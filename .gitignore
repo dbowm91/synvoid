@@ -1,8 +1,91 @@
-/target
+# Build artifacts
+/target/
+**/target/
+*.rlib
+*.dylib
+*.so
 
-# SQLite WAL and shared memory files
+# Build outputs
+*.exe
+*.dll
+*.pdb
+
+# IDE and editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.settings/
+*.sublime-*
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+desktop.ini
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-error.log
+yarn.lock
+package-lock.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Rust
+**/Cargo.lock
+!**/Cargo.lock
+*.rs.bk
+
+# SQLite
+*.db
 *.db-wal
 *.db-shm
+*.sqlite
+*.sqlite3
 
-# RustWaf data directories
+# Logs
+*.log
+logs/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Test/coverage
+coverage/
+*.profraw
+
+# WebAssembly
+*.wasm
+
+# Temporary files
+*.tmp
+*.bak
+*.orig
+*.patch
+
+# Specific directories
 /var/lib/rustwaf/
+
+# Backup files
+*~
+
+# Archive files (if not source)
+*.zip
+*.tar.gz
+*.tar
