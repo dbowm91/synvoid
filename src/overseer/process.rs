@@ -1,6 +1,5 @@
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
-use std::sync::atomic::Ordering;
+use std::process::Child;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -8,6 +7,7 @@ use super::state::{OverseerState, Persistence, UpgradeState};
 use super::upgrade::{Orchestrator, UpgradeError};
 use super::socket_handoff::DualMasterHandoff;
 use super::drain_manager::DrainManager;
+use super::spawn::{SpawnConfig, ProcessMode, spawn_and_log};
 use crate::process::{
     get_secure_socket_path, IpcStream, Message,
     get_master_socket_path, get_versioned_master_socket_path,
@@ -93,21 +93,13 @@ impl OverseerProcess {
     }
 
     pub fn spawn_master(&mut self) -> Result<u32, Box<dyn std::error::Error + Send + Sync>> {
-        let binary = std::env::current_exe()?;
+        let config = SpawnConfig::for_current_binary(
+            self.config_path.clone(),
+            ProcessMode::Master,
+        );
         
-        let mut cmd = Command::new(&binary);
-        cmd.arg("--master")
-            .arg("--config-path")
-            .arg(&self.config_path)
-            .arg("--foreground");
-        
-        cmd.stdout(Stdio::inherit())
-            .stderr(Stdio::inherit());
-
-        let child = cmd.spawn()?;
+        let child = spawn_and_log(&config, "master")?;
         let pid = child.id();
-        
-        tracing::info!("Spawned master process with PID {}", pid);
         
         self.master_child = Some(child);
         self.stable_since = Some(Instant::now());
@@ -556,19 +548,20 @@ impl OverseerProcess {
             }
         }
 
-        let mut cmd = Command::new(&binary);
-        cmd.arg("--master")
-            .arg("--config-path")
-            .arg(&self.config_path)
-            .arg("--foreground");
+        let config = SpawnConfig {
+            binary_path: binary,
+            config_path: self.config_path.clone(),
+            mode: ProcessMode::Master,
+            master_socket: None,
+            upgrade_mode: false,
+            reuse_port: false,
+            socket_generation: None,
+            versioned_socket: None,
+            receive_sockets: false,
+            socket_ports: Vec::new(),
+        };
         
-        cmd.stdout(Stdio::inherit())
-            .stderr(Stdio::inherit());
-
-        let child = cmd.spawn()?;
-        let pid = child.id();
-        
-        tracing::info!("Spawned upgraded master process with PID {} from {}", pid, binary_path);
+        let child = spawn_and_log(&config, "upgraded master")?;
         
         self.master_child = Some(child);
         self.stable_since = Some(Instant::now());
@@ -732,30 +725,20 @@ impl OverseerProcess {
         self.upgrade_generation = Some(generation);
         let versioned_socket = get_versioned_master_socket_path(generation);
 
-        let mut cmd = Command::new(&binary);
-        cmd.arg("--master")
-            .arg("--config-path")
-            .arg(config_path.unwrap_or(&self.config_path.to_string_lossy()))
-            .arg("--foreground")
-            .arg("--upgrade-mode")
-            .arg("--reuse-port")
-            .arg("--master-socket")
-            .arg(versioned_socket.to_string_lossy().as_ref())
-            .arg("--socket-generation")
-            .arg(generation.to_string());
+        let config = SpawnConfig {
+            binary_path: binary,
+            config_path: config_path.map(PathBuf::from).unwrap_or_else(|| self.config_path.clone()),
+            mode: ProcessMode::Master,
+            master_socket: None,
+            upgrade_mode: true,
+            reuse_port: true,
+            socket_generation: Some(generation),
+            versioned_socket: Some(versioned_socket.clone()),
+            receive_sockets: false,
+            socket_ports: Vec::new(),
+        };
         
-        cmd.stdout(Stdio::inherit())
-            .stderr(Stdio::inherit());
-
-        let child = cmd.spawn()?;
-        let pid = child.id();
-        
-        tracing::info!(
-            "Spawned upgraded master (dual mode) with PID {} from {} using socket generation {}",
-            pid,
-            binary_path,
-            generation
-        );
+        let child = spawn_and_log(&config, &format!("upgraded master (dual mode) using socket gen {}", generation))?;
         
         self.upgraded_master_child = Some(child);
         self.dual_master_mode = true;
@@ -882,28 +865,20 @@ impl OverseerProcess {
             ));
         }
 
-        let mut cmd = Command::new(&binary);
-        cmd.arg("--master")
-            .arg("--config-path")
-            .arg(config_path.unwrap_or(&self.config_path.to_string_lossy()))
-            .arg("--foreground")
-            .arg("--upgrade-mode")
-            .arg("--receive-sockets");
-
-        for port in ports {
-            cmd.arg("--socket-port").arg(port.to_string());
-        }
-
-        cmd.stdout(Stdio::inherit()).stderr(Stdio::inherit());
-
-        let child = cmd.spawn()?;
-        let pid = child.id();
-
-        tracing::info!(
-            "Spawned upgraded master (socket handoff mode) with PID {} from {}",
-            pid,
-            binary_path
-        );
+        let config = SpawnConfig {
+            binary_path: binary,
+            config_path: config_path.map(PathBuf::from).unwrap_or_else(|| self.config_path.clone()),
+            mode: ProcessMode::Master,
+            master_socket: None,
+            upgrade_mode: true,
+            reuse_port: false,
+            socket_generation: None,
+            versioned_socket: None,
+            receive_sockets: true,
+            socket_ports: ports.to_vec(),
+        };
+        
+        let child = spawn_and_log(&config, "upgraded master (socket handoff mode)")?;
 
         self.upgraded_master_child = Some(child);
         self.dual_master_mode = true;

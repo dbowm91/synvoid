@@ -1,4 +1,5 @@
 use crate::http_client::{HttpClient, get_with_timeout, create_simple_http_client};
+use std::future::Future;
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone)]
@@ -74,6 +75,58 @@ pub struct ShadowTrafficResult {
     pub new_version_avg_latency_ms: u64,
     pub latency_diff_percent: f64,
     pub healthy: bool,
+}
+
+pub async fn retry_with_timeout<T, E, F, Fut, Pred>(
+    retries: u32,
+    interval_secs: u64,
+    mut operation: F,
+    is_success: Pred,
+) -> Result<T, E>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<T, E>>,
+    Pred: Fn(&T) -> bool,
+    E: std::fmt::Debug,
+{
+    for attempt in 1..=retries {
+        match operation().await {
+            Ok(result) => {
+                if is_success(&result) {
+                    return Ok(result);
+                }
+                tracing::debug!("Attempt {}: condition not met", attempt);
+            }
+            Err(e) => {
+                tracing::debug!("Attempt {} failed: {:?}", attempt, e);
+            }
+        }
+
+        if attempt < retries {
+            tokio::time::sleep(Duration::from_secs(interval_secs)).await;
+        }
+    }
+
+    Err(operation().await.unwrap_or_else(|e| e))
+}
+
+pub async fn wait_for_condition<C, Fut>(
+    timeout: Duration,
+    poll_interval: Duration,
+    mut condition: C,
+) -> bool
+where
+    C: FnMut() -> Fut,
+    Fut: Future<Output = bool>,
+{
+    let start = Instant::now();
+    while start.elapsed() < timeout {
+        if condition().await {
+            return true;
+        }
+        tokio::time::sleep(poll_interval).await;
+    }
+    false
 }
 
 impl HealthChecker {

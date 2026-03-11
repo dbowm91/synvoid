@@ -8,6 +8,7 @@ use tokio::sync::RwLock;
 use super::checksum::compute_sha256;
 use super::health::{HealthChecker, ValidationMetrics, EnhancedHealthConfig};
 use super::mode::{detect_upgrade_mode, UpgradeMode};
+use super::spawn::{SpawnConfig, ProcessMode, cleanup_failed_spawns};
 use super::state::{OverseerState, Persistence, UpgradeState};
 use super::preflight::{PreflightValidator, PreflightConfig};
 use crate::process::get_secure_socket_path;
@@ -81,6 +82,11 @@ impl Orchestrator {
         self.state.read().await.clone()
     }
 
+    pub async fn save_state(&self, state: &OverseerState) -> Result<(), UpgradeError> {
+        let state_clone = state.clone();
+        self.persistence.save(&state_clone).map_err(UpgradeError::IoError)
+    }
+
     pub async fn stage(&self, binary_path: PathBuf, config_path: Option<PathBuf>, 
                        expected_checksum: Option<String>) -> Result<(), UpgradeError> {
         let mut state = self.state.write().await;
@@ -152,8 +158,7 @@ impl Orchestrator {
         state.validation_retries = 0;
         state.last_error = None;
 
-        let state_clone = state.clone();
-        self.persistence.save(&state_clone).map_err(UpgradeError::IoError)?;
+        self.save_state(&state).await?;
 
         tracing::info!(
             "Staged upgrade: version={}, mode={:?}",
@@ -220,8 +225,7 @@ impl Orchestrator {
         state.worker_ports = Some(worker_ports.clone());
         state.state = UpgradeState::Spawning;
         
-        let state_clone = state.clone();
-        self.persistence.save(&state_clone).map_err(UpgradeError::IoError)?;
+        self.save_state(&state).await?;
 
         tracing::info!("Starting upgrade: version={}, mode={:?}", version, mode);
 
@@ -239,8 +243,7 @@ impl Orchestrator {
                 state.state = UpgradeState::Validating;
                 state.worker_ports = Some(new_ports.clone());
                 
-                let state_clone = state.clone();
-                self.persistence.save(&state_clone).map_err(UpgradeError::IoError)?;
+                self.save_state(&state).await?;
 
                 let validation_result = self
                     .validate_upgrade(&new_ports, timeout_secs)
@@ -250,8 +253,7 @@ impl Orchestrator {
                     Ok(metrics) => {
                         state.state = UpgradeState::Draining;
                         
-                        let state_clone = state.clone();
-                        self.persistence.save(&state_clone).map_err(UpgradeError::IoError)?;
+                        self.save_state(&state).await?;
 
                         tracing::info!(
                             "Validation passed (success rate: {:.1}%)",
@@ -327,13 +329,11 @@ impl Orchestrator {
         state.state = UpgradeState::RollingBack;
         state.last_rollback_timestamp = Some(OverseerState::current_timestamp());
         
-        let state_clone = state.clone();
-        self.persistence.save(&state_clone).map_err(UpgradeError::IoError)?;
+        self.save_state(&state).await?;
 
         state.state = UpgradeState::Idle;
         
-        let state_clone = state.clone();
-        self.persistence.save(&state_clone).map_err(UpgradeError::IoError)?;
+        self.save_state(&state).await?;
 
         tracing::info!("Rollback complete");
 
@@ -574,8 +574,7 @@ impl Orchestrator {
         state.new_master_pid = None;
         state.dual_master_start_time = None;
 
-        let state_clone = state.clone();
-        self.persistence.save(&state_clone).map_err(UpgradeError::IoError)?;
+        self.save_state(&state).await?;
 
         tracing::info!("Staged upgrade cancelled");
 
@@ -594,8 +593,7 @@ impl Orchestrator {
 
         state.state = UpgradeState::Spawning;
         
-        let state_clone = state.clone();
-        self.persistence.save(&state_clone).map_err(UpgradeError::IoError)?;
+        self.save_state(&state).await?;
 
         tracing::info!("Prepared for dual-master upgrade");
         Ok(())
@@ -609,8 +607,7 @@ impl Orchestrator {
         state.new_master_pid = Some(new_pid);
         state.dual_master_start_time = Some(OverseerState::current_timestamp());
 
-        let state_clone = state.clone();
-        self.persistence.save(&state_clone).map_err(UpgradeError::IoError)?;
+        self.save_state(&state).await?;
 
         tracing::info!("Dual-master mode active: old={}, new={}", old_pid, new_pid);
         Ok(())
@@ -622,8 +619,7 @@ impl Orchestrator {
         state.state = UpgradeState::DrainingOldMaster;
         state.active_connections_at_drain_start = active_connections;
 
-        let state_clone = state.clone();
-        self.persistence.save(&state_clone).map_err(UpgradeError::IoError)?;
+        self.save_state(&state).await?;
 
         tracing::info!("Started draining old master");
         Ok(())
@@ -643,8 +639,7 @@ impl Orchestrator {
         state.dual_master_start_time = None;
         state.active_connections_at_drain_start = None;
 
-        let state_clone = state.clone();
-        self.persistence.save(&state_clone).map_err(UpgradeError::IoError)?;
+        self.save_state(&state).await?;
 
         tracing::info!("Dual-master upgrade committed");
         Ok(())
@@ -657,8 +652,7 @@ impl Orchestrator {
         state.last_error = Some(error.to_string());
         state.new_master_pid = None;
 
-        let state_clone = state.clone();
-        self.persistence.save(&state_clone).map_err(UpgradeError::IoError)?;
+        self.save_state(&state).await?;
 
         tracing::error!("Dual-master upgrade failed: {}", error);
         Ok(())
@@ -705,35 +699,33 @@ impl Orchestrator {
         let mut spawned_pids = Vec::new();
 
         for (i, &port) in new_ports.iter().enumerate() {
-            let worker_id = i;
+            let config = SpawnConfig {
+                binary_path: worker_binary.clone(),
+                config_path: PathBuf::from(config_path.unwrap_or(&"config".to_string())),
+                mode: ProcessMode::Worker { worker_id: i, port },
+                master_socket: Some(get_secure_socket_path("master.sock")),
+                upgrade_mode: true,
+                reuse_port: matches!(mode, UpgradeMode::ReusePort),
+                socket_generation: None,
+                versioned_socket: None,
+                receive_sockets: false,
+                socket_ports: Vec::new(),
+            };
 
-            let mut cmd = std::process::Command::new(&worker_binary);
-            cmd.arg("--worker")
-                .arg("--worker-id")
-                .arg(worker_id.to_string())
-                .arg("--port")
-                .arg(port.to_string())
+            match std::process::Command::new(&config.binary_path)
+                .args(&["--worker", "--worker-id", &i.to_string(), "--port", &port.to_string()])
                 .arg("--config-path")
-                .arg(config_path.unwrap_or(&"config".to_string()))
+                .arg(&config.config_path)
                 .arg("--master-socket")
-                .arg(get_secure_socket_path("master.sock").to_string_lossy().as_ref())
-                .arg("--upgrade-mode");
-
-            if matches!(mode, UpgradeMode::ReusePort) {
-                cmd.arg("--reuse-port");
-            }
-
-            match cmd.spawn() {
+                .arg(get_secure_socket_path("master.sock"))
+                .arg("--upgrade-mode")
+                .spawn() 
+            {
                 Ok(child) => {
                     spawned_pids.push(child.id());
                 }
                 Err(e) => {
-                    for pid in spawned_pids {
-                        let _ = nix::sys::signal::kill(
-                            nix::unistd::Pid::from_raw(pid as i32),
-                            nix::sys::signal::Signal::SIGKILL,
-                        );
-                    }
+                    cleanup_failed_spawns(&spawned_pids);
                     return Err(UpgradeError::SpawnFailed(e.to_string()));
                 }
             }
@@ -936,35 +928,33 @@ impl Orchestrator {
         let mut spawned_pids = Vec::new();
 
         for (i, &port) in new_ports.iter().enumerate() {
-            let worker_id = i;
+            let config = SpawnConfig {
+                binary_path: worker_binary.clone(),
+                config_path: PathBuf::from(config_path.unwrap_or(&"config".to_string())),
+                mode: ProcessMode::Worker { worker_id: i, port },
+                master_socket: Some(get_secure_socket_path("master.sock")),
+                upgrade_mode: true,
+                reuse_port: matches!(mode, UpgradeMode::ReusePort),
+                socket_generation: None,
+                versioned_socket: None,
+                receive_sockets: false,
+                socket_ports: Vec::new(),
+            };
 
-            let mut cmd = std::process::Command::new(&worker_binary);
-            cmd.arg("--worker")
-                .arg("--worker-id")
-                .arg(worker_id.to_string())
-                .arg("--port")
-                .arg(port.to_string())
+            match std::process::Command::new(&config.binary_path)
+                .args(&["--worker", "--worker-id", &i.to_string(), "--port", &port.to_string()])
                 .arg("--config-path")
-                .arg(config_path.unwrap_or(&"config".to_string()))
+                .arg(&config.config_path)
                 .arg("--master-socket")
-                .arg(get_secure_socket_path("master.sock").to_string_lossy().as_ref())
-                .arg("--upgrade-mode");
-
-            if matches!(mode, UpgradeMode::ReusePort) {
-                cmd.arg("--reuse-port");
-            }
-
-            match cmd.spawn() {
+                .arg(get_secure_socket_path("master.sock"))
+                .arg("--upgrade-mode")
+                .spawn()
+            {
                 Ok(child) => {
                     spawned_pids.push(child.id());
                 }
                 Err(e) => {
-                    for pid in spawned_pids {
-                        let _ = nix::sys::signal::kill(
-                            nix::unistd::Pid::from_raw(pid as i32),
-                            nix::sys::signal::Signal::SIGKILL,
-                        );
-                    }
+                    cleanup_failed_spawns(&spawned_pids);
                     return Err(UpgradeError::SpawnFailed(e.to_string()));
                 }
             }

@@ -40,6 +40,24 @@ pub fn setup_unified_server_panic_handler() {
     setup_panic_handler("UNIFIED SERVER WORKER", Some(&panic_path));
 }
 
+async fn extract_bandwidth_config(
+    config: &Arc<RwLock<ConfigManager>>,
+) -> (
+    Option<String>,
+    u32,
+    bool,
+    crate::metrics::bandwidth::MonthlyResetConfig,
+) {
+    let config_guard = config.read().await;
+    let bandwidth = &config_guard.main.traffic_shaping.bandwidth;
+    (
+        bandwidth.data_dir.clone(),
+        bandwidth.retention_days,
+        bandwidth.mesh_excluded_from_total,
+        bandwidth.monthly_reset.clone(),
+    )
+}
+
 
 
 #[derive(Clone)]
@@ -97,21 +115,8 @@ pub async fn run_unified_server_worker(args: UnifiedServerWorkerArgs) -> Result<
 
     let shared_config = Arc::new(RwLock::new(config_manager));
     
-    let bandwidth_data_dir: Option<String> = {
-        let config = shared_config.read().await;
-        config.main.traffic_shaping.bandwidth.data_dir.clone()
-    };
-    let bandwidth_reset_config = {
-        let config = shared_config.read().await;
-        config.main.traffic_shaping.bandwidth.monthly_reset.clone()
-    };
-    let (bandwidth_retention_days, bandwidth_mesh_excluded) = {
-        let config = shared_config.read().await;
-        (
-            config.main.traffic_shaping.bandwidth.retention_days,
-            config.main.traffic_shaping.bandwidth.mesh_excluded_from_total,
-        )
-    };
+    let (bandwidth_data_dir, bandwidth_retention_days, bandwidth_mesh_excluded, bandwidth_reset_config) = 
+        extract_bandwidth_config(&shared_config).await;
     
     // Initialize global bandwidth tracker with config values
     crate::metrics::bandwidth::init_global_bandwidth_tracker(bandwidth_retention_days, bandwidth_mesh_excluded);
