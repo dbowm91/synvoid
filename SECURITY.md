@@ -103,8 +103,8 @@ The following vulnerabilities exist in transitive dependencies and are documente
 
 | Vulnerability | Crate | ID | Status | Notes |
 |---------------|-------|-----|--------|-------|
-| Denial of Service | `quinn-proto` | RUSTSEC-2026-0037 | Monitoring | Fix in 0.11.14 not yet on crates.io |
 | KyberSlash | `pqc_kyber` | RUSTSEC-2023-0079 | No fix | Used by wasm-pow for PoW challenges |
+| ~~Denial of Service~~ | ~~`quinn-proto`~~ | ~~RUSTSEC-2026-0037~~ | **Patched** | Fixed via git patch to 0.11.14 |
 
 ### Medium Severity
 
@@ -114,12 +114,32 @@ The following vulnerabilities exist in transitive dependencies and are documente
 
 ### Unmaintained Dependencies (Warnings)
 
-| Crate | Alternative | Notes |
-|-------|-------------|-------|
-| `bincode` | `postcard`, `rmp-serde` | Serialization - used by admin-ui/yew |
-| `rustls-pemfile` | (required) | No alternative - used by TLS |
-| `paste` | None | Macro crate - used by utoipa |
-| `proc-macro-error` | `trybuild` | Used by yew |
+| Crate | Alternative | Status | Notes |
+|-------|-------------|--------|-------|
+| `bincode` | `oxicode`, `postcard` | Pending migration | IPC serialization |
+| `paste` | None | Pending removal | Macro crate - used by utoipa |
+| `proc-macro-error` | `proc-macro2` | Pending migration | Used by yew |
+| ~~`rustls-pemfile`~~ | ~~`rustls-pki-types`~~ | **Completed** | TLS certificate parsing |
+
+---
+
+## Dependency Patches
+
+### quinn-proto (RUSTSEC-2026-0037)
+- **Issue**: DoS via malformed QUIC transport parameters (CVE-2026-31812)
+- **Severity**: High (CVSS 8.7)
+- **Fix**: Patched in `quinn-proto 0.11.14`
+- **Patch**: Applied via `[patch.crates-io]` in Cargo.toml
+- **TODO**: Remove patch when quinn 0.11.10+ is released on crates.io
+- **Tracking**: https://github.com/quinn-rs/quinn/releases
+
+### rustls-pemfile → rustls-pki-types
+- **Issue**: Unmaintained (RUSTSEC-2025-0134)
+- **Fix**: Migrated to `rustls-pki-types` for PEM parsing
+- **Files changed**: 
+  - `src/tls/cert_resolver.rs`
+  - `src/mesh/cert.rs`
+  - `src/tunnel/quic/tls.rs`
 
 ---
 

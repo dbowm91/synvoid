@@ -11,6 +11,7 @@ use rustls::ServerConfig;
 use rustls::SupportedProtocolVersion;
 use rustls::version::{TLS13, TLS12};
 use rustls::crypto::aws_lc_rs::default_provider;
+use rustls_pki_types::pem::{self, PemObject};
 use tokio::sync::broadcast;
 use notify::Watcher;
 use metrics::counter;
@@ -256,8 +257,13 @@ impl rustls::server::ResolvesServerCert for CertResolver {
 fn load_certs(path: &PathBuf) -> Result<Vec<CertificateDer<'static>>, Box<dyn std::error::Error + Send + Sync>> {
     let file = File::open(path)?;
     let mut reader = BufReader::new(file);
-    let certs = rustls_pemfile::certs(&mut reader)
-        .collect::<Result<Vec<_>, _>>()?;
+    
+    let mut certs = Vec::new();
+    while let Ok(Some((kind, der))) = pem::from_buf(&mut reader) {
+        if kind == pem::SectionKind::Certificate {
+            certs.push(CertificateDer::from(der));
+        }
+    }
     
     if certs.is_empty() {
         return Err("No certificates found in file".into());
@@ -271,12 +277,18 @@ fn load_private_key(path: &PathBuf) -> Result<PrivateKeyDer<'static>, Box<dyn st
     let mut reader = BufReader::new(file);
 
     loop {
-        match rustls_pemfile::read_one(&mut reader)? {
-            Some(rustls_pemfile::Item::Pkcs1Key(key)) => return Ok(PrivateKeyDer::Pkcs1(key)),
-            Some(rustls_pemfile::Item::Pkcs8Key(key)) => return Ok(PrivateKeyDer::Pkcs8(key)),
-            Some(rustls_pemfile::Item::Sec1Key(key)) => return Ok(PrivateKeyDer::Sec1(key)),
+        match pem::from_buf(&mut reader)? {
+            Some((kind, der)) => {
+                if kind == pem::SectionKind::PrivateKey
+                    || kind == pem::SectionKind::EcPrivateKey
+                    || kind == pem::SectionKind::RsaPrivateKey
+                {
+                    if let Some(key) = PrivateKeyDer::from_pem(kind, der) {
+                        return Ok(key);
+                    }
+                }
+            }
             None => break,
-            _ => continue,
         }
     }
 
@@ -286,8 +298,13 @@ fn load_private_key(path: &PathBuf) -> Result<PrivateKeyDer<'static>, Box<dyn st
 fn load_ca_certs(path: &Path) -> Result<RootCertStore, Box<dyn std::error::Error + Send + Sync>> {
     let file = File::open(path)?;
     let mut reader = BufReader::new(file);
-    let certs = rustls_pemfile::certs(&mut reader)
-        .collect::<Result<Vec<_>, _>>()?;
+    
+    let mut certs = Vec::new();
+    while let Ok(Some((kind, der))) = pem::from_buf(&mut reader) {
+        if kind == pem::SectionKind::Certificate {
+            certs.push(CertificateDer::from(der));
+        }
+    }
     
     if certs.is_empty() {
         return Err("No CA certificates found in file".into());

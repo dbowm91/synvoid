@@ -32,6 +32,12 @@ post-quantum = ["dep:rustls-post-quantum"]
 verify-pq = []
 tun-rs = []
 
+# TODO: Remove git patch when quinn 0.11.10+ is released with fixed quinn-proto
+# Tracking: https://github.com/quinn-rs/quinn/releases
+# Fixes RUSTSEC-2026-0037 / CVE-2026-31812 (DoS via malformed transport parameters)
+[patch.crates-io]
+quinn-proto = { git = "https://github.com/quinn-rs/quinn", tag = "quinn-proto-0.11.14" }
+
 [workspace]
 members = [".", "pqc", "src/wasm_pow", "admin-ui", "examples/dynamic-plugin-example", "examples/embedded-app-example"]
 
@@ -128,7 +134,6 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 # TLS + Post-Quantum Cryptography
 tokio-rustls = "0.26"
 rustls = { version = "0.23", features = ["prefer-post-quantum", "aws-lc-rs"] }
-rustls-pemfile = "2.2"
 rustls-pki-types = "1"
 rustls-post-quantum = { version = "0.2", optional = true }
 x509-parser = "0.16"

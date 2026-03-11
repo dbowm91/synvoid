@@ -13,6 +13,7 @@ use quinn::crypto::rustls::QuicClientConfig;
 use quinn::crypto::rustls::QuicServerConfig;
 use quinn::{ClientConfig, ServerConfig};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use rustls_pki_types::pem::{self, PemObject};
 use subtle::ConstantTimeEq;
 
 use crate::mesh::config::MeshConfig;
@@ -22,7 +23,13 @@ fn load_certs(
 ) -> Result<Vec<CertificateDer<'static>>, Box<dyn std::error::Error + Send + Sync>> {
     let file = File::open(path)?;
     let mut reader = BufReader::new(file);
-    let certs = rustls_pemfile::certs(&mut reader).collect::<Result<Vec<_>, _>>()?;
+
+    let mut certs = Vec::new();
+    while let Ok(Some((kind, der))) = pem::from_buf(&mut reader) {
+        if kind == pem::SectionKind::Certificate {
+            certs.push(CertificateDer::from(der));
+        }
+    }
 
     if certs.is_empty() {
         return Err("No certificates found in file".into());
@@ -38,12 +45,21 @@ fn load_private_key(
     let mut reader = BufReader::new(file);
 
     loop {
-        match rustls_pemfile::read_one(&mut reader)? {
-            Some(rustls_pemfile::Item::Pkcs1Key(key)) => return Ok(PrivateKeyDer::Pkcs1(key)),
-            Some(rustls_pemfile::Item::Pkcs8Key(key)) => return Ok(PrivateKeyDer::Pkcs8(key)),
-            Some(rustls_pemfile::Item::Sec1Key(key)) => return Ok(PrivateKeyDer::Sec1(key)),
+        match pem::from_buf(&mut reader)? {
+            Some((kind, der)) => {
+                if kind == pem::SectionKind::PrivateKey
+                    || kind == pem::SectionKind::EcPrivateKey
+                    || kind == pem::SectionKind::RsaPrivateKey
+                    || kind == pem::SectionKind::PrivateKey
+                    || kind == pem::SectionKind::EcPrivateKey
+                    || kind == pem::SectionKind::RsaPrivateKey
+                {
+                    if let Some(key) = PrivateKeyDer::from_pem(kind, der) {
+                        return Ok(key);
+                    }
+                }
+            }
             None => break,
-            _ => continue,
         }
     }
 
@@ -247,20 +263,19 @@ impl MeshCertManager {
         let cert_reader = &mut BufReader::new(cert_file);
         let key_reader = &mut BufReader::new(key_file);
 
-        let cert_chain = rustls_pemfile::certs(cert_reader)
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| MeshCertError::ParseError(e.to_string()))?;
+        let mut cert_chain = Vec::new();
+        while let Ok(Some((kind, der))) = pem::from_buf(cert_reader) {
+            if kind == pem::SectionKind::Certificate {
+                cert_chain.push(CertificateDer::from(der));
+            }
+        }
 
-        let key_der = rustls_pemfile::read_one(key_reader)
-            .map_err(|e| MeshCertError::ParseError(e.to_string()))?
+        let key_pem = pem::from_buf(key_reader)
+            .map_err(|e| MeshCertError::ParseError(format!("{:?}", e)))?
             .ok_or_else(|| MeshCertError::NoPrivateKey(key_path.display().to_string()))?;
 
-        let private_key = match key_der {
-            rustls_pemfile::Item::Pkcs1Key(key) => PrivateKeyDer::Pkcs1(key),
-            rustls_pemfile::Item::Pkcs8Key(key) => PrivateKeyDer::Pkcs8(key),
-            rustls_pemfile::Item::Sec1Key(key) => PrivateKeyDer::Sec1(key),
-            _ => return Err(MeshCertError::NoPrivateKey(key_path.display().to_string())),
-        };
+        let private_key = PrivateKeyDer::from_pem(key_pem.0, key_pem.1)
+            .ok_or_else(|| MeshCertError::NoPrivateKey(key_path.display().to_string()))?;
 
         let server_config = rustls::ServerConfig::builder()
             .with_no_client_auth()
@@ -305,20 +320,19 @@ impl MeshCertManager {
         let cert_reader = &mut BufReader::new(cert_file);
         let key_reader = &mut BufReader::new(key_file);
 
-        let cert_chain = rustls_pemfile::certs(cert_reader)
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| MeshCertError::ParseError(e.to_string()))?;
+        let mut cert_chain = Vec::new();
+        while let Ok(Some((kind, der))) = pem::from_buf(cert_reader) {
+            if kind == pem::SectionKind::Certificate {
+                cert_chain.push(CertificateDer::from(der));
+            }
+        }
 
-        let key_der = rustls_pemfile::read_one(key_reader)
-            .map_err(|e| MeshCertError::ParseError(e.to_string()))?
+        let key_pem = pem::from_buf(key_reader)
+            .map_err(|e| MeshCertError::ParseError(format!("{:?}", e)))?
             .ok_or_else(|| MeshCertError::NoPrivateKey(key_path.display().to_string()))?;
 
-        let private_key = match key_der {
-            rustls_pemfile::Item::Pkcs1Key(key) => PrivateKeyDer::Pkcs1(key),
-            rustls_pemfile::Item::Pkcs8Key(key) => PrivateKeyDer::Pkcs8(key),
-            rustls_pemfile::Item::Sec1Key(key) => PrivateKeyDer::Sec1(key),
-            _ => return Err(MeshCertError::NoPrivateKey(key_path.display().to_string())),
-        };
+        let private_key = PrivateKeyDer::from_pem(key_pem.0, key_pem.1)
+            .ok_or_else(|| MeshCertError::NoPrivateKey(key_path.display().to_string()))?;
 
         let mut client_config = rustls::ClientConfig::builder()
             .with_root_certificates({
@@ -326,12 +340,14 @@ impl MeshCertManager {
                 if let Some(ref ca_path) = self.ca_path {
                     if let Ok(ca_file) = File::open(ca_path) {
                         let mut ca_reader = BufReader::new(ca_file);
-                        if let Ok(ca_certs) =
-                            rustls_pemfile::certs(&mut ca_reader).collect::<Result<Vec<_>, _>>()
-                        {
-                            for ca_cert in ca_certs {
-                                root_store.add(ca_cert).ok();
+                        let mut ca_certs = Vec::new();
+                        while let Ok(Some((kind, der))) = pem::from_buf(&mut ca_reader) {
+                            if kind == pem::SectionKind::Certificate {
+                                ca_certs.push(CertificateDer::from(der));
                             }
+                        }
+                        for ca_cert in ca_certs {
+                            root_store.add(ca_cert).ok();
                         }
                     }
                 }

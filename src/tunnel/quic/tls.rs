@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use rustls_pki_types::pem::{self, PemObject};
 
 use quinn::{ClientConfig, ServerConfig};
 
@@ -187,9 +188,12 @@ fn load_certs(path: &PathBuf) -> Result<Vec<CertificateDer<'static>>, QuicTlsErr
         File::open(path).map_err(|e| QuicTlsError::IoError(path.display().to_string(), e))?;
     let mut reader = BufReader::new(file);
 
-    let certs: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut reader)
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| QuicTlsError::ParseError(e.to_string()))?;
+    let mut certs = Vec::new();
+    while let Ok(Some((kind, der))) = pem::from_buf(&mut reader) {
+        if kind == pem::SectionKind::Certificate {
+            certs.push(CertificateDer::from(der));
+        }
+    }
 
     if certs.is_empty() {
         return Err(QuicTlsError::NoCertificates(path.display().to_string()));
@@ -204,14 +208,18 @@ fn load_private_key(path: &PathBuf) -> Result<PrivateKeyDer<'static>, QuicTlsErr
     let mut reader = BufReader::new(file);
 
     loop {
-        match rustls_pemfile::read_one(&mut reader)
-            .map_err(|e| QuicTlsError::ParseError(e.to_string()))?
-        {
-            Some(rustls_pemfile::Item::Pkcs1Key(key)) => return Ok(PrivateKeyDer::Pkcs1(key)),
-            Some(rustls_pemfile::Item::Pkcs8Key(key)) => return Ok(PrivateKeyDer::Pkcs8(key)),
-            Some(rustls_pemfile::Item::Sec1Key(key)) => return Ok(PrivateKeyDer::Sec1(key)),
+        match pem::from_buf(&mut reader).map_err(|e| QuicTlsError::ParseError(e.to_string()))? {
+            Some((kind, der)) => {
+                if kind == pem::SectionKind::PrivateKey
+                    || kind == pem::SectionKind::EcPrivateKey
+                    || kind == pem::SectionKind::RsaPrivateKey
+                {
+                    if let Some(key) = PrivateKeyDer::from_pem(kind, der) {
+                        return Ok(key);
+                    }
+                }
+            }
             None => break,
-            _ => continue,
         }
     }
 
