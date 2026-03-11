@@ -61,6 +61,26 @@ impl ContentType {
             ContentType::Other
         }
     }
+
+    pub fn to_mime(&self) -> &'static str {
+        match self {
+            ContentType::Html => "text/html",
+            ContentType::Css => "text/css",
+            ContentType::Js => "application/javascript",
+            ContentType::Svg => "image/svg+xml",
+            ContentType::Other => "application/octet-stream",
+        }
+    }
+}
+
+pub fn content_type_from_path(path: &str) -> String {
+    path.rsplit('.')
+        .next()
+        .map(|e| {
+            let ct = ContentType::from_extension(e);
+            ct.to_mime().to_string()
+        })
+        .unwrap_or_else(|| "application/octet-stream".to_string())
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -390,6 +410,36 @@ impl MinifierCache {
         self.insert(key, entry.clone());
 
         Ok(entry.content)
+    }
+
+    pub fn get_or_create_compressed(
+        &self,
+        site_id: &str,
+        path: &str,
+        minified_content: &[u8],
+        encoding: &str,
+    ) -> Result<Bytes, String> {
+        let enc = match encoding {
+            "gzip" => Encoding::Gzip,
+            "br" => Encoding::Br,
+            _ => return Ok(Bytes::from(minified_content.to_vec())),
+        };
+
+        let key = CacheKey {
+            site_id: Arc::from(site_id),
+            path: Arc::from(path),
+            encoding: enc.clone(),
+        };
+
+        if let Some(entry) = self.get(&key) {
+            return Ok(entry.content.clone());
+        }
+
+        let content = self
+            .generate_compressed(site_id, path, minified_content, &enc)
+            .map_err(|e| format!("{} compression failed: {}", encoding, e))?;
+
+        Ok(content)
     }
 
     pub fn write_to_disk(

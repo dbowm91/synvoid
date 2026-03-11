@@ -102,7 +102,7 @@ pub struct Backend {
 }
 
 impl Backend {
-    pub fn new(url: String) -> Self {
+    fn new_internal(url: String, is_backup: bool) -> Self {
         let validated_url = validate_upstream_url(&url).unwrap_or_else(|e| {
             tracing::error!("Invalid upstream URL '{}': {}", url, e);
             url
@@ -116,47 +116,23 @@ impl Backend {
             consecutive_failures: Arc::new(AtomicU32::new(0)),
             consecutive_successes: Arc::new(AtomicU32::new(0)),
             protocol: BackendProtocol::Http,
-            is_backup: false,
+            is_backup,
             cpu_percent: Arc::new(AtomicU32::new(0)),
             memory_percent: Arc::new(AtomicU32::new(0)),
         }
+    }
+
+    pub fn new(url: String) -> Self {
+        Self::new_internal(url, false)
     }
 
     pub fn try_new(url: String) -> Result<Self, String> {
         let validated_url = validate_upstream_url(&url)?;
-        Ok(Self {
-            url: Arc::new(validated_url),
-            weight: 1,
-            max_connections: 100,
-            current_connections: Arc::new(AtomicUsize::new(0)),
-            is_healthy: RunningFlag::new(),
-            consecutive_failures: Arc::new(AtomicU32::new(0)),
-            consecutive_successes: Arc::new(AtomicU32::new(0)),
-            protocol: BackendProtocol::Http,
-            is_backup: false,
-            cpu_percent: Arc::new(AtomicU32::new(0)),
-            memory_percent: Arc::new(AtomicU32::new(0)),
-        })
+        Ok(Self::new_internal(validated_url, false))
     }
 
     pub fn new_backup(url: String) -> Self {
-        let validated_url = validate_upstream_url(&url).unwrap_or_else(|e| {
-            tracing::error!("Invalid backup upstream URL '{}': {}", url, e);
-            url
-        });
-        Self {
-            url: Arc::new(validated_url),
-            weight: 1,
-            max_connections: 100,
-            current_connections: Arc::new(AtomicUsize::new(0)),
-            is_healthy: RunningFlag::new(),
-            consecutive_failures: Arc::new(AtomicU32::new(0)),
-            consecutive_successes: Arc::new(AtomicU32::new(0)),
-            protocol: BackendProtocol::Http,
-            is_backup: true,
-            cpu_percent: Arc::new(AtomicU32::new(0)),
-            memory_percent: Arc::new(AtomicU32::new(0)),
-        }
+        Self::new_internal(url, true)
     }
 
     pub fn with_weight(mut self, weight: u32) -> Self {

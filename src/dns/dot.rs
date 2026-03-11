@@ -2,122 +2,67 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use parking_lot::RwLock;
-use tokio::net::TcpListener;
 use tokio::net::TcpStream;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::sync::oneshot;
 use tokio_rustls::TlsAcceptor;
 use bytes::Buf;
 
 use crate::config::dns::DnsDotConfig;
 use crate::dns::server::{DnsServer, RecordType};
 use crate::dns::cache::CacheKey;
+use crate::dns::secure_server::{SecureDnsServerBase, DnsServerConfig, TLS_HANDSHAKE_TIMEOUT_SECS, MAX_QUERY_SIZE};
 use crate::tls::cert_resolver::CertResolver;
 
-const DOT_MAX_QUERY_SIZE: usize = 65535;
-const DOT_TLS_HANDSHAKE_TIMEOUT_SECS: u64 = 10;
+pub const DOT_MAX_QUERY_SIZE: usize = MAX_QUERY_SIZE;
+
+impl DnsServerConfig for DnsDotConfig {
+    fn bind_address(&self) -> &str {
+        &self.bind_address
+    }
+
+    fn port(&self) -> u16 {
+        self.port
+    }
+
+    fn server_name(&self) -> &'static str {
+        "DoT"
+    }
+}
 
 pub struct DotServer {
-    config: Arc<DnsDotConfig>,
-    cert_resolver: Option<Arc<CertResolver>>,
-    dns_server: Arc<RwLock<Option<DnsServer>>>,
-    shutdown_tx: Option<oneshot::Sender<()>>,
+    base: SecureDnsServerBase<DnsDotConfig>,
 }
 
 impl DotServer {
     pub fn new(config: DnsDotConfig, cert_resolver: Option<Arc<CertResolver>>) -> Self {
         Self {
-            config: Arc::new(config),
-            cert_resolver,
-            dns_server: Arc::new(RwLock::new(None)),
-            shutdown_tx: None,
+            base: SecureDnsServerBase::new(config, cert_resolver),
         }
     }
 
     pub fn set_dns_server(&self, server: DnsServer) {
-        *self.dns_server.write() = Some(server);
+        self.base.set_dns_server(server);
     }
 
     pub async fn start(&mut self) -> Result<(), String> {
-        let bind_addr = format!("{}:{}", self.config.bind_address, self.config.port)
-            .parse::<SocketAddr>()
-            .map_err(|e| format!("Invalid DoT bind address: {}", e))?;
-
-        let listener = TcpListener::bind(bind_addr)
+        self.base
+            .start_server(
+                &self.base.config.bind_address,
+                self.base.config.port,
+                "DoT server",
+                Self::handle_connection,
+            )
             .await
-            .map_err(|e| format!("Failed to bind DoT socket: {}", e))?;
-
-        tracing::info!("DoT server listening on {}", bind_addr);
-
-        let acceptor = self.create_tls_acceptor()?;
-
-        let dns_server = self.dns_server.clone();
-        let config = self.config.clone();
-
-        let (tx, rx) = oneshot::channel::<()>();
-        self.shutdown_tx = Some(tx);
-
-        tokio::spawn(async move {
-            Self::accept_loop(listener, dns_server, config, acceptor, rx).await;
-        });
-
-        Ok(())
-    }
-
-    fn create_tls_acceptor(&self) -> Result<TlsAcceptor, String> {
-        if let Some(ref resolver) = self.cert_resolver {
-            let server_config = resolver.build_server_config()
-                .map_err(|e| format!("Failed to build TLS config: {}", e))?;
-            Ok(TlsAcceptor::from(server_config))
-        } else {
-            Err("No TLS certificate resolver available".to_string())
-        }
-    }
-
-    async fn accept_loop(
-        listener: TcpListener,
-        dns_server: Arc<RwLock<Option<DnsServer>>>,
-        config: Arc<DnsDotConfig>,
-        acceptor: TlsAcceptor,
-        shutdown_rx: oneshot::Receiver<()>,
-    ) {
-        tokio::select! {
-            _ = shutdown_rx => {
-                tracing::info!("DoT server shutting down");
-            }
-            _ = async {
-                let acceptor = acceptor;
-                loop {
-                    match listener.accept().await {
-                        Ok((stream, client_addr)) => {
-                            let dns_server = dns_server.clone();
-                            let acceptor = acceptor.clone();
-
-                            tokio::spawn(async move {
-                                if let Err(e) = Self::handle_connection(stream, client_addr, dns_server, acceptor).await {
-                                    tracing::debug!("DoT connection error from {}: {}", client_addr, e);
-                                }
-                            });
-                        }
-                        Err(e) => {
-                            tracing::error!("DoT accept error: {}", e);
-                        }
-                    }
-                }
-            } => {}
-        }
     }
 
     async fn handle_connection(
         stream: TcpStream,
         client_addr: SocketAddr,
         dns_server: Arc<RwLock<Option<DnsServer>>>,
-        acceptor: TlsAcceptor,
+        acceptor: Arc<TlsAcceptor>,
     ) -> Result<(), String> {
-        use std::time::Duration;
-
         let tls_stream = tokio::time::timeout(
-            Duration::from_secs(DOT_TLS_HANDSHAKE_TIMEOUT_SECS),
+            std::time::Duration::from_secs(TLS_HANDSHAKE_TIMEOUT_SECS),
             acceptor.accept(stream),
         )
         .await
@@ -222,19 +167,14 @@ impl DotServer {
     }
 
     pub fn shutdown(&mut self) {
-        if let Some(tx) = self.shutdown_tx.take() {
-            let _ = tx.send(());
-        }
+        self.base.shutdown();
     }
 }
 
 impl Clone for DotServer {
     fn clone(&self) -> Self {
         Self {
-            config: self.config.clone(),
-            cert_resolver: self.cert_resolver.clone(),
-            dns_server: self.dns_server.clone(),
-            shutdown_tx: None,
+            base: self.base.clone(),
         }
     }
 }

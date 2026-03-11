@@ -6,6 +6,7 @@ use hmac::{Hmac, Mac};
 use parking_lot::RwLock;
 use sha1::Sha1;
 use sha2::{Digest, Sha256, Sha384, Sha512};
+use thiserror::Error;
 
 use crate::config::dns::{TsigAlgorithm, TsigKeyConfig};
 
@@ -263,40 +264,25 @@ impl TsigAlgorithm {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Error)]
 pub enum TsigError {
+    #[error("Unknown TSIG key: {0}")]
     UnknownKey(String),
+    #[error("Invalid TSIG key")]
     InvalidKey,
+    #[error("TSIG MAC verification failed")]
     MacVerificationFailed,
+    #[error("TSIG MAC length mismatch: expected {expected}, got {actual}")]
     MacMismatch { expected: usize, actual: usize },
+    #[error("TSIG time out of valid range")]
     TimeInvalid,
+    #[error("TSIG error code indicates failure")]
     BadSignature,
+    #[error("TSIG algorithm mismatch")]
     AlgorithmMismatch,
+    #[error("TSIG parse error: {0}")]
     ParseError(String),
 }
-
-impl std::fmt::Display for TsigError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            TsigError::UnknownKey(name) => write!(f, "Unknown TSIG key: {}", name),
-            TsigError::InvalidKey => write!(f, "Invalid TSIG key"),
-            TsigError::MacVerificationFailed => write!(f, "TSIG MAC verification failed"),
-            TsigError::MacMismatch { expected, actual } => {
-                write!(
-                    f,
-                    "TSIG MAC length mismatch: expected {}, got {}",
-                    expected, actual
-                )
-            }
-            TsigError::TimeInvalid => write!(f, "TSIG time out of valid range"),
-            TsigError::BadSignature => write!(f, "TSIG error code indicates failure"),
-            TsigError::AlgorithmMismatch => write!(f, "TSIG algorithm mismatch"),
-            TsigError::ParseError(msg) => write!(f, "TSIG parse error: {}", msg),
-        }
-    }
-}
-
-impl std::error::Error for TsigError {}
 
 pub fn parse_tsig_from_query(query: &[u8], qd_end: usize) -> Option<TsigParseResult> {
     if query.len() < qd_end + 11 {

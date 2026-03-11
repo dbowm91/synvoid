@@ -1,5 +1,6 @@
 use parking_lot::RwLock;
 use std::sync::Arc;
+use thiserror::Error;
 
 pub trait HsmSigner: Send + Sync {
     fn sign(&self, data: &[u8]) -> Result<Vec<u8>, HsmError>;
@@ -7,26 +8,17 @@ pub trait HsmSigner: Send + Sync {
     fn key_id(&self) -> &str;
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Error)]
 pub enum HsmError {
+    #[error("HSM Provider: {0}")]
     Provider(String),
+    #[error("Key not found: {0}")]
     KeyNotFound(String),
+    #[error("Signing failed: {0}")]
     SigningFailed(String),
+    #[error("Initialization failed: {0}")]
     InitializationFailed(String),
 }
-
-impl std::fmt::Display for HsmError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            HsmError::Provider(msg) => write!(f, "HSM Provider: {}", msg),
-            HsmError::KeyNotFound(msg) => write!(f, "Key not found: {}", msg),
-            HsmError::SigningFailed(msg) => write!(f, "Signing failed: {}", msg),
-            HsmError::InitializationFailed(msg) => write!(f, "Initialization failed: {}", msg),
-        }
-    }
-}
-
-impl std::error::Error for HsmError {}
 
 pub enum HsmBackend {
     Pkcs11(Pkcs11Hsm),

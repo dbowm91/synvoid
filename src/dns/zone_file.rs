@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use thiserror::Error;
+
 use crate::dns::server::{RecordType, Zone};
 
 #[derive(Debug, Clone)]
@@ -13,6 +15,25 @@ pub struct ZoneFileParser {
     soa_minimum: u32,
     soa_mname: String,
     soa_rname: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ParsedRecord {
+    pub name: String,
+    pub record_type: RecordType,
+    pub ttl: u32,
+    pub value: String,
+    pub priority: Option<u32>,
+}
+
+#[derive(Debug, Error)]
+pub enum ZoneParseError {
+    #[error("IO error: {0}")]
+    IoError(#[from] std::io::Error),
+    #[error("Parse error: {0}")]
+    ParseError(String),
+    #[error("Invalid record: {0}")]
+    InvalidRecord(String),
 }
 
 #[derive(Debug)]
