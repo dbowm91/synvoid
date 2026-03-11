@@ -1,4 +1,3 @@
-use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -8,6 +7,7 @@ use std::os::unix::net::UnixStream;
 use serde::{Deserialize, Serialize};
 
 use super::ipc::{MasterCommand, MasterStatus};
+use super::ipc_framing::{read_exact_message_sync, write_message_sync};
 
 pub struct CommandClient {
     socket_path: Option<PathBuf>,
@@ -68,39 +68,11 @@ impl CommandClient {
             .set_read_timeout(Some(Duration::from_secs(5)))
             .map_err(|e| CommandError::ConnectionFailed(e.to_string()))?;
 
-        let json = serde_json::to_vec(&command)
-            .map_err(|e| CommandError::SerializationFailed(e.to_string()))?;
-
-        let len = json.len() as u32;
-        stream
-            .write_all(&len.to_be_bytes())
-            .map_err(|e| CommandError::SendFailed(e.to_string()))?;
-        stream
-            .write_all(&json)
-            .map_err(|e| CommandError::SendFailed(e.to_string()))?;
-        stream
-            .flush()
+        write_message_sync(&mut stream, &command)
             .map_err(|e| CommandError::SendFailed(e.to_string()))?;
 
-        let mut len_buf = [0u8; 4];
-        stream
-            .read_exact(&mut len_buf)
+        let response: CommandResponse = read_exact_message_sync(&mut stream)
             .map_err(|e| CommandError::ReceiveFailed(e.to_string()))?;
-        let len = u32::from_be_bytes(len_buf) as usize;
-
-        if len > 1024 * 1024 {
-            return Err(CommandError::ReceiveFailed(
-                "Response too large".to_string(),
-            ));
-        }
-
-        let mut response_buf = vec![0u8; len];
-        stream
-            .read_exact(&mut response_buf)
-            .map_err(|e| CommandError::ReceiveFailed(e.to_string()))?;
-
-        let response: CommandResponse = serde_json::from_slice(&response_buf)
-            .map_err(|e| CommandError::DeserializationFailed(e.to_string()))?;
 
         match response {
             CommandResponse::Ok(msg) => Ok(msg),
@@ -111,15 +83,9 @@ impl CommandClient {
         }
     }
 
-    /// Send command to master via Windows named pipe.
-    ///
-    /// On Windows, we use a named pipe for CLI commands instead of signals.
-    /// The pipe path is: \\.\pipe\rustwaf-commands
     #[cfg(windows)]
     fn send_via_named_pipe(&self, command: MasterCommand) -> Result<String, CommandError> {
-        use std::os::windows::ffi::OsStrExt;
-
-        let pipe_name = "\\\\.\\pipe\\rustwaf-commands";
+        let pipe_name = "\\\\.\\pipe\\maluwaf-commands";
 
         let mut stream = std::fs::OpenOptions::new()
             .read(true)
@@ -127,39 +93,11 @@ impl CommandClient {
             .open(pipe_name)
             .map_err(|e| CommandError::ConnectionFailed(e.to_string()))?;
 
-        let json = serde_json::to_vec(&command)
-            .map_err(|e| CommandError::SerializationFailed(e.to_string()))?;
-
-        let len = json.len() as u32;
-        stream
-            .write_all(&len.to_be_bytes())
-            .map_err(|e| CommandError::SendFailed(e.to_string()))?;
-        stream
-            .write_all(&json)
-            .map_err(|e| CommandError::SendFailed(e.to_string()))?;
-        stream
-            .flush()
+        write_message_sync(&mut stream, &command)
             .map_err(|e| CommandError::SendFailed(e.to_string()))?;
 
-        let mut len_buf = [0u8; 4];
-        stream
-            .read_exact(&mut len_buf)
+        let response: CommandResponse = read_exact_message_sync(&mut stream)
             .map_err(|e| CommandError::ReceiveFailed(e.to_string()))?;
-        let len = u32::from_be_bytes(len_buf) as usize;
-
-        if len > 1024 * 1024 {
-            return Err(CommandError::ReceiveFailed(
-                "Response too large".to_string(),
-            ));
-        }
-
-        let mut response_buf = vec![0u8; len];
-        stream
-            .read_exact(&mut response_buf)
-            .map_err(|e| CommandError::ReceiveFailed(e.to_string()))?;
-
-        let response: CommandResponse = serde_json::from_slice(&response_buf)
-            .map_err(|e| CommandError::DeserializationFailed(e.to_string()))?;
 
         match response {
             CommandResponse::Ok(msg) => Ok(msg),
@@ -177,14 +115,6 @@ impl CommandClient {
         ))
     }
 
-    /// Send command to master via signal.
-    ///
-    /// Signal handling notes:
-    /// - This is used by external clients (e.g., CLI tools) to communicate with the master
-    /// - On Unix, signals are the primary mechanism for external commands
-    /// - On Windows, signals are not available - this path returns an error
-    /// - The master handles these signals via tokio's signal handlers in main.rs
-    /// - For a more robust solution on Windows, we could use named events or a control pipe
     fn send_via_signal(&self, command: MasterCommand) -> Result<String, CommandError> {
         let pid = self
             .get_master_pid()
@@ -217,15 +147,13 @@ impl CommandClient {
     }
 
     fn get_master_pid(&self) -> Option<u32> {
-        let socket_path = self.socket_path.as_ref()?;
+        let _socket_path = self.socket_path.as_ref()?;
 
-        // Try to get PID from socket filename or read from a pid file
-        // For now, we'll check the default locations
         let data_dir = dirs::data_dir()
-            .map(|d| d.join(".rustwaf"))
-            .unwrap_or_else(|| PathBuf::from(".rustwaf"));
+            .map(|d| d.join(".maluwaf"))
+            .unwrap_or_else(|| PathBuf::from(".maluwaf"));
 
-        let pid_file = data_dir.join("rustwaf.pid");
+        let pid_file = data_dir.join("maluwafwaf.pid");
         if pid_file.exists() {
             if let Ok(content) = std::fs::read_to_string(&pid_file) {
                 if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&content) {
@@ -249,33 +177,11 @@ impl CommandClient {
                     .map_err(|e| CommandError::ConnectionFailed(e.to_string()))?;
 
                 let command = MasterCommand::Status;
-                let json = serde_json::to_vec(&command)
-                    .map_err(|e| CommandError::SerializationFailed(e.to_string()))?;
-
-                let len = json.len() as u32;
-                stream
-                    .write_all(&len.to_be_bytes())
-                    .map_err(|e| CommandError::SendFailed(e.to_string()))?;
-                stream
-                    .write_all(&json)
-                    .map_err(|e| CommandError::SendFailed(e.to_string()))?;
-                stream
-                    .flush()
+                write_message_sync(&mut stream, &command)
                     .map_err(|e| CommandError::SendFailed(e.to_string()))?;
 
-                let mut len_buf = [0u8; 4];
-                stream
-                    .read_exact(&mut len_buf)
+                let response: CommandResponse = read_exact_message_sync(&mut stream)
                     .map_err(|e| CommandError::ReceiveFailed(e.to_string()))?;
-                let len = u32::from_be_bytes(len_buf) as usize;
-
-                let mut response_buf = vec![0u8; len];
-                stream
-                    .read_exact(&mut response_buf)
-                    .map_err(|e| CommandError::ReceiveFailed(e.to_string()))?;
-
-                let response: CommandResponse = serde_json::from_slice(&response_buf)
-                    .map_err(|e| CommandError::DeserializationFailed(e.to_string()))?;
 
                 match response {
                     CommandResponse::Status(status) => Ok(status),
@@ -284,8 +190,7 @@ impl CommandClient {
                 }
             }
             super::ipc::CommandMethod::NamedPipe => {
-                // Named pipe status is similar to socket
-                let pipe_name = "\\\\.\\pipe\\rustwaf-commands";
+                let pipe_name = "\\\\.\\pipe\\maluwaf-commands";
 
                 let mut stream = std::fs::OpenOptions::new()
                     .read(true)
@@ -294,39 +199,11 @@ impl CommandClient {
                     .map_err(|e| CommandError::ConnectionFailed(e.to_string()))?;
 
                 let command = MasterCommand::Status;
-                let json = serde_json::to_vec(&command)
-                    .map_err(|e| CommandError::SerializationFailed(e.to_string()))?;
-
-                let len = json.len() as u32;
-                stream
-                    .write_all(&len.to_be_bytes())
-                    .map_err(|e| CommandError::SendFailed(e.to_string()))?;
-                stream
-                    .write_all(&json)
-                    .map_err(|e| CommandError::SendFailed(e.to_string()))?;
-                stream
-                    .flush()
+                write_message_sync(&mut stream, &command)
                     .map_err(|e| CommandError::SendFailed(e.to_string()))?;
 
-                let mut len_buf = [0u8; 4];
-                stream
-                    .read_exact(&mut len_buf)
+                let response: CommandResponse = read_exact_message_sync(&mut stream)
                     .map_err(|e| CommandError::ReceiveFailed(e.to_string()))?;
-                let len = u32::from_be_bytes(len_buf) as usize;
-
-                if len > 1024 * 1024 {
-                    return Err(CommandError::ReceiveFailed(
-                        "Response too large".to_string(),
-                    ));
-                }
-
-                let mut response_buf = vec![0u8; len];
-                stream
-                    .read_exact(&mut response_buf)
-                    .map_err(|e| CommandError::ReceiveFailed(e.to_string()))?;
-
-                let response: CommandResponse = serde_json::from_slice(&response_buf)
-                    .map_err(|e| CommandError::DeserializationFailed(e.to_string()))?;
 
                 match response {
                     CommandResponse::Status(status) => Ok(status),
@@ -334,13 +211,9 @@ impl CommandClient {
                     CommandResponse::Error(msg) => Err(CommandError::ServerError(msg)),
                 }
             }
-            super::ipc::CommandMethod::Signal => {
-                // For signal mode, we'd need the master to write status to a file
-                // For now, return an error
-                Err(CommandError::NotSupported(
-                    "Status not available via signal".to_string(),
-                ))
-            }
+            super::ipc::CommandMethod::Signal => Err(CommandError::NotSupported(
+                "Status not available via signal".to_string(),
+            )),
         }
     }
 }

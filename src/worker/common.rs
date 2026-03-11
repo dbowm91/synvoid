@@ -1,0 +1,223 @@
+use std::path::Path;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use parking_lot::Mutex;
+
+use crate::config::ConfigManager;
+use crate::process::{connect_to_master, current_timestamp, IpcStream, Message, WorkerId, WorkerMetricsPayload};
+use crate::{RunningFlag, DrainFlag};
+
+pub use crate::common::setup_panic_handler;
+
+pub struct IpcConnection {
+    stream: Arc<Mutex<IpcStream>>,
+}
+
+impl IpcConnection {
+    pub fn connect(socket_path: &Path) -> Result<Self, std::io::Error> {
+        let stream = connect_to_master(socket_path)?;
+        Ok(Self {
+            stream: Arc::new(Mutex::new(stream)),
+        })
+    }
+
+    pub fn send(&self, msg: &Message) -> Result<(), std::io::Error> {
+        let mut stream = self.stream.lock();
+        stream.send(msg)
+    }
+
+    pub fn try_recv(&self) -> Result<Option<Message>, std::io::Error> {
+        let mut stream = self.stream.lock();
+        stream.try_recv()
+    }
+
+    pub fn stream(&self) -> Arc<Mutex<IpcStream>> {
+        self.stream.clone()
+    }
+}
+
+pub struct WorkerLifecycle {
+    worker_id: WorkerId,
+    ipc: Arc<Mutex<IpcStream>>,
+    running: RunningFlag,
+    start_time: Instant,
+}
+
+impl WorkerLifecycle {
+    pub fn new(
+        worker_id: WorkerId,
+        ipc: Arc<Mutex<IpcStream>>,
+        running: RunningFlag,
+    ) -> Self {
+        Self {
+            worker_id,
+            ipc,
+            running,
+            start_time: Instant::now(),
+        }
+    }
+
+    pub fn with_running_flag(worker_id: WorkerId, ipc: Arc<Mutex<IpcStream>>) -> Self {
+        Self {
+            worker_id,
+            ipc,
+            running: RunningFlag::new(),
+            start_time: Instant::now(),
+        }
+    }
+
+    pub fn send_started(&self, pid: u32, port: Option<u16>) -> Result<(), std::io::Error> {
+        let mut ipc = self.ipc.lock();
+        ipc.send(&Message::WorkerStarted {
+            id: self.worker_id.clone(),
+            pid,
+            port: port.unwrap_or(0),
+            timestamp: current_timestamp(),
+        })
+    }
+
+    pub fn send_ready(&self) -> Result<(), std::io::Error> {
+        let mut ipc = self.ipc.lock();
+        ipc.send(&Message::WorkerReady {
+            id: self.worker_id.clone(),
+        })
+    }
+
+    pub fn send_heartbeat(&self, metrics: &WorkerMetricsPayload) -> Result<(), std::io::Error> {
+        let mut ipc = self.ipc.lock();
+        ipc.send(&Message::WorkerHeartbeat {
+            id: self.worker_id.clone(),
+            timestamp: current_timestamp(),
+            metrics: metrics.clone(),
+        })
+    }
+
+    pub fn send_shutdown_complete(&self) -> Result<(), std::io::Error> {
+        let mut ipc = self.ipc.lock();
+        ipc.send(&Message::WorkerShutdownComplete {
+            id: self.worker_id.clone(),
+        })
+    }
+
+    pub fn uptime_secs(&self) -> u64 {
+        self.start_time.elapsed().as_secs()
+    }
+
+    pub fn is_running(&self) -> bool {
+        self.running.is_running()
+    }
+
+    pub fn stop(&self) {
+        self.running.stop();
+    }
+
+    pub fn running_flag(&self) -> &RunningFlag {
+        &self.running
+    }
+
+    pub fn try_recv_message(&self) -> Result<Option<Message>, std::io::Error> {
+        let mut ipc = self.ipc.lock();
+        ipc.try_recv()
+    }
+}
+
+pub fn spawn_heartbeat_loop(
+    lifecycle: WorkerLifecycle,
+    metrics: Arc<super::metrics::WorkerMetrics>,
+    interval_secs: u64,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(interval_secs));
+        
+        loop {
+            interval.tick().await;
+            
+            if !lifecycle.is_running() {
+                break;
+            }
+
+            let uptime = lifecycle.uptime_secs();
+            let payload = metrics.to_payload(uptime);
+
+            if let Err(e) = lifecycle.send_heartbeat(&payload) {
+                tracing::warn!("Failed to send heartbeat: {}", e);
+            }
+        }
+    })
+}
+
+pub fn handle_shutdown_message(
+    message: &Message,
+    lifecycle: &WorkerLifecycle,
+    on_shutdown: Option<&dyn Fn()>,
+) -> bool {
+    match message {
+        Message::MasterShutdown { graceful, timeout_secs } => {
+            tracing::info!(
+                "Worker {} received shutdown signal (graceful: {}, timeout: {}s)",
+                lifecycle.worker_id,
+                graceful,
+                timeout_secs
+            );
+            
+            if let Some(callback) = on_shutdown {
+                callback();
+            }
+            
+            lifecycle.stop();
+            
+            let _ = lifecycle.send_shutdown_complete();
+            true
+        }
+        Message::MasterHealthCheck { timestamp } => {
+            let _ = lifecycle.ipc.lock().send(&Message::HealthCheckAck { timestamp: *timestamp });
+            false
+        }
+        Message::MasterConfigReload { config_path } => {
+            tracing::info!("Worker {} received config reload: {}", lifecycle.worker_id, config_path);
+            false
+        }
+        _ => false,
+    }
+}
+
+use tokio::sync::Mutex as TokioMutex;
+use crate::process::ipc_transport::IpcStream as AsyncIpcStream;
+
+#[derive(Clone)]
+pub struct AsyncWorkerState {
+    pub worker_id: WorkerId,
+    pub ipc: Arc<TokioMutex<AsyncIpcStream>>,
+    pub running: RunningFlag,
+    pub draining: DrainFlag,
+    pub start_time: Instant,
+}
+
+impl AsyncWorkerState {
+    pub fn new(worker_id: WorkerId, ipc: Arc<TokioMutex<AsyncIpcStream>>) -> Self {
+        Self {
+            worker_id,
+            ipc,
+            running: RunningFlag::new(),
+            draining: DrainFlag::new(),
+            start_time: Instant::now(),
+        }
+    }
+
+    pub fn uptime_secs(&self) -> u64 {
+        self.start_time.elapsed().as_secs()
+    }
+}
+
+pub fn load_config(config_path: &std::path::Path) -> ConfigManager {
+    let mut config_manager = ConfigManager::new(config_path.to_path_buf());
+    let main_config_path = config_path.join("main.toml");
+    
+    if let Err(e) = config_manager.load_main(&main_config_path) {
+        tracing::warn!("Failed to load main config: {}, using defaults", e);
+    }
+    
+    config_manager.discover_sites();
+    config_manager
+}

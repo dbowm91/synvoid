@@ -296,7 +296,6 @@ invalid_count_min = 3
 invalid_count_max = 7
 valid_count = 2
 asset_path = "/static/"
-valid_aspect_ratios = ["16:9", "4:3", "1:1", "21:9"]
 
 [defaults.css_challenge.block]
 enabled = true
@@ -366,6 +365,10 @@ custom_directory = ""
 # =============================================================================
 
 [defaults.theme]
+# Theme preset: "default", "dark", "light", "ocean", "forest", "sunset"
+# When set, colors are loaded from the preset (custom colors below are ignored)
+preset = "default"
+
 # Theme mode: "dark", "light", or "auto" (follows system preference)
 mode = "auto"
 
@@ -380,22 +383,26 @@ allow_only = "both"
 title = "RustWAF"
 show_logo = true
 
-# Dark theme colors
+# Dark theme colors (used when preset = "default" or custom colors specified)
 [defaults.theme.colors]
-dark_background = "#1a1a2e"
-dark_surface = "#16213e"
-dark_primary = "#e94560"        # Red accent color
-dark_text = "#f0f0f0"
-dark_border = "rgba(233, 69, 96, 0.4)"
-dark_accent = "#0f3460"
+dark_background = "#0a0a0f"
+dark_surface = "#12121a"
+dark_primary = "#e94560"
+dark_text = "#f0f0f5"
+dark_border = "#2a2a3a"
+dark_accent = "#1a1a24"
+dark_accent_primary = "#00d4aa"
+dark_accent_secondary = "#00b894"
 
 # Light theme colors
-light_background = "#e8e8e8"
+light_background = "#f8fafc"
 light_surface = "#ffffff"
-light_primary = "#c41e3a"       # Red accent color
-light_text = "#1a1a2e"
-light_border = "rgba(196, 30, 58, 0.3)"
-light_accent = "#3a86ff"
+light_primary = "#c41e3a"
+light_text = "#0f172a"
+light_border = "#e2e8f0"
+light_accent = "#f1f5f9"
+light_accent_primary = "#059669"
+light_accent_secondary = "#10b981"
 
 # Spacing
 [defaults.theme.spacing]

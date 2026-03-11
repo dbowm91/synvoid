@@ -6,9 +6,7 @@ pub use listener::{UdpListenerPool, UdpListenerConfig};
 pub use protocol::{UdpProtocolDetector, UdpProtocol, UdpProtocolResult};
 pub use filter::{UdpProtocolFilter, UdpFilterAction, UdpFilterConfig};
 
-use std::sync::Arc;
-use std::net::SocketAddr;
-use tokio::sync::RwLock;
+pub use crate::listener::ConnectionContext;
 
 pub struct UdpProxy {
     config: UdpProxyConfig,
@@ -50,11 +48,4 @@ impl UdpProxy {
         let detection_result = self.protocol_detector.detect_from_bytes(data);
         self.protocol_filter.check(expected_protocol, &detection_result.protocol)
     }
-}
-
-pub struct UdpConnectionContext {
-    pub client_ip: std::net::IpAddr,
-    pub server_name: String,
-    pub port: u16,
-    pub expected_protocol: String,
 }

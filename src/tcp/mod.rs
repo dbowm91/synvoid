@@ -6,10 +6,10 @@ pub use listener::{TcpListenerPool, TcpListenerConfig};
 pub use protocol::{ProtocolDetector, Protocol, ProtocolResult};
 pub use filter::{ProtocolFilter, FilterAction, FilterConfig};
 
-use std::sync::Arc;
 use std::net::SocketAddr;
 use tokio::net::TcpStream;
-use tokio::sync::RwLock;
+
+pub use crate::listener::ConnectionContext;
 
 pub struct TcpProxy {
     config: TcpProxyConfig,
@@ -64,7 +64,7 @@ impl TcpProxy {
                     detection_result.protocol.as_str(),
                     client_addr
                 );
-                metrics::counter!("rustwaf.tcp.protocol_mismatch").increment(1);
+                metrics::counter!("maluwaf.tcp.protocol_mismatch").increment(1);
                 return Ok(());
             }
             FilterAction::Stall => {
@@ -74,7 +74,7 @@ impl TcpProxy {
                     detection_result.protocol.as_str(),
                     client_addr
                 );
-                metrics::counter!("rustwaf.tcp.protocol_stalled").increment(1);
+                metrics::counter!("maluwaf.tcp.protocol_stalled").increment(1);
                 return Ok(());
             }
             FilterAction::Allow => {}
@@ -82,11 +82,4 @@ impl TcpProxy {
 
         Ok(())
     }
-}
-
-pub struct TcpConnectionContext {
-    pub client_ip: std::net::IpAddr,
-    pub server_name: String,
-    pub port: u16,
-    pub expected_protocol: String,
 }

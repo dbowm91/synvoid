@@ -12,6 +12,8 @@ pub struct ProxyCacheSettings {
     pub valid_status: Vec<u16>,
     pub methods: Vec<String>,
     pub use_stale: Vec<String>,
+    pub stale_while_revalidate: Option<Duration>,
+    pub stale_if_error: Option<Duration>,
     pub min_uses: u32,
     pub key_pattern: String,
     pub vary_by: Vec<String>,
@@ -21,7 +23,7 @@ impl Default for ProxyCacheSettings {
     fn default() -> Self {
         Self {
             enabled: false,
-            path: PathBuf::from("/var/cache/rustwaf/proxy"),
+            path: PathBuf::from("/var/cache/maluwaf/proxy"),
             max_memory_size: 100 * 1024 * 1024, // 100MB
             max_disk_size: 1024 * 1024 * 1024,  // 1GB
             inactive: Duration::from_secs(3600),
@@ -37,8 +39,10 @@ impl Default for ProxyCacheSettings {
                 "http_503".to_string(),
                 "http_504".to_string(),
             ],
+            stale_while_revalidate: Some(Duration::from_secs(86400)), // 24 hours
+            stale_if_error: Some(Duration::from_secs(3600)),          // 1 hour
             min_uses: 1,
-            key_pattern: "$scheme$request_method$host$request_uri".to_string(),
+            key_pattern: "$scheme$request_method$host$site_id$request_uri".to_string(),
             vary_by: vec!["Accept-Encoding".to_string()],
         }
     }
@@ -58,13 +62,15 @@ impl ProxyCacheSettings {
         key: Option<String>,
         vary_by: Vec<String>,
         memory_max: Option<String>,
-        disk_max: Option<String>,
+        _disk_max: Option<String>,
+        stale_while_revalidate: Option<u64>,
+        stale_if_error: Option<u64>,
     ) -> Self {
         let enabled = enable.unwrap_or(false);
 
         let cache_path = path
             .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("/var/cache/rustwaf/proxy"));
+            .unwrap_or_else(|| PathBuf::from("/var/cache/maluwaf/proxy"));
 
         let max_disk_size = max_size
             .as_ref()
@@ -76,6 +82,9 @@ impl ProxyCacheSettings {
             .and_then(|s| Self::parse_size(s))
             .unwrap_or(100 * 1024 * 1024);
 
+        let swr = stale_while_revalidate.map(Duration::from_secs);
+        let sie = stale_if_error.map(Duration::from_secs);
+
         Self {
             enabled,
             path: cache_path,
@@ -86,6 +95,8 @@ impl ProxyCacheSettings {
             valid_status,
             methods,
             use_stale,
+            stale_while_revalidate: swr,
+            stale_if_error: sie,
             min_uses,
             key_pattern: key
                 .unwrap_or_else(|| "$scheme$request_method$host$request_uri".to_string()),

@@ -1,6 +1,5 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::path::Path;
 
 use bytes::Bytes;
 use http::{header::HeaderName, HeaderMap, HeaderValue, Method, StatusCode, Uri};

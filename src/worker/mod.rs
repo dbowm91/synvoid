@@ -1,3 +1,5 @@
+#![allow(unused_variables, dead_code)]
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -6,12 +8,27 @@ use std::time::{Duration, Instant, SystemTime};
 #[cfg(unix)]
 use std::os::unix::net::UnixListener;
 
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use tokio::task;
+use tokio::sync::Mutex as TokioMutex;
 
 use crate::config::ConfigManager;
-use crate::process::{IpcStream, Message, WorkerId, WorkerMetricsPayload, current_timestamp, connect_to_master};
+use crate::metrics::WorkerMetrics;
+use crate::process::ipc_transport::IpcStream as AsyncIpcStream;
+use crate::process::{Message, WorkerId, current_timestamp};
 use crate::static_files::minifier;
 use crate::waf::WafCore;
+use crate::{RunningFlag, DrainFlag};
+
+use crate::common::setup_panic_handler;
+use crate::worker::common::load_config;
+
+pub mod drain_state;
+pub mod common;
+pub mod connect;
+pub mod metrics;
+pub mod unified_server;
+
+pub use unified_server::{UnifiedServerWorkerArgs, run_unified_server_worker, setup_unified_server_panic_handler};
 
 #[cfg(unix)]
 enum ListenerType {
@@ -26,91 +43,24 @@ pub struct WorkerArgs {
     pub master_socket: PathBuf,
     pub test_mode: Option<Vec<String>>,
     pub log_level: Option<String>,
+    pub upgrade_mode: bool,
+    pub reuse_port: bool,
+    pub ipc_key: Option<String>,
 }
 
 pub fn setup_worker_panic_handler() {
-    std::panic::set_hook(Box::new(|panic_info| {
-        let location = panic_info.location()
-            .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
-            .unwrap_or_else(|| "unknown".to_string());
-        
-        let message = if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
-            s.to_string()
-        } else if let Some(s) = panic_info.payload().downcast_ref::<String>() {
-            s.clone()
-        } else {
-            "unknown panic".to_string()
-        };
-
-        tracing::error!("Worker panic at {}: {}", location, message);
-        eprintln!("Worker panic at {}: {}", location, message);
-    }));
+    let worker_panic_log = format!("{}/maluwaf-worker-panic.log", std::env::temp_dir().display());
+    setup_panic_handler("WORKER", Some(&worker_panic_log));
 }
 
 #[derive(Clone)]
 struct WorkerState {
     worker_id: WorkerId,
-    metrics: Arc<WorkerMetricsInner>,
+    metrics: Arc<WorkerMetrics>,
     start_time: Instant,
-    ipc: Arc<std::sync::Mutex<IpcStream>>,
-    running: Arc<std::sync::atomic::AtomicBool>,
-    draining: Arc<std::sync::atomic::AtomicBool>,
-}
-
-struct WorkerMetricsInner {
-    total_requests: std::sync::atomic::AtomicU64,
-    blocked: std::sync::atomic::AtomicU64,
-    challenged: std::sync::atomic::AtomicU64,
-    proxied: std::sync::atomic::AtomicU64,
-    errors: std::sync::atomic::AtomicU64,
-    current_concurrent: std::sync::atomic::AtomicU64,
-    peak_concurrent: std::sync::atomic::AtomicU64,
-    total_latency_ms: std::sync::atomic::AtomicU64,
-    request_count: std::sync::atomic::AtomicU64,
-}
-
-impl Default for WorkerMetricsInner {
-    fn default() -> Self {
-        use std::sync::atomic::AtomicU64;
-        Self {
-            total_requests: AtomicU64::new(0),
-            blocked: AtomicU64::new(0),
-            challenged: AtomicU64::new(0),
-            proxied: AtomicU64::new(0),
-            errors: AtomicU64::new(0),
-            current_concurrent: AtomicU64::new(0),
-            peak_concurrent: AtomicU64::new(0),
-            total_latency_ms: AtomicU64::new(0),
-            request_count: AtomicU64::new(0),
-        }
-    }
-}
-
-impl WorkerMetricsInner {
-    fn to_payload(&self, uptime_secs: u64) -> WorkerMetricsPayload {
-        use std::sync::atomic::Ordering;
-        
-        let count = self.request_count.load(Ordering::Relaxed);
-        let avg_latency = if count > 0 {
-            self.total_latency_ms.load(Ordering::Relaxed) as f64 / count as f64
-        } else {
-            0.0
-        };
-
-        WorkerMetricsPayload {
-            total_requests: self.total_requests.load(Ordering::Relaxed),
-            blocked: self.blocked.load(Ordering::Relaxed),
-            challenged: self.challenged.load(Ordering::Relaxed),
-            proxied: self.proxied.load(Ordering::Relaxed),
-            errors: self.errors.load(Ordering::Relaxed),
-            current_concurrent: self.current_concurrent.load(Ordering::Relaxed),
-            peak_concurrent: self.peak_concurrent.load(Ordering::Relaxed),
-            avg_latency_ms: avg_latency,
-            uptime_secs,
-            memory_bytes: 0,
-            cpu_percent: 0.0,
-        }
-    }
+    ipc: Arc<TokioMutex<AsyncIpcStream>>,
+    running: RunningFlag,
+    draining: DrainFlag,
 }
 
 pub async fn run_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -128,48 +78,43 @@ pub async fn run_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Erro
         args.master_socket
     );
 
-    let ipc = Arc::new(std::sync::Mutex::new(crate::process::connect_to_master(&args.master_socket)?));
+    let ipc = Arc::new(TokioMutex::new(
+        connect::connect_to_master_async(&args.master_socket, 5, std::time::Duration::from_secs(2), "Worker").await?
+    ));
 
     {
-        let mut ipc = ipc.lock().map_err(|_| "ipc lock poisoned")?;
-        ipc.send(&Message::WorkerStarted {
+        let mut ipc_guard = ipc.lock().await;
+        ipc_guard.send(&Message::WorkerStarted {
             id: worker_id.clone(),
             pid: std::process::id(),
             port: args.port,
             timestamp: current_timestamp(),
-        })?;
+        }).await?;
     }
 
-    let mut config_manager = ConfigManager::new(args.config_path.clone());
-    let main_config_path = args.config_path.join("main.toml");
-    
-    if let Err(e) = config_manager.load_main(&main_config_path) {
-        tracing::warn!("Failed to load main config: {}, using defaults", e);
-    }
-
+    let config_manager = load_config(&args.config_path);
     let main_config = config_manager.main.clone();
-    config_manager.discover_sites();
 
     let _waf = create_waf(&main_config);
 
-    let metrics = Arc::new(WorkerMetricsInner::default());
-    let running = Arc::new(std::sync::atomic::AtomicBool::new(true));
-    let draining = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let metrics = Arc::new(WorkerMetrics::default());
+    let running = RunningFlag::new();
+    let draining = DrainFlag::new();
     
     let state = WorkerState {
         worker_id: worker_id.clone(),
         metrics: metrics.clone(),
         start_time: Instant::now(),
         ipc: ipc.clone(),
-        running: running.clone(),
-        draining: draining.clone(),
+        running,
+        draining,
     };
 
     {
-        let mut ipc = ipc.lock().map_err(|_| "ipc lock poisoned")?;
-        ipc.send(&Message::WorkerReady {
+        let mut ipc_guard = ipc.lock().await;
+        ipc_guard.send(&Message::WorkerReady {
             id: worker_id.clone(),
-        })?;
+        }).await?;
     }
 
     tracing::info!("Worker {} ready", worker_id);
@@ -181,78 +126,73 @@ pub async fn run_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Erro
         loop {
             interval.tick().await;
             
-            if !heartbeat_state.running.load(std::sync::atomic::Ordering::SeqCst) {
+            if !heartbeat_state.running.is_running() {
                 break;
             }
 
             let uptime = heartbeat_state.start_time.elapsed().as_secs();
             let payload = heartbeat_state.metrics.to_payload(uptime);
 
-            if let Ok(mut ipc) = heartbeat_state.ipc.lock() {
-                let _ = ipc.send(&Message::WorkerHeartbeat {
-                    id: heartbeat_state.worker_id.clone(),
-                    timestamp: current_timestamp(),
-                    metrics: payload,
-                });
-            }
+            let mut ipc = heartbeat_state.ipc.lock().await;
+            let _ = ipc.send(&Message::WorkerHeartbeat {
+                id: heartbeat_state.worker_id.clone(),
+                timestamp: current_timestamp(),
+                metrics: payload,
+            }).await;
         }
     });
 
     let ipc_state = state.clone();
     let ipc_handle = tokio::spawn(async move {
         loop {
-            if !ipc_state.running.load(std::sync::atomic::Ordering::SeqCst) {
+            if !ipc_state.running.is_running() {
                 break;
             }
 
             tokio::time::sleep(Duration::from_millis(100)).await;
 
-            if let Ok(mut ipc) = ipc_state.ipc.lock() {
-                match ipc.try_recv() {
-                    Ok(Some(Message::MasterShutdown { graceful, timeout_secs })) => {
-                        tracing::info!(
-                            "Worker {} received shutdown signal (graceful: {}, timeout: {}s)",
-                            ipc_state.worker_id,
-                            graceful,
-                            timeout_secs
-                        );
-                        ipc_state.running.store(false, std::sync::atomic::Ordering::SeqCst);
-                        
-                        if let Ok(mut ipc) = ipc_state.ipc.lock() {
-                            let _ = ipc.send(&Message::WorkerShutdownComplete {
-                                id: ipc_state.worker_id.clone(),
-                            });
-                        }
-                        break;
-                    }
-                    Ok(Some(Message::MasterConfigReload { config_path })) => {
-                        tracing::info!("Worker {} received config reload: {}", ipc_state.worker_id, config_path);
-                    }
-                    Ok(Some(Message::MasterHealthCheck { timestamp })) => {
-                        if let Ok(mut ipc) = ipc_state.ipc.lock() {
-                            let _ = ipc.send(&Message::HealthCheckAck { timestamp });
-                        }
-                    }
-                    Ok(Some(Message::MasterResizeThreadpool { worker_threads })) => {
-                        tracing::info!(
-                            "Worker {} received threadpool resize request to {} threads",
-                            ipc_state.worker_id,
-                            worker_threads
-                        );
-                        ipc_state.draining.store(true, std::sync::atomic::Ordering::SeqCst);
-                        
-                        if let Ok(mut ipc) = ipc_state.ipc.lock() {
-                            let _ = ipc.send(&Message::WorkerResizeAck {
-                                id: ipc_state.worker_id.clone(),
-                                worker_threads,
-                            });
-                        }
-                    }
-                    Ok(Some(_)) => {}
-                    Ok(None) => {}
-                    Err(e) => {
-                        tracing::debug!("IPC recv error: {}", e);
-                    }
+            let mut ipc = ipc_state.ipc.lock().await;
+            match ipc.recv_with_timeout::<Message>(100).await {
+                Ok(Some(Message::MasterShutdown { graceful, timeout_secs })) => {
+                    tracing::info!(
+                        "Worker {} received shutdown signal (graceful: {}, timeout: {}s)",
+                        ipc_state.worker_id,
+                        graceful,
+                        timeout_secs
+                    );
+                    ipc_state.running.stop();
+                    
+                    let mut ipc = ipc_state.ipc.lock().await;
+                    let _ = ipc.send(&Message::WorkerShutdownComplete {
+                        id: ipc_state.worker_id.clone(),
+                    }).await;
+                    break;
+                }
+                Ok(Some(Message::MasterConfigReload { config_path })) => {
+                    tracing::info!("Worker {} received config reload: {}", ipc_state.worker_id, config_path);
+                }
+                Ok(Some(Message::MasterHealthCheck { timestamp })) => {
+                    let mut ipc = ipc_state.ipc.lock().await;
+                    let _ = ipc.send(&Message::HealthCheckAck { timestamp }).await;
+                }
+                Ok(Some(Message::MasterResizeThreadpool { worker_threads })) => {
+                    tracing::info!(
+                        "Worker {} received threadpool resize request to {} threads",
+                        ipc_state.worker_id,
+                        worker_threads
+                    );
+                    ipc_state.draining.start_drain();
+                    
+                    let mut ipc = ipc_state.ipc.lock().await;
+                    let _ = ipc.send(&Message::WorkerResizeAck {
+                        id: ipc_state.worker_id.clone(),
+                        worker_threads,
+                    }).await;
+                }
+                Ok(Some(_)) => {}
+                Ok(None) => {}
+                Err(e) => {
+                    tracing::debug!("IPC recv error: {}", e);
                 }
             }
         }
@@ -261,7 +201,6 @@ pub async fn run_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Erro
     let server_state = state.clone();
     let worker_id_for_log = worker_id.clone();
     let port = args.port;
-    let draining = draining.clone();
     let server_handle = tokio::spawn(async move {
         let addr: std::net::SocketAddr = format!("127.0.0.1:{}", port)
             .parse()
@@ -278,7 +217,7 @@ pub async fn run_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Erro
         tracing::info!("Worker {} HTTP server listening on {}", worker_id_for_log, addr);
 
         loop {
-            if draining.load(std::sync::atomic::Ordering::SeqCst) {
+            if server_state.draining.is_draining() {
                 let concurrent = server_state.metrics.current_concurrent.load(std::sync::atomic::Ordering::SeqCst);
                 if concurrent == 0 {
                     tracing::info!("Worker {} finished draining, exiting for threadpool resize", worker_id_for_log);
@@ -311,9 +250,7 @@ pub async fn run_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Erro
                                 tokio::time::sleep(Duration::from_millis(10)).await;
                                 
                                 let elapsed = start.elapsed().as_millis() as u64;
-                                metrics.total_latency_ms.fetch_add(elapsed, std::sync::atomic::Ordering::Relaxed);
-                                metrics.request_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                                metrics.current_concurrent.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+                                metrics.record_request_end(elapsed);
                             });
                         }
                         Err(e) => {
@@ -322,7 +259,7 @@ pub async fn run_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Erro
                     }
                 }
                 _ = tokio::time::sleep(Duration::from_millis(100)) => {
-                    if !server_state.running.load(std::sync::atomic::Ordering::SeqCst) {
+                    if !server_state.running.is_running() {
                         break;
                     }
                 }
@@ -331,7 +268,7 @@ pub async fn run_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Erro
 
         tracing::info!("Worker {} HTTP server stopped", worker_id_for_log);
         
-        if draining.load(std::sync::atomic::Ordering::SeqCst) {
+        if server_state.draining.is_draining() {
             tracing::info!("Worker {} exiting for threadpool resize", worker_id_for_log);
             std::process::exit(100);
         }
@@ -343,7 +280,7 @@ pub async fn run_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Erro
         _ = server_handle => {}
     }
 
-    running.store(false, std::sync::atomic::Ordering::SeqCst);
+    state.running.stop();
 
     tracing::info!("Worker {} shutting down", worker_id);
     Ok(())
@@ -366,6 +303,7 @@ fn create_waf(main_config: &crate::config::MainConfig) -> Arc<WafCore> {
             enable_pow_challenge: main_config.defaults.pow_challenge.enabled,
             known_bots_allow: main_config.defaults.bot.known_bots_allow.clone(),
             ai_crawlers_block: main_config.defaults.bot.ai_crawlers_block.clone(),
+            scraper_patterns: Vec::new(),
             challenge_cookie_name: main_config.defaults.bot.challenge_cookie_name.clone(),
             challenge_window_secs: main_config.defaults.bot.challenge_window_secs,
             pow_difficulty: main_config.defaults.pow_challenge.difficulty,
@@ -376,18 +314,27 @@ fn create_waf(main_config: &crate::config::MainConfig) -> Arc<WafCore> {
             css_invalid_max: main_config.defaults.css_challenge.invalid_count_max,
             css_valid_count: main_config.defaults.css_challenge.valid_count,
             css_asset_path: main_config.defaults.css_challenge.asset_path.clone(),
-            css_valid_ratios: main_config.defaults.css_challenge.valid_aspect_ratios.clone(),
             css_window_secs: main_config.defaults.css_challenge.challenge_window_secs,
             css_verification_window_secs: main_config.defaults.css_challenge.verification_window_secs,
+            challenge_priority: crate::challenge::ChallengePriority::PowThenCss,
+            challenge_max_attempts: 3,
+            challenge_rate_limit_window_secs: 60,
             honeypot_endpoints_file: main_config.defaults.honeypot.endpoints_file.clone(),
             honeypot_enabled: true,
             honeypot_paths_per_ip: main_config.defaults.honeypot.paths_per_ip,
             honeypot_ttl_secs: main_config.defaults.honeypot.ttl_secs,
             honeypot_ban_duration: main_config.defaults.honeypot.block.ban_duration.clone(),
             error_pages_enabled: main_config.defaults.error_pages.enabled,
+            error_pages_mode: "default".to_string(),
             error_pages_directory: main_config.defaults.error_pages.directory.clone(),
             error_pages_custom_directory: None,
             theme: crate::theme::ThemeConfig::from(main_config.defaults.theme.clone()),
+            mesh_pow_enabled: false,
+            mesh_pow_key_exchange_enabled: false,
+            mesh_pow_auditing_enabled: false,
+            mesh_id: None,
+            mesh_global_node_url: None,
+            mesh_audit_urls: Vec::new(),
         },
         crate::waf::EndpointBlockerConfig {
             paths: main_config.defaults.blocked.paths.clone(),
@@ -404,8 +351,10 @@ fn create_waf(main_config: &crate::config::MainConfig) -> Arc<WafCore> {
             block_ai_crawlers: main_config.defaults.bot.block_ai_crawlers,
             drop_blocked_requests: false,
             test_mode: crate::waf::TestModeConfig::default(),
+            honeypot_ban_duration_secs: 86400,
         },
         Vec::new(),
+        None,
         None,
         Some(crate::waf::AttackDetectionConfig::default()),
         None,
@@ -434,13 +383,29 @@ pub struct StaticWorkerArgs {
 #[derive(Clone)]
 struct StaticWorkerState {
     worker_id: usize,
-    running: Arc<std::sync::atomic::AtomicBool>,
-    stop_background_tasks: Arc<std::sync::atomic::AtomicBool>,
-    ipc: Arc<std::sync::Mutex<crate::process::IpcStream>>,
+    running: RunningFlag,
+    stop_background_tasks: DrainFlag,
+    ipc: Arc<TokioMutex<AsyncIpcStream>>,
     config_manager: Arc<std::sync::RwLock<ConfigManager>>,
     minifier_caches: Arc<std::sync::RwLock<HashMap<String, Arc<minifier::MinifierCache>>>>,
     compression_queue: Arc<std::sync::RwLock<Vec<CompressionTask>>>,
     next_request_id: Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl StaticWorkerState {
+    fn get_cache_stats(&self) -> (u64, u64) {
+        let mut total_hits = 0u64;
+        let mut total_misses = 0u64;
+        
+        if let Ok(caches) = self.minifier_caches.read() {
+            for cache in caches.values() {
+                total_hits += cache.cache_hits();
+                total_misses += cache.cache_misses();
+            }
+        }
+        
+        (total_hits, total_misses)
+    }
 }
 
 #[derive(Clone)]
@@ -463,14 +428,16 @@ pub async fn run_static_worker(args: StaticWorkerArgs) -> Result<(), Box<dyn std
         args.master_socket
     );
 
-    let ipc = Arc::new(std::sync::Mutex::new(crate::process::connect_to_master(&args.master_socket)?));
+    let ipc = Arc::new(TokioMutex::new(
+        connect::connect_to_master_async(&args.master_socket, 5, std::time::Duration::from_secs(2), "Static worker").await?
+    ));
 
     {
-        let mut ipc = ipc.lock().map_err(|_| "ipc lock poisoned")?;
-        ipc.send(&crate::process::Message::StaticWorkerStarted {
+        let mut ipc_guard = ipc.lock().await;
+        ipc_guard.send(&crate::process::Message::StaticWorkerStarted {
             worker_id: args.worker_id,
             pid: std::process::id(),
-        })?;
+        }).await?;
     }
 
     let mut config_manager = ConfigManager::new(args.config_path.clone());
@@ -483,8 +450,8 @@ pub async fn run_static_worker(args: StaticWorkerArgs) -> Result<(), Box<dyn std
     let main_config = config_manager.main.clone();
     config_manager.discover_sites();
 
-    let running = Arc::new(std::sync::atomic::AtomicBool::new(true));
-    let stop_background_tasks = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let running = RunningFlag::new();
+    let stop_background_tasks = DrainFlag::new();
     let config_manager = Arc::new(std::sync::RwLock::new(config_manager));
 
     let minifier_caches: Arc<std::sync::RwLock<HashMap<String, Arc<minifier::MinifierCache>>>> =
@@ -529,7 +496,7 @@ pub async fn run_static_worker(args: StaticWorkerArgs) -> Result<(), Box<dyn std
         let socket_state = state.clone();
         std::thread::spawn(move || {
             loop {
-                if !socket_state.running.load(std::sync::atomic::Ordering::SeqCst) {
+                if !socket_state.running.is_running() {
                     break;
                 }
 
@@ -563,7 +530,7 @@ pub async fn run_static_worker(args: StaticWorkerArgs) -> Result<(), Box<dyn std
         
         std::thread::spawn(move || {
             loop {
-                if !socket_state.running.load(std::sync::atomic::Ordering::SeqCst) {
+                if !socket_state.running.is_running() {
                     break;
                 }
                 
@@ -608,7 +575,7 @@ pub async fn run_static_worker(args: StaticWorkerArgs) -> Result<(), Box<dyn std
                 }
 
                 // Convert raw handle to File and handle connection
-                let stream = unsafe { std::fs::File::from_raw_fd(pipe_handle as i32) };
+                let stream = unsafe { std::fs::File::from_raw_handle(pipe_handle as std::os::windows::io::RawHandle) };
                 let state = socket_state.clone();
                 std::thread::spawn(move || {
                     handle_minify_client_connection_windows(stream, state);
@@ -622,10 +589,10 @@ pub async fn run_static_worker(args: StaticWorkerArgs) -> Result<(), Box<dyn std
     let socket_handle: Option<tokio::task::JoinHandle<()>> = None;
 
     {
-        let mut ipc = ipc.lock().map_err(|_| "ipc lock poisoned")?;
-        ipc.send(&crate::process::Message::StaticWorkerReady {
+        let mut ipc_guard = ipc.lock().await;
+        ipc_guard.send(&crate::process::Message::StaticWorkerReady {
             worker_id: args.worker_id,
-        })?;
+        }).await?;
     }
 
     tracing::info!("Static worker {} ready", args.worker_id);
@@ -633,41 +600,40 @@ pub async fn run_static_worker(args: StaticWorkerArgs) -> Result<(), Box<dyn std
     let ipc_state = state.clone();
     let ipc_handle = tokio::spawn(async move {
         loop {
-            if !ipc_state.running.load(std::sync::atomic::Ordering::SeqCst) {
+            if !ipc_state.running.is_running() {
                 break;
             }
 
             tokio::time::sleep(Duration::from_millis(50)).await;
 
-            if let Ok(mut ipc) = ipc_state.ipc.lock() {
-                match ipc.try_recv() {
-                    Ok(Some(crate::process::Message::MasterShutdown { graceful, timeout_secs })) => {
-                        tracing::info!(
-                            "Static worker {} received shutdown signal (graceful: {}, timeout: {}s), stopping background tasks",
-                            ipc_state.worker_id,
-                            graceful,
-                            timeout_secs
-                        );
-                        
-                        ipc_state.stop_background_tasks.store(true, std::sync::atomic::Ordering::SeqCst);
-                        
-                        process_compression_queue(&ipc_state);
-                        tracing::info!("Static worker {} completed final cache refresh", ipc_state.worker_id);
-                        
-                        let _ = ipc.send(&crate::process::Message::StaticWorkerBackgroundTasksDone {
-                            worker_id: ipc_state.worker_id,
-                        });
-                    }
-                    Ok(Some(crate::process::Message::MinifyRequest { request_id, site_id, path, encoding })) => {
-                        handle_minify_request_sync(&ipc_state, request_id, site_id, path, encoding);
-                    }
-                    Ok(Some(crate::process::Message::GetCompressedRequest { request_id, site_id, path, encoding })) => {
-                        handle_compressed_request_sync(&ipc_state, request_id, site_id, path, encoding);
-                    }
-                    Ok(Some(_)) => {}
-                    Ok(None) => {}
-                    Err(_) => {}
+            let mut ipc = ipc_state.ipc.lock().await;
+            match ipc.recv_with_timeout::<crate::process::Message>(50).await {
+                Ok(Some(crate::process::Message::MasterShutdown { graceful, timeout_secs })) => {
+                    tracing::info!(
+                        "Static worker {} received shutdown signal (graceful: {}, timeout: {}s), stopping background tasks",
+                        ipc_state.worker_id,
+                        graceful,
+                        timeout_secs
+                    );
+                    
+                    ipc_state.stop_background_tasks.start_drain();
+                    
+                    process_compression_queue(&ipc_state);
+                    tracing::info!("Static worker {} completed final cache refresh", ipc_state.worker_id);
+                    
+                    let _ = ipc.send(&crate::process::Message::StaticWorkerBackgroundTasksDone {
+                        worker_id: ipc_state.worker_id,
+                    }).await;
                 }
+                Ok(Some(crate::process::Message::MinifyRequest { request_id, site_id, path, encoding })) => {
+                    handle_minify_request_sync(&ipc_state, request_id, site_id, path, encoding);
+                }
+                Ok(Some(crate::process::Message::GetCompressedRequest { request_id, site_id, path, encoding })) => {
+                    handle_compressed_request_sync(&ipc_state, request_id, site_id, path, encoding);
+                }
+                Ok(Some(_)) => {}
+                Ok(None) => {}
+                Err(_) => {}
             }
         }
     });
@@ -679,11 +645,11 @@ pub async fn run_static_worker(args: StaticWorkerArgs) -> Result<(), Box<dyn std
         loop {
             interval.tick().await;
             
-            if !queue_state.running.load(std::sync::atomic::Ordering::SeqCst) {
+            if !queue_state.running.is_running() {
                 break;
             }
 
-            if queue_state.stop_background_tasks.load(std::sync::atomic::Ordering::SeqCst) {
+            if queue_state.stop_background_tasks.is_draining() {
                 tracing::info!("Static worker {} queue handler stopping (background tasks disabled)", queue_state.worker_id);
                 break;
             }
@@ -703,11 +669,11 @@ pub async fn run_static_worker(args: StaticWorkerArgs) -> Result<(), Box<dyn std
         loop {
             interval.tick().await;
             
-            if !watch_state.running.load(std::sync::atomic::Ordering::SeqCst) {
+            if !watch_state.running.is_running() {
                 break;
             }
 
-            if watch_state.stop_background_tasks.load(std::sync::atomic::Ordering::SeqCst) {
+            if watch_state.stop_background_tasks.is_draining() {
                 tracing::info!("Static worker {} watch handler stopping (background tasks disabled)", watch_state.worker_id);
                 break;
             }
@@ -730,12 +696,15 @@ pub async fn run_static_worker(args: StaticWorkerArgs) -> Result<(), Box<dyn std
                 }
             }
 
-            if let Ok(mut ipc) = watch_state.ipc.lock() {
-                let _ = ipc.send(&crate::process::Message::StaticWorkerHeartbeat {
-                    worker_id: watch_state.worker_id,
-                    timestamp: crate::process::current_timestamp(),
-                });
-            }
+            let (cache_hits, cache_misses) = watch_state.get_cache_stats();
+            
+            let mut ipc = watch_state.ipc.lock().await;
+            let _ = ipc.send(&crate::process::Message::StaticWorkerHeartbeat {
+                worker_id: watch_state.worker_id,
+                timestamp: crate::process::current_timestamp(),
+                static_cache_hits: cache_hits,
+                static_cache_misses: cache_misses,
+            }).await;
         }
     });
 
@@ -750,11 +719,11 @@ pub async fn run_static_worker(args: StaticWorkerArgs) -> Result<(), Box<dyn std
         loop {
             interval.tick().await;
             
-            if !running_for_reload.load(std::sync::atomic::Ordering::SeqCst) {
+            if !running_for_reload.is_running() {
                 break;
             }
 
-            if stop_bg_for_reload.load(std::sync::atomic::Ordering::SeqCst) {
+            if stop_bg_for_reload.is_draining() {
                 tracing::info!("Static worker reload handler stopping (background tasks disabled)");
                 break;
             }
@@ -768,24 +737,16 @@ pub async fn run_static_worker(args: StaticWorkerArgs) -> Result<(), Box<dyn std
                     worker_id: 0,
                     running: running_for_reload.clone(),
                     stop_background_tasks: stop_bg_for_reload.clone(),
-                    ipc: Arc::new(std::sync::Mutex::new({
-                        // Dummy IPC - not actually used for reload, just satisfies type
-                        let path = std::path::PathBuf::from(if cfg!(windows) { "\\\\.\\pipe\\nul" } else { "/dev/null" });
-                        crate::process::connect_to_master(&path).unwrap_or_else(|_| {
-                            // Fallback: create a minimal valid IpcStream
-                            #[cfg(unix)]
-                            {
-                                use std::os::unix::net::UnixStream;
-                                let stream = UnixStream::connect("/dev/null").unwrap();
-                                crate::process::IpcStream::new(stream)
-                            }
-                            #[cfg(windows)]
-                            {
-                                let stream = std::fs::File::create("NUL").unwrap();
-                                crate::process::IpcStream::new(stream)
-                            }
+                    ipc: Arc::new(TokioMutex::new(
+                        futures::executor::block_on(async {
+                            let path = std::path::PathBuf::from(if cfg!(windows) { "\\\\.\\pipe\\nul" } else { "/dev/null" });
+                            let socket_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("dummy");
+                            crate::process::ipc_transport::IpcEndpoint::new(socket_name)
+                                .connect().await.unwrap_or_else(|_| {
+                                    panic!("Failed to create dummy IPC for reload");
+                                })
                         })
-                    })),
+                    )),
                     config_manager: Arc::new(std::sync::RwLock::new(cm)),
                     minifier_caches: caches_for_reload.clone(),
                     compression_queue: queue_for_reload.clone(),
@@ -810,7 +771,7 @@ pub async fn run_static_worker(args: StaticWorkerArgs) -> Result<(), Box<dyn std
         } => {}
     }
 
-    running.store(false, std::sync::atomic::Ordering::SeqCst);
+    running.stop();
 
     if socket_path.exists() {
         let _ = std::fs::remove_file(&socket_path);
@@ -868,7 +829,7 @@ fn handle_minify_client_connection(
             Err(_) => break,
         }
         
-        if !state.running.load(std::sync::atomic::Ordering::SeqCst) {
+        if !state.running.is_running() {
             break;
         }
     }
@@ -992,7 +953,7 @@ fn process_minify_request(
             .ok_or_else(|| format!("No cache for site: {}", site_id))?
     };
     
-    let config = cache.config().clone();
+    let config = cache.config();
     let source_root = {
         let config_manager = state.config_manager.read()
             .map_err(|_| "Config lock poisoned".to_string())?;
@@ -1012,8 +973,8 @@ fn process_minify_request(
         .unwrap_or(SystemTime::UNIX_EPOCH);
 
     let key = minifier::CacheKey {
-        site_id: site_id.clone(),
-        path: path.clone(),
+        site_id: Arc::from(site_id.as_str()),
+        path: Arc::from(path.as_str()),
         encoding: minifier::Encoding::None,
     };
 
@@ -1044,8 +1005,8 @@ fn process_minify_request(
         match enc.as_str() {
             "gzip" => {
                 let enc_key = minifier::CacheKey {
-                    site_id: site_id.clone(),
-                    path: path.clone(),
+                    site_id: Arc::from(site_id.as_str()),
+                    path: Arc::from(path.as_str()),
                     encoding: minifier::Encoding::Gzip,
                 };
 
@@ -1061,8 +1022,8 @@ fn process_minify_request(
             }
             "br" => {
                 let enc_key = minifier::CacheKey {
-                    site_id: site_id.clone(),
-                    path: path.clone(),
+                    site_id: Arc::from(site_id.as_str()),
+                    path: Arc::from(path.as_str()),
                     encoding: minifier::Encoding::Br,
                 };
 
@@ -1133,8 +1094,8 @@ fn process_compressed_request(
     };
 
     let enc_key = minifier::CacheKey {
-        site_id: site_id.clone(),
-        path: path.clone(),
+        site_id: Arc::from(site_id.as_str()),
+        path: Arc::from(path.as_str()),
         encoding: enc,
     };
 
@@ -1148,7 +1109,7 @@ fn process_compressed_request(
     })
 }
 
-fn init_minifier_caches(state: &StaticWorkerState, main_config: &crate::config::MainConfig) {
+fn init_minifier_caches(state: &StaticWorkerState, _main_config: &crate::config::MainConfig) {
     let config = match state.config_manager.read() {
         Ok(c) => c,
         Err(_) => return,
@@ -1218,7 +1179,7 @@ fn handle_minify_request_sync(
         }
     };
     
-    let config = cache.config().clone();
+    let config = cache.config();
     let source_root = {
         let config_manager = match state.config_manager.read() {
             Ok(c) => c,
@@ -1243,21 +1204,27 @@ fn handle_minify_request_sync(
 
     let source_path = source_root.join(path.trim_start_matches('/'));
     
-    let original_content = match std::fs::read(&source_path) {
-        Ok(c) => c,
-        Err(e) => {
+    // Use spawn_blocking to run blocking file I/O in the blocking thread pool
+    // This prevents blocking the async runtime
+    let file_result = task::block_in_place(|| {
+        let read_result = std::fs::read(&source_path);
+        let mtime = std::fs::metadata(&source_path)
+            .and_then(|m| m.modified())
+            .unwrap_or(SystemTime::UNIX_EPOCH);
+        (read_result, mtime)
+    });
+
+    let (original_content, mtime) = match file_result {
+        (Ok(content), mtime) => (content, mtime),
+        (Err(e), _) => {
             send_error_sync(state, request_id, format!("Failed to read file: {}", e));
             return;
         }
     };
 
-    let mtime = std::fs::metadata(&source_path)
-        .and_then(|m| m.modified())
-        .unwrap_or(SystemTime::UNIX_EPOCH);
-
     let key = minifier::CacheKey {
-        site_id: site_id.clone(),
-        path: path.clone(),
+        site_id: Arc::from(site_id.as_str()),
+        path: Arc::from(path.as_str()),
         encoding: minifier::Encoding::None,
     };
 
@@ -1266,7 +1233,15 @@ fn handle_minify_request_sync(
         _ => {
             match cache.minify_and_cache(&site_id, &path, &original_content, mtime) {
                 Ok(entry) => {
-                    if let Err(e) = cache.write_to_disk(&site_id, &path, &entry.content, mtime) {
+                    let site_id_clone = site_id.clone();
+                    let path_clone = path.clone();
+                    let content = entry.content.clone();
+                    let mtime_clone = mtime;
+                    // Run disk write in blocking thread to avoid blocking async runtime
+                    let write_result = task::block_in_place(|| {
+                        cache.write_to_disk(&site_id_clone, &path_clone, &content, mtime_clone)
+                    });
+                    if let Err(e) = write_result {
                         tracing::warn!("Failed to write minified file: {}", e);
                     }
                     entry.content.to_vec()
@@ -1296,8 +1271,8 @@ fn handle_minify_request_sync(
         match enc.as_str() {
             "gzip" => {
                 let enc_key = minifier::CacheKey {
-                    site_id: site_id.clone(),
-                    path: path.clone(),
+                    site_id: Arc::from(site_id.as_str()),
+                    path: Arc::from(path.as_str()),
                     encoding: minifier::Encoding::Gzip,
                 };
 
@@ -1306,7 +1281,13 @@ fn handle_minify_request_sync(
                     _ => {
                         match cache.generate_compressed(&site_id, &path, &minified_content, &minifier::Encoding::Gzip) {
                             Ok(content) => {
-                                if let Err(e) = cache.write_compressed_to_disk(&site_id, &path, &content, &minifier::Encoding::Gzip) {
+                                let site_id_clone = site_id.clone();
+                                let path_clone = path.clone();
+                                let content_clone = content.clone();
+                                let write_result = task::block_in_place(|| {
+                                    cache.write_compressed_to_disk(&site_id_clone, &path_clone, &content_clone, &minifier::Encoding::Gzip)
+                                });
+                                if let Err(e) = write_result {
                                     tracing::warn!("Failed to write gzip file: {}", e);
                                 }
                                 content.to_vec()
@@ -1321,8 +1302,8 @@ fn handle_minify_request_sync(
             }
             "br" => {
                 let enc_key = minifier::CacheKey {
-                    site_id: site_id.clone(),
-                    path: path.clone(),
+                    site_id: Arc::from(site_id.as_str()),
+                    path: Arc::from(path.as_str()),
                     encoding: minifier::Encoding::Br,
                 };
 
@@ -1331,7 +1312,13 @@ fn handle_minify_request_sync(
                     _ => {
                         match cache.generate_compressed(&site_id, &path, &minified_content, &minifier::Encoding::Br) {
                             Ok(content) => {
-                                if let Err(e) = cache.write_compressed_to_disk(&site_id, &path, &content, &minifier::Encoding::Br) {
+                                let site_id_clone = site_id.clone();
+                                let path_clone = path.clone();
+                                let content_clone = content.clone();
+                                let write_result = task::block_in_place(|| {
+                                    cache.write_compressed_to_disk(&site_id_clone, &path_clone, &content_clone, &minifier::Encoding::Br)
+                                });
+                                if let Err(e) = write_result {
                                     tracing::warn!("Failed to write brotli file: {}", e);
                                 }
                                 content.to_vec()
@@ -1369,8 +1356,8 @@ fn handle_minify_request_sync(
         }
     }
 
-    if let Ok(mut ipc) = state.ipc.lock() {
-        let _ = ipc.send(&crate::process::Message::MinifyResponse {
+    let mut ipc = state.ipc.blocking_lock();
+    let _ = ipc.send(&crate::process::Message::MinifyResponse {
             request_id,
             site_id,
             path,
@@ -1379,16 +1366,14 @@ fn handle_minify_request_sync(
             encoding,
             queued_encodings,
         });
-    }
 }
 
 fn send_error_sync(state: &StaticWorkerState, request_id: u64, error: String) {
-    if let Ok(mut ipc) = state.ipc.lock() {
-        let _ = ipc.send(&crate::process::Message::MinifyError {
-            request_id,
-            error,
-        });
-    }
+    let mut ipc = state.ipc.blocking_lock();
+    let _ = ipc.send(&crate::process::Message::MinifyError {
+        request_id,
+        error,
+    });
 }
 
 fn handle_compressed_request_sync(
@@ -1425,8 +1410,8 @@ fn handle_compressed_request_sync(
     };
 
     let enc_key = minifier::CacheKey {
-        site_id: site_id.clone(),
-        path: path.clone(),
+        site_id: Arc::from(site_id.as_str()),
+        path: Arc::from(path.as_str()),
         encoding: enc,
     };
 
@@ -1438,12 +1423,11 @@ fn handle_compressed_request_sync(
         }
     };
 
-    if let Ok(mut ipc) = state.ipc.lock() {
-        let _ = ipc.send(&crate::process::Message::GetCompressedResponse {
-            request_id,
-            content,
-        });
-    }
+    let mut ipc = state.ipc.blocking_lock();
+    let _ = ipc.send(&crate::process::Message::GetCompressedResponse {
+        request_id,
+        content,
+    });
 }
 
 fn process_compression_queue(state: &StaticWorkerState) {
@@ -1453,7 +1437,7 @@ fn process_compression_queue(state: &StaticWorkerState) {
     };
 
     for task in tasks {
-        if !state.running.load(std::sync::atomic::Ordering::SeqCst) {
+        if !state.running.is_running() {
             break;
         }
 
@@ -1464,8 +1448,8 @@ fn process_compression_queue(state: &StaticWorkerState) {
         
         if let Some(cache) = caches.get(&task.site_id) {
             let minified_key = minifier::CacheKey {
-                site_id: task.site_id.clone(),
-                path: task.path.clone(),
+                site_id: Arc::from(task.site_id.as_str()),
+                path: Arc::from(task.path.as_str()),
                 encoding: minifier::Encoding::None,
             };
 
@@ -1482,7 +1466,14 @@ fn process_compression_queue(state: &StaticWorkerState) {
 
             match cache.generate_compressed(&task.site_id, &task.path, &minified_content, &enc) {
                 Ok(content) => {
-                    if let Err(e) = cache.write_compressed_to_disk(&task.site_id, &task.path, &content, &enc) {
+                    let site_id_clone = task.site_id.clone();
+                    let path_clone = task.path.clone();
+                    let content_clone = content.clone();
+                    let enc_clone = enc.clone();
+                    let write_result = task::block_in_place(|| {
+                        cache.write_compressed_to_disk(&site_id_clone, &path_clone, &content_clone, &enc_clone)
+                    });
+                    if let Err(e) = write_result {
                         tracing::warn!("Failed to write {} file: {}", task.encoding, e);
                     } else {
                         tracing::debug!("Generated {} for {}/{}", task.encoding, task.site_id, task.path);
@@ -1497,19 +1488,17 @@ fn process_compression_queue(state: &StaticWorkerState) {
 }
 
 async fn send_error(state: &StaticWorkerState, request_id: u64, error: String) {
-    if let Ok(mut ipc) = state.ipc.lock() {
-        let _ = ipc.send(&crate::process::Message::MinifyError {
-            request_id,
-            error,
-        });
-    }
+    let mut ipc = state.ipc.lock().await;
+    let _ = ipc.send(&crate::process::Message::MinifyError {
+        request_id,
+        error,
+    }).await;
 }
 
 async fn send_compressed_error(state: &StaticWorkerState, request_id: u64, error: String) {
-    if let Ok(mut ipc) = state.ipc.lock() {
-        let _ = ipc.send(&crate::process::Message::MinifyError {
-            request_id,
-            error,
-        });
-    }
+    let mut ipc = state.ipc.lock().await;
+    let _ = ipc.send(&crate::process::Message::MinifyError {
+        request_id,
+        error,
+    }).await;
 }

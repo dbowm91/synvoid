@@ -7,18 +7,63 @@ use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 use std::sync::Arc;
 use super::super::state::AdminState;
-use super::super::auth::{require_auth, OptionalAuth};
 
-use crate::waf::{SuspiciousWordTracker, SuspiciousWordRecord, SuspiciousWordStats, UpstreamErrorTracker, UpstreamErrorRecord, UpstreamErrorStats};
+use super::common::{PaginationQuery, PaginatedResponse, PAGINATION_LIMITS_DEFAULT, require_auth, OptionalAuth, parse_ip};
 
-#[derive(Debug, Deserialize)]
-pub struct ProbesQuery {
-    pub limit: Option<usize>,
-    pub offset: Option<usize>,
-    pub search: Option<String>,
+const MAX_PROBE_EVENTS_ALL: usize = 10000;
+const MAX_RECENT_ENDPOINTS_LIST: usize = 5;
+const MAX_RECENT_ENDPOINTS_DETAIL: usize = 20;
+
+fn empty_probe_response() -> Result<Json<PaginatedResponse<ProbeResponse>>, StatusCode> {
+    Ok(Json(PaginatedResponse::empty()))
 }
 
-#[derive(Debug, Serialize)]
+fn empty_probe_stats_response() -> Result<Json<ProbeStatsResponse>, StatusCode> {
+    Ok(Json(ProbeStatsResponse {
+        total_records: 0,
+        active_records: 0,
+        total_events: 0,
+        top_endpoints: vec![],
+    }))
+}
+
+fn empty_suspicious_word_list_response() -> Result<Json<SuspiciousWordListResponse>, StatusCode> {
+    Ok(Json(SuspiciousWordListResponse {
+        records: vec![],
+        total: 0,
+    }))
+}
+
+fn empty_suspicious_word_stats_response() -> Result<Json<SuspiciousWordStatsResponse>, StatusCode> {
+    Ok(Json(SuspiciousWordStatsResponse {
+        total_ips: 0,
+        total_matches: 0,
+        top_words: vec![],
+    }))
+}
+
+fn empty_upstream_error_list_response() -> Result<Json<UpstreamErrorListResponse>, StatusCode> {
+    Ok(Json(UpstreamErrorListResponse {
+        records: vec![],
+        total: 0,
+    }))
+}
+
+fn empty_upstream_error_stats_response() -> Result<Json<UpstreamErrorStatsResponse>, StatusCode> {
+    Ok(Json(UpstreamErrorStatsResponse {
+        total_ips: 0,
+        total_errors: 0,
+        top_endpoints: vec![],
+    }))
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct BlockProbesRequest {
+    pub ips: Vec<String>,
+    pub duration: String,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ProbeResponse {
     pub ip: String,
     pub event_count: u32,
@@ -29,7 +74,7 @@ pub struct ProbeResponse {
     pub recent_endpoints: Vec<ProbeEventResponse>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ProbeEventResponse {
     pub endpoint: String,
     pub method: String,
@@ -37,14 +82,14 @@ pub struct ProbeEventResponse {
     pub user_agent: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ProbesListResponse {
     pub probes: Vec<ProbeResponse>,
     pub total: usize,
     pub has_more: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ProbeStatsResponse {
     pub total_records: usize,
     pub active_records: usize,
@@ -52,40 +97,41 @@ pub struct ProbeStatsResponse {
     pub top_endpoints: Vec<ProbeEndpointStatsResponse>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ProbeEndpointStatsResponse {
     pub endpoint: String,
     pub count: u32,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct BlockProbesRequest {
-    pub ips: Vec<String>,
-    pub duration: String,
-}
-
+#[utoipa::path(
+    get,
+    path = "/probes",
+    tag = "Probes",
+    responses(
+        (status = 200, description = "List of probe records"),
+        (status = 401, description = "Unauthorized")
+    ),
+    security(
+        ("bearerAuth" = [])
+    )
+)]
 pub async fn list_probes(
     State(state): State<Arc<AdminState>>,
     auth: OptionalAuth,
-    Query(query): Query<ProbesQuery>,
-) -> Result<Json<ProbesListResponse>, StatusCode> {
+    Query(query): Query<PaginationQuery>,
+) -> Result<Json<PaginatedResponse<ProbeResponse>>, StatusCode> {
     if !require_auth(&auth, &state.admin_token) {
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    let tracker = match &state.probe_tracker {
+    let tracker = match state.probe_tracker() {
         Some(t) => t,
-        None => return Ok(Json(ProbesListResponse {
-            probes: vec![],
-            total: 0,
-            has_more: false,
-        })),
+        None => return empty_probe_response(),
     };
 
-    let limit = query.limit.unwrap_or(50).min(500);
-    let offset = query.offset.unwrap_or(0);
+    let (limit, offset) = PAGINATION_LIMITS_DEFAULT.apply(query.limit, query.offset);
 
-    let all_records = tracker.list_records(10000, 0);
+    let all_records = tracker.list_records(MAX_PROBE_EVENTS_ALL, 0);
     let total = all_records.len();
     
     let probes: Vec<ProbeResponse> = all_records
@@ -97,7 +143,7 @@ pub async fn list_probes(
                 .events
                 .iter()
                 .rev()
-                .take(5)
+                .take(MAX_RECENT_ENDPOINTS_LIST)
                 .map(|e| ProbeEventResponse {
                     endpoint: e.endpoint.clone(),
                     method: e.method.clone(),
@@ -118,15 +164,22 @@ pub async fn list_probes(
         })
         .collect();
 
-    let has_more = offset + limit < total;
-
-    Ok(Json(ProbesListResponse {
-        probes,
-        total,
-        has_more,
-    }))
+    Ok(Json(PaginatedResponse::new(probes, total, limit, offset)))
 }
 
+#[utoipa::path(
+    get,
+    path = "/probes/{ip}",
+    tag = "Probes",
+    responses(
+        (status = 200, description = "Probe record details"),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Probe not found")
+    ),
+    security(
+        ("bearerAuth" = [])
+    )
+)]
 pub async fn get_probe(
     State(state): State<Arc<AdminState>>,
     auth: OptionalAuth,
@@ -136,26 +189,20 @@ pub async fn get_probe(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    let tracker = match &state.probe_tracker {
+    let tracker = match state.probe_tracker() {
         Some(t) => t,
         None => return Err(StatusCode::NOT_FOUND),
     };
 
-    let ip_addr: IpAddr = match ip.parse() {
-        Ok(i) => i,
-        Err(_) => return Err(StatusCode::BAD_REQUEST),
-    };
+    let ip_addr: IpAddr = parse_ip(&ip)?;
 
-    let record = match tracker.get_record(&ip_addr) {
-        Some(r) => r,
-        None => return Err(StatusCode::NOT_FOUND),
-    };
+    let record = tracker.get_record(&ip_addr).ok_or(StatusCode::NOT_FOUND)?;
 
     let recent_endpoints: Vec<ProbeEventResponse> = record
         .events
         .iter()
         .rev()
-        .take(20)
+        .take(MAX_RECENT_ENDPOINTS_DETAIL)
         .map(|e| ProbeEventResponse {
             endpoint: e.endpoint.clone(),
             method: e.method.clone(),
@@ -175,6 +222,18 @@ pub async fn get_probe(
     }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/probes/stats",
+    tag = "Probes",
+    responses(
+        (status = 200, description = "Probe statistics"),
+        (status = 401, description = "Unauthorized")
+    ),
+    security(
+        ("bearerAuth" = [])
+    )
+)]
 pub async fn get_probe_stats(
     State(state): State<Arc<AdminState>>,
     auth: OptionalAuth,
@@ -183,14 +242,9 @@ pub async fn get_probe_stats(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    let tracker = match &state.probe_tracker {
+    let tracker = match state.probe_tracker() {
         Some(t) => t,
-        None => return Ok(Json(ProbeStatsResponse {
-            total_records: 0,
-            active_records: 0,
-            total_events: 0,
-            top_endpoints: vec![],
-        })),
+        None => return empty_probe_stats_response(),
     };
 
     let stats = tracker.get_stats();
@@ -210,6 +264,19 @@ pub async fn get_probe_stats(
     }))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/probes/{ip}",
+    tag = "Probes",
+    responses(
+        (status = 204, description = "Probe deleted"),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Probe not found")
+    ),
+    security(
+        ("bearerAuth" = [])
+    )
+)]
 pub async fn delete_probe(
     State(state): State<Arc<AdminState>>,
     auth: OptionalAuth,
@@ -219,15 +286,9 @@ pub async fn delete_probe(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    let tracker = match &state.probe_tracker {
-        Some(t) => t,
-        None => return Err(StatusCode::NOT_FOUND),
-    };
+    let tracker = state.probe_tracker().ok_or(StatusCode::NOT_FOUND)?;
 
-    let ip_addr: IpAddr = match ip.parse() {
-        Ok(i) => i,
-        Err(_) => return Err(StatusCode::BAD_REQUEST),
-    };
+    let ip_addr: IpAddr = parse_ip(&ip)?;
 
     if tracker.clear_record(&ip_addr) {
         Ok(StatusCode::NO_CONTENT)
@@ -260,6 +321,18 @@ fn parse_duration(duration: &str) -> u64 {
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/probes/block",
+    tag = "Probes",
+    responses(
+        (status = 200, description = "Probes blocked"),
+        (status = 401, description = "Unauthorized")
+    ),
+    security(
+        ("bearerAuth" = [])
+    )
+)]
 pub async fn block_probes(
     State(state): State<Arc<AdminState>>,
     auth: OptionalAuth,
@@ -275,13 +348,14 @@ pub async fn block_probes(
     let mut failed = Vec::new();
 
     for ip_str in req.ips {
-        if let Ok(ip) = ip_str.parse::<IpAddr>() {
-            blocked.push(ip_str.clone());
+        if ip_str.parse::<IpAddr>().is_ok() {
+            blocked.push(ip_str);
         } else {
             failed.push(ip_str);
         }
     }
 
+    let _ = state;
     Ok(Json(serde_json::json!({
         "blocked": blocked,
         "failed": failed,
@@ -289,7 +363,7 @@ pub async fn block_probes(
     })))
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct SuspiciousWordRecordResponse {
     pub ip: String,
     pub matched_word: String,
@@ -298,43 +372,52 @@ pub struct SuspiciousWordRecordResponse {
     pub timestamp: u64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct SuspiciousWordListResponse {
     pub records: Vec<SuspiciousWordRecordResponse>,
     pub total: usize,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct SuspiciousWordStatsResponse {
     pub total_ips: usize,
     pub total_matches: u64,
     pub top_words: Vec<SuspiciousWordCountResponse>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct SuspiciousWordCountResponse {
     pub word: String,
     pub count: u32,
 }
 
+#[utoipa::path(
+    get,
+    path = "/probes/suspicious-words",
+    tag = "Probes",
+    responses(
+        (status = 200, description = "List of suspicious words"),
+        (status = 401, description = "Unauthorized")
+    ),
+    security(
+        ("bearerAuth" = [])
+    )
+)]
 pub async fn list_suspicious_words(
     State(state): State<Arc<AdminState>>,
     auth: OptionalAuth,
-    Query(query): Query<ProbesQuery>,
+    Query(query): Query<PaginationQuery>,
 ) -> Result<Json<SuspiciousWordListResponse>, StatusCode> {
     if !require_auth(&auth, &state.admin_token) {
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    let tracker = match &state.suspicious_word_tracker {
+    let tracker = match state.suspicious_word_tracker() {
         Some(t) => t,
-        None => return Ok(Json(SuspiciousWordListResponse {
-            records: vec![],
-            total: 0,
-        })),
+        None => return empty_suspicious_word_list_response(),
     };
 
-    let limit = query.limit.unwrap_or(50).min(500);
+    let (limit, _offset) = PAGINATION_LIMITS_DEFAULT.apply(query.limit, query.offset);
     let records = tracker.list_records(limit);
 
     let total = records.len();
@@ -358,6 +441,18 @@ pub async fn list_suspicious_words(
     }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/probes/suspicious-words/stats",
+    tag = "Probes",
+    responses(
+        (status = 200, description = "Suspicious word statistics"),
+        (status = 401, description = "Unauthorized")
+    ),
+    security(
+        ("bearerAuth" = [])
+    )
+)]
 pub async fn get_suspicious_word_stats(
     State(state): State<Arc<AdminState>>,
     auth: OptionalAuth,
@@ -366,13 +461,9 @@ pub async fn get_suspicious_word_stats(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    let tracker = match &state.suspicious_word_tracker {
+    let tracker = match state.suspicious_word_tracker() {
         Some(t) => t,
-        None => return Ok(Json(SuspiciousWordStatsResponse {
-            total_ips: 0,
-            total_matches: 0,
-            top_words: vec![],
-        })),
+        None => return empty_suspicious_word_stats_response(),
     };
 
     let stats = tracker.get_stats();
@@ -387,6 +478,19 @@ pub async fn get_suspicious_word_stats(
     }))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/probes/suspicious-words/{ip}",
+    tag = "Probes",
+    responses(
+        (status = 204, description = "Suspicious word record deleted"),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Record not found")
+    ),
+    security(
+        ("bearerAuth" = [])
+    )
+)]
 pub async fn delete_suspicious_word(
     State(state): State<Arc<AdminState>>,
     auth: OptionalAuth,
@@ -396,15 +500,9 @@ pub async fn delete_suspicious_word(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    let tracker = match &state.suspicious_word_tracker {
-        Some(t) => t,
-        None => return Err(StatusCode::NOT_FOUND),
-    };
+    let tracker = state.suspicious_word_tracker().ok_or(StatusCode::NOT_FOUND)?;
 
-    let ip_addr: IpAddr = match ip.parse() {
-        Ok(i) => i,
-        Err(_) => return Err(StatusCode::BAD_REQUEST),
-    };
+    let ip_addr: IpAddr = parse_ip(&ip)?;
 
     if tracker.clear_record(&ip_addr) {
         Ok(StatusCode::NO_CONTENT)
@@ -413,7 +511,7 @@ pub async fn delete_suspicious_word(
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct UpstreamErrorRecordResponse {
     pub ip: String,
     pub endpoint: String,
@@ -421,43 +519,52 @@ pub struct UpstreamErrorRecordResponse {
     pub timestamp: u64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct UpstreamErrorListResponse {
     pub records: Vec<UpstreamErrorRecordResponse>,
     pub total: usize,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct UpstreamErrorStatsResponse {
     pub total_ips: usize,
     pub total_errors: u64,
     pub top_endpoints: Vec<UpstreamErrorEndpointCountResponse>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct UpstreamErrorEndpointCountResponse {
     pub endpoint: String,
     pub count: u32,
 }
 
+#[utoipa::path(
+    get,
+    path = "/probes/upstream-errors",
+    tag = "Probes",
+    responses(
+        (status = 200, description = "List of upstream errors"),
+        (status = 401, description = "Unauthorized")
+    ),
+    security(
+        ("bearerAuth" = [])
+    )
+)]
 pub async fn list_upstream_errors(
     State(state): State<Arc<AdminState>>,
     auth: OptionalAuth,
-    Query(query): Query<ProbesQuery>,
+    Query(query): Query<PaginationQuery>,
 ) -> Result<Json<UpstreamErrorListResponse>, StatusCode> {
     if !require_auth(&auth, &state.admin_token) {
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    let tracker = match &state.upstream_error_tracker {
+    let tracker = match state.upstream_error_tracker() {
         Some(t) => t,
-        None => return Ok(Json(UpstreamErrorListResponse {
-            records: vec![],
-            total: 0,
-        })),
+        None => return empty_upstream_error_list_response(),
     };
 
-    let limit = query.limit.unwrap_or(50).min(500);
+    let (limit, _offset) = PAGINATION_LIMITS_DEFAULT.apply(query.limit, query.offset);
     let records = tracker.list_records(limit);
 
     let total = records.len();
@@ -480,6 +587,18 @@ pub async fn list_upstream_errors(
     }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/probes/upstream-errors/stats",
+    tag = "Probes",
+    responses(
+        (status = 200, description = "Upstream error statistics"),
+        (status = 401, description = "Unauthorized")
+    ),
+    security(
+        ("bearerAuth" = [])
+    )
+)]
 pub async fn get_upstream_error_stats(
     State(state): State<Arc<AdminState>>,
     auth: OptionalAuth,
@@ -488,13 +607,9 @@ pub async fn get_upstream_error_stats(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    let tracker = match &state.upstream_error_tracker {
+    let tracker = match state.upstream_error_tracker() {
         Some(t) => t,
-        None => return Ok(Json(UpstreamErrorStatsResponse {
-            total_ips: 0,
-            total_errors: 0,
-            top_endpoints: vec![],
-        })),
+        None => return empty_upstream_error_stats_response(),
     };
 
     let stats = tracker.get_stats();
@@ -509,6 +624,19 @@ pub async fn get_upstream_error_stats(
     }))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/probes/upstream-errors/{ip}",
+    tag = "Probes",
+    responses(
+        (status = 204, description = "Upstream error record deleted"),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Record not found")
+    ),
+    security(
+        ("bearerAuth" = [])
+    )
+)]
 pub async fn delete_upstream_error(
     State(state): State<Arc<AdminState>>,
     auth: OptionalAuth,
@@ -518,15 +646,9 @@ pub async fn delete_upstream_error(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    let tracker = match &state.upstream_error_tracker {
-        Some(t) => t,
-        None => return Err(StatusCode::NOT_FOUND),
-    };
+    let tracker = state.upstream_error_tracker().ok_or(StatusCode::NOT_FOUND)?;
 
-    let ip_addr: IpAddr = match ip.parse() {
-        Ok(i) => i,
-        Err(_) => return Err(StatusCode::BAD_REQUEST),
-    };
+    let ip_addr: IpAddr = parse_ip(&ip)?;
 
     if tracker.clear_record(&ip_addr) {
         Ok(StatusCode::NO_CONTENT)

@@ -1,8 +1,10 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use ahash::AHashMap;
 use bytes::Bytes;
 use http::{HeaderMap, StatusCode};
 use parking_lot::RwLock;
@@ -33,14 +35,18 @@ pub struct ProxyCacheEntry {
     pub created_at: Instant,
     pub last_accessed: Instant,
     pub expires_at: Option<Instant>,
+    pub stale_while_revalidate: Option<Instant>,
+    pub stale_if_error: Option<Instant>,
     pub content_length: Option<usize>,
     pub is_fresh: bool,
 }
 
 impl ProxyCacheEntry {
-    pub fn new(content: Bytes, status: u16, headers: HeaderMap, max_age: Option<Duration>) -> Self {
+    pub fn new(content: Bytes, status: u16, headers: HeaderMap, max_age: Option<Duration>, swr: Option<Duration>, sie: Option<Duration>) -> Self {
         let now = Instant::now();
         let expires_at = max_age.map(|age| now + age);
+        let stale_while_revalidate = swr.and_then(|d| expires_at.map(|e| e + d));
+        let stale_if_error = sie.and_then(|d| expires_at.map(|e| e + d));
 
         Self {
             content,
@@ -49,6 +55,8 @@ impl ProxyCacheEntry {
             created_at: now,
             last_accessed: now,
             expires_at,
+            stale_while_revalidate,
+            stale_if_error,
             content_length: None,
             is_fresh: true,
         }
@@ -63,6 +71,20 @@ impl ProxyCacheEntry {
 
     pub fn is_stale(&self) -> bool {
         self.is_expired()
+    }
+
+    pub fn is_stale_while_revalidate(&self) -> bool {
+        if let Some(swr) = self.stale_while_revalidate {
+            return Instant::now() <= swr && self.is_expired();
+        }
+        false
+    }
+
+    pub fn is_stale_if_error(&self) -> bool {
+        if let Some(sie) = self.stale_if_error {
+            return Instant::now() <= sie && self.is_expired();
+        }
+        false
     }
 
     pub fn age(&self) -> Duration {
@@ -80,24 +102,36 @@ pub enum CacheHit {
     Miss,
     Expired,
     Stale,
+    StaleWhileRevalidate,
 }
 
 pub struct ProxyCache {
-    entries: RwLock<HashMap<CacheKey, CacheEntryInner>>,
+    state: RwLock<CacheState>,
     settings: ProxyCacheSettings,
-    access_order: RwLock<VecDeque<CacheKey>>,
-    current_memory_size: RwLock<usize>,
     disk_path: PathBuf,
+    cache_hits: AtomicU64,
+    cache_misses: AtomicU64,
+}
+
+struct CacheState {
+    entries: AHashMap<CacheKey, CacheEntryInner>,
+    access_order: VecDeque<CacheKey>,
+    current_memory_size: usize,
 }
 
 impl Clone for ProxyCache {
     fn clone(&self) -> Self {
+        let state = self.state.read();
         Self {
-            entries: RwLock::new(HashMap::new()),
+            state: RwLock::new(CacheState {
+                entries: state.entries.clone(),
+                access_order: state.access_order.clone(),
+                current_memory_size: state.current_memory_size,
+            }),
             settings: self.settings.clone(),
-            access_order: RwLock::new(VecDeque::new()),
-            current_memory_size: RwLock::new(0),
             disk_path: self.disk_path.clone(),
+            cache_hits: AtomicU64::new(self.cache_hits.load(Ordering::Relaxed)),
+            cache_misses: AtomicU64::new(self.cache_misses.load(Ordering::Relaxed)),
         }
     }
 }
@@ -110,11 +144,23 @@ struct CacheEntryInner {
     checksum: u64,
 }
 
+impl Clone for CacheEntryInner {
+    fn clone(&self) -> Self {
+        Self {
+            entry: self.entry.clone(),
+            size: self.size,
+            on_disk: self.on_disk,
+            disk_path: self.disk_path.clone(),
+            checksum: self.checksum,
+        }
+    }
+}
+
 impl CacheEntryInner {
     fn compute_checksum(content: &[u8]) -> u64 {
-        use std::collections::hash_map::DefaultHasher;
+        use ahash::AHasher;
         use std::hash::{Hash, Hasher};
-        let mut hasher = DefaultHasher::new();
+        let mut hasher = AHasher::default();
         content.hash(&mut hasher);
         hasher.finish()
     }
@@ -135,11 +181,15 @@ impl ProxyCache {
         }
 
         Self {
-            entries: RwLock::new(HashMap::new()),
+            state: RwLock::new(CacheState {
+                entries: AHashMap::new(),
+                access_order: VecDeque::new(),
+                current_memory_size: 0,
+            }),
             settings,
-            access_order: RwLock::new(VecDeque::new()),
-            current_memory_size: RwLock::new(0),
             disk_path,
+            cache_hits: AtomicU64::new(0),
+            cache_misses: AtomicU64::new(0),
         }
     }
 
@@ -152,7 +202,7 @@ impl ProxyCache {
     }
 
     pub fn start_background_cleanup(&self, interval_secs: u64) {
-        let cache = Arc::new(self.clone_inner());
+        let cache = Arc::new(self.clone());
         
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(interval_secs));
@@ -167,58 +217,105 @@ impl ProxyCache {
     }
 
     fn clone_inner(&self) -> Self {
+        let state = self.state.read();
         Self {
-            entries: RwLock::new(HashMap::new()),
+            state: RwLock::new(CacheState {
+                entries: state.entries.clone(),
+                access_order: state.access_order.clone(),
+                current_memory_size: state.current_memory_size,
+            }),
             settings: self.settings.clone(),
-            access_order: RwLock::new(VecDeque::new()),
-            current_memory_size: RwLock::new(0),
             disk_path: self.disk_path.clone(),
+            cache_hits: AtomicU64::new(self.cache_hits.load(Ordering::Relaxed)),
+            cache_misses: AtomicU64::new(self.cache_misses.load(Ordering::Relaxed)),
         }
     }
 
+    #[inline]
     pub fn get(&self, key: &CacheKey) -> Option<ProxyCacheEntry> {
         if !self.settings.enabled {
             return None;
         }
 
-        let mut entries = self.entries.write();
-        let entry_inner = entries.get(key)?;
+        let mut state = self.state.write();
+        let entry_inner = state.entries.get(key)?.clone();
 
         if entry_inner.on_disk {
             if let Some(path) = &entry_inner.disk_path {
                 if let Ok(content) = std::fs::read(path) {
                     if !entry_inner.validate(&content) {
                         tracing::warn!("Cache entry checksum mismatch, removing corrupted entry");
-                        drop(entries);
+                        drop(state);
                         self.invalidate(key);
                         return None;
                     }
-                    let mut entry = entry_inner.entry.clone();
+                    let mut entry = entry_inner.entry;
                     entry.content = Bytes::from(content);
                     entry.update_access();
-                    drop(entries);
-                    self.update_access_order(key);
+                    
+                    state.access_order.retain(|k| k != key);
+                    state.access_order.push_back(key.clone());
                     return Some(entry);
                 }
             }
         }
 
-        let mut entry = entry_inner.entry.clone();
+        let mut entry = entry_inner.entry;
         
         if entry.is_expired() {
-            drop(entries);
-            let mut access_order = self.access_order.write();
-            access_order.retain(|k| k != key);
+            if entry.is_stale_while_revalidate() {
+                entry.is_fresh = false;
+                entry.update_access();
+                state.access_order.retain(|k| k != key);
+                state.access_order.push_back(key.clone());
+                return Some(entry);
+            }
+            if entry.is_stale_if_error() {
+                entry.is_fresh = false;
+                entry.update_access();
+                state.access_order.retain(|k| k != key);
+                state.access_order.push_back(key.clone());
+                return Some(entry);
+            }
+            state.access_order.retain(|k| k != key);
             return None;
         }
 
         entry.update_access();
-        drop(entries);
-        self.update_access_order(key);
+        state.access_order.retain(|k| k != key);
+        state.access_order.push_back(key.clone());
         Some(entry)
     }
 
-    pub fn get_or_fetch<F, Fut>(&self, key: &CacheKey, fetch: F) -> Option<ProxyCacheEntry>
+    #[inline]
+    pub fn get_hit_status(&self, key: &CacheKey) -> Option<CacheHit> {
+        if !self.settings.enabled {
+            return None;
+        }
+
+        let state = self.state.read();
+        let entry_inner = state.entries.get(key)?;
+
+        if entry_inner.entry.is_fresh {
+            return Some(CacheHit::Hit);
+        }
+
+        if entry_inner.entry.is_stale_while_revalidate() {
+            return Some(CacheHit::StaleWhileRevalidate);
+        }
+
+        if entry_inner.entry.is_stale_if_error() {
+            return Some(CacheHit::Stale);
+        }
+
+        if entry_inner.entry.is_expired() {
+            return Some(CacheHit::Expired);
+        }
+
+        None
+    }
+
+    pub fn get_or_fetch<F, Fut>(&self, key: &CacheKey, _fetch: F) -> Option<ProxyCacheEntry>
     where
         F: FnOnce() -> Fut,
         Fut: std::future::Future<Output = Option<(Bytes, StatusCode, HeaderMap, Option<Duration>)>>,
@@ -247,7 +344,9 @@ impl ProxyCache {
         }
 
         let size = content.len();
-        let entry = ProxyCacheEntry::new(content.clone(), status, headers, max_age);
+        let swr = self.settings.stale_while_revalidate;
+        let sie = self.settings.stale_if_error;
+        let entry = ProxyCacheEntry::new(content.clone(), status, headers, max_age, swr, sie);
 
         let mut should_store_disk = false;
         let mut disk_path = None;
@@ -274,7 +373,7 @@ impl ProxyCache {
                 let _ = tokio::fs::write(&path, content_clone).await;
             });
             
-            disk_path = Some(self.write_to_disk(&key, &content));
+            disk_path = Some(self.disk_path.join(Self::key_to_filename(&key)));
         }
 
         let checksum = CacheEntryInner::compute_checksum(&content);
@@ -287,24 +386,21 @@ impl ProxyCache {
             checksum,
         };
 
-        let mut entries = self.entries.write();
-        let mut current_size = self.current_memory_size.write();
+        let mut state = self.state.write();
 
-        if let Some(old) = entries.insert(key.clone(), entry_inner) {
-            *current_size = current_size.saturating_sub(old.size);
+        if let Some(old) = state.entries.insert(key.clone(), entry_inner) {
+            state.current_memory_size = state.current_memory_size.saturating_sub(old.size);
         }
 
         if !should_store_disk {
-            *current_size = current_size.saturating_add(size);
+            state.current_memory_size = state.current_memory_size.saturating_add(size);
         }
 
-        drop(entries);
-        drop(current_size);
-
-        let mut access_order = self.access_order.write();
-        if !access_order.contains(&key) {
-            access_order.push_back(key);
+        if !state.access_order.contains(&key) {
+            state.access_order.push_back(key);
         }
+
+        drop(state);
 
         self.evict_if_needed();
 
@@ -312,78 +408,69 @@ impl ProxyCache {
     }
 
     pub fn invalidate(&self, key: &CacheKey) {
-        let mut entries = self.entries.write();
+        let mut state = self.state.write();
 
-        if let Some(entry) = entries.remove(key) {
+        if let Some(entry) = state.entries.remove(key) {
             if entry.on_disk {
                 if let Some(path) = entry.disk_path {
                     let _ = std::fs::remove_file(path);
                 }
             }
 
-            let mut current_size = self.current_memory_size.write();
-            *current_size = current_size.saturating_sub(entry.size);
+            state.current_memory_size = state.current_memory_size.saturating_sub(entry.size);
         }
 
-        drop(entries);
-
-        let mut access_order = self.access_order.write();
-        access_order.retain(|k| k != key);
+        state.access_order.retain(|k| k != key);
     }
 
     pub fn invalidate_by_pattern(&self, pattern: &str) -> usize {
-        let mut entries = self.entries.write();
-        let mut current_size = self.current_memory_size.write();
-        let mut access_order = self.access_order.write();
+        let mut state = self.state.write();
 
-        let to_remove: Vec<CacheKey> = entries
+        let to_remove: Vec<CacheKey> = state.entries
             .keys()
             .filter(|k| k.uri.contains(pattern))
             .cloned()
             .collect();
 
         for key in &to_remove {
-            if let Some(entry) = entries.remove(key) {
+            if let Some(entry) = state.entries.remove(key) {
                 if entry.on_disk {
                     if let Some(path) = entry.disk_path {
                         let _ = std::fs::remove_file(path);
                     }
                 }
-                *current_size = current_size.saturating_sub(entry.size);
+                state.current_memory_size = state.current_memory_size.saturating_sub(entry.size);
             }
-            access_order.retain(|k| k != key);
+            state.access_order.retain(|k| k != key);
         }
 
         to_remove.len()
     }
 
     pub fn invalidate_by_host(&self, host: &str) -> usize {
-        let mut entries = self.entries.write();
-        let mut current_size = self.current_memory_size.write();
-        let mut access_order = self.access_order.write();
+        let mut state = self.state.write();
 
-        let to_remove: Vec<CacheKey> = entries.keys().filter(|k| k.host == host).cloned().collect();
+        let to_remove: Vec<CacheKey> = state.entries.keys().filter(|k| k.host == host).cloned().collect();
 
         for key in &to_remove {
-            if let Some(entry) = entries.remove(key) {
+            if let Some(entry) = state.entries.remove(key) {
                 if entry.on_disk {
                     if let Some(path) = entry.disk_path {
                         let _ = std::fs::remove_file(path);
                     }
                 }
-                *current_size = current_size.saturating_sub(entry.size);
+                state.current_memory_size = state.current_memory_size.saturating_sub(entry.size);
             }
-            access_order.retain(|k| k != key);
+            state.access_order.retain(|k| k != key);
         }
 
         to_remove.len()
     }
 
     pub fn clear(&self) {
-        let mut entries = self.entries.write();
-        let mut current_size = self.current_memory_size.write();
+        let mut state = self.state.write();
 
-        for (_, entry) in entries.drain() {
+        for (_, entry) in state.entries.drain() {
             if entry.on_disk {
                 if let Some(path) = entry.disk_path {
                     let _ = std::fs::remove_file(path);
@@ -391,40 +478,33 @@ impl ProxyCache {
             }
         }
 
-        *current_size = 0;
-
-        drop(entries);
-        drop(current_size);
-
-        let mut access_order = self.access_order.write();
-        access_order.clear();
+        state.current_memory_size = 0;
+        state.access_order.clear();
     }
 
     pub fn stats(&self) -> CacheStats {
-        let entries = self.entries.read();
-        let current_size = self.current_memory_size.read();
+        let state = self.state.read();
 
         let mut hit_count = 0u64;
-        let mut miss_count = 0u64;
 
-        for (_, entry) in entries.iter() {
+        for (_, entry) in state.entries.iter() {
             if entry.entry.is_fresh {
                 hit_count += 1;
             }
         }
 
-        miss_count = (entries.len() as u64).saturating_sub(hit_count);
+        let miss_count = (state.entries.len() as u64).saturating_sub(hit_count);
 
         CacheStats {
-            entries: entries.len(),
-            memory_size: *current_size,
+            entries: state.entries.len(),
+            memory_size: state.current_memory_size,
             disk_size: self.calculate_disk_size(),
             hits: hit_count,
             misses: miss_count,
         }
     }
 
-    fn is_status_cacheable(&self, status: u16) -> bool {
+    pub fn is_status_cacheable(&self, status: u16) -> bool {
         self.settings.valid_status.contains(&status)
     }
 
@@ -447,7 +527,7 @@ impl ProxyCache {
         let parent = path.parent().map(|p| p.to_path_buf());
         let path_clone = path.clone();
 
-        let disk_path = self.disk_path.clone();
+        let _disk_path = self.disk_path.clone();
         
         tokio::spawn(async move {
             if let Some(parent) = parent {
@@ -460,47 +540,31 @@ impl ProxyCache {
     }
 
     fn key_to_filename(key: &CacheKey) -> String {
-        use std::collections::hash_map::DefaultHasher;
+        use ahash::AHasher;
         use std::hash::{Hash, Hasher};
 
-        let mut hasher = DefaultHasher::new();
+        let mut hasher = AHasher::default();
         key.hash(&mut hasher);
         format!("{:x}", hasher.finish())
     }
 
-    fn update_access_order(&self, key: &CacheKey) {
-        let mut access_order = self.access_order.write();
-        access_order.retain(|k| k != key);
-        access_order.push_back(key.clone());
-    }
-
     fn evict_if_needed(&self) {
-        loop {
-            let current_size = self.current_memory_size.read();
-            if *current_size <= self.settings.max_memory_size {
-                break;
-            }
-            drop(current_size);
+        let mut state = self.state.write();
+        
+        while state.current_memory_size > self.settings.max_memory_size {
+            let lru_key = match state.access_order.pop_front() {
+                Some(k) => k,
+                None => break,
+            };
 
-            let mut access_order = self.access_order.write();
-            if let Some(lru_key) = access_order.pop_front() {
-                drop(access_order);
+            if let Some(entry) = state.entries.remove(&lru_key) {
+                state.current_memory_size = state.current_memory_size.saturating_sub(entry.size);
 
-                let mut entries = self.entries.write();
-                if let Some(entry) = entries.remove(&lru_key) {
-                    let mut size_guard = self.current_memory_size.write();
-                    *size_guard = size_guard.saturating_sub(entry.size);
-                    drop(size_guard);
-
-                    if entry.on_disk {
-                        if let Some(path) = entry.disk_path {
-                            let _ = std::fs::remove_file(path);
-                        }
+                if entry.on_disk {
+                    if let Some(path) = entry.disk_path {
+                        let _ = std::fs::remove_file(path);
                     }
                 }
-                drop(entries);
-            } else {
-                break;
             }
         }
     }
@@ -522,14 +586,12 @@ impl ProxyCache {
     }
 
     pub fn cleanup_expired(&self) -> usize {
-        let mut entries = self.entries.write();
-        let mut current_size = self.current_memory_size.write();
-        let mut access_order = self.access_order.write();
+        let mut state = self.state.write();
 
         let now = Instant::now();
         let inactive = self.settings.inactive;
 
-        let to_remove: Vec<CacheKey> = entries
+        let to_remove: Vec<CacheKey> = state.entries
             .iter()
             .filter(|(_, v)| {
                 let age = now.duration_since(v.entry.created_at);
@@ -539,18 +601,45 @@ impl ProxyCache {
             .collect();
 
         for key in &to_remove {
-            if let Some(entry) = entries.remove(key) {
+            if let Some(entry) = state.entries.remove(key) {
                 if entry.on_disk {
                     if let Some(path) = entry.disk_path {
                         let _ = std::fs::remove_file(path);
                     }
                 }
-                *current_size = current_size.saturating_sub(entry.size);
+                state.current_memory_size = state.current_memory_size.saturating_sub(entry.size);
             }
-            access_order.retain(|k| k != key);
+            state.access_order.retain(|k| k != key);
         }
 
         to_remove.len()
+    }
+
+    pub fn record_cache_hit(&self) {
+        self.cache_hits.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn record_cache_miss(&self) {
+        self.cache_misses.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn cache_hits(&self) -> u64 {
+        self.cache_hits.load(Ordering::Relaxed)
+    }
+
+    pub fn cache_misses(&self) -> u64 {
+        self.cache_misses.load(Ordering::Relaxed)
+    }
+
+    pub fn cache_hit_rate(&self) -> f64 {
+        let hits = self.cache_hits.load(Ordering::Relaxed);
+        let misses = self.cache_misses.load(Ordering::Relaxed);
+        let total = hits + misses;
+        if total > 0 {
+            (hits as f64 / total as f64) * 100.0
+        } else {
+            0.0
+        }
     }
 }
 

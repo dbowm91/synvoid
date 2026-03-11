@@ -1,10 +1,12 @@
-use super::trait_def::{BoxedHandler, ProtocolError, ProtocolHandler, WafAction};
+#![allow(unused_variables, dead_code)]
+
+use super::trait_def::{ProtocolError, ProtocolHandler, WafAction};
 use super::types::{ProtocolMetrics, ProtocolRequest, ProtocolResponse, ProtocolType};
 use crate::upstream::pool::{Backend, UpstreamPool};
 use crate::waf::WafCore;
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 const WS_FRAME_HEADER_MIN: usize = 2;
@@ -194,7 +196,14 @@ impl WebSocketHandler {
     }
 
     fn build_frame(opcode: u8, payload: &[u8], fin: bool) -> Vec<u8> {
-        let mut frame = Vec::with_capacity(payload.len() + 14);
+        let header_size = if payload.len() < 126 {
+            2
+        } else if payload.len() < 65536 {
+            4
+        } else {
+            10
+        };
+        let mut frame = Vec::with_capacity(header_size + payload.len());
 
         let first_byte = if fin { opcode | 0x80 } else { opcode };
         frame.push(first_byte);
@@ -284,7 +293,7 @@ impl ProtocolHandler for WebSocketHandler {
                 return Err(ProtocolError::ConnectionClosed);
             }
 
-            let body_str = String::from_utf8_lossy(&frame.payload).to_string();
+            let _body_str = String::from_utf8_lossy(&frame.payload).to_string();
 
             return Ok(ProtocolRequest {
                 client_ip: SocketAddr::from(([0, 0, 0, 0], 0)),
@@ -344,7 +353,7 @@ impl ProtocolHandler for WebSocketHandler {
         Ok(ProtocolResponse::new(200).with_body(data.to_vec()))
     }
 
-    fn apply_waf(&self, request: &mut ProtocolRequest, waf: &Arc<WafCore>) -> WafAction {
+    fn apply_waf(&self, request: &mut ProtocolRequest, _waf: &Arc<WafCore>) -> WafAction {
         tracing::debug!(protocol = "websocket", method = %request.method, "Applying WAF rules");
 
         if Self::is_websocket_frame(&request.body) {
@@ -358,7 +367,7 @@ impl ProtocolHandler for WebSocketHandler {
         WafAction::Allow
     }
 
-    fn select_upstream(&self, request: &ProtocolRequest, pool: &UpstreamPool) -> Option<Backend> {
+    fn select_upstream(&self, _request: &ProtocolRequest, _pool: &UpstreamPool) -> Option<Backend> {
         if let Some(ref upstream_pool) = self.upstream_pool {
             upstream_pool.try_select_backend()
         } else {

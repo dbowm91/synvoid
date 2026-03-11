@@ -23,9 +23,6 @@ pub struct SqlitePersistence {
     conn: Arc<Mutex<Connection>>,
 }
 
-unsafe impl Send for SqlitePersistence {}
-unsafe impl Sync for SqlitePersistence {}
-
 impl SqlitePersistence {
     pub fn new(data_dir: Option<PathBuf>, site_id: Option<String>) -> std::io::Result<Self> {
         let db_path = if let Some(dir) = data_dir {
@@ -35,7 +32,7 @@ impl SqlitePersistence {
             }
             base.join("history.db")
         } else {
-            PathBuf::from("/var/lib/rustwaf/threat_level/history.db")
+            PathBuf::from("/var/lib/maluwaf/threat_level/history.db")
         };
 
         let conn = Connection::open(&db_path).map_err(|e| {
@@ -263,9 +260,6 @@ pub struct SqliteHistory {
     buffer_size: Arc<AtomicUsize>,
 }
 
-unsafe impl Send for SqliteHistory {}
-unsafe impl Sync for SqliteHistory {}
-
 impl SqliteHistory {
     pub fn new(
         data_dir: Option<PathBuf>,
@@ -277,7 +271,7 @@ impl SqliteHistory {
             std::fs::create_dir_all(&base)?;
             base.join("history.db")
         } else {
-            PathBuf::from("/var/lib/rustwaf/threat_level/history.db")
+            PathBuf::from("/var/lib/maluwaf/threat_level/history.db")
         };
 
         let conn = Connection::open(&db_path).map_err(|e| {
@@ -812,7 +806,7 @@ impl SqliteBackup {
             .canonicalize()
             .map_err(|e| std::io::Error::new(e.kind(), format!("Invalid path: {}", e)))?;
 
-        let expected_dir = Path::new("/var/lib/rustwaf/threat_level/backups");
+        let expected_dir = Path::new("/var/lib/maluwaf/threat_level/backups");
         let expected_dir_canonical = expected_dir.canonicalize().map_err(|e| {
             std::io::Error::new(
                 e.kind(),
@@ -847,7 +841,7 @@ mod tests {
 
     #[test]
     fn test_sqlite_history_basic() {
-        let temp_dir = env::temp_dir().join("rustwaf_test_history");
+        let temp_dir = env::temp_dir().join("maluwaf_test_history");
         std::fs::create_dir_all(&temp_dir).unwrap();
 
         let history =

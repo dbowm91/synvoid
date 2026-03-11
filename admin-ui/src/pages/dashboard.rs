@@ -3,80 +3,183 @@ use yew::prelude::*;
 
 use crate::components::charts::{Gauge, MultiSeriesLineChart, StackedAreaChart};
 use crate::components::realtime_header::RealtimeHeader;
+use crate::hooks::use_websocket::{use_websocket_or_poll, UseWebSocketState};
+use crate::services::ApiService;
+use crate::types::{RealtimeMetrics, SiteStats, SystemStats};
+
+fn format_number(n: u64) -> String {
+    if n >= 1_000_000_000 {
+        format!("{:.1}B", n as f64 / 1_000_000_000.0)
+    } else if n >= 1_000_000 {
+        format!("{:.1}M", n as f64 / 1_000_000.0)
+    } else if n >= 1_000 {
+        format!("{:.1}K", n as f64 / 1_000.0)
+    } else {
+        n.to_string()
+    }
+}
+
+fn format_bytes(n: u64) -> String {
+    const TB: u64 = 1024 * 1024 * 1024 * 1024;
+    const GB: u64 = 1024 * 1024 * 1024;
+    const MB: u64 = 1024 * 1024;
+    const KB: u64 = 1024;
+    
+    if n >= TB {
+        format!("{:.2} TB", n as f64 / TB as f64)
+    } else if n >= GB {
+        format!("{:.2} GB", n as f64 / GB as f64)
+    } else if n >= MB {
+        format!("{:.2} MB", n as f64 / MB as f64)
+    } else if n >= KB {
+        format!("{:.2} KB", n as f64 / KB as f64)
+    } else {
+        format!("{} B", n)
+    }
+}
+
+fn format_rate(n: u64) -> String {
+    const GBPS: u64 = 1024 * 1024 * 1024;
+    const MBPS: u64 = 1024 * 1024;
+    const KBPS: u64 = 1024;
+    
+    if n >= GBPS {
+        format!("{:.2} GB/s", n as f64 / GBPS as f64)
+    } else if n >= MBPS {
+        format!("{:.2} MB/s", n as f64 / MBPS as f64)
+    } else if n >= KBPS {
+        format!("{:.2} KB/s", n as f64 / KBPS as f64)
+    } else {
+        format!("{} B/s", n)
+    }
+}
+
+fn format_uptime(secs: u64) -> String {
+    let days = secs / 86400;
+    let hours = (secs % 86400) / 3600;
+    let minutes = (secs % 3600) / 60;
+    if days > 0 {
+        format!("{}d {}h", days, hours)
+    } else if hours > 0 {
+        format!("{}h {}m", hours, minutes)
+    } else {
+        format!("{}m", minutes)
+    }
+}
+
+fn window_to_seconds(window: &str) -> u64 {
+    match window {
+        "1m" => 60,
+        "5m" => 300,
+        "15m" => 900,
+        "1h" => 3600,
+        _ => 300,
+    }
+}
 
 #[function_component]
 pub fn Dashboard() -> Html {
     let selected_window = use_state(|| "5m".to_string());
+    let stats = use_state(|| None::<SystemStats>);
+    let sites = use_state(|| Vec::<SiteStats>::new());
+    let history = use_state(|| Vec::<RealtimeMetrics>::new());
+    let historical_data = use_state(|| None::<Vec<RealtimeMetrics>>);
+    let cache_stats = use_state(|| None::<crate::types::CacheStats>);
+    let bandwidth = use_state(|| None::<crate::types::BandwidthPayload>);
+    
+    let (ws_state, _) = use_websocket_or_poll::<RealtimeMetrics>(
+        "ws://localhost:8081/api/ws/metrics",
+        "/api/stats/summary",
+        5000,
+    );
+    
+    {
+        let selected_window = selected_window.clone();
+        let historical_data = historical_data.clone();
+        use_effect_with(selected_window.clone(), move |window| {
+            let historical_data = historical_data.clone();
+            let window = (*window).clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                let api = ApiService::new();
+                let seconds = window_to_seconds(&window);
+                match api.get_stats_history(Some(seconds)).await {
+                    Ok(data) => historical_data.set(Some(data)),
+                    Err(e) => tracing::error!("Failed to fetch history: {}", e),
+                }
+            });
+            || {}
+        });
+    }
+    
+    if let UseWebSocketState::Connected(metrics) = &ws_state {
+        let mut new_history = (*history).clone();
+        new_history.push(metrics.clone());
+        if new_history.len() > 60 {
+            new_history.remove(0);
+        }
+        history.set(new_history);
+    }
 
-    let request_data = {
+    {
+        let stats = stats.clone();
+        let sites = sites.clone();
+        let cache_stats = cache_stats.clone();
+        let bandwidth = bandwidth.clone();
+        use_effect_with((), move |_| {
+            let stats = stats.clone();
+            let sites = sites.clone();
+            let cache_stats = cache_stats.clone();
+            let bandwidth = bandwidth.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                let api = ApiService::new();
+                match api.get_stats_summary().await {
+                    Ok(s) => stats.set(Some(s)),
+                    Err(e) => tracing::error!("Failed to fetch stats: {}", e),
+                }
+                match api.get_stats_sites().await {
+                    Ok(s) => sites.set(s),
+                    Err(e) => tracing::error!("Failed to fetch sites: {}", e),
+                }
+                match api.get_cache_stats().await {
+                    Ok(c) => cache_stats.set(Some(c)),
+                    Err(e) => tracing::error!("Failed to fetch cache stats: {}", e),
+                }
+                match api.get_bandwidth().await {
+                    Ok(b) => bandwidth.set(Some(b)),
+                    Err(e) => tracing::error!("Failed to fetch bandwidth: {}", e),
+                }
+            });
+            Box::new(|| {})
+        });
+    }
+
+    let request_data: HashMap<String, Vec<f64>> = {
+        let hist = (*historical_data).clone();
+        let h = (*history).clone();
+        
+        let data_to_use = hist.unwrap_or(h);
+        
         let mut map = HashMap::new();
-        map.insert(
-            "Requests".to_string(),
-            vec![
-                120.0, 135.0, 142.0, 128.0, 155.0, 168.0, 172.0, 165.0, 158.0, 175.0, 182.0, 178.0,
-            ],
-        );
-        map.insert(
-            "Blocked".to_string(),
-            vec![
-                5.0, 8.0, 6.0, 12.0, 9.0, 7.0, 11.0, 8.0, 10.0, 14.0, 12.0, 9.0,
-            ],
-        );
+        let requests: Vec<f64> = data_to_use.iter().map(|m| m.requests_per_second).collect();
+        let blocked: Vec<f64> = data_to_use.iter().map(|m| m.blocked_per_second).collect();
+        map.insert("Requests".to_string(), if requests.is_empty() { vec![0.0; 12] } else { requests });
+        map.insert("Blocked".to_string(), if blocked.is_empty() { vec![0.0; 12] } else { blocked });
         map
     };
 
     let blocking_data = {
         let mut map = HashMap::new();
-        map.insert(
-            "SQLi".to_string(),
-            vec![2.0, 3.0, 1.0, 4.0, 2.0, 3.0, 5.0, 2.0, 3.0, 4.0, 2.0, 3.0],
-        );
-        map.insert(
-            "XSS".to_string(),
-            vec![1.0, 2.0, 3.0, 1.0, 2.0, 1.0, 2.0, 3.0, 1.0, 2.0, 3.0, 1.0],
-        );
-        map.insert(
-            "Rate Limit".to_string(),
-            vec![
-                5.0, 8.0, 6.0, 12.0, 9.0, 7.0, 11.0, 8.0, 10.0, 14.0, 12.0, 9.0,
-            ],
-        );
-        map.insert(
-            "Bots".to_string(),
-            vec![3.0, 2.0, 4.0, 3.0, 2.0, 4.0, 3.0, 2.0, 4.0, 3.0, 2.0, 4.0],
-        );
-        map.insert(
-            "Path Traversal".to_string(),
-            vec![1.0, 1.0, 2.0, 1.0, 1.0, 2.0, 1.0, 1.0, 2.0, 1.0, 1.0, 2.0],
-        );
+        map.insert("SQLi".to_string(), vec![2.0, 3.0, 1.0, 4.0, 2.0, 3.0, 5.0, 2.0, 3.0, 4.0, 2.0, 3.0]);
+        map.insert("XSS".to_string(), vec![1.0, 2.0, 3.0, 1.0, 2.0, 1.0, 2.0, 3.0, 1.0, 2.0, 3.0, 1.0]);
+        map.insert("Rate Limit".to_string(), vec![5.0, 8.0, 6.0, 12.0, 9.0, 7.0, 11.0, 8.0, 10.0, 14.0, 12.0, 9.0]);
+        map.insert("Bots".to_string(), vec![3.0, 2.0, 4.0, 3.0, 2.0, 4.0, 3.0, 2.0, 4.0, 3.0, 2.0, 4.0]);
         map
     };
 
-    let threat_data = {
-        let mut map = HashMap::new();
-        map.insert(
-            "Threat Score".to_string(),
-            vec![
-                15.0, 18.0, 22.0, 19.0, 25.0, 28.0, 24.0, 21.0, 19.0, 23.0, 20.0, 18.0,
-            ],
-        );
-        map
-    };
-
-    let labels = vec![
-        "1m".to_string(),
-        "2m".to_string(),
-        "3m".to_string(),
-        "4m".to_string(),
-        "5m".to_string(),
-        "6m".to_string(),
-        "7m".to_string(),
-        "8m".to_string(),
-        "9m".to_string(),
-        "10m".to_string(),
-        "11m".to_string(),
-        "12m".to_string(),
-    ];
+    let labels: Vec<String> = (1..=12).map(|i| format!("{}m", i)).collect();
+    let current = stats.as_ref();
+    let cpu = current.map(|s| s.cpu_usage_percent as f64).unwrap_or(0.0);
+    let mem_pct = current.map(|s| (s.memory_used_mb as f64 / s.memory_total_mb as f64) * 100.0).unwrap_or(0.0);
 
     let on_window_change = {
         let selected_window = selected_window.clone();
@@ -104,7 +207,7 @@ pub fn Dashboard() -> Html {
                 <div class="bg-secondary rounded-lg p-6 border border-default">
                     <h3 class="text-lg font-semibold mb-4">{ "Request Traffic" }</h3>
                     <MultiSeriesLineChart
-                        data_series={request_data}
+                        data_series={request_data.clone()}
                         labels={labels.clone()}
                         height="280px"
                         show_legend={true}
@@ -115,7 +218,7 @@ pub fn Dashboard() -> Html {
                 <div class="bg-secondary rounded-lg p-6 border border-default">
                     <h3 class="text-lg font-semibold mb-4">{ "Blocking by Type" }</h3>
                     <StackedAreaChart
-                        data_series={blocking_data}
+                        data_series={blocking_data.clone()}
                         labels={labels.clone()}
                         height="280px"
                         time_window={Some((*selected_window).clone())}
@@ -125,30 +228,76 @@ pub fn Dashboard() -> Html {
 
             <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
                 <div class="bg-secondary rounded-lg p-6 border border-default">
-                    <h3 class="text-lg font-semibold mb-4">{ "Threat Level History" }</h3>
-                    <MultiSeriesLineChart
-                        data_series={threat_data}
-                        labels={labels.clone()}
-                        height="200px"
-                        show_legend={false}
-                    />
+                    <h3 class="text-lg font-semibold mb-4">{ "Latency (ms)" }</h3>
+                    <div class="space-y-3">
+                        <StatRow label="Avg" value={format!("{:.1}", current.map(|s| s.avg_latency_ms).unwrap_or(0.0))} />
+                        <StatRow label="p50" value={format!("{:.1}", current.map(|s| s.p50_latency_ms).unwrap_or(0.0))} />
+                        <StatRow label="p95" value={format!("{:.1}", current.map(|s| s.p95_latency_ms).unwrap_or(0.0))} />
+                        <StatRow label="p99" value={format!("{:.1}", current.map(|s| s.p99_latency_ms).unwrap_or(0.0))} />
+                    </div>
                 </div>
 
                 <div class="bg-secondary rounded-lg p-6 border border-default">
                     <h3 class="text-lg font-semibold mb-4">{ "System Resources" }</h3>
                     <div class="flex justify-around">
-                        <Gauge value={45.0} max={100.0} label="CPU" unit="%" />
-                        <Gauge value={62.0} max={100.0} label="Memory" unit="%" />
+                        <Gauge value={cpu} max={100.0} label="CPU" unit="%" />
+                        <Gauge value={mem_pct} max={100.0} label="Memory" unit="%" />
+                    </div>
+                    <div class="mt-4 text-sm text-secondary">
+                        <div class="flex justify-between">
+                            <span>{ "Memory:" }</span>
+                            <span>{ format!("{}/{} MB", current.map(|s| s.memory_used_mb).unwrap_or(0), current.map(|s| s.memory_total_mb).unwrap_or(0)) }</span>
+                        </div>
                     </div>
                 </div>
 
                 <div class="bg-secondary rounded-lg p-6 border border-default">
                     <h3 class="text-lg font-semibold mb-4">{ "Quick Stats" }</h3>
                     <div class="space-y-3">
-                        <StatRow label="Total Requests" value="1.2M" />
-                        <StatRow label="Blocked" value="12.4K" />
-                        <StatRow label="Unique IPs" value="8.2K" />
-                        <StatRow label="Uptime" value="14d 6h" />
+                        <StatRow label="Total Requests" value={format_number(current.map(|s| s.total_requests).unwrap_or(0))} />
+                        <StatRow label="Blocked" value={format_number(current.map(|s| s.blocked_total).unwrap_or(0))} />
+                        <StatRow label="Active Connections" value={current.map(|s| s.active_connections.to_string()).unwrap_or_else(|| "0".to_string())} />
+                        <StatRow label="Uptime" value={format_uptime(current.map(|s| s.uptime_secs).unwrap_or(0))} />
+                    </div>
+                </div>
+
+                <div class="bg-secondary rounded-lg p-6 border border-default">
+                    <h3 class="text-lg font-semibold mb-4">{ "Cache Performance" }</h3>
+                    <div class="space-y-3">
+                        <StatRow label="Proxy Cache Hits" value={format_number(cache_stats.as_ref().map(|c| c.proxy_cache_hits).unwrap_or(0))} />
+                        <StatRow label="Proxy Cache Misses" value={format_number(cache_stats.as_ref().map(|c| c.proxy_cache_misses).unwrap_or(0))} />
+                        <div class="flex justify-between items-center py-2 border-b border-default">
+                            <span class="text-secondary text-sm">{ "Proxy Cache Hit Rate" }</span>
+                            <span class={if cache_stats.as_ref().map(|c| c.proxy_cache_hit_rate).unwrap_or(0.0) > 70.0 { "text-green-500 font-medium" } else if cache_stats.as_ref().map(|c| c.proxy_cache_hit_rate).unwrap_or(0.0) > 40.0 { "text-yellow-500 font-medium" } else { "text-red-500 font-medium" }}>
+                                { format!("{:.1}%", cache_stats.as_ref().map(|c| c.proxy_cache_hit_rate).unwrap_or(0.0)) }
+                            </span>
+                        </div>
+                        <StatRow label="Static Cache Hits" value={format_number(cache_stats.as_ref().map(|c| c.static_cache_hits).unwrap_or(0))} />
+                        <StatRow label="Static Cache Misses" value={format_number(cache_stats.as_ref().map(|c| c.static_cache_misses).unwrap_or(0))} />
+                        <div class="flex justify-between items-center py-2 border-b border-default">
+                            <span class="text-secondary text-sm">{ "Static Cache Hit Rate" }</span>
+                            <span class={if cache_stats.as_ref().map(|c| c.static_cache_hit_rate).unwrap_or(0.0) > 70.0 { "text-green-500 font-medium" } else if cache_stats.as_ref().map(|c| c.static_cache_hit_rate).unwrap_or(0.0) > 40.0 { "text-yellow-500 font-medium" } else { "text-red-500 font-medium" }}>
+                                { format!("{:.1}%", cache_stats.as_ref().map(|c| c.static_cache_hit_rate).unwrap_or(0.0)) }
+                            </span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="bg-secondary rounded-lg p-6 border border-default">
+                    <h3 class="text-lg font-semibold mb-4">{ "Bandwidth Usage" }</h3>
+                    <div class="space-y-3">
+                        <StatRow label="Current Ingress" value={format_rate(bandwidth.as_ref().map(|b| b.ingress_rate_bps).unwrap_or(0))} />
+                        <StatRow label="Current Egress" value={format_rate(bandwidth.as_ref().map(|b| b.egress_rate_bps).unwrap_or(0))} />
+                        <div class="border-t border-default my-2"></div>
+                        <div class="text-sm text-secondary mb-1">{ "This Month" }</div>
+                        <StatRow label="Ingress" value={format_bytes(bandwidth.as_ref().map(|b| b.monthly_bytes_received).unwrap_or(0))} />
+                        <StatRow label="Egress" value={format_bytes(bandwidth.as_ref().map(|b| b.monthly_bytes_sent).unwrap_or(0))} />
+                        <div class="flex justify-between items-center py-2">
+                            <span class="text-secondary text-sm">{ "Period" }</span>
+                            <span class="text-primary text-sm">
+                                { format!("{} days remaining", bandwidth.as_ref().map(|b| b.monthly_period.days_remaining).unwrap_or(0)) }
+                            </span>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -157,40 +306,42 @@ pub fn Dashboard() -> Html {
                 <div class="bg-secondary rounded-lg p-6 border border-default">
                     <h3 class="text-lg font-semibold mb-4">{ "Sites Status" }</h3>
                     <div class="space-y-3">
-                        <SiteStatusItem domain="example.com" healthy=true requests="45K" blocked="234" />
-                        <SiteStatusItem domain="api.example.com" healthy=true requests="28K" blocked="156" />
-                        <SiteStatusItem domain="admin.example.com" healthy=false requests="1.2K" blocked="89" />
-                        <SiteStatusItem domain="blog.example.com" healthy=true requests="15K" blocked="45" />
+                        if sites.is_empty() {
+                            <div class="text-secondary text-sm">{ "No sites configured" }</div>
+                        } else {
+                            { for sites.iter().map(|site| {
+                                html! {
+                                    <SiteStatusItem 
+                                        domain={site.domains.first().unwrap_or(&site.site_id).clone()}
+                                        healthy={site.upstream_healthy}
+                                        requests={format_number((site.requests_per_second * 60.0) as u64)}
+                                        blocked={format_number(site.blocked_requests)}
+                                    />
+                                }
+                            })}
+                        }
                     </div>
                 </div>
 
                 <div class="bg-secondary rounded-lg p-6 border border-default">
-                    <h3 class="text-lg font-semibold mb-4">{ "Recent Events" }</h3>
-                    <div class="space-y-2">
-                        <EventItem
-                            time="2 min ago"
-                            event="Rate limit triggered"
-                            site="api.example.com"
-                            level="warning"
-                        />
-                        <EventItem
-                            time="5 min ago"
-                            event="SQL injection attempt blocked"
-                            site="example.com"
-                            level="danger"
-                        />
-                        <EventItem
-                            time="12 min ago"
-                            event="Config reloaded"
-                            site="system"
-                            level="info"
-                        />
-                        <EventItem
-                            time="15 min ago"
-                            event="XSS attempt blocked"
-                            site="blog.example.com"
-                            level="danger"
-                        />
+                    <h3 class="text-lg font-semibold mb-4">{ "Backend Health" }</h3>
+                    <div class="space-y-3">
+                        <div class="flex justify-between items-center py-2 border-b border-default">
+                            <span class="text-secondary text-sm">{ "Healthy Backends" }</span>
+                            <span class="text-green-500 font-medium">{ current.map(|s| s.healthy_backends.to_string()).unwrap_or_else(|| "0".to_string()) }</span>
+                        </div>
+                        <div class="flex justify-between items-center py-2 border-b border-default">
+                            <span class="text-secondary text-sm">{ "Unhealthy Backends" }</span>
+                            <span class="text-red-500 font-medium">{ current.map(|s| s.unhealthy_backends.to_string()).unwrap_or_else(|| "0".to_string()) }</span>
+                        </div>
+                        <div class="flex justify-between items-center py-2 border-b border-default">
+                            <span class="text-secondary text-sm">{ "Sites Loaded" }</span>
+                            <span class="text-primary font-medium">{ current.map(|s| s.sites_loaded.to_string()).unwrap_or_else(|| "0".to_string()) }</span>
+                        </div>
+                        <div class="flex justify-between items-center py-2 border-b border-default">
+                            <span class="text-secondary text-sm">{ "Peak Concurrent" }</span>
+                            <span class="text-primary font-medium">{ current.map(|s| s.peak_concurrent.to_string()).unwrap_or_else(|| "0".to_string()) }</span>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -275,35 +426,6 @@ fn SiteStatusItem(props: &SiteStatusItemProps) -> Html {
                 <span class="text-secondary">{ format!("{} req", props.requests) }</span>
                 <span class="text-red-500">{ format!("{} blocked", props.blocked) }</span>
                 <span class="text-secondary text-xs">{ status_text }</span>
-            </div>
-        </div>
-    }
-}
-
-#[derive(Properties, PartialEq)]
-struct EventItemProps {
-    time: String,
-    event: String,
-    site: String,
-    level: String,
-}
-
-#[function_component]
-fn EventItem(props: &EventItemProps) -> Html {
-    let level_class = match props.level.as_str() {
-        "danger" => "text-red-500",
-        "warning" => "text-yellow-500",
-        _ => "text-blue-500",
-    };
-
-    html! {
-        <div class="flex items-start gap-3 py-2 border-b border-default last:border-b-0">
-            <span class={format!("w-2 h-2 rounded-full mt-1.5 {}", level_class)} />
-            <div class="flex-1">
-                <p class="text-primary">{ &props.event }</p>
-                <p class="text-xs text-secondary">
-                    { &props.site } { " - " } { &props.time }
-                </p>
             </div>
         </div>
     }

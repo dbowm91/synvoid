@@ -1,0 +1,25 @@
+pub mod mode;
+pub mod state;
+pub mod health;
+pub mod upgrade;
+pub mod rollback;
+pub mod cli;
+pub mod checksum;
+pub mod process;
+pub mod connection_tracker;
+pub mod drain_manager;
+pub mod socket_handoff;
+pub mod preflight;
+
+pub use mode::{UpgradeMode, detect_upgrade_mode, probe_reuseport_support};
+pub use state::{UpgradeState, OverseerState, Persistence};
+pub use health::{HealthChecker, HealthStatus, EnhancedHealthConfig, EnhancedHealthResult, BaselineComparison, ShadowTrafficResult};
+pub use upgrade::{Orchestrator, AutoRollbackConfig};
+pub use rollback::RollbackManager;
+pub use cli::{OverseerArgs, run_overseer_command, UpgradeCommand};
+pub use process::{OverseerProcess, OverseerConfig, run_overseer_process};
+pub use connection_tracker::{ConnectionTracker, WorkerConnections};
+pub use drain_manager::{DrainManager, DrainProtocol};
+pub use socket_handoff::{SocketHandoffServer, SocketHandoffClient, DualMasterHandoff, SocketHandoffError};
+pub use preflight::{PreflightValidator, PreflightConfig, PreflightResult, PreflightError};
+pub use crate::drain::{DrainStatus, WorkerConnectionInfo, WorkerDrainState};

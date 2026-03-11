@@ -1,6 +1,6 @@
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use super::FloodDecision;
 use crate::utils::ip_to_slot;
@@ -54,14 +54,14 @@ impl ConnectionLimiter {
         let active = self.active_connections.fetch_add(1, Ordering::Acquire);
         if active >= self.max_connections {
             self.active_connections.fetch_sub(1, Ordering::Release);
-            metrics::counter!("rustwaf.connection_limiter.max_reached").increment(1);
+            metrics::counter!("maluwaf.connection_limiter.max_reached").increment(1);
             return FloodDecision::RateLimited;
         }
 
         let global = self.global_second.load(Ordering::Relaxed);
         if global > self.global_rate as u64 {
             self.active_connections.fetch_sub(1, Ordering::Release);
-            metrics::counter!("rustwaf.connection_limiter.global_limited").increment(1);
+            metrics::counter!("maluwaf.connection_limiter.global_limited").increment(1);
             return FloodDecision::RateLimited;
         }
 
@@ -70,7 +70,7 @@ impl ConnectionLimiter {
         if ip_count > self.per_ip_rate {
             self.per_ip_second[slot].fetch_sub(1, Ordering::Relaxed);
             self.active_connections.fetch_sub(1, Ordering::Release);
-            metrics::counter!("rustwaf.connection_limiter.ip_limited").increment(1);
+            metrics::counter!("maluwaf.connection_limiter.ip_limited").increment(1);
             return FloodDecision::RateLimited;
         }
 
@@ -79,7 +79,7 @@ impl ConnectionLimiter {
         self.per_ip_minute[slot].fetch_add(1, Ordering::Relaxed);
 
         let active = self.active_connections.load(Ordering::Relaxed);
-        metrics::gauge!("rustwaf.connection_limiter.active").set(active as f64);
+        metrics::gauge!("maluwaf.connection_limiter.active").set(active as f64);
 
         FloodDecision::Allowed
     }
@@ -102,7 +102,7 @@ impl ConnectionLimiter {
 
     pub fn release_connection(&self) {
         let active = self.active_connections.fetch_sub(1, Ordering::Relaxed);
-        metrics::gauge!("rustwaf.connection_limiter.active").set(active.saturating_sub(1) as f64);
+        metrics::gauge!("maluwaf.connection_limiter.active").set(active.saturating_sub(1) as f64);
     }
 
     fn ip_to_slot(&self, ip: IpAddr) -> usize {
@@ -169,7 +169,7 @@ mod tests {
 
     #[test]
     fn test_connection_rate_limiting() {
-        let limiter = ConnectionLimiter::new(5, 1000);
+        let limiter = ConnectionLimiter::new(5, 1000).with_max_connections(5);
         let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1));
 
         for _ in 0..5 {

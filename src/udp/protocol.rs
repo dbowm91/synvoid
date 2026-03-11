@@ -1,3 +1,5 @@
+use crate::protocol::detect_common::{looks_like_dns, ProtocolDetectionResult};
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UdpProtocol {
     Dns,
@@ -59,12 +61,17 @@ impl UdpProtocol {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct UdpProtocolResult {
-    pub protocol: UdpProtocol,
-    pub confidence: f32,
-    pub matched_pattern: String,
+impl crate::filter::Protocol for UdpProtocol {
+    fn as_str(&self) -> &str {
+        UdpProtocol::as_str(self)
+    }
+
+    fn from_str(s: &str) -> Self {
+        UdpProtocol::from_str(s)
+    }
 }
+
+pub type UdpProtocolResult = ProtocolDetectionResult<UdpProtocol>;
 
 pub struct UdpProtocolDetector {
     min_packet_size: usize,
@@ -126,7 +133,7 @@ impl UdpProtocolDetector {
             return UdpProtocol::Stun;
         }
 
-        if self.looks_like_dns(data) {
+        if looks_like_dns(data) {
             return UdpProtocol::Dns;
         }
 
@@ -169,52 +176,8 @@ impl UdpProtocolDetector {
         UdpProtocol::Unknown
     }
 
-    fn looks_like_dns(&self, data: &[u8]) -> bool {
-        if data.len() < 12 {
-            return false;
-        }
-
-        let flags = u16::from_be_bytes([data[2], data[3]]);
-        let qr = (flags >> 15) & 1;
-        let opcode = (flags >> 11) & 0xF;
-        let z = (flags >> 4) & 0x7;
-
-        if opcode > 2 {
-            return false;
-        }
-
-        if z != 0 {
-            return false;
-        }
-
-        let qdcount = u16::from_be_bytes([data[4], data[5]]);
-        let ancount = u16::from_be_bytes([data[6], data[7]]);
-        let nscount = u16::from_be_bytes([data[8], data[9]]);
-        let arcount = u16::from_be_bytes([data[10], data[11]]);
-
-        if qr == 0 {
-            if qdcount == 0 || qdcount > 100 {
-                return false;
-            }
-            if ancount != 0 || nscount != 0 {
-                return false;
-            }
-        } else {
-            if ancount == 0 && qdcount == 0 {
-                return false;
-            }
-        }
-
-        if data.len() > 12 {
-            if !self.has_valid_dns_question(data, qr == 0) {
-                return false;
-            }
-        }
-
-        true
-    }
-
-    fn has_valid_dns_question(&self, data: &[u8], is_query: bool) -> bool {
+    #[allow(dead_code)]
+    fn has_valid_dns_question(&self, data: &[u8], _is_query: bool) -> bool {
         let mut pos = 12;
         let max_pos = data.len();
 
@@ -304,7 +267,7 @@ impl UdpProtocolDetector {
         }
 
         let first_byte = data[0];
-        let li = (first_byte >> 6) & 0x3;
+        let _li = (first_byte >> 6) & 0x3;
         let vn = (first_byte >> 3) & 0x7;
         let mode = first_byte & 0x7;
 
@@ -398,13 +361,14 @@ impl UdpProtocolDetector {
         false
     }
 
+    #[allow(dead_code)]
     fn looks_like_mdns(&self, data: &[u8]) -> bool {
         if data.len() < 12 {
             return false;
         }
 
         let flags = u16::from_be_bytes([data[2], data[3]]);
-        let qr = (flags >> 15) & 1;
+        let _qr = (flags >> 15) & 1;
 
         let qdcount = u16::from_be_bytes([data[4], data[5]]);
         let ancount = u16::from_be_bytes([data[6], data[7]]);
@@ -476,7 +440,7 @@ impl UdpProtocolDetector {
             return false;
         }
 
-        let seq = u16::from_be_bytes([data[2], data[3]]);
+        let _seq = u16::from_be_bytes([data[2], data[3]]);
         let ssrc = u32::from_be_bytes([data[8], data[9], data[10], data[11]]);
 
         if ssrc == 0 {
@@ -570,7 +534,7 @@ impl UdpProtocolDetector {
         if data[0] == 0x38 || data[0] == 0x40 {
             if data.len() >= 14 {
                 let opcode = data[0] >> 3;
-                let key_id = data[0] & 0x07;
+                let _key_id = data[0] & 0x07;
 
                 if opcode >= 1 && opcode <= 10 {
                     if data[1] == 0x00 || data[1] == 0x01 {
@@ -598,7 +562,7 @@ impl UdpProtocolDetector {
             return false;
         }
 
-        let epoch = u16::from_be_bytes([data[3], data[4]]);
+        let _epoch = u16::from_be_bytes([data[3], data[4]]);
 
         true
     }

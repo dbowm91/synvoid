@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::net::IpAddr;
-use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use parking_lot::RwLock;
@@ -77,7 +77,7 @@ impl ConnectionLimiter {
         }
 
         if can_burst > 0 {
-            let mut burst_tokens = self.ip_burst_tokens.write();
+            let burst_tokens = self.ip_burst_tokens.write();
             if let Some(tokens) = burst_tokens.get(&client_ip) {
                 tokens.fetch_sub(1, Ordering::Release);
             }

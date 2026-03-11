@@ -7,11 +7,15 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
 use super::super::state::AdminState;
-use super::super::auth::{require_auth, OptionalAuth};
-use crate::waf::ThreatLevelManager;
-use crate::waf::threat_level::{BackupInfo, SqliteBackup};
+use crate::waf::ThreatHistorySample;
+use crate::waf::threat_level::SqliteBackup;
 
-#[derive(Debug, Serialize, Deserialize)]
+use super::common::{StatusResponse, require_auth, OptionalAuth};
+
+const DEFAULT_THREAT_LEVEL_DB_PATH: &str = "/var/lib/maluwaf/threat_level/history.db";
+const DEFAULT_THREAT_LEVEL_BACKUP_DIR: &str = "/var/lib/maluwaf/threat_level/backups";
+
+#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ThreatLevelStatusResponse {
     pub level: u8,
     pub score: f64,
@@ -29,7 +33,7 @@ pub struct ThreatLevelStatusResponse {
     pub blocked: u32,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ThreatLevelHistoryResponse {
     pub minute: Vec<HistorySample>,
     pub hour: Vec<HistorySample>,
@@ -38,7 +42,7 @@ pub struct ThreatLevelHistoryResponse {
     pub month: Vec<HistorySample>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct HistorySample {
     pub timestamp: i64,
     pub level: u8,
@@ -49,12 +53,12 @@ pub struct HistorySample {
     pub blocked: u32,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct BaselineStatsResponse {
     pub baselines: Vec<BaselineMetric>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct BaselineMetric {
     pub metric_name: String,
     pub mean: f64,
@@ -65,11 +69,23 @@ pub struct BaselineMetric {
     pub computed_at: i64,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct SetLevelRequest {
     pub level: u8,
 }
 
+#[utoipa::path(
+    get,
+    path = "/threat-level/status",
+    tag = "Threat Level",
+    responses(
+        (status = 200, description = "Threat level status"),
+        (status = 401, description = "Unauthorized")
+    ),
+    security(
+        ("bearerAuth" = [])
+    )
+)]
 pub async fn get_status(
     State(state): State<Arc<AdminState>>,
     auth: OptionalAuth,
@@ -78,13 +94,18 @@ pub async fn get_status(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    let threat_level = match &state.threat_level_manager {
-        Some(tl) => tl,
-        None => return Err(StatusCode::NOT_FOUND),
-    };
+    let threat_level = state.threat_level_manager().ok_or(StatusCode::NOT_FOUND)?.clone();
 
-    let status = threat_level.get_status();
-    let metrics = threat_level.get_metrics();
+    let (status, metrics) = tokio::task::spawn_blocking(move || {
+        let status = threat_level.get_status();
+        let metrics = threat_level.get_metrics();
+        (status, metrics)
+    })
+    .await
+    .map_err(|e| {
+        tracing::error!("Failed to get status (task join): {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     Ok(Json(ThreatLevelStatusResponse {
         level: status.level,
@@ -104,6 +125,18 @@ pub async fn get_status(
     }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/threat-level/history",
+    tag = "Threat Level",
+    responses(
+        (status = 200, description = "Threat level history"),
+        (status = 401, description = "Unauthorized")
+    ),
+    security(
+        ("bearerAuth" = [])
+    )
+)]
 pub async fn get_history(
     State(state): State<Arc<AdminState>>,
     auth: OptionalAuth,
@@ -112,62 +145,49 @@ pub async fn get_history(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    let threat_level = match &state.threat_level_manager {
-        Some(tl) => tl,
-        None => return Err(StatusCode::NOT_FOUND),
+    let threat_level = state.threat_level_manager().ok_or(StatusCode::NOT_FOUND)?.clone();
+
+    let history = tokio::task::spawn_blocking(move || {
+        threat_level.get_history()
+    })
+    .await
+    .map_err(|e| {
+        tracing::error!("Failed to get history (task join): {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    let map_sample = |s: ThreatHistorySample| HistorySample {
+        timestamp: s.timestamp,
+        level: s.level,
+        score: s.score,
+        requests_per_minute: s.requests_per_minute,
+        attacks_per_minute: s.attacks_per_minute,
+        rate_limit_hits: s.rate_limit_hits,
+        blocked: s.blocked,
     };
 
-    let history = threat_level.get_history();
-
     Ok(Json(ThreatLevelHistoryResponse {
-        minute: history.minute.iter().map(|s| HistorySample {
-            timestamp: s.timestamp,
-            level: s.level,
-            score: s.score,
-            requests_per_minute: s.requests_per_minute,
-            attacks_per_minute: s.attacks_per_minute,
-            rate_limit_hits: s.rate_limit_hits,
-            blocked: s.blocked,
-        }).collect(),
-        hour: history.hour.iter().map(|s| HistorySample {
-            timestamp: s.timestamp,
-            level: s.level,
-            score: s.score,
-            requests_per_minute: s.requests_per_minute,
-            attacks_per_minute: s.attacks_per_minute,
-            rate_limit_hits: s.rate_limit_hits,
-            blocked: s.blocked,
-        }).collect(),
-        day: history.day.iter().map(|s| HistorySample {
-            timestamp: s.timestamp,
-            level: s.level,
-            score: s.score,
-            requests_per_minute: s.requests_per_minute,
-            attacks_per_minute: s.attacks_per_minute,
-            rate_limit_hits: s.rate_limit_hits,
-            blocked: s.blocked,
-        }).collect(),
-        week: history.week.iter().map(|s| HistorySample {
-            timestamp: s.timestamp,
-            level: s.level,
-            score: s.score,
-            requests_per_minute: s.requests_per_minute,
-            attacks_per_minute: s.attacks_per_minute,
-            rate_limit_hits: s.rate_limit_hits,
-            blocked: s.blocked,
-        }).collect(),
-        month: history.month.iter().map(|s| HistorySample {
-            timestamp: s.timestamp,
-            level: s.level,
-            score: s.score,
-            requests_per_minute: s.requests_per_minute,
-            attacks_per_minute: s.attacks_per_minute,
-            rate_limit_hits: s.rate_limit_hits,
-            blocked: s.blocked,
-        }).collect(),
+        minute: history.minute.into_iter().map(map_sample).collect(),
+        hour: history.hour.into_iter().map(map_sample).collect(),
+        day: history.day.into_iter().map(map_sample).collect(),
+        week: history.week.into_iter().map(map_sample).collect(),
+        month: history.month.into_iter().map(map_sample).collect(),
     }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/threat-level/baseline",
+    tag = "Threat Level",
+    responses(
+        (status = 200, description = "Baseline statistics"),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Threat level manager not available")
+    ),
+    security(
+        ("bearerAuth" = [])
+    )
+)]
 pub async fn get_baseline(
     State(state): State<Arc<AdminState>>,
     auth: OptionalAuth,
@@ -176,16 +196,20 @@ pub async fn get_baseline(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    let threat_level = match &state.threat_level_manager {
-        Some(tl) => tl,
-        None => return Err(StatusCode::NOT_FOUND),
-    };
+    let threat_level = state.threat_level_manager().ok_or(StatusCode::NOT_FOUND)?.clone();
 
-    let baselines = threat_level.get_baselines();
+    let baselines = tokio::task::spawn_blocking(move || {
+        threat_level.get_baselines()
+    })
+    .await
+    .map_err(|e| {
+        tracing::error!("Failed to get baselines (task join): {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     Ok(Json(BaselineStatsResponse {
-        baselines: baselines.iter().map(|b| BaselineMetric {
-            metric_name: b.metric_name.clone(),
+        baselines: baselines.into_iter().map(|b| BaselineMetric {
+            metric_name: b.metric_name,
             mean: b.mean,
             std_dev: b.std_dev,
             min_value: b.min_value,
@@ -196,40 +220,56 @@ pub async fn get_baseline(
     }))
 }
 
+#[utoipa::path(
+    post,
+    path = "/threat-level/baseline/reset",
+    tag = "Threat Level",
+    responses(
+        (status = 200, description = "Baseline reset"),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Threat level manager not available")
+    ),
+    security(
+        ("bearerAuth" = [])
+    )
+)]
 pub async fn reset_baseline(
     State(state): State<Arc<AdminState>>,
     auth: OptionalAuth,
-) -> Result<Json<serde_json::Value>, StatusCode> {
+) -> Result<Json<StatusResponse>, StatusCode> {
     if !require_auth(&auth, &state.admin_token) {
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    let threat_level = match &state.threat_level_manager {
-        Some(tl) => tl,
-        None => return Err(StatusCode::NOT_FOUND),
-    };
+    let threat_level = state.threat_level_manager().ok_or(StatusCode::NOT_FOUND)?;
 
     threat_level.reset_baseline();
 
-    Ok(Json(serde_json::json!({
-        "status": "ok",
-        "message": "Baseline reset and learning restarted"
-    })))
+    Ok(Json(StatusResponse::ok("Baseline reset and learning restarted")))
 }
 
+#[utoipa::path(
+    post,
+    path = "/threat-level/level",
+    tag = "Threat Level",
+    responses(
+        (status = 200, description = "Threat level set"),
+        (status = 401, description = "Unauthorized")
+    ),
+    security(
+        ("bearerAuth" = [])
+    )
+)]
 pub async fn set_level(
     State(state): State<Arc<AdminState>>,
-    Path(level): Path<u8>,
     auth: OptionalAuth,
+    Path(level): Path<u8>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     if !require_auth(&auth, &state.admin_token) {
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    let threat_level = match &state.threat_level_manager {
-        Some(tl) => tl,
-        None => return Err(StatusCode::NOT_FOUND),
-    };
+    let threat_level = state.threat_level_manager().ok_or(StatusCode::NOT_FOUND)?;
 
     let level = level.clamp(1, 5);
     threat_level.set_level(level);
@@ -240,44 +280,63 @@ pub async fn set_level(
     })))
 }
 
+#[utoipa::path(
+    post,
+    path = "/threat-level/auto",
+    tag = "Threat Level",
+    responses(
+        (status = 200, description = "Auto threat level set"),
+        (status = 401, description = "Unauthorized")
+    ),
+    security(
+        ("bearerAuth" = [])
+    )
+)]
 pub async fn set_auto(
     State(state): State<Arc<AdminState>>,
     auth: OptionalAuth,
-) -> Result<Json<serde_json::Value>, StatusCode> {
+) -> Result<Json<StatusResponse>, StatusCode> {
     if !require_auth(&auth, &state.admin_token) {
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    let threat_level = match &state.threat_level_manager {
-        Some(tl) => tl,
-        None => return Err(StatusCode::NOT_FOUND),
-    };
+    let threat_level = state.threat_level_manager().ok_or(StatusCode::NOT_FOUND)?;
 
     threat_level.reset_to_auto();
 
-    Ok(Json(serde_json::json!({
-        "status": "ok",
-        "message": "Threat level set to auto mode"
-    })))
+    Ok(Json(StatusResponse::ok("Threat level set to auto mode")))
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct BackupResponse {
     pub status: String,
-    pub backup: BackupInfo,
+    pub backup: serde_json::Value,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct BackupsListResponse {
-    pub backups: Vec<BackupInfo>,
+    pub backups: Vec<serde_json::Value>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct PruneResponse {
     pub status: String,
-    pub deleted_count: usize,
+    pub deleted_count: u64,
 }
 
+#[utoipa::path(
+    post,
+    path = "/threat-level/backup",
+    tag = "Threat Level",
+    responses(
+        (status = 200, description = "Backup created"),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Threat level manager not available")
+    ),
+    security(
+        ("bearerAuth" = [])
+    )
+)]
 pub async fn create_backup(
     State(state): State<Arc<AdminState>>,
     auth: OptionalAuth,
@@ -286,28 +345,45 @@ pub async fn create_backup(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    let threat_level = match &state.threat_level_manager {
-        Some(tl) => tl,
-        None => return Err(StatusCode::NOT_FOUND),
-    };
+    let _threat_level = state.threat_level_manager().ok_or(StatusCode::NOT_FOUND)?;
 
-    let db_path = PathBuf::from("/var/lib/rustwaf/threat_level/history.db");
-    let backup_dir = PathBuf::from("/var/lib/rustwaf/threat_level/backups");
+    let db_path = PathBuf::from(DEFAULT_THREAT_LEVEL_DB_PATH);
+    let backup_dir = PathBuf::from(DEFAULT_THREAT_LEVEL_BACKUP_DIR);
 
     let site_id = "global".to_string();
 
-    let backup = SqliteBackup::create_backup(&db_path, &backup_dir, &site_id)
-        .map_err(|e| {
-            tracing::error!("Failed to create backup: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+    let backup = tokio::task::spawn_blocking(move || {
+        SqliteBackup::create_backup(&db_path, &backup_dir, &site_id)
+    })
+    .await
+    .map_err(|e| {
+        tracing::error!("Failed to create backup (task join): {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?
+    .map_err(|e| {
+        tracing::error!("Failed to create backup: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     Ok(Json(BackupResponse {
         status: "ok".to_string(),
-        backup,
+        backup: serde_json::to_value(backup).unwrap_or(serde_json::Value::Null),
     }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/threat-level/backups",
+    tag = "Threat Level",
+    responses(
+        (status = 200, description = "List of backups"),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Threat level manager not available")
+    ),
+    security(
+        ("bearerAuth" = [])
+    )
+)]
 pub async fn list_backups(
     State(state): State<Arc<AdminState>>,
     auth: OptionalAuth,
@@ -316,40 +392,81 @@ pub async fn list_backups(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    let backup_dir = PathBuf::from("/var/lib/rustwaf/threat_level/backups");
+    let backup_dir = PathBuf::from("/var/lib/maluwaf/threat_level/backups");
 
-    let backups = SqliteBackup::list_backups(&backup_dir)
-        .unwrap_or_default();
+    let backups = tokio::task::spawn_blocking(move || {
+        SqliteBackup::list_backups(&backup_dir)
+    })
+    .await
+    .map_err(|e| {
+        tracing::error!("Failed to list backups (task join): {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?
+    .unwrap_or_default();
 
-    Ok(Json(BackupsListResponse { backups }))
+    Ok(Json(BackupsListResponse { 
+        backups: backups.into_iter().map(|b| serde_json::to_value(b).unwrap_or(serde_json::Value::Null)).collect() 
+    }))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct DeleteBackupQuery {
     path: String,
 }
 
+#[utoipa::path(
+    delete,
+    path = "/threat-level/backup",
+    tag = "Threat Level",
+    responses(
+        (status = 200, description = "Backup deleted"),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Backup not found")
+    ),
+    security(
+        ("bearerAuth" = [])
+    )
+)]
 pub async fn delete_backup(
     State(state): State<Arc<AdminState>>,
     Query(query): Query<DeleteBackupQuery>,
     auth: OptionalAuth,
-) -> Result<Json<serde_json::Value>, StatusCode> {
+) -> Result<Json<StatusResponse>, StatusCode> {
     if !require_auth(&auth, &state.admin_token) {
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    SqliteBackup::delete_backup(&query.path)
-        .map_err(|e| {
-            tracing::error!("Failed to delete backup: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+    let path = query.path.clone();
 
-    Ok(Json(serde_json::json!({
-        "status": "ok",
-        "message": "Backup deleted"
-    })))
+    tokio::task::spawn_blocking(move || {
+        SqliteBackup::delete_backup(&path)
+    })
+    .await
+    .map_err(|e| {
+        tracing::error!("Failed to delete backup (task join): {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?
+    .map_err(|e| {
+        tracing::error!("Failed to delete backup: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    Ok(Json(StatusResponse::ok("Backup deleted")))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/threat-level/history",
+    tag = "Threat Level",
+    responses(
+        (status = 200, description = "History pruned"),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Threat level manager not available")
+    ),
+    security(
+        ("bearerAuth" = [])
+    )
+)]
 pub async fn prune_history(
     State(state): State<Arc<AdminState>>,
     auth: OptionalAuth,
@@ -358,23 +475,40 @@ pub async fn prune_history(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    let threat_level = match &state.threat_level_manager {
-        Some(tl) => tl,
-        None => return Err(StatusCode::NOT_FOUND),
-    };
+    let threat_level = state.threat_level_manager().ok_or(StatusCode::NOT_FOUND)?.clone();
 
-    let deleted = threat_level.prune_history()
-        .map_err(|e| {
-            tracing::error!("Failed to prune history: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+    let deleted = tokio::task::spawn_blocking(move || {
+        threat_level.prune_history()
+    })
+    .await
+    .map_err(|e| {
+        tracing::error!("Failed to prune history (task join): {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?
+    .map_err(|e| {
+        tracing::error!("Failed to prune history: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     Ok(Json(PruneResponse {
         status: "ok".to_string(),
-        deleted_count: deleted,
+        deleted_count: deleted as u64,
     }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/threat-level/history/stats",
+    tag = "Threat Level",
+    responses(
+        (status = 200, description = "History statistics"),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Threat level manager not available")
+    ),
+    security(
+        ("bearerAuth" = [])
+    )
+)]
 pub async fn get_history_stats(
     State(state): State<Arc<AdminState>>,
     auth: OptionalAuth,
@@ -383,12 +517,16 @@ pub async fn get_history_stats(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    let threat_level = match &state.threat_level_manager {
-        Some(tl) => tl,
-        None => return Err(StatusCode::NOT_FOUND),
-    };
+    let threat_level = state.threat_level_manager().ok_or(StatusCode::NOT_FOUND)?.clone();
 
-    let sample_count = threat_level.get_history_sample_count();
+    let sample_count = tokio::task::spawn_blocking(move || {
+        threat_level.get_history_sample_count()
+    })
+    .await
+    .map_err(|e| {
+        tracing::error!("Failed to get history stats (task join): {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     Ok(Json(serde_json::json!({
         "sample_count": sample_count,

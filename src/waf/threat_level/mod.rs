@@ -9,7 +9,7 @@ pub use persistence::sqlite::{BackupInfo, SqliteBackup, SqliteHistory};
 pub use persistence::{BaselinePersistence, ThreatHistory, ThreatHistoryAll, ThreatHistorySample};
 pub use scorer::{ThreatLevel, ThreatScore, ThreatScorer, ThreatStatus};
 
-use crate::config::main::ThreatLevelConfig;
+use crate::config::ThreatLevelConfig;
 
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
@@ -73,7 +73,7 @@ pub struct LegacyEscalationConfig {
 }
 
 impl From<&ThreatLevelConfig> for ThreatLevelConfigExtended {
-    fn from(config: &ThreatLevelConfig) -> Self {
+    fn from(_config: &ThreatLevelConfig) -> Self {
         Self {
             learning_enabled: true,
             learning_duration_secs: 600,

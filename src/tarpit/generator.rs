@@ -1,6 +1,6 @@
 use once_cell::sync::Lazy;
 use rand::Rng;
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 
 static CORPORA: Lazy<Vec<&'static str>> = Lazy::new(|| {
     vec![
@@ -69,8 +69,8 @@ impl MarkovChain {
     }
 
     pub fn generate_sentence(&self, min_words: usize, max_words: usize) -> String {
-        let mut rng = rand::thread_rng();
-        let target_words = rng.gen_range(min_words..=max_words);
+        let mut rng = rand::rng();
+        let target_words = rng.random_range(min_words..=max_words);
 
         let first_key = self
             .model
@@ -94,10 +94,10 @@ impl MarkovChain {
             let next_words = self.model.get(&key);
 
             if let Some(choices) = next_words {
-                let next = choices[rng.gen_range(0..choices.len())].clone();
+                let next = choices[rng.random_range(0..choices.len())].clone();
                 words.push(next);
             } else {
-                let random_key = self.model.keys().nth(rng.gen_range(0..self.model.len()));
+                let random_key = self.model.keys().nth(rng.random_range(0..self.model.len()));
                 if let Some(k) = random_key {
                     words = k.split_whitespace().map(|s| s.to_string()).collect();
                 }
@@ -124,9 +124,9 @@ impl MarkovChain {
         links_per_page: u32,
         path_seed: &str,
     ) -> String {
-        let mut rng = rand::thread_rng();
-        let sentences = self.generate_sentences(15 + rng.gen_range(0..10));
-        let paragraph_count = rng.gen_range(3..6);
+        let mut rng = rand::rng();
+        let sentences = self.generate_sentences(15 + rng.random_range(0..10));
+        let paragraph_count = rng.random_range(3..6);
 
         let paragraphs: Vec<String> = sentences
             .chunks(paragraph_count)
@@ -258,10 +258,10 @@ fn generate_random_path(rng: &mut impl Rng, seed: &str, index: u32) -> String {
     ];
     let extensions = ["html", "htm", "php", "asp", "aspx", "jsp", "do", "action"];
 
-    let adj = adjectives[rng.gen_range(0..adjectives.len())];
-    let noun = nouns[rng.gen_range(0..nouns.len())];
-    let ext = extensions[rng.gen_range(0..extensions.len())];
-    let num = rng.gen_range(1000..9999);
+    let adj = adjectives[rng.random_range(0..adjectives.len())];
+    let noun = nouns[rng.random_range(0..nouns.len())];
+    let _ext = extensions[rng.random_range(0..extensions.len())];
+    let num = rng.random_range(1000..9999);
 
     format!(
         "{}-{}-{}-{}{}",
@@ -282,9 +282,9 @@ pub fn generate_infinite_streaming_response(
     max_depth: u32,
     links_per_page: u32,
 ) -> String {
-    let mut rng = rand::thread_rng();
-    let current_depth = rng.gen_range(0..max_depth);
-    let path_seed = format!("page{}", rng.gen_range(1..1000));
+    let mut rng = rand::rng();
+    let current_depth = rng.random_range(0..max_depth);
+    let path_seed = format!("page{}", rng.random_range(1..1000));
 
     chain.generate_html_page(current_depth, max_depth, links_per_page, &path_seed)
 }

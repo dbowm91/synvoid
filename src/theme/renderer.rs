@@ -1,4 +1,4 @@
-use super::config::{ThemeConfig, ThemeMode, ThemeRestriction};
+use super::config::{ThemeConfig, ThemeRestriction};
 
 pub struct ThemeRenderer {
     config: ThemeConfig,
@@ -14,7 +14,7 @@ impl ThemeRenderer {
     }
 
     pub fn generate_css(&self) -> String {
-        let c = &self.config.colors;
+        let _c = &self.config.colors;
         let s = &self.config.spacing;
         let e = &self.config.effects;
 
@@ -331,6 +331,8 @@ body {{
     --waf-text: {dark_text};
     --waf-border: {dark_border};
     --waf-accent: {dark_accent};
+    --waf-accent-primary: {dark_accent_primary};
+    --waf-accent-secondary: {dark_accent_secondary};
 }}
 
 /* Light Theme */
@@ -342,6 +344,8 @@ body {{
         --waf-text: {light_text};
         --waf-border: {light_border};
         --waf-accent: {light_accent};
+        --waf-accent-primary: {light_accent_primary};
+        --waf-accent-secondary: {light_accent_secondary};
     }}
 }}
 
@@ -353,6 +357,8 @@ body {{
     --waf-text: {dark_text};
     --waf-border: {dark_border};
     --waf-accent: {dark_accent};
+    --waf-accent-primary: {dark_accent_primary};
+    --waf-accent-secondary: {dark_accent_secondary};
 }}
 
 /* Cookie Override - Light */
@@ -363,6 +369,8 @@ body {{
     --waf-text: {light_text};
     --waf-border: {light_border};
     --waf-accent: {light_accent};
+    --waf-accent-primary: {light_accent_primary};
+    --waf-accent-secondary: {light_accent_secondary};
 }}"#,
             dark_bg = c.dark_background,
             dark_surface = c.dark_surface,
@@ -370,12 +378,16 @@ body {{
             dark_text = c.dark_text,
             dark_border = c.dark_border,
             dark_accent = c.dark_accent,
+            dark_accent_primary = c.dark_accent_primary,
+            dark_accent_secondary = c.dark_accent_secondary,
             light_bg = c.light_background,
             light_surface = c.light_surface,
             light_primary = c.light_primary,
             light_text = c.light_text,
             light_border = c.light_border,
             light_accent = c.light_accent,
+            light_accent_primary = c.light_accent_primary,
+            light_accent_secondary = c.light_accent_secondary,
         )
     }
 
@@ -390,6 +402,8 @@ body {{
     --waf-text: {dark_text};
     --waf-border: {dark_border};
     --waf-accent: {dark_accent};
+    --waf-accent-primary: {dark_accent_primary};
+    --waf-accent-secondary: {dark_accent_secondary};
 }}"#,
             dark_bg = c.dark_background,
             dark_surface = c.dark_surface,
@@ -397,11 +411,13 @@ body {{
             dark_text = c.dark_text,
             dark_border = c.dark_border,
             dark_accent = c.dark_accent,
+            dark_accent_primary = c.dark_accent_primary,
+            dark_accent_secondary = c.dark_accent_secondary,
         )
     }
 
     fn generate_light_only_css(&self) -> String {
-        let c = &self.config.colors;
+        let c: &super::config::ThemeColors = &self.config.colors;
 
         format!(
             r#":root {{
@@ -411,6 +427,8 @@ body {{
     --waf-text: {light_text};
     --waf-border: {light_border};
     --waf-accent: {light_accent};
+    --waf-accent-primary: {light_accent_primary};
+    --waf-accent-secondary: {light_accent_secondary};
 }}"#,
             light_bg = c.light_background,
             light_surface = c.light_surface,
@@ -418,6 +436,8 @@ body {{
             light_text = c.light_text,
             light_border = c.light_border,
             light_accent = c.light_accent,
+            light_accent_primary = c.light_accent_primary,
+            light_accent_secondary = c.light_accent_secondary,
         )
     }
 

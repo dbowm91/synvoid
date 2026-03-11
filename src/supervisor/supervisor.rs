@@ -4,10 +4,11 @@ use tokio::sync::{broadcast, RwLock};
 use tokio::time::interval;
 use metrics::{gauge, histogram};
 use parking_lot::RwLock as PLRwLock;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::supervisor::worker::{Worker, WorkerId, WorkerStatus};
-use crate::supervisor::autoscaler::{AutoScaler, ScaleDecision};
+use crate::supervisor::autoscaler::AutoScaler;
+use crate::RunningFlag;
 
 pub struct Supervisor {
     config: SupervisorConfig,
@@ -17,7 +18,7 @@ pub struct Supervisor {
     shutdown_tx: Option<broadcast::Sender<()>>,
     metrics: Arc<SupervisorMetrics>,
     restart_state: Arc<RwLock<RestartState>>,
-    running: Arc<AtomicBool>,
+    running: RunningFlag,
     next_worker_id: Arc<PLRwLock<usize>>,
 }
 
@@ -98,7 +99,7 @@ impl Supervisor {
                 attempts: std::collections::HashMap::new(),
                 last_restart: std::collections::HashMap::new(),
             })),
-            running: Arc::new(AtomicBool::new(true)),
+            running: RunningFlag::new(),
             next_worker_id: Arc::new(PLRwLock::new(0)),
         }
     }
@@ -111,7 +112,7 @@ impl Supervisor {
             self.config.max_workers
         );
 
-        for i in 0..self.config.min_workers {
+        for _i in 0..self.config.min_workers {
             self.spawn_worker().await;
         }
 
@@ -139,11 +140,11 @@ impl Supervisor {
             workers.push(worker_arc.clone());
         }
 
-        let workers_clone = self.workers.clone();
+        let _workers_clone = self.workers.clone();
         let event_tx = self.event_tx.clone();
-        let restart_state = self.restart_state.clone();
-        let config = self.config.clone();
-        let metrics = self.metrics.clone();
+        let _restart_state = self.restart_state.clone();
+        let _config = self.config.clone();
+        let _metrics = self.metrics.clone();
         let running = self.running.clone();
         
         let worker_clone = worker_arc.clone();
@@ -152,7 +153,7 @@ impl Supervisor {
             
             *worker_clone.status.write() = WorkerStatus::Running;
             
-            while running.load(Ordering::Relaxed) {
+            while running.is_running() {
                 tokio::time::sleep(Duration::from_secs(1)).await;
             }
             
@@ -178,7 +179,7 @@ impl Supervisor {
     }
 
     pub async fn handle_worker_failure(&self, worker_id: WorkerId, error: String) {
-        if !self.running.load(Ordering::Relaxed) {
+        if !self.running.is_running() {
             return;
         }
 
@@ -244,7 +245,7 @@ impl Supervisor {
 
         tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
 
-        if !self.running.load(Ordering::Relaxed) {
+        if !self.running.is_running() {
             return;
         }
 
@@ -266,7 +267,7 @@ impl Supervisor {
         let metrics = self.metrics.clone();
         let config = self.config.clone();
         let running = self.running.clone();
-        let restart_state = self.restart_state.clone();
+        let _restart_state = self.restart_state.clone();
         
         tokio::spawn(async move {
             let mut timer = interval(Duration::from_secs(config.health_check_interval_secs));
@@ -274,7 +275,7 @@ impl Supervisor {
             loop {
                 timer.tick().await;
                 
-                if !running.load(Ordering::Relaxed) {
+                if !running.is_running() {
                     break;
                 }
                 
@@ -297,10 +298,10 @@ impl Supervisor {
                     });
                 }
                 
-                gauge!("rustwaf.supervisor.workers_total").set(total as f64);
-                gauge!("rustwaf.supervisor.workers_running").set(running_count as f64);
-                gauge!("rustwaf.supervisor.workers_failed").set((total - running_count) as f64);
-                histogram!("rustwaf.supervisor.restarts_total")
+                gauge!("maluwaf.supervisor.workers_total").set(total as f64);
+                gauge!("maluwaf.supervisor.workers_running").set(running_count as f64);
+                gauge!("maluwaf.supervisor.workers_failed").set((total - running_count) as f64);
+                histogram!("maluwaf.supervisor.restarts_total")
                     .record(metrics.total_restarts.load(Ordering::Relaxed) as f64);
             }
         });
@@ -320,7 +321,7 @@ impl Supervisor {
             loop {
                 timer.tick().await;
                 
-                if !running.load(Ordering::Relaxed) {
+                if !running.is_running() {
                     break;
                 }
                 
@@ -379,7 +380,7 @@ impl Supervisor {
         tracing::info!("Initiating graceful shutdown");
         let _ = self.event_tx.send(SupervisorEvent::ShutdownInitiated);
         
-        self.running.store(false, Ordering::Relaxed);
+        self.running.stop();
 
         let timeout = Duration::from_secs(self.config.graceful_shutdown_timeout_secs);
         let start = Instant::now();
@@ -413,6 +414,6 @@ impl Supervisor {
     }
 
     pub fn is_running(&self) -> bool {
-        self.running.load(Ordering::Relaxed)
+        self.running.is_running()
     }
 }

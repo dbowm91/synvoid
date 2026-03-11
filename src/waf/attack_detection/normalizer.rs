@@ -7,7 +7,7 @@ pub struct InputNormalizer {
 impl Default for InputNormalizer {
     fn default() -> Self {
         Self {
-            max_decode_passes: 5,
+            max_decode_passes: 10,
         }
     }
 }
@@ -18,166 +18,175 @@ impl InputNormalizer {
     }
 
     pub fn normalize(&self, input: &str) -> NormalizedInput {
-        let mut result = input.to_string();
+        let mut buffer = String::with_capacity(input.len());
         let mut passes = 0;
 
-        loop {
-            let decoded = self.decode_single_pass(&result);
-            if decoded == result || passes >= self.max_decode_passes {
+        buffer.push_str(input);
+
+        for _ in 0..self.max_decode_passes {
+            let prev_len = buffer.len();
+            let decoded = self.decode_single_pass_inplace(&mut buffer);
+            if decoded == prev_len {
                 break;
             }
-            result = decoded;
             passes += 1;
         }
 
-        result = self.normalize_unicode(&result);
-        result = self.remove_zero_width_chars(&result);
-        result = self.normalize_homoglyphs(&result);
-        result = self.remove_null_bytes(&result);
-        result = self.normalize_whitespace(&result);
+        self.apply_normalizations_inplace(&mut buffer);
 
         NormalizedInput {
             original: input.to_string(),
-            normalized: result,
+            normalized: buffer,
             passes,
         }
     }
 
-    fn decode_single_pass(&self, input: &str) -> String {
-        let mut result = String::with_capacity(input.len());
-        let mut chars = input.chars().peekable();
+    fn decode_single_pass_inplace(&self, input: &mut String) -> usize {
+        let chars: Vec<char> = input.chars().collect();
+        input.clear();
 
-        while let Some(c) = chars.next() {
-            match c {
+        let mut i = 0;
+        while i < chars.len() {
+            match chars[i] {
                 '%' => {
-                    let hex: String = chars.by_ref().take(2).collect();
-                    if hex.len() == 2 {
+                    if i + 2 < chars.len() {
+                        let hex: String = chars[i + 1..=i + 2].iter().collect();
                         if let Ok(byte) = u8::from_str_radix(&hex, 16) {
-                            if byte == 0 {
-                                continue;
+                            if byte != 0 {
+                                input.push(byte as char);
                             }
-                            result.push(byte as char);
+                            i += 3;
                             continue;
                         }
                     }
-                    result.push('%');
-                    result.push_str(&hex);
+                    input.push('%');
+                    i += 1;
                 }
-                '+' => result.push(' '),
+                '+' => {
+                    input.push(' ');
+                    i += 1;
+                }
                 '\\' => {
-                    if let Some(&next) = chars.peek() {
-                        match next {
+                    if i + 1 < chars.len() {
+                        match chars[i + 1] {
                             'x' | 'X' => {
-                                chars.next();
-                                let hex: String = chars.by_ref().take(2).collect();
-                                if hex.len() == 2 {
+                                if i + 3 < chars.len() {
+                                    let hex: String = chars[i + 2..=i + 3].iter().collect();
                                     if let Ok(byte) = u8::from_str_radix(&hex, 16) {
-                                        if byte == 0 {
-                                            continue;
+                                        if byte != 0 {
+                                            input.push(byte as char);
                                         }
-                                        result.push(byte as char);
+                                        i += 4;
                                         continue;
                                     }
                                 }
-                                result.push_str("\\x");
-                                result.push_str(&hex);
-                            }
-                            'u' | 'U' => {
-                                chars.next();
-                                let hex: String = chars.by_ref().take(4).collect();
-                                if hex.len() == 4 {
-                                    if let Ok(code_point) = u32::from_str_radix(&hex, 16) {
-                                        if code_point == 0 {
-                                            continue;
-                                        }
-                                        if let Some(ch) = char::from_u32(code_point) {
-                                            result.push(ch);
-                                            continue;
-                                        }
-                                    }
-                                }
-                                result.push_str("\\u");
-                                result.push_str(&hex);
-                            }
-                            '0'..='7' => {
-                                let octal: String = chars.by_ref().take(3).collect();
-                                if let Ok(byte) = u8::from_str_radix(&octal, 8) {
-                                    if byte == 0 {
-                                        continue;
-                                    }
-                                    result.push(byte as char);
-                                    continue;
-                                }
-                                result.push('\\');
-                                result.push_str(&octal);
-                            }
-                            'n' => {
-                                chars.next();
-                                result.push('\n');
-                            }
-                            'r' => {
-                                chars.next();
-                                result.push('\r');
-                            }
-                            't' => {
-                                chars.next();
-                                result.push('\t');
-                            }
-                            '0' => {
-                                chars.next();
+                                input.push_str("\\x");
+                                i += 2;
                                 continue;
                             }
-                            _ => {
-                                result.push(c);
+                            'u' | 'U' => {
+                                if i + 5 < chars.len() {
+                                    let hex: String = chars[i + 2..=i + 5].iter().collect();
+                                    if let Ok(code_point) = u32::from_str_radix(&hex, 16) {
+                                        if code_point != 0 {
+                                            if let Some(ch) = char::from_u32(code_point) {
+                                                input.push(ch);
+                                            }
+                                        }
+                                        i += 6;
+                                        continue;
+                                    }
+                                }
+                                input.push_str("\\u");
+                                i += 2;
+                                continue;
                             }
+                            'n' => {
+                                input.push('\n');
+                                i += 2;
+                                continue;
+                            }
+                            'r' => {
+                                input.push('\r');
+                                i += 2;
+                                continue;
+                            }
+                            't' => {
+                                input.push('\t');
+                                i += 2;
+                                continue;
+                            }
+                            '0' => {
+                                i += 2;
+                                continue;
+                            }
+                            '1'..='7' => {
+                                if i + 3 < chars.len()
+                                    && chars[i + 2].is_ascii_digit()
+                                    && chars[i + 3].is_ascii_digit()
+                                {
+                                    let octal: String = chars[i + 1..=i + 3].iter().collect();
+                                    if let Ok(byte) = u8::from_str_radix(&octal, 8) {
+                                        if byte != 0 {
+                                            input.push(byte as char);
+                                        }
+                                        i += 4;
+                                        continue;
+                                    }
+                                }
+                            }
+                            _ => {}
                         }
-                    } else {
-                        result.push(c);
                     }
+                    input.push('\\');
+                    i += 1;
                 }
                 '&' => {
                     let mut entity_chars = String::new();
                     let mut found_semicolon = false;
-                    let mut consumed = 0;
+                    let mut j = i + 1;
 
                     for _ in 0..10 {
-                        if let Some(&next) = chars.peek() {
-                            if next == ';' {
-                                found_semicolon = true;
-                                chars.next();
-                                consumed += 1;
-                                break;
-                            }
-                            entity_chars.push(next);
-                            chars.next();
-                            consumed += 1;
-                        } else {
+                        if j >= chars.len() {
                             break;
                         }
+                        if chars[j] == ';' {
+                            found_semicolon = true;
+                            j += 1;
+                            break;
+                        }
+                        entity_chars.push(chars[j]);
+                        j += 1;
                     }
 
                     if found_semicolon {
                         if let Some(ch) = self.decode_html_entity_simple(&entity_chars) {
-                            if ch == '\0' {
-                                continue;
+                            if ch != '\0' {
+                                input.push(ch);
                             }
-                            result.push(ch);
+                            i = j;
                             continue;
                         }
                     }
 
-                    result.push('&');
-                    result.push_str(&entity_chars);
+                    input.push('&');
+                    input.push_str(&entity_chars);
                     if found_semicolon {
-                        result.push(';');
+                        input.push(';');
                     }
+                    i = j;
                 }
-                '\0' => continue,
-                _ => result.push(c),
+                '\0' => {
+                    i += 1;
+                }
+                c => {
+                    input.push(c);
+                    i += 1;
+                }
             }
         }
 
-        result
+        input.len()
     }
 
     fn decode_html_entity_simple(&self, entity: &str) -> Option<char> {
@@ -204,126 +213,145 @@ impl InputNormalizer {
             "copy" => '\u{00a9}',
             "reg" => '\u{00ae}',
             "trade" => '\u{2122}',
+            "hellip" => '\u{2026}',
+            "ndash" => '\u{2013}',
+            "mdash" => '\u{2014}',
+            "lsquo" => '\u{2018}',
+            "rsquo" => '\u{2019}',
+            "ldquo" => '\u{201C}',
+            "rdquo" => '\u{201D}',
+            "bullet" => '\u{2022}',
+            "prime" => '\u{2032}',
+            "Prime" => '\u{2033}',
+            "oline" => '\u{203E}',
+            "frasl" => '\u{2044}',
+            "euro" => '\u{20AC}',
+            "prod" => '\u{220F}',
+            "sum" => '\u{2211}',
+            "radic" => '\u{221A}',
+            "infin" => '\u{221E}',
+            "approx" => '\u{2248}',
+            "ne" => '\u{2260}',
+            "le" => '\u{2264}',
+            "ge" => '\u{2265}',
+            "times" => '\u{00D7}',
+            "divide" => '\u{00F7}',
+            "circ" => '\u{02C6}',
+            "tilde" => '\u{02DC}',
+            "colon" => ':',
+            "Tab" => '\t',
+            "NewLine" => '\n',
             _ => return None,
         })
     }
 
-    fn normalize_unicode(&self, input: &str) -> String {
-        input.nfkc().collect()
-    }
+    fn apply_normalizations_inplace(&self, input: &mut String) {
+        let chars: Vec<char> = input.chars().collect();
+        input.clear();
 
-    fn remove_zero_width_chars(&self, input: &str) -> String {
-        input
-            .chars()
-            .filter(|c| {
-                !matches!(
-                    c,
-                    '\u{200B}' | '\u{200C}' | '\u{200D}' | '\u{200E}' | '\u{200F}' |
-                    '\u{FEFF}' | '\u{2060}' | '\u{2061}' | '\u{2062}' | '\u{2063}' |
-                    '\u{2064}' | '\u{206A}' | '\u{206B}' | '\u{206C}' | '\u{206D}' |
-                    '\u{206E}' | '\u{206F}' | '\u{034F}' | '\u{180E}' | '\u{FE00}'..
-                    '\u{FE0F}' | '\u{E0100}'..='\u{E01EF}'
-                )
-            })
-            .collect()
-    }
+        for c in chars {
+            if matches!(c,
+                '\u{200B}' | '\u{200C}' | '\u{200D}' | '\u{200E}' | '\u{200F}' |
+                '\u{FEFF}' | '\u{2060}' | '\u{2061}' | '\u{2062}' | '\u{2063}' |
+                '\u{2064}' | '\u{206A}' | '\u{206B}' | '\u{206C}' | '\u{206D}' |
+                '\u{206E}' | '\u{206F}' | '\u{034F}' | '\u{180E}' |
+                '\u{FE00}'..='\u{FE0F}' | '\u{E0100}'..='\u{E01EF}' | '\0'
+            ) {
+                continue;
+            }
 
-    fn normalize_homoglyphs(&self, input: &str) -> String {
-        input
-            .chars()
-            .map(|c| match c {
-                '\u{0430}' => 'a',
-                '\u{0410}' => 'A',
-                '\u{0435}' => 'e',
-                '\u{0415}' => 'E',
-                '\u{043E}' => 'o',
-                '\u{041E}' => 'O',
-                '\u{0440}' => 'p',
-                '\u{0420}' => 'P',
-                '\u{0441}' => 'c',
-                '\u{0421}' => 'C',
-                '\u{0443}' => 'y',
-                '\u{0423}' => 'Y',
-                '\u{0445}' => 'x',
-                '\u{0425}' => 'X',
-                '\u{0456}' => 'i',
-                '\u{0406}' => 'I',
-                '\u{0458}' => 'j',
-                '\u{0408}' => 'J',
-                '\u{04BB}' => 'h',
-                '\u{04B2}' => 'H',
-                '\u{0432}' => 'B',
-                '\u{0412}' => 'B',
-                '\u{043C}' => 'M',
-                '\u{041C}' => 'M',
-                '\u{043D}' => 'H',
-                '\u{041D}' => 'H',
-                '\u{043A}' => 'K',
-                '\u{041A}' => 'K',
-                '\u{FE00}'..='\u{FE0F}' => c,
-                '\u{2010}' | '\u{2011}' | '\u{2012}' | '\u{2013}' | '\u{2014}' | '\u{2015}' => '-',
-                '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}' => '\'',
-                '\u{201C}' | '\u{201D}' | '\u{201E}' | '\u{201F}' => '"',
-                '\u{00A0}' => ' ',
-                '\u{2028}' | '\u{2029}' => ' ',
-                '\u{FF01}' => '!',
-                '\u{FF02}' => '"',
-                '\u{FF03}' => '#',
-                '\u{FF04}' => '$',
-                '\u{FF05}' => '%',
-                '\u{FF06}' => '&',
-                '\u{FF07}' => '\'',
-                '\u{FF08}' => '(',
-                '\u{FF09}' => ')',
-                '\u{FF0A}' => '*',
-                '\u{FF0B}' => '+',
-                '\u{FF0C}' => ',',
-                '\u{FF0D}' => '-',
-                '\u{FF0E}' => '.',
-                '\u{FF0F}' => '/',
+            let normalized = match c {
+                '\u{0430}' => Some('a'),
+                '\u{0410}' => Some('A'),
+                '\u{0435}' => Some('e'),
+                '\u{0415}' => Some('E'),
+                '\u{043E}' => Some('o'),
+                '\u{041E}' => Some('O'),
+                '\u{0440}' => Some('p'),
+                '\u{0420}' => Some('P'),
+                '\u{0441}' => Some('c'),
+                '\u{0421}' => Some('C'),
+                '\u{0443}' => Some('y'),
+                '\u{0423}' => Some('Y'),
+                '\u{0445}' => Some('x'),
+                '\u{0425}' => Some('X'),
+                '\u{0456}' => Some('i'),
+                '\u{0406}' => Some('I'),
+                '\u{0458}' => Some('j'),
+                '\u{0408}' => Some('J'),
+                '\u{04BB}' => Some('h'),
+                '\u{04B2}' => Some('H'),
+                '\u{0432}' => Some('B'),
+                '\u{0412}' => Some('B'),
+                '\u{043C}' => Some('M'),
+                '\u{041C}' => Some('M'),
+                '\u{043D}' => Some('H'),
+                '\u{041D}' => Some('H'),
+                '\u{043A}' => Some('K'),
+                '\u{041A}' => Some('K'),
+                '\u{2010}' | '\u{2011}' | '\u{2012}' | '\u{2013}' | '\u{2014}' | '\u{2015}' => {
+                    Some('-')
+                }
+                '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}' => Some('\''),
+                '\u{201C}' | '\u{201D}' | '\u{201E}' | '\u{201F}' => Some('"'),
+                '\u{00A0}' => Some(' '),
+                '\u{2028}' | '\u{2029}' => Some(' '),
+                '\u{FF01}' => Some('!'),
+                '\u{FF02}' => Some('"'),
+                '\u{FF03}' => Some('#'),
+                '\u{FF04}' => Some('$'),
+                '\u{FF05}' => Some('%'),
+                '\u{FF06}' => Some('&'),
+                '\u{FF07}' => Some('\''),
+                '\u{FF08}' => Some('('),
+                '\u{FF09}' => Some(')'),
+                '\u{FF0A}' => Some('*'),
+                '\u{FF0B}' => Some('+'),
+                '\u{FF0C}' => Some(','),
+                '\u{FF0D}' => Some('-'),
+                '\u{FF0E}' => Some('.'),
+                '\u{FF0F}' => Some('/'),
                 '\u{FF10}'..='\u{FF19}' => {
                     let offset = c as u32 - 0xFF10;
-                    char::from_u32(0x30 + offset).unwrap_or(c)
+                    char::from_u32(0x30 + offset)
                 }
-                '\u{FF1A}' => ':',
-                '\u{FF1B}' => ';',
-                '\u{FF1C}' => '<',
-                '\u{FF1D}' => '=',
-                '\u{FF1E}' => '>',
-                '\u{FF1F}' => '?',
-                '\u{FF20}' => '@',
+                '\u{FF1A}' => Some(':'),
+                '\u{FF1B}' => Some(';'),
+                '\u{FF1C}' => Some('<'),
+                '\u{FF1D}' => Some('='),
+                '\u{FF1E}' => Some('>'),
+                '\u{FF1F}' => Some('?'),
+                '\u{FF20}' => Some('@'),
                 '\u{FF21}'..='\u{FF3A}' => {
                     let offset = c as u32 - 0xFF21;
-                    char::from_u32(0x41 + offset).unwrap_or(c)
+                    char::from_u32(0x41 + offset)
                 }
-                '\u{FF3B}' => '[',
-                '\u{FF3C}' => '\\',
-                '\u{FF3D}' => ']',
-                '\u{FF3E}' => '^',
-                '\u{FF3F}' => '_',
-                '\u{FF40}' => '`',
+                '\u{FF3B}' => Some('['),
+                '\u{FF3C}' => Some('\\'),
+                '\u{FF3D}' => Some(']'),
+                '\u{FF3E}' => Some('^'),
+                '\u{FF3F}' => Some('_'),
+                '\u{FF40}' => Some('`'),
                 '\u{FF41}'..='\u{FF5A}' => {
                     let offset = c as u32 - 0xFF41;
-                    char::from_u32(0x61 + offset).unwrap_or(c)
+                    char::from_u32(0x61 + offset)
                 }
-                '\u{FF5B}' => '{',
-                '\u{FF5C}' => '|',
-                '\u{FF5D}' => '}',
-                '\u{FF5E}' => '~',
-                _ => c,
-            })
-            .collect()
-    }
+                '\u{FF5B}' => Some('{'),
+                '\u{FF5C}' => Some('|'),
+                '\u{FF5D}' => Some('}'),
+                '\u{FF5E}' => Some('~'),
+                _ => Some(c),
+            };
 
-    fn remove_null_bytes(&self, input: &str) -> String {
-        input.replace('\0', "")
-    }
-
-    fn normalize_whitespace(&self, input: &str) -> String {
-        input
-            .chars()
-            .map(|c| if c.is_whitespace() { ' ' } else { c })
-            .collect()
+            if let Some(n) = normalized {
+                if n.is_whitespace() {
+                    input.push(' ');
+                } else {
+                    let nfc: String = n.nfkc().collect();
+                    input.push_str(&nfc);
+                }
+            }
+        }
     }
 }
 

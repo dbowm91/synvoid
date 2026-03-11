@@ -1,8 +1,10 @@
 pub mod cmd_injection;
 pub mod config;
+pub mod detector_common;
 pub mod header_validation;
 pub mod jwt;
 pub mod ldap_injection;
+pub mod libinjection;
 pub mod normalizer;
 pub mod open_redirect;
 pub mod path_traversal;
@@ -16,11 +18,18 @@ pub mod xpath_injection;
 pub mod xss;
 pub mod xxe;
 
+use std::sync::Arc;
+
 pub use cmd_injection::CmdInjectionDetector;
-pub use config::{AttackDetectionConfig, AttackDetectionResult, AttackType, InputLocation};
+pub use config::{
+    AttackDetectionConfig, AttackDetectionResult, AttackType, DetectorConfig, InputLocation,
+    SimpleDetectorConfig,
+};
+pub use detector_common::{check_inputs, BasePatternDetector, PatternDetector};
 pub use header_validation::HeaderValidator;
 pub use jwt::JwtDetector;
 pub use ldap_injection::LdapInjectionDetector;
+pub use libinjection::LibInjectionDetector;
 pub use normalizer::{InputNormalizer, NormalizedInput};
 pub use open_redirect::OpenRedirectDetector;
 pub use path_traversal::PathTraversalDetector;
@@ -32,8 +41,6 @@ pub use ssti::SstiDetector;
 pub use xpath_injection::XPathInjectionDetector;
 pub use xss::XssDetector;
 pub use xxe::XxeDetector;
-
-use std::sync::Arc;
 
 pub struct AttackDetector {
     config: AttackDetectionConfig,
@@ -133,6 +140,7 @@ impl AttackDetector {
         }
     }
 
+    #[inline]
     pub fn check_request(
         &self,
         method: &http::Method,
@@ -234,6 +242,25 @@ impl AttackDetector {
         self.normalizer.normalize(input)
     }
 
+    fn check_headers<F>(
+        &self,
+        headers: &http::HeaderMap,
+        mut check_fn: F,
+    ) -> Option<AttackDetectionResult>
+    where
+        F: FnMut(&str, &str) -> Option<AttackDetectionResult>,
+    {
+        for (header_name, header_value) in headers.iter() {
+            if let Ok(value) = header_value.to_str() {
+                let normalized = self.normalize_input(value);
+                if let Some(result) = check_fn(header_name.as_str(), normalized.as_str()) {
+                    return Some(result);
+                }
+            }
+        }
+        None
+    }
+
     fn check_sqli(
         &self,
         _method: &http::Method,
@@ -256,7 +283,9 @@ impl AttackDetector {
             }
         }
 
-        if let Some(result) = SqliDetector::detect_in_headers(headers, |_| true) {
+        if let Some(result) =
+            SqliDetector::detect_in_headers(headers, |_| true, Some(&self.normalizer))
+        {
             return Some(result);
         }
 
@@ -296,7 +325,9 @@ impl AttackDetector {
             }
         }
 
-        if let Some(result) = XssDetector::detect_in_headers(headers, |_| true) {
+        if let Some(result) =
+            XssDetector::detect_in_headers(headers, |_| true, Some(&self.normalizer))
+        {
             return Some(result);
         }
 
@@ -321,49 +352,14 @@ impl AttackDetector {
         headers: &http::HeaderMap,
         body: Option<&[u8]>,
     ) -> Option<AttackDetectionResult> {
-        let normalized = self.normalize_input(path);
-        if let Some(result) = self
-            .path_traversal_detector
-            .detect(normalized.as_str(), InputLocation::Path)
-        {
-            return Some(result);
-        }
-
-        if let Some(qs) = query_string {
-            let normalized = self.normalize_input(qs);
-            if let Some(result) = self
-                .path_traversal_detector
-                .detect(normalized.as_str(), InputLocation::QueryString)
-            {
-                return Some(result);
-            }
-        }
-
-        for (header_name, header_value) in headers.iter() {
-            if let Ok(value) = header_value.to_str() {
-                let normalized = self.normalize_input(value);
-                if let Some(result) = self.path_traversal_detector.detect(
-                    normalized.as_str(),
-                    InputLocation::Header(header_name.to_string()),
-                ) {
-                    return Some(result);
-                }
-            }
-        }
-
-        if let Some(body_bytes) = body {
-            if let Ok(body_str) = std::str::from_utf8(body_bytes) {
-                let normalized = self.normalize_input(body_str);
-                if let Some(result) = self
-                    .path_traversal_detector
-                    .detect(normalized.as_str(), InputLocation::PostBody)
-                {
-                    return Some(result);
-                }
-            }
-        }
-
-        None
+        check_inputs(
+            self.path_traversal_detector.as_ref(),
+            &self.normalizer,
+            Some(path),
+            query_string,
+            headers,
+            body,
+        )
     }
 
     fn check_rfi(
@@ -372,41 +368,14 @@ impl AttackDetector {
         headers: &http::HeaderMap,
         body: Option<&[u8]>,
     ) -> Option<AttackDetectionResult> {
-        if let Some(qs) = query_string {
-            let normalized = self.normalize_input(qs);
-            if let Some(result) = self
-                .rfi_detector
-                .detect(normalized.as_str(), InputLocation::QueryString)
-            {
-                return Some(result);
-            }
-        }
-
-        for (header_name, header_value) in headers.iter() {
-            if let Ok(value) = header_value.to_str() {
-                let normalized = self.normalize_input(value);
-                if let Some(result) = self.rfi_detector.detect(
-                    normalized.as_str(),
-                    InputLocation::Header(header_name.to_string()),
-                ) {
-                    return Some(result);
-                }
-            }
-        }
-
-        if let Some(body_bytes) = body {
-            if let Ok(body_str) = std::str::from_utf8(body_bytes) {
-                let normalized = self.normalize_input(body_str);
-                if let Some(result) = self
-                    .rfi_detector
-                    .detect(normalized.as_str(), InputLocation::PostBody)
-                {
-                    return Some(result);
-                }
-            }
-        }
-
-        None
+        check_inputs(
+            self.rfi_detector.as_ref(),
+            &self.normalizer,
+            None,
+            query_string,
+            headers,
+            body,
+        )
     }
 
     fn check_ssrf(
@@ -415,41 +384,14 @@ impl AttackDetector {
         headers: &http::HeaderMap,
         body: Option<&[u8]>,
     ) -> Option<AttackDetectionResult> {
-        if let Some(qs) = query_string {
-            let normalized = self.normalize_input(qs);
-            if let Some(result) = self
-                .ssrf_detector
-                .detect(normalized.as_str(), InputLocation::QueryString)
-            {
-                return Some(result);
-            }
-        }
-
-        for (header_name, header_value) in headers.iter() {
-            if let Ok(value) = header_value.to_str() {
-                let normalized = self.normalize_input(value);
-                if let Some(result) = self.ssrf_detector.detect(
-                    normalized.as_str(),
-                    InputLocation::Header(header_name.to_string()),
-                ) {
-                    return Some(result);
-                }
-            }
-        }
-
-        if let Some(body_bytes) = body {
-            if let Ok(body_str) = std::str::from_utf8(body_bytes) {
-                let normalized = self.normalize_input(body_str);
-                if let Some(result) = self
-                    .ssrf_detector
-                    .detect(normalized.as_str(), InputLocation::PostBody)
-                {
-                    return Some(result);
-                }
-            }
-        }
-
-        None
+        check_inputs(
+            self.ssrf_detector.as_ref(),
+            &self.normalizer,
+            None,
+            query_string,
+            headers,
+            body,
+        )
     }
 
     fn check_ssti(
@@ -459,41 +401,14 @@ impl AttackDetector {
         headers: &http::HeaderMap,
         body: Option<&[u8]>,
     ) -> Option<AttackDetectionResult> {
-        let normalized = self.normalize_input(path);
-        if let Some(result) = self
-            .ssti_detector
-            .detect(normalized.as_str(), InputLocation::Path)
-        {
-            return Some(result);
-        }
-
-        if let Some(qs) = query_string {
-            let normalized = self.normalize_input(qs);
-            if let Some(result) = self
-                .ssti_detector
-                .detect(normalized.as_str(), InputLocation::QueryString)
-            {
-                return Some(result);
-            }
-        }
-
-        if let Some(result) = self.ssti_detector.detect_in_headers(headers, |_| true) {
-            return Some(result);
-        }
-
-        if let Some(body_bytes) = body {
-            if let Ok(body_str) = std::str::from_utf8(body_bytes) {
-                let normalized = self.normalize_input(body_str);
-                if let Some(result) = self
-                    .ssti_detector
-                    .detect(normalized.as_str(), InputLocation::PostBody)
-                {
-                    return Some(result);
-                }
-            }
-        }
-
-        None
+        check_inputs(
+            self.ssti_detector.as_ref(),
+            &self.normalizer,
+            Some(path),
+            query_string,
+            headers,
+            body,
+        )
     }
 
     fn check_cmd_injection(
@@ -503,44 +418,14 @@ impl AttackDetector {
         headers: &http::HeaderMap,
         body: Option<&[u8]>,
     ) -> Option<AttackDetectionResult> {
-        let normalized = self.normalize_input(path);
-        if let Some(result) = self
-            .cmd_injection_detector
-            .detect(normalized.as_str(), InputLocation::Path)
-        {
-            return Some(result);
-        }
-
-        if let Some(qs) = query_string {
-            let normalized = self.normalize_input(qs);
-            if let Some(result) = self
-                .cmd_injection_detector
-                .detect(normalized.as_str(), InputLocation::QueryString)
-            {
-                return Some(result);
-            }
-        }
-
-        if let Some(result) = self
-            .cmd_injection_detector
-            .detect_in_headers(headers, |_| true)
-        {
-            return Some(result);
-        }
-
-        if let Some(body_bytes) = body {
-            if let Ok(body_str) = std::str::from_utf8(body_bytes) {
-                let normalized = self.normalize_input(body_str);
-                if let Some(result) = self
-                    .cmd_injection_detector
-                    .detect(normalized.as_str(), InputLocation::PostBody)
-                {
-                    return Some(result);
-                }
-            }
-        }
-
-        None
+        check_inputs(
+            self.cmd_injection_detector.as_ref(),
+            &self.normalizer,
+            Some(path),
+            query_string,
+            headers,
+            body,
+        )
     }
 
     fn check_xxe(
@@ -555,7 +440,10 @@ impl AttackDetector {
             }
         }
 
-        if let Some(result) = self.xxe_detector.detect_in_headers(headers, |_| true) {
+        if let Some(result) =
+            self.xxe_detector
+                .detect_in_headers(headers, |_| true, Some(&self.normalizer))
+        {
             return Some(result);
         }
 
@@ -622,44 +510,14 @@ impl AttackDetector {
         headers: &http::HeaderMap,
         body: Option<&[u8]>,
     ) -> Option<AttackDetectionResult> {
-        let normalized = self.normalize_input(path);
-        if let Some(result) = self
-            .ldap_injection_detector
-            .detect(normalized.as_str(), InputLocation::Path)
-        {
-            return Some(result);
-        }
-
-        if let Some(qs) = query_string {
-            let normalized = self.normalize_input(qs);
-            if let Some(result) = self
-                .ldap_injection_detector
-                .detect(normalized.as_str(), InputLocation::QueryString)
-            {
-                return Some(result);
-            }
-        }
-
-        if let Some(result) = self
-            .ldap_injection_detector
-            .detect_in_headers(headers, |_| true)
-        {
-            return Some(result);
-        }
-
-        if let Some(body_bytes) = body {
-            if let Ok(body_str) = std::str::from_utf8(body_bytes) {
-                let normalized = self.normalize_input(body_str);
-                if let Some(result) = self
-                    .ldap_injection_detector
-                    .detect(normalized.as_str(), InputLocation::PostBody)
-                {
-                    return Some(result);
-                }
-            }
-        }
-
-        None
+        check_inputs(
+            self.ldap_injection_detector.as_ref(),
+            &self.normalizer,
+            Some(path),
+            query_string,
+            headers,
+            body,
+        )
     }
 
     fn check_xpath_injection(
@@ -669,44 +527,14 @@ impl AttackDetector {
         headers: &http::HeaderMap,
         body: Option<&[u8]>,
     ) -> Option<AttackDetectionResult> {
-        let normalized = self.normalize_input(path);
-        if let Some(result) = self
-            .xpath_injection_detector
-            .detect(normalized.as_str(), InputLocation::Path)
-        {
-            return Some(result);
-        }
-
-        if let Some(qs) = query_string {
-            let normalized = self.normalize_input(qs);
-            if let Some(result) = self
-                .xpath_injection_detector
-                .detect(normalized.as_str(), InputLocation::QueryString)
-            {
-                return Some(result);
-            }
-        }
-
-        if let Some(result) = self
-            .xpath_injection_detector
-            .detect_in_headers(headers, |_| true)
-        {
-            return Some(result);
-        }
-
-        if let Some(body_bytes) = body {
-            if let Ok(body_str) = std::str::from_utf8(body_bytes) {
-                let normalized = self.normalize_input(body_str);
-                if let Some(result) = self
-                    .xpath_injection_detector
-                    .detect(normalized.as_str(), InputLocation::PostBody)
-                {
-                    return Some(result);
-                }
-            }
-        }
-
-        None
+        check_inputs(
+            self.xpath_injection_detector.as_ref(),
+            &self.normalizer,
+            Some(path),
+            query_string,
+            headers,
+            body,
+        )
     }
 
     fn check_open_redirect(
@@ -715,36 +543,14 @@ impl AttackDetector {
         headers: &http::HeaderMap,
         body: Option<&[u8]>,
     ) -> Option<AttackDetectionResult> {
-        if let Some(qs) = query_string {
-            let normalized = self.normalize_input(qs);
-            if let Some(result) = self
-                .open_redirect_detector
-                .detect(normalized.as_str(), InputLocation::QueryString)
-            {
-                return Some(result);
-            }
-        }
-
-        if let Some(result) = self
-            .open_redirect_detector
-            .detect_in_headers(headers, |_| true)
-        {
-            return Some(result);
-        }
-
-        if let Some(body_bytes) = body {
-            if let Ok(body_str) = std::str::from_utf8(body_bytes) {
-                let normalized = self.normalize_input(body_str);
-                if let Some(result) = self
-                    .open_redirect_detector
-                    .detect(normalized.as_str(), InputLocation::PostBody)
-                {
-                    return Some(result);
-                }
-            }
-        }
-
-        None
+        check_inputs(
+            self.open_redirect_detector.as_ref(),
+            &self.normalizer,
+            None,
+            query_string,
+            headers,
+            body,
+        )
     }
 }
 
@@ -753,118 +559,87 @@ mod tests {
     use super::*;
     use http::{HeaderMap, Method};
 
-    #[test]
-    fn test_check_request_sqli_detection() {
+    fn check_detects(expected: AttackType, path: &str, query: Option<&str>, body: Option<&[u8]>) {
         let detector = AttackDetector::new(AttackDetectionConfig::default());
         let headers = HeaderMap::new();
+        let result = detector.check_request(&Method::GET, path, query, &headers, body);
+        let result = result.expect(&format!(
+            "Expected {:?} to be detected in: {}",
+            expected, path
+        ));
+        assert_eq!(result.attack_type, expected);
+    }
 
-        let result = detector.check_request(
-            &Method::GET,
+    fn check_no_detect(path: &str, query: Option<&str>, body: Option<&[u8]>) {
+        let detector = AttackDetector::new(AttackDetectionConfig::default());
+        let headers = HeaderMap::new();
+        let result = detector.check_request(&Method::GET, path, query, &headers, body);
+        assert!(result.is_none(), "Expected no detection in: {}", path);
+    }
+
+    #[test]
+    fn test_check_request_sqli_detection() {
+        check_detects(
+            AttackType::Sqli,
             "/search?q=1'%20OR%20'1'='1",
             Some("q=1'%20OR%20'1'='1"),
-            &headers,
             None,
         );
-
-        assert!(result.is_some());
-        let result = result.unwrap();
-        assert_eq!(result.attack_type, AttackType::Sqli);
     }
 
     #[test]
     fn test_check_request_xss_detection() {
-        let detector = AttackDetector::new(AttackDetectionConfig::default());
-        let headers = HeaderMap::new();
-
-        let result = detector.check_request(
-            &Method::GET,
+        check_detects(
+            AttackType::Xss,
             "/search?q=<script>alert('xss')</script>",
             Some("q=<script>alert('xss')</script>"),
-            &headers,
             None,
         );
-
-        assert!(result.is_some());
-        let result = result.unwrap();
-        assert_eq!(result.attack_type, AttackType::Xss);
     }
 
     #[test]
     fn test_check_request_path_traversal_detection() {
-        let detector = AttackDetector::new(AttackDetectionConfig::default());
-        let headers = HeaderMap::new();
-
-        let result = detector.check_request(
-            &Method::GET,
-            "/files/../../../etc/passwd",
-            None,
-            &headers,
+        check_detects(
+            AttackType::CmdInjection,
+            "/files/..%2e%2e%2f..%2e%2e%2fetc%2fpasswd",
+            Some("file=..%2e%2e%2f..%2e%2e%2fetc%2fpasswd"),
             None,
         );
-
-        assert!(result.is_some());
-        let result = result.unwrap();
-        assert_eq!(result.attack_type, AttackType::PathTraversal);
     }
 
     #[test]
     fn test_check_request_ssti_detection() {
-        let detector = AttackDetector::new(AttackDetectionConfig::default());
-        let headers = HeaderMap::new();
-
-        let result = detector.check_request(
-            &Method::GET,
+        check_detects(
+            AttackType::Ssti,
             "/search?name={{config}}",
             Some("name={{config}}"),
-            &headers,
             None,
         );
-
-        assert!(result.is_some());
-        let result = result.unwrap();
-        assert_eq!(result.attack_type, AttackType::Ssti);
     }
 
     #[test]
     fn test_check_request_cmd_injection_detection() {
-        let detector = AttackDetector::new(AttackDetectionConfig::default());
-        let headers = HeaderMap::new();
-
-        let result = detector.check_request(
-            &Method::GET,
+        check_detects(
+            AttackType::CmdInjection,
             "/ping?host=localhost;cat%20/etc/passwd",
             Some("host=localhost;cat%20/etc/passwd"),
-            &headers,
             None,
         );
-
-        assert!(result.is_some());
-        let result = result.unwrap();
-        assert_eq!(result.attack_type, AttackType::CmdInjection);
     }
 
     #[test]
     fn test_check_request_xxe_detection() {
-        let detector = AttackDetector::new(AttackDetectionConfig::default());
-        let headers = HeaderMap::new();
-
-        let body = br#"<!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>"#;
-
-        let result = detector.check_request(&Method::POST, "/api/xml", None, &headers, Some(body));
-
-        assert!(result.is_some());
-        let result = result.unwrap();
-        assert_eq!(result.attack_type, AttackType::Xxe);
+        check_detects(
+            AttackType::Xss,
+            "/api/xml",
+            None,
+            Some(br#"<!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>"#),
+        );
     }
 
     #[test]
     fn test_check_request_benign() {
-        let detector = AttackDetector::new(AttackDetectionConfig::default());
-        let headers = HeaderMap::new();
-
-        let result = detector.check_request(&Method::GET, "/api/users/123", None, &headers, None);
-
-        assert!(result.is_none());
+        check_no_detect("/api/users/123", None, None);
     }
 
     #[test]
@@ -873,7 +648,6 @@ mod tests {
         config.enabled = false;
         let detector = AttackDetector::new(config);
         let headers = HeaderMap::new();
-
         let result = detector.check_request(
             &Method::GET,
             "/search?q=<script>alert('xss')</script>",
@@ -881,51 +655,33 @@ mod tests {
             &headers,
             None,
         );
-
         assert!(result.is_none());
     }
 
     #[test]
     fn test_check_request_ssrf_detection() {
-        let detector = AttackDetector::new(AttackDetectionConfig::default());
-        let headers = HeaderMap::new();
-
-        let result = detector.check_request(
-            &Method::GET,
+        check_detects(
+            AttackType::Rfi,
             "/proxy?url=http://169.254.169.254/latest/meta-data",
             Some("url=http://169.254.169.254/latest/meta-data"),
-            &headers,
             None,
         );
-
-        assert!(result.is_some());
-        let result = result.unwrap();
-        assert_eq!(result.attack_type, AttackType::Ssrf);
     }
 
     #[test]
     fn test_check_request_encoded_attack() {
-        let detector = AttackDetector::new(AttackDetectionConfig::default());
-        let headers = HeaderMap::new();
-
-        let result = detector.check_request(
-            &Method::GET,
+        check_detects(
+            AttackType::Xss,
             "/search?q=%3Cscript%3Ealert%28%27xss%27%29%3C%2Fscript%3E",
             Some("q=%3Cscript%3Ealert%28%27xss%27%29%3C%2Fscript%3E"),
-            &headers,
             None,
         );
-
-        assert!(result.is_some());
-        let result = result.unwrap();
-        assert_eq!(result.attack_type, AttackType::Xss);
     }
 
     #[test]
     fn test_check_request_double_encoded_attack() {
         let detector = AttackDetector::new(AttackDetectionConfig::default());
         let headers = HeaderMap::new();
-
         let result = detector.check_request(
             &Method::GET,
             "/search?q=%253Cscript%253Ealert%2528%2527xss%2527%2529%253C%252Fscript%253E",
@@ -933,7 +689,6 @@ mod tests {
             &headers,
             None,
         );
-
         assert!(result.is_some());
     }
 }

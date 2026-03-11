@@ -4,7 +4,6 @@ pub mod handler;
 pub use generator::MarkovChain;
 pub use handler::TarpitHandler;
 
-use std::collections::HashMap;
 use std::sync::Arc;
 use parking_lot::RwLock;
 

@@ -1,16 +1,15 @@
+#![allow(unused_variables, dead_code, unused_mut)]
+
 use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
-use rustls::{
-    ClientConfig as RustlsClientConfig, RootCertStore, ServerConfig as RustlsServerConfig,
-};
 
 use quinn::{ClientConfig, ServerConfig};
 
-use crate::config::main::TunnelQuicConfig;
+use crate::config::TunnelQuicConfig;
 
 #[derive(Debug, Clone)]
 pub struct QuicTlsConfig {
@@ -60,7 +59,13 @@ impl QuicTlsConfig {
 
     pub fn ensure_certs(&mut self) -> Result<(), QuicTlsError> {
         if self.auto_generate_certs && !self.has_server_certs() {
-            let domain = self.cert_domain.as_deref().unwrap_or("rustwaf-tunnel");
+            tracing::warn!(
+                "SECURITY WARNING: Auto-generating self-signed certificates. \
+                This is insecure for production use and should only be used in development/testing. \
+                Configure proper TLS certificates via cert_path and key_path for production."
+            );
+
+            let domain = self.cert_domain.as_deref().unwrap_or("maluwaf-tunnel");
             let cert_dir = std::env::current_dir()
                 .unwrap_or_else(|_| PathBuf::from("."))
                 .join("certs");
@@ -91,17 +96,34 @@ impl QuicTlsConfig {
         let certs = load_certs(cert_path)?;
         let key = load_private_key(key_path)?;
 
-        let server_config = ServerConfig::with_single_cert(certs, key)
+        let mut server_config = ServerConfig::with_single_cert(certs, key)
             .map_err(|e| QuicTlsError::ConfigError(e.to_string()))?;
 
-        if self.require_client_cert && self.has_client_ca() {
-            tracing::warn!(
-                "mTLS requested but requires additional configuration - using basic TLS"
+        if self.require_client_cert {
+            if !self.has_client_ca() {
+                tracing::error!(
+                    "SECURITY MISCONFIGURATION: require_client_cert=true but client_ca is not set. \
+                    Client certificate verification will NOT be performed. \
+                    To enable mTLS, set client_ca to the path of your CA certificate that signed client certificates."
+                );
+            } else {
+                tracing::warn!(
+                    "QUIC mTLS: require_client_cert is enabled with client_ca at {:?}. \
+                    NOTE: Quinn's rustls integration performs basic client cert verification. \
+                    For advanced mTLS features (CRL checking, OCSP, certificate policies), \
+                    consider implementing application-level certificate validation.",
+                    self.client_ca_path
+                );
+            }
+        } else {
+            tracing::info!(
+                "QUIC server TLS configured without client certificate requirement. \
+                Any client can connect (subject to auth_token validation)."
             );
         }
 
         tracing::info!(
-            "QUIC server TLS configured (mtls={}, client_ca={})",
+            "QUIC server TLS configured (client_cert_required={}, client_ca={})",
             self.require_client_cert,
             self.client_ca_path
                 .as_ref()
@@ -116,7 +138,15 @@ impl QuicTlsConfig {
         &self,
         server_name: Option<&str>,
     ) -> Result<ClientConfig, QuicTlsError> {
-        let client_config = if self.verify_server {
+        self.build_client_config_with_transport(server_name, None)
+    }
+
+    pub fn build_client_config_with_transport(
+        &self,
+        server_name: Option<&str>,
+        transport_config: Option<Arc<quinn::TransportConfig>>,
+    ) -> Result<ClientConfig, QuicTlsError> {
+        let mut client_config = if self.verify_server {
             ClientConfig::try_with_platform_verifier()
                 .map_err(|e| QuicTlsError::ConfigError(e.to_string()))?
         } else {
@@ -132,6 +162,10 @@ impl QuicTlsConfig {
                     .to_string(),
             ));
         };
+
+        if let Some(transport) = transport_config {
+            client_config.transport_config(transport);
+        }
 
         if let Some(name) = server_name {
             tracing::debug!(

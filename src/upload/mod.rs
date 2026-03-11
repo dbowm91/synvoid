@@ -1,12 +1,15 @@
 pub mod config;
 pub mod sandbox;
 pub mod yara_scanner;
+pub mod yara_rule_feed;
+pub mod malware_scanner;
 
 pub use config::{AllowedTypesConfig, AllowedTypesMode, EffectiveUploadConfig, PathUploadConfig, UploadConfig};
 pub use sandbox::{QuarantineEntry, Sandbox, SandboxConfig, SandboxError, SandboxHandle};
-pub use yara_scanner::{YaraError, YaraMatch, YaraScanResult, YaraScanner};
+pub use yara_scanner::{YaraError, YaraMatch, YaraScanner, YaraRulesSource, NO_EXCLUDED_CATEGORIES};
+pub use yara_rule_feed::{YaraRuleFeedManager, ParsedYaraRules, YaraRuleSource};
+pub use malware_scanner::MalwareMatch;
 
-use std::path::Path;
 use std::sync::Arc;
 use thiserror::Error;
 use tracing::{debug, warn};
@@ -66,6 +69,7 @@ pub struct UploadValidator {
     sandbox: Arc<Sandbox>,
     yara_scanner: Option<Arc<YaraScanner>>,
     config: UploadConfig,
+    reload_lock: parking_lot::RwLock<()>,
 }
 
 impl UploadValidator {
@@ -74,16 +78,11 @@ impl UploadValidator {
         let sandbox = Arc::new(Sandbox::new(sandbox_config));
 
         let yara_scanner = if config.scan_with_yara {
-            let scanner = if let Some(rules_dir) = &config.yara_rules_dir {
-                let path = Path::new(rules_dir);
-                if path.exists() {
-                    YaraScanner::with_rules_from_dir(path)?
-                } else {
-                    YaraScanner::with_embedded_rules()?
-                }
-            } else {
-                YaraScanner::with_embedded_rules()?
-            };
+            let source = YaraRulesSource::from_config(
+                config.yara_rules_dir.clone().map(std::path::PathBuf::from),
+                true,
+            ).unwrap_or(YaraRulesSource::Bundled);
+            let scanner = YaraScanner::new(source)?;
             Some(Arc::new(scanner))
         } else {
             None
@@ -93,7 +92,35 @@ impl UploadValidator {
             sandbox,
             yara_scanner,
             config,
+            reload_lock: parking_lot::RwLock::new(()),
         })
+    }
+
+    pub fn reload_yara_rules_if_needed(&self) -> Result<(), YaraError> {
+        if let Some(scanner) = &self.yara_scanner {
+            if let Some(yara_rules) = crate::waf::get_yara_rules() {
+                let current_version = scanner.get_version();
+                let new_version = yara_rules.get_current_version();
+
+                if current_version != new_version {
+                    let _guard = self.reload_lock.write();
+                    let current_version = scanner.get_version();
+                    let new_version = yara_rules.get_current_version();
+
+                    if current_version != new_version {
+                        if let Some(new_rules) = yara_rules.get_current_rules() {
+                            tracing::debug!(
+                                current_version = ?current_version,
+                                new_version = ?new_version,
+                                "Reloading YARA rules with new version"
+                            );
+                            scanner.reload_with_rules(&new_rules, new_version)?;
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     pub async fn ensure_directories(&self) -> std::io::Result<()> {
@@ -108,6 +135,10 @@ impl UploadValidator {
                 max: effective_config.max_size_bytes,
                 actual: data.len() as u64,
             });
+        }
+
+        if let Err(e) = self.reload_yara_rules_if_needed() {
+            tracing::warn!("Failed to reload YARA rules: {}", e);
         }
 
         let mime_info = crate::mime::detect_from_bytes_with_fallback(data, "bin");
@@ -125,9 +156,9 @@ impl UploadValidator {
 
         let (scanned, yara_matches) = if effective_config.scan_with_yara {
             if let Some(scanner) = &self.yara_scanner {
-                let result = scanner.scan_bytes(data)?;
-                let matches = result.matched_rule_names();
-                (true, matches)
+                let matches = scanner.scan_bytes(data, NO_EXCLUDED_CATEGORIES)?;
+                let matched_names: Vec<String> = matches.iter().map(|m| m.rule_name.clone()).collect();
+                (true, matched_names)
             } else {
                 (false, Vec::new())
             }
@@ -186,6 +217,10 @@ impl UploadValidator {
             });
         }
 
+        if let Err(e) = self.reload_yara_rules_if_needed() {
+            tracing::warn!("Failed to reload YARA rules: {}", e);
+        }
+
         let mime_info = crate::mime::detect_from_bytes_with_fallback(data, "bin");
         let mime_type = mime_info.mime_type.clone();
 
@@ -201,9 +236,9 @@ impl UploadValidator {
 
         let (scanned, yara_matches) = if effective_config.scan_with_yara {
             if let Some(scanner) = &self.yara_scanner {
-                let result = scanner.scan_bytes(data)?;
-                let matches = result.matched_rule_names();
-                (true, matches)
+                let matches = scanner.scan_bytes(data, NO_EXCLUDED_CATEGORIES)?;
+                let matched_names: Vec<String> = matches.iter().map(|m| m.rule_name.clone()).collect();
+                (true, matched_names)
             } else {
                 (false, Vec::new())
             }
@@ -223,7 +258,7 @@ impl UploadValidator {
             sandbox_handle.write_sync(data)?;
             sandbox_handle.flush()?;
 
-            let quarantine_entry = self
+            let _quarantine_entry = self
                 .sandbox
                 .quarantine(
                     sandbox_handle.path(),
@@ -281,6 +316,10 @@ impl UploadValidator {
             });
         }
 
+        if let Err(e) = self.reload_yara_rules_if_needed() {
+            tracing::warn!("Failed to reload YARA rules: {}", e);
+        }
+
         let header = sandbox_handle.read_header(HEADER_READ_SIZE)?;
         let mime_info = crate::mime::detect_from_bytes_with_fallback(&header, "bin");
         let mime_type = mime_info.mime_type.clone();
@@ -297,9 +336,9 @@ impl UploadValidator {
 
         let (scanned, yara_matches) = if effective_config.scan_with_yara {
             if let Some(scanner) = &self.yara_scanner {
-                let result = scanner.scan_file_with_fallback(sandbox_handle.path())?;
-                let matches = result.matched_rule_names();
-                (true, matches)
+                let matches = scanner.scan_file_with_exclusions(sandbox_handle.path(), NO_EXCLUDED_CATEGORIES)?;
+                let matched_names: Vec<String> = matches.iter().map(|m| m.rule_name.clone()).collect();
+                (true, matched_names)
             } else {
                 (false, Vec::new())
             }
@@ -315,7 +354,7 @@ impl UploadValidator {
                 "Malware detected in large file, quarantining"
             );
 
-            let quarantine_entry = self
+            let _quarantine_entry = self
                 .sandbox
                 .quarantine(
                     sandbox_handle.path(),

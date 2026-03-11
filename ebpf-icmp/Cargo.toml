@@ -1,0 +1,14 @@
+[package]
+name = "maluwaf-ebpf-icmp"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+aya-ebpf = "0.1"
+aya-ebpf-macros = "0.1"
+network-types = "0.1"
+
+[[bin]]
+name = "maluwaf-icmp"
+path = "src/main.rs"
+

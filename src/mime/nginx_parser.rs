@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 pub fn parse_nginx_mime_types(
     content: &str,
 ) -> Result<Vec<(String, Vec<String>)>, crate::mime::MimeError> {

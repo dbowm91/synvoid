@@ -1,19 +1,27 @@
-use crate::config::site::{BackendConfig, SiteListenConfig};
+use crate::config::site::BackendConfig;
 use crate::config::{MainConfig, SiteConfig};
-use crate::static_files::{client::MinifierClient, minifier::MinifierCache, StaticFileHandler};
+use crate::platform::fs::PlatformPaths;
+use crate::static_files::{
+    client::{AsyncMinifierClient, MinifierClient},
+    minifier::MinifierCache,
+    StaticFileHandler,
+};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+const MAX_INLINE_DOMAINS: usize = 4;
+
 #[derive(Clone)]
 pub struct Router {
-    domain_map: HashMap<String, String>,
-    site_configs: HashMap<String, SiteConfig>,
+    domain_map: HashMap<Arc<str>, Arc<SiteConfig>>,
+    suffix_domain_map: Vec<(Arc<str>, Arc<SiteConfig>)>,
     fallback_mode: String,
     fallback_upstream: Option<String>,
     static_handlers: HashMap<String, Arc<StaticFileHandler>>,
     minifier_client: Option<MinifierClient>,
+    async_minifier_client: Option<AsyncMinifierClient>,
     listen_map: HashMap<SocketAddr, Vec<String>>,
     default_servers: HashMap<SocketAddr, String>,
 }
@@ -25,18 +33,22 @@ pub enum BackendType {
     Php,
     Cgi,
     AxumDynamic,
+    AppServer,
     Static,
+    QuicTunnel,
 }
 
 #[derive(Clone)]
 pub struct RouteTarget {
-    pub site_id: String,
-    pub upstream: String,
-    pub site_config: SiteConfig,
+    pub site_id: Arc<str>,
+    pub upstream: Arc<str>,
+    pub site_config: Arc<SiteConfig>,
     pub static_handler: Option<Arc<StaticFileHandler>>,
     pub backend_type: BackendType,
-    pub backend_socket: Option<String>,
-    pub backend_plugin: Option<String>,
+    pub backend_socket: Option<Arc<str>>,
+    pub backend_plugin: Option<Arc<str>>,
+    pub tunnel_peer: Option<Arc<str>>,
+    pub tunnel_port: Option<u16>,
 }
 
 #[derive(Clone)]
@@ -86,6 +98,7 @@ pub enum RouteResult {
 impl Router {
     pub fn new(main_config: &MainConfig, sites: HashMap<String, SiteConfig>) -> Self {
         let mut domain_map = HashMap::new();
+        let mut suffix_domain_map: Vec<(Arc<str>, Arc<SiteConfig>)> = Vec::new();
         let mut static_handlers = HashMap::new();
         let mut listen_map: HashMap<SocketAddr, Vec<String>> = HashMap::new();
         let mut default_servers: HashMap<SocketAddr, String> = HashMap::new();
@@ -97,36 +110,54 @@ impl Router {
             .map(|base| {
                 let mut path = PathBuf::from(base);
                 path.pop();
-                path.join("rustwaf-static-worker.sock")
+                path.join("maluwaf-static-worker.sock")
             })
-            .unwrap_or_else(|| PathBuf::from("/tmp/rustwaf-static-worker.sock"));
+            .unwrap_or_else(|| PlatformPaths::new().static_worker_socket_path());
 
-        let minifier_client = MinifierClient::new(static_worker_socket);
+        let minifier_client = MinifierClient::new(static_worker_socket.clone());
+        let async_minifier_client = AsyncMinifierClient::new(static_worker_socket);
 
-        for (site_id, config) in &sites {
-            for domain in &config.site.domains {
-                domain_map.insert(domain.clone(), site_id.clone());
+        for (_site_id, config) in sites {
+            let config_arc = Arc::new(config);
+
+            for domain in &config_arc.site.domains {
+                let clean_domain = Self::clean_domain(domain);
+
+                if clean_domain.starts_with('.') || clean_domain.contains('*') {
+                    suffix_domain_map.push((Arc::from(clean_domain.as_str()), config_arc.clone()));
+                } else {
+                    domain_map.insert(Arc::from(clean_domain.as_str()), config_arc.clone());
+                }
             }
 
-            if config.r#static.enabled.unwrap_or(false) {
-                let minifier_cache = if config.r#static.enable_minification.unwrap_or(true) {
-                    let min_config = MinifierCache::config_from_site(site_id, &config.r#static);
+            if config_arc.r#static.enabled.unwrap_or(false) {
+                let site_id = config_arc.site_id();
+                let minifier_cache = if config_arc.r#static.enable_minification.unwrap_or(true) {
+                    let min_config =
+                        MinifierCache::config_from_site(&site_id, &config_arc.r#static);
                     Some(Arc::new(MinifierCache::new(min_config)))
                 } else {
                     None
                 };
 
-                let client = if config.r#static.enable_minification.unwrap_or(true) {
+                let client = if config_arc.r#static.enable_minification.unwrap_or(true) {
                     Some(minifier_client.clone())
                 } else {
                     None
                 };
 
+                let async_client = if config_arc.r#static.enable_minification.unwrap_or(true) {
+                    Some(async_minifier_client.clone())
+                } else {
+                    None
+                };
+
                 match StaticFileHandler::new_with_minifier(
-                    config.r#static.clone(),
+                    config_arc.r#static.clone(),
                     site_id.clone(),
                     minifier_cache,
                     client,
+                    async_client,
                 ) {
                     Ok(handler) => {
                         if handler.is_enabled() {
@@ -143,16 +174,15 @@ impl Router {
                 }
             }
 
-            if !config.site.listen.is_empty() {
-                for listen_config in &config.site.listen {
+            if !config_arc.site.listen.is_empty() {
+                for listen_config in &config_arc.site.listen {
                     if let Some(addr) = listen_config.to_socket_addr(main_config.server.port) {
-                        let ssl = listen_config.is_ssl();
-                        let http_port = if ssl {
+                        let http_port = if listen_config.is_ssl() {
                             main_config.tls.port
                         } else {
                             main_config.server.port
                         };
-                        let actual_port = listen_config.port.unwrap_or(http_port);
+                        let _actual_port = listen_config.port.unwrap_or(http_port);
 
                         let bind_addr = if let Some(p) = listen_config.port {
                             SocketAddr::new(addr.ip(), p)
@@ -163,7 +193,7 @@ impl Router {
                         listen_map
                             .entry(bind_addr)
                             .or_insert_with(Vec::new)
-                            .push(site_id.clone());
+                            .push(config_arc.site_id());
 
                         if listen_config.is_default_server() {
                             if let Some(existing) = default_servers.get(&bind_addr) {
@@ -171,10 +201,10 @@ impl Router {
                                     "Multiple default servers configured for {}: {} and {}",
                                     bind_addr,
                                     existing,
-                                    site_id
+                                    config_arc.site_id()
                                 );
                             } else {
-                                default_servers.insert(bind_addr, site_id.clone());
+                                default_servers.insert(bind_addr, config_arc.site_id());
                             }
                         }
                     }
@@ -182,13 +212,16 @@ impl Router {
             }
         }
 
+        suffix_domain_map.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+
         let router = Router {
             domain_map,
-            site_configs: sites,
+            suffix_domain_map,
             fallback_mode: main_config.fallback.mode.clone(),
             fallback_upstream: main_config.fallback.upstream.clone(),
             static_handlers,
             minifier_client: Some(minifier_client),
+            async_minifier_client: Some(async_minifier_client),
             listen_map: listen_map.clone(),
             default_servers,
         };
@@ -210,11 +243,17 @@ impl Router {
         router
     }
 
-    fn is_host_valid_for_site(&self, host: &str, site_config: &SiteConfig) -> bool {
-        let clean_host = host.trim_start_matches("www.").to_lowercase();
+    #[inline]
+    fn clean_domain(domain: &str) -> String {
+        domain.trim_start_matches("www.").to_lowercase()
+    }
+
+    #[inline]
+    fn is_host_valid_for_site(&self, host: &str, site_config: &Arc<SiteConfig>) -> bool {
+        let clean_host = Self::clean_domain(host);
 
         for domain in &site_config.site.domains {
-            let clean_domain = domain.trim_start_matches("www.").to_lowercase();
+            let clean_domain = Self::clean_domain(domain);
             if clean_host == clean_domain || clean_host.ends_with(&format!(".{}", clean_domain)) {
                 return true;
             }
@@ -223,18 +262,34 @@ impl Router {
         false
     }
 
-    fn route_to_target(&self, site_id: &str, site_config: &SiteConfig, path: &str) -> RouteResult {
+    #[inline]
+    fn parse_quictunnel_url(url: &str) -> Option<(String, u16)> {
+        let trimmed = url.trim();
+        if !trimmed.starts_with("quictunnel://") && !trimmed.starts_with("quictunnel:") {
+            return None;
+        }
+
+        let rest = trimmed
+            .trim_start_matches("quictunnel://")
+            .trim_start_matches("quictunnel:");
+
+        if let Some(colon_pos) = rest.rfind(':') {
+            let peer = rest[..colon_pos].to_string();
+            let port_str = &rest[colon_pos + 1..];
+            if let Ok(port) = port_str.parse::<u16>() {
+                return Some((peer, port));
+            }
+        }
+
+        None
+    }
+
+    fn route_to_target(&self, site_config: &Arc<SiteConfig>, path: &str) -> RouteResult {
+        let site_id = site_config.site_id();
+
         if site_config.security.reject_unknown_hosts.unwrap_or(false) {
-            if !self.is_host_valid_for_site(
-                &site_config
-                    .site
-                    .domains
-                    .first()
-                    .cloned()
-                    .unwrap_or_default(),
-                site_config,
-            ) {
-                return RouteResult::NotFound(format!("Host not allowed"));
+            if !self.is_host_valid_for_site(&site_id, site_config) {
+                return RouteResult::NotFound("Host not allowed".to_string());
             }
         }
 
@@ -244,14 +299,31 @@ impl Router {
                     let upstream = url
                         .clone()
                         .unwrap_or_else(|| site_config.site.upstream.get_upstream(path));
+
+                    if let Some((peer, port)) = Self::parse_quictunnel_url(&upstream) {
+                        return RouteResult::Found(RouteTarget {
+                            site_id: Arc::from(site_id.as_str()),
+                            upstream: Arc::from(upstream.as_str()),
+                            site_config: site_config.clone(),
+                            static_handler: None,
+                            backend_type: BackendType::QuicTunnel,
+                            backend_socket: None,
+                            backend_plugin: None,
+                            tunnel_peer: Some(Arc::from(peer.as_str())),
+                            tunnel_port: Some(port),
+                        });
+                    }
+
                     return RouteResult::Found(RouteTarget {
-                        site_id: site_id.to_string(),
-                        upstream,
+                        site_id: Arc::from(site_id.as_str()),
+                        upstream: Arc::from(upstream.as_str()),
                         site_config: site_config.clone(),
                         static_handler: None,
                         backend_type: BackendType::Upstream,
                         backend_socket: None,
                         backend_plugin: None,
+                        tunnel_peer: None,
+                        tunnel_port: None,
                     });
                 }
                 BackendConfig::FastCgi { socket } => {
@@ -259,48 +331,74 @@ impl Router {
                         .clone()
                         .unwrap_or_else(|| "/run/php-fpm.sock".to_string());
                     return RouteResult::Found(RouteTarget {
-                        site_id: site_id.to_string(),
-                        upstream: format!("fastcgi://{}", socket),
+                        site_id: Arc::from(site_id.as_str()),
+                        upstream: Arc::from(format!("fastcgi://{}", socket)),
                         site_config: site_config.clone(),
                         static_handler: None,
                         backend_type: BackendType::FastCgi,
-                        backend_socket: Some(socket),
+                        backend_socket: Some(Arc::from(socket.as_str())),
                         backend_plugin: None,
+                        tunnel_peer: None,
+                        tunnel_port: None,
                     });
                 }
                 BackendConfig::AxumDynamic { socket, plugin } => {
                     let socket = socket
                         .clone()
-                        .unwrap_or_else(|| "/run/rustwaf/axum.sock".to_string());
+                        .unwrap_or_else(|| "/run/maluwaf/axum.sock".to_string());
                     let plugin = plugin
                         .clone()
-                        .unwrap_or_else(|| "/opt/rustwaf/plugins/app.so".to_string());
+                        .unwrap_or_else(|| "/opt/maluwaf/plugins/app.so".to_string());
                     return RouteResult::Found(RouteTarget {
-                        site_id: site_id.to_string(),
-                        upstream: format!("http://{}", socket),
+                        site_id: Arc::from(site_id.as_str()),
+                        upstream: Arc::from(format!("http://{}", socket)),
                         site_config: site_config.clone(),
                         static_handler: None,
                         backend_type: BackendType::AxumDynamic,
-                        backend_socket: Some(socket),
-                        backend_plugin: Some(plugin),
+                        backend_socket: Some(Arc::from(socket.as_str())),
+                        backend_plugin: Some(Arc::from(plugin.as_str())),
+                        tunnel_peer: None,
+                        tunnel_port: None,
+                    });
+                }
+                BackendConfig::AppServer { socket } => {
+                    let socket = socket.clone().unwrap_or_else(|| {
+                        site_config
+                            .app_server
+                            .socket_path_for_site(&site_id, 0)
+                            .display()
+                            .to_string()
+                    });
+                    return RouteResult::Found(RouteTarget {
+                        site_id: Arc::from(site_id.as_str()),
+                        upstream: Arc::from(format!("http://unix:{}:", socket)),
+                        site_config: site_config.clone(),
+                        static_handler: None,
+                        backend_type: BackendType::AppServer,
+                        backend_socket: Some(Arc::from(socket.as_str())),
+                        backend_plugin: None,
+                        tunnel_peer: None,
+                        tunnel_port: None,
                     });
                 }
                 BackendConfig::Static { enabled } => {
                     if enabled.unwrap_or(false) {
-                        if let Some(handler) = self.static_handlers.get(site_id) {
+                        if let Some(handler) = self.static_handlers.get(&site_id) {
                             return RouteResult::Found(RouteTarget {
-                                site_id: site_id.to_string(),
-                                upstream: String::new(),
+                                site_id: Arc::from(site_id.as_str()),
+                                upstream: Arc::from(""),
                                 site_config: site_config.clone(),
                                 static_handler: Some(handler.clone()),
                                 backend_type: BackendType::Static,
                                 backend_socket: None,
                                 backend_plugin: None,
+                                tunnel_peer: None,
+                                tunnel_port: None,
                             });
                         }
                     }
                 }
-                BackendConfig::Axum { socket } => {
+                BackendConfig::Axum { .. } => {
                     tracing::warn!(
                         "Axum compile-time integration not yet implemented, use axum-dynamic"
                     );
@@ -321,18 +419,20 @@ impl Router {
                     }
                 })
             }) {
-                let root = php_config
+                let _root = php_config
                     .root
                     .clone()
                     .unwrap_or_else(|| "/var/www/html".to_string());
                 return RouteResult::Found(RouteTarget {
-                    site_id: site_id.to_string(),
-                    upstream: format!("php://{}", socket),
+                    site_id: Arc::from(site_id.as_str()),
+                    upstream: Arc::from(format!("php://{}", socket)),
                     site_config: site_config.clone(),
                     static_handler: None,
                     backend_type: BackendType::Php,
-                    backend_socket: Some(socket),
+                    backend_socket: Some(Arc::from(socket.as_str())),
                     backend_plugin: None,
+                    tunnel_peer: None,
+                    tunnel_port: None,
                 });
             }
         }
@@ -340,41 +440,66 @@ impl Router {
         if let Some(ref cgi_config) = site_config.proxy.cgi {
             if let Some(ref root) = cgi_config.root {
                 return RouteResult::Found(RouteTarget {
-                    site_id: site_id.to_string(),
-                    upstream: format!("cgi://{}", root),
+                    site_id: Arc::from(site_id.as_str()),
+                    upstream: Arc::from(format!("cgi://{}", root)),
                     site_config: site_config.clone(),
                     static_handler: None,
                     backend_type: BackendType::Cgi,
-                    backend_socket: Some(root.clone()),
+                    backend_socket: Some(Arc::from(root.as_str())),
                     backend_plugin: None,
+                    tunnel_peer: None,
+                    tunnel_port: None,
                 });
             }
         }
 
-        let static_handler = self.static_handlers.get(site_id).cloned();
+        if site_config.app_server.enabled.unwrap_or(false) {
+            let socket = site_config
+                .app_server
+                .socket_path_for_site(&site_id, 0)
+                .display()
+                .to_string();
+            return RouteResult::Found(RouteTarget {
+                site_id: Arc::from(site_id.as_str()),
+                upstream: Arc::from(format!("http://unix:{}:", socket)),
+                site_config: site_config.clone(),
+                static_handler: None,
+                backend_type: BackendType::AppServer,
+                backend_socket: Some(Arc::from(socket.as_str())),
+                backend_plugin: None,
+                tunnel_peer: None,
+                tunnel_port: None,
+            });
+        }
+
+        let static_handler = self.static_handlers.get(&site_id).cloned();
         if let Some(ref handler) = static_handler {
             if handler.get_matching_location(path).is_some() {
                 return RouteResult::Found(RouteTarget {
-                    site_id: site_id.to_string(),
-                    upstream: String::new(),
+                    site_id: Arc::from(site_id.as_str()),
+                    upstream: Arc::from(""),
                     site_config: site_config.clone(),
                     static_handler: Some(handler.clone()),
                     backend_type: BackendType::Static,
                     backend_socket: None,
                     backend_plugin: None,
+                    tunnel_peer: None,
+                    tunnel_port: None,
                 });
             }
         }
 
         let upstream = site_config.site.upstream.get_upstream(path);
         RouteResult::Found(RouteTarget {
-            site_id: site_id.to_string(),
-            upstream,
+            site_id: Arc::from(site_id.as_str()),
+            upstream: Arc::from(upstream.as_str()),
             site_config: site_config.clone(),
             static_handler,
             backend_type: BackendType::Upstream,
             backend_socket: None,
             backend_plugin: None,
+            tunnel_peer: None,
+            tunnel_port: None,
         })
     }
 
@@ -388,23 +513,24 @@ impl Router {
         path: &str,
         local_addr: Option<SocketAddr>,
     ) -> RouteResult {
-        let clean_host = host.trim_start_matches("www.").to_lowercase();
+        let clean_host = Self::clean_domain(host);
+        let clean_host_arc: Arc<str> = Arc::from(clean_host.as_str());
 
         if let Some(addr) = local_addr {
             if let Some(site_ids) = self.listen_map.get(&addr) {
                 for site_id in site_ids {
-                    if let Some(site_config) = self.site_configs.get(site_id) {
+                    if let Some(site_config) = self.domain_map.get(site_id as &str) {
                         if self.is_host_valid_for_site(&clean_host, site_config)
                             || site_config.site.domains.is_empty()
                         {
-                            return self.route_to_target(site_id, site_config, path);
+                            return self.route_to_target(site_config, path);
                         }
                         for domain in &site_config.site.domains {
-                            let clean_domain = domain.trim_start_matches("www.").to_lowercase();
+                            let clean_domain = Self::clean_domain(domain);
                             if clean_host == clean_domain
                                 || clean_host.ends_with(&format!(".{}", clean_domain))
                             {
-                                return self.route_to_target(site_id, site_config, path);
+                                return self.route_to_target(site_config, path);
                             }
                         }
                     }
@@ -412,31 +538,27 @@ impl Router {
             }
         }
 
-        if let Some(site_id) = self.domain_map.get(&clean_host) {
-            if let Some(site_config) = self.site_configs.get(site_id) {
-                return self.route_to_target(site_id, site_config, path);
-            }
+        if let Some(site_config) = self.domain_map.get(clean_host_arc.as_ref()) {
+            return self.route_to_target(site_config, path);
         }
 
-        for (domain, site_id) in &self.domain_map {
-            if clean_host.ends_with(domain) || domain.ends_with(&clean_host) {
-                if let Some(site_config) = self.site_configs.get(site_id) {
-                    return self.route_to_target(site_id, site_config, path);
-                }
+        for (domain, site_config) in &self.suffix_domain_map {
+            if clean_host.ends_with(domain.as_ref()) {
+                return self.route_to_target(site_config, path);
             }
         }
 
         if clean_host.is_empty() || clean_host == "*" {
             if let Some(addr) = local_addr {
                 if let Some(default_site_id) = self.default_servers.get(&addr) {
-                    if let Some(site_config) = self.site_configs.get(default_site_id) {
-                        return self.route_to_target(default_site_id, site_config, path);
+                    if let Some(site_config) = self.domain_map.get(default_site_id as &str) {
+                        return self.route_to_target(site_config, path);
                     }
                 }
             }
             if let Some(default_site_id) = self.default_servers.values().next() {
-                if let Some(site_config) = self.site_configs.get(default_site_id) {
-                    return self.route_to_target(default_site_id, site_config, path);
+                if let Some(site_config) = self.domain_map.get(default_site_id as &str) {
+                    return self.route_to_target(site_config, path);
                 }
             }
         }
@@ -445,18 +567,20 @@ impl Router {
             "return_404" => RouteResult::NotFound(format!("No site configured for host: {}", host)),
             "proxy_to" => {
                 if let Some(upstream) = &self.fallback_upstream {
-                    let mut default_site = SiteConfig::default_fallback_site(upstream.clone());
+                    let default_site = SiteConfig::default_fallback_site(upstream.clone());
                     let site_id = default_site.site_id();
                     let static_handler = self.static_handlers.get(&site_id).cloned();
 
                     RouteResult::Found(RouteTarget {
-                        site_id,
-                        upstream: upstream.clone(),
-                        site_config: default_site,
+                        site_id: Arc::from(site_id.as_str()),
+                        upstream: Arc::from(upstream.as_str()),
+                        site_config: Arc::new(default_site),
                         static_handler,
                         backend_type: BackendType::Upstream,
                         backend_socket: None,
                         backend_plugin: None,
+                        tunnel_peer: None,
+                        tunnel_port: None,
                     })
                 } else {
                     RouteResult::Error(
@@ -470,58 +594,72 @@ impl Router {
 
     pub fn update_sites(&mut self, sites: HashMap<String, SiteConfig>) {
         self.domain_map.clear();
+        self.suffix_domain_map.clear();
         self.static_handlers.clear();
         self.listen_map.clear();
         self.default_servers.clear();
 
-        for (site_id, config) in &sites {
-            for domain in &config.site.domains {
-                self.domain_map.insert(domain.clone(), site_id.clone());
+        for (_site_id, config) in sites {
+            let config_arc = Arc::new(config);
+            let site_id_str = config_arc.site_id();
+
+            for domain in &config_arc.site.domains {
+                let clean_domain = Self::clean_domain(domain);
+
+                if clean_domain.starts_with('.') || clean_domain.contains('*') {
+                    self.suffix_domain_map
+                        .push((Arc::from(clean_domain.as_str()), config_arc.clone()));
+                } else {
+                    self.domain_map
+                        .insert(Arc::from(clean_domain.as_str()), config_arc.clone());
+                }
             }
 
-            if config.r#static.enabled.unwrap_or(false) {
-                let minifier_cache = if config.r#static.enable_minification.unwrap_or(true) {
-                    let min_config = MinifierCache::config_from_site(&site_id, &config.r#static);
+            if config_arc.r#static.enabled.unwrap_or(false) {
+                let minifier_cache = if config_arc.r#static.enable_minification.unwrap_or(true) {
+                    let min_config =
+                        MinifierCache::config_from_site(&site_id_str, &config_arc.r#static);
                     Some(Arc::new(MinifierCache::new(min_config)))
                 } else {
                     None
                 };
 
-                let client = if config.r#static.enable_minification.unwrap_or(true) {
+                let client = if config_arc.r#static.enable_minification.unwrap_or(true) {
                     self.minifier_client.clone()
                 } else {
                     None
                 };
 
                 match StaticFileHandler::new_with_minifier(
-                    config.r#static.clone(),
-                    site_id.clone(),
+                    config_arc.r#static.clone(),
+                    site_id_str.clone(),
                     minifier_cache,
                     client,
+                    self.async_minifier_client.clone(),
                 ) {
                     Ok(handler) => {
                         if handler.is_enabled() {
                             self.static_handlers
-                                .insert(site_id.clone(), Arc::new(handler));
+                                .insert(site_id_str.clone(), Arc::new(handler));
                         }
                     }
                     Err(e) => {
                         tracing::warn!(
                             "Failed to create static handler for site {}: {}",
-                            site_id,
+                            site_id_str,
                             e
                         );
                     }
                 }
             }
 
-            if !config.site.listen.is_empty() {
-                for listen_config in &config.site.listen {
+            if !config_arc.site.listen.is_empty() {
+                for listen_config in &config_arc.site.listen {
                     if let Some(addr) = listen_config.to_socket_addr(80) {
                         self.listen_map
                             .entry(addr)
                             .or_insert_with(Vec::new)
-                            .push(site_id.clone());
+                            .push(site_id_str.clone());
 
                         if listen_config.is_default_server() {
                             if let Some(existing) = self.default_servers.get(&addr) {
@@ -529,17 +667,19 @@ impl Router {
                                     "Multiple default servers configured for {}: {} and {}",
                                     addr,
                                     existing,
-                                    site_id
+                                    site_id_str
                                 );
                             } else {
-                                self.default_servers.insert(addr, site_id.clone());
+                                self.default_servers.insert(addr, site_id_str.clone());
                             }
                         }
                     }
                 }
             }
         }
-        self.site_configs = sites;
+
+        self.suffix_domain_map
+            .sort_by(|a, b| b.0.len().cmp(&a.0.len()));
     }
 }
 
@@ -547,11 +687,12 @@ impl Default for Router {
     fn default() -> Self {
         Router {
             domain_map: HashMap::new(),
-            site_configs: HashMap::new(),
+            suffix_domain_map: Vec::new(),
             fallback_mode: "return_404".to_string(),
             fallback_upstream: None,
             static_handlers: HashMap::new(),
             minifier_client: None,
+            async_minifier_client: None,
             listen_map: HashMap::new(),
             default_servers: HashMap::new(),
         }
@@ -581,6 +722,7 @@ impl SiteConfig {
             logging: Default::default(),
             proxy: Default::default(),
             tcp: Default::default(),
+            udp: Default::default(),
             tarpit: Default::default(),
             attack_detection: Default::default(),
             upload: Default::default(),
@@ -592,6 +734,7 @@ impl SiteConfig {
             grpc: Default::default(),
             websocket: Default::default(),
             tunnel: Default::default(),
+            app_server: Default::default(),
         }
     }
 }

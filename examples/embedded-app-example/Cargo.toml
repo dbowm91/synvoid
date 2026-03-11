@@ -18,12 +18,8 @@ crate-type = ["lib", "cdylib", "staticlib"]
 
 [[bin]]
 name = "my-waf-app"
-path = "main.rs"
+path = "src/main.rs"
 
 [features]
 default = []
 
-[profile.release]
-opt-level = 3
-lto = true
-codegen-units = 1

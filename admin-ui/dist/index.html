@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MaluWAF Admin Dashboard</title>
+    <link href="styles.css" rel="stylesheet">
+<link rel="modulepreload" href="/admin-ui-52fd4932e572c59f.js" crossorigin="anonymous" integrity="sha384-EaoYRroBV+UeGcYxMzTgJeT7YjtJ/Ao1vEh2qMEQBJczlzNsBK1J6Ikbng/5mbBY"><link rel="preload" href="/admin-ui-52fd4932e572c59f_bg.wasm" crossorigin="anonymous" integrity="sha384-KDr6EWsq6jvWXFqJrzafDHWnm9CSSC1jlXSoKM+4qf8SG2oQs2ubmG4g2GzJfI63" as="fetch" type="application/wasm"></head>
+<body class="min-h-screen">
+    <div id="app">
+        <div class="loading-screen">
+            <div class="loading-logo">M</div>
+            <div class="loading-spinner"></div>
+            <p class="loading-text">Loading MaluWAF Dashboard...</p>
+        </div>
+    </div>
+
+<script type="module">
+import init, * as bindings from '/admin-ui-52fd4932e572c59f.js';
+const wasm = await init({ module_or_path: '/admin-ui-52fd4932e572c59f_bg.wasm' });
+
+
+window.wasmBindings = bindings;
+
+
+dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
+
+</script></body>
+</html>

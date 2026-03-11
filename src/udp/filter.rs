@@ -1,3 +1,4 @@
+use crate::filter::{BaseFilterConfig, ProtocolFilterCore};
 use crate::udp::protocol::UdpProtocol;
 use std::collections::HashMap;
 
@@ -7,6 +8,16 @@ pub enum UdpFilterAction {
     Drop,
     RateLimit { rate: u32 },
     Challenge,
+}
+
+impl crate::filter::FilterAction for UdpFilterAction {
+    fn is_allow(&self) -> bool {
+        matches!(self, UdpFilterAction::Allow)
+    }
+
+    fn is_drop(&self) -> bool {
+        matches!(self, UdpFilterAction::Drop)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -160,21 +171,30 @@ impl UdpFilterConfig {
     }
 }
 
+#[derive(Clone)]
 pub struct UdpProtocolFilter {
-    config: UdpFilterConfig,
-}
-
-impl Clone for UdpProtocolFilter {
-    fn clone(&self) -> Self {
-        Self {
-            config: self.config.clone(),
-        }
-    }
+    core: ProtocolFilterCore<UdpProtocol, UdpFilterAction>,
+    port_overrides: HashMap<u16, UdpPortFilterConfig>,
+    amplification_threshold: f64,
+    max_response_size: usize,
 }
 
 impl UdpProtocolFilter {
     pub fn new(config: UdpFilterConfig) -> Self {
-        Self { config }
+        let base_config = BaseFilterConfig::new(
+            config.enabled,
+            config.strict_mode,
+            config.protocol_allowlist,
+            config.protocol_denylist,
+        );
+        let core = ProtocolFilterCore::new(base_config);
+
+        Self {
+            core,
+            port_overrides: config.port_overrides,
+            amplification_threshold: config.amplification_threshold,
+            max_response_size: config.max_response_size,
+        }
     }
 
     pub fn check(
@@ -182,57 +202,26 @@ impl UdpProtocolFilter {
         expected_protocol: &str,
         detected_protocol: &UdpProtocol,
     ) -> UdpFilterAction {
-        if !self.config.enabled {
+        let result = self.core.check(
+            expected_protocol,
+            detected_protocol,
+            UdpFilterAction::Allow,
+            UdpFilterAction::Drop,
+        );
+
+        if result == UdpFilterAction::Allow && *detected_protocol == UdpProtocol::Unknown {
             return UdpFilterAction::Allow;
         }
 
-        if !self.config.protocol_denylist.is_empty() {
-            let detected_str = detected_protocol.as_str();
-            if self
-                .config
-                .protocol_denylist
-                .iter()
-                .any(|p| p.as_str() == detected_str)
-            {
-                return UdpFilterAction::Drop;
-            }
-        }
-
-        if !self.config.protocol_allowlist.is_empty() {
-            let detected_str = detected_protocol.as_str();
-            if !self
-                .config
-                .protocol_allowlist
-                .iter()
-                .any(|p| p.as_str() == detected_str)
-            {
-                return UdpFilterAction::Drop;
-            }
-        }
-
-        let expected = UdpProtocol::from_str(expected_protocol);
-
-        if expected == *detected_protocol {
-            return UdpFilterAction::Allow;
-        }
-
-        if self.config.strict_mode {
-            return UdpFilterAction::Drop;
-        }
-
-        if *detected_protocol == UdpProtocol::Unknown {
-            return UdpFilterAction::Allow;
-        }
-
-        UdpFilterAction::Allow
+        result
     }
 
     pub fn check_port(&self, port: u16, detected_protocol: &UdpProtocol) -> UdpFilterAction {
-        if !self.config.enabled {
+        if !self.core.enabled() {
             return UdpFilterAction::Allow;
         }
 
-        if let Some(port_config) = self.config.port_overrides.get(&port) {
+        if let Some(port_config) = self.port_overrides.get(&port) {
             let expected = UdpProtocol::from_str(&port_config.expected_protocol);
 
             if expected == *detected_protocol {
@@ -264,19 +253,15 @@ impl UdpProtocolFilter {
         }
 
         let ratio = response_size as f64 / request_size as f64;
-        ratio > self.config.amplification_threshold && response_size > self.config.max_response_size
+        ratio > self.amplification_threshold && response_size > self.max_response_size
     }
 
     pub fn get_rate_limit(&self, port: u16) -> Option<u32> {
-        self.config
-            .port_overrides
-            .get(&port)
-            .and_then(|c| c.rate_limit)
+        self.port_overrides.get(&port).and_then(|c| c.rate_limit)
     }
 
     pub fn get_max_packet_size(&self, port: u16) -> Option<usize> {
-        self.config
-            .port_overrides
+        self.port_overrides
             .get(&port)
             .and_then(|c| c.max_packet_size)
     }
@@ -288,7 +273,7 @@ impl UdpProtocolFilter {
         action: &str,
         rate_limit: Option<u32>,
     ) -> Self {
-        self.config.port_overrides.insert(
+        self.port_overrides.insert(
             port,
             UdpPortFilterConfig {
                 expected_protocol: protocol.to_string(),
@@ -301,22 +286,22 @@ impl UdpProtocolFilter {
     }
 
     pub fn with_strict_mode(mut self, strict: bool) -> Self {
-        self.config.strict_mode = strict;
+        self.core = self.core.with_strict_mode(strict);
         self
     }
 
     pub fn with_allowlist(mut self, protocols: Vec<String>) -> Self {
-        self.config.protocol_allowlist = protocols;
+        self.core = self.core.with_allowlist(protocols);
         self
     }
 
     pub fn with_denylist(mut self, protocols: Vec<String>) -> Self {
-        self.config.protocol_denylist = protocols;
+        self.core = self.core.with_denylist(protocols);
         self
     }
 
     pub fn with_amplification_threshold(mut self, threshold: f64) -> Self {
-        self.config.amplification_threshold = threshold;
+        self.amplification_threshold = threshold;
         self
     }
 }

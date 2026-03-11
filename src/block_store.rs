@@ -1,3 +1,14 @@
+//! Block store for IP blocking management.
+//!
+//! This module provides persistent storage for IP blocklist entries,
+//! supporting automatic expiration and graceful shutdown.
+//!
+//! # Features
+//! - Thread-safe access using RwLock
+//! - Automatic persistence to disk
+//! - Expiration-based cleanup
+//! - Graceful shutdown with data flush
+
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -74,6 +85,7 @@ pub struct BlockStore {
     config: DenyListLimitsConfig,
     total_entries: RwLock<usize>,
     persist_tx: Option<mpsc::Sender<PersistRequest>>,
+    shutdown_tx: Option<mpsc::Sender<()>>,
 }
 
 #[derive(Debug, Clone)]
@@ -96,14 +108,24 @@ impl BlockStore {
                     Ok(content) => {
                         match serde_json::from_str::<Vec<BlockEntry>>(&content) {
                             Ok(entries) => {
-                                let validated: HashMap<String, BlockEntry> = entries
-                                    .into_iter()
-                                    .filter(|e| !e.is_expired())
-                                    .map(|e| {
-                                        let ip: IpAddr = e.ip.parse().ok().unwrap_or_else(|| "0.0.0.0".parse().unwrap());
-                                        (BlockEntry::key(&e.site_scope, &ip), e)
-                                    })
-                                    .collect();
+                                let mut validated = HashMap::new();
+                                let mut parse_errors = 0;
+                                for e in entries {
+                                    match e.ip.parse::<IpAddr>() {
+                                        Ok(ip) => {
+                                            if !e.is_expired() {
+                                                validated.insert(BlockEntry::key(&e.site_scope, &ip), e);
+                                            }
+                                        }
+                                        Err(_) => {
+                                            parse_errors += 1;
+                                            tracing::warn!("Skipping block entry with invalid IP: {}", e.ip);
+                                        }
+                                    }
+                                }
+                                if parse_errors > 0 {
+                                    tracing::warn!("Skipped {} block entries with invalid IPs", parse_errors);
+                                }
                                 tracing::info!("Loaded {} valid block entries from disk", validated.len());
                                 validated
                             }
@@ -126,8 +148,9 @@ impl BlockStore {
         };
 
         let initial_count = store.len();
-        let persist_tx = if config.persist_interval_secs > 0 && persist_path.is_some() {
+        let (persist_tx, shutdown_tx) = if config.persist_interval_secs > 0 && persist_path.is_some() {
             let (tx, mut rx): (mpsc::Sender<PersistRequest>, mpsc::Receiver<PersistRequest>) = mpsc::channel(100);
+            let (shutdown_tx, mut shutdown_rx): (mpsc::Sender<()>, mpsc::Receiver<()>) = mpsc::channel(1);
             let path = persist_path.clone().unwrap();
             let max_entries_clone = max_entries;
             
@@ -145,13 +168,20 @@ impl BlockStore {
                         Some(req) = rx.recv() => {
                             pending = Some(req.entries);
                         }
+                        _ = shutdown_rx.recv() => {
+                            if let Some(entries) = pending.take() {
+                                Self::persist_to_disk(&path, entries, max_entries_clone).await;
+                            }
+                            tracing::info!("Block store persistence task shutting down");
+                            break;
+                        }
                     }
                 }
             });
             
-            Some(tx)
+            (Some(tx), Some(shutdown_tx))
         } else {
-            None
+            (None, None)
         };
 
         Self {
@@ -161,6 +191,14 @@ impl BlockStore {
             config,
             total_entries: RwLock::new(initial_count),
             persist_tx,
+            shutdown_tx,
+        }
+    }
+
+    /// Gracefully shutdown the block store, persisting any pending data.
+    pub async fn shutdown(&self) {
+        if let Some(tx) = &self.shutdown_tx {
+            let _ = tx.send(()).await;
         }
     }
 
@@ -177,6 +215,7 @@ impl BlockStore {
                 let temp_path = path.with_extension("tmp");
                 match tokio::fs::write(&temp_path, json).await {
                     Ok(_) => {
+                        Self::set_secure_permissions(&temp_path).await;
                         if let Err(e) = tokio::fs::rename(&temp_path, path).await {
                             tracing::warn!("Failed to rename temp block file: {}", e);
                         }
@@ -192,10 +231,33 @@ impl BlockStore {
         }
     }
 
-    fn trigger_persist(&self) {
+    #[cfg(unix)]
+    async fn set_secure_permissions(path: &PathBuf) {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(metadata) = tokio::fs::metadata(path).await {
+            let mut perms = metadata.permissions();
+            perms.set_mode(0o600);
+            if let Err(e) = tokio::fs::set_permissions(path, perms).await {
+                tracing::debug!("Failed to set secure permissions on block file: {}", e);
+            }
+        }
+    }
+
+    #[cfg(not(unix))]
+    async fn set_secure_permissions(_path: &PathBuf) {}
+
+    pub fn trigger_persist(&self) {
         if let Some(ref tx) = self.persist_tx {
             let store = self.store.read().clone();
-            let _ = tx.try_send(PersistRequest { entries: store });
+            match tx.try_send(PersistRequest { entries: store }) {
+                Ok(()) => {}
+                Err(mpsc::error::TrySendError::Full(_)) => {
+                    tracing::warn!("Block store persist channel full, skipping persist");
+                }
+                Err(mpsc::error::TrySendError::Closed(_)) => {
+                    tracing::error!("Block store persist channel closed");
+                }
+            }
         } else if let Some(ref path) = self.persist_path {
             let store = self.store.read().clone();
             let path = path.clone();
@@ -206,10 +268,26 @@ impl BlockStore {
         }
     }
 
+    /// Check if block store is enabled.
+    ///
+    /// # Returns
+    /// `true` if block store is active and accepting new blocks
     pub fn is_enabled(&self) -> bool {
         self.enabled
     }
 
+    /// Block an IP address.
+    ///
+    /// Adds an IP to the blocklist with the given reason and duration.
+    ///
+    /// # Arguments
+    /// * `ip` - The IP address to block
+    /// * `reason` - Reason for blocking (e.g., "rate_limit", "attack")
+    /// * `ban_expire_seconds` - Duration of block in seconds (0 = permanent)
+    /// * `site_scope` - Scope of block ("global" or site-specific)
+    ///
+    /// # Returns
+    /// `true` if the IP was successfully blocked, `false` if store is full or disabled
     pub fn block_ip(
         &self,
         ip: IpAddr,
@@ -251,12 +329,35 @@ impl BlockStore {
         true
     }
 
+    /// Check if an IP is blocked.
+    ///
+    /// Checks both site-specific and global blocklists.
+    /// Automatically removes expired entries.
+    ///
+    /// # Arguments
+    /// * `ip` - The IP address to check
+    /// * `site_scope` - Scope to check ("global" or site-specific)
+    ///
+    /// # Returns
+    /// `Some(BlockEntry)` if blocked, `None` otherwise
     pub fn is_blocked(&self, ip: &IpAddr, site_scope: &str) -> Option<BlockEntry> {
         if !self.enabled {
             return None;
         }
 
         let key = BlockEntry::key(site_scope, ip);
+        
+        // First try with read lock for quick path
+        {
+            let store = self.store.read();
+            if let Some(entry) = store.get(&key) {
+                if !entry.is_expired() {
+                    return Some(entry.clone());
+                }
+            }
+        }
+        
+        // Need write lock for modification/cleanup
         let mut store = self.store.write();
         
         if let Some(entry) = store.get_mut(&key) {
@@ -271,6 +372,17 @@ impl BlockStore {
 
         if site_scope != "global" {
             let global_key = BlockEntry::key("global", ip);
+            
+            // Quick read check for global
+            {
+                let store = self.store.read();
+                if let Some(entry) = store.get(&global_key) {
+                    if !entry.is_expired() {
+                        return Some(entry.clone());
+                    }
+                }
+            }
+            
             if let Some(entry) = store.get_mut(&global_key) {
                 if !entry.is_expired() {
                     entry.update_access();
@@ -293,6 +405,16 @@ impl BlockStore {
         }
     }
 
+    /// Unblock an IP address.
+    ///
+    /// Removes an IP from both site-specific and global blocklists.
+    ///
+    /// # Arguments
+    /// * `ip` - The IP address to unblock
+    /// * `site_scope` - Scope to unblock from
+    ///
+    /// # Returns
+    /// `true` if the IP was found and removed
     pub fn unblock_ip(&self, ip: &IpAddr, site_scope: &str) -> bool {
         if !self.enabled {
             return false;
@@ -307,6 +429,10 @@ impl BlockStore {
         true
     }
 
+    /// Get block store statistics.
+    ///
+    /// # Returns
+    /// `BlockStoreStats` containing entry counts and utilization
     pub fn get_stats(&self) -> BlockStoreStats {
         let total = *self.total_entries.read();
         let max = self.config.max_entries;
@@ -333,6 +459,42 @@ impl BlockStore {
             expired_count,
             utilization_percent: if max > 0 { (total as f64 / max as f64) * 100.0 } else { 0.0 },
         }
+    }
+
+    pub fn get_all_entries(&self) -> Vec<BlockEntry> {
+        let store = self.store.read();
+        store.values().cloned().collect()
+    }
+
+    pub fn add_block(&self, ip: &str, reason: &str, ban_expire_seconds: u64, site_scope: &str) -> bool {
+        if !self.enabled {
+            return false;
+        }
+        
+        if let Ok(ip_addr) = ip.parse::<IpAddr>() {
+            let key = BlockEntry::key(site_scope, &ip_addr);
+            
+            let mut store = self.store.write();
+            
+            if store.len() >= self.config.max_entries {
+                tracing::warn!("BlockStore max entries reached, cannot add new block for {}", ip);
+                return false;
+            }
+            
+            let entry = BlockEntry::new(
+                ip_addr,
+                reason.to_string(),
+                ban_expire_seconds,
+                site_scope.to_string(),
+            );
+            
+            store.insert(key, entry);
+            *self.total_entries.write() = store.len();
+            
+            return true;
+        }
+        
+        false
     }
 }
 

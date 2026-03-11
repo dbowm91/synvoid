@@ -1,646 +1,140 @@
-# RustWAF - Production-Ready Web Application Firewall
+# MaluWAF
 
-A high-performance, stealth-oriented Web Application Firewall written in Rust, designed to protect multiple websites with advanced attack detection, flood protection, and bot mitigation capabilities.
+A high-performance Web Application Firewall (WAF) and reverse proxy written in Rust. MaluWAF provides comprehensive protection for multiple websites with advanced attack detection, flood mitigation, and bot blocking capabilities. For certain tech stacks MaluWAF provides a full rust alternative to traditional methods from application to client. It also provides for an experimental P2P CDN architecture using a mesh network.
 
-## Features
+## Worker Design
 
-### Attack Detection
-- **SQL Injection (SQLi)** - Detection via libinjection with fingerprinting
-- **Cross-Site Scripting (XSS)** - Context-aware XSS detection via libinjection
-- **Path Traversal** - Directory traversal and LFI detection (`../`, encoded variants, sensitive files)
-- **Remote File Inclusion (RFI)** - URL-based injection detection with IP address heuristics
-- **Server-Side Request Forgery (SSRF)** - Internal IP, cloud metadata endpoint, and protocol detection
-- **Paranoia Levels** - Configurable detection sensitivity (1-3)
+The goal is to separate processes in case of a crash, making sure the master worker is rock solid (which is in turn watched by the overseer process) and allows for zero-downtime updates.
 
-### Flood Protection
-- **SYN Flood Protection** - Per-IP and global SYN rate limiting with half-open connection tracking
-- **Connection Rate Limiting** - Per-IP connection rates with active connection tracking
-- **UDP Flood Protection** - Per-IP, per-port, and global packet rate limiting
-- **Blackhole Mode** - Automatic traffic sampling during sustained attacks
+It uses an overseer --> master --> worker model. The overseer is a process thats primary purpose is to make sure the master process is working and to handle updates without stopping. The master process spawns the workers, which there are primarily two: the minifier and unifiedrequest workers. The minifier workers job is to periodically minify html/css/js, compress, and cache as needed. Since tokio runtime can scale vertically very well, utilizing all cores if allowed, all requests are handled in the unifiedrequest worker. The one downside to this approach is that we can't so easily adjust the number of threads without restarting the loop, so for now this requires restarting that worker. This is different than how NGINX does this, but effectively tokio is doing a similar thing.
 
-### Stealth Features
-- **Silent Stalling** - Attackers receive no response; connections are held indefinitely
-- **Header Sanitization** - Removes `Server`, `X-Powered-By`, and other identifying headers
-- **No Version Disclosure** - No WAF identification in any response
-- **TCP Protocol Stalling** - Protocol mismatch (e.g., SSH on HTTP port) triggers connection stalling
+## Better results on linux
 
-### Bot Detection & Challenges
-- **AI Crawler Blocking** - Block GPTBot, ClaudeBot, and other AI scrapers
-- **Scraper Tarpit** - Endless Markov chain-generated content to waste scraper resources
-- **CSS Honeypot** - Invisible trap links that detect automated scripts
-- **JS Challenge** - Browser verification with proof-of-work
+Best support and performance will be seen on linux. It's more suited to networking that I know of at many levels. The underlying async architecture for things like EPOL are more heavily optimized in linux, windows equivalent for unix sockets is less performative, and I know we can run wireguard relying on kernel instead of userspace in linux. I can be completely wrong on some things, i'm not really an expert on any of this and even less on windows.
 
-### Core Protection
-- **Multi-Site Support** - Manage multiple websites from a single WAF instance
-- **Reverse Proxy** - Forward requests to upstream servers with automatic routing
-- **Rate Limiting** - Per-IP and global rate limiting with sliding windows
-- **IP Blocking** - Persistent blocklists with automatic expiration
-- **Endpoint Blocking** - Regex/glob pattern matching for sensitive paths
+Inter Process Comunications (IPCs) are different and that's a major thing. Since the master and worker processes must communicate with eachother, in POSIX systems we're using unix sockets to communicate in IPCs. This avoids some overhead of running through local loopback for SYN/ACK. Passing sockets and windows equivalent is used as a fallback and the whole IPC itself is abstracted over, but I think there's a performance penalty for this on the windows side. I don't know.
 
-### Observability
-- **Prometheus Metrics** - Comprehensive metrics on port 9090
-- **Structured Logging** - JSON-formatted access logs
-- **Admin API** - Health checks and configuration reload
+For the mesh WAF-WAF communication protocol, we can offload wireguard to the kernel. WAF-WAF messaging is intended to be a backhaul method connecting the WAF node operating at the edge to an origin server, as well as for doing inter-WAF messaging for things like threat intelligence sharing, origin lookups, and health checks.
+
+## Transport protocols: Wireguard and QUIC
+
+The primary intention was twofold with the transports. First, I wanted to expose a website hosted at home or remote server through a VPS. That way you could push an origin server with decent specs through a comparatively minimal VPS, or just make it easier to deploy a remote origin server in various places. Secondly, since a lot of the logic and dependencies were already in place, why not allow the WAF to act as a VPN? 
+
+## Mesh Network
+
+Once the transport protocols were in place for the intended server-WAF and user VPN-WAF, I started looking at the mesh network. This is completely opt-in, it will work (as it was originally intended) as a single instance. The mesh network gives us a couple of new capabilities that could allow the WAF to be more full featured in its original mission: to protect the underlying origin server.
+
+The biggest single weakness of a one-off WAF instance is that it's susceptible to DDOS attacks. Even with the layers of protections that are build into the WAF at the end of the day the way major CDNs are able to withstand these attacks really is about having a lot of PoPs (points of presence) and distributing the load of a DDOS over many of them. The other side of the coin concerns DNS, which is more or less out of scope for this project (major CDNs use anycast and sophisticated routing techniques to balance load), but what i figured could be done was try to lay the groundwork for a sort of P2P approach to this. Like a collaborative DDOS defense system.
+
+For now, assume we have a properly setup DNS that allows Geodns, so the DNS conects us to the closest WAF edge node. The edge node does a lookup for origin server if it doesn't know it, and passes the origin server through the mesh network through a wireguard tunnel. There are still some issues with this, but it's a starting point. Each edge node is monitoring paths and each WAF that has an upstream is monitoring health of the origin server. This gives us flexibility in how we can chose routes. The mesh network assumes there can be multiple WAFS carrying the same origin server, which allows the edge WAF processing the client request to connect to the best performing WAF that has the origin server.
+
+With this design, we can shield the identity of the origin server from the edge. WAFS can work as both an edge and an upstream provider. One origin server can broadcast to several remote WAFs in different locals. So there are a lot of options for how this can be setup as a load balancer and providing PoPs in various geographic areas.
+
+The mesh network will allow for WAF instances to share intelligence in the form of blocked attacks. This will require some level of finnesse to make sure a mesh network doesn't flood itself or lead to unintended amplification effects, but if implemented correctly should let the mesh network respond rapidly to an emerging threat.
+
+### TCP Proxying Through the Mesh
+
+TCP services (HTTP, HTTPS, etc.) can be proxied through the mesh without port conflicts. Each WAF node uses QUIC streams to connect to upstream WAFs. Since QUIC provides native stream multiplexing:
+- WAF B can simultaneously proxy example1.com from WAF F and example2.com from WAF G
+- Each connection uses independent QUIC streams
+- No port allocation conflicts between different upstream WAFs
+
+### UDP Limitations
+
+UDP services (DNS, VoIP, gaming protocols, etc.) **cannot be proxied through the mesh network**. This is a fundamental limitation due to:
+
+1. **Port Conflicts**: Unlike TCP with QUIC streams, UDP requires each node to bind to specific ports. Multiple WAFs cannot share the same UDP port, making mesh-level routing impractical.
+
+2. **Stateful Connections**: UDP is connectionless - there's no built-in way to maintain session state across mesh hops.
+
+3. **No Stream Multiplexing**: UDP lacks QUIC's stream abstraction that makes TCP mesh proxying work cleanly.
+
+**However**, UDP services can still be protected by individual WAF nodes for their local upstreams. Each WAF can:
+- Accept UDP traffic from clients
+- Apply WAF protections (flood detection, protocol filtering)
+- Forward to local or configured upstreams
+
+The existing UDP listener infrastructure (`UdpListenerPool`) handles this use case with full WAF protections including per-IP rate limiting, protocol detection, and amplification attack mitigation.
+
+Last main benefit is that this can function as a VPN using other WAF instances that allow for it in a network.
+
+## Control of the mesh network
+
+The mesh network follows a structure influenced by Tor, in that there are a small and limited number of "global peers" that work as control nodes, sort of like directory authority nodes. For clarity, that's where the similarities end, as the goal of this project is nearly the opposite (expose websites or other servers to the public internet). These global nodes are entirely arbitrary, allowing users to start their own CDN networks. These nodes maintain a full peer list and database of WAFs that have origin servers. The global peers also work as a single source of truth for the network, allowing for a mesh network to work as a private CDN, approve or reject peers, and approve or reject websites from running through the network. This could be loosely organized by hobbyists as a form of crowdsourced CDN.
+
+My personal preference would be a more unified network over many fragmented ones, since large ones would allow for more DDOS mitigation capability. There's also merits for running your own white lable mesh network: you can ensure total control, privacy, focus on a specific geographic area, and have more uniform server performance. 
+
+## Purpose
+
+This started as a project to learn rust, I wanted to do something similar to what nginx is doing. Thankfully tokio/hyper exist, so the groundwork for this isn't terribly difficult. Later it branched into learning about WAFs and the problems people are facing with scraper bots, especially AI scrapers. So MaluWAF is most mature at the reverse proxy and WAF layers.
+
+
 
 ## Quick Start
 
 ```bash
-# Build the project
+# Clone and build
+git clone https://github.com/maluwaf/maluwaf.git
+cd maluwaf
 cargo build --release
 
 # Run with default configuration
-cargo run --release
-
-# The WAF starts on:
-# - Main HTTP server: http://localhost:8080
-# - Admin API: http://localhost:8081
-# - Prometheus metrics: http://localhost:9090
+./target/release/maluwaf
 ```
+
+The WAF starts on:
+- Main HTTP server: http://localhost:8080
+- Admin API: http://localhost:8081
+- Prometheus metrics: http://localhost:9090
+
+## Key Features
+
+- **Attack Detection**: Blocks common web attacks including SQL injection, XSS, SSRF, path traversal, and command injection using pattern matching and libinjection. Useful for protecting applications from automated attacks and exploit attempts.
+
+- **Flood Protection**: Defends against volumetric attacks (SYN floods, UDP floods) and connection exhaustion through rate limiting. Operates at both per-IP and global levels to prevent service degradation.
+
+- **Bot Mitigation**: Identifies and challenges automated traffic including AI crawlers, scrapers, and suspicious bots. Uses CSS honeypots, JavaScript challenges, and behavioral analysis to separate legitimate users from bots.
+
+- **Multi-Site Support**: Run protection for unlimited websites from a single WAF instance. Each site can have independent configuration for upstream servers, protection rules, and rate limits.
+
+- **HTTP/3 & QUIC**: Modern protocol support with lower latency through 0-RTT connections and improved performance on lossy networks. Provides better mobile user experience.
+
+- **WAF Clustering**: Connect multiple WAF instances in a peer-to-peer mesh network to share threat intelligence, distribute DDoS load, and coordinate protection across geographic regions.
+
+- **Observability**: Monitor WAF health through Prometheus metrics, structured JSON logging, and real-time WebSocket feeds for live traffic monitoring and debugging.
+
+- **Security**: Automatic header sanitization removes sensitive information from responses, silent stalling wastes attacker time without revealing the server exists, and no version disclosure prevents information leakage.
+
+## Documentation
+
+See the [docs directory](docs/) for comprehensive documentation:
+
+| Guide | Description |
+|-------|-------------|
+| [GETTING_STARTED.md](docs/GETTING_STARTED.md) | Quick start guide with CLI options |
+| [DEPLOYMENT.md](docs/DEPLOYMENT.md) | Production deployment guide |
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | System architecture overview |
+| [CONFIGURATION.md](docs/CONFIGURATION.md) | Complete configuration reference |
+| [API_REFERENCE.md](docs/API_REFERENCE.md) | Admin API documentation |
+| [ATTACK_DETECTION.md](docs/ATTACK_DETECTION.md) | Attack detection details |
+| [FLOOD_PROTECTION.md](docs/FLOOD_PROTECTION.md) | Flood protection details |
+| [REQUEST_SANITIZATION.md](docs/REQUEST_SANITIZATION.md) | Request sanitization and header handling |
+| [UPSTREAM_HEALTH.md](docs/UPSTREAM_HEALTH.md) | Upstream health checking |
+| [STATIC_FILES.md](docs/STATIC_FILES.md) | Static file serving and optimization |
+| [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Common issues and solutions |
 
 ## Configuration
 
-### Main Configuration (`config/main.toml`)
-
-```toml
-[server]
-host = "0.0.0.0"
-port = 8080
-trusted_proxies = ["127.0.0.1", "::1"]
-
-[admin]
-enabled = true
-port = 8081
-token = "your-secure-random-token-here"
-
-[logging]
-level = "info"
-access_log = true
-access_log_dir = "/var/log/rustwaf"
-access_log_format = "json"
-retention_days = 5
-
-[metrics]
-enabled = true
-port = 9090
-
-[fallback]
-mode = "return_404"  # or "proxy" with upstream setting
-```
-
-### Attack Detection Configuration
-
-```toml
-[defaults.attack_detection]
-enabled = true
-paranoia_level = 2  # 1=low, 2=medium, 3=high
-action = "stall"    # "stall", "block", or "log"
-
-[defaults.attack_detection.sqli]
-enabled = true
-
-[defaults.attack_detection.xss]
-enabled = true
-
-[defaults.attack_detection.path_traversal]
-enabled = true
-custom_patterns = []  # Additional patterns to detect
-
-[defaults.attack_detection.rfi]
-enabled = true
-custom_patterns = []
-
-[defaults.attack_detection.ssrf]
-enabled = true
-block_private_ips = true
-allowed_domains = []  # Whitelist for SSRF
-custom_patterns = []
-```
-
-### Flood Protection Configuration
-
-```toml
-[defaults.flood]
-syn_rate_per_ip = 50           # SYN packets per second per IP
-syn_rate_global = 10000        # Global SYN rate limit
-connection_rate_per_ip = 100   # Connections per second per IP
-connection_rate_global = 20000 # Global connection rate
-half_open_max = 1000           # Max half-open connections
-half_open_per_ip_max = 10      # Max half-open per IP
-udp_rate_per_ip = 1000         # UDP packets per second per IP
-udp_rate_global = 100000       # Global UDP rate
-blackhole_threshold = 0.9      # Enter blackhole at 90% capacity
-blackhole_duration_secs = 60   # Blackhole duration
-```
-
-### Rate Limiting Configuration
-
-```toml
-[defaults.ratelimit]
-mode = "shared"  # "shared" or "isolated" per site
-
-[defaults.ratelimit.ip]
-per_second = 10
-per_minute = 60
-per_5min = 200
-per_hour = 500
-per_day = 1000
-burst = 20
-
-[defaults.ratelimit.global]
-per_second = 500
-per_minute = 5000
-max_connections = 10000
-
-[defaults.rate_limit_memory]
-max_ips = 1000000           # Max tracked IPs
-cleanup_interval_secs = 60  # Cleanup frequency
-```
-
-### Bot Protection Configuration
-
-```toml
-[defaults.bot]
-block_ai_crawlers = true
-enable_css_honeypot = true
-enable_js_challenge = false
-js_difficulty = 3
-
-known_bots_allow = [
-    "googlebot",
-    "bingbot", 
-    "yandex",
-    "duckduckbot",
-]
-
-ai_crawlers_block = [
-    "GPTBot",
-    "ChatGPT-User",
-    "ClaudeBot",
-    "CCBot",
-    "Google-Extended",
-    "Amazonbot",
-]
-
-[defaults.honeypot]
-endpoints_file = "config/honeypot_endpoints.txt"
-```
-
-### Site Configuration (`config/sites/example.com.toml`)
-
-```toml
-[site]
-domains = ["example.com", "www.example.com"]
-
-[site.upstream]
-default = "http://127.0.0.1:8000"
-
-[site.upstream.routes]
-"/api" = "http://api.internal:8001"
-"/static" = "http://cdn.internal:8002"
-
-[ratelimit]
-mode = "isolated"
-
-[ratelimit.ip]
-per_second = 20
-per_minute = 200
-
-[blocked]
-paths = ["/.env", "/.git", "/wp-admin/*", "/phpmyadmin"]
-use_regex = true
-block_methods = ["GET", "POST"]
-block_response_code = 403
-
-[bot]
-inherit = true
-block_ai_crawlers = true
-
-[attack_detection]
-enabled = true
-paranoia_level = 2
-
-[attack_detection.ssrf]
-allowed_domains = ["api.stripe.com", "api.github.com"]
-```
-
-## Attack Detection Details
-
-### SQL Injection Detection
-
-Uses libinjection for SQL injection detection with fingerprinting:
-
-- Tests query strings, POST bodies, headers, and cookies
-- Handles URL-encoded and double-encoded payloads
-- Returns fingerprint for logging and analysis
-
-**Example detections:**
-```
-1' OR '1'='1
-1 UNION SELECT * FROM users
-'; DROP TABLE users;--
-```
-
-### XSS Detection
-
-Context-aware XSS detection testing multiple HTML parsing contexts:
-
-- Data state
-- Unquoted attributes
-- Single/double quoted attributes
-- Backtick quoted values
-
-**Example detections:**
-```
-<script>alert('xss')</script>
-<img src=x onerror=alert(1)>
-<svg onload=alert(1)>
-```
-
-### Path Traversal Detection
-
-Pattern-based detection using Aho-Corasick automaton:
-
-- Basic traversal: `../`, `..\\`
-- URL-encoded: `%2e%2e%2f`, `%252e%252e`
-- Double-encoded variants
-- Sensitive file access: `/etc/passwd`, `/windows/system32`
-- Protocol handlers: `file://`, `php://`, `expect://`
-
-### RFI Detection
-
-- URL parameter injection detection
-- IP address in URL parameters
-- PHP-specific RFI vectors
-- Protocol handlers in parameters
-
-### SSRF Detection
-
-- Internal IP detection (127.0.0.1, 10.x.x.x, 172.16-31.x.x, 192.168.x.x)
-- Cloud metadata endpoints (169.254.169.254, metadata.google, metadata.azure)
-- Alternative localhost representations (0.0.0.0, localhost, [::1])
-- Dangerous protocols (gopher://, dict://)
-
-## Flood Protection Details
-
-### SYN Flood Protection
-
-Tracks half-open connections to detect and mitigate SYN floods:
-
-1. **Per-IP Rate Limiting** - Limit SYN rate per source IP
-2. **Global Rate Limiting** - Protect against distributed attacks
-3. **Half-Open Tracking** - Monitor incomplete handshakes
-4. **Automatic Cleanup** - Remove stale half-open entries
-
-### Connection Rate Limiting
-
-Prevents connection exhaustion:
-
-- Per-IP connection rate tracking
-- Global connection limits
-- Active connection monitoring
-- Automatic window rotation
-
-### UDP Flood Protection
-
-Rate limits UDP traffic with per-port granularity:
-
-- Per-IP packet rate limiting
-- Per-port rate limiting (prevents DNS amplification)
-- Global packet rate limiting
-- Slotted counter design for O(1) lookups
-
-## Stealth Architecture
-
-### Response Strategy
-
-| Threat Type | Response |
-|-------------|----------|
-| Attack Detected | Connection held indefinitely (stall) |
-| Blocked Endpoint | Connection stalled |
-| Blocked Bot | Connection stalled |
-| Protocol Mismatch | Connection stalled |
-| Honeypot Access | Connection stalled + IP ban |
-| Rate Limited | Connection stalled |
-
-### Header Sanitization
-
-Automatically removes from upstream responses:
-- `Server`
-- `X-Powered-By`
-- `X-AspNet-Version`
-- `X-Runtime`
-- `X-Generator`
-- `Via`
-- `X-Cache` and related headers
-
-## TCP Protocol Filtering
-
-Support for non-HTTP protocol proxying with strict filtering:
-
-```toml
-[tcp]
-enabled = true
-worker_pool_size = 4
-
-[tcp.protocols.smtp]
-ports = [25, 587]
-upstream_format = "127.0.0.1:{port}"
-
-[tcp.protocols.imap]
-ports = [143, 993]
-upstream_format = "127.0.0.1:{port}"
-
-[tcp.protocols.mysql]
-ports = [3306]
-upstream_format = "127.0.0.1:{port}"
-```
-
-**Protocol Mismatch Handling:**
-- HTTP on SMTP port → Connection stalled
-- SSH probe on port 80 → Connection stalled
-- Unknown protocol → Configurable (stall/allow)
-
-## Tarpit System
-
-Traps scrapers with infinite generated content:
-
-```toml
-[tarpit]
-enabled = true
-max_depth = 10
-links_per_page = 50
-response_delay_ms = 100
-```
-
-Generated pages contain:
-- Markov chain-generated realistic text
-- 50+ internal links per page
-- Valid-looking URLs and structure
-- SEO-friendly meta tags
-
-## Admin API
-
-All endpoints require `Authorization: Bearer <token>` header. Base URL: `http://127.0.0.1:8081/api`
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/health` | GET | Health check |
-| `/stats/summary` | GET | System stats summary |
-| `/stats/sites` | GET | Per-site statistics |
-| `/sites` | GET | List configured sites |
-| `/sites` | POST | Create new site |
-| `/sites/{site_id}` | GET | Get site config |
-| `/sites/{site_id}` | DELETE | Delete site |
-| `/config/main` | GET | Get main config |
-| `/config/main` | PUT | Update main config |
-| `/config/reload` | POST | Reload configuration |
-| `/logs` | GET | Query access logs |
-| `/upstreams` | GET | List upstreams |
-| `/tcp-udp/listeners` | GET | List TCP/UDP listeners |
-| `/probes` | GET | List probe stats |
-| `/threat-level` | GET | Get threat level status |
-| `/threat-level/history` | GET | Get threat history |
-| `/threat-level/history/stats` | GET | Get history sample count |
-| `/threat-level/history/backup` | POST | Create history backup |
-| `/threat-level/history/backups` | GET | List backups |
-| `/threat-level/history/backups` | DELETE | Delete backup |
-| `/threat-level/history/prune` | POST | Prune old history |
-| `/threat-level/baseline` | GET | Get baseline stats |
-| `/threat-level/reset` | POST | Reset and relearn baseline |
-| `/threat-level/set/{level}` | POST | Set threat level (1-5) |
-| `/threat-level/auto` | POST | Set to auto mode |
-
-```bash
-# Health check
-curl -H "Authorization: Bearer <token>" http://127.0.0.1:8081/api/health
-
-# Get threat level
-curl -H "Authorization: Bearer <token>" http://127.0.0.1:8081/api/threat-level
-
-# Create history backup
-curl -X POST -H "Authorization: Bearer <token>" http://127.0.0.1:8081/api/threat-level/history/backup
-
-# Prune old history (default 365 days)
-curl -X POST -H "Authorization: Bearer <token>" http://127.0.0.1:8081/api/threat-level/history/prune
-```
-
-## Prometheus Metrics
-
-Available at `http://localhost:9090/metrics`:
-
-### Request Metrics
-- `rustwaf_requests_proxied` - Successfully proxied requests
-- `rustwaf_requests_stalled` - Stalled (attack detected)
-- `rustwaf_requests_blocked` - Blocked requests
-- `rustwaf_requests_challenged` - JS/CSS challenges served
-- `rustwaf_requests_tarpitted` - Scraper trap requests
-- `rustwaf_request_duration` - Request latency histogram
-
-### Attack Detection Metrics
-- `rustwaf_attack_detected{type}` - Attacks by type (sqli, xss, path_traversal, rfi, ssrf)
-
-### Flood Protection Metrics
-- `rustwaf_flood_syn_limited` - SYN flood limited
-- `rustwaf_flood_connection_limited` - Connection rate limited
-- `rustwaf_flood_udp_limited` - UDP flood limited
-- `rustwaf_syn_flood_half_open_count` - Current half-open connections
-
-### TCP Metrics
-- `rustwaf_tcp_protocol_stalled` - Protocol mismatches stalled
-- `rustwaf_tcp_protocol_allowed` - Valid protocol connections
-- `rustwaf_tcp_connections_proxied` - TCP connections proxied
-
-### Rate Limiting Metrics
-- `rustwaf_ratelimit_blackhole_drop` - Blackholed requests
-- `rustwaf_requests_dropped` - Dropped requests
-
-## Production Deployment
-
-### System Requirements
-
-- **OS**: Linux (recommended), macOS, FreeBSD
-- **RAM**: Minimum 512MB, recommended 2GB+
-- **CPU**: 2+ cores recommended
-- **Network**: Low latency to upstream servers
-
-### Build for Production
-
-```bash
-# Optimized release build
-cargo build --release
-
-# The binary is at target/release/rustwaf
-```
-
-### Systemd Service
-
-```ini
-[Unit]
-Description=RustWAF Web Application Firewall
-After=network.target
-
-[Service]
-Type=simple
-User=rustwaf
-Group=rustwaf
-WorkingDirectory=/opt/rustwaf
-Environment=RUSTWAF_CONFIG_DIR=/etc/rustwaf
-ExecStart=/opt/rustwaf/rustwaf
-Restart=always
-RestartSec=5
-LimitNOFILE=65536
-
-[Install]
-WantedBy=multi-user.target
-```
-
-### Performance Tuning
-
-```bash
-# Increase file descriptor limits
-ulimit -n 65536
-
-# Set in /etc/security/limits.conf
-rustwaf soft nofile 65536
-rustwaf hard nofile 65536
-
-# Kernel tuning for high traffic
-sysctl -w net.core.somaxconn=65535
-sysctl -w net.ipv4.tcp_max_syn_backlog=65535
-sysctl -w net.ipv4.ip_local_port_range="1024 65535"
-```
-
-### Docker Deployment
-
-```dockerfile
-FROM rust:1.75 as builder
-WORKDIR /app
-COPY . .
-RUN cargo build --release
-
-FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /app/target/release/rustwaf /usr/local/bin/
-COPY config/ /etc/rustwaf/
-EXPOSE 8080 8081 9090
-CMD ["rustwaf"]
-```
-
-```yaml
-# docker-compose.yml
-version: '3.8'
-services:
-  rustwaf:
-    build: .
-    ports:
-      - "8080:8080"
-      - "8081:8081"
-      - "9090:9090"
-    volumes:
-      - ./config:/etc/rustwaf
-      - ./logs:/var/log/rustwaf
-    environment:
-      - RUSTWAF_CONFIG_DIR=/etc/rustwaf
-    restart: always
-    ulimits:
-      nofile:
-        soft: 65536
-        hard: 65536
-```
-
-## Architecture
-
-```
-                              ┌─────────────────────────────────────────────────────────┐
-                              │                     Client Request                       │
-                              └─────────────────────────────────────────────────────────┘
-                                                          │
-                                                          ▼
-                              ┌─────────────────────────────────────────────────────────┐
-                              │                   Flood Protection                       │
-                              │  ┌──────────────────┐  ┌───────────────────────────────┐│
-                              │  │ SYN Flood Guard  │  │ Connection Rate Limiter       ││
-                              │  │ Half-Open Track  │  │ Active Connection Monitoring  ││
-                              │  └──────────────────┘  └───────────────────────────────┘│
-                              └─────────────────────────────────────────────────────────┘
-                                                          │
-                                                          ▼
-                              ┌─────────────────────────────────────────────────────────┐
-                              │                    Rate Limiting                         │
-                              │  ┌──────────────────┐  ┌───────────────────────────────┐│
-                              │  │  Per-IP Limits   │  │ Global Rate Limiter           ││
-                              │  │  Sliding Windows │  │ Blackhole Mode                ││
-                              │  └──────────────────┘  └───────────────────────────────┘│
-                              └─────────────────────────────────────────────────────────┘
-                                                          │
-                                                          ▼
-                              ┌─────────────────────────────────────────────────────────┐
-                              │                   Attack Detection                       │
-                              │  ┌─────────────┐ ┌─────────────┐ ┌─────────────────────┐│
-                              │  │   SQLi      │ │    XSS      │ │ Path Traversal      ││
-                              │  │libinjection │ │libinjection │ │ Aho-Corasick        ││
-                              │  └─────────────┘ └─────────────┘ └─────────────────────┘│
-                              │  ┌─────────────┐ ┌─────────────┐                        │
-                              │  │    RFI      │ │    SSRF     │                        │
-                              │  │Aho-Corasick │ │Aho-Corasick │                        │
-                              │  └─────────────┘ └─────────────┘                        │
-                              └─────────────────────────────────────────────────────────┘
-                                                          │
-                                                          ▼
-                              ┌─────────────────────────────────────────────────────────┐
-                              │                   Bot Detection                          │
-                              │  ┌──────────────────┐  ┌───────────────────────────────┐│
-                              │  │ AI Crawler Block │  │ Scraper Detection → Tarpit    ││
-                              │  │ Known Bot Allow  │  │ User-Agent Analysis           ││
-                              │  └──────────────────┘  └───────────────────────────────┘│
-                              └─────────────────────────────────────────────────────────┘
-                                                          │
-                                                          ▼
-                              ┌─────────────────────────────────────────────────────────┐
-                              │                   WAF Decision                           │
-                              │                                                          │
-                              │  ┌────────────┐ ┌────────────┐ ┌────────────────────┐  │
-                              │  │   PASS     │ │   STALL    │ │      TARPIT        │  │
-                              │  │Proxy to    │ │Hold conn.  │ │Infinite fake       │  │
-                              │  │upstream    │ │indefinitely│ │content generation  │  │
-                              │  └────────────┘ └────────────┘ └────────────────────┘  │
-                              └─────────────────────────────────────────────────────────┘
-                                                          │
-                                                          ▼
-                              ┌─────────────────────────────────────────────────────────┐
-                              │                   Upstream Proxy                         │
-                              │  ┌──────────────────┐  ┌───────────────────────────────┐│
-                              │  │ Header Sanitize  │  │ Load Balancing                ││
-                              │  │ Response Filter  │  │ Health Checking               ││
-                              │  └──────────────────┘  └───────────────────────────────┘│
-                              └─────────────────────────────────────────────────────────┘
-```
-
-## Configuration Reference
+Configuration is in `config/main.toml`. See [CONFIGURATION.md](docs/CONFIGURATION.md) for details.
 
 ### Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `RUSTWAF_CONFIG_DIR` | `./config` | Configuration directory path |
-| `RUST_LOG` | `info` | Log level (trace, debug, info, warn, error) |
-
-### File Structure
-
-```
-/etc/rustwaf/
-├── main.toml                 # Main configuration
-├── sites/
-│   ├── example.com.toml      # Site-specific config
-│   └── api.example.com.toml
-├── honeypot_endpoints.txt    # Honeypot URL list
-└── error_pages/
-    ├── 403.html
-    ├── 404.html
-    ├── 429.html
-    └── 503.html
-```
+| `MALU_CONFIG_DIR` | `./config` | Configuration directory |
+| `RUST_LOG` | `info` | Log level |
+| `MALU_ADMIN_TOKEN` | - | Admin API token |
 
 ## License
 
-MIT License
+MIT License - see [LICENSE](LICENSE) file for details.

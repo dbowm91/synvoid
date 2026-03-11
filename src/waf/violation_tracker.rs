@@ -1,4 +1,4 @@
-use crate::config::main::ThreatLevelEscalation;
+use crate::config::ThreatLevelEscalation;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

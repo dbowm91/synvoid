@@ -1,8 +1,11 @@
 use yew::prelude::*;
 use yew_router::prelude::*;
+use wasm_bindgen::JsCast;
 
 use crate::app::Route;
+use crate::services::ApiService;
 use crate::components::tooltip::{HelpIcon, Tooltip, TooltipPosition};
+use crate::components::{toast_success, toast_error};
 use crate::types::presets::{get_presets, ServerPreset};
 
 #[derive(Properties, PartialEq)]
@@ -54,6 +57,7 @@ pub fn SiteEditor(props: &SiteEditorProps) -> Html {
                         <TabButton label="Attacks" tab="attacks" active={*active_tab == "attacks"} on_click={on_tab_click.clone()} />
                         <TabButton label="Bot Protection" tab="bot" active={*active_tab == "bot"} on_click={on_tab_click.clone()} />
                         <TabButton label="Upload" tab="upload" active={*active_tab == "upload"} on_click={on_tab_click.clone()} />
+                        <TabButton label="Error Pages" tab="error_pages" active={*active_tab == "error_pages"} on_click={on_tab_click.clone()} />
                     </nav>
                 </div>
 
@@ -65,6 +69,7 @@ pub fn SiteEditor(props: &SiteEditorProps) -> Html {
                         "attacks" => html! { <AttacksTab /> },
                         "bot" => html! { <BotTab /> },
                         "upload" => html! { <UploadTab /> },
+                        "error_pages" => html! { <ErrorPagesTab site_id={props.id.clone()} /> },
                         _ => html! { <BasicTab presets={presets} on_preset_select={on_preset_select} selected_preset={(*selected_preset).clone()} /> },
                     }}
                 </div>
@@ -370,7 +375,8 @@ fn BlockingTab() -> Html {
                     class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg font-mono text-sm"
                     rows="6"
                     placeholder="One path per line..."
-                >{".env\n.git\n.svn\nwp-config.php"}</textarea>
+                    value={".env\n.git\n.svn\nwp-config.php"}
+                />
                 <p class="mt-1 text-xs text-secondary">{ "One path per line. Glob patterns supported." }</p>
             </div>
 
@@ -645,7 +651,8 @@ fn UploadTab() -> Html {
                 <textarea
                     class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg font-mono text-sm"
                     rows="6"
-                >{"image/jpeg\nimage/png\napplication/pdf\ntext/plain"}</textarea>
+                    value={"image/jpeg\nimage/png\napplication/pdf\ntext/plain"}
+                />
                 <p class="mt-1 text-xs text-secondary">{ "One MIME type per line" }</p>
             </div>
         </div>
@@ -690,4 +697,348 @@ fn ToggleField(props: &ToggleFieldProps) -> Html {
             </button>
         </div>
     }
+}
+
+#[derive(Properties, PartialEq)]
+pub struct ErrorPagesTabProps {
+    pub site_id: String,
+}
+
+#[function_component]
+fn ErrorPagesTab(props: &ErrorPagesTabProps) -> Html {
+    let selected_preset = use_state(|| "default".to_string());
+    let preview_html = use_state(|| String::new());
+    let preview_light = use_state(|| false);
+    let saving = use_state(|| false);
+
+    {
+        let selected_preset = selected_preset.clone();
+        let preview_html = preview_html.clone();
+        let preview_light = preview_light.clone();
+        let site_id = props.site_id.clone();
+        use_effect_with((), move |_| {
+            wasm_bindgen_futures::spawn_local(async move {
+                let api = crate::services::ApiService::new();
+                match api.get_site_theme(&site_id).await {
+                    Ok(data) => {
+                        if let Some(theme) = data {
+                            let preset = theme.preset.unwrap_or_else(|| "default".to_string());
+                            selected_preset.set(preset.clone());
+                            let colors = get_preset_colors(&preset);
+                            let use_light = *preview_light;
+                            let html = generate_error_page_preview("", &colors, use_light);
+                            preview_html.set(html);
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to fetch site theme: {}", e);
+                    }
+                }
+            });
+            || {}
+        });
+    }
+
+    let on_preset_change = {
+        let selected_preset = selected_preset.clone();
+        let preview_html = preview_html.clone();
+        let preview_light = preview_light.clone();
+        Callback::from(move |e: Event| {
+            let target = e.target().unwrap();
+            let value = target.dyn_ref::<web_sys::HtmlSelectElement>()
+                .map(|el| el.value())
+                .unwrap_or_default();
+            selected_preset.set(value.clone());
+            let colors = get_preset_colors(&value);
+            let use_light = *preview_light;
+            let html = generate_error_page_preview("", &colors, use_light);
+            preview_html.set(html);
+        })
+    };
+
+    let on_toggle_preview = {
+        let preview_light = preview_light.clone();
+        let selected_preset = selected_preset.clone();
+        let preview_html = preview_html.clone();
+        Callback::from(move |_| {
+            let new_value = !*preview_light;
+            preview_light.set(new_value);
+            
+            let colors = get_preset_colors(&selected_preset);
+            let html = generate_error_page_preview("", &colors, new_value);
+            preview_html.set(html);
+        })
+    };
+
+    let on_save = {
+        let saving = saving.clone();
+        let selected_preset = selected_preset.clone();
+        let site_id = props.site_id.clone();
+        Callback::from(move |_| {
+            let preset = (*selected_preset).clone();
+            let site_id = site_id.clone();
+            let saving = saving.clone();
+            
+            saving.set(true);
+            
+            wasm_bindgen_futures::spawn_local(async move {
+                let api = crate::services::ApiService::new();
+                let request = crate::types::UpdateThemeRequest {
+                    preset: Some(preset),
+                    mode: None,
+                    allow_only: None,
+                };
+                
+                match api.update_site_theme(&site_id, &request).await {
+                    Ok(_) => {
+                        toast_success("Site theme updated successfully");
+                        tracing::info!("Site theme updated successfully");
+                    }
+                    Err(e) => {
+                        toast_error(&format!("Failed to update site theme: {}", e));
+                        tracing::error!("Failed to update site theme: {}", e);
+                    }
+                }
+                saving.set(false);
+            });
+        })
+    };
+
+    let presets = vec![
+        ("default", "Default (Use Global)"),
+        ("dark", "Dark"),
+        ("light", "Light"),
+        ("ocean", "Ocean"),
+        ("forest", "Forest"),
+        ("sunset", "Sunset"),
+    ];
+
+    html! {
+        <div class="space-y-6">
+            <div>
+                <label class="block text-sm font-medium text-primary mb-2">{ "Error Page Theme" }</label>
+                <select 
+                    class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary"
+                    value={(*selected_preset).clone()}
+                    onchange={on_preset_change}
+                >
+                    { for presets.iter().map(|(value, label)| {
+                        html! {
+                            <option value={value.clone()}>{label.clone()}</option>
+                        }
+                    }) }
+                </select>
+                <p class="mt-1 text-sm text-secondary">{ "Theme for error pages shown when requests are blocked" }</p>
+            </div>
+
+            <div>
+                <div class="flex items-center justify-between mb-2">
+                    <label class="block text-sm font-medium text-primary">{ "Preview" }</label>
+                    <button 
+                        onclick={on_toggle_preview}
+                        class="px-3 py-1 text-sm bg-tertiary border border-default rounded-lg text-primary hover:opacity-80"
+                    >
+                        { if *preview_light { "🌙 Dark" } else { "☀️ Light" } }
+                    </button>
+                </div>
+                <div class="border border-default rounded-lg overflow-hidden">
+                    <iframe 
+                        srcdoc={(*preview_html).clone()}
+                        class="w-full h-64"
+                        sandbox="allow-same-origin"
+                    />
+                </div>
+                <p class="mt-1 text-sm text-secondary">{ "Preview of the error page with selected theme" }</p>
+            </div>
+
+            <div class="flex justify-end gap-4">
+                <button 
+                    onclick={on_save}
+                    disabled={*saving}
+                    class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                >
+                    { if *saving { "Saving..." } else { "Save Theme" } }
+                </button>
+            </div>
+        </div>
+    }
+}
+
+fn get_preset_colors(preset: &str) -> crate::types::ThemeColorsResponse {
+    match preset {
+        "light" => crate::types::ThemeColorsResponse {
+            dark: crate::types::ThemeColors {
+                background: "#0a0a0f".to_string(),
+                surface: "#12121a".to_string(),
+                primary: "#e94560".to_string(),
+                text: "#f0f0f5".to_string(),
+                border: "#2a2a3a".to_string(),
+                accent: "#1a1a24".to_string(),
+                accent_primary: "#00d4aa".to_string(),
+                accent_secondary: "#00b894".to_string(),
+            },
+            light: crate::types::ThemeColors {
+                background: "#f8fafc".to_string(),
+                surface: "#ffffff".to_string(),
+                primary: "#c41e3a".to_string(),
+                text: "#0f172a".to_string(),
+                border: "#e2e8f0".to_string(),
+                accent: "#f1f5f9".to_string(),
+                accent_primary: "#059669".to_string(),
+                accent_secondary: "#10b981".to_string(),
+            },
+        },
+        "ocean" => crate::types::ThemeColorsResponse {
+            dark: crate::types::ThemeColors {
+                background: "#0c1929".to_string(),
+                surface: "#132f4c".to_string(),
+                primary: "#0ea5e9".to_string(),
+                text: "#e3f2fd".to_string(),
+                border: "#2d4a6f".to_string(),
+                accent: "#173a5e".to_string(),
+                accent_primary: "#0ea5e9".to_string(),
+                accent_secondary: "#38bdf8".to_string(),
+            },
+            light: crate::types::ThemeColors {
+                background: "#e3f2fd".to_string(),
+                surface: "#ffffff".to_string(),
+                primary: "#0284c7".to_string(),
+                text: "#0c1929".to_string(),
+                border: "#90caf9".to_string(),
+                accent: "#f1f5f9".to_string(),
+                accent_primary: "#0ea5e9".to_string(),
+                accent_secondary: "#38bdf8".to_string(),
+            },
+        },
+        "forest" => crate::types::ThemeColorsResponse {
+            dark: crate::types::ThemeColors {
+                background: "#0a1a0f".to_string(),
+                surface: "#132318".to_string(),
+                primary: "#22c55e".to_string(),
+                text: "#e8f5e9".to_string(),
+                border: "#2d4a3a".to_string(),
+                accent: "#1a2e21".to_string(),
+                accent_primary: "#22c55e".to_string(),
+                accent_secondary: "#4ade80".to_string(),
+            },
+            light: crate::types::ThemeColors {
+                background: "#e8f5e9".to_string(),
+                surface: "#ffffff".to_string(),
+                primary: "#16a34a".to_string(),
+                text: "#0a1a0f".to_string(),
+                border: "#a5d6a7".to_string(),
+                accent: "#f1f5f9".to_string(),
+                accent_primary: "#22c55e".to_string(),
+                accent_secondary: "#4ade80".to_string(),
+            },
+        },
+        "sunset" => crate::types::ThemeColorsResponse {
+            dark: crate::types::ThemeColors {
+                background: "#1a0f0a".to_string(),
+                surface: "#2a1a14".to_string(),
+                primary: "#f97316".to_string(),
+                text: "#fff1ec".to_string(),
+                border: "#4a3028".to_string(),
+                accent: "#3d261e".to_string(),
+                accent_primary: "#f97316".to_string(),
+                accent_secondary: "#fb923c".to_string(),
+            },
+            light: crate::types::ThemeColors {
+                background: "#fff1ec".to_string(),
+                surface: "#ffffff".to_string(),
+                primary: "#ea580c".to_string(),
+                text: "#1a0f0a".to_string(),
+                border: "#ffccbc".to_string(),
+                accent: "#f1f5f9".to_string(),
+                accent_primary: "#f97316".to_string(),
+                accent_secondary: "#fb923c".to_string(),
+            },
+        },
+        _ => crate::types::ThemeColorsResponse {
+            dark: crate::types::ThemeColors {
+                background: "#0a0a0f".to_string(),
+                surface: "#12121a".to_string(),
+                primary: "#e94560".to_string(),
+                text: "#f0f0f5".to_string(),
+                border: "#2a2a3a".to_string(),
+                accent: "#1a1a24".to_string(),
+                accent_primary: "#00d4aa".to_string(),
+                accent_secondary: "#00b894".to_string(),
+            },
+            light: crate::types::ThemeColors {
+                background: "#f8fafc".to_string(),
+                surface: "#ffffff".to_string(),
+                primary: "#c41e3a".to_string(),
+                text: "#0f172a".to_string(),
+                border: "#e2e8f0".to_string(),
+                accent: "#f1f5f9".to_string(),
+                accent_primary: "#059669".to_string(),
+                accent_secondary: "#10b981".to_string(),
+            },
+        },
+    }
+}
+
+fn generate_error_page_preview(_css: &str, colors: &crate::types::ThemeColorsResponse, use_light: bool) -> String {
+    let c = if use_light { &colors.light } else { &colors.dark };
+    format!(r#"
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background-color: {bg};
+            color: {text};
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }}
+        .card {{
+            background: {surface};
+            border: 1px solid {border};
+            border-radius: 12px;
+            padding: 2rem;
+            max-width: 400px;
+            text-align: center;
+        }}
+        .status {{
+            font-size: 4rem;
+            font-weight: bold;
+            color: {primary};
+            margin-bottom: 1rem;
+        }}
+        h1 {{
+            font-size: 1.5rem;
+            margin-bottom: 0.5rem;
+        }}
+        p {{
+            color: {text};
+            opacity: 0.8;
+        }}
+        .footer {{
+            margin-top: 1.5rem;
+            font-size: 0.75rem;
+            opacity: 0.5;
+        }}
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="status">403</div>
+        <h1>Forbidden</h1>
+        <p>Access to this resource has been blocked by the WAF.</p>
+        <div class="footer">MaluWAF</div>
+    </div>
+</body>
+</html>
+"#,
+        bg = c.background,
+        surface = c.surface,
+        text = c.text,
+        border = c.border,
+        primary = c.primary,
+    )
 }

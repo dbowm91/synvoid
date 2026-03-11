@@ -1,0 +1,458 @@
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use base64::Engine;
+use serde::{Deserialize, Serialize};
+
+use crate::integrity::protocol::{Ed25519Signer, Ed25519Verifier};
+
+pub const DHT_MESSAGE_TIMESTAMP_WINDOW_SECS: i64 = 300;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SignedDhtRecord {
+    pub key: String,
+    pub value: Vec<u8>,
+    pub publisher_id: String,
+    pub signature: Vec<u8>,
+    pub created_at: u64,
+    pub expires_at: Option<u64>,
+    pub record_type: SignedRecordType,
+    pub sequence_number: u64,
+    pub source_node_id: String,
+    pub ttl_seconds: u64,
+    pub signer_public_key: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SignedRecordType {
+    Organization,
+    TierKey,
+    MemberCertificate,
+    Upstream,
+    NodeInfo,
+    GlobalNodeList,
+    TierClaim,
+    GlobalNodePublicKey,
+    NodeHealth,
+    NodeLoad,
+    VerifiedUpstream,
+    OrgNameReservation,
+    UpstreamRegistrationRequest,
+    YaraRules,
+    YaraRuleSubmission,
+    YaraRuleVersion,
+    DnsZone,
+    DnsRecord,
+    DnsDomainRegistration,
+}
+
+impl SignedRecordType {
+    pub fn requires_global_node(&self) -> bool {
+        matches!(
+            self,
+            SignedRecordType::Organization
+                | SignedRecordType::TierKey
+                | SignedRecordType::MemberCertificate
+                | SignedRecordType::GlobalNodeList
+                | SignedRecordType::OrgNameReservation
+                | SignedRecordType::UpstreamRegistrationRequest
+                | SignedRecordType::YaraRuleSubmission
+                | SignedRecordType::DnsZone
+                | SignedRecordType::DnsDomainRegistration
+        )
+    }
+
+    pub fn is_public(&self) -> bool {
+        matches!(
+            self,
+            SignedRecordType::Upstream
+                | SignedRecordType::NodeInfo
+                | SignedRecordType::TierClaim
+                | SignedRecordType::GlobalNodePublicKey
+                | SignedRecordType::NodeHealth
+                | SignedRecordType::NodeLoad
+                | SignedRecordType::VerifiedUpstream
+                | SignedRecordType::YaraRules
+                | SignedRecordType::YaraRuleVersion
+                | SignedRecordType::DnsZone
+                | SignedRecordType::DnsRecord
+        )
+    }
+
+    pub fn requires_confirmation(&self) -> bool {
+        matches!(
+            self,
+            SignedRecordType::TierKey
+                | SignedRecordType::Organization
+                | SignedRecordType::Upstream
+                | SignedRecordType::OrgNameReservation
+                | SignedRecordType::UpstreamRegistrationRequest
+                | SignedRecordType::YaraRuleSubmission
+        )
+    }
+
+    pub fn default_ttl(&self) -> Option<Duration> {
+        match self {
+            SignedRecordType::Organization => Some(Duration::from_secs(86400 * 7)),
+            SignedRecordType::TierKey => Some(Duration::from_secs(86400 * 30)),
+            SignedRecordType::MemberCertificate => Some(Duration::from_secs(86400 * 365)),
+            SignedRecordType::Upstream => Some(Duration::from_secs(300)),
+            SignedRecordType::NodeInfo => Some(Duration::from_secs(3600)),
+            SignedRecordType::GlobalNodeList => Some(Duration::from_secs(3600)),
+            SignedRecordType::TierClaim => Some(Duration::from_secs(86400)),
+            SignedRecordType::GlobalNodePublicKey => Some(Duration::from_secs(86400)),
+            SignedRecordType::NodeHealth => Some(Duration::from_secs(60)),
+            SignedRecordType::NodeLoad => Some(Duration::from_secs(60)),
+            SignedRecordType::VerifiedUpstream => Some(Duration::from_secs(300)),
+            SignedRecordType::OrgNameReservation => Some(Duration::from_secs(86400 * 7)),
+            SignedRecordType::UpstreamRegistrationRequest => Some(Duration::from_secs(3600)),
+            SignedRecordType::YaraRules => Some(Duration::from_secs(86400)),
+            SignedRecordType::YaraRuleSubmission => Some(Duration::from_secs(86400)),
+            SignedRecordType::YaraRuleVersion => Some(Duration::from_secs(86400 * 7)),
+            SignedRecordType::DnsZone => Some(Duration::from_secs(3600)),
+            SignedRecordType::DnsRecord => Some(Duration::from_secs(300)),
+            SignedRecordType::DnsDomainRegistration => Some(Duration::from_secs(600)),
+        }
+    }
+
+    pub fn requires_announce_refresh(&self) -> bool {
+        matches!(self, SignedRecordType::Upstream)
+    }
+}
+
+impl SignedDhtRecord {
+    pub fn new(
+        key: String,
+        value: Vec<u8>,
+        publisher_id: String,
+        record_type: SignedRecordType,
+    ) -> Self {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        let default_ttl = record_type.default_ttl();
+        let ttl_seconds = default_ttl.map(|ttl| ttl.as_secs()).unwrap_or(3600);
+        let expires_at = default_ttl.map(|ttl| now + ttl.as_secs());
+        let source_node_id = publisher_id.clone();
+
+        Self {
+            key,
+            value,
+            publisher_id,
+            signature: Vec::new(),
+            created_at: now,
+            expires_at,
+            record_type,
+            sequence_number: 1,
+            source_node_id,
+            ttl_seconds,
+            signer_public_key: None,
+        }
+    }
+
+    pub fn with_ttl(mut self, ttl: Duration) -> Self {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        self.ttl_seconds = ttl.as_secs();
+        self.expires_at = Some(now + ttl.as_secs());
+        self
+    }
+
+    pub fn with_source_node_id(mut self, node_id: String) -> Self {
+        self.source_node_id = node_id;
+        self
+    }
+
+    pub fn with_signature(mut self, signature: Vec<u8>) -> Self {
+        self.signature = signature;
+        self
+    }
+
+    pub fn with_signer_public_key(mut self, public_key: String) -> Self {
+        self.signer_public_key = Some(public_key);
+        self
+    }
+
+    pub fn is_expired(&self) -> bool {
+        if let Some(expires_at) = self.expires_at {
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            now > expires_at
+        } else {
+            false
+        }
+    }
+
+    pub fn time_until_expiry(&self) -> Option<Duration> {
+        if let Some(expires_at) = self.expires_at {
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            if expires_at > now {
+                Some(Duration::from_secs(expires_at - now))
+            } else {
+                Some(Duration::ZERO)
+            }
+        } else {
+            None
+        }
+    }
+
+    pub fn needs_refresh(&self) -> bool {
+        if let Some(ttl) = self.record_type.default_ttl() {
+            if let Some(remaining) = self.time_until_expiry() {
+                return remaining < ttl / 2;
+            }
+        }
+        true
+    }
+
+    pub fn requires_global_node(&self) -> bool {
+        self.record_type.requires_global_node()
+    }
+
+    pub fn requires_signature(&self) -> bool {
+        self.record_type.requires_global_node()
+            || self.record_type.is_public()
+            || self.record_type.requires_confirmation()
+    }
+
+    pub fn serialize(&self) -> Vec<u8> {
+        serde_json::to_vec(self).unwrap_or_default()
+    }
+
+    pub fn deserialize(data: &[u8]) -> Option<Self> {
+        serde_json::from_slice(data).ok()
+    }
+
+    pub fn serialize_value<T: Serialize>(value: &T) -> Vec<u8> {
+        serde_json::to_vec(value).unwrap_or_default()
+    }
+
+    pub fn get_signable_content(&self) -> String {
+        format!(
+            "{},{},{},{},{},{}",
+            self.key,
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&self.value),
+            self.publisher_id,
+            self.sequence_number,
+            self.created_at,
+            self.source_node_id
+        )
+    }
+}
+
+#[derive(Clone)]
+pub struct RecordSigner {
+    signing_key: Option<Ed25519Signer>,
+    verifying_key: Option<String>,
+}
+
+impl RecordSigner {
+    pub fn new(signing_key: Option<[u8; 32]>) -> Self {
+        let signer = signing_key.map(Ed25519Signer::new);
+        let verifying_key = signer.as_ref().map(|s| s.verifying_key());
+        Self {
+            signing_key: signer,
+            verifying_key,
+        }
+    }
+
+    pub fn sign(&self, record: &SignedDhtRecord) -> Option<Vec<u8>> {
+        let signer = match self.signing_key.as_ref() {
+            Some(s) => s,
+            None => {
+                tracing::warn!("No signing key configured - record will be stored unsigned");
+                return None;
+            }
+        };
+
+        let content = record.get_signable_content();
+        let signature = signer.sign(&content);
+        base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(&signature)
+            .ok()
+    }
+
+    pub fn verify(&self, record: &SignedDhtRecord) -> bool {
+        if record.signature.is_empty() {
+            tracing::warn!("Empty signature on record {}", record.key);
+            return false;
+        }
+
+        let Some(ref public_key_b64) = record.signer_public_key else {
+            tracing::warn!("No public key on record {} - cannot verify", record.key);
+            return false;
+        };
+
+        let verifier = match Ed25519Verifier::from_base64(public_key_b64) {
+            Some(v) => v,
+            None => {
+                tracing::warn!("Invalid public key format on record {}", record.key);
+                return false;
+            }
+        };
+
+        let content = record.get_signable_content();
+        let signature_b64 =
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&record.signature);
+
+        verifier.verify(&content, &signature_b64)
+    }
+
+    pub fn get_verifying_key(&self) -> Option<String> {
+        self.verifying_key.clone()
+    }
+}
+
+pub fn validate_message_timestamp(timestamp: u64) -> bool {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+
+    let msg_time = timestamp as i64;
+    let diff = (now - msg_time).abs();
+
+    diff <= DHT_MESSAGE_TIMESTAMP_WINDOW_SECS
+}
+
+pub struct TtlManager {
+    org_ttl: Duration,
+    tier_key_ttl: Duration,
+    member_cert_ttl: Duration,
+    upstream_ttl: Duration,
+    node_info_ttl: Duration,
+    global_node_list_ttl: Duration,
+    tier_claim_ttl: Duration,
+    global_node_public_key_ttl: Duration,
+    node_health_ttl: Duration,
+    node_load_ttl: Duration,
+    verified_upstream_ttl: Duration,
+    org_name_reservation_ttl: Duration,
+    upstream_registration_request_ttl: Duration,
+}
+
+impl Default for TtlManager {
+    fn default() -> Self {
+        Self {
+            org_ttl: Duration::from_secs(86400 * 7),
+            tier_key_ttl: Duration::from_secs(86400 * 30),
+            member_cert_ttl: Duration::from_secs(86400 * 365),
+            upstream_ttl: Duration::from_secs(300),
+            node_info_ttl: Duration::from_secs(3600),
+            global_node_list_ttl: Duration::from_secs(3600),
+            tier_claim_ttl: Duration::from_secs(86400),
+            global_node_public_key_ttl: Duration::from_secs(86400),
+            node_health_ttl: Duration::from_secs(60),
+            node_load_ttl: Duration::from_secs(60),
+            verified_upstream_ttl: Duration::from_secs(300),
+            org_name_reservation_ttl: Duration::from_secs(86400 * 7),
+            upstream_registration_request_ttl: Duration::from_secs(3600),
+        }
+    }
+}
+
+impl TtlManager {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_org_ttl(mut self, ttl: Duration) -> Self {
+        self.org_ttl = ttl;
+        self
+    }
+
+    pub fn with_tier_key_ttl(mut self, ttl: Duration) -> Self {
+        self.tier_key_ttl = ttl;
+        self
+    }
+
+    pub fn with_upstream_ttl(mut self, ttl: Duration) -> Self {
+        self.upstream_ttl = ttl;
+        self
+    }
+
+    pub fn ttl_for(&self, record_type: SignedRecordType) -> Duration {
+        match record_type {
+            SignedRecordType::Organization => self.org_ttl,
+            SignedRecordType::TierKey => self.tier_key_ttl,
+            SignedRecordType::MemberCertificate => self.member_cert_ttl,
+            SignedRecordType::Upstream => self.upstream_ttl,
+            SignedRecordType::NodeInfo => self.node_info_ttl,
+            SignedRecordType::GlobalNodeList => self.global_node_list_ttl,
+            SignedRecordType::TierClaim => self.tier_claim_ttl,
+            SignedRecordType::GlobalNodePublicKey => self.global_node_public_key_ttl,
+            SignedRecordType::NodeHealth => self.node_health_ttl,
+            SignedRecordType::NodeLoad => self.node_load_ttl,
+            SignedRecordType::VerifiedUpstream => self.verified_upstream_ttl,
+            SignedRecordType::OrgNameReservation => self.org_name_reservation_ttl,
+            SignedRecordType::UpstreamRegistrationRequest => self.upstream_registration_request_ttl,
+            SignedRecordType::YaraRules => self.upstream_ttl,
+            SignedRecordType::YaraRuleSubmission => self.upstream_registration_request_ttl,
+            SignedRecordType::YaraRuleVersion => self.org_ttl,
+            SignedRecordType::DnsZone => self.node_info_ttl,
+            SignedRecordType::DnsRecord => self.upstream_ttl,
+            SignedRecordType::DnsDomainRegistration => Duration::from_secs(600),
+        }
+    }
+
+    pub fn expires_at_for(&self, record_type: SignedRecordType) -> u64 {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        now + self.ttl_for(record_type).as_secs()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_signed_record_creation() {
+        let record = SignedDhtRecord::new(
+            "org:test".to_string(),
+            b"test_value".to_vec(),
+            "publisher_1".to_string(),
+            SignedRecordType::Organization,
+        );
+
+        assert!(record.signature.is_empty());
+        assert!(!record.is_expired());
+    }
+
+    #[test]
+    fn test_upstream_needs_refresh() {
+        let mut record = SignedDhtRecord::new(
+            "upstream:test".to_string(),
+            b"test_value".to_vec(),
+            "publisher_1".to_string(),
+            SignedRecordType::Upstream,
+        );
+
+        assert!(record.needs_refresh());
+
+        record.created_at = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            - 100;
+
+        assert!(!record.needs_refresh());
+    }
+
+    #[test]
+    fn test_privileged_record_types() {
+        assert!(SignedRecordType::Organization.requires_global_node());
+        assert!(SignedRecordType::TierKey.requires_global_node());
+        assert!(!SignedRecordType::Upstream.requires_global_node());
+    }
+}

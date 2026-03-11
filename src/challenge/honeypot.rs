@@ -1,8 +1,8 @@
+use crate::utils::current_timestamp;
 use parking_lot::RwLock;
 use rand::Rng;
 use std::collections::HashMap;
 use std::net::IpAddr;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const HONEYPOT_PREFIX: &str = "/_waf_hp_";
 
@@ -71,20 +71,13 @@ impl HoneypotTracker {
         false
     }
 
-    pub fn cleanup_expired(&self) {
-        let now = current_timestamp();
-        self.entries
-            .write()
-            .retain(|_, entry| now < entry.created_at + self.ttl_secs);
-    }
-
     pub fn generate_html(&self, ip: &IpAddr) -> String {
         let paths = self.get_or_generate(ip);
         let mut html = String::new();
 
         for path in paths {
             html.push_str(&format!(
-                r#"<a href="{}" style="display:none;visibility:hidden;opacity:0;position:absolute;left:-9999px;width:0;height:0;overflow:hidden;" tabindex="-1" aria-hidden="true">.</a>"#,
+                r#"<a href="{}" rel="nofollow" data-waf-honeypot="true" style="display:none;visibility:hidden;opacity:0;position:absolute;left:-9999px;width:0;height:0;overflow:hidden;" tabindex="-1" aria-hidden="true">.</a>"#,
                 path
             ));
         }
@@ -102,19 +95,19 @@ impl HoneypotTracker {
 }
 
 fn generate_random_path() -> String {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     let charset: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
 
     let segment1: String = (0..8)
         .map(|_| {
-            let idx = rng.gen_range(0..charset.len());
+            let idx = rng.random_range(0..charset.len());
             charset[idx] as char
         })
         .collect();
 
     let segment2: String = (0..8)
         .map(|_| {
-            let idx = rng.gen_range(0..charset.len());
+            let idx = rng.random_range(0..charset.len());
             charset[idx] as char
         })
         .collect();
@@ -124,13 +117,6 @@ fn generate_random_path() -> String {
 
 pub fn generate_honeypot_path() -> String {
     format!("{}{}", HONEYPOT_PREFIX, generate_random_path())
-}
-
-fn current_timestamp() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
 }
 
 #[cfg(test)]

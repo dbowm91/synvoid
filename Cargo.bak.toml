@@ -1,0 +1,254 @@
+[package]
+name = "maluwaf"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "maluwaf"
+path = "src/main.rs"
+
+[[bin]]
+name = "maluwaf-vpn"
+path = "src/bin/maluwaf-vpn.rs"
+
+[features]
+default = ["socket-handoff"]
+socket-handoff = []       # Unix socket FD passing for zero-downtime upgrades
+daemonize = []            # Unix daemonization support
+tun-rs = ["dep:tun-rs"]               # tun-rs userspace TUN implementation
+wireguard = ["wireguard-kernel", "dep:boringtun", "tun-rs"]
+wireguard-userspace = ["dep:boringtun", "tun-rs"]
+wireguard-kernel = ["wireguard-control", "netlink-packet-wireguard", "netlink-packet-generic", "netlink-packet-core", "netlink-sys"]
+icmp-filter = []          # Base ICMP filtering support
+icmp-nftables = ["icmp-filter", "dep:nftables"]
+icmp-ebpf = ["icmp-filter", "dep:aya", "dep:aya-log", "dep:network-types"]
+icmp-pf = ["icmp-filter", "dep:pfctl"]
+icmp-winfw = ["icmp-filter", "dep:windows_firewall"]
+icmp-wfp = ["icmp-filter", "dep:wfp"]
+flood-ebpf = ["dep:aya", "dep:aya-log", "dep:network-types"]  # eBPF-based SYN flood protection (Linux only)
+origin_key_exchange = []  # Origin-signed key exchange for enhanced integrity verification
+audit = []               # Audit logging support
+
+[workspace]
+members = [".", "src/wasm_pow", "admin-ui", "website", "examples/dynamic-plugin-example", "examples/embedded-app-example", "ebpf-icmp", "ebpf-flood"]
+resolver = "2"
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "unwind"
+strip = true
+
+[profile.dev]
+panic = "abort"
+
+[workspace.dependencies]
+tracing-subscriber = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time", "io-util", "fs", "signal", "process"] }
+tower = { version = "0.5", features = ["util"] }
+axum = { version = "0.8", features = ["ws", "macros", "json"] }
+axum-extra = { version = "0.10", features = ["typed-header"] }
+sha2 = "0.10"
+
+[dependencies]
+
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time", "io-util", "fs", "signal", "process"] }
+hyper = { version = "1", features = ["http1", "http2", "server", "client"] }
+hyper-util = { version = "0.1", features = ["tokio", "server-auto", "server-graceful", "http1", "http2", "client", "client-legacy"] }
+hyper-rustls = { version = "0.27", features = ["http2"] }
+tower = { version = "0.5", features = ["util", "timeout"] }
+tower-http = { version = "0.6", features = ["fs", "cors", "trace"] }
+axum = { workspace = true }
+axum-extra = { workspace = true }
+http-body = "1"
+http-body-util = "0.1"
+httparse = "1"
+bytes = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+bincode = "1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing = "0.1"
+toml = "0.8"
+tracing-appender = "0.2"
+isbot = "0.1"
+regex = "1"
+once_cell = "1"
+smallvec = "1"
+ahash = "0.8"
+parking_lot = "0.12"
+dashmap = "5"
+metrics = "0.22"
+metrics-exporter-prometheus = "0.18"
+http = "1"
+ipnetwork = "0.18"
+rand = "0.9"
+base32 = "0.5"
+base64 = "0.22"
+sha1 = "0.10"
+sha2 = "0.10"
+hmac = "0.12"
+hex = "0.4"
+futures = "0.3"
+futures-util = "0.3"
+tokio-stream = "0.1"
+sysinfo = "0.30"
+nix = { version = "0.29", features = ["signal", "process", "socket", "fs", "net", "uio"] }
+chrono = { version = "0.4", features = ["serde"] }
+notify = "6"
+aho-corasick = "1.1"
+url = "2.5"
+unicode-normalization = "0.1"
+libinjectionrs = "0.1"
+clap = { version = "4", features = ["derive"] }
+infer = "0.16"
+tempfile = "3"
+uuid = { version = "1", features = ["v4", "serde"] }
+lazy_static = "1.4"
+thiserror = "2"
+pin-project-lite = "0.2"
+bcrypt = "0.18"
+dirs = "5"
+daemonize2 = "0.6"
+flate2 = "1"
+prost = "0.13"
+tonic = { version = "0.12", features = ["gzip", "prost"] }
+tonic-reflection = "0.12"
+
+# Minification
+lightningcss = "1.0.0-alpha.70"
+minify-html = "0.18"
+minify-js = "0.6"
+brotli = "6"
+
+# File system utilities
+walkdir = "2"
+
+# Database
+rusqlite = { version = "0.31", features = ["bundled"] }
+
+# TLS + Post-Quantum Cryptography
+tokio-rustls = "0.26"
+rustls = { version = "0.23", features = ["prefer-post-quantum", "aws-lc-rs"] }
+rustls-pemfile = "2.2"
+rustls-pki-types = "1"
+rustls-post-quantum = "0.2"
+x509-parser = "0.16"
+
+# Post-Quantum Cryptography (aws-lc-rs with unstable for ML-DSA)
+aws-lc-rs = { version = "1", features = ["unstable"] }
+
+# Cryptography utilities
+subtle = "2"
+async-trait = "0.1"
+lru_time_cache = "0.11"
+aes-gcm = "0.10"
+digest = "0.10"
+pbkdf2 = "0.12"
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+signature = "1"
+hkdf = "0.12"
+sha3 = "0.10"
+
+# HTTP/3 + QUIC
+quinn = { version = "0.11", features = ["runtime-tokio"] }
+h3 = "0.0.8"
+h3-quinn = "0.0.10"
+rcgen = "0.13"
+webpki-roots = "0.26"
+
+# WebSocket proxy (upstream connections)
+tokio-tungstenite = "0.28"
+
+# GeoIP support
+zip = "2"
+
+# FastCGI client support
+fastcgi-client = "0.10"
+
+# Dynamic plugin loading
+libloading = "0.8"
+
+# WASM support for plugins
+wasmtime = "36"
+wasmtime-wasi = "36"
+
+# YARA-X malware scanning
+yara-x = "1"
+
+# WireGuard (optional - requires boringtun and tun-rs)
+boringtun = { version = "0.7", optional = true }
+tun-rs = { version = "2", optional = true }
+
+# Unix domain socket support for HTTP client
+hyperlocal = { version = "0.9", features = ["hyper-util"] }
+
+# Syslog support
+syslog = "6"
+
+# Logging facade
+log = "0.4"
+
+# Socket options
+socket2 = { version = "0.6", features = ["all"] }
+
+# Windows-specific dependencies
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_System_Pipes",
+    "Win32_System_IO",
+    "Win32_Security",
+] }
+tun-rs = { version = "2", features = ["async"] }
+zip = "2"  # For extracting embedded wintun.dll
+
+# ICMP filter dependencies (Windows)
+windows_firewall = { version = "0.1", optional = true }
+wfp = { version = "0.0.3", optional = true }
+
+# Linux-specific dependencies
+[target.'cfg(target_os = "linux")'.dependencies]
+tun = { version = "0.7", features = ["async"] }
+tun-rs = { version = "2", features = ["async"] }
+libc = "0.2"
+mio = "1"
+rtnetlink = { version = "0.14", optional = true }
+netlink-packet-route = { version = "0.19", optional = true }
+netlink-packet-wireguard = { version = "0.2", optional = true }
+netlink-packet-generic = { version = "0.3", optional = true }
+netlink-packet-core = { version = "0.7", optional = true }
+netlink-sys = { version = "0.8", optional = true }
+wireguard-control = { version = "1", optional = true }
+
+# ICMP filter dependencies (Linux)
+nftables = { version = "0.5", optional = true }
+aya = { version = "0.13", optional = true }
+aya-log = { version = "0.2", optional = true }
+network-types = { version = "0.1", optional = true }
+
+# macOS-specific dependencies
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2"
+tun-rs = { version = "2", features = ["async"] }
+
+# ICMP filter dependencies (macOS)
+pfctl = { version = "0.5", optional = true }
+
+# BSD-specific dependencies (FreeBSD, OpenBSD, NetBSD)
+[target.'cfg(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"))'.dependencies]
+libc = "0.2"
+tun-rs = { version = "2", features = ["async"] }
+
+[build-dependencies]
+prost-build = "0.13"
+tonic-build = "0.12"
+chrono = "0.4"
+

@@ -1,14 +1,17 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use dashmap::DashMap;
 use quinn::{SendStream, RecvStream};
+use once_cell::sync::Lazy;
 
 use super::runtime::QuicRuntime;
 
 #[derive(Clone)]
 pub struct QuicTunnelRegistry {
-    sessions: Arc<RwLock<HashMap<String, TunnelSessionInfo>>>,
-    runtime: Arc<RwLock<Option<Arc<QuicRuntime>>>>,
+    sessions: DashMap<String, TunnelSessionInfo>,
+    sessions_by_client: DashMap<String, String>,
+    sessions_by_peer: DashMap<String, String>,
+    runtime: Arc<std::sync::RwLock<Option<Arc<QuicRuntime>>>>,
 }
 
 #[derive(Clone)]
@@ -23,58 +26,76 @@ pub struct TunnelSessionInfo {
 impl QuicTunnelRegistry {
     pub fn new() -> Self {
         Self {
-            sessions: Arc::new(RwLock::new(HashMap::new())),
-            runtime: Arc::new(RwLock::new(None)),
+            sessions: DashMap::new(),
+            sessions_by_client: DashMap::new(),
+            sessions_by_peer: DashMap::new(),
+            runtime: Arc::new(std::sync::RwLock::new(None)),
         }
     }
 
     pub async fn set_runtime(&self, runtime: Arc<QuicRuntime>) {
-        let mut r = self.runtime.write().await;
+        let mut r = self.runtime.write().unwrap();
         *r = Some(runtime);
     }
 
     pub async fn get_runtime(&self) -> Option<Arc<QuicRuntime>> {
-        let r = self.runtime.read().await;
+        let r = self.runtime.read().unwrap();
         r.clone()
     }
 
     pub async fn register(&self, info: TunnelSessionInfo) {
-        let mut sessions = self.sessions.write().await;
-        sessions.insert(info.session_id.clone(), info);
-        tracing::debug!("Tunnel session registered: {}", sessions.len());
+        let session_id = info.session_id.clone();
+        let client_id = info.client_id.clone();
+        
+        if let Some(ref peer_id) = info.peer_id {
+            self.sessions_by_peer.insert(peer_id.clone(), session_id.clone());
+        }
+        
+        self.sessions_by_client.insert(client_id, session_id.clone());
+        self.sessions.insert(session_id, info);
+        
+        tracing::trace!("Tunnel session registered: {}", self.sessions.len());
     }
 
     pub async fn unregister(&self, session_id: &str) {
-        let mut sessions = self.sessions.write().await;
-        sessions.remove(session_id);
-        tracing::debug!("Tunnel session unregistered: {}", sessions.len());
+        if let Some((_, info)) = self.sessions.remove(session_id) {
+            self.sessions_by_client.remove(&info.client_id);
+            if let Some(peer_id) = info.peer_id {
+                self.sessions_by_peer.remove(&peer_id);
+            }
+        }
+        tracing::trace!("Tunnel session unregistered: {}", self.sessions.len());
     }
 
     pub async fn get(&self, session_id: &str) -> Option<TunnelSessionInfo> {
-        let sessions = self.sessions.read().await;
-        sessions.get(session_id).cloned()
+        self.sessions.get(session_id).map(|r| r.clone())
     }
 
     pub async fn get_by_client_id(&self, client_id: &str) -> Option<TunnelSessionInfo> {
-        let sessions = self.sessions.read().await;
-        sessions.values().find(|s| s.client_id == client_id).cloned()
+        let session_id = self.sessions_by_client.get(client_id)?;
+        self.sessions.get(session_id.value()).map(|r| r.clone())
     }
 
     pub async fn get_by_peer_id(&self, peer_id: &str) -> Option<TunnelSessionInfo> {
-        let sessions = self.sessions.read().await;
-        sessions.values().find(|s| s.peer_id.as_deref() == Some(peer_id)).cloned()
+        let session_id = self.sessions_by_peer.get(peer_id)?;
+        self.sessions.get(session_id.value()).map(|r| r.clone())
     }
 
     pub async fn list(&self) -> Vec<TunnelSessionInfo> {
-        let sessions = self.sessions.read().await;
-        sessions.values().cloned().collect()
+        self.sessions.iter().map(|r| r.clone()).collect()
     }
 
     pub async fn find_by_port(&self, port: u16) -> Option<TunnelSessionInfo> {
-        let sessions = self.sessions.read().await;
-        sessions.values()
-            .find(|s| s.mappings.values().any(|&p| p == port))
-            .cloned()
+        for entry in self.sessions.iter() {
+            if entry.mappings.values().any(|&p| p == port) {
+                return Some(entry.clone());
+            }
+        }
+        None
+    }
+
+    pub fn session_count(&self) -> usize {
+        self.sessions.len()
     }
 }
 
@@ -84,9 +105,7 @@ impl Default for QuicTunnelRegistry {
     }
 }
 
-lazy_static::lazy_static! {
-    pub static ref QUIC_TUNNEL_REGISTRY: QuicTunnelRegistry = QuicTunnelRegistry::new();
-}
+pub static QUIC_TUNNEL_REGISTRY: Lazy<QuicTunnelRegistry> = Lazy::new(QuicTunnelRegistry::new);
 
 pub struct QuicTunnelProxy {
     pub send: SendStream,

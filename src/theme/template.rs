@@ -1,5 +1,6 @@
 use super::config::ThemeConfig;
 use super::renderer::ThemeRenderer;
+use crate::http::headers::generate_stealth_timestamp;
 
 pub struct ChallengePageTemplate {
     renderer: ThemeRenderer,
@@ -148,7 +149,7 @@ impl ErrorPageTemplate {
             renderer: ThemeRenderer::new(config),
             status_code: 500,
             message: "An error occurred".to_string(),
-            timestamp: chrono::Utc::now().to_rfc3339(),
+            timestamp: generate_stealth_timestamp(5),
         }
     }
 
@@ -157,7 +158,7 @@ impl ErrorPageTemplate {
             renderer,
             status_code: 500,
             message: "An error occurred".to_string(),
-            timestamp: chrono::Utc::now().to_rfc3339(),
+            timestamp: generate_stealth_timestamp(5),
         }
     }
 
@@ -327,7 +328,7 @@ impl LoginPageTemplate {
             submit_label = self.submit_label,
         );
 
-        let template = ChallengePageTemplate::from_renderer(self.renderer)
+        let _template = ChallengePageTemplate::from_renderer(self.renderer)
             .title("Sign In")
             .subtitle("")
             .spinner(false)

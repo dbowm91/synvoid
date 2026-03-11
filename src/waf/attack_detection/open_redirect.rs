@@ -2,37 +2,24 @@ use aho_corasick::AhoCorasick;
 use std::sync::Arc;
 
 use crate::waf::attack_detection::config::{AttackDetectionResult, AttackType, InputLocation};
+use crate::waf::attack_detection::detector_common::{BasePatternDetector, PatternDetector};
 use crate::waf::attack_detection::patterns::DefaultPatterns;
 
 pub struct OpenRedirectDetector {
-    patterns: Arc<AhoCorasick>,
+    inner: BasePatternDetector,
     redirect_param_patterns: Vec<&'static str>,
 }
 
 impl OpenRedirectDetector {
     pub fn new(paranoia_level: u8, custom_patterns: &[String]) -> Self {
-        let mut base_patterns: Vec<String> = DefaultPatterns::open_redirect()
-            .iter()
-            .map(|s| s.to_lowercase())
-            .collect();
-
-        if paranoia_level >= 3 {
-            base_patterns.extend(
-                DefaultPatterns::open_redirect_high()
-                    .iter()
-                    .map(|s| s.to_lowercase()),
-            );
-        }
-
-        for pattern in custom_patterns {
-            let pattern_lower = pattern.to_lowercase();
-            if !base_patterns.contains(&pattern_lower) {
-                base_patterns.push(pattern_lower);
-            }
-        }
-
-        let patterns_str: Vec<&str> = base_patterns.iter().map(|s| s.as_str()).collect();
-        let patterns = Arc::new(AhoCorasick::new(&patterns_str).unwrap());
+        let inner = BasePatternDetector::new(
+            DefaultPatterns::open_redirect().as_slice(),
+            DefaultPatterns::open_redirect_high().as_slice(),
+            custom_patterns,
+            paranoia_level,
+            AttackType::OpenRedirect,
+            "open_redirect",
+        );
 
         let redirect_param_patterns = vec![
             "redirect",
@@ -72,8 +59,6 @@ impl OpenRedirectDetector {
             "folder",
             "pg",
             "style",
-            "doc",
-            "img_url",
             "return_path",
             "success_url",
             "error_url",
@@ -113,19 +98,16 @@ impl OpenRedirectDetector {
         ];
 
         Self {
-            patterns,
+            inner,
             redirect_param_patterns,
         }
     }
 
     fn is_redirect_param(&self, input: &str) -> bool {
         let input_lower = input.to_lowercase();
-        for param in &self.redirect_param_patterns {
-            if input_lower.contains(param) {
-                return true;
-            }
-        }
-        false
+        self.redirect_param_patterns
+            .iter()
+            .any(|param| input_lower.contains(param))
     }
 
     fn is_external_redirect(&self, input: &str) -> bool {
@@ -155,74 +137,31 @@ impl OpenRedirectDetector {
             ".%5c",
         ];
 
-        for variant in url_encoded_variants {
-            if input_lower.contains(variant) {
-                return true;
-            }
-        }
-
-        false
+        url_encoded_variants
+            .iter()
+            .any(|variant| input_lower.contains(variant))
     }
 
-    pub fn detect(&self, input: &str, location: InputLocation) -> Option<AttackDetectionResult> {
+    fn detect_internal(
+        &self,
+        input: &str,
+        location: InputLocation,
+    ) -> Option<AttackDetectionResult> {
         let input_lower = input.to_lowercase();
 
-        if self.is_external_redirect(input) {
-            if self.is_redirect_param(input) && self.patterns.is_match(&input_lower) {
-                if let Some(mat) = self.patterns.find(&input_lower) {
-                    let matched = input[mat.start()..mat.end()].to_string();
+        if !self.is_external_redirect(input) {
+            return None;
+        }
 
-                    tracing::warn!(
-                        attack_type = "open_redirect",
-                        matched_pattern = %matched,
-                        location = %location,
-                        "Open redirect detected"
-                    );
-
-                    return Some(AttackDetectionResult {
-                        attack_type: AttackType::OpenRedirect,
-                        fingerprint: None,
-                        matched_pattern: Some(matched),
-                        input_location: location,
-                    });
-                }
-            } else if input_lower.starts_with("javascript:")
-                || input_lower.starts_with("vbscript:")
-                || input_lower.starts_with("data:")
-            {
-                let matched = if let Some(mat) = self.patterns.find(&input_lower) {
-                    input[mat.start()..mat.end()].to_string()
-                } else {
-                    input.chars().take(20).collect()
-                };
-
+        if self.is_redirect_param(input) && self.inner.patterns_ref().is_match(&input_lower) {
+            if let Some(mat) = self.inner.patterns_ref().find(&input_lower) {
+                let matched = input[mat.start()..mat.end()].to_string();
                 tracing::warn!(
                     attack_type = "open_redirect",
                     matched_pattern = %matched,
                     location = %location,
                     "Open redirect detected"
                 );
-
-                return Some(AttackDetectionResult {
-                    attack_type: AttackType::OpenRedirect,
-                    fingerprint: None,
-                    matched_pattern: Some(matched),
-                    input_location: location,
-                });
-            } else if input_lower.starts_with("//") || input_lower.starts_with("\\\\") {
-                let matched = if let Some(mat) = self.patterns.find(&input_lower) {
-                    input[mat.start()..mat.end()].to_string()
-                } else {
-                    input.chars().take(20).collect()
-                };
-
-                tracing::warn!(
-                    attack_type = "open_redirect",
-                    matched_pattern = %matched,
-                    location = %location,
-                    "Open redirect detected"
-                );
-
                 return Some(AttackDetectionResult {
                     attack_type: AttackType::OpenRedirect,
                     fingerprint: None,
@@ -230,15 +169,65 @@ impl OpenRedirectDetector {
                     input_location: location,
                 });
             }
+        } else if input_lower.starts_with("javascript:")
+            || input_lower.starts_with("vbscript:")
+            || input_lower.starts_with("data:")
+        {
+            let matched = if let Some(mat) = self.inner.patterns_ref().find(&input_lower) {
+                input[mat.start()..mat.end()].to_string()
+            } else {
+                input.chars().take(20).collect()
+            };
+            tracing::warn!(
+                attack_type = "open_redirect",
+                matched_pattern = %matched,
+                location = %location,
+                "Open redirect detected"
+            );
+            return Some(AttackDetectionResult {
+                attack_type: AttackType::OpenRedirect,
+                fingerprint: None,
+                matched_pattern: Some(matched),
+                input_location: location,
+            });
+        } else if input_lower.starts_with("//") || input_lower.starts_with("\\\\") {
+            let matched = if let Some(mat) = self.inner.patterns_ref().find(&input_lower) {
+                input[mat.start()..mat.end()].to_string()
+            } else {
+                input.chars().take(20).collect()
+            };
+            tracing::warn!(
+                attack_type = "open_redirect",
+                matched_pattern = %matched,
+                location = %location,
+                "Open redirect detected"
+            );
+            return Some(AttackDetectionResult {
+                attack_type: AttackType::OpenRedirect,
+                fingerprint: None,
+                matched_pattern: Some(matched),
+                input_location: location,
+            });
         }
 
         None
     }
+}
 
-    pub fn detect_in_headers<F>(
+impl PatternDetector for OpenRedirectDetector {
+    fn patterns(&self) -> &Arc<AhoCorasick> {
+        self.inner.patterns()
+    }
+
+    fn detect(&self, input: &str, location: InputLocation) -> Option<AttackDetectionResult> {
+        self.detect_internal(input, location)
+    }
+
+    fn detect_in_headers<F>(
         &self,
         headers: &http::HeaderMap,
         _check_header: F,
+        _normalizer: Option<&crate::waf::attack_detection::normalizer::InputNormalizer>,
     ) -> Option<AttackDetectionResult>
     where
         F: FnMut(&str) -> bool,
@@ -255,16 +244,14 @@ impl OpenRedirectDetector {
             if let Some(header_value) = headers.get(header_name) {
                 if let Ok(value) = header_value.to_str() {
                     if self.is_external_redirect(value) {
-                        if let Some(mat) = self.patterns.find(value) {
+                        if let Some(mat) = self.inner.patterns_ref().find(value) {
                             let matched = value[mat.start()..mat.end()].to_string();
-
                             tracing::warn!(
                                 attack_type = "open_redirect",
                                 matched_pattern = %matched,
                                 location = %format!("header:{}", header_name),
                                 "Open redirect detected in header"
                             );
-
                             return Some(AttackDetectionResult {
                                 attack_type: AttackType::OpenRedirect,
                                 fingerprint: None,
@@ -276,7 +263,6 @@ impl OpenRedirectDetector {
                 }
             }
         }
-
         None
     }
 }

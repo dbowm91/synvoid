@@ -1,9 +1,8 @@
 use std::path::Path;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 use bytes::Bytes;
-use http::{Request, Response, StatusCode};
+use http::{Request, Response};
 use parking_lot::RwLock;
 use wasmtime::*;
 
@@ -21,7 +20,7 @@ impl Default for WasmResourceLimits {
     fn default() -> Self {
         Self {
             max_memory_mb: 64,
-            max_cpu_fuel: 0,
+            max_cpu_fuel: 1000000,
             timeout_seconds: 30,
             max_instances: 1,
         }
@@ -83,7 +82,12 @@ impl WasmRuntime {
         let mut config = Config::new();
         config
             .cranelift_opt_level(OptLevel::SpeedAndSize)
-            .max_wasm_stack(1 << 20);
+            .max_wasm_stack(1 << 20)
+            .memory_init_cow(true);
+
+        if limits.max_cpu_fuel > 0 {
+            config.consume_fuel(true);
+        }
 
         let engine =
             Engine::new(&config).map_err(|e| WasmPluginError::LoadFailed(e.to_string()))?;

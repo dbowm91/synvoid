@@ -1,13 +1,20 @@
 use aho_corasick::AhoCorasick;
+use once_cell::sync::Lazy;
 use regex::Regex;
 use std::sync::Arc;
 
+use crate::utils::url_decode_all;
 use crate::waf::attack_detection::config::{AttackDetectionResult, AttackType, InputLocation};
+use crate::waf::attack_detection::detector_common::{BasePatternDetector, PatternDetector};
 use crate::waf::attack_detection::patterns::DefaultPatterns;
 
+static PRIVATE_IP_REGEX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?:^|[/:])(?:(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3})|(?:172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})|(?:192\.168\.\d{1,3}\.\d{1,3})|(?:127\.\d{1,3}\.\d{1,3}\.\d{1,3})|(?:169\.254\.\d{1,3}\.\d{1,3})|(?:::ffff:(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}))|(?:::ffff:(?:172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}))|(?:::ffff:(?:192\.168\.\d{1,3}\.\d{1,3}))|(?:::ffff:(?:127\.\d{1,3}\.\d{1,3}\.\d{1,3}))|(?:::1)|(?:\.local)|(?:0\.0\.0\.0)|(?:localhost)|(?:\[::1\])|(?:\[[:]?:?1\])|(?:\[::ffff:127\.0\.0\.1\])|(?:\[::ffff:0:127\.0\.0\.1\])|(?:\[fc00:/:7\])|(?:\[fd00:/:8\])|(?:\[fe80:/10\])|(?:\b0\b)|(?:\blocalhost\b))(?:[/:]|$)").unwrap()
+});
+
 pub struct SsrfDetector {
-    automaton: Arc<AhoCorasick>,
-    private_ip_pattern: Regex,
+    inner: BasePatternDetector,
+    private_ip_pattern: Option<&'static Regex>,
     allowed_domains: Vec<String>,
 }
 
@@ -18,116 +25,78 @@ impl SsrfDetector {
         block_private_ips: bool,
         allowed_domains: Vec<String>,
     ) -> Self {
-        let mut patterns: Vec<String> = if paranoia_level >= 3 {
-            DefaultPatterns::ssrf_high()
-                .iter()
-                .map(|s| s.to_lowercase())
-                .collect()
-        } else {
-            DefaultPatterns::ssrf()
-                .iter()
-                .map(|s| s.to_lowercase())
-                .collect()
-        };
-
-        for custom in custom_patterns {
-            patterns.push(custom.to_lowercase());
-        }
-
-        let ac = AhoCorasick::new(&patterns).expect("Failed to build Aho-Corasick automaton");
-
+        let inner = BasePatternDetector::new(
+            DefaultPatterns::ssrf().as_slice(),
+            DefaultPatterns::ssrf_high().as_slice(),
+            custom_patterns,
+            paranoia_level,
+            AttackType::Ssrf,
+            "ssrf",
+        );
         let private_ip_pattern = if block_private_ips {
-            Regex::new(r"(?:^|[/:])(?:(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3})|(?:172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})|(?:192\.168\.\d{1,3}\.\d{1,3})|(?:127\.\d{1,3}\.\d{1,3}\.\d{1,3})|(?:169\.254\.\d{1,3}\.\d{1,3})|(?:::ffff:(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}))|(?:::ffff:(?:172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}))|(?:::ffff:(?:192\.168\.\d{1,3}\.\d{1,3}))|(?:::ffff:(?:127\.\d{1,3}\.\d{1,3}\.\d{1,3}))|(?:::1)|(?:\.local))(?:[/:]|$)")
-                .expect("Failed to compile private IP regex")
+            Some(&*PRIVATE_IP_REGEX)
         } else {
-            Regex::new(r"^(?!.)").expect("Empty regex that never matches")
+            None
         };
-
         Self {
-            automaton: Arc::new(ac),
+            inner,
             private_ip_pattern,
             allowed_domains,
         }
     }
 
-    pub fn detect(&self, input: &str, location: InputLocation) -> Option<AttackDetectionResult> {
+    fn detect_with_url_decode(
+        &self,
+        input: &str,
+        location: InputLocation,
+    ) -> Option<AttackDetectionResult> {
         let input_lower = input.to_lowercase();
-        let decoded = self::decode_all(&input_lower);
+        let decoded = url_decode_all(&input_lower);
 
-        if let Some(_mat) = self.automaton.find(&decoded) {
+        if let Some(mat) = self.inner.patterns_ref().find(&decoded) {
+            let matched = decoded[mat.start()..mat.end()].to_string();
             tracing::warn!(
                 attack_type = "ssrf",
+                matched_pattern = %matched,
                 location = %location,
-                input_preview = %&input[..input.len().min(100)],
                 "SSRF attack detected"
             );
-
             return Some(AttackDetectionResult {
                 attack_type: AttackType::Ssrf,
                 fingerprint: None,
-                matched_pattern: Some("ssrf_pattern".to_string()),
+                matched_pattern: Some(matched),
                 input_location: location,
             });
         }
 
-        if self.private_ip_pattern.is_match(&decoded) {
-            tracing::warn!(
-                attack_type = "ssrf",
-                location = %location,
-                "SSRF with private IP detected"
-            );
-
-            return Some(AttackDetectionResult {
-                attack_type: AttackType::Ssrf,
-                fingerprint: None,
-                matched_pattern: Some("private_ip".to_string()),
-                input_location: location,
-            });
+        if let Some(pattern) = self.private_ip_pattern {
+            if pattern.is_match(&decoded) {
+                tracing::warn!(
+                    attack_type = "ssrf",
+                    location = %location,
+                    "SSRF with private IP detected"
+                );
+                return Some(AttackDetectionResult {
+                    attack_type: AttackType::Ssrf,
+                    fingerprint: None,
+                    matched_pattern: Some("private_ip".to_string()),
+                    input_location: location,
+                });
+            }
         }
 
         None
     }
 }
 
-fn decode_all(input: &str) -> String {
-    let mut result = input.to_string();
-
-    for _ in 0..3 {
-        let decoded = urlencoding_decode(&result);
-        if decoded == result {
-            break;
-        }
-        result = decoded;
+impl PatternDetector for SsrfDetector {
+    fn patterns(&self) -> &Arc<AhoCorasick> {
+        self.inner.patterns()
     }
 
-    result
-}
-
-fn urlencoding_decode(input: &str) -> String {
-    let mut result = String::new();
-    let mut chars = input.chars().peekable();
-
-    while let Some(c) = chars.next() {
-        if c == '%' {
-            let hex: String = chars.by_ref().take(2).collect();
-            if hex.len() == 2 {
-                if let Ok(byte) = u8::from_str_radix(&hex, 16) {
-                    if byte.is_ascii() {
-                        result.push(byte as char);
-                        continue;
-                    }
-                }
-            }
-            result.push('%');
-            result.push_str(&hex);
-        } else if c == '+' {
-            result.push(' ');
-        } else {
-            result.push(c);
-        }
+    fn detect(&self, input: &str, location: InputLocation) -> Option<AttackDetectionResult> {
+        self.detect_with_url_decode(input, location)
     }
-
-    result
 }
 
 #[cfg(test)]

@@ -3,7 +3,7 @@ mod renderer;
 mod template;
 
 pub use config::{
-    ThemeBranding, ThemeColors, ThemeConfig, ThemeDefaults, ThemeEffects, ThemeMode,
+    ThemeBranding, ThemeColors, ThemeConfig, ThemeDefaults, ThemeEffects, ThemeMode, ThemePreset,
     ThemeRestriction, ThemeSpacing,
 };
 pub use renderer::ThemeRenderer;

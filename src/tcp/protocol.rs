@@ -1,6 +1,7 @@
 use std::io;
-use tokio::io::AsyncReadExt;
 use tokio::net::TcpStream;
+
+use crate::protocol::detect_common::{extract_first_line, looks_like_dns, ProtocolDetectionResult};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Protocol {
@@ -10,23 +11,51 @@ pub enum Protocol {
     Http,
     Https,
     Http2,
+    Http3,
     Grpc,
+    WebSocket,
+    WebDAV,
     Mysql,
+    MariaDb,
     Postgres,
-    Ssh,
-    Ftp,
+    Mongodb,
+    Cassandra,
     Redis,
     Memcached,
-    Mongodb,
+    MemcachedBinary,
+    Ssh,
+    Ftp,
+    Sftp,
+    Telnet,
     Ldap,
+    Ldaps,
     Rdp,
     Vnc,
     Xmpp,
+    Irc,
     Amqp,
+    Mqtt,
+    Stomp,
     Kafka,
-    WebSocket,
-    Rtsp,
+    CassandraCql,
+    Elasticsearch,
+    Solr,
+    CassandraCompact,
     Dns,
+    Ntp,
+    Socks4,
+    Socks5,
+    HttpProxy,
+    BitTorrent,
+    Minecraft,
+    Radius,
+    Syslog,
+    Prometheus,
+    WireGuard,
+    MeshQuic,
+    Sip,
+    H323,
+    Rtsp,
     Unknown,
 }
 
@@ -39,23 +68,51 @@ impl Protocol {
             Protocol::Http => "http",
             Protocol::Https => "https",
             Protocol::Http2 => "http2",
+            Protocol::Http3 => "http3",
             Protocol::Grpc => "grpc",
+            Protocol::WebSocket => "websocket",
+            Protocol::WebDAV => "webdav",
             Protocol::Mysql => "mysql",
+            Protocol::MariaDb => "mariadb",
             Protocol::Postgres => "postgres",
-            Protocol::Ssh => "ssh",
-            Protocol::Ftp => "ftp",
+            Protocol::Mongodb => "mongodb",
+            Protocol::Cassandra => "cassandra",
             Protocol::Redis => "redis",
             Protocol::Memcached => "memcached",
-            Protocol::Mongodb => "mongodb",
+            Protocol::MemcachedBinary => "memcached_binary",
+            Protocol::Ssh => "ssh",
+            Protocol::Ftp => "ftp",
+            Protocol::Sftp => "sftp",
+            Protocol::Telnet => "telnet",
             Protocol::Ldap => "ldap",
+            Protocol::Ldaps => "ldaps",
             Protocol::Rdp => "rdp",
             Protocol::Vnc => "vnc",
             Protocol::Xmpp => "xmpp",
+            Protocol::Irc => "irc",
             Protocol::Amqp => "amqp",
+            Protocol::Mqtt => "mqtt",
+            Protocol::Stomp => "stomp",
             Protocol::Kafka => "kafka",
-            Protocol::WebSocket => "websocket",
-            Protocol::Rtsp => "rtsp",
+            Protocol::CassandraCql => "cassandra_cql",
+            Protocol::Elasticsearch => "elasticsearch",
+            Protocol::Solr => "solr",
+            Protocol::CassandraCompact => "cassandra_compact",
             Protocol::Dns => "dns",
+            Protocol::Ntp => "ntp",
+            Protocol::Socks4 => "socks4",
+            Protocol::Socks5 => "socks5",
+            Protocol::HttpProxy => "http_proxy",
+            Protocol::BitTorrent => "bittorrent",
+            Protocol::Minecraft => "minecraft",
+            Protocol::Radius => "radius",
+            Protocol::Syslog => "syslog",
+            Protocol::Prometheus => "prometheus",
+            Protocol::WireGuard => "wireguard",
+            Protocol::MeshQuic => "mesh_quic",
+            Protocol::Sip => "sip",
+            Protocol::H323 => "h323",
+            Protocol::Rtsp => "rtsp",
             Protocol::Unknown => "unknown",
         }
     }
@@ -68,37 +125,69 @@ impl Protocol {
             "http" => Protocol::Http,
             "https" => Protocol::Https,
             "http2" | "h2" => Protocol::Http2,
+            "http3" | "h3" => Protocol::Http3,
             "grpc" => Protocol::Grpc,
+            "websocket" | "ws" | "wss" => Protocol::WebSocket,
+            "webdav" => Protocol::WebDAV,
             "mysql" => Protocol::Mysql,
+            "mariadb" => Protocol::MariaDb,
             "postgres" | "postgresql" => Protocol::Postgres,
-            "ssh" => Protocol::Ssh,
-            "ftp" => Protocol::Ftp,
+            "mongodb" | "mongo" => Protocol::Mongodb,
+            "cassandra" => Protocol::Cassandra,
             "redis" => Protocol::Redis,
             "memcached" => Protocol::Memcached,
-            "mongodb" | "mongo" => Protocol::Mongodb,
+            "memcached_binary" => Protocol::MemcachedBinary,
+            "ssh" => Protocol::Ssh,
+            "ftp" => Protocol::Ftp,
+            "sftp" => Protocol::Sftp,
+            "telnet" => Protocol::Telnet,
             "ldap" => Protocol::Ldap,
+            "ldaps" => Protocol::Ldaps,
             "rdp" => Protocol::Rdp,
             "vnc" => Protocol::Vnc,
             "xmpp" => Protocol::Xmpp,
+            "irc" => Protocol::Irc,
             "amqp" => Protocol::Amqp,
+            "mqtt" => Protocol::Mqtt,
+            "stomp" => Protocol::Stomp,
             "kafka" => Protocol::Kafka,
-            "websocket" | "ws" | "wss" => Protocol::WebSocket,
-            "rtsp" => Protocol::Rtsp,
+            "cassandra_cql" | "cql" => Protocol::CassandraCql,
+            "elasticsearch" | "es" => Protocol::Elasticsearch,
+            "solr" => Protocol::Solr,
+            "cassandra_compact" => Protocol::CassandraCompact,
             "dns" => Protocol::Dns,
+            "ntp" => Protocol::Ntp,
+            "socks4" => Protocol::Socks4,
+            "socks5" => Protocol::Socks5,
+            "http_proxy" | "proxy" => Protocol::HttpProxy,
+            "bittorrent" => Protocol::BitTorrent,
+            "minecraft" => Protocol::Minecraft,
+            "radius" => Protocol::Radius,
+            "syslog" => Protocol::Syslog,
+            "prometheus" => Protocol::Prometheus,
+            "wireguard" | "wg" => Protocol::WireGuard,
+            "mesh_quic" | "mesh" | "quic" => Protocol::MeshQuic,
+            "sip" => Protocol::Sip,
+            "h323" => Protocol::H323,
+            "rtsp" => Protocol::Rtsp,
             _ => Protocol::Unknown,
         }
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct ProtocolResult {
-    pub protocol: Protocol,
-    pub confidence: f32,
-    pub matched_pattern: String,
+impl crate::filter::Protocol for Protocol {
+    fn as_str(&self) -> &str {
+        Protocol::as_str(self)
+    }
+
+    fn from_str(s: &str) -> Self {
+        Protocol::from_str(s)
+    }
 }
 
+pub type ProtocolResult = ProtocolDetectionResult<Protocol>;
+
 pub struct ProtocolDetector {
-    read_buffer_size: usize,
     peek_timeout_ms: u64,
 }
 
@@ -111,7 +200,6 @@ impl Default for ProtocolDetector {
 impl Clone for ProtocolDetector {
     fn clone(&self) -> Self {
         Self {
-            read_buffer_size: self.read_buffer_size,
             peek_timeout_ms: self.peek_timeout_ms,
         }
     }
@@ -120,13 +208,12 @@ impl Clone for ProtocolDetector {
 impl ProtocolDetector {
     pub fn new() -> Self {
         Self {
-            read_buffer_size: 64,
             peek_timeout_ms: 1000,
         }
     }
 
     pub async fn detect_peek(&self, stream: &TcpStream) -> io::Result<ProtocolResult> {
-        let mut buffer = vec![0u8; self.read_buffer_size];
+        let mut buffer = [0u8; 64];
         
         let n = tokio::time::timeout(
             std::time::Duration::from_millis(self.peek_timeout_ms),
@@ -160,14 +247,28 @@ impl ProtocolDetector {
             return Protocol::Unknown;
         }
 
+        if self.looks_like_mesh_quic(data) {
+            return Protocol::MeshQuic;
+        }
+
         if data.len() >= 2 && data[0] == 0x16 && (data[1] == 0x03 || data[1] == 0x02) {
             if let Some(&_upgrade_byte) = data.get(5) {
-                let first_line = self.extract_first_line(&data[5..]);
+                let first_line = extract_first_line(&data[5..]);
                 if first_line.to_lowercase().contains("websocket") {
                     return Protocol::WebSocket;
                 }
                 if first_line.to_lowercase().contains("h2") {
                     return Protocol::Http2;
+                }
+                if first_line.to_lowercase().contains("h3") {
+                    return Protocol::Http3;
+                }
+            }
+            if data.len() >= 43 {
+                let sni = &data[43..];
+                let first_line = extract_first_line(sni);
+                if first_line.to_lowercase().contains("wireguard") {
+                    return Protocol::WireGuard;
                 }
             }
             return Protocol::Https;
@@ -186,12 +287,30 @@ impl ProtocolDetector {
             return Protocol::Grpc;
         }
 
-        let first_line = self.extract_first_line(data);
+        let first_line = extract_first_line(data);
         let upper_line = first_line.to_uppercase();
+
+        if first_line.starts_with("GET") || first_line.starts_with("POST") 
+            || first_line.starts_with("HEAD") || first_line.starts_with("PUT") 
+            || first_line.starts_with("DELETE") || first_line.starts_with("OPTIONS") 
+            || first_line.starts_with("PATCH") || first_line.starts_with("CONNECT") {
+            let data_upper = String::from_utf8_lossy(data).to_uppercase();
+            if data_upper.contains("UPGRADE: WEBSOCKET") || data_upper.contains("SEC-WEBSOCKET") {
+                return Protocol::WebSocket;
+            }
+            if data_upper.contains("UPGRADE: HTTP/3") || data_upper.contains("X-HTTP3-SETTING") {
+                return Protocol::Http3;
+            }
+            if data_upper.contains("Destination:") && data_upper.contains(" Depth:") {
+                return Protocol::WebDAV;
+            }
+            return Protocol::Http;
+        }
 
         if first_line.starts_with("HELO") || first_line.starts_with("EHLO") 
             || first_line.starts_with("MAIL FROM") || first_line.starts_with("RCPT TO") 
-            || first_line.starts_with("QUIT") || first_line.starts_with("DATA") {
+            || first_line.starts_with("QUIT") || first_line.starts_with("DATA")
+            || first_line.starts_with("RSET") || first_line.starts_with("NOOP") {
             return Protocol::Smtp;
         }
 
@@ -204,37 +323,60 @@ impl ProtocolDetector {
             return Protocol::Rtsp;
         }
 
-        if first_line.starts_with("GET") || first_line.starts_with("POST") 
-            || first_line.starts_with("HEAD") || first_line.starts_with("PUT") 
-            || first_line.starts_with("DELETE") || first_line.starts_with("OPTIONS") 
-            || first_line.starts_with("PATCH") || first_line.starts_with("CONNECT") {
-            let data_upper = String::from_utf8_lossy(data).to_uppercase();
-            if data_upper.contains("UPGRADE: WEBSOCKET") || data_upper.contains("SEC-WEBSOCKET") {
-                return Protocol::WebSocket;
-            }
-            return Protocol::Http;
-        }
-
         if first_line.starts_with("A") && first_line.chars().nth(4).map(|c| c.is_ascii_digit()).unwrap_or(false) {
             return Protocol::Imap;
         }
 
         if first_line.starts_with("USER") || first_line.starts_with("PASS") 
             || first_line.starts_with("LIST") || first_line.starts_with("RETR") 
-            || first_line.starts_with("QUIT") {
+            || first_line.starts_with("QUIT") || first_line.starts_with("CWD")
+            || first_line.starts_with("PWD") || first_line.starts_with("TYPE") {
             return Protocol::Ftp;
         }
 
+        if first_line.starts_with("SSH-") {
+            return Protocol::Ssh;
+        }
+
+        if data.len() >= 2 {
+            if data.starts_with(&[0xff, 0xfb]) || data.starts_with(&[0xff, 0xfe])
+                || data.starts_with(&[0xff, 0xfd]) || data.starts_with(&[0xff, 0xfc]) {
+                return Protocol::Telnet;
+            }
+        }
+
+        if first_line.starts_with("NICK ") || first_line.starts_with("USER ")
+            || first_line.starts_with("JOIN ") || first_line.starts_with("PRIVMSG ") {
+            return Protocol::Irc;
+        }
+
+        if first_line.starts_with("CONNECT ") {
+            let data_upper = String::from_utf8_lossy(data).to_uppercase();
+            if data_upper.contains("PROXY") || data_upper.contains("HTTP/") {
+                return Protocol::HttpProxy;
+            }
+        }
+
+        if first_line.starts_with("\x05\x01") || first_line.starts_with("\x05\x02") {
+            return Protocol::Socks5;
+        }
+        if first_line.starts_with("\x04\x01") || first_line.starts_with("\x04\x02") {
+            return Protocol::Socks4;
+        }
+
+        if first_line.starts_with("GET /metrics") || first_line.starts_with("POST /api/v1/push") {
+            return Protocol::Prometheus;
+        }
+
         if data.starts_with(b"\x00\x14") || (data.len() >= 4 && u32::from_be_bytes([data[0], data[1], data[2], data[3]]) == 10) {
+            if self.looks_like_mariadb(data) {
+                return Protocol::MariaDb;
+            }
             return Protocol::Mysql;
         }
 
         if data.starts_with(b"\x00\x00\x00\x08") || (data.len() >= 8 && &data[..8] == b"\x00\x00\x00\x08pgsrc\x00\x00") {
             return Protocol::Postgres;
-        }
-
-        if first_line.starts_with("SSH-") {
-            return Protocol::Ssh;
         }
 
         if first_line.starts_with("*") || first_line.starts_with("$") 
@@ -258,8 +400,17 @@ impl ProtocolDetector {
             return Protocol::Memcached;
         }
 
+        if data.len() >= 24 && data[0] == 0x80 && (data[1] == 0x80 || data[1] == 0x00) {
+            if self.looks_like_memcached_binary(data) {
+                return Protocol::MemcachedBinary;
+            }
+        }
+
         if data[0] == 0x30 && data.len() >= 6 {
             if self.looks_like_ldap(data) {
+                if data.len() >= 9 && data[9] == 0x02 {
+                    return Protocol::Ldaps;
+                }
                 return Protocol::Ldap;
             }
         }
@@ -281,11 +432,32 @@ impl ProtocolDetector {
             return Protocol::Amqp;
         }
 
+        if data.len() >= 4 && data[0] == 0x10 && data[1] == 0x00 {
+            return Protocol::Mqtt;
+        }
+        if first_line.starts_with("CONNECT ") && first_line.contains(":") {
+            let parts: Vec<&str> = first_line.split_whitespace().collect();
+            if parts.len() >= 2 && parts[0] == "CONNECT" {
+                return Protocol::Mqtt;
+            }
+        }
+
+        if first_line.starts_with("CONNECT") || first_line.starts_with("SEND")
+            || first_line.starts_with("SUBSCRIBE") || first_line.starts_with("UNSUBLBE") {
+            return Protocol::Stomp;
+        }
+
         if data.len() >= 4 {
             let msg_size = u32::from_be_bytes([data[0], data[1], data[2], data[3]]) as usize;
             if msg_size > 0 && msg_size < 100000000 && data.len() >= 4 + msg_size {
                 if self.looks_like_mongodb(data) {
                     return Protocol::Mongodb;
+                }
+                if self.looks_like_cassandra(data) {
+                    return Protocol::Cassandra;
+                }
+                if self.looks_like_cassandra_cql(data) {
+                    return Protocol::CassandraCql;
                 }
             }
         }
@@ -299,12 +471,76 @@ impl ProtocolDetector {
 
         if data.len() >= 12 && data[2] == 0x01 && data[3] == 0x00 {
             let _flags = u16::from_be_bytes([data[2], data[3]]);
-            if self.looks_like_dns(data) {
+            if looks_like_dns(data) {
                 return Protocol::Dns;
             }
         }
 
+        if data.len() >= 48 && data[0] == 0x1B {
+            return Protocol::Ntp;
+        }
+
+        if data.len() >= 4 && data[0] == 0x01 && data[2] == 0x00 {
+            let code = data[1];
+            if (code >= 0x01 && code <= 0x0C) || code == 0x0E || code == 0x10 {
+                return Protocol::Radius;
+            }
+        }
+
+        if first_line.starts_with("INVITE ") || first_line.starts_with("ACK ")
+            || first_line.starts_with("BYE ") || first_line.starts_with("CANCEL ")
+            || first_line.starts_with("OPTIONS ") || first_line.starts_with("REGISTER ") {
+            if upper_line.contains("SIP/") {
+                return Protocol::Sip;
+            }
+        }
+
+        if first_line.starts_with("GET /") || first_line.starts_with("POST /")
+            || first_line.starts_with("PUT /") || first_line.starts_with("DELETE /") {
+            if upper_line.contains("HTTP/") {
+                let data_upper = String::from_utf8_lossy(data).to_uppercase();
+                if data_upper.contains("ELASTICSEARCH") || data_upper.contains("X-ELASTICSEARCH") {
+                    return Protocol::Elasticsearch;
+                }
+                if data_upper.contains("SOLR") || data_upper.contains("X-SOLR") {
+                    return Protocol::Solr;
+                }
+            }
+        }
+
+        let lower_data = String::from_utf8_lossy(data).to_lowercase();
+        if lower_data.contains("minecraft") || lower_data.contains("yggdrasil") {
+            return Protocol::Minecraft;
+        }
+
+        if lower_data.starts_with("d1:ad2:id20:") || lower_data.contains("bittorrent protocol") {
+            return Protocol::BitTorrent;
+        }
+
         Protocol::Unknown
+    }
+
+    fn looks_like_mesh_quic(&self, data: &[u8]) -> bool {
+        if data.len() < 5 {
+            return false;
+        }
+
+        let first_byte = data[0];
+        let is_long_header = (first_byte & 0x80) != 0;
+
+        if is_long_header {
+            if data.len() >= 5 {
+                let version = u32::from_be_bytes([data[1], data[2], data[3], data[4]]);
+                if version == 0 || (version & 0xFF000000) == 0xFF000000 {
+                    return true;
+                }
+                if version == 1 || version == 2 {
+                    return true;
+                }
+            }
+        }
+
+        false
     }
 
     fn looks_like_redis(&self, data: &[u8]) -> bool {
@@ -312,7 +548,7 @@ impl ProtocolDetector {
             return false;
         }
         let first_char = data[0] as char;
-        let line = self.extract_first_line(data);
+        let line = extract_first_line(data);
         
         if first_char == '*' {
             if line.len() > 1 {
@@ -345,8 +581,8 @@ impl ProtocolDetector {
         let msg_len = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
         if msg_len > 0 && msg_len < 48000000 && data.len() >= msg_len {
             if data.len() >= 12 {
-                let request_id = u32::from_le_bytes([data[4], data[5], data[6], data[7]]);
-                let response_to = u32::from_le_bytes([data[8], data[9], data[10], data[11]]);
+                let _request_id = u32::from_le_bytes([data[4], data[5], data[6], data[7]]);
+                let _response_to = u32::from_le_bytes([data[8], data[9], data[10], data[11]]);
                 let opcode = u32::from_le_bytes([data[12], data[13], data[14], data[15]]);
                 if opcode >= 1 && opcode <= 2010 {
                     return true;
@@ -383,20 +619,6 @@ impl ProtocolDetector {
                     return correlation_id > 0 || api_key == 18;
                 }
             }
-        }
-        false
-    }
-
-    fn looks_like_dns(&self, data: &[u8]) -> bool {
-        if data.len() < 12 {
-            return false;
-        }
-        let flags = u16::from_be_bytes([data[2], data[3]]);
-        let qr = (flags >> 15) & 1;
-        let opcode = (flags >> 11) & 0xF;
-        let qdcount = u16::from_be_bytes([data[4], data[5]]);
-        if opcode <= 2 && qdcount > 0 && qdcount <= 100 {
-            return true;
         }
         false
     }
@@ -444,17 +666,112 @@ impl ProtocolDetector {
         false
     }
 
-    fn extract_first_line(&self, data: &[u8]) -> String {
-        let mut line = String::new();
-        for &byte in data {
-            if byte == b'\n' {
-                break;
-            }
-            if byte != b'\r' {
-                line.push(byte as char);
+    fn looks_like_memcached_binary(&self, data: &[u8]) -> bool {
+        if data.len() < 24 {
+            return false;
+        }
+
+        let magic = data[0];
+        if magic != 0x80 && magic != 0x81 {
+            return false;
+        }
+
+        let opcode = data[1];
+        let _key_len = u16::from_be_bytes([data[2], data[3]]);
+        let body_len = u32::from_be_bytes([data[8], data[9], data[10], data[11]]);
+
+        let header_len = 24;
+        if (data.len() as u32) < header_len + body_len {
+            return false;
+        }
+
+        if opcode <= 0x1f || opcode == 0x30 || opcode == 0x31 {
+            return true;
+        }
+
+        false
+    }
+
+    fn looks_like_mariadb(&self, data: &[u8]) -> bool {
+        if data.len() < 4 {
+            return false;
+        }
+
+        let packet_len = u32::from_be_bytes([0, data[0], data[1], data[2]]);
+        if packet_len == 0 {
+            return false;
+        }
+
+        if data.len() >= 5 {
+            let _sequence = data[3];
+            let payload_start = 4;
+
+            if data.len() > payload_start {
+                if data[payload_start] == 0xFF {
+                    return true;
+                }
+                if data[payload_start] == 0xFE && data.len() >= payload_start + 4 {
+                    let auth_plugin_len = u16::from_be_bytes([data[data.len() - 2], data[data.len() - 1]]);
+                    if auth_plugin_len > 0 && auth_plugin_len < 256 {
+                        return true;
+                    }
+                }
             }
         }
-        line
+
+        false
+    }
+
+    fn looks_like_cassandra(&self, data: &[u8]) -> bool {
+        if data.len() < 8 {
+            return false;
+        }
+
+        let version = data[0];
+        if version != 0x01 && version != 0x02 && version != 0x03 && version != 0x04 && version != 0x05 && version != 0x06 && version != 0x07 && version != 0x08 && version != 0x81 && version != 0x82 && version != 0x83 && version != 0x84 && version != 0x85 && version != 0x86 && version != 0x87 && version != 0x88 {
+            return false;
+        }
+
+        let flags = data[1];
+        if flags > 0x3F {
+            return false;
+        }
+
+        let _stream_id = data[2];
+        let opcode = data[3];
+        if opcode > 0x1F {
+            return false;
+        }
+
+        true
+    }
+
+    fn looks_like_cassandra_cql(&self, data: &[u8]) -> bool {
+        if data.len() < 8 {
+            return false;
+        }
+
+        let version = data[0];
+        if version < 1 || version > 5 {
+            if version < 0x81 || version > 0x85 {
+                return false;
+            }
+        }
+
+        let flags = data[1];
+        if flags > 0x07 {
+            return false;
+        }
+
+        let opcode = data[3];
+        if opcode == 0x01 || opcode == 0x03 || opcode == 0x05 || opcode == 0x06 
+            || opcode == 0x07 || opcode == 0x08 || opcode == 0x09 || opcode == 0x0A 
+            || opcode == 0x0B || opcode == 0x0C || opcode == 0x0D || opcode == 0x0E 
+            || opcode == 0x0F || opcode == 0x10 || opcode == 0x11 || opcode == 0x40 {
+            return true;
+        }
+
+        false
     }
 }
 

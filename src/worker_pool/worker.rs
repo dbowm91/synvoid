@@ -1,9 +1,11 @@
 use super::shared_state::SharedWafState;
+use crate::metrics::WorkerMetrics;
 use crate::proxy::WafDecision;
 use crate::http_client::{create_http_client, send_request_with_timeout, HttpClient};
+use crate::process::WorkerId;
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::Ordering;
 use std::net::SocketAddr;
 use std::time::Instant;
 use tokio::task::JoinHandle;
@@ -12,73 +14,12 @@ use parking_lot::RwLock as PLRwLock;
 use metrics::{counter, histogram};
 use http::Response;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct WorkerId(pub usize);
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkerStatus {
     Starting,
     Running,
     Stopping,
     Stopped,
-}
-
-pub struct WorkerMetrics {
-    pub total_requests: AtomicU64,
-    pub blocked: AtomicU64,
-    pub challenged: AtomicU64,
-    pub proxied: AtomicU64,
-    pub errors: AtomicU64,
-    pub current_concurrent: AtomicUsize,
-    pub peak_concurrent: AtomicUsize,
-    pub total_latency_ms: AtomicU64,
-    pub request_count_for_latency: AtomicU64,
-}
-
-impl Clone for WorkerMetrics {
-    fn clone(&self) -> Self {
-        Self {
-            total_requests: AtomicU64::new(self.total_requests.load(Ordering::Relaxed)),
-            blocked: AtomicU64::new(self.blocked.load(Ordering::Relaxed)),
-            challenged: AtomicU64::new(self.challenged.load(Ordering::Relaxed)),
-            proxied: AtomicU64::new(self.proxied.load(Ordering::Relaxed)),
-            errors: AtomicU64::new(self.errors.load(Ordering::Relaxed)),
-            current_concurrent: AtomicUsize::new(self.current_concurrent.load(Ordering::Relaxed)),
-            peak_concurrent: AtomicUsize::new(self.peak_concurrent.load(Ordering::Relaxed)),
-            total_latency_ms: AtomicU64::new(self.total_latency_ms.load(Ordering::Relaxed)),
-            request_count_for_latency: AtomicU64::new(self.request_count_for_latency.load(Ordering::Relaxed)),
-        }
-    }
-}
-
-impl Default for WorkerMetrics {
-    fn default() -> Self {
-        Self {
-            total_requests: AtomicU64::new(0),
-            blocked: AtomicU64::new(0),
-            challenged: AtomicU64::new(0),
-            proxied: AtomicU64::new(0),
-            errors: AtomicU64::new(0),
-            current_concurrent: AtomicUsize::new(0),
-            peak_concurrent: AtomicUsize::new(0),
-            total_latency_ms: AtomicU64::new(0),
-            request_count_for_latency: AtomicU64::new(0),
-        }
-    }
-}
-
-impl std::fmt::Debug for WorkerMetrics {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("WorkerMetrics")
-            .field("total_requests", &self.total_requests.load(Ordering::Relaxed))
-            .field("blocked", &self.blocked.load(Ordering::Relaxed))
-            .field("challenged", &self.challenged.load(Ordering::Relaxed))
-            .field("proxied", &self.proxied.load(Ordering::Relaxed))
-            .field("errors", &self.errors.load(Ordering::Relaxed))
-            .field("current_concurrent", &self.current_concurrent.load(Ordering::Relaxed))
-            .field("peak_concurrent", &self.peak_concurrent.load(Ordering::Relaxed))
-            .finish()
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -115,7 +56,7 @@ impl Worker {
     }
 
     pub fn current_load(&self) -> u64 {
-        self.metrics.current_concurrent.load(Ordering::Relaxed) as u64
+        self.metrics.current_concurrent.load(Ordering::Relaxed)
     }
 
     pub fn metrics(&self) -> &WorkerMetrics {
@@ -172,7 +113,17 @@ impl Worker {
                         
                         let path_str = path.as_str().to_string();
                         
-                        let waf = shared_state.get_waf().await;
+                        let waf = match shared_state.get_waf().await {
+                            Ok(waf) => waf,
+                            Err(e) => {
+                                tracing::error!("WAF not initialized: {}", e);
+                                metrics.current_concurrent.fetch_sub(1, Ordering::Relaxed);
+                                return Ok(Response::builder()
+                                    .status(503)
+                                    .body("Service Unavailable".to_string())
+                                    .unwrap_or_else(|_| Response::default()));
+                            }
+                        };
 
                         let http_method = http::Method::from_bytes(method.as_str().as_bytes())
                             .unwrap_or(http::Method::GET);
@@ -180,11 +131,11 @@ impl Worker {
                         match waf.check_request(client_ip, http_method.clone(), &path_str, user_agent.as_deref()).await {
                             WafDecision::Block(status, message) => {
                                 metrics.blocked.fetch_add(1, Ordering::Relaxed);
-                                counter!("rustwaf.requests.blocked").increment(1);
+                                counter!("maluwaf.requests.blocked").increment(1);
                                 let elapsed = start.elapsed().as_millis() as u64;
                                 metrics.total_latency_ms.fetch_add(elapsed, Ordering::Relaxed);
                                 metrics.request_count_for_latency.fetch_add(1, Ordering::Relaxed);
-                                histogram!("rustwaf.worker.request_duration").record(elapsed as f64);
+                                histogram!("maluwaf.worker.request_duration").record(elapsed as f64);
                                 metrics.current_concurrent.fetch_sub(1, Ordering::Relaxed);
                                 
                                 let body = waf.error_page_manager.render_page(status, Some(&message));
@@ -196,11 +147,11 @@ impl Worker {
                             }
                             WafDecision::Challenge(html) => {
                                 metrics.challenged.fetch_add(1, Ordering::Relaxed);
-                                counter!("rustwaf.requests.challenged").increment(1);
+                                counter!("maluwaf.requests.challenged").increment(1);
                                 let elapsed = start.elapsed().as_millis() as u64;
                                 metrics.total_latency_ms.fetch_add(elapsed, Ordering::Relaxed);
                                 metrics.request_count_for_latency.fetch_add(1, Ordering::Relaxed);
-                                histogram!("rustwaf.worker.request_duration").record(elapsed as f64);
+                                histogram!("maluwaf.worker.request_duration").record(elapsed as f64);
                                 metrics.current_concurrent.fetch_sub(1, Ordering::Relaxed);
                                 
                                 Ok(Response::builder()
@@ -210,13 +161,31 @@ impl Worker {
                                     .body(html)
                                     .unwrap())
                             }
-                            WafDecision::Tarpit(_) => {
-                                metrics.blocked.fetch_add(1, Ordering::Relaxed);
-                                counter!("rustwaf.requests.tarpitted").increment(1);
+                            WafDecision::ChallengeWithCookie { html, session_cookie_name, session_cookie_value, session_cookie_max_age } => {
+                                metrics.challenged.fetch_add(1, Ordering::Relaxed);
+                                counter!("maluwaf.requests.challenged").increment(1);
                                 let elapsed = start.elapsed().as_millis() as u64;
                                 metrics.total_latency_ms.fetch_add(elapsed, Ordering::Relaxed);
                                 metrics.request_count_for_latency.fetch_add(1, Ordering::Relaxed);
-                                histogram!("rustwaf.worker.request_duration").record(elapsed as f64);
+                                histogram!("maluwaf.worker.request_duration").record(elapsed as f64);
+                                metrics.current_concurrent.fetch_sub(1, Ordering::Relaxed);
+                                
+                                let cookie = format!("{}={}; path=/; max-age={}; Secure; SameSite=Strict", session_cookie_name, session_cookie_value, session_cookie_max_age);
+                                Ok(Response::builder()
+                                    .status(200)
+                                    .header("Content-Type", "text/html")
+                                    .header("Cache-Control", "no-store, no-cache, must-revalidate")
+                                    .header("Set-Cookie", cookie)
+                                    .body(html)
+                                    .unwrap())
+                            }
+                            WafDecision::Tarpit(_) => {
+                                metrics.blocked.fetch_add(1, Ordering::Relaxed);
+                                counter!("maluwaf.requests.tarpitted").increment(1);
+                                let elapsed = start.elapsed().as_millis() as u64;
+                                metrics.total_latency_ms.fetch_add(elapsed, Ordering::Relaxed);
+                                metrics.request_count_for_latency.fetch_add(1, Ordering::Relaxed);
+                                histogram!("maluwaf.worker.request_duration").record(elapsed as f64);
                                 metrics.current_concurrent.fetch_sub(1, Ordering::Relaxed);
                                 
                                 Ok(Response::builder()
@@ -245,12 +214,12 @@ impl Worker {
                                         }
                                         
                                         metrics.proxied.fetch_add(1, Ordering::Relaxed);
-                                        counter!("rustwaf.requests.proxied").increment(1);
+                                        counter!("maluwaf.requests.proxied").increment(1);
                                         
                                         let elapsed = start.elapsed().as_millis() as u64;
                                         metrics.total_latency_ms.fetch_add(elapsed, Ordering::Relaxed);
                                         metrics.request_count_for_latency.fetch_add(1, Ordering::Relaxed);
-                                        histogram!("rustwaf.worker.request_duration").record(elapsed as f64);
+                                        histogram!("maluwaf.worker.request_duration").record(elapsed as f64);
                                         metrics.current_concurrent.fetch_sub(1, Ordering::Relaxed);
                                         
                                         Ok(builder.body(body).unwrap())
@@ -261,7 +230,7 @@ impl Worker {
                                         let elapsed = start.elapsed().as_millis() as u64;
                                         metrics.total_latency_ms.fetch_add(elapsed, Ordering::Relaxed);
                                         metrics.request_count_for_latency.fetch_add(1, Ordering::Relaxed);
-                                        histogram!("rustwaf.worker.request_duration").record(elapsed as f64);
+                                        histogram!("maluwaf.worker.request_duration").record(elapsed as f64);
                                         metrics.current_concurrent.fetch_sub(1, Ordering::Relaxed);
                                         
                                         Ok(Response::builder()

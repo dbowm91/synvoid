@@ -1,0 +1,483 @@
+use std::collections::HashMap;
+use std::net::SocketAddr;
+use std::sync::Arc;
+use std::time::Duration;
+
+use tokio::sync::mpsc;
+use tokio::sync::RwLock;
+use tokio::time::timeout;
+
+use crate::mesh::cert::MeshCertManager;
+use crate::mesh::config::{MeshConfig, MeshSeedNode};
+use crate::mesh::protocol::{MeshCapabilities, MeshMessage, MESH_MESSAGE_VERSION};
+use crate::mesh::topology::{MeshTopology, PeerStatus};
+
+pub struct MeshDiscovery {
+    config: Arc<MeshConfig>,
+    topology: Arc<MeshTopology>,
+    cert_manager: Arc<RwLock<MeshCertManager>>,
+    running: Arc<RwLock<bool>>,
+    shutdown_tx: Arc<RwLock<Option<mpsc::Sender<()>>>>,
+    record_store: Option<Arc<crate::mesh::dht::RecordStoreManager>>,
+}
+
+impl MeshDiscovery {
+    pub fn new(
+        config: Arc<MeshConfig>,
+        topology: Arc<MeshTopology>,
+        cert_manager: Arc<RwLock<MeshCertManager>>,
+        record_store: Option<Arc<crate::mesh::dht::RecordStoreManager>>,
+    ) -> Self {
+        Self {
+            config,
+            topology,
+            cert_manager,
+            running: Arc::new(RwLock::new(false)),
+            shutdown_tx: Arc::new(RwLock::new(None)),
+            record_store,
+        }
+    }
+
+    pub async fn start(&self) -> Result<(), MeshDiscoveryError> {
+        {
+            let mut running = self.running.write();
+            if *running {
+                return Ok(());
+            }
+            *running = true;
+        }
+
+        let (tx, mut rx) = mpsc::channel::<()>(1);
+        {
+            let mut shutdown = self.shutdown_tx.write();
+            *shutdown = Some(tx);
+        }
+
+        let config = self.config.clone();
+        let topology = self.topology.clone();
+        let cert_manager = self.cert_manager.clone();
+
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(30));
+
+            loop {
+                tokio::select! {
+                    _ = interval.tick() => {
+                        if let Err(e) = Self::maintain_connections(&config, &topology, &cert_manager).await {
+                            tracing::warn!("Mesh maintenance error: {}", e);
+                        }
+                    }
+                    _ = rx.recv() => {
+                        tracing::info!("Mesh discovery shutting down");
+                        break;
+                    }
+                }
+            }
+
+            let mut is_running = self.running.write();
+            *is_running = false;
+        });
+
+        if !self.config.seeds.is_empty() {
+            self.bootstrap_from_seeds().await?;
+        }
+
+        Ok(())
+    }
+
+    pub async fn stop(&self) {
+        if let Some(tx) = self.shutdown_tx.write().take() {
+            let _ = tx.send(()).await;
+        }
+    }
+
+    async fn bootstrap_from_seeds(&self) -> Result<(), MeshDiscoveryError> {
+        for seed in &self.config.seeds {
+            match self.connect_to_seed(seed).await {
+                Ok(_) => {
+                    tracing::info!("Connected to seed node: {}", seed.address);
+                    return Ok(());
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to connect to seed {}: {}", seed.address, e);
+                }
+            }
+        }
+        Err(MeshDiscoveryError::NoSeedsAvailable)
+    }
+
+    async fn connect_to_seed(&self, seed: &MeshSeedNode) -> Result<(), MeshDiscoveryError> {
+        let cert_manager = self.cert_manager.read();
+        cert_manager.add_seed_public_key(&seed.address, seed.public_key.clone());
+        drop(cert_manager);
+
+        tracing::debug!("Connecting to seed: {}", seed.address);
+
+        self.topology.add_peer(
+            crate::mesh::protocol::MeshPeerInfo {
+                node_id: seed.address.clone(),
+                address: seed.address.clone(),
+                role: crate::mesh::config::MeshNodeRole::Global,
+                capabilities: MeshCapabilities {
+                    can_route: true,
+                    can_proxy: true,
+                    max_hops: self.config.routing.max_hops,
+                    supported_services: vec![],
+                    preferred_transport: Some(crate::mesh::transports::MeshTransportType::Quic),
+                },
+                is_global: true,
+                latency_ms: None,
+                upstreams: vec![],
+            },
+            PeerStatus::Connecting,
+        ).await;
+
+        Ok(())
+    }
+
+    async fn maintain_connections(
+        config: &Arc<MeshConfig>,
+        topology: &Arc<MeshTopology>,
+        cert_manager: &Arc<RwLock<MeshCertManager>>,
+    ) -> Result<(), MeshDiscoveryError> {
+        let peers = topology.get_all_peers().await;
+
+        for peer in peers {
+            if !peer.is_healthy() {
+                if let Some(updated) = topology.get_peer(&peer.node_id).await {
+                    tracing::debug!("Peer {} status: {:?}", peer.node_id, updated.status);
+                }
+            }
+        }
+
+        if !topology.is_global() {
+            if let Some(global_id) = topology.get_closest_global_node().await {
+                Self::sync_with_global(topology, &global_id).await?;
+            } else if !config.seeds.is_empty() {
+                tracing::warn!("No global nodes available, attempting seed reconnection");
+            }
+        }
+
+        topology.cleanup_expired_queries(Duration::from_secs(10)).await;
+        topology.cleanup_expired_cache().await;
+
+        Ok(())
+    }
+
+    async fn sync_with_global(
+        topology: &Arc<MeshTopology>,
+        global_node_id: &str,
+    ) -> Result<(), MeshDiscoveryError> {
+        tracing::debug!("Syncing topology with global node: {}", global_node_id);
+
+        let request = MeshMessage::SeedListRequest {
+            node_id: topology.node_id().to_string(),
+            request_full_mesh: true,
+        };
+
+        tracing::trace!("Would send SeedListRequest to {}", global_node_id);
+
+        Ok(())
+    }
+
+    pub async fn handle_seed_list_response(
+        &self,
+        global_nodes: Vec<crate::mesh::protocol::MeshPeerInfo>,
+        edge_nodes: Vec<crate::mesh::protocol::MeshPeerInfo>,
+        version: u64,
+    ) {
+        tracing::info!("Received seed list from global: {} global, {} edge nodes (v{})",
+            global_nodes.len(), edge_nodes.len(), version);
+
+        self.topology.add_seeded_nodes(global_nodes.clone()).await;
+        
+        for node in edge_nodes {
+            if !self.topology.get_peer(&node.node_id).await.is_some() {
+                self.topology.add_peer(
+                    node,
+                    crate::mesh::topology::PeerStatus::Connecting,
+                ).await;
+            }
+        }
+
+        tracing::info!("Seeded topology updated with {} known nodes", global_nodes.len() + edge_nodes.len());
+    }
+
+    pub async fn build_seed_list_response(&self, request_full_mesh: bool) -> MeshMessage {
+        let global_nodes = if request_full_mesh {
+            self.topology.get_seeded_global_nodes().await
+        } else {
+            Vec::new()
+        };
+
+        let edge_nodes = if request_full_mesh {
+            self.topology.get_seeded_edge_nodes().await
+        } else {
+            Vec::new()
+        };
+
+        MeshMessage::SeedListResponse {
+            global_nodes,
+            edge_nodes,
+            version: 1,
+        }
+    }
+
+    pub async fn connect_to_peer(&self, address: &str) -> Result<String, MeshDiscoveryError> {
+        tracing::info!("Connecting to mesh peer: {}", address);
+
+        let cert_manager = self.cert_manager.read();
+        let node_id = cert_manager.node_id().to_string();
+        let role = self.config.role;
+        let capabilities = MeshCapabilities {
+            can_route: true,
+            can_proxy: true,
+            max_hops: self.config.routing.max_hops,
+            supported_services: self
+                .config
+                .local_upstreams
+                .keys()
+                .cloned()
+                .collect(),
+            preferred_transport: Some(crate::mesh::transports::MeshTransportType::Quic),
+        };
+        drop(cert_manager);
+
+        let local_upstreams: HashMap<String, crate::mesh::protocol::UpstreamInfo> = self
+            .topology
+            .get_local_upstreams()
+            .into_iter()
+            .map(|u| (u.upstream_id.clone(), u))
+            .collect();
+
+        let hello = MeshMessage::Hello {
+            version: MESH_MESSAGE_VERSION,
+            node_id: node_id.clone(),
+            role,
+            capabilities,
+            upstreams: local_upstreams,
+        };
+
+        tracing::debug!("Would send Hello to peer: {}", address);
+
+        Ok(address.to_string())
+    }
+
+    pub fn handle_hello(&self, msg: MeshMessage) -> Result<MeshMessage, MeshDiscoveryError> {
+        match msg {
+            MeshMessage::Hello {
+                version,
+                node_id,
+                role,
+                capabilities,
+                upstreams,
+                quic_port,
+                wireguard_port,
+                public_key,
+                pow_nonce,
+                pow_public_key,
+                ..
+            } => {
+                if version != MESH_MESSAGE_VERSION {
+                    return Err(MeshDiscoveryError::VersionMismatch {
+                        expected: MESH_MESSAGE_VERSION,
+                        got: version,
+                    });
+                }
+
+                if let Some(ref pk) = public_key {
+                    use base64::Engine;
+                    if let Ok(pk_bytes) = base64::engine::general_purpose::STANDARD.decode(pk.as_str()) {
+                        let expected_node_id = crate::mesh::dht::routing::node_id::NodeId::from_public_key(&pk_bytes);
+                        let claimed_node_id = crate::mesh::dht::routing::node_id::NodeId::from_node_id_string(node_id.as_str());
+                        if expected_node_id != claimed_node_id {
+                            tracing::warn!("Node ID mismatch from incoming connection: peer claimed {} but their public key derives {}",
+                                node_id, expected_node_id);
+                            return Err(MeshDiscoveryError::AuthFailed("Node ID does not match public key".to_string()));
+                        }
+                    }
+                } else {
+                    tracing::warn!("Incoming connection from {} did not provide public key - NodeID verification skipped", node_id);
+                }
+
+                let is_edge = role == crate::mesh::config::MeshNodeRole::Edge;
+                if is_edge {
+                    use base64::Engine;
+                    if let (Some(nonce), Some(ref pk_str)) = (pow_nonce, pow_public_key) {
+                        if let Ok(pk_bytes) = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(pk_str.as_str()) {
+                            let claimed_node_id = crate::mesh::dht::routing::node_id::NodeId::from_node_id_string(node_id.as_str());
+                            if !claimed_node_id.verify_pow(&pk_bytes, nonce) {
+                                tracing::warn!("PoW verification failed for edge node {}", node_id);
+                                return Err(MeshDiscoveryError::AuthFailed("PoW verification failed".to_string()));
+                            }
+                            tracing::debug!("PoW verified for edge node {}", node_id);
+                        } else {
+                            return Err(MeshDiscoveryError::AuthFailed("Invalid PoW public key format".to_string()));
+                        }
+                    } else {
+                        return Err(MeshDiscoveryError::AuthFailed("Edge node must provide PoW".to_string()));
+                    }
+                }
+
+                let peer_info = crate::mesh::protocol::MeshPeerInfo {
+                    node_id: node_id.clone(),
+                    address: String::new(),
+                    role,
+                    capabilities: capabilities.clone(),
+                    is_global: role.is_global(),
+                    latency_ms: None,
+                    upstreams: upstreams.keys().cloned().collect(),
+                    is_trusted: role.is_global(),
+                    quic_port,
+                    wireguard_port,
+                    advertised_port: quic_port.or(wireguard_port),
+                };
+
+                self.topology.add_peer(peer_info, PeerStatus::Handshake);
+
+                if let Some(upstreams) = self.build_hello_upstreams() {
+                    return Ok(MeshMessage::HelloAck {
+                        version: MESH_MESSAGE_VERSION,
+                        node_id: self.topology.node_id().to_string(),
+                        role: self.config.role,
+                        session_id: format!("{}-{}", self.topology.node_id(), node_id),
+                        upstreams,
+                        auth_token: None,
+                        network_id: self.config.network_id.clone().map(|s| s.into()),
+                        global_node_key: self.config.global_node_key.clone().map(|s| s.into()),
+                        timestamp: Some(MeshMessage::generate_timestamp()),
+                        nonce: Some(MeshMessage::generate_nonce()),
+                        is_trusted: self.config.is_trusted_node(),
+                        quic_port: Some(self.config.get_quic_port()),
+                        wireguard_port: self.config.get_advertised_wireguard_port(),
+                        public_key: self.config.signing_public_key().map(|s| s.into()),
+                    });
+                }
+
+                Ok(MeshMessage::HelloAck {
+                    version: MESH_MESSAGE_VERSION,
+                    node_id: self.topology.node_id().to_string(),
+                    role: self.config.role,
+                    session_id: format!("{}-{}", self.topology.node_id(), node_id),
+                    upstreams: HashMap::new(),
+                    auth_token: None,
+                    network_id: self.config.network_id.clone().map(|s| s.into()),
+                    global_node_key: self.config.global_node_key.clone().map(|s| s.into()),
+                    timestamp: Some(MeshMessage::generate_timestamp()),
+                    nonce: Some(MeshMessage::generate_nonce()),
+                    is_trusted: self.config.is_trusted_node(),
+                    quic_port: Some(self.config.get_quic_port()),
+                    wireguard_port: self.config.get_advertised_wireguard_port(),
+                    public_key: self.config.signing_public_key().map(|s| s.into()),
+                })
+            }
+            _ => Err(MeshDiscoveryError::UnexpectedMessage),
+        }
+    }
+
+    fn build_hello_upstreams(&self) -> Option<HashMap<String, crate::mesh::protocol::UpstreamInfo>> {
+        if self.topology.is_global() {
+            let peers = self.topology.get_all_peers().await;
+            let mut upstreams: HashMap<String, crate::mesh::protocol::UpstreamInfo> = HashMap::new();
+
+            for peer in peers {
+                for upstream_id in peer.upstreams {
+                    upstreams.insert(
+                        upstream_id.clone(),
+                        crate::mesh::protocol::UpstreamInfo {
+                            upstream_id,
+                            upstream_url: None,
+                            geo: None,
+                            is_local: false,
+                            owner_node_id: String::new(),
+                            peered_wafs: vec![],
+                            url_hash: String::new(),
+                        },
+                    );
+                }
+            }
+
+            Some(upstreams)
+        } else {
+            None
+        }
+    }
+
+    pub async fn send_route_query(&self, upstream_id: &str) -> Result<String, MeshDiscoveryError> {
+        if let Some((provider, _)) = self.topology.get_cached_route(upstream_id).await {
+            tracing::debug!("Using cached route for upstream {}: {}", upstream_id, provider);
+            return Ok(provider);
+        }
+
+        if self.topology.can_forward_service(upstream_id) {
+            let peer_query_count = self.config.routing.peer_query_count.min(3);
+
+            let known_peers = self.topology.get_best_peers_for_query(upstream_id, peer_query_count).await;
+
+            if !known_peers.is_empty() {
+                tracing::debug!(\n                    "Querying {} peers for upstream {}: {:?}",\n                    known_peers.len(),\n                    upstream_id,\n                    known_peers\n                );
+            }
+
+            if let Some(global_id) = self.topology.get_closest_global_node().await {
+                tracing::debug!("Querying global node {} for upstream {}", global_id, upstream_id);
+                return Ok(global_id);
+            }
+        }
+
+        if let Some(local) = self.topology.get_upstream_info(upstream_id).await {
+            if local.is_local {
+                return Ok(self.topology.node_id().to_string());
+            }
+        }
+
+        Err(MeshDiscoveryError::NoRouteToUpstream(upstream_id.to_string()))
+    }
+
+    pub async fn handle_route_response(&self, msg: MeshMessage) {
+        if let MeshMessage::RouteResponse {
+            query_id,
+            upstream_id,
+            provider_node_id,
+            hops,
+            ttl_secs,
+            upstream_url,
+            waf_policy,
+            priority_tier,
+            ..
+        } = msg
+        {
+            self.topology.cache_route(
+                &upstream_id,
+                provider_node_id.clone(),
+                hops,
+                Duration::from_secs(ttl_secs as u64),
+            ).await;
+
+            tracing::debug!(
+                "Cached route: upstream {} -> node {} ({} hops, {}s TTL)",
+                upstream_id,
+                provider_node_id,
+                hops,
+                ttl_secs
+            );
+        }
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum MeshDiscoveryError {
+    #[error("No seed nodes available")]
+    NoSeedsAvailable,
+    #[error("Connection failed: {0}")]
+    ConnectionFailed(String),
+    #[error("Version mismatch: expected {expected}, got {got}")]
+    VersionMismatch { expected: u8, got: u8 },
+    #[error("Unexpected message type")]
+    UnexpectedMessage,
+    #[error("No route to upstream: {0}")]
+    NoRouteToUpstream(String),
+    #[error("Authentication failed: {0}")]
+    AuthFailed(String),
+    #[error("Timeout")]
+    Timeout,
+}

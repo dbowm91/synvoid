@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Instant, SystemTime};
 
 use bytes::Bytes;
@@ -8,6 +9,8 @@ use parking_lot::RwLock;
 use thiserror::Error;
 
 use crate::config::site::SiteStaticConfig;
+
+use tokio::fs as async_fs;
 
 #[derive(Error, Debug)]
 pub enum MinifierError {
@@ -32,6 +35,7 @@ pub enum ContentType {
     Html,
     Css,
     Js,
+    Svg,
     Other,
 }
 
@@ -41,6 +45,7 @@ impl ContentType {
             "html" | "htm" => ContentType::Html,
             "css" => ContentType::Css,
             "js" | "mjs" => ContentType::Js,
+            "svg" => ContentType::Svg,
             _ => ContentType::Other,
         }
     }
@@ -85,8 +90,8 @@ impl Encoding {
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct CacheKey {
-    pub site_id: String,
-    pub path: String,
+    pub site_id: Arc<str>,
+    pub path: Arc<str>,
     pub encoding: Encoding,
 }
 
@@ -103,6 +108,7 @@ pub struct MinifierConfig {
     pub enable_html: bool,
     pub enable_css: bool,
     pub enable_js: bool,
+    pub enable_svg: bool,
     pub enable_gzip: bool,
     pub enable_brotli: bool,
     pub gzip_level: u32,
@@ -118,7 +124,7 @@ impl MinifierConfig {
         let enabled = config.enable_minification.unwrap_or(true);
         let global_cache_dir = std::env::var("RUSTWAF_CACHE_DIR")
             .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("/var/cache/rustwaf"));
+            .unwrap_or_else(|_| PathBuf::from("/var/cache/maluwaf"));
 
         let minified_dir = global_cache_dir.join("minified").join(site_id);
 
@@ -127,6 +133,7 @@ impl MinifierConfig {
             enable_html: config.enable_html_minification.unwrap_or(true),
             enable_css: config.enable_css_minification.unwrap_or(true),
             enable_js: config.enable_js_minification.unwrap_or(true),
+            enable_svg: config.enable_svg_compression.unwrap_or(true),
             enable_gzip: config.enable_compression.unwrap_or(true),
             enable_brotli: config.enable_brotli.unwrap_or(true),
             gzip_level: config.gzip_level.unwrap_or(9),
@@ -143,6 +150,8 @@ pub struct MinifierCache {
     entries: RwLock<HashMap<CacheKey, CacheEntry>>,
     config: MinifierConfig,
     generator: MinifierGenerator,
+    cache_hits: AtomicU64,
+    cache_misses: AtomicU64,
 }
 
 impl MinifierCache {
@@ -151,6 +160,8 @@ impl MinifierCache {
             entries: RwLock::new(HashMap::new()),
             config,
             generator: MinifierGenerator::new(),
+            cache_hits: AtomicU64::new(0),
+            cache_misses: AtomicU64::new(0),
         }
     }
 
@@ -164,6 +175,7 @@ impl MinifierCache {
 
     pub fn get(&self, key: &CacheKey) -> Option<CacheEntry> {
         if !self.config.enabled || !self.config.enable_cache {
+            self.cache_misses.fetch_add(1, Ordering::Relaxed);
             return None;
         }
 
@@ -172,9 +184,11 @@ impl MinifierCache {
 
         let age = entry.generated_at.elapsed().as_secs();
         if age > self.config.cache_ttl_secs {
+            self.cache_misses.fetch_add(1, Ordering::Relaxed);
             return None;
         }
 
+        self.cache_hits.fetch_add(1, Ordering::Relaxed);
         Some(entry.clone())
     }
 
@@ -194,9 +208,11 @@ impl MinifierCache {
 
     pub fn invalidate(&self, site_id: &str, path: &str) {
         let mut entries = self.entries.write();
+        let site_id_arc: Arc<str> = site_id.into();
+        let path_arc: Arc<str> = path.into();
         let keys: Vec<_> = entries
             .keys()
-            .filter(|k| k.site_id == site_id && k.path == path)
+            .filter(|k| k.site_id == site_id_arc && k.path == path_arc)
             .cloned()
             .collect();
 
@@ -207,9 +223,10 @@ impl MinifierCache {
 
     pub fn clear_site(&self, site_id: &str) {
         let mut entries = self.entries.write();
+        let site_id_arc: Arc<str> = site_id.into();
         let keys: Vec<_> = entries
             .keys()
-            .filter(|k| k.site_id == site_id)
+            .filter(|k| k.site_id == site_id_arc)
             .cloned()
             .collect();
 
@@ -230,6 +247,25 @@ impl MinifierCache {
 
         if let Some(key) = oldest_key {
             entries.remove(&key);
+        }
+    }
+
+    pub fn cache_hits(&self) -> u64 {
+        self.cache_hits.load(Ordering::Relaxed)
+    }
+
+    pub fn cache_misses(&self) -> u64 {
+        self.cache_misses.load(Ordering::Relaxed)
+    }
+
+    pub fn cache_hit_rate(&self) -> f64 {
+        let hits = self.cache_hits.load(Ordering::Relaxed);
+        let misses = self.cache_misses.load(Ordering::Relaxed);
+        let total = hits + misses;
+        if total > 0 {
+            (hits as f64 / total as f64) * 100.0
+        } else {
+            0.0
         }
     }
 
@@ -254,6 +290,7 @@ impl MinifierCache {
             ContentType::Html => self.config.enable_html,
             ContentType::Css => self.config.enable_css,
             ContentType::Js => self.config.enable_js,
+            ContentType::Svg => self.config.enable_svg,
             ContentType::Other => false,
         };
 
@@ -289,6 +326,7 @@ impl MinifierCache {
                         }
                     }
                 }
+                ContentType::Svg => original_content.to_vec(),
                 ContentType::Other => original_content.to_vec(),
             }
         } else {
@@ -303,8 +341,8 @@ impl MinifierCache {
         };
 
         let key = CacheKey {
-            site_id: site_id.to_string(),
-            path: path.to_string(),
+            site_id: Arc::from(site_id),
+            path: Arc::from(path),
             encoding: Encoding::None,
         };
         self.insert(key, entry.clone());
@@ -338,8 +376,8 @@ impl MinifierCache {
         };
 
         let key = CacheKey {
-            site_id: site_id.to_string(),
-            path: path.to_string(),
+            site_id: Arc::from(site_id),
+            path: Arc::from(path),
             encoding: encoding.clone(),
         };
 
@@ -359,11 +397,11 @@ impl MinifierCache {
         site_id: &str,
         path: &str,
         content: &[u8],
-        mtime: SystemTime,
+        _mtime: SystemTime,
     ) -> Result<PathBuf, MinifierError> {
-        let key = CacheKey {
-            site_id: site_id.to_string(),
-            path: path.to_string(),
+        let _key = CacheKey {
+            site_id: Arc::from(site_id),
+            path: Arc::from(path),
             encoding: Encoding::None,
         };
 
@@ -415,6 +453,67 @@ impl MinifierCache {
         }
 
         std::fs::write(&compressed_path, content)?;
+
+        tracing::debug!("Wrote compressed file: {}", compressed_path.display());
+
+        Ok(compressed_path)
+    }
+
+    pub async fn write_to_disk_async(
+        &self,
+        site_id: &str,
+        path: &str,
+        content: &[u8],
+        _mtime: SystemTime,
+    ) -> Result<PathBuf, MinifierError> {
+        let site_dir = self.config.minified_dir.join(site_id);
+        async_fs::create_dir_all(&site_dir).await?;
+
+        let relative_path = path.trim_start_matches('/');
+        let minified_path = site_dir.join(relative_path);
+
+        if let Some(parent) = minified_path.parent() {
+            async_fs::create_dir_all(parent).await?;
+        }
+
+        async_fs::write(&minified_path, content).await?;
+
+        tracing::debug!("Wrote minified file: {}", minified_path.display());
+
+        Ok(minified_path)
+    }
+
+    pub async fn write_compressed_to_disk_async(
+        &self,
+        site_id: &str,
+        path: &str,
+        content: &[u8],
+        encoding: &Encoding,
+    ) -> Result<PathBuf, MinifierError> {
+        let site_dir = self.config.minified_dir.join(site_id);
+        async_fs::create_dir_all(&site_dir).await?;
+
+        let relative_path = path.trim_start_matches('/');
+        let extension = Path::new(relative_path)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("");
+
+        let new_extension = if encoding.extension().is_empty() {
+            extension.to_string()
+        } else if extension.is_empty() {
+            encoding.extension().to_string()
+        } else {
+            format!("{}.{}", extension, encoding.extension())
+        };
+
+        let compressed_path = site_dir.join(Path::new(relative_path).with_extension(new_extension));
+
+        if let Some(parent) = compressed_path.parent() {
+            async_fs::create_dir_all(parent).await?;
+        }
+
+        async_fs::write(&compressed_path, content).await?;
 
         tracing::debug!("Wrote compressed file: {}", compressed_path.display());
 
@@ -474,6 +573,8 @@ impl MinifierCache {
             base_path.with_extension("js.br"),
             base_path.with_extension("html.gz"),
             base_path.with_extension("html.br"),
+            base_path.with_extension("svg.gz"),
+            base_path.with_extension("svg.br"),
         ];
 
         for path in paths_to_delete {
@@ -487,7 +588,7 @@ impl MinifierCache {
         }
     }
 
-    pub fn scan_existing(&self, site_id: &str, source_root: &Path) -> Result<usize, MinifierError> {
+    pub fn scan_existing(&self, site_id: &str, _source_root: &Path) -> Result<usize, MinifierError> {
         if !self.config.minified_dir.exists() {
             return Ok(0);
         }
@@ -512,8 +613,8 @@ impl MinifierCache {
 
                 if !relative.is_empty() {
                     let key = CacheKey {
-                        site_id: site_id.to_string(),
-                        path: format!("/{}", relative),
+                        site_id: Arc::from(site_id),
+                        path: Arc::from(format!("/{}", relative)),
                         encoding: Encoding::None,
                     };
 

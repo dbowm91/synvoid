@@ -1,13 +1,13 @@
-use std::collections::HashMap;
-use std::io::{self, Read, Write};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
-use std::time::Duration;
+#![allow(unused_variables, dead_code)]
 
-use bytes::{Buf, BufMut, BytesMut};
+use std::io;
+use std::sync::Arc;
+
+use bytes::{BufMut, BytesMut};
+use std::sync::atomic::{AtomicU64, Ordering};
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
-use tokio::sync::{broadcast, mpsc, Mutex};
+use tokio::sync::{broadcast, mpsc};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{UnixStream, UnixListener};
 
@@ -16,7 +16,7 @@ use tokio::net::TcpListener;
 #[cfg(windows)]
 use tokio::net::TcpStream;
 
-use metrics::{counter, gauge, histogram};
+use metrics::{counter, histogram};
 
 const MAX_FRAME_SIZE: usize = 16 * 1024 * 1024;
 const DEFAULT_BUFFER_SIZE: usize = 64 * 1024;
@@ -230,7 +230,7 @@ impl MultiplexClient {
         let stream = UnixStream::connect(path).await?;
         
         let streams = Arc::new(DashMap::new());
-        let (frame_tx, mut frame_rx) = mpsc::channel(1024);
+        let (frame_tx, frame_rx) = mpsc::channel(1024);
         
         let conn = MultiplexConnection::new(
             stream,
@@ -317,8 +317,8 @@ impl MultiplexConnection {
             info.bytes_sent += frame.payload.len() as u64;
         }
 
-        counter!("rustwaf.tunnel.ipc.frames_sent").increment(1);
-        histogram!("rustwaf.tunnel.ipc.frame_size").record(frame.payload.len() as f64);
+        counter!("maluwaf.tunnel.ipc.frames_sent").increment(1);
+        histogram!("maluwaf.tunnel.ipc.frame_size").record(frame.payload.len() as f64);
         
         Ok(())
     }
@@ -358,16 +358,16 @@ impl MultiplexConnection {
                     bytes_received: 0,
                     is_closed: false,
                 });
-                counter!("rustwaf.tunnel.ipc.streams_created").increment(1);
+                counter!("maluwaf.tunnel.ipc.streams_created").increment(1);
             } else if frame.is_fin() || frame.is_rst() {
                 if let Some(mut info) = self.streams.get_mut(&frame.stream_id) {
                     info.is_closed = true;
                 }
                 self.streams.remove(&frame.stream_id);
-                counter!("rustwaf.tunnel.ipc.streams_closed").increment(1);
+                counter!("maluwaf.tunnel.ipc.streams_closed").increment(1);
             }
 
-            counter!("rustwaf.tunnel.ipc.frames_received").increment(1);
+            counter!("maluwaf.tunnel.ipc.frames_received").increment(1);
             return Ok(Some(frame));
         }
 

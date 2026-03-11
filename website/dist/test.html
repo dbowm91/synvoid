@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Security Challenge | MaluWAF</title>
+  <link rel="stylesheet" href="/test.css">
+</head>
+<body>
+  <div class="bg">
+    <div class="orb orb-1"></div>
+    <div class="orb orb-2"></div>
+    <div class="orb orb-3"></div>
+    <div class="grid"></div>
+  </div>
+
+  <div id="container">
+    <div id="loading" class="view">
+      <div class="logo">
+        <svg width="80" height="80" viewBox="0 0 80 80" fill="none">
+          <circle cx="40" cy="40" r="38" stroke="#00d4aa" stroke-width="2" fill="none" class="ring"/>
+          <path d="M25 40 L35 30 L45 40 L55 30" stroke="#00ffcc" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+          <path d="M25 50 L35 40 L45 50 L55 40" stroke="#00d4aa" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+          <circle cx="40" cy="40" r="6" fill="#00d4aa"/>
+        </svg>
+      </div>
+      <h1>MaluWAF</h1>
+      <p>Security Challenge</p>
+      <div class="dots">
+        <div class="dot"></div>
+        <div class="dot"></div>
+        <div class="dot"></div>
+      </div>
+    </div>
+
+    <div id="lock" class="view lock-view">
+      <div class="logo">
+        <svg width="80" height="80" viewBox="0 0 80 80" fill="none">
+          <circle cx="40" cy="40" r="38" stroke="#00d4aa" stroke-width="2" fill="none"/>
+          <rect x="28" y="32" width="24" height="20" rx="3" stroke="#00ffcc" stroke-width="2.5" fill="none"/>
+          <path d="M32 32V26C32 22.6863 34.6863 20 38 20C41.3137 20 44 22.6863 44 26V32" stroke="#00d4aa" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+          <circle cx="40" cy="42" r="3" fill="#00d4aa"/>
+        </svg>
+      </div>
+      <h1>Verified</h1>
+      <p>Human verified</p>
+    </div>
+  </div>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', function() {
+      var container = document.getElementById('container');
+      var lock = document.getElementById('lock');
+      
+      setTimeout(function() {
+        lock.style.visibility = 'visible';
+        lock.style.opacity = '1';
+      }, 2000);
+      
+      setTimeout(function() {
+        container.classList.add('fade-out');
+      }, 3500);
+      
+      setTimeout(function() {
+        if (window.challengeComplete) {
+          window.challengeComplete();
+        }
+      }, 4300);
+    });
+  </script>
+</body>
+</html>

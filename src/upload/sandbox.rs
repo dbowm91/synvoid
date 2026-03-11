@@ -1,8 +1,7 @@
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use tempfile::{NamedTempFile, TempDir};
+use tempfile::NamedTempFile;
 use tokio::fs;
-use tokio::io::AsyncWriteExt;
+
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
@@ -14,8 +13,8 @@ pub struct SandboxConfig {
 impl Default for SandboxConfig {
     fn default() -> Self {
         Self {
-            sandbox_dir: PathBuf::from("/var/lib/rustwaf/sandbox"),
-            quarantine_dir: PathBuf::from("/var/lib/rustwaf/quarantine"),
+            sandbox_dir: PathBuf::from("/var/lib/maluwaf/sandbox"),
+            quarantine_dir: PathBuf::from("/var/lib/maluwaf/quarantine"),
         }
     }
 }

@@ -1,12 +1,11 @@
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tokio::task::JoinHandle;
 use parking_lot::RwLock as PLRwLock;
 
+pub use crate::process::WorkerId;
+pub use crate::metrics::WorkerMetrics;
 use crate::supervisor::SupervisorConfig;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct WorkerId(pub usize);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkerStatus {
@@ -16,59 +15,6 @@ pub enum WorkerStatus {
     Stopping,
     Stopped,
     Failed,
-}
-
-pub struct WorkerMetrics {
-    pub total_requests: AtomicU64,
-    pub blocked: AtomicU64,
-    pub challenged: AtomicU64,
-    pub proxied: AtomicU64,
-    pub errors: AtomicU64,
-    pub current_concurrent: AtomicUsize,
-    pub peak_concurrent: AtomicUsize,
-    pub total_latency_ms: AtomicU64,
-    pub request_count_for_latency: AtomicU64,
-}
-
-impl Default for WorkerMetrics {
-    fn default() -> Self {
-        Self {
-            total_requests: AtomicU64::new(0),
-            blocked: AtomicU64::new(0),
-            challenged: AtomicU64::new(0),
-            proxied: AtomicU64::new(0),
-            errors: AtomicU64::new(0),
-            current_concurrent: AtomicUsize::new(0),
-            peak_concurrent: AtomicUsize::new(0),
-            total_latency_ms: AtomicU64::new(0),
-            request_count_for_latency: AtomicU64::new(0),
-        }
-    }
-}
-
-impl WorkerMetrics {
-    pub fn current_load(&self) -> f64 {
-        self.current_concurrent.load(Ordering::Relaxed) as f64
-    }
-
-    pub fn avg_latency_ms(&self) -> f64 {
-        let total = self.total_latency_ms.load(Ordering::Relaxed);
-        let count = self.request_count_for_latency.load(Ordering::Relaxed);
-        if count > 0 {
-            total as f64 / count as f64
-        } else {
-            0.0
-        }
-    }
-
-    pub fn requests_per_second(&self, uptime_secs: u64) -> f64 {
-        let total = self.total_requests.load(Ordering::Relaxed);
-        if uptime_secs > 0 {
-            total as f64 / uptime_secs as f64
-        } else {
-            0.0
-        }
-    }
 }
 
 pub struct Worker {
@@ -180,7 +126,7 @@ impl Worker {
         }
         
         self.metrics.total_latency_ms.fetch_add(latency_ms, Ordering::Relaxed);
-        self.metrics.request_count_for_latency.fetch_add(1, Ordering::Relaxed);
+        self.metrics.request_count.fetch_add(1, Ordering::Relaxed);
     }
 }
 

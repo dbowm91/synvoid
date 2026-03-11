@@ -1,0 +1,148 @@
+use std::io;
+use std::path::Path;
+
+use super::PlatformError;
+
+pub trait IpcTransport: Send {
+    fn send(&mut self, data: &[u8]) -> io::Result<()>;
+    fn recv(&mut self, buf: &mut [u8]) -> io::Result<usize>;
+    fn set_nonblocking(&self, nonblocking: bool) -> io::Result<()>;
+    fn close(&mut self) -> io::Result<()>;
+}
+
+pub trait IpcListener: Send {
+    type Stream: IpcTransport;
+
+    fn bind(path: &Path) -> Result<Self, PlatformError>
+    where
+        Self: Sized;
+    fn accept(&self) -> Result<Self::Stream, PlatformError>;
+    fn path(&self) -> &Path;
+}
+
+pub trait IpcStream: IpcTransport {
+    fn connect(path: &Path) -> Result<Self, PlatformError>
+    where
+        Self: Sized;
+    fn peer_pid(&self) -> Option<u32>;
+}
+
+#[cfg(unix)]
+pub use super::unix::UnixIpcListener as PlatformIpcListener;
+#[cfg(unix)]
+pub use super::unix::UnixIpcStream as PlatformIpcStream;
+
+#[cfg(windows)]
+pub use super::windows_impl::WindowsIpcListener as PlatformIpcListener;
+#[cfg(windows)]
+pub use super::windows_impl::WindowsIpcStream as PlatformIpcStream;
+
+#[cfg(not(any(unix, windows)))]
+pub use stub::StubIpcListener as PlatformIpcListener;
+#[cfg(not(any(unix, windows)))]
+pub use stub::StubIpcStream as PlatformIpcStream;
+
+#[cfg(not(any(unix, windows)))]
+mod stub {
+    use super::*;
+
+    pub struct StubIpcListener {
+        path: std::path::PathBuf,
+    }
+
+    impl IpcListener for StubIpcListener {
+        type Stream = StubIpcStream;
+
+        fn bind(path: &Path) -> Result<Self, PlatformError> {
+            Ok(Self {
+                path: path.to_path_buf(),
+            })
+        }
+
+        fn accept(&self) -> Result<Self::Stream, PlatformError> {
+            Err(PlatformError::NotSupported(
+                "IPC not supported on this platform".into(),
+            ))
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    pub struct StubIpcStream;
+
+    impl IpcTransport for StubIpcStream {
+        fn send(&mut self, _data: &[u8]) -> io::Result<()> {
+            Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "Not implemented",
+            ))
+        }
+
+        fn recv(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
+            Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "Not implemented",
+            ))
+        }
+
+        fn set_nonblocking(&self, _nonblocking: bool) -> io::Result<()> {
+            Ok(())
+        }
+
+        fn close(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl IpcStream for StubIpcStream {
+        fn connect(_path: &Path) -> Result<Self, PlatformError> {
+            Err(PlatformError::NotSupported(
+                "IPC not supported on this platform".into(),
+            ))
+        }
+
+        fn peer_pid(&self) -> Option<u32> {
+            None
+        }
+    }
+}
+
+pub fn get_default_ipc_path(name: &str) -> std::path::PathBuf {
+    use crate::platform::fs::PlatformPaths;
+    let paths = PlatformPaths::new();
+    paths.ipc_path(name)
+}
+
+#[deprecated(since = "0.2.0", note = "Use PlatformPaths::ipc_path() instead")]
+pub fn get_default_ipc_path_legacy(name: &str) -> std::path::PathBuf {
+    #[cfg(unix)]
+    {
+        if let Some(runtime_dir) = std::env::var_os("XDG_RUNTIME_DIR") {
+            let path = std::path::PathBuf::from(runtime_dir).join("maluwaf");
+            if std::fs::create_dir_all(&path).is_ok() {
+                return path.join(name);
+            }
+        }
+
+        if std::path::Path::new("/var/run").exists() {
+            let path = std::path::PathBuf::from("/var/run/maluwaf");
+            if std::fs::create_dir_all(&path).is_ok() {
+                return path.join(name);
+            }
+        }
+
+        std::path::PathBuf::from("/tmp/maluwaf").join(name)
+    }
+
+    #[cfg(windows)]
+    {
+        format!("\\\\.\\pipe\\{}", name).into()
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        std::path::PathBuf::from("/tmp/maluwaf").join(name)
+    }
+}

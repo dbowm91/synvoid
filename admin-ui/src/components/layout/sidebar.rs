@@ -48,9 +48,11 @@ impl Component for Sidebar {
                     </NavSection>
 
                     <NavSection title="Management">
+                        <NavItem to={Route::Workers} icon="cpu" label="Workers" />
                         <NavItem to={Route::Upstreams} icon="server" label="Upstreams" />
                         <NavItem to={Route::Sites} icon="globe" label="Sites" />
                         <NavItem to={Route::TcpUdp} icon="network" label="TCP/UDP" />
+                        <NavItem to={Route::TierKeys} icon="key" label="Tier Keys" />
                     </NavSection>
 
                     <NavSection title="Configuration">
@@ -155,6 +157,11 @@ fn icon(name: &str) -> Html {
         "radar" => html! {
             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
+            </svg>
+        },
+        "cpu" => html! {
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" />
             </svg>
         },
         _ => html! {},

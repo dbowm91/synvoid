@@ -12,9 +12,9 @@ This document outlines the Windows support implementation and what needs to be t
 - **Protocol**: Same 4-byte length prefix + JSON framing as Unix
 
 ### 2. Named Pipe Paths
-- Master IPC: `\\.\pipe\rustwaf-master`
-- Static worker IPC: `\\.\pipe\rustwaf-static-worker`
-- CLI commands: `\\.\pipe\rustwaf-commands`
+- Master IPC: `\\.\pipe\maluwaf-master`
+- Static worker IPC: `\\.\pipe\maluwaf-static-worker`
+- CLI commands: `\\.\pipe\maluwaf-commands`
 
 ### 3. Signal Handling
 - Ctrl+C handler works on Windows (via tokio)

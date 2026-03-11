@@ -2,6 +2,12 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 
+use crate::theme::ThemeColors;
+
+fn default_true() -> Option<bool> {
+    Some(true)
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
 pub struct SiteConfig {
     pub site: SiteInfo,
@@ -28,6 +34,8 @@ pub struct SiteConfig {
     #[serde(default)]
     pub tcp: SiteTcpConfig,
     #[serde(default)]
+    pub udp: SiteUdpConfig,
+    #[serde(default)]
     pub tarpit: SiteTarpitConfig,
     #[serde(default)]
     pub attack_detection: SiteAttackDetectionConfig,
@@ -49,6 +57,9 @@ pub struct SiteConfig {
     pub websocket: SiteWebSocketConfig,
     #[serde(default)]
     pub tunnel: SiteTunnelConfig,
+
+    #[serde(default)]
+    pub app_server: SiteAppServerConfig,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
@@ -76,6 +87,9 @@ pub struct SiteProxyConfig {
 
     #[serde(default)]
     pub locations: Vec<LocationConfig>,
+
+    #[serde(default)]
+    pub cache: Option<ProxyCacheConfig>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
@@ -136,6 +150,56 @@ pub struct ProxyUpstreamConfig {
 
     #[serde(default)]
     pub cache: Option<ProxyCacheConfig>,
+
+    #[serde(default)]
+    pub allowed_protocols: Option<Vec<String>>,
+}
+
+impl ProxyUpstreamConfig {
+    pub fn allows_protocol(&self, protocol: &str) -> bool {
+        let allowed: Vec<String> = match &self.allowed_protocols {
+            None => vec!["http".to_string()],
+            Some(allowed) if allowed.is_empty() => vec!["http".to_string()],
+            Some(allowed) => allowed.clone(),
+        };
+
+        // Check for "all" or "*" keyword - allows everything
+        if allowed.iter().any(|p| {
+            let p_lower = p.to_lowercase();
+            p_lower == "all" || p_lower == "*"
+        }) {
+            return true;
+        }
+
+        let protocol_lower = protocol.to_lowercase();
+        allowed.iter().any(|p| {
+            let p_lower = p.to_lowercase();
+            p_lower == protocol_lower
+                || (p_lower == "tcp" && !protocol_lower.is_empty() && protocol_lower != "udp")
+                || (p_lower == "udp"
+                    && (protocol_lower == "udp"
+                        || protocol_lower == "quic"
+                        || protocol_lower == "wireguard"
+                        || protocol_lower == "mesh_quic"))
+                || (p_lower == "http"
+                    && (protocol_lower.starts_with("http") || protocol_lower == "websocket"))
+        })
+    }
+
+    pub fn is_protocol_restricted(&self) -> bool {
+        matches!(&self.allowed_protocols, Some(v) if !v.is_empty())
+    }
+
+    pub fn allows_all_protocols(&self) -> bool {
+        match &self.allowed_protocols {
+            None => false,
+            Some(allowed) if allowed.is_empty() => false,
+            Some(allowed) => allowed.iter().any(|p| {
+                let p_lower = p.to_lowercase();
+                p_lower == "all" || p_lower == "*"
+            }),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
@@ -242,6 +306,12 @@ pub struct ProxyCacheConfig {
 
     #[serde(default)]
     pub disk_max: Option<String>,
+
+    #[serde(default)]
+    pub stale_while_revalidate: Option<u64>,
+
+    #[serde(default)]
+    pub stale_if_error: Option<u64>,
 }
 
 fn default_cache_inactive() -> u64 {
@@ -486,6 +556,12 @@ pub enum BackendConfig {
         socket: Option<String>,
     },
 
+    #[serde(rename = "app-server")]
+    AppServer {
+        #[serde(default)]
+        socket: Option<String>,
+    },
+
     #[serde(rename = "fastcgi")]
     FastCgi {
         #[serde(default)]
@@ -507,6 +583,28 @@ pub struct SiteTcpConfig {
     pub ports: HashMap<String, SitePortConfig>,
     #[serde(default)]
     pub filter: Option<SiteProtocolFilterConfig>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+pub struct SiteUdpConfig {
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    #[serde(default)]
+    pub ports: HashMap<String, SiteUdpPortConfig>,
+    #[serde(default)]
+    pub filter: Option<SiteProtocolFilterConfig>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+pub struct SiteUdpPortConfig {
+    #[serde(default)]
+    pub port: Option<u16>,
+    #[serde(default)]
+    pub upstream: Option<String>,
+    #[serde(default)]
+    pub expected_protocol: Option<String>,
+    #[serde(default)]
+    pub filter: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
@@ -588,6 +686,58 @@ pub struct SiteTunnelConfig {
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
+pub struct SiteAppServerConfig {
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    #[serde(default)]
+    pub app_path: Option<String>,
+    #[serde(default)]
+    pub interface: Option<String>,
+    #[serde(default)]
+    pub workers: Option<u32>,
+    #[serde(default)]
+    pub blocking_threads: Option<u32>,
+    #[serde(default)]
+    pub socket_path: Option<String>,
+    #[serde(default)]
+    pub port: Option<u16>,
+    #[serde(default)]
+    pub host: Option<String>,
+    #[serde(default)]
+    pub python_path: Option<String>,
+    #[serde(default)]
+    pub working_directory: Option<String>,
+    #[serde(default)]
+    pub env: Option<std::collections::HashMap<String, String>>,
+    #[serde(default)]
+    pub restart_on_failure: Option<bool>,
+    #[serde(default)]
+    pub max_restarts: Option<u32>,
+    #[serde(default)]
+    pub health_check_path: Option<String>,
+    #[serde(default)]
+    pub health_check_interval_secs: Option<u64>,
+    #[serde(default)]
+    pub health_check_timeout_secs: Option<u64>,
+    #[serde(default = "default_true")]
+    pub auto_install_granian: Option<bool>,
+    #[serde(default = "default_true")]
+    pub auto_detect_venv: Option<bool>,
+    #[serde(default = "default_true")]
+    pub auto_detect_app: Option<bool>,
+}
+
+impl SiteAppServerConfig {
+    pub fn socket_path_for_site(&self, site_id: &str, worker_id: usize) -> std::path::PathBuf {
+        if let Some(ref path) = self.socket_path {
+            std::path::PathBuf::from(path)
+        } else {
+            std::env::temp_dir().join(format!("maluwaf-{}-app-{}.sock", site_id, worker_id))
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
 pub struct SiteTarpitConfig {
     #[serde(default)]
     pub enabled: Option<bool>,
@@ -613,8 +763,6 @@ pub struct SiteCssChallengeConfig {
     pub valid_count: Option<u32>,
     #[serde(default)]
     pub asset_path: Option<String>,
-    #[serde(default)]
-    pub valid_aspect_ratios: Option<Vec<String>>,
     #[serde(default)]
     pub verification_window_secs: Option<u32>,
     #[serde(default)]
@@ -796,6 +944,8 @@ pub struct SiteBotConfig {
     pub enable_css_honeypot: Option<bool>,
     #[serde(default)]
     pub enable_js_challenge: Option<bool>,
+    /// Challenge type: "pow", "css", or "auto" (default: "auto" - POW first, fallback to CSS)
+    /// Currently unused - reserved for future challenge selection logic
     #[serde(default)]
     pub challenge_type: Option<String>,
 }
@@ -819,7 +969,52 @@ pub struct SiteErrorPagesConfig {
     #[serde(default)]
     pub inherit: Option<bool>,
     #[serde(default)]
+    pub mode: Option<String>,
+    #[serde(default)]
     pub custom_directory: Option<String>,
+    #[serde(default)]
+    pub theme: Option<SiteThemeConfig>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+pub struct SiteThemeConfig {
+    #[serde(default)]
+    pub preset: Option<String>,
+    #[serde(default)]
+    pub mode: Option<String>,
+    #[serde(default)]
+    pub allow_only: Option<String>,
+    #[serde(default)]
+    pub colors: Option<ThemeColors>,
+}
+
+impl SiteThemeConfig {
+    pub fn to_theme_config(
+        &self,
+        default_theme: &crate::theme::ThemeConfig,
+    ) -> crate::theme::ThemeConfig {
+        let preset = self.preset.as_deref().unwrap_or("default");
+        let preset_enum = crate::theme::ThemePreset::from(preset);
+
+        let colors = self.colors.clone().unwrap_or_else(|| preset_enum.colors());
+
+        crate::theme::ThemeConfig {
+            mode: self
+                .mode
+                .as_deref()
+                .map(|m| crate::theme::ThemeMode::from(m))
+                .unwrap_or(default_theme.mode),
+            restriction: self
+                .allow_only
+                .as_deref()
+                .map(|a| crate::theme::ThemeRestriction::from(a))
+                .unwrap_or(default_theme.restriction),
+            colors,
+            spacing: default_theme.spacing.clone(),
+            effects: default_theme.effects.clone(),
+            branding: default_theme.branding.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
@@ -840,6 +1035,20 @@ pub struct SiteWorkerPoolConfig {
     pub workers: Option<usize>,
 }
 
+#[derive(Debug, Clone)]
+pub struct SiteConfigValidationError {
+    pub field: String,
+    pub message: String,
+}
+
+impl std::fmt::Display for SiteConfigValidationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.field, self.message)
+    }
+}
+
+impl std::error::Error for SiteConfigValidationError {}
+
 impl SiteConfig {
     pub fn from_file<P: AsRef<std::path::Path>>(
         path: P,
@@ -851,11 +1060,66 @@ impl SiteConfig {
             return Err("Site config must have at least one domain".into());
         }
 
+        config.validate()?;
         Ok(config)
+    }
+
+    pub fn validate(&self) -> Result<(), SiteConfigValidationError> {
+        self.site.validate()?;
+        self.ratelimit.validate()?;
+        self.attack_detection.validate()?;
+        self.upload.validate()?;
+        self.security_headers.validate()?;
+        self.app_server.validate()?;
+        self.grpc.validate()?;
+        self.websocket.validate()?;
+        Ok(())
     }
 
     pub fn site_id(&self) -> String {
         self.site.domains.first().cloned().unwrap_or_default()
+    }
+
+    pub fn app_server_config(&self) -> crate::app_server::AppServerConfig {
+        let site_config = &self.app_server;
+
+        crate::app_server::AppServerConfig {
+            enabled: site_config.enabled.unwrap_or(false),
+            app_path: site_config.app_path.clone().unwrap_or_default(),
+            interface: site_config
+                .interface
+                .as_ref()
+                .map(|s| crate::app_server::GranianInterface::from(s.as_str()))
+                .unwrap_or(crate::app_server::GranianInterface::Asgi),
+            workers: site_config.workers.unwrap_or(1),
+            blocking_threads: site_config.blocking_threads.unwrap_or(4),
+            socket_path: site_config
+                .socket_path
+                .as_ref()
+                .map(std::path::PathBuf::from),
+            port: site_config.port,
+            host: site_config.host.clone(),
+            python_path: site_config
+                .python_path
+                .as_ref()
+                .map(std::path::PathBuf::from),
+            working_directory: site_config
+                .working_directory
+                .as_ref()
+                .map(std::path::PathBuf::from),
+            env: site_config.env.clone().unwrap_or_default(),
+            restart_on_failure: site_config.restart_on_failure.unwrap_or(true),
+            max_restarts: site_config.max_restarts.unwrap_or(5),
+            health_check_path: site_config
+                .health_check_path
+                .clone()
+                .unwrap_or_else(|| "/".to_string()),
+            health_check_interval_secs: site_config.health_check_interval_secs.unwrap_or(10),
+            health_check_timeout_secs: site_config.health_check_timeout_secs.unwrap_or(5),
+            auto_install_granian: site_config.auto_install_granian.unwrap_or(true),
+            auto_detect_venv: site_config.auto_detect_venv.unwrap_or(true),
+            auto_detect_app: site_config.auto_detect_app.unwrap_or(true),
+        }
     }
 }
 
@@ -1024,6 +1288,8 @@ pub struct SiteStaticConfig {
     pub enable_css_minification: Option<bool>,
     #[serde(default = "default_enable_js_minification")]
     pub enable_js_minification: Option<bool>,
+    #[serde(default = "default_enable_svg_compression")]
+    pub enable_svg_compression: Option<bool>,
     #[serde(default = "default_enable_brotli")]
     pub enable_brotli: Option<bool>,
     #[serde(default = "default_brotli_level")]
@@ -1096,6 +1362,10 @@ fn default_enable_css_minification() -> Option<bool> {
 }
 
 fn default_enable_js_minification() -> Option<bool> {
+    Some(true)
+}
+
+fn default_enable_svg_compression() -> Option<bool> {
     Some(true)
 }
 
@@ -1209,6 +1479,14 @@ pub struct SiteSecurityHeadersConfig {
     pub cors: SiteCorsConfig,
     #[serde(default)]
     pub cookie: SiteCookieConfig,
+
+    // Stealth settings
+    #[serde(default = "default_true")]
+    pub date_header: Option<bool>,
+    #[serde(default = "default_date_jitter")]
+    pub date_jitter_seconds: Option<u32>,
+    #[serde(default)]
+    pub server_token: Option<String>,
 }
 
 fn default_security_headers_enabled() -> Option<String> {
@@ -1229,6 +1507,10 @@ fn default_cross_domain_policy() -> Option<String> {
 
 fn default_download_options() -> Option<String> {
     Some("noopen".to_string())
+}
+
+fn default_date_jitter() -> Option<u32> {
+    Some(5)
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
@@ -1318,4 +1600,226 @@ pub struct SiteBasicAuthConfig {
     pub users: std::collections::HashMap<String, String>,
     #[serde(default)]
     pub realm: Option<String>,
+}
+
+impl SiteInfo {
+    pub fn validate(&self) -> Result<(), SiteConfigValidationError> {
+        if self.domains.is_empty() {
+            return Err(SiteConfigValidationError {
+                field: "site.domains".to_string(),
+                message: "At least one domain is required".to_string(),
+            });
+        }
+        for domain in &self.domains {
+            if domain.is_empty() {
+                return Err(SiteConfigValidationError {
+                    field: "site.domains".to_string(),
+                    message: "Domain cannot be empty".to_string(),
+                });
+            }
+            if domain.len() > 253 {
+                return Err(SiteConfigValidationError {
+                    field: "site.domains".to_string(),
+                    message: format!("Domain too long: {}", domain),
+                });
+            }
+        }
+        self.upstream.validate()
+    }
+}
+
+impl UpstreamConfig {
+    pub fn validate(&self) -> Result<(), SiteConfigValidationError> {
+        if self.default.is_empty() {
+            return Err(SiteConfigValidationError {
+                field: "site.upstream.default".to_string(),
+                message: "Default upstream is required".to_string(),
+            });
+        }
+        if !self.default.starts_with("http://")
+            && !self.default.starts_with("https://")
+            && !self.default.starts_with("tunnel:")
+            && !self.default.starts_with("unix:")
+        {
+            return Err(SiteConfigValidationError {
+                field: "site.upstream.default".to_string(),
+                message: "Upstream must start with http://, https://, tunnel:, or unix:"
+                    .to_string(),
+            });
+        }
+        for (route, upstream) in &self.routes {
+            if route.is_empty() {
+                return Err(SiteConfigValidationError {
+                    field: "site.upstream.routes".to_string(),
+                    message: "Route pattern cannot be empty".to_string(),
+                });
+            }
+            if upstream.is_empty() {
+                return Err(SiteConfigValidationError {
+                    field: "site.upstream.routes".to_string(),
+                    message: format!("Upstream for route {} cannot be empty", route),
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
+impl SiteRateLimitConfig {
+    pub fn validate(&self) -> Result<(), SiteConfigValidationError> {
+        if let Some(ref mode) = self.mode {
+            match mode.as_str() {
+                "shared" | "isolated" => {}
+                _ => {
+                    return Err(SiteConfigValidationError {
+                        field: "ratelimit.mode".to_string(),
+                        message: "Mode must be 'shared' or 'isolated'".to_string(),
+                    });
+                }
+            }
+        }
+        for endpoint in &self.endpoints {
+            if endpoint.path_pattern.is_empty() {
+                return Err(SiteConfigValidationError {
+                    field: "ratelimit.endpoints".to_string(),
+                    message: "Path pattern cannot be empty".to_string(),
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
+impl SiteAttackDetectionConfig {
+    pub fn validate(&self) -> Result<(), SiteConfigValidationError> {
+        if let Some(ref action) = self.action {
+            match action.as_str() {
+                "stall" | "block" | "log" => {}
+                _ => {
+                    return Err(SiteConfigValidationError {
+                        field: "attack_detection.action".to_string(),
+                        message: "Action must be 'stall', 'block', or 'log'".to_string(),
+                    });
+                }
+            }
+        }
+        if let Some(level) = self.paranoia_level {
+            if level < 1 || level > 3 {
+                return Err(SiteConfigValidationError {
+                    field: "attack_detection.paranoia_level".to_string(),
+                    message: "Paranoia level must be between 1 and 3".to_string(),
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
+impl SiteUploadConfig {
+    pub fn validate(&self) -> Result<(), SiteConfigValidationError> {
+        if let Some(ref max_size) = self.max_size {
+            if let Err(e) = parse_size_string(max_size) {
+                return Err(SiteConfigValidationError {
+                    field: "upload.max_size".to_string(),
+                    message: format!("Invalid size format: {}", e),
+                });
+            }
+        }
+        for path_config in &self.paths {
+            if path_config.pattern.is_empty() {
+                return Err(SiteConfigValidationError {
+                    field: "upload.paths".to_string(),
+                    message: "Path pattern cannot be empty".to_string(),
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
+impl SiteSecurityHeadersConfig {
+    pub fn validate(&self) -> Result<(), SiteConfigValidationError> {
+        if let Some(ref samesite) = self.cookie.samesite {
+            match samesite.to_lowercase().as_str() {
+                "strict" | "lax" | "none" => {}
+                _ => {
+                    return Err(SiteConfigValidationError {
+                        field: "security_headers.cookie.samesite".to_string(),
+                        message: "SameSite must be 'strict', 'lax', or 'none'".to_string(),
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+impl SiteAppServerConfig {
+    pub fn validate(&self) -> Result<(), SiteConfigValidationError> {
+        if self.enabled.unwrap_or(false) {
+            if self.app_path.is_none() {
+                return Err(SiteConfigValidationError {
+                    field: "app_server.app_path".to_string(),
+                    message: "App path is required when app server is enabled".to_string(),
+                });
+            }
+            if let Some(ref interface) = self.interface {
+                match interface.to_lowercase().as_str() {
+                    "asgi" | "rsgi" | "wsgi" => {}
+                    _ => {
+                        return Err(SiteConfigValidationError {
+                            field: "app_server.interface".to_string(),
+                            message: "Interface must be 'asgi', 'rsgi', or 'wsgi'".to_string(),
+                        });
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+impl SiteGrpcConfig {
+    pub fn validate(&self) -> Result<(), SiteConfigValidationError> {
+        if self.enabled.unwrap_or(false) {
+            if self.upstream.is_none() {
+                return Err(SiteConfigValidationError {
+                    field: "grpc.upstream".to_string(),
+                    message: "Upstream is required when gRPC is enabled".to_string(),
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
+impl SiteWebSocketConfig {
+    pub fn validate(&self) -> Result<(), SiteConfigValidationError> {
+        if self.enabled.unwrap_or(false) {
+            if self.upstream.is_none() {
+                return Err(SiteConfigValidationError {
+                    field: "websocket.upstream".to_string(),
+                    message: "Upstream is required when WebSocket is enabled".to_string(),
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
+fn parse_size_string(s: &str) -> Result<usize, String> {
+    let s = s.trim().to_uppercase();
+    let (multiplier, num_str) = if s.ends_with("GB") {
+        (1024 * 1024 * 1024, &s[..s.len() - 2])
+    } else if s.ends_with("MB") {
+        (1024 * 1024, &s[..s.len() - 2])
+    } else if s.ends_with("KB") {
+        (1024, &s[..s.len() - 2])
+    } else if s.ends_with("B") {
+        (1, &s[..s.len() - 1])
+    } else {
+        (1, s.as_str())
+    };
+    let num: usize = num_str.trim().parse().map_err(|_| "Invalid number")?;
+    Ok(num * multiplier)
 }

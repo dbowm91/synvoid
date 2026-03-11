@@ -1,21 +1,89 @@
 pub mod quic;
 pub mod upstream;
 pub mod wireguard;
-pub mod waf_peers;
 pub mod router;
+pub mod udp_manager;
+pub mod tun;
 
-pub use quic::{TunnelMessage, QuicRuntime, QuicConnection, QUIC_TUNNEL_REGISTRY, QuicTunnelRegistry, TunnelSessionInfo};
+pub use quic::{QuicRuntime, QuicConnection, QUIC_TUNNEL_REGISTRY, QuicTunnelRegistry, TunnelSessionInfo};
 pub use upstream::TunnelUpstreamResolver;
-pub use wireguard::WireGuardServer;
-pub use waf_peers::{WafPeerServer, PeerConnection, PeerMessage};
+pub use wireguard::{
+    WireGuardServer, WireGuardServerWrapper, WireGuardRuntime, WireGuardClient,
+    WireGuardConfig, WireGuardPeerConfig, WireGuardClientConfig, WireGuardServerConfig,
+    WgImplementation, WgSessionInfo, WG_TUNNEL_REGISTRY,
+    generate_keypair, is_wireguard_available, detect_available_implementation,
+};
 pub use router::{TunnelRouter, TunnelBackend, TunnelRouteSession, TunnelMapping};
+pub use udp_manager::{UdpTunnelManager, UdpTunnelConfig, ActiveUdpTunnel, UdpResponse, PendingRequest};
+pub use tun::{TunConfig, TunPacket, TunProtocol, TunInterface, AsyncTunDevice, TunReader, TunWriter, is_tun_available};
 
 use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::RwLock;
-use tokio::sync::broadcast;
 
-use crate::config::main::{TunnelConfig, TunnelWafPeersConfig};
+use async_trait::async_trait;
+use std::sync::Arc;
+use tokio::sync::{broadcast, RwLock};
+
+use crate::config::TunnelConfig;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TunnelType {
+    Quic,
+    WireGuard,
+}
+
+#[derive(Debug, Clone)]
+pub struct TunnelStats {
+    pub bytes_sent: u64,
+    pub bytes_received: u64,
+    pub packets_sent: u64,
+    pub packets_received: u64,
+    pub latency_ms: Option<u64>,
+    pub connected_at: Option<std::time::Instant>,
+}
+
+impl Default for TunnelStats {
+    fn default() -> Self {
+        Self {
+            bytes_sent: 0,
+            bytes_received: 0,
+            packets_sent: 0,
+            packets_received: 0,
+            latency_ms: None,
+            connected_at: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct PeerInfo {
+    pub id: String,
+    pub endpoint: Option<String>,
+    pub allowed_ips: Vec<String>,
+    pub last_handshake: Option<std::time::Instant>,
+    pub bytes_sent: u64,
+    pub bytes_received: u64,
+}
+
+#[async_trait]
+pub trait TunnelTransport: Send + Sync {
+    fn tunnel_type(&self) -> TunnelType;
+    
+    async fn start(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
+    
+    async fn stop(&mut self);
+    
+    fn is_running(&self) -> bool;
+    
+    fn stats(&self) -> TunnelStats;
+    
+    fn local_address(&self) -> Option<std::net::SocketAddr>;
+    
+    fn peer_count(&self) -> usize;
+    
+    fn peers(&self) -> Vec<PeerInfo>;
+    
+    fn shutdown(&self);
+}
 
 #[derive(Debug, Clone)]
 pub struct TunnelPortForward {
@@ -47,14 +115,6 @@ impl TunnelManager {
             config,
             sessions: Arc::new(RwLock::new(HashMap::new())),
             shutdown_tx,
-        }
-    }
-
-    pub fn peer_config(&self) -> Option<&TunnelWafPeersConfig> {
-        if self.config.waf_peers.enabled {
-            Some(&self.config.waf_peers)
-        } else {
-            None
         }
     }
 

@@ -1,85 +1,48 @@
-use aho_corasick::AhoCorasick;
-use std::sync::Arc;
-
-use crate::waf::attack_detection::config::{AttackDetectionResult, AttackType, InputLocation};
+use crate::waf::attack_detection::config::{AttackType, InputLocation};
+use crate::waf::attack_detection::detector_common::{BasePatternDetector, PatternDetector};
 use crate::waf::attack_detection::patterns::DefaultPatterns;
 
 pub struct XPathInjectionDetector {
-    patterns: Arc<AhoCorasick>,
+    inner: BasePatternDetector,
 }
 
 impl XPathInjectionDetector {
     pub fn new(paranoia_level: u8, custom_patterns: &[String]) -> Self {
-        let mut base_patterns: Vec<String> = DefaultPatterns::xpath_injection()
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
+        let inner = BasePatternDetector::new(
+            DefaultPatterns::xpath_injection().as_slice(),
+            DefaultPatterns::xpath_injection_high().as_slice(),
+            custom_patterns,
+            paranoia_level,
+            AttackType::XPathInjection,
+            "xpath_injection",
+        );
+        Self { inner }
+    }
+}
 
-        if paranoia_level >= 3 {
-            base_patterns.extend(
-                DefaultPatterns::xpath_injection_high()
-                    .iter()
-                    .map(|s| s.to_string()),
-            );
-        }
-
-        for pattern in custom_patterns {
-            if !base_patterns.contains(pattern) {
-                base_patterns.push(pattern.clone());
-            }
-        }
-
-        let patterns_str: Vec<&str> = base_patterns.iter().map(|s| s.as_str()).collect();
-        let patterns = Arc::new(AhoCorasick::new(&patterns_str).unwrap());
-
-        Self { patterns }
+impl PatternDetector for XPathInjectionDetector {
+    fn patterns(&self) -> &std::sync::Arc<aho_corasick::AhoCorasick> {
+        self.inner.patterns()
     }
 
-    pub fn detect(&self, input: &str, location: InputLocation) -> Option<AttackDetectionResult> {
-        let input_lower = input.to_lowercase();
-
-        if self.patterns.is_match(&input_lower) {
-            if let Some(mat) = self.patterns.find(&input_lower) {
-                let matched = input_lower[mat.start()..mat.end()].to_string();
-
-                tracing::warn!(
-                    attack_type = "xpath_injection",
-                    matched_pattern = %matched,
-                    location = %location,
-                    "XPath injection detected"
-                );
-
-                return Some(AttackDetectionResult {
-                    attack_type: AttackType::XPathInjection,
-                    fingerprint: None,
-                    matched_pattern: Some(matched),
-                    input_location: location,
-                });
-            }
-        }
-
-        None
+    fn detect(
+        &self,
+        input: &str,
+        location: InputLocation,
+    ) -> Option<crate::waf::attack_detection::config::AttackDetectionResult> {
+        self.inner.detect(input, location)
     }
 
-    pub fn detect_in_headers<F>(
+    fn detect_in_headers<F>(
         &self,
         headers: &http::HeaderMap,
         _check_header: F,
-    ) -> Option<AttackDetectionResult>
+        normalizer: Option<&crate::waf::attack_detection::normalizer::InputNormalizer>,
+    ) -> Option<crate::waf::attack_detection::config::AttackDetectionResult>
     where
         F: FnMut(&str) -> bool,
     {
-        for (header_name, header_value) in headers.iter() {
-            if let Ok(value) = header_value.to_str() {
-                if let Some(result) =
-                    self.detect(value, InputLocation::Header(header_name.to_string()))
-                {
-                    return Some(result);
-                }
-            }
-        }
-
-        None
+        self.inner.detect_in_all_headers(headers, normalizer)
     }
 }
 

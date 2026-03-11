@@ -1,0 +1,270 @@
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::time::Instant;
+
+use crate::DrainFlag;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RequestType {
+    Short,
+    Long,
+    Streaming,
+}
+
+pub struct WorkerDrainState {
+    draining: DrainFlag,
+    drain_id: Arc<AtomicU64>,
+    active_connections: Arc<AtomicU64>,
+    idle_connections: Arc<AtomicU64>,
+    connections_drained: Arc<AtomicU64>,
+    drain_start: Arc<std::sync::Mutex<Option<Instant>>>,
+    stopped_accepting: DrainFlag,
+    short_requests: Arc<AtomicU64>,
+    long_requests: Arc<AtomicU64>,
+    streaming_requests: Arc<AtomicU64>,
+}
+
+impl Default for WorkerDrainState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl WorkerDrainState {
+    pub fn new() -> Self {
+        Self {
+            draining: DrainFlag::new(),
+            drain_id: Arc::new(AtomicU64::new(0)),
+            active_connections: Arc::new(AtomicU64::new(0)),
+            idle_connections: Arc::new(AtomicU64::new(0)),
+            connections_drained: Arc::new(AtomicU64::new(0)),
+            drain_start: Arc::new(std::sync::Mutex::new(None)),
+            stopped_accepting: DrainFlag::new(),
+            short_requests: Arc::new(AtomicU64::new(0)),
+            long_requests: Arc::new(AtomicU64::new(0)),
+            streaming_requests: Arc::new(AtomicU64::new(0)),
+        }
+    }
+
+    pub fn shared() -> Arc<Self> {
+        Arc::new(Self::new())
+    }
+
+    pub fn start_drain(&self, drain_id: u64) -> bool {
+        if self.draining.is_draining() {
+            let current_id = self.drain_id.load(Ordering::SeqCst);
+            if current_id > 0 && current_id != drain_id {
+                tracing::warn!(
+                    "Already draining with id {}, ignoring request for id {}",
+                    current_id,
+                    drain_id
+                );
+                return false;
+            }
+        }
+
+        self.drain_id.store(drain_id, Ordering::SeqCst);
+        self.draining.start_drain();
+        self.stopped_accepting.end_drain();
+
+        let mut start = self.drain_start.lock().unwrap();
+        *start = Some(Instant::now());
+
+        tracing::info!(
+            "Worker entering drain mode (id={}, active={})",
+            drain_id,
+            self.active_connections.load(Ordering::SeqCst)
+        );
+
+        true
+    }
+
+    pub fn is_draining(&self) -> bool {
+        self.draining.is_draining()
+    }
+
+    pub fn get_drain_id(&self) -> u64 {
+        self.drain_id.load(Ordering::SeqCst)
+    }
+
+    pub fn increment_active(&self) {
+        self.active_connections.fetch_add(1, Ordering::SeqCst);
+    }
+
+    pub fn increment_active_typed(&self, request_type: RequestType) {
+        self.active_connections.fetch_add(1, Ordering::SeqCst);
+        match request_type {
+            RequestType::Short => self.short_requests.fetch_add(1, Ordering::SeqCst),
+            RequestType::Long => self.long_requests.fetch_add(1, Ordering::SeqCst),
+            RequestType::Streaming => self.streaming_requests.fetch_add(1, Ordering::SeqCst),
+        };
+    }
+
+    pub fn decrement_active(&self) {
+        let prev = self.active_connections.fetch_sub(1, Ordering::SeqCst);
+        if prev == 1 && self.is_draining() {
+            self.mark_drain_complete();
+        }
+    }
+
+    pub fn decrement_active_typed(&self, request_type: RequestType) {
+        let prev = self.active_connections.fetch_sub(1, Ordering::SeqCst);
+        match request_type {
+            RequestType::Short => self.short_requests.fetch_sub(1, Ordering::SeqCst),
+            RequestType::Long => self.long_requests.fetch_sub(1, Ordering::SeqCst),
+            RequestType::Streaming => self.streaming_requests.fetch_sub(1, Ordering::SeqCst),
+        };
+        if prev == 1 && self.is_draining() {
+            self.mark_drain_complete();
+        }
+    }
+
+    pub fn increment_idle(&self) {
+        self.idle_connections.fetch_add(1, Ordering::SeqCst);
+    }
+
+    pub fn decrement_idle(&self) {
+        self.idle_connections.fetch_sub(1, Ordering::SeqCst);
+    }
+
+    pub fn get_active_connections(&self) -> u64 {
+        self.active_connections.load(Ordering::SeqCst)
+    }
+
+    pub fn get_idle_connections(&self) -> u64 {
+        self.idle_connections.load(Ordering::SeqCst)
+    }
+
+    pub fn get_request_type_counts(&self) -> (u64, u64, u64) {
+        (
+            self.short_requests.load(Ordering::SeqCst),
+            self.long_requests.load(Ordering::SeqCst),
+            self.streaming_requests.load(Ordering::SeqCst),
+        )
+    }
+
+    pub fn stop_accepting(&self) {
+        self.stopped_accepting.start_drain();
+        tracing::info!(
+            "Worker stopped accepting new connections, {} active remaining",
+            self.active_connections.load(Ordering::SeqCst)
+        );
+
+        if self.active_connections.load(Ordering::SeqCst) == 0 {
+            self.mark_drain_complete();
+        }
+    }
+
+    pub fn is_stopped_accepting(&self) -> bool {
+        self.stopped_accepting.is_draining()
+    }
+
+    fn mark_drain_complete(&self) {
+        let drained = self.connections_drained.fetch_add(
+            self.active_connections.load(Ordering::SeqCst),
+            Ordering::SeqCst,
+        );
+        tracing::info!("Drain complete, total connections drained: {}", drained);
+    }
+
+    pub fn get_status(&self) -> DrainStatusResponse {
+        let drain_start = self.drain_start.lock().unwrap();
+        let elapsed_secs = drain_start.map(|s| s.elapsed().as_secs()).unwrap_or(0);
+
+        let active = self.active_connections.load(Ordering::SeqCst);
+        let is_draining = self.draining.is_draining();
+        let drain_complete = is_draining && self.stopped_accepting.is_draining() && active == 0;
+
+        let (short, long, streaming) = self.get_request_type_counts();
+
+        DrainStatusResponse {
+            drain_id: self.drain_id.load(Ordering::SeqCst),
+            is_draining,
+            active_connections: active,
+            idle_connections: self.idle_connections.load(Ordering::SeqCst),
+            connections_drained: self.connections_drained.load(Ordering::SeqCst),
+            drain_elapsed_secs: elapsed_secs,
+            drain_complete,
+            stopped_accepting: self.stopped_accepting.is_draining(),
+            short_requests: short,
+            long_requests: long,
+            streaming_requests: streaming,
+        }
+    }
+
+    pub fn reset(&self) {
+        self.draining.end_drain();
+        self.drain_id.store(0, Ordering::SeqCst);
+        self.stopped_accepting.end_drain();
+        self.connections_drained.store(0, Ordering::SeqCst);
+
+        let mut start = self.drain_start.lock().unwrap();
+        *start = None;
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct DrainStatusResponse {
+    pub drain_id: u64,
+    pub is_draining: bool,
+    pub active_connections: u64,
+    pub idle_connections: u64,
+    pub connections_drained: u64,
+    pub drain_elapsed_secs: u64,
+    pub drain_complete: bool,
+    pub stopped_accepting: bool,
+    pub short_requests: u64,
+    pub long_requests: u64,
+    pub streaming_requests: u64,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct DrainRequest {
+    pub timeout_secs: u64,
+    pub drain_id: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_drain_state() {
+        let state = WorkerDrainState::new();
+
+        assert!(!state.is_draining());
+
+        state.start_drain(1);
+        assert!(state.is_draining());
+        assert_eq!(state.get_drain_id(), 1);
+
+        state.increment_active();
+        assert_eq!(state.get_active_connections(), 1);
+
+        state.decrement_active();
+        assert_eq!(state.get_active_connections(), 0);
+
+        let status = state.get_status();
+        assert!(status.is_draining);
+    }
+
+    #[test]
+    fn test_request_type_tracking() {
+        let state = WorkerDrainState::new();
+
+        state.increment_active_typed(RequestType::Short);
+        state.increment_active_typed(RequestType::Long);
+        state.increment_active_typed(RequestType::Streaming);
+
+        assert_eq!(state.get_active_connections(), 3);
+
+        let (short, long, streaming) = state.get_request_type_counts();
+        assert_eq!(short, 1);
+        assert_eq!(long, 1);
+        assert_eq!(streaming, 1);
+
+        state.decrement_active_typed(RequestType::Streaming);
+        let (_, _, streaming) = state.get_request_type_counts();
+        assert_eq!(streaming, 0);
+    }
+}

@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="MaluWAF - High-performance Web Application Firewall and reverse proxy written in Rust">
+    <title>MaluWAF | Production-Ready WAF & Reverse Proxy</title>
+    <link rel="preload" href="/fonts/inter-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="preload" href="/fonts/inter-latin-500-normal.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="preload" href="/fonts/inter-latin-600-normal.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="preload" href="/fonts/inter-latin-700-normal.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="preload" href="/fonts/jetbrains-mono-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="preload" href="/fonts/jetbrains-mono-latin-500-normal.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="preload" href="/fonts/jetbrains-mono-latin-600-normal.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="stylesheet" href="/styles.css">
+    <style>
+        @font-face {
+            font-family: 'Inter';
+            font-style: normal;
+            font-weight: 400;
+            font-display: swap;
+            src: local('Inter'), url('/fonts/inter-latin-400-normal.woff2') format('woff2');
+        }
+        @font-face {
+            font-family: 'Inter';
+            font-style: normal;
+            font-weight: 500;
+            font-display: swap;
+            src: local('Inter Medium'), url('/fonts/inter-latin-500-normal.woff2') format('woff2');
+        }
+        @font-face {
+            font-family: 'Inter';
+            font-style: normal;
+            font-weight: 600;
+            font-display: swap;
+            src: local('Inter SemiBold'), url('/fonts/inter-latin-600-normal.woff2') format('woff2');
+        }
+        @font-face {
+            font-family: 'Inter';
+            font-style: normal;
+            font-weight: 700;
+            font-display: swap;
+            src: local('Inter Bold'), url('/fonts/inter-latin-700-normal.woff2') format('woff2');
+        }
+        @font-face {
+            font-family: 'JetBrains Mono';
+            font-style: normal;
+            font-weight: 400;
+            font-display: swap;
+            src: local('JetBrains Mono'), url('/fonts/jetbrains-mono-latin-400-normal.woff2') format('woff2');
+        }
+        @font-face {
+            font-family: 'JetBrains Mono';
+            font-style: normal;
+            font-weight: 500;
+            font-display: swap;
+            src: local('JetBrains Mono Medium'), url('/fonts/jetbrains-mono-latin-500-normal.woff2') format('woff2');
+        }
+        @font-face {
+            font-family: 'JetBrains Mono';
+            font-style: normal;
+            font-weight: 600;
+            font-display: swap;
+            src: local('JetBrains Mono SemiBold'), url('/fonts/jetbrains-mono-latin-600-normal.woff2') format('woff2');
+        }
+    </style>
+<link rel="modulepreload" href="/website-269ff0435984bf0e.js" crossorigin="anonymous" integrity="sha384-9uOh5BvCtFLY/Hp/yh6LuS51R+IQTeIN/OXK63hty6yWHB213LCgFHs2qzyabLL4"><link rel="preload" href="/website-269ff0435984bf0e_bg.wasm" crossorigin="anonymous" integrity="sha384-e2LoftsvE5mjQbf2ntjOnwNsrsa55/L2ds3xOMJeg+kCL6c4LQlg7ZU/8XO7+6MV" as="fetch" type="application/wasm"></head>
+<body>
+    <div id="app"></div>
+    <script>
+        window.addEventListener('error', function(e) {
+            console.error('Global error:', e.error);
+            document.body.innerHTML = '<div style="color: red; padding: 20px; font-family: monospace; background: #1a1a25; min-height: 100vh;">Error: ' + e.message + '<br><pre>' + (e.error ? e.error.stack : '') + '</pre></div>';
+        });
+
+        function initReveal() {
+            const applyReveal = () => {
+                const revealElements = document.querySelectorAll('.reveal-element:not(.reveal-processed)');
+                if (revealElements.length === 0) return;
+                
+                console.log('Processing', revealElements.length, 'reveal elements');
+                revealElements.forEach(el => {
+                    el.classList.add('reveal', 'reveal-processed');
+                });
+                
+                const observer = new IntersectionObserver((entries) => {
+                    entries.forEach(entry => {
+                        if (entry.isIntersecting) {
+                            entry.target.classList.remove('reveal-hide');
+                            entry.target.classList.add('reveal-visible');
+                        } else {
+                            entry.target.classList.remove('reveal-visible');
+                            entry.target.classList.add('reveal-hide');
+                        }
+                    });
+                }, { threshold: 0.1, rootMargin: '0px 0px -50px 0px' });
+
+                document.querySelectorAll('.reveal-element').forEach(el => observer.observe(el));
+            };
+
+            applyReveal();
+            
+            const mutationObserver = new MutationObserver((mutations) => {
+                mutations.forEach((mutation) => {
+                    if (mutation.addedNodes.length > 0) {
+                        applyReveal();
+                    }
+                });
+            });
+            
+            mutationObserver.observe(document.body, { childList: true, subtree: true });
+        }
+
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initReveal);
+        } else {
+            initReveal();
+        }
+    </script>
+
+<script type="module">
+import init, * as bindings from '/website-269ff0435984bf0e.js';
+const wasm = await init({ module_or_path: '/website-269ff0435984bf0e_bg.wasm' });
+
+
+window.wasmBindings = bindings;
+
+
+dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
+
+</script></body>
+</html>

@@ -1,5 +1,6 @@
+use crate::config::site::ProxyUpstreamConfig;
+use crate::filter::{BaseFilterConfig, ProtocolFilterCore};
 use crate::tcp::protocol::Protocol;
-use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FilterAction {
@@ -8,337 +9,159 @@ pub enum FilterAction {
     Stall,
 }
 
+impl crate::filter::FilterAction for FilterAction {
+    fn is_allow(&self) -> bool {
+        matches!(self, FilterAction::Allow)
+    }
+
+    fn is_drop(&self) -> bool {
+        matches!(self, FilterAction::Drop)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct FilterConfig {
     pub enabled: bool,
     pub strict_mode: bool,
-    pub port_overrides: HashMap<u16, PortFilterConfig>,
     pub protocol_allowlist: Vec<String>,
     pub protocol_denylist: Vec<String>,
-}
-
-#[derive(Debug, Clone)]
-pub struct PortFilterConfig {
-    pub expected_protocol: String,
-    pub action: String, // "allow", "drop", "challenge"
+    pub block_unknown_ports: bool,
 }
 
 impl Default for FilterConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
-            strict_mode: true,
-            port_overrides: Self::default_port_overrides(),
+            enabled: false,
+            strict_mode: false,
             protocol_allowlist: vec![],
             protocol_denylist: vec![],
+            block_unknown_ports: false,
         }
     }
 }
 
 impl FilterConfig {
-    fn default_port_overrides() -> HashMap<u16, PortFilterConfig> {
-        let mut overrides = HashMap::new();
+    pub fn new() -> Self {
+        Self::default()
+    }
 
-        overrides.insert(
-            25,
-            PortFilterConfig {
-                expected_protocol: "smtp".to_string(),
-                action: "drop".to_string(),
-            },
-        );
-        overrides.insert(
-            587,
-            PortFilterConfig {
-                expected_protocol: "smtp".to_string(),
-                action: "drop".to_string(),
-            },
-        );
-        overrides.insert(
-            465,
-            PortFilterConfig {
-                expected_protocol: "smtp".to_string(),
-                action: "drop".to_string(),
-            },
-        );
+    pub fn with_strict_mode(mut self, strict: bool) -> Self {
+        self.strict_mode = strict;
+        self
+    }
 
-        overrides.insert(
-            143,
-            PortFilterConfig {
-                expected_protocol: "imap".to_string(),
-                action: "drop".to_string(),
-            },
-        );
-        overrides.insert(
-            993,
-            PortFilterConfig {
-                expected_protocol: "imap".to_string(),
-                action: "drop".to_string(),
-            },
-        );
+    pub fn enable(mut self) -> Self {
+        self.enabled = true;
+        self
+    }
 
-        overrides.insert(
-            110,
-            PortFilterConfig {
-                expected_protocol: "pop3".to_string(),
-                action: "drop".to_string(),
-            },
-        );
-        overrides.insert(
-            995,
-            PortFilterConfig {
-                expected_protocol: "pop3".to_string(),
-                action: "drop".to_string(),
-            },
-        );
+    pub fn with_protocol_allowlist(mut self, protocols: Vec<String>) -> Self {
+        self.protocol_allowlist = protocols;
+        self
+    }
 
-        overrides.insert(
-            3306,
-            PortFilterConfig {
-                expected_protocol: "mysql".to_string(),
-                action: "drop".to_string(),
-            },
-        );
+    pub fn with_protocol_denylist(mut self, protocols: Vec<String>) -> Self {
+        self.protocol_denylist = protocols;
+        self
+    }
 
-        overrides.insert(
-            5432,
-            PortFilterConfig {
-                expected_protocol: "postgres".to_string(),
-                action: "drop".to_string(),
-            },
-        );
+    pub fn enable_block_unknown(self) -> Self {
+        self.block_unknown_ports(true)
+    }
 
-        overrides.insert(
-            6379,
-            PortFilterConfig {
-                expected_protocol: "redis".to_string(),
-                action: "drop".to_string(),
-            },
-        );
-
-        overrides.insert(
-            11211,
-            PortFilterConfig {
-                expected_protocol: "memcached".to_string(),
-                action: "drop".to_string(),
-            },
-        );
-
-        overrides.insert(
-            27017,
-            PortFilterConfig {
-                expected_protocol: "mongodb".to_string(),
-                action: "drop".to_string(),
-            },
-        );
-
-        overrides.insert(
-            389,
-            PortFilterConfig {
-                expected_protocol: "ldap".to_string(),
-                action: "drop".to_string(),
-            },
-        );
-        overrides.insert(
-            636,
-            PortFilterConfig {
-                expected_protocol: "ldap".to_string(),
-                action: "drop".to_string(),
-            },
-        );
-
-        overrides.insert(
-            3389,
-            PortFilterConfig {
-                expected_protocol: "rdp".to_string(),
-                action: "drop".to_string(),
-            },
-        );
-
-        overrides.insert(
-            5900,
-            PortFilterConfig {
-                expected_protocol: "vnc".to_string(),
-                action: "drop".to_string(),
-            },
-        );
-
-        overrides.insert(
-            5222,
-            PortFilterConfig {
-                expected_protocol: "xmpp".to_string(),
-                action: "drop".to_string(),
-            },
-        );
-        overrides.insert(
-            5269,
-            PortFilterConfig {
-                expected_protocol: "xmpp".to_string(),
-                action: "drop".to_string(),
-            },
-        );
-
-        overrides.insert(
-            5672,
-            PortFilterConfig {
-                expected_protocol: "amqp".to_string(),
-                action: "drop".to_string(),
-            },
-        );
-
-        overrides.insert(
-            9092,
-            PortFilterConfig {
-                expected_protocol: "kafka".to_string(),
-                action: "drop".to_string(),
-            },
-        );
-
-        overrides.insert(
-            554,
-            PortFilterConfig {
-                expected_protocol: "rtsp".to_string(),
-                action: "drop".to_string(),
-            },
-        );
-
-        overrides.insert(
-            53,
-            PortFilterConfig {
-                expected_protocol: "dns".to_string(),
-                action: "drop".to_string(),
-            },
-        );
-
-        overrides.insert(
-            22,
-            PortFilterConfig {
-                expected_protocol: "ssh".to_string(),
-                action: "drop".to_string(),
-            },
-        );
-
-        overrides.insert(
-            21,
-            PortFilterConfig {
-                expected_protocol: "ftp".to_string(),
-                action: "drop".to_string(),
-            },
-        );
-
-        overrides
+    pub fn block_unknown_ports(mut self, block: bool) -> Self {
+        self.block_unknown_ports = block;
+        self
     }
 }
 
+#[derive(Clone)]
 pub struct ProtocolFilter {
-    config: FilterConfig,
-}
-
-impl Clone for ProtocolFilter {
-    fn clone(&self) -> Self {
-        Self {
-            config: self.config.clone(),
-        }
-    }
+    core: ProtocolFilterCore<Protocol, FilterAction>,
+    block_unknown_ports: bool,
 }
 
 impl ProtocolFilter {
     pub fn new(config: FilterConfig) -> Self {
-        Self { config }
+        let base_config = BaseFilterConfig::new(
+            config.enabled,
+            config.strict_mode,
+            config.protocol_allowlist,
+            config.protocol_denylist,
+        );
+        let core = ProtocolFilterCore::new(base_config).with_strict_mode(config.strict_mode);
+
+        Self {
+            core,
+            block_unknown_ports: config.block_unknown_ports,
+        }
     }
 
     pub fn check(&self, expected_protocol: &str, detected_protocol: &Protocol) -> FilterAction {
-        if !self.config.enabled {
+        let result = self.core.check(
+            expected_protocol,
+            detected_protocol,
+            FilterAction::Allow,
+            FilterAction::Stall,
+        );
+
+        if result == FilterAction::Allow && *detected_protocol == Protocol::Unknown {
             return FilterAction::Allow;
         }
 
-        if !self.config.protocol_denylist.is_empty() {
-            let detected_str = detected_protocol.as_str();
-            if self
-                .config
-                .protocol_denylist
-                .iter()
-                .any(|p| p.as_str() == detected_str)
-            {
-                return FilterAction::Stall;
-            }
-        }
+        result
+    }
 
-        if !self.config.protocol_allowlist.is_empty() {
-            let detected_str = detected_protocol.as_str();
-            if !self
-                .config
-                .protocol_allowlist
-                .iter()
-                .any(|p| p.as_str() == detected_str)
-            {
-                return FilterAction::Stall;
-            }
-        }
-
-        let expected = Protocol::from_str(expected_protocol);
-
-        if expected == *detected_protocol {
+    pub fn check_upstream(
+        &self,
+        upstream_config: &ProxyUpstreamConfig,
+        detected_protocol: &Protocol,
+    ) -> FilterAction {
+        if !self.core.enabled() {
             return FilterAction::Allow;
         }
 
-        if self.config.strict_mode {
+        let protocol_str = detected_protocol.as_str();
+
+        if !upstream_config.allows_protocol(protocol_str) {
+            tracing::warn!(
+                "Protocol {} not allowed for upstream (allowed: {:?})",
+                protocol_str,
+                upstream_config.allowed_protocols
+            );
+            return FilterAction::Drop;
+        }
+
+        if *detected_protocol == Protocol::Unknown && self.block_unknown_ports {
             return FilterAction::Stall;
         }
 
-        if *detected_protocol == Protocol::Unknown {
-            return FilterAction::Allow;
-        }
-
         FilterAction::Allow
     }
 
-    pub fn check_port(&self, port: u16, detected_protocol: &Protocol) -> FilterAction {
-        if !self.config.enabled {
+    pub fn check_with_fallback(
+        &self,
+        upstream_config: Option<&ProxyUpstreamConfig>,
+        detected_protocol: &Protocol,
+        fallback_action: FilterAction,
+    ) -> FilterAction {
+        if !self.core.enabled() {
             return FilterAction::Allow;
         }
 
-        if let Some(port_config) = self.config.port_overrides.get(&port) {
-            let expected = Protocol::from_str(&port_config.expected_protocol);
-
-            if expected == *detected_protocol {
-                return FilterAction::Allow;
-            }
-
-            match port_config.action.as_str() {
-                "drop" => return FilterAction::Stall,
-                "stall" => return FilterAction::Stall,
-                "allow" => return FilterAction::Allow,
-                _ => {}
-            }
+        if let Some(config) = upstream_config {
+            return self.check_upstream(config, detected_protocol);
         }
 
-        FilterAction::Allow
+        if *detected_protocol == Protocol::Unknown && self.block_unknown_ports {
+            return FilterAction::Stall;
+        }
+
+        fallback_action
     }
 
-    pub fn with_port_override(mut self, port: u16, protocol: &str, action: &str) -> Self {
-        self.config.port_overrides.insert(
-            port,
-            PortFilterConfig {
-                expected_protocol: protocol.to_string(),
-                action: action.to_string(),
-            },
-        );
-        self
-    }
-
-    pub fn with_strict_mode(mut self, strict: bool) -> Self {
-        self.config.strict_mode = strict;
-        self
-    }
-
-    pub fn with_allowlist(mut self, protocols: Vec<String>) -> Self {
-        self.config.protocol_allowlist = protocols;
-        self
-    }
-
-    pub fn with_denylist(mut self, protocols: Vec<String>) -> Self {
-        self.config.protocol_denylist = protocols;
-        self
+    pub fn is_enabled(&self) -> bool {
+        self.core.enabled()
     }
 }
 
@@ -351,6 +174,152 @@ impl Default for ProtocolFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_default_restricts_to_http() {
+        let config = ProxyUpstreamConfig::default();
+        assert!(config.allows_protocol("http"));
+        assert!(config.allows_protocol("https"));
+        assert!(config.allows_protocol("websocket"));
+        assert!(!config.allows_protocol("irc"));
+        assert!(!config.allows_protocol("mysql"));
+    }
+
+    #[test]
+    fn test_all_keyword_allows_everything() {
+        let config = ProxyUpstreamConfig {
+            allowed_protocols: Some(vec!["all".to_string()]),
+            ..Default::default()
+        };
+        assert!(config.allows_protocol("http"));
+        assert!(config.allows_protocol("irc"));
+        assert!(config.allows_protocol("mysql"));
+        assert!(config.allows_protocol("ssh"));
+    }
+
+    #[test]
+    fn test_star_keyword_allows_everything() {
+        let config = ProxyUpstreamConfig {
+            allowed_protocols: Some(vec!["*".to_string()]),
+            ..Default::default()
+        };
+        assert!(config.allows_protocol("http"));
+        assert!(config.allows_protocol("irc"));
+        assert!(config.allows_protocol("mysql"));
+    }
+
+    #[test]
+    fn test_allows_all_protocols_method() {
+        let default_config = ProxyUpstreamConfig::default();
+        assert!(!default_config.allows_all_protocols());
+
+        let all_config = ProxyUpstreamConfig {
+            allowed_protocols: Some(vec!["all".to_string()]),
+            ..Default::default()
+        };
+        assert!(all_config.allows_all_protocols());
+
+        let star_config = ProxyUpstreamConfig {
+            allowed_protocols: Some(vec!["*".to_string()]),
+            ..Default::default()
+        };
+        assert!(star_config.allows_all_protocols());
+
+        let http_config = ProxyUpstreamConfig {
+            allowed_protocols: Some(vec!["http".to_string()]),
+            ..Default::default()
+        };
+        assert!(!http_config.allows_all_protocols());
+    }
+
+    #[test]
+    fn test_specific_protocol_allowed() {
+        let config = ProxyUpstreamConfig {
+            allowed_protocols: Some(vec!["http".to_string()]),
+            ..Default::default()
+        };
+        assert!(config.allows_protocol("http"));
+        assert!(config.allows_protocol("https"));
+        assert!(!config.allows_protocol("irc"));
+        assert!(!config.allows_protocol("mysql"));
+    }
+
+    #[test]
+    fn test_tcp_catchall() {
+        let config = ProxyUpstreamConfig {
+            allowed_protocols: Some(vec!["tcp".to_string()]),
+            ..Default::default()
+        };
+        assert!(config.allows_protocol("http"));
+        assert!(config.allows_protocol("irc"));
+        assert!(config.allows_protocol("mysql"));
+        assert!(!config.allows_protocol("udp"));
+    }
+
+    #[test]
+    fn test_udp_category_includes_quic_and_wireguard() {
+        let config = ProxyUpstreamConfig {
+            allowed_protocols: Some(vec!["udp".to_string()]),
+            ..Default::default()
+        };
+        assert!(config.allows_protocol("udp"));
+        assert!(config.allows_protocol("quic"));
+        assert!(config.allows_protocol("wireguard"));
+        assert!(config.allows_protocol("mesh_quic"));
+        assert!(!config.allows_protocol("http"));
+        assert!(!config.allows_protocol("irc"));
+    }
+
+    #[test]
+    fn test_http_catchall() {
+        let config = ProxyUpstreamConfig {
+            allowed_protocols: Some(vec!["http".to_string()]),
+            ..Default::default()
+        };
+        assert!(config.allows_protocol("http"));
+        assert!(config.allows_protocol("https"));
+        assert!(config.allows_protocol("websocket"));
+        assert!(!config.allows_protocol("irc"));
+    }
+
+    #[test]
+    fn test_empty_defaults_to_http() {
+        let config = ProxyUpstreamConfig {
+            allowed_protocols: Some(vec![]),
+            ..Default::default()
+        };
+        assert!(config.allows_protocol("http"));
+        assert!(config.allows_protocol("https"));
+        assert!(config.allows_protocol("websocket"));
+        assert!(!config.allows_protocol("irc"));
+    }
+
+    #[test]
+    fn test_default_none_defaults_to_http() {
+        let config = ProxyUpstreamConfig::default();
+        assert!(config.allows_protocol("http"));
+        assert!(config.allows_protocol("https"));
+        assert!(config.allows_protocol("websocket"));
+        assert!(!config.allows_protocol("irc"));
+    }
+
+    #[test]
+    fn test_is_protocol_restricted() {
+        let unrestricted = ProxyUpstreamConfig::default();
+        assert!(!unrestricted.is_protocol_restricted());
+
+        let restricted = ProxyUpstreamConfig {
+            allowed_protocols: Some(vec!["irc".to_string()]),
+            ..Default::default()
+        };
+        assert!(restricted.is_protocol_restricted());
+
+        let empty = ProxyUpstreamConfig {
+            allowed_protocols: Some(vec![]),
+            ..Default::default()
+        };
+        assert!(!empty.is_protocol_restricted());
+    }
 
     #[test]
     fn test_strict_mode_blocks_mismatch() {
@@ -388,5 +357,97 @@ mod tests {
         });
 
         assert_eq!(filter.check("smtp", &Protocol::Http), FilterAction::Allow);
+    }
+
+    #[test]
+    fn test_upstream_restricted_drops_mismatch() {
+        let filter = ProtocolFilter::new(FilterConfig {
+            enabled: true,
+            ..Default::default()
+        });
+
+        let irc_upstream = ProxyUpstreamConfig {
+            allowed_protocols: Some(vec!["irc".to_string()]),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            filter.check_upstream(&irc_upstream, &Protocol::Irc),
+            FilterAction::Allow
+        );
+        assert_eq!(
+            filter.check_upstream(&irc_upstream, &Protocol::Http),
+            FilterAction::Drop
+        );
+    }
+
+    #[test]
+    fn test_upstream_default_allows_http_only() {
+        let filter = ProtocolFilter::new(FilterConfig {
+            enabled: true,
+            ..Default::default()
+        });
+
+        let default_upstream = ProxyUpstreamConfig::default();
+
+        assert_eq!(
+            filter.check_upstream(&default_upstream, &Protocol::Http),
+            FilterAction::Allow
+        );
+        assert_eq!(
+            filter.check_upstream(&default_upstream, &Protocol::Irc),
+            FilterAction::Drop
+        );
+        // Unknown is not HTTP, so it gets dropped (not allowed)
+        assert_eq!(
+            filter.check_upstream(&default_upstream, &Protocol::Unknown),
+            FilterAction::Drop
+        );
+    }
+
+    #[test]
+    fn test_upstream_allows_tcp_category() {
+        let filter = ProtocolFilter::new(FilterConfig {
+            enabled: true,
+            ..Default::default()
+        });
+
+        let tcp_upstream = ProxyUpstreamConfig {
+            allowed_protocols: Some(vec!["tcp".to_string()]),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            filter.check_upstream(&tcp_upstream, &Protocol::Http),
+            FilterAction::Allow
+        );
+        assert_eq!(
+            filter.check_upstream(&tcp_upstream, &Protocol::Irc),
+            FilterAction::Allow
+        );
+    }
+
+    #[test]
+    fn test_block_unknown_with_upstream() {
+        let filter = ProtocolFilter::new(FilterConfig {
+            enabled: true,
+            block_unknown_ports: true,
+            ..Default::default()
+        });
+
+        // Use "all" to allow any protocol, then test block_unknown_ports
+        let all_protocols = ProxyUpstreamConfig {
+            allowed_protocols: Some(vec!["all".to_string()]),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            filter.check_upstream(&all_protocols, &Protocol::Http),
+            FilterAction::Allow
+        );
+        assert_eq!(
+            filter.check_upstream(&all_protocols, &Protocol::Unknown),
+            FilterAction::Stall
+        );
     }
 }

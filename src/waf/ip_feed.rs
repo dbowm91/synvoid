@@ -1,8 +1,9 @@
-use crate::config::main::IpFeedConfig;
+use crate::config::IpFeedConfig;
+use crate::http_client::{HttpClient, get_with_timeout, create_simple_http_client};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time;
@@ -14,24 +15,66 @@ pub struct IpFeedEntry {
     pub added_at: u64,
 }
 
+#[derive(Clone, Debug)]
+enum BlockedNetwork {
+    Single(IpAddr),
+    Ipv4(Ipv4Addr, u8),
+    Ipv6(Ipv6Addr, u8),
+}
+
+impl BlockedNetwork {
+    fn contains(&self, ip: &IpAddr) -> bool {
+        match (self, ip) {
+            (BlockedNetwork::Single(blocked), target) => blocked == target,
+            (BlockedNetwork::Ipv4(net, prefix), IpAddr::V4(target)) => {
+                let network = u32::from(*net);
+                let target_bits = u32::from(*target);
+                let mask = !((1u32 << (32 - *prefix)) - 1);
+                (network & mask) == (target_bits & mask)
+            }
+            (BlockedNetwork::Ipv6(net, prefix), IpAddr::V6(target)) => {
+                let network = net.octets();
+                let target_bits = target.octets();
+                let prefix_bytes = prefix / 8;
+                let prefix_bits = prefix % 8;
+
+                if &network[..prefix_bytes as usize] != &target_bits[..prefix_bytes as usize] {
+                    return false;
+                }
+
+                if prefix_bits > 0 {
+                    let mask = !(0xFF >> prefix_bits);
+                    return (network[prefix_bytes as usize] & mask)
+                        == (target_bits[prefix_bytes as usize] & mask);
+                }
+
+                true
+            }
+            _ => false,
+        }
+    }
+}
+
 pub struct IpFeedManager {
+    blocked_networks: Arc<RwLock<Vec<BlockedNetwork>>>,
     blocked_ips: Arc<RwLock<HashSet<IpAddr>>>,
     config: IpFeedConfig,
     last_update: Arc<RwLock<u64>>,
-    client: reqwest::Client,
+    client: HttpClient,
 }
 
 impl IpFeedManager {
     pub fn new(config: IpFeedConfig) -> Arc<Self> {
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(30))
-            .user_agent("rustwaf-ip-denylist/1.0")
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
+        Self::with_url(config, String::new())
+    }
+
+    pub fn with_url(config: IpFeedConfig, url: String) -> Arc<Self> {
+        let client = create_simple_http_client(Duration::from_secs(30));
 
         Arc::new(Self {
+            blocked_networks: Arc::new(RwLock::new(Vec::new())),
             blocked_ips: Arc::new(RwLock::new(HashSet::new())),
-            config,
+            config: IpFeedConfig { url, ..config },
             last_update: Arc::new(RwLock::new(0)),
             client,
         })
@@ -54,22 +97,31 @@ impl IpFeedManager {
         tracing::info!("Fetching IP feed from {}", self.config.url);
         
         match self.fetch_feed(&self.config.url).await {
-            Ok(ips) => {
-                let trimmed: HashSet<IpAddr> = ips
+            Ok((networks, ips)) => {
+                let trimmed_networks: Vec<BlockedNetwork> = networks
+                    .into_iter()
+                    .take(self.config.max_permanent_blocks / 256)
+                    .collect();
+                
+                let trimmed_ips: HashSet<IpAddr> = ips
                     .into_iter()
                     .take(self.config.max_permanent_blocks)
                     .collect();
 
-                let count = trimmed.len();
-                *self.blocked_ips.write() = trimmed;
+                let network_count = trimmed_networks.len();
+                let ip_count = trimmed_ips.len();
+                
+                *self.blocked_networks.write() = trimmed_networks;
+                *self.blocked_ips.write() = trimmed_ips;
                 
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs();
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
                 *self.last_update.write() = now;
 
-                tracing::info!("IP feed updated: {} IPs blocked (max: {})", count, self.config.max_permanent_blocks);
+                tracing::info!("IP feed updated: {} networks, {} IPs blocked (max: {})", 
+                    network_count, ip_count, self.config.max_permanent_blocks);
             }
             Err(e) => {
                 tracing::error!("Failed to fetch IP feed: {}", e);
@@ -77,26 +129,20 @@ impl IpFeedManager {
         }
     }
 
-    async fn fetch_feed(&self, url: &str) -> Result<Vec<IpAddr>, String> {
-        let response = self.client
-            .get(url)
-            .send()
+    async fn fetch_feed(&self, url: &str) -> Result<(Vec<BlockedNetwork>, Vec<IpAddr>), String> {
+        let response = get_with_timeout(&self.client, url, Duration::from_secs(30))
             .await
             .map_err(|e| format!("Request failed: {}", e))?;
 
-        if !response.status().is_success() {
-            return Err(format!("HTTP error: {}", response.status()));
+        if !response.status.is_success() {
+            return Err(format!("HTTP error: {}", response.status));
         }
 
-        let body = response
-            .text()
-            .await
-            .map_err(|e| format!("Failed to read response: {}", e))?;
-
-        self.parse_feed(&body)
+        self.parse_feed(&response.body)
     }
 
-    fn parse_feed(&self, content: &str) -> Result<Vec<IpAddr>, String> {
+    fn parse_feed(&self, content: &str) -> Result<(Vec<BlockedNetwork>, Vec<IpAddr>), String> {
+        let mut networks = Vec::new();
         let mut ips = Vec::new();
 
         for line in content.lines() {
@@ -112,45 +158,56 @@ impl IpFeedManager {
                 line
             };
 
-            let ip = if ip_or_cidr.contains('/') {
-                if let Some(ip) = self.parse_cidr_first_ip(ip_or_cidr) {
-                    ip
-                } else {
-                    continue;
+            if ip_or_cidr.contains('/') {
+                if let Some(network) = self.parse_cidr(ip_or_cidr) {
+                    networks.push(network);
                 }
             } else {
-                ip_or_cidr.to_string()
-            };
-
-            if let Ok(addr) = ip.parse::<IpAddr>() {
-                ips.push(addr);
+                if let Ok(addr) = ip_or_cidr.parse::<IpAddr>() {
+                    ips.push(addr);
+                }
             }
         }
 
-        Ok(ips)
+        Ok((networks, ips))
     }
 
-    fn parse_cidr_first_ip(&self, cidr: &str) -> Option<String> {
+    fn parse_cidr(&self, cidr: &str) -> Option<BlockedNetwork> {
         let parts: Vec<&str> = cidr.split('/').collect();
         if parts.len() != 2 {
             return None;
         }
         
-        let ip = parts[0].to_string();
+        let ip_str = parts[0];
+        let prefix: u8 = parts[1].parse().ok()?;
         
-        if ip.parse::<IpAddr>().is_ok() {
-            Some(ip)
-        } else {
-            None
+        if let Ok(ipv4) = ip_str.parse::<Ipv4Addr>() {
+            if prefix <= 32 {
+                return Some(BlockedNetwork::Ipv4(ipv4, prefix));
+            }
+        } else if let Ok(ipv6) = ip_str.parse::<Ipv6Addr>() {
+            if prefix <= 128 {
+                return Some(BlockedNetwork::Ipv6(ipv6, prefix));
+            }
         }
+
+        None
     }
 
     pub fn is_blocked(&self, ip: &IpAddr) -> bool {
-        self.blocked_ips.read().contains(ip)
+        let networks = self.blocked_networks.read();
+        for network in networks.iter() {
+            if network.contains(ip) {
+                return true;
+            }
+        }
+        
+        let ips = self.blocked_ips.read();
+        ips.contains(ip)
     }
 
     pub fn get_count(&self) -> usize {
-        self.blocked_ips.read().len()
+        self.blocked_networks.read().len() + self.blocked_ips.read().len()
     }
 
     pub fn get_last_update(&self) -> u64 {
@@ -184,11 +241,7 @@ impl MultiFeedManager {
 
         let feeds: Vec<Arc<IpFeedManager>> = urls
             .into_iter()
-            .map(|url| {
-                let mut feed_config = config.clone();
-                feed_config.url = url;
-                IpFeedManager::new(feed_config)
-            })
+            .map(|url| IpFeedManager::with_url(config.clone(), url))
             .collect();
 
         Arc::new(Self { feeds, config })
@@ -226,28 +279,30 @@ impl MultiFeedManager {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
-    fn test_parse_cidr() {
-        let manager = IpFeedManager::new(IpFeedConfig::default());
+    fn test_blocked_network_ipv4_contains() {
+        use std::net::{IpAddr, Ipv4Addr};
         
-        assert_eq!(manager.parse_cidr_first_ip("192.168.1.0/24"), Some("192.168.1.0".to_string()));
-        assert_eq!(manager.parse_cidr_first_ip("10.0.0.0/8"), Some("10.0.0.0".to_string()));
-        assert_eq!(manager.parse_cidr_first_ip("invalid"), None);
+        fn test_contains(network: &super::BlockedNetwork, ip: IpAddr, expected: bool) {
+            assert_eq!(network.contains(&ip), expected);
+        }
+        
+        let network = super::BlockedNetwork::Ipv4(Ipv4Addr::new(192, 168, 1, 0), 24);
+        
+        test_contains(&network, IpAddr::V4(Ipv4Addr::new(192, 168, 1, 0)), true);
+        test_contains(&network, IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)), true);
+        test_contains(&network, IpAddr::V4(Ipv4Addr::new(192, 168, 1, 255)), true);
+        test_contains(&network, IpAddr::V4(Ipv4Addr::new(192, 168, 2, 1)), false);
     }
 
     #[test]
-    fn test_parse_feed() {
-        let manager = IpFeedManager::new(IpFeedConfig::default());
+    fn test_blocked_network_ipv6_contains() {
+        use std::net::{IpAddr, Ipv6Addr};
         
-        let content = r#"
-# Comment
-192.168.1.1
-10.0.0.1
-"#;
+        let network = super::BlockedNetwork::Ipv6(Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0), 32);
         
-        let ips = manager.parse_feed(content).unwrap();
-        assert_eq!(ips.len(), 2);
+        assert!(network.contains(&IpAddr::V6(Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0))));
+        assert!(network.contains(&IpAddr::V6(Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 1))));
+        assert!(!network.contains(&IpAddr::V6(Ipv6Addr::new(0x2001, 0x0db9, 0, 0, 0, 0, 0, 0))));
     }
 }

@@ -1,3 +1,5 @@
+#![allow(unused_variables, unused_mut)]
+
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -461,13 +463,13 @@ pub struct SuspiciousWordRecord {
 
 pub struct SuspiciousWordTracker {
     store: Arc<RwLock<HashMap<IpAddr, Vec<SuspiciousWordRecord>>>>,
-    config: crate::config::main::SuspiciousWordsConfig,
+    config: crate::config::SuspiciousWordsConfig,
     total_matches: std::sync::atomic::AtomicU64,
     access_order: RwLock<Vec<IpAddr>>,
 }
 
 impl SuspiciousWordTracker {
-    pub fn new(config: crate::config::main::SuspiciousWordsConfig) -> Arc<Self> {
+    pub fn new(config: crate::config::SuspiciousWordsConfig) -> Arc<Self> {
         Arc::new(Self {
             store: Arc::new(RwLock::new(HashMap::new())),
             config,
@@ -603,12 +605,12 @@ pub struct UpstreamErrorRecord {
 
 pub struct UpstreamErrorTracker {
     store: Arc<RwLock<HashMap<IpAddr, Vec<UpstreamErrorRecord>>>>,
-    config: crate::config::main::UpstreamErrorsConfig,
+    config: crate::config::UpstreamErrorsConfig,
     total_errors: std::sync::atomic::AtomicU64,
 }
 
 impl UpstreamErrorTracker {
-    pub fn new(config: crate::config::main::UpstreamErrorsConfig) -> Arc<Self> {
+    pub fn new(config: crate::config::UpstreamErrorsConfig) -> Arc<Self> {
         Arc::new(Self {
             store: Arc::new(RwLock::new(HashMap::new())),
             config,
@@ -620,7 +622,7 @@ impl UpstreamErrorTracker {
         self.config.enabled
     }
 
-    pub fn get_config(&self) -> &crate::config::main::UpstreamErrorsConfig {
+    pub fn get_config(&self) -> &crate::config::UpstreamErrorsConfig {
         &self.config
     }
 

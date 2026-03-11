@@ -1,3 +1,4 @@
+pub mod common;
 pub mod stats;
 pub mod sites;
 pub mod upstreams;
@@ -6,3 +7,10 @@ pub mod config;
 pub mod tcp_udp;
 pub mod probes;
 pub mod threat_level;
+pub mod icmp;
+pub mod system;
+pub mod alerting;
+pub mod mesh_admin;
+pub mod theme;
+pub mod rule_feed;
+pub mod honeypot;

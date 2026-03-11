@@ -1,0 +1,281 @@
+# Mesh Network CDN Configuration Example
+# Add this to config/main.toml to enable mesh networking
+#
+# Mesh networking allows WAF instances to:
+# - Route traffic to upstream servers hosted on other WAF nodes
+# - Distribute load across geographic regions
+# - Provide zero-trust access to origins (IP never exposed)
+# - Failover automatically when nodes go down
+
+[mesh]
+enabled = true
+
+# Unique node identifier (auto-generated if not set)
+# node_id = "edge-us-east-1"
+
+# Node role: "edge", "global", or "origin"
+# - edge: Routes traffic, doesn't host upstreams directly
+# - global: Full topology view, CA for certificate verification
+# - origin: Hosts actual upstream services
+role = "origin"
+
+# Bind address for mesh traffic (reuse QUIC tunnel port by default)
+# bind_address = "0.0.0.0"
+port = 5001
+
+# ============================================================================
+# Seed Nodes (Global Nodes) - Required for bootstrap
+# ============================================================================
+# Edge nodes use these to discover the network and verify certificates
+# Global nodes should be well-known, highly available servers
+
+[[mesh.seeds]]
+# address = "203.0.113.1:5001"
+# public_key = "base64-encoded-certificate-public-key"
+
+# [[mesh.seeds]]
+# address = "203.0.113.2:5001"
+# public_key = "base64-encoded-certificate-public-key"
+
+# ============================================================================
+# Peers (Direct connections for low-latency routing)
+# ============================================================================
+# These are direct QUIC connections to other WAF instances. Used for:
+# - Low-latency routing to nearby edge nodes
+# - Direct upstream access without going through global nodes
+# Each peer requires auth_token for mutual authentication
+
+# [[mesh.peers]]
+# address = "10.0.2.20:5001"
+# auth_token = "peer-auth-token"
+
+# ============================================================================
+# Local Upstreams (Only for origin nodes)
+# ============================================================================
+# These are the actual backend services this node hosts
+# Each upstream gets a unique ID that other nodes use to route to it
+#
+# SECURITY: Use `peered_wafs` to restrict which WAF nodes can route to this
+# upstream. Only these WAFs will receive the actual upstream URL. Other WAFs
+# will receive "route not found" - the origin IP is never exposed.
+
+[mesh.local_upstreams]
+# upstream-id = { upstream_url = "http://...", geo = "...", peered_wafs = [...] }
+
+# Example: Main API service - only edge-us-east-1 and edge-eu-west-1 can route
+# shop-api = { 
+#     upstream_url = "http://10.0.1.5:8080", 
+#     geo = "us-east",
+#     peered_wafs = [
+#         { node_id = "edge-us-east-1", allowed = true },
+#         { node_id = "edge-eu-west-1", allowed = true }
+#     ]
+# }
+
+# Example: Static assets CDN - open to all mesh peers (no peering restriction)
+# cdn-assets = { upstream_url = "http://10.0.1.10:80", geo = "us-east" }
+
+# Example: Admin panel - only local access, not exposed to mesh
+# admin-api = { upstream_url = "http://10.0.2.1:8080", geo = "us-east", peered_wafs = [] }
+
+# ============================================================================
+# Service Policy - Multi-tenant filtering
+# ============================================================================
+# Control which services this node will forward for other nodes
+
+[mesh.service_policy]
+# Allow specific services (empty = allow all)
+# allow = ["shop-api", "cdn-assets"]
+
+# Deny specific services (node will never forward these)
+deny = ["admin-panel", "internal-ops", "debug"]
+
+# ============================================================================
+# Routing Configuration
+# ============================================================================
+
+[mesh.routing]
+# Maximum hops for route discovery
+max_hops = 3
+
+# Timeout for route queries (milliseconds)
+query_timeout_ms = 5000
+
+# Number of retries on failure
+retry_attempts = 2
+
+# Number of peers to query before falling back to global node
+peer_query_count = 3
+
+# ============================================================================
+# TLS Configuration
+# ============================================================================
+
+[mesh.tls]
+# Path to certificate and key (auto-generated if not set)
+# cert_path = "/path/to/mesh-node.crt"
+# key_path = "/path/to/mesh-node.key"
+
+# CA certificate for verifying peer certificates
+# ca_path = "/path/to/mesh-ca.crt"
+
+# Auto-generate self-signed certificates on startup
+auto_generate_certs = true
+
+# ============================================================================
+# Example: Complete Edge Node Configuration
+# ============================================================================
+# This node routes traffic but doesn't host any upstreams
+
+# [mesh]
+# enabled = true
+# node_id = "edge-us-east-1"
+# role = "edge"
+# port = 5001
+
+# [[mesh.seeds]]
+# address = "203.0.113.1:5001"
+# public_key = "..."
+
+# [[mesh.seeds]]
+# address = "203.0.113.2:5001"
+# public_key = "..."
+
+# [[mesh.peers]]
+# address = "10.0.2.20:5001"
+# auth_token = "..."
+
+# [mesh.service_policy]
+# allow = ["shop-api", "cdn-assets"]
+# deny = []
+
+# ============================================================================
+# Example: Complete Origin Node Configuration
+# ============================================================================
+# This node hosts actual backend services with peering restrictions
+
+# [mesh]
+# enabled = true
+# node_id = "origin-us-east-1"
+# role = "origin"
+# port = 5001
+
+# [[mesh.seeds]]
+# address = "203.0.113.1:5001"
+# public_key = "..."
+
+# [mesh.local_upstreams]
+# shop-api = { 
+#     upstream_url = "http://10.0.1.5:8080", 
+#     geo = "us-east",
+#     peered_wafs = [
+#         { node_id = "edge-us-east-1", allowed = true },
+#         { node_id = "edge-us-west-1", allowed = true }
+#     ]
+# }
+# cdn-assets = { upstream_url = "http://10.0.1.10:80", geo = "us-east" }
+
+# ============================================================================
+# Example: Complete Global Node Configuration
+# ============================================================================
+# Global nodes have full topology view and verify certificates
+
+# [mesh]
+# enabled = true
+# node_id = "global-1"
+# role = "global"
+# port = 5001
+
+# # No seeds needed - this is a seed node itself
+# # Other nodes configure this as their seed
+
+# [mesh.local_upstreams]
+# # Global nodes can also host upstreams if needed
+# # monitoring-api = { upstream_url = "http://10.0.3.1:9090", geo = "us-east" }
+
+# ============================================================================
+# WireGuard Mesh Underlay (Recommended for >50ms RTT)
+# ============================================================================
+# When enabled, mesh traffic runs over WireGuard tunnels instead of raw QUIC.
+# Benefits:
+# - Lower latency for route lookups (persistent streams)
+# - Better throughput for backhaul traffic (kernel crypto)
+# - Simpler firewall rules (single UDP port)
+#
+# Generate keys with: wg genkey > wg-private.key && wg pubkey < wg-private.key
+
+[mesh.wireguard]
+enabled = true
+interface = "wg-mesh0"
+
+# WireGuard private key (from wg genkey)
+# private_key = "YOUR_PRIVATE_KEY_HERE"
+
+# Mesh network addresses (one per node, must be unique)
+addresses = ["10.100.0.1/24"]
+
+# Port for WireGuard to listen on
+listen_port = 51821
+
+# Keepalive interval in seconds (25 is good for NAT traversal)
+persistent_keepalive = 25
+
+# MTU - reduce for slower links (1420 is safe for most)
+mtu = 1420
+
+# DNS for the mesh network
+dns = ["10.100.0.1"]
+
+# Mesh peers (other WAF nodes in the mesh)
+# Each node needs the public keys of all other nodes
+# [[mesh.wireguard.peers]]
+# public_key = "PEER_PUBLIC_KEY_1"
+# endpoint = "203.0.113.2:51821"
+# allowed_ips = ["10.100.0.0/24"]
+
+# [[mesh.wireguard.peers]]
+# public_key = "PEER_PUBLIC_KEY_2"
+# endpoint = "203.0.113.3:51821"
+# allowed_ips = ["10.100.0.0/24"]
+
+# ============================================================================
+# Example: Complete Edge Node with WireGuard Mesh
+# ============================================================================
+# This node routes traffic and uses WireGuard for mesh communication
+
+# [mesh]
+# enabled = true
+# node_id = "edge-us-east-1"
+# role = "edge"
+# port = 5001
+
+# [[mesh.seeds]]
+# address = "203.0.113.1:5001"
+# public_key = "..."
+
+# [mesh.wireguard]
+# enabled = true
+# interface = "wg-mesh0"
+# private_key = "YOUR_PRIVATE_KEY"
+# addresses = ["10.100.0.1/24"]
+# listen_port = 51821
+# persistent_keepalive = 25
+# mtu = 1420
+# dns = ["10.100.0.1"]
+
+# [[mesh.wireguard.peers]]
+# public_key = "GLOBAL_NODE_PUBLIC_KEY"
+# endpoint = "203.0.113.1:51821"
+# allowed_ips = ["10.100.0.0/24"]
+
+# ============================================================================
+# Hybrid Mode: QUIC + WireGuard
+# ============================================================================
+# You can run both simultaneously:
+# - WireGuard: Used for persistent streams (low-latency lookups)
+# - QUIC: Used as fallback and for non-persistent messages
+#
+# When WireGuard is enabled, the mesh transport will:
+# 1. Bind to WireGuard interface IPs
+# 2. Use persistent QUIC streams over WireGuard for RouteQuery
+# 3. Fall back to direct QUIC if WireGuard is unavailable

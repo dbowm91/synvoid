@@ -109,7 +109,7 @@ impl CgiHandler {
             }
         }
 
-        let mut full_path = self.root.join(path);
+        let full_path = self.root.join(path);
         
         let canonical = std::fs::canonicalize(&full_path)
             .or_else(|_| {
@@ -200,7 +200,7 @@ impl CgiHandler {
 
         env.insert("SERVER_PROTOCOL".to_string(), "HTTP/1.1".to_string());
         env.insert("GATEWAY_INTERFACE".to_string(), "CGI/1.1".to_string());
-        env.insert("SERVER_SOFTWARE".to_string(), "rustwaf".to_string());
+        env.insert("SERVER_SOFTWARE".to_string(), "MaluWAF".to_string());
 
         if let Some(addr) = client_ip {
             env.insert("REMOTE_ADDR".to_string(), addr.to_string());
@@ -302,7 +302,7 @@ impl CgiHandler {
         &self,
         script_path: &PathBuf,
         method: &Method,
-        headers: &HeaderMap,
+        _headers: &HeaderMap,
         body: Bytes,
         env: HashMap<String, String>,
     ) -> Result<CgiResponse, CgiError> {

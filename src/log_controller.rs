@@ -1,6 +1,5 @@
 use once_cell::sync::Lazy;
 use parking_lot::RwLock;
-use std::sync::Arc;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 pub static LOG_LEVEL: Lazy<RwLock<String>> = Lazy::new(|| RwLock::new("info".to_string()));

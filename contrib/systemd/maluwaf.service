@@ -1,0 +1,37 @@
+[Unit]
+Description=MaluWAF - Multi-Process Web Application Firewall
+Documentation=https://github.com/maluwaf/maluwaf
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/maluwaf
+ExecStart=/usr/local/bin/maluwaf --overseer --foreground
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=5s
+
+# Resource limits
+LimitNOFILE=65535
+LimitNPROC=65535
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/maluwaf /var/log/maluwaf /var/run/maluwaf
+
+# Environment
+Environment=RUST_LOG=info
+Environment=MALUWAF_CONFIG_PATH=/opt/maluwaf/config
+
+# Watchdog support (optional - for systemd watchdog)
+WatchdogSec=30s
+NotifyAccess=all
+
+[Install]
+WantedBy=multi-user.target

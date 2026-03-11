@@ -1,0 +1,626 @@
+use crate::http_client::{HttpClient, get_with_timeout, create_simple_http_client};
+use std::time::{Duration, Instant};
+
+#[derive(Debug, Clone)]
+pub struct HealthChecker {
+    client: HttpClient,
+    health_path: String,
+    timeout_secs: u64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum HealthStatus {
+    Healthy,
+    Draining { active_connections: u64 },
+    Unhealthy { status: u16, message: String },
+    Error(String),
+}
+
+#[derive(Debug, Clone)]
+pub struct WorkerReadinessStatus {
+    pub port: u16,
+    pub ready: bool,
+    pub is_draining: bool,
+    pub active_connections: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct EnhancedHealthConfig {
+    pub sample_requests: usize,
+    pub latency_threshold_ms: u64,
+    pub error_rate_threshold: f64,
+    pub compare_with_baseline: bool,
+    pub shadow_traffic_path: Option<String>,
+}
+
+impl Default for EnhancedHealthConfig {
+    fn default() -> Self {
+        Self {
+            sample_requests: 5,
+            latency_threshold_ms: 1000,
+            error_rate_threshold: 0.1,
+            compare_with_baseline: true,
+            shadow_traffic_path: Some("/__internal__/health".to_string()),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct EnhancedHealthResult {
+    pub port: u16,
+    pub healthy: bool,
+    pub avg_latency_ms: u64,
+    pub p95_latency_ms: u64,
+    pub error_rate: f64,
+    pub success_count: usize,
+    pub total_requests: usize,
+    pub baseline_comparison: Option<BaselineComparison>,
+}
+
+#[derive(Debug, Clone)]
+pub struct BaselineComparison {
+    pub baseline_avg_latency_ms: u64,
+    pub latency_degradation_percent: f64,
+    pub is_degraded: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct ShadowTrafficResult {
+    pub port: u16,
+    pub requests_sent: usize,
+    pub old_version_successes: usize,
+    pub new_version_successes: usize,
+    pub old_version_avg_latency_ms: u64,
+    pub new_version_avg_latency_ms: u64,
+    pub latency_diff_percent: f64,
+    pub healthy: bool,
+}
+
+impl HealthChecker {
+    pub fn new(health_path: Option<String>, timeout_secs: Option<u64>) -> Self {
+        let timeout = Duration::from_secs(timeout_secs.unwrap_or(5));
+        let client = create_simple_http_client(timeout);
+
+        Self {
+            client,
+            health_path: health_path.unwrap_or_else(|| "/health".to_string()),
+            timeout_secs: timeout_secs.unwrap_or(5),
+        }
+    }
+
+    pub async fn check_worker(&self, host: &str, port: u16) -> HealthStatus {
+        let url = format!("http://{}:{}{}", host, port, self.health_path);
+
+        match get_with_timeout(&self.client, &url, Duration::from_secs(self.timeout_secs)).await {
+            Ok(response) => {
+                if response.status.is_success() {
+                    HealthStatus::Healthy
+                } else {
+                    HealthStatus::Unhealthy {
+                        status: response.status.as_u16(),
+                        message: format!("HTTP {}", response.status),
+                    }
+                }
+            }
+            Err(e) => HealthStatus::Error(e),
+        }
+    }
+
+    pub async fn check_worker_readiness(&self, host: &str, port: u16) -> WorkerReadinessStatus {
+        let url = format!("http://{}:{}/__internal__/ready", host, port);
+
+        match get_with_timeout(&self.client, &url, Duration::from_secs(2)).await {
+            Ok(response) => {
+                let status = response.status;
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&response.body) {
+                    let ready = json["ready"].as_bool().unwrap_or(status.is_success());
+                    let is_draining = json["reason"].as_str() == Some("draining");
+                    let active_connections = json["active_connections"].as_u64().unwrap_or(0);
+                    
+                    return WorkerReadinessStatus {
+                        port,
+                        ready,
+                        is_draining,
+                        active_connections,
+                    };
+                }
+                
+                WorkerReadinessStatus {
+                    port,
+                    ready: status.is_success(),
+                    is_draining: false,
+                    active_connections: 0,
+                }
+            }
+            Err(e) => {
+                tracing::debug!("Worker readiness check failed for port {}: {}", port, e);
+                WorkerReadinessStatus {
+                    port,
+                    ready: false,
+                    is_draining: false,
+                    active_connections: 0,
+                }
+            }
+        }
+    }
+
+    pub async fn check_worker_health_with_drain(&self, host: &str, port: u16) -> HealthStatus {
+        let url = format!("http://{}:{}/__internal__/health", host, port);
+
+        match get_with_timeout(&self.client, &url, Duration::from_secs(2)).await {
+            Ok(response) => {
+                let status = response.status;
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&response.body) {
+                    if let Some(status_str) = json["status"].as_str() {
+                        if status_str == "draining" {
+                            let active = json["active_connections"].as_u64().unwrap_or(0);
+                            return HealthStatus::Draining { active_connections: active };
+                        }
+                    }
+                }
+                
+                if status.is_success() {
+                    HealthStatus::Healthy
+                } else if status.as_u16() == 503 {
+                    HealthStatus::Draining { active_connections: 0 }
+                } else {
+                    HealthStatus::Unhealthy {
+                        status: status.as_u16(),
+                        message: format!("HTTP {}", status),
+                    }
+                }
+            }
+            Err(e) => HealthStatus::Error(e),
+        }
+    }
+
+    pub async fn check_workers(&self, ports: &[u16], host: &str) -> Vec<(u16, HealthStatus)> {
+        let mut results = Vec::new();
+
+        for &port in ports {
+            let status = self.check_worker(host, port).await;
+            results.push((port, status));
+        }
+
+        results
+    }
+
+    pub async fn check_all_workers_readiness(&self, ports: &[u16], host: &str) -> Vec<WorkerReadinessStatus> {
+        let mut results = Vec::new();
+
+        for &port in ports {
+            let status = self.check_worker_readiness(host, port).await;
+            results.push(status);
+        }
+
+        results
+    }
+
+    pub async fn validate_all(
+        &self,
+        ports: &[u16],
+        host: &str,
+        retries: u32,
+        interval_secs: u64,
+    ) -> Result<(), Vec<(u16, HealthStatus)>> {
+        for attempt in 1..=retries {
+            let results = self.check_workers(ports, host).await;
+
+            let all_healthy = results.iter().all(|(_, status)| {
+                matches!(status, HealthStatus::Healthy)
+            });
+
+            if all_healthy {
+                return Ok(());
+            }
+
+            if attempt < retries {
+                tokio::time::sleep(Duration::from_secs(interval_secs)).await;
+            }
+        }
+
+        let results = self.check_workers(ports, host).await;
+        let failures: Vec<_> = results
+            .into_iter()
+            .filter(|(_, status)| !matches!(status, HealthStatus::Healthy))
+            .collect();
+
+        Err(failures)
+    }
+
+    pub async fn validate_readiness(
+        &self,
+        ports: &[u16],
+        host: &str,
+        retries: u32,
+        interval_secs: u64,
+        warmup_secs: u64,
+    ) -> Result<Vec<WorkerReadinessStatus>, Vec<WorkerReadinessStatus>> {
+        if warmup_secs > 0 {
+            tracing::info!("Waiting {}s for workers to warm up", warmup_secs);
+            tokio::time::sleep(Duration::from_secs(warmup_secs)).await;
+        }
+
+        for attempt in 1..=retries {
+            let results = self.check_all_workers_readiness(ports, host).await;
+            let all_ready = results.iter().all(|r| r.ready && !r.is_draining);
+
+            if all_ready {
+                tracing::info!("All {} workers ready after {} attempts", ports.len(), attempt);
+                return Ok(results);
+            }
+
+            let not_ready: Vec<_> = results.iter().filter(|r| !r.ready).collect();
+            tracing::debug!(
+                "Attempt {}/{}: {}/{} workers ready, waiting {}s",
+                attempt,
+                retries,
+                ports.len() - not_ready.len(),
+                ports.len(),
+                interval_secs
+            );
+
+            if attempt < retries {
+                tokio::time::sleep(Duration::from_secs(interval_secs)).await;
+            }
+        }
+
+        let results = self.check_all_workers_readiness(ports, host).await;
+        let failures: Vec<_> = results.iter().filter(|r| !r.ready).cloned().collect();
+        
+        tracing::warn!(
+            "Readiness validation failed: {}/{} workers not ready",
+            failures.len(),
+            ports.len()
+        );
+        
+        Err(failures)
+    }
+
+    pub async fn validate_with_metrics(
+        &self,
+        ports: &[u16],
+        host: &str,
+        retries: u32,
+        interval_secs: u64,
+    ) -> Result<ValidationMetrics, Vec<(u16, HealthStatus)>> {
+        let mut total_checks = 0;
+        let mut successful_checks = 0;
+
+        for attempt in 1..=retries {
+            let results = self.check_workers(ports, host).await;
+            total_checks += ports.len();
+
+            let all_healthy = results.iter().all(|(_, status)| {
+                let healthy = matches!(status, HealthStatus::Healthy);
+                if healthy {
+                    successful_checks += 1;
+                }
+                healthy
+            });
+
+            if all_healthy {
+                return Ok(ValidationMetrics {
+                    total_checks,
+                    successful_checks,
+                    success_rate: if total_checks > 0 {
+                        successful_checks as f64 / total_checks as f64
+                    } else {
+                        0.0
+                    },
+                });
+            }
+
+            if attempt < retries {
+                tokio::time::sleep(Duration::from_secs(interval_secs)).await;
+            }
+        }
+
+        let results = self.check_workers(ports, host).await;
+        let failures: Vec<_> = results
+            .into_iter()
+            .filter(|(_, status)| !matches!(status, HealthStatus::Healthy))
+            .collect();
+
+        Err(failures)
+    }
+
+    pub async fn enhanced_health_check(
+        &self,
+        host: &str,
+        port: u16,
+        config: &EnhancedHealthConfig,
+    ) -> EnhancedHealthResult {
+        let url = format!("http://{}:{}{}", host, port, self.health_path);
+        let mut latencies = Vec::new();
+        let mut success_count = 0;
+        let mut error_count = 0;
+
+        for _ in 0..config.sample_requests {
+            let start = Instant::now();
+            
+            match get_with_timeout(&self.client, &url, Duration::from_millis(config.latency_threshold_ms * 2)).await {
+                Ok(response) => {
+                    let latency = start.elapsed().as_millis() as u64;
+                    latencies.push(latency);
+                    
+                    if response.status.is_success() {
+                        success_count += 1;
+                    } else {
+                        error_count += 1;
+                    }
+                }
+                Err(_) => {
+                    error_count += 1;
+                    latencies.push(config.latency_threshold_ms * 2);
+                }
+            }
+            
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+
+        latencies.sort();
+        let total_requests = config.sample_requests;
+        let error_rate = error_count as f64 / total_requests as f64;
+        let avg_latency_ms = if !latencies.is_empty() {
+            latencies.iter().sum::<u64>() / latencies.len() as u64
+        } else {
+            0
+        };
+        let p95_index = ((latencies.len() as f64) * 0.95).floor() as usize;
+        let p95_latency_ms = latencies.get(p95_index.saturating_sub(1)).copied().unwrap_or(0);
+
+        let healthy = error_rate <= config.error_rate_threshold 
+            && avg_latency_ms <= config.latency_threshold_ms;
+
+        EnhancedHealthResult {
+            port,
+            healthy,
+            avg_latency_ms,
+            p95_latency_ms,
+            error_rate,
+            success_count,
+            total_requests,
+            baseline_comparison: None,
+        }
+    }
+
+    pub async fn enhanced_health_check_with_baseline(
+        &self,
+        host: &str,
+        new_port: u16,
+        baseline_port: u16,
+        config: &EnhancedHealthConfig,
+    ) -> EnhancedHealthResult {
+        let baseline_result = self.enhanced_health_check(host, baseline_port, config).await;
+        let mut new_result = self.enhanced_health_check(host, new_port, config).await;
+
+        if baseline_result.healthy {
+            let latency_diff = if baseline_result.avg_latency_ms > 0 {
+                ((new_result.avg_latency_ms as f64 - baseline_result.avg_latency_ms as f64) 
+                    / baseline_result.avg_latency_ms as f64) * 100.0
+            } else {
+                0.0
+            };
+
+            let degradation_threshold = 50.0;
+            let is_degraded = latency_diff > degradation_threshold;
+
+            new_result.baseline_comparison = Some(BaselineComparison {
+                baseline_avg_latency_ms: baseline_result.avg_latency_ms,
+                latency_degradation_percent: latency_diff,
+                is_degraded,
+            });
+
+            if is_degraded && new_result.healthy {
+                tracing::warn!(
+                    "New version on port {} has {:.1}% higher latency than baseline ({}ms vs {}ms)",
+                    new_port,
+                    latency_diff,
+                    new_result.avg_latency_ms,
+                    baseline_result.avg_latency_ms
+                );
+            }
+        }
+
+        new_result
+    }
+
+    pub async fn validate_enhanced(
+        &self,
+        ports: &[u16],
+        host: &str,
+        config: &EnhancedHealthConfig,
+        retries: u32,
+        interval_secs: u64,
+    ) -> Result<Vec<EnhancedHealthResult>, Vec<EnhancedHealthResult>> {
+        for attempt in 1..=retries {
+            let mut results = Vec::new();
+            
+            for &port in ports {
+                let result = self.enhanced_health_check(host, port, config).await;
+                results.push(result);
+            }
+
+            let all_healthy = results.iter().all(|r| r.healthy);
+
+            if all_healthy {
+                tracing::info!(
+                    "Enhanced health check passed on attempt {} for all {} ports",
+                    attempt,
+                    ports.len()
+                );
+                return Ok(results);
+            }
+
+            let unhealthy_count = results.iter().filter(|r| !r.healthy).count();
+            tracing::debug!(
+                "Enhanced health check attempt {}/{}: {}/{} ports healthy",
+                attempt,
+                retries,
+                ports.len() - unhealthy_count,
+                ports.len()
+            );
+
+            if attempt < retries {
+                tokio::time::sleep(Duration::from_secs(interval_secs)).await;
+            }
+        }
+
+        let results: Vec<_> = futures::future::join_all(
+            ports.iter().map(|&port| self.enhanced_health_check(host, port, config))
+        ).await;
+
+        let failures: Vec<_> = results.into_iter().filter(|r| !r.healthy).collect();
+        
+        Err(failures)
+    }
+
+    pub async fn shadow_traffic_test(
+        &self,
+        host: &str,
+        old_port: u16,
+        new_port: u16,
+        config: &EnhancedHealthConfig,
+    ) -> ShadowTrafficResult {
+        let path = config.shadow_traffic_path.as_deref().unwrap_or("/__internal__/health");
+        
+        let mut old_latencies = Vec::new();
+        let mut new_latencies = Vec::new();
+        let mut old_successes: usize = 0;
+        let mut new_successes: usize = 0;
+
+        for _ in 0..config.sample_requests {
+            let old_url = format!("http://{}:{}{}", host, old_port, path);
+            let new_url = format!("http://{}:{}{}", host, new_port, path);
+
+            let (old_result, new_result) = tokio::join!(
+                self.make_shadow_request(&old_url, config.latency_threshold_ms * 2),
+                self.make_shadow_request(&new_url, config.latency_threshold_ms * 2)
+            );
+
+            if let Some(latency) = old_result.0 {
+                old_latencies.push(latency);
+                if old_result.1 {
+                    old_successes += 1;
+                }
+            }
+
+            if let Some(latency) = new_result.0 {
+                new_latencies.push(latency);
+                if new_result.1 {
+                    new_successes += 1;
+                }
+            }
+
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+
+        let old_avg = if !old_latencies.is_empty() {
+            old_latencies.iter().sum::<u64>() / old_latencies.len() as u64
+        } else {
+            0
+        };
+
+        let new_avg = if !new_latencies.is_empty() {
+            new_latencies.iter().sum::<u64>() / new_latencies.len() as u64
+        } else {
+            0
+        };
+
+        let latency_diff = if old_avg > 0 {
+            ((new_avg as f64 - old_avg as f64) / old_avg as f64) * 100.0
+        } else {
+            0.0
+        };
+
+        let healthy = new_successes >= old_successes.saturating_sub(1)
+            && latency_diff < 100.0;
+
+        ShadowTrafficResult {
+            port: new_port,
+            requests_sent: config.sample_requests,
+            old_version_successes: old_successes,
+            new_version_successes: new_successes,
+            old_version_avg_latency_ms: old_avg,
+            new_version_avg_latency_ms: new_avg,
+            latency_diff_percent: latency_diff,
+            healthy,
+        }
+    }
+
+    async fn make_shadow_request(&self, url: &str, timeout_ms: u64) -> (Option<u64>, bool) {
+        let start = Instant::now();
+        
+        match get_with_timeout(&self.client, url, Duration::from_millis(timeout_ms)).await {
+            Ok(response) => {
+                let latency = start.elapsed().as_millis() as u64;
+                (Some(latency), response.status.is_success())
+            }
+            Err(_) => (None, false),
+        }
+    }
+
+    pub async fn comprehensive_validation(
+        &self,
+        old_ports: &[u16],
+        new_ports: &[u16],
+        host: &str,
+        config: &EnhancedHealthConfig,
+    ) -> Result<Vec<EnhancedHealthResult>, String> {
+        if old_ports.len() != new_ports.len() {
+            return Err("Port count mismatch between old and new versions".to_string());
+        }
+
+        let mut results = Vec::new();
+
+        for (old_port, new_port) in old_ports.iter().zip(new_ports.iter()) {
+            let result = self.enhanced_health_check_with_baseline(host, *new_port, *old_port, config).await;
+            
+            if !result.healthy {
+                return Err(format!(
+                    "Port {} failed health check: error_rate={:.1}%, avg_latency={}ms",
+                    new_port, result.error_rate * 100.0, result.avg_latency_ms
+                ));
+            }
+
+            if let Some(ref comparison) = result.baseline_comparison {
+                if comparison.is_degraded {
+                    tracing::warn!(
+                        "Port {} shows latency degradation of {:.1}% (baseline: {}ms, new: {}ms)",
+                        new_port,
+                        comparison.latency_degradation_percent,
+                        comparison.baseline_avg_latency_ms,
+                        result.avg_latency_ms
+                    );
+                }
+            }
+
+            results.push(result);
+        }
+
+        Ok(results)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ValidationMetrics {
+    pub total_checks: usize,
+    pub successful_checks: usize,
+    pub success_rate: f64,
+}
+
+impl std::fmt::Display for HealthStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            HealthStatus::Healthy => write!(f, "healthy"),
+            HealthStatus::Draining { active_connections } => {
+                write!(f, "draining ({} active)", active_connections)
+            }
+            HealthStatus::Unhealthy { status, message } => {
+                write!(f, "unhealthy (HTTP {}: {})", status, message)
+            }
+            HealthStatus::Error(e) => write!(f, "error: {}", e),
+        }
+    }
+}

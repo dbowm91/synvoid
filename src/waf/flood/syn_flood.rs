@@ -1,6 +1,8 @@
+#![allow(unused_variables, dead_code)]
+
 use std::collections::HashMap;
 use std::net::IpAddr;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::RwLock;
 use std::time::Instant;
 
@@ -63,20 +65,20 @@ impl SynFloodProtector {
 
         let current = self.global_counter.fetch_add(1, Ordering::Relaxed) + 1;
         if current > self.global_rate as u64 {
-            metrics::counter!("rustwaf.syn_flood.global_limited").increment(1);
+            metrics::counter!("maluwaf.syn_flood.global_limited").increment(1);
             return FloodDecision::RateLimited;
         }
 
         let slot = self.ip_to_slot(ip);
         let ip_count = self.per_ip_counters[slot].fetch_add(1, Ordering::Relaxed) + 1;
         if ip_count > self.per_ip_rate {
-            metrics::counter!("rustwaf.syn_flood.ip_limited").increment(1);
+            metrics::counter!("maluwaf.syn_flood.ip_limited").increment(1);
             return FloodDecision::RateLimited;
         }
 
         let half_open = self.half_open_total.load(Ordering::Relaxed);
         if half_open > self.half_open_max {
-            metrics::counter!("rustwaf.syn_flood.half_open_exceeded").increment(1);
+            metrics::counter!("maluwaf.syn_flood.half_open_exceeded").increment(1);
             return FloodDecision::RateLimited;
         }
 
@@ -88,7 +90,7 @@ impl SynFloodProtector {
             let mut map = self.half_open_ips.write().unwrap();
 
             if map.len() >= MAX_HALF_OPEN_ENTRIES {
-                metrics::counter!("rustwaf.syn_flood.half_open_map_full").increment(1);
+                metrics::counter!("maluwaf.syn_flood.half_open_map_full").increment(1);
                 return;
             }
 
@@ -102,8 +104,8 @@ impl SynFloodProtector {
             entry.last_seen = now;
 
             let half_open = self.half_open_total.fetch_add(1, Ordering::Relaxed) + 1;
-            metrics::counter!("rustwaf.syn_flood.half_open").increment(1);
-            metrics::gauge!("rustwaf.syn_flood.half_open_count").set(half_open as f64);
+            metrics::counter!("maluwaf.syn_flood.half_open").increment(1);
+            metrics::gauge!("maluwaf.syn_flood.half_open_count").set(half_open as f64);
         }
 
         self.maybe_cleanup();
@@ -132,7 +134,7 @@ impl SynFloodProtector {
         if should_decrement {
             self.half_open_total.fetch_sub(1, Ordering::Relaxed);
             let half_open = self.half_open_total.load(Ordering::Relaxed);
-            metrics::gauge!("rustwaf.syn_flood.half_open_count").set(half_open as f64);
+            metrics::gauge!("maluwaf.syn_flood.half_open_count").set(half_open as f64);
         }
     }
 
@@ -190,13 +192,13 @@ impl SynFloodProtector {
             self.half_open_total
                 .fetch_sub(removed_count, Ordering::Relaxed);
             let half_open = self.half_open_total.load(Ordering::Relaxed);
-            metrics::gauge!("rustwaf.syn_flood.half_open_count").set(half_open as f64);
+            metrics::gauge!("maluwaf.syn_flood.half_open_count").set(half_open as f64);
             tracing::debug!("Cleaned up {} stale half-open connections", removed_count);
         }
     }
 
     pub fn get_stats(&self) -> SynFloodStats {
-        let now_secs = self.start_instant.elapsed().as_secs();
+        let _now_secs = self.start_instant.elapsed().as_secs();
         SynFloodStats {
             global_syn_rate: self.global_counter.load(Ordering::Relaxed),
             half_open_connections: self.half_open_total.load(Ordering::Relaxed),
@@ -210,6 +212,28 @@ pub struct SynFloodStats {
     pub global_syn_rate: u64,
     pub half_open_connections: u32,
     pub unique_half_open_ips: usize,
+}
+
+impl super::SynFloodBackend for SynFloodProtector {
+    fn check_syn(&self, ip: IpAddr) -> super::FloodDecision {
+        SynFloodProtector::check_syn(self, ip)
+    }
+
+    fn register_half_open(&self, ip: IpAddr) {
+        SynFloodProtector::register_half_open(self, ip);
+    }
+
+    fn register_ack(&self, ip: IpAddr) {
+        SynFloodProtector::register_ack(self, ip);
+    }
+
+    fn complete_half_open(&self, ip: IpAddr) {
+        SynFloodProtector::complete_half_open(self, ip);
+    }
+
+    fn get_stats(&self) -> SynFloodStats {
+        SynFloodProtector::get_stats(self)
+    }
 }
 
 #[cfg(test)]

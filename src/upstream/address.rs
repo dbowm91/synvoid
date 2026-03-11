@@ -8,8 +8,6 @@ use parking_lot::Mutex;
 use thiserror::Error;
 use quinn::{RecvStream, SendStream};
 
-use crate::tunnel::QUIC_TUNNEL_REGISTRY;
-
 #[derive(Error, Debug)]
 pub enum UpstreamError {
     #[error("Invalid address: {0}")]

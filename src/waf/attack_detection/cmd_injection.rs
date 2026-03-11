@@ -2,93 +2,62 @@ use aho_corasick::AhoCorasick;
 use std::sync::Arc;
 
 use crate::waf::attack_detection::config::{AttackDetectionResult, AttackType, InputLocation};
+use crate::waf::attack_detection::detector_common::{BasePatternDetector, PatternDetector};
 use crate::waf::attack_detection::patterns::DefaultPatterns;
 
 pub struct CmdInjectionDetector {
-    patterns: Arc<AhoCorasick>,
+    inner: BasePatternDetector,
 }
 
 impl CmdInjectionDetector {
     pub fn new(paranoia_level: u8, custom_patterns: &[String]) -> Self {
-        let mut base_patterns: Vec<String> = DefaultPatterns::cmd_injection()
-            .iter()
-            .map(|s| s.to_lowercase())
-            .collect();
-
-        if paranoia_level >= 3 {
-            base_patterns.extend(
-                DefaultPatterns::cmd_injection_high()
-                    .iter()
-                    .map(|s| s.to_lowercase()),
-            );
-        }
-
-        for pattern in custom_patterns {
-            let pattern_lower = pattern.to_lowercase();
-            if !base_patterns.contains(&pattern_lower) {
-                base_patterns.push(pattern_lower);
-            }
-        }
-
-        let patterns_str: Vec<&str> = base_patterns.iter().map(|s| s.as_str()).collect();
-        let patterns = Arc::new(AhoCorasick::new(&patterns_str).unwrap());
-
-        Self { patterns }
+        let inner = BasePatternDetector::new(
+            DefaultPatterns::cmd_injection().as_slice(),
+            DefaultPatterns::cmd_injection_high().as_slice(),
+            custom_patterns,
+            paranoia_level,
+            AttackType::CmdInjection,
+            "cmd_injection",
+        );
+        Self { inner }
     }
 
-    pub fn detect(&self, input: &str, location: InputLocation) -> Option<AttackDetectionResult> {
+    fn detect_with_normalization(
+        &self,
+        input: &str,
+        location: InputLocation,
+    ) -> Option<AttackDetectionResult> {
         let normalized = normalize_input(input);
 
-        if self.patterns.is_match(&normalized) {
-            if let Some(mat) = self.patterns.find(&normalized) {
-                let matched = normalized[mat.start()..mat.end()].to_string();
+        if let Some(mat) = self.inner.patterns_ref().find(&normalized) {
+            let matched = normalized[mat.start()..mat.end()].to_string();
 
-                tracing::warn!(
-                    attack_type = "cmd_injection",
-                    matched_pattern = %matched,
-                    location = %location,
-                    "Command injection detected"
-                );
+            tracing::warn!(
+                attack_type = "cmd_injection",
+                matched_pattern = %matched,
+                location = %location,
+                "Command injection detected"
+            );
 
-                return Some(AttackDetectionResult {
-                    attack_type: AttackType::CmdInjection,
-                    fingerprint: None,
-                    matched_pattern: Some(matched),
-                    input_location: location,
-                });
-            }
+            return Some(AttackDetectionResult {
+                attack_type: AttackType::CmdInjection,
+                fingerprint: None,
+                matched_pattern: Some(matched),
+                input_location: location,
+            });
         }
 
         None
     }
+}
 
-    pub fn detect_in_headers<F>(
-        &self,
-        headers: &http::HeaderMap,
-        mut check_header: F,
-    ) -> Option<AttackDetectionResult>
-    where
-        F: FnMut(&str) -> bool,
-    {
-        let headers_to_check = DefaultPatterns::headers_to_check();
+impl PatternDetector for CmdInjectionDetector {
+    fn patterns(&self) -> &Arc<AhoCorasick> {
+        self.inner.patterns()
+    }
 
-        for header_name in headers_to_check {
-            if let Some(value) = headers.get(*header_name) {
-                if !check_header(*header_name) {
-                    continue;
-                }
-
-                if let Ok(value_str) = value.to_str() {
-                    let location = InputLocation::Header(header_name.to_string());
-
-                    if let Some(result) = self.detect(value_str, location.clone()) {
-                        return Some(result);
-                    }
-                }
-            }
-        }
-
-        None
+    fn detect(&self, input: &str, location: InputLocation) -> Option<AttackDetectionResult> {
+        self.detect_with_normalization(input, location)
     }
 }
 

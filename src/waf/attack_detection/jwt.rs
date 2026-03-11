@@ -52,11 +52,19 @@ impl JwtDetector {
             return Some(result);
         }
 
-        if signature.is_empty() || signature == " ''" || signature == "\"\"" {
+        if signature.is_empty()
+            || signature.trim().is_empty()
+            || signature == "''"
+            || signature == "\"\""
+            || signature == "."
+            || signature
+                .chars()
+                .all(|c| c == '\u{0}' || c.is_ascii_whitespace())
+        {
             tracing::warn!(
                 attack_type = "jwt",
                 location = %location,
-                "JWT with empty signature detected"
+                "JWT with empty/invalid signature detected"
             );
 
             return Some(AttackDetectionResult {
@@ -81,19 +89,63 @@ impl JwtDetector {
     ) -> Option<AttackDetectionResult> {
         let header_lower = header.to_lowercase();
 
-        if header_lower.contains("\"alg\":\"none\"") || header_lower.contains("\"alg\":none") {
-            tracing::warn!(
-                attack_type = "jwt",
-                location = %location,
-                "JWT algorithm confusion attack (alg: none)"
-            );
+        let alg_patterns = [
+            "\"alg\":\"none\"",
+            "\"alg\":none",
+            "\"alg\":\"null\"",
+            "\"alg\":null",
+            "\"alg\":\"\"",
+        ];
 
-            return Some(AttackDetectionResult {
-                attack_type: AttackType::Jwt,
-                fingerprint: Some("alg_none".to_string()),
-                matched_pattern: Some("alg:none".to_string()),
-                input_location: location,
-            });
+        for pattern in alg_patterns {
+            if header_lower.contains(pattern) {
+                tracing::warn!(
+                    attack_type = "jwt",
+                    location = %location,
+                    "JWT algorithm confusion attack (alg: none/null)"
+                );
+
+                return Some(AttackDetectionResult {
+                    attack_type: AttackType::Jwt,
+                    fingerprint: Some("alg_none".to_string()),
+                    matched_pattern: Some(pattern.to_string()),
+                    input_location: location,
+                });
+            }
+        }
+
+        if header_lower.contains("\"alg\":")
+            && !header_lower.contains("\"alg\":\"hs")
+            && !header_lower.contains("\"alg\":\"rs")
+            && !header_lower.contains("\"alg\":\"es")
+            && !header_lower.contains("\"alg\":\"ps")
+        {
+            if let Some(start) = header_lower.find("\"alg\":") {
+                let rest = &header_lower[start..];
+                if let Some(end) =
+                    rest.find(|c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '_')
+                {
+                    let alg_value = &rest[7..end.min(20)];
+                    if alg_value.is_empty()
+                        || alg_value == "null"
+                        || alg_value == "none"
+                        || alg_value.len() < 3
+                    {
+                        tracing::warn!(
+                            attack_type = "jwt",
+                            location = %location,
+                            "JWT suspicious algorithm detected"
+                        );
+
+                        return Some(AttackDetectionResult {
+                            attack_type: AttackType::Jwt,
+                            fingerprint: Some("suspicious_alg".to_string()),
+                            matched_pattern: Some(alg_value.to_string()),
+                            input_location: location,
+                        });
+                    }
+                }
+            }
         }
 
         if self.patterns.is_match(header) {
@@ -125,23 +177,40 @@ impl JwtDetector {
         location: InputLocation,
     ) -> Option<AttackDetectionResult> {
         let decoded = decode_jwt_part(payload)?;
+        let decoded_lower = decoded.to_lowercase();
 
-        if decoded.contains("\"admin\":true")
-            || decoded.contains("\"role\":\"admin\"")
-            || decoded.contains("\"role\":\"superuser\"")
-        {
-            tracing::warn!(
-                attack_type = "jwt",
-                location = %location,
-                "JWT privilege escalation attempt detected"
-            );
+        let privilege_patterns = [
+            "\"admin\":true",
+            "\"admin\":1",
+            "\"admin\":\"true\"",
+            "\"admin\":\"yes\"",
+            "\"is_admin\":true",
+            "\"is_admin\":1",
+            "\"role\":\"admin\"",
+            "\"role\":\"superuser\"",
+            "\"role\":\"root\"",
+            "\"role\":\"moderator\"",
+            "\"permissions\":[\"admin\"]",
+            "\"permissions\":[\"root\"]",
+            "\"user.role\":\"admin\"",
+            "\"user.role\":\"root\"",
+        ];
 
-            return Some(AttackDetectionResult {
-                attack_type: AttackType::Jwt,
-                fingerprint: Some("privilege_escalation".to_string()),
-                matched_pattern: None,
-                input_location: location,
-            });
+        for pattern in privilege_patterns {
+            if decoded_lower.contains(pattern) {
+                tracing::warn!(
+                    attack_type = "jwt",
+                    location = %location,
+                    "JWT privilege escalation attempt detected"
+                );
+
+                return Some(AttackDetectionResult {
+                    attack_type: AttackType::Jwt,
+                    fingerprint: Some("privilege_escalation".to_string()),
+                    matched_pattern: Some(pattern.to_string()),
+                    input_location: location,
+                });
+            }
         }
 
         None

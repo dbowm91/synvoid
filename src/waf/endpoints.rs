@@ -1,4 +1,6 @@
-use crate::theme::{ErrorPageTemplate, ThemeConfig};
+use crate::http::headers::generate_stealth_timestamp;
+use crate::theme::{ErrorPageTemplate, ThemeConfig, ThemeRenderer};
+use crate::utils::check_regex_complexity;
 use parking_lot::RwLock;
 use regex::Regex;
 use std::collections::{HashMap, HashSet};
@@ -61,6 +63,16 @@ impl EndpointBlockerManager {
 
         for p in paths {
             if use_regex {
+                let complexity = check_regex_complexity(p);
+                if !complexity.safe {
+                    invalid.push((
+                        p.clone(),
+                        complexity
+                            .reason
+                            .unwrap_or_else(|| "Unknown risk".to_string()),
+                    ));
+                    continue;
+                }
                 match Regex::new(p) {
                     Ok(_) => valid.push(p.clone()),
                     Err(e) => invalid.push((p.clone(), e.to_string())),
@@ -198,7 +210,39 @@ pub struct ErrorPageManager {
     default_pages: Arc<HashMap<u16, String>>,
     custom_pages: Arc<RwLock<HashMap<u16, String>>>,
     enabled: bool,
+    mode: ErrorPageMode,
     theme: ThemeConfig,
+}
+
+impl ErrorPageManager {
+    pub fn theme(&self) -> &ThemeConfig {
+        &self.theme
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum ErrorPageMode {
+    Generic,
+    Styled,
+    Custom,
+}
+
+impl ErrorPageMode {
+    pub fn from_str(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "styled" => ErrorPageMode::Styled,
+            "custom" => ErrorPageMode::Custom,
+            _ => ErrorPageMode::Generic,
+        }
+    }
+
+    pub fn subdirectory(&self) -> &'static str {
+        match self {
+            ErrorPageMode::Generic => "generic",
+            ErrorPageMode::Styled => "styled",
+            ErrorPageMode::Custom => "",
+        }
+    }
 }
 
 fn escape_html(s: &str) -> String {
@@ -211,7 +255,13 @@ fn escape_html(s: &str) -> String {
 
 impl ErrorPageManager {
     pub fn new(default_dir: &str, custom_dir: Option<String>, enabled: bool) -> Self {
-        Self::with_theme(default_dir, custom_dir, enabled, ThemeConfig::default())
+        Self::with_theme_and_mode(
+            default_dir,
+            custom_dir,
+            enabled,
+            "generic",
+            ThemeConfig::default(),
+        )
     }
 
     pub fn with_theme(
@@ -220,10 +270,70 @@ impl ErrorPageManager {
         enabled: bool,
         theme: ThemeConfig,
     ) -> Self {
-        let default_pages = Self::load_directory(default_dir);
+        Self::with_theme_and_mode(default_dir, custom_dir, enabled, "generic", theme)
+    }
 
-        let custom_pages = if let Some(custom_dir) = custom_dir {
-            Self::load_directory(&custom_dir)
+    pub fn with_theme_and_mode(
+        default_dir: &str,
+        custom_dir: Option<String>,
+        enabled: bool,
+        mode: &str,
+        theme: ThemeConfig,
+    ) -> Self {
+        let error_page_mode = ErrorPageMode::from_str(mode);
+
+        let resolved_dir = if error_page_mode == ErrorPageMode::Custom {
+            custom_dir.clone().unwrap_or_else(|| {
+                log::warn!(
+                    "error_pages mode is 'custom' but custom_directory not specified, falling back to 'styled'"
+                );
+                format!("{}/styled", default_dir.trim_end_matches('/'))
+            })
+        } else {
+            format!(
+                "{}/{}",
+                default_dir.trim_end_matches('/'),
+                error_page_mode.subdirectory()
+            )
+        };
+
+        let mode_name = match error_page_mode {
+            ErrorPageMode::Generic => "generic",
+            ErrorPageMode::Styled => "styled",
+            ErrorPageMode::Custom => "custom",
+        };
+
+        let custom_dir_str = custom_dir.as_deref().unwrap_or("none");
+
+        log::info!(
+            "Error pages: mode={}, directory='{}', custom_directory={}, custom_pages={}",
+            mode_name,
+            resolved_dir,
+            custom_dir_str,
+            if custom_dir.is_some() {
+                "loaded"
+            } else {
+                "none"
+            }
+        );
+
+        let default_pages = Self::load_directory(&resolved_dir);
+
+        if default_pages.is_empty() {
+            log::warn!(
+                "Error pages directory '{}' is empty or not found - using minimal fallback pages",
+                resolved_dir
+            );
+        } else {
+            log::trace!(
+                "Loaded {} error pages from '{}'",
+                default_pages.len(),
+                resolved_dir
+            );
+        }
+
+        let custom_pages = if let Some(ref custom_dir) = custom_dir {
+            Self::load_directory(custom_dir)
         } else {
             HashMap::new()
         };
@@ -232,6 +342,7 @@ impl ErrorPageManager {
             default_pages: Arc::new(default_pages),
             custom_pages: Arc::new(RwLock::new(custom_pages)),
             enabled,
+            mode: error_page_mode,
             theme,
         }
     }
@@ -273,14 +384,34 @@ impl ErrorPageManager {
     }
 
     pub fn render_page(&self, status_code: u16, message: Option<&str>) -> String {
+        self.render_page_with_theme(status_code, message, None)
+    }
+
+    pub fn render_page_with_theme(
+        &self,
+        status_code: u16,
+        message: Option<&str>,
+        override_theme: Option<&ThemeConfig>,
+    ) -> String {
+        let theme = override_theme.unwrap_or(&self.theme);
+
+        if !self.enabled || self.default_pages.is_empty() {
+            return Self::minimal_page(status_code, message);
+        }
+
         let page = self
             .get_page(status_code)
-            .or_else(|| self.default_pages.get(&0).cloned())
-            .unwrap_or_else(|| Self::fallback_page(status_code, message, &self.theme));
+            .or_else(|| self.default_pages.get(&0).cloned());
 
-        let timestamp = chrono::Utc::now()
-            .format("%Y-%m-%d %H:%M:%S UTC")
-            .to_string();
+        let Some(page) = page else {
+            return if self.mode == ErrorPageMode::Styled {
+                Self::fallback_page(status_code, message, theme)
+            } else {
+                Self::minimal_page(status_code, message)
+            };
+        };
+
+        let timestamp = generate_stealth_timestamp(5).replace("GMT", "UTC");
         let message = message.unwrap_or(match status_code {
             400 => "Bad Request",
             401 => "Unauthorized",
@@ -303,9 +434,43 @@ impl ErrorPageManager {
         let escaped_message = escape_html(message);
         let escaped_timestamp = escape_html(&timestamp);
 
-        page.replace("{{status_code}}", &status_code.to_string())
+        let mut result = page
+            .replace("{{status_code}}", &status_code.to_string())
             .replace("{{message}}", &escaped_message)
-            .replace("{{timestamp}}", &escaped_timestamp)
+            .replace("{{timestamp}}", &escaped_timestamp);
+
+        if result.contains("{{theme_css}}") {
+            let theme_css = ThemeRenderer::new(theme.clone()).generate_css();
+            result = result.replace("{{theme_css}}", &theme_css);
+        }
+
+        result
+    }
+
+    fn minimal_page(status_code: u16, message: Option<&str>) -> String {
+        let status_text = match status_code {
+            400 => "Bad Request",
+            401 => "Unauthorized",
+            403 => "Forbidden",
+            404 => "Not Found",
+            405 => "Method Not Allowed",
+            408 => "Request Timeout",
+            413 => "Payload Too Large",
+            414 => "URI Too Long",
+            429 => "Too Many Requests",
+            431 => "Request Header Fields Too Large",
+            500 => "Internal Server Error",
+            501 => "Not Implemented",
+            502 => "Bad Gateway",
+            503 => "Service Unavailable",
+            504 => "Gateway Timeout",
+            _ => "Error",
+        };
+        let msg = message.unwrap_or(status_text);
+        format!(
+            "<!DOCTYPE html><html><head><title>{} {}</title></head><body><h1>{}</h1><p>{}</p></body></html>",
+            status_code, status_text, status_code, msg
+        )
     }
 
     fn fallback_page(status_code: u16, message: Option<&str>, theme: &ThemeConfig) -> String {

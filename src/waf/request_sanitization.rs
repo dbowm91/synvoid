@@ -1,4 +1,4 @@
-use http::{HeaderMap, HeaderName, HeaderValue};
+use http::{HeaderMap, HeaderName};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 #[derive(Debug, Clone)]
@@ -86,23 +86,7 @@ impl RequestSanitizer {
     pub fn sanitize(&self, headers: &mut HeaderMap, client_ip: IpAddr) -> SanitizedRequest {
         let mut sanitized = SanitizedRequest::default();
 
-        if !self.sanitize_forwarded {
-            sanitized.original_forwarded_for = headers
-                .get("x-forwarded-for")
-                .and_then(|v| v.to_str().ok())
-                .map(String::from);
-            sanitized.original_forwarded_proto = headers
-                .get("x-forwarded-proto")
-                .and_then(|v| v.to_str().ok())
-                .map(String::from);
-            sanitized.original_forwarded_host = headers
-                .get("x-forwarded-host")
-                .and_then(|v| v.to_str().ok())
-                .map(String::from);
-            return sanitized;
-        }
-
-        if self.is_trusted_proxy(client_ip) {
+        if self.sanitize_forwarded && self.is_trusted_proxy(client_ip) {
             sanitized.original_forwarded_for = headers
                 .get("x-forwarded-for")
                 .and_then(|v| v.to_str().ok())
@@ -116,7 +100,7 @@ impl RequestSanitizer {
                 .and_then(|v| v.to_str().ok())
                 .map(String::from);
             sanitized.forwarded_from_trusted = true;
-        } else {
+        } else if self.sanitize_forwarded {
             headers.remove("x-forwarded-for");
             headers.remove("x-forwarded-proto");
             headers.remove("x-forwarded-host");
@@ -128,6 +112,8 @@ impl RequestSanitizer {
             sanitized.original_forwarded_host = None;
             sanitized.forwarded_from_trusted = false;
             sanitized.headers_sanitized = true;
+        } else {
+            sanitized.client_ip = Some(client_ip);
         }
 
         sanitized.client_ip = Some(client_ip);
@@ -154,29 +140,31 @@ impl RequestSanitizer {
     }
 
     pub fn get_real_ip(&self, headers: &HeaderMap, client_ip: IpAddr) -> Option<IpAddr> {
-        if !self.sanitize_forwarded {
-            return Some(client_ip);
-        }
-
-        if self.is_trusted_proxy(client_ip) {
-            if let Some(forwarded_for) = headers.get("x-forwarded-for") {
-                if let Ok(value) = forwarded_for.to_str() {
-                    if let Some(first_ip) = value.split(',').next() {
-                        if let Ok(ip) = first_ip.trim().parse::<IpAddr>() {
-                            return Some(ip);
+        if self.sanitize_forwarded {
+            if self.is_trusted_proxy(client_ip) {
+                if let Some(forwarded_for) = headers.get("x-forwarded-for") {
+                    if let Ok(value) = forwarded_for.to_str() {
+                        if let Some(first_ip) = value.split(',').next() {
+                            if let Ok(ip) = first_ip.trim().parse::<IpAddr>() {
+                                if !self.is_private_ip(&ip) {
+                                    return Some(ip);
+                                }
+                            }
                         }
                     }
                 }
-            }
 
-            if let Some(forwarded) = headers.get("forwarded") {
-                if let Ok(value) = forwarded.to_str() {
-                    for part in value.split(';') {
-                        if let Some((key, val)) = part.split_once('=') {
-                            if key.trim().eq_ignore_ascii_case("for") {
-                                let ip_str = val.trim().trim_matches('"');
-                                if let Ok(ip) = ip_str.parse::<IpAddr>() {
-                                    return Some(ip);
+                if let Some(forwarded) = headers.get("forwarded") {
+                    if let Ok(value) = forwarded.to_str() {
+                        for part in value.split(';') {
+                            if let Some((key, val)) = part.split_once('=') {
+                                if key.trim().eq_ignore_ascii_case("for") {
+                                    let ip_str = val.trim().trim_matches('"');
+                                    if let Ok(ip) = ip_str.parse::<IpAddr>() {
+                                        if !self.is_private_ip(&ip) {
+                                            return Some(ip);
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -186,6 +174,29 @@ impl RequestSanitizer {
         }
 
         Some(client_ip)
+    }
+
+    fn is_private_ip(&self, ip: &IpAddr) -> bool {
+        match ip {
+            IpAddr::V4(ipv4) => {
+                let octets = ipv4.octets();
+                octets[0] == 10
+                    || (octets[0] == 172 && (16..=31).contains(&octets[1]))
+                    || (octets[0] == 192 && octets[1] == 168)
+                    || octets[0] == 127
+                    || octets[0] == 0
+            }
+            IpAddr::V6(ipv6) => {
+                let segments = ipv6.segments();
+                segments[0] == 0xfc00
+                    || segments[0] == 0xfe00
+                    || segments[0] == 0xfc00
+                    || (segments[0] & 0xffc0) == 0xfe80
+                    || segments == [0, 0, 0, 0, 0, 0, 0, 1]
+                    || segments == [0, 0, 0, 0, 0, 0, 0, 0]
+                    || (segments[0] & 0xff00) == 0xff00
+            }
+        }
     }
 }
 

@@ -1,60 +1,57 @@
 use aho_corasick::AhoCorasick;
+use once_cell::sync::Lazy;
 use regex::Regex;
 use std::sync::Arc;
 
+use crate::utils::url_decode_all;
 use crate::waf::attack_detection::config::{AttackDetectionResult, AttackType, InputLocation};
+use crate::waf::attack_detection::detector_common::{BasePatternDetector, PatternDetector};
 use crate::waf::attack_detection::patterns::DefaultPatterns;
 
+static IP_REGEX: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"https?://(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})").unwrap());
+
 pub struct RfiDetector {
-    automaton: Arc<AhoCorasick>,
-    ip_pattern: Regex,
+    inner: BasePatternDetector,
+    ip_pattern: &'static Regex,
 }
 
 impl RfiDetector {
     pub fn new(paranoia_level: u8, custom_patterns: &[String]) -> Self {
-        let mut patterns: Vec<String> = if paranoia_level >= 3 {
-            DefaultPatterns::rfi_high()
-                .iter()
-                .map(|s| s.to_lowercase())
-                .collect()
-        } else {
-            DefaultPatterns::rfi()
-                .iter()
-                .map(|s| s.to_lowercase())
-                .collect()
-        };
-
-        for custom in custom_patterns {
-            patterns.push(custom.to_lowercase());
-        }
-
-        let ac = AhoCorasick::new(&patterns).expect("Failed to build Aho-Corasick automaton");
-
-        let ip_pattern = Regex::new(r"https?://(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})")
-            .expect("Failed to compile IP regex");
-
+        let inner = BasePatternDetector::new(
+            DefaultPatterns::rfi().as_slice(),
+            DefaultPatterns::rfi_high().as_slice(),
+            custom_patterns,
+            paranoia_level,
+            AttackType::Rfi,
+            "rfi",
+        );
         Self {
-            automaton: Arc::new(ac),
-            ip_pattern,
+            inner,
+            ip_pattern: &*IP_REGEX,
         }
     }
 
-    pub fn detect(&self, input: &str, location: InputLocation) -> Option<AttackDetectionResult> {
+    fn detect_with_url_decode(
+        &self,
+        input: &str,
+        location: InputLocation,
+    ) -> Option<AttackDetectionResult> {
         let input_lower = input.to_lowercase();
-        let decoded = self::decode_all(&input_lower);
+        let decoded = url_decode_all(&input_lower);
 
-        if let Some(_mat) = self.automaton.find(&decoded) {
+        if let Some(mat) = self.inner.patterns_ref().find(&decoded) {
+            let matched = decoded[mat.start()..mat.end()].to_string();
             tracing::warn!(
                 attack_type = "rfi",
+                matched_pattern = %matched,
                 location = %location,
-                input_preview = %&input[..input.len().min(100)],
                 "RFI attack detected"
             );
-
             return Some(AttackDetectionResult {
                 attack_type: AttackType::Rfi,
                 fingerprint: None,
-                matched_pattern: Some("rfi_pattern".to_string()),
+                matched_pattern: Some(matched),
                 input_location: location,
             });
         }
@@ -65,7 +62,6 @@ impl RfiDetector {
                 location = %location,
                 "RFI with IP address detected"
             );
-
             return Some(AttackDetectionResult {
                 attack_type: AttackType::Rfi,
                 fingerprint: None,
@@ -78,45 +74,14 @@ impl RfiDetector {
     }
 }
 
-fn decode_all(input: &str) -> String {
-    let mut result = input.to_string();
-
-    for _ in 0..3 {
-        let decoded = urlencoding_decode(&result);
-        if decoded == result {
-            break;
-        }
-        result = decoded;
+impl PatternDetector for RfiDetector {
+    fn patterns(&self) -> &Arc<AhoCorasick> {
+        self.inner.patterns()
     }
 
-    result
-}
-
-fn urlencoding_decode(input: &str) -> String {
-    let mut result = String::new();
-    let mut chars = input.chars().peekable();
-
-    while let Some(c) = chars.next() {
-        if c == '%' {
-            let hex: String = chars.by_ref().take(2).collect();
-            if hex.len() == 2 {
-                if let Ok(byte) = u8::from_str_radix(&hex, 16) {
-                    if byte.is_ascii() {
-                        result.push(byte as char);
-                        continue;
-                    }
-                }
-            }
-            result.push('%');
-            result.push_str(&hex);
-        } else if c == '+' {
-            result.push(' ');
-        } else {
-            result.push(c);
-        }
+    fn detect(&self, input: &str, location: InputLocation) -> Option<AttackDetectionResult> {
+        self.detect_with_url_decode(input, location)
     }
-
-    result
 }
 
 #[cfg(test)]

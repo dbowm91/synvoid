@@ -6,9 +6,10 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use super::super::state::AdminState;
-use super::super::auth::{require_auth, OptionalAuth};
 
-#[derive(Debug, Deserialize)]
+use super::common::{ErrorPage, require_auth, OptionalAuth};
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct LogsQuery {
     pub level: Option<String>,
     pub site_id: Option<String>,
@@ -17,7 +18,7 @@ pub struct LogsQuery {
     pub offset: Option<usize>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct LogEntry {
     pub timestamp: String,
     pub level: String,
@@ -28,24 +29,41 @@ pub struct LogEntry {
     pub status: Option<u16>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct LogsResponse {
     pub entries: Vec<LogEntry>,
     pub total: usize,
     pub has_more: bool,
 }
 
+#[utoipa::path(
+    get,
+    path = "/logs",
+    tag = "Logs",
+    params(
+        ("level" = Option<String>, Query, description = "Filter by log level"),
+        ("site_id" = Option<String>, Query, description = "Filter by site ID"),
+        ("search" = Option<String>, Query, description = "Search in log messages"),
+        ("limit" = Option<usize>, Query, description = "Maximum number of entries"),
+        ("offset" = Option<usize>, Query, description = "Number of entries to skip")
+    ),
+    responses(
+        (status = 200, description = "Log entries", body = [LogsResponse]),
+        (status = 401, description = "Unauthorized - missing or invalid bearer token")
+    ),
+    security(
+        ("bearerAuth" = [])
+    )
+)]
 pub async fn get_logs(
     State(state): State<Arc<AdminState>>,
     auth: OptionalAuth,
-    Query(query): Query<LogsQuery>,
+    Query(_query): Query<LogsQuery>,
 ) -> Result<Json<LogsResponse>, StatusCode> {
     if !require_auth(&auth, &state.admin_token) {
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    let limit = query.limit.unwrap_or(100).min(1000);
-    
     Ok(Json(LogsResponse {
         entries: vec![],
         total: 0,
@@ -53,94 +71,125 @@ pub async fn get_logs(
     }))
 }
 
-#[derive(Debug, Serialize)]
-pub struct ErrorPage {
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct ErrorPageResponse {
     pub code: u16,
     pub name: String,
     pub description: String,
     pub html_preview: Option<String>,
 }
 
+#[utoipa::path(
+    get,
+    path = "/error-pages",
+    tag = "Logs",
+    responses(
+        (status = 200, description = "List of error pages", body = [ErrorPageResponse]),
+        (status = 401, description = "Unauthorized - missing or invalid bearer token")
+    ),
+    security(
+        ("bearerAuth" = [])
+    )
+)]
 pub async fn list_error_pages(
     State(state): State<Arc<AdminState>>,
     auth: OptionalAuth,
-) -> Result<Json<Vec<ErrorPage>>, StatusCode> {
+) -> Result<Json<Vec<ErrorPageResponse>>, StatusCode> {
     if !require_auth(&auth, &state.admin_token) {
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    let error_pages = vec![
-        ErrorPage {
-            code: 400,
-            name: "Bad Request".to_string(),
-            description: "The server could not understand the request".to_string(),
-            html_preview: None,
-        },
-        ErrorPage {
-            code: 403,
-            name: "Forbidden".to_string(),
-            description: "Access denied by WAF policy".to_string(),
-            html_preview: None,
-        },
-        ErrorPage {
-            code: 404,
-            name: "Not Found".to_string(),
-            description: "The requested resource was not found".to_string(),
-            html_preview: None,
-        },
-        ErrorPage {
-            code: 429,
-            name: "Too Many Requests".to_string(),
-            description: "Rate limit exceeded".to_string(),
-            html_preview: None,
-        },
-        ErrorPage {
-            code: 500,
-            name: "Internal Server Error".to_string(),
-            description: "An unexpected error occurred".to_string(),
-            html_preview: None,
-        },
-        ErrorPage {
-            code: 502,
-            name: "Bad Gateway".to_string(),
-            description: "Upstream server error".to_string(),
-            html_preview: None,
-        },
-        ErrorPage {
-            code: 503,
-            name: "Service Unavailable".to_string(),
-            description: "Service temporarily unavailable".to_string(),
-            html_preview: None,
-        },
-    ];
+    let error_pages: Vec<ErrorPageResponse> = ErrorPage::list()
+        .into_iter()
+        .map(|ep| ErrorPageResponse {
+            code: ep.code,
+            name: ep.name,
+            description: ep.description,
+            html_preview: ep.html_preview,
+        })
+        .collect();
 
     Ok(Json(error_pages))
 }
 
+#[utoipa::path(
+    get,
+    path = "/error-pages/{code}",
+    tag = "Logs",
+    params(
+        ("code" = u16, Path, description = "HTTP status code (e.g., 404, 500)")
+    ),
+    responses(
+        (status = 200, description = "Error page details", body = [ErrorPageResponse]),
+        (status = 401, description = "Unauthorized - missing or invalid bearer token"),
+        (status = 404, description = "Error page not found")
+    ),
+    security(
+        ("bearerAuth" = [])
+    )
+)]
 pub async fn get_error_page(
     State(state): State<Arc<AdminState>>,
     auth: OptionalAuth,
     Path(code): Path<u16>,
-) -> Result<Json<ErrorPage>, StatusCode> {
+) -> Result<Json<ErrorPageResponse>, StatusCode> {
     if !require_auth(&auth, &state.admin_token) {
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    let (name, description) = match code {
-        400 => ("Bad Request", "The server could not understand the request"),
-        403 => ("Forbidden", "Access denied by WAF policy"),
-        404 => ("Not Found", "The requested resource was not found"),
-        429 => ("Too Many Requests", "Rate limit exceeded"),
-        500 => ("Internal Server Error", "An unexpected error occurred"),
-        502 => ("Bad Gateway", "Upstream server error"),
-        503 => ("Service Unavailable", "Service temporarily unavailable"),
-        _ => return Err(StatusCode::NOT_FOUND),
-    };
+    let error_page = ErrorPage::from_code(code).ok_or(StatusCode::NOT_FOUND)?;
 
-    Ok(Json(ErrorPage {
-        code,
-        name: name.to_string(),
-        description: description.to_string(),
-        html_preview: None,
+    Ok(Json(ErrorPageResponse {
+        code: error_page.code,
+        name: error_page.name,
+        description: error_page.description,
+        html_preview: error_page.html_preview,
+    }))
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct UpdateErrorPageRequest {
+    pub title: Option<String>,
+    pub message: Option<String>,
+    pub content: Option<String>,
+}
+
+#[utoipa::path(
+    put,
+    path = "/error-pages/{code}",
+    tag = "Logs",
+    params(
+        ("code" = u16, Path, description = "HTTP status code to update")
+    ),
+    request_body = UpdateErrorPageRequest,
+    responses(
+        (status = 200, description = "Error page updated", body = [ErrorPageResponse]),
+        (status = 401, description = "Unauthorized - missing or invalid bearer token"),
+        (status = 404, description = "Error page not found")
+    ),
+    security(
+        ("bearerAuth" = [])
+    )
+)]
+pub async fn update_error_page(
+    State(_state): State<Arc<AdminState>>,
+    auth: OptionalAuth,
+    Path(code): Path<u16>,
+    Json(payload): Json<UpdateErrorPageRequest>,
+) -> Result<Json<ErrorPageResponse>, StatusCode> {
+    if !require_auth(&auth, &_state.admin_token) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
+    let error_page = ErrorPage::from_code(code).ok_or(StatusCode::NOT_FOUND)?;
+
+    tracing::info!("Updating error page {}: title={:?}, message={:?}, content_present={}", 
+        code, payload.title, payload.message, payload.content.is_some());
+
+    Ok(Json(ErrorPageResponse {
+        code: error_page.code,
+        name: payload.title.unwrap_or(error_page.name),
+        description: payload.message.unwrap_or(error_page.description),
+        html_preview: payload.content,
     }))
 }

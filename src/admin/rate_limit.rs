@@ -14,9 +14,21 @@ use tower::{Layer, Service, util::ServiceExt};
 use std::future::Future;
 use std::pin::Pin;
 
-const MAX_REQUESTS_PER_MINUTE: u32 = 60;
-const MAX_REQUESTS_PER_SECOND: u32 = 10;
 const CLEANUP_INTERVAL_SECS: u64 = 60;
+
+pub struct AdminRateLimitConfig {
+    pub requests_per_minute: u32,
+    pub requests_per_second: u32,
+}
+
+impl Default for AdminRateLimitConfig {
+    fn default() -> Self {
+        Self {
+            requests_per_minute: 60,
+            requests_per_second: 10,
+        }
+    }
+}
 
 struct RateLimitEntry {
     requests_per_minute: u32,
@@ -28,6 +40,7 @@ struct RateLimitEntry {
 struct AdminRateLimiterInner {
     per_ip: RwLock<HashMap<String, RateLimitEntry>>,
     last_cleanup: RwLock<Instant>,
+    config: AdminRateLimitConfig,
 }
 
 #[derive(Clone)]
@@ -36,11 +49,12 @@ pub struct AdminRateLimiter {
 }
 
 impl AdminRateLimiter {
-    pub fn new() -> Self {
+    pub fn new(config: AdminRateLimitConfig) -> Self {
         Self {
             inner: Arc::new(AdminRateLimiterInner {
                 per_ip: RwLock::new(HashMap::new()),
                 last_cleanup: RwLock::new(Instant::now()),
+                config,
             }),
         }
     }
@@ -70,13 +84,13 @@ impl AdminRateLimiter {
             entry.second_window_start = now;
         }
 
-        if entry.requests_per_minute >= MAX_REQUESTS_PER_MINUTE {
-            metrics::counter!("rustwaf.admin.rate_limited.minute").increment(1);
+        if entry.requests_per_minute >= self.inner.config.requests_per_minute {
+            metrics::counter!("maluwaf.admin.rate_limited.minute").increment(1);
             return false;
         }
 
-        if entry.requests_per_second >= MAX_REQUESTS_PER_SECOND {
-            metrics::counter!("rustwaf.admin.rate_limited.second").increment(1);
+        if entry.requests_per_second >= self.inner.config.requests_per_second {
+            metrics::counter!("maluwaf.admin.rate_limited.second").increment(1);
             return false;
         }
 
@@ -111,7 +125,7 @@ impl AdminRateLimiter {
 
 impl Default for AdminRateLimiter {
     fn default() -> Self {
-        Self::new()
+        Self::new(AdminRateLimitConfig::default())
     }
 }
 
@@ -123,7 +137,13 @@ pub struct AdminRateLimitLayer {
 impl AdminRateLimitLayer {
     pub fn new() -> Self {
         Self {
-            limiter: AdminRateLimiter::new(),
+            limiter: AdminRateLimiter::new(AdminRateLimitConfig::default()),
+        }
+    }
+
+    pub fn from_config(config: AdminRateLimitConfig) -> Self {
+        Self {
+            limiter: AdminRateLimiter::new(config),
         }
     }
 }
@@ -184,18 +204,9 @@ where
 }
 
 fn extract_client_ip(request: &Request) -> String {
-    request
-        .headers()
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.split(',').next())
-        .map(|s| s.trim().to_string())
-        .or_else(|| {
-            request
-                .headers()
-                .get("x-real-ip")
-                .and_then(|v| v.to_str().ok())
-                .map(|s| s.to_string())
-        })
-        .unwrap_or_else(|| "unknown".to_string())
+    if let Some(remote_addr) = request.extensions().get::<axum::extract::ConnectInfo<std::net::SocketAddr>>() {
+        return remote_addr.ip().to_string();
+    }
+    
+    "127.0.0.1".to_string()
 }

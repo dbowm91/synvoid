@@ -4,12 +4,11 @@ use axum::{
     Json,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::sync::Arc;
 use super::super::state::AdminState;
-use super::super::auth::{require_auth, OptionalAuth};
+use super::common::{require_auth, OptionalAuth};
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct TcpUdpListener {
     pub id: String,
     pub port: u16,
@@ -19,11 +18,23 @@ pub struct TcpUdpListener {
     pub active_connections: usize,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ListListenersResponse {
     pub listeners: Vec<TcpUdpListener>,
 }
 
+#[utoipa::path(
+    get,
+    path = "/tcp-udp/listeners",
+    tag = "TCP/UDP",
+    responses(
+        (status = 200, description = "List of TCP/UDP listeners", body = [ListListenersResponse]),
+        (status = 401, description = "Unauthorized - missing or invalid bearer token")
+    ),
+    security(
+        ("bearerAuth" = [])
+    )
+)]
 pub async fn list_listeners(
     State(state): State<Arc<AdminState>>,
     auth: OptionalAuth,
@@ -53,7 +64,7 @@ pub async fn list_listeners(
     Ok(Json(ListListenersResponse { listeners }))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateListenerRequest {
     pub site_id: String,
     pub port: u16,
@@ -61,11 +72,23 @@ pub struct CreateListenerRequest {
     pub upstream: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct CreateListenerResponse {
     pub listener: TcpUdpListener,
 }
 
+#[utoipa::path(
+    post,
+    path = "/tcp-udp/listeners",
+    tag = "TCP/UDP",
+    responses(
+        (status = 200, description = "Listener created", body = [CreateListenerResponse]),
+        (status = 401, description = "Unauthorized - missing or invalid bearer token")
+    ),
+    security(
+        ("bearerAuth" = [])
+    )
+)]
 pub async fn create_listener(
     State(state): State<Arc<AdminState>>,
     auth: OptionalAuth,
@@ -87,6 +110,22 @@ pub async fn create_listener(
     Ok(Json(CreateListenerResponse { listener }))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/tcp-udp/listeners/{listener_id}",
+    tag = "TCP/UDP",
+    params(
+        ("listener_id" = String, Path, description = "Listener ID to delete")
+    ),
+    responses(
+        (status = 204, description = "Listener deleted successfully"),
+        (status = 401, description = "Unauthorized - missing or invalid bearer token"),
+        (status = 404, description = "Listener not found")
+    ),
+    security(
+        ("bearerAuth" = [])
+    )
+)]
 pub async fn delete_listener(
     State(state): State<Arc<AdminState>>,
     auth: OptionalAuth,
@@ -96,17 +135,29 @@ pub async fn delete_listener(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    tracing::info!("Deleting listener: {}", listener_id);
+    let _ = (state, listener_id);
     Ok(StatusCode::NO_CONTENT)
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ProtocolInfo {
     pub name: String,
     pub description: String,
-    pub default_ports: Vec<u16>,
+    pub supported: bool,
 }
 
+#[utoipa::path(
+    get,
+    path = "/tcp-udp/protocols",
+    tag = "TCP/UDP",
+    responses(
+        (status = 200, description = "List of supported protocols", body = [ProtocolInfo]),
+        (status = 401, description = "Unauthorized - missing or invalid bearer token")
+    ),
+    security(
+        ("bearerAuth" = [])
+    )
+)]
 pub async fn list_protocols(
     State(state): State<Arc<AdminState>>,
     auth: OptionalAuth,
@@ -118,28 +169,18 @@ pub async fn list_protocols(
     let protocols = vec![
         ProtocolInfo {
             name: "http".to_string(),
-            description: "HTTP protocol detection".to_string(),
-            default_ports: vec![80, 443, 8080],
+            description: "HTTP/1.1 proxy".to_string(),
+            supported: true,
         },
         ProtocolInfo {
-            name: "smtp".to_string(),
-            description: "SMTP mail protocol".to_string(),
-            default_ports: vec![25, 587, 465],
+            name: "http2".to_string(),
+            description: "HTTP/2 proxy".to_string(),
+            supported: true,
         },
         ProtocolInfo {
-            name: "imap".to_string(),
-            description: "IMAP mail protocol".to_string(),
-            default_ports: vec![143, 993],
-        },
-        ProtocolInfo {
-            name: "mysql".to_string(),
-            description: "MySQL database protocol".to_string(),
-            default_ports: vec![3306],
-        },
-        ProtocolInfo {
-            name: "postgres".to_string(),
-            description: "PostgreSQL database protocol".to_string(),
-            default_ports: vec![5432],
+            name: "tls".to_string(),
+            description: "TLS/SSL proxy".to_string(),
+            supported: true,
         },
     ];
 

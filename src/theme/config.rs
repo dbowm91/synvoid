@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ThemeDefaults {
+    #[serde(default)]
+    pub preset: String,
     #[serde(default = "default_theme_mode")]
     pub mode: String,
     #[serde(default = "default_allow_only")]
@@ -18,13 +20,24 @@ pub struct ThemeDefaults {
 
 impl Default for ThemeDefaults {
     fn default() -> Self {
+        let preset = ThemePreset::Default;
         Self {
+            preset: "default".to_string(),
             mode: default_theme_mode(),
             allow_only: default_allow_only(),
-            colors: ThemeColors::default(),
+            colors: preset.colors(),
             spacing: ThemeSpacing::default(),
             effects: ThemeEffects::default(),
             branding: ThemeBranding::default(),
+        }
+    }
+}
+
+impl ThemeDefaults {
+    pub fn apply_preset(&mut self) {
+        let preset = ThemePreset::from(self.preset.as_str());
+        if preset != ThemePreset::Default || self.colors == ThemeColors::default() {
+            self.colors = preset.colors();
         }
     }
 }
@@ -37,7 +50,7 @@ fn default_allow_only() -> String {
     "both".to_string()
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct ThemeColors {
     #[serde(default = "default_dark_background")]
     pub dark_background: String,
@@ -51,6 +64,10 @@ pub struct ThemeColors {
     pub dark_border: String,
     #[serde(default = "default_dark_accent")]
     pub dark_accent: String,
+    #[serde(default = "default_dark_accent_primary")]
+    pub dark_accent_primary: String,
+    #[serde(default = "default_dark_accent_secondary")]
+    pub dark_accent_secondary: String,
     #[serde(default = "default_light_background")]
     pub light_background: String,
     #[serde(default = "default_light_surface")]
@@ -63,24 +80,15 @@ pub struct ThemeColors {
     pub light_border: String,
     #[serde(default = "default_light_accent")]
     pub light_accent: String,
+    #[serde(default = "default_light_accent_primary")]
+    pub light_accent_primary: String,
+    #[serde(default = "default_light_accent_secondary")]
+    pub light_accent_secondary: String,
 }
 
 impl Default for ThemeColors {
     fn default() -> Self {
-        Self {
-            dark_background: default_dark_background(),
-            dark_surface: default_dark_surface(),
-            dark_primary: default_dark_primary(),
-            dark_text: default_dark_text(),
-            dark_border: default_dark_border(),
-            dark_accent: default_dark_accent(),
-            light_background: default_light_background(),
-            light_surface: default_light_surface(),
-            light_primary: default_light_primary(),
-            light_text: default_light_text(),
-            light_border: default_light_border(),
-            light_accent: default_light_accent(),
-        }
+        ThemePreset::Default.colors()
     }
 }
 
@@ -119,6 +127,18 @@ fn default_light_border() -> String {
 }
 fn default_light_accent() -> String {
     "#3a86ff".to_string()
+}
+fn default_dark_accent_primary() -> String {
+    "#00d4aa".to_string()
+}
+fn default_dark_accent_secondary() -> String {
+    "#00b894".to_string()
+}
+fn default_light_accent_primary() -> String {
+    "#059669".to_string()
+}
+fn default_light_accent_secondary() -> String {
+    "#10b981".to_string()
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -215,6 +235,126 @@ fn default_title() -> String {
 }
 fn default_show_logo() -> bool {
     true
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ThemePreset {
+    Default,
+    Dark,
+    Light,
+    Ocean,
+    Forest,
+    Sunset,
+}
+
+impl From<&str> for ThemePreset {
+    fn from(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "dark" => ThemePreset::Dark,
+            "light" => ThemePreset::Light,
+            "ocean" => ThemePreset::Ocean,
+            "forest" => ThemePreset::Forest,
+            "sunset" => ThemePreset::Sunset,
+            _ => ThemePreset::Default,
+        }
+    }
+}
+
+impl ThemePreset {
+    pub fn colors(&self) -> ThemeColors {
+        match self {
+            ThemePreset::Default | ThemePreset::Dark => ThemeColors {
+                dark_background: "#0a0a0f".to_string(),
+                dark_surface: "#12121a".to_string(),
+                dark_primary: "#e94560".to_string(),
+                dark_text: "#f0f0f5".to_string(),
+                dark_border: "#2a2a3a".to_string(),
+                dark_accent: "#1a1a24".to_string(),
+                dark_accent_primary: "#00d4aa".to_string(),
+                dark_accent_secondary: "#00b894".to_string(),
+                light_background: "#f8fafc".to_string(),
+                light_surface: "#ffffff".to_string(),
+                light_primary: "#c41e3a".to_string(),
+                light_text: "#0f172a".to_string(),
+                light_border: "#e2e8f0".to_string(),
+                light_accent: "#f1f5f9".to_string(),
+                light_accent_primary: "#059669".to_string(),
+                light_accent_secondary: "#10b981".to_string(),
+            },
+            ThemePreset::Light => ThemeColors {
+                dark_background: "#0a0a0f".to_string(),
+                dark_surface: "#12121a".to_string(),
+                dark_primary: "#e94560".to_string(),
+                dark_text: "#f0f0f5".to_string(),
+                dark_border: "#2a2a3a".to_string(),
+                dark_accent: "#1a1a24".to_string(),
+                dark_accent_primary: "#00d4aa".to_string(),
+                dark_accent_secondary: "#00b894".to_string(),
+                light_background: "#f8fafc".to_string(),
+                light_surface: "#ffffff".to_string(),
+                light_primary: "#c41e3a".to_string(),
+                light_text: "#0f172a".to_string(),
+                light_border: "#e2e8f0".to_string(),
+                light_accent: "#f1f5f9".to_string(),
+                light_accent_primary: "#059669".to_string(),
+                light_accent_secondary: "#10b981".to_string(),
+            },
+            ThemePreset::Ocean => ThemeColors {
+                dark_background: "#0c1929".to_string(),
+                dark_surface: "#132f4c".to_string(),
+                dark_primary: "#0ea5e9".to_string(),
+                dark_text: "#e3f2fd".to_string(),
+                dark_border: "#2d4a6f".to_string(),
+                dark_accent: "#173a5e".to_string(),
+                dark_accent_primary: "#0ea5e9".to_string(),
+                dark_accent_secondary: "#38bdf8".to_string(),
+                light_background: "#e3f2fd".to_string(),
+                light_surface: "#ffffff".to_string(),
+                light_primary: "#0284c7".to_string(),
+                light_text: "#0c1929".to_string(),
+                light_border: "#90caf9".to_string(),
+                light_accent: "#f1f5f9".to_string(),
+                light_accent_primary: "#0ea5e9".to_string(),
+                light_accent_secondary: "#38bdf8".to_string(),
+            },
+            ThemePreset::Forest => ThemeColors {
+                dark_background: "#0a1a0f".to_string(),
+                dark_surface: "#132318".to_string(),
+                dark_primary: "#22c55e".to_string(),
+                dark_text: "#e8f5e9".to_string(),
+                dark_border: "#2d4a3a".to_string(),
+                dark_accent: "#1a2e21".to_string(),
+                dark_accent_primary: "#22c55e".to_string(),
+                dark_accent_secondary: "#4ade80".to_string(),
+                light_background: "#e8f5e9".to_string(),
+                light_surface: "#ffffff".to_string(),
+                light_primary: "#16a34a".to_string(),
+                light_text: "#0a1a0f".to_string(),
+                light_border: "#a5d6a7".to_string(),
+                light_accent: "#f1f5f9".to_string(),
+                light_accent_primary: "#22c55e".to_string(),
+                light_accent_secondary: "#4ade80".to_string(),
+            },
+            ThemePreset::Sunset => ThemeColors {
+                dark_background: "#1a0f0a".to_string(),
+                dark_surface: "#2a1a14".to_string(),
+                dark_primary: "#f97316".to_string(),
+                dark_text: "#fff1ec".to_string(),
+                dark_border: "#4a3028".to_string(),
+                dark_accent: "#3d261e".to_string(),
+                dark_accent_primary: "#f97316".to_string(),
+                dark_accent_secondary: "#fb923c".to_string(),
+                light_background: "#fff1ec".to_string(),
+                light_surface: "#ffffff".to_string(),
+                light_primary: "#ea580c".to_string(),
+                light_text: "#1a0f0a".to_string(),
+                light_border: "#ffccbc".to_string(),
+                light_accent: "#f1f5f9".to_string(),
+                light_accent_primary: "#f97316".to_string(),
+                light_accent_secondary: "#fb923c".to_string(),
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

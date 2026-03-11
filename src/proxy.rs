@@ -1,16 +1,19 @@
-use http::{header::HeaderName, Method, Response, StatusCode};
-use metrics::{counter, histogram};
+use http::{header::HeaderName, Method, Response};
+use ::metrics::{counter, histogram};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Instant, Duration};
 
 use crate::challenge::ChallengeResult;
-use crate::config::site::{HeaderOverride, ProxyHeadersConfig, RetryConfig, BufferingConfig, ProxyCacheConfig};
+use crate::config::site::{ProxyHeadersConfig, RetryConfig, BufferingConfig, ProxyCacheConfig};
 use crate::waf::{
     BotDetectionResult, EndpointCheckResult, RateLimitResult, UpstreamErrorTracker, WafCore,
 };
-use crate::http_client::{create_http_client_with_config, send_request_with_timeout, HttpClient, HttpResponse};
+use crate::http_client::{create_http_client_with_config, send_request_with_timeout, HttpClient};
+use crate::metrics::{record_proxy_cache_hit, record_proxy_cache_miss};
 use crate::upstream::{UpstreamPool, Backend, LoadBalanceAlgorithm};
-use crate::proxy_cache::{ProxyCache, ProxyCacheSettings, CacheKey, CacheKeyBuilder, ProxyCacheEntry};
+use crate::proxy_cache::{ProxyCache, ProxyCacheSettings, CacheKey, CacheKeyBuilder, ProxyCacheEntry, CacheHit};
+use ahash::AHashSet;
+use once_cell::sync::Lazy;
 
 pub const HOP_BY_HOP_HEADERS: &[&str] = &[
     "connection",
@@ -24,35 +27,132 @@ pub const HOP_BY_HOP_HEADERS: &[&str] = &[
     "upgrade",
 ];
 
-pub fn build_headers_to_filter(global_headers: &[String], site_headers: &[String]) -> Vec<String> {
-    let mut to_filter: Vec<String> = HOP_BY_HOP_HEADERS.iter().map(|s| s.to_string()).collect();
+pub const HEADERS_TO_STRIP: &[&str] = &[
+    "server",
+    "x-powered-by",
+    "x-aspnet-version",
+    "x-aspnetmvc-version",
+    "x-runtime",
+    "x-generator",
+    "x-drupal-cache",
+    "x-varnish",
+    "via",
+    "x-served-by",
+    "x-cache",
+    "x-cache-hits",
+    "x-backend",
+    "x-server",
+];
+
+static HOP_BY_HOP_HEADERS_SET: Lazy<AHashSet<&'static str>> = Lazy::new(|| {
+    HOP_BY_HOP_HEADERS.iter().copied().collect()
+});
+
+static HEADERS_TO_STRIP_SET: Lazy<AHashSet<&'static str>> = Lazy::new(|| {
+    HEADERS_TO_STRIP.iter().copied().collect()
+});
+
+static HOP_BY_HOP_HEADER_NAMES: Lazy<AHashSet<http::header::HeaderName>> = Lazy::new(|| {
+    HOP_BY_HOP_HEADERS.iter().filter_map(|s| s.parse().ok()).collect()
+});
+
+#[inline]
+pub fn is_hop_by_hop_header(name: &str) -> bool {
+    HOP_BY_HOP_HEADERS.iter().any(|h| h.eq_ignore_ascii_case(name))
+}
+
+#[inline]
+pub fn is_hop_by_hop_header_name(name: &http::header::HeaderName) -> bool {
+    HOP_BY_HOP_HEADER_NAMES.contains(name)
+}
+
+pub fn build_headers_to_filter(global_headers: &[String], site_headers: &[String]) -> AHashSet<String> {
+    let mut to_filter = AHashSet::with_capacity(
+        HOP_BY_HOP_HEADERS.len() + 
+        HEADERS_TO_STRIP.len() + 
+        global_headers.len() + 
+        site_headers.len()
+    );
+    
+    to_filter.extend(HOP_BY_HOP_HEADERS_SET.iter().copied().map(String::from));
+    to_filter.extend(HEADERS_TO_STRIP_SET.iter().copied().map(String::from));
     
     for header in global_headers {
         let lower = header.to_lowercase();
-        if !to_filter.contains(&lower) {
-            to_filter.push(lower);
-        }
+        to_filter.insert(lower);
     }
     
     for header in site_headers {
         let lower = header.to_lowercase();
-        if !to_filter.contains(&lower) {
-            to_filter.push(lower);
-        }
+        to_filter.insert(lower);
     }
     
     to_filter
 }
 
+pub fn sanitize_request_path(path: &str) -> String {
+    let mut result = String::with_capacity(path.len());
+    let mut prev_was_percent = false;
+    let mut decode_buffer = String::new();
+    
+    for c in path.chars() {
+        if c == '%' && !prev_was_percent {
+            prev_was_percent = true;
+            decode_buffer.clear();
+            continue;
+        }
+        
+        if prev_was_percent {
+            decode_buffer.push(c);
+            if decode_buffer.len() == 2 {
+                if let (Ok(h), Ok(l)) = (
+                    u8::from_str_radix(&decode_buffer[0..1], 16),
+                    u8::from_str_radix(&decode_buffer[1..2], 16),
+                ) {
+                    let decoded_byte = (h << 4) | l;
+                    if decoded_byte == 0 {
+                        continue;
+                    }
+                    if let Some(decoded_char) = char::from_u32(decoded_byte as u32) {
+                        result.push(decoded_char);
+                    } else {
+                        result.push_str(&decode_buffer);
+                    }
+                } else {
+                    result.push('%');
+                    result.push_str(&decode_buffer);
+                }
+                decode_buffer.clear();
+            }
+            prev_was_percent = false;
+        } else if c == '.' && result.ends_with('/') {
+            continue;
+        } else if c == '/' && result.ends_with('/') {
+            continue;
+        } else if c.is_control() {
+            continue;
+        } else {
+            result.push(c);
+        }
+    }
+    
+    if prev_was_percent {
+        result.push('%');
+    }
+    
+    result
+}
+
+#[inline]
 pub fn filter_response_headers(
     headers: &http::HeaderMap,
-    headers_to_filter: &[String],
+    headers_to_filter: &AHashSet<String>,
 ) -> Vec<(String, String)> {
     headers
         .iter()
         .filter(|(k, _)| {
-            let name = k.as_str().to_lowercase();
-            !headers_to_filter.contains(&name)
+            let name_str = k.as_str();
+            !HOP_BY_HOP_HEADERS_SET.contains(name_str) && !headers_to_filter.contains(name_str)
         })
         .filter_map(|(k, v)| v.to_str().ok().map(|vv| (k.to_string(), vv.to_string())))
         .collect()
@@ -60,6 +160,7 @@ pub fn filter_response_headers(
 
 pub struct ProxyServer {
     client: HttpClient,
+    revalidation_client: HttpClient,
     upstream_url: String,
     waf: Arc<WafCore>,
     max_response_size: usize,
@@ -86,8 +187,15 @@ impl ProxyServer {
             std::time::Duration::from_secs(30),
         );
 
+        let revalidation_client = create_http_client_with_config(
+            std::time::Duration::from_secs(5),
+            50,
+            std::time::Duration::from_secs(15),
+        );
+
         ProxyServer {
             client,
+            revalidation_client,
             upstream_url,
             waf,
             max_response_size,
@@ -140,6 +248,12 @@ impl ProxyServer {
             std::time::Duration::from_secs(30),
         );
 
+        let revalidation_client = create_http_client_with_config(
+            std::time::Duration::from_secs(5),
+            50,
+            std::time::Duration::from_secs(15),
+        );
+
         let upstream_pool = if !servers.is_empty() || !backup_servers.is_empty() {
             Some(Arc::new(UpstreamPool::new_with_backup(
                 servers,
@@ -165,6 +279,8 @@ impl ProxyServer {
                 cc.vary_by.clone(),
                 cc.memory_max.clone(),
                 cc.disk_max.clone(),
+                cc.stale_while_revalidate,
+                cc.stale_if_error,
             );
             
             let cache = Arc::new(ProxyCache::new(settings));
@@ -179,6 +295,7 @@ impl ProxyServer {
 
         ProxyServer {
             client,
+            revalidation_client,
             upstream_url: String::new(),
             waf,
             max_response_size,
@@ -208,7 +325,7 @@ impl ProxyServer {
                 }
                 Err(e) => {
                     tracing::warn!("Connection limit exceeded for {}: {}", client_ip, e);
-                    counter!("rustwaf.traffic.connection_limited").increment(1);
+                    counter!("maluwaf.traffic.connection_limited").increment(1);
                     return Err("connection_limit_exceeded".to_string());
                 }
             }
@@ -218,26 +335,26 @@ impl ProxyServer {
 
         match self.check_waf(&client_ip, &path, &method, user_agent.as_deref()).await {
             WafDecision::Drop => {
-                counter!("rustwaf.requests.dropped").increment(1);
+                counter!("maluwaf.requests.dropped").increment(1);
                 return Err("blackholed".to_string());
             }
             WafDecision::Stall => {
-                counter!("rustwaf.requests.stalled").increment(1);
+                counter!("maluwaf.requests.stalled").increment(1);
                 tokio::time::sleep(std::time::Duration::from_secs(300)).await;
                 std::future::pending::<()>().await;
                 return Err("stalled".to_string());
             }
-            WafDecision::Block(status_code, message) => {
-                counter!("rustwaf.requests.blocked").increment(1);
-                histogram!("rustwaf.request.duration").record(start.elapsed());
+            WafDecision::Block(_status_code, _message) => {
+                counter!("maluwaf.requests.blocked").increment(1);
+                histogram!("maluwaf.request.duration").record(start.elapsed());
                 if drop {
                     return Err("dropped".to_string());
                 }
                 return Err("blocked".to_string());
             }
             WafDecision::Challenge(html) => {
-                counter!("rustwaf.requests.challenged").increment(1);
-                histogram!("rustwaf.request.duration").record(start.elapsed());
+                counter!("maluwaf.requests.challenged").increment(1);
+                histogram!("maluwaf.request.duration").record(start.elapsed());
                 return Ok(Response::builder()
                     .status(200)
                     .header("Content-Type", "text/html")
@@ -248,9 +365,24 @@ impl ProxyServer {
                         .body("Internal Server Error".to_string())
                         .unwrap()));
             }
+            WafDecision::ChallengeWithCookie { html, session_cookie_name, session_cookie_value, session_cookie_max_age } => {
+                counter!("maluwaf.requests.challenged").increment(1);
+                histogram!("maluwaf.request.duration").record(start.elapsed());
+                let cookie = format!("{}={}; path=/; max-age={}; Secure; SameSite=Strict", session_cookie_name, session_cookie_value, session_cookie_max_age);
+                return Ok(Response::builder()
+                    .status(200)
+                    .header("Content-Type", "text/html")
+                    .header("Cache-Control", "no-store, no-cache, must-revalidate")
+                    .header("Set-Cookie", cookie)
+                    .body(html)
+                    .unwrap_or_else(|_| Response::builder()
+                        .status(500)
+                        .body("Internal Server Error".to_string())
+                        .unwrap()));
+            }
             WafDecision::Tarpit(_) => {
-                counter!("rustwaf.requests.tarpitted").increment(1);
-                histogram!("rustwaf.request.duration").record(start.elapsed());
+                counter!("maluwaf.requests.tarpitted").increment(1);
+                histogram!("maluwaf.request.duration").record(start.elapsed());
             }
             WafDecision::Pass => {}
         }
@@ -292,6 +424,14 @@ impl ProxyServer {
                                         if let Some(ref store) = self.waf.block_store {
                                             store.block_ip(client_ip, "upstream_error_probe", ban_duration, "global");
                                         }
+                                        if let Some(ref threat_intel) = crate::waf::get_threat_intel() {
+                                            let _ = threat_intel.announce_local_block(
+                                                client_ip,
+                                                "upstream_error_probe".to_string(),
+                                                ban_duration,
+                                                "global".to_string(),
+                                            );
+                                        }
                                     }
                                 }
                             }
@@ -300,14 +440,14 @@ impl ProxyServer {
                     }
                 }
                 
-                counter!("rustwaf.requests.proxied").increment(1);
-                histogram!("rustwaf.request.duration").record(start.elapsed());
+                counter!("maluwaf.requests.proxied").increment(1);
+                histogram!("maluwaf.request.duration").record(start.elapsed());
                 Ok(response)
             }
             Err(e) => {
-                counter!("rustwaf.requests.upstream_error").increment(1);
+                counter!("maluwaf.requests.upstream_error").increment(1);
                 tracing::error!("Upstream error: {}", e);
-                histogram!("rustwaf.request.duration").record(start.elapsed());
+                histogram!("maluwaf.request.duration").record(start.elapsed());
                 Ok(Response::builder()
                     .status(502)
                     .body("Bad Gateway".to_string())
@@ -326,18 +466,18 @@ impl ProxyServer {
         method: &Method,
         user_agent: Option<&str>,
     ) -> WafDecision {
-        if self.waf.whitelist.iter().any(|w| w == &client_ip.to_string()) {
+        if self.waf.whitelist.contains(client_ip) {
             return WafDecision::Pass;
         }
 
         if self.waf.rate_limiter.is_in_blackhole() {
-            counter!("rustwaf.ratelimit.blackhole_drop").increment(1);
+            counter!("maluwaf.ratelimit.blackhole_drop").increment(1);
             return WafDecision::Drop;
         }
 
         match self.waf.rate_limiter.check_global() {
             RateLimitResult::Blackholed => {
-                counter!("rustwaf.ratelimit.blackhole_drop").increment(1);
+                counter!("maluwaf.ratelimit.blackhole_drop").increment(1);
                 return WafDecision::Drop;
             }
             RateLimitResult::Limited { limit_type, retry_after_millis } => {
@@ -367,7 +507,7 @@ impl ProxyServer {
             RateLimitResult::Allowed => {}
         }
 
-        if let EndpointCheckResult::Blocked { response_code, html, .. } =
+        if let EndpointCheckResult::Blocked { response_code: _, html: _, .. } =
             self.waf.endpoint_blocker.check(path, method.as_str())
         {
             tracing::info!("Blocked endpoint accessed: {} - method: {}", path, method);
@@ -393,6 +533,14 @@ impl ProxyServer {
                 let ban_duration = 24 * 60 * 60;
                 store.block_ip(*client_ip, "honeypot", ban_duration, "global");
             }
+            if let Some(ref threat_intel) = crate::waf::get_threat_intel() {
+                let _ = threat_intel.announce_local_block(
+                    *client_ip,
+                    "honeypot".to_string(),
+                    24 * 60 * 60,
+                    "global".to_string(),
+                );
+            }
             return WafDecision::Stall;
         }
 
@@ -402,21 +550,39 @@ impl ProxyServer {
                 let ban_duration = 24 * 60 * 60;
                 store.block_ip(*client_ip, "honeypot", ban_duration, "global");
             }
+            if let Some(ref threat_intel) = crate::waf::get_threat_intel() {
+                let _ = threat_intel.announce_local_block(
+                    *client_ip,
+                    "honeypot".to_string(),
+                    24 * 60 * 60,
+                    "global".to_string(),
+                );
+            }
             return WafDecision::Stall;
         }
 
         if self.waf.config.enable_pow_challenge || self.waf.config.enable_css_honeypot {
             let challenge_result = self.waf.challenge_manager.check_cookie(None);
             match challenge_result {
-                ChallengeResult::NotSet => {
-                    let html = self.waf.challenge_manager.generate_challenge_page(client_ip);
-                    return WafDecision::Challenge(html);
-                }
-                ChallengeResult::Failed => {
-                    let html = self.waf.challenge_manager.generate_challenge_page(client_ip);
-                    return WafDecision::Challenge(html);
+                ChallengeResult::NotSet | ChallengeResult::Failed => {
+                    let (html, session_id) = self.waf.challenge_manager.generate_challenge_page(client_ip);
+                    if let Some(sid) = session_id {
+                        let session_cookie_name = self.waf.challenge_manager.css_session_cookie_name();
+                        let window_secs = self.waf.challenge_manager.css_window_secs();
+                        return WafDecision::ChallengeWithCookie {
+                            html,
+                            session_cookie_name,
+                            session_cookie_value: sid,
+                            session_cookie_max_age: window_secs,
+                        };
+                    } else {
+                        return WafDecision::Challenge(html);
+                    }
                 }
                 ChallengeResult::Passed => {}
+                ChallengeResult::RateLimited => {
+                    return WafDecision::Pass;
+                }
             }
         }
 
@@ -433,7 +599,19 @@ impl ProxyServer {
         }
 
         let url = format!("{}{}", self.upstream_url, path);
-        self.send_single_request(method, &url).await
+        self.send_single_request(method, &url, None).await
+    }
+
+    pub async fn forward_request_via_tunnel(
+        &self,
+        method: http::Method,
+        tunnel_url: &str,
+        path: &str,
+        headers: Option<&http::HeaderMap>,
+        _body: Option<bytes::Bytes>,
+    ) -> Result<Response<String>, Box<dyn std::error::Error + Send + Sync>> {
+        let full_url = format!("{}{}", tunnel_url, path);
+        self.send_single_request(method, &full_url, headers).await
     }
 
     pub async fn handle_request_with_cache(
@@ -452,24 +630,57 @@ impl ProxyServer {
             return self.forward_request(method, path).await.map_err(|e| e.to_string());
         }
 
-        if let (Some(ref cache), Some(ref key_builder)) = (&self.cache, &self.cache_key_builder) {
+        if let (Some(cache), Some(key_builder)) = (&self.cache, &self.cache_key_builder) {
             if cache.is_enabled() {
                 if self.should_bypass_cache(headers) {
                     tracing::debug!("Cache bypass requested for {}", path);
                 } else {
                     let uri = http::Uri::try_from(path).unwrap_or_else(|_| http::Uri::from_static("/"));
-                    let cache_key = key_builder.build(scheme, &method, host, &uri, headers);
+                    let cache_key = key_builder.build(scheme, &method, host, &uri, headers, &self.site_id);
+                    
+                    let hit_status = cache.get_hit_status(&cache_key);
                     
                     if let Some(cached) = cache.get(&cache_key) {
                         tracing::debug!("Cache HIT for {}", path);
-                        counter!("rustwaf.proxy.cache.hit").increment(1);
+                        counter!("maluwaf.proxy.cache.hit").increment(1);
+                        cache.record_cache_hit();
+                        record_proxy_cache_hit();
+                        
+                        let is_swr = matches!(hit_status, Some(CacheHit::StaleWhileRevalidate));
+                        
+                        if is_swr {
+                            let cache_clone = cache.clone();
+                            let key_clone = cache_key.clone();
+                            let path_owned = path.to_string();
+                            let method_clone = method.clone();
+                            let scheme_owned = scheme.to_string();
+                            let host_owned = host.to_string();
+                            let reval_client = self.revalidation_client.clone();
+                            
+                            tokio::spawn(async move {
+                                tracing::debug!("Triggering background revalidation for {}", path_owned);
+                                let _ = Self::revalidate_cache_entry(
+                                    &reval_client,
+                                    cache_clone,
+                                    key_clone,
+                                    method_clone,
+                                    path_owned,
+                                    scheme_owned,
+                                    host_owned,
+                                ).await;
+                            });
+                            
+                            counter!("maluwaf.proxy.cache.stale_while_revalidate").increment(1);
+                        }
                         
                         let response = self.build_cached_response(cached);
                         return Ok(response);
                     }
                     
                     tracing::debug!("Cache MISS for {}", path);
-                    counter!("rustwaf.proxy.cache.miss").increment(1);
+                    counter!("maluwaf.proxy.cache.miss").increment(1);
+                    cache.record_cache_miss();
+                    record_proxy_cache_miss();
                     
                     let result = self.forward_request(method.clone(), path).await;
                     
@@ -652,6 +863,35 @@ impl ProxyServer {
             builder = builder.header(name, value);
         }
         
+        let mut cache_directive = if entry.is_fresh {
+            "public".to_string()
+        } else {
+            "public, stale-while-revalidate".to_string()
+        };
+        
+        if let Some(expires_at) = entry.expires_at {
+            let max_age = expires_at.saturating_duration_since(std::time::Instant::now());
+            if max_age.as_secs() > 0 {
+                cache_directive.push_str(&format!(", max-age={}", max_age.as_secs()));
+            }
+        }
+        
+        if let Some(swr) = entry.stale_while_revalidate {
+            let swr_age = swr.saturating_duration_since(std::time::Instant::now());
+            if swr_age.as_secs() > 0 {
+                cache_directive.push_str(&format!(", stale-while-revalidate={}", swr_age.as_secs()));
+            }
+        }
+        
+        if let Some(sie) = entry.stale_if_error {
+            let sie_age = sie.saturating_duration_since(std::time::Instant::now());
+            if sie_age.as_secs() > 0 {
+                cache_directive.push_str(&format!(", stale-if-error={}", sie_age.as_secs()));
+            }
+        }
+        
+        builder = builder.header("Cache-Control", cache_directive);
+        
         if entry.is_fresh {
             builder = builder.header("X-Cache", "HIT");
         } else {
@@ -664,6 +904,58 @@ impl ProxyServer {
                 .body("Internal Server Error".to_string())
                 .unwrap()
         })
+    }
+    
+    async fn revalidate_cache_entry(
+        client: &HttpClient,
+        cache: Arc<ProxyCache>,
+        key: CacheKey,
+        method: http::Method,
+        path: String,
+        scheme: String,
+        host: String,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        
+        let url = format!("{}://{}{}", scheme, host, path);
+        
+        match send_request_with_timeout(client, method, &url, Some(Duration::from_secs(5))).await {
+            Ok(response) => {
+                let status = response.status_code();
+                let headers = response.headers.clone();
+                let body = bytes::Bytes::from(response.body.clone());
+                
+                if cache.is_status_cacheable(status) {
+                    let max_age = Self::get_cache_max_age_static(&headers);
+                    if let Err(e) = cache.insert(key, body, status, headers, max_age) {
+                        tracing::warn!("Failed to update cached response: {}", e);
+                    } else {
+                        tracing::debug!("Successfully revalidated cache for {}", path);
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::debug!("Background revalidation failed for {}: {}", path, e);
+            }
+        }
+        
+        Ok(())
+    }
+    
+    fn get_cache_max_age_static(headers: &http::HeaderMap) -> Option<Duration> {
+        if let Some(cc) = headers.get("cache-control") {
+            if let Ok(cc_str) = cc.to_str() {
+                for part in cc_str.split(',') {
+                    let part = part.trim();
+                    if part.starts_with("max-age=") {
+                        if let Ok(age) = part[8..].parse::<u64>() {
+                            return Some(Duration::from_secs(age));
+                        }
+                    }
+                }
+            }
+        }
+        None
     }
 
     async fn forward_with_pool(
@@ -678,16 +970,16 @@ impl ProxyServer {
         let mut current_backend: Option<Backend> = None;
         let mut last_error: Option<String> = None;
         let mut attempt = 0;
-        let mut tried_backends: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut tried_backends: std::collections::HashSet<std::sync::Arc<String>> = std::collections::HashSet::new();
 
         loop {
             let backend = if let Some(ref be) = current_backend {
-                match pool.select_next_backend(be).await {
+                match pool.select_next_backend(be) {
                     Some(next) => next,
                     None => break,
                 }
             } else {
-                match pool.select_backend().await {
+                match pool.select_backend() {
                     Some(b) => b,
                     None => break,
                 }
@@ -708,7 +1000,7 @@ impl ProxyServer {
             
             tracing::debug!("Attempting request to upstream: {} (attempt {}/{})", url, attempt, max_retries + 1);
 
-            let result = self.send_single_request(method.clone(), &url).await;
+            let result = self.send_single_request(method.clone(), &url, None).await;
 
             backend.decrement_connections();
 
@@ -719,7 +1011,7 @@ impl ProxyServer {
                     if let Some(ref config) = retry_config {
                         if self.is_retryable_status(status, config) && attempt <= max_retries {
                             if let Some(ref be) = current_backend {
-                                pool.mark_failed(&be.url).await;
+                                pool.mark_failed(&be.url);
                             }
                             
                             if let Some(timeout) = config.timeout_ms {
@@ -744,7 +1036,7 @@ impl ProxyServer {
                         
                         if should_retry && attempt <= max_retries {
                             if let Some(ref be) = current_backend {
-                                pool.mark_failed(&be.url).await;
+                                pool.mark_failed(&be.url);
                             }
                             
                             if let Some(timeout) = config.timeout_ms {
@@ -758,7 +1050,7 @@ impl ProxyServer {
                     }
                     
                     if let Some(ref be) = current_backend {
-                        pool.mark_failed(&be.url).await;
+                        pool.mark_failed(&be.url);
                     }
                     
                     if attempt <= max_retries {
@@ -803,6 +1095,7 @@ impl ProxyServer {
         &self,
         method: http::Method,
         url: &str,
+        headers: Option<&http::HeaderMap>,
     ) -> Result<Response<String>, Box<dyn std::error::Error + Send + Sync>> {
         let hop_by_hop_headers = [
             "connection",
@@ -814,6 +1107,37 @@ impl ProxyServer {
             "transfer-encoding",
             "upgrade",
         ];
+
+        if crate::http_client::is_quictunnel_url(url) {
+            let response = crate::http_client::send_request_via_quic_tunnel(
+                method,
+                url,
+                headers,
+                None,
+                Some(std::time::Duration::from_secs(30)),
+            ).await?;
+            
+            let status = response.status_code();
+            let headers_vec: Vec<(String, String)> = response
+                .headers_iter()
+                .filter(|(k, _)| !hop_by_hop_headers.contains(&k.as_str()))
+                .filter_map(|(k, v)| v.to_str().ok().map(|vv| (k.to_string(), vv.to_string())))
+                .collect();
+            let body = response.body;
+            
+            if body.len() > self.max_response_size {
+                tracing::warn!("Upstream response body too large: {} bytes (limit: {})", body.len(), self.max_response_size);
+                return Err("Response too large".into());
+            }
+            
+            let mut builder = Response::builder().status(status);
+            
+            for (key, value) in headers_vec {
+                builder = builder.header(&key, &value);
+            }
+            
+            return Ok(builder.body(body)?);
+        }
         
         let response = send_request_with_timeout(
             &self.client,
@@ -857,12 +1181,29 @@ impl ProxyServer {
     }
 }
 
+/// WAF decision for a request.
+///
+/// This enum represents the result of WAF inspection, indicating how the
+/// request should be handled.
 pub enum WafDecision {
+    /// Block the request with the given HTTP status code and message.
     Block(u16, String),
+    /// Challenge the client with the given HTML challenge page.
     Challenge(String),
+    /// Challenge with Set-Cookie headers (for CSS challenges).
+    ChallengeWithCookie {
+        html: String,
+        session_cookie_name: String,
+        session_cookie_value: String,
+        session_cookie_max_age: u64,
+    },
+    /// Feed the client tarpit content (markov chain generated).
     Tarpit(String),
+    /// Allow the request to pass through to the backend.
     Pass,
+    /// Silently drop the connection without response.
     Drop,
+    /// Stall the connection (for honeypot endpoints).
     Stall,
 }
 

@@ -197,15 +197,15 @@ impl ThreatScorer {
                 continue;
             }
 
-            let z = baseline.z_score(0.0);
+            let z_score = baseline.z_score(0.0);
 
-            let level = if z > self.sigma_scale_up * 2.0 {
+            let level = if z_score > self.sigma_scale_up * 2.0 {
                 5
-            } else if z > self.sigma_scale_up * 1.5 {
+            } else if z_score > self.sigma_scale_up * 1.5 {
                 4
-            } else if z > self.sigma_scale_up {
+            } else if z_score > self.sigma_scale_up {
                 3
-            } else if z > self.sigma_scale_down {
+            } else if z_score > self.sigma_scale_down {
                 2
             } else {
                 1

@@ -1,3 +1,5 @@
+#![allow(unused_variables, dead_code)]
+
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -95,7 +97,7 @@ impl TunnelUpstreamPool {
     }
 }
 
-use crate::upstream::pool::{Backend, BackendProtocol, LoadBalanceAlgorithm};
+use crate::upstream::pool::{Backend, BackendProtocol};
 
 pub struct TunnelBackend {
     pub tunnel_identifier: String,

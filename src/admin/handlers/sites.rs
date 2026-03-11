@@ -6,9 +6,9 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use super::super::state::AdminState;
-use super::super::auth::{require_auth, OptionalAuth};
+use super::common::{require_auth, OptionalAuth, config_path};
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct SiteInfo {
     pub id: String,
     pub domains: Vec<String>,
@@ -16,12 +16,24 @@ pub struct SiteInfo {
     pub routes: std::collections::HashMap<String, String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct SiteDetail {
     pub id: String,
-    pub config: crate::config::site::SiteConfig,
+    pub config: serde_json::Value,
 }
 
+#[utoipa::path(
+    get,
+    path = "/sites",
+    tag = "Sites",
+    responses(
+        (status = 200, description = "List of sites"),
+        (status = 401, description = "Unauthorized")
+    ),
+    security(
+        ("bearerAuth" = [])
+    )
+)]
 pub async fn list_sites(
     State(state): State<Arc<AdminState>>,
     auth: OptionalAuth,
@@ -44,6 +56,19 @@ pub async fn list_sites(
     Ok(Json(sites))
 }
 
+#[utoipa::path(
+    get,
+    path = "/sites/{site_id}",
+    tag = "Sites",
+    responses(
+        (status = 200, description = "Site details"),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Site not found")
+    ),
+    security(
+        ("bearerAuth" = [])
+    )
+)]
 pub async fn get_site(
     State(state): State<Arc<AdminState>>,
     auth: OptionalAuth,
@@ -57,21 +82,35 @@ pub async fn get_site(
     
     match config.sites.get(&site_id) {
         Some(site) => {
+            let json = serde_json::to_value(&site.site).unwrap_or(serde_json::Value::Null);
             Ok(Json(SiteDetail {
                 id: site_id,
-                config: site.clone(),
+                config: json,
             }))
         }
         None => Err(StatusCode::NOT_FOUND),
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateSiteRequest {
     pub domains: Vec<String>,
     pub default_upstream: String,
 }
 
+#[utoipa::path(
+    post,
+    path = "/sites",
+    tag = "Sites",
+    responses(
+        (status = 200, description = "Site created"),
+        (status = 401, description = "Unauthorized"),
+        (status = 400, description = "Invalid request")
+    ),
+    security(
+        ("bearerAuth" = [])
+    )
+)]
 pub async fn create_site(
     State(state): State<Arc<AdminState>>,
     auth: OptionalAuth,
@@ -85,7 +124,9 @@ pub async fn create_site(
         return Err(StatusCode::BAD_REQUEST);
     }
 
-    let site_id = req.domains.first().unwrap().clone();
+    let site_id = req.domains.first()
+        .cloned()
+        .ok_or(StatusCode::BAD_REQUEST)?;
     
     let site_config = crate::config::site::SiteConfig {
         site: crate::config::site::SiteInfo {
@@ -100,30 +141,44 @@ pub async fn create_site(
         ..Default::default()
     };
 
-    let config_path = format!("config/sites/{}.toml", site_id.replace('.', "_"));
+    let config_path = config_path(&site_id);
     
-    let toml_content = match toml::to_string_pretty(&site_config) {
-        Ok(t) => t,
-        Err(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR),
-    };
+    let toml_content = toml::to_string_pretty(&site_config)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     
-    if let Err(e) = std::fs::write(&config_path, toml_content) {
-        tracing::error!("Failed to write site config: {}", e);
-        return Err(StatusCode::INTERNAL_SERVER_ERROR);
-    }
+    tokio::fs::write(&config_path, toml_content)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to write site config: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
 
     let mut config = state.config.write().await;
-    if let Err(e) = config.load_site(std::path::PathBuf::from(&config_path)) {
-        tracing::error!("Failed to load new site: {}", e);
-        return Err(StatusCode::INTERNAL_SERVER_ERROR);
-    }
+    config.load_site(std::path::PathBuf::from(&config_path))
+        .map_err(|e| {
+            tracing::error!("Failed to load new site: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
 
     Ok(Json(SiteDetail {
         id: site_id,
-        config: site_config,
+        config: serde_json::to_value(&site_config).unwrap_or(serde_json::Value::Null),
     }))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/sites/{site_id}",
+    tag = "Sites",
+    responses(
+        (status = 204, description = "Site deleted"),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Site not found")
+    ),
+    security(
+        ("bearerAuth" = [])
+    )
+)]
 pub async fn delete_site(
     State(state): State<Arc<AdminState>>,
     auth: OptionalAuth,
@@ -133,15 +188,201 @@ pub async fn delete_site(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    let config_path = format!("config/sites/{}.toml", site_id.replace('.', "_"));
+    let config_path = config_path(&site_id);
     
-    if let Err(e) = std::fs::remove_file(&config_path) {
-        tracing::error!("Failed to delete site config file: {}", e);
-        return Err(StatusCode::INTERNAL_SERVER_ERROR);
-    }
+    tokio::fs::remove_file(&config_path)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to delete site config file: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
 
     let mut config = state.config.write().await;
     config.sites.remove(&site_id);
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct UpdateSiteRequest {
+    pub config: serde_json::Value,
+}
+
+#[utoipa::path(
+    put,
+    path = "/sites/{site_id}",
+    tag = "Sites",
+    responses(
+        (status = 200, description = "Site updated"),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Site not found")
+    ),
+    security(
+        ("bearerAuth" = [])
+    )
+)]
+pub async fn update_site(
+    State(state): State<Arc<AdminState>>,
+    auth: OptionalAuth,
+    Path(site_id): Path<String>,
+    Json(req): Json<UpdateSiteRequest>,
+) -> Result<Json<SiteDetail>, StatusCode> {
+    if !require_auth(&auth, &state.admin_token) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
+    let config: crate::config::site::SiteConfig = serde_json::from_value(req.config.clone())
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    if config.site.domains.is_empty() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    if let Err(e) = config.validate() {
+        tracing::warn!("Site config validation failed: {}", e);
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    let config_path = config_path(&site_id);
+    
+    let toml_content = toml::to_string_pretty(&config)
+        .map_err(|e| {
+            tracing::error!("Failed to serialize config: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    
+    tokio::fs::write(&config_path, toml_content)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to write site config: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    let mut state_config = state.config.write().await;
+    state_config.sites.insert(site_id.clone(), config.clone());
+
+    Ok(Json(SiteDetail {
+        id: site_id,
+        config: req.config,
+    }))
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct SiteThemeResponse {
+    pub site_id: String,
+    pub preset: Option<String>,
+    pub mode: Option<String>,
+    pub allow_only: Option<String>,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct UpdateSiteThemeRequest {
+    #[serde(default)]
+    pub preset: Option<String>,
+    #[serde(default)]
+    pub mode: Option<String>,
+    #[serde(default)]
+    pub allow_only: Option<String>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/sites/{site_id}/theme",
+    tag = "Sites",
+    responses(
+        (status = 200, description = "Site theme"),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Site not found")
+    ),
+    security(
+        ("bearerAuth" = [])
+    )
+)]
+pub async fn get_site_theme(
+    State(state): State<Arc<AdminState>>,
+    auth: OptionalAuth,
+    Path(site_id): Path<String>,
+) -> Result<Json<SiteThemeResponse>, StatusCode> {
+    if !require_auth(&auth, &state.admin_token) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
+    let config = state.config.read().await;
+    
+    let site = config.sites.get(&site_id)
+        .ok_or(StatusCode::NOT_FOUND)?;
+    
+    let theme = &site.error_pages.theme;
+    
+    Ok(Json(SiteThemeResponse {
+        site_id: site_id.clone(),
+        preset: theme.as_ref().and_then(|t| t.preset.clone()),
+        mode: theme.as_ref().and_then(|t| t.mode.clone()),
+        allow_only: theme.as_ref().and_then(|t| t.allow_only.clone()),
+    }))
+}
+
+#[utoipa::path(
+    put,
+    path = "/sites/{site_id}/theme",
+    tag = "Sites",
+    responses(
+        (status = 200, description = "Site theme updated"),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Site not found")
+    ),
+    security(
+        ("bearerAuth" = [])
+    )
+)]
+pub async fn update_site_theme(
+    State(state): State<Arc<AdminState>>,
+    auth: OptionalAuth,
+    Path(site_id): Path<String>,
+    Json(req): Json<UpdateSiteThemeRequest>,
+) -> Result<Json<SiteThemeResponse>, StatusCode> {
+    if !require_auth(&auth, &state.admin_token) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
+    let mut config = state.config.write().await;
+    
+    let site = config.sites.get_mut(&site_id)
+        .ok_or(StatusCode::NOT_FOUND)?;
+    
+    if req.preset.is_some() || req.mode.is_some() || req.allow_only.is_none() {
+        site.error_pages.theme = Some(crate::config::site::SiteThemeConfig {
+            preset: req.preset,
+            mode: req.mode,
+            allow_only: req.allow_only,
+            colors: None,
+        });
+    }
+    
+    let theme = &site.error_pages.theme;
+    let response = SiteThemeResponse {
+        site_id: site_id.clone(),
+        preset: theme.as_ref().and_then(|t| t.preset.clone()),
+        mode: theme.as_ref().and_then(|t| t.mode.clone()),
+        allow_only: theme.as_ref().and_then(|t| t.allow_only.clone()),
+    };
+    
+    let site_config = site.clone();
+    drop(config);
+
+    let config_path = config_path(&site_id);
+    let toml_content = toml::to_string_pretty(&site_config)
+        .map_err(|e| {
+            tracing::error!("Failed to serialize site config: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    
+    tokio::fs::write(&config_path, toml_content)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to write site config: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    Ok(Json(response))
 }

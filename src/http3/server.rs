@@ -4,14 +4,15 @@ use std::time::Instant;
 use tokio::sync::broadcast;
 
 use bytes::Bytes;
-use http::{StatusCode, header, Method, HeaderMap};
-use http_body_util::Full;
+use http::{StatusCode, header};
 use metrics::{counter, histogram, gauge};
 
-use crate::config::main::Http3Config;
+use crate::config::Http3Config;
 use crate::proxy::WafDecision;
 use crate::router::{Router, RouteResult};
 use crate::waf::{WafCore, FloodProtector, FloodDecision};
+use crate::http::headers::generate_stealth_timestamp;
+use crate::metrics::bandwidth::{get_global_bandwidth_tracker, BandwidthProtocol, EgressDirection};
 
 pub struct Http3Server {
     addr: SocketAddr,
@@ -121,7 +122,7 @@ impl Http3Server {
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let connection = incoming.await
             .map_err(|e| {
-                counter!("rustwaf.http3.connection.errors").increment(1);
+                counter!("maluwaf.http3.connection.errors").increment(1);
                 format!("Connection failed: {}", e)
             })?;
 
@@ -133,25 +134,25 @@ impl Http3Server {
         if let Some(ref fp) = flood_protector {
             match fp.check_tcp_connection(client_ip) {
                 FloodDecision::Blackholed => {
-                    counter!("rustwaf.http3.flood_blackhole").increment(1);
+                    counter!("maluwaf.http3.flood_blackhole").increment(1);
                     return Ok(());
                 }
                 FloodDecision::RateLimited => {
-                    counter!("rustwaf.http3.flood_limited").increment(1);
+                    counter!("maluwaf.http3.flood_limited").increment(1);
                     return Ok(());
                 }
                 FloodDecision::Allowed => {}
             }
         }
 
-        gauge!("rustwaf.http3.connections").increment(1.0);
-        counter!("rustwaf.http3.connections.total").increment(1);
+        gauge!("maluwaf.http3.connections").increment(1.0);
+        counter!("maluwaf.http3.connections.total").increment(1);
 
-        let mut server_builder = h3::server::builder();
+        let server_builder = h3::server::builder();
         let mut h3_conn = server_builder.build(h3_quinn::Connection::new(connection))
             .await
             .map_err(|e| {
-                counter!("rustwaf.http3.connection.errors").increment(1);
+                counter!("maluwaf.http3.connection.errors").increment(1);
                 format!("Failed to create H3 connection: {}", e)
             })?;
 
@@ -160,7 +161,7 @@ impl Http3Server {
                 Ok(Some(resolver)) => {
                     let router = router.clone();
                     let waf = waf.clone();
-                    let flood_protector = flood_protector.clone();
+                    let _flood_protector = flood_protector.clone();
                     tokio::spawn(async move {
                         if let Err(e) = Self::handle_request(resolver, remote_addr, router, waf).await {
                             tracing::debug!("HTTP/3 request error: {}", e);
@@ -173,13 +174,13 @@ impl Http3Server {
                 }
                 Err(e) => {
                     tracing::debug!("HTTP/3 accept error: {}", e);
-                    counter!("rustwaf.http3.connection.errors").increment(1);
+                    counter!("maluwaf.http3.connection.errors").increment(1);
                     break;
                 }
             }
         }
 
-        gauge!("rustwaf.http3.connections").decrement(1.0);
+        gauge!("maluwaf.http3.connections").decrement(1.0);
         Ok(())
     }
 
@@ -198,7 +199,7 @@ impl Http3Server {
                 Ok(token) => Some(token),
                 Err(e) => {
                     tracing::warn!("HTTP/3 connection limit exceeded for {}: {}", client_ip, e);
-                    counter!("rustwaf.http3.connection_limited").increment(1);
+                    counter!("maluwaf.http3.connection_limited").increment(1);
                     return Ok(());
                 }
             }
@@ -206,10 +207,16 @@ impl Http3Server {
             None
         };
 
+        if waf.is_over_bandwidth_limit() {
+            tracing::warn!("Monthly bandwidth limit exceeded - returning 503");
+            counter!("maluwaf.bandwidth.limit_exceeded").increment(1);
+            return Ok(());
+        }
+
         let (request, mut request_stream) = resolver.resolve_request().await
             .map_err(|e| {
-                counter!("rustwaf.http3.request.errors").increment(1);
-                histogram!("rustwaf.http3.request.duration").record(start.elapsed().as_secs_f64());
+                counter!("maluwaf.http3.request.errors").increment(1);
+                histogram!("maluwaf.http3.request.duration").record(start.elapsed().as_secs_f64());
                 format!("Failed to resolve request: {}", e)
             })?;
 
@@ -241,7 +248,7 @@ impl Http3Server {
             let chunk_len = chunk.remaining();
             if body_bytes.len() + chunk_len > max_body_size {
                 tracing::warn!(client = %client_ip, size = body_bytes.len(), "HTTP/3 request body exceeds max size");
-                counter!("rustwaf.http3.request.body_too_large").increment(1);
+                counter!("maluwaf.http3.request.body_too_large").increment(1);
                 break;
             }
             let mut chunk = chunk;
@@ -253,6 +260,13 @@ impl Http3Server {
         } else {
             Some(&body_bytes)
         };
+
+        let bandwidth = get_global_bandwidth_tracker();
+        let body_len = body_bytes.len() as u64;
+        if body_len > 0 {
+            bandwidth.record_ingress(body_len, BandwidthProtocol::Http3);
+            bandwidth.record_site_ingress(&host, body_len);
+        }
 
         tracing::trace!(client = %client_ip, method = %method_str, path = %path, body_size = body_bytes.len(), "HTTP/3 request body read");
 
@@ -268,7 +282,7 @@ impl Http3Server {
 
         match waf_decision {
             WafDecision::Stall => {
-                counter!("rustwaf.http3.requests.stalled").increment(1);
+                counter!("maluwaf.http3.requests.stalled").increment(1);
                 tokio::select! {
                     _ = tokio::time::sleep(std::time::Duration::from_secs(10)) => {
                         tracing::debug!("Stall timeout reached, dropping connection");
@@ -276,23 +290,51 @@ impl Http3Server {
                 }
             }
             WafDecision::Block(status, message) => {
-                counter!("rustwaf.http3.requests.blocked").increment(1);
+                counter!("maluwaf.http3.requests.blocked").increment(1);
                 let body = format!("{{\"error\":\"{}\"}}", message);
+                let body_len = body.len() as u64;
+                bandwidth.record_egress(body_len, BandwidthProtocol::Http3, EgressDirection::Blocked);
+                bandwidth.record_site_egress(&host, body_len);
                 let response = http::Response::builder()
                     .status(StatusCode::from_u16(status).unwrap_or(StatusCode::FORBIDDEN))
                     .header(header::CONTENT_TYPE, "application/json")
+                    .header(header::DATE, generate_stealth_timestamp(5))
                     .body(Bytes::from(body))
+                    .map_err(|e| format!("Failed to build response: {}", e))?;
+                
+                let (parts, _body) = response.into_parts();
+                request_stream.send_response(http::Response::from_parts(parts, ())).await
+                    .map_err(|e| format!("Failed to send response: {}", e))?;
+            }
+            WafDecision::Challenge(html) => {
+                counter!("maluwaf.http3.requests.challenged").increment(1);
+                let body_len = html.len() as u64;
+                bandwidth.record_egress(body_len, BandwidthProtocol::Http3, EgressDirection::Challenged);
+                bandwidth.record_site_egress(&host, body_len);
+                let response = http::Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_TYPE, "text/html")
+                    .header(header::DATE, generate_stealth_timestamp(5))
+                    .body(Bytes::from(html))
                     .map_err(|e| format!("Failed to build response: {}", e))?;
                 
                 let (parts, body) = response.into_parts();
                 request_stream.send_response(http::Response::from_parts(parts, ())).await
                     .map_err(|e| format!("Failed to send response: {}", e))?;
+                request_stream.send_data(body).await
+                    .map_err(|e| format!("Failed to send data: {}", e))?;
             }
-            WafDecision::Challenge(html) => {
-                counter!("rustwaf.http3.requests.challenged").increment(1);
+            WafDecision::ChallengeWithCookie { html, session_cookie_name, session_cookie_value, session_cookie_max_age } => {
+                counter!("maluwaf.http3.requests.challenged").increment(1);
+                let body_len = html.len() as u64;
+                bandwidth.record_egress(body_len, BandwidthProtocol::Http3, EgressDirection::Challenged);
+                bandwidth.record_site_egress(&host, body_len);
+                let cookie = format!("{}={}; path=/; max-age={}; Secure; SameSite=Strict", session_cookie_name, session_cookie_value, session_cookie_max_age);
                 let response = http::Response::builder()
                     .status(StatusCode::OK)
                     .header(header::CONTENT_TYPE, "text/html")
+                    .header(header::DATE, generate_stealth_timestamp(5))
+                    .header(header::SET_COOKIE, cookie)
                     .body(Bytes::from(html))
                     .map_err(|e| format!("Failed to build response: {}", e))?;
                 
@@ -303,11 +345,15 @@ impl Http3Server {
                     .map_err(|e| format!("Failed to send data: {}", e))?;
             }
             WafDecision::Tarpit(tar_path) => {
-                counter!("rustwaf.http3.requests.tarpitted").increment(1);
+                counter!("maluwaf.http3.requests.tarpitted").increment(1);
                 let html = waf.generate_tarpit_response(&tar_path);
+                let body_len = html.len() as u64;
+                bandwidth.record_egress(body_len, BandwidthProtocol::Http3, EgressDirection::Blocked);
+                bandwidth.record_site_egress(&host, body_len);
                 let response = http::Response::builder()
                     .status(StatusCode::OK)
                     .header(header::CONTENT_TYPE, "text/html")
+                    .header(header::DATE, generate_stealth_timestamp(5))
                     .body(Bytes::from(html))
                     .map_err(|e| format!("Failed to build response: {}", e))?;
                 
@@ -318,7 +364,7 @@ impl Http3Server {
                     .map_err(|e| format!("Failed to send data: {}", e))?;
             }
             WafDecision::Drop => {
-                counter!("rustwaf.http3.blackhole_drop").increment(1);
+                counter!("maluwaf.http3.blackhole_drop").increment(1);
                 return Ok(());
             }
             WafDecision::Pass => {}
@@ -334,6 +380,7 @@ impl Http3Server {
                 let response = http::Response::builder()
                     .status(StatusCode::OK)
                     .header(header::CONTENT_TYPE, "text/plain")
+                    .header(header::DATE, generate_stealth_timestamp(5))
                     .body(Bytes::from(body))
                     .map_err(|e| format!("Failed to build response: {}", e))?;
                 
@@ -345,15 +392,16 @@ impl Http3Server {
             }
             RouteResult::NotFound(e) | RouteResult::Error(e) => {
                 tracing::debug!("Route not found: {} for host: {}", e, host);
-                counter!("rustwaf.http3.requests.not_found").increment(1);
+                counter!("maluwaf.http3.requests.not_found").increment(1);
                 let body = format!("Not Found: {}", e);
                 let response = http::Response::builder()
                     .status(StatusCode::NOT_FOUND)
                     .header(header::CONTENT_TYPE, "text/plain")
+                    .header(header::DATE, generate_stealth_timestamp(5))
                     .body(Bytes::from(body))
                     .map_err(|e| format!("Failed to build response: {}", e))?;
                 
-                let (parts, body) = response.into_parts();
+                let (parts, _body) = response.into_parts();
                 request_stream.send_response(http::Response::from_parts(parts, ())).await
                     .map_err(|e| format!("Failed to send response: {}", e))?;
             }
@@ -362,8 +410,8 @@ impl Http3Server {
         request_stream.finish().await
             .map_err(|e| format!("Failed to finish stream: {}", e))?;
 
-        histogram!("rustwaf.http3.request.duration").record(start.elapsed());
-        counter!("rustwaf.http3.responses").increment(1);
+        histogram!("maluwaf.http3.request.duration").record(start.elapsed());
+        counter!("maluwaf.http3.responses").increment(1);
         
         drop(connection_token);
         

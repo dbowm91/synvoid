@@ -1,4 +1,5 @@
 use crate::waf::attack_detection::config::{AttackDetectionResult, AttackType, InputLocation};
+use crate::waf::attack_detection::detector_common::detect_in_headers;
 
 pub struct XssDetector;
 
@@ -26,67 +27,14 @@ impl XssDetector {
 
     pub fn detect_in_headers<F>(
         headers: &http::HeaderMap,
-        mut check_header: F,
+        check_header: F,
+        normalizer: Option<&crate::waf::attack_detection::normalizer::InputNormalizer>,
     ) -> Option<AttackDetectionResult>
     where
         F: FnMut(&str) -> bool,
     {
-        let headers_to_check =
-            crate::waf::attack_detection::patterns::DefaultPatterns::headers_to_check();
-
-        for header_name in headers_to_check {
-            if let Some(value) = headers.get(*header_name) {
-                if !check_header(*header_name) {
-                    continue;
-                }
-
-                if let Ok(value_str) = value.to_str() {
-                    let input = value_str.as_bytes();
-                    let location = InputLocation::Header(header_name.to_string());
-
-                    if let Some(result) = Self::detect(input, location) {
-                        return Some(result);
-                    }
-
-                    if let Ok(decoded) = urlencoding_decode(value_str) {
-                        if decoded != value_str {
-                            let location = InputLocation::Header(header_name.to_string());
-                            if let Some(result) = Self::detect(decoded.as_bytes(), location) {
-                                return Some(result);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        None
+        detect_in_headers(headers, check_header, normalizer, Self::detect)
     }
-}
-
-fn urlencoding_decode(input: &str) -> Result<String, ()> {
-    let mut result = String::new();
-    let mut chars = input.chars().peekable();
-
-    while let Some(c) = chars.next() {
-        if c == '%' {
-            let hex: String = chars.by_ref().take(2).collect();
-            if hex.len() == 2 {
-                if let Ok(byte) = u8::from_str_radix(&hex, 16) {
-                    result.push(byte as char);
-                    continue;
-                }
-            }
-            result.push('%');
-            result.push_str(&hex);
-        } else if c == '+' {
-            result.push(' ');
-        } else {
-            result.push(c);
-        }
-    }
-
-    Ok(result)
 }
 
 #[cfg(test)]

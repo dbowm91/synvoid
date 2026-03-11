@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
@@ -9,7 +9,7 @@ use bytes::Bytes;
 use http_body_util::Full;
 use tokio::sync::broadcast;
 use metrics::counter;
-use futures_util::{SinkExt, StreamExt};
+use futures::{SinkExt, StreamExt};
 use tokio_tungstenite::{connect_async, WebSocketStream, tungstenite::protocol::Role};
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 
@@ -17,13 +17,74 @@ use crate::router::Router;
 use crate::waf::{WafCore, FloodProtector, FloodDecision};
 use crate::http_client::{create_http_client_with_config, send_request_with_timeout, HttpClient};
 use crate::config::MainConfig;
-use crate::config::main::HttpConfig;
+use crate::RunningFlag;
+use crate::config::HttpConfig;
 use crate::config::site::SiteWebSocketConfig;
-use crate::proxy::{HOP_BY_HOP_HEADERS, filter_response_headers};
+use crate::proxy::{filter_response_headers, build_headers_to_filter};
 use crate::challenge::HONEYPOT_PREFIX;
 use crate::protocol::websocket::WebSocketHandler;
 use crate::protocol::trait_def::{ProtocolHandler, WafAction};
 use crate::protocol::types::{ProtocolRequest, ProtocolType};
+use crate::worker::drain_state::WorkerDrainState;
+use crate::mesh::config::MeshConfig;
+use crate::mesh::MeshNodeRole;
+use crate::mesh::transports::MeshTransportManager;
+use crate::http::headers::{inject_security_headers, inject_cors_headers, is_websocket_upgrade, compute_websocket_accept_key, generate_stealth_timestamp};
+use crate::metrics::bandwidth::{BandwidthProtocol, EgressDirection};
+use crate::metrics::WorkerMetrics;
+use parking_lot::Mutex;
+
+struct HttpConnection {
+    io: Mutex<Option<TokioIo<tokio::net::TcpStream>>>,
+    drop_requested: RunningFlag,
+}
+
+impl HttpConnection {
+    fn new(stream: tokio::net::TcpStream) -> Self {
+        Self {
+            io: Mutex::new(Some(TokioIo::new(stream))),
+            drop_requested: RunningFlag::new(),
+        }
+    }
+
+    fn request_drop(&self) {
+        self.drop_requested.stop();
+    }
+
+    fn should_drop(&self) -> bool {
+        !self.drop_requested.is_running()
+    }
+
+    fn take_stream(&self) -> Option<TokioIo<tokio::net::TcpStream>> {
+        self.io.lock().take()
+    }
+}
+
+struct DrainGuard {
+    state: Option<Arc<WorkerDrainState>>,
+}
+
+impl DrainGuard {
+    fn new(state: Option<Arc<WorkerDrainState>>) -> Self {
+        if let Some(ref ds) = state {
+            ds.increment_active();
+        }
+        Self { state }
+    }
+}
+
+impl Drop for DrainGuard {
+    fn drop(&mut self) {
+        if let Some(ref state) = self.state {
+            state.decrement_active();
+        }
+    }
+}
+
+const INTERNAL_DRAIN_PATH: &str = "/__internal__/drain";
+const INTERNAL_DRAIN_STATUS_PATH: &str = "/__internal__/drain-status";
+const INTERNAL_HEALTH_PATH: &str = "/__internal__/health";
+const INTERNAL_READY_PATH: &str = "/__internal__/ready";
 
 pub struct HttpServer {
     addr: SocketAddr,
@@ -35,6 +96,10 @@ pub struct HttpServer {
     http_config: HttpConfig,
     alt_svc: Option<String>,
     main_config: Arc<MainConfig>,
+    drain_state: Option<Arc<WorkerDrainState>>,
+    mesh_config: Option<Arc<MeshConfig>>,
+    mesh_transport: Option<Arc<MeshTransportManager>>,
+    metrics: Option<Arc<WorkerMetrics>>,
 }
 
 impl HttpServer {
@@ -62,7 +127,16 @@ impl HttpServer {
             http_config,
             alt_svc: None,
             main_config: Arc::new(main_config),
+            drain_state: None,
+            mesh_config: None,
+            mesh_transport: None,
+            metrics: None,
         }
+    }
+
+    pub fn with_metrics(mut self, metrics: Arc<WorkerMetrics>) -> Self {
+        self.metrics = Some(metrics);
+        self
     }
 
     pub fn with_flood_protector(mut self, flood_protector: Arc<FloodProtector>) -> Self {
@@ -72,6 +146,21 @@ impl HttpServer {
 
     pub fn with_alt_svc(mut self, alt_svc: String) -> Self {
         self.alt_svc = Some(alt_svc);
+        self
+    }
+
+    pub fn with_drain_state(mut self, drain_state: Arc<WorkerDrainState>) -> Self {
+        self.drain_state = Some(drain_state);
+        self
+    }
+
+    pub fn with_mesh_config(mut self, mesh_config: Option<Arc<MeshConfig>>) -> Self {
+        self.mesh_config = mesh_config;
+        self
+    }
+
+    pub fn with_mesh_transport(mut self, transport: Option<Arc<MeshTransportManager>>) -> Self {
+        self.mesh_transport = transport;
         self
     }
 
@@ -86,10 +175,14 @@ impl HttpServer {
         let http_config = self.http_config.clone();
         let alt_svc = self.alt_svc.clone();
         let main_config = self.main_config.clone();
+        let drain_state = self.drain_state.clone();
+        let mesh_config = self.mesh_config.clone();
+        let mesh_transport = self.mesh_transport.clone();
+        let metrics = self.metrics.clone();
 
-        let header_read_timeout = Duration::from_secs(http_config.header_read_timeout_secs);
-        let max_headers = http_config.max_headers;
-        let max_buf_size = http_config.max_request_size;
+        let header_read_timeout = Duration::from_secs(self.http_config.header_read_timeout_secs);
+        let max_headers = self.http_config.max_headers;
+        let max_buf_size = self.http_config.max_request_size;
         
         loop {
             tokio::select! {
@@ -107,11 +200,11 @@ impl HttpServer {
                             if let Some(ref fp) = flood_protector {
                                 match fp.check_tcp_connection(client_ip) {
                                     FloodDecision::Blackholed => {
-                                        counter!("rustwaf.http.flood_blackhole").increment(1);
+                                        counter!("maluwaf.http.flood_blackhole").increment(1);
                                         continue;
                                     }
                                     FloodDecision::RateLimited => {
-                                        counter!("rustwaf.http.flood_limited").increment(1);
+                                        counter!("maluwaf.http.flood_limited").increment(1);
                                         continue;
                                     }
                                     FloodDecision::Allowed => {}
@@ -123,7 +216,22 @@ impl HttpServer {
                             let client = client.clone();
                             let alt_svc = alt_svc.clone();
                             let main_config = main_config.clone();
-                            let io = TokioIo::new(stream);
+                            let drain_state = drain_state.clone();
+                            let http_config = http_config.clone();
+                            let mesh_config = mesh_config.clone();
+                            let mesh_transport = mesh_transport.clone();
+                            let metrics = metrics.clone();
+                            
+                            let http_conn = Arc::new(HttpConnection::new(stream));
+                            let http_conn_clone = http_conn.clone();
+                            
+                            let io = match http_conn.io.lock().take() {
+                                Some(io) => io,
+                                None => {
+                                    tracing::error!("Failed to take IO from HTTP connection");
+                                    continue;
+                                }
+                            };
                             
                             let conn = hyper::server::conn::http1::Builder::new()
                                 .header_read_timeout(header_read_timeout)
@@ -136,8 +244,14 @@ impl HttpServer {
                                     let alt_svc = alt_svc.clone();
                                     let main_config = main_config.clone();
                                     let local_addr = local_addr;
+                                    let drain_state = drain_state.clone();
+                                    let http_config = http_config.clone();
+                                    let mesh_config = mesh_config.clone();
+                                    let mesh_transport = mesh_transport.clone();
+                                    let metrics = metrics.clone();
+                                    let http_conn = http_conn_clone.clone();
                                     async move {
-                                        Self::handle_request(req, client_addr, local_addr, router, waf, client, alt_svc, main_config).await
+                                        Self::handle_request(req, client_addr, local_addr, router, waf, client, alt_svc, main_config, drain_state, http_config, mesh_config, mesh_transport, metrics, http_conn).await
                                     }
                                 }))
                                 .with_upgrades();
@@ -145,6 +259,11 @@ impl HttpServer {
                             tokio::spawn(async move {
                                 if let Err(e) = conn.await {
                                     tracing::debug!("HTTP connection error: {}", e);
+                                }
+                                if http_conn.should_drop() {
+                                    if let Some(stream) = http_conn.take_stream() {
+                                        drop(stream);
+                                    }
                                 }
                             });
                         }
@@ -170,15 +289,65 @@ impl HttpServer {
         client: HttpClient,
         alt_svc: Option<String>,
         main_config: Arc<MainConfig>,
+        drain_state: Option<Arc<WorkerDrainState>>,
+        http_config: HttpConfig,
+        mesh_config: Option<Arc<MeshConfig>>,
+        mesh_transport: Option<Arc<MeshTransportManager>>,
+        metrics: Option<Arc<WorkerMetrics>>,
+        http_conn: Arc<HttpConnection>,
     ) -> Result<Response<Full<Bytes>>, hyper::Error> {
+        let start = std::time::Instant::now();
         let client_ip = client_addr.ip();
+
+        let path = req.uri().path_and_query()
+            .map(|pq| pq.path())
+            .unwrap_or("/");
+
+        if let Some(ref state) = drain_state {
+            let is_localhost = matches!(client_ip, IpAddr::V4(ip) if ip.is_loopback())
+                || matches!(client_ip, IpAddr::V6(ip) if ip.is_loopback());
+
+            if is_localhost {
+                if path == INTERNAL_DRAIN_PATH {
+                    return Self::handle_drain_request(req, state, &alt_svc, &main_config);
+                }
+
+                if path == INTERNAL_DRAIN_STATUS_PATH {
+                    return Self::handle_drain_status_request(req, state, &alt_svc, &main_config);
+                }
+            }
+
+            if path == INTERNAL_HEALTH_PATH {
+                return Self::handle_health_request(&drain_state, &alt_svc, &main_config);
+            }
+
+            if path == INTERNAL_READY_PATH {
+                return Self::handle_ready_request(&drain_state, &alt_svc, &main_config);
+            }
+        } else {
+            if path == INTERNAL_HEALTH_PATH || path == INTERNAL_READY_PATH {
+                return Self::handle_health_request(&drain_state, &alt_svc, &main_config);
+            }
+        }
+
+        // Handle key exchange requests for global nodes
+        if path.starts_with("/key-") || path == "/health" {
+            if let Some(ref mesh_cfg) = mesh_config {
+                if mesh_cfg.role == MeshNodeRole::Global 
+                    && mesh_cfg.global_node.key_exchange_enabled 
+                    && mesh_cfg.origin_signing_key.is_some() 
+                {
+                    return Self::handle_key_exchange_request(req, mesh_cfg, &alt_svc, &main_config, client_ip, mesh_transport).await;
+                }
+            }
+        }
 
         let connection_token = if let Some(ref conn_limiter) = waf.connection_limiter {
             match conn_limiter.try_acquire("_http_", client_ip).await {
                 Ok(token) => Some(token),
                 Err(e) => {
                     tracing::warn!("Connection limit exceeded for {}: {}", client_ip, e);
-                    counter!("rustwaf.traffic.connection_limited").increment(1);
+                    counter!("maluwaf.traffic.connection_limited").increment(1);
                     return Ok(Self::build_response_with_alt_svc(503, "Too Many Connections".to_string(), "application/json", &alt_svc, &main_config));
                 }
             }
@@ -187,6 +356,18 @@ impl HttpServer {
         };
 
         let _conn_token = connection_token;
+
+        if waf.is_over_bandwidth_limit() {
+            tracing::warn!("Monthly bandwidth limit exceeded - returning 503");
+            counter!("maluwaf.bandwidth.limit_exceeded").increment(1);
+            return Ok(Self::build_response_with_alt_svc(
+                503,
+                "Monthly Bandwidth Limit Exceeded".to_string(),
+                "text/plain",
+                &alt_svc,
+                &main_config,
+            ));
+        }
 
         let is_ws_upgrade = Self::is_websocket_upgrade(req.headers());
         let on_upgrade = if is_ws_upgrade {
@@ -209,17 +390,95 @@ impl HttpServer {
             .and_then(|v| v.to_str().ok())
             .map(|s| s.to_string());
 
-        if path.starts_with("/_waf_pow") || path.starts_with("/_waf_css_challenge") 
-            || path.starts_with("/_waf_assets") || path.starts_with("/_waf_login") 
-            || path.starts_with("/_waf_logout") || path.starts_with("/_waf_captcha") {
-            return Ok(Self::build_response_with_alt_svc(404, "Not Found".to_string(), "text/plain", &alt_svc, &main_config));
+        let mut request_body_size: u64 = 0;
+        if let Some(ref m) = metrics {
+            if let Some(content_length) = parts.headers.get("content-length") {
+                if let Ok(len_str) = content_length.to_str() {
+                    if let Ok(len) = len_str.parse::<u64>() {
+                        request_body_size = len;
+                        m.bandwidth.record_ingress(len, BandwidthProtocol::Http);
+                        m.bandwidth.record_site_ingress(&host, len);
+                    }
+                }
+            }
         }
 
         if path.starts_with(HONEYPOT_PREFIX) {
-            counter!("rustwaf.honeypot.hit").increment(1);
+            counter!("maluwaf.honeypot.hit").increment(1);
             tracing::info!("HTTP honeypot accessed: {} by {}", path, client_ip);
             return Ok(Self::build_response_with_alt_svc(408, "Request timeout".to_string(), "text/plain", &alt_svc, &main_config));
         }
+
+        if path.starts_with("/_waf_css_challenge") {
+            let (html, _) = waf.challenge_manager.generate_challenge_page(&client_ip);
+            return Ok(Self::build_response_with_alt_svc(200, html, "text/html", &alt_svc, &main_config));
+        }
+
+        if path.starts_with("/_waf_assets") {
+            let asset_name = match path.strip_prefix("/_waf_assets/rnd-") {
+                Some(name) => name.strip_suffix(".png").unwrap_or(name),
+                None => {
+                    let mut resp = Response::new(Full::new(Bytes::new()));
+                    *resp.status_mut() = http::StatusCode::NO_CONTENT;
+                    resp.headers_mut().insert(http::header::CONNECTION, "close".parse().unwrap());
+                    return Ok(resp);
+                }
+            };
+            
+            if !waf.challenge_manager.css_enabled() {
+                return Ok(Self::build_response_with_alt_svc(404, "Not Found".to_string(), "text/plain", &alt_svc, &main_config));
+            }
+            
+            let cookie_name = waf.challenge_manager.css_session_cookie_name();
+            let session_id = parts.headers
+                .get("cookie")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|cookie_str| {
+                    cookie_str.split(';')
+                        .find(|c| c.trim().starts_with(&format!("{}=", cookie_name)))
+                        .map(|c| c.trim()[cookie_name.len() + 1..].to_string())
+                });
+            
+            let session_id = match session_id {
+                Some(sid) => sid,
+                None => {
+                    let mut resp = Response::new(Full::new(Bytes::new()));
+                    *resp.status_mut() = http::StatusCode::NO_CONTENT;
+                    resp.headers_mut().insert(http::header::CONNECTION, "close".parse().unwrap());
+                    return Ok(resp);
+                }
+            };
+            
+            let (_, action) = waf.challenge_manager.record_css_asset_request(&session_id, asset_name);
+            
+            match action {
+                crate::challenge::CssAssetAction::RedirectWithCookie => {
+                    let verified_cookie_name = waf.challenge_manager.css_verified_cookie_name();
+                    let window_secs = waf.challenge_manager.css_window_secs();
+                    let cookie = format!(
+                        "{}={}; path=/; max-age={}; Secure; SameSite=Strict",
+                        verified_cookie_name,
+                        "verified",
+                        window_secs
+                    );
+                    let response = Response::builder()
+                        .status(http::StatusCode::FOUND)
+                        .header(http::header::LOCATION, "/")
+                        .header(http::header::SET_COOKIE, cookie)
+                        .body(Full::new(Bytes::new()))
+                        .unwrap_or_else(|_| Response::new(Full::new(Bytes::new())));
+                    return Ok(response);
+                }
+                crate::challenge::CssAssetAction::DropConnection => {
+                    let mut resp = Response::new(Full::new(Bytes::new()));
+                    *resp.status_mut() = http::StatusCode::NO_CONTENT;
+                    resp.headers_mut().insert(http::header::CONNECTION, "close".parse().unwrap());
+                    return Ok(resp);
+                }
+            }
+        }
+
+        let _drain_guard = DrainGuard::new(drain_state.clone());
 
         let query_string = parts.uri.query();
         
@@ -239,6 +498,11 @@ impl HttpServer {
             }
         };
 
+        let site_id = target.site_id.clone();
+        if let Some(ref metrics) = metrics {
+            metrics.record_site_request_start(&site_id);
+        }
+
         let method_str = method.to_string();
         let waf_decision = waf.check_request_full(
             client_ip,
@@ -250,31 +514,75 @@ impl HttpServer {
             user_agent.as_deref(),
         ).await;
 
-        match waf_decision {
+        let response = match waf_decision {
             crate::proxy::WafDecision::Drop => {
-                counter!("rustwaf.http.blackhole_drop").increment(1);
-                return Ok(Self::build_response_with_alt_svc(503, "Service Unavailable".to_string(), "text/plain", &alt_svc, &main_config));
+                counter!("maluwaf.http.blackhole_drop").increment(1);
+                http_conn.request_drop();
+                let resp = Response::new(Full::new(Bytes::new()));
+                return Ok(resp);
             }
             crate::proxy::WafDecision::Stall => {
-                counter!("rustwaf.http.stalled").increment(1);
+                counter!("maluwaf.http.stalled").increment(1);
+                let stall_timeout = Duration::from_secs(http_config.waf_stall_timeout_secs);
                 tokio::select! {
-                    _ = tokio::time::sleep(std::time::Duration::from_secs(10)) => {
+                    _ = tokio::time::sleep(stall_timeout) => {
                         Ok(Self::build_response_with_alt_svc(408, "Request timeout".to_string(), "text/plain", &alt_svc, &main_config))
                     }
                 }
             }
             crate::proxy::WafDecision::Block(status, message) => {
-                let body = waf.error_page_manager.render_page(status, Some(&message));
+                if let Some(ref metrics) = metrics {
+                    metrics.record_site_blocked(&site_id);
+                }
+                let site_theme = target.site_config.error_pages.theme.as_ref()
+                    .map(|theme_config| theme_config.to_theme_config(waf.error_page_manager.theme()));
+                let body = waf.error_page_manager.render_page_with_theme(status, Some(&message), site_theme.as_ref());
+                let body_len = body.len() as u64;
+                if let Some(ref m) = metrics {
+                    m.bandwidth.record_egress(body_len, BandwidthProtocol::Http, EgressDirection::Blocked);
+                    m.bandwidth.record_site_egress(&site_id, body_len);
+                }
                 Ok(Self::build_response_with_alt_svc(status, body, "text/html", &alt_svc, &main_config))
             }
             crate::proxy::WafDecision::Challenge(html) => {
+                if let Some(ref metrics) = metrics {
+                    metrics.record_site_challenged(&site_id);
+                }
+                let body_len = html.len() as u64;
+                if let Some(ref m) = metrics {
+                    m.bandwidth.record_egress(body_len, BandwidthProtocol::Http, EgressDirection::Challenged);
+                    m.bandwidth.record_site_egress(&site_id, body_len);
+                }
                 Ok(Self::build_response_with_alt_svc(200, html, "text/html", &alt_svc, &main_config))
             }
+            crate::proxy::WafDecision::ChallengeWithCookie { html, session_cookie_name, session_cookie_value, session_cookie_max_age } => {
+                if let Some(ref metrics) = metrics {
+                    metrics.record_site_challenged(&site_id);
+                }
+                let body_len = html.len() as u64;
+                if let Some(ref m) = metrics {
+                    m.bandwidth.record_egress(body_len, BandwidthProtocol::Http, EgressDirection::Challenged);
+                    m.bandwidth.record_site_egress(&site_id, body_len);
+                }
+                let cookie = format!("{}={}; path=/; max-age={}; Secure; SameSite=Strict", session_cookie_name, session_cookie_value, session_cookie_max_age);
+                Ok(Self::build_response_with_cookie(200, html, "text/html", &cookie, &alt_svc, &main_config))
+            }
             crate::proxy::WafDecision::Tarpit(tar_path) => {
+                if let Some(ref metrics) = metrics {
+                    metrics.record_site_blocked(&site_id);
+                }
                 let html = waf.generate_tarpit_response(&tar_path);
+                let body_len = html.len() as u64;
+                if let Some(ref m) = metrics {
+                    m.bandwidth.record_egress(body_len, BandwidthProtocol::Http, EgressDirection::Blocked);
+                    m.bandwidth.record_site_egress(&site_id, body_len);
+                }
                 Ok(Self::build_response_with_alt_svc(200, html, "text/html", &alt_svc, &main_config))
             }
             crate::proxy::WafDecision::Pass => {
+                if let Some(ref metrics) = metrics {
+                    metrics.record_site_proxied(&site_id);
+                }
                 if let Some(upgraded) = on_upgrade {
                     let ws_config = target.site_config.websocket.clone();
                     let target_clone = target.clone();
@@ -304,37 +612,42 @@ impl HttpServer {
                 
                 let target_url = format!("{}{}", target.upstream, path);
                 
-                let global_headers_to_remove: Vec<String> = main_config.security.more_clear_headers.iter()
-                    .map(|s| s.to_lowercase())
-                    .collect();
+                let headers_to_filter = build_headers_to_filter(
+                    &main_config.security.more_clear_headers,
+                    &target.site_config.security.more_clear_headers.iter()
+                        .chain(target.site_config.security_headers.more_clear_headers.iter())
+                        .cloned()
+                        .collect::<Vec<_>>(),
+                );
                 
-                let site_headers_to_remove: Vec<String> = target.site_config.security.more_clear_headers.iter()
-                    .chain(target.site_config.security_headers.more_clear_headers.iter())
-                    .map(|s| s.to_lowercase())
-                    .collect();
+                let resp = if crate::http_client::is_quictunnel_url(&target.upstream) {
+                    crate::http_client::send_request_via_quic_tunnel(
+                        method,
+                        &target_url,
+                        Some(&parts.headers),
+                        None,
+                        Some(std::time::Duration::from_secs(30)),
+                    ).await
+                } else {
+                    send_request_with_timeout(&client, method, &target_url, Some(std::time::Duration::from_secs(30))).await
+                };
                 
-                let mut headers_to_filter: Vec<String> = HOP_BY_HOP_HEADERS.iter()
-                    .map(|s| s.to_string())
-                    .collect();
-                
-                for h in global_headers_to_remove.iter() {
-                    if !headers_to_filter.contains(h) {
-                        headers_to_filter.push(h.clone());
-                    }
-                }
-                
-                for h in site_headers_to_remove.iter() {
-                    if !headers_to_filter.contains(h) {
-                        headers_to_filter.push(h.clone());
-                    }
-                }
-                
-                match send_request_with_timeout(&client, method, &target_url, Some(std::time::Duration::from_secs(30))).await {
+                match resp {
                     Ok(resp) => {
+                        if let Some(ref metrics) = metrics {
+                            metrics.record_site_upstream_success(&site_id);
+                        }
                         let status = resp.status_code();
                         let headers = filter_response_headers(&resp.headers, &headers_to_filter);
                         
                         let body = resp.body;
+                        let body_len = body.len() as u64;
+                        
+                        if let Some(ref m) = metrics {
+                            m.bandwidth.record_proxied(request_body_size, body_len, &target.upstream);
+                            m.bandwidth.record_egress(body_len, BandwidthProtocol::Http, EgressDirection::Proxied);
+                            m.bandwidth.record_site_egress(&site_id, body_len);
+                        }
                         
                         let mut builder = Response::builder().status(status);
                         for (key, value) in headers {
@@ -349,111 +662,201 @@ impl HttpServer {
                             builder = Self::inject_security_headers(builder, &target.site_config.security_headers);
                         }
                         
+                        if target.site_config.security_headers.date_header.unwrap_or(true) {
+                            let jitter = target.site_config.security_headers.date_jitter_seconds.unwrap_or(5);
+                            builder = builder.header("Date", generate_stealth_timestamp(jitter));
+                        }
+                        
+                        if let Some(ref token) = target.site_config.security_headers.server_token {
+                            builder = builder.header("Server", token.as_str());
+                        }
+                        
                         Ok(builder
                             .body(Full::new(Bytes::from(body)))
                             .unwrap_or_else(|_| Self::build_response_with_alt_svc(500, "Internal Server Error".to_string(), "text/plain", &alt_svc, &main_config)))
                     }
                     Err(e) => {
+                        if let Some(ref metrics) = metrics {
+                            metrics.record_site_upstream_failure(&site_id);
+                        }
                         tracing::error!("Upstream error: {}", e);
-                        Ok(Self::build_response_with_alt_svc(502, "Bad Gateway".to_string(), "text/plain", &alt_svc, &main_config))
+                        let error_body = "Bad Gateway".to_string();
+                        let error_len = error_body.len() as u64;
+                        if let Some(ref m) = metrics {
+                            m.bandwidth.record_egress(error_len, BandwidthProtocol::Http, EgressDirection::Error);
+                            m.bandwidth.record_site_egress(&site_id, error_len);
+                        }
+                        Ok(Self::build_response_with_alt_svc(502, error_body, "text/plain", &alt_svc, &main_config))
                     }
                 }
             }
+        };
+
+        let latency_ms = start.elapsed().as_millis() as u64;
+        if let Some(ref metrics) = metrics {
+            let site_id_clone = site_id.clone();
+            let metrics_clone = metrics.clone();
+            tokio::spawn(async move {
+                metrics_clone.record_site_request_end(&site_id_clone, latency_ms);
+            });
         }
+
+        response
     }
 
     fn inject_security_headers(
         builder: http::response::Builder,
         config: &crate::config::SiteSecurityHeadersConfig,
     ) -> http::response::Builder {
-        let mut builder = builder;
-        
-        if let Some(ref hsts) = config.strict_transport_security {
-            builder = builder.header("Strict-Transport-Security", hsts);
-        }
-        
-        if let Some(ref csp) = config.content_security_policy {
-            builder = builder.header("Content-Security-Policy", csp);
-        }
-        
-        if let Some(ref xfo) = config.x_frame_options {
-            builder = builder.header("X-Frame-Options", xfo);
-        }
-        
-        if let Some(ref xcto) = config.x_content_type_options {
-            builder = builder.header("X-Content-Type-Options", xcto);
-        }
-        
-        if let Some(ref xxss) = config.x_xss_protection {
-            builder = builder.header("X-XSS-Protection", xxss);
-        }
-        
-        if let Some(ref rp) = config.referrer_policy {
-            builder = builder.header("Referrer-Policy", rp);
-        }
-        
-        if let Some(ref pp) = config.permissions_policy {
-            builder = builder.header("Permissions-Policy", pp);
-        }
-        
-        if let Some(ref cc) = config.cache_control {
-            builder = builder.header("Cache-Control", cc);
-        }
-        
-        if let Some(ref ect) = config.expect_ct {
-            builder = builder.header("Expect-CT", ect);
-        }
-        
-        if let Some(ref pcdp) = config.x_permitted_cross_domain_policies {
-            builder = builder.header("X-Permitted-Cross-Domain-Policies", pcdp);
-        }
-        
-        if let Some(ref xdo) = config.x_download_options {
-            builder = builder.header("X-Download-Options", xdo);
-        }
-        
-        if let Some(ref ct) = config.content_type {
-            builder = builder.header("Content-Type", ct);
-        }
-        
-        if config.cors.enabled.unwrap_or(false) {
-            builder = Self::inject_cors_headers(builder, &config.cors);
-        }
-        
-        builder
+        inject_security_headers(builder, config)
     }
 
     fn inject_cors_headers(
         builder: http::response::Builder,
         config: &crate::config::SiteCorsConfig,
     ) -> http::response::Builder {
-        let mut builder = builder;
-        
-        if let Some(ref origin) = config.allow_origin {
-            builder = builder.header("Access-Control-Allow-Origin", origin);
+        inject_cors_headers(builder, config)
+    }
+
+    fn handle_drain_request(
+        _req: hyper::Request<hyper::body::Incoming>,
+        drain_state: &Arc<WorkerDrainState>,
+        alt_svc: &Option<String>,
+        main_config: &Arc<MainConfig>,
+    ) -> Result<Response<Full<Bytes>>, hyper::Error> {
+        let drain_id = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+
+        let accepted = drain_state.start_drain(drain_id);
+        drain_state.stop_accepting();
+
+        let status = drain_state.get_status();
+        let body = serde_json::to_string(&status).unwrap_or_else(|_| "{}".to_string());
+
+        let status_code = if accepted { 200 } else { 409 };
+        Ok(Self::build_response_with_alt_svc(
+            status_code,
+            body,
+            "application/json",
+            alt_svc,
+            main_config,
+        ))
+    }
+
+    fn handle_drain_status_request(
+        _req: hyper::Request<hyper::body::Incoming>,
+        drain_state: &Arc<WorkerDrainState>,
+        alt_svc: &Option<String>,
+        main_config: &Arc<MainConfig>,
+    ) -> Result<Response<Full<Bytes>>, hyper::Error> {
+        let status = drain_state.get_status();
+        let body = serde_json::to_string(&status).unwrap_or_else(|_| "{}".to_string());
+
+        Ok(Self::build_response_with_alt_svc(
+            200,
+            body,
+            "application/json",
+            alt_svc,
+            main_config,
+        ))
+    }
+
+    fn handle_health_request(
+        drain_state: &Option<Arc<WorkerDrainState>>,
+        alt_svc: &Option<String>,
+        _main_config: &Arc<MainConfig>,
+    ) -> Result<Response<Full<Bytes>>, hyper::Error> {
+        let (status_code, body) = if let Some(state) = drain_state {
+            let status = state.get_status();
+            if status.is_draining {
+                let body = serde_json::json!({
+                    "status": "draining",
+                    "active_connections": status.active_connections,
+                    "drain_elapsed_secs": status.drain_elapsed_secs,
+                });
+                (503, body.to_string())
+            } else {
+                let body = serde_json::json!({
+                    "status": "healthy",
+                });
+                (200, body.to_string())
+            }
+        } else {
+            let body = serde_json::json!({
+                "status": "healthy",
+            });
+            (200, body.to_string())
+        };
+
+        let mut builder = Response::builder()
+            .status(status_code)
+            .header("Content-Type", "application/json")
+            .header("Content-Length", body.len());
+
+        if status_code == 503 {
+            builder = builder.header("Retry-After", "5");
         }
-        
-        if let Some(ref methods) = config.allow_methods {
-            builder = builder.header("Access-Control-Allow-Methods", methods.join(", "));
+
+        if let Some(alt_svc) = alt_svc {
+            builder = builder.header("Alt-Svc", alt_svc.as_str());
         }
-        
-        if let Some(ref headers) = config.allow_headers {
-            builder = builder.header("Access-Control-Allow-Headers", headers.join(", "));
+
+        Ok(builder
+            .body(Full::new(Bytes::from(body)))
+            .unwrap_or_else(|_| Response::builder()
+                .status(500)
+                .body(Full::new(Bytes::from("Internal Server Error")))
+                .unwrap()))
+    }
+
+    fn handle_ready_request(
+        drain_state: &Option<Arc<WorkerDrainState>>,
+        alt_svc: &Option<String>,
+        _main_config: &Arc<MainConfig>,
+    ) -> Result<Response<Full<Bytes>>, hyper::Error> {
+        let (status_code, body) = if let Some(state) = drain_state {
+            let status = state.get_status();
+            if status.is_draining || status.stopped_accepting {
+                let body = serde_json::json!({
+                    "ready": false,
+                    "reason": "draining",
+                    "active_connections": status.active_connections,
+                });
+                (503, body.to_string())
+            } else {
+                let body = serde_json::json!({
+                    "ready": true,
+                });
+                (200, body.to_string())
+            }
+        } else {
+            let body = serde_json::json!({
+                "ready": true,
+            });
+            (200, body.to_string())
+        };
+
+        let mut builder = Response::builder()
+            .status(status_code)
+            .header("Content-Type", "application/json")
+            .header("Content-Length", body.len());
+
+        if status_code == 503 {
+            builder = builder.header("Retry-After", "5");
         }
-        
-        if config.allow_credentials.unwrap_or(false) {
-            builder = builder.header("Access-Control-Allow-Credentials", "true");
+
+        if let Some(alt_svc) = alt_svc {
+            builder = builder.header("Alt-Svc", alt_svc.as_str());
         }
-        
-        if let Some(max_age) = config.max_age {
-            builder = builder.header("Access-Control-Max-Age", max_age.to_string());
-        }
-        
-        if let Some(ref headers) = config.expose_headers {
-            builder = builder.header("Access-Control-Expose-Headers", headers.join(", "));
-        }
-        
-        builder
+
+        Ok(builder
+            .body(Full::new(Bytes::from(body)))
+            .unwrap_or_else(|_| Response::builder()
+                .status(500)
+                .body(Full::new(Bytes::from("Internal Server Error")))
+                .unwrap()))
     }
 
     fn build_response_with_alt_svc(status: u16, body: String, content_type: &str, alt_svc: &Option<String>, main_config: &Arc<MainConfig>) -> Response<Full<Bytes>> {
@@ -462,7 +865,7 @@ impl HttpServer {
             .header("Content-Type", content_type)
             .header("Content-Length", body.len());
         
-        if let Some(ref alt_svc) = alt_svc {
+        if let Some(alt_svc) = alt_svc {
             builder = builder.header("Alt-Svc", alt_svc.as_str());
         }
         
@@ -472,6 +875,36 @@ impl HttpServer {
                 .header("X-Content-Type-Options", "nosniff")
                 .header("X-Frame-Options", "DENY");
         }
+        
+        builder = builder.header("Date", generate_stealth_timestamp(5));
+        
+        builder
+            .body(Full::new(Bytes::from(body)))
+            .unwrap_or_else(|_| Response::builder()
+                .status(500)
+                .body(Full::new(Bytes::from("Internal Server Error")))
+                .unwrap())
+    }
+
+    fn build_response_with_cookie(status: u16, body: String, content_type: &str, cookie: &str, alt_svc: &Option<String>, main_config: &Arc<MainConfig>) -> Response<Full<Bytes>> {
+        let mut builder = Response::builder()
+            .status(status)
+            .header("Content-Type", content_type)
+            .header("Content-Length", body.len())
+            .header("Set-Cookie", cookie);
+        
+        if let Some(alt_svc) = alt_svc {
+            builder = builder.header("Alt-Svc", alt_svc.as_str());
+        }
+        
+        if main_config.security.global_security_headers {
+            builder = builder
+                .header("Cache-Control", "no-store, no-cache, must-revalidate")
+                .header("X-Content-Type-Options", "nosniff")
+                .header("X-Frame-Options", "DENY");
+        }
+        
+        builder = builder.header("Date", generate_stealth_timestamp(5));
         
         builder
             .body(Full::new(Bytes::from(body)))
@@ -486,6 +919,7 @@ impl HttpServer {
             .status(status)
             .header("Content-Type", content_type)
             .header("Content-Length", body.len())
+            .header("Date", generate_stealth_timestamp(5))
             .body(Full::new(Bytes::from(body)))
             .unwrap_or_else(|_| Response::builder()
                 .status(500)
@@ -505,12 +939,12 @@ impl HttpServer {
             Ok(up) => up,
             Err(e) => {
                 tracing::error!("WebSocket upgrade failed: {}", e);
-                counter!("rustwaf.websocket.upgrade_failed").increment(1);
+                counter!("maluwaf.websocket.upgrade_failed").increment(1);
                 return;
             }
         };
 
-        counter!("rustwaf.websocket.connections").increment(1);
+        counter!("maluwaf.websocket.connections").increment(1);
 
         let ws_stream = WebSocketStream::from_raw_socket(
             TokioIo::new(upgraded),
@@ -542,23 +976,23 @@ impl HttpServer {
             Ok(ws) => ws,
             Err(e) => {
                 tracing::error!("Failed to connect to upstream WebSocket: {}", e);
-                counter!("rustwaf.websocket.upstream_failed").increment(1);
+                counter!("maluwaf.websocket.upstream_failed").increment(1);
                 return;
             }
         };
 
-        counter!("rustwaf.websocket.upstream_connected").increment(1);
+        counter!("maluwaf.websocket.upstream_connected").increment(1);
 
         let (mut upstream_tx, mut upstream_rx) = upstream_ws.split();
 
         let path_clone = path.clone();
         let waf_clone = waf.clone();
-        let should_close = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let should_close = std::sync::Arc::new(RunningFlag::new());
         let should_close_clone = should_close.clone();
         
         let client_to_upstream = async {
             while let Some(msg_result) = client_rx.next().await {
-                if should_close_clone.load(std::sync::atomic::Ordering::Relaxed) {
+                if !should_close_clone.is_running() {
                     break;
                 }
                 
@@ -572,7 +1006,7 @@ impl HttpServer {
 
                 let (method, body_vec) = match &msg {
                     WsMessage::Text(t) => ("TEXT", t.as_bytes().to_vec()),
-                    WsMessage::Binary(b) => ("BINARY", b.clone()),
+                    WsMessage::Binary(b) => ("BINARY", b.to_vec()),
                     WsMessage::Close(_) => {
                         let _ = upstream_tx.send(WsMessage::Close(None)).await;
                         break;
@@ -602,9 +1036,9 @@ impl HttpServer {
                             client_ip = %client_ip,
                             "WebSocket message blocked by WAF"
                         );
-                        counter!("rustwaf.websocket.blocked").increment(1);
+                        counter!("maluwaf.websocket.blocked").increment(1);
                         let _ = upstream_tx.close().await;
-                        should_close_clone.store(true, std::sync::atomic::Ordering::Relaxed);
+                        should_close_clone.stop();
                         break;
                     }
                     WafAction::LogOnly => {
@@ -612,7 +1046,7 @@ impl HttpServer {
                             client_ip = %client_ip,
                             "WebSocket message logged by WAF"
                         );
-                        counter!("rustwaf.websocket.logged").increment(1);
+                        counter!("maluwaf.websocket.logged").increment(1);
                     }
                     WafAction::Allow => {}
                     WafAction::Challenge | WafAction::Stall | WafAction::TarPit => {
@@ -633,7 +1067,7 @@ impl HttpServer {
 
         let upstream_to_client = async {
             while let Some(msg_result) = upstream_rx.next().await {
-                if should_close.load(std::sync::atomic::Ordering::Relaxed) {
+                if !should_close.is_running() {
                     break;
                 }
                 
@@ -657,38 +1091,16 @@ impl HttpServer {
             _ = upstream_to_client => {}
         }
 
-        counter!("rustwaf.websocket.closed").increment(1);
+        counter!("maluwaf.websocket.closed").increment(1);
         tracing::debug!("WebSocket connection closed");
     }
 
     fn is_websocket_upgrade(headers: &http::HeaderMap) -> bool {
-        let upgrade = headers.get("upgrade")
-            .and_then(|v| v.to_str().ok())
-            .map(|v| v.to_lowercase());
-        
-        let connection = headers.get("connection")
-            .and_then(|v| v.to_str().ok())
-            .map(|v| v.to_lowercase());
-        
-        let has_upgrade = upgrade.as_ref().map(|u| u == "websocket").unwrap_or(false);
-        let has_connection_upgrade = connection
-            .as_ref()
-            .map(|c| c.contains("upgrade"))
-            .unwrap_or(false);
-        
-        has_upgrade && has_connection_upgrade
+        is_websocket_upgrade(headers)
     }
 
     fn compute_websocket_accept_key(key: &str) -> String {
-        use sha2::{Sha256, Digest};
-        use base64::{Engine as _, engine::general_purpose::STANDARD};
-        
-        const GUID: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
-        let combined = format!("{}{}", key, GUID);
-        let mut hasher = Sha256::new();
-        hasher.update(combined.as_bytes());
-        let result = hasher.finalize();
-        STANDARD.encode(result)
+        compute_websocket_accept_key(key)
     }
 
     fn build_websocket_response(headers: &http::HeaderMap) -> Response<Full<Bytes>> {
@@ -719,5 +1131,92 @@ impl HttpServer {
                     .body(Full::new(Bytes::from("Internal Server Error")))
                     .unwrap()
             })
+    }
+
+    async fn handle_key_exchange_request(
+        req: hyper::Request<hyper::body::Incoming>,
+        mesh_config: &Arc<MeshConfig>,
+        alt_svc: &Option<String>,
+        main_config: &Arc<MainConfig>,
+        client_ip: IpAddr,
+        mesh_transport: Option<Arc<MeshTransportManager>>,
+    ) -> Result<Response<Full<Bytes>>, hyper::Error> {
+        use crate::mesh::passover_key_exchange::KeyConfirmHttp;
+        use axum::Json;
+        use http::StatusCode;
+        use http_body_util::BodyExt;
+
+        // Extract parts first to avoid borrow issues
+        let (parts, body) = req.into_parts();
+        let path = parts.uri.path();
+        let method = parts.method.clone();
+
+        // Read body
+        let body_bytes = match body.collect().await {
+            Ok(collected) => collected.to_bytes(),
+            Err(e) => {
+                return Ok(Self::build_response_with_alt_svc(
+                    400, 
+                    format!("Failed to read request body: {}", e), 
+                    "application/json", 
+                    alt_svc, 
+                    main_config
+                ));
+            }
+        };
+
+        let state = crate::mesh::passover_key_exchange::KeyExchangeHttpState::new(mesh_config.clone())
+            .with_transport(mesh_transport);
+
+        let response = if path == "/key-request-origin" && method == http::Method::POST {
+            match serde_json::from_slice::<crate::mesh::passover_key_exchange::KeyRequestOriginHttp>(&body_bytes) {
+                Ok(mut req_data) => {
+                    // Pass client_ip to the request for edge token verification
+                    req_data.client_ip = Some(client_ip.to_string());
+
+                    let result = crate::mesh::passover_key_exchange::key_request_origin_http(
+                        axum::extract::State(state),
+                        Json(req_data),
+                    ).await;
+                    match result {
+                        Ok(Json(response)) => {
+                            let json = serde_json::to_string(&response).unwrap_or_default();
+                            (StatusCode::OK, json)
+                        }
+                        Err((status, err)) => (status, err)
+                    }
+                }
+                Err(e) => (StatusCode::BAD_REQUEST, format!("Invalid request: {}", e)),
+            }
+        } else if path == "/key-confirm" && method == http::Method::POST {
+            match serde_json::from_slice::<KeyConfirmHttp>(&body_bytes) {
+                Ok(req_data) => {
+                    let result = crate::mesh::passover_key_exchange::key_confirm_http(
+                        axum::extract::State(state),
+                        Json(req_data),
+                    ).await;
+                    match result {
+                        Ok(Json(response)) => {
+                            let json = serde_json::to_string(&response).unwrap_or_default();
+                            (StatusCode::OK, json)
+                        }
+                        Err((status, err)) => (status, err)
+                    }
+                }
+                Err(e) => (StatusCode::BAD_REQUEST, format!("Invalid request: {}", e)),
+            }
+        } else if path == "/health" && method == http::Method::GET {
+            (StatusCode::OK, "OK".to_string())
+        } else {
+            (StatusCode::NOT_FOUND, "Not Found".to_string())
+        };
+
+        Ok(Self::build_response_with_alt_svc(
+            response.0.as_u16(),
+            response.1,
+            "application/json",
+            alt_svc,
+            main_config,
+        ))
     }
 }

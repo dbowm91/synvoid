@@ -1,14 +1,15 @@
-pub mod trait_def;
+pub mod detect_common;
 pub mod grpc;
-pub mod websocket;
+pub mod trait_def;
 pub mod types;
+pub mod websocket;
 
-pub use trait_def::{ProtocolHandler, BoxedHandler};
-pub use types::{ProtocolRequest, ProtocolResponse, ProtocolMetrics, ProtocolType};
+pub use detect_common::{extract_first_line, looks_like_dns, ProtocolDetectionResult};
+pub use trait_def::{BoxedHandler, ProtocolHandler};
+pub use types::{ProtocolMetrics, ProtocolRequest, ProtocolResponse, ProtocolType};
 
 use self::grpc::GrpcHandler;
 use self::websocket::WebSocketHandler;
-use std::sync::Arc;
 
 pub fn create_handler(protocol: &ProtocolType) -> Option<BoxedHandler> {
     match protocol {

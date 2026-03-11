@@ -155,7 +155,6 @@ invalid_count_max = 120
 valid_count = 3
 verification_window_secs = 30
 asset_path = "/static/assets/"
-valid_aspect_ratios = ["16:9", "4:3", "21:9"]
 
 # =============================================================================
 # POW CHALLENGE
@@ -163,7 +162,7 @@ valid_aspect_ratios = ["16:9", "4:3", "21:9"]
 
 [pow_challenge]
 enabled = true
-difficulty = 6
+difficulty = 10
 timeout_secs = 60
 window_secs = 300
 prefer_wasm = true
@@ -256,6 +255,12 @@ format = "json"
 # Maximum response size from upstream
 max_response_size = 20971520  # 20MB
 
+# Backend configuration (one of: upstream, fastcgi, app-server, static)
+# Example: Use app-server (Granian) for Python ASGI/RSGI/WSGI apps
+[proxy.backend]
+type = "app-server"
+# socket = "/tmp/rustwaf-example-com-app.sock"  # Optional: auto-generated if not specified
+
 # =============================================================================
 # WORKER POOL
 # =============================================================================
@@ -343,3 +348,25 @@ scan_with_yara = false
 [upload.paths.allowed_types]
 mode = "allowlist"
 mime_types = ["*"]  # Allow all types for admin
+
+# =============================================================================
+# APP SERVER (Granian)
+# =============================================================================
+
+[app_server]
+enabled = true
+app_path = "main:app"  # Format: "module:app_variable"
+interface = "asgi"      # asgi, rsgi, wsgi
+workers = 4
+blocking_threads = 4
+socket_path = "/tmp/rustwaf-example-com-app.sock"
+python_path = "/usr/bin/python3"
+working_directory = "/var/www/myapp"
+restart_on_failure = true
+max_restarts = 5
+health_check_path = "/health"
+health_check_interval_secs = 10
+health_check_timeout_secs = 5
+auto_install_granian = true    # Auto-install granian if not present
+auto_detect_venv = true       # Auto-detect venv in working_directory
+auto_detect_app = true        # Auto-detect app entry point

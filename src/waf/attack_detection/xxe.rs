@@ -2,67 +2,70 @@ use aho_corasick::AhoCorasick;
 use std::sync::Arc;
 
 use crate::waf::attack_detection::config::{AttackDetectionResult, AttackType, InputLocation};
+use crate::waf::attack_detection::detector_common::{BasePatternDetector, PatternDetector};
 use crate::waf::attack_detection::patterns::DefaultPatterns;
 
 pub struct XxeDetector {
-    patterns: Arc<AhoCorasick>,
+    inner: BasePatternDetector,
 }
 
 impl XxeDetector {
     pub fn new(paranoia_level: u8, custom_patterns: &[String]) -> Self {
-        let mut base_patterns: Vec<String> = DefaultPatterns::xxe()
-            .iter()
-            .map(|s| s.to_lowercase())
-            .collect();
-
-        if paranoia_level >= 3 {
-            base_patterns.extend(DefaultPatterns::xxe_high().iter().map(|s| s.to_lowercase()));
-        }
-
-        for pattern in custom_patterns {
-            let pattern_lower = pattern.to_lowercase();
-            if !base_patterns.contains(&pattern_lower) {
-                base_patterns.push(pattern_lower);
-            }
-        }
-
-        let patterns_str: Vec<&str> = base_patterns.iter().map(|s| s.as_str()).collect();
-        let patterns = Arc::new(AhoCorasick::new(&patterns_str).unwrap());
-
-        Self { patterns }
+        let inner = BasePatternDetector::new(
+            DefaultPatterns::xxe().as_slice(),
+            DefaultPatterns::xxe_high().as_slice(),
+            custom_patterns,
+            paranoia_level,
+            AttackType::Xxe,
+            "xxe",
+        );
+        Self { inner }
     }
 
-    pub fn detect(&self, input: &str, location: InputLocation) -> Option<AttackDetectionResult> {
+    fn detect_with_xml_normalization(
+        &self,
+        input: &str,
+        location: InputLocation,
+    ) -> Option<AttackDetectionResult> {
         let normalized = normalize_xml(input);
         let normalized_lower = normalized.to_lowercase();
 
-        if self.patterns.is_match(&normalized_lower) {
-            if let Some(mat) = self.patterns.find(&normalized_lower) {
-                let matched = normalized[mat.start()..mat.end()].to_string();
+        if let Some(mat) = self.inner.patterns_ref().find(&normalized_lower) {
+            let matched = normalized[mat.start()..mat.end()].to_string();
 
-                tracing::warn!(
-                    attack_type = "xxe",
-                    matched_pattern = %matched,
-                    location = %location,
-                    "XXE attack detected"
-                );
+            tracing::warn!(
+                attack_type = "xxe",
+                matched_pattern = %matched,
+                location = %location,
+                "XXE attack detected"
+            );
 
-                return Some(AttackDetectionResult {
-                    attack_type: AttackType::Xxe,
-                    fingerprint: None,
-                    matched_pattern: Some(matched),
-                    input_location: location,
-                });
-            }
+            return Some(AttackDetectionResult {
+                attack_type: AttackType::Xxe,
+                fingerprint: None,
+                matched_pattern: Some(matched),
+                input_location: location,
+            });
         }
 
         None
     }
+}
 
-    pub fn detect_in_headers<F>(
+impl PatternDetector for XxeDetector {
+    fn patterns(&self) -> &Arc<AhoCorasick> {
+        self.inner.patterns()
+    }
+
+    fn detect(&self, input: &str, location: InputLocation) -> Option<AttackDetectionResult> {
+        self.detect_with_xml_normalization(input, location)
+    }
+
+    fn detect_in_headers<F>(
         &self,
         headers: &http::HeaderMap,
         mut check_header: F,
+        _normalizer: Option<&crate::waf::attack_detection::normalizer::InputNormalizer>,
     ) -> Option<AttackDetectionResult>
     where
         F: FnMut(&str) -> bool,
@@ -79,7 +82,6 @@ impl XxeDetector {
                 }
             }
         }
-
         None
     }
 }

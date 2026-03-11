@@ -4,7 +4,7 @@ pub mod shared_state;
 pub use worker::{Worker, WorkerId, WorkerStatus};
 pub use shared_state::SharedWafState;
 
-use crate::config::main::WorkerPoolDefaults;
+use crate::config::WorkerPoolDefaults;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -14,6 +14,18 @@ use tokio::time::interval;
 use parking_lot::RwLock as PLRwLock;
 use metrics::{gauge, histogram};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LoadBalanceAlgorithm {
+    RoundRobin,
+    LeastConnections,
+}
+
+impl Default for LoadBalanceAlgorithm {
+    fn default() -> Self {
+        Self::LeastConnections
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct WorkerPool {
     config: WorkerPoolDefaults,
@@ -22,6 +34,8 @@ pub struct WorkerPool {
     shutdown_tx: broadcast::Sender<()>,
     scale_event_tx: mpsc::Sender<ScaleEvent>,
     current_worker_count: Arc<AtomicUsize>,
+    worker_selection_index: Arc<AtomicUsize>,
+    algorithm: parking_lot::RwLock<LoadBalanceAlgorithm>,
 }
 
 #[derive(Debug, Clone)]
@@ -38,6 +52,12 @@ impl WorkerPool {
 
         let workers = Arc::new(PLRwLock::new(Vec::new()));
 
+        let algorithm = if config.auto_scale {
+            LoadBalanceAlgorithm::LeastConnections
+        } else {
+            LoadBalanceAlgorithm::RoundRobin
+        };
+
         WorkerPool {
             config,
             workers,
@@ -45,6 +65,8 @@ impl WorkerPool {
             shutdown_tx,
             scale_event_tx,
             current_worker_count: Arc::new(AtomicUsize::new(0)),
+            worker_selection_index: Arc::new(AtomicUsize::new(0)),
+            algorithm: parking_lot::RwLock::new(algorithm),
         }
     }
 
@@ -85,6 +107,16 @@ impl WorkerPool {
         worker_ref
     }
 
+    pub fn set_algorithm(&self, algorithm: LoadBalanceAlgorithm) {
+        let workers = self.workers.read();
+        if workers.is_empty() {
+            return;
+        }
+
+        *self.algorithm.write() = algorithm;
+        self.worker_selection_index.store(0, Ordering::SeqCst);
+    }
+
     pub async fn get_worker_for_request(&self) -> Option<Worker> {
         let workers = self.workers.read();
         
@@ -92,15 +124,50 @@ impl WorkerPool {
             return None;
         }
 
-        let mut best_worker = None;
+        let worker_count = workers.len();
+        
+        match *self.algorithm.read() {
+            LoadBalanceAlgorithm::RoundRobin => {
+                let idx = self.worker_selection_index.fetch_add(1, Ordering::Relaxed) % worker_count;
+                let worker = &workers[idx];
+                if worker.status() == WorkerStatus::Running {
+                    Some(worker.clone())
+                } else {
+                    self.find_next_running_worker(workers, idx, worker_count)
+                }
+            }
+            LoadBalanceAlgorithm::LeastConnections => {
+                self.find_least_loaded_worker(&workers)
+            }
+        }
+    }
+
+    fn find_next_running_worker(&self, workers: &[Worker], start_idx: usize, worker_count: usize) -> Option<Worker> {
+        for i in 0..worker_count {
+            let idx = (start_idx + i) % worker_count;
+            if workers[idx].status() == WorkerStatus::Running {
+                return Some(workers[idx].clone());
+            }
+        }
+        None
+    }
+
+    fn find_least_loaded_worker(&self, workers: &[Worker]) -> Option<Worker> {
+        let mut best_worker: Option<Worker> = None;
         let mut lowest_load = u64::MAX;
 
         for worker in workers.iter() {
-            if let WorkerStatus::Running = worker.status() {
-                let load = worker.current_load();
-                if load < lowest_load {
-                    lowest_load = load;
-                    best_worker = Some(worker.clone());
+            if worker.status() != WorkerStatus::Running {
+                continue;
+            }
+
+            let load = worker.current_load();
+            if load < lowest_load {
+                lowest_load = load;
+                best_worker = Some(worker.clone());
+                
+                if load == 0 {
+                    break;
                 }
             }
         }

@@ -1,10 +1,13 @@
+#![allow(unused_variables, dead_code)]
+
 use crate::theme::{ChallengePageTemplate, ThemeConfig};
+use crate::utils::current_timestamp;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use rand::Rng;
 use sha2::{Digest, Sha256};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 const MAX_NONCE: u64 = 100_000_000;
+const MIN_TIMESTAMP_SECS: u64 = 60;
 
 #[derive(Debug, Clone)]
 pub struct PowChallenge {
@@ -20,12 +23,13 @@ pub struct PowManager {
     timeout_secs: u64,
     cookie_name: String,
     theme: ThemeConfig,
+    css_fallback_enabled: bool,
 }
 
 impl PowManager {
     pub fn new(difficulty: u8, window_secs: u64, timeout_secs: u64, cookie_name: String) -> Self {
         let mut secret_key = [0u8; 32];
-        rand::thread_rng().fill(&mut secret_key);
+        rand::fill(&mut secret_key);
 
         Self {
             secret_key,
@@ -34,6 +38,7 @@ impl PowManager {
             timeout_secs,
             cookie_name,
             theme: ThemeConfig::default(),
+            css_fallback_enabled: true,
         }
     }
 
@@ -42,14 +47,23 @@ impl PowManager {
         self
     }
 
+    pub fn with_css_fallback(mut self, enabled: bool) -> Self {
+        self.css_fallback_enabled = enabled;
+        self
+    }
+
     pub fn theme(&self) -> &ThemeConfig {
         &self.theme
     }
 
+    pub fn css_fallback_enabled(&self) -> bool {
+        self.css_fallback_enabled
+    }
+
     pub fn generate_challenge(&self) -> PowChallenge {
         let now = current_timestamp();
-        let mut rng = rand::thread_rng();
-        let server_nonce: u64 = rng.gen();
+        let mut rng = rand::rng();
+        let server_nonce: u64 = rng.random();
 
         let mut challenge_data = Vec::new();
         challenge_data.extend_from_slice(&self.secret_key);
@@ -90,20 +104,61 @@ impl PowManager {
             Err(_) => return false,
         };
 
-        if now > timestamp + self.timeout_secs {
+        let age = now.saturating_sub(timestamp);
+        if age > self.timeout_secs {
+            return false;
+        }
+
+        if timestamp > now + 60 {
             return false;
         }
 
         let input = format!("{}{}", challenge, client_nonce);
         let hash = Sha256::digest(input.as_bytes());
 
-        has_leading_zeros(&hash, self.difficulty as usize)
+        has_leading_zeros_ct(&hash, self.difficulty as usize).into()
     }
 
     pub fn generate_challenge_page(&self, honeypot_html: &str) -> String {
         let challenge = self.generate_challenge();
         let timeout_ms = self.timeout_secs * 1000;
-        let css_fallback_url = "/_waf_css_challenge";
+
+        let css_fallback_action = if self.css_fallback_enabled {
+            r#"
+        } else {{
+            updateProgress('Challenge failed, redirecting...');
+            setTimeout(() => {{ location.href = cssFallbackUrl; }}, 1000);
+        }}
+    }}
+
+    runChallenge();
+
+    setTimeout(() => {{
+        if (!document.cookie.includes(cookieName + '=')) {{
+            location.href = cssFallbackUrl;
+        }}
+    }}, timeout_ms);"#
+        } else {
+            r#"
+        } else {{
+            updateProgress('Challenge failed. Please refresh the page.');
+        }}
+    }}
+
+    runChallenge();
+
+    setTimeout(() => {{
+        if (!document.cookie.includes(cookieName + '=')) {{
+            updateProgress('Verification timed out. Please refresh.');
+        }}
+    }}, timeout_ms);"#
+        };
+
+        let css_fallback_decl = if self.css_fallback_enabled {
+            r#"const cssFallbackUrl = "/_waf_css_challenge";"#
+        } else {
+            ""
+        };
 
         let scripts = format!(
             r#"<noscript>
@@ -120,7 +175,8 @@ impl PowManager {
     const difficulty = {difficulty};
     const cookieName = "{cookie_name}";
     const windowSecs = {window_secs};
-    const cssFallbackUrl = "{css_fallback_url}";
+    const timeout_ms = {timeout_ms};
+    {css_fallback_decl}
 
     function updateProgress(msg) {{
         const el = document.getElementById('waf-progress');
@@ -131,7 +187,7 @@ impl PowManager {
         let bitIndex = 0;
         for (let i = 0; i < hash.length && bitIndex < zeros; i++) {{
             const byte = hash[i];
-            for (let j = 7; j >= 0 && bitIndex < zeros; j--) {{
+            for (let j = 7; j >= 0 && bitIndex < zeros; j++) {{
                 if ((byte >> j) & 1) return false;
                 bitIndex++;
             }}
@@ -185,20 +241,7 @@ impl PowManager {
         if (nonce) {{
             updateProgress('Solution found!');
             document.cookie = cookieName + '=' + nonce + ':' + challenge + '; path=/; max-age=' + windowSecs + '; Secure; SameSite=Strict';
-            setTimeout(() => location.reload(), 100);
-        }} else {{
-            updateProgress('Challenge failed, redirecting...');
-            setTimeout(() => {{ location.href = cssFallbackUrl; }}, 1000);
-        }}
-    }}
-
-    runChallenge();
-
-    setTimeout(() => {{
-        if (!document.cookie.includes(cookieName + '=')) {{
-            location.href = cssFallbackUrl;
-        }}
-    }}, {timeout_ms});
+            setTimeout(() => location.reload(), 100);{css_fallback_action}
 </script>
 
 <script nomodule src="/_waf_pow_fallback.js"></script>"#,
@@ -206,8 +249,9 @@ impl PowManager {
             difficulty = challenge.difficulty,
             cookie_name = self.cookie_name,
             window_secs = self.window_secs,
-            css_fallback_url = css_fallback_url,
-            timeout_ms = timeout_ms
+            timeout_ms = timeout_ms,
+            css_fallback_decl = css_fallback_decl,
+            css_fallback_action = css_fallback_action
         );
 
         let content = r#"<div class="waf-progress" id="waf-progress">Computing...</div>"#;
@@ -236,11 +280,11 @@ impl PowManager {
             difficulty = challenge.difficulty
         );
 
-        let content = r#"<div class="waf-progress" id="waf-progress">Loading...</div>"#;
+        let content = r#"<div class="waf-progress" id="waf-progress">Computing...</div>"#;
 
         ChallengePageTemplate::new(self.theme.clone())
             .title("Verifying")
-            .subtitle("Computing verification. Please wait...")
+            .subtitle("Please wait while we verify your browser.")
             .content(content)
             .scripts(&scripts)
             .honeypot(honeypot_html)
@@ -289,21 +333,39 @@ pub enum PowResult {
 }
 
 pub fn has_leading_zeros(hash: &[u8], zeros: usize) -> bool {
-    let mut bit_index = 0;
+    let zeros_u8 = zeros / 8;
+    let zeros_remainder = zeros % 8;
 
-    for &byte in hash {
-        for j in (0..8).rev() {
-            if bit_index >= zeros {
-                return true;
-            }
-            if (byte >> j) & 1 != 0 {
-                return false;
-            }
-            bit_index += 1;
-        }
+    let mut result: u8 = 1;
+
+    for i in 0..zeros_u8 {
+        result &= (hash[i] == 0) as u8;
     }
 
-    bit_index >= zeros
+    if zeros_remainder > 0 && zeros_u8 < hash.len() {
+        let mask = (0xFF_u8) << (8 - zeros_remainder);
+        result &= ((hash[zeros_u8] & mask) == 0) as u8;
+    }
+
+    result == 1
+}
+
+pub fn has_leading_zeros_ct(hash: &[u8], zeros: usize) -> subtle::Choice {
+    let zeros_u8 = zeros / 8;
+    let zeros_remainder = zeros % 8;
+
+    let mut result = subtle::Choice::from(1);
+
+    for i in 0..zeros_u8.min(hash.len()) {
+        result &= subtle::Choice::from((hash[i] == 0) as u8);
+    }
+
+    if zeros_remainder > 0 && zeros_u8 < hash.len() {
+        let mask = (0xFF_u8) << (8 - zeros_remainder);
+        result &= subtle::Choice::from(((hash[zeros_u8] & mask) == 0) as u8);
+    }
+
+    result
 }
 
 pub fn solve_pow_sync(challenge: &str, difficulty: u8) -> Option<String> {
@@ -319,13 +381,6 @@ pub fn solve_pow_sync(challenge: &str, difficulty: u8) -> Option<String> {
     }
 
     None
-}
-
-fn current_timestamp() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -351,6 +406,7 @@ mod tests {
 
         let nonce = solution.unwrap();
         assert!(manager.verify_solution(&challenge.challenge, &nonce));
+        assert!(!manager.verify_solution(&challenge.challenge, "invalid_nonce"));
     }
 
     #[test]
@@ -366,5 +422,12 @@ mod tests {
         let hash = hex::decode("0001ff").unwrap();
         assert!(has_leading_zeros(&hash, 15));
         assert!(!has_leading_zeros(&hash, 16));
+    }
+
+    #[test]
+    fn test_leading_zeros_ct() {
+        let hash = hex::decode("0001ff").unwrap();
+        assert!(has_leading_zeros_ct(&hash, 15).unwrap_u8() == 1);
+        assert!(has_leading_zeros_ct(&hash, 16).unwrap_u8() == 0);
     }
 }

@@ -1,19 +1,24 @@
 use std::path::PathBuf;
+use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 
 use clap::Parser;
 use tokio::sync::{broadcast, RwLock};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use rustwaf::config::ConfigManager;
-use rustwaf::config::main::{LoggingConfig, MainConfig};
-use rustwaf::waf::{ProbeTracker, SuspiciousWordTracker, UpstreamErrorTracker, ThreatLevelManager};
-use rustwaf::process::{ProcessManager, ProcessManagerConfig, ProcessEvent, IpcStream, Message, PidFileManager, CommandClient, MasterCommand};
-use rustwaf::worker::{WorkerArgs, run_worker, setup_worker_panic_handler, StaticWorkerArgs, run_static_worker};
-use rustwaf::log_controller;
+use maluwaf::config::ConfigManager;
+use maluwaf::config::MainConfig;
+use maluwaf::config::logging::LoggingConfig;
+use maluwaf::waf::{ProbeTracker, SuspiciousWordTracker, UpstreamErrorTracker, ThreatLevelManager, RuleFeedManagerForWaf};
+use maluwaf::block_store::BlockStore;
+use maluwaf::master::{handle_status, handle_stop, handle_rehash, handle_configtest, handle_generatetoken, handle_generatenewtoken, handle_worker_connection};
+use maluwaf::mime;
+use maluwaf::platform::fs::PlatformPaths;
+use maluwaf::process::{ProcessManager, ProcessManagerConfig, ProcessEvent, IpcEndpoint, PidFileManager};
+use maluwaf::worker::{WorkerArgs, run_worker, setup_worker_panic_handler, StaticWorkerArgs, run_static_worker, UnifiedServerWorkerArgs, run_unified_server_worker, setup_unified_server_panic_handler};
+use maluwaf::log_controller;
 
 #[derive(Parser, Debug)]
-#[command(name = "rustwaf")]
+#[command(name = "maluwaf")]
 #[command(about = "Multi-Process Web Application Firewall")]
 #[command(version)]
 struct Args {
@@ -37,6 +42,15 @@ struct Args {
 
     #[arg(long, value_name = "ID", help = "Static worker ID")]
     static_worker_id: Option<usize>,
+
+    #[arg(long, help = "Run as unified server worker process (handles HTTP/HTTPS/HTTP3)")]
+    unified_server_worker: bool,
+
+    #[arg(long, value_name = "ID", help = "Unified server worker ID")]
+    unified_worker_id: Option<usize>,
+
+    #[arg(long, value_name = "COUNT", help = "Number of tokio worker threads (for worker processes)")]
+    worker_threads: Option<usize>,
 
     #[arg(short, long, help = "Run in foreground (don't daemonize)")]
     foreground: bool,
@@ -65,8 +79,17 @@ struct Args {
     #[arg(long, value_name = "MODE", help = "Test mode: challenge-off, ratelimit-off, attack-off, bot-off, flood-off, all-off")]
     test: Option<Vec<String>>,
 
+    #[arg(long, value_name = "PATTERN", help = "Check if a regex pattern is safe (ReDoS check)")]
+    checkregex: Option<String>,
+
+    #[arg(long, help = "Required when using --test all-off to confirm intentional testing")]
+    force: bool,
+
     #[arg(short, long, value_name = "LEVEL", help = "Log level: trace, debug, info, warn, error (overrides config)")]
     log_level: Option<String>,
+
+    #[arg(long, help = "Export OpenAPI spec as JSON and exit")]
+    export_openapi: bool,
 }
 
 #[derive(Clone)]
@@ -77,6 +100,9 @@ struct MasterState {
     suspicious_word_tracker: Option<Arc<SuspiciousWordTracker>>,
     upstream_error_tracker: Option<Arc<UpstreamErrorTracker>>,
     threat_level_manager: Option<Arc<ThreatLevelManager>>,
+    rule_feed_manager: Option<Arc<RuleFeedManagerForWaf>>,
+    block_store: Arc<BlockStore>,
+    mesh_transport: Option<Arc<maluwaf::mesh::transport::MeshTransport>>,
 }
 
 impl MasterState {
@@ -86,6 +112,9 @@ impl MasterState {
         suspicious_word_tracker: Option<Arc<SuspiciousWordTracker>>,
         upstream_error_tracker: Option<Arc<UpstreamErrorTracker>>,
         threat_level_manager: Option<Arc<ThreatLevelManager>>,
+        rule_feed_manager: Option<Arc<RuleFeedManagerForWaf>>,
+        block_store: Arc<BlockStore>,
+        mesh_transport: Option<Arc<maluwaf::mesh::transport::MeshTransport>>,
     ) -> Self {
         let (shutdown_tx, _) = broadcast::channel(1);
         
@@ -96,6 +125,9 @@ impl MasterState {
             suspicious_word_tracker,
             upstream_error_tracker,
             threat_level_manager,
+            rule_feed_manager,
+            block_store,
+            mesh_transport,
         }
     }
     
@@ -108,26 +140,7 @@ impl MasterState {
     }
 }
 
-fn setup_master_panic_handler() {
-    std::panic::set_hook(Box::new(|panic_info| {
-        let location = panic_info.location()
-            .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
-            .unwrap_or_else(|| "unknown".to_string());
-        
-        let message = if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
-            s.to_string()
-        } else if let Some(s) = panic_info.payload().downcast_ref::<String>() {
-            s.clone()
-        } else {
-            "unknown panic".to_string()
-        };
-
-        tracing::error!("MASTER PANIC at {}: {}", location, message);
-        eprintln!("\n=== MASTER PROCESS PANIC ===\nLocation: {}\nMessage: {}\n", location, message);
-        
-        let _ = std::fs::write("/tmp/rustwaf-panic.log", format!("{}: {}", location, message));
-    }));
-}
+use maluwaf::common::setup_panic_handler;
 
 fn setup_signal_handlers(master_state: MasterState, process_manager: Arc<ProcessManager>) {
     let state = master_state.clone();
@@ -146,29 +159,39 @@ fn setup_signal_handlers(master_state: MasterState, process_manager: Arc<Process
         }
     });
 
-    /// Unix-specific signal handler for graceful shutdown.
-    ///
-    /// Signal handling notes:
-    /// - This handles SIGTERM (not SIGINT/Ctrl+C which is handled separately above)
-    /// - On Unix, SIGTERM is the standard signal for graceful shutdown request
-    /// - On Windows, we rely solely on Ctrl+C (handled by ctrl_c() above)
-    /// - The SIGTERM handler triggers the same graceful shutdown flow as Ctrl+C
+    // Unix-specific signal handler for graceful shutdown.
+    //
+    // Signal handling notes:
+    // - This handles SIGTERM (not SIGINT/Ctrl+C which is handled separately above)
+    // - On Unix, SIGTERM is the standard signal for graceful shutdown request
+    // - On Windows, we rely solely on Ctrl+C (handled by ctrl_c() above)
+    // - The SIGTERM handler triggers the same graceful shutdown flow as Ctrl+C
     #[cfg(unix)]
     {
         let state = master_state.clone();
         let pm = process_manager.clone();
         
         tokio::spawn(async move {
-            let mut sigterm = match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
-                Ok(s) => s,
-                Err(e) => {
-                    tracing::warn!("Failed to install SIGTERM handler: {}", e);
-                    return;
-                }
-            };
+            #[cfg(unix)]
+            {
+                let mut sigterm = match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        tracing::warn!("Failed to install SIGTERM handler: {}", e);
+                        return;
+                    }
+                };
+                
+                sigterm.recv().await;
+            }
             
-            sigterm.recv().await;
-            tracing::info!("Received SIGTERM, initiating graceful shutdown...");
+            #[cfg(windows)]
+            {
+                use tokio::signal::ctrl_c;
+                ctrl_c().await.ok();
+            }
+            
+            tracing::info!("Received shutdown signal, initiating graceful shutdown...");
             state.shutdown().await;
             pm.graceful_shutdown().await;
         });
@@ -225,308 +248,6 @@ fn print_test_mode_warning(test_flags: &[String]) {
     eprintln!("");
 }
 
-fn handle_status() -> Result<(), Box<dyn std::error::Error>> {
-    let pid_manager = PidFileManager::new();
-    
-    if let Some(content) = pid_manager.read_pid() {
-        if pid_manager.is_running() {
-            let client = CommandClient::new(Some(pid_manager.socket_file_path()));
-            
-            match client.get_status() {
-                Ok(status) => {
-                    println!("RustWAF Status");
-                    println!("==============");
-                    println!("Master PID: {}", status.master_pid);
-                    println!("Version: {}", status.version);
-                    println!("Uptime: {} seconds", status.uptime_secs);
-                    println!("");
-                    println!("Workers:");
-                    println!("  {:<4} {:<8} {:<6} {:<10} {:<12} {:<10}", "ID", "PID", "Port", "Status", "Requests", "Blocked");
-                    println!("  {}", "-".repeat(60));
-                    for worker in &status.workers {
-                        println!("  {:<4} {:<8} {:<6} {:<10} {:<12} {:<10}", 
-                            worker.id, worker.pid, worker.port, worker.status, worker.requests, worker.blocked);
-                    }
-                    println!("");
-                    println!("Stats (last hour):");
-                    println!("  Total Requests:    {}", status.stats.total_requests);
-                    println!("  Blocked:           {} ({:.1}%)", 
-                        status.stats.blocked_last_hour,
-                        if status.stats.total_requests > 0 { 
-                            (status.stats.blocked_last_hour as f64 / status.stats.total_requests as f64) * 100.0 
-                        } else { 0.0 });
-                    println!("  Challenged:        {}", status.stats.challenged_last_hour);
-                    println!("  Proxied:           {}", status.stats.proxied_last_hour);
-                    println!("");
-                    println!("Threat Summary:");
-                    println!("  Active Blocks:     {}", status.stats.active_blocks);
-                    println!("  Critical IPs:      {}", status.threat_summary.critical_ips);
-                    println!("  Elevated IPs:     {}", status.threat_summary.elevated_ips);
-                    
-                    return Ok(());
-                }
-                Err(e) => {
-                    println!("RustWAF appears to be running but status is unavailable: {}", e);
-                    println!("PID: {}", content.pid);
-                    return Ok(());
-                }
-            }
-        }
-    }
-    
-    println!("RustWAF is not running");
-    Ok(())
-}
-
-fn handle_stop() -> Result<(), Box<dyn std::error::Error>> {
-    let pid_manager = PidFileManager::new();
-    
-    if let Some(content) = pid_manager.read_pid() {
-        if pid_manager.is_running() {
-            let client = CommandClient::new(Some(pid_manager.socket_file_path()));
-            
-            match client.send_command(MasterCommand::Stop { graceful: true }) {
-                Ok(msg) => {
-                    println!("Stop signal sent: {}", msg);
-                    println!("Waiting for shutdown...");
-                    
-                    let mut count = 0;
-                    while pid_manager.is_running() && count < 30 {
-                        std::thread::sleep(std::time::Duration::from_secs(1));
-                        count += 1;
-                    }
-                    
-                    if pid_manager.is_running() {
-                        println!("Warning: Process did not shut down cleanly");
-                    } else {
-                        println!("RustWAF stopped");
-                        pid_manager.remove_pid()?;
-                        pid_manager.remove_socket()?;
-                    }
-                }
-                Err(e) => {
-                    println!("Failed to send stop command: {}", e);
-                }
-            }
-            return Ok(());
-        }
-    }
-    
-    println!("RustWAF is not running");
-    Ok(())
-}
-
-fn handle_rehash() -> Result<(), Box<dyn std::error::Error>> {
-    let pid_manager = PidFileManager::new();
-    
-    if let Some(content) = pid_manager.read_pid() {
-        if pid_manager.is_running() {
-            let client = CommandClient::new(Some(pid_manager.socket_file_path()));
-            
-            match client.send_command(MasterCommand::ReloadConfig) {
-                Ok(msg) => {
-                    println!("Reload signal sent: {}", msg);
-                }
-                Err(e) => {
-                    println!("Failed to send reload command: {}", e);
-                }
-            }
-            return Ok(());
-        }
-    }
-    
-    println!("RustWAF is not running");
-    Ok(())
-}
-
-fn handle_configtest(config_path: &Option<PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
-    let config_dir = config_path.clone().unwrap_or_else(|| PathBuf::from("config"));
-    let main_config_path = config_dir.join("main.toml");
-    
-    println!("Testing configuration files...");
-    
-    if !main_config_path.exists() {
-        eprintln!("Error: main.toml not found at {:?}", main_config_path);
-        std::process::exit(1);
-    }
-    
-    match MainConfig::from_file(&main_config_path) {
-        Ok(config) => {
-            println!("✓ main.toml is valid");
-            
-            let sites_dir = config_dir.join("sites");
-            if sites_dir.exists() {
-                for entry in std::fs::read_dir(&sites_dir)? {
-                    let entry = entry?;
-                    let path = entry.path();
-                    if path.extension().map(|e| e == "toml").unwrap_or(false) {
-                        match rustwaf::config::site::SiteConfig::from_file(&path) {
-                            Ok(_) => {
-                                println!("✓ {} is valid", path.file_name().unwrap().to_string_lossy());
-                            }
-                            Err(e) => {
-                                eprintln!("✗ {}: {}", path.file_name().unwrap().to_string_lossy(), e);
-                                std::process::exit(1);
-                            }
-                        }
-                    }
-                }
-            }
-            
-            println!("\nAll configuration files are valid");
-            Ok(())
-        }
-        Err(e) => {
-            eprintln!("✗ main.toml: {}", e);
-            std::process::exit(1);
-        }
-    }
-}
-
-fn generate_token_hex() -> String {
-    use rand::Rng;
-    let mut rng = rand::thread_rng();
-    let bytes: Vec<u8> = (0..32).map(|_| rng.gen()).collect();
-    bytes.iter().map(|b| format!("{:02x}", b)).collect()
-}
-
-fn handle_generatetoken() {
-    let token = generate_token_hex();
-    println!("{}", token);
-}
-
-fn handle_generatenewtoken(config_path: &Option<PathBuf>) {
-    let token = generate_token_hex();
-    println!("{}", token);
-
-    let config_dir = config_path.clone().unwrap_or_else(|| PathBuf::from("config"));
-    let main_config_path = config_dir.join("main.toml");
-
-    if let Err(e) = std::fs::create_dir_all(&config_dir) {
-        eprintln!("Error: Failed to create config directory: {}", e);
-        return;
-    }
-
-    let content = if main_config_path.exists() {
-        match std::fs::read_to_string(&main_config_path) {
-            Ok(c) => c,
-            Err(e) => {
-                eprintln!("Error: Failed to read config file: {}", e);
-                return;
-            }
-        }
-    } else {
-        let default_config = r#"# RustWAF Main Configuration
-# This file was generated by --generatenewtoken
-
-[server]
-host = "0.0.0.0"
-port = 8080
-trusted_proxies = ["127.0.0.1", "::1"]
-
-[tokio]
-worker_threads = "auto"
-
-[http]
-header_read_timeout_secs = 10
-keep_alive_timeout_secs = 60
-max_headers = 128
-max_request_line_size = 8192
-max_header_size_ingress = 4096
-max_header_size_egress = 16384
-max_request_size = 1048576
-pipeline_limit = 32
-
-[admin]
-enabled = true
-port = 8081
-token = "TOKEN_PLACEHOLDER"
-
-[logging]
-level = "info"
-access_log = true
-access_log_format = "json"
-retention_days = 5
-max_entries_per_file = 50000
-
-[metrics]
-enabled = true
-port = 9090
-
-[defaults]
-[defaults.ratelimit]
-mode = "shared"
-
-[defaults.ratelimit.ip]
-per_second = 10
-per_minute = 60
-per_5min = 200
-per_10min = 350
-per_hour = 500
-per_day = 1000
-burst = 20
-
-[defaults.ratelimit.global]
-per_second = 500
-per_minute = 5000
-per_5min = 20000
-max_connections = 1000
-
-[defaults.blocked]
-paths = ["/.env", "/.git", "/wp-login.php"]
-use_regex = true
-block_methods = ["GET", "POST", "PUT", "DELETE"]
-
-[defaults.worker_pool]
-mode = "shared"
-workers = 4
-worker_port_base = 9000
-auto_scale = true
-"#;
-        default_config.to_string()
-    };
-
-    let updated_content = if content.contains("[admin]") {
-        let mut lines: Vec<String> = content.lines().map(|l| l.to_string()).collect();
-        let mut in_admin_section = false;
-        let mut token_updated = false;
-
-        for (i, line) in lines.iter_mut().enumerate() {
-            let trimmed = line.trim();
-            if trimmed == "[admin]" {
-                in_admin_section = true;
-            } else if trimmed.starts_with('[') && trimmed != "[admin]" {
-                in_admin_section = false;
-            }
-            
-            if in_admin_section && trimmed.starts_with("token") && trimmed.contains('=') {
-                *line = format!("token = \"{}\"", token);
-                token_updated = true;
-                break;
-            }
-        }
-
-        if !token_updated {
-            if let Some(pos) = lines.iter().position(|l| l.trim() == "[admin]") {
-                lines.insert(pos + 3, format!("token = \"{}\"", token));
-            }
-        }
-
-        lines.join("\n")
-    } else {
-        let admin_section = format!("\n[admin]\nenabled = true\nport = 8081\ntoken = \"{}\"\n", token);
-        content + &admin_section
-    };
-
-    if let Err(e) = std::fs::write(&main_config_path, &updated_content) {
-        eprintln!("Error: Failed to write config file: {}", e);
-        return;
-    }
-
-    println!("Config file updated: {:?}", main_config_path);
-    println!("Admin token has been set in [admin] section");
-}
-
 fn main() {
     let args = Args::parse();
 
@@ -539,9 +260,28 @@ fn main() {
         std::process::exit(0);
     }
 
+    if args.export_openapi {
+        use maluwaf::admin::openapi::ApiDoc;
+        let spec: utoipa::openapi::OpenApi = ApiDoc::default().into();
+        println!("{}", serde_json::to_string_pretty(&spec).unwrap_or_default());
+        std::process::exit(0);
+    }
+
     if args.generatetoken {
         handle_generatetoken();
         std::process::exit(0);
+    }
+
+    if let Some(pattern) = args.checkregex {
+        use maluwaf::utils::check_regex_complexity;
+        let result = check_regex_complexity(&pattern);
+        if result.safe {
+            println!("✓ Pattern is safe: {}", pattern);
+        } else {
+            println!("✗ Pattern is UNSAFE: {}", pattern);
+            println!("  Reason: {}", result.reason.as_deref().unwrap_or("unknown"));
+        }
+        std::process::exit(if result.safe { 0 } else { 1 });
     }
 
     if args.generatenewtoken {
@@ -580,12 +320,21 @@ fn main() {
 
     // Check for test mode flags and print warning
     if let Some(ref test_flags) = args.test {
+        if !args.force {
+            eprintln!("ERROR: --test requires --force flag");
+            eprintln!("This mode disables security protections and should only be used for testing.");
+            eprintln!("If you are sure you want to proceed, add --force");
+            std::process::exit(1);
+        }
         print_test_mode_warning(test_flags);
     }
 
-    // Check if already running
-    let pid_manager = PidFileManager::new();
-    if pid_manager.is_running() {
+    // Check if already running (atomic check-and-write to avoid TOCTOU race)
+    let mut pid_manager = PidFileManager::new();
+    let current_pid = std::process::id();
+    let version = env!("CARGO_PKG_VERSION");
+    
+    if !pid_manager.try_acquire(current_pid, version).unwrap_or(false) {
         eprintln!("RustWAF is already running (PID: {:?})", pid_manager.get_pid());
         std::process::exit(1);
     }
@@ -595,13 +344,17 @@ fn main() {
         setup_worker_panic_handler();
         init_logging_simple();
 
+        let paths = PlatformPaths::new();
         let worker_args = WorkerArgs {
             worker_id: args.worker_id.unwrap_or(0),
             port: args.port.unwrap_or(9000),
             config_path: args.config_path.unwrap_or_else(|| PathBuf::from("config")),
-            master_socket: args.master_socket.unwrap_or_else(|| PathBuf::from("/tmp/rustwaf-master.sock")),
+            master_socket: args.master_socket.unwrap_or_else(|| paths.master_socket_path()),
             test_mode: args.test,
             log_level: args.log_level,
+            upgrade_mode: false,
+            reuse_port: false,
+            ipc_key: None,
         };
 
         let rt = tokio::runtime::Builder::new_multi_thread()
@@ -618,11 +371,12 @@ fn main() {
         setup_worker_panic_handler();
         init_logging_simple();
 
+        let paths = PlatformPaths::new();
         let static_worker_args = StaticWorkerArgs {
             worker_id: args.static_worker_id.unwrap_or(0),
             config_path: args.config_path.unwrap_or_else(|| PathBuf::from("config")),
-            master_socket: args.master_socket.unwrap_or_else(|| PathBuf::from("/tmp/rustwaf-master.sock")),
-            static_worker_socket: PathBuf::from("/tmp/rustwaf-static-worker.sock"),
+            master_socket: args.master_socket.unwrap_or_else(|| paths.master_socket_path()),
+            static_worker_socket: paths.static_worker_socket_path(),
             log_level: args.log_level,
         };
 
@@ -636,8 +390,47 @@ fn main() {
             tracing::error!("Static worker error: {}", e);
             std::process::exit(1);
         }
+    // ============================================================================================
+    // IMPORTANT: UnifiedServerWorker MUST run as a separate process from the master.
+    //
+    // Architectural requirements for running as separate process:
+    // - Improved robustness: Isolates master from crashes/vulnerabilities in the worker
+    // - Rolling updates: Allows graceful draining and restart without affecting master
+    // - Process isolation: Prevents worker issues from bringing down the entire system
+    //
+    // DO NOT run UnifiedServer in-process within the master - this violates the
+    // overseer -> master -> worker separation model required for production deployments.
+    // ============================================================================================
+    } else if args.unified_server_worker {
+        setup_unified_server_panic_handler();
+        init_logging_simple();
+
+        let worker_threads = args.worker_threads.unwrap_or(2);
+        let paths = PlatformPaths::new();
+        
+        let unified_worker_args = UnifiedServerWorkerArgs {
+            worker_id: args.unified_worker_id.unwrap_or(0),
+            config_path: args.config_path.unwrap_or_else(|| PathBuf::from("config")),
+            master_socket: args.master_socket.unwrap_or_else(|| paths.master_socket_path()),
+            log_level: args.log_level,
+            upgrade_mode: false,
+            reuse_port: false,
+            worker_threads,
+        };
+
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(worker_threads)
+            .enable_all()
+            .build()
+            .expect("Failed to build Tokio runtime");
+
+        if let Err(e) = rt.block_on(run_unified_server_worker(unified_worker_args)) {
+            tracing::error!("Unified server worker error: {}", e);
+            std::process::exit(1);
+        }
     } else {
-        setup_master_panic_handler();
+        let master_panic_log = format!("{}/maluwaf-master-panic.log", std::env::temp_dir().display());
+        setup_panic_handler("MASTER", Some(&master_panic_log));
 
         let config_dir = args.config_path.unwrap_or_else(|| PathBuf::from("config"));
         let main_config_path = config_dir.join("main.toml");
@@ -650,14 +443,21 @@ fn main() {
 
         let main_config = config_manager.main.clone();
 
-        // Write PID file before starting
-        let pid_manager = PidFileManager::new();
-        let current_pid = std::process::id();
-        let version = env!("CARGO_PKG_VERSION");
-        
-        if let Err(e) = pid_manager.write_pid(current_pid, version) {
-            eprintln!("Warning: Failed to write PID file: {}", e);
+        // Load MIME types from file if enabled
+        if main_config.mimes.enabled {
+            if let Some(ref mimes_file) = main_config.mimes.file {
+                match mime::init_mimes_from_file(mimes_file) {
+                    Ok(()) => {
+                        tracing::info!("Loaded MIME types from {}", mimes_file);
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to load MIME types from {}: {}, using defaults", mimes_file, e);
+                    }
+                }
+            }
         }
+
+        // PID file already written by try_acquire above
 
         // Daemonize unless foreground flag is set or test mode is enabled
         let should_daemonize = !args.foreground && args.test.is_none();
@@ -668,12 +468,18 @@ fn main() {
                 let current_dir = std::env::current_dir()
                     .unwrap_or_else(|_| std::path::PathBuf::from("/"));
                 
-                match daemonize::Daemonize::new()
-                    .working_directory(current_dir)
-                    .umask(0o077)
-                    .pid_file(pid_manager.pid_file_path())
-                    .start()
-                {
+                let result = {
+                    // SAFETY: daemon.start() must be called before any threads exist.
+                    // This runs during early initialization before Tokio runtime starts.
+                    unsafe {
+                        daemonize2::Daemonize::new()
+                            .working_directory(current_dir)
+                            .umask(0o077)
+                            .pid_file(pid_manager.pid_file_path())
+                            .start()
+                    }
+                };
+                match result {
                     Ok(_) => {}
                     Err(e) => {
                         eprintln!("Failed to daemonize: {}", e);
@@ -702,9 +508,9 @@ fn main() {
             }
         };
 
-        let result = std::panic::catch_unwind(|| {
+        let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
             rt.block_on(run_master(config_manager, main_config, args.log_level.clone()))
-        });
+        }));
 
         match result {
             Ok(Ok(())) => {
@@ -732,6 +538,33 @@ async fn run_master(
     main_config: MainConfig,
     log_level_override: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // Initialize post-quantum cryptography for TLS
+    // This enables X25519MLKEM768 hybrid key exchange for all TLS connections
+    #[cfg(feature = "post-quantum")]
+    {
+        use rustls_post_quantum::provider;
+        if let Err(e) = provider().install_default() {
+            tracing::warn!("Failed to install post-quantum TLS provider: {:?}. Using default.", e);
+        } else {
+            tracing::info!("Post-quantum TLS (X25519MLKEM768) enabled");
+            
+            // Verify PQ is actually available by checking supported key exchange groups
+            use rustls::crypto::CryptoProvider;
+            let provider = CryptoProvider::get_default();
+            if let Some(p) = provider {
+                let group_count = p.kx_groups.len();
+                tracing::info!("TLS crypto provider has {} key exchange groups available", group_count);
+                // Log first few groups to confirm PQ is included
+                let sample_groups: Vec<_> = p.kx_groups.iter().take(5).map(|g| format!("{:?}", g)).collect();
+                tracing::debug!("Sample kx_groups: {:?}", sample_groups);
+            }
+        }
+    }
+    #[cfg(not(feature = "post-quantum"))]
+    {
+        tracing::info!("TLS using classical cryptography (post-quantum feature not enabled)");
+    }
+
     let log_level_for_process = log_level_override.clone();
     init_logging(&main_config.logging, log_level_override);
 
@@ -758,25 +591,72 @@ async fn run_master(
     
     let shared_config = Arc::new(RwLock::new(config_manager));
     
-    let unified_server = rustwaf::server::UnifiedServer::new(shared_config.clone()).await?;
-    let probe_tracker = unified_server.get_probe_tracker();
-    let suspicious_word_tracker = unified_server.get_suspicious_word_tracker();
-    let upstream_error_tracker = unified_server.get_upstream_error_tracker();
-    let threat_level_manager = unified_server.get_threat_level_manager();
+    // ============================================================================================
+    // CRITICAL ARCHITECTURAL REQUIREMENT: Master process must NEVER run UnifiedServer inline.
+    //
+    // The Master process must ONLY:
+    // - Run the admin panel API
+    // - Orchestrate threat intelligence (aggregate threats from workers, coordinate mesh sharing)
+    // - Manage worker processes (spawn, monitor, restart)
+    // - Handle IPC communications
+    //
+    // The Master MUST NOT:
+    // - Run UnifiedServer inline for request handling
+    // - Accept HTTP/TCP/UDP/QUIC/WebSocket requests directly
+    // - Handle any external network traffic for proxying
+    //
+    // This separation is CRITICAL for security:
+    // - Process isolation: If a CVE exists in the request handling code (UnifiedServer),
+    //   the Master process is protected as it's in a separate process
+    // - Least privilege: Master handles sensitive operations (config, workers, intelligence)
+    //   while Workers handle untrusted input (client requests)
+    // - Crash isolation: Worker crashes don't affect Master or admin panel
+    //
+    // All request handling MUST occur in UnifiedServerWorker processes which are spawned
+    // and managed by the ProcessManager. The Workers also handle mesh connections
+    // (WAF-WAF, WAF-User VPN, WAF-Server VPN) directly without IPC overhead.
+    // ============================================================================================
+
+    // NOTE: We do NOT create UnifiedServer inline here. Trackers for admin panel
+    // will be obtained from Workers via IPC or created separately if needed.
+    // The Master ONLY orchestrates - it does not handle requests.
+    
+    // Create BlockStore for persistent blocklist management in Master
+    let data_dir = main_config.persistence.data_dir.as_ref()
+        .map(|d| PathBuf::from(d));
+    let master_block_store = Arc::new(BlockStore::new(
+        true, // enabled
+        data_dir,
+        main_config.blocklist_limits.clone(),
+    ));
+    
+    // Clone for ProcessManager before moving into MasterState
+    let master_block_store_for_pm = master_block_store.clone();
+    
+    // Initialize rule feed manager if enabled
+    let rule_feed_config = main_config.rule_feed.clone();
+    let rule_feed_manager = if rule_feed_config.enabled {
+        let manager = RuleFeedManagerForWaf::new(rule_feed_config);
+        let manager_clone = manager.clone();
+        manager_clone.start_background_fetching();
+        Some(manager)
+    } else {
+        None
+    };
     
     let master_state = MasterState::new(
         shared_config.clone(), 
-        probe_tracker,
-        suspicious_word_tracker,
-        upstream_error_tracker,
-        threat_level_manager,
+        None, // probe_tracker - obtained from workers via IPC in production
+        None, // suspicious_word_tracker - obtained from workers via IPC  
+        None, // upstream_error_tracker - obtained from workers via IPC
+        None, // threat_level_manager - obtained from workers via IPC
+        rule_feed_manager.clone(), // rule_feed_manager - initialized above
+        master_block_store,
+        None, // mesh_transport - will be set when mesh is initialized
     );
 
-    #[cfg(unix)]
-    let master_socket_path = PathBuf::from("/tmp/rustwaf-master.sock");
-    
-    #[cfg(windows)]
-    let master_socket_path = PathBuf::from("rustwaf-master");
+    let paths = PlatformPaths::new();
+    let master_socket_path = paths.master_socket_path();
 
     #[cfg(unix)]
     if master_socket_path.exists() {
@@ -786,12 +666,14 @@ async fn run_master(
     #[cfg(windows)]
     {
         use std::os::windows::ffi::OsStrExt;
-        let pipe_name: Vec<u16> = std::ffi::OsStr::new("\\\\.\\pipe\\rustwaf-master")
+        let pipe_name: Vec<u16> = std::ffi::OsStr::new("\\\\.\\pipe\\maluwaf-master")
             .encode_wide()
             .chain(std::iter::once(0))
             .collect();
         
         // Try to clean up any existing pipe
+        // SAFETY: CreateNamedPipeW returns a new handle which we immediately close.
+        // This attempts to clean up a stale pipe from a previous crashed process.
         unsafe {
             let _ = windows_sys::Win32::Foundation::CloseHandle(
                 windows_sys::Win32::System::Pipes::CreateNamedPipeW(
@@ -810,42 +692,85 @@ async fn run_master(
         }
     }
 
+    let ipc_session_key = if let Some(ref env_var) = main_config.security.ipc_session_key_env {
+        match std::env::var(env_var) {
+            Ok(key_hex) => {
+                if key_hex.len() == 64 {
+                    let mut key = [0u8; 32];
+                    for (i, chunk) in key_hex.as_bytes().chunks(2).enumerate() {
+                        key[i] = u8::from_str_radix(std::str::from_utf8(chunk).unwrap(), 16).unwrap();
+                    }
+                    Some(key)
+                } else {
+                    tracing::error!("IPC session key from env {} is not 64 hex chars. Generate with: xxd -l 32 -p /dev/urandom", env_var);
+                    return Err(Box::new(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "Invalid IPC session key: must be 64 hex characters",
+                    )));
+                }
+            }
+            Err(_) => {
+                tracing::error!("IPC session key env var {} is not set but ipc_enforce_signing is enabled. Set with: export {}='$(xxd -l 32 -p /dev/urandom)'", env_var, env_var);
+                return Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "IPC session key environment variable not set",
+                )));
+            }
+        }
+    } else {
+        None
+    };
+
     let process_config = ProcessManagerConfig {
         min_workers: main_config.defaults.worker_pool.workers,
         max_workers: 16,
         max_restart_attempts: 5,
         restart_cooldown_secs: 60,
+        restart_backoff_max_secs: 300,
         heartbeat_timeout_secs: 30,
         graceful_shutdown_timeout_secs: 30,
         worker_port_base: main_config.defaults.worker_pool.worker_port_base,
         config_path: config_path_for_process,
         master_socket_path: master_socket_path.clone(),
         log_level: log_level_for_process,
+        pre_spawn_workers: main_config.defaults.worker_pool.workers,
+        warm_workers_target: main_config.defaults.worker_pool.workers,
+        health_check_interval_secs: 5,
+        ipc_session_key,
+        ipc_enforce_signing: main_config.security.ipc_enforce_signing,
+        ipc_rate_limit: Default::default(),
     };
 
-    let (process_manager, mut event_rx) = ProcessManager::new(process_config);
+    let (process_manager, mut event_rx) = ProcessManager::new(process_config, Some(master_block_store_for_pm));
     let process_manager = Arc::new(process_manager);
+
+    // Set up rule feed broadcast callback if enabled
+    if let Some(ref manager) = rule_feed_manager {
+        let pm = process_manager.clone();
+        manager.set_on_apply_callback(move |version, patterns| {
+            let pm_clone = pm.clone();
+            tokio::spawn(async move {
+                pm_clone.broadcast_rule_patterns_update(version, patterns).await;
+            });
+        });
+    }
 
     #[cfg(unix)]
     {
-        let ipc_listener = tokio::net::UnixListener::bind(&master_socket_path)?;
+        let ipc_endpoint = IpcEndpoint::master();
+        let ipc_listener = ipc_endpoint.bind().await?;
         tracing::info!("Master IPC socket listening at {:?}", master_socket_path);
 
         let pm_clone = process_manager.clone();
         tokio::spawn(async move {
             loop {
                 match ipc_listener.accept().await {
-                    Ok((stream, _addr)) => {
-                        #[cfg(unix)]
-                        {
-                            let stream = stream.into_std().expect("Failed to convert stream");
-                            let ipc = IpcStream::new(stream);
-                            let pm = pm_clone.clone();
-                            
-                            tokio::spawn(async move {
-                                handle_worker_connection(ipc, pm).await;
-                            });
-                        }
+                    Ok(ipc) => {
+                        let pm = pm_clone.clone();
+                        
+                        tokio::spawn(async move {
+                            handle_worker_connection(ipc, pm).await;
+                        });
                     }
                     Err(e) => {
                         tracing::debug!("IPC accept error: {}", e);
@@ -857,7 +782,7 @@ async fn run_master(
 
     #[cfg(windows)]
     {
-        tracing::info!("Master IPC listening on Windows named pipe: \\\\.\\pipe\\rustwaf-master");
+        tracing::info!("Master IPC listening on Windows named pipe: \\\\.\\pipe\\maluwaf-master");
         
         // On Windows, we need a different approach for IPC
         // The workers will connect via named pipes
@@ -880,6 +805,8 @@ async fn run_master(
         process_manager.spawn_worker()?;
     }
 
+    process_manager.ensure_warm_workers();
+
     if main_config.static_config.as_ref().and_then(|c| c.enabled).unwrap_or(true) {
         if let Err(e) = process_manager.spawn_static_worker() {
             tracing::warn!("Failed to spawn static worker: {}", e);
@@ -890,28 +817,42 @@ async fn run_master(
 
     let pm_health = process_manager.clone();
     tokio::spawn(async move {
-        rustwaf::process::start_health_monitor(pm_health, 5).await;
+        maluwaf::process::start_health_monitor(pm_health, 5).await;
+    });
+
+    let pm_persist = process_manager.clone();
+    let persist_interval_secs = main_config.blocklist_limits.persist_interval_secs;
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(persist_interval_secs));
+        loop {
+            interval.tick().await;
+            pm_persist.trigger_blocklist_persist();
+            tracing::debug!("Blocklist persisted to disk");
+        }
     });
 
     tracing::info!("Starting admin server...");
     let admin_state = master_state.clone();
     tokio::spawn(async move {
-        rustwaf::admin::start_admin_server(
+        maluwaf::admin::start_admin_server(
             admin_state.config, 
             admin_state.probe_tracker,
             admin_state.suspicious_word_tracker,
             admin_state.upstream_error_tracker,
             admin_state.threat_level_manager,
+            admin_state.rule_feed_manager,
+            admin_state.mesh_transport,
+            #[cfg(feature = "icmp-filter")]
+            None,
+            None,
         ).await;
     });
 
-    tracing::info!("Starting unified server...");
-    let server_state = master_state.clone();
-    tokio::spawn(async move {
-        if let Err(e) = run_server(server_state, unified_server).await {
-            tracing::error!("Server error: {}", e);
-        }
-    });
+    tracing::info!("Spawning unified server worker...");
+    if let Err(e) = process_manager.spawn_unified_server_worker() {
+        tracing::error!("Failed to spawn unified server worker: {}", e);
+        std::process::exit(1);
+    }
 
     let mut shutdown_rx = master_state.subscribe_shutdown();
 
@@ -933,6 +874,18 @@ async fn run_master(
                     }
                     ProcessEvent::WorkerRestarted(id, attempt) => {
                         tracing::info!("Worker {} restarted (attempt {})", id, attempt);
+                    }
+                    ProcessEvent::UnifiedServerWorkerStarted(id, pid) => {
+                        tracing::info!("UnifiedServerWorker {} started (PID: {})", id, pid);
+                    }
+                    ProcessEvent::UnifiedServerWorkerReady(id) => {
+                        tracing::info!("UnifiedServerWorker {} ready", id);
+                    }
+                    ProcessEvent::UnifiedServerWorkerStopped(id) => {
+                        tracing::warn!("UnifiedServerWorker {} stopped", id);
+                    }
+                    ProcessEvent::UnifiedServerWorkerFailed(id, error) => {
+                        tracing::error!("UnifiedServerWorker {} failed: {}", id, error);
                     }
                     ProcessEvent::ShutdownInitiated => {
                         tracing::info!("Shutdown initiated by process manager");
@@ -966,7 +919,7 @@ async fn run_master(
 async fn windows_ipc_accept_loop(process_manager: Arc<ProcessManager>, pipe_name: PathBuf) {
     use std::os::windows::ffi::OsStrExt;
     
-    let pipe_name_str = format!("\\\\.\\pipe\\rustwaf-master");
+    let pipe_name_str = format!("\\\\.\\pipe\\maluwaf-master");
     let pipe_name_wide: Vec<u16> = std::ffi::OsStr::new(&pipe_name_str)
         .encode_wide()
         .chain(std::iter::once(0))
@@ -974,6 +927,7 @@ async fn windows_ipc_accept_loop(process_manager: Arc<ProcessManager>, pipe_name
 
     loop {
         // Create a new pipe instance for each connection
+        // SAFETY: CreateNamedPipeW called with valid pipe name; we check for zero handle.
         let pipe_handle = unsafe {
             windows_sys::Win32::System::Pipes::CreateNamedPipeW(
                 pipe_name_wide.as_ptr(),
@@ -996,6 +950,7 @@ async fn windows_ipc_accept_loop(process_manager: Arc<ProcessManager>, pipe_name
         }
 
         // Wait for client connection
+        // SAFETY: ConnectNamedPipe called with valid pipe handle; we check return value.
         let connected = unsafe {
             windows_sys::Win32::System::Pipes::ConnectNamedPipe(
                 pipe_handle,
@@ -1004,9 +959,11 @@ async fn windows_ipc_accept_loop(process_manager: Arc<ProcessManager>, pipe_name
         };
 
         if connected == 0 {
+            // SAFETY: GetLastError reads thread-local errno; always safe.
             let error = unsafe { *windows_sys::Win32::Foundation::GetLastError() };
             if error != windows_sys::Win32::Foundation::ERROR_PIPE_CONNECTED {
                 tracing::warn!("ConnectNamedPipe failed with error: {}", error);
+                // SAFETY: CloseHandle called on valid handle we own from failed ConnectNamedPipe.
                 unsafe { windows_sys::Win32::Foundation::CloseHandle(pipe_handle); }
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                 continue;
@@ -1014,7 +971,8 @@ async fn windows_ipc_accept_loop(process_manager: Arc<ProcessManager>, pipe_name
         }
 
         // Convert raw handle to File
-        let stream = unsafe { std::fs::File::from_raw_fd(pipe_handle as i32) };
+        // SAFETY: from_raw_handle takes ownership of pipe_handle; we validated it's non-zero above.
+        let stream = unsafe { std::fs::File::from_raw_handle(pipe_handle as std::os::windows::io::RawHandle) };
         
         let pm = process_manager.clone();
         tokio::spawn(async move {
@@ -1028,7 +986,7 @@ async fn windows_ipc_accept_loop(process_manager: Arc<ProcessManager>, pipe_name
 async fn windows_command_pipe_listener(config_manager: Arc<RwLock<ConfigManager>>) {
     use std::os::windows::ffi::OsStrExt;
     
-    let pipe_name_str = "\\\\.\\pipe\\rustwaf-commands";
+    let pipe_name_str = "\\\\.\\pipe\\maluwaf-commands";
     let pipe_name_wide: Vec<u16> = std::ffi::OsStr::new(pipe_name_str)
         .encode_wide()
         .chain(std::iter::once(0))
@@ -1036,6 +994,7 @@ async fn windows_command_pipe_listener(config_manager: Arc<RwLock<ConfigManager>
 
     loop {
         // Create a new pipe instance for each connection
+        // SAFETY: CreateNamedPipeW called with valid pipe name; we check for zero handle.
         let pipe_handle = unsafe {
             windows_sys::Win32::System::Pipes::CreateNamedPipeW(
                 pipe_name_wide.as_ptr(),
@@ -1058,6 +1017,7 @@ async fn windows_command_pipe_listener(config_manager: Arc<RwLock<ConfigManager>
         }
 
         // Wait for client connection
+        // SAFETY: ConnectNamedPipe called with valid pipe handle; we check return value.
         let connected = unsafe {
             windows_sys::Win32::System::Pipes::ConnectNamedPipe(
                 pipe_handle,
@@ -1066,9 +1026,11 @@ async fn windows_command_pipe_listener(config_manager: Arc<RwLock<ConfigManager>
         };
 
         if connected == 0 {
+            // SAFETY: GetLastError reads thread-local errno; always safe.
             let error = unsafe { *windows_sys::Win32::Foundation::GetLastError() };
             if error != windows_sys::Win32::Foundation::ERROR_PIPE_CONNECTED {
                 tracing::warn!("ConnectNamedPipe failed with error: {}", error);
+                // SAFETY: CloseHandle called on valid handle we own from failed ConnectNamedPipe.
                 unsafe { windows_sys::Win32::Foundation::CloseHandle(pipe_handle); }
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                 continue;
@@ -1076,7 +1038,8 @@ async fn windows_command_pipe_listener(config_manager: Arc<RwLock<ConfigManager>
         }
 
         // Convert raw handle to File and handle command
-        let stream = unsafe { std::fs::File::from_raw_fd(pipe_handle as i32) };
+        // SAFETY: from_raw_handle takes ownership of pipe_handle; we validated it's non-zero above.
+        let stream = unsafe { std::fs::File::from_raw_handle(pipe_handle as std::os::windows::io::RawHandle) };
         tokio::spawn(async move {
             handle_command_connection(stream, config_manager.clone()).await;
         });
@@ -1131,7 +1094,28 @@ async fn handle_command_connection(stream: std::fs::File, config_manager: Arc<Rw
         }
         crate::process::MasterCommand::ReloadConfig => {
             tracing::info!("CLI: ReloadConfig command received");
-            // Reload config
+            // Reload config and mimes
+            {
+                let config = config_manager.read();
+                let mimes_config = &config.main.mimes;
+                if mimes_config.enabled {
+                    if let Some(ref mimes_file) = mimes_config.file {
+                        match crate::mime::reload_mimes_from_file(mimes_file) {
+                            Ok(()) => {
+                                tracing::info!("MIME types reloaded from {}", mimes_file);
+                            }
+                            Err(e) => {
+                                tracing::warn!("Failed to reload MIME types from {}: {}", mimes_file, e);
+                            }
+                        }
+                    }
+                }
+            }
+            // Reload site configs
+            {
+                let mut config = config_manager.write();
+                config.reload_all();
+            }
             let _ = stream.write_all(&4u32.to_be_bytes());
             let _ = stream.write_all(b"true");
             return;
@@ -1159,101 +1143,4 @@ async fn handle_command_connection(stream: std::fs::File, config_manager: Arc<Rw
             return;
         }
     };
-}
-
-async fn handle_worker_connection(mut ipc: IpcStream, process_manager: Arc<ProcessManager>) {
-    loop {
-        match ipc.recv(5000) {
-            Ok(Some(message)) => {
-                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    match message {
-                        Message::WorkerStarted { id, pid, port, timestamp: _ } => {
-                            tracing::debug!("Worker {} connected (PID: {}, port: {})", id, pid, port);
-                        }
-                        Message::WorkerReady { id } => {
-                            process_manager.handle_worker_ready(id);
-                        }
-                        Message::WorkerHeartbeat { id, timestamp: _, metrics } => {
-                            process_manager.handle_heartbeat(id, metrics);
-                        }
-                        Message::WorkerError { id, error, severity, error_code } => {
-                            process_manager.handle_worker_error(id, error, severity, error_code);
-                        }
-                        Message::WorkerShutdownComplete { id } => {
-                            process_manager.mark_worker_stopped(id);
-                            return Err(()); 
-                        }
-                        Message::StaticWorkerStarted { worker_id, pid } => {
-                            tracing::debug!("Static worker {} connected (PID: {})", worker_id, pid);
-                        }
-                        Message::StaticWorkerReady { worker_id } => {
-                            process_manager.handle_static_worker_ready(worker_id);
-                        }
-                        Message::StaticWorkerHeartbeat { worker_id, timestamp: _ } => {
-                            process_manager.handle_static_worker_heartbeat(worker_id);
-                        }
-                        Message::StaticWorkerShutdownComplete { worker_id } => {
-                            tracing::info!("Static worker {} shutdown complete", worker_id);
-                            return Err(());
-                        }
-                        Message::MinifyResponse { request_id, site_id, path, content, content_type: _, encoding, queued_encodings } => {
-                            tracing::debug!(
-                                "Minify response for request {}: site={}, path={}, size={}, queued={:?}",
-                                request_id, site_id, path, content.len(), queued_encodings
-                            );
-                        }
-                        Message::MinifyError { request_id, error } => {
-                            tracing::warn!("Minify error for request {}: {}", request_id, error);
-                        }
-                        Message::GetCompressedResponse { request_id, content } => {
-                            tracing::debug!("Compressed response for request {}: size={}", request_id, content.len());
-                        }
-                        Message::HealthCheckAck { timestamp: _ } => {}
-                        _ => {}
-                    }
-                    Ok(())
-                }));
-                
-                match result {
-                    Ok(Ok(())) => {}
-                    Ok(Err(())) => break,
-                    Err(panic_info) => {
-                        tracing::error!("IPC message handler panicked: {:?}", panic_info);
-                        break;
-                    }
-                }
-            }
-            Ok(None) => {}
-            Err(e) => {
-                tracing::debug!("Worker connection error: {}", e);
-                break;
-            }
-        }
-    }
-}
-
-async fn run_server(
-    state: MasterState,
-    unified_server: rustwaf::server::UnifiedServer,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let mut shutdown_rx = state.subscribe_shutdown();
-    
-    let server_task = tokio::spawn(async move {
-        if let Err(e) = unified_server.run().await {
-            tracing::error!("Unified server error: {}", e);
-        }
-    });
-    
-    tokio::select! {
-        result = server_task => {
-            if let Err(e) = result {
-                tracing::error!("Server task error: {}", e);
-            }
-        }
-        _ = shutdown_rx.recv() => {
-            tracing::info!("Server received shutdown signal");
-        }
-    }
-    
-    Ok(())
 }

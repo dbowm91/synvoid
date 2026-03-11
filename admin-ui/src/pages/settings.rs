@@ -1,4 +1,8 @@
 use crate::components::forms::{Input, Select};
+use crate::components::{toast_success, toast_error};
+use crate::services::ApiService;
+use crate::types::{ThemeResponse, UpdateThemeRequest};
+use wasm_bindgen::JsCast;
 use yew::prelude::*;
 
 #[function_component]
@@ -24,24 +28,28 @@ pub fn Settings() -> Html {
                         <SectionButton label="Logging" section="logging" active={*active_section == "logging"} on_click={on_section_click.clone()} />
                         <SectionButton label="Metrics" section="metrics" active={*active_section == "metrics"} on_click={on_section_click.clone()} />
                         <SectionButton label="Rate Limits" section="ratelimits" active={*active_section == "ratelimits"} on_click={on_section_click.clone()} />
+                        <SectionButton label="Bandwidth" section="bandwidth" active={*active_section == "bandwidth"} on_click={on_section_click.clone()} />
                         <SectionButton label="Bot Defaults" section="bot" active={*active_section == "bot"} on_click={on_section_click.clone()} />
                         <SectionButton label="Upload" section="upload" active={*active_section == "upload"} on_click={on_section_click.clone()} />
+                        <SectionButton label="Theme" section="theme" active={*active_section == "theme"} on_click={on_section_click.clone()} />
                     </div>
                 </nav>
 
                 <div class="flex-1 bg-secondary rounded-lg border border-default">
                     <div class="p-6 border-b border-default">
                         <h2 class="text-lg font-semibold">
-                            { match active_section.as_str() {
-                                "server" => "Server Configuration",
-                                "http" => "HTTP Settings",
-                                "logging" => "Logging Configuration",
-                                "metrics" => "Metrics Configuration",
-                                "ratelimits" => "Rate Limit Defaults",
-                                "bot" => "Bot Protection Defaults",
-                                "upload" => "Upload Defaults",
-                                _ => "Server Configuration",
-                            }}
+                        { match active_section.as_str() {
+                            "server" => "Server Configuration",
+                            "http" => "HTTP Settings",
+                            "logging" => "Logging Configuration",
+                            "metrics" => "Metrics Configuration",
+                            "ratelimits" => "Rate Limit Defaults",
+                            "bandwidth" => "Bandwidth Limits",
+                            "bot" => "Bot Protection Defaults",
+                            "upload" => "Upload Defaults",
+                            "theme" => "Theme Configuration",
+                            _ => "Server Configuration",
+                        }}
                         </h2>
                     </div>
 
@@ -52,8 +60,10 @@ pub fn Settings() -> Html {
                             "logging" => html! { <LoggingSection /> },
                             "metrics" => html! { <MetricsSection /> },
                             "ratelimits" => html! { <RateLimitsSection /> },
+                            "bandwidth" => html! { <BandwidthSection /> },
                             "bot" => html! { <BotSection /> },
                             "upload" => html! { <UploadSection /> },
+                            "theme" => html! { <ThemeSection /> },
                             _ => html! { <ServerSection /> },
                         }}
                     </div>
@@ -304,6 +314,71 @@ fn RateLimitsSection() -> Html {
 }
 
 #[function_component]
+fn BandwidthSection() -> Html {
+    html! {
+        <div class="space-y-6">
+            <h3 class="font-semibold text-primary">{ "Monthly Limits" }</h3>
+            <div class="grid grid-cols-2 gap-4">
+                <Input
+                    label="Monthly Ingress Cap (GB)"
+                    name="monthly_cap_ingress_gb"
+                    input_type="number"
+                    value="0"
+                    help="Set to 0 for unlimited. For example: 5000 for 5TB"
+                />
+                <Input
+                    label="Monthly Egress Cap (GB)"
+                    name="monthly_cap_egress_gb"
+                    input_type="number"
+                    value="0"
+                    help="Set to 0 for unlimited. For example: 5000 for 5TB"
+                />
+            </div>
+
+            <div class="flex items-center justify-between py-3 border-b border-default">
+                <div>
+                    <p class="text-primary font-medium">{ "Action on Limit Exceeded" }</p>
+                    <p class="text-sm text-secondary">{ "What to do when monthly bandwidth cap is reached" }</p>
+                </div>
+                <select class="bg-tertiary text-primary px-3 py-2 rounded-lg border border-default">
+                    <option value="block">{ "Hard Block (503)" }</option>
+                    <option value="throttle">{ "Throttle to Monthly Rate" }</option>
+                </select>
+            </div>
+
+            <h3 class="font-semibold text-primary mt-6">{ "Reset Configuration" }</h3>
+            <div class="flex items-center justify-between py-3 border-b border-default">
+                <div>
+                    <p class="text-primary font-medium">{ "Reset Mode" }</p>
+                    <p class="text-sm text-secondary">{ "How to determine the billing period" }</p>
+                </div>
+                <select class="bg-tertiary text-primary px-3 py-2 rounded-lg border border-default">
+                    <option value="rolling_30_days">{ "Rolling 30 Days" }</option>
+                    <option value="calendar_month">{ "Calendar Month (1st of each month)" }</option>
+                    <option value="fixed_date">{ "Fixed Day of Month" }</option>
+                </select>
+            </div>
+
+            <Input
+                label="Fixed Day of Month (1-28)"
+                name="fixed_day"
+                input_type="number"
+                value=""
+                help="Day of month to reset bandwidth counters (only for Fixed Date mode)"
+            />
+
+            <h3 class="font-semibold text-primary mt-6">{ "Data Persistence" }</h3>
+            <Input
+                label="Data Directory"
+                name="bandwidth_data_dir"
+                value="/var/lib/maluwaf"
+                help="Directory to store bandwidth counter persistence file"
+            />
+        </div>
+    }
+}
+
+#[function_component]
 fn BotSection() -> Html {
     html! {
         <div class="space-y-6">
@@ -387,4 +462,447 @@ fn UploadSection() -> Html {
             </div>
         </div>
     }
+}
+
+#[function_component]
+fn ThemeSection() -> Html {
+    let theme_data = use_state(|| None::<ThemeResponse>);
+    let selected_preset = use_state(|| "default".to_string());
+    let selected_mode = use_state(|| "auto".to_string());
+    let preview_html = use_state(|| String::new());
+    let preview_light = use_state(|| false);
+    let saving = use_state(|| false);
+
+    use_effect_with((), {
+        let theme_data = theme_data.clone();
+        let selected_preset = selected_preset.clone();
+        let selected_mode = selected_mode.clone();
+        let preview_html = preview_html.clone();
+        let preview_light = preview_light.clone();
+        move |_| {
+            wasm_bindgen_futures::spawn_local(async move {
+                let api = ApiService::new();
+                let theme_result = api.get_theme().await;
+                let css_result = api.get_theme_css().await;
+                let use_light = *preview_light;
+                
+                if let Ok(data) = theme_result {
+                    theme_data.set(Some(data.clone()));
+                    selected_preset.set(data.preset.clone());
+                    selected_mode.set(data.mode.clone());
+                    
+                    if let Ok(css) = css_result {
+                        let html = generate_preview_html(&css, &data.colors, use_light);
+                        preview_html.set(html);
+                    }
+                }
+            });
+            || {}
+        }
+    });
+
+    let on_preset_change = {
+        let selected_preset = selected_preset.clone();
+        let preview_html = preview_html.clone();
+        let theme_data = theme_data.clone();
+        let preview_light = preview_light.clone();
+        Callback::from(move |e: Event| {
+            let target = e.target().unwrap();
+            let value = target.dyn_ref::<web_sys::HtmlSelectElement>()
+                .map(|el| el.value())
+                .unwrap_or_default();
+            selected_preset.set(value.clone());
+            
+            if let Some(ref data) = *theme_data {
+                let colors = get_preset_colors(&value);
+                let use_light = *preview_light;
+                let html = generate_preview_html("", &colors, use_light);
+                preview_html.set(html);
+            }
+        })
+    };
+
+    let on_mode_change = {
+        let selected_mode = selected_mode.clone();
+        Callback::from(move |e: Event| {
+            let target = e.target().unwrap();
+            let value = target.dyn_ref::<web_sys::HtmlSelectElement>()
+                .map(|el| el.value())
+                .unwrap_or_default();
+            selected_mode.set(value);
+        })
+    };
+
+    let on_toggle_preview = {
+        let preview_light = preview_light.clone();
+        let selected_preset = selected_preset.clone();
+        let theme_data = theme_data.clone();
+        let preview_html = preview_html.clone();
+        Callback::from(move |_| {
+            let new_value = !*preview_light;
+            preview_light.set(new_value);
+            
+            if let Some(ref data) = *theme_data {
+                let colors = get_preset_colors(&selected_preset);
+                let html = generate_preview_html("", &colors, new_value);
+                preview_html.set(html);
+            }
+        })
+    };
+
+    let on_save = {
+        let saving = saving.clone();
+        let selected_preset = selected_preset.clone();
+        let selected_mode = selected_mode.clone();
+        let theme_data = theme_data.clone();
+        let preview_html = preview_html.clone();
+        let preview_light = preview_light.clone();
+        Callback::from(move |_| {
+            let preset = (*selected_preset).clone();
+            let mode = (*selected_mode).clone();
+            let theme_data = theme_data.clone();
+            let preview_html = preview_html.clone();
+            let preview_light = *preview_light;
+            let saving = saving.clone();
+            
+            saving.set(true);
+
+            wasm_bindgen_futures::spawn_local(async move {
+                let api = ApiService::new();
+                let request = UpdateThemeRequest {
+                    preset: Some(preset),
+                    mode: Some(mode),
+                    allow_only: None,
+                };
+                
+                match api.update_theme(&request).await {
+                    Ok(data) => {
+                        theme_data.set(Some(data.clone()));
+                        toast_success("Theme updated successfully");
+                        
+                        match api.get_theme_css().await {
+                            Ok(css) => {
+                                let html = generate_preview_html(&css, &data.colors, preview_light);
+                                preview_html.set(html);
+                            }
+                            Err(e) => {
+                                tracing::error!("Failed to fetch theme CSS: {}", e);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        toast_error(&format!("Failed to update theme: {}", e));
+                        tracing::error!("Failed to update theme: {}", e);
+                    }
+                }
+                saving.set(false);
+            });
+        })
+    };
+
+    let on_reset = {
+        let selected_preset = selected_preset.clone();
+        let selected_mode = selected_mode.clone();
+        let theme_data = theme_data.clone();
+        let preview_html = preview_html.clone();
+        let preview_light = preview_light.clone();
+        Callback::from(move |_| {
+            selected_preset.set("default".to_string());
+            selected_mode.set("auto".to_string());
+            
+            if let Some(ref data) = *theme_data {
+                let colors = get_preset_colors("default");
+                let use_light = *preview_light;
+                let html = generate_preview_html("", &colors, use_light);
+                preview_html.set(html);
+            }
+            
+            let request = UpdateThemeRequest {
+                preset: Some("default".to_string()),
+                mode: Some("auto".to_string()),
+                allow_only: None,
+            };
+            
+            let theme_data = theme_data.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                let api = ApiService::new();
+                match api.update_theme(&request).await {
+                    Ok(data) => {
+                        theme_data.set(Some(data.clone()));
+                        toast_success("Theme reset to default");
+                    }
+                    Err(e) => {
+                        toast_error(&format!("Failed to reset theme: {}", e));
+                    }
+                }
+            });
+        })
+    };
+
+    let presets = vec![
+        ("default", "Default"),
+        ("dark", "Dark"),
+        ("light", "Light"),
+        ("ocean", "Ocean"),
+        ("forest", "Forest"),
+        ("sunset", "Sunset"),
+    ];
+
+    let modes = vec![
+        ("auto", "Auto (System)"),
+        ("dark", "Dark"),
+        ("light", "Light"),
+    ];
+
+    html! {
+        <div class="space-y-6">
+            <div>
+                <label class="block text-sm font-medium text-primary mb-2">{ "Theme Preset" }</label>
+                <select 
+                    class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary"
+                    value={(*selected_preset).clone()}
+                    onchange={on_preset_change}
+                >
+                    { for presets.iter().map(|(value, label)| {
+                        html! {
+                            <option value={value.clone()}>{label.clone()}</option>
+                        }
+                    }) }
+                </select>
+                <p class="mt-1 text-sm text-secondary">{ "Choose a color scheme for the admin interface" }</p>
+            </div>
+
+            <div>
+                <label class="block text-sm font-medium text-primary mb-2">{ "Theme Mode" }</label>
+                <select 
+                    class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary"
+                    value={(*selected_mode).clone()}
+                    onchange={on_mode_change}
+                >
+                    { for modes.iter().map(|(value, label)| {
+                        html! {
+                            <option value={value.clone()}>{label.clone()}</option>
+                        }
+                    }) }
+                </select>
+                <p class="mt-1 text-sm text-secondary">{ "How users can switch between light and dark themes" }</p>
+            </div>
+
+            <div>
+                <div class="flex items-center justify-between mb-2">
+                    <label class="block text-sm font-medium text-primary">{ "Preview" }</label>
+                    <button 
+                        onclick={on_toggle_preview}
+                        class="px-3 py-1 text-sm bg-tertiary border border-default rounded-lg text-primary hover:opacity-80"
+                    >
+                        { if *preview_light { "🌙 Dark" } else { "☀️ Light" } }
+                    </button>
+                </div>
+                <div class="border border-default rounded-lg overflow-hidden">
+                    <iframe 
+                        srcdoc={(*preview_html).clone()}
+                        class="w-full h-64"
+                        sandbox="allow-same-origin"
+                    />
+                </div>
+                <p class="mt-1 text-sm text-secondary">{ "Sample error page preview with current theme" }</p>
+            </div>
+
+            <div class="flex justify-between gap-4">
+                <button 
+                    onclick={on_reset}
+                    disabled={*saving}
+                    class="px-4 py-2 bg-tertiary text-primary rounded-lg hover:opacity-80 disabled:opacity-50"
+                >
+                    { "Reset to Default" }
+                </button>
+                <button 
+                    onclick={on_save}
+                    disabled={*saving}
+                    class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                >
+                    { if *saving { "Saving..." } else { "Save Changes" } }
+                </button>
+            </div>
+        </div>
+    }
+}
+
+fn get_preset_colors(preset: &str) -> crate::types::ThemeColorsResponse {
+    match preset {
+        "light" => crate::types::ThemeColorsResponse {
+            dark: crate::types::ThemeColors {
+                background: "#0a0a0f".to_string(),
+                surface: "#12121a".to_string(),
+                primary: "#e94560".to_string(),
+                text: "#f0f0f5".to_string(),
+                border: "#2a2a3a".to_string(),
+                accent: "#1a1a24".to_string(),
+                accent_primary: "#00d4aa".to_string(),
+                accent_secondary: "#00b894".to_string(),
+            },
+            light: crate::types::ThemeColors {
+                background: "#f8fafc".to_string(),
+                surface: "#ffffff".to_string(),
+                primary: "#c41e3a".to_string(),
+                text: "#0f172a".to_string(),
+                border: "#e2e8f0".to_string(),
+                accent: "#f1f5f9".to_string(),
+                accent_primary: "#059669".to_string(),
+                accent_secondary: "#10b981".to_string(),
+            },
+        },
+        "ocean" => crate::types::ThemeColorsResponse {
+            dark: crate::types::ThemeColors {
+                background: "#0c1929".to_string(),
+                surface: "#132f4c".to_string(),
+                primary: "#0ea5e9".to_string(),
+                text: "#e3f2fd".to_string(),
+                border: "#2d4a6f".to_string(),
+                accent: "#173a5e".to_string(),
+                accent_primary: "#0ea5e9".to_string(),
+                accent_secondary: "#38bdf8".to_string(),
+            },
+            light: crate::types::ThemeColors {
+                background: "#e3f2fd".to_string(),
+                surface: "#ffffff".to_string(),
+                primary: "#0284c7".to_string(),
+                text: "#0c1929".to_string(),
+                border: "#90caf9".to_string(),
+                accent: "#f1f5f9".to_string(),
+                accent_primary: "#0ea5e9".to_string(),
+                accent_secondary: "#38bdf8".to_string(),
+            },
+        },
+        "forest" => crate::types::ThemeColorsResponse {
+            dark: crate::types::ThemeColors {
+                background: "#0a1a0f".to_string(),
+                surface: "#132318".to_string(),
+                primary: "#22c55e".to_string(),
+                text: "#e8f5e9".to_string(),
+                border: "#2d4a3a".to_string(),
+                accent: "#1a2e21".to_string(),
+                accent_primary: "#22c55e".to_string(),
+                accent_secondary: "#4ade80".to_string(),
+            },
+            light: crate::types::ThemeColors {
+                background: "#e8f5e9".to_string(),
+                surface: "#ffffff".to_string(),
+                primary: "#16a34a".to_string(),
+                text: "#0a1a0f".to_string(),
+                border: "#a5d6a7".to_string(),
+                accent: "#f1f5f9".to_string(),
+                accent_primary: "#22c55e".to_string(),
+                accent_secondary: "#4ade80".to_string(),
+            },
+        },
+        "sunset" => crate::types::ThemeColorsResponse {
+            dark: crate::types::ThemeColors {
+                background: "#1a0f0a".to_string(),
+                surface: "#2a1a14".to_string(),
+                primary: "#f97316".to_string(),
+                text: "#fff1ec".to_string(),
+                border: "#4a3028".to_string(),
+                accent: "#3d261e".to_string(),
+                accent_primary: "#f97316".to_string(),
+                accent_secondary: "#fb923c".to_string(),
+            },
+            light: crate::types::ThemeColors {
+                background: "#fff1ec".to_string(),
+                surface: "#ffffff".to_string(),
+                primary: "#ea580c".to_string(),
+                text: "#1a0f0a".to_string(),
+                border: "#ffccbc".to_string(),
+                accent: "#f1f5f9".to_string(),
+                accent_primary: "#f97316".to_string(),
+                accent_secondary: "#fb923c".to_string(),
+            },
+        },
+        _ => crate::types::ThemeColorsResponse {
+            dark: crate::types::ThemeColors {
+                background: "#0a0a0f".to_string(),
+                surface: "#12121a".to_string(),
+                primary: "#e94560".to_string(),
+                text: "#f0f0f5".to_string(),
+                border: "#2a2a3a".to_string(),
+                accent: "#1a1a24".to_string(),
+                accent_primary: "#00d4aa".to_string(),
+                accent_secondary: "#00b894".to_string(),
+            },
+            light: crate::types::ThemeColors {
+                background: "#f8fafc".to_string(),
+                surface: "#ffffff".to_string(),
+                primary: "#c41e3a".to_string(),
+                text: "#0f172a".to_string(),
+                border: "#e2e8f0".to_string(),
+                accent: "#f1f5f9".to_string(),
+                accent_primary: "#059669".to_string(),
+                accent_secondary: "#10b981".to_string(),
+            },
+        },
+    }
+}
+
+fn generate_preview_html(_css: &str, colors: &crate::types::ThemeColorsResponse, use_light: bool) -> String {
+    let c = if use_light { &colors.light } else { &colors.dark };
+    format!(r#"
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background-color: {bg};
+            color: {text};
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }}
+        .card {{
+            background: {surface};
+            border: 1px solid {border};
+            border-radius: 12px;
+            padding: 2rem;
+            max-width: 400px;
+            text-align: center;
+        }}
+        .status {{
+            font-size: 4rem;
+            font-weight: bold;
+            color: {primary};
+            margin-bottom: 1rem;
+        }}
+        h1 {{
+            font-size: 1.5rem;
+            margin-bottom: 0.5rem;
+        }}
+        p {{
+            color: {text};
+            opacity: 0.8;
+        }}
+        .footer {{
+            margin-top: 1.5rem;
+            font-size: 0.75rem;
+            opacity: 0.5;
+        }}
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="status">403</div>
+        <h1>Forbidden</h1>
+        <p>Access to this resource has been blocked by the WAF.</p>
+        <div class="footer">MaluWAF</div>
+    </div>
+</body>
+</html>
+"#,
+        bg = c.background,
+        surface = c.surface,
+        text = c.text,
+        border = c.border,
+        primary = c.primary,
+    )
 }

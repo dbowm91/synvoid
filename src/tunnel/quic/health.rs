@@ -3,12 +3,13 @@ use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
 use metrics::{counter, gauge, histogram};
+use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc};
 use quinn::Connection;
 
-use crate::tunnel::quic::messages::{TunnelMessage, DatagramCapabilities};
+use crate::tunnel::quic::messages::DatagramCapabilities;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HealthCheckConfig {
     pub interval_secs: u64,
     pub timeout_secs: u64,
@@ -18,6 +19,12 @@ pub struct HealthCheckConfig {
     pub rtt_critical_threshold_ms: u64,
     pub loss_rate_warning_threshold: f64,
     pub loss_rate_critical_threshold: f64,
+    #[serde(default = "default_check_timeout_ms")]
+    pub check_timeout_ms: u64,
+}
+
+fn default_check_timeout_ms() -> u64 {
+    500
 }
 
 impl Default for HealthCheckConfig {
@@ -31,6 +38,7 @@ impl Default for HealthCheckConfig {
             rtt_critical_threshold_ms: 500,
             loss_rate_warning_threshold: 0.05,
             loss_rate_critical_threshold: 0.15,
+            check_timeout_ms: 500,
         }
     }
 }
@@ -145,8 +153,8 @@ impl ConnectionHealth {
             _ => ConnectionQuality::Poor,
         };
 
-        self.quality = std::cmp::min(
-            std::cmp::min(rtt_quality, loss_quality),
+        self.quality = std::cmp::max(
+            std::cmp::max(rtt_quality, loss_quality),
             failure_quality,
         );
     }
@@ -224,12 +232,12 @@ impl QuicHealthMonitor {
     pub fn register_connection(&self, session_id: String, peer_id: Option<String>) {
         let health = ConnectionHealth::new(session_id.clone(), peer_id.clone());
         self.connections.insert(session_id, health);
-        gauge!("rustwaf.tunnel.quic.health.monitored_connections").set(self.connections.len() as f64);
+        gauge!("maluwaf.tunnel.quic.health.monitored_connections").set(self.connections.len() as f64);
     }
 
     pub fn unregister_connection(&self, session_id: &str) {
         self.connections.remove(session_id);
-        gauge!("rustwaf.tunnel.quic.health.monitored_connections").set(self.connections.len() as f64);
+        gauge!("maluwaf.tunnel.quic.health.monitored_connections").set(self.connections.len() as f64);
     }
 
     pub fn set_datagram_capabilities(&self, session_id: &str, caps: DatagramCapabilities) {
@@ -249,7 +257,7 @@ impl QuicHealthMonitor {
             health.record_rtt(rtt);
             health.update_quality(&self.config);
 
-            histogram!("rustwaf.tunnel.quic.health.rtt").record(rtt.as_secs_f64() * 1000.0);
+            histogram!("maluwaf.tunnel.quic.health.rtt").record(rtt.as_secs_f64() * 1000.0);
 
             if health.consecutive_successes == self.config.recovery_threshold {
                 if old_quality == ConnectionQuality::Failed || old_quality == ConnectionQuality::Poor {
@@ -257,7 +265,7 @@ impl QuicHealthMonitor {
                         session_id: session_id.to_string(),
                         peer_id: health.peer_id.clone(),
                     });
-                    counter!("rustwaf.tunnel.quic.health.recovered").increment(1);
+                    counter!("maluwaf.tunnel.quic.health.recovered").increment(1);
                 }
             }
 
@@ -282,7 +290,7 @@ impl QuicHealthMonitor {
             health.last_failure = Some(Instant::now());
             health.update_quality(&self.config);
 
-            counter!("rustwaf.tunnel.quic.health.failures").increment(1);
+            counter!("maluwaf.tunnel.quic.health.failures").increment(1);
 
             if health.consecutive_failures >= self.config.failure_threshold {
                 let _ = self.health_event_tx.try_send(HealthEvent::ConnectionFailed {
@@ -346,6 +354,8 @@ impl QuicHealthMonitor {
         let health_connections = self.connections.clone();
         let shutdown_rx = self.shutdown_tx.subscribe();
         let event_tx = self.health_event_tx.clone();
+        let max_concurrent_checks = 50usize;
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(max_concurrent_checks));
 
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(config.interval_secs));
@@ -354,20 +364,32 @@ impl QuicHealthMonitor {
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
-                        for entry in connections.iter() {
-                            let session_id = entry.key().clone();
-                            let connection = entry.value().clone();
-
-                            if let Some(health) = health_connections.get(&session_id) {
-                                if !health.quality.is_usable() {
-                                    continue;
+                        let connections_snapshot: Vec<(String, Connection)> = connections
+                            .iter()
+                            .filter_map(|entry| {
+                                let session_id = entry.key().clone();
+                                let connection = entry.value().clone();
+                                
+                                if let Some(health) = health_connections.get(&session_id) {
+                                    if health.quality.is_usable() {
+                                        return Some((session_id, connection));
+                                    }
                                 }
-                            }
-
+                                None
+                            })
+                            .collect();
+                        
+                        for (session_id, connection) in connections_snapshot {
                             let health_connections_clone = health_connections.clone();
                             let event_tx_clone = event_tx.clone();
                             let config_clone = config.clone();
-
+                            let semaphore_clone = semaphore.clone();
+                            
+                            let permit = match semaphore_clone.clone().acquire_owned().await {
+                                Ok(p) => p,
+                                Err(_) => continue,
+                            };
+                            
                             tokio::spawn(async move {
                                 let start = Instant::now();
                                 
@@ -388,7 +410,7 @@ impl QuicHealthMonitor {
                                             }
                                         }
                                     }
-                                    _ = tokio::time::sleep(Duration::from_millis(100)) => {
+                                    _ = tokio::time::sleep(Duration::from_millis(config_clone.check_timeout_ms)) => {
                                         let rtt = start.elapsed();
                                         if let Some(mut health) = health_connections_clone.get_mut(&session_id) {
                                             health.consecutive_failures = 0;
@@ -400,6 +422,7 @@ impl QuicHealthMonitor {
                                         }
                                     }
                                 }
+                                drop(permit);
                             });
                         }
                     }
@@ -411,7 +434,11 @@ impl QuicHealthMonitor {
             }
         });
 
-        tracing::info!("QUIC health monitor started with interval {}s", self.config.interval_secs);
+        tracing::info!(
+            "QUIC health monitor started with interval {}s, max concurrent checks: {}",
+            self.config.interval_secs,
+            max_concurrent_checks
+        );
     }
 
     pub fn shutdown(&self) {

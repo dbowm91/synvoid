@@ -28,7 +28,7 @@ impl TarpitHandler {
     pub async fn handle_request(
         &self,
         path: &str,
-        user_agent: Option<&str>,
+        _user_agent: Option<&str>,
     ) -> String {
         let start = std::time::Instant::now();
         
@@ -46,8 +46,8 @@ impl TarpitHandler {
             &path_seed,
         );
 
-        counter!("rustwaf.tarpit.requests").increment(1);
-        histogram!("rustwaf.tarpit.response_time").record(start.elapsed());
+        counter!("maluwaf.tarpit.requests").increment(1);
+        histogram!("maluwaf.tarpit.response_time").record(start.elapsed());
 
         content
     }
@@ -65,10 +65,10 @@ impl TarpitHandler {
     }
 
     fn generate_path_seed(&self, path: &str) -> String {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         
         if path.is_empty() || path == "/" {
-            return format!("page{}", rng.gen_range(1..100));
+            return format!("page{}", rng.random_range(1..100));
         }
 
         let clean_path = path.chars()
@@ -78,12 +78,12 @@ impl TarpitHandler {
         if clean_path.len() >= 3 {
             clean_path[..clean_path.len().min(10)].to_string()
         } else {
-            format!("{}{}", clean_path, rng.gen_range(1..100))
+            format!("{}{}", clean_path, rng.random_range(1..100))
         }
     }
 
     pub fn generate_redirect_page(&self, target_path: &str) -> String {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         
         let sentences = self.chain.generate_sentences(8);
         
@@ -103,7 +103,7 @@ impl TarpitHandler {
             sentences.join(" "),
             target_path,
             target_path,
-            rng.gen_range(1000..3000)
+            rng.random_range(1000..3000)
         )
     }
 }

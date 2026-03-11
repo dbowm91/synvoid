@@ -70,6 +70,27 @@ pub struct UploadConfig {
     #[serde(default = "default_yara_timeout_ms")]
     pub yara_timeout_ms: u64,
 
+    #[serde(default = "default_verify_signature")]
+    pub verify_signature: bool,
+
+    #[serde(default = "default_signature_strict_mode")]
+    pub signature_strict_mode: bool,
+
+    #[serde(default = "default_rate_limit_enabled")]
+    pub rate_limit_enabled: bool,
+
+    #[serde(default = "default_max_uploads_per_minute")]
+    pub max_uploads_per_minute: u32,
+
+    #[serde(default = "default_max_uploads_per_hour")]
+    pub max_uploads_per_hour: u32,
+
+    #[serde(default = "default_max_bytes_per_minute")]
+    pub max_bytes_per_minute: String,
+
+    #[serde(default = "default_burst_allowance")]
+    pub burst_allowance: u32,
+
     #[serde(default)]
     pub allowed_types: AllowedTypesConfig,
 
@@ -89,6 +110,13 @@ impl Default for UploadConfig {
             quarantine_dir: default_quarantine_dir(),
             yara_rules_dir: None,
             yara_timeout_ms: default_yara_timeout_ms(),
+            verify_signature: default_verify_signature(),
+            signature_strict_mode: default_signature_strict_mode(),
+            rate_limit_enabled: default_rate_limit_enabled(),
+            max_uploads_per_minute: default_max_uploads_per_minute(),
+            max_uploads_per_hour: default_max_uploads_per_hour(),
+            max_bytes_per_minute: default_max_bytes_per_minute(),
+            burst_allowance: default_burst_allowance(),
             allowed_types: AllowedTypesConfig::default(),
             paths: Vec::new(),
         }
@@ -116,15 +144,43 @@ fn default_sandbox_enabled() -> bool {
 }
 
 fn default_sandbox_dir() -> String {
-    "/var/lib/rustwaf/sandbox".to_string()
+    "/var/lib/maluwaf/sandbox".to_string()
 }
 
 fn default_quarantine_dir() -> String {
-    "/var/lib/rustwaf/quarantine".to_string()
+    "/var/lib/maluwaf/quarantine".to_string()
 }
 
 fn default_yara_timeout_ms() -> u64 {
     30000
+}
+
+fn default_verify_signature() -> bool {
+    true
+}
+
+fn default_signature_strict_mode() -> bool {
+    false
+}
+
+fn default_rate_limit_enabled() -> bool {
+    true
+}
+
+fn default_max_uploads_per_minute() -> u32 {
+    30
+}
+
+fn default_max_uploads_per_hour() -> u32 {
+    200
+}
+
+fn default_max_bytes_per_minute() -> String {
+    "100MB".to_string()
+}
+
+fn default_burst_allowance() -> u32 {
+    5
 }
 
 impl UploadConfig {
@@ -134,6 +190,10 @@ impl UploadConfig {
 
     pub fn memory_threshold_bytes(&self) -> u64 {
         parse_size(&self.memory_threshold).unwrap_or(10 * 1024 * 1024)
+    }
+
+    pub fn max_bytes_per_minute_bytes(&self) -> u64 {
+        parse_size(&self.max_bytes_per_minute).unwrap_or(100 * 1024 * 1024)
     }
 
     pub fn get_path_config(&self, request_path: &str) -> Option<&PathUploadConfig> {
@@ -174,14 +234,49 @@ impl UploadConfig {
                     path_cfg.allowed_types.mime_types.clone()
                 },
                 scan_with_yara: path_cfg.scan_with_yara.unwrap_or(self.scan_with_yara),
+                yara_rules_dir: path_cfg
+                    .yara_rules_dir
+                    .clone()
+                    .or_else(|| self.yara_rules_dir.clone())
+                    .map(std::path::PathBuf::from),
+                yara_timeout_ms: path_cfg.yara_timeout_ms.unwrap_or(self.yara_timeout_ms),
                 memory_threshold_bytes: self.memory_threshold_bytes(),
+                verify_signature: path_cfg.verify_signature.unwrap_or(self.verify_signature),
+                signature_strict_mode: path_cfg
+                    .signature_strict_mode
+                    .unwrap_or(self.signature_strict_mode),
+                rate_limit_enabled: path_cfg
+                    .rate_limit_enabled
+                    .unwrap_or(self.rate_limit_enabled),
+                max_uploads_per_minute: path_cfg
+                    .max_uploads_per_minute
+                    .unwrap_or(self.max_uploads_per_minute),
+                max_uploads_per_hour: path_cfg
+                    .max_uploads_per_hour
+                    .unwrap_or(self.max_uploads_per_hour),
+                max_bytes_per_minute: path_cfg
+                    .max_bytes_per_minute
+                    .as_ref()
+                    .and_then(|s| parse_size(s))
+                    .unwrap_or_else(|| self.max_size_bytes()),
+                burst_allowance: path_cfg.burst_allowance.unwrap_or(self.burst_allowance),
             }
         } else {
             EffectiveUploadConfig {
                 max_size_bytes: self.max_size_bytes(),
                 allowed_mime_types: self.allowed_types.effective_mime_types(),
                 scan_with_yara: self.scan_with_yara,
+                yara_rules_dir: self.yara_rules_dir.clone().map(std::path::PathBuf::from),
+                yara_timeout_ms: self.yara_timeout_ms,
                 memory_threshold_bytes: self.memory_threshold_bytes(),
+                verify_signature: self.verify_signature,
+                signature_strict_mode: self.signature_strict_mode,
+                rate_limit_enabled: self.rate_limit_enabled,
+                max_uploads_per_minute: self.max_uploads_per_minute,
+                max_uploads_per_hour: self.max_uploads_per_hour,
+                max_bytes_per_minute: parse_size(&self.max_bytes_per_minute)
+                    .unwrap_or(100 * 1024 * 1024),
+                burst_allowance: self.burst_allowance,
             }
         }
     }
@@ -192,7 +287,16 @@ pub struct EffectiveUploadConfig {
     pub max_size_bytes: u64,
     pub allowed_mime_types: Vec<String>,
     pub scan_with_yara: bool,
+    pub yara_rules_dir: Option<std::path::PathBuf>,
+    pub yara_timeout_ms: u64,
     pub memory_threshold_bytes: u64,
+    pub verify_signature: bool,
+    pub signature_strict_mode: bool,
+    pub rate_limit_enabled: bool,
+    pub max_uploads_per_minute: u32,
+    pub max_uploads_per_hour: u32,
+    pub max_bytes_per_minute: u64,
+    pub burst_allowance: u32,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -247,6 +351,33 @@ pub struct PathUploadConfig {
 
     #[serde(default)]
     pub scan_with_yara: Option<bool>,
+
+    #[serde(default)]
+    pub yara_rules_dir: Option<String>,
+
+    #[serde(default)]
+    pub yara_timeout_ms: Option<u64>,
+
+    #[serde(default)]
+    pub verify_signature: Option<bool>,
+
+    #[serde(default)]
+    pub signature_strict_mode: Option<bool>,
+
+    #[serde(default)]
+    pub rate_limit_enabled: Option<bool>,
+
+    #[serde(default)]
+    pub max_uploads_per_minute: Option<u32>,
+
+    #[serde(default)]
+    pub max_uploads_per_hour: Option<u32>,
+
+    #[serde(default)]
+    pub max_bytes_per_minute: Option<String>,
+
+    #[serde(default)]
+    pub burst_allowance: Option<u32>,
 
     #[serde(default)]
     pub allowed_types: AllowedTypesConfig,

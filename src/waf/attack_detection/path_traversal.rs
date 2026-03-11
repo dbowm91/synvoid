@@ -1,72 +1,70 @@
+use crate::utils::url_decode_all;
+use crate::waf::attack_detection::config::{AttackType, InputLocation};
+use crate::waf::attack_detection::detector_common::{BasePatternDetector, PatternDetector};
+use crate::waf::attack_detection::patterns::DefaultPatterns;
 use aho_corasick::AhoCorasick;
 use std::sync::Arc;
 
-use crate::waf::attack_detection::config::{AttackDetectionResult, AttackType, InputLocation};
-use crate::waf::attack_detection::patterns::DefaultPatterns;
-
 pub struct PathTraversalDetector {
-    automaton: Arc<AhoCorasick>,
+    inner: BasePatternDetector,
 }
 
 impl PathTraversalDetector {
     pub fn new(paranoia_level: u8, custom_patterns: &[String]) -> Self {
-        let mut patterns: Vec<String> = if paranoia_level >= 3 {
-            DefaultPatterns::path_traversal_high()
-                .iter()
-                .map(|s| s.to_lowercase())
-                .collect()
-        } else {
-            DefaultPatterns::path_traversal()
-                .iter()
-                .map(|s| s.to_lowercase())
-                .collect()
-        };
-
-        for custom in custom_patterns {
-            patterns.push(custom.to_lowercase());
-        }
-
-        let ac = AhoCorasick::new(&patterns).expect("Failed to build Aho-Corasick automaton");
-
-        Self {
-            automaton: Arc::new(ac),
-        }
+        let inner = BasePatternDetector::new(
+            DefaultPatterns::path_traversal().as_slice(),
+            DefaultPatterns::path_traversal_high().as_slice(),
+            custom_patterns,
+            paranoia_level,
+            AttackType::PathTraversal,
+            "path_traversal",
+        );
+        Self { inner }
     }
 
-    pub fn detect(&self, input: &str, location: InputLocation) -> Option<AttackDetectionResult> {
+    fn detect_with_url_decode(
+        &self,
+        input: &str,
+        location: InputLocation,
+    ) -> Option<crate::waf::attack_detection::config::AttackDetectionResult> {
         let input_lower = input.to_lowercase();
-        let decoded = self::decode_all(&input_lower);
+        let decoded = url_decode_all(&input_lower);
 
-        if let Some(_mat) = self.automaton.find(&decoded) {
+        if let Some(mat) = self.inner.patterns_ref().find(&decoded) {
+            let matched = decoded[mat.start()..mat.end()].to_string();
             tracing::warn!(
                 attack_type = "path_traversal",
+                matched_pattern = %matched,
                 location = %location,
-                input_preview = %&input[..input.len().min(100)],
                 "Path traversal detected"
             );
-
-            return Some(AttackDetectionResult {
-                attack_type: AttackType::PathTraversal,
-                fingerprint: None,
-                matched_pattern: Some("path_traversal_pattern".to_string()),
-                input_location: location,
-            });
+            return Some(
+                crate::waf::attack_detection::config::AttackDetectionResult {
+                    attack_type: AttackType::PathTraversal,
+                    fingerprint: None,
+                    matched_pattern: Some(matched),
+                    input_location: location,
+                },
+            );
         }
 
         if decoded != input_lower {
-            if let Some(_mat) = self.automaton.find(&input_lower) {
+            if let Some(mat) = self.inner.patterns_ref().find(&input_lower) {
+                let matched = input_lower[mat.start()..mat.end()].to_string();
                 tracing::warn!(
                     attack_type = "path_traversal",
+                    matched_pattern = %matched,
                     location = %location,
                     "Path traversal detected (encoded)"
                 );
-
-                return Some(AttackDetectionResult {
-                    attack_type: AttackType::PathTraversal,
-                    fingerprint: None,
-                    matched_pattern: Some("path_traversal_pattern".to_string()),
-                    input_location: location,
-                });
+                return Some(
+                    crate::waf::attack_detection::config::AttackDetectionResult {
+                        attack_type: AttackType::PathTraversal,
+                        fingerprint: None,
+                        matched_pattern: Some(matched),
+                        input_location: location,
+                    },
+                );
             }
         }
 
@@ -74,45 +72,18 @@ impl PathTraversalDetector {
     }
 }
 
-fn decode_all(input: &str) -> String {
-    let mut result = input.to_string();
-
-    for _ in 0..3 {
-        let decoded = urlencoding_decode(&result);
-        if decoded == result {
-            break;
-        }
-        result = decoded;
+impl PatternDetector for PathTraversalDetector {
+    fn patterns(&self) -> &Arc<AhoCorasick> {
+        self.inner.patterns()
     }
 
-    result
-}
-
-fn urlencoding_decode(input: &str) -> String {
-    let mut result = String::new();
-    let mut chars = input.chars().peekable();
-
-    while let Some(c) = chars.next() {
-        if c == '%' {
-            let hex: String = chars.by_ref().take(2).collect();
-            if hex.len() == 2 {
-                if let Ok(byte) = u8::from_str_radix(&hex, 16) {
-                    if byte.is_ascii() {
-                        result.push(byte as char);
-                        continue;
-                    }
-                }
-            }
-            result.push('%');
-            result.push_str(&hex);
-        } else if c == '+' {
-            result.push(' ');
-        } else {
-            result.push(c);
-        }
+    fn detect(
+        &self,
+        input: &str,
+        location: InputLocation,
+    ) -> Option<crate::waf::attack_detection::config::AttackDetectionResult> {
+        self.detect_with_url_decode(input, location)
     }
-
-    result
 }
 
 #[cfg(test)]

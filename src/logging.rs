@@ -5,7 +5,6 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 
 pub struct SiteLogger {
     log_dir: PathBuf,

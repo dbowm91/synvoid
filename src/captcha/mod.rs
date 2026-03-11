@@ -94,53 +94,53 @@ impl CaptchaManager {
     }
 
     fn generate_random_text(&self, length: usize) -> String {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         (0..length)
             .map(|_| {
-                let idx = rng.gen_range(0..CAPTCHA_CHARS.len());
+                let idx = rng.random_range(0..CAPTCHA_CHARS.len());
                 CAPTCHA_CHARS.chars().nth(idx).unwrap()
             })
             .collect()
     }
 
     fn generate_random_id(&self) -> String {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let charset: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
         (0..16)
             .map(|_| {
-                let idx = rng.gen_range(0..charset.len());
+                let idx = rng.random_range(0..charset.len());
                 charset[idx] as char
             })
             .collect()
     }
 
     fn render_captcha_svg(&self, text: &str) -> String {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         
         let lines: String = (0..8)
             .map(|_| {
-                let x1 = rng.gen_range(0..200);
-                let y1 = rng.gen_range(0..80);
-                let x2 = rng.gen_range(0..200);
-                let y2 = rng.gen_range(0..80);
+                let x1 = rng.random_range(0..200);
+                let y1 = rng.random_range(0..80);
+                let x2 = rng.random_range(0..200);
+                let y2 = rng.random_range(0..80);
                 format!(r#"<line x1="{}" y1="{}" x2="{}" y2="{}" stroke="rgb({},{},{})" stroke-width="1"/>"#,
                     x1, y1, x2, y2,
-                    rng.gen_range(100..200),
-                    rng.gen_range(100..200),
-                    rng.gen_range(100..200)
+                    rng.random_range(100..200),
+                    rng.random_range(100..200),
+                    rng.random_range(100..200)
                 )
             })
             .collect();
         
         let dots: String = (0..100)
             .map(|_| {
-                let x = rng.gen_range(0..200);
-                let y = rng.gen_range(0..80);
+                let x = rng.random_range(0..200);
+                let y = rng.random_range(0..80);
                 format!(r#"<circle cx="{}" cy="{}" r="1" fill="rgb({},{},{})"/>"#,
                     x, y,
-                    rng.gen_range(150..220),
-                    rng.gen_range(150..220),
-                    rng.gen_range(150..220)
+                    rng.random_range(150..220),
+                    rng.random_range(150..220),
+                    rng.random_range(150..220)
                 )
             })
             .collect();
@@ -149,14 +149,14 @@ impl CaptchaManager {
             .map(|(i, c)| {
                 let x = 20 + i * 28;
                 let y = 55;
-                let rotation = rng.gen_range(-20..20);
-                let font_size = rng.gen_range(28..36);
+                let rotation = rng.random_range(-20..20);
+                let font_size = rng.random_range(28..36);
                 let font_family = vec!["monospace", "Arial", "Courier New", "Verdana"];
-                let ff = font_family[rng.gen_range(0..font_family.len())];
+                let ff = font_family[rng.random_range(0..font_family.len())];
                 let color = format!("rgb({},{},{})", 
-                    rng.gen_range(0..80),
-                    rng.gen_range(0..80),
-                    rng.gen_range(0..80)
+                    rng.random_range(0..80),
+                    rng.random_range(0..80),
+                    rng.random_range(0..80)
                 );
                 
                 format!(r#"<text x="{}" y="{}" font-family="{}" font-size="{}" fill="{}" transform="rotate({}, {}, {})">{}</text>"#,

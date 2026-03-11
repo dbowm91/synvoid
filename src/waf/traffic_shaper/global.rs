@@ -1,4 +1,6 @@
-use crate::config::{GlobalTrafficShapingConfig, TrafficShapingConfig};
+use crate::config::traffic::{BandwidthConfig, BandwidthLimitAction};
+use crate::config::GlobalTrafficShapingConfig;
+use crate::metrics::bandwidth::get_global_bandwidth_tracker;
 use crate::waf::ThreatLevelManager;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -8,19 +10,21 @@ use super::async_bucket::AsyncTokenBucket;
 #[derive(Clone)]
 pub struct GlobalTrafficShaper {
     config: GlobalTrafficShapingConfig,
+    bandwidth_config: BandwidthConfig,
     ingress_bucket: Arc<AsyncTokenBucket>,
     egress_bucket: Arc<AsyncTokenBucket>,
     threat_level: Arc<RwLock<Option<Arc<ThreatLevelManager>>>>,
 }
 
 impl GlobalTrafficShaper {
-    pub fn new(config: GlobalTrafficShapingConfig) -> Self {
+    pub fn new(config: GlobalTrafficShapingConfig, bandwidth_config: BandwidthConfig) -> Self {
         let ingress_rate = config.ingress_max_mb_s * 1024 * 1024;
         let egress_rate = config.egress_max_mb_s * 1024 * 1024;
         let burst_capacity = config.burst_allowance_mb * 1024 * 1024;
 
         Self {
             config: config.clone(),
+            bandwidth_config,
             ingress_bucket: AsyncTokenBucket::new(
                 burst_capacity,
                 ingress_rate,
@@ -68,6 +72,108 @@ impl GlobalTrafficShaper {
     pub fn config(&self) -> &GlobalTrafficShapingConfig {
         &self.config
     }
+
+    pub fn get_bandwidth_status(&self) -> BandwidthStatus {
+        let tracker = get_global_bandwidth_tracker();
+        let (total_received, total_sent) = tracker.get_total_excluding_mesh();
+        let (ingress_rate, egress_rate) = tracker.get_current_rate();
+        let (monthly_received, monthly_sent) = tracker.get_monthly_usage();
+
+        let (monthly_cap_ingress, monthly_cap_egress) =
+            self.bandwidth_config.calculate_rate_limit();
+
+        BandwidthStatus {
+            total_bytes_received: total_received,
+            total_bytes_sent: total_sent,
+            ingress_rate_bps: ingress_rate,
+            egress_rate_bps: egress_rate,
+            monthly_bytes_received: monthly_received,
+            monthly_bytes_sent: monthly_sent,
+            monthly_cap_ingress_bps: monthly_cap_ingress,
+            monthly_cap_egress_bps: monthly_cap_egress,
+            monthly_cap_ingress_gb: self.bandwidth_config.monthly_cap_ingress_gb,
+            monthly_cap_egress_gb: self.bandwidth_config.monthly_cap_egress_gb,
+            is_over_limit: self.is_over_monthly_limit(),
+        }
+    }
+
+    pub fn is_over_monthly_limit(&self) -> (bool, bool) {
+        let tracker = get_global_bandwidth_tracker();
+        let (monthly_received, monthly_sent) = tracker.get_monthly_usage();
+
+        let ingress_cap_bytes = self.bandwidth_config.monthly_cap_ingress_gb * 1024 * 1024 * 1024;
+        let egress_cap_bytes = self.bandwidth_config.monthly_cap_egress_gb * 1024 * 1024 * 1024;
+
+        let ingress_over = ingress_cap_bytes > 0 && monthly_received > ingress_cap_bytes;
+        let egress_over = egress_cap_bytes > 0 && monthly_sent > egress_cap_bytes;
+
+        (ingress_over, egress_over)
+    }
+
+    pub fn check_monthly_limit(
+        &self,
+        _bytes: u64,
+        direction: BandwidthDirection,
+    ) -> Result<(), BandwidthLimitExceeded> {
+        if self.bandwidth_config.action_on_limit == BandwidthLimitAction::Block {
+            let (ingress_over, egress_over) = self.is_over_monthly_limit();
+
+            let cap_bytes = match direction {
+                BandwidthDirection::Ingress => {
+                    self.bandwidth_config.monthly_cap_ingress_gb * 1024 * 1024 * 1024
+                }
+                BandwidthDirection::Egress => {
+                    self.bandwidth_config.monthly_cap_egress_gb * 1024 * 1024 * 1024
+                }
+            };
+
+            if cap_bytes > 0 {
+                match direction {
+                    BandwidthDirection::Ingress if ingress_over => {
+                        return Err(BandwidthLimitExceeded {
+                            direction: "ingress".to_string(),
+                            limit_gb: self.bandwidth_config.monthly_cap_ingress_gb,
+                        });
+                    }
+                    BandwidthDirection::Egress if egress_over => {
+                        return Err(BandwidthLimitExceeded {
+                            direction: "egress".to_string(),
+                            limit_gb: self.bandwidth_config.monthly_cap_egress_gb,
+                        });
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum BandwidthDirection {
+    Ingress,
+    Egress,
+}
+
+#[derive(Clone, Debug)]
+pub struct BandwidthLimitExceeded {
+    pub direction: String,
+    pub limit_gb: u64,
+}
+
+#[derive(Clone, Debug)]
+pub struct BandwidthStatus {
+    pub total_bytes_received: u64,
+    pub total_bytes_sent: u64,
+    pub ingress_rate_bps: u64,
+    pub egress_rate_bps: u64,
+    pub monthly_bytes_received: u64,
+    pub monthly_bytes_sent: u64,
+    pub monthly_cap_ingress_bps: u64,
+    pub monthly_cap_egress_bps: u64,
+    pub monthly_cap_ingress_gb: u64,
+    pub monthly_cap_egress_gb: u64,
+    pub is_over_limit: (bool, bool),
 }
 
 pub struct SiteTrafficShaper {

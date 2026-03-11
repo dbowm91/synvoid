@@ -1,13 +1,16 @@
 use std::sync::Arc;
 use std::net::SocketAddr;
-use std::path::PathBuf;
-use std::collections::HashMap;
+use std::sync::atomic::{AtomicU32, AtomicI64, AtomicU64, Ordering};
 use tokio::net::{UdpSocket, UnixDatagram};
 use tokio::sync::broadcast;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
 use parking_lot::RwLock as PLRwLock;
+use dashmap::DashMap;
 use metrics::{counter, histogram, gauge};
-use quinn::{SendStream, RecvStream};
+use once_cell::sync::Lazy;
+
+#[cfg(unix)]
+use socket2::{Socket, Protocol, Type, Domain};
 
 use crate::udp::protocol::UdpProtocolDetector;
 use crate::udp::filter::{UdpProtocolFilter, UdpFilterAction, UdpFilterConfig};
@@ -15,6 +18,42 @@ use crate::waf::FloodProtector;
 use crate::upstream::UpstreamAddress;
 use crate::tunnel;
 use crate::tunnel::quic::messages::TunnelMessage;
+use crate::tunnel::udp_manager::{UdpTunnelManager, UdpTunnelConfig};
+use crate::buffer::BufferPool;
+use crate::metrics::bandwidth::{get_global_bandwidth_tracker, BandwidthProtocol, EgressDirection};
+
+static UDP_TUNNEL_MANAGER: Lazy<std::sync::RwLock<Option<Arc<UdpTunnelManager>>>> = 
+    Lazy::new(|| std::sync::RwLock::new(None));
+
+pub fn init_udp_tunnel_manager(config: UdpTunnelConfig) {
+    let manager = Arc::new(UdpTunnelManager::new(config));
+    let mut guard = UDP_TUNNEL_MANAGER.write().unwrap();
+    *guard = Some(manager);
+}
+
+pub fn get_udp_tunnel_manager() -> Option<Arc<UdpTunnelManager>> {
+    let guard = UDP_TUNNEL_MANAGER.read().unwrap();
+    guard.clone()
+}
+
+const SHARD_COUNT: usize = 64;
+
+#[derive(Debug, Clone)]
+pub struct UdpSocketOptions {
+    pub reuse_port: bool,
+    pub recv_buffer_size: usize,
+    pub send_buffer_size: usize,
+}
+
+impl Default for UdpSocketOptions {
+    fn default() -> Self {
+        Self {
+            reuse_port: true,
+            recv_buffer_size: 2 * 1024 * 1024,
+            send_buffer_size: 2 * 1024 * 1024,
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct UdpListenerConfig {
@@ -28,6 +67,7 @@ pub struct UdpListenerConfig {
     pub strict_mode: bool,
     pub max_packet_size: usize,
     pub rate_limit_per_ip: u32,
+    pub socket_options: UdpSocketOptions,
 }
 
 impl Default for UdpListenerConfig {
@@ -43,6 +83,7 @@ impl Default for UdpListenerConfig {
             strict_mode: true,
             max_packet_size: 4096,
             rate_limit_per_ip: 100,
+            socket_options: UdpSocketOptions::default(),
         }
     }
 }
@@ -55,6 +96,7 @@ pub struct UdpListenerPool {
     protocol_detector: UdpProtocolDetector,
     protocol_filter: UdpProtocolFilter,
     flood_protector: Option<Arc<FloodProtector>>,
+    socket_options: UdpSocketOptions,
 }
 
 #[derive(Debug, Clone)]
@@ -62,6 +104,8 @@ pub struct UdpListenerPoolConfig {
     pub worker_pool_size: usize,
     pub buffer_size: usize,
     pub max_packets_per_second: u32,
+    pub socket_options: UdpSocketOptions,
+    pub workers_per_listener: usize,
 }
 
 impl Default for UdpListenerPoolConfig {
@@ -70,6 +114,8 @@ impl Default for UdpListenerPoolConfig {
             worker_pool_size: 4,
             buffer_size: 8192,
             max_packets_per_second: 10000,
+            socket_options: UdpSocketOptions::default(),
+            workers_per_listener: 1,
         }
     }
 }
@@ -83,6 +129,7 @@ struct UdpListenerInstance {
 impl UdpListenerPool {
     pub fn new(pool_config: UdpListenerPoolConfig, filter_config: UdpFilterConfig) -> Self {
         let (shutdown_tx, _) = broadcast::channel(1);
+        let socket_options = pool_config.socket_options.clone();
 
         Self {
             config: pool_config,
@@ -91,6 +138,7 @@ impl UdpListenerPool {
             protocol_detector: UdpProtocolDetector::new(),
             protocol_filter: UdpProtocolFilter::new(filter_config),
             flood_protector: None,
+            socket_options,
         }
     }
 
@@ -126,31 +174,40 @@ impl UdpListenerPool {
     pub async fn start(&self) {
         let listeners = self.listeners.read().clone();
         let listener_count = listeners.len();
+        let workers_per_listener = self.config.workers_per_listener;
+        let socket_options = self.socket_options.clone();
 
         for instance in listeners {
-            let config = instance.config.clone();
-            let shutdown_rx = self.shutdown_tx.subscribe();
-            let detector = self.protocol_detector.clone();
-            let filter = self.protocol_filter.clone();
-            let flood_protector = self.flood_protector.clone();
-            let buffer_size = self.config.buffer_size;
+            for worker_id in 0..workers_per_listener {
+                let config = instance.config.clone();
+                let shutdown_rx = self.shutdown_tx.subscribe();
+                let detector = self.protocol_detector.clone();
+                let filter = self.protocol_filter.clone();
+                let flood_protector = self.flood_protector.clone();
+                let buffer_size = self.config.buffer_size;
+                let sock_opts = socket_options.clone();
 
-            tokio::spawn(async move {
-                Self::listen_loop(
-                    config,
-                    shutdown_rx,
-                    detector,
-                    filter,
-                    flood_protector,
-                    buffer_size,
-                )
-                .await;
-            });
+                tokio::spawn(async move {
+                    Self::listen_loop(
+                        config,
+                        shutdown_rx,
+                        detector,
+                        filter,
+                        flood_protector,
+                        buffer_size,
+                        sock_opts,
+                        worker_id,
+                    )
+                    .await;
+                });
+            }
         }
 
         tracing::info!(
-            "UDP listener pool started with {} listeners",
-            listener_count
+            "UDP listener pool started with {} listeners x {} workers = {} total workers",
+            listener_count,
+            workers_per_listener,
+            listener_count * workers_per_listener
         );
     }
 
@@ -161,8 +218,63 @@ impl UdpListenerPool {
         filter: UdpProtocolFilter,
         flood_protector: Option<Arc<FloodProtector>>,
         buffer_size: usize,
+        socket_options: UdpSocketOptions,
+        worker_id: usize,
     ) {
         let bind_addr = format!("{}:{}", config.bind_address, config.port);
+        
+        #[cfg(unix)]
+        let socket = {
+            let addr: SocketAddr = match bind_addr.parse() {
+                Ok(a) => a,
+                Err(e) => {
+                    tracing::error!("Failed to parse bind address {}: {}", bind_addr, e);
+                    return;
+                }
+            };
+            
+            let domain = if addr.is_ipv6() {
+                Domain::IPV6
+            } else {
+                Domain::IPV4
+            };
+            
+            let sock = match Socket::new(domain, Type::DGRAM, Some(Protocol::UDP)) {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::error!("Failed to create UDP socket for {}: {}", bind_addr, e);
+                    return;
+                }
+            };
+            
+            sock.set_reuse_address(true).ok();
+            
+            if socket_options.reuse_port {
+                #[cfg(target_os = "linux")]
+                sock.set_reuse_port(true).ok();
+            }
+            
+            sock.set_nonblocking(true).ok();
+            
+            let _ = sock.set_recv_buffer_size(socket_options.recv_buffer_size);
+            let _ = sock.set_send_buffer_size(socket_options.send_buffer_size);
+            
+            if let Err(e) = sock.bind(&addr.into()) {
+                tracing::error!("Failed to bind UDP socket to {}: {}", bind_addr, e);
+                return;
+            }
+            
+            let std_socket: std::net::UdpSocket = sock.into();
+            match UdpSocket::from_std(std_socket) {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::error!("Failed to convert to tokio UDP socket for {}: {}", bind_addr, e);
+                    return;
+                }
+            }
+        };
+        
+        #[cfg(not(unix))]
         let socket = match UdpSocket::bind(&bind_addr).await {
             Ok(s) => s,
             Err(e) => {
@@ -179,7 +291,7 @@ impl UdpListenerPool {
             }
         };
 
-        let upstream_unix_socket: Option<UnixDatagram> = match &upstream_addr {
+        let _upstream_unix_socket: Option<UnixDatagram> = match &upstream_addr {
             UpstreamAddress::Tcp(_) => None,
             UpstreamAddress::Unix(path) => {
                 match std::os::unix::net::UnixDatagram::bind(path) {
@@ -208,13 +320,15 @@ impl UdpListenerPool {
         };
 
         tracing::info!(
-            "UDP listener running on {} for protocol {}",
+            "UDP listener running on {} for protocol {} (worker {})",
             bind_addr,
-            config.expected_protocol
+            config.expected_protocol,
+            worker_id
         );
 
-        let mut buf = vec![0u8; buffer_size];
+        let mut pooled_buf = BufferPool::acquire(buffer_size);
         let rate_limiter = UdpRateLimiter::new(config.rate_limit_per_ip);
+        let mut cleanup_counter: u32 = 0;
 
         loop {
             tokio::select! {
@@ -222,22 +336,30 @@ impl UdpListenerPool {
                     tracing::info!("UDP listener shutting down on {}", bind_addr);
                     break;
                 }
-                result = socket.recv_from(&mut buf) => {
+                result = socket.recv_from(pooled_buf.as_mut_slice()) => {
                     match result {
                         Ok((n, client_addr)) => {
+                            let bandwidth = get_global_bandwidth_tracker();
+                            bandwidth.record_ingress(n as u64, BandwidthProtocol::Udp);
+                            
                             let start = std::time::Instant::now();
                             let client_ip = client_addr.ip();
-                            let data = &buf[..n];
+                            let data = &pooled_buf.as_slice()[..n];
+
+                            cleanup_counter = cleanup_counter.wrapping_add(1);
+                            if cleanup_counter % 1000 == 0 {
+                                rate_limiter.cleanup_stale(60);
+                            }
 
                             if let Some(ref fp) = flood_protector {
                                 use crate::waf::FloodDecision;
                                 match fp.check_udp(client_ip) {
                                     FloodDecision::Blackholed => {
-                                        counter!("rustwaf.udp.flood_blackhole").increment(1);
+                                        counter!("maluwaf.udp.flood_blackhole").increment(1);
                                         continue;
                                     }
                                     FloodDecision::RateLimited => {
-                                        counter!("rustwaf.udp.flood_limited").increment(1);
+                                        counter!("maluwaf.udp.flood_limited").increment(1);
                                         continue;
                                     }
                                     FloodDecision::Allowed => {}
@@ -245,7 +367,7 @@ impl UdpListenerPool {
                             }
 
                             if !rate_limiter.check(client_ip) {
-                                counter!("rustwaf.udp.rate_limited").increment(1);
+                                counter!("maluwaf.udp.rate_limited").increment(1);
                                 continue;
                             }
 
@@ -262,28 +384,28 @@ impl UdpListenerPool {
                                             detection_result.protocol.as_str(),
                                             client_addr
                                         );
-                                        counter!("rustwaf.udp.protocol_rejected").increment(1);
-                                        histogram!("rustwaf.udp.packet_duration").record(start.elapsed());
+                                        counter!("maluwaf.udp.protocol_rejected").increment(1);
+                                        histogram!("maluwaf.udp.packet_duration").record(start.elapsed());
                                         continue;
                                     }
                                     UdpFilterAction::RateLimit { rate } => {
                                         if rate_limiter.check_with_limit(client_ip, rate) {
-                                            counter!("rustwaf.udp.protocol_rate_limited").increment(1);
+                                            counter!("maluwaf.udp.protocol_rate_limited").increment(1);
                                             continue;
                                         }
                                     }
                                     UdpFilterAction::Allow => {
-                                        counter!("rustwaf.udp.protocol_allowed").increment(1);
+                                        counter!("maluwaf.udp.protocol_allowed").increment(1);
                                     }
                                     UdpFilterAction::Challenge => {
-                                        counter!("rustwaf.udp.protocol_challenged").increment(1);
+                                        counter!("maluwaf.udp.protocol_challenged").increment(1);
                                         continue;
                                     }
                                 }
                             }
 
                             if n > config.max_packet_size {
-                                counter!("rustwaf.udp.oversized_packet").increment(1);
+                                counter!("maluwaf.udp.oversized_packet").increment(1);
                                 continue;
                             }
 
@@ -299,85 +421,102 @@ impl UdpListenerPool {
                                     }
                                 }
                                 UpstreamAddress::Unix(path) => {
-                                    if let Some(ref _socket) = upstream_unix_socket {
-                                        let data_owned = data.to_vec();
-                                        let path_owned = path.clone();
-                                        tokio::task::spawn_blocking(move || {
-                                            match std::os::unix::net::UnixDatagram::bind(&path_owned) {
-                                                Ok(socket) => socket.send_to(&data_owned, &path_owned),
-                                                Err(e) => Err(e),
-                                            }
-                                        }).await.unwrap_or_else(|e| {
-                                            Err(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
-                                        })
-                                    } else {
-                                        Err(std::io::Error::new(
-                                            std::io::ErrorKind::NotFound,
-                                            format!("Unix socket not found: {}", path.display())
-                                        ))
-                                    }
+                                    let data_owned = data.to_vec();
+                                    let path_owned = path.clone();
+                                    tokio::task::spawn_blocking(move || {
+                                        match std::os::unix::net::UnixDatagram::unbound() {
+                                            Ok(socket) => socket.send_to(&data_owned, &path_owned),
+                                            Err(e) => Err(e),
+                                        }
+                                    }).await.unwrap_or_else(|e| {
+                                        Err(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+                                    })
                                 }
                                 UpstreamAddress::QuicTunnel { peer, port } => {
-                                    let registry = tunnel::QUIC_TUNNEL_REGISTRY.clone();
-                                    match registry.get_runtime().await {
-                                        Some(runtime) => {
-                                            let identifier = format!("udp-port-{}", port);
-                                            
-                                            match runtime.open_tunnel_stream_to_peer(peer, &identifier).await {
-                                                Ok((mut send_stream, _recv_stream)) => {
-                                                    let data_msg = TunnelMessage::DataChunk {
-                                                        identifier: identifier.clone(),
-                                                        sequence: 0,
-                                                        data: data.to_vec(),
-                                                        fin: false,
-                                                    };
-                                                    
-                                                    match data_msg.encode() {
-                                                        Ok(encoded) => {
-                                                            let len = (encoded.len() as u32).to_be_bytes();
-                                                            let _ = send_stream.write_all(&len).await;
-                                                            let _ = send_stream.write_all(&encoded).await;
-                                                            counter!("rustwaf.udp.quic_tunnel.packets_sent").increment(1);
-                                                            Ok(data.len())
-                                                        }
-                                                        Err(e) => {
-                                                            Err(std::io::Error::new(
-                                                                std::io::ErrorKind::InvalidData,
-                                                                format!("Encode error: {}", e)
-                                                            ))
-                                                        }
-                                                    }
+                                    match get_udp_tunnel_manager() {
+                                        Some(manager) => {
+                                            match manager.send(peer, *port, data, client_addr).await {
+                                                Ok(_) => {
+                                                    counter!("maluwaf.udp.quic_tunnel.packets_sent").increment(1);
+                                                    counter!("maluwaf.udp.quic_tunnel.datagram_used").increment(1);
+                                                    Ok(n)
                                                 }
                                                 Err(e) => {
                                                     Err(std::io::Error::new(
                                                         std::io::ErrorKind::NotConnected,
-                                                        format!("Failed to open QUIC stream: {}", e)
+                                                        format!("Failed to send via UDP tunnel manager: {}", e)
                                                     ))
                                                 }
                                             }
                                         }
                                         None => {
-                                            Err(std::io::Error::new(
-                                                std::io::ErrorKind::NotConnected,
-                                                "QUIC tunnel runtime not available"
-                                            ))
+                                            let registry = tunnel::QUIC_TUNNEL_REGISTRY.clone();
+                                            match registry.get_runtime().await {
+                                                Some(runtime) => {
+                                                    let identifier = format!("udp-port-{}", port);
+                                                    
+                                                    match runtime.open_tunnel_stream_to_peer(peer, &identifier).await {
+                                                        Ok((mut send_stream, _recv_stream)) => {
+                                                            match TunnelMessage::write_data_chunk_zero_copy(
+                                                                &mut send_stream,
+                                                                &identifier,
+                                                                0,
+                                                                data,
+                                                                false,
+                                                            ).await {
+                                                                Ok(_) => {
+                                                                    counter!("maluwaf.udp.quic_tunnel.packets_sent").increment(1);
+                                                                    counter!("maluwaf.udp.quic_tunnel.stream_fallback").increment(1);
+                                                                    Ok(n)
+                                                                }
+                                                                Err(e) => {
+                                                                    Err(std::io::Error::new(
+                                                                        std::io::ErrorKind::InvalidData,
+                                                                        format!("Zero-copy write error: {}", e)
+                                                                    ))
+                                                                }
+                                                            }
+                                                        }
+                                                        Err(e) => {
+                                                            Err(std::io::Error::new(
+                                                                std::io::ErrorKind::NotConnected,
+                                                                format!("Failed to open QUIC stream: {}", e)
+                                                            ))
+                                                        }
+                                                    }
+                                                }
+                                                None => {
+                                                    Err(std::io::Error::new(
+                                                        std::io::ErrorKind::NotConnected,
+                                                        "QUIC tunnel runtime not available"
+                                                    ))
+                                                }
+                                            }
                                         }
                                     }
                                 }
                             };
 
                             match send_result {
-                                Ok(sent) => {
-                                    counter!("rustwaf.udp.packets_forwarded").increment(1);
-                                    gauge!("rustwaf.udp.packet_size").set(n as f64);
+                                Ok(_sent) => {
+                                    counter!("maluwaf.udp.packets_forwarded").increment(1);
+                                    gauge!("maluwaf.udp.packet_size").set(n as f64);
+                                    
+                                    let upstream_str = match &upstream_addr {
+                                        UpstreamAddress::Tcp(addr) => addr.to_string(),
+                                        UpstreamAddress::Unix(path) => path.to_string_lossy().to_string(),
+                                        UpstreamAddress::QuicTunnel { peer, port } => format!("{}:{}", peer, port),
+                                    };
+                                    bandwidth.record_proxied(n as u64, 0, &upstream_str);
+                                    bandwidth.record_egress(n as u64, BandwidthProtocol::Udp, EgressDirection::Proxied);
                                 }
                                 Err(e) => {
                                     tracing::debug!("Failed to forward UDP packet: {}", e);
-                                    counter!("rustwaf.udp.forward_error").increment(1);
+                                    counter!("maluwaf.udp.forward_error").increment(1);
                                 }
                             }
 
-                            histogram!("rustwaf.udp.packet_duration").record(start.elapsed());
+                            histogram!("maluwaf.udp.packet_duration").record(start.elapsed());
                         }
                         Err(e) => {
                             tracing::error!("UDP recv error: {}", e);
@@ -400,14 +539,45 @@ impl UdpListenerPool {
 
 struct UdpRateLimiter {
     limit: u32,
-    trackers: Arc<PLRwLock<Vec<(std::net::IpAddr, u32, std::time::Instant)>>>,
+    shards: [DashMap<std::net::IpAddr, RateEntry>; SHARD_COUNT],
+    total_tracked: AtomicU64,
+}
+
+#[derive(Debug)]
+struct RateEntry {
+    count: AtomicU32,
+    window_start: AtomicI64,
+}
+
+impl RateEntry {
+    fn new() -> Self {
+        Self {
+            count: AtomicU32::new(1),
+            window_start: AtomicI64::new(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() as i64
+            ),
+        }
+    }
+}
+
+fn hash_ip(ip: &std::net::IpAddr) -> usize {
+    use std::hash::{Hash, Hasher};
+    use std::collections::hash_map::DefaultHasher;
+    
+    let mut hasher = DefaultHasher::new();
+    ip.hash(&mut hasher);
+    (hasher.finish() as usize) % SHARD_COUNT
 }
 
 impl UdpRateLimiter {
     fn new(limit: u32) -> Self {
         Self {
             limit,
-            trackers: Arc::new(PLRwLock::new(Vec::new())),
+            shards: std::array::from_fn(|_| DashMap::new()),
+            total_tracked: AtomicU64::new(0),
         }
     }
 
@@ -416,24 +586,60 @@ impl UdpRateLimiter {
     }
 
     fn check_with_limit(&self, ip: std::net::IpAddr, limit: u32) -> bool {
-        let mut trackers = self.trackers.write();
-        let now = std::time::Instant::now();
-        let window = std::time::Duration::from_secs(1);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        
+        let window_secs: i64 = 1;
+        let shard_idx = hash_ip(&ip);
+        let shard = &self.shards[shard_idx];
 
-        trackers.retain(|(_, _, ts)| now.duration_since(*ts) < window);
-
-        for entry in trackers.iter_mut() {
-            if entry.0 == ip {
-                if entry.1 >= limit {
-                    return false;
-                }
-                entry.1 += 1;
+        match shard.get(&ip) { Some(entry) => {
+            let window_start = entry.window_start.load(Ordering::Relaxed);
+            
+            if now - window_start >= window_secs {
+                entry.window_start.store(now, Ordering::Relaxed);
+                entry.count.store(1, Ordering::Relaxed);
                 return true;
             }
-        }
+            
+            let current = entry.count.fetch_add(1, Ordering::Relaxed);
+            if current >= limit {
+                entry.count.fetch_sub(1, Ordering::Relaxed);
+                return false;
+            }
+            true
+        } _ => {
+            shard.insert(ip, RateEntry::new());
+            self.total_tracked.fetch_add(1, Ordering::Relaxed);
+            true
+        }}
+    }
 
-        trackers.push((ip, 1, now));
-        true
+    fn cleanup_stale(&self, max_age_secs: i64) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        
+        let mut total_removed = 0u64;
+        for shard in &self.shards {
+            let before = shard.len() as u64;
+            shard.retain(|_, entry| {
+                let window_start = entry.window_start.load(Ordering::Relaxed);
+                now - window_start < max_age_secs
+            });
+            total_removed += before - shard.len() as u64;
+        }
+        
+        if total_removed > 0 {
+            self.total_tracked.fetch_sub(total_removed, Ordering::Relaxed);
+        }
+    }
+    
+    fn tracked_count(&self) -> u64 {
+        self.total_tracked.load(Ordering::Relaxed)
     }
 }
 

@@ -2,10 +2,13 @@ use yew::prelude::*;
 use yew_router::prelude::*;
 
 use crate::components::layout::Sidebar;
+use crate::components::ToastContainer;
 use crate::hooks::use_theme::*;
 use crate::pages::{
-    Dashboard, Logs, Probes, RequestLogs, Settings, SiteEditor, Sites, TcpUdp, Upstreams,
+    Dashboard, Logs, Probes, RequestLogs, Settings, SiteEditor, Sites, TcpUdp, TierKeys, Upstreams,
+    Workers,
 };
+use crate::types::UpdateThemeRequest;
 
 #[derive(Clone, Routable, PartialEq)]
 pub enum Route {
@@ -29,56 +32,53 @@ pub enum Route {
     Probes,
     #[at("/settings")]
     Settings,
+    #[at("/tier-keys")]
+    TierKeys,
+    #[at("/workers")]
+    Workers,
     #[not_found]
     #[at("/404")]
     NotFound,
 }
 
-pub struct App {
-    theme: Theme,
-}
+#[function_component]
+pub fn App() -> Html {
+    let (theme_data, update_theme) = use_api_theme();
+    let theme = use_state(|| Theme::Dark);
 
-pub enum Msg {
-    ToggleTheme,
-}
+    let current_theme = (*theme).clone();
 
-impl Component for App {
-    type Message = Msg;
-    type Properties = ();
+    let toggle_theme = {
+        let theme = theme.clone();
+        let update_theme = update_theme.clone();
+        Callback::from(move |_| {
+            let new_theme = theme.toggle();
+            theme.set(new_theme);
 
-    fn create(_ctx: &Context<Self>) -> Self {
-        Self { theme: Theme::Dark }
-    }
+            let request = UpdateThemeRequest {
+                preset: Some(new_theme.to_preset().to_string()),
+                mode: None,
+                allow_only: None,
+            };
+            update_theme.emit(request);
+        })
+    };
 
-    fn update(&mut self, _ctx: &Context<Self>, msg: Self::Message) -> bool {
-        match msg {
-            Msg::ToggleTheme => {
-                self.theme = match self.theme {
-                    Theme::Dark => Theme::Light,
-                    Theme::Light => Theme::Dark,
-                };
-                true
-            }
-        }
-    }
+    let theme_class = current_theme.class().to_string();
 
-    fn view(&self, ctx: &Context<Self>) -> Html {
-        let toggle_theme = ctx.link().callback(|_| Msg::ToggleTheme);
-        let theme_class = self.theme.class().to_string();
-
-        html! {
-            <BrowserRouter>
-                <div class={classes!("min-h-screen", "flex", &theme_class)}>
-                    <Sidebar
-                        theme={self.theme}
-                        on_toggle_theme={toggle_theme.clone()}
-                    />
-                    <main class="flex-1 p-6 overflow-auto">
-                        <Switch<Route> render={switch} />
-                    </main>
-                </div>
-            </BrowserRouter>
-        }
+    html! {
+        <BrowserRouter>
+            <ToastContainer />
+            <div class={classes!("min-h-screen", "flex", &theme_class)}>
+                <Sidebar
+                    theme={current_theme}
+                    on_toggle_theme={toggle_theme.clone()}
+                />
+                <main class="flex-1 p-6 overflow-auto">
+                    <Switch<Route> render={switch} />
+                </main>
+            </div>
+        </BrowserRouter>
     }
 }
 
@@ -93,6 +93,8 @@ fn switch(route: Route) -> Html {
         Route::TcpUdp => html! { <TcpUdp /> },
         Route::Probes => html! { <Probes /> },
         Route::Settings => html! { <Settings /> },
+        Route::TierKeys => html! { <TierKeys /> },
+        Route::Workers => html! { <Workers /> },
         Route::NotFound => html! { <div class="text-center py-20">
             <h1 class="text-4xl font-bold mb-4">{ "404" }</h1>
             <p class="text-secondary">{ "Page not found" }</p>

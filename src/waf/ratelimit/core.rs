@@ -1,8 +1,85 @@
 use std::net::IpAddr;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::time::{Duration, Instant};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::time::Instant;
 
 use crate::utils::ip_to_slot;
+use crate::RunningFlag;
+
+const SHARD_COUNT: usize = 16;
+
+static RATE_LIMITER_START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+
+fn get_monotonic_time_ms() -> u64 {
+    let start = RATE_LIMITER_START.get_or_init(Instant::now);
+    start.elapsed().as_millis() as u64
+}
+
+pub struct ShardedRateLimiter {
+    shards: Box<[RateLimitShard]>,
+    config: RateLimitConfig,
+}
+
+struct RateLimitShard {
+    window: AtomicSlidingWindow,
+    per_ip_limit: u32,
+}
+
+#[derive(Clone)]
+pub struct RateLimitConfig {
+    pub per_second: u32,
+    pub per_minute: u32,
+    pub shard_count: usize,
+}
+
+impl Default for RateLimitConfig {
+    fn default() -> Self {
+        Self {
+            per_second: 10,
+            per_minute: 60,
+            shard_count: SHARD_COUNT,
+        }
+    }
+}
+
+impl ShardedRateLimiter {
+    pub fn new(config: RateLimitConfig) -> Self {
+        let shard_count = config.shard_count.max(1);
+        let per_shard_limit = config.per_second / shard_count as u32;
+
+        let shards: Vec<RateLimitShard> = (0..shard_count)
+            .map(|_| RateLimitShard {
+                window: AtomicSlidingWindow::new(1, 10),
+                per_ip_limit: per_shard_limit.max(1),
+            })
+            .collect();
+
+        Self {
+            shards: shards.into_boxed_slice(),
+            config,
+        }
+    }
+
+    pub fn check(&self, client_ip: IpAddr) -> RateLimitDecision {
+        let shard_idx = ip_to_slot(client_ip, self.shards.len());
+        let shard = &self.shards[shard_idx];
+
+        let now_ms = get_monotonic_time_ms();
+
+        let count = shard.window.increment(now_ms);
+
+        if count > shard.per_ip_limit as u64 {
+            RateLimitDecision::Limited {
+                limit_type: "per_ip_second",
+            }
+        } else {
+            RateLimitDecision::Allowed
+        }
+    }
+
+    pub fn get_shard_count(&self) -> usize {
+        self.shards.len()
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RateLimitDecision {
@@ -66,18 +143,18 @@ impl AtomicSlidingWindow {
         self.rotate_buckets(now_ms);
 
         let bucket_idx = ((now_ms / self.bucket_duration_ms) % self.bucket_count) as usize;
-        let count = self.buckets[bucket_idx].fetch_add(1, Ordering::Relaxed) + 1;
-        self.total_count.fetch_add(1, Ordering::Relaxed) + 1
+        let _count = self.buckets[bucket_idx].fetch_add(1, Ordering::AcqRel) + 1;
+        self.total_count.fetch_add(1, Ordering::AcqRel) + 1
     }
 
     pub fn get_count(&self, now_ms: u64) -> u64 {
         self.rotate_buckets(now_ms);
-        self.total_count.load(Ordering::Relaxed)
+        self.total_count.load(Ordering::Acquire)
     }
 
     fn rotate_buckets(&self, now_ms: u64) {
         let current_bucket = now_ms / self.bucket_duration_ms;
-        let last_rotate = self.last_rotate_ms.load(Ordering::Relaxed);
+        let last_rotate = self.last_rotate_ms.load(Ordering::Acquire);
 
         if current_bucket > last_rotate {
             if self
@@ -85,8 +162,8 @@ impl AtomicSlidingWindow {
                 .compare_exchange(
                     last_rotate,
                     current_bucket,
-                    Ordering::SeqCst,
-                    Ordering::Relaxed,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
                 )
                 .is_ok()
             {
@@ -96,7 +173,7 @@ impl AtomicSlidingWindow {
                 let mut total = 0u64;
                 for i in 0..self.bucket_count {
                     let idx = (current_bucket.wrapping_sub(i) % self.bucket_count) as usize;
-                    total += self.buckets[idx].load(Ordering::Relaxed);
+                    total += self.buckets[idx].load(Ordering::Acquire);
                 }
 
                 for i in 0..buckets_to_clear {
@@ -104,11 +181,11 @@ impl AtomicSlidingWindow {
                         .wrapping_sub(self.bucket_count)
                         .wrapping_add(i)
                         % self.bucket_count) as usize;
-                    let cleared = self.buckets[idx].swap(0, Ordering::Relaxed);
+                    let cleared = self.buckets[idx].swap(0, Ordering::AcqRel);
                     total = total.saturating_sub(cleared);
                 }
 
-                self.total_count.store(total, Ordering::Relaxed);
+                self.total_count.store(total, Ordering::Release);
             }
         }
     }
@@ -126,7 +203,7 @@ pub struct GlobalRateLimiter {
     minute_window: AtomicSlidingWindow,
     five_min_window: AtomicSlidingWindow,
 
-    blackhole_active: AtomicBool,
+    blackhole_active: RunningFlag,
     sample_rate: AtomicU32,
     probe_backoff_secs: AtomicU32,
     consecutive_low_samples: AtomicU32,
@@ -142,7 +219,7 @@ impl GlobalRateLimiter {
             second_window: AtomicSlidingWindow::new(1, 10),
             minute_window: AtomicSlidingWindow::new(60, 60),
             five_min_window: AtomicSlidingWindow::new(300, 60),
-            blackhole_active: AtomicBool::new(false),
+            blackhole_active: RunningFlag::new(),
             sample_rate: AtomicU32::new(1),
             probe_backoff_secs: AtomicU32::new(1),
             consecutive_low_samples: AtomicU32::new(0),
@@ -158,7 +235,7 @@ impl GlobalRateLimiter {
         let minute_count = self.minute_window.get_count(now_ms);
         let five_min_count = self.five_min_window.get_count(now_ms);
 
-        if self.blackhole_active.load(Ordering::Relaxed) {
+        if self.blackhole_active.is_running() {
             return self.handle_blackhole_mode(second_count);
         }
 
@@ -226,7 +303,7 @@ impl GlobalRateLimiter {
     }
 
     fn enter_blackhole(&self) {
-        self.blackhole_active.store(true, Ordering::Relaxed);
+        self.blackhole_active.stop();
         self.sample_rate
             .store(self.config.blackhole_sample_rate, Ordering::Relaxed);
         self.probe_backoff_secs.store(1, Ordering::Relaxed);
@@ -239,7 +316,7 @@ impl GlobalRateLimiter {
     }
 
     fn exit_blackhole(&self) {
-        self.blackhole_active.store(false, Ordering::Relaxed);
+        self.blackhole_active.set(true);
         self.sample_rate.store(1, Ordering::Relaxed);
         self.probe_backoff_secs.store(1, Ordering::Relaxed);
         self.consecutive_low_samples.store(0, Ordering::Relaxed);
@@ -259,7 +336,7 @@ impl GlobalRateLimiter {
     }
 
     pub fn is_in_blackhole(&self) -> bool {
-        self.blackhole_active.load(Ordering::Relaxed)
+        self.blackhole_active.is_running()
     }
 
     pub fn get_stats(&self) -> GlobalRateLimitStats {
@@ -269,7 +346,7 @@ impl GlobalRateLimiter {
             per_second: self.second_window.get_count(now_ms),
             per_minute: self.minute_window.get_count(now_ms),
             per_5min: self.five_min_window.get_count(now_ms),
-            blackhole_active: self.blackhole_active.load(Ordering::Relaxed),
+            blackhole_active: self.blackhole_active.is_running(),
             sample_rate: self.sample_rate.load(Ordering::Relaxed),
             consecutive_low_samples: self.consecutive_low_samples.load(Ordering::Relaxed),
         }

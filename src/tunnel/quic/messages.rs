@@ -4,7 +4,6 @@ use std::collections::HashMap;
 const MAX_DATAGRAM_PAYLOAD: usize = 1200;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", content = "data")]
 pub enum TunnelMessage {
     Hello {
         client_id: String,
@@ -17,6 +16,8 @@ pub enum TunnelMessage {
         server_mappings: HashMap<String, PortMapping>,
         supports_datagrams: bool,
         max_datagram_size: usize,
+        #[serde(default)]
+        access_level: Option<String>,
     },
     AuthFailure {
         reason: String,
@@ -72,6 +73,8 @@ pub enum TunnelMessage {
         identifier: String,
         port: u16,
         protocol: String,
+        #[serde(default)]
+        tls_passthrough: bool,
     },
     StreamOpenAck {
         identifier: String,
@@ -91,6 +94,13 @@ pub enum TunnelMessage {
         message: Option<String>,
     },
     UdpTunnelClose {
+        identifier: String,
+    },
+    UdpData {
+        identifier: String,
+        data: Vec<u8>,
+    },
+    UdpClose {
         identifier: String,
     },
 }
@@ -151,6 +161,55 @@ impl TunnelMessage {
         let msg = Self::decode(&data[4..4 + len])?;
         Some((msg, 4 + len))
     }
+
+    pub async fn write_data_chunk_zero_copy<W: tokio::io::AsyncWrite + Unpin>(
+        writer: &mut W,
+        identifier: &str,
+        sequence: u64,
+        data: &[u8],
+        fin: bool,
+    ) -> std::io::Result<()> {
+        use tokio::io::AsyncWriteExt;
+        
+        let header = DataChunkHeader {
+            identifier: identifier.to_string(),
+            sequence,
+            data_len: data.len() as u32,
+            fin,
+        };
+        let header_bytes = bincode::serialize(&header)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        
+        let msg_type: u8 = 100;
+        let total_len = 1 + header_bytes.len() + data.len();
+        writer.write_all(&(total_len as u32).to_be_bytes()).await?;
+        writer.write_all(&[msg_type]).await?;
+        writer.write_all(&header_bytes).await?;
+        writer.write_all(data).await?;
+        Ok(())
+    }
+
+    pub fn decode_data_chunk_zero_copy(data: &[u8]) -> Option<(String, u64, &[u8], bool)> {
+        if data.is_empty() || data[0] != 100 {
+            return None;
+        }
+        let header: DataChunkHeader = bincode::deserialize(&data[1..]).ok()?;
+        let header_size = bincode::serialized_size(&header).ok()? as usize;
+        let data_start = 1 + header_size;
+        if data.len() < data_start + header.data_len as usize {
+            return None;
+        }
+        let chunk_data = &data[data_start..data_start + header.data_len as usize];
+        Some((header.identifier, header.sequence, chunk_data, header.fin))
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DataChunkHeader {
+    identifier: String,
+    sequence: u64,
+    data_len: u32,
+    fin: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -160,6 +219,17 @@ pub struct DatagramMessage {
     pub data: Vec<u8>,
     pub port: u16,
     pub source_addr: String,
+    pub return_addr: Option<String>,
+    pub fragment_info: Option<FragmentInfo>,
+    pub hop_count: u8,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FragmentInfo {
+    pub fragment_id: u32,
+    pub fragment_index: u16,
+    pub fragment_total: u16,
+    pub is_last: bool,
 }
 
 impl DatagramMessage {
@@ -176,7 +246,25 @@ impl DatagramMessage {
             data,
             port,
             source_addr,
+            return_addr: None,
+            fragment_info: None,
+            hop_count: 0,
         }
+    }
+
+    pub fn with_return_addr(mut self, return_addr: String) -> Self {
+        self.return_addr = Some(return_addr);
+        self
+    }
+
+    pub fn with_fragment(mut self, fragment_info: FragmentInfo) -> Self {
+        self.fragment_info = Some(fragment_info);
+        self
+    }
+
+    pub fn with_hop_count(mut self, hop_count: u8) -> Self {
+        self.hop_count = hop_count;
+        self
     }
 
     pub fn encode(&self) -> Result<Vec<u8>, bincode::Error> {
@@ -195,6 +283,18 @@ impl DatagramMessage {
 
     pub fn encoded_size(&self) -> usize {
         bincode::serialized_size(self).unwrap_or(0) as usize
+    }
+
+    pub fn is_fragmented(&self) -> bool {
+        self.fragment_info.is_some()
+    }
+
+    pub fn is_first_fragment(&self) -> bool {
+        self.fragment_info.as_ref().map_or(false, |f| f.fragment_index == 0)
+    }
+
+    pub fn estimated_header_size() -> usize {
+        128
     }
 }
 
@@ -279,7 +379,9 @@ mod tests {
             vec![1, 2, 3, 4, 5],
             53,
             "192.168.1.1:12345".to_string(),
-        );
+        )
+        .with_return_addr("10.0.0.1:53".to_string())
+        .with_hop_count(1);
 
         let encoded = msg.encode().unwrap();
         let decoded = DatagramMessage::decode(&encoded).unwrap();
@@ -289,6 +391,41 @@ mod tests {
         assert_eq!(decoded.data, vec![1, 2, 3, 4, 5]);
         assert_eq!(decoded.port, 53);
         assert_eq!(decoded.source_addr, "192.168.1.1:12345");
+        assert_eq!(decoded.return_addr, Some("10.0.0.1:53".to_string()));
+        assert_eq!(decoded.hop_count, 1);
+        assert!(!decoded.is_fragmented());
+    }
+
+    #[test]
+    fn test_datagram_message_fragmented() {
+        let fragment = FragmentInfo {
+            fragment_id: 12345,
+            fragment_index: 0,
+            fragment_total: 3,
+            is_last: false,
+        };
+        
+        let msg = DatagramMessage::new(
+            "udp-53".to_string(),
+            1,
+            vec![1, 2, 3, 4, 5],
+            53,
+            "192.168.1.1:12345".to_string(),
+        )
+        .with_fragment(fragment.clone());
+
+        assert!(msg.is_fragmented());
+        assert!(msg.is_first_fragment());
+        
+        let encoded = msg.encode().unwrap();
+        let decoded = DatagramMessage::decode(&encoded).unwrap();
+        
+        assert!(decoded.is_fragmented());
+        let frag = decoded.fragment_info.unwrap();
+        assert_eq!(frag.fragment_id, 12345);
+        assert_eq!(frag.fragment_index, 0);
+        assert_eq!(frag.fragment_total, 3);
+        assert!(!frag.is_last);
     }
 
     #[test]

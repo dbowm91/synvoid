@@ -36,8 +36,8 @@ impl SharedWafState {
         tracing::info!("Shared WAF state initialized");
     }
 
-    pub async fn get_waf(&self) -> Arc<WafCore> {
-        self.waf.read().clone().expect("WAF not initialized")
+    pub async fn get_waf(&self) -> Result<Arc<WafCore>, String> {
+        self.waf.read().clone().ok_or_else(|| "WAF not initialized".to_string())
     }
 
     pub async fn set_waf(&self, waf: Arc<WafCore>) {
@@ -94,7 +94,7 @@ impl SharedWafState {
             }
         }
         
-        gauge!("rustwaf.persistence.last_save").set(
+        gauge!("maluwaf.persistence.last_save").set(
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()

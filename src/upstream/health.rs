@@ -1,7 +1,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::interval;
-use metrics::{counter, histogram};
+use metrics::counter;
+use futures::future;
 
 use crate::upstream::pool::Backend;
 use crate::http_client::{create_http_client_with_config, send_request_with_timeout};
@@ -20,6 +21,7 @@ pub struct HealthCheckConfig {
     pub recovery_threshold: u32,
     pub health_check_path: String,
     pub health_check_method: HealthCheckMethod,
+    pub max_load_percent: f32,
 }
 
 #[derive(Clone, Debug)]
@@ -38,6 +40,7 @@ impl Default for HealthCheckConfig {
             recovery_threshold: 2,
             health_check_path: "/".to_string(),
             health_check_method: HealthCheckMethod::Head,
+            max_load_percent: 80.0,
         }
     }
 }
@@ -85,35 +88,58 @@ impl HealthChecker {
         pools: &Arc<tokio::sync::RwLock<Vec<Arc<crate::upstream::UpstreamPool>>>>,
         config: &HealthCheckConfig,
     ) {
-        let pools_guard = pools.read().await;
-        
-        for pool in pools_guard.iter() {
-            let backends = pool.get_backends().await;
+        let backends_to_check: Vec<Arc<Backend>> = {
+            let pools_guard = pools.read().await;
+            let mut backends = Vec::new();
             
-            for backend in backends.iter() {
-                let is_healthy = Self::check_backend(backend, config).await;
-
-                if is_healthy {
-                    if !backend.is_healthy.load(std::sync::atomic::Ordering::Relaxed) {
-                        backend.consecutive_successes.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        let successes = backend.consecutive_successes.load(std::sync::atomic::Ordering::Relaxed);
-                        
-                        if successes >= config.recovery_threshold {
-                            backend.is_healthy.store(true, std::sync::atomic::Ordering::Relaxed);
-                            backend.consecutive_failures.store(0, std::sync::atomic::Ordering::Relaxed);
-                            tracing::info!("Backend {} recovered", backend.url);
-                            counter!("rustwaf.upstream.backend_recovered").increment(1);
-                        }
-                    }
-                } else {
-                    backend.consecutive_failures.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    let failures = backend.consecutive_failures.load(std::sync::atomic::Ordering::Relaxed);
+            for pool in pools_guard.iter() {
+                let pool_backends = pool.get_backends();
+                backends.extend(pool_backends.iter().map(|b| Arc::new(b.clone())));
+            }
+            
+            backends
+        };
+        
+        if backends_to_check.is_empty() {
+            return;
+        }
+        
+        let health_checks: Vec<_> = backends_to_check
+            .iter()
+            .map(|backend| {
+                let backend = backend.clone();
+                let config = config.clone();
+                async move {
+                    let is_healthy = Self::check_backend(&backend, &config).await;
+                    (backend, is_healthy)
+                }
+            })
+            .collect();
+        
+        let results = future::join_all(health_checks).await;
+        
+        let _pools_guard = pools.read().await;
+        for (backend, is_healthy) in results {
+            if is_healthy {
+                if !backend.is_healthy.is_running() {
+                    backend.consecutive_successes.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let successes = backend.consecutive_successes.load(std::sync::atomic::Ordering::Relaxed);
                     
-                    if failures >= config.failure_threshold && backend.is_healthy.load(std::sync::atomic::Ordering::Relaxed) {
-                        backend.is_healthy.store(false, std::sync::atomic::Ordering::Relaxed);
-                        tracing::warn!("Backend {} marked unhealthy after {} failures", backend.url, failures);
-                        counter!("rustwaf.upstream.backend_unhealthy").increment(1);
+                    if successes >= config.recovery_threshold {
+                        backend.is_healthy.set(true);
+                        backend.consecutive_failures.store(0, std::sync::atomic::Ordering::Relaxed);
+                        tracing::info!("Backend {} recovered", backend.url);
+                        counter!("maluwaf.upstream.backend_recovered").increment(1);
                     }
+                }
+            } else {
+                backend.consecutive_failures.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let failures = backend.consecutive_failures.load(std::sync::atomic::Ordering::Relaxed);
+                
+                if failures >= config.failure_threshold && backend.is_healthy.is_running() {
+                    backend.is_healthy.set(false);
+                    tracing::warn!("Backend {} marked unhealthy after {} failures", backend.url, failures);
+                    counter!("maluwaf.upstream.backend_unhealthy").increment(1);
                 }
             }
         }
@@ -158,11 +184,11 @@ impl HealthChecker {
     }
 
     async fn tcp_health_check(backend: &Backend) -> bool {
-        let url = backend.url.clone();
+        let url = backend.url.as_ref();
         
         match tokio::time::timeout(
             Duration::from_secs(5),
-            tokio::net::TcpStream::connect(&url)
+            tokio::net::TcpStream::connect(url)
         ).await {
             Ok(Ok(_)) => true,
             _ => false,

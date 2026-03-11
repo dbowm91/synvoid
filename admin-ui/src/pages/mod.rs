@@ -7,6 +7,8 @@ mod site_editor;
 mod tcp_udp;
 mod settings;
 mod probes;
+mod tier_keys;
+mod workers;
 
 pub use dashboard::Dashboard;
 pub use logs::Logs;
@@ -17,3 +19,5 @@ pub use site_editor::SiteEditor;
 pub use tcp_udp::TcpUdp;
 pub use settings::Settings;
 pub use probes::Probes;
+pub use tier_keys::TierKeys;
+pub use workers::Workers;

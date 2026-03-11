@@ -1,9 +1,41 @@
 use serde::Deserialize;
-use std::collections::HashMap;
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct DetectorConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub custom_patterns: Vec<String>,
+}
+
+impl Default for DetectorConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            custom_patterns: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SimpleDetectorConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+impl Default for SimpleDetectorConfig {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
+}
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct AttackDetectionConfig {
-    #[serde(default = "default_enabled")]
+    #[serde(default = "default_true")]
     pub enabled: bool,
     #[serde(default = "default_paranoia_level")]
     pub paranoia_level: u8,
@@ -14,60 +46,31 @@ pub struct AttackDetectionConfig {
     #[serde(default = "default_max_headers")]
     pub max_headers: usize,
     #[serde(default)]
-    pub sqli: SqliConfig,
+    pub sqli: SimpleDetectorConfig,
     #[serde(default)]
-    pub xss: XssConfig,
+    pub xss: SimpleDetectorConfig,
     #[serde(default)]
-    pub path_traversal: PathTraversalConfig,
+    pub path_traversal: DetectorConfig,
     #[serde(default)]
-    pub rfi: RfiConfig,
+    pub rfi: DetectorConfig,
     #[serde(default)]
     pub ssrf: SsrfConfig,
     #[serde(default)]
-    pub ssti: SstiConfig,
+    pub ssti: DetectorConfig,
     #[serde(default)]
-    pub cmd_injection: CmdInjectionConfig,
+    pub cmd_injection: DetectorConfig,
     #[serde(default)]
-    pub xxe: XxeConfig,
+    pub xxe: DetectorConfig,
     #[serde(default)]
-    pub jwt: JwtConfig,
+    pub jwt: DetectorConfig,
     #[serde(default)]
-    pub request_smuggling: RequestSmugglingConfig,
+    pub request_smuggling: SimpleDetectorConfig,
     #[serde(default)]
-    pub ldap_injection: LdapInjectionConfig,
+    pub ldap_injection: DetectorConfig,
     #[serde(default)]
-    pub xpath_injection: XPathInjectionConfig,
+    pub xpath_injection: DetectorConfig,
     #[serde(default)]
-    pub open_redirect: OpenRedirectConfig,
-}
-
-impl Default for AttackDetectionConfig {
-    fn default() -> Self {
-        Self {
-            enabled: default_enabled(),
-            paranoia_level: default_paranoia_level(),
-            action: default_action(),
-            max_header_size: default_max_header_size(),
-            max_headers: default_max_headers(),
-            sqli: SqliConfig::default(),
-            xss: XssConfig::default(),
-            path_traversal: PathTraversalConfig::default(),
-            rfi: RfiConfig::default(),
-            ssrf: SsrfConfig::default(),
-            ssti: SstiConfig::default(),
-            cmd_injection: CmdInjectionConfig::default(),
-            xxe: XxeConfig::default(),
-            jwt: JwtConfig::default(),
-            request_smuggling: RequestSmugglingConfig::default(),
-            ldap_injection: LdapInjectionConfig::default(),
-            xpath_injection: XPathInjectionConfig::default(),
-            open_redirect: OpenRedirectConfig::default(),
-        }
-    }
-}
-
-fn default_enabled() -> bool {
-    true
+    pub open_redirect: DetectorConfig,
 }
 
 fn default_paranoia_level() -> u8 {
@@ -86,53 +89,34 @@ fn default_max_headers() -> usize {
     128
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
-pub struct SqliConfig {
-    #[serde(default = "default_sqli_enabled")]
-    pub enabled: bool,
-}
-
-fn default_sqli_enabled() -> bool {
-    true
-}
-
-#[derive(Debug, Clone, Deserialize, Default)]
-pub struct XssConfig {
-    #[serde(default = "default_xss_enabled")]
-    pub enabled: bool,
-}
-
-fn default_xss_enabled() -> bool {
-    true
-}
-
-#[derive(Debug, Clone, Deserialize, Default)]
-pub struct PathTraversalConfig {
-    #[serde(default = "default_path_traversal_enabled")]
-    pub enabled: bool,
-    #[serde(default)]
-    pub custom_patterns: Vec<String>,
-}
-
-fn default_path_traversal_enabled() -> bool {
-    true
-}
-
-#[derive(Debug, Clone, Deserialize, Default)]
-pub struct RfiConfig {
-    #[serde(default = "default_rfi_enabled")]
-    pub enabled: bool,
-    #[serde(default)]
-    pub custom_patterns: Vec<String>,
-}
-
-fn default_rfi_enabled() -> bool {
-    true
+impl Default for AttackDetectionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            paranoia_level: default_paranoia_level(),
+            action: default_action(),
+            max_header_size: default_max_header_size(),
+            max_headers: default_max_headers(),
+            sqli: SimpleDetectorConfig::default(),
+            xss: SimpleDetectorConfig::default(),
+            path_traversal: DetectorConfig::default(),
+            rfi: DetectorConfig::default(),
+            ssrf: SsrfConfig::default(),
+            ssti: DetectorConfig::default(),
+            cmd_injection: DetectorConfig::default(),
+            xxe: DetectorConfig::default(),
+            jwt: DetectorConfig::default(),
+            request_smuggling: SimpleDetectorConfig::default(),
+            ldap_injection: DetectorConfig::default(),
+            xpath_injection: DetectorConfig::default(),
+            open_redirect: DetectorConfig::default(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct SsrfConfig {
-    #[serde(default = "default_ssrf_enabled")]
+    #[serde(default = "default_true")]
     pub enabled: bool,
     #[serde(default)]
     pub custom_patterns: Vec<String>,
@@ -142,107 +126,22 @@ pub struct SsrfConfig {
     pub allowed_domains: Vec<String>,
 }
 
-fn default_ssrf_enabled() -> bool {
-    true
-}
-
 fn default_block_private_ips() -> bool {
     true
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
-pub struct SstiConfig {
-    #[serde(default = "default_ssti_enabled")]
-    pub enabled: bool,
-    #[serde(default)]
-    pub custom_patterns: Vec<String>,
-}
-
-fn default_ssti_enabled() -> bool {
-    true
-}
-
-#[derive(Debug, Clone, Deserialize, Default)]
-pub struct CmdInjectionConfig {
-    #[serde(default = "default_cmd_injection_enabled")]
-    pub enabled: bool,
-    #[serde(default)]
-    pub custom_patterns: Vec<String>,
-}
-
-fn default_cmd_injection_enabled() -> bool {
-    true
-}
-
-#[derive(Debug, Clone, Deserialize, Default)]
-pub struct XxeConfig {
-    #[serde(default = "default_xxe_enabled")]
-    pub enabled: bool,
-    #[serde(default)]
-    pub custom_patterns: Vec<String>,
-}
-
-fn default_xxe_enabled() -> bool {
-    true
-}
-
-#[derive(Debug, Clone, Deserialize, Default)]
-pub struct JwtConfig {
-    #[serde(default = "default_jwt_enabled")]
-    pub enabled: bool,
-    #[serde(default)]
-    pub custom_patterns: Vec<String>,
-}
-
-fn default_jwt_enabled() -> bool {
-    true
-}
-
-#[derive(Debug, Clone, Deserialize, Default)]
-pub struct RequestSmugglingConfig {
-    #[serde(default = "default_request_smuggling_enabled")]
-    pub enabled: bool,
-}
-
-fn default_request_smuggling_enabled() -> bool {
-    true
-}
-
-#[derive(Debug, Clone, Deserialize, Default)]
-pub struct LdapInjectionConfig {
-    #[serde(default = "default_ldap_injection_enabled")]
-    pub enabled: bool,
-    #[serde(default)]
-    pub custom_patterns: Vec<String>,
-}
-
-fn default_ldap_injection_enabled() -> bool {
-    true
-}
-
-#[derive(Debug, Clone, Deserialize, Default)]
-pub struct XPathInjectionConfig {
-    #[serde(default = "default_xpath_injection_enabled")]
-    pub enabled: bool,
-    #[serde(default)]
-    pub custom_patterns: Vec<String>,
-}
-
-fn default_xpath_injection_enabled() -> bool {
-    true
-}
-
-#[derive(Debug, Clone, Deserialize, Default)]
-pub struct OpenRedirectConfig {
-    #[serde(default = "default_open_redirect_enabled")]
-    pub enabled: bool,
-    #[serde(default)]
-    pub custom_patterns: Vec<String>,
-}
-
-fn default_open_redirect_enabled() -> bool {
-    true
-}
+pub type SqliConfig = SimpleDetectorConfig;
+pub type XssConfig = SimpleDetectorConfig;
+pub type PathTraversalConfig = DetectorConfig;
+pub type RfiConfig = DetectorConfig;
+pub type SstiConfig = DetectorConfig;
+pub type CmdInjectionConfig = DetectorConfig;
+pub type XxeConfig = DetectorConfig;
+pub type JwtConfig = DetectorConfig;
+pub type RequestSmugglingConfig = SimpleDetectorConfig;
+pub type LdapInjectionConfig = DetectorConfig;
+pub type XPathInjectionConfig = DetectorConfig;
+pub type OpenRedirectConfig = DetectorConfig;
 
 #[derive(Debug, Clone)]
 pub struct AttackDetectionResult {
@@ -252,7 +151,7 @@ pub struct AttackDetectionResult {
     pub input_location: InputLocation,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AttackType {
     Sqli,
     Xss,

@@ -1,166 +1,113 @@
-//! Windows Named Pipe IPC backend.
+//! Windows Named Pipe IPC utilities.
 //!
-//! This implementation uses Windows Named Pipes for inter-process communication
-//! between the master process and worker processes. Named pipes are the Windows
-//! equivalent of Unix domain sockets and provide similar semantics.
-//!
-//! Unlike Unix sockets, named pipes require explicit management of pipe instances
-//! and connection handling. This implementation uses a similar framing protocol
-//! (4-byte length prefix + JSON message) to maintain compatibility with the
-//! Unix implementation.
-//!
-//! Signal handling note: On Windows, we cannot use Unix signals (SIGTERM, SIGUSR1, etc.).
-//! Instead, we rely entirely on socket/pipe-based IPC for all communication.
-//! This is more complex but provides better cross-platform consistency.
-//! The master uses a heartbeat mechanism to detect worker crashes.
+//! Provides unified helper functions for Windows named pipe operations.
 
 use std::io;
-use std::path::Path;
+use std::os::windows::ffi::OsStrExt;
 
-use super::ipc_backend::{IpcBackend, IpcConnection};
+pub const PIPE_BUFFER_SIZE: u32 = 65536;
+pub const MAX_PIPE_INSTANCES: u32 = 1;
 
-pub struct WindowsIpcBackend {
-    pipe_path: String,
-    listener: Option<std::fs::File>,
-    is_server: bool,
+pub fn pipe_name_to_wide(name: &str) -> Vec<u16> {
+    std::ffi::OsStr::new(name)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect()
 }
 
-impl WindowsIpcBackend {
-    pub fn new(pipe_path: String, listener: Option<std::fs::File>, is_server: bool) -> Self {
-        Self {
-            pipe_path,
-            listener,
-            is_server,
+pub fn create_named_pipe_server(pipe_name: &str) -> io::Result<std::fs::File> {
+    let wide_name = pipe_name_to_wide(pipe_name);
+
+    // SAFETY: CreateNamedPipeW is called with valid parameters; we check for zero handle.
+    let handle = unsafe {
+        windows_sys::Win32::System::Pipes::CreateNamedPipeW(
+            wide_name.as_ptr(),
+            windows_sys::Win32::System::Pipes::PIPE_ACCESS_DUPLEX,
+            windows_sys::Win32::System::Pipes::PIPE_TYPE_MESSAGE
+                | windows_sys::Win32::System::Pipes::PIPE_READMODE_MESSAGE
+                | windows_sys::Win32::System::Pipes::PIPE_WAIT,
+            MAX_PIPE_INSTANCES,
+            PIPE_BUFFER_SIZE,
+            PIPE_BUFFER_SIZE,
+            0,
+            std::ptr::null_mut(),
+        )
+    };
+
+    if handle == 0 {
+        return Err(io::Error::last_os_error());
+    }
+
+    // SAFETY: from_raw_handle takes ownership of the handle; we validated it above.
+    Ok(unsafe { std::fs::File::from_raw_handle(handle as std::os::windows::io::RawHandle) })
+}
+
+pub fn accept_pipe_connection(handle: &std::fs::File) -> io::Result<()> {
+    // SAFETY: ConnectNamedPipe is called with a valid pipe handle; we check return value.
+    let connected = unsafe {
+        windows_sys::Win32::System::Pipes::ConnectNamedPipe(
+            handle.as_raw_handle() as *mut _,
+            std::ptr::null_mut(),
+        )
+    };
+
+    if connected == 0 {
+        let error = windows_sys::Win32::Foundation::GetLastError();
+        if error != windows_sys::Win32::Foundation::ERROR_PIPE_CONNECTED {
+            return Err(io::Error::new(
+                io::ErrorKind::ConnectionRefused,
+                format!("ConnectNamedPipe failed with error: {}", error),
+            ));
         }
     }
 
-    fn pipe_name(path: &Path) -> String {
-        let filename = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("rustwaf");
-        format!("\\\\.\\pipe\\{}", filename)
+    Ok(())
+}
+
+pub fn connect_to_named_pipe(pipe_name: &str, max_attempts: u32) -> io::Result<std::fs::File> {
+    let mut attempts = 0;
+
+    loop {
+        match std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(pipe_name)
+        {
+            Ok(handle) => return Ok(handle),
+            Err(e) if e.kind() == io::ErrorKind::NotFound && attempts < max_attempts => {
+                attempts += 1;
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Err(e) => return Err(e),
+        }
     }
 }
 
-impl IpcBackend for WindowsIpcBackend {
-    fn connect(path: &Path) -> io::Result<Self>
-    where
-        Self: Sized,
-    {
-        let pipe_name = Self::pipe_name(path);
-
-        let mut attempts = 0;
-        let max_attempts = 10;
-
-        loop {
-            match std::fs::OpenOptions::new()
-                .read(true)
-                .write(true)
-                .open(&pipe_name)
-            {
-                Ok(handle) => {
-                    return Ok(Self::new(pipe_name, Some(handle), false));
-                }
-                Err(e) if e.kind() == io::ErrorKind::NotFound && attempts < max_attempts => {
-                    attempts += 1;
-                    std::thread::sleep(std::time::Duration::from_millis(50));
-                }
-                Err(e) => return Err(e),
-            }
-        }
+pub fn close_pipe_handle(handle: &std::fs::File) {
+    // SAFETY: CloseHandle is called on a valid handle we own.
+    unsafe {
+        windows_sys::Win32::Foundation::CloseHandle(handle.as_raw_handle() as _);
     }
+}
 
-    fn listen(path: &Path) -> io::Result<Self>
-    where
-        Self: Sized,
-    {
-        let pipe_name = Self::pipe_name(path);
+pub trait RawHandleExt {
+    fn as_raw_handle(&self) -> std::os::windows::io::RawHandle;
+}
 
-        #[cfg(windows)]
-        {
-            use std::os::windows::ffi::OsStrExt;
-            let wide: Vec<u16> = std::ffi::OsStr::new(&pipe_name)
-                .encode_wide()
-                .chain(std::iter::once(0))
-                .collect();
-
-            let handle = unsafe {
-                windows_sys::Win32::Foundation::CreateNamedPipeW(
-                    wide.as_ptr(),
-                    windows_sys::Win32::NamedPipes::PIPE_ACCESS_DUPLEX,
-                    windows_sys::Win32::NamedPipes::PIPE_TYPE_MESSAGE
-                        | windows_sys::Win32::NamedPipes::PIPE_READMODE_MESSAGE
-                        | windows_sys::Win32::NamedPipes::PIPE_WAIT,
-                    1,
-                    65536,
-                    65536,
-                    0,
-                    std::ptr::null_mut(),
-                )
-            };
-
-            if handle == 0 {
-                return Err(io::Error::last_os_error());
-            }
-
-            let file = unsafe { std::fs::File::from_raw_fd(handle as i32) };
-
-            Ok(Self::new(pipe_name, Some(file), true))
-        }
-
-        #[cfg(not(windows))]
-        {
-            Err(io::Error::new(
-                io::ErrorKind::Other,
-                "Windows named pipes not available on this platform",
-            ))
-        }
+impl RawHandleExt for std::fs::File {
+    fn as_raw_handle(&self) -> std::os::windows::io::RawHandle {
+        std::os::windows::io::AsRawHandle::as_raw_handle(self)
     }
+}
 
-    fn accept(&self) -> io::Result<IpcConnection> {
-        #[cfg(windows)]
-        {
-            if !self.is_server {
-                return Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    "Cannot accept on client connection",
-                ));
-            }
+pub fn master_pipe_name() -> String {
+    "\\\\.\\pipe\\maluwaf-master".to_string()
+}
 
-            // Wait for client connection
-            let connected = unsafe {
-                windows_sys::Win32::NamedPipes::ConnectNamedPipe(
-                    self.listener.as_ref().unwrap().as_raw_fd() as *mut _,
-                    std::ptr::null_mut(),
-                )
-            };
+pub fn static_worker_pipe_name() -> String {
+    "\\\\.\\pipe\\maluwaf-static-worker".to_string()
+}
 
-            if connected == 0 {
-                let error = unsafe { *windows_sys::Win32::Foundation::GetLastError() };
-                if error != windows_sys::Win32::Foundation::ERROR_PIPE_CONNECTED {
-                    return Err(io::Error::new(
-                        io::ErrorKind::Other,
-                        format!("ConnectNamedPipe failed: {}", error),
-                    ));
-                }
-            }
-
-            // Clone the handle for the connection
-            let handle = self.listener.as_ref().unwrap().try_clone()?;
-            Ok(IpcConnection::new(handle))
-        }
-
-        #[cfg(not(windows))]
-        {
-            Err(io::Error::new(
-                io::ErrorKind::Other,
-                "Not supported on this platform",
-            ))
-        }
-    }
-
-    fn platform_name(&self) -> &'static str {
-        "windows"
-    }
+pub fn commands_pipe_name() -> String {
+    "\\\\.\\pipe\\maluwaf-commands".to_string()
 }

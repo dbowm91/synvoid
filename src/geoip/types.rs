@@ -17,6 +17,14 @@ impl GeoIpResult {
 pub struct CountryInfo {
     pub code: String,
     pub name: String,
+    pub subdivision: Option<String>,
+    pub city: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AsnInfo {
+    pub asn: u32,
+    pub organization: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

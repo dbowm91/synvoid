@@ -17,6 +17,7 @@ impl BotDetector {
     pub fn new(
         known_bots_allow: Vec<String>,
         ai_crawlers_block: Vec<String>,
+        scraper_patterns: Vec<String>,
         block_ai_crawlers: bool,
     ) -> Self {
         let known_bots_allow: HashSet<String> = known_bots_allow
@@ -29,30 +30,10 @@ impl BotDetector {
             .map(|s| s.to_lowercase())
             .collect();
 
-        let scraper_patterns: HashSet<String> = vec![
-            "scrapy".to_string(),
-            "curl".to_string(),
-            "wget".to_string(),
-            "python-requests".to_string(),
-            "python-urllib".to_string(),
-            "aiohttp".to_string(),
-            "httpx".to_string(),
-            "go-http".to_string(),
-            "node-fetch".to_string(),
-            "axios".to_string(),
-            "rubygems".to_string(),
-            "java".to_string(),
-            "okhttp".to_string(),
-            "feedparser".to_string(),
-            " UniversalFeedParser".to_string(),
-            "libwww-perl".to_string(),
-            "pyspider".to_string(),
-            "scrapeloader".to_string(),
-            "siteanalyzer".to_string(),
-            "screaming frog".to_string(),
-        ]
-        .into_iter()
-        .collect();
+        let scraper_patterns: HashSet<String> = scraper_patterns
+            .into_iter()
+            .map(|s| s.to_lowercase())
+            .collect();
 
         BotDetector {
             known_bots_allow: Arc::new(known_bots_allow),

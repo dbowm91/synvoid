@@ -1,5 +1,5 @@
+use crate::utils::now_ms;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Instant;
 
 pub struct AsyncTokenBucket {
     capacity: u64,
@@ -80,11 +80,4 @@ impl AsyncTokenBucket {
             }
         }
     }
-}
-
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
 }

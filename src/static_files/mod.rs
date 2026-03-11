@@ -8,15 +8,13 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use bytes::Bytes;
-use http::{header, Method, Response, StatusCode};
+use http::{Method, Response, StatusCode};
 use http_body_util::Full;
 use metrics::{counter, histogram};
-use parking_lot::RwLock;
-use tokio::sync::broadcast;
 
 use crate::config::site::SiteStaticConfig;
 use crate::mime::MIME_REGISTRY;
-use minifier::{CacheKey, Encoding, MinifierCache};
+use minifier::MinifierCache;
 
 #[derive(Clone)]
 pub struct NormalizedLocation {
@@ -44,8 +42,11 @@ pub struct StaticFileHandler {
     directory_listing_format: Option<String>,
     default_cache_ttl: Option<u64>,
     site_id: String,
+    minified_cache_dir: Option<PathBuf>,
     minifier_cache: Option<Arc<MinifierCache>>,
     minifier_client: Option<client::MinifierClient>,
+    async_minifier_client: Option<client::AsyncMinifierClient>,
+    enable_zero_copy: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -81,11 +82,12 @@ pub struct StaticResponse {
     pub status: StatusCode,
     pub headers: Vec<(String, String)>,
     pub body: Bytes,
+    pub zero_copy_path: Option<std::path::PathBuf>,
 }
 
 impl StaticFileHandler {
     pub fn new(config: SiteStaticConfig) -> Result<Self, String> {
-        Self::new_with_minifier(config, String::new(), None, None)
+        Self::new_with_minifier(config, String::new(), None, None, None)
     }
 
     pub fn new_with_minifier(
@@ -93,6 +95,7 @@ impl StaticFileHandler {
         site_id: String,
         minifier_cache: Option<Arc<MinifierCache>>,
         minifier_client: Option<client::MinifierClient>,
+        async_minifier_client: Option<client::AsyncMinifierClient>,
     ) -> Result<Self, String> {
         let enabled = config.enabled.unwrap_or(false);
         let gzip_level = config.gzip_level.unwrap_or(5);
@@ -108,6 +111,13 @@ impl StaticFileHandler {
         let config_clone = config.clone();
 
         if !enabled {
+        let minified_cache_dir = config.minified_dir.as_ref().map(|_d| {
+                let global_cache_dir = std::env::var("RUSTWAF_CACHE_DIR")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|_| PathBuf::from("/var/cache/maluwaf"));
+                global_cache_dir.join("minified").join(&site_id)
+            });
+
             return Ok(Self {
                 config: Arc::new(config),
                 locations: vec![],
@@ -124,8 +134,11 @@ impl StaticFileHandler {
                 directory_listing_format: None,
                 default_cache_ttl: None,
                 site_id,
+                minified_cache_dir,
                 minifier_cache,
                 minifier_client,
+                async_minifier_client: None,
+                enable_zero_copy: false,
             });
         }
 
@@ -169,6 +182,13 @@ impl StaticFileHandler {
 
         let gzip_types = config.gzip_types.clone().unwrap_or_else(default_gzip_types);
 
+        let minified_cache_dir = config.minified_dir.as_ref().map(|_d| {
+            let global_cache_dir = std::env::var("RUSTWAF_CACHE_DIR")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| PathBuf::from("/var/cache/maluwaf"));
+            global_cache_dir.join("minified").join(&site_id)
+        });
+
         Ok(Self {
             config: Arc::new(config_clone),
             locations,
@@ -185,8 +205,11 @@ impl StaticFileHandler {
             directory_listing_format,
             default_cache_ttl,
             site_id,
+            minified_cache_dir,
             minifier_cache,
             minifier_client,
+            async_minifier_client,
+            enable_zero_copy: cfg!(unix),
         })
     }
 
@@ -201,16 +224,16 @@ impl StaticFileHandler {
             .max_by_key(|loc| loc.url_prefix.len())
     }
 
-    pub fn serve(
+    pub async fn serve(
         &self,
         path: &str,
-        method: &Method,
+        _method: &Method,
         accept_encoding: Option<&str>,
         if_none_match: Option<&str>,
         if_modified_since: Option<&str>,
         range_header: Option<&str>,
     ) -> Result<StaticResponse, StaticError> {
-        counter!("rustwaf.static.requests").increment(1);
+        counter!("maluwaf.static.requests").increment(1);
 
         let location = self
             .get_matching_location(path)
@@ -221,18 +244,18 @@ impl StaticFileHandler {
             .unwrap_or(path)
             .trim_start_matches('/');
 
-        let resolved = self.resolve_path(location, relative_path)?;
-        let metadata = std::fs::metadata(&resolved).map_err(|e| {
+        let resolved = self.resolve_path(location, relative_path).await?;
+        let metadata = tokio::fs::metadata(&resolved).await.map_err(|e| {
             tracing::debug!("Failed to get metadata for {}: {}", resolved.display(), e);
             StaticError::NotFound(path.to_string())
         })?;
 
         if metadata.is_dir() {
-            return self.serve_directory(path, location, &resolved, accept_encoding);
+            return self.serve_directory(path, location, &resolved, accept_encoding).await;
         }
 
         if metadata.len() > self.max_file_size {
-            histogram!("rustwaf.static.file_too_large").record(metadata.len() as f64);
+            histogram!("maluwaf.static.file_too_large").record(metadata.len() as f64);
             return Err(StaticError::FileTooLarge(format!(
                 "File exceeds max size of {} bytes",
                 self.max_file_size
@@ -248,10 +271,10 @@ impl StaticFileHandler {
             if_none_match,
             if_modified_since,
             range_header,
-        )
+        ).await
     }
 
-    fn resolve_path(
+    async fn resolve_path(
         &self,
         location: &NormalizedLocation,
         relative_path: &str,
@@ -262,38 +285,27 @@ impl StaticFileHandler {
 
         let mut full_path = location.fs_root.join(relative_path);
 
-        let canonical = if self.allow_symlinks {
-            std::fs::canonicalize(&full_path)
-                .or_else(|_| {
-                    std::fs::metadata(&full_path).map(|m| {
-                        if m.is_symlink() {
-                            std::fs::read_link(&full_path)
-                                .map(|p| full_path.clone())
-                                .unwrap_or_else(|_| full_path.clone())
-                        } else {
-                            full_path.clone()
+        let canonical = match tokio::fs::canonicalize(&full_path).await {
+            Ok(c) => c,
+            Err(_) => {
+                if self.allow_symlinks {
+                    let fp = full_path.clone();
+                    match tokio::task::spawn_blocking(move || std::fs::metadata(&fp)).await {
+                        Ok(Ok(m)) if m.is_symlink() => {
+                            let fp = full_path.clone();
+                            std::fs::read_link(&fp).unwrap_or_else(|_| fp.clone())
                         }
-                    })
-                })
-                .map_err(|_| StaticError::NotFound(relative_path.to_string()))?
-        } else {
-            std::fs::canonicalize(&full_path)
-                .or_else(|_| {
-                    std::fs::metadata(&full_path).map(|m| {
-                        if m.is_symlink() {
-                            std::fs::read_link(&full_path)
-                                .map(|p| full_path.clone())
-                                .unwrap_or_else(|_| full_path.clone())
-                        } else {
-                            full_path.clone()
-                        }
-                    })
-                })
-                .map_err(|_| StaticError::NotFound(relative_path.to_string()))?
+                        _ => full_path.clone(),
+                    }
+                } else {
+                    full_path.clone()
+                }
+            }
         };
 
-        let canonical_root =
-            std::fs::canonicalize(&location.fs_root).unwrap_or_else(|_| location.fs_root.clone());
+        let canonical_root = tokio::fs::canonicalize(&location.fs_root)
+            .await
+            .unwrap_or_else(|_| location.fs_root.clone());
 
         if !canonical.starts_with(&canonical_root) {
             tracing::warn!(
@@ -323,11 +335,11 @@ impl StaticFileHandler {
         Ok(full_path)
     }
 
-    fn serve_file(
+    async fn serve_file(
         &self,
         path: &Path,
         metadata: std::fs::Metadata,
-        url_path: &str,
+        _url_path: &str,
         location: &NormalizedLocation,
         accept_encoding: Option<&str>,
         if_none_match: Option<&str>,
@@ -347,21 +359,10 @@ impl StaticFileHandler {
         if let Some(etag_header) = if_none_match {
             if etag_header.contains(&etag) || etag_header == "*" {
                 return Ok(StaticResponse {
-                    status: StatusCode::NOT_MODIFIED,
-                    headers: vec![
-                        ("ETag".to_string(), etag),
-                        (
-                            "Cache-Control".to_string(),
-                            format!(
-                                "max-age={}",
-                                location
-                                    .cache_ttl
-                                    .or(self.default_cache_ttl)
-                                    .unwrap_or(3600)
-                            ),
-                        ),
-                    ],
+                    status: StatusCode::NOT_FOUND,
+                    headers: vec![],
                     body: Bytes::new(),
+                    zero_copy_path: None,
                 });
             }
         }
@@ -385,12 +386,13 @@ impl StaticFileHandler {
                             ),
                         ],
                         body: Bytes::new(),
+                        zero_copy_path: None,
                     });
                 }
             }
         }
 
-        let body = std::fs::read(path).map_err(|e| {
+        let body = tokio::fs::read(path).await.map_err(|e| {
             tracing::error!("Failed to read file {}: {}", path.display(), e);
             StaticError::Internal(e.to_string())
         })?;
@@ -428,29 +430,71 @@ impl StaticFileHandler {
                 let gz_path = path.with_extension(format!("{}.gz", extension));
 
                 if encoding.contains("br") && br_path.exists() {
-                    let compressed = std::fs::read(&br_path)
+                    let compressed = tokio::fs::read(&br_path)
+                        .await
                         .map_err(|e| StaticError::Internal(e.to_string()))?;
                     headers.push(("Content-Encoding".to_string(), "br".to_string()));
                     headers.push(("Vary".to_string(), "Accept-Encoding".to_string()));
-                    histogram!("rustwaf.static.served_compressed").record(1.0);
+                    histogram!("maluwaf.static.served_compressed").record(1.0);
                     return Ok(StaticResponse {
                         status: StatusCode::OK,
                         headers,
                         body: Bytes::from(compressed),
+                        zero_copy_path: None,
                     });
                 }
 
                 if encoding.contains("gzip") && gz_path.exists() {
-                    let compressed = std::fs::read(&gz_path)
+                    let compressed = tokio::fs::read(&gz_path)
+                        .await
                         .map_err(|e| StaticError::Internal(e.to_string()))?;
                     headers.push(("Content-Encoding".to_string(), "gzip".to_string()));
                     headers.push(("Vary".to_string(), "Accept-Encoding".to_string()));
-                    histogram!("rustwaf.static.served_compressed").record(1.0);
+                    histogram!("maluwaf.static.served_compressed").record(1.0);
                     return Ok(StaticResponse {
                         status: StatusCode::OK,
                         headers,
                         body: Bytes::from(compressed),
+                        zero_copy_path: None,
                     });
+                }
+
+                if let Some(ref cache_dir) = self.minified_cache_dir {
+                    let relative_path = path.strip_prefix(&location.fs_root).unwrap_or(path);
+                    let minified_br =
+                        cache_dir.join(relative_path.with_extension(format!("{}.br", extension)));
+                    let minified_gz =
+                        cache_dir.join(relative_path.with_extension(format!("{}.gz", extension)));
+
+                    if encoding.contains("br") && minified_br.exists() {
+                        let compressed = tokio::fs::read(&minified_br)
+                            .await
+                            .map_err(|e| StaticError::Internal(e.to_string()))?;
+                        headers.push(("Content-Encoding".to_string(), "br".to_string()));
+                        headers.push(("Vary".to_string(), "Accept-Encoding".to_string()));
+                        histogram!("maluwaf.static.served_compressed").record(1.0);
+                        return Ok(StaticResponse {
+                            status: StatusCode::OK,
+                            headers,
+                            body: Bytes::from(compressed),
+                            zero_copy_path: None,
+                        });
+                    }
+
+                    if encoding.contains("gzip") && minified_gz.exists() {
+                        let compressed = tokio::fs::read(&minified_gz)
+                            .await
+                            .map_err(|e| StaticError::Internal(e.to_string()))?;
+                        headers.push(("Content-Encoding".to_string(), "gzip".to_string()));
+                        headers.push(("Vary".to_string(), "Accept-Encoding".to_string()));
+                        histogram!("maluwaf.static.served_compressed").record(1.0);
+                        return Ok(StaticResponse {
+                            status: StatusCode::OK,
+                            headers,
+                            body: Bytes::from(compressed),
+                            zero_copy_path: None,
+                        });
+                    }
                 }
             }
 
@@ -474,25 +518,34 @@ impl StaticFileHandler {
                 if compressed.len() < body.len() {
                     headers.push(("Content-Encoding".to_string(), "gzip".to_string()));
                     headers.push(("Vary".to_string(), "Accept-Encoding".to_string()));
-                    histogram!("rustwaf.static.served_gzip_otf").record(1.0);
+                    histogram!("maluwaf.static.served_gzip_otf").record(1.0);
                     return Ok(StaticResponse {
                         status: StatusCode::OK,
                         headers,
                         body: Bytes::from(compressed),
+                        zero_copy_path: None,
                     });
                 }
             }
         }
 
-        counter!("rustwaf.static.served").increment(1);
+        counter!("maluwaf.static.served").increment(1);
+
+        let zero_copy_path = if self.enable_zero_copy && body.len() > 4096 {
+            Some(path.to_path_buf())
+        } else {
+            None
+        };
+
         Ok(StaticResponse {
             status: StatusCode::OK,
             headers,
             body: Bytes::from(body),
+            zero_copy_path,
         })
     }
 
-    fn serve_directory(
+    async fn serve_directory(
         &self,
         url_path: &str,
         location: &NormalizedLocation,
@@ -502,7 +555,8 @@ impl StaticFileHandler {
         if let Some(ref index) = location.index {
             let index_path = dir_path.join(index);
             if index_path.exists() {
-                let index_metadata = std::fs::metadata(&index_path)
+                let index_metadata = tokio::fs::metadata(&index_path)
+                    .await
                     .map_err(|_| StaticError::NotFound("index not found".to_string()))?;
                 return self.serve_file(
                     &index_path,
@@ -513,7 +567,7 @@ impl StaticFileHandler {
                     None,
                     None,
                     None,
-                );
+                ).await;
             }
         }
 
@@ -527,7 +581,8 @@ impl StaticFileHandler {
                 .to_string();
             let tf_path = dir_path.join(&tf);
             if tf_path.exists() {
-                let tf_metadata = std::fs::metadata(&tf_path)
+                let tf_metadata = tokio::fs::metadata(&tf_path)
+                    .await
                     .map_err(|_| StaticError::NotFound("try file not found".to_string()))?;
                 if tf_metadata.is_file() {
                     return self.serve_file(
@@ -539,7 +594,7 @@ impl StaticFileHandler {
                         None,
                         None,
                         None,
-                    );
+                    ).await;
                 }
             }
         }
@@ -558,6 +613,7 @@ impl StaticFileHandler {
                     ("Cache-Control".to_string(), "no-cache".to_string()),
                 ],
                 body: Bytes::from(body),
+                zero_copy_path: None,
             });
         }
 
@@ -582,7 +638,7 @@ impl StaticFileHandler {
                 })
             }
             Err(e) => {
-                counter!("rustwaf.static.errors").increment(1);
+                counter!("maluwaf.static.errors").increment(1);
                 let status = e.status_code();
                 let body = match &e {
                     StaticError::NotFound(path) => format!("404 Not Found: {}", path),

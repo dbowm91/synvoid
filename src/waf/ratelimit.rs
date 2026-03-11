@@ -10,7 +10,8 @@ use tokio::time::interval;
 use parking_lot::RwLock;
 use metrics::{counter, gauge};
 
-use crate::config::main::{IpRateLimitConfig, GlobalRateLimitConfig, RateLimitMemoryConfig};
+use crate::config::defaults::{IpRateLimitConfig, GlobalRateLimitConfig};
+use crate::config::RateLimitMemoryConfig;
 pub use core::{GlobalRateLimiter, GlobalRateLimitConfig as CoreGlobalConfig, SlottedIpRateLimiter, IpRateLimitConfig as CoreIpConfig, RateLimitDecision};
 pub use sliding::{
     SlidingWindowConfig, SlidingWindowLimiter, SlidingDecision,
@@ -57,6 +58,7 @@ impl IpRateLimitState {
         }
     }
 
+    #[inline]
     fn is_empty(&self) -> bool {
         self.per_second.is_empty()
             && self.per_minute.is_empty()
@@ -78,7 +80,7 @@ struct RingBuffer<T> {
     len: usize,
 }
 
-impl<T: Clone> Default for RingBuffer<T> {
+impl<T> Default for RingBuffer<T> {
     fn default() -> Self {
         Self {
             data: Vec::new(),
@@ -89,7 +91,7 @@ impl<T: Clone> Default for RingBuffer<T> {
     }
 }
 
-impl<T: Clone> RingBuffer<T> {
+impl<T: Copy> RingBuffer<T> {
     fn with_capacity(capacity: usize) -> Self {
         Self {
             data: Vec::with_capacity(capacity),
@@ -123,20 +125,26 @@ impl<T: Clone> RingBuffer<T> {
         self.len = 0;
     }
 
+    #[inline]
     fn retain<F: FnMut(&T) -> bool>(&mut self, mut f: F) {
-        let mut kept = Vec::with_capacity(self.len);
+        if self.len == 0 {
+            return;
+        }
+        
+        let mut write_idx = 0;
         
         for i in 0..self.len {
-            let index = (self.head + i) % self.capacity;
-            if f(&self.data[index]) {
-                kept.push(self.data[index].clone());
+            let read_idx = (self.head + i) % self.capacity;
+            if f(&self.data[read_idx]) {
+                if write_idx != i {
+                    let write_pos = (self.head + write_idx) % self.capacity;
+                    self.data[write_pos] = self.data[read_idx];
+                }
+                write_idx += 1;
             }
         }
-
-        self.data = kept;
-        self.head = 0;
-        self.len = self.data.len();
-        self.capacity = self.data.capacity();
+        
+        self.len = write_idx;
     }
 }
 
@@ -251,9 +259,9 @@ impl RateLimiterManager {
 
                     {
                         let stats = cleanup_state.global_limiter.get_stats();
-                        gauge!("rustwaf.ratelimit.global_per_second").set(stats.per_second as f64);
-                        gauge!("rustwaf.ratelimit.global_per_minute").set(stats.per_minute as f64);
-                        gauge!("rustwaf.ratelimit.blackhole_active").set(if stats.blackhole_active { 1.0 } else { 0.0 });
+                        gauge!("maluwaf.ratelimit.global_per_second").set(stats.per_second as f64);
+                        gauge!("maluwaf.ratelimit.global_per_minute").set(stats.per_minute as f64);
+                        gauge!("maluwaf.ratelimit.blackhole_active").set(if stats.blackhole_active { 1.0 } else { 0.0 });
                         
                         if stats.blackhole_active {
                             tracing::warn!(
@@ -299,12 +307,10 @@ impl RateLimiterManager {
         
         let evicted = to_evict.len();
         for ip in to_evict {
-            let shard = state.shards.iter().find(|s| {
-                s.ip_requests.read().contains_key(&ip)
-            });
-            
-            if let Some(shard) = shard {
-                shard.ip_requests.write().remove(&ip);
+            for shard in &state.shards {
+                if shard.ip_requests.write().remove(&ip).is_some() {
+                    break;
+                }
             }
         }
         
@@ -317,11 +323,18 @@ impl RateLimiterManager {
         let hash = match ip {
             IpAddr::V4(ipv4) => {
                 let octets = ipv4.octets();
-                (octets[0] as usize) ^ (octets[1] as usize) << 8 ^ (octets[2] as usize) << 16 ^ (octets[3] as usize) << 24
+                let hash = (octets[0] as u64) * 16777619u64
+                    ^ (octets[1] as u64) * 2166136261u64
+                    ^ (octets[2] as u64) ^ (octets[3] as u64) * 65536u64;
+                hash as usize
             }
             IpAddr::V6(ipv6) => {
                 let segments = ipv6.segments();
-                segments.iter().fold(0usize, |acc, &seg| acc ^ seg as usize)
+                let mut hash = 0u64;
+                for (i, &seg) in segments.iter().enumerate() {
+                    hash = hash.wrapping_add((seg as u64).wrapping_mul(2166136261u64 >> (i * 5)));
+                }
+                hash as usize
             }
         };
         let shard_index = hash % self.state.shards.len();
@@ -332,14 +345,14 @@ impl RateLimiterManager {
         match self.state.global_limiter.check_and_increment() {
             RateLimitDecision::Allowed => RateLimitResult::Allowed,
             RateLimitDecision::Limited { limit_type } => {
-                counter!("rustwaf.ratelimit.global_limited").increment(1);
+                counter!("maluwaf.ratelimit.global_limited").increment(1);
                 RateLimitResult::Limited {
                     limit_type: limit_type.to_string(),
                     retry_after_millis: 1000,
                 }
             }
             RateLimitDecision::Blackholed => {
-                counter!("rustwaf.ratelimit.blackholed").increment(1);
+                counter!("maluwaf.ratelimit.blackholed").increment(1);
                 RateLimitResult::Blackholed
             }
         }
@@ -355,7 +368,7 @@ impl RateLimiterManager {
         match decision {
             RateLimitDecision::Allowed => RateLimitResult::Allowed,
             RateLimitDecision::Limited { limit_type } => {
-                counter!("rustwaf.ratelimit.ip_limited").increment(1);
+                counter!("maluwaf.ratelimit.ip_limited").increment(1);
                 RateLimitResult::Limited {
                     limit_type: limit_type.to_string(),
                     retry_after_millis: 1000,
@@ -383,7 +396,7 @@ impl RateLimiterManager {
         if slotted_decision != RateLimitDecision::Allowed {
             match slotted_decision {
                 RateLimitDecision::Limited { limit_type } => {
-                    counter!("rustwaf.ratelimit.ip_limited_slotted").increment(1);
+                    counter!("maluwaf.ratelimit.ip_limited_slotted").increment(1);
                     return RateLimitResult::Limited {
                         limit_type: limit_type.to_string(),
                         retry_after_millis: 1000,

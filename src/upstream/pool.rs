@@ -1,9 +1,8 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
-use tokio::sync::RwLock;
-use tokio::sync::broadcast;
-use std::collections::VecDeque;
-use metrics::{gauge, histogram};
+use parking_lot::RwLock;
+
+use crate::RunningFlag;
 
 const ALLOWED_SCHEMES: &[&str] = &["http", "https", "ws", "wss", "grpc", "grpcs"];
 
@@ -89,15 +88,17 @@ fn protocol_name(protocol: BackendProtocol) -> &'static str {
 
 #[derive(Clone)]
 pub struct Backend {
-    pub url: String,
+    pub url: Arc<String>,
     pub weight: u32,
     pub max_connections: usize,
     pub current_connections: Arc<AtomicUsize>,
-    pub is_healthy: Arc<std::sync::atomic::AtomicBool>,
+    pub is_healthy: RunningFlag,
     pub consecutive_failures: Arc<AtomicU32>,
     pub consecutive_successes: Arc<AtomicU32>,
     pub protocol: BackendProtocol,
     pub is_backup: bool,
+    pub cpu_percent: Arc<AtomicU32>,
+    pub memory_percent: Arc<AtomicU32>,
 }
 
 impl Backend {
@@ -107,30 +108,34 @@ impl Backend {
             url
         });
         Self {
-            url: validated_url,
+            url: Arc::new(validated_url),
             weight: 1,
             max_connections: 100,
             current_connections: Arc::new(AtomicUsize::new(0)),
-            is_healthy: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            is_healthy: RunningFlag::new(),
             consecutive_failures: Arc::new(AtomicU32::new(0)),
             consecutive_successes: Arc::new(AtomicU32::new(0)),
             protocol: BackendProtocol::Http,
             is_backup: false,
+            cpu_percent: Arc::new(AtomicU32::new(0)),
+            memory_percent: Arc::new(AtomicU32::new(0)),
         }
     }
 
     pub fn try_new(url: String) -> Result<Self, String> {
         let validated_url = validate_upstream_url(&url)?;
         Ok(Self {
-            url: validated_url,
+            url: Arc::new(validated_url),
             weight: 1,
             max_connections: 100,
             current_connections: Arc::new(AtomicUsize::new(0)),
-            is_healthy: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            is_healthy: RunningFlag::new(),
             consecutive_failures: Arc::new(AtomicU32::new(0)),
             consecutive_successes: Arc::new(AtomicU32::new(0)),
             protocol: BackendProtocol::Http,
             is_backup: false,
+            cpu_percent: Arc::new(AtomicU32::new(0)),
+            memory_percent: Arc::new(AtomicU32::new(0)),
         })
     }
 
@@ -140,15 +145,17 @@ impl Backend {
             url
         });
         Self {
-            url: validated_url,
+            url: Arc::new(validated_url),
             weight: 1,
             max_connections: 100,
             current_connections: Arc::new(AtomicUsize::new(0)),
-            is_healthy: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            is_healthy: RunningFlag::new(),
             consecutive_failures: Arc::new(AtomicU32::new(0)),
             consecutive_successes: Arc::new(AtomicU32::new(0)),
             protocol: BackendProtocol::Http,
             is_backup: true,
+            cpu_percent: Arc::new(AtomicU32::new(0)),
+            memory_percent: Arc::new(AtomicU32::new(0)),
         }
     }
 
@@ -180,15 +187,18 @@ impl Backend {
         self
     }
 
+    #[inline]
     pub fn is_available(&self) -> bool {
-        self.is_healthy.load(Ordering::Relaxed) 
+        self.is_healthy.is_running() 
             && self.current_connections.load(Ordering::Relaxed) < self.max_connections
     }
 
+    #[inline]
     pub fn increment_connections(&self) {
         self.current_connections.fetch_add(1, Ordering::Relaxed);
     }
 
+    #[inline]
     pub fn decrement_connections(&self) {
         self.current_connections.fetch_sub(1, Ordering::Relaxed);
     }
@@ -196,23 +206,47 @@ impl Backend {
     pub fn record_success(&self) {
         self.consecutive_failures.store(0, Ordering::Relaxed);
         let successes = self.consecutive_successes.fetch_add(1, Ordering::Relaxed) + 1;
-        if successes >= 3 && !self.is_healthy.load(Ordering::Relaxed) {
-            self.is_healthy.store(true, Ordering::Relaxed);
-            tracing::info!("Backend {} marked as healthy", self.url);
+        if successes >= 3 && !self.is_healthy.is_running() {
+            self.is_healthy.set(true);
         }
     }
 
     pub fn record_failure(&self) {
         self.consecutive_successes.store(0, Ordering::Relaxed);
         let failures = self.consecutive_failures.fetch_add(1, Ordering::Relaxed) + 1;
-        if failures >= 3 && self.is_healthy.load(Ordering::Relaxed) {
-            self.is_healthy.store(false, Ordering::Relaxed);
+        if failures >= 3 && self.is_healthy.is_running() {
+            self.is_healthy.set(false);
             tracing::warn!("Backend {} marked as unhealthy after {} failures", self.url, failures);
         }
     }
 
     pub fn load(&self) -> f64 {
         self.current_connections.load(Ordering::Relaxed) as f64 / self.max_connections as f64
+    }
+
+    pub fn get_cpu_percent(&self) -> f32 {
+        self.cpu_percent.load(Ordering::Relaxed) as f32 / 100.0
+    }
+
+    pub fn set_cpu_percent(&self, value: f32) {
+        let scaled = (value.min(100.0).max(0.0) * 100.0) as u32;
+        self.cpu_percent.store(scaled, Ordering::Relaxed);
+    }
+
+    pub fn get_memory_percent(&self) -> f32 {
+        self.memory_percent.load(Ordering::Relaxed) as f32 / 100.0
+    }
+
+    pub fn set_memory_percent(&self, value: f32) {
+        let scaled = (value.min(100.0).max(0.0) * 100.0) as u32;
+        self.memory_percent.store(scaled, Ordering::Relaxed);
+    }
+
+    pub fn composite_load(&self) -> f64 {
+        let conn_load = self.current_connections.load(Ordering::Relaxed) as f64 / self.max_connections as f64;
+        let cpu_load = self.get_cpu_percent() as f64;
+        let _mem_load = self.get_memory_percent() as f64;
+        (conn_load * 0.4) + (cpu_load * 0.6)
     }
 }
 
@@ -257,52 +291,96 @@ impl UpstreamPool {
         }
     }
 
-    pub async fn select_backend(&self) -> Option<Backend> {
-        let backends = self.backends.read().await;
+    pub fn select_backend(&self) -> Option<Backend> {
+        let backends = self.backends.read();
         
-        let primaries: Vec<Backend> = backends.iter()
-            .filter(|b| !b.is_backup && b.is_available())
-            .cloned()
-            .collect();
-
-        if !primaries.is_empty() {
-            return self.select_from_list(&primaries).await;
+        if let Some(backend) = self.select_from_backends(&backends, false) {
+            return Some(backend);
         }
-
-        let backups: Vec<Backend> = backends.iter()
-            .filter(|b| b.is_backup && b.is_available())
-            .cloned()
-            .collect();
-
-        if !backups.is_empty() {
-            return self.select_from_list(&backups).await;
-        }
-
-        None
+        
+        self.select_from_backends(&backends, true)
     }
 
     pub fn try_select_backend(&self) -> Option<Backend> {
-        let backends = self.backends.try_read().ok()?;
+        let backends = self.backends.try_read()?;
         
-        let primaries: Vec<Backend> = backends.iter()
-            .filter(|b| !b.is_backup && b.is_available())
-            .cloned()
-            .collect();
+        if let Some(backend) = self.select_from_backends(&backends, false) {
+            return Some(backend);
+        }
+        
+        self.select_from_backends(&backends, true)
+    }
 
-        if !primaries.is_empty() {
-            return self.select_from_list_sync(&primaries);
+    fn select_from_backends(&self, backends: &[Backend], backup_only: bool) -> Option<Backend> {
+        let len = backends.len();
+        if len == 0 {
+            return None;
         }
 
-        let backups: Vec<Backend> = backends.iter()
-            .filter(|b| b.is_backup && b.is_available())
-            .cloned()
-            .collect();
-
-        if !backups.is_empty() {
-            return self.select_from_list_sync(&backups);
+        match self.algorithm {
+            LoadBalanceAlgorithm::RoundRobin => {
+                let start_idx = self.round_robin_index.fetch_add(1, Ordering::Relaxed) % len;
+                
+                for offset in 0..len {
+                    let idx = (start_idx + offset) % len;
+                    let b = &backends[idx];
+                    if b.is_backup == backup_only && b.is_available() {
+                        return Some(b.clone());
+                    }
+                }
+                None
+            }
+            LoadBalanceAlgorithm::Random => {
+                use rand::Rng;
+                let mut rng = rand::rng();
+                
+                let available_count = backends.iter()
+                    .filter(|b| b.is_backup == backup_only && b.is_available())
+                    .count();
+                
+                if available_count == 0 {
+                    return None;
+                }
+                
+                let target = rng.random_range(0..available_count);
+                
+                let mut count = 0;
+                for b in backends.iter() {
+                    if b.is_backup == backup_only && b.is_available() {
+                        if count == target {
+                            return Some(b.clone());
+                        }
+                        count += 1;
+                    }
+                }
+                
+                None
+            }
+            LoadBalanceAlgorithm::LeastConnections => {
+                let mut best: Option<(f64, &Backend)> = None;
+                
+                for b in backends.iter() {
+                    if b.is_backup == backup_only && b.is_available() {
+                        let load = b.composite_load();
+                        match best {
+                            None => best = Some((load, b)),
+                            Some((best_load, _)) if load < best_load => best = Some((load, b)),
+                            _ => {}
+                        }
+                    }
+                }
+                
+                best.map(|(_, b)| b.clone())
+            }
+            LoadBalanceAlgorithm::WeightedRoundRobin => {
+                None
+            }
+            LoadBalanceAlgorithm::IpHash => {
+                backends.iter()
+                    .find(|b| b.is_backup == backup_only && b.is_available())
+                    .cloned()
+            }
         }
-
-        None
     }
 
     fn select_from_list_sync(&self, available: &[Backend]) -> Option<Backend> {
@@ -317,14 +395,15 @@ impl UpstreamPool {
             }
             LoadBalanceAlgorithm::Random => {
                 use rand::Rng;
-                let mut rng = rand::thread_rng();
-                let idx = rng.gen_range(0..available.len());
+                let mut rng = rand::rng();
+                let idx = rng.random_range(0..available.len());
                 Some(available[idx].clone())
             }
             LoadBalanceAlgorithm::LeastConnections => {
                 available.iter()
-                    .min_by_key(|b| b.current_connections.load(Ordering::Relaxed))
-                    .cloned()
+                    .map(|b| (b.composite_load(), b))
+                    .min_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal))
+                    .map(|(_, b)| b.clone())
             }
             LoadBalanceAlgorithm::WeightedRoundRobin => {
                 None
@@ -347,14 +426,15 @@ impl UpstreamPool {
             }
             LoadBalanceAlgorithm::Random => {
                 use rand::Rng;
-                let mut rng = rand::thread_rng();
-                let idx = rng.gen_range(0..available.len());
+                let mut rng = rand::rng();
+                let idx = rng.random_range(0..available.len());
                 Some(available[idx].clone())
             }
             LoadBalanceAlgorithm::LeastConnections => {
                 available.iter()
-                    .min_by_key(|b| b.current_connections.load(Ordering::Relaxed))
-                    .cloned()
+                    .map(|b| (b.composite_load(), b))
+                    .min_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal))
+                    .map(|(_, b)| b.clone())
             }
             LoadBalanceAlgorithm::WeightedRoundRobin => {
                 self.weighted_round_robin(&available)
@@ -365,46 +445,92 @@ impl UpstreamPool {
         }
     }
 
-    pub async fn select_next_backend(&self, current: &Backend) -> Option<Backend> {
-        let backends = self.backends.read().await;
-        
+    pub fn select_next_backend(&self, current: &Backend) -> Option<Backend> {
+        let backends = self.backends.read();
         let current_is_backup = current.is_backup;
+        let current_url = &current.url;
         
-        let candidates: Vec<Backend> = backends.iter()
-            .filter(|b| {
-                b.url != current.url && 
-                b.is_available() &&
-                b.is_backup == current_is_backup
-            })
-            .cloned()
-            .collect();
-
-        if !candidates.is_empty() {
-            return self.select_from_list(&candidates).await;
+        let len = backends.len();
+        if len == 0 {
+            return None;
         }
 
-        if !current_is_backup {
-            let backups: Vec<Backend> = backends.iter()
-                .filter(|b| b.is_backup && b.is_available())
-                .cloned()
-                .collect();
-            
-            if !backups.is_empty() {
-                return self.select_from_list(&backups).await;
+        match self.algorithm {
+            LoadBalanceAlgorithm::RoundRobin => {
+                let start_idx = self.round_robin_index.fetch_add(1, Ordering::Relaxed) % len;
+                
+                for offset in 0..len {
+                    let idx = (start_idx + offset) % len;
+                    let b = &backends[idx];
+                    if b.url != *current_url && b.is_available() && b.is_backup == current_is_backup {
+                        return Some(b.clone());
+                    }
+                }
+                
+                if !current_is_backup {
+                    for b in backends.iter() {
+                        if b.is_backup && b.is_available() {
+                            return Some(b.clone());
+                        }
+                    }
+                }
+                
+                None
+            }
+            LoadBalanceAlgorithm::LeastConnections => {
+                let mut best: Option<(f64, &Backend)> = None;
+                
+                for b in backends.iter() {
+                    if b.url != *current_url && b.is_available() && b.is_backup == current_is_backup {
+                        let load = b.composite_load();
+                        match best {
+                            None => best = Some((load, b)),
+                            Some((best_load, _)) if load < best_load => best = Some((load, b)),
+                            _ => {}
+                        }
+                    }
+                }
+                
+                if let Some((_, b)) = best {
+                    return Some(b.clone());
+                }
+                
+                if !current_is_backup {
+                    for b in backends.iter() {
+                        if b.is_backup && b.is_available() {
+                            return Some(b.clone());
+                        }
+                    }
+                }
+                
+                None
+            }
+            _ => {
+                for b in backends.iter() {
+                    if b.url != *current_url && b.is_available() && b.is_backup == current_is_backup {
+                        return Some(b.clone());
+                    }
+                }
+                
+                if !current_is_backup {
+                    backends.iter()
+                        .find(|b| b.is_backup && b.is_available())
+                        .cloned()
+                } else {
+                    None
+                }
             }
         }
-
-        None
     }
 
-    pub async fn has_primaries(&self) -> bool {
-        let backends = self.backends.read().await;
+    pub fn has_primaries(&self) -> bool {
+        let backends = self.backends.read();
         backends.iter().any(|b| !b.is_backup && b.is_available())
     }
 
-    pub async fn mark_failed(&self, url: &str) {
-        let backends = self.backends.read().await;
-        if let Some(backend) = backends.iter().find(|b| b.url == url) {
+    pub fn mark_failed(&self, url: &str) {
+        let backends = self.backends.read();
+        if let Some(backend) = backends.iter().find(|b| b.url.as_ref() == url) {
             backend.record_failure();
         }
     }
@@ -428,101 +554,145 @@ impl UpstreamPool {
         available.first().cloned()
     }
 
-    pub async fn select_backend_for_ip(&self, client_ip: &str) -> Option<Backend> {
+    pub fn select_backend_for_ip(&self, client_ip: &str) -> Option<Backend> {
         if matches!(self.algorithm, LoadBalanceAlgorithm::IpHash) {
-            let backends = self.backends.read().await;
-            if backends.is_empty() {
+            let backends = self.backends.read();
+            let len = backends.len();
+            
+            if len == 0 {
                 return None;
             }
 
-            let hash = self.get_or_create_hash(client_ip, backends.len());
-            let idx = hash % backends.len();
+            let hash = self.get_or_create_hash(client_ip, len);
+            let idx = hash % len;
             
-            let backend = backends[idx].clone();
+            let backend = &backends[idx];
             if backend.is_available() {
-                Some(backend)
+                Some(backend.clone())
             } else {
                 backends.iter().find(|b| b.is_available()).cloned()
             }
         } else {
-            self.select_backend().await
+            self.select_backend()
         }
     }
 
+    #[inline]
     fn get_or_create_hash(&self, key: &str, num_backends: usize) -> usize {
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        std::hash::Hash::hash(&key, &mut hasher);
-        (std::hash::Hasher::finish(&hasher) as usize) % num_backends
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut hasher = DefaultHasher::new();
+        key.hash(&mut hasher);
+        (hasher.finish() as usize) % num_backends
     }
 
-    pub async fn add_backend(&self, url: String) {
-        let mut backends = self.backends.write().await;
-        if !backends.iter().any(|b| b.url == url) {
+    pub fn add_backend(&self, url: String) {
+        let mut backends = self.backends.write();
+        if !backends.iter().any(|b| b.url.as_ref() == &url) {
             backends.push(Backend::new(url));
             tracing::info!("Added backend to pool");
         }
     }
 
-    pub async fn add_backend_with_protocol(&self, url: String, protocol: BackendProtocol) {
-        let mut backends = self.backends.write().await;
-        if !backends.iter().any(|b| b.url == url) {
+    pub fn add_backend_with_protocol(&self, url: String, protocol: BackendProtocol) {
+        let mut backends = self.backends.write();
+        if !backends.iter().any(|b| b.url.as_ref() == &url) {
             backends.push(Backend::new(url.clone()).with_protocol(protocol));
             tracing::info!("Added {} backend to pool", protocol_name(protocol));
         }
     }
 
-    pub async fn add_backend_with_weight(&self, url: String, weight: u32, protocol: BackendProtocol) {
-        let mut backends = self.backends.write().await;
-        if let Some(existing) = backends.iter_mut().find(|b| b.url == url) {
+    pub fn add_backend_with_weight(&self, url: String, weight: u32, protocol: BackendProtocol) {
+        let mut backends = self.backends.write();
+        if let Some(existing) = backends.iter_mut().find(|b| b.url.as_ref() == &url) {
             existing.weight = weight;
             existing.protocol = protocol;
             tracing::info!("Updated backend {} with weight {} and protocol {:?}", url, weight, protocol);
         } else {
             backends.push(Backend::new(url.clone()).with_weight(weight).with_protocol(protocol));
-            tracing::info!("Added {} backend to pool with weight {} and protocol {:?}", url, weight, protocol);
+            tracing::info!("Added {} backend with weight {} and protocol {:?}", url, weight, protocol);
         }
     }
 
-    pub async fn select_backend_for_protocol(&self, required_protocol: BackendProtocol) -> Option<Backend> {
-        let backends = self.backends.read().await;
+    pub fn select_backend_for_protocol(&self, required_protocol: BackendProtocol) -> Option<Backend> {
+        let backends = self.backends.read();
         
-        let matching: Vec<Backend> = backends.iter()
-            .filter(|b| b.is_available() && b.protocol == required_protocol)
-            .cloned()
-            .collect();
-
-        if matching.is_empty() {
+        let mut best: Option<Backend> = None;
+        let start_idx = self.round_robin_index.fetch_add(1, Ordering::Relaxed);
+        let len = backends.len();
+        
+        if len == 0 {
             tracing::warn!("No available backends for protocol {:?}", required_protocol);
             return None;
         }
 
         match self.algorithm {
-            LoadBalanceAlgorithm::RoundRobin => {
-                let idx = self.round_robin_index.fetch_add(1, Ordering::Relaxed) % matching.len();
-                Some(matching[idx].clone())
+            LoadBalanceAlgorithm::RoundRobin | LoadBalanceAlgorithm::LeastConnections | LoadBalanceAlgorithm::IpHash => {
+                for offset in 0..len {
+                    let idx = (start_idx + offset) % len;
+                    let b = &backends[idx];
+                    if b.is_available() && b.protocol == required_protocol {
+                        best = Some(b.clone());
+                        break;
+                    }
+                }
+                
+                if best.is_none() {
+                    for b in backends.iter() {
+                        if b.is_available() && b.protocol == required_protocol {
+                            best = Some(b.clone());
+                            break;
+                        }
+                    }
+                }
+                
+                if best.is_none() {
+                    tracing::warn!("No available backends for protocol {:?}", required_protocol);
+                }
+                
+                best
             }
             LoadBalanceAlgorithm::Random => {
                 use rand::Rng;
-                let mut rng = rand::thread_rng();
-                let idx = rng.gen_range(0..matching.len());
-                Some(matching[idx].clone())
+                let mut rng = rand::rng();
+                let idx = rng.random_range(0..len);
+                let mut found = None;
+                
+                for offset in 0..len {
+                    let i = (idx + offset) % len;
+                    let b = &backends[i];
+                    if b.is_available() && b.protocol == required_protocol {
+                        found = Some(b.clone());
+                        break;
+                    }
+                }
+                
+                if found.is_none() {
+                    tracing::warn!("No available backends for protocol {:?}", required_protocol);
+                }
+                
+                found
             }
-            _ => matching.into_iter().next(),
+            _ => {
+                backends.iter()
+                    .find(|b| b.is_available() && b.protocol == required_protocol)
+                    .cloned()
+            }
         }
     }
 
-    pub async fn remove_backend(&self, url: &str) {
-        let mut backends = self.backends.write().await;
-        backends.retain(|b| b.url != url);
+    pub fn remove_backend(&self, url: &str) {
+        let mut backends = self.backends.write();
+        backends.retain(|b| b.url.as_ref() != url);
         tracing::info!("Removed backend {} from pool", url);
     }
 
-    pub async fn get_backends(&self) -> tokio::sync::RwLockReadGuard<'_, Vec<Backend>> {
-        self.backends.read().await
+    pub fn get_backends(&self) -> parking_lot::RwLockReadGuard<'_, Vec<Backend>> {
+        self.backends.read()
     }
 
-    pub async fn get_metrics(&self) -> UpstreamMetrics {
-        let backends = self.backends.read().await;
+    pub fn get_metrics(&self) -> UpstreamMetrics {
+        let backends = self.backends.read();
         
         let mut healthy_count = 0;
         let mut unhealthy_count = 0;
@@ -530,27 +700,23 @@ impl UpstreamPool {
         let mut avg_load = 0.0;
 
         for backend in backends.iter() {
-            if backend.is_healthy.load(Ordering::Relaxed) {
+            total_connections += backend.current_connections.load(Ordering::Relaxed);
+            if backend.is_healthy.is_running() {
                 healthy_count += 1;
+                avg_load += backend.load();
             } else {
                 unhealthy_count += 1;
             }
-            total_connections += backend.current_connections.load(Ordering::Relaxed);
-            avg_load += backend.load();
         }
 
-        let backend_count = backends.len();
-        if backend_count > 0 {
-            avg_load /= backend_count as f64;
+        let total_backends = backends.len();
+        
+        if !backends.is_empty() {
+            avg_load /= healthy_count.max(1) as f64;
         }
-
-        gauge!("rustwaf.upstream.healthy_backends").set(healthy_count as f64);
-        gauge!("rustwaf.upstream.unhealthy_backends").set(unhealthy_count as f64);
-        gauge!("rustwaf.upstream.total_connections").set(total_connections as f64);
-        histogram!("rustwaf.upstream.backend_load").record(avg_load);
 
         UpstreamMetrics {
-            total_backends: backend_count,
+            total_backends,
             healthy_backends: healthy_count,
             unhealthy_backends: unhealthy_count,
             total_connections,
@@ -558,19 +724,19 @@ impl UpstreamPool {
         }
     }
 
-    pub async fn mark_unhealthy(&self, url: &str) {
-        let backends = self.backends.read().await;
-        if let Some(backend) = backends.iter().find(|b| b.url == url) {
-            backend.is_healthy.store(false, Ordering::Relaxed);
-            tracing::warn!("Backend {} marked unhealthy", url);
+    pub fn mark_healthy(&self, url: &str) {
+        let backends = self.backends.read();
+        if let Some(backend) = backends.iter().find(|b| b.url.as_ref() == url) {
+            backend.is_healthy.set(true);
+            tracing::info!("Backend {} marked healthy", url);
         }
     }
 
-    pub async fn mark_healthy(&self, url: &str) {
-        let backends = self.backends.read().await;
-        if let Some(backend) = backends.iter().find(|b| b.url == url) {
-            backend.is_healthy.store(true, Ordering::Relaxed);
-            tracing::info!("Backend {} marked healthy", url);
+    pub fn mark_unhealthy(&self, url: &str) {
+        let backends = self.backends.read();
+        if let Some(backend) = backends.iter().find(|b| b.url.as_ref() == url) {
+            backend.is_healthy.set(false);
+            tracing::info!("Backend {} marked unhealthy", url);
         }
     }
 }

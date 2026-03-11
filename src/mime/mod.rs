@@ -2,12 +2,37 @@ pub mod nginx_parser;
 
 use once_cell::sync::Lazy;
 use parking_lot::RwLock;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::Path;
 
-pub static MIME_REGISTRY: Lazy<RwLock<MimeRegistry>> = Lazy::new(|| {
-    RwLock::new(MimeRegistry::with_defaults())
-});
+pub static MIME_REGISTRY: Lazy<RwLock<MimeRegistry>> =
+    Lazy::new(|| RwLock::new(MimeRegistry::with_defaults()));
+
+pub fn init_mimes_from_file<P: AsRef<Path>>(path: P) -> Result<(), MimeError> {
+    let mut registry = MIME_REGISTRY.write();
+    registry.load_from_file(path)
+}
+
+pub fn reload_mimes_from_file<P: AsRef<Path>>(path: P) -> Result<(), MimeError> {
+    let mut registry = MIME_REGISTRY.write();
+    registry.clear();
+    registry.register_defaults();
+    match registry.load_from_file(path) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            tracing::warn!("Failed to load mimes from file, using defaults: {}", e);
+            Ok(())
+        }
+    }
+}
+
+pub fn reload_mimes_from_path(path: Option<&Path>) -> Result<(), MimeError> {
+    if let Some(p) = path {
+        reload_mimes_from_file(p)
+    } else {
+        Ok(())
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FileCategory {
@@ -30,7 +55,11 @@ pub struct MimeTypeInfo {
 }
 
 impl MimeTypeInfo {
-    pub fn new(mime_type: impl Into<String>, extensions: Vec<String>, category: FileCategory) -> Self {
+    pub fn new(
+        mime_type: impl Into<String>,
+        extensions: Vec<String>,
+        category: FileCategory,
+    ) -> Self {
         Self {
             mime_type: mime_type.into(),
             extensions,
@@ -65,6 +94,12 @@ impl MimeRegistry {
         }
     }
 
+    pub fn clear(&mut self) {
+        self.mime_to_extensions.clear();
+        self.extension_to_mime.clear();
+        self.mime_categories.clear();
+    }
+
     pub fn with_defaults() -> Self {
         let mut registry = Self::new();
         registry.register_defaults();
@@ -73,16 +108,27 @@ impl MimeRegistry {
 
     fn register_defaults(&mut self) {
         let defaults = vec![
-            ("text/html", vec!["html", "htm", "shtml"], FileCategory::Document),
+            (
+                "text/html",
+                vec!["html", "htm", "shtml"],
+                FileCategory::Document,
+            ),
             ("text/css", vec!["css"], FileCategory::Code),
             ("text/javascript", vec!["js", "mjs"], FileCategory::Code),
             ("text/plain", vec!["txt", "log"], FileCategory::Document),
             ("text/xml", vec!["xml"], FileCategory::Document),
             ("text/csv", vec!["csv"], FileCategory::Document),
-            ("text/markdown", vec!["md", "markdown"], FileCategory::Document),
-
+            (
+                "text/markdown",
+                vec!["md", "markdown"],
+                FileCategory::Document,
+            ),
             ("image/gif", vec!["gif"], FileCategory::Image),
-            ("image/jpeg", vec!["jpg", "jpeg", "jpe"], FileCategory::Image),
+            (
+                "image/jpeg",
+                vec!["jpg", "jpeg", "jpe"],
+                FileCategory::Image,
+            ),
             ("image/png", vec!["png"], FileCategory::Image),
             ("image/webp", vec!["webp"], FileCategory::Image),
             ("image/svg+xml", vec!["svg", "svgz"], FileCategory::Image),
@@ -90,16 +136,18 @@ impl MimeRegistry {
             ("image/bmp", vec!["bmp"], FileCategory::Image),
             ("image/tiff", vec!["tif", "tiff"], FileCategory::Image),
             ("image/x-icon", vec!["ico"], FileCategory::Image),
-
             ("video/mp4", vec!["mp4", "m4v"], FileCategory::Video),
             ("video/webm", vec!["webm"], FileCategory::Video),
-            ("video/mpeg", vec!["mpeg", "mpg", "mpe"], FileCategory::Video),
+            (
+                "video/mpeg",
+                vec!["mpeg", "mpg", "mpe"],
+                FileCategory::Video,
+            ),
             ("video/quicktime", vec!["mov"], FileCategory::Video),
             ("video/x-msvideo", vec!["avi"], FileCategory::Video),
             ("video/x-matroska", vec!["mkv"], FileCategory::Video),
             ("video/x-flv", vec!["flv"], FileCategory::Video),
             ("video/3gpp", vec!["3gp", "3gpp"], FileCategory::Video),
-
             ("audio/mpeg", vec!["mp3"], FileCategory::Audio),
             ("audio/ogg", vec!["ogg", "oga"], FileCategory::Audio),
             ("audio/wav", vec!["wav"], FileCategory::Audio),
@@ -107,42 +155,95 @@ impl MimeRegistry {
             ("audio/aac", vec!["aac"], FileCategory::Audio),
             ("audio/x-m4a", vec!["m4a"], FileCategory::Audio),
             ("audio/flac", vec!["flac"], FileCategory::Audio),
-
             ("application/pdf", vec!["pdf"], FileCategory::Document),
             ("application/msword", vec!["doc"], FileCategory::Document),
-            ("application/vnd.openxmlformats-officedocument.wordprocessingml.document", vec!["docx"], FileCategory::Document),
-            ("application/vnd.ms-excel", vec!["xls"], FileCategory::Document),
-            ("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", vec!["xlsx"], FileCategory::Document),
-            ("application/vnd.ms-powerpoint", vec!["ppt"], FileCategory::Document),
-            ("application/vnd.openxmlformats-officedocument.presentationml.presentation", vec!["pptx"], FileCategory::Document),
-            ("application/vnd.oasis.opendocument.text", vec!["odt"], FileCategory::Document),
-            ("application/vnd.oasis.opendocument.spreadsheet", vec!["ods"], FileCategory::Document),
-            ("application/vnd.oasis.opendocument.presentation", vec!["odp"], FileCategory::Document),
+            (
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                vec!["docx"],
+                FileCategory::Document,
+            ),
+            (
+                "application/vnd.ms-excel",
+                vec!["xls"],
+                FileCategory::Document,
+            ),
+            (
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                vec!["xlsx"],
+                FileCategory::Document,
+            ),
+            (
+                "application/vnd.ms-powerpoint",
+                vec!["ppt"],
+                FileCategory::Document,
+            ),
+            (
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                vec!["pptx"],
+                FileCategory::Document,
+            ),
+            (
+                "application/vnd.oasis.opendocument.text",
+                vec!["odt"],
+                FileCategory::Document,
+            ),
+            (
+                "application/vnd.oasis.opendocument.spreadsheet",
+                vec!["ods"],
+                FileCategory::Document,
+            ),
+            (
+                "application/vnd.oasis.opendocument.presentation",
+                vec!["odp"],
+                FileCategory::Document,
+            ),
             ("application/rtf", vec!["rtf"], FileCategory::Document),
-
             ("application/zip", vec!["zip"], FileCategory::Archive),
-            ("application/x-rar-compressed", vec!["rar"], FileCategory::Archive),
-            ("application/x-7z-compressed", vec!["7z"], FileCategory::Archive),
+            (
+                "application/x-rar-compressed",
+                vec!["rar"],
+                FileCategory::Archive,
+            ),
+            (
+                "application/x-7z-compressed",
+                vec!["7z"],
+                FileCategory::Archive,
+            ),
             ("application/x-tar", vec!["tar"], FileCategory::Archive),
-            ("application/gzip", vec!["gz", "gzip"], FileCategory::Archive),
-            ("application/x-bzip2", vec!["bz2", "bzip2"], FileCategory::Archive),
-
+            (
+                "application/gzip",
+                vec!["gz", "gzip"],
+                FileCategory::Archive,
+            ),
+            (
+                "application/x-bzip2",
+                vec!["bz2", "bzip2"],
+                FileCategory::Archive,
+            ),
             ("application/json", vec!["json"], FileCategory::Document),
             ("application/xml", vec!["xml"], FileCategory::Document),
-
             ("font/woff", vec!["woff"], FileCategory::Font),
             ("font/woff2", vec!["woff2"], FileCategory::Font),
             ("font/ttf", vec!["ttf"], FileCategory::Font),
             ("font/otf", vec!["otf"], FileCategory::Font),
-            ("application/vnd.ms-fontobject", vec!["eot"], FileCategory::Font),
-
-            ("application/x-msdownload", vec!["exe", "dll", "com"], FileCategory::Executable),
+            (
+                "application/vnd.ms-fontobject",
+                vec!["eot"],
+                FileCategory::Font,
+            ),
+            (
+                "application/x-msdownload",
+                vec!["exe", "dll", "com"],
+                FileCategory::Executable,
+            ),
             ("application/x-sh", vec!["sh"], FileCategory::Code),
             ("application/x-python", vec!["py"], FileCategory::Code),
-
             ("application/wasm", vec!["wasm"], FileCategory::Code),
-
-            ("application/octet-stream", vec!["bin", "dat"], FileCategory::Unknown),
+            (
+                "application/octet-stream",
+                vec!["bin", "dat"],
+                FileCategory::Unknown,
+            ),
         ];
 
         for (mime, exts, category) in defaults {
@@ -154,7 +255,8 @@ impl MimeRegistry {
         let mime_lower = mime_type.to_lowercase();
         let exts_owned: Vec<String> = extensions.iter().map(|s| s.to_lowercase()).collect();
 
-        self.mime_to_extensions.insert(mime_lower.clone(), exts_owned.clone());
+        self.mime_to_extensions
+            .insert(mime_lower.clone(), exts_owned.clone());
         self.mime_categories.insert(mime_lower.clone(), category);
 
         for ext in exts_owned {
@@ -166,7 +268,11 @@ impl MimeRegistry {
         let entries = nginx_parser::parse_nginx_mime_types(content)?;
         for (mime, extensions) in entries {
             let category = Self::categorize_by_mime(&mime);
-            self.register(&mime, extensions.iter().map(|s| s.as_str()).collect(), category);
+            self.register(
+                &mime,
+                extensions.iter().map(|s| s.as_str()).collect(),
+                category,
+            );
         }
         Ok(())
     }
@@ -211,11 +317,15 @@ impl MimeRegistry {
     }
 
     pub fn get_mime_for_extension(&self, extension: &str) -> Option<String> {
-        self.extension_to_mime.get(&extension.to_lowercase()).cloned()
+        self.extension_to_mime
+            .get(&extension.to_lowercase())
+            .cloned()
     }
 
     pub fn get_extensions_for_mime(&self, mime_type: &str) -> Option<Vec<String>> {
-        self.mime_to_extensions.get(&mime_type.to_lowercase()).cloned()
+        self.mime_to_extensions
+            .get(&mime_type.to_lowercase())
+            .cloned()
     }
 
     pub fn get_category(&self, mime_type: &str) -> FileCategory {
@@ -228,7 +338,11 @@ impl MimeRegistry {
     pub fn get_info(&self, mime_type: &str) -> Option<MimeTypeInfo> {
         let mime_lower = mime_type.to_lowercase();
         let extensions = self.mime_to_extensions.get(&mime_lower)?.clone();
-        let category = self.mime_categories.get(&mime_lower).copied().unwrap_or(FileCategory::Unknown);
+        let category = self
+            .mime_categories
+            .get(&mime_lower)
+            .copied()
+            .unwrap_or(FileCategory::Unknown);
         Some(MimeTypeInfo {
             mime_type: mime_lower,
             extensions,
@@ -320,7 +434,11 @@ pub fn detect_from_bytes_with_fallback(data: &[u8], fallback_extension: &str) ->
                 return info;
             }
         }
-        MimeTypeInfo::new("application/octet-stream", vec![fallback_extension.to_string()], FileCategory::Unknown)
+        MimeTypeInfo::new(
+            "application/octet-stream",
+            vec![fallback_extension.to_string()],
+            FileCategory::Unknown,
+        )
     }
 }
 

@@ -4,17 +4,15 @@ pub mod updater;
 
 use std::collections::HashSet;
 use std::net::IpAddr;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::config::geoip::GeoIpConfig;
 use crate::config::site::SiteGeoipConfig;
-use metrics::gauge;
 use parking_lot::RwLock;
 use tokio::time::{interval, Duration};
 
 use lookup::GeoIpLookup;
-use types::{CountryInfo, GeoIpResult, GeoIpStatus};
+use types::{AsnInfo, CountryInfo, GeoIpResult, GeoIpStatus};
 use updater::GeoIpUpdater;
 
 pub struct GeoIpManager {
@@ -25,6 +23,16 @@ pub struct GeoIpManager {
     allowed_countries: Arc<RwLock<HashSet<String>>>,
     last_update: Arc<RwLock<Option<u64>>>,
     is_enabled: bool,
+}
+
+impl std::fmt::Debug for GeoIpManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GeoIpManager")
+            .field("is_enabled", &self.is_enabled)
+            .field("blocked_countries", &self.blocked_countries)
+            .field("allowed_countries", &self.allowed_countries)
+            .finish()
+    }
 }
 
 impl GeoIpManager {
@@ -163,6 +171,39 @@ impl GeoIpManager {
 
     pub fn get_country_info(&self, ip: IpAddr) -> Option<CountryInfo> {
         let lookup = self.lookup.read();
-        lookup.lookup_country_info(ip)
+        
+        let code = lookup.lookup_country(ip)?;
+        let info = lookup.lookup_country_info(ip)?;
+        
+        Some(CountryInfo {
+            code,
+            name: info.name,
+            subdivision: lookup.lookup_subdivision(ip),
+            city: lookup.lookup_city(ip),
+        })
+    }
+
+    pub fn get_asn_info(&self, ip: IpAddr) -> Option<AsnInfo> {
+        let lookup = self.lookup.read();
+        lookup.lookup_asn(ip).map(|(asn, org)| AsnInfo {
+            asn,
+            organization: org,
+        })
+    }
+
+    pub fn get_continent_code(&self, ip: IpAddr) -> Option<String> {
+        let lookup = self.lookup.read();
+        
+        let reader = lookup.reader.as_ref()?;
+        let result = reader.lookup(ip).ok()?;
+        
+        let code: Option<String> = result.decode_path(&[
+            maxminddb::PathElement::Key("continent"),
+            maxminddb::PathElement::Key("code"),
+        ])
+        .ok()
+        .flatten();
+        
+        code
     }
 }

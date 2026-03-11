@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>408 - Request Timeout | MaluWAF</title>
+    <style>
+        {{theme_css}}
+        * { box-sizing: border-box; }
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0;
+            padding: 1rem;
+            background-color: var(--waf-bg);
+            color: var(--waf-text);
+        }
+        .waf-container {
+            background: var(--waf-surface);
+            padding: 3rem;
+            border-radius: 16px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            max-width: 480px;
+            width: 100%;
+            text-align: center;
+            border: 1px solid var(--waf-border);
+            position: relative;
+            overflow: hidden;
+        }
+        .waf-container::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, var(--waf-primary), var(--waf-accent-primary));
+        }
+        .waf-logo {
+            width: 56px;
+            height: 56px;
+            background: linear-gradient(135deg, var(--waf-primary), var(--waf-accent-primary));
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 1.5rem;
+            font-weight: 700;
+            font-size: 1.5rem;
+            color: white;
+        }
+        .waf-error-code {
+            font-size: 6rem;
+            font-weight: 700;
+            color: var(--waf-primary);
+            margin: 0;
+            line-height: 1;
+            font-family: 'JetBrains Mono', monospace;
+        }
+        .waf-title {
+            color: var(--waf-text);
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin: 1rem 0 0.75rem;
+        }
+        .waf-message {
+            color: var(--waf-text);
+            opacity: 0.8;
+            line-height: 1.6;
+            margin: 0 0 1.5rem;
+            font-size: 0.95rem;
+        }
+        .waf-home {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            background: var(--waf-accent-primary);
+            color: var(--waf-bg);
+            padding: 0.75rem 1.5rem;
+            border-radius: 8px;
+            text-decoration: none;
+            font-weight: 600;
+            transition: all 0.2s;
+        }
+        .waf-home:hover {
+            background: var(--waf-accent-secondary);
+            transform: translateY(-2px);
+        }
+        .waf-timestamp {
+            font-size: 0.8rem;
+            color: var(--waf-text);
+            opacity: 0.6;
+            margin-top: 1.5rem;
+            font-family: 'JetBrains Mono', monospace;
+        }
+    </style>
+</head>
+<body>
+    <div class="waf-container">
+        <div class="waf-logo">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 15v2m0 0v2m0-2h2m-2 0H10m2-9a3 3 0 00-3 3v6m0 0V9a3 3 0 013-3h4a3 3 0 013 3v6m0 0V9a3 3 0 00-3-3h-4"/>
+            </svg>
+        </div>
+        <p class="waf-error-code">{{status_code}}</p>
+        <h1 class="waf-title">Request Timeout</h1>
+        <p class="waf-message">The server timed out waiting for your request.</p>
+        <a href="/" class="waf-home">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/>
+            </svg>
+            Back to Home
+        </a>
+        <p class="waf-timestamp">{{timestamp}}</p>
+    </div>
+</body>
+</html>

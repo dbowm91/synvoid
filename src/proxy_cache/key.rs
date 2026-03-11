@@ -1,5 +1,5 @@
+use ahash::AHasher;
 use http::{HeaderMap, Method, Uri};
-use std::collections::HashMap;
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct CacheKey {
@@ -8,6 +8,7 @@ pub struct CacheKey {
     pub host: String,
     pub uri: String,
     pub vary: String,
+    pub site_id: String,
 }
 
 impl CacheKey {
@@ -19,6 +20,7 @@ impl CacheKey {
         headers: &HeaderMap,
         key_pattern: &str,
         vary_by: &[String],
+        site_id: &str,
     ) -> Self {
         let uri_str = uri
             .path_and_query()
@@ -31,9 +33,10 @@ impl CacheKey {
             .replace("$scheme", scheme)
             .replace("$request_method", method.as_str())
             .replace("$host", host)
-            .replace("$request_uri", &uri_str);
+            .replace("$request_uri", &uri_str)
+            .replace("$site_id", site_id);
 
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        let mut hasher = AHasher::default();
         std::hash::Hash::hash(&key, &mut hasher);
         std::hash::Hash::hash(&vary, &mut hasher);
         let hash = std::hash::Hasher::finish(&hasher);
@@ -44,6 +47,7 @@ impl CacheKey {
             host: host.to_string(),
             uri: format!("{}:{}", hash, uri_str),
             vary,
+            site_id: site_id.to_string(),
         }
     }
 
@@ -64,16 +68,20 @@ impl CacheKey {
     }
 
     pub fn to_cache_string(&self) -> String {
-        format!("{}:{}:{}:{}", self.scheme, self.method, self.host, self.uri)
+        format!(
+            "{}:{}:{}:{}:{}",
+            self.scheme, self.method, self.host, self.uri, self.site_id
+        )
     }
 
     pub fn from_cache_string(s: &str) -> Option<Self> {
-        let mut parts = s.splitn(4, ':');
+        let mut parts = s.splitn(5, ':');
         Some(Self {
             scheme: parts.next()?.to_string(),
             method: parts.next()?.to_string(),
             host: parts.next()?.to_string(),
             uri: parts.next()?.to_string(),
+            site_id: parts.next()?.to_string(),
             vary: String::new(),
         })
     }
@@ -96,6 +104,7 @@ impl CacheKeyBuilder {
         host: &str,
         uri: &Uri,
         headers: &HeaderMap,
+        site_id: &str,
     ) -> CacheKey {
         CacheKey::new(
             scheme,
@@ -105,6 +114,7 @@ impl CacheKeyBuilder {
             headers,
             &self.pattern,
             &self.vary_by,
+            site_id,
         )
     }
 }
