@@ -87,8 +87,10 @@ where
     F: FnMut() -> Fut,
     Fut: Future<Output = Result<T, E>>,
     Pred: Fn(&T) -> bool,
-    E: std::fmt::Debug,
+    E: std::fmt::Debug + Default,
 {
+    let mut last_error: Option<E> = None;
+    
     for attempt in 1..=retries {
         match operation().await {
             Ok(result) => {
@@ -99,6 +101,7 @@ where
             }
             Err(e) => {
                 tracing::debug!("Attempt {} failed: {:?}", attempt, e);
+                last_error = Some(e);
             }
         }
 
@@ -107,7 +110,7 @@ where
         }
     }
 
-    Err(operation().await.unwrap_or_else(|e| e))
+    Err(last_error.unwrap_or_default())
 }
 
 pub async fn wait_for_condition<C, Fut>(
