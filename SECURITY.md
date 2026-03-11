@@ -92,3 +92,42 @@ ipc_session_key_env = "MALU_IPC_KEY"
 3. Enable enforcement: Set `ipc_enforce_signing = true`
 
 Without IPC signing enabled, any process on the same machine can connect to the master IPC socket.
+
+---
+
+## Known Dependency Vulnerabilities
+
+The following vulnerabilities exist in transitive dependencies and are documented for awareness. Fixes are monitored via [RustSec Advisory Database](https://rustsec.org/).
+
+### High Severity
+
+| Vulnerability | Crate | ID | Status | Notes |
+|---------------|-------|-----|--------|-------|
+| Denial of Service | `quinn-proto` | RUSTSEC-2026-0037 | Monitoring | Fix in 0.11.14 not yet on crates.io |
+| KyberSlash | `pqc_kyber` | RUSTSEC-2023-0079 | No fix | Used by wasm-pow for PoW challenges |
+
+### Medium Severity
+
+| Vulnerability | Crate | ID | Status | Notes |
+|---------------|-------|-----|--------|-------|
+| Marvin Attack | `rsa` | RUSTSEC-2023-0071 | No fix | Used by yara-x for rule scanning |
+
+### Unmaintained Dependencies (Warnings)
+
+| Crate | Alternative | Notes |
+|-------|-------------|-------|
+| `bincode` | `postcard`, `rmp-serde` | Serialization - used by admin-ui/yew |
+| `rustls-pemfile` | (required) | No alternative - used by TLS |
+| `paste` | None | Macro crate - used by utoipa |
+| `proc-macro-error` | `trybuild` | Used by yew |
+
+---
+
+### Monitoring
+
+Run `cargo audit` regularly to check for new vulnerabilities:
+```bash
+cargo audit
+```
+
+To add automated checking, consider integrating [cargo-deny](https://cargo-deny.readthedocs.io/) in CI.
