@@ -11,7 +11,7 @@ where
     W: Write,
     T: Serialize,
 {
-    let data = bincode::serialize(msg).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let data = crate::serialization::serialize(msg)?;
 
     if data.len() > MAX_MESSAGE_SIZE {
         return Err(io::Error::new(
@@ -96,8 +96,7 @@ where
     let data = buffer[4..total_needed].to_vec();
     buffer.drain(..total_needed);
 
-    let msg: T = bincode::deserialize(&data)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let msg: T = crate::serialization::deserialize(&data)?;
 
     Ok(Some(msg))
 }
@@ -121,8 +120,7 @@ where
     let mut data = vec![0u8; len];
     reader.read_exact(&mut data)?;
 
-    let msg: T = bincode::deserialize(&data)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let msg: T = crate::serialization::deserialize(&data)?;
 
     Ok(msg)
 }
@@ -132,7 +130,7 @@ where
     W: AsyncWrite + Unpin,
     T: Serialize,
 {
-    let data = bincode::serialize(msg).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let data = crate::serialization::serialize(msg)?;
 
     if data.len() > MAX_MESSAGE_SIZE {
         return Err(io::Error::new(
@@ -217,8 +215,7 @@ where
     let data = buffer[4..total_needed].to_vec();
     buffer.drain(..total_needed);
 
-    let msg: T = bincode::deserialize(&data)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let msg: T = crate::serialization::deserialize(&data)?;
 
     Ok(Some(msg))
 }

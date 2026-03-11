@@ -106,8 +106,7 @@ impl SignedIpcMessage {
         msg: &T,
         signer: &IpcSigner,
     ) -> io::Result<Vec<u8>> {
-        let payload =
-            bincode::serialize(msg).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        let payload = crate::serialization::serialize(msg)?;
 
         let hmac = signer.sign(&payload);
 
@@ -157,7 +156,7 @@ impl SignedIpcMessage {
             ));
         }
 
-        bincode::deserialize(payload).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+        crate::serialization::deserialize(payload)
     }
 }
 

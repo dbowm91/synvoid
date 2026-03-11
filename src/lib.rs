@@ -12,6 +12,7 @@ pub mod waf;
 pub mod router;
 pub mod logging;
 pub mod utils;
+pub mod serialization;
 pub mod zero_copy;
 pub mod block_store;
 pub mod tcp;

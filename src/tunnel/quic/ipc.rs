@@ -469,11 +469,11 @@ pub enum QuicIpcMessage {
 
 impl QuicIpcMessage {
     pub fn encode(&self) -> Vec<u8> {
-        bincode::serialize(self).unwrap_or_default()
+        crate::serialization::serialize(self).unwrap_or_default()
     }
 
     pub fn decode(data: &[u8]) -> Option<Self> {
-        bincode::deserialize(data).ok()
+        crate::serialization::deserialize(data).ok()
     }
 }
 

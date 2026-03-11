@@ -110,15 +110,15 @@ The following vulnerabilities exist in transitive dependencies and are documente
 
 | Vulnerability | Crate | ID | Status | Notes |
 |---------------|-------|-----|--------|-------|
-| Marvin Attack | `rsa` | RUSTSEC-2023-0071 | No fix | Used by yara-x for rule scanning |
+| Marvin Attack | `rsa` | RUSTSEC-2023-0071 | **Low exposure** | Transitive via yara-x, not actively used |
 
 ### Unmaintained Dependencies (Warnings)
 
 | Crate | Alternative | Status | Notes |
 |-------|-------------|--------|-------|
-| `bincode` | `oxicode`, `postcard` | Pending migration | IPC serialization |
-| `paste` | None | Pending removal | Macro crate - used by utoipa |
-| `proc-macro-error` | `proc-macro2` | Pending migration | Used by yew |
+| `bincode` | Abstraction layer | **Abstraction added** | IPC via serialization wrapper |
+| `paste` | None | Acceptable | Transitive via utoipa |
+| `proc-macro-error` | None | Acceptable | Transitive via yew |
 | ~~`rustls-pemfile`~~ | ~~`rustls-pki-types`~~ | **Completed** | TLS certificate parsing |
 
 ---
@@ -140,6 +140,28 @@ The following vulnerabilities exist in transitive dependencies and are documente
   - `src/tls/cert_resolver.rs`
   - `src/mesh/cert.rs`
   - `src/tunnel/quic/tls.rs`
+
+### bincode → Serialization Abstraction Layer
+- **Issue**: Unmaintained (RUSTSEC-2025-0141)
+- **Fix**: Created abstraction layer (`src/serialization.rs`) to wrap serialization
+- **Rationale**: Allows future migration to alternative serializers without API changes
+- **Files changed**:
+  - Added `src/serialization.rs` (wrapper module)
+  - Updated `src/process/ipc_framing.rs`
+  - Updated `src/process/ipc_signed.rs`
+  - Updated `src/tunnel/quic/ipc.rs`
+  - Updated `src/tunnel/quic/messages.rs`
+  - Updated `src/tunnel/quic/codec.rs`
+
+### yara-x/rsa Exposure Assessment (RUSTSEC-2023-0071)
+- **Vulnerability**: Marvin Attack - potential key recovery through timing side-channels
+- **Exposure**: LOW
+- **Analysis**: 
+  - The `rsa` crate is a transitive dependency via yara-x
+  - yara-x uses RSA only for optional YARA rule signature verification
+  - MaluWAF uses **ed25519-dalek** for YARA rule feed signature verification (not RSA)
+  - The RSA functionality is loaded but never invoked in the current code path
+- **Recommendation**: No action required unless you enable RSA-based YARA rule signing
 
 ---
 

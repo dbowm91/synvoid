@@ -132,11 +132,11 @@ impl PortMapping {
 
 impl TunnelMessage {
     pub fn encode(&self) -> Result<Vec<u8>, bincode::Error> {
-        bincode::serialize(self)
+        crate::serialization::serialize_bincode(self)
     }
 
     pub fn decode(data: &[u8]) -> Option<Self> {
-        bincode::deserialize(data)
+        crate::serialization::deserialize_bincode(data)
             .map_err(|e| tracing::warn!("Failed to decode message: {}", e))
             .ok()
     }
@@ -177,8 +177,7 @@ impl TunnelMessage {
             data_len: data.len() as u32,
             fin,
         };
-        let header_bytes = bincode::serialize(&header)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        let header_bytes = crate::serialization::serialize(&header)?;
         
         let msg_type: u8 = 100;
         let total_len = 1 + header_bytes.len() + data.len();
@@ -193,8 +192,8 @@ impl TunnelMessage {
         if data.is_empty() || data[0] != 100 {
             return None;
         }
-        let header: DataChunkHeader = bincode::deserialize(&data[1..]).ok()?;
-        let header_size = bincode::serialized_size(&header).ok()? as usize;
+        let header: DataChunkHeader = crate::serialization::deserialize(&data[1..]).ok()?;
+        let header_size = crate::serialization::serialized_size(&header).ok()? as usize;
         let data_start = 1 + header_size;
         if data.len() < data_start + header.data_len as usize {
             return None;
@@ -268,11 +267,11 @@ impl DatagramMessage {
     }
 
     pub fn encode(&self) -> Result<Vec<u8>, bincode::Error> {
-        bincode::serialize(self)
+        crate::serialization::serialize_bincode(self)
     }
 
     pub fn decode(data: &[u8]) -> Option<Self> {
-        bincode::deserialize(data)
+        crate::serialization::deserialize_bincode(data)
             .map_err(|e| tracing::trace!("Failed to decode datagram: {}", e))
             .ok()
     }
@@ -282,7 +281,7 @@ impl DatagramMessage {
     }
 
     pub fn encoded_size(&self) -> usize {
-        bincode::serialized_size(self).unwrap_or(0) as usize
+        crate::serialization::serialized_size(self).unwrap_or(0) as usize
     }
 
     pub fn is_fragmented(&self) -> bool {

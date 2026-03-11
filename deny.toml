@@ -20,14 +20,14 @@ confidence-threshold = 0.8
 [advisories]
 # Ignore unmaintained crates that are still functional
 ignore = [
-    # bincode - unmaintained but widely used, no security issues
+    # bincode - unmaintained but abstraction layer added for future migration
     "RUSTSEC-2025-0141",
-    # rustls-pemfile - archived but still works, wraps rustls-pki-types
-    "RUSTSEC-2025-0134",
     # fxhash - transitive via wasmtime, no issues
     "RUSTSEC-2025-0057",
-    # paste - transitive via tun-rs/netlink, no safe upgrade
+    # paste - transitive via utoipa, no safe upgrade
     "RUSTSEC-2024-0436",
+    # rsa (Marvin Attack) - low exposure via yara-x, not actively used
+    "RUSTSEC-2023-0071",
 ]
 
 [bans]

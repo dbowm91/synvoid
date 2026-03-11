@@ -34,11 +34,11 @@ pub enum TunnelMessage {
 
 impl TunnelMessage {
     pub fn encode(&self) -> Result<Vec<u8>, bincode::Error> {
-        bincode::serialize(self)
+        crate::serialization::serialize_bincode(self)
     }
 
     pub fn decode(data: &[u8]) -> Option<Self> {
-        bincode::deserialize(data)
+        crate::serialization::deserialize_bincode(data)
             .map_err(|e| tracing::warn!("Failed to decode message: {}", e))
             .ok()
     }
