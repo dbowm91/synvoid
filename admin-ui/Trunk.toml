@@ -1,0 +1,19 @@
+[build]
+target = "index.html"
+dist = "dist"
+
+[watch]
+watch = ["src", "styles", "index.html"]
+
+[serve]
+address = "127.0.0.1"
+port = 3000
+open = false
+
+[tools]
+wasm_pack = "latest"
+
+[[hooks]]
+stage = "post_build"
+command = "sh"
+command_arguments = ["-c", "echo 'Build complete'"]

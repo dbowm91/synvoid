@@ -1,0 +1,31 @@
+[site]
+domains = ["api.example.com"]
+
+[site.upstream]
+default = "http://127.0.0.1:6000"
+
+[ratelimit]
+mode = "isolated"
+
+[ratelimit.ip]
+per_second = 50
+per_minute = 500
+
+[[ratelimit.endpoints]]
+path_pattern = "/search/*"
+per_minute = 30
+
+[[ratelimit.endpoints]]
+path_pattern = "/bulk/*"
+per_minute = 10
+
+[blocked]
+paths = ["/.env", "/.git"]
+
+[bot]
+inherit = true
+block_ai_crawlers = true
+
+[worker_pool]
+mode = "dedicated"
+workers = 2

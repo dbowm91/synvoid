@@ -1,0 +1,345 @@
+# Site Configuration Example
+# 
+# This file configures protection for a specific website.
+# Multiple site files can exist in config/sites/
+
+# =============================================================================
+# SITE IDENTIFICATION
+# =============================================================================
+
+[site]
+# Domains this configuration applies to
+# The first domain is used as the site identifier
+domains = ["example.com", "www.example.com"]
+
+# =============================================================================
+# UPSTREAM CONFIGURATION
+# =============================================================================
+
+[site.upstream]
+# Default upstream server for unmatched routes
+default = "http://127.0.0.1:8000"
+
+# Path-based routing to different upstreams
+# Routes are matched by prefix
+[site.upstream.routes]
+"/api" = "http://api.internal:8001"
+"/static" = "http://cdn.internal:8002"
+"/ws" = "http://websocket.internal:8003"
+
+# =============================================================================
+# RATE LIMITING
+# =============================================================================
+
+[ratelimit]
+# Rate limiting mode: "shared" (use global limits) or "isolated" (site-specific)
+mode = "isolated"
+
+# Per-IP rate limits (overrides defaults)
+[ratelimit.ip]
+per_second = 20
+per_minute = 200
+per_5min = 600
+per_hour = 2000
+
+# Global rate limits for this site
+[ratelimit.global]
+per_second = 500
+per_minute = 5000
+max_connections = 2000
+
+# =============================================================================
+# ENDPOINT BLOCKING
+# =============================================================================
+
+[blocked]
+# Paths to block (glob patterns supported)
+paths = [
+    ".env",
+    ".git",
+    ".svn",
+    ".htaccess",
+    ".htpasswd",
+    "wp-config.php",
+    "wp-login.php",
+    "wp-admin/*",
+    "phpmyadmin",
+    "pma",
+    "backup.sql",
+    "config.php.bak",
+]
+
+# Enable regex matching for paths
+use_regex = false
+
+# HTTP methods to block
+block_methods = ["GET", "POST", "PUT", "DELETE"]
+
+# HTTP response code for blocked requests
+block_response_code = 403
+
+# =============================================================================
+# ATTACK DETECTION
+# =============================================================================
+
+[attack_detection]
+# Enable attack detection for this site
+enabled = true
+
+# Paranoia level: 1 (low), 2 (medium), 3 (high)
+paranoia_level = 2
+
+# Action: "stall", "block", "log"
+action = "stall"
+
+# Individual attack type controls
+[attack_detection.sqli]
+enabled = true
+
+[attack_detection.xss]
+enabled = true
+
+[attack_detection.path_traversal]
+enabled = true
+custom_patterns = [
+    # Add site-specific path traversal patterns
+    "/proc/self/environ",
+]
+
+[attack_detection.rfi]
+enabled = true
+custom_patterns = []
+
+[attack_detection.ssrf]
+enabled = true
+block_private_ips = true
+# Domains allowed in URL parameters
+allowed_domains = [
+    "api.stripe.com",
+    "api.github.com",
+    "api.slack.com",
+]
+custom_patterns = []
+
+# =============================================================================
+# BOT PROTECTION
+# =============================================================================
+
+[bot]
+# Inherit bot settings from defaults
+inherit = true
+
+# Override specific settings
+block_ai_crawlers = true
+enable_js_challenge = false
+enable_css_honeypot = true
+
+# Additional AI crawlers to block (appended to defaults)
+ai_crawlers_block_extra = [
+    "CustomBot",
+]
+
+# Additional known bots to allow
+known_bots_allow_extra = [
+    "my-monitoring-bot",
+]
+
+# =============================================================================
+# CSS CHALLENGE
+# =============================================================================
+
+[css_challenge]
+enabled = true
+invalid_count_min = 80
+invalid_count_max = 120
+valid_count = 3
+verification_window_secs = 30
+asset_path = "/static/assets/"
+valid_aspect_ratios = ["16:9", "4:3", "21:9"]
+
+# =============================================================================
+# POW CHALLENGE
+# =============================================================================
+
+[pow_challenge]
+enabled = true
+difficulty = 6
+timeout_secs = 60
+window_secs = 300
+prefer_wasm = true
+
+[pow_challenge.block]
+enabled = true
+ban_duration = "1h"
+
+# =============================================================================
+# HONEYPOT
+# =============================================================================
+
+[honeypot]
+enabled = true
+paths_per_ip = 5
+ttl_secs = 86400
+
+[honeypot.block]
+enabled = true
+ban_duration = "24h"
+
+# =============================================================================
+# WHITELIST
+# =============================================================================
+
+[whitelist]
+# IPs to exclude from all WAF checks for this site
+ips = ["192.168.1.100", "10.0.0.50"]
+
+# Networks to whitelist
+networks = ["192.168.1.0/24"]
+
+# User-Agent patterns to whitelist
+user_agents = ["MonitoringService/1.0", "HealthChecker"]
+
+# =============================================================================
+# ERROR PAGES
+# =============================================================================
+
+[error_pages]
+# Inherit error pages from defaults
+inherit = true
+
+# Custom error pages directory for this site
+custom_directory = "config/error_pages/example.com"
+
+# =============================================================================
+# TCP PROTOCOL
+# =============================================================================
+
+[tcp]
+# Enable TCP protocol filtering for this site
+enabled = false
+
+# Port-specific upstream overrides
+[tcp.ports.smtp]
+port = 25
+upstream = "mail.internal:25"
+filter = "drop"  # Drop protocol mismatches
+
+# =============================================================================
+# TARPIT
+# =============================================================================
+
+[tarpit]
+# Inherit tarpit settings
+inherit = true
+
+# Site-specific tarpit settings
+max_depth = 15
+links_per_page = 75
+response_delay_ms = 200
+
+# =============================================================================
+# LOGGING
+# =============================================================================
+
+[logging]
+# Enable access logging for this site
+enabled = true
+
+# Log format: "json" or "text"
+format = "json"
+
+# =============================================================================
+# PROXY
+# =============================================================================
+
+[proxy]
+# Maximum response size from upstream
+max_response_size = 20971520  # 20MB
+
+# =============================================================================
+# WORKER POOL
+# =============================================================================
+
+[worker_pool]
+# Use shared worker pool or isolated
+mode = "shared"
+
+# =============================================================================
+# FILE UPLOAD VALIDATION
+# =============================================================================
+
+[upload]
+# Enable upload validation for this site
+enabled = true
+
+# Maximum upload size (supports KB, MB, GB suffixes)
+max_size = "50MB"
+
+# Files under this threshold are scanned in-memory, larger files go to disk
+memory_threshold = "10MB"
+
+# Scan uploaded files with YARA for malware detection
+scan_with_yara = true
+
+# Sandbox files before forwarding to upstream
+sandbox_enabled = true
+
+# Default allowed MIME types (mode: "allowlist" or "blocklist")
+[upload.allowed_types]
+mode = "allowlist"
+mime_types = [
+    # Images
+    "image/jpeg",
+    "image/png",
+    "image/gif",
+    "image/webp",
+    "image/svg+xml",
+    # Videos
+    "video/mp4",
+    "video/webm",
+    # Documents
+    "application/pdf",
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.ms-excel",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    # Text
+    "text/plain",
+    "text/csv",
+]
+
+# Path-specific upload rules (override defaults for specific endpoints)
+[[upload.paths]]
+# Avatar uploads - restricted to images only
+pattern = "/api/avatars/.*"
+max_size = "5MB"
+scan_with_yara = true
+
+[upload.paths.allowed_types]
+mode = "allowlist"
+mime_types = ["image/jpeg", "image/png", "image/webp"]
+
+[[upload.paths]]
+# Document uploads - office documents and PDFs
+pattern = "/api/documents/.*"
+max_size = "25MB"
+scan_with_yara = true
+
+[upload.paths.allowed_types]
+mode = "allowlist"
+mime_types = [
+    "application/pdf",
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.ms-excel",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+]
+
+[[upload.paths]]
+# Admin uploads - trusted source, skip YARA scanning
+pattern = "/admin/upload/.*"
+scan_with_yara = false
+
+[upload.paths.allowed_types]
+mode = "allowlist"
+mime_types = ["*"]  # Allow all types for admin

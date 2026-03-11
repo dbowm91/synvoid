@@ -1,0 +1,120 @@
+# Tunnel Configuration Example
+# Add this to config/main.toml to enable tunnel functionality
+# 
+# All tunnel modes are DISABLED by default - enable them here or via admin panel
+
+[tunnel]
+enabled = true
+
+# ============================================================================
+# WAF-Server Mode (Home Server connects outward to VPS)
+# ============================================================================
+# This allows a home server behind NAT/firewall to connect to a VPS WAF
+# The server receives a public IP, home server initiates outbound QUIC
+
+[tunnel.quic]
+enabled = true
+
+# QUIC server (accepts connections from clients/peers)
+[tunnel.quic.server]
+enabled = true
+auth_token = "change-this-to-a-secure-random-token"
+mappings = { }
+
+# IP whitelist - only these IPs can connect
+# Leave empty to allow any IP (not recommended for production)
+[tunnel.quic.whitelist]
+# - "192.168.1.0/24"
+# - "10.0.0.1"
+
+# QUIC client (connects to remote peers)
+[tunnel.quic.client]
+enabled = false
+client_id = "home-server"
+auth_token = "change-this-to-a-secure-random-token"
+
+# Port mappings: identifier -> upstream
+# Traffic arriving on these identifiers will be forwarded to the specified upstream
+[tunnel.quic.client.mappings]
+# home-http = { port = 80, protocol = "tcp", upstream_host = "127.0.0.1", upstream_port = 8080 }
+# home-https = { port = 443, protocol = "tcp", upstream_host = "127.0.0.1", upstream_port = 8443 }
+
+# Peers to connect to (for WAF-Server or WAF-WAF mesh)
+[tunnel.quic.client.peers]
+# [tunnel.quic.client.peers.vps-east]
+# address = "waf-east.example.com:51821"
+# auth_token = "..."
+# weight = 100
+# enabled = true
+
+# TLS certificates (optional - uses insecure if not provided)
+# [tunnel.quic]
+# cert_path = "/path/to/server.crt"
+# key_path = "/path/to/server.key"
+# client_ca = "/path/to/client-ca.crt"  # For mutual TLS auth
+
+# ============================================================================
+# WAF-WAF Mesh/Spoke (Peer-to-peer connections between WAF instances)
+# ============================================================================
+# Each WAF can connect to multiple peers for load distribution/failover
+
+[tunnel.waf_peers]
+enabled = false
+bind_address = "0.0.0.0"
+port = 5001
+
+# Peers for load distribution
+# [tunnel.waf_peers.peers.vps-east]
+# address = "waf-east.example.com:5001"
+# auth_token = "..."
+# weight = 100
+# enabled = true
+
+# [tunnel.waf_peers.peers.vps-west]
+# address = "waf-west.example.com:5001"
+# auth_token = "..."
+# weight = 100
+# enabled = true
+
+# ============================================================================
+# WAF-Personal VPN (WireGuard - requires boringtun feature)
+# ============================================================================
+# Personal VPN server for remote access
+
+[tunnel.vpn]
+enabled = false
+bind_address = "0.0.0.0"
+port = 51820
+interface = "wg0"
+
+# WireGuard private key (base64 encoded)
+# Generate with: wg genkey
+# private_key = "YOUR_PRIVATE_KEY_HERE"
+
+# VPN address range
+addresses = ["10.0.0.1/24"]
+
+# Allowed peers
+# [[tunnel.vpn.peers]]
+# public_key = "PEER_PUBLIC_KEY"
+# allowed_ips = ["0.0.0.0/0", "::/0"]
+# persistent_keepalive = 25
+# enabled = true
+
+# ============================================================================
+# Legacy TCP Tunnel (deprecated - use QUIC instead)
+# ============================================================================
+[tunnel.server]
+enabled = false
+bind_address = "0.0.0.0"
+port = 5000
+auth_token = "change-this-to-a-secure-random-token"
+keepalive_secs = 30
+max_idle_timeout_secs = 300
+
+# Port mappings: tunnel_identifier -> local_port_on_home_server
+# When a tunnel connects, it sends its mappings.
+[tunnel.server.mappings]
+# home-http = 80
+# home-https = 443
+# home-ssh = 22

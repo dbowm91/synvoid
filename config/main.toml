@@ -1,0 +1,201 @@
+[server]
+host = "0.0.0.0"
+port = 8080
+# host_v6 = "::1"          # Optional: IPv6 bind address (e.g., "::1" for localhost, "::" for all IPv6)
+# host_v6 = "::"           # Uncomment to enable IPv6 support
+trusted_proxies = ["127.0.0.1", "::1"]
+
+[tokio]
+worker_threads = "auto"
+
+[http]
+header_read_timeout_secs = 10
+keep_alive_timeout_secs = 60
+max_headers = 128
+max_request_line_size = 8192
+max_header_size_ingress = 4096
+max_header_size_egress = 16384
+max_request_size = 1048576
+pipeline_limit = 32
+
+[threat_level]
+initial = 1
+auto_scale = true
+scale_up_attacks_per_min = 50
+scale_up_window_secs = 60
+scale_down_attacks_per_min = 10
+scale_down_window_secs = 300
+cooldown_secs = 60
+persist_interval_normal_secs = 60
+persist_interval_attack_secs = 15
+auto_deescalate_timeout_mins = 15
+
+[threat_level.global_limits]
+level_1 = 1.0
+level_2 = 0.75
+level_3 = 0.5
+level_4 = 0.25
+level_5 = 0.1
+
+[threat_level.ban_durations]
+level_1_base = "1h"
+level_2_base = "4h"
+level_3_base = "24h"
+level_4_base = "7d"
+level_5_base = "permanent"
+
+[threat_level.escalation]
+enabled = true
+violations_before_block = 3
+violation_window_secs = 300
+excluded_ips = ["127.0.0.1", "::1"]
+
+[ip_feeds]
+enabled = true
+update_interval_hours = 2
+url = "https://raw.githubusercontent.com/bitwire-it/ipblocklist/main/inbound.txt"
+max_permanent_blocks = 1000000
+
+[fallback]
+mode = "return_404"
+
+[admin]
+enabled = true
+port = 8081
+token = "16e1bf72943b10e35ccb523475adbb2a23738bb8495f59c0ab7dbacf892be5e1"
+
+[logging]
+level = "info"
+access_log = true
+access_log_dir = "/var/log/rustwaf"
+access_log_format = "json"
+retention_days = 5
+max_entries_per_file = 50000
+
+[metrics]
+enabled = true
+port = 9090
+
+[defaults]
+[defaults.ratelimit]
+mode = "shared"
+
+[defaults.ratelimit.ip]
+per_second = 10
+per_minute = 60
+per_5min = 200
+per_10min = 350
+per_hour = 500
+per_day = 1000
+burst = 20
+
+[defaults.ratelimit.global]
+per_second = 500
+per_minute = 5000
+per_5min = 20000
+max_connections = 1000
+
+[defaults.blocked]
+paths = ["/.env", "/.git", "/wp-login.php"]
+use_regex = true
+block_methods = ["GET", "POST", "PUT", "DELETE"]
+
+[defaults.honeypot]
+endpoints_file = "config/honeypot_endpoints.txt"
+paths_per_ip = 5
+ttl_secs = 86400
+
+[defaults.honeypot.block]
+enabled = true
+ban_duration = "24h"
+
+# Probe tracking - detects patterns of probing activity
+# Records honeypot endpoint hits and can auto-ban during elevated threat levels
+[defaults.honeypot_probe]
+enabled = true
+max_endpoints_per_window = 3    # trigger after this many different honeypot endpoints
+window_secs = 300               # detection window in seconds
+retention_days = 7             # how long to keep probe records
+max_records = 1000              # max probe records to persist
+auto_ban_elevated_threat = true # auto-ban during elevated threat
+elevated_threat_threshold = 3   # threat level to trigger auto-ban
+elevated_ban_duration = 900     # ban duration in seconds (15 min)
+
+# Suspicious word detection - flags requests containing suspicious words in path/query
+[defaults.suspicious_words]
+enabled = true
+words = [
+    "admin", "administrator", "backup", "bak", "config",
+    "debug", ".git", ".svn", ".env", "wp-admin",
+    "phpmyadmin", "shell", "webshell", "passwd",
+    "shadow", "id_rsa", "database", "db", "sql", "dump", "restore"
+]
+
+# Upstream error tracking - flags when healthy upstream returns error responses
+# This could indicate a vulnerability discovered by an attacker
+[defaults.upstream_errors]
+enabled = true
+min_error_endpoints = 3    # trigger after this many unique endpoints return errors
+window_secs = 300          # detection window in seconds
+error_codes = [400, 401, 403, 404, 500, 502, 503]
+
+[defaults.error_pages]
+enabled = true
+directory = "config/error_pages"
+
+[defaults.css_challenge]
+enabled = true
+invalid_count_min = 100
+invalid_count_max = 300
+valid_count = 3
+valid_aspect_ratios = ["16/9", "16/10", "4/3", "1/1"]
+
+[defaults.css_challenge.block]
+enabled = true
+ban_duration = "24h"
+
+[defaults.pow_challenge]
+enabled = true
+difficulty = 6
+timeout_secs = 60
+window_secs = 300
+prefer_wasm = true
+
+[defaults.pow_challenge.block]
+enabled = true
+ban_duration = "1h"
+
+[defaults.bot]
+block_ai_crawlers = true
+enable_css_honeypot = true
+enable_js_challenge = false
+
+known_bots_allow = [
+    "googlebot",
+    "bingbot",
+    "yandex",
+    "duckduckbot",
+]
+
+ai_crawlers_block = [
+    "GPTBot",
+    "ChatGPT-User",
+    "ClaudeBot",
+    "Claude-Web",
+    "CCBot",
+    "Google-Extended",
+    "Amazonbot",
+    "FacebookBot",
+]
+
+[defaults.worker_pool]
+mode = "shared"
+workers = 4
+worker_port_base = 9000
+auto_scale = true
+
+[defaults.persistence]
+enabled = true
+data_dir = "/var/lib/rustwaf"
+persist_interval_secs = 60
+use_persistent_kv = false

@@ -1,0 +1,122 @@
+# Honeypot Endpoints
+# 
+# These are trap URLs that should never be accessed legitimately.
+# Any access results in an automatic IP ban (default 24 hours).
+# One endpoint per line.
+
+# WordPress traps
+/wp-admin/setup-config
+/wp-admin/install.php
+/wp-login.php
+/wp-signup.php
+/xmlrpc.php
+/wp-config.php.bak
+/wp-content/debug.log
+
+# Joomla/Drupal traps
+/administrator/index
+/administrator/login
+/user/login
+/node/add
+
+# PHPMyAdmin traps
+/phpmyadmin
+/pma
+/mysql
+/myadmin
+/dbadmin
+/mysqladmin
+/admin/mysql
+
+# Version control
+/.svn/entries
+/.svn/wc.db
+/.git/config
+/.git/HEAD
+/.gitignore.bak
+/.hg/store
+/.bzr/branch
+
+# Cloud/Container
+/.aws/credentials
+/.aws/config
+/.docker/config.json
+/.env.production
+/.env.local
+/.env.bak
+/app.yaml
+/Dockerfile
+/docker-compose.yml
+/kubernetes.yaml
+/k8s/
+/.kube/config
+
+# Configuration files
+/config.php.bak
+/config.php~
+/settings.php.bak
+/configuration.php.bak
+/local.xml
+/app/config/parameters.yml
+/.htaccess.bak
+/.htpasswd
+/web.config
+
+# Database dumps
+/backup.sql
+/database.sql
+/dump.sql
+/db_backup.sql
+/mysql_backup.sql
+/dump.sql.gz
+/backup.sql.gz
+
+# Shell/command files
+/.mysql_history
+/.bash_history
+/.zsh_history
+/shell.php
+/cmd.php
+/backdoor.php
+/webshell.php
+/c99.php
+/r57.php
+
+# API internals
+/api/v1/internal
+/api/debug
+/api/test
+/graphql/debug
+/_debug
+/_internal
+/_status
+
+# Admin panels
+/admin/phpinfo
+/admin/debug
+/admin/config
+/admin/backup
+/admin/settings.php
+/adminer.php
+
+# Log files
+/error.log
+/access.log
+/debug.log
+/production.log
+/development.log
+
+# Temporary/backup files
+/~
+/.swp
+/.swo
+/#
+/.DS_Store
+/Thumbs.db
+
+# Sensitive paths
+/server-status
+/server-info
+/.well-known/security.txt
+/robots.txt.bak
+/sitemap.xml.bak

@@ -1,0 +1,469 @@
+# RustWAF Complete Configuration Example
+# 
+# This file documents all available configuration options.
+# Copy and modify for your deployment.
+
+# =============================================================================
+# SERVER CONFIGURATION
+# =============================================================================
+
+[server]
+# Network address to bind the main HTTP server
+host = "0.0.0.0"
+
+# Port for the main HTTP server
+port = 8080
+
+# Trusted proxy IPs for X-Forwarded-For header parsing
+# These IPs are trusted to provide accurate client IP information
+trusted_proxies = ["127.0.0.1", "::1", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+
+# =============================================================================
+# ADMIN API CONFIGURATION
+# =============================================================================
+
+[admin]
+# Enable the admin API server
+enabled = true
+
+# Port for the admin API
+port = 8081
+
+# Authentication token for admin API access
+# GENERATE A SECURE RANDOM TOKEN: openssl rand -hex 32
+token = "CHANGE-ME-TO-A-SECURE-RANDOM-TOKEN"
+
+# =============================================================================
+# LOGGING CONFIGURATION
+# =============================================================================
+
+[logging]
+# Log level: trace, debug, info, warn, error
+level = "info"
+
+# Enable access logging
+access_log = true
+
+# Directory for access log files
+access_log_dir = "/var/log/rustwaf"
+
+# Access log format: "json" or "text"
+access_log_format = "json"
+
+# Number of days to retain logs
+retention_days = 7
+
+# Maximum entries per log file before rotation
+max_entries_per_file = 50000
+
+# =============================================================================
+# METRICS CONFIGURATION
+# =============================================================================
+
+[metrics]
+# Enable Prometheus metrics endpoint
+enabled = true
+
+# Port for Prometheus metrics
+port = 9090
+
+# =============================================================================
+# FALLBACK CONFIGURATION
+# =============================================================================
+
+[fallback]
+# Fallback behavior for unmatched requests
+# Options: "return_404", "proxy"
+mode = "return_404"
+
+# Upstream URL for proxy mode (only used when mode = "proxy")
+# upstream = "http://127.0.0.1:8000"
+
+# =============================================================================
+# TCP PROTOCOL FILTERING
+# =============================================================================
+
+[tcp]
+# Enable TCP protocol filtering
+enabled = true
+
+# Worker pool size for TCP connections
+worker_pool_size = 4
+
+# TCP protocol definitions
+[tcp.protocols.smtp]
+ports = [25, 587, 465]
+upstream_format = "127.0.0.1:{port}"
+
+[tcp.protocols.imap]
+ports = [143, 993]
+upstream_format = "127.0.0.1:{port}"
+
+[tcp.protocols.pop3]
+ports = [110, 995]
+upstream_format = "127.0.0.1:{port}"
+
+[tcp.protocols.mysql]
+ports = [3306]
+upstream_format = "127.0.0.1:{port}"
+
+[tcp.protocols.postgres]
+ports = [5432]
+upstream_format = "127.0.0.1:{port}"
+
+# =============================================================================
+# TARPIT CONFIGURATION
+# =============================================================================
+
+[tarpit]
+# Enable the scraper tarpit
+enabled = true
+
+# Maximum link depth for generated pages
+max_depth = 10
+
+# Number of links per generated page
+links_per_page = 50
+
+# Artificial response delay in milliseconds
+response_delay_ms = 100
+
+# =============================================================================
+# RATE LIMITING DEFAULTS
+# =============================================================================
+
+[defaults.ratelimit]
+# Rate limiting mode: "shared" (global across sites) or "isolated" (per-site)
+mode = "shared"
+
+# Per-IP rate limits
+[defaults.ratelimit.ip]
+per_second = 10
+per_minute = 60
+per_5min = 200
+per_10min = 350
+per_hour = 500
+per_day = 1000
+burst = 20
+
+# Global rate limits
+[defaults.ratelimit.global]
+per_second = 500
+per_minute = 5000
+per_5min = 20000
+max_connections = 10000
+
+# Blackhole configuration (DDoS protection)
+[defaults.ratelimit.global.blackhole]
+# Enter blackhole when rate exceeds this threshold (1.0 = 100%)
+entry_threshold = 1.0
+# Exit blackhole when rate drops below this threshold
+exit_threshold = 0.7
+# Number of consecutive low samples before exiting
+exit_samples = 3
+# Initial sampling rate in blackhole mode (1/sample_rate)
+sample_rate = 1000
+# Maximum backoff duration in seconds
+max_backoff_secs = 30
+
+# Rate limiting memory configuration
+[defaults.rate_limit_memory]
+# Maximum number of IPs to track
+max_ips = 1000000
+# Cleanup interval in seconds
+cleanup_interval_secs = 60
+
+# =============================================================================
+# FLOOD PROTECTION DEFAULTS
+# =============================================================================
+
+[defaults.flood]
+# SYN flood protection
+syn_rate_per_ip = 50              # SYN packets/sec per IP
+syn_rate_global = 10000           # Global SYN packets/sec
+half_open_max = 1000              # Max half-open connections
+half_open_per_ip_max = 10         # Max half-open per IP
+
+# Connection rate limiting
+connection_rate_per_ip = 100      # New connections/sec per IP
+connection_rate_global = 20000    # Global new connections/sec
+
+# UDP flood protection
+udp_rate_per_ip = 1000            # UDP packets/sec per IP
+udp_rate_global = 100000          # Global UDP packets/sec
+
+# Blackhole settings
+blackhole_threshold = 0.9         # Enter blackhole at 90% capacity
+blackhole_duration_secs = 60      # Blackhole duration
+
+# =============================================================================
+# ATTACK DETECTION DEFAULTS
+# =============================================================================
+
+[defaults.attack_detection]
+# Enable attack detection
+enabled = true
+
+# Paranoia level: 1 (low), 2 (medium), 3 (high)
+# Higher levels have more patterns but may cause false positives
+paranoia_level = 2
+
+# Action when attack detected: "stall", "block", "log"
+# "stall" - Hold connection indefinitely (recommended for stealth)
+# "block" - Return 403 response
+# "log" - Log only, allow request through
+action = "stall"
+
+# SQL Injection detection
+[defaults.attack_detection.sqli]
+enabled = true
+
+# Cross-Site Scripting detection
+[defaults.attack_detection.xss]
+enabled = true
+
+# Path Traversal detection
+[defaults.attack_detection.path_traversal]
+enabled = true
+# Additional patterns to detect (added to defaults)
+custom_patterns = []
+
+# Remote File Inclusion detection
+[defaults.attack_detection.rfi]
+enabled = true
+custom_patterns = []
+
+# Server-Side Request Forgery detection
+[defaults.attack_detection.ssrf]
+enabled = true
+# Block requests to private IP addresses
+block_private_ips = true
+# Whitelist of allowed domains for SSRF checks
+allowed_domains = []
+custom_patterns = []
+
+# =============================================================================
+# BOT PROTECTION DEFAULTS
+# =============================================================================
+
+[defaults.bot]
+# Block AI crawlers (GPTBot, ClaudeBot, etc.)
+block_ai_crawlers = true
+
+# Enable CSS honeypot traps
+enable_css_honeypot = true
+
+# Enable JavaScript challenge
+enable_js_challenge = false
+
+# JavaScript challenge difficulty (1-10)
+js_difficulty = 3
+
+# Search engine bots to allow (never blocked)
+known_bots_allow = [
+    "googlebot",
+    "bingbot",
+    "yandex",
+    "duckduckbot",
+    "slurp",
+    "baiduspider",
+    "yisou",
+    "sogou",
+]
+
+# AI crawlers to block
+ai_crawlers_block = [
+    "GPTBot",
+    "ChatGPT-User",
+    "ClaudeBot",
+    "Claude-Web",
+    "CCBot",
+    "Google-Extended",
+    "Amazonbot",
+    "FacebookBot",
+    "Applebot",
+]
+
+# Challenge configuration
+[defaults.bot.challenge]
+cookie_name = "rustwaf_challenge"
+window_secs = 300
+
+# CSS honeypot configuration
+[defaults.css_challenge]
+enabled = true
+invalid_count_min = 3
+invalid_count_max = 7
+valid_count = 2
+asset_path = "/static/"
+valid_aspect_ratios = ["16:9", "4:3", "1:1", "21:9"]
+
+[defaults.css_challenge.block]
+enabled = true
+ban_duration = "24h"
+
+# =============================================================================
+# HONEYPOT CONFIGURATION
+# =============================================================================
+
+[defaults.honeypot]
+# File containing honeypot endpoint paths (one per line)
+endpoints_file = "config/honeypot_endpoints.txt"
+
+# Duration to ban IPs that access honeypot endpoints
+ban_duration = "24h"
+
+# =============================================================================
+# ENDPOINT BLOCKING DEFAULTS
+# =============================================================================
+
+[defaults.blocked]
+# Paths to block (supports glob patterns)
+paths = [
+    ".env",
+    ".git",
+    ".svn",
+    ".hg",
+    ".htaccess",
+    ".htpasswd",
+    "wp-config.php",
+    "wp-login.php",
+    "wp-admin",
+    "phpmyadmin",
+    "pma",
+    "mysql",
+    "adminer",
+    "backup.sql",
+    "dump.sql",
+    "database.sql",
+    "config.php",
+    "settings.php",
+    "web.config",
+]
+
+# Use regex for path matching
+use_regex = false
+
+# HTTP methods to block on matched paths
+block_methods = ["GET", "POST", "PUT", "DELETE", "PATCH"]
+
+# Response code for blocked requests
+block_response_code = 403
+
+# =============================================================================
+# ERROR PAGES CONFIGURATION
+# =============================================================================
+
+[defaults.error_pages]
+enabled = true
+# Directory containing custom error pages
+directory = "config/error_pages"
+# Optional custom directory (overrides default)
+custom_directory = ""
+
+# =============================================================================
+# THEME CONFIGURATION
+# =============================================================================
+
+[defaults.theme]
+# Theme mode: "dark", "light", or "auto" (follows system preference)
+mode = "auto"
+
+# Restrict to specific theme: "dark", "light", or "both"
+# When set to "dark" or "light", users cannot toggle the theme
+allow_only = "both"
+
+# Branding
+[defaults.theme.branding]
+# Custom logo URL (optional, defaults to RustWAF logo)
+# logo_url = "https://example.com/logo.png"
+title = "RustWAF"
+show_logo = true
+
+# Dark theme colors
+[defaults.theme.colors]
+dark_background = "#1a1a2e"
+dark_surface = "#16213e"
+dark_primary = "#e94560"        # Red accent color
+dark_text = "#f0f0f0"
+dark_border = "rgba(233, 69, 96, 0.4)"
+dark_accent = "#0f3460"
+
+# Light theme colors
+light_background = "#e8e8e8"
+light_surface = "#ffffff"
+light_primary = "#c41e3a"       # Red accent color
+light_text = "#1a1a2e"
+light_border = "rgba(196, 30, 58, 0.3)"
+light_accent = "#3a86ff"
+
+# Spacing
+[defaults.theme.spacing]
+border_radius = "8px"
+padding = "2rem"
+max_width = "420px"
+
+# Visual effects
+[defaults.theme.effects]
+glass_opacity = 0.9
+blur = "12px"
+shadow = "0 8px 32px rgba(0, 0, 0, 0.4)"
+neon_glow = true                # Enable neon glow effects
+
+# =============================================================================
+# WHITELIST CONFIGURATION
+# =============================================================================
+
+[defaults.whitelist]
+# IP addresses to exclude from all WAF checks
+ips = []
+
+# IP networks to exclude from all WAF checks
+networks = []
+
+# User-Agent patterns to whitelist
+user_agents = []
+
+# =============================================================================
+# PROXY LIMITS
+# =============================================================================
+
+[defaults.proxy_limits]
+# Maximum response size in bytes
+max_response_size = 10485760  # 10MB
+
+# Request timeout in seconds
+request_timeout_secs = 30
+
+# =============================================================================
+# BLOCKLIST LIMITS
+# =============================================================================
+
+[defaults.blocklist_limits]
+# Maximum number of blocked IPs to store
+max_entries = 100000
+
+# Persistence file for blocked IPs
+persistence_file = "/var/lib/rustwaf/blocked_ips.json"
+
+# =============================================================================
+# WORKER POOL CONFIGURATION
+# =============================================================================
+
+[defaults.worker_pool]
+# Mode: "auto" (based on CPU cores), "fixed"
+mode = "auto"
+
+# Fixed worker count (when mode = "fixed")
+workers = 4
+
+# =============================================================================
+# PERSISTENCE CONFIGURATION
+# =============================================================================
+
+[defaults.persistence]
+# Enable persistent storage
+enabled = true
+
+# Directory for persistent data
+data_dir = "/var/lib/rustwaf"

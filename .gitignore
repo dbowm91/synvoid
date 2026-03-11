@@ -1,0 +1,8 @@
+/target
+
+# SQLite WAL and shared memory files
+*.db-wal
+*.db-shm
+
+# RustWaf data directories
+/var/lib/rustwaf/
