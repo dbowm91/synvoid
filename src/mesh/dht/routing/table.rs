@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use serde::{Deserialize, Serialize};
 
 use super::bucket::KBucket;
@@ -23,21 +24,21 @@ pub enum InsertError {
     PowVerificationFailed,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, Archive, RkyvDeserialize, RkyvSerialize)]
 pub struct PersistedRoutingTable {
     pub local_node_id: String,
     pub buckets: Vec<PersistedBucket>,
     pub last_updated: u64,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, Archive, RkyvDeserialize, RkyvSerialize)]
 pub struct PersistedBucket {
     pub index: usize,
     pub peers: Vec<PersistedContact>,
     pub last_updated: u64,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, Archive, RkyvDeserialize, RkyvSerialize)]
 pub struct PersistedContact {
     pub node_id: String,
     pub address: String,
@@ -47,6 +48,50 @@ pub struct PersistedContact {
     pub last_seen: u64,
     pub is_global: bool,
     pub is_trusted: bool,
+}
+
+impl PersistedRoutingTable {
+    pub fn to_bytes(&self) -> Result<Vec<u8>, rkyv::rancor::Error> {
+        rkyv::to_bytes::<rkyv::rancor::Error>(self).map(|b| b.into_vec())
+    }
+
+    pub fn from_bytes(data: &[u8]) -> Result<Self, rkyv::rancor::Error> {
+        rkyv::from_bytes::<Self, rkyv::rancor::Error>(data)
+    }
+
+    pub fn to_bytes_postcard(&self) -> Vec<u8> {
+        postcard::to_allocvec(self).unwrap_or_default()
+    }
+
+    pub fn from_bytes_postcard(data: &[u8]) -> Option<Self> {
+        postcard::from_bytes(data).ok()
+    }
+}
+
+impl PersistedBucket {
+    pub fn to_bytes_rkyv(&self) -> Vec<u8> {
+        match rkyv::to_bytes::<rkyv::rancor::Error>(self) {
+            Ok(b) => b.into_vec(),
+            Err(_) => Vec::new(),
+        }
+    }
+
+    pub fn from_bytes_rkyv(data: &[u8]) -> Option<Self> {
+        rkyv::from_bytes::<Self, rkyv::rancor::Error>(data).ok()
+    }
+}
+
+impl PersistedContact {
+    pub fn to_bytes_rkyv(&self) -> Vec<u8> {
+        match rkyv::to_bytes::<rkyv::rancor::Error>(self) {
+            Ok(b) => b.into_vec(),
+            Err(_) => Vec::new(),
+        }
+    }
+
+    pub fn from_bytes_rkyv(data: &[u8]) -> Option<Self> {
+        rkyv::from_bytes::<Self, rkyv::rancor::Error>(data).ok()
+    }
 }
 
 pub struct RoutingTable {
@@ -481,6 +526,17 @@ impl RoutingTable {
                 .unwrap()
                 .as_secs(),
         }
+    }
+
+    pub fn to_persisted_bytes(&self) -> Result<Vec<u8>, rkyv::rancor::Error> {
+        self.to_persisted().to_bytes()
+    }
+
+    pub fn from_persisted_bytes(
+        data: Vec<u8>,
+        local_node_id: NodeId,
+    ) -> Result<Self, rkyv::rancor::Error> {
+        PersistedRoutingTable::from_bytes(&data).map(|p| Self::from_persisted(p, local_node_id))
     }
 
     pub fn from_persisted(data: PersistedRoutingTable, local_node_id: NodeId) -> Self {

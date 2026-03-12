@@ -11,6 +11,7 @@ use super::mode::{detect_upgrade_mode, UpgradeMode};
 use super::spawn::{SpawnConfig, ProcessMode, cleanup_failed_spawns};
 use super::state::{OverseerState, Persistence, UpgradeState};
 use super::preflight::{PreflightValidator, PreflightConfig};
+use super::constants::timeouts::WORKER_READY_TIMEOUT_SECS;
 use crate::process::get_secure_socket_path;
 use crate::http_client::{HttpClient, get_with_timeout, post_json_with_timeout, create_simple_http_client};
 
@@ -676,12 +677,13 @@ impl Orchestrator {
         }
     }
 
-    async fn spawn_upgraded_workers(
+    async fn spawn_workers_impl(
         &self,
         binary_path: &str,
         config_path: Option<&String>,
         ports: &[u16],
         mode: &UpgradeMode,
+        timeout_message: &str,
     ) -> Result<Vec<u16>, UpgradeError> {
         let worker_binary = PathBuf::from(binary_path);
 
@@ -731,30 +733,51 @@ impl Orchestrator {
             }
         }
 
-        let wait_for_ready = async {
-            let start = Instant::now();
-            let timeout = Duration::from_secs(30);
-
-            while start.elapsed() < timeout {
-                tokio::time::sleep(Duration::from_secs(1)).await;
-
-                let all_ready = self
-                    .health_checker
-                    .validate_all(ports, "127.0.0.1", 1, 1)
-                    .await
-                    .is_ok();
-
-                if all_ready {
-                    return Ok(());
-                }
-            }
-
-            Err(UpgradeError::Timeout("Workers failed to become ready".to_string()))
-        };
-
-        wait_for_ready.await?;
+        self.wait_for_workers_ready(&new_ports, timeout_message).await?;
 
         Ok(new_ports)
+    }
+
+    async fn wait_for_workers_ready(
+        &self,
+        ports: &[u16],
+        timeout_message: &str,
+    ) -> Result<(), UpgradeError> {
+        let start = Instant::now();
+        let timeout = Duration::from_secs(WORKER_READY_TIMEOUT_SECS);
+
+        while start.elapsed() < timeout {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+
+            let all_ready = self
+                .health_checker
+                .validate_all(ports, "127.0.0.1", 1, 1)
+                .await
+                .is_ok();
+
+            if all_ready {
+                return Ok(());
+            }
+        }
+
+        Err(UpgradeError::Timeout(timeout_message.to_string()))
+    }
+
+    async fn spawn_upgraded_workers(
+        &self,
+        binary_path: &str,
+        config_path: Option<&String>,
+        ports: &[u16],
+        mode: &UpgradeMode,
+    ) -> Result<Vec<u16>, UpgradeError> {
+        self.spawn_workers_impl(
+            binary_path,
+            config_path,
+            ports,
+            mode,
+            "Workers failed to become ready",
+        )
+        .await
     }
 
     async fn validate_upgrade(
@@ -910,80 +933,16 @@ impl Orchestrator {
         ports: &[u16],
         mode: Option<&UpgradeMode>,
     ) -> Result<Vec<u16>, UpgradeError> {
-        let worker_binary = PathBuf::from(binary_path);
-
-        if !worker_binary.exists() {
-            return Err(UpgradeError::BinaryNotFound(worker_binary));
-        }
-
         let mode = mode.copied().unwrap_or_else(detect_upgrade_mode);
         
-        let new_ports: Vec<u16> = match mode {
-            UpgradeMode::ReusePort => ports.to_vec(),
-            UpgradeMode::PortSwap { temp_port_offset } => {
-                ports.iter().map(|p| p + temp_port_offset).collect()
-            }
-        };
-
-        let mut spawned_pids = Vec::new();
-
-        for (i, &port) in new_ports.iter().enumerate() {
-            let config = SpawnConfig {
-                binary_path: worker_binary.clone(),
-                config_path: PathBuf::from(config_path.unwrap_or(&"config".to_string())),
-                mode: ProcessMode::Worker { worker_id: i, port },
-                master_socket: Some(get_secure_socket_path("master.sock")),
-                upgrade_mode: true,
-                reuse_port: matches!(mode, UpgradeMode::ReusePort),
-                socket_generation: None,
-                versioned_socket: None,
-                receive_sockets: false,
-                socket_ports: Vec::new(),
-            };
-
-            match std::process::Command::new(&config.binary_path)
-                .args(&["--worker", "--worker-id", &i.to_string(), "--port", &port.to_string()])
-                .arg("--config-path")
-                .arg(&config.config_path)
-                .arg("--master-socket")
-                .arg(get_secure_socket_path("master.sock"))
-                .arg("--upgrade-mode")
-                .spawn()
-            {
-                Ok(child) => {
-                    spawned_pids.push(child.id());
-                }
-                Err(e) => {
-                    cleanup_failed_spawns(&spawned_pids);
-                    return Err(UpgradeError::SpawnFailed(e.to_string()));
-                }
-            }
-        }
-
-        let wait_for_ready = async {
-            let start = Instant::now();
-            let timeout = Duration::from_secs(30);
-
-            while start.elapsed() < timeout {
-                tokio::time::sleep(Duration::from_secs(1)).await;
-
-                let all_ready = self
-                    .health_checker
-                    .validate_all(&new_ports, "127.0.0.1", 1, 1)
-                    .await
-                    .is_ok();
-
-                if all_ready {
-                    return Ok(());
-                }
-            }
-
-            Err(UpgradeError::Timeout("Rollback workers failed to become ready".to_string()))
-        };
-
-        wait_for_ready.await?;
-
-        Ok(new_ports)
+        self.spawn_workers_impl(
+            binary_path,
+            config_path,
+            ports,
+            &mode,
+            "Rollback workers failed to become ready",
+        )
+        .await
     }
 
     pub async fn validate_rollback(

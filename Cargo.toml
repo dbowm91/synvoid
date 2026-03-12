@@ -65,6 +65,12 @@ http-body-util = "0.1"
 bytes = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Serialization - postcard for default, rkyv for high-performance paths
+postcard = { version = "1", features = ["alloc"] }
+# rkyv for zero-copy - uses renamed dependency to avoid lightningcss conflict
+# Use package = "rkyv" to rename it
+rkyv = { package = "rkyv", version = "0.8", features = ["std", "alloc"] }
+# Keep bincode for backwards compatibility
 bincode = "1"
 toml = "0.8"
 tracing = "0.1"

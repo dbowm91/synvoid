@@ -13,6 +13,8 @@ pub mod router;
 pub mod logging;
 pub mod utils;
 pub mod serialization;
+pub mod serialization_rkyv;
+pub mod serder;
 pub mod zero_copy;
 pub mod block_store;
 pub mod tcp;

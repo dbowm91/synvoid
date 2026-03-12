@@ -1,11 +1,12 @@
 use std::collections::HashMap;
 
+use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 const MERKLE_TREE_DEGREE: usize = 16;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
 pub struct MerkleNode {
     pub hash: Vec<u8>,
     pub key: Option<String>,
@@ -51,7 +52,7 @@ impl MerkleNode {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
 pub struct MerkleProof {
     pub root_hash: Vec<u8>,
     pub queried_keys: Vec<String>,
@@ -116,7 +117,7 @@ impl MerkleProof {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
 pub struct MerkleProofNode {
     pub hash: Vec<u8>,
     pub position: ProofPosition,
@@ -124,7 +125,18 @@ pub struct MerkleProofNode {
     pub key: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    Archive,
+    RkyvSerialize,
+    RkyvDeserialize,
+)]
 pub enum ProofPosition {
     Left,
     Right,

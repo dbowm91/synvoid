@@ -1,5 +1,6 @@
 use std::time::Instant;
 
+use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use serde::{Deserialize, Serialize};
 
 use super::node_id::NodeId;
@@ -47,7 +48,7 @@ mod serde_secs {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, Archive, RkyvDeserialize, RkyvSerialize)]
 pub struct GeoInfo {
     pub country: Option<String>,
     pub region: Option<String>,

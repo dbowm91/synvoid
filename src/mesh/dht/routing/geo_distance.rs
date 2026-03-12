@@ -1,9 +1,10 @@
+use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use serde::{Deserialize, Serialize};
 
 use super::contact::GeoInfo;
 use super::node_id::NodeId;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, Archive, RkyvDeserialize, RkyvSerialize)]
 pub struct GeoRoutingConfig {
     pub enabled: bool,
     pub latency_weight: f64,

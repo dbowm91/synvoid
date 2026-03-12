@@ -2,6 +2,7 @@ use std::cmp::Ordering;
 use std::fmt;
 use std::ops::BitXor;
 
+use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -9,7 +10,18 @@ pub const NODE_ID_LEN: usize = 32;
 pub const NODE_ID_POW_DIFFICULTY: u32 = 16;
 pub const NODE_ID_POW_PREFIX: &[u8] = b"nodeid-pow-v1:";
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+)]
 pub struct NodeId(pub [u8; NODE_ID_LEN]);
 
 impl NodeId {

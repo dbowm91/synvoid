@@ -14,6 +14,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 
 pub use keys::*;
 pub use store::*;
@@ -110,7 +111,7 @@ pub enum DhtError {
     InvalidKey(String),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
 pub enum DhtConsistencyLevel {
     Low,
     Medium,
@@ -123,6 +124,7 @@ impl Default for DhtConsistencyLevel {
     }
 }
 
+// Note: DhtConfig has complex dependencies - add rkyv derives to individual fields as needed
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DhtConfig {
     pub enabled: bool,

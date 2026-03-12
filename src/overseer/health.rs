@@ -132,6 +132,53 @@ where
     false
 }
 
+pub struct PollResult<T> {
+    pub attempt: u32,
+    pub results: Vec<T>,
+    pub failures: Vec<T>,
+}
+
+pub async fn poll_until_success<T, F, Fut>(
+    retries: u32,
+    interval_secs: u64,
+    mut operation: F,
+    is_success: impl Fn(&[T]) -> bool,
+    format_failure: impl Fn(&[T]) -> String,
+) -> Result<PollResult<T>, Vec<T>>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Vec<T>>,
+    T: Clone,
+{
+    for attempt in 1..=retries {
+        let results = operation().await;
+
+        if is_success(&results) {
+            return Ok(PollResult {
+                attempt,
+                results,
+                failures: Vec::new(),
+            });
+        }
+
+        let failures: Vec<_> = results.iter().cloned().collect();
+        tracing::debug!(
+            "Poll attempt {}/{} failed: {}",
+            attempt,
+            retries,
+            format_failure(&failures)
+        );
+
+        if attempt < retries {
+            tokio::time::sleep(Duration::from_secs(interval_secs)).await;
+        }
+    }
+
+    let results = operation().await;
+    let failures: Vec<_> = results.iter().cloned().collect();
+    Err(failures)
+}
+
 impl HealthChecker {
     pub fn new(health_path: Option<String>, timeout_secs: Option<u64>) -> Self {
         let timeout = Duration::from_secs(timeout_secs.unwrap_or(5));
@@ -259,29 +306,23 @@ impl HealthChecker {
         retries: u32,
         interval_secs: u64,
     ) -> Result<(), Vec<(u16, HealthStatus)>> {
-        for attempt in 1..=retries {
-            let results = self.check_workers(ports, host).await;
+        let host = host.to_string();
+        let this = &*self;
 
-            let all_healthy = results.iter().all(|(_, status)| {
-                matches!(status, HealthStatus::Healthy)
-            });
-
-            if all_healthy {
-                return Ok(());
-            }
-
-            if attempt < retries {
-                tokio::time::sleep(Duration::from_secs(interval_secs)).await;
-            }
-        }
-
-        let results = self.check_workers(ports, host).await;
-        let failures: Vec<_> = results
-            .into_iter()
-            .filter(|(_, status)| !matches!(status, HealthStatus::Healthy))
-            .collect();
-
-        Err(failures)
+        poll_until_success(
+            retries,
+            interval_secs,
+            || {
+                let this = this;
+                let host = host.clone();
+                async move { this.check_workers(ports, &host).await }
+            },
+            |results| results.iter().all(|(_, s)| matches!(s, HealthStatus::Healthy)),
+            |failures| format!("{}/{} unhealthy", failures.len(), ports.len()),
+        )
+        .await
+        .map(|_| ())
+        .map_err(|failures| failures.into_iter().map(|(p, s)| (p, s)).collect())
     }
 
     pub async fn validate_readiness(
@@ -678,5 +719,78 @@ impl std::fmt::Display for HealthStatus {
             }
             HealthStatus::Error(e) => write!(f, "error: {}", e),
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct HealthCheckBuilder {
+    host: String,
+    health_path: Option<String>,
+    timeout_secs: Option<u64>,
+    retries: u32,
+    interval_secs: u64,
+    warmup_secs: u64,
+}
+
+impl HealthCheckBuilder {
+    pub fn new(host: impl Into<String>) -> Self {
+        Self {
+            host: host.into(),
+            health_path: None,
+            timeout_secs: None,
+            retries: 3,
+            interval_secs: 5,
+            warmup_secs: 0,
+        }
+    }
+
+    pub fn with_health_path(mut self, path: impl Into<String>) -> Self {
+        self.health_path = Some(path.into());
+        self
+    }
+
+    pub fn with_timeout(mut self, secs: u64) -> Self {
+        self.timeout_secs = Some(secs);
+        self
+    }
+
+    pub fn with_retries(mut self, retries: u32) -> Self {
+        self.retries = retries;
+        self
+    }
+
+    pub fn with_interval(mut self, secs: u64) -> Self {
+        self.interval_secs = secs;
+        self
+    }
+
+    pub fn with_warmup(mut self, secs: u64) -> Self {
+        self.warmup_secs = secs;
+        self
+    }
+
+    pub fn build(&self) -> HealthChecker {
+        HealthChecker::new(self.health_path.clone(), self.timeout_secs)
+    }
+
+    pub async fn validate(&self, ports: &[u16]) -> Result<(), Vec<(u16, HealthStatus)>> {
+        let checker = self.build();
+        checker
+            .validate_all(ports, &self.host, self.retries, self.interval_secs)
+            .await
+    }
+
+    pub async fn validate_with_readiness(&self, ports: &[u16]) -> Result<Vec<WorkerReadinessStatus>, Vec<WorkerReadinessStatus>> {
+        let checker = self.build();
+        checker
+            .validate_readiness(ports, &self.host, self.retries, self.interval_secs, self.warmup_secs)
+            .await
+    }
+
+    pub async fn enhanced_validate(&self, ports: &[u16], config: &EnhancedHealthConfig) -> Result<Vec<EnhancedHealthResult>, Vec<EnhancedHealthResult>> {
+        let checker = self.build();
+        checker
+            .validate_enhanced(ports, &self.host, config, self.retries, self.interval_secs)
+            .await
     }
 }

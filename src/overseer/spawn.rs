@@ -141,34 +141,57 @@ pub fn spawn_and_log(config: &SpawnConfig, process_type: &str) -> Result<Child, 
     Ok(child)
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum Signal {
+    Term,
+    Kill,
+    User1,
+}
+
+impl Signal {
+    pub fn send(self, pid: u32) -> Result<(), std::io::Error> {
+        #[cfg(unix)]
+        {
+            use nix::sys::signal::Signal as NixSignal;
+            let nix_signal = match self {
+                Signal::Term => NixSignal::SIGTERM,
+                Signal::Kill => NixSignal::SIGKILL,
+                Signal::User1 => NixSignal::SIGUSR1,
+            };
+            nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), nix_signal)?;
+        }
+        #[cfg(not(unix))]
+        {
+            let flag = match self {
+                Signal::Term => "",
+                Signal::Kill => "/F",
+                Signal::User1 => "",
+            };
+            let result = std::process::Command::new("taskkill")
+                .args([flag, "/PID", &pid.to_string()])
+                .output();
+
+            if let Err(e) = result {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("Failed to send signal: {}", e),
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
 pub fn kill_process(pid: u32) -> Result<(), std::io::Error> {
-    #[cfg(unix)]
-    {
-        use nix::sys::signal::Signal;
-        nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), Signal::SIGTERM)?;
-    }
-    #[cfg(not(unix))]
-    {
-        std::process::Command::new("taskkill")
-            .args(["/PID", &pid.to_string()])
-            .spawn()?;
-    }
-    Ok(())
+    Signal::Term.send(pid)
 }
 
 pub fn force_kill_process(pid: u32) -> Result<(), std::io::Error> {
-    #[cfg(unix)]
-    {
-        use nix::sys::signal::Signal;
-        nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), Signal::SIGKILL)?;
-    }
-    #[cfg(not(unix))]
-    {
-        std::process::Command::new("taskkill")
-            .args(["/F", "/PID", &pid.to_string()])
-            .spawn()?;
-    }
-    Ok(())
+    Signal::Kill.send(pid)
+}
+
+pub fn signal_process(pid: u32, signal: Signal) -> Result<(), std::io::Error> {
+    signal.send(pid)
 }
 
 pub fn cleanup_failed_spawns(pids: &[u32]) {

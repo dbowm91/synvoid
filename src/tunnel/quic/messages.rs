@@ -131,7 +131,7 @@ impl PortMapping {
 }
 
 impl TunnelMessage {
-    pub fn encode(&self) -> Result<Vec<u8>, bincode::Error> {
+    pub fn encode(&self) -> std::io::Result<Vec<u8>> {
         crate::serialization::serialize_bincode(self)
     }
 
@@ -266,7 +266,7 @@ impl DatagramMessage {
         self
     }
 
-    pub fn encode(&self) -> Result<Vec<u8>, bincode::Error> {
+    pub fn encode(&self) -> std::io::Result<Vec<u8>> {
         crate::serialization::serialize_bincode(self)
     }
 

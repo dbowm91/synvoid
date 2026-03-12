@@ -140,10 +140,7 @@ impl Supervisor {
             workers.push(worker_arc.clone());
         }
 
-        let _workers_clone = self.workers.clone();
         let event_tx = self.event_tx.clone();
-        let _restart_state = self.restart_state.clone();
-        let _config = self.config.clone();
         let _metrics = self.metrics.clone();
         let running = self.running.clone();
         
@@ -267,7 +264,6 @@ impl Supervisor {
         let metrics = self.metrics.clone();
         let config = self.config.clone();
         let running = self.running.clone();
-        let _restart_state = self.restart_state.clone();
         
         tokio::spawn(async move {
             let mut timer = interval(Duration::from_secs(config.health_check_interval_secs));

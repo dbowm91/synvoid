@@ -1,18 +1,52 @@
+use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    Archive,
+    RkyvSerialize,
+    RkyvDeserialize,
+)]
 pub enum DnsNodeRole {
     Edge,
     Origin,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    Archive,
+    RkyvSerialize,
+    RkyvDeserialize,
+)]
 pub enum DomainVerificationType {
     NsRecord,
     TxtChallenge,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    Archive,
+    RkyvSerialize,
+    RkyvDeserialize,
+)]
 pub enum DomainVerificationStatus {
     Pending,
     InProgress,
@@ -20,7 +54,7 @@ pub enum DomainVerificationStatus {
     Failed,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
 pub struct DomainVerificationRequest {
     pub request_id: String,
     pub domain: String,
@@ -32,7 +66,7 @@ pub struct DomainVerificationRequest {
     pub expires_at: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
 pub struct DomainVerificationResponse {
     pub request_id: String,
     pub domain: String,
@@ -43,7 +77,7 @@ pub struct DomainVerificationResponse {
     pub error_message: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
 pub struct DnsRegistration {
     pub node_id: String,
     pub domain: String,
@@ -58,7 +92,7 @@ pub struct DnsRegistration {
     pub edge_node_geo: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
 pub struct DnsRegistrationWithVerificationRequest {
     pub request_id: String,
     pub registration: DnsRegistration,
@@ -66,7 +100,7 @@ pub struct DnsRegistrationWithVerificationRequest {
     pub timestamp: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
 pub struct DnsRegistrationWithVerificationResponse {
     pub request_id: String,
     pub domain: String,
@@ -80,7 +114,7 @@ pub struct DnsRegistrationWithVerificationResponse {
     pub timestamp: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
 pub struct DomainVerificationStatusUpdate {
     pub request_id: String,
     pub domain: String,
@@ -89,7 +123,7 @@ pub struct DomainVerificationStatusUpdate {
     pub error_message: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
 pub struct DnsRegistrationRequest {
     pub node_id: String,
     pub domains: Vec<DnsRegistration>,
@@ -98,7 +132,7 @@ pub struct DnsRegistrationRequest {
     pub role: DnsNodeRole,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
 pub struct DnsHealthUpdate {
     pub node_id: String,
     pub healthy: bool,
@@ -107,14 +141,14 @@ pub struct DnsHealthUpdate {
     pub consecutive_failures: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
 pub struct DnsZoneSync {
     pub zone: String,
     pub records: Vec<DnsRecord>,
     pub serial: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
 pub struct DnsRecord {
     pub name: String,
     pub record_type: String,
@@ -123,7 +157,7 @@ pub struct DnsRecord {
     pub priority: Option<u32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
 pub struct DnsNodeShutdown {
     pub node_id: String,
     pub role: DnsNodeRole,

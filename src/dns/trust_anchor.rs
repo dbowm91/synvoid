@@ -1,4 +1,5 @@
 use parking_lot::RwLock;
+use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -62,7 +63,7 @@ impl TrustAnchor {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
 pub struct TrustAnchorConfig {
     pub enabled: bool,
     pub anchor_file_path: String,
@@ -90,7 +91,7 @@ pub struct TrustAnchorManager {
     last_refresh: RwLock<u64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
 pub struct TrustAnchorStore {
     pub version: u32,
     pub anchors: Vec<TrustAnchor>,
@@ -347,7 +348,7 @@ pub enum TrustAnchorEvent {
     KeyRevoked { key_tag: u16 },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
 pub struct TrustAnchorStatus {
     pub total_anchors: usize,
     pub valid_anchors: usize,

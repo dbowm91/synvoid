@@ -414,6 +414,25 @@ impl DhtRoutingManager {
         rt.as_ref().map(|t| t.to_persisted())
     }
 
+    pub async fn get_persisted_bytes(&self) -> Option<Vec<u8>> {
+        let rt = self.routing_table.read().await;
+        rt.as_ref().and_then(|t| t.to_persisted_bytes().ok())
+    }
+
+    pub async fn init_with_persisted_bytes(&self, data: Vec<u8>) -> bool {
+        match RoutingTable::from_persisted_bytes(data, self.node_id_hash.clone()) {
+            Ok(table) => {
+                let mut rt = self.routing_table.write().await;
+                *rt = Some(table);
+                true
+            }
+            Err(e) => {
+                tracing::warn!("Failed to deserialize routing table: {}", e);
+                false
+            }
+        }
+    }
+
     pub fn local_node_id(&self) -> &str {
         &self.node_id
     }

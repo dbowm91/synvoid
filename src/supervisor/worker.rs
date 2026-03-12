@@ -112,18 +112,14 @@ impl Worker {
     pub fn record_request_end(&self, latency_ms: u64, blocked: bool, challenged: bool, proxied: bool, error: bool) {
         self.metrics.current_concurrent.fetch_sub(1, Ordering::Relaxed);
         
-        if blocked {
-            self.metrics.blocked.fetch_add(1, Ordering::Relaxed);
-        }
-        if challenged {
-            self.metrics.challenged.fetch_add(1, Ordering::Relaxed);
-        }
-        if proxied {
-            self.metrics.proxied.fetch_add(1, Ordering::Relaxed);
-        }
-        if error {
-            self.metrics.errors.fetch_add(1, Ordering::Relaxed);
-        }
+        [
+            (blocked, &self.metrics.blocked),
+            (challenged, &self.metrics.challenged),
+            (proxied, &self.metrics.proxied),
+            (error, &self.metrics.errors),
+        ].iter()
+            .filter(|(flag, _)| *flag)
+            .for_each(|(_, counter)| { counter.fetch_add(1, Ordering::Relaxed); });
         
         self.metrics.total_latency_ms.fetch_add(latency_ms, Ordering::Relaxed);
         self.metrics.request_count.fetch_add(1, Ordering::Relaxed);

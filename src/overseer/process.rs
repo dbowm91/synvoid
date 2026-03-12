@@ -517,6 +517,45 @@ impl OverseerProcess {
     }
 
     async fn spawn_upgraded_master(&mut self, binary_path: &str) -> Result<(), std::io::Error> {
+        let config = self.build_spawn_config(
+            binary_path,
+            self.config_path.clone(),
+            false,
+            false,
+            None,
+            None,
+            false,
+            Vec::new(),
+        )?;
+        
+        let child = spawn_and_log(&config, "upgraded master")?;
+        
+        self.master_child = Some(child);
+        self.stable_since = Some(Instant::now());
+        self.restart_count = 0;
+        
+        Ok(())
+    }
+
+    fn get_staged_checksum(&self) -> Option<String> {
+        match self.orchestrator.state.try_read() { Ok(state) => {
+            state.staged_binary_checksum.clone()
+        } _ => {
+            None
+        }}
+    }
+
+    fn build_spawn_config(
+        &self,
+        binary_path: &str,
+        config_path: PathBuf,
+        upgrade_mode: bool,
+        reuse_port: bool,
+        socket_generation: Option<u32>,
+        versioned_socket: Option<PathBuf>,
+        receive_sockets: bool,
+        socket_ports: Vec<u16>,
+    ) -> Result<SpawnConfig, std::io::Error> {
         let binary = PathBuf::from(binary_path);
         
         if !binary.exists() {
@@ -548,34 +587,18 @@ impl OverseerProcess {
             }
         }
 
-        let config = SpawnConfig {
+        Ok(SpawnConfig {
             binary_path: binary,
-            config_path: self.config_path.clone(),
+            config_path,
             mode: ProcessMode::Master,
             master_socket: None,
-            upgrade_mode: false,
-            reuse_port: false,
-            socket_generation: None,
-            versioned_socket: None,
-            receive_sockets: false,
-            socket_ports: Vec::new(),
-        };
-        
-        let child = spawn_and_log(&config, "upgraded master")?;
-        
-        self.master_child = Some(child);
-        self.stable_since = Some(Instant::now());
-        self.restart_count = 0;
-        
-        Ok(())
-    }
-
-    fn get_staged_checksum(&self) -> Option<String> {
-        match self.orchestrator.state.try_read() { Ok(state) => {
-            state.staged_binary_checksum.clone()
-        } _ => {
-            None
-        }}
+            upgrade_mode,
+            reuse_port,
+            socket_generation,
+            versioned_socket,
+            receive_sockets,
+            socket_ports,
+        })
     }
 
     pub async fn get_master_status(&self) -> Option<MasterStatusInfo> {
@@ -712,31 +735,20 @@ impl OverseerProcess {
         binary_path: &str,
         config_path: Option<&str>,
     ) -> Result<(), std::io::Error> {
-        let binary = PathBuf::from(binary_path);
-        
-        if !binary.exists() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                format!("Binary not found: {}", binary_path)
-            ));
-        }
-
         let generation = next_master_generation();
         self.upgrade_generation = Some(generation);
         let versioned_socket = get_versioned_master_socket_path(generation);
 
-        let config = SpawnConfig {
-            binary_path: binary,
-            config_path: config_path.map(PathBuf::from).unwrap_or_else(|| self.config_path.clone()),
-            mode: ProcessMode::Master,
-            master_socket: None,
-            upgrade_mode: true,
-            reuse_port: true,
-            socket_generation: Some(generation),
-            versioned_socket: Some(versioned_socket.clone()),
-            receive_sockets: false,
-            socket_ports: Vec::new(),
-        };
+        let config = self.build_spawn_config(
+            binary_path,
+            config_path.map(PathBuf::from).unwrap_or_else(|| self.config_path.clone()),
+            true,
+            true,
+            Some(generation),
+            Some(versioned_socket),
+            false,
+            Vec::new(),
+        )?;
         
         let child = spawn_and_log(&config, &format!("upgraded master (dual mode) using socket gen {}", generation))?;
         
@@ -856,27 +868,16 @@ impl OverseerProcess {
         config_path: Option<&str>,
         ports: &[u16],
     ) -> Result<(), std::io::Error> {
-        let binary = PathBuf::from(binary_path);
-
-        if !binary.exists() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                format!("Binary not found: {}", binary_path),
-            ));
-        }
-
-        let config = SpawnConfig {
-            binary_path: binary,
-            config_path: config_path.map(PathBuf::from).unwrap_or_else(|| self.config_path.clone()),
-            mode: ProcessMode::Master,
-            master_socket: None,
-            upgrade_mode: true,
-            reuse_port: false,
-            socket_generation: None,
-            versioned_socket: None,
-            receive_sockets: true,
-            socket_ports: ports.to_vec(),
-        };
+        let config = self.build_spawn_config(
+            binary_path,
+            config_path.map(PathBuf::from).unwrap_or_else(|| self.config_path.clone()),
+            true,
+            false,
+            None,
+            None,
+            true,
+            ports.to_vec(),
+        )?;
         
         let child = spawn_and_log(&config, "upgraded master (socket handoff mode)")?;
 

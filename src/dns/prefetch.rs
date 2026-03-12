@@ -1,4 +1,5 @@
 use parking_lot::RwLock;
+use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -37,7 +38,7 @@ pub struct DnsPrefetcher {
     last_cleanup: RwLock<Instant>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
 pub struct PrefetchedSignature {
     pub qname: String,
     pub qtype: u16,
@@ -196,7 +197,7 @@ impl DnsPrefetcher {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
 pub struct PrefetchStats {
     pub total_tracked_names: usize,
     pub prefetched_signatures: usize,

@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -14,6 +14,21 @@ use super::ipc::{Message, WorkerId, WorkerMetricsPayload, WorkerStatus, ErrorSev
 
 pub type SharedIpc = Arc<tokio::sync::Mutex<IpcStream>>;
 use super::ipc_rate_limit::IpcRateLimiter;
+
+macro_rules! delegate_to_base {
+    ($ty:ty) => {
+        impl $ty {
+            pub fn pid(&self) -> Option<u32> { self.base.pid() }
+            pub fn status(&self) -> &WorkerStatus { self.base.status() }
+            pub fn status_mut(&mut self) -> &mut WorkerStatus { self.base.status_mut() }
+            pub fn child_ref(&self) -> &Option<Child> { self.base.child_ref() }
+            pub fn child_mut(&mut self) -> &mut Option<Child> { self.base.child_mut() }
+            pub fn started_at(&self) -> Instant { self.base.started_at() }
+            pub fn last_heartbeat(&self) -> Instant { self.base.last_heartbeat() }
+            pub fn last_heartbeat_mut(&mut self) -> &mut Instant { self.base.last_heartbeat_mut() }
+        }
+    };
+}
 
 #[derive(Debug, Clone)]
 pub struct WorkerConfig {
@@ -94,16 +109,9 @@ impl WorkerProcess {
             last_restart_at: if restart_count > 0 { Some(Instant::now()) } else { None },
         }
     }
-
-    pub fn pid(&self) -> Option<u32> { self.base.pid() }
-    pub fn status(&self) -> &WorkerStatus { self.base.status() }
-    pub fn status_mut(&mut self) -> &mut WorkerStatus { self.base.status_mut() }
-    pub fn child_ref(&self) -> &Option<Child> { self.base.child_ref() }
-    pub fn child_mut(&mut self) -> &mut Option<Child> { self.base.child_mut() }
-    pub fn started_at(&self) -> Instant { self.base.started_at() }
-    pub fn last_heartbeat(&self) -> Instant { self.base.last_heartbeat() }
-    pub fn last_heartbeat_mut(&mut self) -> &mut Instant { self.base.last_heartbeat_mut() }
 }
+
+delegate_to_base!(WorkerProcess);
 
 pub struct StaticWorkerProcess {
     pub worker_id: usize,
@@ -119,15 +127,9 @@ impl StaticWorkerProcess {
             ipc: None,
         }
     }
-
-    pub fn pid(&self) -> Option<u32> { self.base.pid() }
-    pub fn status(&self) -> &WorkerStatus { self.base.status() }
-    pub fn status_mut(&mut self) -> &mut WorkerStatus { self.base.status_mut() }
-    pub fn child_ref(&self) -> &Option<Child> { self.base.child_ref() }
-    pub fn child_mut(&mut self) -> &mut Option<Child> { self.base.child_mut() }
-    pub fn last_heartbeat(&self) -> Instant { self.base.last_heartbeat() }
-    pub fn last_heartbeat_mut(&mut self) -> &mut Instant { self.base.last_heartbeat_mut() }
 }
+
+delegate_to_base!(StaticWorkerProcess);
 
 pub struct UnifiedServerWorkerProcess {
     pub id: WorkerId,
@@ -149,15 +151,9 @@ impl UnifiedServerWorkerProcess {
             ipc: None,
         }
     }
-
-    pub fn pid(&self) -> Option<u32> { self.base.pid() }
-    pub fn status(&self) -> &WorkerStatus { self.base.status() }
-    pub fn status_mut(&mut self) -> &mut WorkerStatus { self.base.status_mut() }
-    pub fn child_ref(&self) -> &Option<Child> { self.base.child_ref() }
-    pub fn child_mut(&mut self) -> &mut Option<Child> { self.base.child_mut() }
-    pub fn last_heartbeat(&self) -> Instant { self.base.last_heartbeat() }
-    pub fn last_heartbeat_mut(&mut self) -> &mut Instant { self.base.last_heartbeat_mut() }
 }
+
+delegate_to_base!(UnifiedServerWorkerProcess);
 
 pub struct ProcessManagerConfig {
     pub min_workers: usize,
@@ -314,6 +310,38 @@ impl ProcessManager {
         worker_id
     }
 
+    fn build_worker_command(&self, binary_path: &Path) -> Command {
+        let mut cmd = Command::new(binary_path);
+        
+        if let Some(ref level) = self.config.log_level {
+            cmd.arg("--log-level").arg(level);
+        }
+
+        if let Some(ref key) = self.config.ipc_session_key {
+            let key_hex = key.iter().map(|b| format!("{:02x}", b)).collect::<String>();
+            cmd.arg("--ipc-key").arg(key_hex);
+        }
+
+        cmd.arg("--config-path")
+            .arg(&self.config.config_path)
+            .arg("--master-socket")
+            .arg(&self.config.master_socket_path)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        
+        cmd
+    }
+
+    fn record_spawn(&self, id: &WorkerId, pid: u32, port: Option<u16>, event: ProcessEvent) {
+        self.metrics.total_spawns.fetch_add(1, Ordering::Relaxed);
+        let _ = self.event_tx.blocking_send(event);
+        if let Some(p) = port {
+            tracing::info!("Spawned worker {} with PID {} on port {}", id, pid, p);
+        } else {
+            tracing::info!("Spawned worker {} with PID {}", id, pid);
+        }
+    }
+
     pub fn spawn_worker(&self) -> std::io::Result<WorkerId> {
         let id = self.allocate_worker_id();
         let port = self.config.worker_port_base + id.as_usize() as u16;
@@ -328,28 +356,12 @@ impl ProcessManager {
     fn spawn_worker_with_id_and_count(&self, id: WorkerId, port: u16, restart_count: u32) -> std::io::Result<WorkerId> {
         let worker_binary = self.find_worker_binary()?;
         
-        let mut cmd = Command::new(&worker_binary);
+        let mut cmd = self.build_worker_command(&worker_binary);
         cmd.arg("--worker")
             .arg("--worker-id")
             .arg(id.as_usize().to_string())
             .arg("--port")
-            .arg(port.to_string())
-            .arg("--config-path")
-            .arg(&self.config.config_path)
-            .arg("--master-socket")
-            .arg(&self.config.master_socket_path);
-        
-        if let Some(ref level) = self.config.log_level {
-            cmd.arg("--log-level").arg(level);
-        }
-
-        if let Some(ref key) = self.config.ipc_session_key {
-            let key_hex = key.iter().map(|b| format!("{:02x}", b)).collect::<String>();
-            cmd.arg("--ipc-key").arg(key_hex);
-        }
-
-        cmd.stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+            .arg(port.to_string());
 
         let child = cmd.spawn()?;
 
@@ -361,15 +373,7 @@ impl ProcessManager {
             workers.insert(id.as_usize(), worker_process);
         }
 
-        self.metrics.total_spawns.fetch_add(1, Ordering::Relaxed);
-        
-        let _ = self.event_tx.blocking_send(ProcessEvent::WorkerStarted(
-            id.clone(),
-            pid,
-            port,
-        ));
-
-        tracing::info!("Spawned worker {} with PID {} on port {}", id, pid, port);
+        self.record_spawn(&id, pid, Some(port), ProcessEvent::WorkerStarted(id.clone(), pid, port));
         Ok(id)
     }
 
@@ -391,16 +395,12 @@ impl ProcessManager {
             None => self.find_worker_binary()?,
         };
         
-        let mut cmd = Command::new(&worker_binary);
+        let mut cmd = self.build_worker_command(&worker_binary);
         cmd.arg("--worker")
             .arg("--worker-id")
             .arg(id.as_usize().to_string())
             .arg("--port")
-            .arg(port.to_string())
-            .arg("--config-path")
-            .arg(&self.config.config_path)
-            .arg("--master-socket")
-            .arg(&self.config.master_socket_path);
+            .arg(port.to_string());
         
         if upgrade_mode {
             cmd.arg("--upgrade-mode");
@@ -409,18 +409,6 @@ impl ProcessManager {
         if reuse_port {
             cmd.arg("--reuse-port");
         }
-        
-        if let Some(ref level) = self.config.log_level {
-            cmd.arg("--log-level").arg(level);
-        }
-
-        if let Some(ref key) = self.config.ipc_session_key {
-            let key_hex = key.iter().map(|b| format!("{:02x}", b)).collect::<String>();
-            cmd.arg("--ipc-key").arg(key_hex);
-        }
-
-        cmd.stdout(Stdio::piped())
-            .stderr(Stdio::piped());
 
         let child = cmd.spawn()?;
 
@@ -432,14 +420,12 @@ impl ProcessManager {
             workers.insert(id.as_usize(), worker_process);
         }
 
-        self.metrics.total_spawns.fetch_add(1, Ordering::Relaxed);
-        
-        let _ = self.event_tx.blocking_send(ProcessEvent::WorkerStarted(
-            id.clone(),
-            pid,
-            port,
-        ));
-
+        self.record_spawn(
+            &id, 
+            pid, 
+            Some(port), 
+            ProcessEvent::WorkerStarted(id.clone(), pid, port)
+        );
         tracing::info!("Spawned upgrade worker {} with PID {} on port {} (upgrade={}, reuse_port={})", 
             id, pid, port, upgrade_mode, reuse_port);
         Ok(id)
@@ -448,21 +434,10 @@ impl ProcessManager {
     pub fn spawn_static_worker(&self) -> std::io::Result<usize> {
         let worker_binary = self.find_worker_binary()?;
         
-        let mut cmd = Command::new(&worker_binary);
+        let mut cmd = self.build_worker_command(&worker_binary);
         cmd.arg("--static-worker")
             .arg("--static-worker-id")
-            .arg("0")
-            .arg("--config-path")
-            .arg(&self.config.config_path)
-            .arg("--master-socket")
-            .arg(&self.config.master_socket_path);
-        
-        if let Some(ref level) = self.config.log_level {
-            cmd.arg("--log-level").arg(level);
-        }
-
-        cmd.stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+            .arg("0");
 
         let child = cmd.spawn()?;
         let pid = child.id();
@@ -486,32 +461,17 @@ impl ProcessManager {
         let pending_threads = *self.pending_thread_count.read();
         let worker_threads = pending_threads.unwrap_or(2) as usize;
         
-        let mut cmd = Command::new(&worker_binary);
+        let mut cmd = self.build_worker_command(&worker_binary);
         cmd.arg("--unified-server-worker")
             .arg("--worker-id")
             .arg("0")
             .arg("--worker-threads")
-            .arg(worker_threads.to_string())
-            .arg("--config-path")
-            .arg(&self.config.config_path)
-            .arg("--master-socket")
-            .arg(&self.config.master_socket_path);
-        
-        if let Some(ref level) = self.config.log_level {
-            cmd.arg("--log-level").arg(level);
-        }
+            .arg(worker_threads.to_string());
 
-        cmd.stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-
-        let child = cmd.spawn();
-        let child = match child {
-            Ok(c) => c,
-            Err(e) => {
-                tracing::error!("Failed to spawn unified server worker: {}", e);
-                return Err(e);
-            }
-        };
+        let child = cmd.spawn().map_err(|e| {
+            tracing::error!("Failed to spawn unified server worker: {}", e);
+            e
+        })?;
 
         let pid = child.id();
         let unified_worker_process = UnifiedServerWorkerProcess::new(id.clone(), pid, child);
@@ -521,14 +481,12 @@ impl ProcessManager {
             *unified_server_worker = Some(unified_worker_process);
         }
 
-        self.metrics.total_spawns.fetch_add(1, Ordering::Relaxed);
-        
-        let _ = self.event_tx.blocking_send(ProcessEvent::UnifiedServerWorkerStarted(
-            id.clone(),
-            pid,
-        ));
-
-        tracing::info!("Spawned unified server worker with PID {}", pid);
+        self.record_spawn(
+            &id, 
+            pid, 
+            None, 
+            ProcessEvent::UnifiedServerWorkerStarted(id.clone(), pid)
+        );
         Ok(id)
     }
 

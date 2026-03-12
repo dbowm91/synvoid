@@ -1,6 +1,7 @@
+use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
 pub struct NetworkPolicy {
     pub min_reputation_for_read: i64,
     pub min_reputation_for_write: i64,
@@ -66,7 +67,7 @@ impl NetworkPolicy {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
 pub struct BlockedNode {
     pub node_id: String,
     pub blocked_ip: Option<String>,
@@ -119,7 +120,7 @@ impl BlockedNode {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
 pub struct GlobalNodeBlocklist {
     pub blocked_nodes: Vec<BlockedNode>,
     pub last_updated: u64,

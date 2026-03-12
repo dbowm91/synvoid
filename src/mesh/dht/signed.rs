@@ -1,13 +1,14 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::Engine;
+use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use serde::{Deserialize, Serialize};
 
 use crate::integrity::protocol::{Ed25519Signer, Ed25519Verifier};
 
 pub const DHT_MESSAGE_TIMESTAMP_WINDOW_SECS: i64 = 300;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
 pub struct SignedDhtRecord {
     pub key: String,
     pub value: Vec<u8>,
@@ -22,7 +23,18 @@ pub struct SignedDhtRecord {
     pub signer_public_key: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    Archive,
+    RkyvSerialize,
+    RkyvDeserialize,
+)]
 pub enum SignedRecordType {
     Organization,
     TierKey,
@@ -223,18 +235,28 @@ impl SignedDhtRecord {
             || self.record_type.requires_confirmation()
     }
 
-    pub fn serialize(&self) -> Vec<u8> {
-        serde_json::to_vec(self).unwrap_or_default()
+    pub fn serialize(&self) -> Result<Vec<u8>, rkyv::rancor::Error> {
+        rkyv::to_bytes::<rkyv::rancor::Error>(self).map(|b| b.into_vec())
     }
 
-    pub fn deserialize(data: &[u8]) -> Option<Self> {
-        serde_json::from_slice(data).ok()
+    pub fn deserialize(data: &[u8]) -> Result<Self, rkyv::rancor::Error> {
+        rkyv::from_bytes::<Self, rkyv::rancor::Error>(data)
     }
 
     pub fn serialize_value<T: Serialize>(value: &T) -> Vec<u8> {
         serde_json::to_vec(value).unwrap_or_default()
     }
 
+    pub fn serialize_json(&self) -> Vec<u8> {
+        serde_json::to_vec(self).unwrap_or_default()
+    }
+
+    pub fn deserialize_json(data: &[u8]) -> Option<Self> {
+        serde_json::from_slice(data).ok()
+    }
+
+    /// Get signable content for signature verification
+    /// Format: key,value,publisher_id,sequence_number,created_at,source_node_id
     pub fn get_signable_content(&self) -> String {
         format!(
             "{},{},{},{},{},{}",

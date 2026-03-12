@@ -107,7 +107,7 @@ struct MasterState {
 
 impl MasterState {
     fn new(
-        config: Arc<RwLock<ConfigManager>>, 
+        config: Arc<RwLock<ConfigManager>>,
         probe_tracker: Option<Arc<ProbeTracker>>,
         suspicious_word_tracker: Option<Arc<SuspiciousWordTracker>>,
         upstream_error_tracker: Option<Arc<UpstreamErrorTracker>>,
@@ -117,7 +117,7 @@ impl MasterState {
         mesh_transport: Option<Arc<maluwaf::mesh::transport::MeshTransport>>,
     ) -> Self {
         let (shutdown_tx, _) = broadcast::channel(1);
-        
+
         Self {
             config,
             shutdown_tx,
@@ -130,11 +130,11 @@ impl MasterState {
             mesh_transport,
         }
     }
-    
+
     fn subscribe_shutdown(&self) -> broadcast::Receiver<()> {
         self.shutdown_tx.subscribe()
     }
-    
+
     async fn shutdown(&self) {
         let _ = self.shutdown_tx.send(());
     }
@@ -145,7 +145,7 @@ use maluwaf::common::setup_panic_handler;
 fn setup_signal_handlers(master_state: MasterState, process_manager: Arc<ProcessManager>) {
     let state = master_state.clone();
     let pm = process_manager.clone();
-    
+
     tokio::spawn(async move {
         match tokio::signal::ctrl_c().await {
             Ok(()) => {
@@ -170,7 +170,7 @@ fn setup_signal_handlers(master_state: MasterState, process_manager: Arc<Process
     {
         let state = master_state.clone();
         let pm = process_manager.clone();
-        
+
         tokio::spawn(async move {
             #[cfg(unix)]
             {
@@ -181,16 +181,16 @@ fn setup_signal_handlers(master_state: MasterState, process_manager: Arc<Process
                         return;
                     }
                 };
-                
+
                 sigterm.recv().await;
             }
-            
+
             #[cfg(windows)]
             {
                 use tokio::signal::ctrl_c;
                 ctrl_c().await.ok();
             }
-            
+
             tracing::info!("Received shutdown signal, initiating graceful shutdown...");
             state.shutdown().await;
             pm.graceful_shutdown().await;
@@ -209,7 +209,7 @@ fn init_logging_simple() {
 
 fn print_test_mode_warning(test_flags: &[String]) {
     let mut disabled = Vec::new();
-    
+
     for flag in test_flags {
         match flag.as_str() {
             "challenge-off" | "challenge_off" => disabled.push("challenge"),
@@ -225,26 +225,23 @@ fn print_test_mode_warning(test_flags: &[String]) {
             _ => {}
         }
     }
-    
+
     if disabled.is_empty() {
         disabled.push("ALL");
     }
-    
+
     let is_all_disabled = disabled.iter().any(|s| s.to_lowercase() == "all");
     let disabled_str = if is_all_disabled {
         "ALL".to_string()
     } else {
         disabled.join(", ")
     };
-    
+
     eprintln!("");
-    eprintln!("╔═══════════════════════════════════════════════════════════════════════════╗");
-    eprintln!("║                     WARNING: TEST MODE ENABLED                           ║");
-    eprintln!("║                                                                       ║");
-    eprintln!("║  Protections DISABLED: {}                                          ║", disabled_str);
-    eprintln!("║  This mode is intended for throughput/capacity testing only.         ║");
-    eprintln!("║  DO NOT use in production.                                          ║");
-    eprintln!("╚═══════════════════════════════════════════════════════════════════════════╝");
+    eprintln!("WARNING: TEST MODE ENABLED");
+    eprintln!("  Protections DISABLED: {}", disabled_str);
+    eprintln!("  This mode is intended for throughput/capacity testing only.");
+    eprintln!("  DO NOT use in production.");
     eprintln!("");
 }
 
@@ -323,7 +320,7 @@ fn main() {
         if !args.force {
             eprintln!("ERROR: --test requires --force flag");
             eprintln!("This mode disables security protections and should only be used for testing.");
-            eprintln!("If you are sure you want to proceed, add --force");
+            eprintln!("If you're sure you want to proceed, add --force");
             std::process::exit(1);
         }
         print_test_mode_warning(test_flags);
@@ -333,7 +330,7 @@ fn main() {
     let mut pid_manager = PidFileManager::new();
     let current_pid = std::process::id();
     let version = env!("CARGO_PKG_VERSION");
-    
+
     if !pid_manager.try_acquire(current_pid, version).unwrap_or(false) {
         eprintln!("RustWAF is already running (PID: {:?})", pid_manager.get_pid());
         std::process::exit(1);
@@ -407,7 +404,7 @@ fn main() {
 
         let worker_threads = args.worker_threads.unwrap_or(2);
         let paths = PlatformPaths::new();
-        
+
         let unified_worker_args = UnifiedServerWorkerArgs {
             worker_id: args.unified_worker_id.unwrap_or(0),
             config_path: args.config_path.unwrap_or_else(|| PathBuf::from("config")),
@@ -461,13 +458,13 @@ fn main() {
 
         // Daemonize unless foreground flag is set or test mode is enabled
         let should_daemonize = !args.foreground && args.test.is_none();
-        
+
         if should_daemonize {
             #[cfg(unix)]
             {
                 let current_dir = std::env::current_dir()
                     .unwrap_or_else(|_| std::path::PathBuf::from("/"));
-                
+
                 let result = {
                     // SAFETY: daemon.start() must be called before any threads exist.
                     // This runs during early initialization before Tokio runtime starts.
@@ -519,7 +516,7 @@ fn main() {
             Ok(Err(e)) => {
                 tracing::error!("RustWAF master process error: {}", e);
                 eprintln!("Error: {}", e);
-                
+
                 eprintln!("Master process exiting due to error");
                 std::process::exit(1);
             }
@@ -547,7 +544,7 @@ async fn run_master(
             tracing::warn!("Failed to install post-quantum TLS provider: {:?}. Using default.", e);
         } else {
             tracing::info!("Post-quantum TLS (X25519MLKEM768) enabled");
-            
+
             // Verify PQ is actually available by checking supported key exchange groups
             use rustls::crypto::CryptoProvider;
             let provider = CryptoProvider::get_default();
@@ -568,15 +565,13 @@ async fn run_master(
     let log_level_for_process = log_level_override.clone();
     init_logging(&main_config.logging, log_level_override);
 
-    tracing::info!("========================================");
     tracing::info!("Starting RustWAF - Multi-Process WAF");
-    tracing::info!("========================================");
     tracing::info!("Main HTTP entry: http://{}:{}", main_config.server.host, main_config.server.port);
 
     let site_results = config_manager.discover_sites();
     let loaded_count = site_results.iter().filter(|r| r.1.is_ok()).count();
     let failed_count = site_results.iter().filter(|r| r.1.is_err()).count();
-    
+
     tracing::info!("Loaded {} site(s), {} failed", loaded_count, failed_count);
 
     for (site_id, result) in &site_results {
@@ -588,9 +583,9 @@ async fn run_master(
     let config_path_for_process = config_manager.sites_dir.parent()
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| config_manager.sites_dir.clone());
-    
+
     let shared_config = Arc::new(RwLock::new(config_manager));
-    
+
     // ============================================================================================
     // CRITICAL ARCHITECTURAL REQUIREMENT: Master process must NEVER run UnifiedServer inline.
     //
@@ -620,7 +615,7 @@ async fn run_master(
     // NOTE: We do NOT create UnifiedServer inline here. Trackers for admin panel
     // will be obtained from Workers via IPC or created separately if needed.
     // The Master ONLY orchestrates - it does not handle requests.
-    
+
     // Create BlockStore for persistent blocklist management in Master
     let data_dir = main_config.persistence.data_dir.as_ref()
         .map(|d| PathBuf::from(d));
@@ -629,10 +624,10 @@ async fn run_master(
         data_dir,
         main_config.blocklist_limits.clone(),
     ));
-    
+
     // Clone for ProcessManager before moving into MasterState
     let master_block_store_for_pm = master_block_store.clone();
-    
+
     // Initialize rule feed manager if enabled
     let rule_feed_config = main_config.rule_feed.clone();
     let rule_feed_manager = if rule_feed_config.enabled {
@@ -643,11 +638,11 @@ async fn run_master(
     } else {
         None
     };
-    
+
     let master_state = MasterState::new(
-        shared_config.clone(), 
+        shared_config.clone(),
         None, // probe_tracker - obtained from workers via IPC in production
-        None, // suspicious_word_tracker - obtained from workers via IPC  
+        None, // suspicious_word_tracker - obtained from workers via IPC
         None, // upstream_error_tracker - obtained from workers via IPC
         None, // threat_level_manager - obtained from workers via IPC
         rule_feed_manager.clone(), // rule_feed_manager - initialized above
@@ -670,7 +665,7 @@ async fn run_master(
             .encode_wide()
             .chain(std::iter::once(0))
             .collect();
-        
+
         // Try to clean up any existing pipe
         // SAFETY: CreateNamedPipeW returns a new handle which we immediately close.
         // This attempts to clean up a stale pipe from a previous crashed process.
@@ -679,8 +674,8 @@ async fn run_master(
                 windows_sys::Win32::System::Pipes::CreateNamedPipeW(
                     pipe_name.as_ptr(),
                     windows_sys::Win32::System::Pipes::PIPE_ACCESS_DUPLEX,
-                    windows_sys::Win32::System::Pipes::PIPE_TYPE_MESSAGE 
-                        | windows_sys::Win32::System::Pipes::PIPE_READMODE_MESSAGE 
+                    windows_sys::Win32::System::Pipes::PIPE_TYPE_MESSAGE
+                        | windows_sys::Win32::System::Pipes::PIPE_READMODE_MESSAGE
                         | windows_sys::Win32::System::Pipes::PIPE_WAIT,
                     1,
                     65536,
@@ -767,7 +762,7 @@ async fn run_master(
                 match ipc_listener.accept().await {
                     Ok(ipc) => {
                         let pm = pm_clone.clone();
-                        
+
                         tokio::spawn(async move {
                             handle_worker_connection(ipc, pm).await;
                         });
@@ -783,13 +778,13 @@ async fn run_master(
     #[cfg(windows)]
     {
         tracing::info!("Master IPC listening on Windows named pipe: \\\\.\\pipe\\maluwaf-master");
-        
-        // On Windows, we need a different approach for IPC
+
+        // On Windows, need to do IPC different
         // The workers will connect via named pipes
-        // For now, we'll spawn a background task that handles Windows pipe connections
+        // This spawns a background task that handles Windows pipe connections
         let pm_clone = process_manager.clone();
         let master_path = master_socket_path.clone();
-        
+
         tokio::spawn(async move {
             windows_ipc_accept_loop(pm_clone, master_path).await;
         });
@@ -835,7 +830,7 @@ async fn run_master(
     let admin_state = master_state.clone();
     tokio::spawn(async move {
         maluwaf::admin::start_admin_server(
-            admin_state.config, 
+            admin_state.config,
             admin_state.probe_tracker,
             admin_state.suspicious_word_tracker,
             admin_state.upstream_error_tracker,
@@ -896,7 +891,7 @@ async fn run_master(
                     }
                 }
             }
-            
+
             _ = shutdown_rx.recv() => {
                 tracing::info!("Shutdown signal received");
                 break;
@@ -918,7 +913,7 @@ async fn run_master(
 #[cfg(windows)]
 async fn windows_ipc_accept_loop(process_manager: Arc<ProcessManager>, pipe_name: PathBuf) {
     use std::os::windows::ffi::OsStrExt;
-    
+
     let pipe_name_str = format!("\\\\.\\pipe\\maluwaf-master");
     let pipe_name_wide: Vec<u16> = std::ffi::OsStr::new(&pipe_name_str)
         .encode_wide()
@@ -932,8 +927,8 @@ async fn windows_ipc_accept_loop(process_manager: Arc<ProcessManager>, pipe_name
             windows_sys::Win32::System::Pipes::CreateNamedPipeW(
                 pipe_name_wide.as_ptr(),
                 windows_sys::Win32::System::Pipes::PIPE_ACCESS_DUPLEX,
-                windows_sys::Win32::System::Pipes::PIPE_TYPE_MESSAGE 
-                    | windows_sys::Win32::System::Pipes::PIPE_READMODE_MESSAGE 
+                windows_sys::Win32::System::Pipes::PIPE_TYPE_MESSAGE
+                    | windows_sys::Win32::System::Pipes::PIPE_READMODE_MESSAGE
                     | windows_sys::Win32::System::Pipes::PIPE_WAIT,
                 1,
                 65536,
@@ -973,7 +968,7 @@ async fn windows_ipc_accept_loop(process_manager: Arc<ProcessManager>, pipe_name
         // Convert raw handle to File
         // SAFETY: from_raw_handle takes ownership of pipe_handle; we validated it's non-zero above.
         let stream = unsafe { std::fs::File::from_raw_handle(pipe_handle as std::os::windows::io::RawHandle) };
-        
+
         let pm = process_manager.clone();
         tokio::spawn(async move {
             let ipc = IpcStream::new(stream);
@@ -985,7 +980,7 @@ async fn windows_ipc_accept_loop(process_manager: Arc<ProcessManager>, pipe_name
 #[cfg(windows)]
 async fn windows_command_pipe_listener(config_manager: Arc<RwLock<ConfigManager>>) {
     use std::os::windows::ffi::OsStrExt;
-    
+
     let pipe_name_str = "\\\\.\\pipe\\maluwaf-commands";
     let pipe_name_wide: Vec<u16> = std::ffi::OsStr::new(pipe_name_str)
         .encode_wide()
@@ -999,8 +994,8 @@ async fn windows_command_pipe_listener(config_manager: Arc<RwLock<ConfigManager>
             windows_sys::Win32::System::Pipes::CreateNamedPipeW(
                 pipe_name_wide.as_ptr(),
                 windows_sys::Win32::System::Pipes::PIPE_ACCESS_DUPLEX,
-                windows_sys::Win32::System::Pipes::PIPE_TYPE_MESSAGE 
-                    | windows_sys::Win32::System::Pipes::PIPE_READMODE_MESSAGE 
+                windows_sys::Win32::System::Pipes::PIPE_TYPE_MESSAGE
+                    | windows_sys::Win32::System::Pipes::PIPE_READMODE_MESSAGE
                     | windows_sys::Win32::System::Pipes::PIPE_WAIT,
                 1,
                 65536,
@@ -1049,9 +1044,9 @@ async fn windows_command_pipe_listener(config_manager: Arc<RwLock<ConfigManager>
 #[cfg(windows)]
 async fn handle_command_connection(stream: std::fs::File, config_manager: Arc<RwLock<ConfigManager>>) {
     use std::io::{Read, Write};
-    
+
     let mut stream = stream;
-    
+
     // Read command
     let mut length_buf = [0u8; 4];
     match stream.read_exact(&mut length_buf) {
@@ -1061,19 +1056,19 @@ async fn handle_command_connection(stream: std::fs::File, config_manager: Arc<Rw
             return;
         }
     }
-    
+
     let len = u32::from_be_bytes(length_buf) as usize;
     if len > 1024 * 1024 {
         let _ = stream.write_all(&0u32.to_be_bytes());
         return;
     }
-    
+
     let mut json_buf = vec![0u8; len];
     if let Err(e) = stream.read_exact(&mut json_buf) {
         tracing::warn!("Failed to read command: {}", e);
         return;
     }
-    
+
     let command: crate::process::MasterCommand = match serde_json::from_slice(&json_buf) {
         Ok(c) => c,
         Err(e) => {
@@ -1082,7 +1077,7 @@ async fn handle_command_connection(stream: std::fs::File, config_manager: Arc<Rw
             return;
         }
     };
-    
+
     // Handle command and send response
     let response = match command {
         crate::process::MasterCommand::Stop { graceful } => {

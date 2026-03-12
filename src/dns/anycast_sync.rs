@@ -5,11 +5,12 @@ use std::time::Duration;
 use futures::FutureExt;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
+use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 
 use crate::dns::server::{DnsZoneRecord, RecordType, Zone, ZoneHistory};
 use crate::mesh::transport::MeshTransport;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
 pub struct ZoneSyncMetadata {
     pub zone_origin: String,
     pub serial: u32,
@@ -18,14 +19,14 @@ pub struct ZoneSyncMetadata {
     pub source_node_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
 pub struct SerializedZoneVersion {
     pub serial: u32,
     pub records: Vec<SerializedRecord>,
     pub timestamp: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
 pub struct SerializedZoneData {
     pub origin: String,
     pub serial: u32,
@@ -33,7 +34,7 @@ pub struct SerializedZoneData {
     pub history: Vec<SerializedZoneVersion>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
 pub struct SerializedIxfrData {
     pub origin: String,
     pub serial: u32,
@@ -41,7 +42,7 @@ pub struct SerializedIxfrData {
     pub changes: Vec<ZoneChange>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
 pub struct ZoneChange {
     pub change_type: String,
     pub name: String,
@@ -51,7 +52,7 @@ pub struct ZoneChange {
     pub priority: Option<u32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
 pub struct SerializedRecord {
     pub name: String,
     pub record_type: String,

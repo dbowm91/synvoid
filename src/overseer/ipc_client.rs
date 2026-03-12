@@ -21,9 +21,24 @@ impl IpcClient {
         self
     }
 
-    pub fn connect(&self) -> Result<IpcStream, String> {
+    fn connect(&self) -> Result<IpcStream, String> {
         IpcStream::connect_unix(&self.socket_path)
             .map_err(|e| format!("Failed to connect to {}: {}", self.socket_path.display(), e))
+    }
+
+    fn handle_recv_result(
+        &self,
+        result: Result<Option<Message>, io::Error>,
+    ) -> Result<Message, String> {
+        match result {
+            Ok(Some(msg)) => Ok(msg),
+            Ok(None) => Err(self.timeout_error()),
+            Err(e) => Err(format!("IPC error: {}", e)),
+        }
+    }
+
+    fn timeout_error(&self) -> String {
+        format!("Timeout waiting for response after {}ms", self.timeout_ms)
     }
 
     pub fn send_and_expect<F>(&mut self, request: &Message, expected: F) -> Result<Message, String>
@@ -36,14 +51,11 @@ impl IpcClient {
             .send(request)
             .map_err(|e| format!("Failed to send message: {}", e))?;
 
-        match stream.recv(self.timeout_ms) {
+        let result = stream.recv(self.timeout_ms);
+        match result {
             Ok(Some(msg)) if expected(&msg) => Ok(msg),
             Ok(Some(msg)) => Err(format!("Unexpected response: {:?}", msg)),
-            Ok(None) => Err(format!(
-                "Timeout waiting for response after {}ms",
-                self.timeout_ms
-            )),
-            Err(e) => Err(format!("IPC error: {}", e)),
+            _ => self.handle_recv_result(result),
         }
     }
 
@@ -56,14 +68,7 @@ impl IpcClient {
 
     pub fn recv(&mut self) -> Result<Message, String> {
         let mut stream = self.connect()?;
-        match stream.recv(self.timeout_ms) {
-            Ok(Some(msg)) => Ok(msg),
-            Ok(None) => Err(format!(
-                "Timeout waiting for response after {}ms",
-                self.timeout_ms
-            )),
-            Err(e) => Err(format!("IPC error: {}", e)),
-        }
+        self.handle_recv_result(stream.recv(self.timeout_ms))
     }
 
     pub fn send_and_recv(&mut self, msg: &Message) -> Result<Message, String> {
@@ -73,14 +78,7 @@ impl IpcClient {
             .send(msg)
             .map_err(|e| format!("Failed to send: {}", e))?;
 
-        match stream.recv(self.timeout_ms) {
-            Ok(Some(resp)) => Ok(resp),
-            Ok(None) => Err(format!(
-                "Timeout waiting for response after {}ms",
-                self.timeout_ms
-            )),
-            Err(e) => Err(format!("IPC error: {}", e)),
-        }
+        self.handle_recv_result(stream.recv(self.timeout_ms))
     }
 }
 

@@ -165,6 +165,16 @@ impl Default for DrainFlag {
     }
 }
 
+const DURATION_SUFFIXES: &[(&str, &str, u64)] = &[
+    ("milliseconds", "ms", 1),
+    ("seconds", "s", 1),
+    ("minutes", "m", 60),
+    ("hours", "h", 3600),
+    ("days", "d", 86400),
+];
+
+const DURATION_SUFFIX_SHORT: &[(char, u64)] = &[('s', 1), ('m', 60), ('h', 3600), ('d', 86400)];
+
 pub fn parse_duration(s: &str) -> Option<u64> {
     let s = s.trim();
 
@@ -175,7 +185,6 @@ pub fn parse_duration(s: &str) -> Option<u64> {
     if s.eq_ignore_ascii_case("never")
         || s.eq_ignore_ascii_case("permanent")
         || s.eq_ignore_ascii_case("0")
-        || s.eq_ignore_ascii_case("0s")
     {
         return Some(0);
     }
@@ -184,61 +193,29 @@ pub fn parse_duration(s: &str) -> Option<u64> {
         return Some(num);
     }
 
-    if s.len() >= 2 {
-        let last_two = &s[s.len() - 2..];
-        if last_two.eq_ignore_ascii_case("ms") {
-            return s[..s.len() - 2].parse::<u64>().ok().map(|n| n / 1000);
-        }
+    if s.len() < 2 {
+        return None;
+    }
 
-        if s.len() >= 9 && s[s.len() - 7..].eq_ignore_ascii_case("seconds") {
-            return s[..s.len() - 7].parse::<u64>().ok();
+    for (long_suffix, _short_suffix, multiplier) in DURATION_SUFFIXES {
+        let suffix_len = long_suffix.len();
+        if s.len() > suffix_len && s[s.len() - suffix_len..].eq_ignore_ascii_case(long_suffix) {
+            let value = s[..s.len() - suffix_len].parse::<u64>().ok()?;
+            return Some(value * multiplier);
         }
-        if s.len() >= 9 && s[s.len() - 7..].eq_ignore_ascii_case("minutes") {
-            return s[..s.len() - 7].parse::<u64>().ok().map(|n| n * 60);
-        }
-        if s.len() >= 6 && s[s.len() - 5..].eq_ignore_ascii_case("hours") {
-            return s[..s.len() - 5].parse::<u64>().ok().map(|n| n * 3600);
-        }
+    }
 
-        if s.len() >= 5 && s[s.len() - 4..].eq_ignore_ascii_case("secs") {
-            return s[..s.len() - 4].parse::<u64>().ok();
+    let last_char = s.chars().last()?;
+    for (short_suffix, multiplier) in DURATION_SUFFIX_SHORT {
+        if last_char.eq_ignore_ascii_case(short_suffix) {
+            let value = s[..s.len() - 1].parse::<u64>().ok()?;
+            return Some(value * multiplier);
         }
-        if s.len() >= 5 && s[s.len() - 4..].eq_ignore_ascii_case("mins") {
-            return s[..s.len() - 4].parse::<u64>().ok().map(|n| n * 60);
-        }
-        if s.len() >= 4 && s[s.len() - 3..].eq_ignore_ascii_case("hrs") {
-            return s[..s.len() - 3].parse::<u64>().ok().map(|n| n * 3600);
-        }
-        if s.len() >= 5 && s[s.len() - 4..].eq_ignore_ascii_case("days") {
-            return s[..s.len() - 4].parse::<u64>().ok().map(|n| n * 86400);
-        }
+    }
 
-        if s.len() >= 4 && s[s.len() - 3..].eq_ignore_ascii_case("sec") {
-            return s[..s.len() - 3].parse::<u64>().ok();
-        }
-        if s.len() >= 4 && s[s.len() - 3..].eq_ignore_ascii_case("min") {
-            return s[..s.len() - 3].parse::<u64>().ok().map(|n| n * 60);
-        }
-        if s.len() >= 3 && s[s.len() - 2..].eq_ignore_ascii_case("hr") {
-            return s[..s.len() - 2].parse::<u64>().ok().map(|n| n * 3600);
-        }
-        if s.len() >= 4 && s[s.len() - 3..].eq_ignore_ascii_case("day") {
-            return s[..s.len() - 3].parse::<u64>().ok().map(|n| n * 86400);
-        }
-
-        let last_one = &s[s.len() - 1..];
-        if last_one == "s" || last_one == "S" {
-            return s[..s.len() - 1].parse::<u64>().ok();
-        }
-        if last_one == "m" || last_one == "M" {
-            return s[..s.len() - 1].parse::<u64>().ok().map(|n| n * 60);
-        }
-        if last_one == "h" || last_one == "H" {
-            return s[..s.len() - 1].parse::<u64>().ok().map(|n| n * 3600);
-        }
-        if last_one == "d" || last_one == "D" {
-            return s[..s.len() - 1].parse::<u64>().ok().map(|n| n * 86400);
-        }
+    if s.ends_with("ms") {
+        let value = s[..s.len() - 2].parse::<u64>().ok()?;
+        return Some(value / 1000);
     }
 
     None
@@ -362,6 +339,16 @@ pub fn is_ipv6_host(host: &str) -> bool {
 }
 
 #[inline]
+fn hash_ipv6(ipv6: std::net::Ipv6Addr) -> u64 {
+    let segments = ipv6.segments();
+    let mut hash: u64 = 0;
+    for seg in &segments {
+        hash = hash.wrapping_mul(0x9e3779b9).wrapping_add(u64::from(*seg));
+    }
+    hash
+}
+
+#[inline]
 pub fn ip_to_slot(ip: IpAddr, num_slots: usize) -> usize {
     match ip {
         IpAddr::V4(ipv4) => {
@@ -374,11 +361,7 @@ pub fn ip_to_slot(ip: IpAddr, num_slots: usize) -> usize {
             (hash >> 16) as usize % num_slots
         }
         IpAddr::V6(ipv6) => {
-            let segments = ipv6.segments();
-            let mut hash: u64 = 0;
-            for seg in segments.iter() {
-                hash = hash.wrapping_mul(0x9e3779b9).wrapping_add(u64::from(*seg));
-            }
+            let hash = hash_ipv6(ipv6);
             (hash >> 32) as usize % num_slots
         }
     }
@@ -394,14 +377,7 @@ pub fn hash_ip(ip: IpAddr) -> usize {
                 | (u32::from(octets[2]) << 8)
                 | u32::from(octets[3])) as usize
         }
-        IpAddr::V6(ipv6) => {
-            let segments = ipv6.segments();
-            let mut hash: u64 = 0;
-            for seg in segments.iter() {
-                hash = hash.wrapping_mul(0x9e3779b9).wrapping_add(u64::from(*seg));
-            }
-            hash as usize
-        }
+        IpAddr::V6(ipv6) => hash_ipv6(ipv6) as usize,
     }
 }
 

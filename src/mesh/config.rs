@@ -2,12 +2,24 @@
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use parking_lot::RwLock;
+use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
 use crate::config::site::ProxyUpstreamConfig;
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+)]
 pub struct MeshNodeRole(u8);
 
 impl MeshNodeRole {

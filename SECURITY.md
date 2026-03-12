@@ -116,9 +116,10 @@ The following vulnerabilities exist in transitive dependencies and are documente
 
 | Crate | Alternative | Status | Notes |
 |-------|-------------|--------|-------|
-| `bincode` | Abstraction layer | **Abstraction added** | IPC via serialization wrapper |
+| ~~`bincode`~~ | ~~`postcard`~~ | **Completed** | Replaced with postcard |
 | `paste` | None | Acceptable | Transitive via utoipa |
 | `proc-macro-error` | None | Acceptable | Transitive via yew |
+| `atomic-polyfill` | None | Acceptable | Transitive via postcard/heapless |
 | ~~`rustls-pemfile`~~ | ~~`rustls-pki-types`~~ | **Completed** | TLS certificate parsing |
 
 ---
@@ -141,17 +142,33 @@ The following vulnerabilities exist in transitive dependencies and are documente
   - `src/mesh/cert.rs`
   - `src/tunnel/quic/tls.rs`
 
-### bincode → Serialization Abstraction Layer
-- **Issue**: Unmaintained (RUSTSEC-2025-0141)
-- **Fix**: Created abstraction layer (`src/serialization.rs`) to wrap serialization
-- **Rationale**: Allows future migration to alternative serializers without API changes
-- **Files changed**:
-  - Added `src/serialization.rs` (wrapper module)
-  - Updated `src/process/ipc_framing.rs`
-  - Updated `src/process/ipc_signed.rs`
-  - Updated `src/tunnel/quic/ipc.rs`
-  - Updated `src/tunnel/quic/messages.rs`
-  - Updated `src/tunnel/quic/codec.rs`
+### bincode → postcard Migration
+- **Issue**: bincode unmaintained (RUSTSEC-2025-0141)
+- **Fix**: Migrated to `postcard` for serialization
+- **Benefits**: 
+  - Actively maintained
+  - 30% smaller serialized output
+  - No dependency conflicts
+- **Completed**: 2025-03-11
+
+### rkyv for High-Performance Paths
+- **Purpose**: Zero-copy serialization for DNS and DHT operations
+- **Implementation**:
+  - Added `rkyv` dependency (renamed to avoid lightningcss conflict)
+  - Created `src/serialization_rkyv.rs` module re-exporting rkyv
+  - Added rkyv derives to DNS message types (`src/dns/messages.rs`)
+  - Added rkyv derives to DHT types (keys, signed, stake, network_policy, merkle, store, routing)
+  - Added rkyv derives to `MeshNodeRole` in `src/mesh/config.rs`
+- **Default Serialization**: rkyv is now the default for:
+  - `SignedDhtRecord::serialize()` / `deserialize()` - DHT record storage
+  - `PersistedRoutingTable::to_bytes()` / `from_bytes()` - routing table persistence
+  - `RoutingTable::to_persisted_bytes()` / `from_persisted_bytes()` - routing table
+  - `DhtRoutingManager::get_persisted_bytes()` / `init_with_persisted_bytes()` - manager API
+- **Fallback Methods**: 
+  - `serialize_json()` / `deserialize_json()` - for wire format compatibility
+  - `to_bytes_postcard()` / `from_bytes_postcard()` - for postcard compatibility
+- **Error Handling**: Methods return `Result` types with proper error propagation
+- **Completed**: 2025-03-12
 
 ### yara-x/rsa Exposure Assessment (RUSTSEC-2023-0071)
 - **Vulnerability**: Marvin Attack - potential key recovery through timing side-channels
