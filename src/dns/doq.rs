@@ -98,14 +98,14 @@ impl DoqServer {
         let config = resolver.build_server_config()
             .map_err(|e| format!("Failed to build TLS config: {}", e))?;
         
-        Ok(Arc::new(config))
+        Ok(config)
     }
 
     async fn accept_loop(
         mut endpoint: quinn::Endpoint,
         dns_server: Arc<RwLock<Option<DnsServer>>>,
         config: Arc<DnsDoqConfig>,
-        shutdown_rx: oneshot::Receiver<()>,
+        mut shutdown_rx: oneshot::Receiver<()>,
     ) {
         loop {
             tokio::select! {
@@ -239,16 +239,18 @@ impl DoqServer {
         let query_buf = Self::read_query(&mut recv).await?;
         counter!("maluwaf.doq.queries.total").increment(1);
 
-        let dns_server_guard = dns_server.read();
-        let server = match dns_server_guard.as_ref() {
-            Some(s) => s,
-            None => {
-                counter!("maluwaf.doq.query.errors").increment(1);
-                return Err("DNS server not configured".to_string());
-            }
-        };
+        let response = {
+            let dns_server_guard = dns_server.read();
+            let server = match dns_server_guard.as_ref() {
+                Some(s) => s,
+                None => {
+                    counter!("maluwaf.doq.query.errors").increment(1);
+                    return Err("DNS server not configured".to_string());
+                }
+            };
 
-        let response = Self::process_query(server, &query_buf, client_ip);
+            Self::process_query(server, &query_buf, client_ip)
+        };
 
         match response {
             Some(resp) => {
@@ -263,7 +265,7 @@ impl DoqServer {
         Ok(())
     }
 
-    fn process_query(server: &DnsServer, query: &[u8], client_ip: IpAddr) -> Option<Vec<u8>> {
+    fn process_query(server: &DnsServer, query: &[u8], client_ip: IpAddr) -> Option<Arc<Vec<u8>>> {
         let zones = server.get_zones();
         let zone_trie = server.get_zone_trie();
         let cache = server.get_cache();

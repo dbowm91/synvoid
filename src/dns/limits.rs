@@ -86,7 +86,7 @@ impl ConnectionLimits {
     }
 
     pub fn should_reject_request(&self) -> bool {
-        if !self.degraded_mode.load(Ordering::Relaxed) {
+        if !self.degraded_mode.get() {
             return false;
         }
 
@@ -124,7 +124,7 @@ impl ConnectionLimits {
     }
 
     pub fn try_acquire_connection(&self) -> Result<ConnectionGuard, ConnectionLimitError> {
-        if self.graceful_shutdown.load(Ordering::Relaxed) {
+        if self.graceful_shutdown.get() {
             return Err(ConnectionLimitError::GracefulShutdown);
         }
 
@@ -144,7 +144,7 @@ impl ConnectionLimits {
     }
 
     pub fn try_acquire_query(&self) -> Result<QueryGuard, ConnectionLimitError> {
-        if self.graceful_shutdown.load(Ordering::Relaxed) {
+        if self.graceful_shutdown.get() {
             return Err(ConnectionLimitError::GracefulShutdown);
         }
 

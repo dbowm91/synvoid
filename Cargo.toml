@@ -19,7 +19,7 @@ name = "server"
 path = "src/bin/server.rs"
 
 [features]
-default = ["socket-handoff", "post-quantum"]
+default = ["socket-handoff", "post-quantum", "mesh"]
 dns = []
 socket-handoff = []
 daemonize = []
@@ -31,6 +31,7 @@ audit = []
 post-quantum = ["dep:rustls-post-quantum"]
 verify-pq = []
 tun-rs = []
+mesh = []
 
 # TODO: Remove git patch when quinn 0.11.10+ is released with fixed quinn-proto
 # Tracking: https://github.com/quinn-rs/quinn/releases

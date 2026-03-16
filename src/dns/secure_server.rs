@@ -59,7 +59,7 @@ impl<C: DnsServerConfig> SecureDnsServerBase<C> {
         handle_connection: F,
     ) -> Result<(), String>
     where
-        F: Fn(tokio::net::TcpStream, SocketAddr, Arc<RwLock<Option<DnsServer>>>, TlsAcceptor) -> Fut
+        F: Fn(tokio::net::TcpStream, SocketAddr, Arc<RwLock<Option<DnsServer>>>, Arc<TlsAcceptor>) -> Fut
             + Send
             + Sync
             + Clone
@@ -76,7 +76,7 @@ impl<C: DnsServerConfig> SecureDnsServerBase<C> {
 
         tracing::info!("{} server listening on {}", server_name, bind_addr);
 
-        let acceptor = self.create_tls_acceptor()?;
+        let acceptor = Arc::new(self.create_tls_acceptor()?);
 
         let dns_server = self.dns_server.clone();
         let config = self.config.clone();
@@ -95,19 +95,17 @@ impl<C: DnsServerConfig> SecureDnsServerBase<C> {
         listener: TcpListener,
         dns_server: Arc<RwLock<Option<DnsServer>>>,
         _config: Arc<C>,
-        acceptor: TlsAcceptor,
+        acceptor: Arc<TlsAcceptor>,
         shutdown_rx: oneshot::Receiver<()>,
         handle_connection: F,
     ) where
-        F: Fn(tokio::net::TcpStream, SocketAddr, Arc<RwLock<Option<DnsServer>>>, TlsAcceptor) -> Fut
+        F: Fn(tokio::net::TcpStream, SocketAddr, Arc<RwLock<Option<DnsServer>>>, Arc<TlsAcceptor>) -> Fut
             + Send
             + Sync
             + Clone
             + 'static,
         Fut: std::future::Future<Output = Result<(), String>> + Send,
     {
-        let acceptor = Arc::new(acceptor);
-
         tokio::select! {
             _ = shutdown_rx => {
                 tracing::info!("DNS server shutting down");

@@ -1504,6 +1504,76 @@ impl DnsServer {
                                                     )
                                                 }
                                             }
+                                            None => {
+                                                if let Some(ref c) = cache_udp {
+                                                    Self::handle_query_with_cache(
+                                                        &zones_udp,
+                                                        &zone_trie_udp,
+                                                        &buf[..len],
+                                                        mesh_registry_udp.as_ref(),
+                                                        geoip_lookup_udp.as_ref(),
+                                                        min_geo_ttl,
+                                                        negative_cache_ttl,
+                                                        c,
+                                                        cache_key,
+                                                        dnssec.as_ref(),
+                                                        signer_name.as_ref(),
+                                                        Some(client_ip),
+                                                        zone_transfer_udp.as_ref(),
+                                                        &ecs_filter_config_udp,
+                                                        update_handler_udp.as_ref(),
+                                                        notify_handler_udp.as_ref(),
+                                                    )
+                                                } else {
+                                                    Self::handle_query(
+                                                        &zones_udp,
+                                                        &zone_trie_udp,
+                                                        &buf[..len],
+                                                        mesh_registry_udp.as_ref(),
+                                                        geoip_lookup_udp.as_ref(),
+                                                        min_geo_ttl,
+                                                        Some(client_ip),
+                                                        &ecs_filter_config_udp,
+                                                        update_handler_udp.as_ref(),
+                                                        notify_handler_udp.as_ref(),
+                                                    )
+                                                }
+                                            }
+                                            _ => {
+                                                if let Some(ref c) = cache_udp {
+                                                    Self::handle_query_with_cache(
+                                                        &zones_udp,
+                                                        &zone_trie_udp,
+                                                        &buf[..len],
+                                                        mesh_registry_udp.as_ref(),
+                                                        geoip_lookup_udp.as_ref(),
+                                                        min_geo_ttl,
+                                                        negative_cache_ttl,
+                                                        c,
+                                                        cache_key,
+                                                        dnssec.as_ref(),
+                                                        signer_name.as_ref(),
+                                                        Some(client_ip),
+                                                        zone_transfer_udp.as_ref(),
+                                                        &ecs_filter_config_udp,
+                                                        update_handler_udp.as_ref(),
+                                                        notify_handler_udp.as_ref(),
+                                                    )
+                                                } else {
+                                                    Self::handle_query(
+                                                        &zones_udp,
+                                                        &zone_trie_udp,
+                                                        &buf[..len],
+                                                        mesh_registry_udp.as_ref(),
+                                                        geoip_lookup_udp.as_ref(),
+                                                        min_geo_ttl,
+                                                        Some(client_ip),
+                                                        &ecs_filter_config_udp,
+                                                        update_handler_udp.as_ref(),
+                                                        notify_handler_udp.as_ref(),
+                                                    )
+                                                }
+                                            }
                                         }
                                     } else {
                                         if let Some(ref c) = cache_udp {
@@ -1839,6 +1909,76 @@ update_handler_udp.as_ref(),
                                                 Some(resp)
                                             }
                                             Some(super::query_coalesce::CoalesceResult::NewQuery(_)) => {
+                                                if let Some(ref c) = cache_udp {
+                                                    Self::handle_query_with_cache(
+                                                        &zones_udp,
+                                                        &zone_trie_udp,
+                                                        &buf[..len],
+                                                        mesh_registry_udp.as_ref(),
+                                                        geoip_lookup_udp.as_ref(),
+                                                        min_geo_ttl,
+                                                        negative_cache_ttl,
+                                                        c,
+                                                        cache_key,
+                                                        dnssec.as_ref(),
+                                                        signer_name.as_ref(),
+                                                        Some(client_ip),
+                                                        zone_transfer_udp.as_ref(),
+                                                        &ecs_filter_config_udp,
+                                                        update_handler_udp.as_ref(),
+                                                        notify_handler_udp.as_ref(),
+                                                    )
+                                                } else {
+                                                    Self::handle_query(
+                                                        &zones_udp,
+                                                        &zone_trie_udp,
+                                                        &buf[..len],
+                                                        mesh_registry_udp.as_ref(),
+                                                        geoip_lookup_udp.as_ref(),
+                                                        min_geo_ttl,
+                                                        Some(client_ip),
+                                                        &ecs_filter_config_udp,
+                                                        update_handler_udp.as_ref(),
+                                                        notify_handler_udp.as_ref(),
+                                                    )
+                                                }
+                                            }
+                                            None => {
+                                                if let Some(ref c) = cache_udp {
+                                                    Self::handle_query_with_cache(
+                                                        &zones_udp,
+                                                        &zone_trie_udp,
+                                                        &buf[..len],
+                                                        mesh_registry_udp.as_ref(),
+                                                        geoip_lookup_udp.as_ref(),
+                                                        min_geo_ttl,
+                                                        negative_cache_ttl,
+                                                        c,
+                                                        cache_key,
+                                                        dnssec.as_ref(),
+                                                        signer_name.as_ref(),
+                                                        Some(client_ip),
+                                                        zone_transfer_udp.as_ref(),
+                                                        &ecs_filter_config_udp,
+                                                        update_handler_udp.as_ref(),
+                                                        notify_handler_udp.as_ref(),
+                                                    )
+                                                } else {
+                                                    Self::handle_query(
+                                                        &zones_udp,
+                                                        &zone_trie_udp,
+                                                        &buf[..len],
+                                                        mesh_registry_udp.as_ref(),
+                                                        geoip_lookup_udp.as_ref(),
+                                                        min_geo_ttl,
+                                                        Some(client_ip),
+                                                        &ecs_filter_config_udp,
+                                                        update_handler_udp.as_ref(),
+                                                        notify_handler_udp.as_ref(),
+                                                    )
+                                                }
+                                            }
+                                            _ => {
                                                 if let Some(ref c) = cache_udp {
                                                     Self::handle_query_with_cache(
                                                         &zones_udp,
@@ -2214,6 +2354,76 @@ update_handler_udp.as_ref(),
                         Some(resp)
                     }
                     Some(super::query_coalesce::CoalesceResult::NewQuery(_)) => {
+                        if let Some(c) = cache {
+                            Self::handle_query_with_cache(
+                                zones,
+                                zone_trie,
+                                &query,
+                                mesh_registry,
+                                geoip_lookup,
+                                min_geo_ttl,
+                                negative_cache_ttl,
+                                c,
+                                cache_key,
+                                dnssec,
+                                signer_name,
+                                Some(client_ip),
+                                zone_transfer,
+                                ecs_filter_config,
+                                update_handler,
+                                notify_handler,
+                            )
+                        } else {
+                            Self::handle_query(
+                                zones,
+                                zone_trie,
+                                &query,
+                                mesh_registry,
+                                geoip_lookup,
+                                min_geo_ttl,
+                                Some(client_ip),
+                                ecs_filter_config,
+                                update_handler,
+                                notify_handler,
+                            )
+                        }
+                    }
+                    None => {
+                        if let Some(c) = cache {
+                            Self::handle_query_with_cache(
+                                zones,
+                                zone_trie,
+                                &query,
+                                mesh_registry,
+                                geoip_lookup,
+                                min_geo_ttl,
+                                negative_cache_ttl,
+                                c,
+                                cache_key,
+                                dnssec,
+                                signer_name,
+                                Some(client_ip),
+                                zone_transfer,
+                                ecs_filter_config,
+                                update_handler,
+                                notify_handler,
+                            )
+                        } else {
+                            Self::handle_query(
+                                zones,
+                                zone_trie,
+                                &query,
+                                mesh_registry,
+                                geoip_lookup,
+                                min_geo_ttl,
+                                Some(client_ip),
+                                ecs_filter_config,
+                                update_handler,
+                                notify_handler,
+                            )
+                        }
+                    }
+                    _ => {
                         if let Some(c) = cache {
                             Self::handle_query_with_cache(
                                 zones,

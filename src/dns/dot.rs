@@ -45,10 +45,12 @@ impl DotServer {
     }
 
     pub async fn start(&mut self) -> Result<(), String> {
+        let bind_address = self.base.config.bind_address.clone();
+        let port = self.base.config.port;
         self.base
             .start_server(
-                &self.base.config.bind_address,
-                self.base.config.port,
+                &bind_address,
+                port,
                 "DoT server",
                 Self::handle_connection,
             )
