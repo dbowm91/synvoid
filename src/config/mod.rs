@@ -12,6 +12,7 @@ pub mod main;
 pub mod mesh;
 pub mod network;
 pub mod plugins;
+pub mod process;
 pub mod protection;
 pub mod security;
 pub mod server;
@@ -54,6 +55,9 @@ pub use network::{
     UdpProtocolConfig, UdpSocketConfig,
 };
 pub use plugins::{PluginConfig, WasmPluginGlobalConfig, WasmPluginInstanceConfig};
+pub use process::{
+    OverseerConfig, ProcessManagerConfig, SupervisorConfig, SupervisorConfigBuilder,
+};
 pub use protection::{
     IpFeedConfig, MimesConfig, RuleFeedConfig, ThreatLevelBanDurations, ThreatLevelConfig,
     ThreatLevelEscalation, ThreatLevelGlobalLimits, YaraRuleFeedConfig,

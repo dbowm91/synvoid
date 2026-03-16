@@ -517,6 +517,84 @@ impl AuthManager {
         None
     }
 
+    pub async fn validate_session_with_ip(&self, session_id: &str, client_ip: &str) -> Option<SessionInfo> {
+        let mut store = self.store.write().await;
+        
+        let session_data = store.sessions.get(session_id).map(|s| {
+            if s.expires_at > Utc::now() {
+                Some(SessionData {
+                    user_id: s.user_id.clone(),
+                    username: s.username.clone(),
+                    expires_at: s.expires_at,
+                    created_at: s.created_at,
+                    ip_address: s.ip_address.clone(),
+                    user_agent: s.user_agent.clone(),
+                })
+            } else {
+                None
+            }
+        }).flatten();
+
+        if let Some(data) = session_data {
+            if data.ip_address.as_deref() != Some(client_ip) {
+                tracing::warn!("Session {} used from IP {} but was created from IP {:?} - possible session hijacking", 
+                    session_id, client_ip, data.ip_address);
+                store.sessions.remove(session_id);
+                self.save_store(&store).await;
+                return None;
+            }
+
+            let now = Utc::now();
+            let remaining = data.expires_at.signed_duration_since(now);
+            let total_duration = data.expires_at.signed_duration_since(data.created_at);
+            let elapsed_ratio = 1.0 - (remaining.num_seconds() as f64 / total_duration.num_seconds() as f64);
+            
+            if elapsed_ratio > self.session_refresh_threshold {
+                let new_session_id = Uuid::new_v4().to_string();
+                let expires_at = Utc::now() + chrono::Duration::seconds(self.session_duration_secs as i64);
+                let new_csrf_token = Uuid::new_v4().to_string();
+                
+                store.sessions.remove(session_id);
+                
+                let new_session = Session {
+                    id: new_session_id.clone(),
+                    user_id: data.user_id.clone(),
+                    username: data.username.clone(),
+                    created_at: now,
+                    expires_at,
+                    ip_address: data.ip_address.clone(),
+                    user_agent: data.user_agent.clone(),
+                    csrf_token: Some(new_csrf_token),
+                };
+                
+                store.sessions.insert(new_session_id.clone(), new_session);
+                
+                self.save_store(&store).await;
+                
+                return Some(SessionInfo {
+                    id: new_session_id,
+                    user_id: data.user_id,
+                    username: data.username,
+                    expires_at,
+                });
+            }
+            
+            return Some(SessionInfo {
+                id: session_id.to_string(),
+                user_id: data.user_id,
+                username: data.username,
+                expires_at: data.expires_at,
+            });
+        } else {
+            if store.sessions.contains_key(session_id) {
+                store.sessions.remove(session_id);
+                self.save_store(&store).await;
+            }
+        }
+        
+        None
+    }
+
     pub async fn destroy_session(&self, session_id: &str) {
         let mut store = self.store.write().await;
         store.sessions.remove(session_id);

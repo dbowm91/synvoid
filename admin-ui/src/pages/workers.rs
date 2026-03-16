@@ -1,22 +1,26 @@
 use yew::prelude::*;
 use crate::services::ApiService;
-use crate::types::{WorkerStatus, OverseerStatus};
+use crate::types::{WorkerStatus, OverseerStatus, WorkerCountResponse};
 
 #[function_component]
 pub fn Workers() -> Html {
     let workers = use_state(|| Vec::<WorkerStatus>::new());
     let overseer = use_state(|| None as Option<OverseerStatus>);
+    let worker_count = use_state(|| None as Option<WorkerCountResponse>);
     let error = use_state(|| None as Option<String>);
     let restarting = use_state(|| None as Option<String>);
+    let scaling = use_state(|| false);
 
     {
         let workers = workers.clone();
         let overseer = overseer.clone();
+        let worker_count = worker_count.clone();
         let error = error.clone();
         
         use_effect_with((), move |_| {
             let workers = workers.clone();
             let overseer = overseer.clone();
+            let worker_count = worker_count.clone();
             let error = error.clone();
             
             wasm_bindgen_futures::spawn_local(async move {
@@ -30,6 +34,11 @@ pub fn Workers() -> Html {
                 match api.get_overseer_status().await {
                     Ok(o) => overseer.set(Some(o)),
                     Err(e) => error.set(Some(e)),
+                }
+
+                match api.get_worker_count().await {
+                    Ok(c) => worker_count.set(Some(c)),
+                    Err(e) => tracing::error!("Failed to get worker count: {}", e),
                 }
             });
             
@@ -70,6 +79,82 @@ pub fn Workers() -> Html {
                         restarting.set(None);
                     }
                 }
+            });
+        })
+    };
+
+    let on_scale_up = {
+        let worker_count = worker_count.clone();
+        let error = error.clone();
+        let scaling = scaling.clone();
+
+        Callback::from(move |_| {
+            let worker_count = worker_count.clone();
+            let error = error.clone();
+            let scaling = scaling.clone();
+
+            let current = worker_count.as_ref().map(|c| c.current).unwrap_or(0);
+            let max = worker_count.as_ref().map(|c| c.max).unwrap_or(16);
+
+            if current >= max {
+                return;
+            }
+
+            scaling.set(true);
+
+            wasm_bindgen_futures::spawn_local(async move {
+                let api = ApiService::new();
+                
+                match api.scale_workers(current + 1).await {
+                    Ok(resp) => {
+                        tracing::info!("Scaled workers: {}", resp.message);
+                        if let Ok(c) = api.get_worker_count().await {
+                            worker_count.set(Some(c));
+                        }
+                    }
+                    Err(e) => {
+                        error.set(Some(e));
+                    }
+                }
+                scaling.set(false);
+            });
+        })
+    };
+
+    let on_scale_down = {
+        let worker_count = worker_count.clone();
+        let error = error.clone();
+        let scaling = scaling.clone();
+
+        Callback::from(move |_| {
+            let worker_count = worker_count.clone();
+            let error = error.clone();
+            let scaling = scaling.clone();
+
+            let current = worker_count.as_ref().map(|c| c.current).unwrap_or(0);
+            let min = worker_count.as_ref().map(|c| c.min).unwrap_or(2);
+
+            if current <= min {
+                return;
+            }
+
+            scaling.set(true);
+
+            wasm_bindgen_futures::spawn_local(async move {
+                let api = ApiService::new();
+                
+                match api.scale_workers(current - 1).await {
+                    Ok(resp) => {
+                        tracing::info!("Scaled workers: {}", resp.message);
+                        if let Ok(c) = api.get_worker_count().await {
+                            worker_count.set(Some(c));
+                        }
+                    }
+                    Err(e) => {
+                        error.set(Some(e));
+                    }
+                }
+                scaling.set(false);
             });
         })
     };
@@ -184,9 +269,43 @@ pub fn Workers() -> Html {
                             </div>
                         </div>
                     </div>
-                    <p class="text-sm text-secondary text-center mt-2">
-                        { format!("{} worker(s) running", workers.len()) }
-                    </p>
+                    
+                    <div class="mt-4 space-y-3">
+                        <div class="flex items-center justify-between">
+                            <span class="text-sm text-secondary">{ "Worker Count" }</span>
+                            <div class="flex items-center gap-3">
+                                <button 
+                                    onclick={on_scale_down}
+                                    disabled={*scaling || worker_count.as_ref().map(|c| c.current <= c.min).unwrap_or(true)}
+                                    class="px-3 py-1 bg-tertiary rounded hover:bg-tertiary/80 disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12H4" />
+                                    </svg>
+                                </button>
+                                <span class="text-primary font-medium min-w-[30px] text-center">
+                                    { worker_count.as_ref().map(|c| c.current.to_string()).unwrap_or_else(|| "-".to_string()) }
+                                </span>
+                                <button 
+                                    onclick={on_scale_up}
+                                    disabled={*scaling || worker_count.as_ref().map(|c| c.current >= c.max).unwrap_or(true)}
+                                    class="px-3 py-1 bg-tertiary rounded hover:bg-tertiary/80 disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="flex justify-between text-xs text-secondary">
+                            <span>{ "Min:" }</span>
+                            <span>{ worker_count.as_ref().map(|c| c.min.to_string()).unwrap_or_else(|| "-".to_string()) }</span>
+                        </div>
+                        <div class="flex justify-between text-xs text-secondary">
+                            <span>{ "Max:" }</span>
+                            <span>{ worker_count.as_ref().map(|c| c.max.to_string()).unwrap_or_else(|| "-".to_string()) }</span>
+                        </div>
+                    </div>
                 </div>
             </div>
 

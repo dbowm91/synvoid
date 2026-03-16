@@ -191,8 +191,23 @@ impl HealthChecker {
         }
     }
 
+    /// Builds a URL with the given host, port, and path.
+    fn build_url(&self, host: &str, port: u16, path: &str) -> String {
+        format!("http://{}:{}{}", host, port, path)
+    }
+
+    /// Builds the health check URL for a worker.
+    fn build_health_url(&self, host: &str, port: u16) -> String {
+        self.build_url(host, port, &self.health_path)
+    }
+
+    /// Builds an internal API URL for a worker (e.g., /__internal__/ready).
+    fn build_internal_url(&self, host: &str, port: u16, endpoint: &str) -> String {
+        self.build_url(host, port, &format!("/__internal__/{}", endpoint))
+    }
+
     pub async fn check_worker(&self, host: &str, port: u16) -> HealthStatus {
-        let url = format!("http://{}:{}{}", host, port, self.health_path);
+        let url = self.build_health_url(host, port);
 
         match get_with_timeout(&self.client, &url, Duration::from_secs(self.timeout_secs)).await {
             Ok(response) => {
@@ -210,7 +225,7 @@ impl HealthChecker {
     }
 
     pub async fn check_worker_readiness(&self, host: &str, port: u16) -> WorkerReadinessStatus {
-        let url = format!("http://{}:{}/__internal__/ready", host, port);
+        let url = self.build_internal_url(host, port, "ready");
 
         match get_with_timeout(&self.client, &url, Duration::from_secs(2)).await {
             Ok(response) => {
@@ -248,7 +263,7 @@ impl HealthChecker {
     }
 
     pub async fn check_worker_health_with_drain(&self, host: &str, port: u16) -> HealthStatus {
-        let url = format!("http://{}:{}/__internal__/health", host, port);
+        let url = self.build_internal_url(host, port, "health");
 
         match get_with_timeout(&self.client, &url, Duration::from_secs(2)).await {
             Ok(response) => {
@@ -296,6 +311,23 @@ impl HealthChecker {
             results.push(status);
         }
 
+        results
+    }
+
+    pub async fn for_each_port<F, R, Fut>(
+        &self,
+        ports: &[u16],
+        host: &str,
+        mut check_fn: F,
+    ) -> Vec<R>
+    where
+        F: FnMut(&Self, &str, u16) -> Fut,
+        Fut: std::future::Future<Output = R>,
+    {
+        let mut results = Vec::with_capacity(ports.len());
+        for &port in ports {
+            results.push(check_fn(self, host, port).await);
+        }
         results
     }
 

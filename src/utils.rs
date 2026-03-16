@@ -1,6 +1,53 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+pub mod errors {
+    pub mod ipc {
+        pub fn connect_failed(e: &impl std::fmt::Display) -> String {
+            format!("Failed to connect to IPC socket: {}", e)
+        }
+        pub fn send_failed(e: &impl std::fmt::Display) -> String {
+            format!("Failed to send IPC message: {}", e)
+        }
+        pub fn recv_failed(e: &impl std::fmt::Display) -> String {
+            format!("Failed to receive IPC message: {}", e)
+        }
+        pub fn timeout(timeout_ms: u64) -> String {
+            format!("Timeout waiting for IPC response after {}ms", timeout_ms)
+        }
+        pub fn unexpected_response(msg: &impl std::fmt::Debug) -> String {
+            format!("Unexpected IPC response: {:?}", msg)
+        }
+    }
+
+    pub mod process {
+        pub fn process_exited(status: &impl std::fmt::Display) -> String {
+            format!("Process exited unexpectedly with status: {}", status)
+        }
+        pub fn process_not_found(pid: &impl std::fmt::Display) -> String {
+            format!("Process not found: {}", pid)
+        }
+        pub fn spawn_failed(e: &impl std::fmt::Display) -> String {
+            format!("Failed to spawn process: {}", e)
+        }
+    }
+
+    pub mod health {
+        pub fn check_failed(e: &impl std::fmt::Display) -> String {
+            format!("Health check failed: {}", e)
+        }
+        pub fn worker_not_ready(worker_id: impl std::fmt::Display, attempts: u32) -> String {
+            format!("Worker {} not ready after {} attempts", worker_id, attempts)
+        }
+        pub fn validation_failed(unhealthy: usize, total: usize) -> String {
+            format!(
+                "Health validation failed: {}/{} workers unhealthy",
+                unhealthy, total
+            )
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ArcStr(Arc<str>);
 
@@ -63,6 +110,69 @@ impl<'de> serde::Deserialize<'de> for ArcStr {
     {
         let s = String::deserialize(deserializer)?;
         Ok(Self(Arc::from(s)))
+    }
+}
+
+/// Extension trait for Result types providing additional utility methods.
+pub trait ResultExt<T, E> {
+    /// Executes a closure if the result is an error, without changing the result.
+    fn inspect_err(self, f: impl FnOnce(&E)) -> Self;
+    /// Converts an Err to None, logging the error with debug level tracing.
+    fn ok_or_trace(self, context: &str) -> Option<T>
+    where
+        E: std::fmt::Debug;
+}
+
+impl<T, E> ResultExt<T, E> for Result<T, E> {
+    #[inline]
+    fn inspect_err(self, f: impl FnOnce(&E)) -> Self {
+        if let Err(ref e) = self {
+            f(e);
+        }
+        self
+    }
+
+    #[inline]
+    fn ok_or_trace(self, context: &str) -> Option<T>
+    where
+        E: std::fmt::Debug,
+    {
+        match self {
+            Ok(t) => Some(t),
+            Err(e) => {
+                tracing::debug!("{}: {:?}", context, e);
+                None
+            }
+        }
+    }
+}
+
+/// Extension trait for Option types providing additional utility methods.
+pub trait OptionExt<T> {
+    /// Executes a closure if the option contains a value.
+    fn if_some<F: FnOnce(&T)>(self, f: F);
+    /// Placeholder for logic when option is None.
+    fn if_none(self);
+    /// Converts None to an Err with the given context message.
+    fn require(self, context: &str) -> Result<T, String>;
+}
+
+impl<T> OptionExt<T> for Option<T> {
+    #[inline]
+    fn if_some<F: FnOnce(&T)>(self, f: F) {
+        if let Some(ref t) = self {
+            f(t);
+        }
+    }
+
+    #[inline]
+    fn if_none(self) {
+        if self.is_none() {}
+    }
+
+    #[inline]
+    fn require(self, context: &str) -> Result<T, String> {
+        self.ok_or_else(|| context.to_string())
     }
 }
 
@@ -760,5 +870,114 @@ mod drain_flag_tests {
         flag.start_drain();
         handle.join().unwrap();
         assert!(flag.is_draining());
+    }
+}
+
+#[cfg(test)]
+mod result_ext_tests {
+    use super::*;
+
+    #[test]
+    fn test_inspect_err_calls_closure_on_err() {
+        let mut called = false;
+        let result: Result<i32, &str> = Err("error");
+        result.inspect_err(|e| {
+            assert_eq!(e, &"error");
+            called = true;
+        });
+        assert!(called);
+    }
+
+    #[test]
+    fn test_inspect_err_does_nothing_on_ok() {
+        let mut called = false;
+        let result: Result<i32, &str> = Ok(42);
+        result.inspect_err(|_| called = true);
+        assert!(!called);
+    }
+
+    #[test]
+    fn test_ok_or_trace_returns_ok_value() {
+        let result: Result<i32, &str> = Ok(42);
+        assert_eq!(result.ok_or_trace("context"), Some(42));
+    }
+
+    #[test]
+    fn test_ok_or_trace_returns_none_on_err() {
+        let result: Result<i32, &str> = Err("error");
+        assert_eq!(result.ok_or_trace("context"), None);
+    }
+}
+
+#[cfg(test)]
+mod option_ext_tests {
+    use super::*;
+
+    #[test]
+    fn test_if_some_calls_closure() {
+        let mut called = false;
+        let value = Some(42);
+        value.if_some(|v| {
+            assert_eq!(*v, 42);
+            called = true;
+        });
+        assert!(called);
+    }
+
+    #[test]
+    fn test_if_some_does_nothing_on_none() {
+        let mut called = false;
+        let value: Option<i32> = None;
+        value.if_some(|_| called = true);
+        assert!(!called);
+    }
+
+    #[test]
+    fn test_require_returns_value() {
+        let value = Some(42);
+        assert_eq!(value.require("context").unwrap(), 42);
+    }
+
+    #[test]
+    fn test_require_returns_err_on_none() {
+        let value: Option<i32> = None;
+        assert_eq!(value.require("context"), Err("context".to_string()));
+    }
+}
+
+#[cfg(test)]
+mod error_helpers_tests {
+    use super::errors;
+
+    #[test]
+    fn test_ipc_connect_failed() {
+        let msg = errors::ipc::connect_failed(&"connection refused");
+        assert!(msg.contains("connection refused"));
+    }
+
+    #[test]
+    fn test_ipc_send_failed() {
+        let msg = errors::ipc::send_failed(&"broken pipe");
+        assert!(msg.contains("broken pipe"));
+    }
+
+    #[test]
+    fn test_health_check_failed() {
+        let msg = errors::health::check_failed(&"timeout");
+        assert!(msg.contains("timeout"));
+    }
+
+    #[test]
+    fn test_health_worker_not_ready() {
+        let msg = errors::health::worker_not_ready("worker-1", 5);
+        assert!(msg.contains("worker-1"));
+        assert!(msg.contains("5"));
+    }
+
+    #[test]
+    fn test_health_validation_failed() {
+        let msg = errors::health::validation_failed(3, 10);
+        assert!(msg.contains("3"));
+        assert!(msg.contains("10"));
     }
 }

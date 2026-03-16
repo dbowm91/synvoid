@@ -40,6 +40,12 @@ pub struct SiteStats {
     pub p95_latency_ms: f64,
     pub p99_latency_ms: f64,
     pub upstream_healthy: bool,
+    pub bytes_received: u64,
+    pub bytes_sent: u64,
+    pub proxied_bytes_sent: u64,
+    pub proxied_bytes_received: u64,
+    pub mesh_bytes_sent: u64,
+    pub mesh_bytes_received: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -59,6 +65,12 @@ pub struct UpstreamStatus {
     pub weight: u32,
     pub consecutive_failures: u32,
     pub consecutive_successes: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StatusResponse {
+    pub success: bool,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -137,6 +149,21 @@ pub struct WorkerStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkerCountResponse {
+    pub current: usize,
+    pub min: usize,
+    pub max: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScaleWorkersResponse {
+    pub success: bool,
+    pub message: String,
+    pub current_count: usize,
+    pub target_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OverseerStatus {
     pub running: bool,
     pub pid: Option<u32>,
@@ -186,6 +213,28 @@ pub struct CacheStats {
     pub static_cache_hits: u64,
     pub static_cache_misses: u64,
     pub static_cache_hit_rate: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RequestLogEntry {
+    pub id: String,
+    pub timestamp: String,
+    pub client_ip: String,
+    pub method: String,
+    pub path: String,
+    pub status: u16,
+    pub response_time_ms: u32,
+    pub site_id: String,
+    pub user_agent: Option<String>,
+    pub bytes_sent: u64,
+    pub bytes_received: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RequestLogsResponse {
+    pub entries: Vec<RequestLogEntry>,
+    pub total: usize,
+    pub has_more: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -259,6 +308,10 @@ pub struct ProtocolBandwidthPayload {
 pub struct SiteBandwidthPayload {
     pub bytes_received: u64,
     pub bytes_sent: u64,
+    pub proxied_bytes_sent: u64,
+    pub proxied_bytes_received: u64,
+    pub mesh_bytes_sent: u64,
+    pub mesh_bytes_received: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -366,4 +419,81 @@ pub struct BackupInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BackupsListResponse {
     pub backups: Vec<BackupInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct OverseerConfig {
+    pub auto_restart: bool,
+    #[serde(rename = "restart_delay_secs")]
+    pub restart_delay_secs: u64,
+    #[serde(rename = "max_restart_attempts")]
+    pub max_restart_attempts: u32,
+    #[serde(rename = "health_check_interval_secs")]
+    pub health_check_interval_secs: u64,
+    #[serde(rename = "stable_uptime_secs")]
+    pub stable_uptime_secs: u64,
+    #[serde(rename = "upgrade_validation_timeout_secs")]
+    pub upgrade_validation_timeout_secs: u64,
+    #[serde(rename = "upgrade_drain_timeout_secs")]
+    pub upgrade_drain_timeout_secs: u64,
+    #[serde(rename = "upgrade_health_check_retries")]
+    pub upgrade_health_check_retries: u32,
+    #[serde(rename = "upgrade_health_check_interval_secs")]
+    pub upgrade_health_check_interval_secs: u64,
+    #[serde(rename = "ipc_read_timeout_ms")]
+    pub ipc_read_timeout_ms: u64,
+    #[serde(rename = "ipc_write_timeout_ms")]
+    pub ipc_write_timeout_ms: u64,
+    #[serde(rename = "master_startup_timeout_secs")]
+    pub master_startup_timeout_secs: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct ProcessManagerConfig {
+    #[serde(rename = "min_workers")]
+    pub min_workers: usize,
+    #[serde(rename = "max_workers")]
+    pub max_workers: usize,
+    #[serde(rename = "max_restart_attempts")]
+    pub max_restart_attempts: u32,
+    #[serde(rename = "restart_cooldown_secs")]
+    pub restart_cooldown_secs: u64,
+    #[serde(rename = "restart_backoff_max_secs")]
+    pub restart_backoff_max_secs: u64,
+    #[serde(rename = "heartbeat_timeout_secs")]
+    pub heartbeat_timeout_secs: u64,
+    #[serde(rename = "graceful_shutdown_timeout_secs")]
+    pub graceful_shutdown_timeout_secs: u64,
+    #[serde(rename = "worker_port_base")]
+    pub worker_port_base: u16,
+    #[serde(rename = "pre_spawn_workers")]
+    pub pre_spawn_workers: usize,
+    #[serde(rename = "warm_workers_target")]
+    pub warm_workers_target: usize,
+    #[serde(rename = "health_check_interval_secs")]
+    pub health_check_interval_secs: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct SupervisorConfig {
+    #[serde(rename = "min_workers")]
+    pub min_workers: usize,
+    #[serde(rename = "max_workers")]
+    pub max_workers: usize,
+    #[serde(rename = "scale_up_threshold")]
+    pub scale_up_threshold: f64,
+    #[serde(rename = "scale_down_threshold")]
+    pub scale_down_threshold: f64,
+    #[serde(rename = "scale_up_cooldown_secs")]
+    pub scale_up_cooldown_secs: u64,
+    #[serde(rename = "scale_down_cooldown_secs")]
+    pub scale_down_cooldown_secs: u64,
+    #[serde(rename = "max_restart_attempts")]
+    pub max_restart_attempts: u32,
+    #[serde(rename = "restart_cooldown_secs")]
+    pub restart_cooldown_secs: u64,
+    #[serde(rename = "health_check_interval_secs")]
+    pub health_check_interval_secs: u64,
+    #[serde(rename = "graceful_shutdown_timeout_secs")]
+    pub graceful_shutdown_timeout_secs: u64,
 }

@@ -1,5 +1,6 @@
 #![allow(unused_variables, dead_code)]
 
+use bytes::Bytes;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -27,8 +28,57 @@ pub mod common;
 pub mod connect;
 pub mod metrics;
 pub mod unified_server;
+pub mod traits;
+
+pub use traits::{BaseWorkerState, WorkerLifecycle};
 
 pub use unified_server::{UnifiedServerWorkerArgs, run_unified_server_worker, setup_unified_server_panic_handler};
+
+type MinifierCache = Arc<minifier::MinifierCache>;
+
+fn get_content_type(path: &str) -> String {
+    path.rsplit('.')
+        .next()
+        .and_then(|e| crate::mime::MIME_REGISTRY.read().get_mime_for_extension(e))
+        .unwrap_or_else(|| "application/octet-stream".to_string())
+}
+
+fn get_compressed_content(
+    cache: &MinifierCache,
+    site_id: &str,
+    path: &str,
+    minified_content: &[u8],
+    encoding: Option<&str>,
+) -> Result<Vec<u8>, String> {
+    let enc = match encoding {
+        Some("gzip") => minifier::Encoding::Gzip,
+        Some("br") => minifier::Encoding::Br,
+        _ => return Ok(minified_content.to_vec()),
+    };
+
+    let enc_key = minifier::CacheKey {
+        site_id: Arc::from(site_id),
+        path: Arc::from(path),
+        encoding: enc,
+    };
+
+    match cache.get(&enc_key) {
+        Some(entry) => Ok(entry.content.to_vec()),
+        None => {
+            let enc_for_gen = match encoding {
+                Some("gzip") => minifier::Encoding::Gzip,
+                Some("br") => minifier::Encoding::Br,
+                _ => return Ok(minified_content.to_vec()),
+            };
+            let content: Bytes = cache
+                .generate_compressed(site_id, path, minified_content, &enc_for_gen)
+                .map_err(|e| format!("{:?} compression failed: {}", enc_for_gen, e))?;
+            let content_vec = content.to_vec();
+            let _ = cache.write_compressed_to_disk(site_id, path, &content, &enc_for_gen);
+            Ok(content_vec)
+        }
+    }
+}
 
 #[cfg(unix)]
 enum ListenerType {
@@ -820,6 +870,13 @@ fn handle_minify_client_connection(
                             }
                         }
                     }
+                    crate::process::Message::PoisonImageRequest { request_id, site_id, body, last_modified } => {
+                        let poisoned = poison_image_sync(&state, &site_id, body, last_modified);
+                        let _ = ipc.send(&crate::process::Message::PoisonImageResponse {
+                            request_id,
+                            poisoned_body: poisoned,
+                        });
+                    }
                     _ => {}
                 }
             }
@@ -990,14 +1047,8 @@ fn process_minify_request(
 
     let content_type = path.rsplit('.')
         .next()
-        .map(|e| match e {
-            "css" => "text/css",
-            "js" => "application/javascript", 
-            "html" | "htm" => "text/html",
-            _ => "application/octet-stream",
-        })
-        .unwrap_or("application/octet-stream")
-        .to_string();
+        .and_then(|e| crate::mime::MIME_REGISTRY.read().get_mime_for_extension(e))
+        .unwrap_or_else(|| "application/octet-stream".to_string());
 
     let mut queued_encodings = Vec::new();
 
@@ -1256,14 +1307,8 @@ fn handle_minify_request_sync(
 
     let content_type = path.rsplit('.')
         .next()
-        .map(|e| match e {
-            "css" => "text/css",
-            "js" => "application/javascript", 
-            "html" | "htm" => "text/html",
-            _ => "application/octet-stream",
-        })
-        .unwrap_or("application/octet-stream")
-        .to_string();
+        .and_then(|e| crate::mime::MIME_REGISTRY.read().get_mime_for_extension(e))
+        .unwrap_or_else(|| "application/octet-stream".to_string());
 
     let mut queued_encodings = Vec::new();
 
@@ -1374,6 +1419,21 @@ fn send_error_sync(state: &StaticWorkerState, request_id: u64, error: String) {
         request_id,
         error,
     });
+}
+
+fn poison_image_sync(
+    _state: &StaticWorkerState,
+    _site_id: &str,
+    body: Vec<u8>,
+    _last_modified: Option<String>,
+) -> Vec<u8> {
+    if body.is_empty() {
+        return body;
+    }
+    // STUB - returns body unchanged
+    // TODO: Implement actual image poisoning algorithm
+    // The last_modified date is available for metadata preservation
+    body
 }
 
 fn handle_compressed_request_sync(

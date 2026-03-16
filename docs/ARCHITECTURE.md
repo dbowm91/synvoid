@@ -352,6 +352,73 @@ Node A                          Node B
    - Cross-datacenter coordination
    - Consistent policy enforcement
 
+### 5. Metrics Collection
+
+MaluWAF collects comprehensive metrics across all components, with per-site attribution for billing, quota management, and traffic analysis.
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         Metrics Collection Pipeline                          │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+ Worker Process                      Master Process              Admin API
+      │                                    │                           │
+      │  ┌─────────────────────┐          │                           │
+      │  │  Per-Site Metrics  │          │                           │
+      │  │  • Requests        │          │                           │
+      │  │  • Blocked         │          │                           │
+      │  │  • Bandwidth       │          │                           │
+      │  └──────────┬──────────┘          │                           │
+      │             │                      │                           │
+      │        Heartbeat                  │                           │
+      │             │                      │                           │
+      │             ▼                      │                           │
+      │    ┌────────────────┐              │                           │
+      │    │    IPC Link   │──────────────►                           │
+      │    │  (Unix Socket)│              │                           │
+      │    └────────────────┘              │                           │
+      │                                    │                           │
+      │                             ┌──────▼──────┐                   │
+      │                             │   Aggregate │                   │
+      │                             │  Per-Site   │                   │
+      │                             │   Metrics   │                   │
+      │                             └──────┬──────┘                   │
+      │                                    │                           │
+      │                                    │  /api/stats/sites         │
+      │                                    ▼                           │
+      │                             ┌─────────────┐  ◄────────────  │
+      │                             │  Admin API  │─────────────────┘
+      │                             └─────────────┘
+```
+
+#### Per-Site Bandwidth Tracking
+
+MaluWAF tracks bandwidth at multiple levels for comprehensive traffic accounting:
+
+| Category | Direction | Description |
+|----------|-----------|-------------|
+| **Client Ingress** | → WAF | Raw requests from end users |
+| **Response Egress** | WAF → | Block pages, challenges, errors |
+| **Direct Proxy** | WAF ↔ Origin | When connecting directly to origin |
+| **Mesh Proxy** | WAF ↔ Peer | When routing through WAF mesh |
+
+This granular tracking is essential for:
+- **Bandwidth quota management** in environments with limits
+- **Per-site billing/chargeback** in multi-tenant deployments  
+- **Traffic analysis** to identify unusual patterns
+- **Capacity planning** based on actual usage
+
+#### Security Through Process Isolation
+
+The metrics pipeline maintains security through process separation:
+
+1. **Worker processes** are isolated - each handles requests independently
+2. **Heartbeat IPC** transmits only aggregated metrics, not raw request data
+3. **Master process** aggregates without exposing worker internals
+4. **Admin API** serves sanitized metrics to authorized clients
+
+This architecture ensures that even if a worker is compromised, raw request data cannot be exfiltrated through the metrics channel.
+
 ## Deployment Features
 
 ### Built-in Application Support

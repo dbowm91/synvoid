@@ -87,5 +87,5 @@ pub use secure_server::{SecureDnsServerBase, DnsServerConfig, TLS_HANDSHAKE_TIME
 pub use zone_file::{ZoneFileParser, parse_zone_file, parse_zone_content, ZoneParseError, ParsedRecord};
 pub use query_coalesce::{QueryCoalescer, QueryKey, CoalesceResult};
 pub use anycast::{AnycastSocketManager, AnycastPacketInfo, AnycastHealthUpdate};
-pub use anycast_sync::{AnycastZoneSync, ZoneSyncMetadata, SerializedZoneData, SerializedRecord, ZoneSyncReason};
+    pub use anycast_sync::{AnycastZoneSync, ZoneSyncMetadata, SerializedZoneData, SerializedRecord, ZoneSyncReason, SerialComparison, ZoneSyncDecision};
 pub use platform::{AnycastSocketPlatform, create_platform};

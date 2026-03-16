@@ -593,4 +593,224 @@ mod tests {
         assert!(response.len() > 17);
         // Should contain the question name "nonexistent.example.com"
     }
+
+    #[test]
+    fn test_anycast_health_check_query_building() {
+        use maluwaf::dns::anycast::AnycastSocketManager;
+
+        let domain = "_healthcheck.local";
+
+        let packet = AnycastSocketManager::build_health_check_query(0x1234, domain);
+
+        assert!(packet.is_some());
+        let pkt = packet.unwrap();
+
+        assert!(pkt.len() >= 12);
+
+        let id = u16::from_be_bytes([pkt[0], pkt[1]]);
+        assert_eq!(id, 0x1234);
+
+        let flags = u16::from_be_bytes([pkt[2], pkt[3]]);
+        assert!(flags & 0x8000 == 0);
+
+        let qdcount = u16::from_be_bytes([pkt[4], pkt[5]]);
+        assert_eq!(qdcount, 1);
+    }
+
+    #[test]
+    fn test_anycast_health_check_invalid_domain() {
+        use maluwaf::dns::anycast::AnycastSocketManager;
+
+        let empty_domain = "";
+        let packet = AnycastSocketManager::build_health_check_query(0x1234, empty_domain);
+        assert!(packet.is_none());
+
+        let long_label = "a".repeat(64);
+        let packet2 = AnycastSocketManager::build_health_check_query(0x1234, &long_label);
+        assert!(packet2.is_none());
+    }
+
+    #[test]
+    fn test_anycast_serial_comparison_remote_newer() {
+        use maluwaf::dns::anycast_sync::AnycastZoneSync;
+        use maluwaf::dns::anycast_sync::{SerialComparison, ZoneSyncDecision};
+
+        let local = 100u32;
+        let remote = 200u32;
+
+        let cmp = AnycastZoneSync::compare_serials(local, remote);
+        assert_eq!(cmp, SerialComparison::RemoteIsNewer);
+
+        let decision = AnycastZoneSync::should_accept_zone_update(local, remote);
+        assert_eq!(decision, ZoneSyncDecision::Accept);
+    }
+
+    #[test]
+    fn test_anycast_serial_comparison_local_newer() {
+        use maluwaf::dns::anycast_sync::AnycastZoneSync;
+        use maluwaf::dns::anycast_sync::{SerialComparison, ZoneSyncDecision};
+
+        let local = 200u32;
+        let remote = 100u32;
+
+        let cmp = AnycastZoneSync::compare_serials(local, remote);
+        assert_eq!(cmp, SerialComparison::LocalIsNewer);
+
+        let decision = AnycastZoneSync::should_accept_zone_update(local, remote);
+        assert_eq!(decision, ZoneSyncDecision::Reject);
+    }
+
+    #[test]
+    fn test_anycast_serial_comparison_equal() {
+        use maluwaf::dns::anycast_sync::AnycastZoneSync;
+        use maluwaf::dns::anycast_sync::{SerialComparison, ZoneSyncDecision};
+
+        let serial = 100u32;
+
+        let cmp = AnycastZoneSync::compare_serials(serial, serial);
+        assert_eq!(cmp, SerialComparison::Equal);
+
+        let decision = AnycastZoneSync::should_accept_zone_update(serial, serial);
+        assert_eq!(decision, ZoneSyncDecision::Reject);
+    }
+
+    #[test]
+    fn test_anycast_serial_wrap_around() {
+        use maluwaf::dns::anycast_sync::AnycastZoneSync;
+        use maluwaf::dns::anycast_sync::SerialComparison;
+
+        let local = u32::MAX - 100;
+        let remote = 50u32;
+
+        let cmp = AnycastZoneSync::compare_serials(local, remote);
+        assert_eq!(cmp, SerialComparison::WrapAround);
+
+        let decision = AnycastZoneSync::should_accept_zone_update(local, remote);
+        assert_eq!(decision, ZoneSyncDecision::Reject);
+    }
+
+    #[test]
+    fn test_anycast_zone_sync_decision_reject_wrap_around() {
+        use maluwaf::dns::anycast_sync::AnycastZoneSync;
+        use maluwaf::dns::anycast_sync::ZoneSyncDecision;
+
+        let local = 50u32;
+        let remote = u32::MAX - 100;
+
+        let decision = AnycastZoneSync::should_accept_zone_update(local, remote);
+        assert_eq!(decision, ZoneSyncDecision::Reject);
+    }
+
+    #[test]
+    fn test_query_validator_valid_query() {
+        use maluwaf::dns::DnsQueryValidator;
+
+        let validator = DnsQueryValidator::new();
+
+        let valid_query = vec![
+            0x00, 0x01, // ID
+            0x01, 0x00, // Flags: standard query
+            0x00, 0x01, // QDCOUNT = 1
+            0x00, 0x00, // ANCOUNT = 0
+            0x00, 0x00, // NSCOUNT = 0
+            0x00, 0x00, // ARCOUNT = 0
+            0x07, b'e', b'x', b'a', b'm', b'p', b'l', b'e', // example
+            0x03, b'c', b'o', b'm', // com
+            0x00, // end
+            0x00, 0x01, // TYPE = A
+            0x00, 0x01, // CLASS = IN
+        ];
+
+        let result = validator.validate_query(&valid_query);
+        assert!(result.is_ok(), "Valid query should pass: {:?}", result);
+    }
+
+    #[test]
+    fn test_query_validator_invalid_label_length() {
+        use maluwaf::dns::DnsQueryValidator;
+
+        let validator = DnsQueryValidator::new();
+
+        let mut query = vec![
+            0x00, 0x01, // ID
+            0x01, 0x00, // Flags: standard query
+            0x00, 0x01, // QDCOUNT = 1
+            0x00, 0x00, // ANCOUNT = 0
+            0x00, 0x00, // NSCOUNT = 0
+            0x00, 0x00, // ARCOUNT = 0
+        ];
+
+        // Add a label with length 64 (invalid - max is 63)
+        query.push(64);
+        query
+            .extend_from_slice(b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        query.push(0x00); // end
+        query.extend_from_slice(&[0x00, 0x01, 0x00, 0x01]); // TYPE=A, CLASS=IN
+
+        let result = validator.validate_query(&query);
+        assert!(result.is_err(), "Query with label > 63 should fail");
+    }
+
+    #[test]
+    fn test_query_validator_too_many_labels() {
+        use maluwaf::dns::DnsQueryValidator;
+
+        let validator = DnsQueryValidator::new();
+
+        let mut query = vec![
+            0x00, 0x01, // ID
+            0x01, 0x00, // Flags: standard query
+            0x00, 0x01, // QDCOUNT = 1
+            0x00, 0x00, // ANCOUNT = 0
+            0x00, 0x00, // NSCOUNT = 0
+            00, 0x00, // ARCOUNT = 0
+        ];
+
+        // Add 20 single-character labels (default max is 16)
+        for _ in 0..20 {
+            query.push(1);
+            query.push(b'a');
+        }
+        query.push(0x00); // end
+        query.extend_from_slice(&[0x00, 0x01, 0x00, 0x01]); // TYPE=A, CLASS=IN
+
+        let result = validator.validate_query(&query);
+        assert!(result.is_err(), "Query with too many labels should fail");
+    }
+
+    #[test]
+    fn test_query_validator_invalid_query_type_zero() {
+        use maluwaf::dns::DnsQueryValidator;
+
+        let validator = DnsQueryValidator::new();
+
+        let query = vec![
+            0x00, 0x01, // ID
+            0x01, 0x00, // Flags: standard query
+            0x00, 0x01, // QDCOUNT = 1
+            0x00, 0x00, // ANCOUNT = 0
+            0x00, 0x00, // NSCOUNT = 0
+            0x00, 0x00, // ARCOUNT = 0
+            0x07, b'e', b'x', b'a', b'm', b'p', b'l', b'e', // example
+            0x03, b'c', b'o', b'm', // com
+            0x00, // end
+            0x00, 0x00, // TYPE = 0 (invalid)
+            0x00, 0x01, // CLASS = IN
+        ];
+
+        let result = validator.validate_query(&query);
+        assert!(result.is_err(), "Query type 0 should be rejected");
+    }
+
+    #[test]
+    fn test_query_validator_query_too_small() {
+        use maluwaf::dns::DnsQueryValidator;
+
+        let validator = DnsQueryValidator::new();
+
+        let query = vec![0x00, 0x01]; // Too small - need at least 12 bytes
+
+        let result = validator.validate_query(&query);
+        assert!(result.is_err(), "Query smaller than 12 bytes should fail");
+    }
 }

@@ -18,6 +18,8 @@ use crate::tunnel::{TunnelManager, TunnelRouter};
 use crate::utils::parse_host_port;
 use crate::worker::drain_state::WorkerDrainState;
 use crate::metrics::WorkerMetrics;
+use crate::process::ipc::{Message, RequestLogPayload, WorkerId, current_timestamp};
+use crate::process::ipc_transport::IpcStream;
 
 #[derive(Clone)]
 struct ServerSharedState {
@@ -28,6 +30,8 @@ struct ServerSharedState {
     drain_state: Option<Arc<WorkerDrainState>>,
     mesh_transport: Option<Arc<crate::mesh::transport::MeshTransportManager>>,
     metrics: Option<Arc<WorkerMetrics>>,
+    ipc: Option<Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>>,
+    worker_id: Option<WorkerId>,
 }
 
 #[derive(Clone)]
@@ -54,6 +58,8 @@ pub struct UnifiedServer {
     drain_state: Option<Arc<WorkerDrainState>>,
     mesh_transport: Option<Arc<crate::mesh::transport::MeshTransportManager>>,
     metrics: Option<Arc<WorkerMetrics>>,
+    ipc: Option<Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>>,
+    worker_id: Option<WorkerId>,
     
     // DNS Server
     #[cfg(feature = "dns")]
@@ -292,6 +298,8 @@ impl UnifiedServer {
             drain_state: None,
             mesh_transport,
             metrics: None,
+            ipc: None,
+            worker_id: None,
             #[cfg(feature = "dns")]
             _dns_config: dns_config,
             #[cfg(feature = "dns")]
@@ -310,6 +318,12 @@ impl UnifiedServer {
 
     pub fn with_metrics(mut self, metrics: Arc<WorkerMetrics>) -> Self {
         self.metrics = Some(metrics);
+        self
+    }
+
+    pub fn with_ipc(mut self, ipc: Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>, worker_id: WorkerId) -> Self {
+        self.ipc = Some(ipc);
+        self.worker_id = Some(worker_id);
         self
     }
 
@@ -578,6 +592,8 @@ impl UnifiedServer {
             drain_state: self.drain_state.clone(),
             mesh_transport: self.mesh_transport.clone(),
             metrics: self.metrics.clone(),
+            ipc: self.ipc.clone(),
+            worker_id: self.worker_id.clone(),
         });
         
         let http_jh = {
@@ -794,6 +810,10 @@ impl UnifiedServer {
 
         if let Some(m) = state.metrics.clone() {
             server = server.with_metrics(m);
+        }
+
+        if let (Some(ipc), Some(worker_id)) = (state.ipc.clone(), state.worker_id.clone()) {
+            server = server.with_ipc(ipc, worker_id);
         }
         
         server.serve().await

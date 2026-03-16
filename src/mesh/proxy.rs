@@ -15,13 +15,15 @@ use lru_time_cache::LruCache;
 use parking_lot::RwLock;
 use rand::Rng;
 use tokio::sync::{Mutex, RwLock as TokioRwLock};
+use parking_lot::Mutex as PLMutex;
 
-use crate::mesh::config::MeshConfig;
+use crate::mesh::config::{MeshConfig, MeshMinificationConfig};
 use crate::mesh::organization::OrganizationManager;
 use crate::mesh::protocol::{ProviderInfo, UpstreamProtocol, WafPolicy};
 use crate::mesh::topology::MeshTopology;
 use crate::mesh::transport::MeshTransport;
 use crate::proxy_cache::{ProxyCache, ProxyCacheSettings, CacheKeyBuilder};
+use crate::metrics::bandwidth::get_global_bandwidth_tracker;
 
 /// Default TTL for cached routing policies (1 hour)
 const DEFAULT_POLICY_CACHE_TTL_SECS: u64 = 3600;
@@ -49,6 +51,7 @@ pub struct MeshProxy {
     config: Arc<MeshConfig>,
     topology: Arc<MeshTopology>,
     transport: Arc<RwLock<Option<Arc<MeshTransport>>>>,
+    transport_manager: Arc<RwLock<Option<Arc<crate::mesh::transports::manager::MeshTransportManager>>>>,
     active_connections: Arc<RwLock<HashMap<String, MeshConnection>>>,
     policy_cache: Arc<Mutex<LruCache<String, CachedPolicy>>>,
     failed_providers: Arc<Mutex<LruCache<String, Instant>>>,
@@ -57,6 +60,8 @@ pub struct MeshProxy {
     org_manager: Arc<TokioRwLock<OrganizationManager>>,
     proxy_cache: Option<Arc<ProxyCache>>,
     cache_key_builder: Option<CacheKeyBuilder>,
+    minifier_generator: Arc<crate::static_files::minifier::MinifierGenerator>,
+    transform_cache: Arc<PLMutex<LruCache<String, TransformCacheEntry>>>,
 }
 
 struct MeshConnection {
@@ -145,6 +150,17 @@ impl ProviderStats {
     }
 }
 
+#[derive(Clone)]
+struct TransformCacheEntry {
+    body: Bytes,
+    content_encoding: Option<String>,
+    content_type: Option<String>,
+    created_at: Instant,
+}
+
+const DEFAULT_TRANSFORM_CACHE_TTL_SECS: u64 = 300;
+const DEFAULT_TRANSFORM_CACHE_SIZE: usize = 1000;
+
 impl MeshProxy {
     pub fn new(
         config: Arc<MeshConfig>,
@@ -181,10 +197,16 @@ impl MeshProxy {
             (None, None)
         };
 
+        let transform_cache = LruCache::with_expiry_duration_and_capacity(
+            Duration::from_secs(DEFAULT_TRANSFORM_CACHE_TTL_SECS),
+            DEFAULT_TRANSFORM_CACHE_SIZE,
+        );
+
         Self {
             config,
             topology,
             transport: Arc::new(RwLock::new(None)),
+            transport_manager: Arc::new(RwLock::new(None)),
             active_connections: Arc::new(RwLock::new(HashMap::new())),
             policy_cache: Arc::new(Mutex::new(cache)),
             failed_providers: Arc::new(Mutex::new(failed_cache)),
@@ -193,12 +215,19 @@ impl MeshProxy {
             org_manager: Arc::new(TokioRwLock::new(OrganizationManager::new())),
             proxy_cache,
             cache_key_builder,
+            minifier_generator: Arc::new(crate::static_files::minifier::MinifierGenerator::new()),
+            transform_cache: Arc::new(PLMutex::new(transform_cache)),
         }
     }
 
     pub fn set_transport(&self, transport: Arc<MeshTransport>) {
         let mut t = self.transport.write();
         *t = Some(transport);
+    }
+
+    pub fn set_transport_manager(&self, manager: Arc<crate::mesh::transports::manager::MeshTransportManager>) {
+        let mut m = self.transport_manager.write();
+        *m = Some(manager);
     }
 
     pub async fn register_organization(&self, org: crate::mesh::Organization) {
@@ -734,6 +763,13 @@ impl MeshProxy {
                         }
                     }
                     
+                    let request_size = body_bytes.len() + format!("{} {} HTTP/1.1\r\n", method, uri).len();
+                    let response_size = resp.body().size_hint().exact().unwrap_or(0);
+                    
+                    let bandwidth = get_global_bandwidth_tracker();
+                    bandwidth.record_site_mesh_egress(upstream_id, request_size as u64);
+                    bandwidth.record_site_mesh_ingress(upstream_id, response_size as u64);
+                    
                     tracing::info!(
                         "Successfully proxied to {} via provider {} (tried {}/{})",
                         upstream_id, provider.node_id, idx + 1, providers.len()
@@ -905,7 +941,225 @@ impl MeshProxy {
             connections.remove(&request_id);
         }
 
+        let response = self.transform_response(response, upstream_id, &uri).await;
+
         Ok(response)
+    }
+
+    async fn transform_response(
+        &self,
+        mut response: Response<BoxBody<Bytes, Infallible>>,
+        upstream_id: &str,
+        request_path: &str,
+    ) -> Response<BoxBody<Bytes, Infallible>> {
+        let tm = self.transport_manager.read();
+        let tm = tm.as_ref();
+
+        if tm.is_none() {
+            return response;
+        }
+
+        let tm = tm.unwrap();
+
+        let image_protection = tm.get_image_protection_for_site(upstream_id).await;
+        let compression = tm.get_compression_for_site(upstream_id).await;
+        let minification = tm.get_minification_for_site(upstream_id).await;
+
+        if image_protection.is_none() && compression.is_none() && minification.is_none() {
+            return response;
+        }
+
+        let cache_key = format!(
+            "{}:{}:{:?}:{:?}",
+            upstream_id,
+            request_path,
+            minification.as_ref().and_then(|c| c.enabled),
+            image_protection.as_ref().and_then(|c| c.enabled),
+        );
+
+        {
+            let mut cache = self.transform_cache.lock();
+            if let Some(entry) = cache.get(&cache_key) {
+                tracing::debug!("Transform cache hit for {}", cache_key);
+                let mut new_response = Response::builder()
+                    .status(200);
+                
+                if let Some(ref enc) = entry.content_encoding {
+                    new_response = new_response.header("Content-Encoding", enc.as_str());
+                }
+                if let Some(ref ct) = entry.content_type {
+                    new_response = new_response.header("Content-Type", ct.as_str());
+                }
+                
+                let body = http_body_util::Full::new(entry.body.clone()).boxed();
+                return new_response.body(body).unwrap();
+            }
+        }
+
+        let content_type = response.headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+
+        let last_modified = response.headers()
+            .get("last-modified")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
+
+        let body = std::mem::replace(response.body_mut(), http_body_util::Full::new(Bytes::new()).boxed());
+
+        let body = match body.collect().await {
+            Ok(collected) => collected.to_bytes(),
+            Err(_) => return response,
+        };
+
+        if body.is_empty() {
+            return response;
+        }
+
+        let mut transformed = body;
+
+        if let Some(ref config) = minification {
+            if config.enabled.unwrap_or(false) {
+                transformed = self.apply_minification(transformed, &content_type, config);
+            }
+        }
+
+        if let Some(ref config) = image_protection {
+            if config.enabled.unwrap_or(false) && content_type.starts_with("image/") {
+                let min_size = config.min_size_bytes.unwrap_or(102400) as u64;
+                if transformed.len() as u64 >= min_size {
+                    let whitelisted = config.whitelist_patterns.as_ref()
+                        .map(|patterns| {
+                            patterns.iter().any(|p| {
+                                regex::Regex::new(p)
+                                    .map(|re| re.is_match(upstream_id))
+                                    .unwrap_or(false)
+                            })
+                        })
+                        .unwrap_or(false);
+
+                    if !whitelisted {
+                        transformed = self.apply_image_poisoning(transformed, upstream_id, last_modified.clone()).await;
+                    }
+                }
+            }
+        }
+
+        if let Some(ref comp_config) = compression {
+            if comp_config.enabled.unwrap_or(false) {
+                let accept_encoding = response.headers()
+                    .get("accept-encoding")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("");
+                
+                if accept_encoding.contains("br") {
+                    if let Ok(compressed) = self.minifier_generator.compress_brotli(&transformed, comp_config.brotli_level.unwrap_or(6) as u32) {
+                        transformed = Bytes::from(compressed);
+                        response.headers_mut()
+                            .insert("Content-Encoding", "br".parse().unwrap());
+                    }
+                } else if accept_encoding.contains("gzip") {
+                    let gzip_level = comp_config.gzip_level.unwrap_or(6) as u32;
+                    if let Ok(compressed) = self.minifier_generator.compress_gzip(&transformed, gzip_level) {
+                        transformed = Bytes::from(compressed);
+                        response.headers_mut()
+                            .insert("Content-Encoding", "gzip".parse().unwrap());
+                    }
+                }
+            }
+        }
+
+        let full_body = http_body_util::Full::new(transformed.clone());
+        let new_body: BoxBody<Bytes, Infallible> = full_body.boxed();
+
+        *response.body_mut() = new_body;
+
+        let content_type_header = response.headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
+
+        let cached_content_encoding = response.headers()
+            .get("content-encoding")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
+
+        {
+            let mut cache = self.transform_cache.lock();
+            cache.insert(cache_key, TransformCacheEntry {
+                body: transformed,
+                content_encoding: cached_content_encoding,
+                content_type: content_type_header,
+                created_at: Instant::now(),
+            });
+        }
+
+        response
+    }
+
+    fn apply_minification(
+        &self,
+        body: Bytes,
+        content_type: &str,
+        config: &MeshMinificationConfig,
+    ) -> Bytes {
+        let ct = content_type.to_lowercase();
+        
+        if ct.contains("text/html") || ct.contains("text/css") || ct.contains("javascript") {
+            if ct.contains("text/html") {
+                if let Ok(text) = String::from_utf8(body.to_vec()) {
+                    if let Ok(minified) = self.minifier_generator.minify_html(&text) {
+                        return Bytes::from(minified);
+                    }
+                }
+            } else if ct.contains("text/css") {
+                if let Ok(text) = String::from_utf8(body.to_vec()) {
+                    if let Ok(minified) = self.minifier_generator.minify_css(&text) {
+                        return Bytes::from(minified);
+                    }
+                }
+            } else if ct.contains("javascript") {
+                if let Ok(text) = String::from_utf8(body.to_vec()) {
+                    if let Ok(minified) = self.minifier_generator.minify_js(&text) {
+                        return Bytes::from(minified);
+                    }
+                }
+            }
+        }
+
+        body
+    }
+
+    async fn apply_image_poisoning(
+        &self,
+        body: Bytes,
+        site_id: &str,
+        last_modified: Option<String>,
+    ) -> Bytes {
+        if body.is_empty() {
+            return body;
+        }
+
+        let static_worker_socket = std::env::var("STATIC_WORKER_SOCKET")
+            .unwrap_or_else(|_| "/var/run/maluwaf-static-worker.sock".to_string());
+
+        if static_worker_socket.is_empty() {
+            return body;
+        }
+
+        let socket_path = std::path::PathBuf::from(&static_worker_socket);
+
+        let client = crate::static_files::client::PoisonImageClient::new(socket_path);
+
+        match client.poison_image(site_id, body.to_vec(), last_modified).await {
+            Ok(poisoned) => Bytes::from(poisoned),
+            Err(e) => {
+                tracing::debug!("Image poisoning failed: {}", e);
+                body
+            }
+        }
     }
 
     pub fn get_connection_stats(&self) -> MeshProxyStats {

@@ -971,6 +971,44 @@ impl MeshTopology {
         None
     }
 
+    pub fn find_origin_by_site_sync(&self, site: &str) -> Option<String> {
+        let upstreams = self.local_upstreams.blocking_read();
+        
+        for (upstream_id, info) in upstreams.iter() {
+            if upstream_id == site && info.is_local {
+                return Some(info.owner_node_id.clone());
+            }
+        }
+        
+        None
+    }
+
+    pub fn find_all_origins_for_site_sync(&self, site: &str) -> Vec<String> {
+        let upstreams = self.local_upstreams.blocking_read();
+        let mut origins = Vec::new();
+        
+        for (upstream_id, info) in upstreams.iter() {
+            if upstream_id == site && info.is_local {
+                origins.push(info.owner_node_id.clone());
+            }
+        }
+        
+        origins
+    }
+
+    pub async fn find_all_origins_for_site(&self, site: &str) -> Vec<String> {
+        let upstreams = self.local_upstreams.read().await;
+        let mut origins = Vec::new();
+        
+        for (upstream_id, info) in upstreams.iter() {
+            if upstream_id == site && info.is_local {
+                origins.push(info.owner_node_id.clone());
+            }
+        }
+        
+        origins
+    }
+
     pub async fn get_upstream_for_peer(
         &self,
         upstream_id: &str,

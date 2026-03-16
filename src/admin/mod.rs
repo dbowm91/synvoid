@@ -119,6 +119,7 @@ fn build_router_from_state(state: Arc<AdminState>, admin_cors_config: AdminCorsC
         .route("/stats/attacks", get(handlers::stats::get_attack_stats))
         .route("/stats/cache", get(handlers::stats::get_cache_stats))
         .route("/stats/bandwidth", get(handlers::stats::get_bandwidth))
+        .route("/stats/requests", get(handlers::stats::get_request_logs))
         .route("/sites", get(handlers::sites::list_sites).post(handlers::sites::create_site))
         .route("/sites/{site_id}", get(handlers::sites::get_site).put(handlers::sites::update_site).delete(handlers::sites::delete_site))
         .route("/sites/{site_id}/theme", get(handlers::sites::get_site_theme).put(handlers::sites::update_site_theme))
@@ -135,6 +136,9 @@ fn build_router_from_state(state: Arc<AdminState>, admin_cors_config: AdminCorsC
         .route("/config/export", get(handlers::config::export_config))
         .route("/config/import", post(handlers::config::import_config))
         .route("/config/check-regex", post(handlers::config::check_regex))
+        .route("/config/overseer", get(handlers::config::get_overseer_config).put(handlers::config::update_overseer_config))
+        .route("/config/process-manager", get(handlers::config::get_process_manager_config).put(handlers::config::update_process_manager_config))
+        .route("/config/supervisor", get(handlers::config::get_supervisor_config).put(handlers::config::update_supervisor_config))
         .route("/tcp-udp/listeners", get(handlers::tcp_udp::list_listeners).post(handlers::tcp_udp::create_listener))
         .route("/tcp-udp/listeners/{listener_id}", delete(handlers::tcp_udp::delete_listener))
         .route("/tcp-udp/protocols", get(handlers::tcp_udp::list_protocols))
@@ -171,6 +175,8 @@ fn build_router_from_state(state: Arc<AdminState>, admin_cors_config: AdminCorsC
         .route("/system/info", get(handlers::system::get_system_info))
         .route("/system/master", get(handlers::system::get_master_status))
         .route("/system/workers", get(handlers::system::get_workers))
+        .route("/system/workers/count", get(handlers::system::get_worker_count))
+        .route("/system/workers/scale", post(handlers::system::scale_workers))
         .route("/system/workers/{worker_id}/restart", post(handlers::system::restart_worker))
         .route("/system/overseer", get(handlers::system::get_overseer))
         .route("/alerts/config", get(handlers::alerting::get_alert_config).put(handlers::alerting::update_alert_config))
@@ -208,6 +214,7 @@ fn build_router_from_state(state: Arc<AdminState>, admin_cors_config: AdminCorsC
         .route("/health", get(health_check))
         .fallback_service(ServeDir::new("admin-ui/dist"))
         .layer(create_cors_layer(&admin_cors_config))
+        .layer(axum::middleware::from_fn(middleware::extract_client_ip_middleware))
         .layer(rate_limit_layer)
         .with_state(state)
 }
@@ -279,6 +286,8 @@ pub async fn start_admin_server(
     }
 
     let admin_state = Arc::new(admin_state_builder);
+    
+    admin_state.setup_site_config_sync().await;
     
     let app = create_admin_router_with_state(admin_state.clone());
 

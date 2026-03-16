@@ -116,6 +116,45 @@ impl ApiService {
         self.get("/stats/bandwidth").await
     }
 
+    pub async fn get_request_logs(
+        &self,
+        site_id: Option<&str>,
+        method: Option<&str>,
+        status: Option<&str>,
+        search: Option<&str>,
+        limit: Option<usize>,
+        offset: Option<usize>,
+    ) -> Result<crate::types::RequestLogsResponse, String> {
+        let mut params = Vec::new();
+        
+        if let Some(site_id) = site_id {
+            params.push(format!("site_id={}", site_id));
+        }
+        if let Some(method) = method {
+            params.push(format!("method={}", method));
+        }
+        if let Some(status) = status {
+            params.push(format!("status={}", status));
+        }
+        if let Some(search) = search {
+            params.push(format!("search={}", search));
+        }
+        if let Some(limit) = limit {
+            params.push(format!("limit={}", limit));
+        }
+        if let Some(offset) = offset {
+            params.push(format!("offset={}", offset));
+        }
+        
+        let path = if params.is_empty() {
+            "/stats/requests".to_string()
+        } else {
+            format!("/stats/requests?{}", params.join("&"))
+        };
+        
+        self.get(&path).await
+    }
+
     pub async fn get_system_info(&self) -> Result<SystemInfo, String> {
         self.get("/system/info").await
     }
@@ -142,6 +181,14 @@ impl ApiService {
 
     pub async fn restart_worker(&self, worker_id: &str) -> Result<serde_json::Value, String> {
         self.post(&format!("/system/worker/{}/restart", worker_id), &serde_json::json!({})).await
+    }
+
+    pub async fn get_worker_count(&self) -> Result<crate::types::WorkerCountResponse, String> {
+        self.get("/system/workers/count").await
+    }
+
+    pub async fn scale_workers(&self, target_count: usize) -> Result<crate::types::ScaleWorkersResponse, String> {
+        self.post("/system/workers/scale", &serde_json::json!({ "target_count": target_count })).await
     }
 
     pub async fn post<T: DeserializeOwned, B: Serialize>(&self, path: &str, body: &B) -> Result<T, String> {
@@ -333,5 +380,29 @@ impl ApiService {
 
     pub async fn test_alert_webhook(&self) -> Result<serde_json::Value, String> {
         self.post("/alerts/test-webhook", &serde_json::json!({})).await
+    }
+
+    pub async fn get_overseer_config(&self) -> Result<serde_json::Value, String> {
+        self.get("/config/overseer").await
+    }
+
+    pub async fn update_overseer_config(&self, config: &serde_json::Value) -> Result<serde_json::Value, String> {
+        self.put("/config/overseer", config).await
+    }
+
+    pub async fn get_process_manager_config(&self) -> Result<serde_json::Value, String> {
+        self.get("/config/process-manager").await
+    }
+
+    pub async fn update_process_manager_config(&self, config: &serde_json::Value) -> Result<serde_json::Value, String> {
+        self.put("/config/process-manager", config).await
+    }
+
+    pub async fn get_supervisor_config(&self) -> Result<serde_json::Value, String> {
+        self.get("/config/supervisor").await
+    }
+
+    pub async fn update_supervisor_config(&self, config: &serde_json::Value) -> Result<serde_json::Value, String> {
+        self.put("/config/supervisor", config).await
     }
 }

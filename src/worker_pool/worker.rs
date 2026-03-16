@@ -2,7 +2,7 @@ use super::shared_state::SharedWafState;
 use crate::metrics::WorkerMetrics;
 use crate::proxy::WafDecision;
 use crate::http_client::{create_http_client, send_request_with_timeout, HttpClient};
-use crate::process::WorkerId;
+use crate::process::{WorkerId, WorkerStatus};
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -14,13 +14,7 @@ use parking_lot::RwLock as PLRwLock;
 use metrics::{counter, histogram};
 use http::Response;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WorkerStatus {
-    Starting,
-    Running,
-    Stopping,
-    Stopped,
-}
+pub use crate::process::WorkerStatus;
 
 #[derive(Clone, Debug)]
 pub struct Worker {

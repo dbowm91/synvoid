@@ -83,11 +83,12 @@ pub static AUTH_RATE_LIMITER: std::sync::LazyLock<AuthRateLimiter> =
 pub fn require_auth(
     auth: &Option<TypedHeader<Authorization<Bearer>>>,
     expected_token: &str,
+    client_ip: Option<&str>,
 ) -> bool {
-    let client_id = "admin_auth";
+    let client_id = client_ip.unwrap_or("unknown");
     
     if !AUTH_RATE_LIMITER.check(client_id) {
-        tracing::warn!("Authentication rate limit exceeded - too many failed attempts");
+        tracing::warn!("Authentication rate limit exceeded for {} - too many failed attempts", client_id);
         return false;
     }
     

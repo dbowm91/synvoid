@@ -9,6 +9,7 @@
 //! - Expiration-based cleanup
 //! - Graceful shutdown with data flush
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -83,7 +84,7 @@ pub struct BlockStore {
     enabled: bool,
     persist_path: Option<PathBuf>,
     config: DenyListLimitsConfig,
-    total_entries: RwLock<usize>,
+    total_entries: AtomicUsize,
     persist_tx: Option<mpsc::Sender<PersistRequest>>,
     shutdown_tx: Option<mpsc::Sender<()>>,
 }
@@ -189,7 +190,7 @@ impl BlockStore {
             enabled,
             persist_path,
             config,
-            total_entries: RwLock::new(initial_count),
+            total_entries: AtomicUsize::new(initial_count),
             persist_tx,
             shutdown_tx,
         }
@@ -300,7 +301,7 @@ impl BlockStore {
         }
 
         let max_entries = self.config.max_entries;
-        let current = *self.total_entries.read();
+        let current = self.total_entries.load(Ordering::Relaxed);
         
         if current >= max_entries {
             tracing::warn!(
@@ -320,7 +321,7 @@ impl BlockStore {
         let key = BlockEntry::key(site_scope, &ip);
 
         self.store.write().insert(key, entry);
-        *self.total_entries.write() = self.store.read().len();
+        self.total_entries.fetch_add(1, Ordering::Relaxed);
         
         tracing::info!("Blocked IP {} for {} (scope: {})", ip, reason, site_scope);
 
@@ -366,7 +367,7 @@ impl BlockStore {
                 return Some(entry.clone());
             } else {
                 store.remove(&key);
-                *self.total_entries.write() = store.len();
+                self.total_entries.fetch_sub(1, Ordering::Relaxed);
             }
         }
 
@@ -389,7 +390,7 @@ impl BlockStore {
                     return Some(entry.clone());
                 } else {
                     store.remove(&global_key);
-                    *self.total_entries.write() = store.len();
+                    self.total_entries.fetch_sub(1, Ordering::Relaxed);
                 }
             }
         }
@@ -400,7 +401,7 @@ impl BlockStore {
     fn remove_entry(&self, key: &str) {
         let removed = self.store.write().remove(key).is_some();
         if removed {
-            *self.total_entries.write() = self.store.read().len();
+            self.total_entries.fetch_sub(1, Ordering::Relaxed);
             self.trigger_persist();
         }
     }
@@ -434,20 +435,16 @@ impl BlockStore {
     /// # Returns
     /// `BlockStoreStats` containing entry counts and utilization
     pub fn get_stats(&self) -> BlockStoreStats {
-        let total = *self.total_entries.read();
+        let total = self.total_entries.load(Ordering::Relaxed);
         let max = self.config.max_entries;
         
         let mut permanent_count = 0;
-        let mut expired_count = 0;
         
         {
             let store = self.store.read();
             for entry in store.values() {
                 if entry.is_permanent() {
                     permanent_count += 1;
-                }
-                if entry.is_expired() {
-                    expired_count += 1;
                 }
             }
         }
@@ -456,7 +453,7 @@ impl BlockStore {
             total_entries: total,
             max_entries: max,
             permanent_count,
-            expired_count,
+            expired_count: 0,
             utilization_percent: if max > 0 { (total as f64 / max as f64) * 100.0 } else { 0.0 },
         }
     }
@@ -489,7 +486,7 @@ impl BlockStore {
             );
             
             store.insert(key, entry);
-            *self.total_entries.write() = store.len();
+            self.total_entries.fetch_add(1, Ordering::Relaxed);
             
             return true;
         }

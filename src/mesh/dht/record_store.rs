@@ -81,6 +81,7 @@ pub struct RecordStoreManager {
     transport: Arc<RwLock<Option<Arc<crate::mesh::transport::MeshTransport>>>>,
     routing_manager: RwLock<Option<Arc<crate::mesh::dht::routing::DhtRoutingManager>>>,
     stake_manager: RwLock<Option<Arc<crate::mesh::dht::StakeManager>>>,
+    topology: RwLock<Option<Arc<crate::mesh::topology::MeshTopology>>>,
     last_sync: RwLock<Instant>,
     pending_announces: RwLock<Vec<DhtRecord>>,
     cache_hits: RwLock<u64>,
@@ -138,6 +139,7 @@ impl RecordStoreManager {
             transport: Arc::new(RwLock::new(None)),
             routing_manager: RwLock::new(None),
             stake_manager: RwLock::new(None),
+            topology: RwLock::new(None),
             last_sync: RwLock::new(Instant::now()),
             pending_announces: RwLock::new(Vec::new()),
             cache_hits: RwLock::new(0),
@@ -191,6 +193,11 @@ impl RecordStoreManager {
     pub fn set_stake_manager(&self, manager: Arc<crate::mesh::dht::StakeManager>) {
         let mut sm = self.stake_manager.write();
         *sm = Some(manager);
+    }
+
+    pub fn set_topology(&self, topology: Arc<crate::mesh::topology::MeshTopology>) {
+        let mut t = self.topology.write();
+        *t = Some(topology);
     }
 
     pub fn is_routing_enabled(&self) -> bool {
@@ -1110,6 +1117,16 @@ impl RecordStoreManager {
         let mut skipped_count = 0;
         
         for record in records {
+            if !self.verify_origin_permission(&record, from_node) {
+                tracing::debug!(
+                    "Rejected record announce from {}: not an origin for record key {}",
+                    from_node,
+                    record.key
+                );
+                skipped_count += 1;
+                continue;
+            }
+
             if self.is_global_node() {
                 if self.store_record(record, source_reputation) {
                     stored_count += 1;
@@ -1131,6 +1148,34 @@ impl RecordStoreManager {
             stored_count,
             skipped_count
         );
+    }
+
+    fn verify_origin_permission(&self, record: &DhtRecord, announcer: &str) -> bool {
+        let dht_key = crate::mesh::dht::keys::DhtKey::from_str(&record.key);
+        
+        if let Some(record_type) = dht_key.to_signed_record_type() {
+            if !record_type.requires_origin_node() {
+                return true;
+            }
+        } else {
+            return true;
+        }
+
+        if self.is_global_node() {
+            return true;
+        }
+
+        let topology = self.topology.read();
+        if let Some(ref topo) = *topology {
+            let site_scope = dht_key.site_scope();
+            if let Some(site) = site_scope {
+                if let Some(origin_id) = topo.find_origin_by_site_sync(&site) {
+                    return origin_id == announcer;
+                }
+            }
+        }
+
+        false
     }
 
     pub fn handle_record_query(
@@ -2361,6 +2406,7 @@ impl Clone for RecordStoreManager {
             transport: self.transport.clone(),
             routing_manager: RwLock::new(self.routing_manager.read().clone()),
             stake_manager: RwLock::new(self.stake_manager.read().clone()),
+            topology: RwLock::new(self.topology.read().clone()),
             last_sync: RwLock::new(*self.last_sync.read()),
             pending_announces: RwLock::new(self.pending_announces.read().clone()),
             cache_hits: RwLock::new(*self.cache_hits.read()),

@@ -88,6 +88,40 @@ The dashboard shows connection status:
 
 When deleting a site, a confirmation dialog appears to prevent accidental deletions. This ensures you don't accidentally remove important configurations.
 
+### Per-Site Bandwidth
+
+The Sites Status panel on the dashboard shows bandwidth breakdown for each site. Click on a site row to expand and view detailed ingress/egress metrics:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Sites Status                                              │
+├─────────────────────────────────────────────────────────────┤
+│ ● example.com      1.2K req   342 blocked  Healthy     ▼ │
+│ ├─ Ingress:     2.4 GB                                  │
+│ │   Client:      1.8 GB                                  │
+│ │   Proxied:    512 MB                                  │
+│ │   Mesh:        128 MB                                  │
+│ ├─ Egress:      4.1 GB                                  │
+│ │   Response:    890 MB                                  │
+│ │   Proxied:    2.9 GB                                  │
+│ │   Mesh:        312 MB                                  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Bandwidth Categories:**
+
+- **Ingress (received from clients)**
+  - *Client*: Raw request data from end users
+  - *Proxied*: Response data from direct origin connections
+  - *Mesh*: Response data from mesh peer proxies
+
+- **Egress (sent to clients)**
+  - *Response*: Block pages, challenges, error responses
+  - *Proxied*: Request data forwarded to direct origins
+  - *Mesh*: Request data forwarded to mesh peers
+
+This breakdown helps identify traffic patterns and is essential for environments with bandwidth limits or per-site billing.
+
 ## Site Editor
 
 Configure individual site settings including:

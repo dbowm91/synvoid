@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, AtomicU32, Ordering};
 use std::time::Duration;
 use tokio::net::TcpListener;
 use hyper_util::rt::TokioIo;
@@ -32,7 +33,11 @@ use crate::mesh::transports::MeshTransportManager;
 use crate::http::headers::{inject_security_headers, inject_cors_headers, is_websocket_upgrade, compute_websocket_accept_key, generate_stealth_timestamp};
 use crate::metrics::bandwidth::{BandwidthProtocol, EgressDirection};
 use crate::metrics::WorkerMetrics;
+use crate::process::{current_timestamp, RequestLogPayload};
 use parking_lot::Mutex;
+
+static REQUEST_LOG_RATE_LIMITER: AtomicU32 = AtomicU32::new(0);
+static REQUEST_LOG_RATE_LIMITER_RESET: AtomicU64 = AtomicU64::new(0);
 
 struct HttpConnection {
     io: Mutex<Option<TokioIo<tokio::net::TcpStream>>>,
@@ -100,6 +105,8 @@ pub struct HttpServer {
     mesh_config: Option<Arc<MeshConfig>>,
     mesh_transport: Option<Arc<MeshTransportManager>>,
     metrics: Option<Arc<WorkerMetrics>>,
+    ipc: Option<Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>>,
+    worker_id: Option<crate::process::ipc::WorkerId>,
 }
 
 impl HttpServer {
@@ -131,11 +138,19 @@ impl HttpServer {
             mesh_config: None,
             mesh_transport: None,
             metrics: None,
+            ipc: None,
+            worker_id: None,
         }
     }
 
     pub fn with_metrics(mut self, metrics: Arc<WorkerMetrics>) -> Self {
         self.metrics = Some(metrics);
+        self
+    }
+
+    pub fn with_ipc(mut self, ipc: Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>, worker_id: crate::process::ipc::WorkerId) -> Self {
+        self.ipc = Some(ipc);
+        self.worker_id = Some(worker_id);
         self
     }
 
@@ -179,7 +194,8 @@ impl HttpServer {
         let mesh_config = self.mesh_config.clone();
         let mesh_transport = self.mesh_transport.clone();
         let metrics = self.metrics.clone();
-
+        let worker_id = self.worker_id.clone();
+        
         let header_read_timeout = Duration::from_secs(self.http_config.header_read_timeout_secs);
         let max_headers = self.http_config.max_headers;
         let max_buf_size = self.http_config.max_request_size;
@@ -221,6 +237,7 @@ impl HttpServer {
                             let mesh_config = mesh_config.clone();
                             let mesh_transport = mesh_transport.clone();
                             let metrics = metrics.clone();
+                            let ipc = self.ipc.clone();
                             
                             let http_conn = Arc::new(HttpConnection::new(stream));
                             let http_conn_clone = http_conn.clone();
@@ -250,8 +267,10 @@ impl HttpServer {
                                     let mesh_transport = mesh_transport.clone();
                                     let metrics = metrics.clone();
                                     let http_conn = http_conn_clone.clone();
+                                    let ipc_for_request = ipc.clone();
+                                    let worker_id_for_request = worker_id.clone();
                                     async move {
-                                        Self::handle_request(req, client_addr, local_addr, router, waf, client, alt_svc, main_config, drain_state, http_config, mesh_config, mesh_transport, metrics, http_conn).await
+                                        Self::handle_request(req, client_addr, local_addr, router, waf, client, alt_svc, main_config, drain_state, http_config, mesh_config, mesh_transport, metrics, http_conn, ipc_for_request, worker_id_for_request).await
                                     }
                                 }))
                                 .with_upgrades();
@@ -295,6 +314,8 @@ impl HttpServer {
         mesh_transport: Option<Arc<MeshTransportManager>>,
         metrics: Option<Arc<WorkerMetrics>>,
         http_conn: Arc<HttpConnection>,
+        ipc: Option<Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>>,
+        worker_id: Option<crate::process::ipc::WorkerId>,
     ) -> Result<Response<Full<Bytes>>, hyper::Error> {
         let start = std::time::Instant::now();
         let client_ip = client_addr.ip();
@@ -348,6 +369,14 @@ impl HttpServer {
                 Err(e) => {
                     tracing::warn!("Connection limit exceeded for {}: {}", client_ip, e);
                     counter!("maluwaf.traffic.connection_limited").increment(1);
+                    let ipc_clone = ipc.clone();
+                    let worker_id_clone = worker_id.clone();
+                    Self::send_request_log_if_enabled(
+                        ipc_clone, worker_id_clone, &main_config,
+                        client_ip, "UNKNOWN".to_string(), path.to_string(),
+                        503, start.elapsed().as_millis() as u64, "internal".to_string(), None,
+                        true,
+                    );
                     return Ok(Self::build_response_with_alt_svc(503, "Too Many Connections".to_string(), "application/json", &alt_svc, &main_config));
                 }
             }
@@ -360,6 +389,14 @@ impl HttpServer {
         if waf.is_over_bandwidth_limit() {
             tracing::warn!("Monthly bandwidth limit exceeded - returning 503");
             counter!("maluwaf.bandwidth.limit_exceeded").increment(1);
+            let ipc_clone = ipc.clone();
+            let worker_id_clone = worker_id.clone();
+            Self::send_request_log_if_enabled(
+                ipc_clone, worker_id_clone, &main_config,
+                client_ip, "UNKNOWN".to_string(), path.to_string(),
+                503, start.elapsed().as_millis() as u64, "internal".to_string(), None,
+                true,
+            );
             return Ok(Self::build_response_with_alt_svc(
                 503,
                 "Monthly Bandwidth Limit Exceeded".to_string(),
@@ -406,11 +443,27 @@ impl HttpServer {
         if path.starts_with(HONEYPOT_PREFIX) {
             counter!("maluwaf.honeypot.hit").increment(1);
             tracing::info!("HTTP honeypot accessed: {} by {}", path, client_ip);
+            let ipc_clone = ipc.clone();
+            let worker_id_clone = worker_id.clone();
+            Self::send_request_log_if_enabled(
+                ipc_clone, worker_id_clone, &main_config,
+                client_ip, method.to_string(), path.clone(),
+                408, start.elapsed().as_millis() as u64, "internal".to_string(), user_agent.clone(),
+                true,
+            );
             return Ok(Self::build_response_with_alt_svc(408, "Request timeout".to_string(), "text/plain", &alt_svc, &main_config));
         }
 
         if path.starts_with("/_waf_css_challenge") {
             let (html, _) = waf.challenge_manager.generate_challenge_page(&client_ip);
+            let ipc_clone = ipc.clone();
+            let worker_id_clone = worker_id.clone();
+            Self::send_request_log_if_enabled(
+                ipc_clone, worker_id_clone, &main_config,
+                client_ip, method.to_string(), path.clone(),
+                200, start.elapsed().as_millis() as u64, "internal".to_string(), user_agent.clone(),
+                true,
+            );
             return Ok(Self::build_response_with_alt_svc(200, html, "text/html", &alt_svc, &main_config));
         }
 
@@ -418,6 +471,14 @@ impl HttpServer {
             let asset_name = match path.strip_prefix("/_waf_assets/rnd-") {
                 Some(name) => name.strip_suffix(".png").unwrap_or(name),
                 None => {
+                    let ipc_clone = ipc.clone();
+                    let worker_id_clone = worker_id.clone();
+                    Self::send_request_log_if_enabled(
+                        ipc_clone, worker_id_clone, &main_config,
+                        client_ip, method.to_string(), path.clone(),
+                        204, start.elapsed().as_millis() as u64, "internal".to_string(), user_agent.clone(),
+                        true,
+                    );
                     let mut resp = Response::new(Full::new(Bytes::new()));
                     *resp.status_mut() = http::StatusCode::NO_CONTENT;
                     resp.headers_mut().insert(http::header::CONNECTION, "close".parse().unwrap());
@@ -426,6 +487,14 @@ impl HttpServer {
             };
             
             if !waf.challenge_manager.css_enabled() {
+                let ipc_clone = ipc.clone();
+                let worker_id_clone = worker_id.clone();
+                Self::send_request_log_if_enabled(
+                    ipc_clone, worker_id_clone, &main_config,
+                    client_ip, method.to_string(), path.clone(),
+                    404, start.elapsed().as_millis() as u64, "internal".to_string(), user_agent.clone(),
+                    true,
+                );
                 return Ok(Self::build_response_with_alt_svc(404, "Not Found".to_string(), "text/plain", &alt_svc, &main_config));
             }
             
@@ -442,6 +511,14 @@ impl HttpServer {
             let session_id = match session_id {
                 Some(sid) => sid,
                 None => {
+                    let ipc_clone = ipc.clone();
+                    let worker_id_clone = worker_id.clone();
+                    Self::send_request_log_if_enabled(
+                        ipc_clone, worker_id_clone, &main_config,
+                        client_ip, method.to_string(), path.clone(),
+                        204, start.elapsed().as_millis() as u64, "internal".to_string(), user_agent.clone(),
+                        true,
+                    );
                     let mut resp = Response::new(Full::new(Bytes::new()));
                     *resp.status_mut() = http::StatusCode::NO_CONTENT;
                     resp.headers_mut().insert(http::header::CONNECTION, "close".parse().unwrap());
@@ -490,10 +567,26 @@ impl HttpServer {
             crate::router::RouteResult::Found(target) => target,
             crate::router::RouteResult::NotFound(msg) => {
                 tracing::debug!("Route not found: {} for host: {}", msg, host);
+                let ipc_clone = ipc.clone();
+                let worker_id_clone = worker_id.clone();
+                Self::send_request_log_if_enabled(
+                    ipc_clone, worker_id_clone, &main_config,
+                    client_ip, method.to_string(), path.clone(),
+                    404, start.elapsed().as_millis() as u64, host.clone(), user_agent.clone(),
+                    false,
+                );
                 return Ok(Self::build_response_with_alt_svc(404, "Not Found".to_string(), "text/plain", &alt_svc, &main_config));
             }
             crate::router::RouteResult::Error(msg) => {
                 tracing::error!("Router error: {}", msg);
+                let ipc_clone = ipc.clone();
+                let worker_id_clone = worker_id.clone();
+                Self::send_request_log_if_enabled(
+                    ipc_clone, worker_id_clone, &main_config,
+                    client_ip, method.to_string(), path.clone(),
+                    500, start.elapsed().as_millis() as u64, host.clone(), user_agent.clone(),
+                    false,
+                );
                 return Ok(Self::build_response_with_alt_svc(500, "Internal Server Error".to_string(), "text/plain", &alt_svc, &main_config));
             }
         };
@@ -518,6 +611,14 @@ impl HttpServer {
             crate::proxy::WafDecision::Drop => {
                 counter!("maluwaf.http.blackhole_drop").increment(1);
                 http_conn.request_drop();
+                let ipc_clone = ipc.clone();
+                let worker_id_clone = worker_id.clone();
+                Self::send_request_log_if_enabled(
+                    ipc_clone, worker_id_clone, &main_config,
+                    client_ip, method_str.clone(), path.clone(),
+                    0, start.elapsed().as_millis() as u64, site_id.to_string(), user_agent.clone(),
+                    false,
+                );
                 let resp = Response::new(Full::new(Bytes::new()));
                 return Ok(resp);
             }
@@ -526,6 +627,15 @@ impl HttpServer {
                 let stall_timeout = Duration::from_secs(http_config.waf_stall_timeout_secs);
                 tokio::select! {
                     _ = tokio::time::sleep(stall_timeout) => {
+                        let latency_ms = stall_timeout.as_millis() as u64;
+                        let ipc_clone = ipc.clone();
+                        let worker_id_clone = worker_id.clone();
+                        Self::send_request_log_if_enabled(
+                            ipc_clone, worker_id_clone, &main_config,
+                            client_ip, method_str.clone(), path.clone(),
+                            408, latency_ms, site_id.to_string(), user_agent.clone(),
+                            false,
+                        );
                         Ok(Self::build_response_with_alt_svc(408, "Request timeout".to_string(), "text/plain", &alt_svc, &main_config))
                     }
                 }
@@ -542,6 +652,14 @@ impl HttpServer {
                     m.bandwidth.record_egress(body_len, BandwidthProtocol::Http, EgressDirection::Blocked);
                     m.bandwidth.record_site_egress(&site_id, body_len);
                 }
+                let ipc_clone = ipc.clone();
+                let worker_id_clone = worker_id.clone();
+                Self::send_request_log_if_enabled(
+                    ipc_clone, worker_id_clone, &main_config,
+                    client_ip, method_str.clone(), path.clone(),
+                    status, start.elapsed().as_millis() as u64, site_id.to_string(), user_agent.clone(),
+                    false,
+                );
                 Ok(Self::build_response_with_alt_svc(status, body, "text/html", &alt_svc, &main_config))
             }
             crate::proxy::WafDecision::Challenge(html) => {
@@ -553,6 +671,14 @@ impl HttpServer {
                     m.bandwidth.record_egress(body_len, BandwidthProtocol::Http, EgressDirection::Challenged);
                     m.bandwidth.record_site_egress(&site_id, body_len);
                 }
+                let ipc_clone = ipc.clone();
+                let worker_id_clone = worker_id.clone();
+                Self::send_request_log_if_enabled(
+                    ipc_clone, worker_id_clone, &main_config,
+                    client_ip, method_str.clone(), path.clone(),
+                    200, start.elapsed().as_millis() as u64, site_id.to_string(), user_agent.clone(),
+                    false,
+                );
                 Ok(Self::build_response_with_alt_svc(200, html, "text/html", &alt_svc, &main_config))
             }
             crate::proxy::WafDecision::ChallengeWithCookie { html, session_cookie_name, session_cookie_value, session_cookie_max_age } => {
@@ -565,6 +691,14 @@ impl HttpServer {
                     m.bandwidth.record_site_egress(&site_id, body_len);
                 }
                 let cookie = format!("{}={}; path=/; max-age={}; Secure; SameSite=Strict", session_cookie_name, session_cookie_value, session_cookie_max_age);
+                let ipc_clone = ipc.clone();
+                let worker_id_clone = worker_id.clone();
+                Self::send_request_log_if_enabled(
+                    ipc_clone, worker_id_clone, &main_config,
+                    client_ip, method_str.clone(), path.clone(),
+                    200, start.elapsed().as_millis() as u64, site_id.to_string(), user_agent.clone(),
+                    false,
+                );
                 Ok(Self::build_response_with_cookie(200, html, "text/html", &cookie, &alt_svc, &main_config))
             }
             crate::proxy::WafDecision::Tarpit(tar_path) => {
@@ -577,6 +711,14 @@ impl HttpServer {
                     m.bandwidth.record_egress(body_len, BandwidthProtocol::Http, EgressDirection::Blocked);
                     m.bandwidth.record_site_egress(&site_id, body_len);
                 }
+                let ipc_clone = ipc.clone();
+                let worker_id_clone = worker_id.clone();
+                Self::send_request_log_if_enabled(
+                    ipc_clone, worker_id_clone, &main_config,
+                    client_ip, method_str.clone(), path.clone(),
+                    200, start.elapsed().as_millis() as u64, site_id.to_string(), user_agent.clone(),
+                    false,
+                );
                 Ok(Self::build_response_with_alt_svc(200, html, "text/html", &alt_svc, &main_config))
             }
             crate::proxy::WafDecision::Pass => {
@@ -638,13 +780,126 @@ impl HttpServer {
                             metrics.record_site_upstream_success(&site_id);
                         }
                         let status = resp.status_code();
-                        let headers = filter_response_headers(&resp.headers, &headers_to_filter);
                         
-                        let body = resp.body;
-                        let body_len = body.len() as u64;
+                        let content_type = resp.headers.get("content-type")
+                            .and_then(|v| v.to_str().ok())
+                            .map(|s| s.to_string());
+                        
+                        let last_modified = resp.headers.get("last-modified")
+                            .and_then(|v| v.to_str().ok())
+                            .map(|s| s.to_string());
+                        
+                        let mut headers = filter_response_headers(&resp.headers, &headers_to_filter);
+                        
+                        let mut body = Bytes::from(resp.body);
+                        let mut body_len = body.len() as u64;
+                        
+                        if let Some(ref mt) = mesh_transport {
+                            let minification = mt.get_minification_for_site(&site_id).await;
+                            if let Some(ref min_config) = minification {
+                                if min_config.enabled.unwrap_or(false) {
+                                    let ct = content_type.as_deref().unwrap_or("");
+                                    if ct.contains("text/html") || ct.contains("text/css") || ct.contains("javascript") {
+                                        let generator = crate::static_files::minifier::MinifierGenerator::new();
+                                        
+                                        if ct.contains("text/html") {
+                                            if let Ok(text) = String::from_utf8(body.to_vec()) {
+                                                if let Ok(minified) = generator.minify_html(&text) {
+                                                    body = Bytes::from(minified);
+                                                    body_len = body.len() as u64;
+                                                }
+                                            }
+                                        } else if ct.contains("text/css") {
+                                            if let Ok(text) = String::from_utf8(body.to_vec()) {
+                                                if let Ok(minified) = generator.minify_css(&text) {
+                                                    body = Bytes::from(minified);
+                                                    body_len = body.len() as u64;
+                                                }
+                                            }
+                                        } else if ct.contains("javascript") {
+                                            if let Ok(text) = String::from_utf8(body.to_vec()) {
+                                                if let Ok(minified) = generator.minify_js(&text) {
+                                                    body = Bytes::from(minified);
+                                                    body_len = body.len() as u64;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            let image_protection = mt.get_image_protection_for_site(&site_id).await;
+                            
+                            if let Some(ref config) = image_protection {
+                                if config.enabled.unwrap_or(false) {
+                                    let is_image = content_type.as_ref()
+                                        .map(|ct| ct.starts_with("image/"))
+                                        .unwrap_or(false);
+                                    let min_size = config.min_size_bytes.unwrap_or(100 * 1024) as u64;
+                                    let in_range = body_len >= min_size;
+                                    let max_check = config.whitelist_patterns.as_ref()
+                                        .map(|p| p.is_empty())
+                                        .unwrap_or(true);
+                                    
+                                    if is_image && in_range && max_check {
+                                        let path_str = path.to_string();
+                                        let whitelisted = config.whitelist_patterns.as_ref()
+                                            .map(|patterns| {
+                                                patterns.iter().any(|p| {
+                                                    if let Ok(re) = regex::Regex::new(p) {
+                                                        re.is_match(&path_str)
+                                                    } else {
+                                                        false
+                                                    }
+                                                })
+                                            })
+                                            .unwrap_or(false);
+                                        
+                                        if !whitelisted {
+                                            let site_id_for_poison = site_id.to_string();
+                                            body = Self::apply_image_poisoning(body, site_id_for_poison, last_modified.clone()).await;
+                                            body_len = body.len() as u64;
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            let compression = mt.get_compression_for_site(&site_id).await;
+                            if let Some(ref comp_config) = compression {
+                                if comp_config.enabled.unwrap_or(false) {
+                                    let accept_encoding: &str = resp.headers.get("accept-encoding")
+                                        .and_then(|v: &http::HeaderValue| v.to_str().ok())
+                                        .unwrap_or("");
+                                    
+                                    let generator = crate::static_files::minifier::MinifierGenerator::new();
+                                    let gzip_level = comp_config.gzip_level.unwrap_or(6) as u32;
+                                    
+                                    if accept_encoding.contains("br") {
+                                        if let Ok(compressed) = generator.compress_brotli(&body, comp_config.brotli_level.unwrap_or(6) as u32) {
+                                            body = Bytes::from(compressed);
+                                            body_len = body.len() as u64;
+                                            let mut headers_clone = headers.clone();
+                                            headers_clone.retain(|(k, _)| k.to_lowercase() != "content-encoding");
+                                            headers_clone.push(("Content-Encoding".to_string(), "br".to_string()));
+                                            headers = headers_clone;
+                                        }
+                                    } else if accept_encoding.contains("gzip") {
+                                        if let Ok(compressed) = generator.compress_gzip(&body, gzip_level) {
+                                            body = Bytes::from(compressed);
+                                            body_len = body.len() as u64;
+                                            let mut headers_clone = headers.clone();
+                                            headers_clone.retain(|(k, _)| k.to_lowercase() != "content-encoding");
+                                            headers_clone.push(("Content-Encoding".to_string(), "gzip".to_string()));
+                                            headers = headers_clone;
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         
                         if let Some(ref m) = metrics {
                             m.bandwidth.record_proxied(request_body_size, body_len, &target.upstream);
+                            m.bandwidth.record_site_proxied(&site_id, request_body_size, body_len);
                             m.bandwidth.record_egress(body_len, BandwidthProtocol::Http, EgressDirection::Proxied);
                             m.bandwidth.record_site_egress(&site_id, body_len);
                         }
@@ -694,12 +949,18 @@ impl HttpServer {
 
         let latency_ms = start.elapsed().as_millis() as u64;
         if let Some(ref metrics) = metrics {
-            let site_id_clone = site_id.clone();
-            let metrics_clone = metrics.clone();
-            tokio::spawn(async move {
-                metrics_clone.record_site_request_end(&site_id_clone, latency_ms);
-            });
+            metrics.record_site_request_end(&site_id, latency_ms);
         }
+
+        let status = response.as_ref().map(|r| r.status().as_u16()).unwrap_or(0);
+        let ipc_clone = ipc.clone();
+        let worker_id_clone = worker_id.clone();
+        Self::send_request_log_if_enabled(
+            ipc_clone, worker_id_clone, &main_config,
+            client_ip, method_str, path.clone(),
+            status, latency_ms, site_id.to_string(), user_agent.clone(),
+            false,
+        );
 
         response
     }
@@ -1218,5 +1479,113 @@ impl HttpServer {
             alt_svc,
             main_config,
         ))
+    }
+
+    async fn apply_image_poisoning(
+        body: Bytes,
+        site_id: String,
+        last_modified: Option<String>,
+    ) -> Bytes {
+        if body.is_empty() {
+            return body;
+        }
+
+        let static_worker_socket = std::env::var("STATIC_WORKER_SOCKET")
+            .unwrap_or_else(|_| "/var/run/maluwaf-static-worker.sock".to_string());
+        
+        if static_worker_socket.is_empty() {
+            return body;
+        }
+
+        let socket_path = std::path::PathBuf::from(&static_worker_socket);
+        
+        let client = crate::static_files::client::PoisonImageClient::new(socket_path);
+        
+        match client.poison_image(&site_id, body.to_vec(), last_modified).await {
+            Ok(poisoned) => Bytes::from(poisoned),
+            Err(e) => {
+                tracing::debug!("Image poisoning failed: {}", e);
+                body
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn send_request_log_if_enabled(
+        ipc: Option<Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>>,
+        worker_id: Option<crate::process::ipc::WorkerId>,
+        main_config: &Arc<MainConfig>,
+        client_ip: IpAddr,
+        method: String,
+        path: String,
+        status: u16,
+        latency_ms: u64,
+        site_id: String,
+        user_agent: Option<String>,
+        is_internal: bool,
+    ) {
+        let verbose_config = &main_config.logging.verbose_request_logging;
+        if !verbose_config.enabled {
+            return;
+        }
+
+        let should_log = if is_internal {
+            verbose_config.log_internal
+        } else {
+            match status {
+                0 => verbose_config.log_dropped,
+                1..=399 => verbose_config.log_proxied,
+                400..=599 => verbose_config.log_blocked,
+                _ => false,
+            }
+        };
+
+        if !should_log {
+            return;
+        }
+
+        let max_per_second = verbose_config.max_logs_per_second as u32;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as u64)
+            .unwrap_or(0);
+        
+        let last_reset = REQUEST_LOG_RATE_LIMITER_RESET.load(Ordering::Relaxed);
+        if now != last_reset {
+            REQUEST_LOG_RATE_LIMITER_RESET.store(now, Ordering::Relaxed);
+            REQUEST_LOG_RATE_LIMITER.store(0, Ordering::Relaxed);
+        }
+        
+        let current_count = REQUEST_LOG_RATE_LIMITER.fetch_add(1, Ordering::Relaxed);
+        if current_count >= max_per_second {
+            return;
+        }
+
+        if let (Some(ref ipc), Some(ref worker_id)) = (ipc, worker_id) {
+            let log = RequestLogPayload {
+                timestamp: current_timestamp(),
+                client_ip: client_ip.to_string(),
+                method,
+                path,
+                status,
+                response_time_ms: latency_ms as u32,
+                site_id,
+                user_agent,
+                bytes_sent: 0,
+                bytes_received: 0,
+            };
+            let ipc = ipc.clone();
+            let worker_id = worker_id.clone();
+            tokio::spawn(async move {
+                let mut ipc_guard = ipc.lock().await;
+                let msg = crate::process::Message::WorkerRequestLog {
+                    id: worker_id,
+                    log,
+                };
+                if let Err(e) = ipc_guard.send(&msg).await {
+                    tracing::warn!("Failed to send request log: {}", e);
+                }
+            });
+        }
     }
 }

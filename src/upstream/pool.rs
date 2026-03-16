@@ -547,20 +547,28 @@ impl UpstreamPool {
         }
     }
 
-    pub fn mark_healthy(&self, url: &str) {
+    fn with_backend<F>(&self, url: &str, f: F)
+    where
+        F: FnOnce(&Backend),
+    {
         let backends = self.backends.read();
         if let Some(backend) = backends.iter().find(|b| b.url.as_ref() == url) {
-            backend.is_healthy.set(true);
-            tracing::info!("Backend {} marked healthy", url);
+            f(backend);
         }
     }
 
+    pub fn mark_healthy(&self, url: &str) {
+        self.with_backend(url, |backend| {
+            backend.is_healthy.set(true);
+            tracing::info!("Backend {} marked healthy", url);
+        });
+    }
+
     pub fn mark_unhealthy(&self, url: &str) {
-        let backends = self.backends.read();
-        if let Some(backend) = backends.iter().find(|b| b.url.as_ref() == url) {
+        self.with_backend(url, |backend| {
             backend.is_healthy.set(false);
             tracing::info!("Backend {} marked unhealthy", url);
-        }
+        });
     }
 }
 

@@ -5,8 +5,8 @@ use crate::components::layout::Sidebar;
 use crate::components::ToastContainer;
 use crate::hooks::use_theme::*;
 use crate::pages::{
-    Dashboard, Logs, Probes, RequestLogs, Settings, SiteEditor, Sites, TcpUdp, TierKeys, Upstreams,
-    Workers,
+    Alerts, Dashboard, Logs, Probes, ProcessManagement, RequestLogs, Settings, SiteDetail,
+    SiteEditor, Sites, TcpUdp, TierKeys, Upstreams, Workers,
 };
 use crate::types::UpdateThemeRequest;
 
@@ -26,16 +26,22 @@ pub enum Route {
     Sites,
     #[at("/sites/:id")]
     SiteEditor { id: String },
+    #[at("/sites/:id/stats")]
+    SiteDetail { id: String },
     #[at("/tcp-udp")]
     TcpUdp,
     #[at("/probes")]
     Probes,
     #[at("/settings")]
     Settings,
+    #[at("/process")]
+    ProcessManagement,
     #[at("/tier-keys")]
     TierKeys,
     #[at("/workers")]
     Workers,
+    #[at("/alerts")]
+    Alerts,
     #[not_found]
     #[at("/404")]
     NotFound,
@@ -90,11 +96,14 @@ fn switch(route: Route) -> Html {
         Route::Upstreams => html! { <Upstreams /> },
         Route::Sites => html! { <Sites /> },
         Route::SiteEditor { id } => html! { <SiteEditor id={id} /> },
+        Route::SiteDetail { id } => html! { <SiteDetail id={id} /> },
         Route::TcpUdp => html! { <TcpUdp /> },
         Route::Probes => html! { <Probes /> },
         Route::Settings => html! { <Settings /> },
+        Route::ProcessManagement => html! { <ProcessManagement /> },
         Route::TierKeys => html! { <TierKeys /> },
         Route::Workers => html! { <Workers /> },
+        Route::Alerts => html! { <Alerts /> },
         Route::NotFound => html! { <div class="text-center py-20">
             <h1 class="text-4xl font-bold mb-4">{ "404" }</h1>
             <p class="text-secondary">{ "Page not found" }</p>

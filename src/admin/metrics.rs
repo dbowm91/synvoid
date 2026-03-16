@@ -205,6 +205,12 @@ pub async fn start_metrics_publisher(
                             proxy_cache_misses: 0,
                             static_cache_hits: 0,
                             static_cache_misses: 0,
+                            bytes_received: 0,
+                            bytes_sent: 0,
+                            proxied_bytes_sent: 0,
+                            proxied_bytes_received: 0,
+                            mesh_bytes_sent: 0,
+                            mesh_bytes_received: 0,
                         });
                         entry.total_requests += site_payload.total_requests;
                         entry.blocked += site_payload.blocked;
@@ -227,6 +233,13 @@ pub async fn start_metrics_publisher(
                         for (attack_type, count) in &site_payload.blocked_by_type {
                             *entry.blocked_by_type.entry(attack_type.clone()).or_insert(0) += count;
                         }
+
+                        entry.bytes_received += site_payload.bytes_received;
+                        entry.bytes_sent += site_payload.bytes_sent;
+                        entry.proxied_bytes_sent += site_payload.proxied_bytes_sent;
+                        entry.proxied_bytes_received += site_payload.proxied_bytes_received;
+                        entry.mesh_bytes_sent += site_payload.mesh_bytes_sent;
+                        entry.mesh_bytes_received += site_payload.mesh_bytes_received;
                     }
                 }
 

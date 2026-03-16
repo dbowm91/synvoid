@@ -189,6 +189,7 @@ impl DohServer {
                 None,
                 None,
                 60,
+                300,
                 c,
                 cache_key,
                 dnssec.as_ref(),

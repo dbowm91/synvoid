@@ -6,6 +6,7 @@ use metrics::{gauge, histogram};
 use parking_lot::RwLock as PLRwLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::config::{SupervisorConfig, SupervisorConfigBuilder};
 use crate::supervisor::worker::{Worker, WorkerId, WorkerStatus};
 use crate::supervisor::autoscaler::AutoScaler;
 use crate::RunningFlag;
@@ -20,37 +21,6 @@ pub struct Supervisor {
     restart_state: Arc<RwLock<RestartState>>,
     running: RunningFlag,
     next_worker_id: Arc<PLRwLock<usize>>,
-}
-
-#[derive(Clone)]
-pub struct SupervisorConfig {
-    pub min_workers: usize,
-    pub max_workers: usize,
-    pub scale_up_threshold: f64,
-    pub scale_down_threshold: f64,
-    pub scale_up_cooldown_secs: u64,
-    pub scale_down_cooldown_secs: u64,
-    pub max_restart_attempts: u32,
-    pub restart_cooldown_secs: u64,
-    pub health_check_interval_secs: u64,
-    pub graceful_shutdown_timeout_secs: u64,
-}
-
-impl Default for SupervisorConfig {
-    fn default() -> Self {
-        Self {
-            min_workers: 2,
-            max_workers: 16,
-            scale_up_threshold: 0.8,
-            scale_down_threshold: 0.2,
-            scale_up_cooldown_secs: 30,
-            scale_down_cooldown_secs: 60,
-            max_restart_attempts: 5,
-            restart_cooldown_secs: 300,
-            health_check_interval_secs: 5,
-            graceful_shutdown_timeout_secs: 30,
-        }
-    }
 }
 
 #[derive(Clone, Debug)]

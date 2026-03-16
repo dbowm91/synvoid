@@ -3,28 +3,38 @@ use yew_router::prelude::*;
 
 use crate::app::Route;
 use crate::services::ApiService;
-use crate::types::SiteInfo;
+use crate::types::{SiteInfo, SiteStats};
 
 #[function_component]
 pub fn Sites() -> Html {
     let sites = use_state(|| Vec::<SiteInfo>::new());
+    let site_stats = use_state(|| Vec::<SiteStats>::new());
     let loading = use_state(|| true);
     let error = use_state(|| None as Option<String>);
 
     {
         let sites = sites.clone();
+        let site_stats = site_stats.clone();
         let loading = loading.clone();
         let error = error.clone();
         use_effect_with((), move |_| {
             let sites = sites.clone();
+            let site_stats = site_stats.clone();
             let loading = loading.clone();
             let error = error.clone();
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
+                
                 match api.list_sites().await {
                     Ok(s) => sites.set(s),
                     Err(e) => error.set(Some(e)),
                 }
+                
+                match api.get_stats_sites().await {
+                    Ok(s) => site_stats.set(s),
+                    Err(e) => tracing::error!("Failed to fetch site stats: {}", e),
+                }
+                
                 loading.set(false);
             });
             || {}
@@ -81,13 +91,17 @@ pub fn Sites() -> Html {
                         let site_id = site.id.clone();
                         let domains = site.domains.clone();
                         let routes_count = site.routes.keys().count();
+                        let healthy = site_stats.iter()
+                            .find(|s| s.site_id == site_id)
+                            .map(|s| s.upstream_healthy)
+                            .unwrap_or(true);
                         html! {
                             <SiteCard
                                 site_id={site_id.clone()}
                                 domains={domains}
                                 upstream={site.default_upstream.clone()}
                                 routes={routes_count}
-                                healthy={true}
+                                healthy={healthy}
                                 on_delete={on_delete.clone()}
                             />
                         }

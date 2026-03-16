@@ -3,12 +3,27 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures::FutureExt;
+use metrics::counter;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 
 use crate::dns::server::{DnsZoneRecord, RecordType, Zone, ZoneHistory};
 use crate::mesh::transport::MeshTransport;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SerialComparison {
+    RemoteIsNewer,
+    LocalIsNewer,
+    Equal,
+    WrapAround,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ZoneSyncDecision {
+    Accept,
+    Reject,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
 pub struct ZoneSyncMetadata {
@@ -568,6 +583,116 @@ impl AnycastZoneSync {
             nsec3param: None,
             history,
         })
+    }
+
+    pub fn should_accept_zone_update(
+        local_serial: u32,
+        remote_serial: u32,
+    ) -> ZoneSyncDecision {
+        let serial_cmp = Self::compare_serials(local_serial, remote_serial);
+        
+        match serial_cmp {
+            SerialComparison::RemoteIsNewer => {
+                tracing::debug!(
+                    "Remote zone is newer (local={}, remote={}), accepting",
+                    local_serial, remote_serial
+                );
+                ZoneSyncDecision::Accept
+            }
+            SerialComparison::LocalIsNewer => {
+                tracing::debug!(
+                    "Local zone is newer (local={}, remote={}), rejecting",
+                    local_serial, remote_serial
+                );
+                ZoneSyncDecision::Reject
+            }
+            SerialComparison::Equal | SerialComparison::WrapAround => {
+                tracing::debug!(
+                    "Serial comparison: local={}, remote={}, rejecting",
+                    local_serial, remote_serial
+                );
+                ZoneSyncDecision::Reject
+            }
+        }
+    }
+
+    pub fn compare_serials(local: u32, remote: u32) -> SerialComparison {
+        const HALF_U32: u32 = u32::MAX / 2;
+        let diff = remote.wrapping_sub(local);
+        
+        if diff == 0 {
+            SerialComparison::Equal
+        } else if diff <= HALF_U32 {
+            SerialComparison::RemoteIsNewer
+        } else if local.wrapping_sub(remote) <= HALF_U32 {
+            SerialComparison::LocalIsNewer
+        } else {
+            SerialComparison::WrapAround
+        }
+    }
+
+    pub fn apply_remote_zone(&self, remote_zone: Zone, source_node_id: &str) -> Result<bool, String> {
+        let zone_origin = remote_zone.origin.clone();
+        let remote_serial = remote_zone.serial;
+        
+        let should_accept = {
+            let zones = self.local_zones.read();
+            if let Some(local_zone) = zones.get(&zone_origin) {
+                let local_serial = local_zone.serial;
+                
+                let decision = Self::compare_and_decide(local_serial, remote_serial);
+                
+                match decision {
+                    ZoneSyncDecision::Accept => {
+                        counter!("dns_zone_sync_accepted_total").increment(1);
+                        true
+                    }
+                    ZoneSyncDecision::Reject => {
+                        counter!("dns_zone_sync_rejected_total").increment(1);
+                        false
+                    }
+                }
+            } else {
+                counter!("dns_zone_sync_new_zone_total").increment(1);
+                true
+            }
+        };
+        
+        if should_accept {
+            let mut zones = self.local_zones.write();
+            zones.insert(zone_origin.clone(), remote_zone);
+            tracing::info!(
+                "Accepted remote zone {} (serial: {}) from node {}",
+                zone_origin,
+                remote_serial,
+                source_node_id
+            );
+            Ok(true)
+        } else {
+            tracing::debug!(
+                "Rejected zone {} update from {} (local serial: {} >= remote: {})",
+                zone_origin,
+                source_node_id,
+                self.get_zone_serial(&zone_origin).unwrap_or(0),
+                remote_serial
+            );
+            Ok(false)
+        }
+    }
+
+    pub fn apply_remote_zone_from_json(&self, json_data: &str, source_node_id: &str) -> Result<bool, String> {
+        let remote_zone = self.deserialize_zone(json_data)?;
+        self.apply_remote_zone(remote_zone, source_node_id)
+    }
+
+    fn compare_and_decide(local_serial: u32, remote_serial: u32) -> ZoneSyncDecision {
+        let cmp = Self::compare_serials(local_serial, remote_serial);
+        match cmp {
+            SerialComparison::RemoteIsNewer => ZoneSyncDecision::Accept,
+            SerialComparison::LocalIsNewer => ZoneSyncDecision::Reject,
+            SerialComparison::Equal => ZoneSyncDecision::Reject,
+            SerialComparison::WrapAround => ZoneSyncDecision::Reject,
+        }
     }
 
     pub fn get_zone_serial(&self, zone_origin: &str) -> Option<u32> {

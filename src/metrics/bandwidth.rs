@@ -138,6 +138,10 @@ pub struct BandwidthTracker {
 pub struct SiteBandwidth {
     pub bytes_received: AtomicU64,
     pub bytes_sent: AtomicU64,
+    pub proxied_bytes_sent: AtomicU64,
+    pub proxied_bytes_received: AtomicU64,
+    pub mesh_bytes_sent: AtomicU64,
+    pub mesh_bytes_received: AtomicU64,
 }
 
 #[derive(Debug, Default)]
@@ -424,6 +428,35 @@ impl BandwidthTracker {
         site.bytes_sent.fetch_add(bytes, Ordering::Relaxed);
     }
 
+    pub fn record_site_proxied(&self, site_id: &str, bytes_sent: u64, bytes_received: u64) {
+        let mut sites = self.per_site.write();
+        let site = sites
+            .entry(site_id.to_string())
+            .or_insert_with(SiteBandwidth::default);
+        site.proxied_bytes_sent
+            .fetch_add(bytes_sent, Ordering::Relaxed);
+        site.proxied_bytes_received
+            .fetch_add(bytes_received, Ordering::Relaxed);
+    }
+
+    pub fn record_site_mesh_egress(&self, site_id: &str, bytes: u64) {
+        let mut sites = self.per_site.write();
+        let site = sites
+            .entry(site_id.to_string())
+            .or_insert_with(SiteBandwidth::default);
+        site.mesh_bytes_sent.fetch_add(bytes, Ordering::Relaxed);
+        self.mesh_bytes_sent.fetch_add(bytes, Ordering::Relaxed);
+    }
+
+    pub fn record_site_mesh_ingress(&self, site_id: &str, bytes: u64) {
+        let mut sites = self.per_site.write();
+        let site = sites
+            .entry(site_id.to_string())
+            .or_insert_with(SiteBandwidth::default);
+        site.mesh_bytes_received.fetch_add(bytes, Ordering::Relaxed);
+        self.mesh_bytes_received.fetch_add(bytes, Ordering::Relaxed);
+    }
+
     fn record_protocol_ingress(&self, bytes: u64, protocol: BandwidthProtocol) {
         match protocol {
             BandwidthProtocol::Http => {
@@ -608,6 +641,10 @@ impl BandwidthTracker {
                 SiteBandwidthPayload {
                     bytes_received: bw.bytes_received.load(Ordering::Relaxed),
                     bytes_sent: bw.bytes_sent.load(Ordering::Relaxed),
+                    proxied_bytes_sent: bw.proxied_bytes_sent.load(Ordering::Relaxed),
+                    proxied_bytes_received: bw.proxied_bytes_received.load(Ordering::Relaxed),
+                    mesh_bytes_sent: bw.mesh_bytes_sent.load(Ordering::Relaxed),
+                    mesh_bytes_received: bw.mesh_bytes_received.load(Ordering::Relaxed),
                 },
             );
         }
@@ -773,6 +810,10 @@ pub struct ProtocolBandwidth {
 pub struct SiteBandwidthPayload {
     pub bytes_received: u64,
     pub bytes_sent: u64,
+    pub proxied_bytes_sent: u64,
+    pub proxied_bytes_received: u64,
+    pub mesh_bytes_sent: u64,
+    pub mesh_bytes_received: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

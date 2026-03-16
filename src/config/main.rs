@@ -12,6 +12,7 @@ use super::limits::{BlocklistLimitsConfig, ProxyLimitsConfig, RateLimitMemoryCon
 use super::logging::LoggingConfig;
 use super::network::{TarpitDefaults, TcpDefaults, UdpDefaults};
 use super::plugins::PluginConfig;
+use super::process::{OverseerConfig, ProcessManagerConfig, SupervisorConfig};
 use super::protection::{
     IpFeedConfig, MimesConfig, RuleFeedConfig, ThreatLevelConfig, YaraRuleFeedConfig,
 };
@@ -31,6 +32,10 @@ pub use super::defaults::{
 };
 pub use super::http::{
     Http3Config as MainHttp3Config, HttpConfig as MainHttpConfig, TokioConfig as MainTokioConfig,
+};
+pub use super::process::{
+    OverseerConfig as MainOverseerConfig, ProcessManagerConfig as MainProcessManagerConfig,
+    SupervisorConfig as MainSupervisorConfig,
 };
 pub use super::protection::{
     IpFeedConfig as MainIpFeedConfig, RuleFeedConfig as MainRuleFeedConfig,
@@ -114,6 +119,12 @@ pub struct MainConfig {
     pub dns: DnsConfig,
     #[serde(default)]
     pub mesh: Option<super::MeshConfig>,
+    #[serde(default)]
+    pub overseer: OverseerConfig,
+    #[serde(default)]
+    pub process_manager: ProcessManagerConfig,
+    #[serde(default)]
+    pub supervisor: SupervisorConfig,
 }
 
 impl MainConfig {
@@ -215,6 +226,9 @@ impl MainConfig {
             #[cfg(feature = "dns")]
             dns: DnsConfig::default(),
             mesh: None,
+            overseer: super::OverseerConfig::default(),
+            process_manager: super::ProcessManagerConfig::default(),
+            supervisor: super::SupervisorConfig::default(),
         }
     }
 }

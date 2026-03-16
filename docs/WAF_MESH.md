@@ -347,6 +347,24 @@ maluwaf_mesh_sync_total
 maluwaf_mesh_blocklist_updates_total
 ```
 
+### Per-Site Mesh Bandwidth
+
+When using mesh proxying to route traffic through other WAF nodes, bandwidth is tracked per-site in the admin dashboard. Each site shows:
+
+| Metric | Description |
+|--------|-------------|
+| `mesh_bytes_sent` | Request bytes sent to mesh peers |
+| `mesh_bytes_received` | Response bytes received from mesh peers |
+
+This is distinct from direct proxy bandwidth (`proxied_bytes_sent`/`proxied_bytes_received`) where the WAF connects directly to the origin server.
+
+**Use cases:**
+- Track bandwidth costs when mesh traffic crosses network boundaries
+- Identify sites heavily using mesh proxying vs direct connections
+- Monitor for unexpected mesh traffic patterns
+
+The breakdown is visible in the dashboard's Sites Status panel - expand any site to see ingress/egress breakdown including mesh contributions.
+
 ### Debugging
 
 ```bash

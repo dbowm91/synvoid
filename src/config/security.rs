@@ -1,5 +1,9 @@
 use serde::{Deserialize, Serialize};
 
+fn default_ipc_enforce_signing() -> bool {
+    true
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
 pub struct MainSecurityConfig {
     #[serde(default)]
@@ -8,7 +12,7 @@ pub struct MainSecurityConfig {
     pub sanitize_forwarded_headers: bool,
     #[serde(default)]
     pub global_security_headers: bool,
-    #[serde(default)]
+    #[serde(default = "default_ipc_enforce_signing")]
     pub ipc_enforce_signing: bool,
     #[serde(default)]
     pub ipc_session_key_env: Option<String>,

@@ -129,6 +129,20 @@ impl SignedRecordType {
     pub fn requires_announce_refresh(&self) -> bool {
         matches!(self, SignedRecordType::Upstream)
     }
+
+    /// Returns true if this record type requires an origin node to announce it.
+    /// Origin-node specific records are those that relate to site-specific configuration
+    /// and should only be announced by nodes serving as origins for particular sites.
+    pub fn requires_origin_node(&self) -> bool {
+        matches!(
+            self,
+            SignedRecordType::Upstream
+                | SignedRecordType::DnsZone
+                | SignedRecordType::DnsRecord
+                | SignedRecordType::VerifiedUpstream
+                | SignedRecordType::YaraRules
+        )
+    }
 }
 
 impl SignedDhtRecord {

@@ -4,18 +4,9 @@ use tokio::task::JoinHandle;
 use parking_lot::RwLock as PLRwLock;
 
 pub use crate::process::WorkerId;
+pub use crate::process::WorkerStatus;
 pub use crate::metrics::WorkerMetrics;
-use crate::supervisor::SupervisorConfig;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WorkerStatus {
-    Starting,
-    Running,
-    Ready,
-    Stopping,
-    Stopped,
-    Failed,
-}
+use crate::config::SupervisorConfig;
 
 pub struct Worker {
     pub id: WorkerId,

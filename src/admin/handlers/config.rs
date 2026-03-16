@@ -1227,3 +1227,328 @@ pub async fn check_regex(
         reason: result.reason,
     }))
 }
+
+#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct OverseerConfigResponse {
+    pub config: crate::config::OverseerConfig,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct UpdateOverseerConfigRequest {
+    pub config: crate::config::OverseerConfig,
+}
+
+#[utoipa::path(
+    get,
+    path = "/config/overseer",
+    tag = "Config",
+    responses(
+        (status = 200, description = "Overseer configuration", body = [OverseerConfigResponse]),
+        (status = 401, description = "Unauthorized")
+    ),
+    security(
+        ("bearerAuth" = [])
+    )
+)]
+pub async fn get_overseer_config(
+    State(state): State<Arc<AdminState>>,
+    auth: OptionalAuth,
+) -> Result<Json<OverseerConfigResponse>, StatusCode> {
+    if !require_auth(&auth, &state.admin_token) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
+    let config = state.config.read().await;
+    Ok(Json(OverseerConfigResponse {
+        config: config.main.overseer.clone(),
+    }))
+}
+
+#[utoipa::path(
+    put,
+    path = "/config/overseer",
+    tag = "Config",
+    request_body = UpdateOverseerConfigRequest,
+    responses(
+        (status = 200, description = "Overseer configuration updated", body = [StatusResponse]),
+        (status = 401, description = "Unauthorized")
+    ),
+    security(
+        ("bearerAuth" = [])
+    )
+)]
+pub async fn update_overseer_config(
+    State(state): State<Arc<AdminState>>,
+    auth: OptionalAuth,
+    Json(req): Json<UpdateOverseerConfigRequest>,
+) -> Result<Json<StatusResponse>, StatusCode> {
+    if !require_auth(&auth, &state.admin_token) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
+    {
+        let mut config = state.config.write().await;
+        config.main.overseer = req.config.clone();
+    }
+
+    let toml_content = tokio::fs::read_to_string("config/main.toml")
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to read main config: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    let mut main_config: crate::config::MainConfig = toml::from_str(&toml_content)
+        .map_err(|e| {
+            tracing::error!("Failed to parse main config: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    main_config.overseer = req.config;
+
+    let toml_content = toml::to_string_pretty(&main_config)
+        .map_err(|e| {
+            tracing::error!("Failed to serialize config: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    tokio::fs::write("config/main.toml", toml_content)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to write main config: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    let reload_path = std::env::current_dir()
+        .map_err(|e| {
+            tracing::error!("Failed to get current dir: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?
+        .join(".overseer_reload");
+
+    if let Err(e) = tokio::fs::write(&reload_path, "1").await {
+        tracing::warn!("Failed to write overseer reload signal: {}", e);
+    } else {
+        tracing::info!("Overseer reload signal written to {:?}", reload_path);
+    }
+
+    tracing::info!("Overseer config updated - reload signal sent");
+
+    Ok(Json(StatusResponse::success("Overseer config updated and reload signal sent.")))
+}
+
+#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct ProcessManagerConfigResponse {
+    pub config: crate::config::ProcessManagerConfig,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct UpdateProcessManagerConfigRequest {
+    pub config: crate::config::ProcessManagerConfig,
+}
+
+#[utoipa::path(
+    get,
+    path = "/config/process-manager",
+    tag = "Config",
+    responses(
+        (status = 200, description = "Process manager configuration", body = [ProcessManagerConfigResponse]),
+        (status = 401, description = "Unauthorized")
+    ),
+    security(
+        ("bearerAuth" = [])
+    )
+)]
+pub async fn get_process_manager_config(
+    State(state): State<Arc<AdminState>>,
+    auth: OptionalAuth,
+) -> Result<Json<ProcessManagerConfigResponse>, StatusCode> {
+    if !require_auth(&auth, &state.admin_token) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
+    if let Some(ref pm) = state.process_manager {
+        Ok(Json(ProcessManagerConfigResponse {
+            config: pm.get_config(),
+        }))
+    } else {
+        let config = state.config.read().await;
+        Ok(Json(ProcessManagerConfigResponse {
+            config: config.main.process_manager.clone(),
+        }))
+    }
+}
+
+#[utoipa::path(
+    put,
+    path = "/config/process-manager",
+    tag = "Config",
+    request_body = UpdateProcessManagerConfigRequest,
+    responses(
+        (status = 200, description = "Process manager configuration updated", body = [StatusResponse]),
+        (status = 401, description = "Unauthorized")
+    ),
+    security(
+        ("bearerAuth" = [])
+    )
+)]
+pub async fn update_process_manager_config(
+    State(state): State<Arc<AdminState>>,
+    auth: OptionalAuth,
+    Json(req): Json<UpdateProcessManagerConfigRequest>,
+) -> Result<Json<StatusResponse>, StatusCode> {
+    if !require_auth(&auth, &state.admin_token) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
+    let needs_restart = if let Some(ref pm) = state.process_manager {
+        match pm.update_config(req.config.clone()) {
+            Ok(restart_needed) => {
+                tracing::info!("Process manager config updated dynamically");
+                restart_needed
+            }
+            Err(e) => {
+                tracing::error!("Failed to update process manager config: {}", e);
+                return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            }
+        }
+    } else {
+        true
+    };
+
+    let toml_content = {
+        let mut config = state.config.write().await;
+        config.main.process_manager = req.config;
+        toml::to_string_pretty(&config.main)
+            .map_err(|e| {
+                tracing::error!("Failed to serialize config: {}", e);
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?
+    };
+
+    tokio::fs::write("config/main.toml", toml_content)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to write main config: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    if needs_restart {
+        Ok(Json(StatusResponse::success("Process manager config updated. Restart required for changes to take effect.")))
+    } else {
+        Ok(Json(StatusResponse::success("Process manager config updated and applied dynamically.")))
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct SupervisorConfigResponse {
+    pub config: crate::config::SupervisorConfig,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct UpdateSupervisorConfigRequest {
+    pub config: crate::config::SupervisorConfig,
+}
+
+#[utoipa::path(
+    get,
+    path = "/config/supervisor",
+    tag = "Config",
+    responses(
+        (status = 200, description = "Supervisor configuration", body = [SupervisorConfigResponse]),
+        (status = 401, description = "Unauthorized")
+    ),
+    security(
+        ("bearerAuth" = [])
+    )
+)]
+pub async fn get_supervisor_config(
+    State(state): State<Arc<AdminState>>,
+    auth: OptionalAuth,
+) -> Result<Json<SupervisorConfigResponse>, StatusCode> {
+    if !require_auth(&auth, &state.admin_token) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
+    let config = state.config.read().await;
+    Ok(Json(SupervisorConfigResponse {
+        config: config.main.supervisor.clone(),
+    }))
+}
+
+#[utoipa::path(
+    put,
+    path = "/config/supervisor",
+    tag = "Config",
+    request_body = UpdateSupervisorConfigRequest,
+    responses(
+        (status = 200, description = "Supervisor configuration updated", body = [StatusResponse]),
+        (status = 401, description = "Unauthorized")
+    ),
+    security(
+        ("bearerAuth" = [])
+    )
+)]
+pub async fn update_supervisor_config(
+    State(state): State<Arc<AdminState>>,
+    auth: OptionalAuth,
+    Json(req): Json<UpdateSupervisorConfigRequest>,
+) -> Result<Json<StatusResponse>, StatusCode> {
+    if !require_auth(&auth, &state.admin_token) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
+    {
+        let mut config = state.config.write().await;
+        config.main.supervisor = req.config.clone();
+    }
+
+    let toml_content = tokio::fs::read_to_string("config/main.toml")
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to read main config: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    let mut main_config: crate::config::MainConfig = toml::from_str(&toml_content)
+        .map_err(|e| {
+            tracing::error!("Failed to parse main config: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    main_config.supervisor = req.config;
+
+    let toml_content = toml::to_string_pretty(&main_config)
+        .map_err(|e| {
+            tracing::error!("Failed to serialize config: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    tokio::fs::write("config/main.toml", toml_content)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to write main config: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    let reload_path = std::env::current_dir()
+        .map_err(|e| {
+            tracing::error!("Failed to get current dir: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?
+        .join(".worker_reload");
+
+    if let Err(e) = tokio::fs::write(&reload_path, "1").await {
+        tracing::warn!("Failed to write worker reload signal: {}", e);
+    } else {
+        tracing::info!("Worker reload signal written to {:?}", reload_path);
+    }
+
+    if let Some(ref pm) = state.process_manager {
+        pm.reload_config();
+    }
+
+    tracing::info!("Supervisor config updated - reload signal sent to workers");
+
+    Ok(Json(StatusResponse::success("Supervisor config updated and reload signal sent to workers.")))
+}

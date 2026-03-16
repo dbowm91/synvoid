@@ -8,11 +8,13 @@ use super::upgrade::{Orchestrator, UpgradeError};
 use super::socket_handoff::DualMasterHandoff;
 use super::drain_manager::DrainManager;
 use super::spawn::{SpawnConfig, ProcessMode, spawn_and_log};
+pub use crate::config::OverseerConfig;
 use crate::process::{
     get_secure_socket_path, IpcStream, Message,
     get_master_socket_path, get_versioned_master_socket_path,
     next_master_generation, set_master_generation, cleanup_old_master_sockets,
 };
+use crate::utils::errors;
 use crate::RunningFlag;
 
 pub struct OverseerProcess {
@@ -32,52 +34,17 @@ pub struct OverseerProcess {
     upgrade_generation: Option<u32>,
 }
 
-#[derive(Clone)]
-pub struct OverseerConfig {
-    pub config_path: PathBuf,
-    pub auto_restart: bool,
-    pub restart_delay_secs: u64,
-    pub max_restart_attempts: u32,
-    pub health_check_interval_secs: u64,
-    pub stable_uptime_secs: u64,
-    pub upgrade_validation_timeout_secs: u64,
-    pub upgrade_drain_timeout_secs: u64,
-    pub upgrade_health_check_retries: u32,
-    pub upgrade_health_check_interval_secs: u64,
-    pub ipc_read_timeout_ms: u64,
-    pub ipc_write_timeout_ms: u64,
-    pub master_startup_timeout_secs: u64,
-}
-
-impl Default for OverseerConfig {
-    fn default() -> Self {
-        Self {
-            config_path: PathBuf::from("config"),
-            auto_restart: true,
-            restart_delay_secs: 5,
-            max_restart_attempts: 5,
-            health_check_interval_secs: 5,
-            stable_uptime_secs: 60,
-            upgrade_validation_timeout_secs: 10,
-            upgrade_drain_timeout_secs: 30,
-            upgrade_health_check_retries: 5,
-            upgrade_health_check_interval_secs: 2,
-            ipc_read_timeout_ms: 5000,
-            ipc_write_timeout_ms: 5000,
-            master_startup_timeout_secs: 30,
-        }
-    }
-}
-
 impl OverseerProcess {
     pub fn new(config: OverseerConfig) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let persistence = Persistence::new(None);
         let orchestrator = Orchestrator::new(None, None, None);
         
+        let config_path = config.config_path.clone().unwrap_or_else(|| PathBuf::from("config"));
+        
         Ok(Self {
             master_child: None,
             upgraded_master_child: None,
-            config_path: config.config_path.clone(),
+            config_path: config_path.clone(),
             running: RunningFlag::new(),
             persistence,
             orchestrator,
@@ -187,6 +154,66 @@ impl OverseerProcess {
         }
     }
 
+    pub fn reload_config(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let config_file = self.config_path.join("main.toml");
+        
+        if !config_file.exists() {
+            tracing::warn!("Config file not found: {:?}", config_file);
+            return Ok(());
+        }
+
+        let content = std::fs::read_to_string(&config_file)?;
+        
+        let main_config: crate::config::MainConfig = toml::from_str(&content)
+            .map_err(|e| format!("Failed to parse config: {}", e))?;
+
+        let new_overseer_config = main_config.overseer;
+        
+        tracing::info!("Reloading overseer config from {:?}", config_file);
+        
+        if self.config.health_check_interval_secs != new_overseer_config.health_check_interval_secs {
+            tracing::info!("health_check_interval changed from {} to {}",
+                self.config.health_check_interval_secs, new_overseer_config.health_check_interval_secs);
+        }
+        
+        self.config.auto_restart = new_overseer_config.auto_restart;
+        self.config.restart_delay_secs = new_overseer_config.restart_delay_secs;
+        self.config.max_restart_attempts = new_overseer_config.max_restart_attempts;
+        self.config.health_check_interval_secs = new_overseer_config.health_check_interval_secs;
+        self.config.stable_uptime_secs = new_overseer_config.stable_uptime_secs;
+        self.config.upgrade_validation_timeout_secs = new_overseer_config.upgrade_validation_timeout_secs;
+        self.config.upgrade_drain_timeout_secs = new_overseer_config.upgrade_drain_timeout_secs;
+        self.config.upgrade_health_check_retries = new_overseer_config.upgrade_health_check_retries;
+        self.config.upgrade_health_check_interval_secs = new_overseer_config.upgrade_health_check_interval_secs;
+        self.config.ipc_read_timeout_ms = new_overseer_config.ipc_read_timeout_ms;
+        self.config.ipc_write_timeout_ms = new_overseer_config.ipc_write_timeout_ms;
+        self.config.master_startup_timeout_secs = new_overseer_config.master_startup_timeout_secs;
+        
+        tracing::info!("Overseer config reloaded successfully");
+        Ok(())
+    }
+
+    pub fn check_reload_signal(&mut self) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+        let signal_file = std::env::current_dir()
+            .map_err(|e| format!("Failed to get current dir: {}", e))?
+            .join(".overseer_reload");
+        
+        if signal_file.exists() {
+            if let Err(e) = std::fs::remove_file(&signal_file) {
+                tracing::warn!("Failed to remove reload signal file: {}", e);
+            }
+            tracing::info!("Detected reload signal file at {:?}", signal_file);
+            
+            if let Err(e) = self.reload_config() {
+                tracing::error!("Failed to reload config: {}", e);
+                return Ok(true);
+            }
+            return Ok(true);
+        }
+        
+        Ok(false)
+    }
+
     pub fn stop_master(&mut self, graceful: bool) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if let Some(ref mut child) = self.master_child {
             let pid = child.id();
@@ -237,6 +264,10 @@ impl OverseerProcess {
 
         while self.running.is_running() {
             tokio::time::sleep(Duration::from_secs(self.config.health_check_interval_secs)).await;
+
+            if let Err(e) = self.check_reload_signal() {
+                tracing::warn!("Error checking reload signal: {}", e);
+            }
 
             let health = self.check_master_health()?;
             
@@ -470,7 +501,7 @@ impl OverseerProcess {
         let socket_path = get_secure_socket_path("master.sock");
         
         let mut stream = IpcStream::connect_unix(&socket_path)
-            .map_err(|e| format!("Failed to connect to master socket: {}", e))?;
+            .map_err(|e| errors::ipc::connect_failed(&e))?;
 
         let msg = Message::OverseerUpgradePrepare {
             binary_path: binary_path.to_string(),
@@ -499,7 +530,7 @@ impl OverseerProcess {
         let socket_path = get_secure_socket_path("master.sock");
         
         let mut stream = IpcStream::connect_unix(&socket_path)
-            .map_err(|e| format!("Failed to connect to master socket: {}", e))?;
+            .map_err(|e| errors::ipc::connect_failed(&e))?;
 
         let msg = Message::OverseerDrainWorkers { timeout_secs };
 
@@ -967,7 +998,7 @@ impl OverseerProcess {
         let socket_path = get_secure_socket_path("master.sock");
 
         let mut stream = IpcStream::connect_unix(&socket_path)
-            .map_err(|e| format!("Failed to connect to master socket: {}", e))?;
+            .map_err(|e| errors::ipc::connect_failed(&e))?;
 
         let drain_id = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -1197,7 +1228,7 @@ impl OverseerProcess {
         let socket_path = get_secure_socket_path("master.sock");
         
         let mut stream = IpcStream::connect_unix(&socket_path)
-            .map_err(|e| format!("Failed to connect to master socket: {}", e))?;
+            .map_err(|e| errors::ipc::connect_failed(&e))?;
 
         let msg = Message::MasterDrainMode {
             graceful_timeout_secs: timeout_secs,
@@ -1371,7 +1402,7 @@ mod tests {
     fn test_overseer_config_default() {
         let config = OverseerConfig::default();
         
-        assert_eq!(config.config_path, PathBuf::from("config"));
+        assert_eq!(config.config_path, None);
         assert!(config.auto_restart);
         assert_eq!(config.restart_delay_secs, 5);
         assert_eq!(config.max_restart_attempts, 5);
@@ -1389,7 +1420,7 @@ mod tests {
     #[test]
     fn test_overseer_config_custom() {
         let config = OverseerConfig {
-            config_path: PathBuf::from("/custom/config"),
+            config_path: Some(PathBuf::from("/custom/config")),
             auto_restart: false,
             restart_delay_secs: 10,
             max_restart_attempts: 3,
@@ -1404,7 +1435,7 @@ mod tests {
             master_startup_timeout_secs: 60,
         };
         
-        assert_eq!(config.config_path, PathBuf::from("/custom/config"));
+        assert_eq!(config.config_path, Some(PathBuf::from("/custom/config")));
         assert!(!config.auto_restart);
         assert_eq!(config.restart_delay_secs, 10);
         assert_eq!(config.max_restart_attempts, 3);
@@ -1457,11 +1488,11 @@ mod tests {
     #[test]
     fn test_overseer_config_path_validation() {
         let config = OverseerConfig {
-            config_path: PathBuf::from(""),
+            config_path: Some(PathBuf::from("")),
             ..Default::default()
         };
         
-        assert_eq!(config.config_path, PathBuf::from(""));
+        assert_eq!(config.config_path, Some(PathBuf::from("")));
     }
 
     #[test]

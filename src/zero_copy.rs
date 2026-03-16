@@ -1,3 +1,18 @@
+//! Zero-copy file operations.
+//!
+//! This module provides high-performance file-to-socket and file-to-file transfer
+//! using Linux kernel syscalls. The unsafe blocks in this module are REQUIRED and
+//! CANNOT be eliminated because:
+//!
+//! 1. **`libc::sendfile`** - Linux kernel syscall with no safe Rust wrapper in std or nix.
+//!    The syscall transfers data directly between file descriptors in kernel space,
+//!    bypassing user space for optimal performance.
+//!
+//! 2. **`libc::copy_file_range`** - Linux kernel syscall for efficient file-to-file
+//!    copying. No safe Rust alternative exists in the standard library or popular crates.
+//!
+//! These operations are inherently low-level and require direct FFI to the kernel.
+
 use std::fs::File;
 use std::io::{Read, Result, Seek, SeekFrom, Write};
 use std::os::fd::AsRawFd;
@@ -37,6 +52,12 @@ pub fn sendfile_to_socket(socket_fd: i32, file: &File, offset: u64, count: usize
     let mut c_offset = offset as libc::off_t;
     let c_count = count as libc::size_t;
 
+    // SAFETY: This is a direct syscall to Linux kernel's sendfile(2).
+    // - socket_fd and file.as_raw_fd() are valid file descriptors
+    // - c_offset must point to a valid off_t that we have mutable access to
+    // - c_count is a valid size_t
+    // No safe Rust wrapper exists for this syscall - this is the only way to achieve
+    // zero-copy file-to-socket transfer in user space.
     let written = unsafe { libc::sendfile(socket_fd, file.as_raw_fd(), &mut c_offset, c_count) };
 
     if written < 0 {
@@ -86,6 +107,11 @@ pub fn copy_file_range(src: &File, dst: &File, count: usize) -> Result<usize> {
 
     let mut c_count = count as libc::size_t;
 
+    // SAFETY: This is a direct syscall to Linux kernel's copy_file_range(2).
+    // - src.as_raw_fd() and dst.as_raw_fd() are valid file descriptors
+    // - The kernel handles all copying internally (no user-space buffer involvement)
+    // - c_count is a valid size_t that we have mutable access to
+    // No safe Rust wrapper exists for this efficient file-to-file syscall.
     let written = unsafe {
         libc::copy_file_range(
             src.as_raw_fd(),

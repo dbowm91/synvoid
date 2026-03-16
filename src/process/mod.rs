@@ -26,7 +26,7 @@ pub use ipc::{
     MasterCommand, MasterStatus, Message, StatusStats, ThreatSummary, WorkerId, WorkerMetricsPayload,
     WorkerStatus, WorkerStatusInfo, IpcStream,
     ThreatIndicatorType, ThreatSeverityLevel, ThreatIndicatorData,
-    BoxResult, BoxError, SiteMetricsPayload,
+    BoxResult, BoxError, SiteMetricsPayload, RequestLogPayload,
 };
 pub use ipc_framing::{
     read_exact_message_sync, read_message_sync, write_message_sync, MAX_MESSAGE_SIZE,

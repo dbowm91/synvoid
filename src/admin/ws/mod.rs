@@ -21,7 +21,7 @@ pub async fn ws_metrics_handler(
     State(state): State<Arc<AdminState>>,
     auth: Option<TypedHeader<Authorization<Bearer>>>,
 ) -> Response {
-    if !require_auth(&auth, &state.admin_token) {
+    if !require_auth(&auth, &state.admin_token, None) {
         return axum::response::IntoResponse::into_response(axum::http::StatusCode::UNAUTHORIZED);
     }
     
@@ -33,7 +33,7 @@ pub async fn ws_logs_handler(
     State(state): State<Arc<AdminState>>,
     auth: Option<TypedHeader<Authorization<Bearer>>>,
 ) -> Response {
-    if !require_auth(&auth, &state.admin_token) {
+    if !require_auth(&auth, &state.admin_token, None) {
         return axum::response::IntoResponse::into_response(axum::http::StatusCode::UNAUTHORIZED);
     }
     

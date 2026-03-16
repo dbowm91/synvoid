@@ -14,6 +14,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::RwLock as TokioRwLock;
+use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct AdminRateLimiter {
@@ -116,8 +117,53 @@ pub struct AdminState {
     pub icmp_filter: Option<Arc<TokioRwLock<IcmpFilterManager>>>,
     pub port_honeypot_controller: Option<Arc<crate::honeypot_port::HoneypotMeshController>>,
     pub port_honeypot_runner: Option<Arc<crate::honeypot_port::PortHoneypotRunner>>,
+    pub request_logs: Arc<RwLock<Vec<RequestLogEntry>>>,
 }
 
+#[derive(Clone)]
+pub struct RequestLogEntry {
+    pub id: String,
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+    pub client_ip: String,
+    pub method: String,
+    pub path: String,
+    pub status: u16,
+    pub response_time_ms: u32,
+    pub site_id: String,
+    pub user_agent: Option<String>,
+    pub bytes_sent: u64,
+    pub bytes_received: u64,
+}
+
+impl RequestLogEntry {
+    pub fn new(
+        client_ip: String,
+        method: String,
+        path: String,
+        status: u16,
+        response_time_ms: u32,
+        site_id: String,
+        user_agent: Option<String>,
+        bytes_sent: u64,
+        bytes_received: u64,
+    ) -> Self {
+        Self {
+            id: uuid::Uuid::new_v4().to_string(),
+            timestamp: chrono::Utc::now(),
+            client_ip,
+            method,
+            path,
+            status,
+            response_time_ms,
+            site_id,
+            user_agent,
+            bytes_sent,
+            bytes_received,
+        }
+    }
+}
+
+const MAX_REQUEST_LOGS: usize = 10000;
 const MAX_HISTORY_SIZE: usize = 3600;
 
 impl AdminState {
@@ -147,6 +193,7 @@ impl AdminState {
             icmp_filter: None,
             port_honeypot_controller: None,
             port_honeypot_runner: None,
+            request_logs: Arc::new(RwLock::new(Vec::with_capacity(MAX_REQUEST_LOGS))),
         }
     }
 
@@ -260,6 +307,44 @@ impl AdminState {
         self.metrics.read().clone()
     }
 
+    pub async fn setup_site_config_sync(&self) {
+        let mesh_transport = match &self.mesh_transport {
+            Some(t) => t.clone(),
+            None => {
+                tracing::debug!("No mesh transport available for site config sync");
+                return;
+            }
+        };
+
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<(String, String)>(32);
+        mesh_transport.set_site_config_sync_callback(tx);
+
+        let config = self.config.clone();
+        
+        tokio::spawn(async move {
+            while let Some((site_id, config_json)) = rx.recv().await {
+                tracing::info!("Received site config sync for site: {}", site_id);
+
+                let config_path = {
+                    let cfg = config.read().await;
+                    cfg.sites_dir.join(format!("{}.toml", site_id.replace('.', "_")))
+                };
+
+                if let Err(e) = tokio::fs::write(&config_path, &config_json).await {
+                    tracing::error!("Failed to write synced site config for {}: {}", site_id, e);
+                    continue;
+                }
+
+                let mut cfg = config.write().await;
+                if let Err(e) = cfg.load_site(std::path::PathBuf::from(&config_path)) {
+                    tracing::error!("Failed to reload synced site config for {}: {}", site_id, e);
+                } else {
+                    tracing::info!("Successfully applied synced site config for {}", site_id);
+                }
+            }
+        });
+    }
+
     pub fn update_system_resources(&self, resources: SystemResources) {
         *self.system_resources.write() = resources;
     }
@@ -297,6 +382,64 @@ impl AdminState {
 
     pub fn get_site_metrics(&self) -> HashMap<String, SiteMetricsPayload> {
         self.site_metrics.read().clone()
+    }
+
+    pub fn add_request_log(&self, entry: RequestLogEntry) {
+        let mut logs = self.request_logs.write();
+        if logs.len() >= MAX_REQUEST_LOGS {
+            logs.remove(0);
+        }
+        logs.push(entry);
+    }
+
+    pub fn get_request_logs(
+        &self,
+        site_id: Option<&str>,
+        method: Option<&str>,
+        status_prefix: Option<&str>,
+        search: Option<&str>,
+        limit: usize,
+        offset: usize,
+    ) -> (Vec<RequestLogEntry>, usize, bool) {
+        let logs = self.request_logs.read();
+
+        let filtered: Vec<RequestLogEntry> = logs
+            .iter()
+            .filter(|log| {
+                if let Some(site_id) = site_id {
+                    if &log.site_id != site_id {
+                        return false;
+                    }
+                }
+                if let Some(method) = method {
+                    if !log.method.eq_ignore_ascii_case(method) {
+                        return false;
+                    }
+                }
+                if let Some(prefix) = status_prefix {
+                    let status_str = log.status.to_string();
+                    if !status_str.starts_with(prefix) {
+                        return false;
+                    }
+                }
+                if let Some(search) = search {
+                    let search_lower = search.to_lowercase();
+                    if !log.path.to_lowercase().contains(&search_lower)
+                        && !log.client_ip.contains(&search_lower)
+                    {
+                        return false;
+                    }
+                }
+                true
+            })
+            .cloned()
+            .collect();
+
+        let total = filtered.len();
+        let has_more = offset + limit < total;
+        let result: Vec<RequestLogEntry> = filtered.into_iter().skip(offset).take(limit).collect();
+
+        (result, total, has_more)
     }
 
     pub fn uptime(&self) -> u64 {

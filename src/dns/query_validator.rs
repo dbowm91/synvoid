@@ -100,6 +100,10 @@ impl DnsQueryValidator {
                 ));
             }
 
+            if pos + 1 + len > query.len() {
+                return Err("Incomplete label in query name".to_string());
+            }
+
             labels_count += 1;
             name_length += 1 + len;
 
@@ -131,16 +135,67 @@ impl DnsQueryValidator {
             return Err("Unsupported query class".to_string());
         }
 
-        // Allow ANY query type (255)
-        if qtype == 255 {
+        if qtype == 0 {
+            return Err("Invalid query type 0".to_string());
+        }
+
+        let end_of_question = pos + 4;
+
+        if end_of_question < query.len() {
+            Self::validate_edns_options(query, end_of_question)?;
+        }
+
+        Ok(())
+    }
+
+    fn validate_edns_options(query: &[u8], pos: usize) -> Result<(), String> {
+        if pos + 11 > query.len() {
             return Ok(());
         }
 
-        // Allow unknown query types for forward compatibility
-        // RFC 1035 Section 3.2.2: TYPE values are an unsigned 16-bit integer
-        // Only reject type 0 which is reserved
-        if qtype != 0 {
-            return Ok(());
+        let udp_payload_size = u16::from_be_bytes([query[pos], query[pos + 1]]);
+        if udp_payload_size != 0 && udp_payload_size < 512 {
+            return Err(format!(
+                "Invalid EDNS UDP payload size: {}",
+                udp_payload_size
+            ));
+        }
+
+        let extended_rcode = query[pos + 2];
+        let version = query[pos + 3];
+
+        if version > 0 {
+            return Err(format!("Unsupported EDNS version: {}", version));
+        }
+
+        let z = u16::from_be_bytes([query[pos + 4], query[pos + 5]]);
+
+        let rdlen = u16::from_be_bytes([query[pos + 10], query[pos + 11]]);
+
+        if rdlen > 0 {
+            let rdata_start = pos + 12;
+            if rdata_start + rdlen as usize > query.len() {
+                return Err("Incomplete EDNS options".to_string());
+            }
+
+            let mut opt_pos = rdata_start;
+            let opt_end = rdata_start + rdlen as usize;
+
+            while opt_pos + 4 < opt_end {
+                let opt_code = u16::from_be_bytes([query[opt_pos], query[opt_pos + 1]]);
+                let opt_len = u16::from_be_bytes([query[opt_pos + 2], query[opt_pos + 3]]);
+
+                if opt_code == 0 && opt_len == 0 {
+                    opt_pos += 4;
+                    continue;
+                }
+
+                if opt_pos + 4 + opt_len as usize > query.len() {
+                    return Err("Incomplete EDNS option data".to_string());
+                }
+
+                opt_pos += 4 + opt_len as usize;
+            }
         }
 
         Ok(())

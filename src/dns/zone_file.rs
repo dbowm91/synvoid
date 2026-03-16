@@ -36,40 +36,6 @@ pub enum ZoneParseError {
     InvalidRecord(String),
 }
 
-#[derive(Debug)]
-pub struct ParsedRecord {
-    pub name: String,
-    pub record_type: RecordType,
-    pub ttl: u32,
-    pub value: String,
-    pub priority: Option<u32>,
-}
-
-#[derive(Debug)]
-pub enum ZoneParseError {
-    IoError(std::io::Error),
-    ParseError(String),
-    InvalidRecord(String),
-}
-
-impl std::fmt::Display for ZoneParseError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ZoneParseError::IoError(e) => write!(f, "IO error: {}", e),
-            ZoneParseError::ParseError(e) => write!(f, "Parse error: {}", e),
-            ZoneParseError::InvalidRecord(e) => write!(f, "Invalid record: {}", e),
-        }
-    }
-}
-
-impl std::error::Error for ZoneParseError {}
-
-impl From<std::io::Error> for ZoneParseError {
-    fn from(e: std::io::Error) -> Self {
-        ZoneParseError::IoError(e)
-    }
-}
-
 impl ZoneFileParser {
     pub fn new(origin: String) -> Self {
         Self {

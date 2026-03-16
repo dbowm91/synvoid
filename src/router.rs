@@ -1,5 +1,8 @@
 use crate::config::site::BackendConfig;
 use crate::config::{MainConfig, SiteConfig};
+use crate::mesh::config::{
+    MeshCompressionConfig, MeshImageProtectionConfig, MeshMinificationConfig,
+};
 use crate::platform::fs::PlatformPaths;
 use crate::static_files::{
     client::{AsyncMinifierClient, MinifierClient},
@@ -158,6 +161,9 @@ impl Router {
                     minifier_cache,
                     client,
                     async_client,
+                    None,
+                    None,
+                    None,
                 ) {
                     Ok(handler) => {
                         if handler.is_enabled() {
@@ -636,6 +642,9 @@ impl Router {
                     minifier_cache,
                     client,
                     self.async_minifier_client.clone(),
+                    None,
+                    None,
+                    None,
                 ) {
                     Ok(handler) => {
                         if handler.is_enabled() {
@@ -680,6 +689,22 @@ impl Router {
 
         self.suffix_domain_map
             .sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+    }
+
+    pub fn update_static_handler_mesh_config(
+        &self,
+        site_id: &str,
+        image_protection: Option<MeshImageProtectionConfig>,
+        compression: Option<MeshCompressionConfig>,
+        minification: Option<MeshMinificationConfig>,
+    ) -> Option<Arc<StaticFileHandler>> {
+        self.static_handlers.get(site_id).map(|handler| {
+            let new_handler =
+                (**handler)
+                    .clone()
+                    .with_mesh_config(image_protection, compression, minification);
+            Arc::new(new_handler)
+        })
     }
 }
 

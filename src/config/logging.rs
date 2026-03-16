@@ -20,6 +20,8 @@ pub struct LoggingConfig {
     pub exporter: LogExporterConfig,
     #[serde(default)]
     pub request_body_logging: RequestBodyLoggingConfig,
+    #[serde(default)]
+    pub verbose_request_logging: VerboseRequestLoggingConfig,
 }
 
 impl Default for LoggingConfig {
@@ -33,6 +35,7 @@ impl Default for LoggingConfig {
             access_log_format: default_access_log_format(),
             exporter: LogExporterConfig::default(),
             request_body_logging: RequestBodyLoggingConfig::default(),
+            verbose_request_logging: VerboseRequestLoggingConfig::default(),
         }
     }
 }
@@ -113,6 +116,42 @@ fn default_sensitive_fields() -> Vec<String> {
         "ssn".to_string(),
         "social_security".to_string(),
     ]
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct VerboseRequestLoggingConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub log_blocked: bool,
+    #[serde(default)]
+    pub log_challenged: bool,
+    #[serde(default)]
+    pub log_dropped: bool,
+    #[serde(default)]
+    pub log_proxied: bool,
+    #[serde(default)]
+    pub log_internal: bool,
+    #[serde(default = "default_max_logs_per_second")]
+    pub max_logs_per_second: u32,
+}
+
+impl Default for VerboseRequestLoggingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            log_blocked: false,
+            log_challenged: false,
+            log_dropped: false,
+            log_proxied: false,
+            log_internal: false,
+            max_logs_per_second: default_max_logs_per_second(),
+        }
+    }
+}
+
+fn default_max_logs_per_second() -> u32 {
+    100
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]

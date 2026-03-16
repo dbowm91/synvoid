@@ -18,7 +18,7 @@ pub fn setup_panic_handler(process_name: &str, log_file: Option<&str>) {
 
         tracing::error!("{} PANIC at {}: {}", name, location, message);
         eprintln!(
-            "\n=== {} PANIC ===\nLocation: {}\nMessage: {}\n",
+            "\n{} PANIC\nLocation: {}\nMessage: {}\n",
             name, location, message
         );
 

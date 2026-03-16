@@ -87,6 +87,7 @@ pub struct MeshTransport {
     dns_registry: Option<Arc<crate::dns::MeshDnsRegistry>>,
     #[cfg(feature = "dns")]
     dns_zones: Arc<RwLock<Option<Arc<RwLock<HashMap<String, DnsZone>>>>>>,
+    pub site_config_sync_tx: Arc<std::sync::RwLock<Option<mpsc::Sender<(String, String)>>>>,
 }
 
 impl Clone for MeshTransport {
@@ -124,6 +125,7 @@ impl Clone for MeshTransport {
             dns_registry: self.dns_registry.clone(),
             #[cfg(feature = "dns")]
             dns_zones: self.dns_zones.clone(),
+            site_config_sync_tx: self.site_config_sync_tx.clone(),
         }
     }
 }
@@ -369,7 +371,13 @@ impl MeshTransport {
             dns_registry,
             #[cfg(feature = "dns")]
             dns_zones: Arc::new(RwLock::new(None)),
+            site_config_sync_tx: Arc::new(std::sync::RwLock::new(None)),
         }
+    }
+
+    pub fn set_site_config_sync_callback(&self, tx: mpsc::Sender<(String, String)>) {
+        let mut lock = self.site_config_sync_tx.write().unwrap();
+        *lock = Some(tx);
     }
 
     #[cfg(feature = "dns")]
@@ -586,6 +594,70 @@ impl MeshTransport {
 
         tracing::debug!("Sent datagram to peer {}: {:?}", peer_id, message);
         Ok(())
+    }
+
+    pub async fn broadcast_site_config_to_origins(
+        &self,
+        site_id: &str,
+        config_json: &str,
+        config_version: u64,
+    ) -> Result<(usize, usize), String> {
+        let current_node_id = self.topology.node_id().to_string();
+        
+        let is_origin = {
+            let origins = self.topology.find_all_origins_for_site(site_id).await;
+            origins.contains(&current_node_id)
+        };
+        
+        if !is_origin {
+            tracing::debug!("Node {} is not an origin for site {}, skipping broadcast", current_node_id, site_id);
+            return Ok((0, 0));
+        }
+
+        let origins = self.topology.find_all_origins_for_site(site_id).await;
+        
+        let mut success_count = 0;
+        let mut fail_count = 0;
+
+        for origin_node_id in origins {
+            if origin_node_id == current_node_id {
+                continue;
+            }
+
+            let request_id = MeshMessage::generate_nonce();
+            let timestamp = MeshMessage::generate_timestamp();
+
+            let (signature, signer_public_key) = if let Some(ref signer) = self.mesh_signer {
+                let msg = format!("{}:{}:{}:{}", site_id, config_version, config_json.len(), timestamp);
+                (signer.sign(&msg), Some(signer.get_public_key().into()))
+            } else {
+                (Vec::new(), None)
+            };
+
+            let message = MeshMessage::SiteConfigSync {
+                request_id: request_id.into(),
+                site_id: site_id.into(),
+                config_version,
+                config_json: config_json.into(),
+                timestamp,
+                source_node_id: current_node_id.clone().into(),
+                signature,
+                signer_public_key,
+            };
+
+            match self.send_datagram_to_peer(&origin_node_id, &message).await {
+                Ok(_) => {
+                    tracing::info!("Sent site config sync to origin {} for site {}", origin_node_id, site_id);
+                    success_count += 1;
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to send site config sync to origin {}: {}", origin_node_id, e);
+                    fail_count += 1;
+                }
+            }
+        }
+
+        Ok((success_count, fail_count))
     }
 
     pub async fn send_route_query_datagram(
@@ -1102,6 +1174,28 @@ impl MeshTransport {
             #[cfg(not(feature = "dns"))]
             MeshMessage::NodeShutdown { .. } => {
                 tracing::debug!("NodeShutdown received but DNS feature not enabled");
+            }
+            MeshMessage::SiteConfigSync {
+                request_id,
+                site_id,
+                config_version,
+                config_json,
+                timestamp,
+                source_node_id,
+                signature,
+                signer_public_key,
+            } => {
+                self.handle_site_config_sync(
+                    peer_id,
+                    &request_id,
+                    &site_id,
+                    config_version,
+                    &config_json,
+                    timestamp,
+                    &source_node_id,
+                    signature.as_ref(),
+                    signer_public_key.as_deref(),
+                ).await;
             }
             #[cfg(feature = "dns")]
             MeshMessage::DnsDomainRegisterRequest {
@@ -3321,7 +3415,7 @@ impl MeshTransport {
     #[cfg(feature = "dns")]
     async fn handle_zone_sync_response(
         &self,
-        _peer_id: &str,
+        peer_id: &str,
         _request_id: &str,
         zone_origin: &str,
         records_json: &str,
@@ -3385,11 +3479,47 @@ impl MeshTransport {
             counter!("dns_zone_sync_signature_failed_total").increment(1);
         }
 
-        if let Ok(data) = serde_json::from_str::<serde_json::Value>(&final_json) {
-            tracing::debug!("Zone sync data for {}: {:?}", zone_origin, data);
-        }
-
         if complete {
+            let should_accept = {
+                let zones_guard = self.dns_zones.read();
+                if let Some(ref zones) = *zones_guard {
+                    let zones_read = zones.read();
+                    if let Some(local_zone) = zones_read.get(zone_origin) {
+                        let local_serial = local_zone.serial;
+                        let remote_newer = serial.wrapping_sub(local_serial) <= (u32::MAX / 2);
+                        if remote_newer {
+                            counter!("dns_zone_sync_accepted_total").increment(1);
+                            true
+                        } else {
+                            counter!("dns_zone_sync_rejected_total").increment(1);
+                            tracing::debug!("Rejecting zone {} sync: local serial {} >= remote {}", zone_origin, local_serial, serial);
+                            false
+                        }
+                    } else {
+                        counter!("dns_zone_sync_new_zone_total").increment(1);
+                        true
+                    }
+                } else {
+                    false
+                }
+            };
+
+            if should_accept {
+                if let Ok(data) = serde_json::from_str::<serde_json::Value>(&final_json) {
+                    tracing::debug!("Zone sync data for {}: {:?}", zone_origin, data);
+                }
+                
+                if let Some(ref zones) = *self.dns_zones.read() {
+                    let mut zones_write = zones.write();
+                    if let Ok(zone) = Self::parse_zone_from_json(zone_origin, &final_json, serial) {
+                        zones_write.insert(zone_origin.to_string(), zone);
+                        tracing::info!("Applied zone {} from peer {} (serial: {})", zone_origin, peer_id, serial);
+                    } else {
+                        tracing::warn!("Failed to parse zone {} from sync response", zone_origin);
+                    }
+                }
+            }
+            
             tracing::info!("Zone {} sync completed with serial {}", zone_origin, serial);
             counter!("dns_zone_sync_completed_total").increment(1);
             
@@ -3417,6 +3547,56 @@ impl MeshTransport {
         serial: u64,
     ) {
         tracing::debug!("Received zone sync ACK for zone: {} serial: {}", zone_origin, serial);
+    }
+
+    #[cfg(feature = "dns")]
+    fn parse_zone_from_json(origin: &str, json_data: &str, serial: u32) -> Result<DnsZone, String> {
+        use crate::dns::RecordType;
+        
+        let data: serde_json::Value = serde_json::from_str(json_data)
+            .map_err(|e| format!("Failed to parse zone JSON: {}", e))?;
+        
+        let mut records: std::collections::HashMap<(String, RecordType), Vec<crate::dns::DnsZoneRecord>> = 
+            std::collections::HashMap::new();
+        
+        if let Some(records_arr) = data.get("records").and_then(|r| r.as_array()) {
+            for rec in records_arr {
+                let name = rec.get("name").and_then(|n| n.as_str()).unwrap_or("@").to_string();
+                let record_type_str = rec.get("record_type").and_then(|t| t.as_str()).unwrap_or("A");
+                let value = rec.get("value").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let ttl = rec.get("ttl").and_then(|t| t.as_u64()).unwrap_or(3600) as u32;
+                let priority = rec.get("priority").and_then(|p| p.as_u64()).map(|p| p as u32);
+                
+                let record_type = match record_type_str.to_uppercase().as_str() {
+                    "A" => RecordType::A,
+                    "AAAA" => RecordType::AAAA,
+                    "CNAME" => RecordType::CNAME,
+                    "MX" => RecordType::MX,
+                    "TXT" => RecordType::TXT,
+                    "NS" => RecordType::NS,
+                    "SOA" => RecordType::SOA,
+                    "PTR" => RecordType::PTR,
+                    "SRV" => RecordType::SRV,
+                    "DNSKEY" => RecordType::DNSKEY,
+                    _ => continue,
+                };
+                
+                let key = (name.clone(), record_type);
+                records.entry(key).or_default().push(crate::dns::DnsZoneRecord {
+                    name,
+                    record_type,
+                    value,
+                    ttl,
+                    priority,
+                });
+            }
+        }
+        
+        let mut zone = DnsZone::new(origin.to_string());
+        zone.serial = serial;
+        zone.records = records;
+        
+        Ok(zone)
     }
 
     async fn handle_org_member_announce(
@@ -3630,6 +3810,84 @@ impl MeshTransport {
         }
 
         self.topology.remove_peer(node_id).await;
+    }
+
+    async fn handle_site_config_sync(
+        &self,
+        from_peer: &str,
+        request_id: &str,
+        site_id: &str,
+        config_version: u64,
+        config_json: &str,
+        timestamp: u64,
+        source_node_id: &str,
+        signature: &[u8],
+        signer_public_key: Option<&str>,
+    ) {
+        tracing::info!(
+            "Received site config sync for site {} version {} from node {}",
+            site_id,
+            config_version,
+            source_node_id
+        );
+
+        let is_valid_origin = {
+            let origins = self.topology.find_all_origins_for_site(site_id).await;
+            origins.contains(&source_node_id.to_string())
+        };
+
+        if !is_valid_origin {
+            tracing::warn!("Site config sync from {} who is not an origin for site {} - rejecting", source_node_id, site_id);
+            return;
+        }
+
+        let verified = if !signature.is_empty() {
+            let public_key = match signer_public_key {
+                Some(pk) => pk,
+                None => {
+                    tracing::warn!("Site config sync from {} has signature but no public key - rejecting", source_node_id);
+                    return;
+                }
+            };
+
+            let sign_data = format!("{}:{}:{}:{}", site_id, config_version, config_json.len(), timestamp);
+            
+            match base64::Engine::decode(&base64::engine::general_purpose::STANDARD, public_key) {
+                Ok(pubkey_bytes) => {
+                    let result = crate::integrity::signing::verify_ed25519_raw(&pubkey_bytes, &sign_data, signature);
+                    if result {
+                        tracing::info!("Site config sync signature verified for site {} from {}", site_id, source_node_id);
+                    } else {
+                        tracing::warn!("Site config sync signature verification FAILED for site {} from {}", site_id, source_node_id);
+                    }
+                    result
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to decode public key for site config sync from {}: {}", source_node_id, e);
+                    return;
+                }
+            }
+        } else {
+            tracing::debug!("Site config sync from {} has no signature - accepting (backward compatible)", source_node_id);
+            true
+        };
+
+        if !verified {
+            tracing::warn!("Rejected site config sync from {} due to invalid signature", source_node_id);
+            return;
+        }
+
+        let tx_to_send = {
+            let tx_option = self.site_config_sync_tx.read().unwrap();
+            tx_option.clone()
+        };
+        
+        if let Some(tx) = tx_to_send {
+            let _ = tx.send((site_id.to_string(), config_json.to_string())).await;
+            tracing::debug!("Sent site config sync to callback handler");
+        } else {
+            tracing::warn!("No site config sync callback configured");
+        }
     }
 
     #[cfg(feature = "dns")]
@@ -4416,6 +4674,7 @@ impl MeshTransport {
             dns_registry: self.dns_registry.clone(),
             #[cfg(feature = "dns")]
             dns_zones: self.dns_zones.clone(),
+            site_config_sync_tx: self.site_config_sync_tx.clone(),
         }
     }
 

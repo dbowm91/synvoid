@@ -146,6 +146,8 @@ pub async fn create_site(
     let toml_content = toml::to_string_pretty(&site_config)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     
+    let toml_content_for_broadcast = toml_content.clone();
+    
     tokio::fs::write(&config_path, toml_content)
         .await
         .map_err(|e| {
@@ -159,6 +161,28 @@ pub async fn create_site(
             tracing::error!("Failed to load new site: {}", e);
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
+
+    let site_id_for_broadcast = site_id.clone();
+    drop(config);
+
+    if let Some(ref mesh_transport) = state.mesh_transport {
+        let mesh_transport_clone = mesh_transport.clone();
+        let version = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        
+        tokio::spawn(async move {
+            match mesh_transport_clone.broadcast_site_config_to_origins(&site_id_for_broadcast, &toml_content_for_broadcast, version).await {
+                Ok((success, fail)) => {
+                    tracing::info!("Broadcast new site config for {}: {} success, {} failed", site_id_for_broadcast, success, fail);
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to broadcast new site config for {}: {}", site_id_for_broadcast, e);
+                }
+            }
+        });
+    }
 
     Ok(Json(SiteDetail {
         id: site_id,
@@ -251,6 +275,8 @@ pub async fn update_site(
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
     
+    let toml_content_for_broadcast = toml_content.clone();
+    
     tokio::fs::write(&config_path, toml_content)
         .await
         .map_err(|e| {
@@ -260,6 +286,28 @@ pub async fn update_site(
 
     let mut state_config = state.config.write().await;
     state_config.sites.insert(site_id.clone(), config.clone());
+
+    let site_id_for_broadcast = site_id.clone();
+    let version = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    drop(state_config);
+
+    if let Some(ref mesh_transport) = state.mesh_transport {
+        let mesh_transport_clone = mesh_transport.clone();
+        
+        tokio::spawn(async move {
+            match mesh_transport_clone.broadcast_site_config_to_origins(&site_id_for_broadcast, &toml_content_for_broadcast, version).await {
+                Ok((success, fail)) => {
+                    tracing::info!("Broadcast site config for {}: {} success, {} failed", site_id_for_broadcast, success, fail);
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to broadcast site config for {}: {}", site_id_for_broadcast, e);
+                }
+            }
+        });
+    }
 
     Ok(Json(SiteDetail {
         id: site_id,

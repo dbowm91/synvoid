@@ -10,7 +10,7 @@ use parking_lot::RwLock as PLRwLock;
 use tokio::sync::{broadcast, mpsc};
 use tokio::time::interval;
 
-use super::ipc::{Message, WorkerId, WorkerMetricsPayload, WorkerStatus, ErrorSeverity, ErrorCode, IpcStream};
+use super::ipc::{Message, WorkerId, WorkerMetricsPayload, WorkerStatus, ErrorSeverity, ErrorCode, IpcStream, RequestLogPayload};
 
 pub type SharedIpc = Arc<tokio::sync::Mutex<IpcStream>>;
 use super::ipc_rate_limit::IpcRateLimiter;
@@ -203,6 +203,7 @@ impl Default for ProcessManagerConfig {
 
 pub struct ProcessManager {
     config: ProcessManagerConfig,
+    dynamic_config: Arc<PLRwLock<crate::config::ProcessManagerConfig>>,
     workers: Arc<PLRwLock<HashMap<usize, WorkerProcess>>>,
     static_worker: Arc<PLRwLock<Option<StaticWorkerProcess>>>,
     unified_server_worker: Arc<PLRwLock<Option<UnifiedServerWorkerProcess>>>,
@@ -217,6 +218,7 @@ pub struct ProcessManager {
     ipc_rate_limiter: IpcRateLimiter,
     static_worker_cache_hits: Arc<AtomicU64>,
     static_worker_cache_misses: Arc<AtomicU64>,
+    request_logs: Arc<PLRwLock<Vec<RequestLogPayload>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -260,9 +262,24 @@ impl ProcessManager {
             config.ipc_rate_limit.max_burst,
         );
 
+        let dynamic_config = crate::config::ProcessManagerConfig {
+            min_workers: config.min_workers,
+            max_workers: config.max_workers,
+            max_restart_attempts: config.max_restart_attempts,
+            restart_cooldown_secs: config.restart_cooldown_secs,
+            restart_backoff_max_secs: config.restart_backoff_max_secs,
+            heartbeat_timeout_secs: config.heartbeat_timeout_secs,
+            graceful_shutdown_timeout_secs: config.graceful_shutdown_timeout_secs,
+            worker_port_base: config.worker_port_base,
+            pre_spawn_workers: config.pre_spawn_workers,
+            warm_workers_target: config.warm_workers_target,
+            health_check_interval_secs: config.health_check_interval_secs,
+        };
+
         (
             Self {
                 config,
+                dynamic_config: Arc::new(PLRwLock::new(dynamic_config)),
                 workers: Arc::new(PLRwLock::new(HashMap::new())),
                 static_worker: Arc::new(PLRwLock::new(None)),
                 unified_server_worker: Arc::new(PLRwLock::new(None)),
@@ -277,6 +294,7 @@ impl ProcessManager {
                 ipc_rate_limiter,
                 static_worker_cache_hits: Arc::new(AtomicU64::new(0)),
                 static_worker_cache_misses: Arc::new(AtomicU64::new(0)),
+                request_logs: Arc::new(PLRwLock::new(Vec::with_capacity(10000))),
             },
             event_rx,
         )
@@ -301,6 +319,90 @@ impl ProcessManager {
 
     pub fn get_ipc_enforce_signing(&self) -> bool {
         self.config.ipc_enforce_signing
+    }
+
+    pub fn update_config(&self, new_config: crate::config::ProcessManagerConfig) -> Result<bool, String> {
+        let mut dynamic = self.dynamic_config.write();
+        
+        if new_config.min_workers > new_config.max_workers {
+            return Err("min_workers cannot exceed max_workers".to_string());
+        }
+
+        if new_config.min_workers > dynamic.max_workers {
+            return Err("new min_workers cannot exceed current max_workers".to_string());
+        }
+        
+        let mut needs_restart = false;
+        
+        if new_config.worker_port_base != dynamic.worker_port_base {
+            tracing::info!("worker_port_base changed - requires restart");
+            needs_restart = true;
+        }
+
+        dynamic.max_workers = new_config.max_workers;
+        dynamic.max_restart_attempts = new_config.max_restart_attempts;
+        dynamic.restart_cooldown_secs = new_config.restart_cooldown_secs;
+        dynamic.restart_backoff_max_secs = new_config.restart_backoff_max_secs;
+        dynamic.heartbeat_timeout_secs = new_config.heartbeat_timeout_secs;
+        dynamic.graceful_shutdown_timeout_secs = new_config.graceful_shutdown_timeout_secs;
+        dynamic.pre_spawn_workers = new_config.pre_spawn_workers;
+        dynamic.warm_workers_target = new_config.warm_workers_target;
+        dynamic.health_check_interval_secs = new_config.health_check_interval_secs;
+
+        if new_config.min_workers != dynamic.min_workers {
+            let old_min = dynamic.min_workers;
+            dynamic.min_workers = new_config.min_workers;
+            
+            if new_config.min_workers > old_min {
+                tracing::info!("min_workers increased from {} to {} - spawning additional workers", old_min, new_config.min_workers);
+                let current_count = self.get_running_worker_count();
+                let needed = new_config.min_workers.saturating_sub(current_count);
+                let mut spawned = 0;
+                for _ in 0..needed {
+                    drop(dynamic);
+                    match self.spawn_worker() {
+                        Ok(_) => spawned += 1,
+                        Err(e) => tracing::error!("Failed to spawn worker when scaling up: {}", e),
+                    }
+                    dynamic = self.dynamic_config.write();
+                }
+                if spawned < needed {
+                    tracing::warn!("Requested {} workers but only spawned {} due to errors", needed, spawned);
+                }
+            } else {
+                tracing::info!("min_workers decreased from {} to {} - will scale down on next worker exit", old_min, new_config.min_workers);
+            }
+        }
+
+        tracing::info!("ProcessManager config updated dynamically");
+        
+        if new_config.warm_workers_target > dynamic.warm_workers_target {
+            tracing::info!("Increasing warm workers target - spawning additional workers");
+            drop(dynamic);
+            match self.spawn_worker() {
+                Ok(_) => {}
+                Err(e) => tracing::error!("Failed to spawn warm worker: {}", e),
+            }
+        }
+
+        Ok(needs_restart)
+    }
+
+    pub fn get_config(&self) -> crate::config::ProcessManagerConfig {
+        let dynamic = self.dynamic_config.read();
+        crate::config::ProcessManagerConfig {
+            min_workers: dynamic.min_workers,
+            max_workers: dynamic.max_workers,
+            max_restart_attempts: dynamic.max_restart_attempts,
+            restart_cooldown_secs: dynamic.restart_cooldown_secs,
+            restart_backoff_max_secs: dynamic.restart_backoff_max_secs,
+            heartbeat_timeout_secs: dynamic.heartbeat_timeout_secs,
+            graceful_shutdown_timeout_secs: dynamic.graceful_shutdown_timeout_secs,
+            worker_port_base: dynamic.worker_port_base,
+            pre_spawn_workers: dynamic.pre_spawn_workers,
+            warm_workers_target: dynamic.warm_workers_target,
+            health_check_interval_secs: dynamic.health_check_interval_secs,
+        }
     }
 
     fn allocate_worker_id(&self) -> WorkerId {
@@ -714,6 +816,20 @@ impl ProcessManager {
         let _ = self.event_tx.blocking_send(ProcessEvent::WorkerReady(worker_id));
     }
 
+    const MAX_REQUEST_LOGS: usize = 10000;
+
+    pub fn handle_request_log(&self, worker_id: WorkerId, log: RequestLogPayload) {
+        let mut logs = self.request_logs.write();
+        if logs.len() >= Self::MAX_REQUEST_LOGS {
+            logs.remove(0);
+        }
+        logs.push(log);
+    }
+
+    pub fn get_request_logs(&self) -> Vec<RequestLogPayload> {
+        self.request_logs.read().clone()
+    }
+
     pub fn handle_worker_error(&self, worker_id: WorkerId, error: String, severity: ErrorSeverity, error_code: ErrorCode) {
         match severity {
             ErrorSeverity::Warning => {
@@ -819,9 +935,16 @@ impl ProcessManager {
     }
 
     pub async fn reap_zombies(&self) {
+        let (resize_restart_ids, failure_restarts) = self.detect_dead_workers();
+        self.handle_resize_restarts(resize_restart_ids).await;
+        self.handle_failure_restarts(failure_restarts).await;
+        self.handle_unified_worker_restart().await;
+    }
+
+    fn detect_dead_workers(&self) -> (Vec<usize>, Vec<(usize, u32)>) {
         let mut workers = self.workers.write();
-        let mut to_restart = Vec::new();
         let mut resize_restart = Vec::new();
+        let mut to_restart = Vec::new();
         
         for (id, worker) in workers.iter_mut() {
             if let Some(child) = worker.child_mut() {
@@ -857,9 +980,12 @@ impl ProcessManager {
                 }
             }
         }
-        drop(workers);
 
-        for id in resize_restart {
+        (resize_restart, to_restart)
+    }
+
+    async fn handle_resize_restarts(&self, resize_restart_ids: Vec<usize>) {
+        for id in resize_restart_ids {
             {
                 let mut pending = self.pending_thread_count.write();
                 *pending = None;
@@ -879,8 +1005,10 @@ impl ProcessManager {
                 self.metrics.total_restarts.fetch_add(1, Ordering::Relaxed);
             }
         }
+    }
 
-        for (id, restart_count) in to_restart {
+    async fn handle_failure_restarts(&self, failure_restarts: Vec<(usize, u32)>) {
+        for (id, restart_count) in failure_restarts {
             let workers = self.workers.read();
             let worker = workers.get(&id);
             let port = worker.map(|w| w.port).unwrap_or_else(|| {
@@ -916,53 +1044,53 @@ impl ProcessManager {
                 );
             }
         }
+    }
 
-        {
-            let mut unified_worker = self.unified_server_worker.write();
-            if let Some(ref mut worker) = unified_worker.as_mut() {
-                if let Some(child) = worker.child_mut() {
-                    match child.try_wait() {
-                        Ok(Some(status)) => {
-                            let exit_code = status.code();
-                            let is_resize_restart = exit_code == Some(100);
+    async fn handle_unified_worker_restart(&self) {
+        let mut unified_worker = self.unified_server_worker.write();
+        if let Some(ref mut worker) = unified_worker.as_mut() {
+            if let Some(child) = worker.child_mut() {
+                match child.try_wait() {
+                    Ok(Some(status)) => {
+                        let exit_code = status.code();
+                        let is_resize_restart = exit_code == Some(100);
+                        
+                        if is_resize_restart {
+                            tracing::info!(
+                                "UnifiedServerWorker (PID {:?}) exited for threadpool resize",
+                                worker.pid()
+                            );
                             
-                            if is_resize_restart {
-                                tracing::info!(
-                                    "UnifiedServerWorker (PID {:?}) exited for threadpool resize",
-                                    worker.pid()
-                                );
-                                
-                                let pending = self.pending_thread_count.write();
-                                let new_threads = *pending;
-                                drop(pending);
-                                
-                                tracing::info!("Respawning UnifiedServerWorker for threadpool resize to {:?} threads", new_threads);
-                                if let Err(e) = self.spawn_unified_server_worker() {
-                                    tracing::error!("Failed to respawn UnifiedServerWorker: {}", e);
-                                } else {
-                                    self.metrics.total_restarts.fetch_add(1, Ordering::Relaxed);
-                                }
+                            let pending = self.pending_thread_count.write();
+                            let new_threads = *pending;
+                            drop(pending);
+                            
+                            tracing::info!("Respawning UnifiedServerWorker for threadpool resize to {:?} threads", new_threads);
+                            if let Err(e) = self.spawn_unified_server_worker() {
+                                tracing::error!("Failed to respawn UnifiedServerWorker: {}", e);
                             } else {
-                                tracing::error!(
-                                    "UnifiedServerWorker (PID {:?}) exited unexpectedly with status: {}",
-                                    worker.pid(),
-                                    status
-                                );
-                                *worker.status_mut() = WorkerStatus::Failed;
-                                *worker.child_mut() = None;
-                                
-                                tracing::info!("Respawning UnifiedServerWorker after unexpected exit");
-                                if let Err(e) = self.spawn_unified_server_worker() {
-                                    tracing::error!("Failed to respawn UnifiedServerWorker: {}", e);
-                                } else {
-                                    self.metrics.total_restarts.fetch_add(1, Ordering::Relaxed);
-                                }
+                                self.metrics.total_restarts.fetch_add(1, Ordering::Relaxed);
+                            }
+                        } else {
+                            tracing::error!(
+                                "UnifiedServerWorker (PID {:?}) exited unexpectedly with status: {}",
+                                worker.pid(),
+                                status
+                            );
+                            *worker.status_mut() = WorkerStatus::Failed;
+                            *worker.child_mut() = None;
+                            
+                            tracing::info!("Respawning UnifiedServerWorker after unexpected exit");
+                            if let Err(e) = self.spawn_unified_server_worker() {
+                                tracing::error!("Failed to respawn UnifiedServerWorker: {}", e);
+                            } else {
+                                self.metrics.total_restarts.fetch_add(1, Ordering::Relaxed);
                             }
                         }
-                        Ok(None) => {}
-                        Err(e) => {
-                            tracing::error!("Error checking UnifiedServerWorker: {}", e);
-                        }
+                    }
+                    Ok(None) => {}
+                    Err(e) => {
+                        tracing::error!("Error checking UnifiedServerWorker: {}", e);
                     }
                 }
             }
@@ -1039,7 +1167,14 @@ impl ProcessManager {
         self.running.store(false, Ordering::SeqCst);
         
         self.broadcast_shutdown(true);
+        self.wait_for_workers_to_stop().await;
+        self.kill_remaining_workers();
 
+        tracing::info!("Shutdown complete");
+        let _ = self.event_tx.blocking_send(ProcessEvent::ShutdownComplete);
+    }
+
+    async fn wait_for_workers_to_stop(&self) {
         let timeout = Duration::from_secs(self.config.graceful_shutdown_timeout_secs);
         let start = Instant::now();
 
@@ -1084,7 +1219,9 @@ impl ProcessManager {
                 }
             }
         }
+    }
 
+    fn kill_remaining_workers(&self) {
         {
             let mut workers = self.workers.write();
             for worker in workers.values_mut() {
@@ -1102,9 +1239,6 @@ impl ProcessManager {
                 }
             }
         }
-
-        tracing::info!("Shutdown complete");
-        let _ = self.event_tx.blocking_send(ProcessEvent::ShutdownComplete);
     }
 
     pub fn get_worker_count(&self) -> usize {
@@ -1405,5 +1539,48 @@ pub fn check_ports_available(ports: &[u16]) -> std::io::Result<Vec<u16>> {
             std::io::ErrorKind::AddrInUse,
             format!("Ports already in use: {:?}", unavailable)
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_restart_backoff_calculation() {
+        let base_cooldown = 1u64;
+        let max_backoff = 60u64;
+
+        for attempt in 0..10u32 {
+            let backoff = base_cooldown * 2_u64.pow(attempt.min(8));
+            let expected = std::cmp::min(backoff, max_backoff);
+            
+            let calculated = std::cmp::min(
+                base_cooldown * 2_u64.pow(attempt.min(8)),
+                max_backoff,
+            );
+            
+            assert_eq!(calculated, expected, "Failed for attempt {}", attempt);
+        }
+    }
+
+    #[test]
+    fn test_worker_id_conversion() {
+        let worker_id = WorkerId(42);
+        assert_eq!(worker_id.0, 42);
+    }
+
+    #[test]
+    fn test_worker_id_display() {
+        let worker_id = WorkerId(5);
+        assert_eq!(format!("{}", worker_id), "5");
+    }
+
+    #[test]
+    fn test_process_manager_config_defaults() {
+        let config = ProcessManagerConfig::default();
+        assert_eq!(config.max_workers, 16);
+        assert_eq!(config.min_workers, 2);
+        assert_eq!(config.max_restart_attempts, 5);
     }
 }

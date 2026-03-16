@@ -505,13 +505,65 @@ impl TimedTokenBucket {
         self.last_access = Instant::now();
         self.bucket.try_consume()
     }
+
+    fn last_access_time(&self) -> Instant {
+        self.last_access
+    }
+}
+
+struct TimedBucketMap<K: Eq + std::hash::Hash + Clone> {
+    buckets: std::collections::HashMap<K, TimedTokenBucket>,
+    max_buckets: usize,
+    cleanup_batch_size: usize,
+}
+
+impl<K: Eq + std::hash::Hash + Clone> TimedBucketMap<K> {
+    fn new(max_buckets: usize, cleanup_batch_size: usize) -> Self {
+        Self {
+            buckets: std::collections::HashMap::new(),
+            max_buckets,
+            cleanup_batch_size,
+        }
+    }
+
+    fn get_or_insert_with<F: FnOnce() -> TimedTokenBucket>(&mut self, key: &K, f: F) -> &mut TimedTokenBucket {
+        self.buckets.entry(key.clone()).or_insert_with(f)
+    }
+
+    fn cleanup(&mut self) {
+        self.buckets.retain(|_, v| !v.is_expired());
+        
+        if self.buckets.len() > self.max_buckets {
+            let excess = self.buckets.len() - self.max_buckets / 2;
+            let mut items: Vec<_> = self.buckets.iter()
+                .map(|(k, v)| (k.clone(), v.last_access_time()))
+                .collect();
+            items.sort_by(|a, b| a.1.cmp(&b.1));
+            
+            for (key, _) in items.into_iter().take(excess.min(self.cleanup_batch_size)) {
+                self.buckets.remove(&key);
+            }
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.buckets.len()
+    }
+
+    fn is_full(&self) -> bool {
+        self.buckets.len() >= self.max_buckets
+    }
+
+    fn is_over_limit(&self, limit: usize) -> bool {
+        self.buckets.len() >= limit
+    }
 }
 
 pub struct DnsRateLimiter {
     global_bucket: PLRwLock<TokenBucket>,
-    ip_buckets: PLRwLock<std::collections::HashMap<IpAddr, TimedTokenBucket>>,
-    rrl_buckets: PLRwLock<std::collections::HashMap<String, TimedTokenBucket>>,
-    rrl_source_buckets: PLRwLock<std::collections::HashMap<IpAddr, TimedTokenBucket>>,
+    ip_buckets: PLRwLock<TimedBucketMap<IpAddr>>,
+    rrl_buckets: PLRwLock<TimedBucketMap<String>>,
+    rrl_source_buckets: PLRwLock<TimedBucketMap<IpAddr>>,
     rrl_threshold: u64,
     rrl_window: Duration,
     last_cleanup: PLRwLock<Instant>,
@@ -521,9 +573,9 @@ impl DnsRateLimiter {
     pub fn new(per_second: u64, max_burst: u64) -> Self {
         Self {
             global_bucket: PLRwLock::new(TokenBucket::new(max_burst, per_second)),
-            ip_buckets: PLRwLock::new(std::collections::HashMap::new()),
-            rrl_buckets: PLRwLock::new(std::collections::HashMap::new()),
-            rrl_source_buckets: PLRwLock::new(std::collections::HashMap::new()),
+            ip_buckets: PLRwLock::new(TimedBucketMap::new(MAX_IP_BUCKETS, 1000)),
+            rrl_buckets: PLRwLock::new(TimedBucketMap::new(MAX_RRL_BUCKETS, 1000)),
+            rrl_source_buckets: PLRwLock::new(TimedBucketMap::new(MAX_RRL_BUCKETS, 1000)),
             rrl_threshold: 100,
             rrl_window: Duration::from_secs(5),
             last_cleanup: PLRwLock::new(Instant::now()),
@@ -541,59 +593,10 @@ impl DnsRateLimiter {
             return;
         }
 
-        let cleanup_batch_size = 1000;
-
-        {
-            let mut buckets = self.ip_buckets.write();
-            let expired_count = buckets.iter().filter(|(_, v)| v.is_expired()).count();
-            if expired_count > 0 {
-                buckets.retain(|_, v| !v.is_expired());
-            }
-            if buckets.len() > MAX_IP_BUCKETS {
-                let excess = buckets.len() - MAX_IP_BUCKETS / 2;
-                let mut items: Vec<_> = buckets.iter()
-                    .map(|(k, v)| (k.clone(), v.last_access))
-                    .collect();
-                items.sort_by(|a, b| a.1.cmp(&b.1));
-                drop(buckets);
-                let mut buckets = self.ip_buckets.write();
-                for (key, _) in items.into_iter().take(excess.min(cleanup_batch_size)) {
-                    buckets.remove(&key);
-                }
-            }
-        }
-        {
-            let mut buckets = self.rrl_buckets.write();
-            buckets.retain(|_, v| !v.is_expired());
-            if buckets.len() > MAX_RRL_BUCKETS {
-                let excess = buckets.len() - MAX_RRL_BUCKETS / 2;
-                let mut items: Vec<_> = buckets.iter()
-                    .map(|(k, v)| (k.clone(), v.last_access))
-                    .collect();
-                items.sort_by(|a, b| a.1.cmp(&b.1));
-                drop(buckets);
-                let mut buckets = self.rrl_buckets.write();
-                for (key, _) in items.into_iter().take(excess.min(cleanup_batch_size)) {
-                    buckets.remove(&key);
-                }
-            }
-        }
-        {
-            let mut buckets = self.rrl_source_buckets.write();
-            buckets.retain(|_, v| !v.is_expired());
-            if buckets.len() > MAX_RRL_BUCKETS {
-                let excess = buckets.len() - MAX_RRL_BUCKETS / 2;
-                let mut items: Vec<_> = buckets.iter()
-                    .map(|(k, v)| (k.clone(), v.last_access))
-                    .collect();
-                items.sort_by(|a, b| a.1.cmp(&b.1));
-                drop(buckets);
-                let mut buckets = self.rrl_source_buckets.write();
-                for (key, _) in items.into_iter().take(excess.min(cleanup_batch_size)) {
-                    buckets.remove(&key);
-                }
-            }
-        }
+        self.ip_buckets.write().cleanup();
+        self.rrl_buckets.write().cleanup();
+        self.rrl_source_buckets.write().cleanup();
+        
         *self.last_cleanup.write() = now;
     }
 
@@ -614,11 +617,11 @@ impl DnsRateLimiter {
 
         let mut buckets = self.ip_buckets.write();
         
-        if buckets.len() >= MAX_IP_BUCKETS {
+        if buckets.is_over_limit(MAX_IP_BUCKETS) {
             return Err(());
         }
         
-        let bucket = buckets.entry(ip).or_insert_with(|| TimedTokenBucket::new(TokenBucket::new(10, 10)));
+        let bucket = buckets.get_or_insert_with(&ip, || TimedTokenBucket::new(TokenBucket::new(10, 10)));
         if bucket.try_consume() {
             Ok(())
         } else {
@@ -631,11 +634,11 @@ impl DnsRateLimiter {
         
         let mut buckets = self.rrl_source_buckets.write();
         
-        if buckets.len() >= MAX_RRL_BUCKETS {
+        if buckets.is_over_limit(MAX_RRL_BUCKETS) {
             return Err(());
         }
         
-        let bucket = buckets.entry(source_ip).or_insert_with(|| TimedTokenBucket::new(TokenBucket::new(self.rrl_threshold * 10, self.rrl_threshold)));
+        let bucket = buckets.get_or_insert_with(&source_ip, || TimedTokenBucket::new(TokenBucket::new(self.rrl_threshold * 10, self.rrl_threshold)));
         if bucket.try_consume() {
             Ok(())
         } else {
@@ -648,11 +651,11 @@ impl DnsRateLimiter {
         
         let mut buckets = self.rrl_source_buckets.write();
         
-        if buckets.len() >= MAX_RRL_BUCKETS {
+        if buckets.is_over_limit(MAX_RRL_BUCKETS) {
             return false;
         }
         
-        let bucket = buckets.entry(source_ip).or_insert_with(|| TimedTokenBucket::new(TokenBucket::new(self.rrl_threshold * 10, self.rrl_threshold)));
+        let bucket = buckets.get_or_insert_with(&source_ip, || TimedTokenBucket::new(TokenBucket::new(self.rrl_threshold * 10, self.rrl_threshold)));
         
         if bucket.try_consume() {
             true
@@ -1075,13 +1078,28 @@ impl DnsServer {
         for zone_config in zone_configs {
             let mut zone = Zone::new(zone_config.zone.clone());
             zone.dnskey_ttl = Some(3600);
-            zone.nsec3_enabled = self.config.dnssec.nsec3_enabled;
-            zone.nsec_enabled = self.config.dnssec.nsec_enabled;
-            zone.nsec3param = if self.config.dnssec.nsec3_enabled {
-                Some(super::dnssec::Nsec3Config::new(self.config.dnssec.nsec3_iterations, Self::generate_random_salt()))
-            } else {
-                None
-            };
+            
+            let zone_dnssec = zone_config.dnssec.as_ref();
+            let use_global = zone_dnssec.map(|z| !z.enabled).unwrap_or(true);
+            
+            if use_global {
+                zone.nsec3_enabled = self.config.dnssec.nsec3_enabled;
+                zone.nsec_enabled = self.config.dnssec.nsec_enabled;
+                zone.nsec3param = if self.config.dnssec.nsec3_enabled {
+                    Some(super::dnssec::Nsec3Config::new(self.config.dnssec.nsec3_iterations, Self::generate_random_salt()))
+                } else {
+                    None
+                };
+            } else if let Some(dnssec) = zone_dnssec {
+                zone.nsec3_enabled = dnssec.nsec3_enabled;
+                zone.nsec_enabled = dnssec.nsec_enabled;
+                zone.nsec3param = if dnssec.nsec3_enabled {
+                    let iterations = dnssec.nsec3_iterations.unwrap_or(self.config.dnssec.nsec3_iterations);
+                    Some(super::dnssec::Nsec3Config::new(iterations, Self::generate_random_salt()))
+                } else {
+                    None
+                };
+            }
 
             for record_config in &zone_config.records {
                 let record = DnsZoneRecord {
@@ -1305,7 +1323,7 @@ impl DnsServer {
         }
 
         if self.config.anycast.mesh_based_sync {
-            let sync_interval = self.config.anycast.health_check_interval_secs * 10;
+            let sync_interval = self.config.anycast.sync_interval_secs;
             zone_sync = zone_sync.with_sync_interval(sync_interval);
             zone_sync.start_sync_loop().await;
         }
@@ -1337,6 +1355,7 @@ impl DnsServer {
         let firewall = self.firewall.clone();
         let connection_limits = self.connection_limits.clone();
         let min_geo_ttl = self.config.settings.min_geo_ttl;
+        let negative_cache_ttl = self.config.settings.negative_cache_ttl;
         let cache = self.cache.clone();
         let dnssec = self.dnssec.clone();
         let signer_name = self.signer_name.clone();
@@ -1451,7 +1470,7 @@ impl DnsServer {
                                                 Some(resp)
                                             }
                                             Some(super::query_coalesce::CoalesceResult::NewQuery(_)) => {
-                                                let result = if let Some(ref c) = cache_udp {
+                                                if let Some(ref c) = cache_udp {
                                                     Self::handle_query_with_cache(
                                                         &zones_udp,
                                                         &zone_trie_udp,
@@ -1459,6 +1478,7 @@ impl DnsServer {
                                                         mesh_registry_udp.as_ref(),
                                                         geoip_lookup_udp.as_ref(),
                                                         min_geo_ttl,
+                                                        negative_cache_ttl,
                                                         c,
                                                         cache_key,
                                                         dnssec.as_ref(),
@@ -1468,19 +1488,6 @@ impl DnsServer {
                                                         &ecs_filter_config_udp,
                                                         update_handler_udp.as_ref(),
                                                         notify_handler_udp.as_ref(),
-                                                    )
-                                                } else {
-                                                    Self::handle_query(
-                                                        &zones_udp,
-                                                        &zone_trie_udp,
-                                                        &buf[..len],
-                                                        mesh_registry_udp.as_ref(),
-                                                        geoip_lookup_udp.as_ref(),
-                                                        min_geo_ttl,
-                                                        Some(client_ip),
-                                                        &ecs_filter_config_udp,
-                                                        update_handler_udp.as_ref(),
-notify_handler_udp.as_ref(),
                                                     )
                                                 } else {
                                                     Self::handle_query(
@@ -1507,6 +1514,7 @@ notify_handler_udp.as_ref(),
                                                 mesh_registry_udp.as_ref(),
                                                 geoip_lookup_udp.as_ref(),
                                                 min_geo_ttl,
+                                                negative_cache_ttl,
                                                 c,
                                                 cache_key,
                                                 dnssec.as_ref(),
@@ -1540,6 +1548,7 @@ update_handler_udp.as_ref(),
                                         mesh_registry_udp.as_ref(),
                                         geoip_lookup_udp.as_ref(),
                                         min_geo_ttl,
+                                        negative_cache_ttl,
                                         c,
                                         cache_key,
                                         dnssec.as_ref(),
@@ -1671,7 +1680,7 @@ update_handler_udp.as_ref(),
                                         connection_limits.max_tcp_idle_time().as_secs()
                                     ));
                                     tracing::debug!("TCP connection from {} to anycast IP {}", client_ip, dest_ip);
-                                    if let Err(e) = Self::handle_tcp_query(conn.stream, &zones_clone, &zone_trie_clone, &zone_index_clone, mesh_registry_clone.as_ref(), geoip_lookup_clone.as_ref(), min_geo_ttl, cache_clone.as_ref(), dnssec_clone.as_ref(), signer_name_clone.as_ref(), query_validator_clone.as_ref(), firewall_clone.as_ref(), Some(&connection_limits), max_idle_time, zone_transfer_clone.as_ref(), &ecs_filter_clone, rate_limiter_clone.as_ref(), rrl_enabled_tcp, update_handler_clone.as_ref(), notify_handler_clone.as_ref(), query_coalescer_clone.as_ref()).await {
+                                    if let Err(e) = Self::handle_tcp_query(conn.stream, &zones_clone, &zone_trie_clone, &zone_index_clone, mesh_registry_clone.as_ref(), geoip_lookup_clone.as_ref(), min_geo_ttl, negative_cache_ttl, cache_clone.as_ref(), dnssec_clone.as_ref(), signer_name_clone.as_ref(), query_validator_clone.as_ref(), firewall_clone.as_ref(), Some(&connection_limits), max_idle_time, zone_transfer_clone.as_ref(), &ecs_filter_clone, rate_limiter_clone.as_ref(), rrl_enabled_tcp, update_handler_clone.as_ref(), notify_handler_clone.as_ref(), query_coalescer_clone.as_ref()).await {
                                         tracing::debug!("Anycast TCP DNS error: {}", e);
                                     }
                                 });
@@ -1714,6 +1723,7 @@ update_handler_udp.as_ref(),
         let firewall = self.firewall.clone();
         let connection_limits = self.connection_limits.clone();
         let min_geo_ttl = self.config.settings.min_geo_ttl;
+        let negative_cache_ttl = self.config.settings.negative_cache_ttl;
         let cache = self.cache.clone();
         let dnssec = self.dnssec.clone();
         let signer_name = self.signer_name.clone();
@@ -1829,7 +1839,7 @@ update_handler_udp.as_ref(),
                                                 Some(resp)
                                             }
                                             Some(super::query_coalesce::CoalesceResult::NewQuery(_)) => {
-                                                let result = if let Some(ref c) = cache_udp {
+                                                if let Some(ref c) = cache_udp {
                                                     Self::handle_query_with_cache(
                                                         &zones_udp,
                                                         &zone_trie_udp,
@@ -1837,6 +1847,7 @@ update_handler_udp.as_ref(),
                                                         mesh_registry_udp.as_ref(),
                                                         geoip_lookup_udp.as_ref(),
                                                         min_geo_ttl,
+                                                        negative_cache_ttl,
                                                         c,
                                                         cache_key,
                                                         dnssec.as_ref(),
@@ -1846,19 +1857,6 @@ update_handler_udp.as_ref(),
                                                         &ecs_filter_config_udp,
                                                         update_handler_udp.as_ref(),
                                                         notify_handler_udp.as_ref(),
-                                                    )
-                                                } else {
-                                                    Self::handle_query(
-                                                        &zones_udp,
-                                                        &zone_trie_udp,
-                                                        &buf[..len],
-                                                        mesh_registry_udp.as_ref(),
-                                                        geoip_lookup_udp.as_ref(),
-                                                        min_geo_ttl,
-                                                        Some(client_ip),
-                                                        &ecs_filter_config_udp,
-                                                        update_handler_udp.as_ref(),
-notify_handler_udp.as_ref(),
                                                     )
                                                 } else {
                                                     Self::handle_query(
@@ -1885,6 +1883,7 @@ notify_handler_udp.as_ref(),
                                                 mesh_registry_udp.as_ref(),
                                                 geoip_lookup_udp.as_ref(),
                                                 min_geo_ttl,
+                                                negative_cache_ttl,
                                                 c,
                                                 cache_key,
                                                 dnssec.as_ref(),
@@ -1918,6 +1917,7 @@ notify_handler_udp.as_ref(),
                                         mesh_registry_udp.as_ref(),
                                         geoip_lookup_udp.as_ref(),
                                         min_geo_ttl,
+                                        negative_cache_ttl,
                                         c,
                                         cache_key,
                                         dnssec.as_ref(),
@@ -2042,7 +2042,7 @@ notify_handler_udp.as_ref(),
                                     let max_idle_time = Some(std::time::Duration::from_secs(
                                         connection_limits.max_tcp_idle_time().as_secs()
                                     ));
-                                    if let Err(e) = Self::handle_tcp_query(stream, &zones_clone, &zone_trie_clone, &zone_index_clone, mesh_registry_clone.as_ref(), geoip_lookup_clone.as_ref(), min_geo_ttl, cache_clone.as_ref(), dnssec_clone.as_ref(), signer_name_clone.as_ref(), query_validator_clone.as_ref(), firewall_clone.as_ref(), Some(&connection_limits), max_idle_time, zone_transfer_clone.as_ref(), &ecs_filter_clone, rate_limiter_clone.as_ref(), rrl_enabled_tcp, update_handler_clone.as_ref(), notify_handler_clone.as_ref(), query_coalescer_clone.as_ref()).await {
+                                    if let Err(e) = Self::handle_tcp_query(stream, &zones_clone, &zone_trie_clone, &zone_index_clone, mesh_registry_clone.as_ref(), geoip_lookup_clone.as_ref(), min_geo_ttl, negative_cache_ttl, cache_clone.as_ref(), dnssec_clone.as_ref(), signer_name_clone.as_ref(), query_validator_clone.as_ref(), firewall_clone.as_ref(), Some(&connection_limits), max_idle_time, zone_transfer_clone.as_ref(), &ecs_filter_clone, rate_limiter_clone.as_ref(), rrl_enabled_tcp, update_handler_clone.as_ref(), notify_handler_clone.as_ref(), query_coalescer_clone.as_ref()).await {
                                         tracing::debug!("TCP DNS error: {}", e);
                                     }
                                 });
@@ -2104,6 +2104,7 @@ notify_handler_udp.as_ref(),
         mesh_registry: Option<&Arc<MeshDnsRegistry>>,
         geoip_lookup: Option<&Arc<crate::geoip::GeoIpManager>>,
         min_geo_ttl: u32,
+        negative_cache_ttl: u32,
         cache: Option<&Arc<DnsCache>>,
         dnssec: Option<&Arc<RwLock<DnsSecKeyManager>>>,
         signer_name: Option<&String>,
@@ -2213,7 +2214,7 @@ notify_handler_udp.as_ref(),
                         Some(resp)
                     }
                     Some(super::query_coalesce::CoalesceResult::NewQuery(_)) => {
-                        let result = if let Some(c) = cache {
+                        if let Some(c) = cache {
                             Self::handle_query_with_cache(
                                 zones,
                                 zone_trie,
@@ -2221,25 +2222,13 @@ notify_handler_udp.as_ref(),
                                 mesh_registry,
                                 geoip_lookup,
                                 min_geo_ttl,
+                                negative_cache_ttl,
                                 c,
                                 cache_key,
                                 dnssec,
                                 signer_name,
                                 Some(client_ip),
                                 zone_transfer,
-                                ecs_filter_config,
-                                update_handler,
-                                notify_handler,
-                            )
-                        } else {
-                            Self::handle_query(
-                                zones,
-                                zone_trie,
-                                &query,
-                                mesh_registry,
-                                geoip_lookup,
-                                min_geo_ttl,
-                                Some(client_ip),
                                 ecs_filter_config,
                                 update_handler,
                                 notify_handler,
@@ -2269,6 +2258,7 @@ notify_handler_udp.as_ref(),
                         mesh_registry,
                         geoip_lookup,
                         min_geo_ttl,
+                        negative_cache_ttl,
                         c,
                         cache_key,
                         dnssec,
@@ -2302,6 +2292,7 @@ notify_handler_udp.as_ref(),
                 mesh_registry,
                 geoip_lookup,
                 min_geo_ttl,
+                negative_cache_ttl,
                 c,
                 cache_key,
                 dnssec,
@@ -2408,6 +2399,7 @@ notify_handler_udp.as_ref(),
         mesh_registry: Option<&Arc<MeshDnsRegistry>>,
         geoip_lookup: Option<&Arc<crate::geoip::GeoIpManager>>,
         min_geo_ttl: u32,
+        negative_cache_ttl: u32,
         cache: &Arc<DnsCache>,
         mut cache_key: CacheKey,
         _dnssec: Option<&Arc<RwLock<DnsSecKeyManager>>>,
@@ -2521,7 +2513,7 @@ notify_handler_udp.as_ref(),
         );
 
         if let Some(ref data) = result {
-            let ttl = Self::extract_ttl_from_response(data.as_ref());
+            let ttl = Self::extract_ttl_from_response(data.as_ref(), negative_cache_ttl);
             if ttl > 0 {
                 cache.insert(cache_key, data.as_ref().clone(), ttl);
             }
@@ -2530,13 +2522,19 @@ notify_handler_udp.as_ref(),
         result
     }
 
-    fn extract_ttl_from_response(response: &[u8]) -> u32 {
-        if response.len() < 20 {
+    fn extract_ttl_from_response(response: &[u8], negative_cache_ttl: u32) -> u32 {
+        if response.len() < 12 {
             return 0;
         }
 
+        let flags = u16::from_be_bytes([response[2], response[3]]);
+        let rcode = flags & 0x000F;
         let ancount = u16::from_be_bytes([response[6], response[7]]);
+
         if ancount == 0 {
+            if rcode == 3 {
+                return negative_cache_ttl;
+            }
             return 0;
         }
 

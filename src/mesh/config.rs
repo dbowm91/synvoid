@@ -587,6 +587,38 @@ pub struct MeshUpstreamConfig {
     pub priority_tier: u32,
     #[serde(default)]
     pub allowed_protocols: Vec<String>,
+    #[serde(default)]
+    pub image_protection: Option<MeshImageProtectionConfig>,
+    #[serde(default)]
+    pub compression: Option<MeshCompressionConfig>,
+    #[serde(default)]
+    pub minification: Option<MeshMinificationConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct MeshImageProtectionConfig {
+    pub enabled: Option<bool>,
+    pub min_size_bytes: Option<usize>,
+    pub whitelist_patterns: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct MeshCompressionConfig {
+    pub enabled: Option<bool>,
+    pub gzip_on_the_fly: Option<bool>,
+    pub gzip_level: Option<u32>,
+    pub gzip_min_size: Option<usize>,
+    pub gzip_types: Option<Vec<String>>,
+    pub enable_brotli: Option<bool>,
+    pub brotli_level: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct MeshMinificationConfig {
+    pub enabled: Option<bool>,
+    pub enable_html: Option<bool>,
+    pub enable_css: Option<bool>,
+    pub enable_js: Option<bool>,
 }
 
 impl MeshUpstreamConfig {

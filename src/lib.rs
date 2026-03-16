@@ -62,4 +62,8 @@ pub mod dns;
 
 pub use config::ConfigManager;
 pub use waf::WafCore;
-pub use utils::{urlencoding_decode, RunningFlag, DrainFlag};
+pub use utils::{
+    urlencoding_decode, RunningFlag, DrainFlag,
+    ResultExt, OptionExt,
+    errors,
+};

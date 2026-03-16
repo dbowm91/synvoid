@@ -252,6 +252,7 @@ message MeshMessage {
         ZoneSyncRequest zone_sync_request = 122;
         ZoneSyncResponse zone_sync_response = 123;
         ZoneSyncAck zone_sync_ack = 124;
+        SiteConfigSync site_config_sync = 125;
     }
 }
 
@@ -1202,4 +1203,15 @@ message ZoneSyncAck {
     string zone_origin = 2;
     uint64 serial = 3;
     uint64 timestamp = 4;
+}
+
+message SiteConfigSync {
+    string request_id = 1;
+    string site_id = 2;
+    uint64 config_version = 3;
+    string config_json = 4;
+    uint64 timestamp = 5;
+    string source_node_id = 6;
+    bytes signature = 7;
+    optional string signer_public_key = 8;
 }

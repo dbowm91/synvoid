@@ -40,6 +40,34 @@ pub fn setup_unified_server_panic_handler() {
     setup_panic_handler("UNIFIED SERVER WORKER", Some(&panic_path));
 }
 
+async fn setup_worker_ipc(
+    master_socket: &std::path::Path,
+    worker_id: &WorkerId,
+) -> Result<Arc<TokioMutex<AsyncIpcStream>>, Box<dyn std::error::Error + Send + Sync>> {
+    let mut stream = connect_to_master_async(master_socket, 5, std::time::Duration::from_secs(2), "Unified server worker").await?;
+    
+    stream.send(&Message::UnifiedServerWorkerStarted {
+        id: worker_id.clone(),
+        pid: std::process::id(),
+        timestamp: current_timestamp(),
+    }).await?;
+
+    Ok(Arc::new(TokioMutex::new(stream)))
+}
+
+async fn setup_config(config_path: &std::path::Path) -> Arc<RwLock<ConfigManager>> {
+    let mut config_manager = ConfigManager::new(config_path.to_path_buf());
+    let main_config_path = config_path.join("main.toml");
+    
+    if let Err(e) = config_manager.load_main(&main_config_path) {
+        tracing::warn!("Failed to load main config: {}, using defaults", e);
+    }
+    
+    config_manager.discover_sites();
+
+    Arc::new(RwLock::new(config_manager))
+}
+
 async fn extract_bandwidth_config(
     config: &Arc<RwLock<ConfigManager>>,
 ) -> (
@@ -91,29 +119,9 @@ pub async fn run_unified_server_worker(args: UnifiedServerWorkerArgs) -> Result<
         args.master_socket
     );
 
-    let ipc = Arc::new(TokioMutex::new(
-        connect_to_master_async(&args.master_socket, 5, std::time::Duration::from_secs(2), "Unified server worker").await?
-    ));
+    let ipc = setup_worker_ipc(&args.master_socket, &worker_id).await?;
 
-    {
-        let mut ipc_guard = ipc.lock().await;
-        ipc_guard.send(&Message::UnifiedServerWorkerStarted {
-            id: worker_id.clone(),
-            pid: std::process::id(),
-            timestamp: current_timestamp(),
-        }).await?;
-    }
-
-    let mut config_manager = ConfigManager::new(args.config_path.clone());
-    let main_config_path = args.config_path.join("main.toml");
-    
-    if let Err(e) = config_manager.load_main(&main_config_path) {
-        tracing::warn!("Failed to load main config: {}, using defaults", e);
-    }
-    
-    config_manager.discover_sites();
-
-    let shared_config = Arc::new(RwLock::new(config_manager));
+    let shared_config = setup_config(&args.config_path).await;
     
     let (bandwidth_data_dir, bandwidth_retention_days, bandwidth_mesh_excluded, bandwidth_reset_config) = 
         extract_bandwidth_config(&shared_config).await;
@@ -126,10 +134,13 @@ pub async fn run_unified_server_worker(args: UnifiedServerWorkerArgs) -> Result<
     
     let drain_state = Arc::new(WorkerDrainState::new());
     let metrics = WorkerMetrics::shared_with_bandwidth(bandwidth_retention_days, bandwidth_mesh_excluded);
+    let ipc_for_server = ipc.clone();
+    let worker_id_for_server = worker_id.clone();
     let unified_server = UnifiedServer::new(shared_config.clone(), None)
         .await?
         .with_drain_state(drain_state.clone())
-        .with_metrics(metrics.clone());
+        .with_metrics(metrics.clone())
+        .with_ipc(ipc_for_server, worker_id_for_server);
     
     // Wrap in Arc immediately for easier sharing
     let unified_server: Arc<UnifiedServer> = Arc::new(unified_server);
@@ -722,36 +733,12 @@ pub async fn run_unified_server_worker(args: UnifiedServerWorkerArgs) -> Result<
                         ipc_state.worker_id
                     );
 
-                    let start = Instant::now();
-                    let drain_timeout = Duration::from_secs(timeout_secs);
-                    let poll_interval = Duration::from_millis(100);
-
-                    loop {
-                        if start.elapsed() >= drain_timeout {
-                            tracing::warn!(
-                                "Unified Server Worker {} drain timeout reached",
-                                ipc_state.worker_id
-                            );
-                            break;
-                        }
-
-                        let active = ipc_state.drain_state.get_active_connections();
-                        if active == 0 {
-                            tracing::info!(
-                                "Unified Server Worker {} all connections drained",
-                                ipc_state.worker_id
-                            );
-                            break;
-                        }
-
-                        tracing::debug!(
-                            "Unified Server Worker {} waiting for {} connections to drain",
-                            ipc_state.worker_id,
-                            active
-                        );
-
-                        tokio::time::sleep(poll_interval).await;
-                    }
+                    let remaining = wait_for_drain(
+                        &ipc_state.drain_state,
+                        timeout_secs,
+                        &ipc_state.worker_id,
+                        "drain request"
+                    ).await;
 
                     tracing::info!("Unified Server Worker {} stopping Granian supervisors", ipc_state.worker_id);
                     let app_servers = ipc_state.app_servers.read().await;
@@ -798,36 +785,12 @@ pub async fn run_unified_server_worker(args: UnifiedServerWorkerArgs) -> Result<
                         ipc_state.worker_id
                     );
 
-                    let start = Instant::now();
-                    let drain_timeout = Duration::from_secs(30);
-                    let poll_interval = Duration::from_millis(100);
-
-                    loop {
-                        if start.elapsed() >= drain_timeout {
-                            tracing::warn!(
-                                "Unified Server Worker {} resize drain timeout reached",
-                                ipc_state.worker_id
-                            );
-                            break;
-                        }
-
-                        let active = ipc_state.drain_state.get_active_connections();
-                        if active == 0 {
-                            tracing::info!(
-                                "Unified Server Worker {} all connections drained for resize",
-                                ipc_state.worker_id
-                            );
-                            break;
-                        }
-
-                        tracing::debug!(
-                            "Unified Server Worker {} waiting for {} connections to drain for resize",
-                            ipc_state.worker_id,
-                            active
-                        );
-
-                        tokio::time::sleep(poll_interval).await;
-                    }
+                    let _remaining = wait_for_drain(
+                        &ipc_state.drain_state,
+                        30,
+                        &ipc_state.worker_id,
+                        "resize request"
+                    ).await;
 
                     tracing::info!(
                         "Unified Server Worker {} exiting for threadpool resize to {} threads",
@@ -877,30 +840,78 @@ pub async fn run_unified_server_worker(args: UnifiedServerWorkerArgs) -> Result<
     Ok(())
 }
 
+async fn wait_for_drain(
+    drain_state: &WorkerDrainState,
+    timeout_secs: u64,
+    worker_id: &WorkerId,
+    reason: &str,
+) -> u64 {
+    let start = Instant::now();
+    let drain_timeout = Duration::from_secs(timeout_secs);
+    let poll_interval = Duration::from_millis(100);
+
+    loop {
+        if start.elapsed() >= drain_timeout {
+            tracing::warn!(
+                "Unified Server Worker {} drain timeout reached for {}",
+                worker_id,
+                reason
+            );
+            break;
+        }
+
+        let active = drain_state.get_active_connections();
+        if active == 0 {
+            tracing::info!(
+                "Unified Server Worker {} all connections drained for {}",
+                worker_id,
+                reason
+            );
+            break;
+        }
+
+        tracing::debug!(
+            "Unified Server Worker {} waiting for {} connections to drain for {}",
+            worker_id,
+            active,
+            reason
+        );
+
+        tokio::time::sleep(poll_interval).await;
+    }
+
+    drain_state.get_active_connections()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::Arc;
 
-    #[test]
-    fn test_unified_server_worker_args_default() {
-        let args = UnifiedServerWorkerArgs {
-            worker_id: 1,
-            config_path: PathBuf::from("config"),
-            master_socket: PathBuf::from("/tmp/master.sock"),
-            log_level: None,
-            upgrade_mode: false,
-            reuse_port: true,
-            worker_threads: 4,
-        };
+    #[tokio::test]
+    async fn test_wait_for_drain_immediate() {
+        let drain_state = WorkerDrainState::new();
+        assert_eq!(drain_state.get_active_connections(), 0);
         
-        assert_eq!(args.worker_id, 1);
-        assert_eq!(args.config_path, PathBuf::from("config"));
-        assert_eq!(args.master_socket, PathBuf::from("/tmp/master.sock"));
-        assert!(args.log_level.is_none());
-        assert!(!args.upgrade_mode);
-        assert!(args.reuse_port);
-        assert_eq!(args.worker_threads, 4);
+        let worker_id = WorkerId(1);
+        let remaining = wait_for_drain(&drain_state, 10, &worker_id, "test").await;
+        assert_eq!(remaining, 0);
+    }
+
+    #[tokio::test]
+    async fn test_wait_for_drain_with_connections() {
+        let drain_state = WorkerDrainState::new();
+        drain_state.increment_active();
+        drain_state.increment_active();
+        drain_state.increment_active();
+        drain_state.increment_active();
+        drain_state.increment_active();
+        assert_eq!(drain_state.get_active_connections(), 5);
+        
+        let worker_id = WorkerId(1);
+        let remaining = wait_for_drain(&drain_state, 1, &worker_id, "test").await;
+        assert_eq!(remaining, 5);
     }
 
     #[test]

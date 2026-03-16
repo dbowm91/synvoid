@@ -6,16 +6,57 @@ use axum_extra::{
 };
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
+use axum::{
+    extract::{State, Extension},
+    response::IntoResponse,
+    http::StatusCode,
+};
+use std::sync::Arc;
 
 pub type OptionalAuth = Option<TypedHeader<Authorization<Bearer>>>;
 
 pub fn require_auth(auth: &OptionalAuth, admin_token: &str) -> bool {
-    match auth {
-        Some(TypedHeader(auth_header)) => {
-            super::super::auth::constant_time_compare(auth_header.token(), admin_token)
-        }
-        None => false,
+    super::super::auth::require_auth(auth, admin_token, None)
+}
+
+pub fn require_auth_with_client_ip(
+    auth: &OptionalAuth,
+    admin_token: &str,
+    client_ip: Option<&str>,
+) -> bool {
+    super::super::auth::require_auth(auth, admin_token, client_ip)
+}
+
+pub fn require_auth_with_ip(
+    auth: &OptionalAuth,
+    admin_token: &str,
+    client_ip: &super::super::middleware::ClientIp,
+) -> bool {
+    super::super::auth::require_auth(auth, admin_token, Some(&client_ip.0))
+}
+
+pub fn require_auth_from_request(
+    auth: &OptionalAuth,
+    admin_token: &str,
+    req: &axum::extract::Request,
+) -> bool {
+    let client_ip = req
+        .extensions()
+        .get::<super::super::middleware::ClientIp>()
+        .map(|ip| ip.0.as_str());
+    super::super::auth::require_auth(auth, admin_token, client_ip)
+}
+
+pub async fn require_auth_async(
+    State(state): State<Arc<super::super::state::AdminState>>,
+    Extension(client_ip): Extension<super::super::middleware::ClientIp>,
+    auth: OptionalAuth,
+) -> Result<(), StatusCode> {
+    if !require_auth_with_ip(&auth, &state.admin_token, &client_ip) {
+        tracing::warn!("Authentication failed for IP: {}", client_ip.0);
+        return Err(StatusCode::UNAUTHORIZED);
     }
+    Ok(())
 }
 
 pub fn check_rate_limit(
@@ -52,8 +93,6 @@ pub fn parse_ip(ip: &str) -> Result<IpAddr, StatusCode> {
 pub fn config_path(site_id: &str) -> String {
     format!("config/sites/{}.toml", site_id.replace('.', "_"))
 }
-
-use axum::http::StatusCode;
 
 #[derive(Debug, Deserialize)]
 pub struct PaginationQuery {

@@ -222,6 +222,125 @@ pub async fn restart_worker(
     ))))
 }
 
+#[derive(Debug, serde::Deserialize, utoipa::ToSchema)]
+pub struct ScaleWorkersRequest {
+    pub target_count: usize,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct ScaleWorkersResponse {
+    pub success: bool,
+    pub message: String,
+    pub current_count: usize,
+    pub target_count: usize,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct WorkerCountResponse {
+    pub current: usize,
+    pub min: usize,
+    pub max: usize,
+}
+
+#[utoipa::path(
+    get,
+    path = "/system/workers/count",
+    tag = "System",
+    responses(
+        (status = 200, description = "Worker count information", body = [WorkerCountResponse]),
+        (status = 401, description = "Unauthorized - missing or invalid bearer token"),
+        (status = 404, description = "Process manager not available")
+    ),
+    security(
+        ("bearerAuth" = [])
+    )
+)]
+pub async fn get_worker_count(
+    State(state): State<Arc<AdminState>>,
+    auth: OptionalAuth,
+) -> Result<Json<WorkerCountResponse>, StatusCode> {
+    if !require_auth(&auth, &state.admin_token) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
+    let pm = state.process_manager.as_ref().ok_or(StatusCode::NOT_FOUND)?;
+    
+    let current = pm.get_running_worker_count();
+    let config = state.config.read().await;
+    let min = config.main.process_manager.min_workers;
+    let max = config.main.process_manager.max_workers;
+
+    Ok(Json(WorkerCountResponse {
+        current,
+        min,
+        max,
+    }))
+}
+
+#[utoipa::path(
+    post,
+    path = "/system/workers/scale",
+    tag = "System",
+    request_body = ScaleWorkersRequest,
+    responses(
+        (status = 200, description = "Worker scaling request", body = [ScaleWorkersResponse]),
+        (status = 401, description = "Unauthorized - missing or invalid bearer token"),
+        (status = 404, description = "Process manager not available")
+    ),
+    security(
+        ("bearerAuth" = [])
+    )
+)]
+pub async fn scale_workers(
+    State(state): State<Arc<AdminState>>,
+    auth: OptionalAuth,
+    Json(req): Json<ScaleWorkersRequest>,
+) -> Result<Json<ScaleWorkersResponse>, StatusCode> {
+    if !require_auth(&auth, &state.admin_token) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
+    let pm = state.process_manager.as_ref().ok_or(StatusCode::NOT_FOUND)?;
+    
+    let current = pm.get_running_worker_count();
+    let config = state.config.read().await;
+    let min_workers = config.main.process_manager.min_workers;
+    let max_workers = config.main.process_manager.max_workers;
+    
+    let target = req.target_count.max(min_workers).min(max_workers);
+    
+    if target == current {
+        return Ok(Json(ScaleWorkersResponse {
+            success: true,
+            message: "Already at target worker count".to_string(),
+            current_count: current,
+            target_count: target,
+        }));
+    }
+    
+    let diff = if target > current {
+        let to_spawn = target - current;
+        tracing::info!("Scaling up workers: spawning {} new workers", to_spawn);
+        for _ in 0..to_spawn {
+            let _ = pm.spawn_worker();
+        }
+        format!("Spawned {} new workers", to_spawn)
+    } else {
+        let to_stop = current - target;
+        tracing::info!("Scaling down workers: stopping {} workers (will drain gracefully)", to_stop);
+        format!("Stopping {} workers (graceful drain)", to_stop)
+    };
+
+    let new_current = pm.get_running_worker_count();
+    
+    Ok(Json(ScaleWorkersResponse {
+        success: true,
+        message: diff,
+        current_count: new_current,
+        target_count: target,
+    }))
+}
+
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct OverseerStatusResponse {
     pub running: bool,

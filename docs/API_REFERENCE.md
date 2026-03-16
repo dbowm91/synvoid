@@ -192,7 +192,13 @@ curl -H "Authorization: Bearer your-admin-token" \
     "p50_latency_ms": 30.5,
     "p95_latency_ms": 110.2,
     "p99_latency_ms": 220.0,
-    "upstream_healthy": true
+    "upstream_healthy": true,
+    "bytes_received": 1523456789,
+    "bytes_sent": 2345678901,
+    "proxied_bytes_sent": 1234567890,
+    "proxied_bytes_received": 987654321,
+    "mesh_bytes_sent": 112233445,
+    "mesh_bytes_received": 55667788
   },
   {
     "site_id": "api.example.com",
@@ -207,10 +213,31 @@ curl -H "Authorization: Bearer your-admin-token" \
     "p50_latency_ms": 28.2,
     "p95_latency_ms": 95.0,
     "p99_latency_ms": 180.0,
-    "upstream_healthy": true
+    "upstream_healthy": true,
+    "bytes_received": 456789012,
+    "bytes_sent": 789012345,
+    "proxied_bytes_sent": 567890123,
+    "proxied_bytes_received": 234567890,
+    "mesh_bytes_sent": 0,
+    "mesh_bytes_received": 0
   }
 ]
 ```
+
+### Per-Site Bandwidth Fields
+
+The bandwidth fields provide detailed traffic accounting per site:
+
+| Field | Description |
+|-------|-------------|
+| `bytes_received` | Total bytes received from clients (HTTP/HTTPS/HTTP3 ingress) |
+| `bytes_sent` | Total bytes sent to clients (blocked pages, challenges, error responses) |
+| `proxied_bytes_sent` | Bytes forwarded to origin servers (direct proxy) |
+| `proxied_bytes_received` | Bytes received from origin servers (direct proxy) |
+| `mesh_bytes_sent` | Bytes sent to mesh peers (when using WAF-WAF proxying) |
+| `mesh_bytes_received` | Bytes received from mesh peers (when using WAF-WAF proxying) |
+
+These fields help track bandwidth usage across different traffic types, which is especially useful in environments with bandwidth limits or for billing/chargeback purposes.
 
 ## Sites
 

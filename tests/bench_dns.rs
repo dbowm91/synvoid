@@ -1,3 +1,5 @@
+#![cfg(feature = "dns")]
+
 use std::net::IpAddr;
 use std::time::Instant;
 

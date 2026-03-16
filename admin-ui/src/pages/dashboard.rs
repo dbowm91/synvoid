@@ -1,11 +1,42 @@
 use std::collections::HashMap;
 use yew::prelude::*;
+use yew_router::prelude::*;
 
+use crate::app::Route;
 use crate::components::charts::{Gauge, MultiSeriesLineChart, StackedAreaChart};
 use crate::components::realtime_header::RealtimeHeader;
 use crate::hooks::use_websocket::{use_websocket_or_poll, UseWebSocketState};
 use crate::services::ApiService;
 use crate::types::{RealtimeMetrics, SiteStats, SystemStats};
+
+fn export_to_json(data: &serde_json::Value, filename: &str) {
+    let json = serde_json::to_string_pretty(data).unwrap_or_default();
+    let blob = web_sys::Blob::new_with_str_sequence(&js_sys::Array::of1(&json.into())).unwrap();
+    let url = web_sys::Url::create_object_url_with_blob(&blob).unwrap();
+    let window = web_sys::window().unwrap();
+    let document = window.document().unwrap();
+    let a = document.create_element("a").unwrap();
+    a.set_attribute("href", &url).unwrap();
+    a.set_attribute("download", filename).unwrap();
+    let _ = a.dispatch_event(&web_sys::MouseEvent::new("click").unwrap());
+}
+
+fn export_to_csv(headers: &[&str], rows: &[Vec<String>], filename: &str) {
+    let mut csv = headers.join(",");
+    csv.push('\n');
+    for row in rows {
+        csv.push_str(&row.join(","));
+        csv.push('\n');
+    }
+    let blob = web_sys::Blob::new_with_str_sequence(&js_sys::Array::of1(&csv.into())).unwrap();
+    let url = web_sys::Url::create_object_url_with_blob(&blob).unwrap();
+    let window = web_sys::window().unwrap();
+    let document = window.document().unwrap();
+    let a = document.create_element("a").unwrap();
+    a.set_attribute("href", &url).unwrap();
+    a.set_attribute("download", filename).unwrap();
+    let _ = a.dispatch_event(&web_sys::MouseEvent::new("click").unwrap());
+}
 
 fn format_number(n: u64) -> String {
     if n >= 1_000_000_000 {
@@ -73,6 +104,8 @@ fn window_to_seconds(window: &str) -> u64 {
         "5m" => 300,
         "15m" => 900,
         "1h" => 3600,
+        "6h" => 21600,
+        "24h" => 86400,
         _ => 300,
     }
 }
@@ -80,12 +113,16 @@ fn window_to_seconds(window: &str) -> u64 {
 #[function_component]
 pub fn Dashboard() -> Html {
     let selected_window = use_state(|| "5m".to_string());
+    let show_custom_picker = use_state(|| false);
+    let custom_start = use_state(|| String::new());
+    let custom_end = use_state(|| String::new());
     let stats = use_state(|| None::<SystemStats>);
     let sites = use_state(|| Vec::<SiteStats>::new());
     let history = use_state(|| Vec::<RealtimeMetrics>::new());
     let historical_data = use_state(|| None::<Vec<RealtimeMetrics>>);
     let cache_stats = use_state(|| None::<crate::types::CacheStats>);
     let bandwidth = use_state(|| None::<crate::types::BandwidthPayload>);
+    let blocking_history = use_state(|| Vec::<std::collections::HashMap<String, u64>>::new());
     
     let (ws_state, _) = use_websocket_or_poll::<RealtimeMetrics>(
         "ws://localhost:8081/api/ws/metrics",
@@ -118,6 +155,13 @@ pub fn Dashboard() -> Html {
             new_history.remove(0);
         }
         history.set(new_history);
+
+        let mut new_blocking = (*blocking_history).clone();
+        new_blocking.push(metrics.blocked_by_type.clone());
+        if new_blocking.len() > 60 {
+            new_blocking.remove(0);
+        }
+        blocking_history.set(new_blocking);
     }
 
     {
@@ -167,13 +211,64 @@ pub fn Dashboard() -> Html {
         map
     };
 
-    let blocking_data = {
-        let mut map = HashMap::new();
-        map.insert("SQLi".to_string(), vec![2.0, 3.0, 1.0, 4.0, 2.0, 3.0, 5.0, 2.0, 3.0, 4.0, 2.0, 3.0]);
-        map.insert("XSS".to_string(), vec![1.0, 2.0, 3.0, 1.0, 2.0, 1.0, 2.0, 3.0, 1.0, 2.0, 3.0, 1.0]);
-        map.insert("Rate Limit".to_string(), vec![5.0, 8.0, 6.0, 12.0, 9.0, 7.0, 11.0, 8.0, 10.0, 14.0, 12.0, 9.0]);
-        map.insert("Bots".to_string(), vec![3.0, 2.0, 4.0, 3.0, 2.0, 4.0, 3.0, 2.0, 4.0, 3.0, 2.0, 4.0]);
-        map
+    let blocking_data: HashMap<String, Vec<f64>> = {
+        let hist = (*historical_data).clone();
+        let h = (*history).clone();
+        let blocking = (*blocking_history).clone();
+        
+        let metrics_data = hist.unwrap_or(h);
+        
+        if !blocking.is_empty() {
+            let mut by_type: std::collections::HashMap<String, Vec<u64>> = std::collections::HashMap::new();
+            
+            for snapshot in &blocking {
+                for (attack_type, count) in snapshot {
+                    by_type.entry(attack_type.clone()).or_default().push(*count);
+                }
+            }
+            
+            let mut map: HashMap<String, Vec<f64>> = HashMap::new();
+            for (attack_type, counts) in by_type {
+                let rates: Vec<f64> = counts.windows(2)
+                    .map(|w| (w[1] as i64 - w[0] as i64).max(0) as f64)
+                    .collect();
+                let display_data = if rates.len() < 12 {
+                    let mut padded = vec![0.0; 12 - rates.len()];
+                    padded.extend(rates);
+                    padded
+                } else {
+                    rates
+                };
+                map.insert(attack_type, display_data);
+            }
+            map
+        } else if !metrics_data.is_empty() {
+            let mut by_type: std::collections::HashMap<String, Vec<u64>> = std::collections::HashMap::new();
+            
+            for metrics in &metrics_data {
+                for (attack_type, count) in &metrics.blocked_by_type {
+                    by_type.entry(attack_type.clone()).or_default().push(*count);
+                }
+            }
+            
+            let mut map: HashMap<String, Vec<f64>> = HashMap::new();
+            for (attack_type, counts) in by_type {
+                let rates: Vec<f64> = counts.windows(2)
+                    .map(|w| (w[1] as i64 - w[0] as i64).max(0) as f64)
+                    .collect();
+                let display_data = if rates.len() < 12 {
+                    let mut padded = vec![0.0; 12 - rates.len()];
+                    padded.extend(rates);
+                    padded
+                } else {
+                    rates
+                };
+                map.insert(attack_type, display_data);
+            }
+            map
+        } else {
+            HashMap::new()
+        }
     };
 
     let labels: Vec<String> = (1..=12).map(|i| format!("{}m", i)).collect();
@@ -188,18 +283,92 @@ pub fn Dashboard() -> Html {
         })
     };
 
+    let export_json = {
+        let stats = stats.clone();
+        Callback::from(move |_| {
+            if let Some(s) = (*stats).as_ref() {
+                let data = serde_json::json!({
+                    "uptime_secs": s.uptime_secs,
+                    "total_requests": s.total_requests,
+                    "requests_per_second": s.requests_per_second,
+                    "blocked_per_second": s.blocked_per_second,
+                    "active_connections": s.active_connections,
+                    "memory_used_mb": s.memory_used_mb,
+                    "memory_total_mb": s.memory_total_mb,
+                    "cpu_usage_percent": s.cpu_usage_percent,
+                    "sites_loaded": s.sites_loaded,
+                    "healthy_backends": s.healthy_backends,
+                    "unhealthy_backends": s.unhealthy_backends,
+                    "blocked_total": s.blocked_total,
+                    "challenged_total": s.challenged_total,
+                    "proxied_total": s.proxied_total,
+                    "errors_total": s.errors_total,
+                    "avg_latency_ms": s.avg_latency_ms,
+                    "p50_latency_ms": s.p50_latency_ms,
+                    "p95_latency_ms": s.p95_latency_ms,
+                    "p99_latency_ms": s.p99_latency_ms,
+                    "peak_concurrent": s.peak_concurrent,
+                });
+                export_to_json(&data, "maluwaf-stats.json");
+            }
+        })
+    };
+
+    let export_csv = {
+        let stats = stats.clone();
+        Callback::from(move |_| {
+            if let Some(s) = (*stats).as_ref() {
+                let headers = ["Metric", "Value"];
+                let rows = vec![
+                    vec!["Uptime (secs)".to_string(), s.uptime_secs.to_string()],
+                    vec!["Total Requests".to_string(), s.total_requests.to_string()],
+                    vec!["Requests/sec".to_string(), format!("{:.2}", s.requests_per_second)],
+                    vec!["Blocked Total".to_string(), s.blocked_total.to_string()],
+                    vec!["Active Connections".to_string(), s.active_connections.to_string()],
+                    vec!["Memory Used (MB)".to_string(), s.memory_used_mb.to_string()],
+                    vec!["Memory Total (MB)".to_string(), s.memory_total_mb.to_string()],
+                    vec!["CPU Usage (%)".to_string(), format!("{:.1}", s.cpu_usage_percent)],
+                    vec!["Sites Loaded".to_string(), s.sites_loaded.to_string()],
+                    vec!["Healthy Backends".to_string(), s.healthy_backends.to_string()],
+                    vec!["Unhealthy Backends".to_string(), s.unhealthy_backends.to_string()],
+                    vec!["Avg Latency (ms)".to_string(), format!("{:.2}", s.avg_latency_ms)],
+                    vec!["p95 Latency (ms)".to_string(), format!("{:.2}", s.p95_latency_ms)],
+                    vec!["p99 Latency (ms)".to_string(), format!("{:.2}", s.p99_latency_ms)],
+                    vec!["Peak Concurrent".to_string(), s.peak_concurrent.to_string()],
+                ];
+                export_to_csv(&headers, &rows, "maluwaf-stats.csv");
+            }
+        })
+    };
+
     html! {
         <div>
             <h1 class="text-2xl font-bold mb-6">{ "Dashboard" }</h1>
 
             <RealtimeHeader />
 
-            <div class="mb-6">
+            <div class="mb-6 flex justify-between items-center">
                 <div class="flex gap-2">
                     <WindowButton label="1m" active={*selected_window == "1m"} on_click={on_window_change.clone()} />
                     <WindowButton label="5m" active={*selected_window == "5m"} on_click={on_window_change.clone()} />
                     <WindowButton label="15m" active={*selected_window == "15m"} on_click={on_window_change.clone()} />
                     <WindowButton label="1h" active={*selected_window == "1h"} on_click={on_window_change.clone()} />
+                    <WindowButton label="6h" active={*selected_window == "6h"} on_click={on_window_change.clone()} />
+                    <WindowButton label="24h" active={*selected_window == "24h"} on_click={on_window_change.clone()} />
+                </div>
+                <div class="flex gap-2">
+                    <button 
+                        onclick={export_json}
+                        class="px-3 py-2 bg-tertiary text-secondary rounded-lg hover:text-primary text-sm"
+                    >
+                        { "Export JSON" }
+                    </button>
+                    <button 
+                        onclick={export_csv}
+                        class="px-3 py-2 bg-tertiary text-secondary rounded-lg hover:text-primary text-sm"
+                    >
+                        { "Export CSV" }
+                    </button>
                 </div>
             </div>
 
@@ -310,13 +479,25 @@ pub fn Dashboard() -> Html {
                             <div class="text-secondary text-sm">{ "No sites configured" }</div>
                         } else {
                             { for sites.iter().map(|site| {
+                                let site_id = site.site_id.clone();
                                 html! {
-                                    <SiteStatusItem 
-                                        domain={site.domains.first().unwrap_or(&site.site_id).clone()}
-                                        healthy={site.upstream_healthy}
-                                        requests={format_number((site.requests_per_second * 60.0) as u64)}
-                                        blocked={format_number(site.blocked_requests)}
-                                    />
+                                    <Link<Route>
+                                        to={Route::SiteDetail { id: site_id.clone() }}
+                                        classes="block"
+                                    >
+                                        <SiteStatusItem 
+                                            domain={site.domains.first().unwrap_or(&site.site_id).clone()}
+                                            healthy={site.upstream_healthy}
+                                            requests={format_number((site.requests_per_second * 60.0) as u64)}
+                                            blocked={format_number(site.blocked_requests)}
+                                            bytes_received={site.bytes_received}
+                                            bytes_sent={site.bytes_sent}
+                                            proxied_bytes_sent={site.proxied_bytes_sent}
+                                            proxied_bytes_received={site.proxied_bytes_received}
+                                            mesh_bytes_sent={site.mesh_bytes_sent}
+                                            mesh_bytes_received={site.mesh_bytes_received}
+                                        />
+                                    </Link<Route>>
                                 }
                             })}
                         }
@@ -401,10 +582,25 @@ struct SiteStatusItemProps {
     healthy: bool,
     requests: String,
     blocked: String,
+    bytes_received: u64,
+    bytes_sent: u64,
+    proxied_bytes_sent: u64,
+    proxied_bytes_received: u64,
+    mesh_bytes_sent: u64,
+    mesh_bytes_received: u64,
 }
 
 #[function_component]
 fn SiteStatusItem(props: &SiteStatusItemProps) -> Html {
+    let expanded = use_state(|| false);
+    
+    let toggle_expanded = {
+        let expanded = expanded.clone();
+        Callback::from(move |_| {
+            expanded.set(!*expanded);
+        })
+    };
+
     let status_class = if props.healthy {
         "bg-green-500"
     } else {
@@ -416,17 +612,64 @@ fn SiteStatusItem(props: &SiteStatusItemProps) -> Html {
         "Unhealthy"
     };
 
+    let total_ingress = props.bytes_received + props.proxied_bytes_received + props.mesh_bytes_received;
+    let total_egress = props.bytes_sent + props.proxied_bytes_sent + props.mesh_bytes_sent;
+
     html! {
-        <div class="flex items-center justify-between py-3 border-b border-default last:border-b-0">
-            <div class="flex items-center gap-3">
-                <span class={format!("w-2 h-2 rounded-full {}", status_class)} />
-                <span class="text-primary">{ &props.domain }</span>
+        <div>
+            <div class="flex items-center justify-between py-3 border-b border-default last:border-b-0 cursor-pointer" onclick={toggle_expanded}>
+                <div class="flex items-center gap-3">
+                    <span class={format!("w-2 h-2 rounded-full {}", status_class)} />
+                    <span class="text-primary">{ &props.domain }</span>
+                </div>
+                <div class="flex items-center gap-4 text-sm">
+                    <span class="text-secondary">{ format!("{} req", props.requests) }</span>
+                    <span class="text-red-500">{ format!("{} blocked", props.blocked) }</span>
+                    <span class="text-secondary text-xs">{ status_text }</span>
+                </div>
             </div>
-            <div class="flex items-center gap-4 text-sm">
-                <span class="text-secondary">{ format!("{} req", props.requests) }</span>
-                <span class="text-red-500">{ format!("{} blocked", props.blocked) }</span>
-                <span class="text-secondary text-xs">{ status_text }</span>
-            </div>
+            if *expanded {
+                <div class="bg-tertiary p-3 border-b border-default">
+                    <div class="grid grid-cols-2 gap-4 text-sm">
+                        <div>
+                            <div class="text-secondary text-xs mb-1">{ "Ingress" }</div>
+                            <div class="font-medium">{ format_bytes(total_ingress) }</div>
+                            <div class="text-xs text-secondary mt-1 space-y-1">
+                                <div class="flex justify-between">
+                                    <span>{ "Client:" }</span>
+                                    <span>{ format_bytes(props.bytes_received) }</span>
+                                </div>
+                                <div class="flex justify-between">
+                                    <span>{ "Proxied:" }</span>
+                                    <span>{ format_bytes(props.proxied_bytes_received) }</span>
+                                </div>
+                                <div class="flex justify-between">
+                                    <span>{ "Mesh:" }</span>
+                                    <span>{ format_bytes(props.mesh_bytes_received) }</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div>
+                            <div class="text-secondary text-xs mb-1">{ "Egress" }</div>
+                            <div class="font-medium">{ format_bytes(total_egress) }</div>
+                            <div class="text-xs text-secondary mt-1 space-y-1">
+                                <div class="flex justify-between">
+                                    <span>{ "Response:" }</span>
+                                    <span>{ format_bytes(props.bytes_sent) }</span>
+                                </div>
+                                <div class="flex justify-between">
+                                    <span>{ "Proxied:" }</span>
+                                    <span>{ format_bytes(props.proxied_bytes_sent) }</span>
+                                </div>
+                                <div class="flex justify-between">
+                                    <span>{ "Mesh:" }</span>
+                                    <span>{ format_bytes(props.mesh_bytes_sent) }</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            }
         </div>
     }
 }

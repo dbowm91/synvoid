@@ -133,6 +133,9 @@ pub struct DnsSettingsConfig {
     #[serde(default = "default_cache_min_ttl")]
     pub cache_min_ttl: u64,
 
+    #[serde(default = "default_negative_cache_ttl")]
+    pub negative_cache_ttl: u32,
+
     #[serde(default)]
     pub allow_wildcard_transfer: bool,
 
@@ -357,6 +360,10 @@ fn default_ixfr_fallback_to_axfr() -> bool {
 }
 
 fn default_dns_ttl() -> u32 {
+    300
+}
+
+fn default_negative_cache_ttl() -> u32 {
     300
 }
 
@@ -651,10 +658,24 @@ pub struct DnsDoqConfig {
 
     #[serde(default = "default_true")]
     pub use_system_cert_store: bool,
+
+    #[serde(default = "default_doq_max_concurrent_streams")]
+    pub max_concurrent_streams: u32,
+
+    #[serde(default = "default_doq_idle_timeout")]
+    pub idle_timeout_secs: u64,
 }
 
 fn default_doq_port() -> u16 {
     853
+}
+
+fn default_doq_max_concurrent_streams() -> u32 {
+    100
+}
+
+fn default_doq_idle_timeout() -> u64 {
+    30
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -861,6 +882,27 @@ pub struct DnsZoneEntry {
 
     #[serde(default)]
     pub records: Vec<DnsRecordEntry>,
+
+    #[serde(default)]
+    pub dnssec: Option<DnsZoneDnssecConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DnsZoneDnssecConfig {
+    #[serde(default)]
+    pub enabled: bool,
+
+    #[serde(default)]
+    pub algorithm: Option<DnsSecAlgorithm>,
+
+    #[serde(default)]
+    pub nsec_enabled: bool,
+
+    #[serde(default)]
+    pub nsec3_enabled: bool,
+
+    #[serde(default)]
+    pub nsec3_iterations: Option<u16>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1117,6 +1159,7 @@ impl Default for DnsSettingsConfig {
         Self {
             default_ttl: default_dns_ttl(),
             min_geo_ttl: default_min_geo_ttl(),
+            negative_cache_ttl: default_negative_cache_ttl(),
             allow_transfer: Vec::new(),
             cache_enabled: default_cache_enabled(),
             cache_size: default_cache_size(),
@@ -1404,6 +1447,9 @@ pub struct DnsAnycastConfig {
     #[serde(default)]
     pub use_pktinfo: bool,
 
+    #[serde(default = "default_health_check_domain")]
+    pub health_check_domain: String,
+
     #[serde(default)]
     pub health_check_interval_secs: u64,
 
@@ -1412,6 +1458,9 @@ pub struct DnsAnycastConfig {
 
     #[serde(default)]
     pub mesh_based_sync: bool,
+
+    #[serde(default = "default_anycast_sync_interval")]
+    pub sync_interval_secs: u64,
 
     #[serde(default)]
     pub geo: Option<String>,
@@ -1422,6 +1471,14 @@ pub struct DnsAnycastConfig {
 
 fn default_capacity() -> u32 {
     10000
+}
+
+fn default_health_check_domain() -> String {
+    "_healthcheck.local".to_string()
+}
+
+fn default_anycast_sync_interval() -> u64 {
+    300
 }
 
 fn default_sync_trigger_on_update() -> bool {
@@ -1435,9 +1492,11 @@ impl Default for DnsAnycastConfig {
             bind_addresses: Vec::new(),
             port: 53,
             use_pktinfo: true,
+            health_check_domain: default_health_check_domain(),
             health_check_interval_secs: 5,
             capacity: 10000,
             mesh_based_sync: true,
+            sync_interval_secs: default_anycast_sync_interval(),
             geo: None,
             sync_trigger_on_update: default_sync_trigger_on_update(),
         }

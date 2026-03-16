@@ -5,6 +5,11 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
+#[cfg(target_os = "linux")]
+use nix::sys::socket::{recvmsg, MsgFlags, ControlMessageOwned};
+#[cfg(target_os = "linux")]
+use nix::cmsg_space;
+
 use metrics::counter;
 use parking_lot::RwLock;
 use tokio::net::{TcpListener as TokioTcpListener, UdpSocket};
@@ -55,6 +60,7 @@ pub struct AnycastSocketManager {
     config: DnsAnycastConfig,
     health_status: Arc<RwLock<HashMap<IpAddr, bool>>>,
     health_tx: Option<mpsc::Sender<AnycastHealthUpdate>>,
+    health_check_domain: String,
 }
 
 #[derive(Debug, Clone)]
@@ -136,6 +142,7 @@ impl AnycastSocketManager {
             config: config.clone(),
             health_status: Arc::new(RwLock::new(health_status)),
             health_tx: None,
+            health_check_domain: config.health_check_domain.clone(),
         })
     }
 
@@ -211,6 +218,8 @@ impl AnycastSocketManager {
         let health_tx = self.health_tx.clone();
         let health_status = self.health_status.clone();
         let sockets = self.sockets.clone();
+        let health_check_domain = self.health_check_domain.clone();
+        let port = self.config.port;
 
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(interval_secs));
@@ -219,7 +228,12 @@ impl AnycastSocketManager {
                 interval.tick().await;
 
                 for socket in &sockets {
-                    let (healthy, latency) = Self::check_socket_health_async(&socket.socket, socket.ip).await;
+                    let (healthy, latency) = Self::check_socket_health_async(
+                        &socket.socket,
+                        socket.ip,
+                        port,
+                        &health_check_domain,
+                    ).await;
 
                     {
                         let mut status = health_status.write();
@@ -251,33 +265,53 @@ impl AnycastSocketManager {
         });
     }
 
-    async fn check_socket_health_async(socket: &UdpSocket, anycast_ip: IpAddr) -> (bool, Option<u64>) {
+    async fn check_socket_health_async(
+        socket: &UdpSocket,
+        anycast_ip: IpAddr,
+        port: u16,
+        health_check_domain: &str,
+    ) -> (bool, Option<u64>) {
         let start = Instant::now();
-        let port = match socket.local_addr() {
-            Ok(addr) => addr.port(),
-            Err(_) => return (false, None),
-        };
         
-        let probe_packet = Self::build_dns_probe_packet();
+        let query_id = Self::rand_u16();
+        
+        let query_packet = match Self::build_health_check_query(query_id, health_check_domain) {
+            Some(packet) => packet,
+            None => return (false, None),
+        };
         
         let dest_addr = SocketAddr::new(anycast_ip, port);
         
-        if let Err(e) = socket.send_to(&probe_packet, dest_addr).await {
+        if let Err(e) = socket.send_to(&query_packet, dest_addr).await {
             tracing::debug!("Health check send failed for {}: {}", anycast_ip, e);
             return (false, None);
         }
         
         let mut buf = [0u8; 512];
-        let mut received = false;
         let mut iterations = 0;
         let max_iterations = 50;
         
         while iterations < max_iterations {
             match tokio::time::timeout(Duration::from_millis(20), socket.recv_from(&mut buf)).await {
-                Ok(Ok((_len, src))) => {
+                Ok(Ok((len, src))) => {
                     if src.ip() == anycast_ip || src.ip() == IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)) {
-                        received = true;
-                        break;
+                        if len >= 12 {
+                            let response_id = u16::from_be_bytes([buf[0], buf[1]]);
+                            if response_id == query_id {
+                                let flags = u16::from_be_bytes([buf[2], buf[3]]);
+                                let is_response = (flags & 0x8000) != 0;
+                                if is_response {
+                                    let latency = start.elapsed().as_millis() as u64;
+                                    tracing::debug!(
+                                        "Health check received valid response for {}: id={}, latency={}ms",
+                                        anycast_ip,
+                                        response_id,
+                                        latency
+                                    );
+                                    return (true, Some(latency));
+                                }
+                            }
+                        }
                     }
                 }
                 Ok(Err(_)) => {
@@ -289,21 +323,16 @@ impl AnycastSocketManager {
             }
         }
         
-        let latency = start.elapsed().as_millis() as u64;
-        
-        if received {
-            (true, Some(latency))
-        } else {
-            (false, None)
-        }
+        tracing::debug!("Health check timed out or invalid response for {}", anycast_ip);
+        (false, None)
     }
 
-    fn build_dns_probe_packet() -> Vec<u8> {
+    pub fn build_health_check_query(query_id: u16, domain: &str) -> Option<Vec<u8>> {
         let mut packet = Vec::new();
         
-        packet.extend_from_slice(&0x1234u16.to_be_bytes());
+        packet.extend_from_slice(&query_id.to_be_bytes());
         
-        packet.extend_from_slice(&(0x0100u16).to_be_bytes());
+        packet.extend_from_slice(&0x0100u16.to_be_bytes());
         
         packet.extend_from_slice(&0x0001u16.to_be_bytes());
         
@@ -313,13 +342,30 @@ impl AnycastSocketManager {
         
         packet.extend_from_slice(&0x0000u16.to_be_bytes());
         
+        let labels: Vec<&str> = domain.trim_end_matches('.').split('.').collect();
+        for label in &labels {
+            if label.is_empty() || label.len() > 63 {
+                return None;
+            }
+            packet.push(label.len() as u8);
+            packet.extend_from_slice(label.as_bytes());
+        }
         packet.push(0);
         
         packet.extend_from_slice(&0x0001u16.to_be_bytes());
         
         packet.extend_from_slice(&0x0001u16.to_be_bytes());
         
-        packet
+        Some(packet)
+    }
+
+    fn rand_u16() -> u16 {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .subsec_nanos();
+        (nanos as u16) ^ ((nanos >> 16) as u16)
     }
 
     pub async fn recv_from(&self, buf: &mut [u8]) -> Result<(usize, SocketAddr, IpAddr), String> {
@@ -408,58 +454,39 @@ impl AnycastSocketManager {
         }
     }
     
-    fn get_destination_sync(socket: &UdpSocket, platform: Arc<dyn AnycastSocketPlatform>) -> Option<IpAddr> {
+    #[cfg(target_os = "linux")]
+    fn get_destination_sync(socket: &UdpSocket, _platform: Arc<dyn AnycastSocketPlatform>) -> Option<IpAddr> {
+        use nix::sys::socket::SockaddrIn;
+
         let fd = socket.as_raw_fd();
-        
-        let mut msg: libc::msghdr = unsafe { std::mem::zeroed() };
-        
-        let mut iov: libc::iovec = unsafe { std::mem::zeroed() };
-        let mut dummy_buf = [0u8; 1];
-        unsafe {
-            iov.iov_base = dummy_buf.as_mut_ptr() as *mut libc::c_void;
-            iov.iov_len = 1;
-        }
-        msg.msg_iov = &mut iov;
-        msg.msg_iovlen = 1;
+        let mut buf = [0u8; 1];
+        let mut iov = [std::io::IoSliceMut::new(&mut buf)];
+        let mut cmsg_buffer = cmsg_space!([nix::libc::in_pktinfo; 2]);
 
-        let mut cmsg_buf: [u8; 256] = [0; 256];
-        msg.msg_control = cmsg_buf.as_mut_ptr() as *mut libc::c_void;
-        msg.msg_controllen = cmsg_buf.len() as u32;
+        let msg = match recvmsg::<SockaddrIn>(fd, &mut iov, Some(&mut cmsg_buffer), MsgFlags::MSG_PEEK) {
+            Ok(m) => m,
+            Err(_) => return None,
+        };
 
-        let ret = unsafe { libc::recvmsg(fd, &mut msg, libc::MSG_PEEK) };
-        
-        if ret < 0 {
-            return None;
-        }
-
-        let mut cmsg = unsafe { msg.msg_control as *mut libc::cmsghdr };
-        if cmsg.is_null() {
-            return None;
-        }
-
-        loop {
-            let hdr = unsafe { &*cmsg };
-            
-            if hdr.cmsg_level == libc::IPPROTO_IP && hdr.cmsg_type == libc::IP_PKTINFO {
-                let data = unsafe { libc::CMSG_DATA(cmsg) };
-                return platform.get_destination_ip(unsafe {
-                    std::slice::from_raw_parts(data, hdr.cmsg_len as usize)
-                });
-            }
-            
-            if hdr.cmsg_level == libc::IPPROTO_IPV6 && hdr.cmsg_type == libc::IPV6_PKTINFO {
-                let data = unsafe { libc::CMSG_DATA(cmsg) };
-                return platform.get_destination_ip(unsafe {
-                    std::slice::from_raw_parts(data, hdr.cmsg_len as usize)
-                });
-            }
-            
-            cmsg = unsafe { libc::CMSG_NXTHDR(&msg, cmsg) };
-            if cmsg.is_null() {
-                break;
+        for cmsg in msg.cmsgs().filter_map(|r| r.ok()) {
+            match cmsg {
+                ControlMessageOwned::Ipv4PacketInfo(pktinfo) => {
+                    let addr = IpAddr::from(Ipv4Addr::from(pktinfo.ipi_addr.s_addr.to_ne_bytes()));
+                    return Some(addr);
+                }
+                ControlMessageOwned::Ipv6PacketInfo(pktinfo) => {
+                    let addr = IpAddr::from(Ipv6Addr::from(pktinfo.ipi6_addr.s6_addr));
+                    return Some(addr);
+                }
+                _ => continue,
             }
         }
-        
+
+        None
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn get_destination_sync(_socket: &UdpSocket, _platform: Arc<dyn AnycastSocketPlatform>) -> Option<IpAddr> {
         None
     }
 

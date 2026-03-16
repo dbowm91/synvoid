@@ -296,6 +296,9 @@ pub async fn handle_worker_connection(mut ipc: AsyncIpcStream, process_manager: 
                         Message::WorkerHeartbeat { id, timestamp: _, metrics } => {
                             process_manager.handle_heartbeat(id, metrics);
                         }
+                        Message::WorkerRequestLog { id, log } => {
+                            process_manager.handle_request_log(id, log);
+                        }
                         Message::WorkerError { id, error, severity, error_code } => {
                             process_manager.handle_worker_error(id, error, severity, error_code);
                         }
@@ -311,6 +314,9 @@ pub async fn handle_worker_connection(mut ipc: AsyncIpcStream, process_manager: 
                         }
                         Message::StaticWorkerHeartbeat { worker_id, timestamp: _, static_cache_hits, static_cache_misses } => {
                             process_manager.handle_static_worker_heartbeat(worker_id, static_cache_hits, static_cache_misses);
+                        }
+                        Message::StaticWorkerRequestLog { worker_id: _, log } => {
+                            process_manager.handle_request_log(WorkerId(0), log);
                         }
                         Message::StaticWorkerShutdownComplete { worker_id } => {
                             tracing::info!("Static worker {} shutdown complete", worker_id);

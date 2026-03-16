@@ -57,6 +57,8 @@ impl Component for Sidebar {
 
                     <NavSection title="Configuration">
                         <NavItem to={Route::Settings} icon="settings" label="Settings" />
+                        <NavItem to={Route::ProcessManagement} icon="process" label="Process Management" />
+                        <NavItem to={Route::Alerts} icon="bell" label="Alerts" />
                     </NavSection>
                 </div>
 
@@ -162,6 +164,11 @@ fn icon(name: &str) -> Html {
         "cpu" => html! {
             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" />
+            </svg>
+        },
+        "process" => html! {
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
             </svg>
         },
         _ => html! {},

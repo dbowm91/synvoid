@@ -15,6 +15,7 @@ pub trait AnycastSocketPlatform: Send + Sync {
 #[cfg(target_os = "linux")]
 mod linux {
     use super::*;
+    use nix::sys::socket::{setsockopt, sockopt, SockLevel};
     use std::os::fd::AsRawFd;
 
     pub struct LinuxAnycastSocket;
@@ -35,52 +36,31 @@ mod linux {
         fn enable_pktinfo(&self, socket: &UdpSocket) -> Result<(), String> {
             let fd = socket.as_raw_fd();
 
-            let enable: libc::c_int = 1;
+            setsockopt(fd, sockopt::Ipv4PacketInfo, &true)
+                .map_err(|e| format!("IP_PKTINFO: {}", e))?;
 
-            unsafe {
-                let ret = libc::setsockopt(
-                    fd,
-                    libc::IPPROTO_IP,
-                    libc::IP_PKTINFO,
-                    &enable as *const _ as *const libc::c_void,
-                    std::mem::size_of::<libc::c_int>() as libc::socklen_t,
-                );
-
-                if ret != 0 {
-                    return Err(format!("IP_PKTINFO: {}", std::io::Error::last_os_error()));
-                }
-
-                let ret_v6 = libc::setsockopt(
-                    fd,
-                    libc::IPPROTO_IPV6,
-                    libc::IPV6_PKTINFO,
-                    &enable as *const _ as *const libc::c_void,
-                    std::mem::size_of::<libc::c_int>() as libc::socklen_t,
-                );
-
-                if ret_v6 != 0 {
-                    tracing::warn!("IPV6_PKTINFO not available (may not be IPv6 socket)");
-                }
-            }
+            let _ = setsockopt(fd, sockopt::Ipv6PacketInfo, &true)
+                .map_err(|e| format!("IPV6_PKTINFO: {}", e));
 
             tracing::debug!("Enabled IP_PKTINFO on socket");
             Ok(())
         }
 
         fn get_destination_ip(&self, cmsg_data: &[u8]) -> Option<IpAddr> {
-            if cmsg_data.len() < std::mem::size_of::<libc::in_pktinfo>() {
+            use std::mem::size_of;
+
+            if cmsg_data.len() < size_of::<nix::libc::in_pktinfo>() {
                 return None;
             }
 
-            unsafe {
-                let pktinfo = &*(cmsg_data.as_ptr() as *const libc::in_pktinfo);
+            let pktinfo =
+                nix::libc::in_pktinfo::from_bytes(&cmsg_data[..size_of::<nix::libc::in_pktinfo>()]);
 
-                let addr = std::net::IpAddr::from(std::net::Ipv4Addr::from(
-                    pktinfo.ipi_addr.s_addr.to_ne_bytes(),
-                ));
+            let addr = std::net::IpAddr::from(std::net::Ipv4Addr::from(
+                pktinfo.ipi_addr.s_addr.to_ne_bytes(),
+            ));
 
-                Some(addr)
-            }
+            Some(addr)
         }
 
         fn supports_pktinfo(&self) -> bool {
@@ -92,36 +72,11 @@ mod linux {
         }
 
         fn enable_tcp_pktinfo(&self, fd: std::os::fd::RawFd) -> Result<(), String> {
-            let enable: libc::c_int = 1;
+            setsockopt(fd, sockopt::Ipv4PacketInfo, &true)
+                .map_err(|e| format!("IP_PKTINFO for TCP: {}", e))?;
 
-            unsafe {
-                let ret = libc::setsockopt(
-                    fd,
-                    libc::IPPROTO_IP,
-                    libc::IP_PKTINFO,
-                    &enable as *const _ as *const libc::c_void,
-                    std::mem::size_of::<libc::c_int>() as libc::socklen_t,
-                );
-
-                if ret != 0 {
-                    return Err(format!(
-                        "IP_PKTINFO for TCP: {}",
-                        std::io::Error::last_os_error()
-                    ));
-                }
-
-                let ret_v6 = libc::setsockopt(
-                    fd,
-                    libc::IPPROTO_IPV6,
-                    libc::IPV6_PKTINFO,
-                    &enable as *const _ as *const libc::c_void,
-                    std::mem::size_of::<libc::c_int>() as libc::socklen_t,
-                );
-
-                if ret_v6 != 0 {
-                    tracing::warn!("IPV6_PKTINFO not available for TCP");
-                }
-            }
+            let _ = setsockopt(fd, sockopt::Ipv6PacketInfo, &true)
+                .map_err(|e| format!("IPV6_PKTINFO for TCP: {}", e));
 
             tracing::debug!("Enabled IP_PKTINFO on TCP socket");
             Ok(())
@@ -197,4 +152,316 @@ pub use fallback::create_platform;
 
 pub fn create_platform_optional() -> Arc<dyn AnycastSocketPlatform> {
     create_platform()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(target_os = "linux")]
+    mod linux_tests {
+        use super::*;
+
+        #[test]
+        fn test_linux_platform_name() {
+            let platform = crate::dns::platform::linux::LinuxAnycastSocket::new();
+            assert_eq!(platform.platform_name(), "linux");
+        }
+
+        #[test]
+        fn test_linux_supports_pktinfo() {
+            let platform = crate::dns::platform::linux::LinuxAnycastSocket::new();
+            assert!(platform.supports_pktinfo());
+        }
+
+        #[test]
+        fn test_linux_supports_tcp_pktinfo() {
+            let platform = crate::dns::platform::linux::LinuxAnycastSocket::new();
+            assert!(platform.supports_tcp_pktinfo());
+        }
+
+        #[test]
+        fn test_get_destination_ip_valid_ipv4_loopback() {
+            let platform = crate::dns::platform::linux::LinuxAnycastSocket::new();
+
+            let mut pktinfo_bytes = vec![0u8; std::mem::size_of::<nix::libc::in_pktinfo>()];
+            let pktinfo = nix::libc::in_pktinfo::from_bytes_mut(&mut pktinfo_bytes);
+            pktinfo.ipi_addr.s_addr = u32::to_ne_bytes(0x7F000001);
+
+            let result = platform.get_destination_ip(&pktinfo_bytes);
+            assert!(result.is_some());
+            assert_eq!(result.unwrap(), IpAddr::from([127, 0, 0, 1]));
+        }
+
+        #[test]
+        fn test_get_destination_ip_valid_ipv4_private_10() {
+            let platform = crate::dns::platform::linux::LinuxAnycastSocket::new();
+
+            let mut pktinfo_bytes = vec![0u8; std::mem::size_of::<nix::libc::in_pktinfo>()];
+            let pktinfo = nix::libc::in_pktinfo::from_bytes_mut(&mut pktinfo_bytes);
+            pktinfo.ipi_addr.s_addr = u32::to_ne_bytes(0x0A000001);
+
+            let result = platform.get_destination_ip(&pktinfo_bytes);
+            assert!(result.is_some());
+            assert_eq!(result.unwrap(), IpAddr::from([10, 0, 0, 1]));
+        }
+
+        #[test]
+        fn test_get_destination_ip_valid_ipv4_private_172() {
+            let platform = crate::dns::platform::linux::LinuxAnycastSocket::new();
+
+            let mut pktinfo_bytes = vec![0u8; std::mem::size_of::<nix::libc::in_pktinfo>()];
+            let pktinfo = nix::libc::in_pktinfo::from_bytes_mut(&mut pktinfo_bytes);
+            pktinfo.ipi_addr.s_addr = u32::to_ne_bytes(0xAC100001);
+
+            let result = platform.get_destination_ip(&pktinfo_bytes);
+            assert!(result.is_some());
+            assert_eq!(result.unwrap(), IpAddr::from([172, 16, 0, 1]));
+        }
+
+        #[test]
+        fn test_get_destination_ip_valid_ipv4_private_192() {
+            let platform = crate::dns::platform::linux::LinuxAnycastSocket::new();
+
+            let mut pktinfo_bytes = vec![0u8; std::mem::size_of::<nix::libc::in_pktinfo>()];
+            let pktinfo = nix::libc::in_pktinfo::from_bytes_mut(&mut pktinfo_bytes);
+            pktinfo.ipi_addr.s_addr = u32::to_ne_bytes(0xC0A80001);
+
+            let result = platform.get_destination_ip(&pktinfo_bytes);
+            assert!(result.is_some());
+            assert_eq!(result.unwrap(), IpAddr::from([192, 168, 0, 1]));
+        }
+
+        #[test]
+        fn test_get_destination_ip_valid_ipv4_broadcast() {
+            let platform = crate::dns::platform::linux::LinuxAnycastSocket::new();
+
+            let mut pktinfo_bytes = vec![0u8; std::mem::size_of::<nix::libc::in_pktinfo>()];
+            let pktinfo = nix::libc::in_pktinfo::from_bytes_mut(&mut pktinfo_bytes);
+            pktinfo.ipi_addr.s_addr = u32::to_ne_bytes(0xFFFFFFFF);
+
+            let result = platform.get_destination_ip(&pktinfo_bytes);
+            assert!(result.is_some());
+            assert_eq!(result.unwrap(), IpAddr::from([255, 255, 255, 255]));
+        }
+
+        #[test]
+        fn test_get_destination_ip_valid_ipv4_all_zeros() {
+            let platform = crate::dns::platform::linux::LinuxAnycastSocket::new();
+
+            let mut pktinfo_bytes = vec![0u8; std::mem::size_of::<nix::libc::in_pktinfo>()];
+            let pktinfo = nix::libc::in_pktinfo::from_bytes_mut(&mut pktinfo_bytes);
+            pktinfo.ipi_addr.s_addr = u32::to_ne_bytes(0x00000000);
+
+            let result = platform.get_destination_ip(&pktinfo_bytes);
+            assert!(result.is_some());
+            assert_eq!(result.unwrap(), IpAddr::from([0, 0, 0, 0]));
+        }
+
+        #[test]
+        fn test_get_destination_ip_invalid_too_small() {
+            let platform = crate::dns::platform::linux::LinuxAnycastSocket::new();
+
+            let small_data = vec![0u8; 4];
+            let result = platform.get_destination_ip(&small_data);
+            assert!(result.is_none());
+        }
+
+        #[test]
+        fn test_get_destination_ip_empty() {
+            let platform = crate::dns::platform::linux::LinuxAnycastSocket::new();
+
+            let empty_data: Vec<u8> = vec![];
+            let result = platform.get_destination_ip(&empty_data);
+            assert!(result.is_none());
+        }
+
+        #[test]
+        fn test_get_destination_ip_exact_size() {
+            let platform = crate::dns::platform::linux::LinuxAnycastSocket::new();
+
+            let pktinfo_bytes = vec![0u8; std::mem::size_of::<nix::libc::in_pktinfo>()];
+            let result = platform.get_destination_ip(&pktinfo_bytes);
+            assert!(result.is_some());
+        }
+
+        #[test]
+        fn test_get_destination_ip_one_byte_short() {
+            let platform = crate::dns::platform::linux::LinuxAnycastSocket::new();
+
+            let size = std::mem::size_of::<nix::libc::in_pktinfo>();
+            let pktinfo_bytes = vec![0u8; size - 1];
+            let result = platform.get_destination_ip(&pktinfo_bytes);
+            assert!(result.is_none());
+        }
+
+        #[test]
+        fn test_get_destination_ip_one_byte_over() {
+            let platform = crate::dns::platform::linux::LinuxAnycastSocket::new();
+
+            let size = std::mem::size_of::<nix::libc::in_pktinfo>();
+            let mut pktinfo_bytes = vec![0u8; size + 1];
+            let pktinfo = nix::libc::in_pktinfo::from_bytes_mut(&mut pktinfo_bytes);
+            pktinfo.ipi_addr.s_addr = u32::to_ne_bytes(0xC0A80001);
+
+            let result = platform.get_destination_ip(&pktinfo_bytes);
+            assert!(result.is_some());
+            assert_eq!(result.unwrap(), IpAddr::from([192, 168, 0, 1]));
+        }
+
+        #[test]
+        fn test_get_destination_ip_zeroed_data() {
+            let platform = crate::dns::platform::linux::LinuxAnycastSocket::new();
+
+            let pktinfo_bytes = vec![0u8; std::mem::size_of::<nix::libc::in_pktinfo>()];
+            let result = platform.get_destination_ip(&pktinfo_bytes);
+            assert!(result.is_some());
+            assert_eq!(result.unwrap(), IpAddr::from([0, 0, 0, 0]));
+        }
+
+        #[test]
+        fn test_get_destination_ip_max_values() {
+            let platform = crate::dns::platform::linux::LinuxAnycastSocket::new();
+
+            let mut pktinfo_bytes = vec![0u8; std::mem::size_of::<nix::libc::in_pktinfo>()];
+            let pktinfo = nix::libc::in_pktinfo::from_bytes_mut(&mut pktinfo_bytes);
+            pktinfo.ipi_addr.s_addr = u32::MAX;
+
+            let result = platform.get_destination_ip(&pktinfo_bytes);
+            assert!(result.is_some());
+            assert_eq!(result.unwrap(), IpAddr::from([255, 255, 255, 255]));
+        }
+
+        #[test]
+        fn test_default_linux_platform() {
+            let platform = crate::dns::platform::linux::LinuxAnycastSocket::default();
+            assert_eq!(platform.platform_name(), "linux");
+            assert!(platform.supports_pktinfo());
+        }
+
+        #[test]
+        fn test_linux_platform_size() {
+            let size = std::mem::size_of::<nix::libc::in_pktinfo>();
+            assert_eq!(size, 12);
+        }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    mod fallback_tests {
+        use super::*;
+
+        #[test]
+        fn test_fallback_platform_name() {
+            let platform = super::fallback::FallbackAnycastSocket::new();
+            assert_eq!(platform.platform_name(), "fallback");
+        }
+
+        #[test]
+        fn test_fallback_does_not_support_pktinfo() {
+            let platform = super::fallback::FallbackAnycastSocket::new();
+            assert!(!platform.supports_pktinfo());
+        }
+
+        #[test]
+        fn test_fallback_does_not_support_tcp_pktinfo() {
+            let platform = super::fallback::FallbackAnycastSocket::new();
+            assert!(!platform.supports_tcp_pktinfo());
+        }
+
+        #[test]
+        fn test_fallback_get_destination_ip_returns_none() {
+            let platform = super::fallback::FallbackAnycastSocket::new();
+            let result = platform.get_destination_ip(&[0u8; 32]);
+            assert!(result.is_none());
+        }
+
+        #[test]
+        fn test_fallback_get_destination_ip_with_various_sizes() {
+            let platform = super::fallback::FallbackAnycastSocket::new();
+
+            assert!(platform.get_destination_ip(&[]).is_none());
+            assert!(platform.get_destination_ip(&[0u8; 1]).is_none());
+            assert!(platform.get_destination_ip(&[0u8; 8]).is_none());
+            assert!(platform.get_destination_ip(&[0u8; 12]).is_none());
+            assert!(platform.get_destination_ip(&[0u8; 16]).is_none());
+            assert!(platform.get_destination_ip(&[0u8; 32]).is_none());
+            assert!(platform.get_destination_ip(&[0u8; 64]).is_none());
+        }
+
+        #[test]
+        fn test_fallback_enable_pktinfo_returns_error() {
+            let platform = super::fallback::FallbackAnycastSocket::new();
+            let socket = tokio::net::UdpSocket::bind("0.0.0.0:0").await.unwrap();
+            let result = platform.enable_pktinfo(&socket);
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn test_fallback_enable_tcp_pktinfo_returns_error() {
+            let platform = super::fallback::FallbackAnycastSocket::new();
+            let result = platform.enable_tcp_pktinfo(0);
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn test_fallback_error_message_mentions_pktinfo() {
+            let platform = super::fallback::FallbackAnycastSocket::new();
+            let socket = tokio::net::UdpSocket::bind("0.0.0.0:0").await.unwrap();
+            let result = platform.enable_pktinfo(&socket);
+            assert!(result.unwrap_err().contains("IP_PKTINFO"));
+        }
+
+        #[test]
+        fn test_fallback_error_message_mentions_tcp() {
+            let platform = super::fallback::FallbackAnycastSocket::new();
+            let result = platform.enable_tcp_pktinfo(0);
+            assert!(result.unwrap_err().contains("IP_PKTINFO"));
+        }
+
+        #[test]
+        fn test_default_fallback_platform() {
+            let platform = super::fallback::FallbackAnycastSocket::default();
+            assert_eq!(platform.platform_name(), "fallback");
+            assert!(!platform.supports_pktinfo());
+        }
+    }
+
+    #[test]
+    fn test_trait_object_creation() {
+        let _platform: Arc<dyn AnycastSocketPlatform> = create_platform();
+    }
+
+    #[test]
+    fn test_create_platform_optional() {
+        let platform = create_platform_optional();
+        let _ = platform.platform_name();
+        let _ = platform.supports_pktinfo();
+    }
+
+    #[test]
+    fn test_trait_has_all_methods() {
+        let platform = create_platform_optional();
+
+        let _ = platform.platform_name();
+        let _ = platform.supports_pktinfo();
+        let _ = platform.supports_tcp_pktinfo();
+        let _ = platform.get_destination_ip(&[]);
+    }
+
+    #[test]
+    fn test_trait_object_clone() {
+        let platform = create_platform_optional();
+        let name = platform.platform_name();
+
+        let platform2 = create_platform_optional();
+        let name2 = platform2.platform_name();
+
+        assert_eq!(name, name2);
+    }
+
+    #[test]
+    fn test_platform_is_send_sync() {
+        fn require_send_sync<T: Send + Sync>() {}
+        require_send_sync::<Arc<dyn AnycastSocketPlatform>>();
+    }
 }

@@ -35,9 +35,6 @@ pub fn Alerts() -> Html {
     let config = use_state(|| None as Option<AlertConfig>);
     let error = use_state(|| None as Option<String>);
     let saving = use_state(|| false);
-    
-    let email_recipients_input = use_state(|| String::new());
-    let webhook_urls_input = use_state(|| String::new());
 
     {
         let config = config.clone();
@@ -117,9 +114,11 @@ pub fn Alerts() -> Html {
     let toggle_config = {
         let config = config.clone();
         Callback::from(move |_| {
-            if let Some(ref mut c) = *config {
-                c.enabled = !c.enabled;
-                config.set(Some(c.clone()));
+            let config = config.clone();
+            if let Some(c) = (*config).clone() {
+                let mut new_config = c;
+                new_config.enabled = !new_config.enabled;
+                config.set(Some(new_config));
             }
         })
     };
@@ -127,9 +126,11 @@ pub fn Alerts() -> Html {
     let toggle_email = {
         let config = config.clone();
         Callback::from(move |_| {
-            if let Some(ref mut c) = *config {
-                c.email_enabled = !c.email_enabled;
-                config.set(Some(c.clone()));
+            let config = config.clone();
+            if let Some(c) = (*config).clone() {
+                let mut new_config = c;
+                new_config.email_enabled = !new_config.email_enabled;
+                config.set(Some(new_config));
             }
         })
     };
@@ -137,9 +138,91 @@ pub fn Alerts() -> Html {
     let toggle_webhook = {
         let config = config.clone();
         Callback::from(move |_| {
-            if let Some(ref mut c) = *config {
-                c.webhook_enabled = !c.webhook_enabled;
-                config.set(Some(c.clone()));
+            let config = config.clone();
+            if let Some(c) = (*config).clone() {
+                let mut new_config = c;
+                new_config.webhook_enabled = !new_config.webhook_enabled;
+                config.set(Some(new_config));
+            }
+        })
+    };
+
+    let on_smtp_host_change = {
+        let config = config.clone();
+        Callback::from(move |value: String| {
+            let config = config.clone();
+            if let Some(c) = (*config).clone() {
+                let mut new_config = c;
+                new_config.email_smtp_host = if value.is_empty() { None } else { Some(value) };
+                config.set(Some(new_config));
+            }
+        })
+    };
+
+    let on_smtp_port_change = {
+        let config = config.clone();
+        Callback::from(move |value: u16| {
+            let config = config.clone();
+            if let Some(c) = (*config).clone() {
+                let mut new_config = c;
+                new_config.email_smtp_port = Some(value);
+                config.set(Some(new_config));
+            }
+        })
+    };
+
+    let on_email_username_change = {
+        let config = config.clone();
+        Callback::from(move |value: String| {
+            let config = config.clone();
+            if let Some(c) = (*config).clone() {
+                let mut new_config = c;
+                new_config.email_username = if value.is_empty() { None } else { Some(value) };
+                config.set(Some(new_config));
+            }
+        })
+    };
+
+    let on_email_password_change = {
+        let config = config.clone();
+        Callback::from(move |value: String| {
+            let config = config.clone();
+            if let Some(c) = (*config).clone() {
+                let mut new_config = c;
+                new_config.email_password = if value.is_empty() { None } else { Some(value) };
+                config.set(Some(new_config));
+            }
+        })
+    };
+
+    let on_email_recipients_change = {
+        let config = config.clone();
+        Callback::from(move |value: String| {
+            let config = config.clone();
+            if let Some(c) = (*config).clone() {
+                let mut new_config = c;
+                new_config.email_recipients = value
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                config.set(Some(new_config));
+            }
+        })
+    };
+
+    let on_webhook_urls_change = {
+        let config = config.clone();
+        Callback::from(move |value: String| {
+            let config = config.clone();
+            if let Some(c) = (*config).clone() {
+                let mut new_config = c;
+                new_config.webhook_urls = value
+                    .lines()
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                config.set(Some(new_config));
             }
         })
     };
@@ -199,10 +282,8 @@ pub fn Alerts() -> Html {
                                         type="text" 
                                         value={c.email_smtp_host.clone().unwrap_or_default()}
                                         oninput={Callback::from(move |e: InputEvent| {
-                                            if let Some(ref mut c) = *config {
-                                                c.email_smtp_host = Some(e.target_unchecked_into::<web_sys::HtmlInputElement>().value());
-                                                config.set(Some(c.clone()));
-                                            }
+                                            let value = e.target_unchecked_into::<web_sys::HtmlInputElement>().value();
+                                            on_smtp_host_change.emit(value);
                                         })}
                                         class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary"
                                         placeholder="smtp.example.com"
@@ -214,9 +295,8 @@ pub fn Alerts() -> Html {
                                         type="number" 
                                         value={c.email_smtp_port.unwrap_or(587).to_string()}
                                         oninput={Callback::from(move |e: InputEvent| {
-                                            if let Some(ref mut c) = *config {
-                                                c.email_smtp_port = e.target_unchecked_into::<web_sys::HtmlInputElement>().value().parse().ok();
-                                                config.set(Some(c.clone()));
+                                            if let Ok(value) = e.target_unchecked_into::<web_sys::HtmlInputElement>().value().parse::<u16>() {
+                                                on_smtp_port_change.emit(value);
                                             }
                                         })}
                                         class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary"
@@ -229,10 +309,8 @@ pub fn Alerts() -> Html {
                                         type="text" 
                                         value={c.email_username.clone().unwrap_or_default()}
                                         oninput={Callback::from(move |e: InputEvent| {
-                                            if let Some(ref mut c) = *config {
-                                                c.email_username = Some(e.target_unchecked_into::<web_sys::HtmlInputElement>().value());
-                                                config.set(Some(c.clone()));
-                                            }
+                                            let value = e.target_unchecked_into::<web_sys::HtmlInputElement>().value();
+                                            on_email_username_change.emit(value);
                                         })}
                                         class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary"
                                         placeholder="alerts@example.com"
@@ -244,10 +322,8 @@ pub fn Alerts() -> Html {
                                         type="password" 
                                         value={c.email_password.clone().unwrap_or_default()}
                                         oninput={Callback::from(move |e: InputEvent| {
-                                            if let Some(ref mut c) = *config {
-                                                c.email_password = Some(e.target_unchecked_into::<web_sys::HtmlInputElement>().value());
-                                                config.set(Some(c.clone()));
-                                            }
+                                            let value = e.target_unchecked_into::<web_sys::HtmlInputElement>().value();
+                                            on_email_password_change.emit(value);
                                         })}
                                         class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary"
                                         placeholder="••••••••"
@@ -259,15 +335,8 @@ pub fn Alerts() -> Html {
                                         type="text" 
                                         value={c.email_recipients.join(", ")}
                                         oninput={Callback::from(move |e: InputEvent| {
-                                            if let Some(ref mut c) = *config {
-                                                c.email_recipients = e.target_unchecked_into::<web_sys::HtmlInputElement>()
-                                                    .value()
-                                                    .split(',')
-                                                    .map(|s| s.trim().to_string())
-                                                    .filter(|s| !s.is_empty())
-                                                    .collect();
-                                                config.set(Some(c.clone()));
-                                            }
+                                            let value = e.target_unchecked_into::<web_sys::HtmlInputElement>().value();
+                                            on_email_recipients_change.emit(value);
                                         })}
                                         class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary"
                                         placeholder="admin@example.com, security@example.com"
@@ -295,15 +364,8 @@ pub fn Alerts() -> Html {
                                     <textarea 
                                         value={c.webhook_urls.join("\n")}
                                         oninput={Callback::from(move |e: InputEvent| {
-                                            if let Some(ref mut c) = *config {
-                                                c.webhook_urls = e.target_unchecked_into::<web_sys::HtmlTextAreaElement>()
-                                                    .value()
-                                                    .lines()
-                                                    .map(|s| s.trim().to_string())
-                                                    .filter(|s| !s.is_empty())
-                                                    .collect();
-                                                config.set(Some(c.clone()));
-                                            }
+                                            let value = e.target_unchecked_into::<web_sys::HtmlTextAreaElement>().value();
+                                            on_webhook_urls_change.emit(value);
                                         })}
                                         class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary h-24"
                                         placeholder="https://hooks.slack.com/services/...\nhttps://your-server.com/webhook"
@@ -331,16 +393,22 @@ pub fn Alerts() -> Html {
                                         <input 
                                             type="checkbox" 
                                             checked={rule.enabled}
-                                            onchange={Callback::from(move |_| {
-                                                if let Some(ref mut c) = *config {
-                                                    for r in &mut c.alerts {
-                                                        if r.name == rule_name {
-                                                            r.enabled = !r.enabled;
+                                            onchange={{
+                                                let config = config.clone();
+                                                let rule_name = rule.name.clone();
+                                                Callback::from(move |_| {
+                                                    let config = config.clone();
+                                                    if let Some(c) = (*config).clone() {
+                                                        let mut new_config = c;
+                                                        for r in &mut new_config.alerts {
+                                                            if r.name == rule_name {
+                                                                r.enabled = !r.enabled;
+                                                            }
                                                         }
+                                                        config.set(Some(new_config));
                                                     }
-                                                    config.set(Some(c.clone()));
-                                                }
-                                            })}
+                                                })
+                                            }}
                                             class="w-4 h-4"
                                         />
                                         <div>

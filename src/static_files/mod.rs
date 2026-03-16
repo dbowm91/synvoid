@@ -14,6 +14,7 @@ use metrics::{counter, histogram};
 
 use crate::config::site::SiteStaticConfig;
 use crate::mime::MIME_REGISTRY;
+use crate::mesh::config::{MeshCompressionConfig, MeshImageProtectionConfig, MeshMinificationConfig};
 use minifier::MinifierCache;
 
 #[derive(Clone)]
@@ -47,6 +48,9 @@ pub struct StaticFileHandler {
     minifier_client: Option<client::MinifierClient>,
     async_minifier_client: Option<client::AsyncMinifierClient>,
     enable_zero_copy: bool,
+    mesh_image_protection: Option<MeshImageProtectionConfig>,
+    mesh_compression: Option<MeshCompressionConfig>,
+    mesh_minification: Option<MeshMinificationConfig>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -87,7 +91,7 @@ pub struct StaticResponse {
 
 impl StaticFileHandler {
     pub fn new(config: SiteStaticConfig) -> Result<Self, String> {
-        Self::new_with_minifier(config, String::new(), None, None, None)
+        Self::new_with_minifier(config, String::new(), None, None, None, None, None, None)
     }
 
     pub fn new_with_minifier(
@@ -96,6 +100,9 @@ impl StaticFileHandler {
         minifier_cache: Option<Arc<MinifierCache>>,
         minifier_client: Option<client::MinifierClient>,
         async_minifier_client: Option<client::AsyncMinifierClient>,
+        mesh_image_protection: Option<MeshImageProtectionConfig>,
+        mesh_compression: Option<MeshCompressionConfig>,
+        mesh_minification: Option<MeshMinificationConfig>,
     ) -> Result<Self, String> {
         let enabled = config.enabled.unwrap_or(false);
         let gzip_level = config.gzip_level.unwrap_or(5);
@@ -139,6 +146,9 @@ impl StaticFileHandler {
                 minifier_client,
                 async_minifier_client: None,
                 enable_zero_copy: false,
+                mesh_image_protection,
+                mesh_compression,
+                mesh_minification,
             });
         }
 
@@ -210,11 +220,26 @@ impl StaticFileHandler {
             minifier_client,
             async_minifier_client,
             enable_zero_copy: cfg!(unix),
+            mesh_image_protection,
+            mesh_compression,
+            mesh_minification,
         })
     }
 
     pub fn is_enabled(&self) -> bool {
         !self.locations.is_empty()
+    }
+
+    pub fn with_mesh_config(
+        mut self,
+        image_protection: Option<MeshImageProtectionConfig>,
+        compression: Option<MeshCompressionConfig>,
+        minification: Option<MeshMinificationConfig>,
+    ) -> Self {
+        self.mesh_image_protection = image_protection;
+        self.mesh_compression = compression;
+        self.mesh_minification = minification;
+        self
     }
 
     pub fn get_matching_location(&self, path: &str) -> Option<&NormalizedLocation> {
@@ -473,6 +498,7 @@ impl StaticFileHandler {
                         headers.push(("Content-Encoding".to_string(), "br".to_string()));
                         headers.push(("Vary".to_string(), "Accept-Encoding".to_string()));
                         histogram!("maluwaf.static.served_compressed").record(1.0);
+                        counter!("maluwaf.static.compression_served", "encoding" => "brotli_precompressed", "site" => self.site_id.clone()).increment(1);
                         return Ok(StaticResponse {
                             status: StatusCode::OK,
                             headers,
@@ -488,6 +514,7 @@ impl StaticFileHandler {
                         headers.push(("Content-Encoding".to_string(), "gzip".to_string()));
                         headers.push(("Vary".to_string(), "Accept-Encoding".to_string()));
                         histogram!("maluwaf.static.served_compressed").record(1.0);
+                        counter!("maluwaf.static.compression_served", "encoding" => "gzip_precompressed", "site" => self.site_id.clone()).increment(1);
                         return Ok(StaticResponse {
                             status: StatusCode::OK,
                             headers,
@@ -519,6 +546,8 @@ impl StaticFileHandler {
                     headers.push(("Content-Encoding".to_string(), "gzip".to_string()));
                     headers.push(("Vary".to_string(), "Accept-Encoding".to_string()));
                     histogram!("maluwaf.static.served_gzip_otf").record(1.0);
+                    counter!("maluwaf.static.compression_served", "encoding" => "gzip_otf", "site" => self.site_id.clone()).increment(1);
+                    histogram!("maluwaf.static.compression_ratio", "encoding" => "gzip").record(body.len() as f64 / compressed.len() as f64);
                     return Ok(StaticResponse {
                         status: StatusCode::OK,
                         headers,

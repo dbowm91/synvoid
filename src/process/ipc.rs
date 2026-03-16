@@ -185,6 +185,10 @@ pub enum Message {
         timestamp: u64,
         metrics: WorkerMetricsPayload,
     },
+    WorkerRequestLog {
+        id: WorkerId,
+        log: RequestLogPayload,
+    },
     WorkerShutdownComplete {
         id: WorkerId,
     },
@@ -200,6 +204,12 @@ pub enum Message {
     },
     MasterConfigReload {
         config_path: String,
+    },
+    MasterProcessConfigReload {
+        config: crate::config::ProcessManagerConfig,
+    },
+    MasterSupervisorConfigReload {
+        config: crate::config::SupervisorConfig,
     },
     MasterHealthCheck {
         timestamp: u64,
@@ -226,6 +236,10 @@ pub enum Message {
         timestamp: u64,
         static_cache_hits: u64,
         static_cache_misses: u64,
+    },
+    StaticWorkerRequestLog {
+        worker_id: usize,
+        log: RequestLogPayload,
     },
     StaticWorkerShutdownComplete {
         worker_id: usize,
@@ -327,6 +341,20 @@ pub enum Message {
         queued_encodings: Vec<String>,
     },
     MinifyError {
+        request_id: u64,
+        error: String,
+    },
+    PoisonImageRequest {
+        request_id: u64,
+        site_id: String,
+        body: Vec<u8>,
+        last_modified: Option<String>,
+    },
+    PoisonImageResponse {
+        request_id: u64,
+        poisoned_body: Vec<u8>,
+    },
+    PoisonImageError {
         request_id: u64,
         error: String,
     },
@@ -589,6 +617,26 @@ pub struct SiteMetricsPayload {
     pub proxy_cache_misses: u64,
     pub static_cache_hits: u64,
     pub static_cache_misses: u64,
+    pub bytes_received: u64,
+    pub bytes_sent: u64,
+    pub proxied_bytes_sent: u64,
+    pub proxied_bytes_received: u64,
+    pub mesh_bytes_sent: u64,
+    pub mesh_bytes_received: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RequestLogPayload {
+    pub timestamp: u64,
+    pub client_ip: String,
+    pub method: String,
+    pub path: String,
+    pub status: u16,
+    pub response_time_ms: u32,
+    pub site_id: String,
+    pub user_agent: Option<String>,
+    pub bytes_sent: u64,
+    pub bytes_received: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

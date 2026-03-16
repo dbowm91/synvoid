@@ -26,6 +26,7 @@ use crate::cgi::{CgiHandler, CgiConfig};
 use crate::http::range::serve_range;
 use crate::http::headers::{inject_security_headers, inject_cors_headers, is_websocket_upgrade, compute_websocket_accept_key, generate_stealth_timestamp};
 use crate::metrics::WorkerMetrics;
+use crate::mesh::transports::manager::MeshTransportManager;
 
 pub type UpstreamPools = std::collections::HashMap<String, Arc<UpstreamPool>>;
 
@@ -101,6 +102,7 @@ pub struct RequestHandler {
     login_rate_limiter: Arc<LoginRateLimiter>,
     metrics: Option<Arc<WorkerMetrics>>,
     proxy_servers: tokio::sync::RwLock<std::collections::HashMap<String, Arc<crate::proxy::ProxyServer>>>,
+    mesh_transport: Option<Arc<MeshTransportManager>>,
 }
 
 impl RequestHandler {
@@ -137,6 +139,7 @@ impl RequestHandler {
             login_rate_limiter: Arc::new(LoginRateLimiter::new(5, 60)),
             metrics: None,
             proxy_servers: tokio::sync::RwLock::new(std::collections::HashMap::new()),
+            mesh_transport: None,
         }
     }
 
@@ -168,6 +171,11 @@ impl RequestHandler {
 
     pub fn with_captcha(mut self, captcha_manager: Arc<CaptchaManager>) -> Self {
         self.captcha_manager = Some(captcha_manager);
+        self
+    }
+
+    pub fn with_mesh_transport(mut self, mesh_transport: Option<Arc<MeshTransportManager>>) -> Self {
+        self.mesh_transport = mesh_transport;
         self
     }
 
@@ -395,7 +403,7 @@ impl RequestHandler {
                     if let (Some(ref metrics), Some(ref sid)) = (&self.metrics, &site_id) {
                         metrics.record_site_proxied(sid);
                     }
-                    self.serve_static(static_handler, &path, &parts.headers).await
+                    self.serve_static(static_handler, &route_target.site_id, &path, &parts.headers).await
                 } else if is_websocket_upgrade {
                     counter!("maluwaf.websocket.upgrade").increment(1);
                     if let (Some(ref metrics), Some(ref sid)) = (&self.metrics, &site_id) {
@@ -871,9 +879,28 @@ impl RequestHandler {
     async fn serve_static(
         &self,
         handler: &crate::static_files::StaticFileHandler,
+        site_id: &str,
         path: &str,
         headers: &http::HeaderMap,
     ) -> Response<Full<Bytes>> {
+        let handler = if let Some(ref mt) = self.mesh_transport {
+            let image_protection = mt.get_image_protection_for_site(site_id).await;
+            let compression = mt.get_compression_for_site(site_id).await;
+            let minification = mt.get_minification_for_site(site_id).await;
+            
+            if image_protection.is_some() || compression.is_some() || minification.is_some() {
+                handler.clone().with_mesh_config(
+                    image_protection,
+                    compression,
+                    minification,
+                )
+            } else {
+                handler.clone()
+            }
+        } else {
+            handler.clone()
+        };
+
         let accept_encoding = headers.get("accept-encoding")
             .and_then(|v| v.to_str().ok());
 

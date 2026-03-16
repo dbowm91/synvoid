@@ -407,3 +407,123 @@ impl AsyncMinifierClient {
         false
     }
 }
+
+static POISON_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
+
+#[derive(Debug)]
+pub enum PoisonImageClientError {
+    ConnectionFailed(String),
+    SendFailed(String),
+    ReceiveFailed(String),
+    Timeout,
+    PoisoningFailed(String),
+}
+
+impl std::fmt::Display for PoisonImageClientError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PoisonImageClientError::ConnectionFailed(e) => write!(f, "Connection failed: {}", e),
+            PoisonImageClientError::SendFailed(e) => write!(f, "Send failed: {}", e),
+            PoisonImageClientError::ReceiveFailed(e) => write!(f, "Receive failed: {}", e),
+            PoisonImageClientError::Timeout => write!(f, "Request timed out"),
+            PoisonImageClientError::PoisoningFailed(e) => write!(f, "Poisoning failed: {}", e),
+        }
+    }
+}
+
+impl std::error::Error for PoisonImageClientError {}
+
+#[derive(Clone)]
+pub struct PoisonImageClient {
+    socket_path: PathBuf,
+    timeout_ms: u64,
+}
+
+impl PoisonImageClient {
+    pub fn new(socket_path: PathBuf) -> Self {
+        Self {
+            socket_path,
+            timeout_ms: 5000,
+        }
+    }
+
+    pub fn with_timeout(mut self, timeout_ms: u64) -> Self {
+        self.timeout_ms = timeout_ms;
+        self
+    }
+
+    pub async fn poison_image(
+        &self,
+        site_id: &str,
+        body: Vec<u8>,
+        last_modified: Option<String>,
+    ) -> Result<Vec<u8>, PoisonImageClientError> {
+        let socket_name = self.socket_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("static-worker");
+        
+        let endpoint = IpcEndpoint::new(socket_name);
+        
+        let mut ipc = endpoint.connect().await
+            .map_err(|e| PoisonImageClientError::ConnectionFailed(e.to_string()))?;
+
+        let request_id = POISON_REQUEST_ID.fetch_add(1, Ordering::Relaxed);
+
+        let request = crate::process::Message::PoisonImageRequest {
+            request_id,
+            site_id: site_id.to_string(),
+            body,
+            last_modified,
+        };
+
+        ipc.send(&request).await
+            .map_err(|e| PoisonImageClientError::SendFailed(e.to_string()))?;
+
+        let start = std::time::Instant::now();
+        loop {
+            if start.elapsed().as_millis() as u64 > self.timeout_ms {
+                return Err(PoisonImageClientError::Timeout);
+            }
+
+            match ipc.recv_with_timeout::<crate::process::Message>(100).await {
+                Ok(Some(crate::process::Message::PoisonImageResponse {
+                    request_id: resp_id,
+                    poisoned_body,
+                })) => {
+                    if resp_id == request_id {
+                        return Ok(poisoned_body);
+                    }
+                }
+                Ok(Some(crate::process::Message::PoisonImageError {
+                    request_id: resp_id,
+                    error,
+                })) => {
+                    if resp_id == request_id {
+                        return Err(PoisonImageClientError::PoisoningFailed(error));
+                    }
+                }
+                Ok(Some(_)) => {}
+                Ok(None) => {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+                Err(e) => {
+                    return Err(PoisonImageClientError::ReceiveFailed(e.to_string()));
+                }
+            }
+        }
+    }
+
+    pub async fn is_available(&self) -> bool {
+        let socket_name = self.socket_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("static-worker");
+        
+        let endpoint = IpcEndpoint::new(socket_name);
+        if let Ok(mut ipc) = endpoint.connect().await {
+            return ipc.recv_with_timeout::<crate::process::Message>(100).await.is_ok();
+        }
+        false
+    }
+}

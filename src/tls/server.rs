@@ -603,6 +603,7 @@ impl HttpsServer {
                         let body_len = body.len() as u64;
                         
                         bandwidth.record_proxied(request_body_size, body_len, &target.upstream);
+                        bandwidth.record_site_proxied(&site_id, request_body_size, body_len);
                         bandwidth.record_egress(body_len, BandwidthProtocol::Https, EgressDirection::Proxied);
                         bandwidth.record_site_egress(&site_id, body_len);
                         

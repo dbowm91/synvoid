@@ -20,7 +20,8 @@ pub use health::{HealthChecker, HealthStatus, EnhancedHealthConfig, EnhancedHeal
 pub use upgrade::{Orchestrator, AutoRollbackConfig};
 pub use rollback::RollbackManager;
 pub use cli::{OverseerArgs, run_overseer_command, UpgradeCommand};
-pub use process::{OverseerProcess, OverseerConfig, run_overseer_process};
+pub use process::{OverseerProcess, run_overseer_process};
+pub use crate::config::OverseerConfig;
 pub use spawn::{SpawnConfig, ProcessMode, build_spawn_command, spawn_process, spawn_and_log, cleanup_failed_spawns};
 pub use ipc_client::{IpcClient, connect_and_expect, send_and_receive, send_message, map_ipc_error};
 pub use connection_tracker::{ConnectionTracker, WorkerConnections};

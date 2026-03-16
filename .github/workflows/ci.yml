@@ -112,6 +112,28 @@ jobs:
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
+  unsafe-dns:
+    name: No Unsafe in src/dns/
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Check for unsafe in src/dns/
+        run: |
+          # Check for unsafe blocks in src/dns/ directory
+          UNSAFE_COUNT=$(grep -r "unsafe {" src/dns/ --include="*.rs" | wc -l)
+          if [ "$UNSAFE_COUNT" -gt 0 ]; then
+            echo "Found $UNSAFE_COUNT unsafe block(s) in src/dns/:"
+            grep -r "unsafe {" src/dns/ --include="*.rs"
+            echo "::error::Found $UNSAFE_COUNT unsafe block(s) in src/dns/ - these should be eliminated"
+            exit 1
+          else
+            echo "✅ No unsafe blocks found in src/dns/"
+          fi
+
   fmt:
     name: Rustfmt
     runs-on: ubuntu-latest
@@ -257,7 +279,7 @@ jobs:
 
   summary:
     name: CI Summary
-    needs: [build, clippy, fmt, docs, security-audit, dependency-audit, outdated-deps]
+    needs: [build, clippy, unsafe-dns, fmt, docs, security-audit, dependency-audit, outdated-deps]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -268,7 +290,7 @@ jobs:
           echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
           echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
           
-          for job in build clippy fmt docs security-audit dependency-audit outdated-deps; do
+          for job in build clippy unsafe-dns fmt docs security-audit dependency-audit outdated-deps; do
             status="${{ needs.${{ job }}.result }}"
             if [ "$status" = "success" ]; then
               echo "| $job | ✅ |" >> $GITHUB_STEP_SUMMARY

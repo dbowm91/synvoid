@@ -335,6 +335,19 @@ impl DhtKey {
     pub fn is_content_addressed(&self) -> bool {
         self.as_str().starts_with("content:")
     }
+
+    pub fn site_scope(&self) -> Option<String> {
+        match self {
+            DhtKey::Upstream(id) => Some(id.clone()),
+            DhtKey::VerifiedUpstream(id) => Some(id.clone()),
+            DhtKey::DnsZone(zone) => Some(zone.clone()),
+            DhtKey::DnsRecord(zone, _) => Some(zone.clone()),
+            DhtKey::YaraRules(site) => Some(site.clone()),
+            DhtKey::YaraRuleVersion(site) => Some(site.clone()),
+            DhtKey::YaraRuleSubmission(site) => Some(site.clone()),
+            _ => None,
+        }
+    }
 }
 
 #[cfg(test)]

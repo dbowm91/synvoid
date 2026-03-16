@@ -815,6 +815,16 @@ pub enum MeshMessage {
         timestamp: u64,
         signature: Vec<u8>,
     },
+    SiteConfigSync {
+        request_id: ArcStr,
+        site_id: ArcStr,
+        config_version: u64,
+        config_json: ArcStr,
+        timestamp: u64,
+        source_node_id: ArcStr,
+        signature: Vec<u8>,
+        signer_public_key: Option<ArcStr>,
+    },
     DnsDomainRegisterRequest {
         request_id: ArcStr,
         domain: ArcStr,
@@ -1051,6 +1061,7 @@ impl MeshMessage {
             Self::GlobalNodeBlocklistUpdate { source_node_id, .. } => {
                 Some(source_node_id.as_str().into())
             }
+            Self::SiteConfigSync { request_id, .. } => Some(request_id.as_str().into()),
             Self::UpstreamBlocked {
                 mesh_identifier,
                 service_id,
@@ -3217,6 +3228,30 @@ impl From<&MeshMessage> for proto::MeshMessage {
                     },
                 )),
             },
+            MeshMessage::SiteConfigSync {
+                request_id,
+                site_id,
+                config_version,
+                config_json,
+                timestamp,
+                source_node_id,
+                signature,
+                signer_public_key,
+            } => proto::MeshMessage {
+                message_type: 125,
+                payload: Some(proto::mesh_message::Payload::SiteConfigSync(
+                    proto::SiteConfigSync {
+                        request_id: request_id.to_string(),
+                        site_id: site_id.to_string(),
+                        config_version: *config_version,
+                        config_json: config_json.to_string(),
+                        timestamp: *timestamp,
+                        source_node_id: source_node_id.to_string(),
+                        signature: signature.clone(),
+                        signer_public_key: signer_public_key.as_ref().map(|s| s.to_string()),
+                    },
+                )),
+            },
         }
     }
 }
@@ -4427,6 +4462,16 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                 zone_origin: r.zone_origin.into(),
                 serial: r.serial,
                 timestamp: r.timestamp,
+            }),
+            proto::mesh_message::Payload::SiteConfigSync(r) => Ok(MeshMessage::SiteConfigSync {
+                request_id: r.request_id.into(),
+                site_id: r.site_id.into(),
+                config_version: r.config_version,
+                config_json: r.config_json.into(),
+                timestamp: r.timestamp,
+                source_node_id: r.source_node_id.into(),
+                signature: r.signature,
+                signer_public_key: r.signer_public_key.map(|s| s.into()),
             }),
         }
     }

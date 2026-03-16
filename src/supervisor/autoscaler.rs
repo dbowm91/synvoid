@@ -1,4 +1,4 @@
-use crate::supervisor::SupervisorConfig;
+use crate::config::SupervisorConfig;
 
 #[derive(Clone, Debug)]
 pub enum ScaleDecision {

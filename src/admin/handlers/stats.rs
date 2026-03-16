@@ -1,5 +1,5 @@
 use axum::{
-    extract::State,
+    extract::{Query, State},
     http::StatusCode,
     Json,
 };
@@ -8,6 +8,7 @@ use std::sync::Arc;
 use super::super::state::{AdminState, AggregatedMetrics};
 use super::common::{require_auth, OptionalAuth};
 use crate::metrics::{get_proxy_cache_hits, get_proxy_cache_misses};
+use crate::process::RequestLogPayload;
 
 #[derive(Debug, Serialize, Deserialize, Clone, utoipa::ToSchema)]
 pub struct SystemStats {
@@ -49,6 +50,12 @@ pub struct SiteStats {
     pub p95_latency_ms: f64,
     pub p99_latency_ms: f64,
     pub upstream_healthy: bool,
+    pub bytes_received: u64,
+    pub bytes_sent: u64,
+    pub proxied_bytes_sent: u64,
+    pub proxied_bytes_received: u64,
+    pub mesh_bytes_sent: u64,
+    pub mesh_bytes_received: u64,
 }
 
 #[utoipa::path(
@@ -154,6 +161,12 @@ pub async fn get_sites_stats(
             p95_latency_ms: site_metric.map(|m| m.p95_latency_ms).unwrap_or(0.0),
             p99_latency_ms: site_metric.map(|m| m.p99_latency_ms).unwrap_or(0.0),
             upstream_healthy: site_metric.map(|m| m.upstream_healthy).unwrap_or(true),
+            bytes_received: site_metric.map(|m| m.bytes_received).unwrap_or(0),
+            bytes_sent: site_metric.map(|m| m.bytes_sent).unwrap_or(0),
+            proxied_bytes_sent: site_metric.map(|m| m.proxied_bytes_sent).unwrap_or(0),
+            proxied_bytes_received: site_metric.map(|m| m.proxied_bytes_received).unwrap_or(0),
+            mesh_bytes_sent: site_metric.map(|m| m.mesh_bytes_sent).unwrap_or(0),
+            mesh_bytes_received: site_metric.map(|m| m.mesh_bytes_received).unwrap_or(0),
         }
     }).collect();
 
@@ -320,4 +333,138 @@ pub async fn get_bandwidth(
     let payload = tracker.to_payload();
 
     Ok(Json(payload))
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, utoipa::ToSchema)]
+pub struct RequestLogResponse {
+    pub id: String,
+    pub timestamp: String,
+    pub client_ip: String,
+    pub method: String,
+    pub path: String,
+    pub status: u16,
+    pub response_time_ms: u32,
+    pub site_id: String,
+    pub user_agent: Option<String>,
+    pub bytes_sent: u64,
+    pub bytes_received: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct RequestLogsResponse {
+    pub entries: Vec<RequestLogResponse>,
+    pub total: usize,
+    pub has_more: bool,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct RequestLogsQuery {
+    pub site_id: Option<String>,
+    pub method: Option<String>,
+    pub status: Option<String>,
+    pub search: Option<String>,
+    pub limit: Option<usize>,
+    pub offset: Option<usize>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/stats/requests",
+    tag = "Stats",
+    params(
+        ("site_id" = Option<String>, Query, description = "Filter by site ID"),
+        ("method" = Option<String>, Query, description = "Filter by HTTP method"),
+        ("status" = Option<String>, Query, description = "Filter by status code (2xx, 3xx, 4xx, 5xx)"),
+        ("search" = Option<String>, Query, description = "Search in path or IP"),
+        ("limit" = Option<usize>, Query, description = "Maximum entries to return"),
+        ("offset" = Option<usize>, Query, description = "Number of entries to skip")
+    ),
+    responses(
+        (status = 200, description = "Request log entries", body = [RequestLogsResponse]),
+        (status = 401, description = "Unauthorized - missing or invalid bearer token")
+    ),
+    security(
+        ("bearerAuth" = [])
+    )
+)]
+pub async fn get_request_logs(
+    State(state): State<Arc<AdminState>>,
+    auth: OptionalAuth,
+    Query(query): Query<RequestLogsQuery>,
+) -> Result<Json<RequestLogsResponse>, StatusCode> {
+    if !require_auth(&auth, &state.admin_token) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
+    let limit = query.limit.unwrap_or(100).min(1000);
+    let offset = query.offset.unwrap_or(0);
+
+    let all_logs = if let Some(ref pm) = state.process_manager {
+        pm.get_request_logs()
+    } else {
+        Vec::new()
+    };
+
+    let filtered: Vec<RequestLogPayload> = all_logs
+        .iter()
+        .filter(|log| {
+            if let Some(ref site_id) = query.site_id {
+                if &log.site_id != site_id {
+                    return false;
+                }
+            }
+            if let Some(ref method) = query.method {
+                if !log.method.eq_ignore_ascii_case(method) {
+                    return false;
+                }
+            }
+            if let Some(ref status_prefix) = query.status {
+                let status_str = log.status.to_string();
+                if !status_str.starts_with(status_prefix) {
+                    return false;
+                }
+            }
+            if let Some(ref search) = query.search {
+                let search_lower = search.to_lowercase();
+                if !log.path.to_lowercase().contains(&search_lower)
+                    && !log.client_ip.contains(&search_lower)
+                {
+                    return false;
+                }
+            }
+            true
+        })
+        .cloned()
+        .collect();
+
+    let total = filtered.len();
+    let has_more = offset + limit < total;
+    
+    let entries: Vec<RequestLogResponse> = filtered
+        .into_iter()
+        .skip(offset)
+        .take(limit)
+        .enumerate()
+        .map(|(i, e)| RequestLogResponse {
+            id: format!("log-{}", i),
+            timestamp: chrono::DateTime::from_timestamp(e.timestamp as i64, 0)
+                .map(|dt| dt.to_rfc3339())
+                .unwrap_or_default(),
+            client_ip: e.client_ip,
+            method: e.method,
+            path: e.path,
+            status: e.status,
+            response_time_ms: e.response_time_ms,
+            site_id: e.site_id,
+            user_agent: e.user_agent,
+            bytes_sent: e.bytes_sent,
+            bytes_received: e.bytes_received,
+        })
+        .collect();
+
+    Ok(Json(RequestLogsResponse {
+        entries,
+        total,
+        has_more,
+    }))
 }

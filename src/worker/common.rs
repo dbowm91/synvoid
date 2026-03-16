@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use parking_lot::Mutex;
 
 use crate::config::ConfigManager;
-use crate::process::{connect_to_master, current_timestamp, IpcStream, Message, WorkerId, WorkerMetricsPayload};
+use crate::process::{connect_to_master, current_timestamp, IpcStream, Message, WorkerId, WorkerMetricsPayload, RequestLogPayload};
 use crate::{RunningFlag, DrainFlag};
 
 pub use crate::common::setup_panic_handler;
@@ -90,6 +90,14 @@ impl WorkerLifecycle {
             id: self.worker_id.clone(),
             timestamp: current_timestamp(),
             metrics: metrics.clone(),
+        })
+    }
+
+    pub fn send_request_log(&self, log: RequestLogPayload) -> Result<(), std::io::Error> {
+        let mut ipc = self.ipc.lock();
+        ipc.send(&Message::WorkerRequestLog {
+            id: self.worker_id.clone(),
+            log,
         })
     }
 

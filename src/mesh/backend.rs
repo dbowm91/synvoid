@@ -291,6 +291,8 @@ pub fn create_mesh_backend_from_config(
         None,
     ));
 
+    proxy.set_transport_manager(transport_manager.clone());
+
     (topology, proxy, backend_pool, transport_manager)
 }
 

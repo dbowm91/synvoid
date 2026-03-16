@@ -8,7 +8,10 @@ use crate::process::{SiteMetricsPayload, WorkerMetricsPayload};
 use crate::waf::attack_detection::config::AttackType;
 
 pub mod bandwidth;
-pub use bandwidth::{BandwidthPayload, BandwidthProtocol, BandwidthTracker, EgressDirection};
+pub use bandwidth::{
+    get_global_bandwidth_tracker, BandwidthPayload, BandwidthProtocol, BandwidthTracker,
+    EgressDirection,
+};
 
 const LATENCY_SAMPLE_SIZE: usize = 1000;
 
@@ -219,7 +222,7 @@ impl SiteMetrics {
         }
     }
 
-    pub fn to_payload(&self) -> SiteMetricsPayload {
+    pub fn to_payload(&self, site_id: &str) -> SiteMetricsPayload {
         let count = self.request_count.load(Ordering::Relaxed);
         let avg_latency = if count > 0 {
             self.total_latency_ms.load(Ordering::Relaxed) as f64 / count as f64
@@ -251,6 +254,10 @@ impl SiteMetrics {
             blocked_by_type.insert(k.to_string(), v.load(Ordering::Relaxed));
         }
 
+        let bandwidth = get_global_bandwidth_tracker();
+        let per_site_bandwidth = bandwidth.get_per_site();
+        let site_bw = per_site_bandwidth.get(site_id);
+
         SiteMetricsPayload {
             total_requests: self.total_requests.load(Ordering::Relaxed),
             blocked: self.blocked.load(Ordering::Relaxed),
@@ -269,6 +276,12 @@ impl SiteMetrics {
             proxy_cache_misses: 0,
             static_cache_hits: 0,
             static_cache_misses: 0,
+            bytes_received: site_bw.map(|b| b.bytes_received).unwrap_or(0),
+            bytes_sent: site_bw.map(|b| b.bytes_sent).unwrap_or(0),
+            proxied_bytes_sent: site_bw.map(|b| b.proxied_bytes_sent).unwrap_or(0),
+            proxied_bytes_received: site_bw.map(|b| b.proxied_bytes_received).unwrap_or(0),
+            mesh_bytes_sent: site_bw.map(|b| b.mesh_bytes_sent).unwrap_or(0),
+            mesh_bytes_received: site_bw.map(|b| b.mesh_bytes_received).unwrap_or(0),
         }
     }
 }
@@ -459,7 +472,7 @@ impl WorkerMetrics {
             let sites = self.per_site.lock();
             let mut result = std::collections::HashMap::new();
             for (site_id, metrics) in sites.iter() {
-                result.insert(site_id.clone(), metrics.to_payload());
+                result.insert(site_id.clone(), metrics.to_payload(site_id));
             }
             result
         };
