@@ -1,0 +1,29 @@
+[package]
+name = "maluwaf-fuzz"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+maluwaf = { path = ".." }
+http = "1"
+postcard = "1"
+
+[[bin]]
+name = "fuzz_attack_detection"
+path = "fuzz_attack_detection.rs"
+
+[[bin]]
+name = "fuzz_ipc"
+path = "fuzz_ipc.rs"
+
+[[bin]]
+name = "fuzz_serialization"
+path = "fuzz_serialization.rs"
+
+[profile.release]
+opt-level = 3
