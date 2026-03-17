@@ -574,6 +574,7 @@ impl HttpsServer {
                         }
                     }
                 } else {
+                    // Intentionally empty - falls through to non-cached request handling below
                 }
                 }
                 

@@ -352,7 +352,7 @@ impl ProbeTracker {
         ProbeStats {
             total_records: store.len(),
             active_records: active,
-            total_events: total_events,
+            total_events,
             top_endpoints,
         }
     }

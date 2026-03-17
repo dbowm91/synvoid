@@ -1,3 +1,9 @@
+#![allow(
+    clippy::collapsible_if,
+    clippy::redundant_closure,
+    clippy::manual_range_contains
+)]
+
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "icmp-filter")]

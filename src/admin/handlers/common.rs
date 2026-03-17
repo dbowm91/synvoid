@@ -8,7 +8,6 @@ use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 use axum::{
     extract::{State, Extension},
-    response::IntoResponse,
     http::StatusCode,
 };
 use std::sync::Arc;

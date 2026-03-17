@@ -1,4 +1,4 @@
-#![allow(unused_variables, unused_mut)]
+#![allow(unused_variables, unused_mut, dead_code, clippy::redundant_field_names)]
 
 use std::collections::HashMap;
 use std::convert::Infallible;
@@ -9,20 +9,18 @@ use std::time::{Duration, Instant};
 #[cfg(feature = "dns")]
 use crate::dns::server::Zone as DnsZone;
 
-use flate2::write::ZlibEncoder;
-use flate2::read::ZlibDecoder;
-use flate2::Compression;
-
 use lru_time_cache::LruCache;
 
 use bytes::Bytes;
 use dashmap::DashMap;
-use futures::future::{BoxFuture, FutureExt, join_all};
+use futures::future::join_all;
 use base64::Engine;
 use http_body::Body as HttpBody;
 use http_body_util::combinators::BoxBody;
 use hyper::{Request, Response};
-use metrics::{counter, gauge};
+use metrics::counter;
+#[cfg(feature = "dns")]
+use metrics::gauge;
 use parking_lot::RwLock;
 use rand::Rng;
 

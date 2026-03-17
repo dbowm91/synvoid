@@ -1,3 +1,5 @@
+#![allow(unused_variables)]
+
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock, Mutex};
@@ -18,8 +20,7 @@ use crate::tunnel::{TunnelManager, TunnelRouter};
 use crate::utils::parse_host_port;
 use crate::worker::drain_state::WorkerDrainState;
 use crate::metrics::WorkerMetrics;
-use crate::process::ipc::{Message, RequestLogPayload, WorkerId, current_timestamp};
-use crate::process::ipc_transport::IpcStream;
+use crate::process::ipc::WorkerId;
 
 #[derive(Clone)]
 struct ServerSharedState {

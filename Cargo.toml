@@ -32,6 +32,7 @@ post-quantum = ["dep:rustls-post-quantum"]
 verify-pq = []
 tun-rs = []
 mesh = []
+rkyv = []
 
 # TODO: Remove git patch when quinn 0.11.10+ is released with fixed quinn-proto
 # Tracking: https://github.com/quinn-rs/quinn/releases

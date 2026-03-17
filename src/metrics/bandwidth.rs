@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use chrono::{DateTime, Datelike, TimeZone, Utc};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};

@@ -1,3 +1,5 @@
+#![allow(clippy::all, unused_variables)]
+
 mod server;
 
 use std::path::PathBuf;

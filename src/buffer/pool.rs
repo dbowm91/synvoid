@@ -182,11 +182,7 @@ impl BufferPool {
             let mut guard = self.small[shard].lock();
             match guard.pop_front() {
                 Some(mut buf) => {
-                    if buf.capacity() >= size {
-                        buf.resize(size, 0);
-                    } else {
-                        buf.resize(size, 0);
-                    }
+                    buf.resize(size, 0);
                     self.metrics.record_acquire(BufferTier::Small, true);
                     (buf, BufferTier::Small)
                 }
@@ -201,11 +197,7 @@ impl BufferPool {
             let mut guard = self.medium[shard].lock();
             match guard.pop_front() {
                 Some(mut buf) => {
-                    if buf.capacity() >= size {
-                        buf.resize(size, 0);
-                    } else {
-                        buf.resize(size, 0);
-                    }
+                    buf.resize(size, 0);
                     self.metrics.record_acquire(BufferTier::Medium, true);
                     (buf, BufferTier::Medium)
                 }
@@ -220,11 +212,7 @@ impl BufferPool {
             let mut guard = self.large[shard].lock();
             match guard.pop_front() {
                 Some(mut buf) => {
-                    if buf.capacity() >= size {
-                        buf.resize(size, 0);
-                    } else {
-                        buf.resize(size, 0);
-                    }
+                    buf.resize(size, 0);
                     self.metrics.record_acquire(BufferTier::Large, true);
                     (buf, BufferTier::Large)
                 }
@@ -239,11 +227,7 @@ impl BufferPool {
             let mut guard = self.jumbo[shard].lock();
             match guard.pop_front() {
                 Some(mut buf) => {
-                    if buf.capacity() >= size {
-                        buf.resize(size, 0);
-                    } else {
-                        buf.resize(size, 0);
-                    }
+                    buf.resize(size, 0);
                     self.metrics.record_acquire(BufferTier::Jumbo, true);
                     (buf, BufferTier::Jumbo)
                 }
@@ -434,7 +418,7 @@ impl PooledBuf {
     }
 
     pub fn take_bytes(&mut self) -> BytesMut {
-        self.buf.take().unwrap_or_else(BytesMut::new)
+        self.buf.take().unwrap_or_default()
     }
 
     pub fn as_bytes_mut(&mut self) -> &mut BytesMut {

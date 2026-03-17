@@ -1,3 +1,9 @@
+#![allow(
+    clippy::redundant_closure,
+    clippy::manual_range_contains,
+    clippy::collapsible_if
+)]
+
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};

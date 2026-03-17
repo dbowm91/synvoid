@@ -171,7 +171,7 @@ impl MlKem768 {
 #[cfg(feature = "async")]
 impl MlKem768 {
     pub async fn generate_keypair_async() -> Result<(PublicKey, SecretKey), KemError> {
-        tokio::task::spawn_blocking(|| Self::generate_keypair())
+        tokio::task::spawn_blocking(Self::generate_keypair)
             .await
             .map_err(|e| KemError::KeyGenerationFailed(e.to_string()))?
     }
@@ -335,7 +335,7 @@ impl MlKem1024 {
 #[cfg(feature = "async")]
 impl MlKem1024 {
     pub async fn generate_keypair_async() -> Result<(PublicKey, SecretKey), KemError> {
-        tokio::task::spawn_blocking(|| Self::generate_keypair())
+        tokio::task::spawn_blocking(Self::generate_keypair)
             .await
             .map_err(|e| KemError::KeyGenerationFailed(e.to_string()))?
     }

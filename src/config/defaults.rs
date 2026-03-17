@@ -1,3 +1,5 @@
+#![allow(clippy::derivable_impls)]
+
 use serde::{Deserialize, Serialize};
 
 use super::limits::{BlocklistLimitsConfig, ProxyLimitsConfig, RateLimitMemoryConfig};

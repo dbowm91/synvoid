@@ -441,7 +441,7 @@ fn main() {
         let main_config = config_manager.main.clone();
 
         // Load MIME types from file if enabled
-        if main_config.mimes.enabled {
+      if main_config.mimes.enabled {
             if let Some(ref mimes_file) = main_config.mimes.file {
                 match mime::init_mimes_from_file(mimes_file) {
                     Ok(()) => {

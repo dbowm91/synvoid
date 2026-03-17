@@ -1,3 +1,5 @@
+#![allow(clippy::all, dead_code, elided_lifetimes_in_paths, mismatched_lifetime_syntaxes)]
+
 pub mod buffer;
 pub mod challenge;
 pub mod common;

@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::theme::{ChallengePageTemplate, ThemeConfig};
 use crate::utils::current_timestamp;
 use parking_lot::RwLock;

@@ -338,8 +338,8 @@ pub fn has_leading_zeros(hash: &[u8], zeros: usize) -> bool {
 
     let mut result: u8 = 1;
 
-    for i in 0..zeros_u8 {
-        result &= (hash[i] == 0) as u8;
+    for hash_byte in &hash[..zeros_u8] {
+        result &= (*hash_byte == 0) as u8;
     }
 
     if zeros_remainder > 0 && zeros_u8 < hash.len() {
@@ -356,8 +356,8 @@ pub fn has_leading_zeros_ct(hash: &[u8], zeros: usize) -> subtle::Choice {
 
     let mut result = subtle::Choice::from(1);
 
-    for i in 0..zeros_u8.min(hash.len()) {
-        result &= subtle::Choice::from((hash[i] == 0) as u8);
+    for hash_byte in hash.iter().take(zeros_u8.min(hash.len())) {
+        result &= subtle::Choice::from((*hash_byte == 0) as u8);
     }
 
     if zeros_remainder > 0 && zeros_u8 < hash.len() {

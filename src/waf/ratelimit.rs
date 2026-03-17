@@ -323,9 +323,9 @@ impl RateLimiterManager {
         let hash = match ip {
             IpAddr::V4(ipv4) => {
                 let octets = ipv4.octets();
-                let hash = (octets[0] as u64) * 16777619u64
-                    ^ (octets[1] as u64) * 2166136261u64
-                    ^ (octets[2] as u64) ^ (octets[3] as u64) * 65536u64;
+                let hash = ((octets[0] as u64) * 16777619u64)
+                    ^ ((octets[1] as u64) * 2166136261u64)
+                    ^ ((octets[2] as u64) ^ ((octets[3] as u64) * 65536u64));
                 hash as usize
             }
             IpAddr::V6(ipv6) => {

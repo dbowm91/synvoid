@@ -14,7 +14,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::RwLock as TokioRwLock;
-use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct AdminRateLimiter {

@@ -6,7 +6,7 @@ use metrics::{gauge, histogram};
 use parking_lot::RwLock as PLRwLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::config::{SupervisorConfig, SupervisorConfigBuilder};
+use crate::config::SupervisorConfig;
 use crate::supervisor::worker::{Worker, WorkerId, WorkerStatus};
 use crate::supervisor::autoscaler::AutoScaler;
 use crate::RunningFlag;

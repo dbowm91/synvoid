@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 use nix::fcntl::{flock, FlockArg};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
