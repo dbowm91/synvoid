@@ -41,7 +41,7 @@ rkyv = []
 quinn-proto = { git = "https://github.com/quinn-rs/quinn", tag = "quinn-proto-0.11.14" }
 
 [workspace]
-members = [".", "pqc", "src/wasm_pow", "admin-ui", "examples/dynamic-plugin-example", "examples/embedded-app-example"]
+members = [".", "pqc", "src/wasm_pow", "admin-ui", "examples/dynamic-plugin-example", "examples/embedded-app-example", "fuzz"]
 
 [workspace.dependencies]
 tracing-subscriber = "0.3"
@@ -222,9 +222,10 @@ tonic-reflection = "0.12"
 tonic-build = "0.12"
 chrono = "0.4"
 
-# Windows-specific dependencies
-[target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Pipes", "Win32_System_IO"] }
+# Fuzzing
+[profile.dev]
+opt-level = 0
+debug = true
 
 [profile.release]
 lto = true
@@ -236,3 +237,4 @@ strip = true
 aes-gcm = "0.10.3"
 ahash = "0.8.12"
 async-trait = "0.1.89"
+libfuzzer-sys = "0.4"

@@ -2485,8 +2485,8 @@ impl MeshTransport {
         let mut org_mgr = self.org_manager.write();
         org_mgr.add_invitation(invitation);
 
-        tracing::warn!("Organization invitation stored for node {}: token = {} (expires at {})", 
-            invited_node_id, invitation_token, expires_at);
+        tracing::warn!("Organization invitation stored for node {} (expires at {})", 
+            invited_node_id, expires_at);
     }
 
     async fn handle_org_invitation_accept(

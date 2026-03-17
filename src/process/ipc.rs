@@ -592,6 +592,134 @@ pub enum Message {
     },
 }
 
+const MAX_STRING_LENGTH: usize = 64 * 1024;
+const MAX_PATH_LENGTH: usize = 4096;
+
+#[derive(Debug)]
+pub struct IpcValidationError {
+    pub field: String,
+    pub message: String,
+}
+
+impl std::fmt::Display for IpcValidationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "IPC validation error in {}: {}",
+            self.field, self.message
+        )
+    }
+}
+
+impl std::error::Error for IpcValidationError {}
+
+impl Message {
+    pub fn validate(&self) -> Result<(), IpcValidationError> {
+        match self {
+            Message::WorkerError { error, .. } if error.len() > MAX_STRING_LENGTH => {
+                Err(IpcValidationError {
+                    field: "WorkerError.error".into(),
+                    message: format!("{} > {}", error.len(), MAX_STRING_LENGTH),
+                })
+            }
+            Message::MasterConfigReload { config_path } if config_path.len() > MAX_PATH_LENGTH => {
+                Err(IpcValidationError {
+                    field: "MasterConfigReload.config_path".into(),
+                    message: format!("{} > {}", config_path.len(), MAX_PATH_LENGTH),
+                })
+            }
+            Message::ThreatIndicatorAnnounce {
+                indicator_value,
+                reason,
+                site_scope,
+                ..
+            } => {
+                if indicator_value.len() > MAX_STRING_LENGTH {
+                    return Err(IpcValidationError {
+                        field: "indicator_value".into(),
+                        message: "too long".into(),
+                    });
+                }
+                if reason.len() > MAX_STRING_LENGTH {
+                    return Err(IpcValidationError {
+                        field: "reason".into(),
+                        message: "too long".into(),
+                    });
+                }
+                if site_scope.len() > MAX_STRING_LENGTH {
+                    return Err(IpcValidationError {
+                        field: "site_scope".into(),
+                        message: "too long".into(),
+                    });
+                }
+                Ok(())
+            }
+            Message::ThreatIndicatorFromMesh {
+                indicator_value,
+                reason,
+                site_scope,
+                ..
+            } => {
+                if indicator_value.len() > MAX_STRING_LENGTH {
+                    return Err(IpcValidationError {
+                        field: "indicator_value".into(),
+                        message: "too long".into(),
+                    });
+                }
+                if reason.len() > MAX_STRING_LENGTH {
+                    return Err(IpcValidationError {
+                        field: "reason".into(),
+                        message: "too long".into(),
+                    });
+                }
+                if site_scope.len() > MAX_STRING_LENGTH {
+                    return Err(IpcValidationError {
+                        field: "site_scope".into(),
+                        message: "too long".into(),
+                    });
+                }
+                Ok(())
+            }
+            Message::OverseerDualMasterPrepare {
+                binary_path,
+                config_path,
+                ..
+            } => {
+                if binary_path.len() > MAX_PATH_LENGTH {
+                    return Err(IpcValidationError {
+                        field: "binary_path".into(),
+                        message: "too long".into(),
+                    });
+                }
+                if let Some(cp) = config_path {
+                    if cp.len() > MAX_PATH_LENGTH {
+                        return Err(IpcValidationError {
+                            field: "config_path".into(),
+                            message: "too long".into(),
+                        });
+                    }
+                }
+                Ok(())
+            }
+            Message::SocketHandoffRequest { socket_path }
+                if socket_path.len() > MAX_PATH_LENGTH =>
+            {
+                Err(IpcValidationError {
+                    field: "socket_path".into(),
+                    message: "too long".into(),
+                })
+            }
+            Message::SocketHandoffFailed { error } if error.len() > MAX_STRING_LENGTH => {
+                Err(IpcValidationError {
+                    field: "error".into(),
+                    message: "too long".into(),
+                })
+            }
+            _ => Ok(()),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum UpgradeModePayload {
     ReusePort,

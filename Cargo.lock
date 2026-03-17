@@ -3737,6 +3737,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "libfuzzer-sys"
+version = "0.4.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f12a681b7dd8ce12bff52488013ba614b869148d54dd79836ab85aafdd53f08d"
+dependencies = [
+ "arbitrary",
+ "cc",
+]
+
+[[package]]
 name = "libinjectionrs"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4024,6 +4034,7 @@ dependencies = [
  "ipnetwork 0.18.0",
  "isbot",
  "libc",
+ "libfuzzer-sys",
  "libinjectionrs",
  "libloading",
  "lightningcss",
@@ -4089,12 +4100,21 @@ dependencies = [
  "wasmtime 36.0.6",
  "wasmtime-wasi",
  "webpki-roots 0.26.11",
- "windows-sys 0.59.0",
  "x25519-dalek",
  "x509-parser 0.16.0",
  "yara-x",
  "zeroize",
  "zip 2.4.2",
+]
+
+[[package]]
+name = "maluwaf-fuzz"
+version = "0.0.0"
+dependencies = [
+ "http 1.4.0",
+ "libfuzzer-sys",
+ "maluwaf",
+ "postcard",
 ]
 
 [[package]]

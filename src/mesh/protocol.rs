@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use subtle::ConstantTimeEq;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ArcStr(Arc<str>);
@@ -155,14 +156,7 @@ impl MeshMessageSigner {
 }
 
 fn constant_time_compare(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut diff = 0u8;
-    for (x, y) in a.iter().zip(b.iter()) {
-        diff |= x ^ y;
-    }
-    diff == 0
+    a.ct_eq(b).into()
 }
 
 #[derive(Clone)]

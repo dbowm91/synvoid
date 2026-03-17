@@ -105,6 +105,8 @@ pub struct Http3Config {
     pub host_v6: Option<String>,
     #[serde(default = "default_alt_svc_max_age")]
     pub alt_svc_max_age: u64,
+    #[serde(default = "default_http3_max_request_size")]
+    pub max_request_size: usize,
 }
 
 fn default_http3_port() -> u16 {
@@ -113,6 +115,10 @@ fn default_http3_port() -> u16 {
 
 fn default_alt_svc_max_age() -> u64 {
     86400
+}
+
+fn default_http3_max_request_size() -> usize {
+    10 * 1024 * 1024 // 10MB default for HTTP/3
 }
 
 #[derive(Debug, Clone)]

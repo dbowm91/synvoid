@@ -81,6 +81,7 @@ impl Http3Server {
         let router = self.router.clone();
         let waf = self.waf.clone();
         let flood_protector = self.flood_protector.clone();
+        let max_request_size = self.config.max_request_size;
         
         loop {
             tokio::select! {
@@ -90,8 +91,9 @@ impl Http3Server {
                             let router = router.clone();
                             let waf = waf.clone();
                             let flood_protector = flood_protector.clone();
+                            let max_request_size = max_request_size;
                             tokio::spawn(async move {
-                                if let Err(e) = Self::handle_quic_connection(conn, router, waf, flood_protector).await {
+                                if let Err(e) = Self::handle_quic_connection(conn, router, waf, flood_protector, max_request_size).await {
                                     tracing::debug!("HTTP/3 connection error: {}", e);
                                 }
                             });
@@ -119,6 +121,7 @@ impl Http3Server {
         router: Arc<Router>,
         waf: Arc<WafCore>,
         flood_protector: Option<Arc<FloodProtector>>,
+        max_request_size: usize,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let connection = incoming.await
             .map_err(|e| {
@@ -161,9 +164,10 @@ impl Http3Server {
                 Ok(Some(resolver)) => {
                     let router = router.clone();
                     let waf = waf.clone();
+                    let max_request_size = max_request_size;
                     let _flood_protector = flood_protector.clone();
                     tokio::spawn(async move {
-                        if let Err(e) = Self::handle_request(resolver, remote_addr, router, waf).await {
+                        if let Err(e) = Self::handle_request(resolver, remote_addr, router, waf, max_request_size).await {
                             tracing::debug!("HTTP/3 request error: {}", e);
                         }
                     });
@@ -189,6 +193,7 @@ impl Http3Server {
         remote_addr: SocketAddr,
         router: Arc<Router>,
         waf: Arc<WafCore>,
+        max_request_size: usize,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let start = Instant::now();
         
@@ -241,7 +246,7 @@ impl Http3Server {
             .and_then(|v| v.to_str().ok())
             .map(String::from);
 
-        let max_body_size = 10 * 1024 * 1024;
+        let max_body_size = max_request_size;
         let mut body_bytes = Vec::new();
         while let Ok(Some(chunk)) = request_stream.recv_data().await {
             use bytes::Buf;

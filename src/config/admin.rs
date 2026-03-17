@@ -2,6 +2,12 @@ use serde::{Deserialize, Serialize};
 
 use super::validation::ConfigValidationError;
 
+const MIN_TOKEN_LENGTH: usize = 32;
+const WEAK_TOKEN_PATTERNS: &[&str] = &[
+    "changeme", "password", "admin", "123456", "qwerty", "letmein", "welcome", "monkey", "dragon",
+    "master",
+];
+
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
 pub struct AdminCorsConfig {
     #[serde(default)]
@@ -91,7 +97,34 @@ impl AdminConfig {
             });
         }
 
-        if self.token == "changeme" && self.token_env_var.is_none() {
+        let token = self.resolve_token();
+
+        if token.len() < MIN_TOKEN_LENGTH {
+            return Err(ConfigValidationError {
+                field: "admin.token".to_string(),
+                message: format!(
+                    "Admin token must be at least {} characters for security. Generated token: {}",
+                    MIN_TOKEN_LENGTH,
+                    Self::generate_token()
+                ),
+            });
+        }
+
+        let token_lower = token.to_lowercase();
+        for pattern in WEAK_TOKEN_PATTERNS {
+            if token_lower.contains(pattern) {
+                return Err(ConfigValidationError {
+                    field: "admin.token".to_string(),
+                    message: format!(
+                        "Admin token contains weak pattern '{}'. Use a cryptographically random token. Generated token: {}",
+                        pattern,
+                        Self::generate_token()
+                    ),
+                });
+            }
+        }
+
+        if token == "changeme" && self.token_env_var.is_none() {
             tracing::warn!("Admin token is still set to default 'changeme'. Set admin.token or admin.token_env_var for production.");
         }
 

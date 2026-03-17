@@ -101,18 +101,24 @@ struct MasterState {
     upstream_error_tracker: Option<Arc<UpstreamErrorTracker>>,
     threat_level_manager: Option<Arc<ThreatLevelManager>>,
     rule_feed_manager: Option<Arc<RuleFeedManagerForWaf>>,
+    #[allow(dead_code)]
     block_store: Arc<BlockStore>,
     mesh_transport: Option<Arc<maluwaf::mesh::transport::MeshTransport>>,
+}
+
+#[derive(Clone)]
+struct MasterStateTrackers {
+    probe_tracker: Option<Arc<ProbeTracker>>,
+    suspicious_word_tracker: Option<Arc<SuspiciousWordTracker>>,
+    upstream_error_tracker: Option<Arc<UpstreamErrorTracker>>,
+    threat_level_manager: Option<Arc<ThreatLevelManager>>,
+    rule_feed_manager: Option<Arc<RuleFeedManagerForWaf>>,
 }
 
 impl MasterState {
     fn new(
         config: Arc<RwLock<ConfigManager>>,
-        probe_tracker: Option<Arc<ProbeTracker>>,
-        suspicious_word_tracker: Option<Arc<SuspiciousWordTracker>>,
-        upstream_error_tracker: Option<Arc<UpstreamErrorTracker>>,
-        threat_level_manager: Option<Arc<ThreatLevelManager>>,
-        rule_feed_manager: Option<Arc<RuleFeedManagerForWaf>>,
+        trackers: MasterStateTrackers,
         block_store: Arc<BlockStore>,
         mesh_transport: Option<Arc<maluwaf::mesh::transport::MeshTransport>>,
     ) -> Self {
@@ -121,11 +127,11 @@ impl MasterState {
         Self {
             config,
             shutdown_tx,
-            probe_tracker,
-            suspicious_word_tracker,
-            upstream_error_tracker,
-            threat_level_manager,
-            rule_feed_manager,
+            probe_tracker: trackers.probe_tracker,
+            suspicious_word_tracker: trackers.suspicious_word_tracker,
+            upstream_error_tracker: trackers.upstream_error_tracker,
+            threat_level_manager: trackers.threat_level_manager,
+            rule_feed_manager: trackers.rule_feed_manager,
             block_store,
             mesh_transport,
         }
@@ -237,12 +243,12 @@ fn print_test_mode_warning(test_flags: &[String]) {
         disabled.join(", ")
     };
 
-    eprintln!("");
+    eprintln!();
     eprintln!("WARNING: TEST MODE ENABLED");
     eprintln!("  Protections DISABLED: {}", disabled_str);
     eprintln!("  This mode is intended for throughput/capacity testing only.");
     eprintln!("  DO NOT use in production.");
-    eprintln!("");
+    eprintln!();
 }
 
 fn main() {
@@ -259,7 +265,7 @@ fn main() {
 
     if args.export_openapi {
         use maluwaf::admin::openapi::ApiDoc;
-        let spec: utoipa::openapi::OpenApi = ApiDoc::default().into();
+        let spec: utoipa::openapi::OpenApi = ApiDoc.into();
         println!("{}", serde_json::to_string_pretty(&spec).unwrap_or_default());
         std::process::exit(0);
     }
@@ -618,7 +624,7 @@ async fn run_master(
 
     // Create BlockStore for persistent blocklist management in Master
     let data_dir = main_config.persistence.data_dir.as_ref()
-        .map(|d| PathBuf::from(d));
+        .map(PathBuf::from);
     let master_block_store = Arc::new(BlockStore::new(
         true, // enabled
         data_dir,
@@ -641,13 +647,15 @@ async fn run_master(
 
     let master_state = MasterState::new(
         shared_config.clone(),
-        None, // probe_tracker - obtained from workers via IPC in production
-        None, // suspicious_word_tracker - obtained from workers via IPC
-        None, // upstream_error_tracker - obtained from workers via IPC
-        None, // threat_level_manager - obtained from workers via IPC
-        rule_feed_manager.clone(), // rule_feed_manager - initialized above
+        MasterStateTrackers {
+            probe_tracker: None,
+            suspicious_word_tracker: None,
+            upstream_error_tracker: None,
+            threat_level_manager: None,
+            rule_feed_manager: rule_feed_manager.clone(),
+        },
         master_block_store,
-        None, // mesh_transport - will be set when mesh is initialized
+        None,
     );
 
     let paths = PlatformPaths::new();
