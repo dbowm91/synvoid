@@ -488,94 +488,94 @@ impl HttpsServer {
                 let use_cache = cache_config.map(|c| c.enable.unwrap_or(false)).unwrap_or(false);
                 
                 if use_cache {
-                    let site_id = target.site_id.to_string();
-                    let proxy_servers_lock = proxy_servers.read().await;
-                    
-                    let proxy_server = if let Some(existing) = proxy_servers_lock.get(&site_id) {
-                        Some(existing.clone())
-                    } else {
-                        drop(proxy_servers_lock);
-                        let settings = ProxyCacheSettings::from_config(
-                            cache_config.unwrap().enable,
-                            cache_config.unwrap().path.clone(),
-                            cache_config.unwrap().max_size.clone(),
-                            cache_config.unwrap().inactive,
-                            cache_config.unwrap().use_temp_file.clone(),
-                            cache_config.unwrap().valid_status.clone(),
-                            cache_config.unwrap().methods.clone(),
-                            cache_config.unwrap().use_stale.clone(),
-                            cache_config.unwrap().min_uses,
-                            cache_config.unwrap().key.clone(),
-                            cache_config.unwrap().vary_by.clone(),
-                            cache_config.unwrap().memory_max.clone(),
-                            cache_config.unwrap().disk_max.clone(),
-                            cache_config.unwrap().stale_while_revalidate,
-                            cache_config.unwrap().stale_if_error,
-                        );
-
-                        let cache = Arc::new(ProxyCache::new(settings));
-                        let ps = ProxyServer::new(
-                            target.upstream.to_string(),
-                            waf.clone(),
-                            main_config.proxy_limits.max_response_size,
-                            waf.upstream_error_tracker.clone(),
-                            site_id.clone(),
-                        ).with_cache(cache);
-
-                        let ps = Arc::new(ps);
-                        let mut proxy_servers_lock = proxy_servers.write().await;
-                        proxy_servers_lock.insert(site_id, ps.clone());
-                        Some(ps)
-                    };
-
-                    if let Some(proxy_server) = proxy_server {
-                        match proxy_server.handle_request_with_cache(
-                        method.clone(),
-                        &path,
-                        &host,
-                        &parts.headers,
-                        "https",
-                    ).await {
-                        Ok(resp) => {
-                            let (parts, body) = resp.into_parts();
-                            let status = parts.status.as_u16();
-                            let body_bytes = Bytes::from(body);
-                            
-                            let headers_to_filter = build_headers_to_filter(
-                                &main_config.security.more_clear_headers,
-                                &target.site_config.security.more_clear_headers.iter()
-                                    .chain(target.site_config.security_headers.more_clear_headers.iter())
-                                    .cloned()
-                                    .collect::<Vec<_>>(),
+                    if let Some(cache_cfg) = cache_config {
+                        let site_id = target.site_id.to_string();
+                        let proxy_servers_lock = proxy_servers.read().await;
+                        
+                        let proxy_server = if let Some(existing) = proxy_servers_lock.get(&site_id) {
+                            Some(existing.clone())
+                        } else {
+                            drop(proxy_servers_lock);
+                            let settings = ProxyCacheSettings::from_config(
+                                cache_cfg.enable,
+                                cache_cfg.path.clone(),
+                                cache_cfg.max_size.clone(),
+                                cache_cfg.inactive,
+                                cache_cfg.use_temp_file.clone(),
+                                cache_cfg.valid_status.clone(),
+                                cache_cfg.methods.clone(),
+                                cache_cfg.use_stale.clone(),
+                                cache_cfg.min_uses,
+                                cache_cfg.key.clone(),
+                                cache_cfg.vary_by.clone(),
+                                cache_cfg.memory_max.clone(),
+                                cache_cfg.disk_max.clone(),
+                                cache_cfg.stale_while_revalidate,
+                                cache_cfg.stale_if_error,
                             );
-                            let filtered_headers = filter_response_headers(&parts.headers, &headers_to_filter);
-                            
-                            let mut builder = Response::builder().status(status);
-                            for (key, value) in filtered_headers {
-                                builder = builder.header(&key, &value);
+
+                            let cache = Arc::new(ProxyCache::new(settings));
+                            let ps = ProxyServer::new(
+                                target.upstream.to_string(),
+                                waf.clone(),
+                                main_config.proxy_limits.max_response_size,
+                                waf.upstream_error_tracker.clone(),
+                                site_id.clone(),
+                            ).with_cache(cache);
+
+                            let ps = Arc::new(ps);
+                            let mut proxy_servers_lock = proxy_servers.write().await;
+                            proxy_servers_lock.insert(site_id, ps.clone());
+                            Some(ps)
+                        };
+
+                        if let Some(proxy_server) = proxy_server {
+                            match proxy_server.handle_request_with_cache(
+                                method.clone(),
+                                &path,
+                                &host,
+                                &parts.headers,
+                                "https",
+                            ).await {
+                                Ok(resp) => {
+                                    let (parts, body) = resp.into_parts();
+                                    let status = parts.status.as_u16();
+                                    let body_bytes = Bytes::from(body);
+                                    
+                                    let headers_to_filter = build_headers_to_filter(
+                                        &main_config.security.more_clear_headers,
+                                        &target.site_config.security.more_clear_headers.iter()
+                                            .chain(target.site_config.security_headers.more_clear_headers.iter())
+                                            .cloned()
+                                            .collect::<Vec<_>>(),
+                                    );
+                                    let filtered_headers = filter_response_headers(&parts.headers, &headers_to_filter);
+                                    
+                                    let mut builder = Response::builder().status(status);
+                                    for (key, value) in filtered_headers {
+                                        builder = builder.header(&key, &value);
+                                    }
+                                    
+                                    if target.site_config.security_headers.enabled.unwrap_or(false) || main_config.security.global_security_headers {
+                                        builder = inject_security_headers(builder, &target.site_config.security_headers);
+                                    }
+                                    
+                                    if target.site_config.security_headers.date_header.unwrap_or(true) {
+                                        let jitter = target.site_config.security_headers.date_jitter_seconds.unwrap_or(5);
+                                        builder = builder.header("Date", generate_stealth_timestamp(jitter));
+                                    }
+                                    
+                                    return Ok(builder
+                                        .body(Full::new(body_bytes))
+                                        .unwrap_or_else(|_| Self::build_response(500, "Internal Server Error".to_string(), "text/plain")));
+                                }
+                                Err(e) => {
+                                    tracing::error!("Proxy server error: {}", e);
+                                    return Ok(Self::build_response(502, "Bad Gateway".to_string(), "text/plain"));
+                                }
                             }
-                            
-                            if target.site_config.security_headers.enabled.unwrap_or(false) || main_config.security.global_security_headers {
-                                builder = inject_security_headers(builder, &target.site_config.security_headers);
-                            }
-                            
-                            if target.site_config.security_headers.date_header.unwrap_or(true) {
-                                let jitter = target.site_config.security_headers.date_jitter_seconds.unwrap_or(5);
-                                builder = builder.header("Date", generate_stealth_timestamp(jitter));
-                            }
-                            
-                            return Ok(builder
-                                .body(Full::new(body_bytes))
-                                .unwrap_or_else(|_| Self::build_response(500, "Internal Server Error".to_string(), "text/plain")));
-                        }
-                        Err(e) => {
-                            tracing::error!("Proxy server error: {}", e);
-                            return Ok(Self::build_response(502, "Bad Gateway".to_string(), "text/plain"));
                         }
                     }
-                } else {
-                    // Intentionally empty - falls through to non-cached request handling below
-                }
                 }
                 
                 let target_url = format!("{}{}", target.upstream, path);

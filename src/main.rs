@@ -11,6 +11,7 @@ use maluwaf::config::logging::LoggingConfig;
 use maluwaf::waf::{ProbeTracker, SuspiciousWordTracker, UpstreamErrorTracker, ThreatLevelManager, RuleFeedManagerForWaf};
 use maluwaf::block_store::BlockStore;
 use maluwaf::master::{handle_status, handle_stop, handle_rehash, handle_configtest, handle_generatetoken, handle_generatenewtoken, handle_worker_connection};
+use maluwaf::overseer::{OverseerProcess, OverseerConfig};
 use maluwaf::mime;
 use maluwaf::platform::fs::PlatformPaths;
 use maluwaf::process::{ProcessManager, ProcessManagerConfig, ProcessEvent, IpcEndpoint, PidFileManager};
@@ -51,6 +52,11 @@ struct Args {
 
     #[arg(long, value_name = "COUNT", help = "Number of tokio worker threads (for worker processes)")]
     worker_threads: Option<usize>,
+
+    // Internal: Used by Overseer to spawn Master process. Not for direct user invocation.
+    // The default behavior (no flags) runs the Overseer which spawns Master.
+    #[arg(long, hide = true)]
+    master: bool,
 
     #[arg(short, long, help = "Run in foreground (don't daemonize)")]
     foreground: bool,
@@ -431,7 +437,11 @@ fn main() {
             tracing::error!("Unified server worker error: {}", e);
             std::process::exit(1);
         }
-    } else {
+    // ============================================================================================
+    // INTERNAL: Master mode is invoked by the Overseer process.
+    // This is NOT for direct user invocation - use the default mode instead.
+    // ============================================================================================
+    } else if args.master {
         let master_panic_log = format!("{}/maluwaf-master-panic.log", std::env::temp_dir().display());
         setup_panic_handler("MASTER", Some(&master_panic_log));
 
@@ -446,8 +456,78 @@ fn main() {
 
         let main_config = config_manager.main.clone();
 
+        if main_config.mimes.enabled {
+            if let Some(ref mimes_file) = main_config.mimes.file {
+                match mime::init_mimes_from_file(mimes_file) {
+                    Ok(()) => {
+                        tracing::info!("Loaded MIME types from {}", mimes_file);
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to load MIME types from {}: {}, using defaults", mimes_file, e);
+                    }
+                }
+            }
+        }
+
+        let worker_threads = main_config.tokio.worker_threads;
+        tracing::info!("Starting RustWAF Master Process with {} worker threads", worker_threads);
+
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(worker_threads)
+            .enable_all()
+            .build()
+            .expect("Failed to build Tokio runtime");
+
+        let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            rt.block_on(run_master(config_manager, main_config, args.log_level.clone()))
+        }));
+
+        match result {
+            Ok(Ok(())) => {
+                tracing::info!("RustWAF master process exited cleanly");
+            }
+            Ok(Err(e)) => {
+                tracing::error!("RustWAF master process error: {}", e);
+                eprintln!("Error: {}", e);
+                eprintln!("Master process exiting due to error");
+                std::process::exit(1);
+            }
+            Err(panic_info) => {
+                tracing::error!("RustWAF master process panicked: {:?}", panic_info);
+                eprintln!("Master process panic: {:?}", panic_info);
+                eprintln!("Master process exiting due to panic");
+                std::process::exit(1);
+            }
+        }
+    } else {
+        // Default: Run as Overseer (parent of Master and Workers)
+        // This is the only supported mode for production deployments.
+        //
+        // Process hierarchy:
+        //   Overseer (this process) -> Master -> Workers
+        //
+        // The Overseer is responsible for:
+        //   - Spawning and monitoring the Master process
+        //   - Health checking and automatic restart
+        //   - Managing upgrades and rollbacks
+        //   - Daemonization (unless --foreground is set)
+
+        let overseer_panic_log = format!("{}/maluwaf-overseer-panic.log", std::env::temp_dir().display());
+        setup_panic_handler("OVERSEER", Some(&overseer_panic_log));
+
+        let config_dir = args.config_path.unwrap_or_else(|| PathBuf::from("config"));
+        let main_config_path = config_dir.join("main.toml");
+
+        let mut config_manager = ConfigManager::new(config_dir.clone());
+
+        if let Err(e) = config_manager.load_main(&main_config_path) {
+            eprintln!("Failed to load main.toml: {}, using defaults", e);
+        }
+
+        let main_config = config_manager.main.clone();
+
         // Load MIME types from file if enabled
-      if main_config.mimes.enabled {
+        if main_config.mimes.enabled {
             if let Some(ref mimes_file) = main_config.mimes.file {
                 match mime::init_mimes_from_file(mimes_file) {
                     Ok(()) => {
@@ -496,40 +576,54 @@ fn main() {
             }
         }
 
-        let worker_threads = main_config.tokio.worker_threads;
-        tracing::info!("Starting RustWAF Master Process with {} worker threads", worker_threads);
+        tracing::info!("Starting RustWAF Overseer Process");
 
-        let rt = match tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(worker_threads)
-            .enable_all()
-            .build()
-        {
-            Ok(rt) => rt,
-            Err(e) => {
-                eprintln!("Failed to build Tokio runtime: {}", e);
-                std::process::exit(1);
-            }
+        // Create OverseerConfig from main config
+        let overseer_config = OverseerConfig {
+            config_path: Some(config_dir.clone()),
+            auto_restart: main_config.overseer.auto_restart,
+            restart_delay_secs: main_config.overseer.restart_delay_secs,
+            max_restart_attempts: main_config.overseer.max_restart_attempts,
+            health_check_interval_secs: main_config.overseer.health_check_interval_secs,
+            stable_uptime_secs: main_config.overseer.stable_uptime_secs,
+            upgrade_validation_timeout_secs: main_config.overseer.upgrade_validation_timeout_secs,
+            upgrade_drain_timeout_secs: main_config.overseer.upgrade_drain_timeout_secs,
+            upgrade_health_check_retries: main_config.overseer.upgrade_health_check_retries,
+            upgrade_health_check_interval_secs: main_config.overseer.upgrade_health_check_interval_secs,
+            ipc_read_timeout_ms: main_config.overseer.ipc_read_timeout_ms,
+            ipc_write_timeout_ms: main_config.overseer.ipc_write_timeout_ms,
+            master_startup_timeout_secs: main_config.overseer.master_startup_timeout_secs,
         };
 
+        // Run the overseer (which spawns Master, which spawns Workers)
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .expect("Failed to build Tokio runtime");
+
         let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-            rt.block_on(run_master(config_manager, main_config, args.log_level.clone()))
+            rt.block_on(async {
+                let mut overseer = OverseerProcess::new(overseer_config)?;
+                overseer.run().await
+            })
         }));
 
         match result {
             Ok(Ok(())) => {
-                tracing::info!("RustWAF master process exited cleanly");
+                tracing::info!("RustWAF overseer process exited cleanly");
             }
             Ok(Err(e)) => {
-                tracing::error!("RustWAF master process error: {}", e);
+                tracing::error!("RustWAF overseer process error: {}", e);
                 eprintln!("Error: {}", e);
 
-                eprintln!("Master process exiting due to error");
+                eprintln!("Overseer process exiting due to error");
                 std::process::exit(1);
             }
             Err(panic_info) => {
-                tracing::error!("RustWAF master process panicked: {:?}", panic_info);
-                eprintln!("Master process panic: {:?}", panic_info);
-                eprintln!("Master process exiting due to panic");
+                tracing::error!("RustWAF overseer process panicked: {:?}", panic_info);
+                eprintln!("Overseer process panic: {:?}", panic_info);
+                eprintln!("Overseer process exiting due to panic");
                 std::process::exit(1);
             }
         }
@@ -700,10 +794,33 @@ async fn run_master(
             Ok(key_hex) => {
                 if key_hex.len() == 64 {
                     let mut key = [0u8; 32];
+                    let mut valid = true;
                     for (i, chunk) in key_hex.as_bytes().chunks(2).enumerate() {
-                        key[i] = u8::from_str_radix(std::str::from_utf8(chunk).unwrap(), 16).unwrap();
+                        if chunk.len() != 2 {
+                            valid = false;
+                            break;
+                        }
+                        let Ok(s) = std::str::from_utf8(chunk) else {
+                            valid = false;
+                            break;
+                        };
+                        match u8::from_str_radix(s, 16) {
+                            Ok(b) => key[i] = b,
+                            Err(_) => {
+                                valid = false;
+                                break;
+                            }
+                        }
                     }
-                    Some(key)
+                    if valid {
+                        Some(key)
+                    } else {
+                        tracing::error!("IPC session key from env {} contains invalid hex characters. Generate with: xxd -l 32 -p /dev/urandom", env_var);
+                        return Err(Box::new(std::io::Error::new(
+                            std::io::ErrorKind::InvalidInput,
+                            "Invalid IPC session key: must be valid hexadecimal",
+                        )));
+                    }
                 } else {
                     tracing::error!("IPC session key from env {} is not 64 hex chars. Generate with: xxd -l 32 -p /dev/urandom", env_var);
                     return Err(Box::new(std::io::Error::new(

@@ -149,6 +149,7 @@ impl DnsServer {
             truncated: false,
             recursion_desired: false,
             recursion_available: false,
+            authentic_data: false,
             response_code: 3, // NXDOMAIN
         };
 
@@ -700,6 +701,8 @@ pub struct DnsServer {
     anycast_manager: Option<Arc<super::anycast::AnycastSocketManager>>,
     mesh_transport: Option<Arc<crate::mesh::transport::MeshTransport>>,
     zone_sync: Option<Arc<super::anycast_sync::AnycastZoneSync>>,
+    #[allow(dead_code)]
+    recursive_server: Option<Arc<super::recursive::RecursiveDnsServer>>,
 }
 
 impl Clone for DnsServer {
@@ -734,6 +737,7 @@ impl Clone for DnsServer {
             anycast_manager: None, // Cannot clone - requires re-initialization
             mesh_transport: None, // Cannot clone - requires re-initialization
             zone_sync: None, // Cannot clone - requires re-initialization
+            recursive_server: None, // Cannot clone - requires re-initialization
         }
     }
 }
@@ -798,10 +802,15 @@ impl DnsServer {
             let key_name = format!("ksk.{}", config.dnssec.domain);
             
             if !key_path.exists() {
-                std::fs::create_dir_all(&key_path).unwrap();
-                let rsa_key_size = 2048;
-                let validity_days = 30;
-                manager.generate_key(algorithm, key_type, rsa_key_size, validity_days).unwrap();
+                if let Err(e) = std::fs::create_dir_all(&key_path) {
+                    tracing::error!("Failed to create DNSSEC key directory {}: {}", key_path.display(), e);
+                } else {
+                    let rsa_key_size = 2048;
+                    let validity_days = 30;
+                    if let Err(e) = manager.generate_key(algorithm, key_type, rsa_key_size, validity_days) {
+                        tracing::error!("Failed to generate DNSSEC key: {}", e);
+                    }
+                }
             }
 
             (Some(Arc::new(RwLock::new(manager))), Some(key_name))
@@ -946,6 +955,7 @@ impl DnsServer {
             anycast_manager: None,
             mesh_transport: None,
             zone_sync: None,
+            recursive_server: None,
         }
     }
 
@@ -1229,6 +1239,10 @@ impl DnsServer {
             }
         }
 
+        if self.config.recursive.enabled {
+            self.start_recursive_server().await?;
+        }
+
         if let Some(ref coalescer) = self.query_coalescer {
             Self::start_coalescer_cleanup_task(
                 Some(coalescer),
@@ -1242,6 +1256,35 @@ impl DnsServer {
             self.start_standard_mode().await?;
         }
         
+        Ok(())
+    }
+
+    async fn start_recursive_server(&mut self) -> Result<(), String> {
+        tracing::info!(
+            "Starting recursive DNS server on {}:{}",
+            self.config.recursive.bind_address,
+            self.config.recursive.port
+        );
+
+        let rate_limiter = self.rate_limiter.clone();
+        let metrics = None;
+
+        let recursive_server = super::recursive::RecursiveDnsServer::new(
+            self.config.recursive.clone(),
+            rate_limiter,
+            None,
+            metrics,
+        )
+        .await
+        .map_err(|e| format!("Failed to create recursive DNS server: {}", e))?;
+
+        let server = Arc::new(recursive_server);
+        let server_clone = server.clone();
+        server_clone.start().await
+            .map_err(|e| format!("Failed to start recursive DNS server: {}", e))?;
+
+        self.recursive_server = Some(server);
+
         Ok(())
     }
 
@@ -4549,6 +4592,11 @@ update_handler_udp.as_ref(),
     }
 
     pub fn shutdown(&mut self) {
+        if let Some(ref server) = self.recursive_server {
+            server.stop();
+            tracing::info!("Recursive DNS server stopped");
+        }
+        
         if let Some(tx) = self.shutdown_tx.take() {
             let _ = tx.send(());
         }

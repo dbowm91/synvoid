@@ -249,6 +249,7 @@ mod tests {
             truncated: false,
             recursion_desired: false,
             recursion_available: false,
+            authentic_data: false,
             response_code: 0,
         };
 
@@ -678,6 +679,7 @@ mod tests {
     fn test_anycast_serial_wrap_around() {
         use maluwaf::dns::anycast_sync::AnycastZoneSync;
         use maluwaf::dns::anycast_sync::SerialComparison;
+        use maluwaf::dns::anycast_sync::ZoneSyncDecision;
 
         let local = u32::MAX - 100;
         let remote = 50u32;

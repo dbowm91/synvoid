@@ -22,17 +22,17 @@ use crate::tunnel::udp_manager::{UdpTunnelManager, UdpTunnelConfig};
 use crate::buffer::BufferPool;
 use crate::metrics::bandwidth::{get_global_bandwidth_tracker, BandwidthProtocol, EgressDirection};
 
-static UDP_TUNNEL_MANAGER: Lazy<std::sync::RwLock<Option<Arc<UdpTunnelManager>>>> = 
-    Lazy::new(|| std::sync::RwLock::new(None));
+static UDP_TUNNEL_MANAGER: Lazy<parking_lot::RwLock<Option<Arc<UdpTunnelManager>>>> = 
+    Lazy::new(|| parking_lot::RwLock::new(None));
 
 pub fn init_udp_tunnel_manager(config: UdpTunnelConfig) {
     let manager = Arc::new(UdpTunnelManager::new(config));
-    let mut guard = UDP_TUNNEL_MANAGER.write().unwrap();
+    let mut guard = UDP_TUNNEL_MANAGER.write();
     *guard = Some(manager);
 }
 
 pub fn get_udp_tunnel_manager() -> Option<Arc<UdpTunnelManager>> {
-    let guard = UDP_TUNNEL_MANAGER.read().unwrap();
+    let guard = UDP_TUNNEL_MANAGER.read();
     guard.clone()
 }
 

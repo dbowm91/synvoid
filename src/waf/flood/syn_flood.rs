@@ -3,8 +3,9 @@
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use std::sync::RwLock;
 use std::time::Instant;
+
+use parking_lot::RwLock;
 
 use super::FloodDecision;
 use crate::utils::ip_to_slot;
@@ -87,7 +88,7 @@ impl SynFloodProtector {
 
     pub fn register_half_open(&self, ip: IpAddr) {
         {
-            let mut map = self.half_open_ips.write().unwrap();
+            let mut map = self.half_open_ips.write();
 
             if map.len() >= MAX_HALF_OPEN_ENTRIES {
                 metrics::counter!("maluwaf.syn_flood.half_open_map_full").increment(1);
@@ -119,7 +120,7 @@ impl SynFloodProtector {
         let mut should_decrement = false;
 
         {
-            let mut map = self.half_open_ips.write().unwrap();
+            let mut map = self.half_open_ips.write();
             if let Some(entry) = map.get_mut(&ip) {
                 if entry.count > 0 {
                     entry.count -= 1;
@@ -174,7 +175,7 @@ impl SynFloodProtector {
     }
 
     fn cleanup_stale_half_opens(&self) {
-        let mut map = self.half_open_ips.write().unwrap();
+        let mut map = self.half_open_ips.write();
         let now = Instant::now();
         let stale_threshold = std::time::Duration::from_secs(120);
 
@@ -202,7 +203,7 @@ impl SynFloodProtector {
         SynFloodStats {
             global_syn_rate: self.global_counter.load(Ordering::Relaxed),
             half_open_connections: self.half_open_total.load(Ordering::Relaxed),
-            unique_half_open_ips: self.half_open_ips.read().unwrap().len(),
+            unique_half_open_ips: self.half_open_ips.read().len(),
         }
     }
 }

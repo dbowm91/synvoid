@@ -267,11 +267,11 @@ impl PeerContact {
         };
 
         let ip = &self.address;
-        if ip.parse::<std::net::IpAddr>().is_err() {
+        let Ok(ip_addr) = ip.parse::<std::net::IpAddr>() else {
             return;
-        }
+        };
 
-        let location_info = lookup.lookup_location_info(ip.parse().unwrap());
+        let location_info = lookup.lookup_location_info(ip_addr);
 
         if let Some(info) = location_info {
             self.geo = Some(GeoInfo::from(info));

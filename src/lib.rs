@@ -59,7 +59,6 @@ pub mod honeypot_port;
 #[cfg(feature = "icmp-filter")]
 pub mod icmp_filter;
 
-#[cfg(feature = "dns")]
 pub mod dns;
 
 pub use config::ConfigManager;

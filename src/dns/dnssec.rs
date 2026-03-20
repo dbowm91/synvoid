@@ -13,7 +13,7 @@ use std::result::Result;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use ed25519_dalek::{Signer, SigningKey};
-use sha2::{Digest, Sha256};
+use sha2::{Digest, Sha256, Sha384};
 
 use super::crypto_rng;
 
@@ -180,7 +180,7 @@ impl DnsSecKeyManager {
         dnskey_rdata.push(key.algorithm.to_u8());
         dnskey_rdata.extend_from_slice(&key.public_key);
 
-        use sha2::{Digest, Sha256};
+        use sha2::{Digest, Sha256, Sha384};
         let mut hasher = Sha256::new();
         hasher.update(&dnskey_rdata);
         let digest = hasher.finalize();
@@ -1203,6 +1203,7 @@ pub fn find_next_name_in_zone(zone: &super::server::Zone, current_name: &str) ->
 pub enum DsDigestType {
     Sha1 = 1,
     Sha256 = 2,
+    Sha384 = 4,
 }
 
 impl DsDigestType {
@@ -1210,6 +1211,7 @@ impl DsDigestType {
         match self {
             DsDigestType::Sha1 => 1,
             DsDigestType::Sha256 => 2,
+            DsDigestType::Sha384 => 4,
         }
     }
 
@@ -1217,9 +1219,66 @@ impl DsDigestType {
         match value {
             1 => Some(DsDigestType::Sha1),
             2 => Some(DsDigestType::Sha256),
+            4 => Some(DsDigestType::Sha384),
             _ => None,
         }
     }
+}
+
+pub fn compute_dnskey_canonical(
+    flags: u16,
+    protocol: u8,
+    algorithm: u8,
+    public_key: &[u8],
+) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(4 + public_key.len());
+    buf.extend_from_slice(&flags.to_be_bytes());
+    buf.push(protocol);
+    buf.push(algorithm);
+    buf.extend_from_slice(public_key);
+    buf
+}
+
+pub fn compute_ds_digest(
+    digest_type: u8,
+    flags: u16,
+    protocol: u8,
+    algorithm: u8,
+    public_key: &[u8],
+) -> Result<Vec<u8>, String> {
+    let canonical = compute_dnskey_canonical(flags, protocol, algorithm, public_key);
+
+    match digest_type {
+        1 => {
+            use sha1::Sha1;
+            let mut hasher = Sha1::new();
+            hasher.update(&canonical);
+            Ok(hasher.finalize().to_vec())
+        }
+        2 => {
+            let mut hasher = Sha256::new();
+            hasher.update(&canonical);
+            Ok(hasher.finalize().to_vec())
+        }
+        4 => {
+            let mut hasher = Sha384::new();
+            hasher.update(&canonical);
+            Ok(hasher.finalize().to_vec())
+        }
+        _ => Err(format!("Unsupported DS digest type: {}", digest_type)),
+    }
+}
+
+pub fn verify_ds_digest(
+    digest_type: u8,
+    flags: u16,
+    protocol: u8,
+    algorithm: u8,
+    public_key: &[u8],
+    expected_digest: &[u8],
+) -> Result<bool, String> {
+    let computed = compute_ds_digest(digest_type, flags, protocol, algorithm, public_key)?;
+    Ok(computed == expected_digest)
 }
 
 pub fn create_ds_record(
@@ -1240,6 +1299,11 @@ pub fn create_ds_record(
         }
         DsDigestType::Sha256 => {
             let mut hasher = Sha256::new();
+            hasher.update(&key.public_key);
+            hasher.finalize().to_vec()
+        }
+        DsDigestType::Sha384 => {
+            let mut hasher = Sha384::new();
             hasher.update(&key.public_key);
             hasher.finalize().to_vec()
         }

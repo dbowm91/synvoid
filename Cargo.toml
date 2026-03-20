@@ -19,7 +19,7 @@ name = "server"
 path = "src/bin/server.rs"
 
 [features]
-default = ["socket-handoff", "post-quantum", "mesh"]
+default = ["socket-handoff", "post-quantum", "mesh", "dns"]
 dns = []
 socket-handoff = []
 daemonize = []
@@ -103,8 +103,9 @@ unicode-normalization = "0.1"
 libinjectionrs = "0.1"
 
 # DNS support
-hickory-proto = "0.25"
+hickory-proto = { version = "0.25", features = ["dnssec-ring", "text-parsing"] }
 hickory-resolver = { version = "0.25", features = ["system-config"] }
+hickory-recursor = { version = "0.25", features = ["dnssec-ring"] }
 dns-parser = "0.8"
 thiserror = { version = "2", package = "thiserror" }
 getrandom = { version = "0.2", features = ["std"] }

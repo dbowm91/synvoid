@@ -34,6 +34,8 @@ pub mod metrics;
 pub mod platform;
 pub mod qname;
 pub mod query_validator;
+pub mod recursive;
+pub mod recursive_cache;
 pub mod resolver;
 pub mod rpz;
 pub mod secure_server;
@@ -46,6 +48,7 @@ pub mod notify;
 pub mod wire;
 pub mod zone_file;
 pub mod query_coalesce;
+pub mod trust_anchor;
 pub mod zone_trie;
 
 pub use wire::{
@@ -62,8 +65,11 @@ pub use wire::{
 pub use dns64::{Dns64Config, Dns64Translator};
 pub use dnssec::{DnsSecKeyManager, KeyRotationConfig, KeyRotationResult, KeyInfo, DnsSecKeyStatus, Algorithm, KeyType, ZoneSigningKey};
 pub use cache::{CacheKey, CacheStats, CachedResponse, DnsCache, SecureDnsCache, CachePoisoningError};
+pub use recursive::{RecursiveDnsServer, RecursiveDnsError, RecursiveDnsResult};
+pub use recursive_cache::{RecursiveDnsCache, RecursiveCacheKey, RecursiveCacheStats, CacheEntry, PositiveCacheEntry, NegativeCacheEntry, CachedRecord, RecursiveRecordType};
 pub use cookie::{DnsCookieServer, build_cookie_option};
 pub use config::DnsSettings;
+pub use crate::config::dns::{RecursiveDnsConfig, RecursiveCacheConfig, RecursiveUpstreamServer, RecursiveUpstreamProvider};
 pub use firewall::{DnsFirewall, DnsFirewallDecision, DnsFirewallRule, DnsFirewallRuleType, DnsFirewallStats, DnsFirewallAction};
 pub use limits::{ConnectionLimitError, ConnectionLimits, ConnectionStats};
 pub use hsm::{HsmManager, HsmSigner, HsmError, HsmBackend, Pkcs11Hsm, SoftHsm};
@@ -72,7 +78,8 @@ pub use messages::{DnsHealthUpdate, DnsRegistration, DnsRegistrationRequest, Dns
 pub use metrics::{DnsMetrics, DnsMetricsSummary, DnsSecurityEvent, DnsSecurityEventSeverity, DnsSecurityEventType, DnsSecurityLogger};
 pub use qname::{QnameMinimizer, RebindingChecker};
 pub use query_validator::{DnsQueryClass, DnsQueryType, DnsQueryValidator};
-pub use resolver::{DnsResolver, HickoryResolver, NoopResolver, TxtRecord, NsRecord, ResolverError, ResolverResult};
+pub use resolver::{DnsResolver, HickoryResolver, HickoryRecursor, NoopResolver, TxtRecord, NsRecord, ResolverError, ResolverResult, DnsKeyRecord, CdsRecord, Rfc5011CheckResult};
+pub use trust_anchor::{TrustAnchorManager, TrustAnchorConfig, TrustAnchorStatus, TrustAnchorState, Rfc5011Event};
 pub use rpz::{RpzAction, RpzManager, RpzPolicy, RpzZone};
 pub use server::{DnsRateLimiter, DnsServer, DnsZoneRecord, DsRecordExport, RecordType, Zone};
 pub use store::ZoneStore;

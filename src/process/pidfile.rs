@@ -71,7 +71,7 @@ impl PidFileManager {
         let socket_path = self.socket_file_path().to_string_lossy().to_string();
         let started_at = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs();
 
         let content = PidFileContent {
@@ -148,7 +148,7 @@ impl PidFileManager {
         let socket_path = self.socket_file_path().to_string_lossy().to_string();
         let started_at = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs();
 
         let content = PidFileContent {
@@ -161,12 +161,7 @@ impl PidFileManager {
         let json = serde_json::to_string_pretty(&content)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
 
-        file.write_all(json.as_bytes())?;
-        file.flush()?;
-
-        // Keep the file open to hold the lock until process exits
-        self.lock_file = Some(file);
-
+        self.atomic_write(&self.pid_file_path(), json.as_bytes())?;
         Ok(true)
     }
 
@@ -200,7 +195,7 @@ impl PidFileManager {
         let socket_path = self.socket_file_path().to_string_lossy().to_string();
         let started_at = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs();
 
         let content = PidFileContent {
@@ -247,7 +242,7 @@ impl PidFileManager {
         let socket_path = self.socket_file_path().to_string_lossy().to_string();
         let started_at = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs();
 
         let content = PidFileContent {
@@ -412,7 +407,7 @@ impl OverseerLockFile {
             pid,
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_default()
                 .as_secs()
         );
 
@@ -453,7 +448,7 @@ impl OverseerLockFile {
                 if let Ok(modified) = metadata.modified() {
                     let age = std::time::SystemTime::now()
                         .duration_since(modified)
-                        .unwrap()
+                        .unwrap_or_default()
                         .as_secs();
 
                     if age > max_age_secs {

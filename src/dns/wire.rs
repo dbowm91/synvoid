@@ -132,6 +132,7 @@ pub fn get_message_flags(bytes: &[u8]) -> Option<MessageFlags> {
         truncated: (flags & 0x0200) != 0,
         recursion_desired: (flags & 0x0100) != 0,
         recursion_available: (flags & 0x0080) != 0,
+        authentic_data: (flags & 0x0020) != 0,
         response_code: (flags & 0x000F) as u8,
     })
 }
@@ -145,6 +146,7 @@ pub struct MessageFlags {
     pub truncated: bool,
     pub recursion_desired: bool,
     pub recursion_available: bool,
+    pub authentic_data: bool,
     pub response_code: u8,
 }
 
@@ -194,6 +196,9 @@ pub fn build_response_header(
     }
     if flags.recursion_available {
         flag_bits |= 0x0080;
+    }
+    if flags.authentic_data {
+        flag_bits |= 0x0020;
     }
     flag_bits |= flags.response_code as u16 & 0x000F;
 
@@ -248,6 +253,7 @@ pub fn build_error_response(query: &[u8], rcode: u8) -> Option<Vec<u8>> {
         truncated: false,
         recursion_desired: false,
         recursion_available: false,
+        authentic_data: false,
         response_code: rcode,
     };
 
@@ -410,6 +416,7 @@ mod tests {
             truncated: false,
             recursion_desired: true,
             recursion_available: true,
+            authentic_data: false,
             response_code: 0,
         };
 
@@ -428,6 +435,7 @@ mod tests {
             truncated: false,
             recursion_desired: true,
             recursion_available: true,
+            authentic_data: false,
             response_code: 3,
         };
 
@@ -459,6 +467,7 @@ mod tests {
             truncated: false,
             recursion_desired: true,
             recursion_available: true,
+            authentic_data: false,
             response_code: 3, // NXDOMAIN
         };
 
@@ -573,6 +582,7 @@ mod tests {
             truncated: false,
             recursion_desired: true,
             recursion_available: true,
+            authentic_data: false,
             response_code: 0,
         };
 

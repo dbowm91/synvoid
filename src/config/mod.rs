@@ -2,7 +2,6 @@
 
 pub mod admin;
 pub mod defaults;
-#[cfg(feature = "dns")]
 pub mod dns;
 pub mod geoip;
 pub mod http;

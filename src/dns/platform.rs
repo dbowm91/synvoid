@@ -390,10 +390,16 @@ mod tests {
 
         #[test]
         fn test_fallback_enable_pktinfo_returns_error() {
-            let platform = super::fallback::FallbackAnycastSocket::new();
-            let socket = tokio::net::UdpSocket::bind("0.0.0.0:0").await.unwrap();
-            let result = platform.enable_pktinfo(&socket);
-            assert!(result.is_err());
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(async {
+                    let platform = super::fallback::FallbackAnycastSocket::new();
+                    let socket = tokio::net::UdpSocket::bind("0.0.0.0:0").await.unwrap();
+                    let result = platform.enable_pktinfo(&socket);
+                    assert!(result.is_err());
+                });
         }
 
         #[test]
@@ -405,10 +411,16 @@ mod tests {
 
         #[test]
         fn test_fallback_error_message_mentions_pktinfo() {
-            let platform = super::fallback::FallbackAnycastSocket::new();
-            let socket = tokio::net::UdpSocket::bind("0.0.0.0:0").await.unwrap();
-            let result = platform.enable_pktinfo(&socket);
-            assert!(result.unwrap_err().contains("IP_PKTINFO"));
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(async {
+                    let platform = super::fallback::FallbackAnycastSocket::new();
+                    let socket = tokio::net::UdpSocket::bind("0.0.0.0:0").await.unwrap();
+                    let result = platform.enable_pktinfo(&socket);
+                    assert!(result.unwrap_err().contains("IP_PKTINFO"));
+                });
         }
 
         #[test]

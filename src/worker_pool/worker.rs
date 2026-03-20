@@ -68,7 +68,9 @@ impl Worker {
         *status.write() = WorkerStatus::Running;
 
         let handle = tokio::spawn(async move {
-            let addr: SocketAddr = format!("127.0.0.1:{}", port).parse().unwrap();
+            let addr: SocketAddr = format!("127.0.0.1:{}", port)
+                .parse()
+                .expect("Hardcoded socket address should always parse");
             
             let client = create_http_client();
 

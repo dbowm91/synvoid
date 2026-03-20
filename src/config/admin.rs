@@ -18,7 +18,7 @@ pub struct AdminCorsConfig {
     pub allow_headers: Option<Vec<String>>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
 pub struct AdminConfig {
     #[serde(default = "default_admin_enabled")]
     pub enabled: bool,

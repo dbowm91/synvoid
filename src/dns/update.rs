@@ -380,6 +380,7 @@ impl DynamicUpdateHandler {
             truncated: false,
             recursion_desired: false,
             recursion_available: false,
+            authentic_data: false,
             response_code: rcode,
         };
 

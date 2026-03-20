@@ -421,9 +421,11 @@ impl ProcessManager {
             cmd.arg("--log-level").arg(level);
         }
 
+        // Pass IPC session key via environment variable instead of CLI argument
+        // to avoid exposing it in process listings (ps aux)
         if let Some(ref key) = self.config.ipc_session_key {
             let key_hex = key.iter().map(|b| format!("{:02x}", b)).collect::<String>();
-            cmd.arg("--ipc-key").arg(key_hex);
+            cmd.env("MALUWAF_IPC_KEY", key_hex);
         }
 
         cmd.arg("--config-path")

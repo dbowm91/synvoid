@@ -275,6 +275,7 @@ pub fn build_notify_response(query: &[u8], rcode: u8) -> Vec<u8> {
         truncated: false,
         recursion_desired: false,
         recursion_available: false,
+        authentic_data: false,
         response_code: rcode,
     };
 

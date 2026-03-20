@@ -161,6 +161,56 @@ assert!(config.auto_restart);
 - Test files: `snake_case_test.rs` or in `tests/` directory
 - Modules: `mod.rs` for module aggregation
 
+## DNSSEC and RFC 5011
+
+### Trust Anchor Configuration
+
+The `TrustAnchorConfig` struct now supports separate timeout configuration for RFC 5011 state transitions:
+
+| Field | Default | Purpose |
+|-------|---------|---------|
+| `pending_observation_days` | 30 | Time a new key spends in Pending state before becoming Valid (RFC 5011 Section 3.2) |
+| `revocation_grace_days` | 30 | Time a revoked key spends before being Removed (RFC 5011 Section 4) |
+| `extended_removal_days` | 60 | Time a removed key spends before being Purged from storage |
+| `trust_anchor_retention_days` | 7 | Time a Valid key can be absent before being marked Missing |
+
+### RFC 5011 State Machine
+
+Keys transition through these states:
+1. **Seen** - Key observed in DNSKEY RRset but not validated
+2. **Pending** - Key validated via CDS/CDNSKEY digest, awaiting observation period
+3. **Valid** - Key is trusted for DNSSEC validation
+4. **Revoked** - Key has REVOKE bit set
+5. **Removed** - Revoked key waiting for extended confirmation
+6. **Missing** - Valid key not seen for retention period
+
+### Testing Trust Anchor State Transitions
+
+```rust
+use maluwaf::dns::trust_anchor::{TrustAnchorManager, TrustAnchorConfig, Rfc5011Event};
+
+// Create manager with custom timeouts
+let config = TrustAnchorConfig {
+    pending_observation_days: 30,
+    revocation_grace_days: 30,
+    extended_removal_days: 60,
+    trust_anchor_retention_days: 7,
+    ..TrustAnchorConfig::default()
+};
+let manager = TrustAnchorManager::new(config);
+
+// Observe a new key
+let event = manager.observe_dnskey_at_root(key_tag, algorithm, &public_key, false);
+assert!(matches!(event, Rfc5011Event::NewKeySeen { .. }));
+
+// Check trust anchor with CDS digest
+let event = manager.trust_anchor_check(key_tag, algorithm, digest_type, &digest);
+assert!(matches!(event, Rfc5011Event::KeyPending { .. }));
+
+// Process RFC 5011 updates
+let events = manager.process_rfc5011_updates();
+```
+
 ## Important Notes
 
 1. **Never commit secrets** - Use `.gitignore` for credentials

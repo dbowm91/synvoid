@@ -24,7 +24,7 @@ pub use command::{CommandClient, CommandError, CommandResponse};
 pub use ipc::{
     current_timestamp, connect_to_master, get_ipc_path, CommandMethod, ErrorSeverity, ErrorCode,
     MasterCommand, MasterStatus, Message, StatusStats, ThreatSummary, WorkerId, WorkerMetricsPayload,
-    WorkerStatus, WorkerStatusInfo, IpcStream,
+    WorkerStatus, WorkerStatusInfo, IpcStream, IpcValidationError,
     ThreatIndicatorType, ThreatSeverityLevel, ThreatIndicatorData,
     BoxResult, BoxError, SiteMetricsPayload, RequestLogPayload,
 };

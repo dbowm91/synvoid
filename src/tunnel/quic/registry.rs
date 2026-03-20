@@ -3,6 +3,7 @@ use std::sync::Arc;
 use dashmap::DashMap;
 use quinn::{SendStream, RecvStream};
 use once_cell::sync::Lazy;
+use parking_lot::RwLock;
 
 use super::runtime::QuicRuntime;
 
@@ -11,7 +12,7 @@ pub struct QuicTunnelRegistry {
     sessions: DashMap<String, TunnelSessionInfo>,
     sessions_by_client: DashMap<String, String>,
     sessions_by_peer: DashMap<String, String>,
-    runtime: Arc<std::sync::RwLock<Option<Arc<QuicRuntime>>>>,
+    runtime: Arc<RwLock<Option<Arc<QuicRuntime>>>>,
 }
 
 #[derive(Clone)]
@@ -29,17 +30,17 @@ impl QuicTunnelRegistry {
             sessions: DashMap::new(),
             sessions_by_client: DashMap::new(),
             sessions_by_peer: DashMap::new(),
-            runtime: Arc::new(std::sync::RwLock::new(None)),
+            runtime: Arc::new(RwLock::new(None)),
         }
     }
 
     pub async fn set_runtime(&self, runtime: Arc<QuicRuntime>) {
-        let mut r = self.runtime.write().unwrap();
+        let mut r = self.runtime.write();
         *r = Some(runtime);
     }
 
     pub async fn get_runtime(&self) -> Option<Arc<QuicRuntime>> {
-        let r = self.runtime.read().unwrap();
+        let r = self.runtime.read();
         r.clone()
     }
 

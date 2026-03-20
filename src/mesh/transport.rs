@@ -6,6 +6,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
+use flate2::{Compress, Decompress, Compression, Status};
+use flate2::write::{ZlibEncoder, ZlibDecoder};
+use flate2::read::{ZlibDecoder as ReadZlibDecoder};
+
 #[cfg(feature = "dns")]
 use crate::dns::server::Zone as DnsZone;
 
@@ -85,7 +89,7 @@ pub struct MeshTransport {
     dns_registry: Option<Arc<crate::dns::MeshDnsRegistry>>,
     #[cfg(feature = "dns")]
     dns_zones: Arc<RwLock<Option<Arc<RwLock<HashMap<String, DnsZone>>>>>>,
-    pub site_config_sync_tx: Arc<std::sync::RwLock<Option<mpsc::Sender<(String, String)>>>>,
+    pub site_config_sync_tx: Arc<RwLock<Option<mpsc::Sender<(String, String)>>>>,
 }
 
 impl Clone for MeshTransport {
@@ -369,12 +373,12 @@ impl MeshTransport {
             dns_registry,
             #[cfg(feature = "dns")]
             dns_zones: Arc::new(RwLock::new(None)),
-            site_config_sync_tx: Arc::new(std::sync::RwLock::new(None)),
+            site_config_sync_tx: Arc::new(RwLock::new(None)),
         }
     }
 
     pub fn set_site_config_sync_callback(&self, tx: mpsc::Sender<(String, String)>) {
-        let mut lock = self.site_config_sync_tx.write().unwrap();
+        let mut lock = self.site_config_sync_tx.write();
         *lock = Some(tx);
     }
 
@@ -3364,7 +3368,6 @@ impl MeshTransport {
         };
 
         let (compressed, final_json) = if records_json.len() > 1024 {
-            // Compress if larger than 1KB
             use std::io::Write;
             let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
             if encoder.write_all(records_json.as_bytes()).is_ok() {
@@ -3431,7 +3434,7 @@ impl MeshTransport {
             match base64::Engine::decode(&base64::engine::general_purpose::STANDARD, records_json) {
                 Ok(compressed_data) => {
                     use std::io::Read;
-                    let mut decoder = ZlibDecoder::new(compressed_data.as_slice());
+                    let mut decoder = ReadZlibDecoder::new(compressed_data.as_slice());
                     let mut decompressed = String::new();
                     match decoder.read_to_string(&mut decompressed) {
                         Ok(_) => {
@@ -3876,7 +3879,7 @@ impl MeshTransport {
         }
 
         let tx_to_send = {
-            let tx_option = self.site_config_sync_tx.read().unwrap();
+            let tx_option = self.site_config_sync_tx.read();
             tx_option.clone()
         };
         
@@ -4391,7 +4394,7 @@ impl MeshTransport {
     ) {
         // blocked_until is Unix timestamp when block expires
         let now_unix = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+            .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
         
         // Validate: block timestamp not unreasonably far in the future
         let max_allowed = now_unix + MAX_BLOCK_DURATION_SECS;
@@ -6096,7 +6099,7 @@ impl MeshTransport {
 
         // Send Unix timestamp for when block expires (not remaining duration)
         let block_until_unix = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()
+            .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs()
             + blocked_duration_secs;
 
         let block_message = MeshMessage::UpstreamBlocked {
