@@ -15,11 +15,13 @@ use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::RwLock as TokioRwLock;
 
+#[allow(dead_code)]
 #[derive(Clone)]
 pub struct AdminRateLimiter {
     inner: Arc<AdminRateLimiterInner>,
 }
 
+#[allow(dead_code)]
 struct AdminRateLimiterInner {
     requests: RwLock<HashMap<String, (u32, Instant)>>,
     requests_per_minute: u32,

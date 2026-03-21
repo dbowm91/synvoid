@@ -55,7 +55,7 @@ fn format_bytes(n: u64) -> String {
     const GB: u64 = 1024 * 1024 * 1024;
     const MB: u64 = 1024 * 1024;
     const KB: u64 = 1024;
-    
+
     if n >= TB {
         format!("{:.2} TB", n as f64 / TB as f64)
     } else if n >= GB {
@@ -73,7 +73,7 @@ fn format_rate(n: u64) -> String {
     const GBPS: u64 = 1024 * 1024 * 1024;
     const MBPS: u64 = 1024 * 1024;
     const KBPS: u64 = 1024;
-    
+
     if n >= GBPS {
         format!("{:.2} GB/s", n as f64 / GBPS as f64)
     } else if n >= MBPS {
@@ -123,13 +123,13 @@ pub fn Dashboard() -> Html {
     let cache_stats = use_state(|| None::<crate::types::CacheStats>);
     let bandwidth = use_state(|| None::<crate::types::BandwidthPayload>);
     let blocking_history = use_state(|| Vec::<std::collections::HashMap<String, u64>>::new());
-    
+
     let (ws_state, _) = use_websocket_or_poll::<RealtimeMetrics>(
         "ws://localhost:8081/api/ws/metrics",
         "/api/stats/summary",
         5000,
     );
-    
+
     {
         let selected_window = selected_window.clone();
         let historical_data = historical_data.clone();
@@ -147,7 +147,7 @@ pub fn Dashboard() -> Html {
             || {}
         });
     }
-    
+
     if let UseWebSocketState::Connected(metrics) = &ws_state {
         let mut new_history = (*history).clone();
         new_history.push(metrics.clone());
@@ -200,14 +200,28 @@ pub fn Dashboard() -> Html {
     let request_data: HashMap<String, Vec<f64>> = {
         let hist = (*historical_data).clone();
         let h = (*history).clone();
-        
+
         let data_to_use = hist.unwrap_or(h);
-        
+
         let mut map = HashMap::new();
         let requests: Vec<f64> = data_to_use.iter().map(|m| m.requests_per_second).collect();
         let blocked: Vec<f64> = data_to_use.iter().map(|m| m.blocked_per_second).collect();
-        map.insert("Requests".to_string(), if requests.is_empty() { vec![0.0; 12] } else { requests });
-        map.insert("Blocked".to_string(), if blocked.is_empty() { vec![0.0; 12] } else { blocked });
+        map.insert(
+            "Requests".to_string(),
+            if requests.is_empty() {
+                vec![0.0; 12]
+            } else {
+                requests
+            },
+        );
+        map.insert(
+            "Blocked".to_string(),
+            if blocked.is_empty() {
+                vec![0.0; 12]
+            } else {
+                blocked
+            },
+        );
         map
     };
 
@@ -215,21 +229,23 @@ pub fn Dashboard() -> Html {
         let hist = (*historical_data).clone();
         let h = (*history).clone();
         let blocking = (*blocking_history).clone();
-        
+
         let metrics_data = hist.unwrap_or(h);
-        
+
         if !blocking.is_empty() {
-            let mut by_type: std::collections::HashMap<String, Vec<u64>> = std::collections::HashMap::new();
-            
+            let mut by_type: std::collections::HashMap<String, Vec<u64>> =
+                std::collections::HashMap::new();
+
             for snapshot in &blocking {
                 for (attack_type, count) in snapshot {
                     by_type.entry(attack_type.clone()).or_default().push(*count);
                 }
             }
-            
+
             let mut map: HashMap<String, Vec<f64>> = HashMap::new();
             for (attack_type, counts) in by_type {
-                let rates: Vec<f64> = counts.windows(2)
+                let rates: Vec<f64> = counts
+                    .windows(2)
                     .map(|w| (w[1] as i64 - w[0] as i64).max(0) as f64)
                     .collect();
                 let display_data = if rates.len() < 12 {
@@ -243,17 +259,19 @@ pub fn Dashboard() -> Html {
             }
             map
         } else if !metrics_data.is_empty() {
-            let mut by_type: std::collections::HashMap<String, Vec<u64>> = std::collections::HashMap::new();
-            
+            let mut by_type: std::collections::HashMap<String, Vec<u64>> =
+                std::collections::HashMap::new();
+
             for metrics in &metrics_data {
                 for (attack_type, count) in &metrics.blocked_by_type {
                     by_type.entry(attack_type.clone()).or_default().push(*count);
                 }
             }
-            
+
             let mut map: HashMap<String, Vec<f64>> = HashMap::new();
             for (attack_type, counts) in by_type {
-                let rates: Vec<f64> = counts.windows(2)
+                let rates: Vec<f64> = counts
+                    .windows(2)
                     .map(|w| (w[1] as i64 - w[0] as i64).max(0) as f64)
                     .collect();
                 let display_data = if rates.len() < 12 {
@@ -274,7 +292,9 @@ pub fn Dashboard() -> Html {
     let labels: Vec<String> = (1..=12).map(|i| format!("{}m", i)).collect();
     let current = stats.as_ref();
     let cpu = current.map(|s| s.cpu_usage_percent as f64).unwrap_or(0.0);
-    let mem_pct = current.map(|s| (s.memory_used_mb as f64 / s.memory_total_mb as f64) * 100.0).unwrap_or(0.0);
+    let mem_pct = current
+        .map(|s| (s.memory_used_mb as f64 / s.memory_total_mb as f64) * 100.0)
+        .unwrap_or(0.0);
 
     let on_window_change = {
         let selected_window = selected_window.clone();
@@ -322,18 +342,45 @@ pub fn Dashboard() -> Html {
                 let rows = vec![
                     vec!["Uptime (secs)".to_string(), s.uptime_secs.to_string()],
                     vec!["Total Requests".to_string(), s.total_requests.to_string()],
-                    vec!["Requests/sec".to_string(), format!("{:.2}", s.requests_per_second)],
+                    vec![
+                        "Requests/sec".to_string(),
+                        format!("{:.2}", s.requests_per_second),
+                    ],
                     vec!["Blocked Total".to_string(), s.blocked_total.to_string()],
-                    vec!["Active Connections".to_string(), s.active_connections.to_string()],
+                    vec![
+                        "Active Connections".to_string(),
+                        s.active_connections.to_string(),
+                    ],
                     vec!["Memory Used (MB)".to_string(), s.memory_used_mb.to_string()],
-                    vec!["Memory Total (MB)".to_string(), s.memory_total_mb.to_string()],
-                    vec!["CPU Usage (%)".to_string(), format!("{:.1}", s.cpu_usage_percent)],
+                    vec![
+                        "Memory Total (MB)".to_string(),
+                        s.memory_total_mb.to_string(),
+                    ],
+                    vec![
+                        "CPU Usage (%)".to_string(),
+                        format!("{:.1}", s.cpu_usage_percent),
+                    ],
                     vec!["Sites Loaded".to_string(), s.sites_loaded.to_string()],
-                    vec!["Healthy Backends".to_string(), s.healthy_backends.to_string()],
-                    vec!["Unhealthy Backends".to_string(), s.unhealthy_backends.to_string()],
-                    vec!["Avg Latency (ms)".to_string(), format!("{:.2}", s.avg_latency_ms)],
-                    vec!["p95 Latency (ms)".to_string(), format!("{:.2}", s.p95_latency_ms)],
-                    vec!["p99 Latency (ms)".to_string(), format!("{:.2}", s.p99_latency_ms)],
+                    vec![
+                        "Healthy Backends".to_string(),
+                        s.healthy_backends.to_string(),
+                    ],
+                    vec![
+                        "Unhealthy Backends".to_string(),
+                        s.unhealthy_backends.to_string(),
+                    ],
+                    vec![
+                        "Avg Latency (ms)".to_string(),
+                        format!("{:.2}", s.avg_latency_ms),
+                    ],
+                    vec![
+                        "p95 Latency (ms)".to_string(),
+                        format!("{:.2}", s.p95_latency_ms),
+                    ],
+                    vec![
+                        "p99 Latency (ms)".to_string(),
+                        format!("{:.2}", s.p99_latency_ms),
+                    ],
                     vec!["Peak Concurrent".to_string(), s.peak_concurrent.to_string()],
                 ];
                 export_to_csv(&headers, &rows, "maluwaf-stats.csv");
@@ -357,13 +404,13 @@ pub fn Dashboard() -> Html {
                     <WindowButton label="24h" active={*selected_window == "24h"} on_click={on_window_change.clone()} />
                 </div>
                 <div class="flex gap-2">
-                    <button 
+                    <button
                         onclick={export_json}
                         class="px-3 py-2 bg-tertiary text-secondary rounded-lg hover:text-primary text-sm"
                     >
                         { "Export JSON" }
                     </button>
-                    <button 
+                    <button
                         onclick={export_csv}
                         class="px-3 py-2 bg-tertiary text-secondary rounded-lg hover:text-primary text-sm"
                     >
@@ -485,7 +532,7 @@ pub fn Dashboard() -> Html {
                                         to={Route::SiteDetail { id: site_id.clone() }}
                                         classes="block"
                                     >
-                                        <SiteStatusItem 
+                                        <SiteStatusItem
                                             domain={site.domains.first().unwrap_or(&site.site_id).clone()}
                                             healthy={site.upstream_healthy}
                                             requests={format_number((site.requests_per_second * 60.0) as u64)}
@@ -593,7 +640,7 @@ struct SiteStatusItemProps {
 #[function_component]
 fn SiteStatusItem(props: &SiteStatusItemProps) -> Html {
     let expanded = use_state(|| false);
-    
+
     let toggle_expanded = {
         let expanded = expanded.clone();
         Callback::from(move |_| {
@@ -612,7 +659,8 @@ fn SiteStatusItem(props: &SiteStatusItemProps) -> Html {
         "Unhealthy"
     };
 
-    let total_ingress = props.bytes_received + props.proxied_bytes_received + props.mesh_bytes_received;
+    let total_ingress =
+        props.bytes_received + props.proxied_bytes_received + props.mesh_bytes_received;
     let total_egress = props.bytes_sent + props.proxied_bytes_sent + props.mesh_bytes_sent;
 
     html! {

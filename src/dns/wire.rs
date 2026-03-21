@@ -102,6 +102,7 @@ pub fn parse_query_name(bytes: &[u8], mut pos: usize) -> Option<String> {
         name.push_str(std::str::from_utf8(label).unwrap());
         pos += len;
     }
+    let _ = pos;
 
     Some(name)
 }
@@ -362,8 +363,12 @@ pub fn encode_name(name: &str) -> Vec<u8> {
 
     encoded
 }
+#[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{
+        build_question, build_response_header, build_simple_response, encode_name,
+        get_message_flags, get_message_id, parse_query_name, MessageFlags,
+    };
 
     #[test]
     fn test_parse_query_name_simple() {

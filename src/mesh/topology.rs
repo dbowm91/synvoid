@@ -253,6 +253,7 @@ pub struct MeshTopology {
 }
 
 #[derive(Debug, Clone, Default)]
+#[allow(dead_code)]
 struct PeerCategories {
     local_region: HashSet<String>,
     regional: HashSet<String>,
@@ -260,6 +261,7 @@ struct PeerCategories {
 }
 
 #[derive(Debug, Clone, Default)]
+#[allow(dead_code)]
 struct CacheMetrics {
     hits: u64,
     misses: u64,
@@ -267,6 +269,7 @@ struct CacheMetrics {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct CachedRoute {
     provider_node_id: String,
     hops: u8,
@@ -274,6 +277,7 @@ struct CachedRoute {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct RouteStability {
     upstream_id: String,
     provider_history: Vec<(String, Instant)>,
@@ -386,6 +390,7 @@ impl RouteUsage {
     }
 }
 
+#[allow(dead_code)]
 pub struct RouteUsageTracker {
     usages: HashMap<String, RouteUsage>,
     window: Duration,

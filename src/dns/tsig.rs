@@ -5,7 +5,7 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use hmac::{Hmac, Mac};
 use parking_lot::RwLock;
 use sha1::Sha1;
-use sha2::{Digest, Sha256, Sha384, Sha512};
+use sha2::{Sha256, Sha384, Sha512};
 use thiserror::Error;
 
 use crate::config::dns::{TsigAlgorithm, TsigKeyConfig};
@@ -316,7 +316,7 @@ pub fn parse_tsig_from_query(query: &[u8], qd_end: usize) -> Option<TsigParseRes
         pos += 2;
 
         let mut key_name = String::new();
-        let mut key_start = pos;
+        let key_start = pos;
         while pos < query.len() {
             let len = query[pos] as usize;
             if len == 0 {

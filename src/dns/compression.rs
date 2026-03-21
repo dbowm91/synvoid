@@ -88,7 +88,7 @@ impl DnsMessageCompressor {
 
         let parts: Vec<&str> = name_lower.split('.').collect();
 
-        for (i, part) in parts.iter().enumerate() {
+        for (i, _part) in parts.iter().enumerate() {
             let suffix = parts[i..].join(".");
             if let Some(&offset) = self.labels.get(&suffix) {
                 output.extend_from_slice(
@@ -199,8 +199,6 @@ impl DnsMessageDecompressor {
         let mut result = Vec::new();
         let mut pos = start_pos;
         let mut jumps = 0;
-        let mut jumped = false;
-        let mut end_pos = start_pos;
 
         loop {
             if jumps > self.max_jumps {
@@ -217,7 +215,7 @@ impl DnsMessageDecompressor {
                 if !result.is_empty() {
                     result.push(0);
                 }
-                end_pos = pos + 1;
+                pos += 1;
                 break;
             }
 
@@ -227,11 +225,6 @@ impl DnsMessageDecompressor {
                 }
 
                 let offset = ((len & 0x3F) as usize) << 8 | data[pos + 1] as usize;
-
-                if !jumped {
-                    jumped = true;
-                    end_pos = pos + 2;
-                }
 
                 pos = offset;
                 jumps += 1;
@@ -248,10 +241,9 @@ impl DnsMessageDecompressor {
 
             result.extend_from_slice(&data[pos + 1..pos + 1 + len]);
             pos += 1 + len;
-            end_pos = pos;
         }
 
-        Ok((String::from_utf8_lossy(&result).to_string(), end_pos))
+        Ok((String::from_utf8_lossy(&result).to_string(), pos))
     }
 }
 

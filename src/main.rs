@@ -1,22 +1,33 @@
-use std::path::PathBuf;
 use std::panic::AssertUnwindSafe;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use clap::Parser;
 use tokio::sync::{broadcast, RwLock};
 
+use maluwaf::block_store::BlockStore;
+use maluwaf::config::logging::LoggingConfig;
 use maluwaf::config::ConfigManager;
 use maluwaf::config::MainConfig;
-use maluwaf::config::logging::LoggingConfig;
-use maluwaf::waf::{ProbeTracker, SuspiciousWordTracker, UpstreamErrorTracker, ThreatLevelManager, RuleFeedManagerForWaf};
-use maluwaf::block_store::BlockStore;
-use maluwaf::master::{handle_status, handle_stop, handle_rehash, handle_configtest, handle_generatetoken, handle_generatenewtoken, handle_worker_connection};
-use maluwaf::overseer::{OverseerProcess, OverseerConfig};
-use maluwaf::mime;
-use maluwaf::platform::fs::PlatformPaths;
-use maluwaf::process::{ProcessManager, ProcessManagerConfig, ProcessEvent, IpcEndpoint, PidFileManager};
-use maluwaf::worker::{WorkerArgs, run_worker, setup_worker_panic_handler, StaticWorkerArgs, run_static_worker, UnifiedServerWorkerArgs, run_unified_server_worker, setup_unified_server_panic_handler};
 use maluwaf::log_controller;
+use maluwaf::master::{
+    handle_configtest, handle_generatenewtoken, handle_generatetoken, handle_rehash, handle_status,
+    handle_stop, handle_worker_connection,
+};
+use maluwaf::mime;
+use maluwaf::overseer::{OverseerConfig, OverseerProcess};
+use maluwaf::platform::fs::PlatformPaths;
+use maluwaf::process::{
+    IpcEndpoint, PidFileManager, ProcessEvent, ProcessManager, ProcessManagerConfig,
+};
+use maluwaf::waf::{
+    ProbeTracker, RuleFeedManagerForWaf, SuspiciousWordTracker, ThreatLevelManager,
+    UpstreamErrorTracker,
+};
+use maluwaf::worker::{
+    run_static_worker, run_unified_server_worker, run_worker, setup_unified_server_panic_handler,
+    setup_worker_panic_handler, StaticWorkerArgs, UnifiedServerWorkerArgs, WorkerArgs,
+};
 
 #[derive(Parser, Debug)]
 #[command(name = "maluwaf")]
@@ -35,7 +46,11 @@ struct Args {
     #[arg(long, value_name = "PATH", help = "Config directory path")]
     config_path: Option<PathBuf>,
 
-    #[arg(long, value_name = "PATH", help = "Master socket path (worker mode only)")]
+    #[arg(
+        long,
+        value_name = "PATH",
+        help = "Master socket path (worker mode only)"
+    )]
     master_socket: Option<PathBuf>,
 
     #[arg(long, help = "Run as static file worker process")]
@@ -44,13 +59,20 @@ struct Args {
     #[arg(long, value_name = "ID", help = "Static worker ID")]
     static_worker_id: Option<usize>,
 
-    #[arg(long, help = "Run as unified server worker process (handles HTTP/HTTPS/HTTP3)")]
+    #[arg(
+        long,
+        help = "Run as unified server worker process (handles HTTP/HTTPS/HTTP3)"
+    )]
     unified_server_worker: bool,
 
     #[arg(long, value_name = "ID", help = "Unified server worker ID")]
     unified_worker_id: Option<usize>,
 
-    #[arg(long, value_name = "COUNT", help = "Number of tokio worker threads (for worker processes)")]
+    #[arg(
+        long,
+        value_name = "COUNT",
+        help = "Number of tokio worker threads (for worker processes)"
+    )]
     worker_threads: Option<usize>,
 
     // Internal: Used by Overseer to spawn Master process. Not for direct user invocation.
@@ -76,22 +98,44 @@ struct Args {
     #[arg(long, help = "Reload configuration and propagate to workers")]
     rehash: bool,
 
-    #[arg(long, help = "Generate a new admin token and save it to config/main.toml")]
+    #[arg(
+        long,
+        help = "Generate a new admin token and save it to config/main.toml"
+    )]
     generatenewtoken: bool,
 
-    #[arg(long, help = "Generate and print an admin token (does not save to config)")]
+    #[arg(
+        long,
+        help = "Generate and print an admin token (does not save to config)"
+    )]
     generatetoken: bool,
 
-    #[arg(long, value_name = "MODE", help = "Test mode: challenge-off, ratelimit-off, attack-off, bot-off, flood-off, all-off")]
+    #[arg(
+        long,
+        value_name = "MODE",
+        help = "Test mode: challenge-off, ratelimit-off, attack-off, bot-off, flood-off, all-off"
+    )]
     test: Option<Vec<String>>,
 
-    #[arg(long, value_name = "PATTERN", help = "Check if a regex pattern is safe (ReDoS check)")]
+    #[arg(
+        long,
+        value_name = "PATTERN",
+        help = "Check if a regex pattern is safe (ReDoS check)"
+    )]
     checkregex: Option<String>,
 
-    #[arg(long, help = "Required when using --test all-off to confirm intentional testing")]
+    #[arg(
+        long,
+        help = "Required when using --test all-off to confirm intentional testing"
+    )]
     force: bool,
 
-    #[arg(short, long, value_name = "LEVEL", help = "Log level: trace, debug, info, warn, error (overrides config)")]
+    #[arg(
+        short,
+        long,
+        value_name = "LEVEL",
+        help = "Log level: trace, debug, info, warn, error (overrides config)"
+    )]
     log_level: Option<String>,
 
     #[arg(long, help = "Export OpenAPI spec as JSON and exit")]
@@ -186,13 +230,15 @@ fn setup_signal_handlers(master_state: MasterState, process_manager: Arc<Process
         tokio::spawn(async move {
             #[cfg(unix)]
             {
-                let mut sigterm = match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
-                    Ok(s) => s,
-                    Err(e) => {
-                        tracing::warn!("Failed to install SIGTERM handler: {}", e);
-                        return;
-                    }
-                };
+                let mut sigterm =
+                    match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                    {
+                        Ok(s) => s,
+                        Err(e) => {
+                            tracing::warn!("Failed to install SIGTERM handler: {}", e);
+                            return;
+                        }
+                    };
 
                 sigterm.recv().await;
             }
@@ -272,7 +318,10 @@ fn main() {
     if args.export_openapi {
         use maluwaf::admin::openapi::ApiDoc;
         let spec: utoipa::openapi::OpenApi = ApiDoc.into();
-        println!("{}", serde_json::to_string_pretty(&spec).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&spec).unwrap_or_default()
+        );
         std::process::exit(0);
     }
 
@@ -288,7 +337,10 @@ fn main() {
             println!("✓ Pattern is safe: {}", pattern);
         } else {
             println!("✗ Pattern is UNSAFE: {}", pattern);
-            println!("  Reason: {}", result.reason.as_deref().unwrap_or("unknown"));
+            println!(
+                "  Reason: {}",
+                result.reason.as_deref().unwrap_or("unknown")
+            );
         }
         std::process::exit(if result.safe { 0 } else { 1 });
     }
@@ -323,7 +375,9 @@ fn main() {
     }
 
     if args.restart {
-        let _ = handle_stop();
+        if let Err(e) = handle_stop() {
+            eprintln!("Warning: Restart may fail - could not stop existing instance: {}", e);
+        }
         std::thread::sleep(std::time::Duration::from_secs(1));
     }
 
@@ -331,7 +385,9 @@ fn main() {
     if let Some(ref test_flags) = args.test {
         if !args.force {
             eprintln!("ERROR: --test requires --force flag");
-            eprintln!("This mode disables security protections and should only be used for testing.");
+            eprintln!(
+                "This mode disables security protections and should only be used for testing."
+            );
             eprintln!("If you're sure you want to proceed, add --force");
             std::process::exit(1);
         }
@@ -343,8 +399,37 @@ fn main() {
     let current_pid = std::process::id();
     let version = env!("CARGO_PKG_VERSION");
 
-    if !pid_manager.try_acquire(current_pid, version).unwrap_or(false) {
-        eprintln!("RustWAF is already running (PID: {:?})", pid_manager.get_pid());
+    match pid_manager.try_acquire(current_pid, version) {
+        Ok(true) => {}
+        Ok(false) => {
+            eprintln!(
+                "RustWAF is already running (PID: {:?})",
+                pid_manager.get_pid()
+            );
+            std::process::exit(1);
+        }
+        Err(e) => {
+            eprintln!(
+                "Error acquiring PID file: {}. RustWAF may already be running.",
+                e
+            );
+            std::process::exit(1);
+        }
+    }
+
+    // Validate mutual exclusivity of worker modes
+    let worker_mode_count = [
+        args.worker,
+        args.static_worker,
+        args.unified_server_worker,
+        args.master,
+    ]
+    .into_iter()
+    .filter(|&b| b)
+    .count();
+
+    if worker_mode_count > 1 {
+        eprintln!("Error: Only one worker mode (--worker, --static-worker, --unified-server-worker, --master) can be specified");
         std::process::exit(1);
     }
 
@@ -358,7 +443,9 @@ fn main() {
             worker_id: args.worker_id.unwrap_or(0),
             port: args.port.unwrap_or(9000),
             config_path: args.config_path.unwrap_or_else(|| PathBuf::from("config")),
-            master_socket: args.master_socket.unwrap_or_else(|| paths.master_socket_path()),
+            master_socket: args
+                .master_socket
+                .unwrap_or_else(|| paths.master_socket_path()),
             test_mode: args.test,
             log_level: args.log_level,
             upgrade_mode: false,
@@ -384,7 +471,9 @@ fn main() {
         let static_worker_args = StaticWorkerArgs {
             worker_id: args.static_worker_id.unwrap_or(0),
             config_path: args.config_path.unwrap_or_else(|| PathBuf::from("config")),
-            master_socket: args.master_socket.unwrap_or_else(|| paths.master_socket_path()),
+            master_socket: args
+                .master_socket
+                .unwrap_or_else(|| paths.master_socket_path()),
             static_worker_socket: paths.static_worker_socket_path(),
             log_level: args.log_level,
         };
@@ -420,7 +509,9 @@ fn main() {
         let unified_worker_args = UnifiedServerWorkerArgs {
             worker_id: args.unified_worker_id.unwrap_or(0),
             config_path: args.config_path.unwrap_or_else(|| PathBuf::from("config")),
-            master_socket: args.master_socket.unwrap_or_else(|| paths.master_socket_path()),
+            master_socket: args
+                .master_socket
+                .unwrap_or_else(|| paths.master_socket_path()),
             log_level: args.log_level,
             upgrade_mode: false,
             reuse_port: false,
@@ -442,7 +533,10 @@ fn main() {
     // This is NOT for direct user invocation - use the default mode instead.
     // ============================================================================================
     } else if args.master {
-        let master_panic_log = format!("{}/maluwaf-master-panic.log", std::env::temp_dir().display());
+        let master_panic_log = format!(
+            "{}/maluwaf-master-panic.log",
+            std::env::temp_dir().display()
+        );
         setup_panic_handler("MASTER", Some(&master_panic_log));
 
         let config_dir = args.config_path.unwrap_or_else(|| PathBuf::from("config"));
@@ -463,14 +557,21 @@ fn main() {
                         tracing::info!("Loaded MIME types from {}", mimes_file);
                     }
                     Err(e) => {
-                        tracing::warn!("Failed to load MIME types from {}: {}, using defaults", mimes_file, e);
+                        tracing::warn!(
+                            "Failed to load MIME types from {}: {}, using defaults",
+                            mimes_file,
+                            e
+                        );
                     }
                 }
             }
         }
 
         let worker_threads = main_config.tokio.worker_threads;
-        tracing::info!("Starting RustWAF Master Process with {} worker threads", worker_threads);
+        tracing::info!(
+            "Starting RustWAF Master Process with {} worker threads",
+            worker_threads
+        );
 
         let rt = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(worker_threads)
@@ -479,7 +580,11 @@ fn main() {
             .expect("Failed to build Tokio runtime");
 
         let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-            rt.block_on(run_master(config_manager, main_config, args.log_level.clone()))
+            rt.block_on(run_master(
+                config_manager,
+                main_config,
+                args.log_level.clone(),
+            ))
         }));
 
         match result {
@@ -512,7 +617,10 @@ fn main() {
         //   - Managing upgrades and rollbacks
         //   - Daemonization (unless --foreground is set)
 
-        let overseer_panic_log = format!("{}/maluwaf-overseer-panic.log", std::env::temp_dir().display());
+        let overseer_panic_log = format!(
+            "{}/maluwaf-overseer-panic.log",
+            std::env::temp_dir().display()
+        );
         setup_panic_handler("OVERSEER", Some(&overseer_panic_log));
 
         let config_dir = args.config_path.unwrap_or_else(|| PathBuf::from("config"));
@@ -534,7 +642,11 @@ fn main() {
                         tracing::info!("Loaded MIME types from {}", mimes_file);
                     }
                     Err(e) => {
-                        tracing::warn!("Failed to load MIME types from {}: {}, using defaults", mimes_file, e);
+                        tracing::warn!(
+                            "Failed to load MIME types from {}: {}, using defaults",
+                            mimes_file,
+                            e
+                        );
                     }
                 }
             }
@@ -548,8 +660,8 @@ fn main() {
         if should_daemonize {
             #[cfg(unix)]
             {
-                let current_dir = std::env::current_dir()
-                    .unwrap_or_else(|_| std::path::PathBuf::from("/"));
+                let current_dir =
+                    std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/"));
 
                 let result = {
                     // SAFETY: daemon.start() must be called before any threads exist.
@@ -589,7 +701,9 @@ fn main() {
             upgrade_validation_timeout_secs: main_config.overseer.upgrade_validation_timeout_secs,
             upgrade_drain_timeout_secs: main_config.overseer.upgrade_drain_timeout_secs,
             upgrade_health_check_retries: main_config.overseer.upgrade_health_check_retries,
-            upgrade_health_check_interval_secs: main_config.overseer.upgrade_health_check_interval_secs,
+            upgrade_health_check_interval_secs: main_config
+                .overseer
+                .upgrade_health_check_interval_secs,
             ipc_read_timeout_ms: main_config.overseer.ipc_read_timeout_ms,
             ipc_write_timeout_ms: main_config.overseer.ipc_write_timeout_ms,
             master_startup_timeout_secs: main_config.overseer.master_startup_timeout_secs,
@@ -641,7 +755,10 @@ async fn run_master(
     {
         use rustls_post_quantum::provider;
         if let Err(e) = provider().install_default() {
-            tracing::warn!("Failed to install post-quantum TLS provider: {:?}. Using default.", e);
+            tracing::warn!(
+                "Failed to install post-quantum TLS provider: {:?}. Using default.",
+                e
+            );
         } else {
             tracing::info!("Post-quantum TLS (X25519MLKEM768) enabled");
 
@@ -650,9 +767,17 @@ async fn run_master(
             let provider = CryptoProvider::get_default();
             if let Some(p) = provider {
                 let group_count = p.kx_groups.len();
-                tracing::info!("TLS crypto provider has {} key exchange groups available", group_count);
+                tracing::info!(
+                    "TLS crypto provider has {} key exchange groups available",
+                    group_count
+                );
                 // Log first few groups to confirm PQ is included
-                let sample_groups: Vec<_> = p.kx_groups.iter().take(5).map(|g| format!("{:?}", g)).collect();
+                let sample_groups: Vec<_> = p
+                    .kx_groups
+                    .iter()
+                    .take(5)
+                    .map(|g| format!("{:?}", g))
+                    .collect();
                 tracing::debug!("Sample kx_groups: {:?}", sample_groups);
             }
         }
@@ -666,7 +791,11 @@ async fn run_master(
     init_logging(&main_config.logging, log_level_override);
 
     tracing::info!("Starting RustWAF - Multi-Process WAF");
-    tracing::info!("Main HTTP entry: http://{}:{}", main_config.server.host, main_config.server.port);
+    tracing::info!(
+        "Main HTTP entry: http://{}:{}",
+        main_config.server.host,
+        main_config.server.port
+    );
 
     let site_results = config_manager.discover_sites();
     let loaded_count = site_results.iter().filter(|r| r.1.is_ok()).count();
@@ -680,7 +809,9 @@ async fn run_master(
         }
     }
 
-    let config_path_for_process = config_manager.sites_dir.parent()
+    let config_path_for_process = config_manager
+        .sites_dir
+        .parent()
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| config_manager.sites_dir.clone());
 
@@ -717,8 +848,7 @@ async fn run_master(
     // The Master ONLY orchestrates - it does not handle requests.
 
     // Create BlockStore for persistent blocklist management in Master
-    let data_dir = main_config.persistence.data_dir.as_ref()
-        .map(PathBuf::from);
+    let data_dir = main_config.persistence.data_dir.as_ref().map(PathBuf::from);
     let master_block_store = Arc::new(BlockStore::new(
         true, // enabled
         data_dir,
@@ -784,7 +914,7 @@ async fn run_master(
                     65536,
                     0,
                     std::ptr::null_mut(),
-                )
+                ),
             );
         }
     }
@@ -861,7 +991,8 @@ async fn run_master(
         ipc_rate_limit: Default::default(),
     };
 
-    let (process_manager, mut event_rx) = ProcessManager::new(process_config, Some(master_block_store_for_pm));
+    let (process_manager, mut event_rx) =
+        ProcessManager::new(process_config, Some(master_block_store_for_pm));
     let process_manager = Arc::new(process_manager);
 
     // Set up rule feed broadcast callback if enabled
@@ -870,7 +1001,9 @@ async fn run_master(
         manager.set_on_apply_callback(move |version, patterns| {
             let pm_clone = pm.clone();
             tokio::spawn(async move {
-                pm_clone.broadcast_rule_patterns_update(version, patterns).await;
+                pm_clone
+                    .broadcast_rule_patterns_update(version, patterns)
+                    .await;
             });
         });
     }
@@ -927,7 +1060,12 @@ async fn run_master(
 
     process_manager.ensure_warm_workers();
 
-    if main_config.static_config.as_ref().and_then(|c| c.enabled).unwrap_or(true) {
+    if main_config
+        .static_config
+        .as_ref()
+        .and_then(|c| c.enabled)
+        .unwrap_or(true)
+    {
         if let Err(e) = process_manager.spawn_static_worker() {
             tracing::warn!("Failed to spawn static worker: {}", e);
         }
@@ -943,7 +1081,8 @@ async fn run_master(
     let pm_persist = process_manager.clone();
     let persist_interval_secs = main_config.blocklist_limits.persist_interval_secs;
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(persist_interval_secs));
+        let mut interval =
+            tokio::time::interval(tokio::time::Duration::from_secs(persist_interval_secs));
         loop {
             interval.tick().await;
             pm_persist.trigger_blocklist_persist();
@@ -965,7 +1104,8 @@ async fn run_master(
             #[cfg(feature = "icmp-filter")]
             None,
             None,
-        ).await;
+        )
+        .await;
     });
 
     tracing::info!("Spawning unified server worker...");
@@ -1064,7 +1204,10 @@ async fn windows_ipc_accept_loop(process_manager: Arc<ProcessManager>, pipe_name
         };
 
         if pipe_handle == 0 {
-            tracing::error!("Failed to create named pipe: {:?}", std::io::Error::last_os_error());
+            tracing::error!(
+                "Failed to create named pipe: {:?}",
+                std::io::Error::last_os_error()
+            );
             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
             continue;
         }
@@ -1072,10 +1215,7 @@ async fn windows_ipc_accept_loop(process_manager: Arc<ProcessManager>, pipe_name
         // Wait for client connection
         // SAFETY: ConnectNamedPipe called with valid pipe handle; we check return value.
         let connected = unsafe {
-            windows_sys::Win32::System::Pipes::ConnectNamedPipe(
-                pipe_handle,
-                std::ptr::null_mut(),
-            )
+            windows_sys::Win32::System::Pipes::ConnectNamedPipe(pipe_handle, std::ptr::null_mut())
         };
 
         if connected == 0 {
@@ -1084,7 +1224,9 @@ async fn windows_ipc_accept_loop(process_manager: Arc<ProcessManager>, pipe_name
             if error != windows_sys::Win32::Foundation::ERROR_PIPE_CONNECTED {
                 tracing::warn!("ConnectNamedPipe failed with error: {}", error);
                 // SAFETY: CloseHandle called on valid handle we own from failed ConnectNamedPipe.
-                unsafe { windows_sys::Win32::Foundation::CloseHandle(pipe_handle); }
+                unsafe {
+                    windows_sys::Win32::Foundation::CloseHandle(pipe_handle);
+                }
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                 continue;
             }
@@ -1092,7 +1234,9 @@ async fn windows_ipc_accept_loop(process_manager: Arc<ProcessManager>, pipe_name
 
         // Convert raw handle to File
         // SAFETY: from_raw_handle takes ownership of pipe_handle; we validated it's non-zero above.
-        let stream = unsafe { std::fs::File::from_raw_handle(pipe_handle as std::os::windows::io::RawHandle) };
+        let stream = unsafe {
+            std::fs::File::from_raw_handle(pipe_handle as std::os::windows::io::RawHandle)
+        };
 
         let pm = process_manager.clone();
         tokio::spawn(async move {
@@ -1131,7 +1275,10 @@ async fn windows_command_pipe_listener(config_manager: Arc<RwLock<ConfigManager>
         };
 
         if pipe_handle == 0 {
-            tracing::error!("Failed to create command pipe: {:?}", std::io::Error::last_os_error());
+            tracing::error!(
+                "Failed to create command pipe: {:?}",
+                std::io::Error::last_os_error()
+            );
             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
             continue;
         }
@@ -1139,10 +1286,7 @@ async fn windows_command_pipe_listener(config_manager: Arc<RwLock<ConfigManager>
         // Wait for client connection
         // SAFETY: ConnectNamedPipe called with valid pipe handle; we check return value.
         let connected = unsafe {
-            windows_sys::Win32::System::Pipes::ConnectNamedPipe(
-                pipe_handle,
-                std::ptr::null_mut(),
-            )
+            windows_sys::Win32::System::Pipes::ConnectNamedPipe(pipe_handle, std::ptr::null_mut())
         };
 
         if connected == 0 {
@@ -1151,7 +1295,9 @@ async fn windows_command_pipe_listener(config_manager: Arc<RwLock<ConfigManager>
             if error != windows_sys::Win32::Foundation::ERROR_PIPE_CONNECTED {
                 tracing::warn!("ConnectNamedPipe failed with error: {}", error);
                 // SAFETY: CloseHandle called on valid handle we own from failed ConnectNamedPipe.
-                unsafe { windows_sys::Win32::Foundation::CloseHandle(pipe_handle); }
+                unsafe {
+                    windows_sys::Win32::Foundation::CloseHandle(pipe_handle);
+                }
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                 continue;
             }
@@ -1159,7 +1305,9 @@ async fn windows_command_pipe_listener(config_manager: Arc<RwLock<ConfigManager>
 
         // Convert raw handle to File and handle command
         // SAFETY: from_raw_handle takes ownership of pipe_handle; we validated it's non-zero above.
-        let stream = unsafe { std::fs::File::from_raw_handle(pipe_handle as std::os::windows::io::RawHandle) };
+        let stream = unsafe {
+            std::fs::File::from_raw_handle(pipe_handle as std::os::windows::io::RawHandle)
+        };
         tokio::spawn(async move {
             handle_command_connection(stream, config_manager.clone()).await;
         });
@@ -1167,7 +1315,10 @@ async fn windows_command_pipe_listener(config_manager: Arc<RwLock<ConfigManager>
 }
 
 #[cfg(windows)]
-async fn handle_command_connection(stream: std::fs::File, config_manager: Arc<RwLock<ConfigManager>>) {
+async fn handle_command_connection(
+    stream: std::fs::File,
+    config_manager: Arc<RwLock<ConfigManager>>,
+) {
     use std::io::{Read, Write};
 
     let mut stream = stream;
@@ -1225,7 +1376,11 @@ async fn handle_command_connection(stream: std::fs::File, config_manager: Arc<Rw
                                 tracing::info!("MIME types reloaded from {}", mimes_file);
                             }
                             Err(e) => {
-                                tracing::warn!("Failed to reload MIME types from {}: {}", mimes_file, e);
+                                tracing::warn!(
+                                    "Failed to reload MIME types from {}: {}",
+                                    mimes_file,
+                                    e
+                                );
                             }
                         }
                     }
@@ -1251,7 +1406,8 @@ async fn handle_command_connection(stream: std::fs::File, config_manager: Arc<Rw
                 stats: crate::process::StatusStats::default(),
                 threat_summary: crate::process::ThreatSummary::default(),
             };
-            let json = serde_json::to_string(&crate::process::CommandResponse::Status(status)).unwrap_or_default();
+            let json = serde_json::to_string(&crate::process::CommandResponse::Status(status))
+                .unwrap_or_default();
             let len = json.len() as u32;
             let _ = stream.write_all(&len.to_be_bytes());
             let _ = stream.write_all(json.as_bytes());

@@ -2,20 +2,6 @@ use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use parking_lot::RwLock;
-
-const RFC1918_10: &str = "10.0.0.0/8";
-const RFC1918_172: &str = "172.16.0.0/12";
-const RFC1918_192: &str = "192.168.0.0/16";
-const LOCALHOST: &str = "127.0.0.0/8";
-const LINK_LOCAL: &str = "169.254.0.0/16";
-const MULTICAST: &str = "224.0.0.0/4";
-const UNSPECIFIED: &str = "0.0.0.0/8";
-const LOOPBACK_V6: &str = "::1/128";
-const ULA_V6: &str = "fc00::/7";
-const LINK_LOCAL_V6: &str = "fe80::/10";
-const MULTICAST_V6: &str = "ff00::/8";
-
 fn is_private_ip(ip: &IpAddr) -> bool {
     match ip {
         IpAddr::V4(ipv4) => {
@@ -109,8 +95,6 @@ pub enum DnsFirewallAction {
 #[derive(Debug, Clone)]
 pub struct DnsFirewall {
     rules: Vec<DnsFirewallRule>,
-    blocked_ips: Vec<IpAddr>,
-    blocked_domains: Vec<String>,
     last_cleanup: u64,
     geoip_lookup: Option<Arc<crate::geoip::GeoIpManager>>,
 }
@@ -119,8 +103,6 @@ impl DnsFirewall {
     pub fn new() -> Self {
         Self {
             rules: Vec::new(),
-            blocked_ips: Vec::new(),
-            blocked_domains: Vec::new(),
             last_cleanup: 0,
             geoip_lookup: None,
         }
@@ -274,7 +256,6 @@ impl DnsFirewall {
                     }
                 }
             }
-            _ => return false,
         }
 
         false

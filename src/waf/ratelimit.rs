@@ -119,12 +119,6 @@ impl<T: Copy> RingBuffer<T> {
         self.len == 0
     }
 
-    fn clear(&mut self) {
-        self.data.clear();
-        self.head = 0;
-        self.len = 0;
-    }
-
     #[inline]
     fn retain<F: FnMut(&T) -> bool>(&mut self, mut f: F) {
         if self.len == 0 {
@@ -510,6 +504,7 @@ impl RateLimiterManager {
     }
 }
 
+#[allow(dead_code)]
 pub struct GlobalConnectionPermit {
     semaphore: Arc<Semaphore>,
     _permit: tokio::sync::OwnedSemaphorePermit,

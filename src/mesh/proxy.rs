@@ -23,7 +23,7 @@ use crate::mesh::protocol::{ProviderInfo, UpstreamProtocol, WafPolicy};
 use crate::mesh::topology::MeshTopology;
 use crate::mesh::transport::MeshTransport;
 use crate::proxy_cache::{ProxyCache, ProxyCacheSettings, CacheKeyBuilder};
-use crate::metrics::bandwidth::get_global_bandwidth_tracker;
+use crate::metrics::bandwidth::get_global_bandwidth_tracker_or_log;
 
 /// Default TTL for cached routing policies (1 hour)
 const DEFAULT_POLICY_CACHE_TTL_SECS: u64 = 3600;
@@ -766,9 +766,10 @@ impl MeshProxy {
                     let request_size = body_bytes.len() + format!("{} {} HTTP/1.1\r\n", method, uri).len();
                     let response_size = resp.body().size_hint().exact().unwrap_or(0);
                     
-                    let bandwidth = get_global_bandwidth_tracker();
-                    bandwidth.record_site_mesh_egress(upstream_id, request_size as u64);
-                    bandwidth.record_site_mesh_ingress(upstream_id, response_size as u64);
+                    if let Some(bandwidth) = get_global_bandwidth_tracker_or_log() {
+                        bandwidth.record_site_mesh_egress(upstream_id, request_size as u64);
+                        bandwidth.record_site_mesh_ingress(upstream_id, response_size as u64);
+                    }
                     
                     tracing::info!(
                         "Successfully proxied to {} via provider {} (tried {}/{})",

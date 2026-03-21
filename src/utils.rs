@@ -1,6 +1,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+pub mod ratelimit;
 pub mod errors {
     pub mod ipc {
         pub fn connect_failed(e: &impl std::fmt::Display) -> String {

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use ed25519_dalek::Verifier;
 use parking_lot::RwLock;
 
 use crate::dns::dnssec::{Algorithm, ZoneSigningKey};

@@ -79,6 +79,7 @@ pub struct PluginManager {
     axum_plugins: RwLock<Vec<Arc<AxumPluginWrapper>>>,
 }
 
+#[allow(dead_code)]
 struct AxumPluginWrapper {
     router: axum::Router<()>,
     name: String,
@@ -146,8 +147,8 @@ impl PluginManager {
 pub enum AxumPluginError {
     #[error("Failed to load plugin: {0}")]
     LoadFailed(String),
-    #[error("ABI version mismatch: {0}")]
-    AbiMismatch(String),
+    #[error("Plugin ABI version {plugin} does not match expected version {expected}")]
+    AbiMismatch { plugin: String, expected: String },
     #[error("Symbol not found: {0}")]
     SymbolNotFound(String),
 }

@@ -5,7 +5,6 @@ use parking_lot::RwLock;
 use tokio::net::TcpStream;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_rustls::TlsAcceptor;
-use bytes::Buf;
 
 use crate::config::dns::DnsDotConfig;
 use crate::dns::server::{DnsServer, RecordType};
@@ -97,7 +96,7 @@ impl DotServer {
             tls_stream.read_exact(&mut query_buf).await
                 .map_err(|e| format!("Failed to read query: {}", e))?;
 
-            let (zones, zone_trie, zone_index, cache, dnssec, signer_name, ecs_config) = {
+            let (zones, zone_trie, _zone_index, cache, dnssec, signer_name, ecs_config) = {
                 let dns_server_guard = dns_server.read();
                 let server = match dns_server_guard.as_ref() {
                     Some(s) => s,

@@ -1,5 +1,5 @@
-use yew::prelude::*;
 use crate::types::{ThemeResponse, UpdateThemeRequest};
+use yew::prelude::*;
 
 const STORAGE_KEY: &str = "maluwaf-theme";
 
@@ -68,7 +68,7 @@ impl Theme {
         let storage = window.local_storage().ok()??;
         let preset = storage.get(STORAGE_KEY).ok()?;
         let preset = preset?;
-        
+
         Some(Theme::from_preset(&preset))
     }
 
@@ -81,7 +81,7 @@ impl Theme {
             Ok(Some(s)) => s,
             _ => return,
         };
-        
+
         let _ = storage.set(STORAGE_KEY, self.to_preset());
     }
 }
@@ -97,7 +97,7 @@ fn apply_theme_class(theme: Theme) {
         Some(d) => d,
         None => return,
     };
-    
+
     if let Some(root) = document.document_element() {
         let class = theme.class();
         let _ = root.set_class_name(class);
@@ -107,17 +107,15 @@ fn apply_theme_class(theme: Theme) {
 #[hook]
 pub fn use_api_theme() -> (Option<ThemeResponse>, Callback<UpdateThemeRequest>) {
     let theme_data = use_state(|| None::<ThemeResponse>);
-    let theme = use_state(|| {
-        Theme::from_storage().unwrap_or_default()
-    });
-    
+    let theme = use_state(|| Theme::from_storage().unwrap_or_default());
+
     let initial_theme = (*theme).clone();
-    
+
     apply_theme_class(initial_theme);
-    
+
     let theme_data_clone = theme_data.clone();
     let theme_clone = theme.clone();
-    
+
     use_effect_with((), move |_| {
         wasm_bindgen_futures::spawn_local(async move {
             let api = crate::services::ApiService::new();
@@ -142,13 +140,13 @@ pub fn use_api_theme() -> (Option<ThemeResponse>, Callback<UpdateThemeRequest>) 
         Callback::from(move |request: UpdateThemeRequest| {
             let theme_data = theme_data.clone();
             let theme = theme.clone();
-            
+
             if let Some(preset) = &request.preset {
                 let theme_enum = Theme::from_preset(preset);
                 theme_enum.save_to_storage();
                 apply_theme_class(theme_enum);
             }
-            
+
             wasm_bindgen_futures::spawn_local(async move {
                 let api = crate::services::ApiService::new();
                 match api.update_theme(&request).await {

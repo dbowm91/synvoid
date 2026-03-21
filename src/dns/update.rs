@@ -2,7 +2,7 @@ use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use super::server::{DnsZoneRecord, RecordType, RecordTypeExt, Zone};
+use super::server::{DnsZoneRecord, RecordType, Zone};
 use super::wire;
 
 #[derive(Debug, Clone)]
@@ -115,7 +115,7 @@ impl DynamicUpdate {
         if end_pos + 4 > query.len() {
             return Err("Incomplete RR".to_string());
         }
-        let rtype = u16::from_be_bytes([query[end_pos], query[end_pos + 1]]);
+        let _rtype = u16::from_be_bytes([query[end_pos], query[end_pos + 1]]);
         let zclass = u16::from_be_bytes([query[end_pos + 2], query[end_pos + 3]]);
         Ok((name, zclass))
     }
@@ -205,17 +205,17 @@ impl DynamicUpdate {
     }
 
     fn skip_rr(query: &[u8], pos: usize) -> usize {
-        let (name, end_pos) = Self::parse_name(query, pos).unwrap_or((String::new(), pos));
+        let (_name, end_pos) = Self::parse_name(query, pos).unwrap_or((String::new(), pos));
         end_pos + 4
     }
 
     fn skip_rr_with_rdata(query: &[u8], pos: usize) -> usize {
-        let (name, end_pos) = Self::parse_name(query, pos).unwrap_or((String::new(), pos));
+        let (_name, end_pos) = Self::parse_name(query, pos).unwrap_or((String::new(), pos));
         end_pos + 4
     }
 
     fn skip_rr_full(query: &[u8], pos: usize) -> usize {
-        let (name, end_pos) = Self::parse_name(query, pos).unwrap_or((String::new(), pos));
+        let (_name, end_pos) = Self::parse_name(query, pos).unwrap_or((String::new(), pos));
         if end_pos + 10 > query.len() {
             return query.len();
         }
@@ -263,7 +263,7 @@ impl DynamicUpdateHandler {
     pub fn handle_update(
         &self,
         query: &[u8],
-        client_ip: std::net::IpAddr,
+        _client_ip: std::net::IpAddr,
     ) -> Result<Vec<u8>, String> {
         if !self.enabled {
             return Err("Dynamic updates not enabled".to_string());
@@ -297,11 +297,11 @@ impl DynamicUpdateHandler {
                     updated_zone.records.insert(
                         (
                             update_record.name.clone(),
-                            RecordType::from_u16(update_record.rtype),
+                            RecordType::from(update_record.rtype),
                         ),
                         vec![DnsZoneRecord {
                             name: update_record.name.clone(),
-                            record_type: RecordType::from_u16(update_record.rtype),
+                            record_type: RecordType::from(update_record.rtype),
                             value: format!("{:?}", update_record.rdata),
                             ttl: update_record.ttl,
                             priority: None,
@@ -311,7 +311,7 @@ impl DynamicUpdateHandler {
                 2 => {
                     updated_zone.records.remove(&(
                         update_record.name.clone(),
-                        RecordType::from_u16(update_record.rtype),
+                        RecordType::from(update_record.rtype),
                     ));
                 }
                 _ => {}
@@ -342,25 +342,25 @@ impl DynamicUpdateHandler {
             PrerequisiteCondition::Exists => {
                 let records = zone
                     .records
-                    .get(&(prereq.name.clone(), RecordType::from_u16(prereq.rtype)));
+                    .get(&(prereq.name.clone(), RecordType::from(prereq.rtype)));
                 Ok(records.is_some() && !records.unwrap().is_empty())
             }
             PrerequisiteCondition::NotExists => {
                 let records = zone
                     .records
-                    .get(&(prereq.name.clone(), RecordType::from_u16(prereq.rtype)));
+                    .get(&(prereq.name.clone(), RecordType::from(prereq.rtype)));
                 Ok(records.is_none() || records.unwrap().is_empty())
             }
             PrerequisiteCondition::ExistsRRset => {
                 let records = zone
                     .records
-                    .get(&(prereq.name.clone(), RecordType::from_u16(prereq.rtype)));
+                    .get(&(prereq.name.clone(), RecordType::from(prereq.rtype)));
                 Ok(records.is_some() && !records.unwrap().is_empty())
             }
             PrerequisiteCondition::NotExistsRRset => {
                 let records = zone
                     .records
-                    .get(&(prereq.name.clone(), RecordType::from_u16(prereq.rtype)));
+                    .get(&(prereq.name.clone(), RecordType::from(prereq.rtype)));
                 Ok(records.is_none() || records.unwrap().is_empty())
             }
         }

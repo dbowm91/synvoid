@@ -202,6 +202,7 @@ pub fn parse_wg_show_output(output: &str) -> Result<Vec<WgInterfaceStats>, WgSta
     Ok(interfaces)
 }
 
+#[cfg(target_os = "linux")]
 fn parse_handshake_time(value: &str) -> Option<u64> {
     let mut seconds = 0u64;
     let parts: Vec<&str> = value.split_whitespace().collect();
@@ -287,6 +288,7 @@ pub async fn get_peer_stats(interface: &str, public_key: &str) -> Result<Option<
     Ok(stats.peer_by_public_key(public_key).cloned())
 }
 
+#[allow(dead_code)]
 pub struct WgStatsCollector {
     interface: String,
     last_stats: Option<WgInterfaceStats>,

@@ -17,6 +17,7 @@ pub struct ServiceBanner {
     pub response_for_payload: Option<Vec<u8>>,
 }
 
+#[allow(dead_code)]
 pub struct ProtocolDetector {
     patterns: Vec<(String, String, String, Regex)>,
     ac: AhoCorasick,

@@ -4,6 +4,7 @@ use super::checksum::compute_sha256;
 use super::state::{OverseerState, Persistence, UpgradeState};
 use super::upgrade::Orchestrator;
 
+#[allow(dead_code)]
 pub struct RollbackManager {
     persistence: Persistence,
     data_dir: PathBuf,

@@ -108,7 +108,10 @@ impl ConfigManager {
         }
     }
 
-    pub fn load_main<P: AsRef<Path>>(&mut self, path: P) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn load_main<P: AsRef<Path>>(
+        &mut self,
+        path: P,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.main = MainConfig::from_file(path)?;
         Ok(())
     }
@@ -116,7 +119,7 @@ impl ConfigManager {
     pub fn load_site<P: AsRef<Path>>(
         &mut self,
         path: P,
-    ) -> Result<String, Box<dyn std::error::Error>> {
+    ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
         let config = SiteConfig::from_file(&path)?;
         let site_id = config.site_id();
         self.sites.insert(site_id.clone(), config);

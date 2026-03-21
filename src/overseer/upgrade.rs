@@ -285,6 +285,7 @@ impl Orchestrator {
                     }
                     Err(failures) => {
                         state.state = UpgradeState::Failed;
+                        state.current_version = state.previous_version.clone();
                         state.last_error = Some(format!(
                             "Validation failed: {:?}",
                             failures
@@ -659,24 +660,6 @@ impl Orchestrator {
         Ok(())
     }
 
-    fn extract_version(&self, binary_path: &PathBuf) -> Result<String, UpgradeError> {
-        let output = std::process::Command::new(binary_path)
-            .arg("--version")
-            .output();
-
-        match output {
-            Ok(out) => {
-                let version = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                if version.is_empty() {
-                    Ok("unknown".to_string())
-                } else {
-                    Ok(version)
-                }
-            }
-            Err(_) => Ok("unknown".to_string()),
-        }
-    }
-
     async fn spawn_workers_impl(
         &self,
         binary_path: &str,
@@ -816,6 +799,7 @@ impl Orchestrator {
         use serde::Deserialize;
         
         #[derive(Deserialize)]
+        #[allow(dead_code)]
         struct DrainStatusResponse {
             #[allow(dead_code)]
             drain_id: u64,

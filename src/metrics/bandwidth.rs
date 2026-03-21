@@ -27,12 +27,28 @@ const EMA_ALPHA: f64 = 0.3;
 static GLOBAL_TRACKER: parking_lot::Mutex<Option<Arc<BandwidthTracker>>> =
     parking_lot::Mutex::new(None);
 
-pub fn get_global_bandwidth_tracker() -> Arc<BandwidthTracker> {
+#[derive(Debug, thiserror::Error)]
+pub enum BandwidthTrackerError {
+    #[error("BandwidthTracker not initialized - call init_global_bandwidth_tracker() first")]
+    NotInitialized,
+}
+
+pub fn get_global_bandwidth_tracker() -> Result<Arc<BandwidthTracker>, BandwidthTrackerError> {
     GLOBAL_TRACKER
         .lock()
         .as_ref()
-        .expect("BandwidthTracker not initialized - call init_global_bandwidth_tracker() first")
-        .clone()
+        .ok_or(BandwidthTrackerError::NotInitialized)
+        .map(Clone::clone)
+}
+
+pub fn get_global_bandwidth_tracker_or_log() -> Option<Arc<BandwidthTracker>> {
+    match get_global_bandwidth_tracker() {
+        Ok(tracker) => Some(tracker),
+        Err(e) => {
+            tracing::warn!("{}", e);
+            None
+        }
+    }
 }
 
 pub fn init_global_bandwidth_tracker(retention_days: u32, mesh_excluded: bool) {

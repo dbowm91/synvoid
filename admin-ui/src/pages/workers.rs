@@ -1,6 +1,6 @@
-use yew::prelude::*;
 use crate::services::ApiService;
-use crate::types::{WorkerStatus, OverseerStatus, WorkerCountResponse};
+use crate::types::{OverseerStatus, WorkerCountResponse, WorkerStatus};
+use yew::prelude::*;
 
 #[function_component]
 pub fn Workers() -> Html {
@@ -16,21 +16,21 @@ pub fn Workers() -> Html {
         let overseer = overseer.clone();
         let worker_count = worker_count.clone();
         let error = error.clone();
-        
+
         use_effect_with((), move |_| {
             let workers = workers.clone();
             let overseer = overseer.clone();
             let worker_count = worker_count.clone();
             let error = error.clone();
-            
+
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
-                
+
                 match api.get_workers_status().await {
                     Ok(w) => workers.set(w),
                     Err(e) => error.set(Some(e)),
                 }
-                
+
                 match api.get_overseer_status().await {
                     Ok(o) => overseer.set(Some(o)),
                     Err(e) => error.set(Some(e)),
@@ -41,7 +41,7 @@ pub fn Workers() -> Html {
                     Err(e) => tracing::error!("Failed to get worker count: {}", e),
                 }
             });
-            
+
             || {}
         });
     }
@@ -50,26 +50,26 @@ pub fn Workers() -> Html {
         let workers = workers.clone();
         let restarting = restarting.clone();
         let error = error.clone();
-        
+
         Callback::from(move |worker_id: String| {
             let workers = workers.clone();
             let restarting = restarting.clone();
             let error = error.clone();
             let worker_id_clone = worker_id.clone();
-            
+
             restarting.set(Some(worker_id_clone.clone()));
-            
+
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
-                
+
                 match api.restart_worker(&worker_id_clone).await {
                     Ok(_resp) => {
                         let workers = workers.clone();
                         let restarting = restarting.clone();
-                        
+
                         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
                         restarting.set(None);
-                        
+
                         if let Ok(w) = api.get_workers_status().await {
                             workers.set(w);
                         }
@@ -104,7 +104,7 @@ pub fn Workers() -> Html {
 
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
-                
+
                 match api.scale_workers(current + 1).await {
                     Ok(resp) => {
                         tracing::info!("Scaled workers: {}", resp.message);
@@ -142,7 +142,7 @@ pub fn Workers() -> Html {
 
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
-                
+
                 match api.scale_workers(current - 1).await {
                     Ok(resp) => {
                         tracing::info!("Scaled workers: {}", resp.message);
@@ -163,7 +163,7 @@ pub fn Workers() -> Html {
         let days = secs / 86400;
         let hours = (secs % 86400) / 3600;
         let minutes = (secs % 3600) / 60;
-        
+
         if days > 0 {
             format!("{}d {}h {}m", days, hours, minutes)
         } else if hours > 0 {
@@ -269,12 +269,12 @@ pub fn Workers() -> Html {
                             </div>
                         </div>
                     </div>
-                    
+
                     <div class="mt-4 space-y-3">
                         <div class="flex items-center justify-between">
                             <span class="text-sm text-secondary">{ "Worker Count" }</span>
                             <div class="flex items-center gap-3">
-                                <button 
+                                <button
                                     onclick={on_scale_down}
                                     disabled={*scaling || worker_count.as_ref().map(|c| c.current <= c.min).unwrap_or(true)}
                                     class="px-3 py-1 bg-tertiary rounded hover:bg-tertiary/80 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -286,7 +286,7 @@ pub fn Workers() -> Html {
                                 <span class="text-primary font-medium min-w-[30px] text-center">
                                     { worker_count.as_ref().map(|c| c.current.to_string()).unwrap_or_else(|| "-".to_string()) }
                                 </span>
-                                <button 
+                                <button
                                     onclick={on_scale_up}
                                     disabled={*scaling || worker_count.as_ref().map(|c| c.current >= c.max).unwrap_or(true)}
                                     class="px-3 py-1 bg-tertiary rounded hover:bg-tertiary/80 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -311,7 +311,7 @@ pub fn Workers() -> Html {
 
             <div class="bg-secondary rounded-lg border border-default p-6">
                 <h2 class="text-lg font-semibold mb-4">{ "Worker Processes" }</h2>
-                
+
                 if workers.is_empty() {
                     <p class="text-secondary">{ "No workers found" }</p>
                 } else {
@@ -338,9 +338,9 @@ pub fn Workers() -> Html {
                                         "running" => "text-green-500",
                                         _ => "text-red-500",
                                     };
-                                    
+
                                     let is_restarting = restarting.as_ref().map(|r| r == &w.id).unwrap_or(false);
-                                    
+
                                     html! {
                                         <tr class="border-b border-default hover:bg-tertiary/30">
                                             <td class="py-3 px-4 text-primary font-medium">{ &w.id }</td>
@@ -354,7 +354,7 @@ pub fn Workers() -> Html {
                                             <td class="py-3 px-4 text-secondary">{ format!("{} MB", w.memory_mb) }</td>
                                             <td class="py-3 px-4 text-secondary">{ format!("{:.1}%", w.cpu_percent) }</td>
                                             <td class="py-3 px-4">
-                                                <button 
+                                                <button
                                                     onclick={{
                                                         let worker_id = w.id.clone();
                                                         let on_restart = on_restart.clone();

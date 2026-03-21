@@ -390,36 +390,6 @@ pub trait PatternDetector: Send + Sync {
     }
 }
 
-fn detect_header_value<D: PatternDetector>(
-    detector: &D,
-    header_name: &str,
-    value: &str,
-    normalizer: Option<&InputNormalizer>,
-) -> Option<AttackDetectionResult> {
-    let location = InputLocation::Header(header_name.to_string());
-
-    if let Some(result) = detector.detect(value, location.clone()) {
-        return Some(result);
-    }
-
-    if let Some(norm) = normalizer {
-        let normalized = norm.normalize(value);
-        if normalized.normalized != value {
-            if let Some(result) = detector.detect(&normalized.normalized, location) {
-                return Some(result);
-            }
-        }
-    } else if let Ok(decoded) = urlencoding_decode_result(value) {
-        if decoded != value {
-            if let Some(result) = detector.detect(&decoded, location) {
-                return Some(result);
-            }
-        }
-    }
-
-    None
-}
-
 pub struct BasePatternDetector {
     patterns: Arc<AhoCorasick>,
     attack_type: AttackType,

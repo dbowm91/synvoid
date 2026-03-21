@@ -564,7 +564,7 @@ impl DnsPadding {
         let blocks = (target_size + block_size - 1) / block_size;
         let total_size = blocks * block_size;
 
-        let mut padding = random_bytes(total_size);
+        let padding = random_bytes(total_size);
 
         self.generated_padding = padding.clone();
 

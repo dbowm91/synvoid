@@ -125,7 +125,7 @@ impl ShardedDnsCache {
             cached_at: Instant::now(),
             fingerprint: super::cache::DnsCache::compute_fingerprint(&data),
             source_ip: key.client_subnet,
-            is_dnssec_signed: false, // TODO: detect this
+            is_dnssec_signed: super::cache::detect_dnssec_signed(&data),
         };
 
         shard.entries.insert(key, entry);

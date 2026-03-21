@@ -12,10 +12,7 @@
 // - create_router: Function that returns pointer to Router
 //
 
-use axum::{
-    routing::get,
-    Router,
-};
+use axum::{routing::get, Router};
 
 #[repr(transparent)]
 pub struct AbiVersion(*const std::ffi::c_char);
@@ -35,7 +32,7 @@ pub extern "C" fn create_router() -> *mut Router<()> {
         .route("/api/health", get(health))
         .route("/api/data", get(data))
         .fallback(fallback);
-    
+
     Box::into_raw(Box::new(router))
 }
 
@@ -68,7 +65,10 @@ async fn data() -> axum::Json<serde_json::Value> {
 }
 
 async fn fallback(uri: axum::http::Uri) -> (axum::http::StatusCode, String) {
-    (axum::http::StatusCode::NOT_FOUND, format!("Not found: {}", uri))
+    (
+        axum::http::StatusCode::NOT_FOUND,
+        format!("Not found: {}", uri),
+    )
 }
 
 #[cfg(test)]
@@ -83,15 +83,15 @@ mod tests {
         unsafe {
             let router = create_router();
             assert!(!router.is_null());
-            
+
             let app = &*router;
             let response = app
                 .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
                 .await
                 .unwrap();
-            
+
             assert_eq!(response.status(), StatusCode::OK);
-            
+
             destroy_router(router);
         }
     }

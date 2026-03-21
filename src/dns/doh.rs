@@ -79,7 +79,7 @@ impl DohServer {
 
         let dns_server_clone = dns_server.clone();
 
-        let mut builder = http2::Builder::new(hyper_util::rt::TokioExecutor::new());
+        let builder = http2::Builder::new(hyper_util::rt::TokioExecutor::new());
         
         builder.serve_connection(
             io,
@@ -176,7 +176,7 @@ impl DohServer {
 
         let zones = server.get_zones();
         let zone_trie = server.get_zone_trie();
-        let zone_index = server.get_zone_index();
+        let _zone_index = server.get_zone_index();
         let cache = server.get_cache();
         let dnssec = server.get_dnssec();
         let signer_name = server.get_signer_name();

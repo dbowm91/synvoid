@@ -1,6 +1,6 @@
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use parking_lot::RwLock;
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use std::sync::Arc;
 
 use crate::RunningFlag;
 
@@ -8,15 +8,15 @@ const ALLOWED_SCHEMES: &[&str] = &["http", "https", "ws", "wss", "grpc", "grpcs"
 
 fn validate_upstream_url(url: &str) -> Result<String, String> {
     let url = url.trim();
-    
+
     if url.is_empty() {
         return Err("Upstream URL cannot be empty".to_string());
     }
-    
+
     if url.starts_with('/') || url.starts_with("./") {
         return Ok(url.to_string());
     }
-    
+
     let scheme_end = url.find("://");
     if let Some(pos) = scheme_end {
         let scheme = &url[..pos];
@@ -32,11 +32,11 @@ fn validate_upstream_url(url: &str) -> Result<String, String> {
             url
         ));
     }
-    
+
     if url.contains("file://") || url.contains("ftp://") || url.contains("gopher://") {
         return Err(format!("Unsafe scheme in upstream URL: {}", url));
     }
-    
+
     Ok(url.to_string())
 }
 
@@ -161,11 +161,17 @@ impl Backend {
     }
 
     pub fn supports_grpc(&self) -> bool {
-        matches!(self.protocol, BackendProtocol::Grpc | BackendProtocol::GrpcTls)
+        matches!(
+            self.protocol,
+            BackendProtocol::Grpc | BackendProtocol::GrpcTls
+        )
     }
 
     pub fn supports_websocket(&self) -> bool {
-        matches!(self.protocol, BackendProtocol::WebSocket | BackendProtocol::Wss)
+        matches!(
+            self.protocol,
+            BackendProtocol::WebSocket | BackendProtocol::Wss
+        )
     }
 
     pub fn with_max_connections(mut self, max: usize) -> Self {
@@ -175,7 +181,7 @@ impl Backend {
 
     #[inline]
     pub fn is_available(&self) -> bool {
-        self.is_healthy.is_running() 
+        self.is_healthy.is_running()
             && self.current_connections.load(Ordering::Relaxed) < self.max_connections
     }
 
@@ -208,7 +214,11 @@ impl Backend {
         let failures = self.consecutive_failures.fetch_add(1, Ordering::Relaxed) + 1;
         if failures >= 3 && self.is_healthy.is_running() {
             self.is_healthy.set(false);
-            tracing::warn!("Backend {} marked as unhealthy after {} failures", self.url, failures);
+            tracing::warn!(
+                "Backend {} marked as unhealthy after {} failures",
+                self.url,
+                failures
+            );
         }
     }
 
@@ -235,7 +245,8 @@ impl Backend {
     }
 
     pub fn composite_load(&self) -> f64 {
-        let conn_load = self.current_connections.load(Ordering::Relaxed) as f64 / self.max_connections as f64;
+        let conn_load =
+            self.current_connections.load(Ordering::Relaxed) as f64 / self.max_connections as f64;
         let cpu_load = self.get_cpu_percent() as f64;
         let _mem_load = self.get_memory_percent() as f64;
         (conn_load * 0.4) + (cpu_load * 0.6)
@@ -251,9 +262,7 @@ pub struct UpstreamPool {
 
 impl UpstreamPool {
     pub fn new(urls: Vec<String>, algorithm: LoadBalanceAlgorithm) -> Self {
-        let backends: Vec<Backend> = urls.into_iter()
-            .map(Backend::new)
-            .collect();
+        let backends: Vec<Backend> = urls.into_iter().map(Backend::new).collect();
 
         Self {
             backends: Arc::new(RwLock::new(backends)),
@@ -262,15 +271,15 @@ impl UpstreamPool {
         }
     }
 
-    pub fn new_with_backup(urls: Vec<String>, backup_urls: Vec<String>, algorithm: LoadBalanceAlgorithm) -> Self {
-        let mut backends: Vec<Backend> = urls.into_iter()
-            .map(Backend::new)
-            .collect();
-        
-        let backups: Vec<Backend> = backup_urls.into_iter()
-            .map(Backend::new_backup)
-            .collect();
-        
+    pub fn new_with_backup(
+        urls: Vec<String>,
+        backup_urls: Vec<String>,
+        algorithm: LoadBalanceAlgorithm,
+    ) -> Self {
+        let mut backends: Vec<Backend> = urls.into_iter().map(Backend::new).collect();
+
+        let backups: Vec<Backend> = backup_urls.into_iter().map(Backend::new_backup).collect();
+
         backends.extend(backups);
 
         Self {
@@ -282,21 +291,21 @@ impl UpstreamPool {
 
     pub fn select_backend(&self) -> Option<Backend> {
         let backends = self.backends.read();
-        
+
         if let Some(backend) = self.select_from_backends(&backends, false) {
             return Some(backend);
         }
-        
+
         self.select_from_backends(&backends, true)
     }
 
     pub fn try_select_backend(&self) -> Option<Backend> {
         let backends = self.backends.try_read()?;
-        
+
         if let Some(backend) = self.select_from_backends(&backends, false) {
             return Some(backend);
         }
-        
+
         self.select_from_backends(&backends, true)
     }
 
@@ -321,13 +330,18 @@ impl UpstreamPool {
     }
 
     fn apply_least_connections(&self, candidates: &[&Backend]) -> Option<Backend> {
-        candidates.iter()
+        candidates
+            .iter()
             .map(|b| (b.composite_load(), *b))
             .min_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal))
             .map(|(_, b)| b.clone())
     }
 
-    fn apply_ip_hash(&self, candidates: &[&Backend], _client_ip_hint: Option<&str>) -> Option<Backend> {
+    fn apply_ip_hash(
+        &self,
+        candidates: &[&Backend],
+        _client_ip_hint: Option<&str>,
+    ) -> Option<Backend> {
         let len = candidates.len();
         if len == 0 {
             return None;
@@ -337,8 +351,13 @@ impl UpstreamPool {
         Some(candidates[idx].clone())
     }
 
-    fn filter_candidates<'a>(&self, backends: &'a [Backend], backup_only: bool) -> Vec<&'a Backend> {
-        backends.iter()
+    fn filter_candidates<'a>(
+        &self,
+        backends: &'a [Backend],
+        backup_only: bool,
+    ) -> Vec<&'a Backend> {
+        backends
+            .iter()
             .filter(|b| b.is_backup == backup_only && b.is_available())
             .collect()
     }
@@ -348,16 +367,15 @@ impl UpstreamPool {
             LoadBalanceAlgorithm::RoundRobin => self.apply_round_robin(candidates),
             LoadBalanceAlgorithm::Random => self.apply_random(candidates),
             LoadBalanceAlgorithm::LeastConnections => self.apply_least_connections(candidates),
-            LoadBalanceAlgorithm::WeightedRoundRobin => {
-                self.weighted_round_robin(&candidates.iter().map(|b| (*b).clone()).collect::<Vec<_>>())
-            }
+            LoadBalanceAlgorithm::WeightedRoundRobin => self
+                .weighted_round_robin(&candidates.iter().map(|b| (*b).clone()).collect::<Vec<_>>()),
             LoadBalanceAlgorithm::IpHash => self.apply_ip_hash(candidates, None),
         }
     }
 
     fn select_from_backends(&self, backends: &[Backend], backup_only: bool) -> Option<Backend> {
         let candidates = self.filter_candidates(backends, backup_only);
-        
+
         if candidates.is_empty() {
             return None;
         }
@@ -365,24 +383,15 @@ impl UpstreamPool {
         self.apply_algorithm(&candidates)
     }
 
-    fn select_from_list_sync(&self, available: &[Backend]) -> Option<Backend> {
-        if available.is_empty() {
-            return None;
-        }
-        let candidates: Vec<&Backend> = available.iter().collect();
-        self.apply_algorithm(&candidates)
-    }
-
-    async fn select_from_list(&self, available: &[Backend]) -> Option<Backend> {
-        self.select_from_list_sync(available)
-    }
-
     pub fn select_next_backend(&self, current: &Backend) -> Option<Backend> {
         let backends = self.backends.read();
         let current_is_backup = current.is_backup;
-        
-        let candidates: Vec<&Backend> = backends.iter()
-            .filter(|b| b.url != current.url && b.is_available() && b.is_backup == current_is_backup)
+
+        let candidates: Vec<&Backend> = backends
+            .iter()
+            .filter(|b| {
+                b.url != current.url && b.is_available() && b.is_backup == current_is_backup
+            })
             .collect();
 
         let result = self.apply_algorithm(&candidates);
@@ -392,7 +401,8 @@ impl UpstreamPool {
         }
 
         if !current_is_backup {
-            backends.iter()
+            backends
+                .iter()
                 .find(|b| b.is_backup && b.is_available())
                 .cloned()
         } else {
@@ -438,14 +448,14 @@ impl UpstreamPool {
 
         let backends = self.backends.read();
         let candidates: Vec<&Backend> = backends.iter().filter(|b| b.is_available()).collect();
-        
+
         if candidates.is_empty() {
             return None;
         }
 
         let hash = self.get_or_create_hash(client_ip, candidates.len());
         let idx = hash % candidates.len();
-        
+
         Some(candidates[idx].clone())
     }
 
@@ -479,23 +489,45 @@ impl UpstreamPool {
         if let Some(existing) = backends.iter_mut().find(|b| b.url.as_ref() == &url) {
             existing.weight = weight;
             existing.protocol = protocol;
-            tracing::info!("Updated backend {} with weight {} and protocol {:?}", url, weight, protocol);
+            tracing::info!(
+                "Updated backend {} with weight {} and protocol {:?}",
+                url,
+                weight,
+                protocol
+            );
         } else {
-            backends.push(Backend::new(url.clone()).with_weight(weight).with_protocol(protocol));
-            tracing::info!("Added {} backend with weight {} and protocol {:?}", url, weight, protocol);
+            backends.push(
+                Backend::new(url.clone())
+                    .with_weight(weight)
+                    .with_protocol(protocol),
+            );
+            tracing::info!(
+                "Added {} backend with weight {} and protocol {:?}",
+                url,
+                weight,
+                protocol
+            );
         }
     }
 
-    fn filter_by_protocol<'a>(&self, backends: &'a [Backend], protocol: BackendProtocol) -> Vec<&'a Backend> {
-        backends.iter()
+    fn filter_by_protocol<'a>(
+        &self,
+        backends: &'a [Backend],
+        protocol: BackendProtocol,
+    ) -> Vec<&'a Backend> {
+        backends
+            .iter()
             .filter(|b| b.is_available() && b.protocol == protocol)
             .collect()
     }
 
-    pub fn select_backend_for_protocol(&self, required_protocol: BackendProtocol) -> Option<Backend> {
+    pub fn select_backend_for_protocol(
+        &self,
+        required_protocol: BackendProtocol,
+    ) -> Option<Backend> {
         let backends = self.backends.read();
         let candidates = self.filter_by_protocol(&backends, required_protocol);
-        
+
         if candidates.is_empty() {
             tracing::warn!("No available backends for protocol {:?}", required_protocol);
             return None;
@@ -516,7 +548,7 @@ impl UpstreamPool {
 
     pub fn get_metrics(&self) -> UpstreamMetrics {
         let backends = self.backends.read();
-        
+
         let mut healthy_count = 0;
         let mut unhealthy_count = 0;
         let mut total_connections = 0;
@@ -533,7 +565,7 @@ impl UpstreamPool {
         }
 
         let total_backends = backends.len();
-        
+
         if !backends.is_empty() {
             avg_load /= healthy_count.max(1) as f64;
         }

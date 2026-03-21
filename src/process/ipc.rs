@@ -715,6 +715,41 @@ impl Message {
                     message: "too long".into(),
                 })
             }
+            Message::WorkerRequestLog { log, .. } | Message::StaticWorkerRequestLog { log, .. } => {
+                if log.client_ip.len() > MAX_STRING_LENGTH {
+                    return Err(IpcValidationError {
+                        field: "RequestLogPayload.client_ip".into(),
+                        message: "too long".into(),
+                    });
+                }
+                if log.method.len() > MAX_STRING_LENGTH {
+                    return Err(IpcValidationError {
+                        field: "RequestLogPayload.method".into(),
+                        message: "too long".into(),
+                    });
+                }
+                if log.path.len() > MAX_STRING_LENGTH {
+                    return Err(IpcValidationError {
+                        field: "RequestLogPayload.path".into(),
+                        message: "too long".into(),
+                    });
+                }
+                if log.site_id.len() > MAX_STRING_LENGTH {
+                    return Err(IpcValidationError {
+                        field: "RequestLogPayload.site_id".into(),
+                        message: "too long".into(),
+                    });
+                }
+                if let Some(ref ua) = log.user_agent {
+                    if ua.len() > MAX_STRING_LENGTH {
+                        return Err(IpcValidationError {
+                            field: "RequestLogPayload.user_agent".into(),
+                            message: "too long".into(),
+                        });
+                    }
+                }
+                Ok(())
+            }
             _ => Ok(()),
         }
     }
@@ -1007,4 +1042,259 @@ pub fn current_timestamp() -> u64 {
         .duration_since(SystemTime::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_worker_id() {
+        let id = WorkerId(42);
+        assert_eq!(id.0, 42);
+    }
+
+    #[test]
+    fn test_worker_id_clone() {
+        let id = WorkerId(42);
+        let cloned = id.clone();
+        assert_eq!(id.0, cloned.0);
+    }
+
+    #[test]
+    fn test_worker_id_debug() {
+        let id = WorkerId(42);
+        let debug = format!("{:?}", id);
+        assert!(debug.contains("42"));
+    }
+
+    #[test]
+    fn test_error_code_variants() {
+        let codes = [
+            ErrorCode::WorkerPanic,
+            ErrorCode::Timeout,
+            ErrorCode::ConfigLoadFailed,
+            ErrorCode::SocketBindFailed,
+        ];
+        for code in codes {
+            let json = serde_json::to_string(&code).unwrap();
+            let decoded: ErrorCode = serde_json::from_str(&json).unwrap();
+            assert_eq!(code, decoded);
+        }
+    }
+
+    #[test]
+    fn test_error_code_display() {
+        let displays = [
+            (ErrorCode::Unknown, "unknown"),
+            (ErrorCode::WorkerPanic, "worker_panic"),
+            (ErrorCode::Timeout, "timeout"),
+        ];
+        for (code, expected) in displays {
+            assert_eq!(format!("{}", code), expected);
+        }
+    }
+
+    #[test]
+    fn test_error_severity_variants() {
+        let severities = [
+            ErrorSeverity::Warning,
+            ErrorSeverity::Error,
+            ErrorSeverity::Critical,
+        ];
+        for sev in severities {
+            let json = serde_json::to_string(&sev).unwrap();
+            let decoded: ErrorSeverity = serde_json::from_str(&json).unwrap();
+            assert_eq!(sev, decoded);
+        }
+    }
+
+    #[test]
+    fn test_error_severity_display() {
+        let displays = [
+            (ErrorSeverity::Warning, "warning"),
+            (ErrorSeverity::Error, "error"),
+            (ErrorSeverity::Critical, "critical"),
+        ];
+        for (sev, expected) in displays {
+            assert_eq!(format!("{}", sev), expected);
+        }
+    }
+
+    #[test]
+    fn test_threat_indicator_type_variants() {
+        let types = [
+            ThreatIndicatorType::IpBlock,
+            ThreatIndicatorType::RateLimitViolation,
+            ThreatIndicatorType::SuspiciousActivity,
+        ];
+        for t in types {
+            let json = serde_json::to_string(&t).unwrap();
+            let decoded: ThreatIndicatorType = serde_json::from_str(&json).unwrap();
+            assert_eq!(t, decoded);
+        }
+    }
+
+    #[test]
+    fn test_threat_severity_level_variants() {
+        let levels = [
+            ThreatSeverityLevel::Low,
+            ThreatSeverityLevel::Medium,
+            ThreatSeverityLevel::High,
+            ThreatSeverityLevel::Critical,
+        ];
+        for level in levels {
+            let json = serde_json::to_string(&level).unwrap();
+            let decoded: ThreatSeverityLevel = serde_json::from_str(&json).unwrap();
+            assert_eq!(level, decoded);
+        }
+    }
+
+    #[test]
+    fn test_threat_indicator_data_serde() {
+        let data = ThreatIndicatorData {
+            threat_type: ThreatIndicatorType::IpBlock,
+            indicator_value: "192.168.1.1".to_string(),
+            severity: ThreatSeverityLevel::High,
+            reason: "brute force".to_string(),
+            ttl_seconds: 3600,
+            source_node_id: "node1".to_string(),
+            timestamp: 1000,
+            site_scope: "global".to_string(),
+            rate_limit_requests: Some(100),
+            rate_limit_window_secs: Some(60),
+            suspicious_pattern: Some("rapid_login".to_string()),
+        };
+        let json = serde_json::to_string(&data).unwrap();
+        let decoded: ThreatIndicatorData = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.threat_type, ThreatIndicatorType::IpBlock);
+        assert_eq!(decoded.indicator_value, "192.168.1.1");
+        assert_eq!(decoded.severity, ThreatSeverityLevel::High);
+    }
+
+    #[test]
+    fn test_threat_summary_serde() {
+        let summary = ThreatSummary {
+            critical_ips: 10,
+            elevated_ips: 20,
+            total_blocked_ips: 100,
+        };
+        let json = serde_json::to_string(&summary).unwrap();
+        let decoded: ThreatSummary = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.critical_ips, 10);
+        assert_eq!(decoded.total_blocked_ips, 100);
+    }
+
+    #[test]
+    fn test_status_stats_serde() {
+        let stats = StatusStats {
+            total_requests: 1000,
+            blocked_last_hour: 50,
+            challenged_last_hour: 10,
+            proxied_last_hour: 500,
+            active_blocks: 25,
+            active_violations: 5,
+        };
+        let json = serde_json::to_string(&stats).unwrap();
+        let decoded: StatusStats = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.total_requests, 1000);
+    }
+
+    #[test]
+    fn test_worker_status_info_serde() {
+        let info = WorkerStatusInfo {
+            id: 1,
+            pid: 1234,
+            port: 8080,
+            status: "running".to_string(),
+            requests: 100,
+            blocked: 5,
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        let decoded: WorkerStatusInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.id, 1);
+        assert_eq!(decoded.pid, 1234);
+    }
+
+    #[test]
+    fn test_command_method_variants() {
+        let methods = [
+            CommandMethod::UnixSocket,
+            CommandMethod::NamedPipe,
+            CommandMethod::Signal,
+        ];
+        for method in methods {
+            let json = serde_json::to_string(&method).unwrap();
+            let decoded: CommandMethod = serde_json::from_str(&json).unwrap();
+            assert_eq!(method, decoded);
+        }
+    }
+
+    #[test]
+    fn test_current_timestamp() {
+        let ts = current_timestamp();
+        assert!(ts > 0);
+    }
+
+    #[test]
+    fn test_master_command_serde() {
+        let cmds = [
+            MasterCommand::Stop { graceful: true },
+            MasterCommand::Stop { graceful: false },
+            MasterCommand::ReloadConfig,
+            MasterCommand::Status,
+            MasterCommand::HealthCheck,
+        ];
+        for cmd in cmds {
+            let json = serde_json::to_string(&cmd).unwrap();
+            let decoded: MasterCommand = serde_json::from_str(&json).unwrap();
+            assert_eq!(format!("{:?}", cmd), format!("{:?}", decoded));
+        }
+    }
+
+    #[test]
+    fn test_message_serde() {
+        let msg = Message::HealthCheckAck { timestamp: 12345 };
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: Message = serde_json::from_str(&json).unwrap();
+        assert!(matches!(
+            decoded,
+            Message::HealthCheckAck { timestamp: 12345 }
+        ));
+    }
+
+    #[test]
+    fn test_message_worker_heartbeat_serde() {
+        let metrics = WorkerMetricsPayload {
+            total_requests: 100,
+            blocked: 10,
+            challenged: 5,
+            proxied: 80,
+            errors: 2,
+            current_concurrent: 20,
+            peak_concurrent: 50,
+            avg_latency_ms: 25.0,
+            p50_latency_ms: 20.0,
+            p95_latency_ms: 50.0,
+            p99_latency_ms: 100.0,
+            uptime_secs: 3600,
+            memory_bytes: 100_000_000,
+            cpu_percent: 0.5,
+            blocked_by_type: std::collections::HashMap::new(),
+            per_site: std::collections::HashMap::new(),
+            static_cache_hits: 500,
+            static_cache_misses: 50,
+            bandwidth: crate::metrics::bandwidth::BandwidthPayload::default(),
+        };
+        let msg = Message::WorkerHeartbeat {
+            id: WorkerId(1),
+            timestamp: 1000,
+            metrics,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: Message = serde_json::from_str(&json).unwrap();
+        assert!(
+            matches!(decoded, Message::WorkerHeartbeat { id, timestamp: 1000, .. } if id.0 == 1)
+        );
+    }
 }

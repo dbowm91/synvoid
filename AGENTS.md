@@ -36,8 +36,6 @@ cargo test --features dns
 
 ### Common Issues
 
-**DNS Feature Compile Errors**: The DNS feature (`--features dns`) has pre-existing compile errors unrelated to test coverage. These are known issues in `src/dns/server.rs` and related modules.
-
 **Test Timeouts**: Full test suite can take 3+ minutes. Use targeted tests during development.
 
 ## Codebase Structure
@@ -118,7 +116,7 @@ cargo check
 ## Feature Flags
 
 Key features that affect testing:
-- `dns` - DNS server functionality (has compile issues)
+- `dns` - DNS server functionality (optional, conditionally compiled)
 - `socket-handoff` - Socket transfer between processes
 - `post-quantum` - Post-quantum cryptography
 - `wireguard` - WireGuard VPN support

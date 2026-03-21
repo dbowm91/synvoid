@@ -146,7 +146,12 @@ impl SignedIpcMessage {
             ));
         }
 
-        let hmac: [u8; HMAC_SIZE] = data[4..4 + HMAC_SIZE].try_into().unwrap();
+        let hmac: [u8; HMAC_SIZE] = data[4..4 + HMAC_SIZE].try_into().map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "HMAC extraction failed: insufficient data",
+            )
+        })?;
         let payload = &data[4 + HMAC_SIZE..4 + HMAC_SIZE + (len - HMAC_SIZE)];
 
         if !signer.verify(payload, &hmac) {

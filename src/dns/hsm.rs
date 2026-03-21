@@ -56,6 +56,7 @@ pub enum HsmBackend {
     Soft(SoftHsm),
 }
 
+#[allow(dead_code)]
 pub struct Pkcs11Hsm {
     context: cryptoki::context::Pkcs11,
     slot: cryptoki::slot::Slot,
@@ -266,7 +267,6 @@ impl HsmSigner for SoftHsm {
     }
 
     fn get_public_key(&self) -> Result<Vec<u8>, HsmError> {
-        use ed25519_dalek::VerifyingKey;
         Ok(self.key.verifying_key().to_bytes().to_vec())
     }
 

@@ -33,6 +33,14 @@ pub struct StablePort {
     pub responder: Arc<dyn HoneypotResponder>,
 }
 
+struct ActivePort {
+    port: u16,
+    service_name: String,
+    responder: Arc<dyn HoneypotResponder>,
+    started_at: Instant,
+}
+
+#[allow(dead_code)]
 pub struct PortManager {
     mode: PortMode,
     config: Arc<PortHoneypotConfig>,
@@ -41,13 +49,6 @@ pub struct PortManager {
     paused: Arc<RwLock<bool>>,
     paused_reason: Arc<RwLock<Option<String>>>,
     last_rotation: Arc<RwLock<Instant>>,
-}
-
-struct ActivePort {
-    port: u16,
-    service_name: String,
-    responder: Arc<dyn HoneypotResponder>,
-    started_at: Instant,
 }
 
 impl PortManager {

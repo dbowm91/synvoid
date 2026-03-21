@@ -1,5 +1,5 @@
-use yew::prelude::*;
 use crate::services::api::ApiService;
+use yew::prelude::*;
 
 #[derive(Clone, PartialEq)]
 enum ProbeTab {
@@ -11,7 +11,7 @@ enum ProbeTab {
 #[function_component]
 pub fn Probes() -> Html {
     let active_tab = use_state(|| ProbeTab::Honeypot);
-    
+
     let tab_class = |tab: &ProbeTab| {
         if *active_tab == *tab {
             "px-4 py-2 bg-primary text-white rounded-t-lg border-b-2 border-primary"
@@ -27,19 +27,19 @@ pub fn Probes() -> Html {
             </div>
 
             <div class="flex gap-2 mb-4">
-                <button 
+                <button
                     class={tab_class(&ProbeTab::Honeypot)}
                     onclick={let active_tab = active_tab.clone(); move |_| active_tab.set(ProbeTab::Honeypot)}
                 >
                     { "Honeypot Hits" }
                 </button>
-                <button 
+                <button
                     class={tab_class(&ProbeTab::SuspiciousWords)}
                     onclick={let active_tab = active_tab.clone(); move |_| active_tab.set(ProbeTab::SuspiciousWords)}
                 >
                     { "Suspicious Words" }
                 </button>
-                <button 
+                <button
                     class={tab_class(&ProbeTab::UpstreamErrors)}
                     onclick={let active_tab = active_tab.clone(); move |_| active_tab.set(ProbeTab::UpstreamErrors)}
                 >
@@ -97,22 +97,23 @@ fn HoneypotProbes() -> Html {
             let loading = loading.clone();
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
-                
+
                 if let Ok(data) = api.get::<serde_json::Value>("/probes").await {
                     if let Some(probes_arr) = data.get("probes").and_then(|v| v.as_array()) {
-                        let parsed: Vec<HoneypotProbe> = probes_arr.iter().filter_map(|p| {
-                            serde_json::from_value(p.clone()).ok()
-                        }).collect();
+                        let parsed: Vec<HoneypotProbe> = probes_arr
+                            .iter()
+                            .filter_map(|p| serde_json::from_value(p.clone()).ok())
+                            .collect();
                         probes.set(parsed);
                     }
                 }
-                
+
                 if let Ok(data) = api.get::<serde_json::Value>("/probes/stats").await {
                     if let Ok(s) = serde_json::from_value(data) {
                         stats.set(Some(s));
                     }
                 }
-                
+
                 loading.set(false);
             });
             || ()
@@ -134,7 +135,7 @@ fn HoneypotProbes() -> Html {
     }
 
     let stats = (*stats).clone();
-    
+
     html! {
         <div>
             if let Some(s) = stats {
@@ -202,7 +203,7 @@ fn HoneypotProbes() -> Html {
                         })}
                     </tbody>
                 </table>
-                
+
                 if probes.is_empty() {
                     <div class="p-8 text-center text-secondary">
                         { "No honeypot activity detected" }
@@ -250,22 +251,23 @@ fn SuspiciousWordsTab() -> Html {
             let loading = loading.clone();
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
-                
+
                 if let Ok(data) = api.get::<serde_json::Value>("/probes/words").await {
                     if let Some(records_arr) = data.get("records").and_then(|v| v.as_array()) {
-                        let parsed: Vec<SuspiciousWordRecord> = records_arr.iter().filter_map(|r| {
-                            serde_json::from_value(r.clone()).ok()
-                        }).collect();
+                        let parsed: Vec<SuspiciousWordRecord> = records_arr
+                            .iter()
+                            .filter_map(|r| serde_json::from_value(r.clone()).ok())
+                            .collect();
                         records.set(parsed);
                     }
                 }
-                
+
                 if let Ok(data) = api.get::<serde_json::Value>("/probes/words/stats").await {
                     if let Ok(s) = serde_json::from_value(data) {
                         stats.set(Some(s));
                     }
                 }
-                
+
                 loading.set(false);
             });
             || ()
@@ -343,7 +345,7 @@ fn SuspiciousWordsTab() -> Html {
                         })}
                     </tbody>
                 </table>
-                
+
                 if records.is_empty() {
                     <div class="p-8 text-center text-secondary">
                         { "No suspicious word matches detected" }
@@ -385,22 +387,23 @@ fn UpstreamErrorsTab() -> Html {
             let loading = loading.clone();
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
-                
+
                 if let Ok(data) = api.get::<serde_json::Value>("/probes/upstream").await {
                     if let Some(records_arr) = data.get("records").and_then(|v| v.as_array()) {
-                        let parsed: Vec<UpstreamErrorRecord> = records_arr.iter().filter_map(|r| {
-                            serde_json::from_value(r.clone()).ok()
-                        }).collect();
+                        let parsed: Vec<UpstreamErrorRecord> = records_arr
+                            .iter()
+                            .filter_map(|r| serde_json::from_value(r.clone()).ok())
+                            .collect();
                         records.set(parsed);
                     }
                 }
-                
+
                 if let Ok(data) = api.get::<serde_json::Value>("/probes/upstream/stats").await {
                     if let Ok(s) = serde_json::from_value(data) {
                         stats.set(Some(s));
                     }
                 }
-                
+
                 loading.set(false);
             });
             || ()
@@ -496,7 +499,7 @@ fn UpstreamErrorsTab() -> Html {
                         })}
                     </tbody>
                 </table>
-                
+
                 if records.is_empty() {
                     <div class="p-8 text-center text-secondary">
                         { "No upstream error patterns detected" }

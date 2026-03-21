@@ -1,11 +1,11 @@
+use wasm_bindgen::JsCast;
 use yew::prelude::*;
 use yew_router::prelude::*;
-use wasm_bindgen::JsCast;
 
 use crate::app::Route;
-use crate::services::ApiService;
 use crate::components::tooltip::{HelpIcon, Tooltip, TooltipPosition};
-use crate::components::{toast_success, toast_error};
+use crate::components::{toast_error, toast_success};
+use crate::services::ApiService;
 use crate::types::presets::{get_presets, ServerPreset};
 
 #[derive(Properties, PartialEq)]
@@ -745,7 +745,8 @@ fn ErrorPagesTab(props: &ErrorPagesTabProps) -> Html {
         let preview_light = preview_light.clone();
         Callback::from(move |e: Event| {
             let target = e.target().unwrap();
-            let value = target.dyn_ref::<web_sys::HtmlSelectElement>()
+            let value = target
+                .dyn_ref::<web_sys::HtmlSelectElement>()
                 .map(|el| el.value())
                 .unwrap_or_default();
             selected_preset.set(value.clone());
@@ -763,7 +764,7 @@ fn ErrorPagesTab(props: &ErrorPagesTabProps) -> Html {
         Callback::from(move |_| {
             let new_value = !*preview_light;
             preview_light.set(new_value);
-            
+
             let colors = get_preset_colors(&selected_preset);
             let html = generate_error_page_preview("", &colors, new_value);
             preview_html.set(html);
@@ -778,9 +779,9 @@ fn ErrorPagesTab(props: &ErrorPagesTabProps) -> Html {
             let preset = (*selected_preset).clone();
             let site_id = site_id.clone();
             let saving = saving.clone();
-            
+
             saving.set(true);
-            
+
             wasm_bindgen_futures::spawn_local(async move {
                 let api = crate::services::ApiService::new();
                 let request = crate::types::UpdateThemeRequest {
@@ -788,7 +789,7 @@ fn ErrorPagesTab(props: &ErrorPagesTabProps) -> Html {
                     mode: None,
                     allow_only: None,
                 };
-                
+
                 match api.update_site_theme(&site_id, &request).await {
                     Ok(_) => {
                         toast_success("Site theme updated successfully");
@@ -817,7 +818,7 @@ fn ErrorPagesTab(props: &ErrorPagesTabProps) -> Html {
         <div class="space-y-6">
             <div>
                 <label class="block text-sm font-medium text-primary mb-2">{ "Error Page Theme" }</label>
-                <select 
+                <select
                     class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary"
                     value={(*selected_preset).clone()}
                     onchange={on_preset_change}
@@ -834,7 +835,7 @@ fn ErrorPagesTab(props: &ErrorPagesTabProps) -> Html {
             <div>
                 <div class="flex items-center justify-between mb-2">
                     <label class="block text-sm font-medium text-primary">{ "Preview" }</label>
-                    <button 
+                    <button
                         onclick={on_toggle_preview}
                         class="px-3 py-1 text-sm bg-tertiary border border-default rounded-lg text-primary hover:opacity-80"
                     >
@@ -842,7 +843,7 @@ fn ErrorPagesTab(props: &ErrorPagesTabProps) -> Html {
                     </button>
                 </div>
                 <div class="border border-default rounded-lg overflow-hidden">
-                    <iframe 
+                    <iframe
                         srcdoc={(*preview_html).clone()}
                         class="w-full h-64"
                         sandbox="allow-same-origin"
@@ -852,7 +853,7 @@ fn ErrorPagesTab(props: &ErrorPagesTabProps) -> Html {
             </div>
 
             <div class="flex justify-end gap-4">
-                <button 
+                <button
                     onclick={on_save}
                     disabled={*saving}
                     class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
@@ -979,9 +980,18 @@ fn get_preset_colors(preset: &str) -> crate::types::ThemeColorsResponse {
     }
 }
 
-fn generate_error_page_preview(_css: &str, colors: &crate::types::ThemeColorsResponse, use_light: bool) -> String {
-    let c = if use_light { &colors.light } else { &colors.dark };
-    format!(r#"
+fn generate_error_page_preview(
+    _css: &str,
+    colors: &crate::types::ThemeColorsResponse,
+    use_light: bool,
+) -> String {
+    let c = if use_light {
+        &colors.light
+    } else {
+        &colors.dark
+    };
+    format!(
+        r#"
 <!DOCTYPE html>
 <html>
 <head>

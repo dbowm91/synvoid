@@ -93,6 +93,7 @@ impl Default for QueryCoalescerMetrics {
     }
 }
 
+#[allow(dead_code)]
 pub struct QueryCoalescer {
     in_flight: Arc<RwLock<HashMap<QueryKey, CoalescerEntry>>>,
     max_wait_time: Duration,
@@ -222,7 +223,7 @@ impl QueryCoalescer {
         let now = Instant::now();
         
         let prev_count = in_flight.len();
-        in_flight.retain(|key, entry| {
+        in_flight.retain(|_key, entry| {
             let is_stale = entry.sender.receiver_count() == 0 
                 || now.duration_since(entry.created_at) > self.entry_ttl;
             

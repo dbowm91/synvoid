@@ -155,7 +155,7 @@ impl BlockStore {
             let path = persist_path.clone().unwrap();
             let max_entries_clone = max_entries;
             
-            tokio::spawn(async move {
+            let _ = tokio::spawn(async move {
                 let mut interval = tokio::time::interval(std::time::Duration::from_secs(config.persist_interval_secs));
                 let mut pending: Option<HashMap<String, BlockEntry>> = None;
                 
@@ -203,7 +203,7 @@ impl BlockStore {
         }
     }
 
-    async fn persist_to_disk(path: &PathBuf, entries: HashMap<String, BlockEntry>, max_entries: usize) {
+    pub(crate) async fn persist_to_disk(path: &PathBuf, entries: HashMap<String, BlockEntry>, max_entries: usize) {
         let entries_to_save: Vec<BlockEntry> = entries
             .values()
             .filter(|e| !e.is_expired())
@@ -216,9 +216,10 @@ impl BlockStore {
                 let temp_path = path.with_extension("tmp");
                 match tokio::fs::write(&temp_path, json).await {
                     Ok(_) => {
-                        Self::set_secure_permissions(&temp_path).await;
                         if let Err(e) = tokio::fs::rename(&temp_path, path).await {
                             tracing::warn!("Failed to rename temp block file: {}", e);
+                        } else {
+                            Self::set_secure_permissions(path).await;
                         }
                     }
                     Err(e) => {
@@ -263,7 +264,7 @@ impl BlockStore {
             let store = self.store.read().clone();
             let path = path.clone();
             let max_entries = self.config.max_entries;
-            tokio::spawn(async move {
+            let _ = tokio::spawn(async move {
                 Self::persist_to_disk(&path, store, max_entries).await;
             });
         }
@@ -502,4 +503,219 @@ pub struct BlockStoreStats {
     pub permanent_count: usize,
     pub expired_count: usize,
     pub utilization_percent: f64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+    use std::net::IpAddr;
+    use tempfile::TempDir;
+
+    fn default_config() -> DenyListLimitsConfig {
+        DenyListLimitsConfig {
+            max_entries: 1000,
+            persist_interval_secs: 0,
+        }
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn test_block_entry_key(site_scope: String, ip: String) {
+            let ip = ip.parse::<IpAddr>().unwrap_or(IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
+            let key = BlockEntry::key(&site_scope, &ip);
+            prop_assert!(key.starts_with("block:"));
+            prop_assert!(key.contains(&site_scope));
+            prop_assert!(key.contains(&ip.to_string()));
+        }
+
+        #[test]
+        fn test_block_entry_new_creates_valid_entry(ip: String, reason: String, ban_expire: u64, scope: String) {
+            let ip = ip.parse::<IpAddr>().unwrap_or(IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
+            let entry = BlockEntry::new(ip, reason.clone(), ban_expire, scope.clone());
+            prop_assert_eq!(entry.ip, ip.to_string());
+            prop_assert_eq!(entry.reason, reason);
+            prop_assert_eq!(entry.ban_expire_seconds, ban_expire);
+            prop_assert_eq!(entry.site_scope, scope);
+            prop_assert_eq!(entry.access_count, 0);
+        }
+
+        #[test]
+        fn test_block_entry_is_permanent(ban_expire: u64) {
+            let ip: IpAddr = "127.0.0.1".parse().unwrap();
+            let entry = BlockEntry::new(ip, "test".to_string(), ban_expire, "global".to_string());
+            prop_assert_eq!(entry.is_permanent(), ban_expire == 0);
+        }
+
+        #[test]
+        fn test_block_entry_update_access(access_count: u64) {
+            let ip: IpAddr = "127.0.0.1".parse().unwrap();
+            let mut entry = BlockEntry::new(ip, "test".to_string(), 0, "global".to_string());
+            entry.access_count = access_count;
+            let prev_access = entry.last_access;
+            entry.update_access();
+            prop_assert_eq!(entry.access_count, access_count + 1);
+            prop_assert!(entry.last_access >= prev_access);
+        }
+
+        #[test]
+        fn test_block_entry_is_expired_for_permanent(ban_expire: u64) {
+            if ban_expire == 0 {
+                let ip: IpAddr = "127.0.0.1".parse().unwrap();
+                let entry = BlockEntry::new(ip, "test".to_string(), 0, "global".to_string());
+                prop_assert!(!entry.is_expired());
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_block_store_disabled() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(false, Some(temp_dir.path().to_path_buf()), default_config());
+
+        let ip: IpAddr = "192.168.1.1".parse().unwrap();
+        assert!(!store.is_enabled());
+        assert!(!store.block_ip(ip, "test", 3600, "global"));
+        assert!(store.is_blocked(&ip, "global").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_block_store_block_and_check() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        let ip: IpAddr = "192.168.1.1".parse().unwrap();
+        assert!(store.block_ip(ip, "test_reason", 3600, "global"));
+
+        let blocked = store.is_blocked(&ip, "global");
+        assert!(blocked.is_some());
+        let entry = blocked.unwrap();
+        assert_eq!(entry.reason, "test_reason");
+        assert!(!entry.is_permanent());
+    }
+
+    #[tokio::test]
+    async fn test_block_store_unblock() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        let ip: IpAddr = "192.168.1.1".parse().unwrap();
+        assert!(store.block_ip(ip, "test", 3600, "global"));
+        assert!(store.is_blocked(&ip, "global").is_some());
+
+        store.unblock_ip(&ip, "global");
+        assert!(store.is_blocked(&ip, "global").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_block_store_permanent_block() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        let ip: IpAddr = "10.0.0.1".parse().unwrap();
+        assert!(store.block_ip(ip, "permanent", 0, "global"));
+
+        let blocked = store.is_blocked(&ip, "global");
+        assert!(blocked.is_some());
+        assert!(blocked.unwrap().is_permanent());
+    }
+
+    #[tokio::test]
+    async fn test_block_store_stats() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        let ip1: IpAddr = "10.0.0.1".parse().unwrap();
+        let ip2: IpAddr = "10.0.0.2".parse().unwrap();
+        store.block_ip(ip1, "test", 0, "global");
+        store.block_ip(ip2, "test", 3600, "global");
+
+        let stats = store.get_stats();
+        assert_eq!(stats.total_entries, 2);
+        assert_eq!(stats.permanent_count, 1);
+        assert_eq!(stats.max_entries, 1000);
+    }
+
+    #[tokio::test]
+    async fn test_block_store_site_specific() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        let ip: IpAddr = "172.16.0.1".parse().unwrap();
+        assert!(store.block_ip(ip, "site_a_only", 3600, "site_a"));
+        assert!(store.is_blocked(&ip, "site_a").is_some());
+        assert!(store.is_blocked(&ip, "site_b").is_none());
+        assert!(store.is_blocked(&ip, "global").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_block_store_global_fallback() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        let ip: IpAddr = "8.8.8.8".parse().unwrap();
+        assert!(store.block_ip(ip, "global_block", 3600, "global"));
+        assert!(store.is_blocked(&ip, "site_a").is_some());
+    }
+
+    #[tokio::test]
+    async fn test_block_store_add_block() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        let result = store.add_block("192.168.1.100", "rate_limit", 1800, "global");
+        assert!(result);
+
+        let ip: IpAddr = "192.168.1.100".parse().unwrap();
+        let blocked = store.is_blocked(&ip, "global");
+        assert!(blocked.is_some());
+        assert_eq!(blocked.unwrap().reason, "rate_limit");
+    }
+
+    #[tokio::test]
+    async fn test_block_store_add_block_invalid_ip() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        let result = store.add_block("not_an_ip", "test", 3600, "global");
+        assert!(!result);
+    }
+
+    #[tokio::test]
+    async fn test_block_store_get_all_entries() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        store.add_block("10.0.0.1", "test", 0, "global");
+        store.add_block("10.0.0.2", "test", 0, "global");
+
+        let entries = store.get_all_entries();
+        assert_eq!(entries.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_block_store_shutdown() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(
+            true,
+            Some(temp_dir.path().to_path_buf()),
+            DenyListLimitsConfig {
+                max_entries: 1000,
+                persist_interval_secs: 0,
+            },
+        );
+
+        store.add_block("10.0.0.1", "test", 0, "global");
+        store.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn test_block_store_ipv6() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        let ip: IpAddr = "2001:db8::1".parse().unwrap();
+        assert!(store.block_ip(ip, "ipv6_test", 3600, "global"));
+        assert!(store.is_blocked(&ip, "global").is_some());
+    }
 }

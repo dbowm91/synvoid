@@ -24,6 +24,7 @@ pub struct UdpTunnelManager {
 }
 
 #[derive(Clone)]
+#[allow(dead_code)]
 pub struct ActiveUdpTunnel {
     pub identifier: String,
     pub peer_id: String,

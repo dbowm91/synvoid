@@ -12,7 +12,7 @@ use crate::proxy::WafDecision;
 use crate::router::{Router, RouteResult};
 use crate::waf::{WafCore, FloodProtector, FloodDecision};
 use crate::http::headers::generate_stealth_timestamp;
-use crate::metrics::bandwidth::{get_global_bandwidth_tracker, BandwidthProtocol, EgressDirection};
+use crate::metrics::bandwidth::{get_global_bandwidth_tracker_or_log, BandwidthProtocol, EgressDirection};
 
 pub struct Http3Server {
     addr: SocketAddr,
@@ -266,11 +266,13 @@ impl Http3Server {
             Some(&body_bytes)
         };
 
-        let bandwidth = get_global_bandwidth_tracker();
         let body_len = body_bytes.len() as u64;
+        let bandwidth = get_global_bandwidth_tracker_or_log();
         if body_len > 0 {
-            bandwidth.record_ingress(body_len, BandwidthProtocol::Http3);
-            bandwidth.record_site_ingress(&host, body_len);
+            if let Some(ref bw) = bandwidth {
+                bw.record_ingress(body_len, BandwidthProtocol::Http3);
+                bw.record_site_ingress(&host, body_len);
+            }
         }
 
         tracing::trace!(client = %client_ip, method = %method_str, path = %path, body_size = body_bytes.len(), "HTTP/3 request body read");
@@ -298,8 +300,10 @@ impl Http3Server {
                 counter!("maluwaf.http3.requests.blocked").increment(1);
                 let body = format!("{{\"error\":\"{}\"}}", message);
                 let body_len = body.len() as u64;
-                bandwidth.record_egress(body_len, BandwidthProtocol::Http3, EgressDirection::Blocked);
-                bandwidth.record_site_egress(&host, body_len);
+                if let Some(ref bw) = bandwidth {
+                    bw.record_egress(body_len, BandwidthProtocol::Http3, EgressDirection::Blocked);
+                    bw.record_site_egress(&host, body_len);
+                }
                 let response = http::Response::builder()
                     .status(StatusCode::from_u16(status).unwrap_or(StatusCode::FORBIDDEN))
                     .header(header::CONTENT_TYPE, "application/json")
@@ -314,8 +318,10 @@ impl Http3Server {
             WafDecision::Challenge(html) => {
                 counter!("maluwaf.http3.requests.challenged").increment(1);
                 let body_len = html.len() as u64;
-                bandwidth.record_egress(body_len, BandwidthProtocol::Http3, EgressDirection::Challenged);
-                bandwidth.record_site_egress(&host, body_len);
+                if let Some(ref bw) = bandwidth {
+                    bw.record_egress(body_len, BandwidthProtocol::Http3, EgressDirection::Challenged);
+                    bw.record_site_egress(&host, body_len);
+                }
                 let response = http::Response::builder()
                     .status(StatusCode::OK)
                     .header(header::CONTENT_TYPE, "text/html")
@@ -332,8 +338,10 @@ impl Http3Server {
             WafDecision::ChallengeWithCookie { html, session_cookie_name, session_cookie_value, session_cookie_max_age } => {
                 counter!("maluwaf.http3.requests.challenged").increment(1);
                 let body_len = html.len() as u64;
-                bandwidth.record_egress(body_len, BandwidthProtocol::Http3, EgressDirection::Challenged);
-                bandwidth.record_site_egress(&host, body_len);
+                if let Some(ref bw) = bandwidth {
+                    bw.record_egress(body_len, BandwidthProtocol::Http3, EgressDirection::Challenged);
+                    bw.record_site_egress(&host, body_len);
+                }
                 let cookie = format!("{}={}; path=/; max-age={}; Secure; SameSite=Strict", session_cookie_name, session_cookie_value, session_cookie_max_age);
                 let response = http::Response::builder()
                     .status(StatusCode::OK)
@@ -353,8 +361,10 @@ impl Http3Server {
                 counter!("maluwaf.http3.requests.tarpitted").increment(1);
                 let html = waf.generate_tarpit_response(&tar_path);
                 let body_len = html.len() as u64;
-                bandwidth.record_egress(body_len, BandwidthProtocol::Http3, EgressDirection::Blocked);
-                bandwidth.record_site_egress(&host, body_len);
+                if let Some(ref bw) = bandwidth {
+                    bw.record_egress(body_len, BandwidthProtocol::Http3, EgressDirection::Blocked);
+                    bw.record_site_egress(&host, body_len);
+                }
                 let response = http::Response::builder()
                     .status(StatusCode::OK)
                     .header(header::CONTENT_TYPE, "text/html")

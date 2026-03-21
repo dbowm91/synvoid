@@ -161,14 +161,14 @@ impl DnsQueryValidator {
             ));
         }
 
-        let extended_rcode = query[pos + 2];
+        let _extended_rcode = query[pos + 2];
         let version = query[pos + 3];
 
         if version > 0 {
             return Err(format!("Unsupported EDNS version: {}", version));
         }
 
-        let z = u16::from_be_bytes([query[pos + 4], query[pos + 5]]);
+        let _z = u16::from_be_bytes([query[pos + 4], query[pos + 5]]);
 
         let rdlen = u16::from_be_bytes([query[pos + 10], query[pos + 11]]);
 
@@ -435,9 +435,7 @@ impl DnsQueryValidator {
             return Err(resp);
         }
 
-        use crate::dns::server::RecordTypeExt;
-
-        let qtype_record = RecordType::from_u16(qtype);
+        let qtype_record = RecordType::from(qtype);
         if qtype == 255 || qtype == 252 {
             return Ok(());
         }
@@ -461,7 +459,7 @@ impl DnsQueryValidator {
                 (addr.octets()[0] == 172 && (addr.octets()[1] & 0xF0) == 16) || // 172.16.0.0/12
                 (addr.octets()[0] == 192 && addr.octets()[1] == 168) || // 192.168.0.0/16
                 (addr.octets()[0] == 169 && addr.octets()[1] == 254) || // 169.254.0.0/16
-                (addr.octets()[0] & 0xFE == 0xFC) // 224.0.0.0/3
+                ((addr.octets()[0] & 0xFE) == 0xFC) // 224.0.0.0/3
             }
             IpAddr::V6(addr) => {
                 addr.segments()[0] == 0xFE80 || // fe80::/10

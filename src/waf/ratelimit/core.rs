@@ -3,6 +3,9 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::Instant;
 
 use crate::utils::ip_to_slot;
+use crate::utils::ratelimit::{
+    IpRateLimiter, RateLimitResult, RateLimitStats, RateLimitStatsProvider,
+};
 use crate::RunningFlag;
 
 const SHARD_COUNT: usize = 16;
@@ -14,6 +17,7 @@ fn get_monotonic_time_ms() -> u64 {
     start.elapsed().as_millis() as u64
 }
 
+#[allow(dead_code)]
 pub struct ShardedRateLimiter {
     shards: Box<[RateLimitShard]>,
     config: RateLimitConfig,
@@ -25,6 +29,7 @@ struct RateLimitShard {
 }
 
 #[derive(Clone)]
+#[allow(dead_code)]
 pub struct RateLimitConfig {
     pub per_second: u32,
     pub per_minute: u32,
@@ -235,7 +240,7 @@ impl GlobalRateLimiter {
         let minute_count = self.minute_window.get_count(now_ms);
         let five_min_count = self.five_min_window.get_count(now_ms);
 
-        if self.blackhole_active.is_running() {
+        if !self.blackhole_active.is_running() {
             return self.handle_blackhole_mode(second_count);
         }
 
@@ -336,7 +341,7 @@ impl GlobalRateLimiter {
     }
 
     pub fn is_in_blackhole(&self) -> bool {
-        self.blackhole_active.is_running()
+        !self.blackhole_active.is_running()
     }
 
     pub fn get_stats(&self) -> GlobalRateLimitStats {
@@ -505,6 +510,45 @@ impl SlottedIpRateLimiter {
             self.minute_counters[i].store(minute / factor, Ordering::Relaxed);
             self.five_min_counters[i].store(five_min / factor, Ordering::Relaxed);
         }
+    }
+}
+
+impl IpRateLimiter for SlottedIpRateLimiter {
+    fn check(&self, ip: IpAddr) -> RateLimitResult {
+        match self.check_and_increment(ip) {
+            RateLimitDecision::Allowed => RateLimitResult::Allowed,
+            RateLimitDecision::Limited { limit_type: _ } => RateLimitResult::Limited {
+                retry_after_secs: 1,
+            },
+            RateLimitDecision::Blackholed => RateLimitResult::Limited {
+                retry_after_secs: 60,
+            },
+        }
+    }
+}
+
+impl RateLimitStatsProvider for GlobalRateLimiter {
+    fn get_stats(&self) -> Option<RateLimitStats> {
+        let stats = self.get_stats();
+        Some(RateLimitStats {
+            current_count: stats.per_second,
+            limit: self.config.per_second as u64,
+            remaining: (self.config.per_second as u64).saturating_sub(stats.per_second),
+            reset_at: self.start_instant + std::time::Duration::from_secs(1),
+        })
+    }
+}
+
+impl RateLimitStatsProvider for SlottedIpRateLimiter {
+    fn get_stats(&self) -> Option<RateLimitStats> {
+        let slot = 0;
+        let current_count = self.second_counters[slot].load(Ordering::Relaxed) as u64;
+        Some(RateLimitStats {
+            current_count,
+            limit: self.config.per_second as u64,
+            remaining: (self.config.per_second as u64).saturating_sub(current_count),
+            reset_at: self.start_instant + std::time::Duration::from_secs(1),
+        })
     }
 }
 

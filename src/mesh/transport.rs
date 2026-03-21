@@ -3,11 +3,10 @@
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use flate2::{Compress, Decompress, Compression, Status};
-use flate2::write::{ZlibEncoder, ZlibDecoder};
+use flate2::{Compression};
+use flate2::write::ZlibEncoder;
 use flate2::read::{ZlibDecoder as ReadZlibDecoder};
 
 #[cfg(feature = "dns")]
@@ -44,6 +43,10 @@ use crate::waf::ratelimit::core::AtomicSlidingWindow;
 
 pub use crate::mesh::transports::MeshTransportManager;
 
+pub use crate::mesh::transport_core::{MeshTransportError, validate_system_time, get_time_validation_error_count, MIN_REASONABLE_TIMESTAMP, MAX_REASONABLE_TIMESTAMP};
+
+
+
 const MAX_PENDING_CONNECTIONS: usize = 100;
 const CONNECTION_RATE_LIMIT_WINDOW_SECS: u64 = 60;
 const MAX_MESSAGE_QUEUE_SIZE: usize = 1000;
@@ -51,12 +54,6 @@ const DEFAULT_MAX_PEER_MESSAGE_RATE: usize = 1000;
 const PEER_RATE_LIMIT_WINDOW_SECS: u64 = 60;
 /// Maximum duration for a block received from another node (24 hours)
 const MAX_BLOCK_DURATION_SECS: u64 = 86400;
-/// Minimum reasonable Unix timestamp (Jan 1, 2025)
-const MIN_REASONABLE_TIMESTAMP: u64 = 1735689600;
-/// Maximum reasonable Unix timestamp (Jan 1, 2027)
-const MAX_REASONABLE_TIMESTAMP: u64 = 1767225600;
-
-static TIME_VALIDATION_ERRORS: AtomicU64 = AtomicU64::new(0);
 
 pub struct MeshTransport {
     config: Arc<MeshConfig>,
@@ -171,40 +168,6 @@ impl MeshGlobalRateLimiter {
 pub struct GlobalRateLimitCheck {
     pub current_per_second: u64,
     pub current_per_minute: u64,
-}
-
-pub fn validate_system_time() {
-    let now_unix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    
-    if now_unix < MIN_REASONABLE_TIMESTAMP {
-        let offset = MIN_REASONABLE_TIMESTAMP.saturating_sub(now_unix);
-        TIME_VALIDATION_ERRORS.fetch_add(1, Ordering::SeqCst);
-        counter!("maluwaf.mesh.time_validation.errors", "reason" => "clock_behind").increment(1);
-        tracing::error!(
-            "System time appears incorrect: {} (Unix timestamp), expected at least {}. \
-            Please sync NTP! Clock is off by approximately {} seconds ({} years)",
-            now_unix, MIN_REASONABLE_TIMESTAMP, offset, offset / 31536000
-        );
-    } else if now_unix > MAX_REASONABLE_TIMESTAMP {
-        let offset = now_unix.saturating_sub(MAX_REASONABLE_TIMESTAMP);
-        TIME_VALIDATION_ERRORS.fetch_add(1, Ordering::SeqCst);
-        counter!("maluwaf.mesh.time_validation.errors", "reason" => "clock_ahead").increment(1);
-        tracing::error!(
-            "System time appears incorrect: {} (Unix timestamp), expected at most {}. \
-            Please sync NTP! Clock is off by approximately {} seconds ({} years)",
-            now_unix, MAX_REASONABLE_TIMESTAMP, offset, offset / 31536000
-        );
-    } else {
-        counter!("maluwaf.mesh.time_validation.valid").increment(1);
-        tracing::info!("System time validated: {} (Unix timestamp)", now_unix);
-    }
-}
-
-pub fn get_time_validation_error_count() -> u64 {
-    TIME_VALIDATION_ERRORS.load(Ordering::SeqCst)
 }
 
 #[derive(Clone)]
@@ -6497,73 +6460,5 @@ impl MeshTransport {
             }
             times.retain(|_, v| !v.is_empty());
         }
-    }
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum MeshTransportError {
-    #[error("No seed nodes available")]
-    NoSeedsAvailable,
-    #[error("Connection failed: {0}")]
-    ConnectionFailed(String),
-    #[error("Send failed: {0}")]
-    SendFailed(String),
-    #[error("Receive failed: {0}")]
-    ReceiveFailed(String),
-    #[error("Version mismatch: expected {expected}, got {got}")]
-    VersionMismatch { expected: u8, got: u8 },
-    #[error("Unexpected message type")]
-    UnexpectedMessage,
-    #[error("Peer error: {code} - {message}")]
-    PeerError { code: u16, message: String },
-    #[error("Peer not found: {0}")]
-    PeerNotFound(String),
-    #[error("No route to upstream: {0}")]
-    NoRouteToUpstream(String),
-    #[error("Service not allowed: {0}")]
-    ServiceNotAllowed(String),
-    #[error("Runtime not set")]
-    RuntimeNotSet,
-    #[error("Timeout")]
-    Timeout,
-    #[error("Rate limited - too many connection attempts")]
-    RateLimited,
-    #[error("Authentication failed: {0}")]
-    AuthFailed(String),
-}
-
-impl From<quinn::ConnectionError> for MeshTransportError {
-    fn from(e: quinn::ConnectionError) -> Self {
-        MeshTransportError::ConnectionFailed(e.to_string())
-    }
-}
-
-impl From<prost::EncodeError> for MeshTransportError {
-    fn from(e: prost::EncodeError) -> Self {
-        MeshTransportError::SendFailed(e.to_string())
-    }
-}
-
-impl From<tokio::io::Error> for MeshTransportError {
-    fn from(e: tokio::io::Error) -> Self {
-        MeshTransportError::SendFailed(e.to_string())
-    }
-}
-
-impl From<quinn::WriteError> for MeshTransportError {
-    fn from(e: quinn::WriteError) -> Self {
-        MeshTransportError::SendFailed(e.to_string())
-    }
-}
-
-impl From<quinn::ReadError> for MeshTransportError {
-    fn from(e: quinn::ReadError) -> Self {
-        MeshTransportError::ReceiveFailed(e.to_string())
-    }
-}
-
-impl From<quinn::ReadExactError> for MeshTransportError {
-    fn from(e: quinn::ReadExactError) -> Self {
-        MeshTransportError::ReceiveFailed(e.to_string())
     }
 }

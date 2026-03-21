@@ -64,7 +64,7 @@ impl NotifyHandler {
         }
     }
 
-    pub fn handle_notify(&self, query: &[u8], client_ip: IpAddr) -> Option<Vec<u8>> {
+    pub fn handle_notify(&self, query: &[u8], _client_ip: IpAddr) -> Option<Vec<u8>> {
         if !self.config.enabled {
             return None;
         }
@@ -207,7 +207,7 @@ impl NotifyHandler {
 
         notify_query.extend_from_slice(&1u16.to_be_bytes());
 
-        let timeout = std::time::Duration::from_secs(5);
+        let _timeout = std::time::Duration::from_secs(5);
 
         match socket.send_to(&notify_query, format!("{}:{}", ip, port)) {
             Ok(_) => {
@@ -253,6 +253,7 @@ fn parse_notify_zone_name(query: &[u8], mut pos: usize) -> Option<String> {
         name.push_str(&String::from_utf8_lossy(&query[pos..pos + len]));
         pos += len;
     }
+    let _ = pos;
 
     if name.is_empty() {
         None

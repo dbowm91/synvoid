@@ -116,7 +116,7 @@ impl ZoneTransfer {
         false
     }
 
-    pub fn is_wildcard_transfer(&self, origin: &str) -> bool {
+    pub fn is_wildcard_transfer(&self, _origin: &str) -> bool {
         for allowed in &self.allowed_transfers {
             if allowed == "*" {
                 return true;
@@ -547,103 +547,6 @@ impl ZoneTransfer {
         Ok(responses)
     }
 
-    fn build_ixfr_incremental_response(
-        &self,
-        qname: &str,
-        zone: &Zone,
-        old_records: &std::collections::HashMap<
-            (String, crate::dns::server::RecordType),
-            Vec<DnsZoneRecord>,
-        >,
-    ) -> Result<Vec<u8>, String> {
-        let current_soa = self
-            .find_soa_record(zone)
-            .ok_or("Zone has no SOA record")?
-            .clone();
-
-        let old_soa = old_records
-            .get(&("@".to_string(), RecordType::SOA))
-            .and_then(|v| v.first())
-            .cloned();
-
-        let mut all_record_keys: std::collections::HashSet<(String, RecordType)> =
-            std::collections::HashSet::new();
-        for key in old_records.keys() {
-            all_record_keys.insert(key.clone());
-        }
-        for key in zone.records.keys() {
-            all_record_keys.insert(key.clone());
-        }
-
-        let mut to_delete = Vec::new();
-        let mut to_add = Vec::new();
-
-        for key in &all_record_keys {
-            let old_recs = old_records.get(key);
-            let new_recs = zone.records.get(key);
-
-            match (old_recs, new_recs) {
-                (Some(old), None) => {
-                    to_delete.push((key.clone(), old.clone()));
-                }
-                (None, Some(new)) => {
-                    to_add.push((key.clone(), new.clone()));
-                }
-                (Some(old), Some(new)) => {
-                    if old.len() != new.len()
-                        || old
-                            .iter()
-                            .zip(new.iter())
-                            .any(|(a, b)| a.value != b.value || a.ttl != b.ttl)
-                    {
-                        to_delete.push((key.clone(), old.clone()));
-                        to_add.push((key.clone(), new.clone()));
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        let mut responses = Vec::new();
-
-        let delete_record_count = to_delete.len();
-        let add_record_count = to_add.len() + 1;
-
-        // RFC 1995: First message must have old SOA
-        let old_soa_for_msg = old_soa
-            .as_ref()
-            .ok_or("IXFR requires old SOA for incremental transfer")?;
-
-        let first_message_ancount = (1 + delete_record_count) as u16;
-        responses.push(self.build_ixfr_message(
-            qname,
-            Some(old_soa_for_msg),
-            &to_delete,
-            first_message_ancount,
-        ));
-
-        let second_message_ancount = add_record_count as u16;
-        responses.push(self.build_ixfr_message(
-            qname,
-            Some(&current_soa),
-            &to_add,
-            second_message_ancount,
-        ));
-
-        let mut combined = Vec::new();
-        for resp in responses {
-            combined.extend_from_slice(&resp);
-        }
-
-        tracing::debug!(
-            "IXFR incremental complete: {} deletes, {} adds",
-            delete_record_count,
-            add_record_count
-        );
-
-        Ok(combined)
-    }
-
     fn build_ixfr_message(
         &self,
         qname: &str,
@@ -721,105 +624,6 @@ impl ZoneTransfer {
         Ok(response)
     }
 
-    fn find_soa_record_by_serial(&self, zone: &Zone, serial: u32) -> Option<DnsZoneRecord> {
-        if zone.serial == serial {
-            return self.find_soa_record(zone);
-        }
-
-        if let Some(old_version) = zone.get_previous_version(serial) {
-            return old_version
-                .records
-                .get(&("@".to_string(), RecordType::SOA))
-                .and_then(|v| v.first())
-                .cloned();
-        }
-
-        None
-    }
-
-    fn build_ixfr_delete_section(
-        &self,
-        qname: &str,
-        zone: &Zone,
-        _old_soa: Option<&DnsZoneRecord>,
-    ) -> Vec<u8> {
-        let soa = self.find_soa_record(zone).expect("Zone must have SOA");
-
-        let mut response = Vec::new();
-
-        response.extend_from_slice(
-            self.build_axfr_record(qname, &RecordType::SOA, &[soa.clone()])
-                .as_slice(),
-        );
-
-        response
-    }
-
-    fn build_ixfr_add_section(&self, qname: &str, zone: &Zone) -> Vec<u8> {
-        let soa = self.find_soa_record(zone).expect("Zone must have SOA");
-
-        let mut response = Vec::new();
-
-        for ((name, record_type), records) in &zone.records {
-            if *record_type == RecordType::SOA {
-                continue;
-            }
-            let full_name = if name == "@" || name.is_empty() {
-                zone.origin.clone()
-            } else {
-                format!("{}.{}", name, zone.origin)
-            };
-            response.extend_from_slice(
-                self.build_axfr_record(&full_name, record_type, records)
-                    .as_slice(),
-            );
-        }
-
-        response.extend_from_slice(
-            self.build_axfr_record(qname, &RecordType::SOA, &[soa.clone()])
-                .as_slice(),
-        );
-
-        response
-    }
-
-    fn build_ixfr_full_response(&self, qname: &str, zone: &Zone) -> Result<Vec<u8>, String> {
-        let soa_record = self.find_soa_record(zone).ok_or("Zone has no SOA record")?;
-
-        let mut responses = Vec::new();
-
-        responses.push(self.build_axfr_first_message(&qname, &[soa_record.clone()]));
-
-        for ((name, record_type), records) in &zone.records {
-            if *record_type != RecordType::SOA {
-                let full_name = if name == "@" || name.is_empty() {
-                    zone.origin.clone()
-                } else {
-                    format!("{}.{}", name, zone.origin)
-                };
-                let response = self.build_axfr_record(&full_name, record_type, records);
-                responses.push(response);
-            }
-        }
-
-        if let Some(ref soa) = self.find_soa_record(zone) {
-            responses.push(self.build_axfr_last_message(&qname, &[soa.clone()]));
-        }
-
-        let mut combined = Vec::new();
-        for resp in responses {
-            combined.extend_from_slice(&resp);
-        }
-
-        tracing::info!(
-            "Full AXFR sent for {} (serial {})",
-            zone.origin,
-            zone.serial
-        );
-
-        Ok(combined)
-    }
-
     fn build_soa_rdata(soa_value: &str) -> Vec<u8> {
         let parts: Vec<&str> = soa_value.split_whitespace().collect();
         if parts.len() < 7 {
@@ -884,15 +688,6 @@ impl ZoneTransfer {
         zone.records
             .get(&soa_key)
             .and_then(|records| records.first().cloned())
-    }
-
-    fn get_zone_serial(&self, zone: &Zone) -> u32 {
-        if let Some(soa) = self.find_soa_record(zone) {
-            if let Some(serial) = soa.value.split_whitespace().nth(2) {
-                return serial.parse().unwrap_or(0);
-            }
-        }
-        0
     }
 
     fn build_axfr_first_message(&self, qname: &str, records: &[DnsZoneRecord]) -> Vec<u8> {

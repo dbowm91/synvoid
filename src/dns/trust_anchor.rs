@@ -787,38 +787,6 @@ impl TrustAnchorManager {
         Some((key_tag, algorithm, public_key))
     }
 
-    fn parse_dnskey_line(line: &str) -> Option<(u16, u8, Vec<u8>)> {
-        let parts: Vec<&str> = line.split_whitespace().collect();
-
-        if parts.len() < 5 {
-            return None;
-        }
-
-        let flags: u16 = parts.get(2)?.parse().ok()?;
-        let protocol: u8 = parts.get(3)?.parse().ok()?;
-        let algorithm: u8 = parts.get(4)?.parse().ok()?;
-
-        if flags != 257 || protocol != 3 {
-            return None;
-        }
-
-        let key_data = if let Some(idx) = line.find('(') {
-            let rest = &line[idx..];
-            rest.chars()
-                .filter(|c| !c.is_whitespace() && *c != '(' && *c != ')')
-                .collect::<String>()
-        } else {
-            parts.get(5)?.to_string()
-        };
-
-        let public_key =
-            base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &key_data).ok()?;
-
-        let key_tag = Self::calculate_dnskey_key_tag(257, 3, algorithm, &public_key);
-
-        Some((key_tag, algorithm, public_key))
-    }
-
     pub fn calculate_dnskey_key_tag(
         flags: u16,
         protocol: u8,

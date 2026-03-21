@@ -1457,29 +1457,6 @@ impl RecordStoreManager {
         tracing::debug!("Kademlia DHT record announce: {} sent, {} failed", success_count, fail_count);
     }
 
-    async fn broadcast_pending_records_legacy(&self) {
-        let Some(message) = self.create_record_announce() else {
-            return;
-        };
-
-        let transport_opt = self.transport.read().clone();
-        let fanout_factor = self.config.fanout_factor;
-        if let Some(transport) = transport_opt {
-            let (success, fail) = transport.broadcast_to_random_peers(
-                message,
-                fanout_factor,
-                Some(crate::mesh::config::MeshNodeRole::Global),
-            ).await;
-            tracing::debug!("Fanout DHT record announce (deprecated): {} sent, {} failed", success, fail);
-        } else { match self.mesh_sender.read().clone() { Some(sender) => {
-            if let Err(e) = sender.send(message).await {
-                tracing::warn!("Failed to broadcast DHT record announce: {}", e);
-            } else {
-                tracing::debug!("Broadcast DHT record announce to mesh");
-            }
-        } _ => {}}}
-    }
-
     pub async fn query_record_iterative(&self, key: &str) -> Option<DhtRecord> {
         if !self.config.enabled {
             return None;

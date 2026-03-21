@@ -54,6 +54,13 @@ impl BotDetector {
             }
         };
 
+        if ua.is_empty() {
+            return BotDetectionResult::Tarpit {
+                reason: "empty_user_agent".to_string(),
+                bot_type: "missing_ua".to_string(),
+            };
+        }
+
         let ua_lower = ua.to_lowercase();
 
         if self.is_allowed_bot(&ua_lower) {
@@ -112,4 +119,171 @@ pub enum BotDetectionResult {
     Allowed { reason: String },
     Blocked { reason: String, bot_type: String },
     Tarpit { reason: String, bot_type: String },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn create_test_detector() -> BotDetector {
+        BotDetector::new(
+            vec![
+                "googlebot".to_string(),
+                "bingbot".to_string(),
+                "yandex".to_string(),
+            ],
+            vec![
+                "gptbot".to_string(),
+                "claudebot".to_string(),
+                "chatgpt".to_string(),
+                "anthropic-ai".to_string(),
+                "ccbot".to_string(),
+            ],
+            vec![
+                "curl".to_string(),
+                "wget".to_string(),
+                "python-requests".to_string(),
+                "axios".to_string(),
+            ],
+            true,
+        )
+    }
+
+    #[test]
+    fn test_no_user_agent_allowed() {
+        let detector = create_test_detector();
+        let result = detector.check(None);
+        assert!(
+            matches!(result, BotDetectionResult::Allowed { reason } if reason == "no_user_agent")
+        );
+    }
+
+    #[test]
+    fn test_googlebot_allowed() {
+        let detector = create_test_detector();
+        let result = detector.check(Some(
+            "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+        ));
+        assert!(
+            matches!(result, BotDetectionResult::Allowed { reason } if reason == "known_search_bot")
+        );
+    }
+
+    #[test]
+    fn test_bingbot_allowed() {
+        let detector = create_test_detector();
+        let result = detector.check(Some(
+            "Mozilla/5.0 (compatible; bingbot/2.1; +http://www.bing.com/bingbot.htm)",
+        ));
+        assert!(
+            matches!(result, BotDetectionResult::Allowed { reason } if reason == "known_search_bot")
+        );
+    }
+
+    #[test]
+    fn test_yandex_allowed() {
+        let detector = create_test_detector();
+        let result = detector.check(Some(
+            "Mozilla/5.0 (compatible; YandexBot/3.0; +http://yandex.com/bots)",
+        ));
+        assert!(
+            matches!(result, BotDetectionResult::Allowed { reason } if reason == "known_search_bot")
+        );
+    }
+
+    #[test]
+    fn test_gptbot_blocked() {
+        let detector = create_test_detector();
+        let result = detector.check(Some("GPTBot/1.0"));
+        assert!(
+            matches!(result, BotDetectionResult::Blocked { ref reason, ref bot_type } 
+            if reason == "detected_as_bot" && bot_type == "isbot")
+        );
+    }
+
+    #[test]
+    fn test_claudebot_blocked() {
+        let detector = create_test_detector();
+        let result = detector.check(Some("ClaudeBot/1.0"));
+        assert!(
+            matches!(result, BotDetectionResult::Blocked { ref reason, ref bot_type } 
+            if reason == "detected_as_bot" && bot_type == "isbot")
+        );
+    }
+
+    #[test]
+    fn test_chatgpt_blocked() {
+        let detector = create_test_detector();
+        let result = detector.check(Some("ChatGPT-User/1.0"));
+        assert!(
+            matches!(result, BotDetectionResult::Blocked { ref reason, ref bot_type } 
+            if reason == "ai_crawler_detected" && bot_type == "ai")
+        );
+    }
+
+    #[test]
+    fn test_curl_scraper_tarpit() {
+        let detector = create_test_detector();
+        let result = detector.check(Some("curl/7.88.1"));
+        assert!(
+            matches!(result, BotDetectionResult::Tarpit { ref reason, ref bot_type } 
+            if reason == "scraper_detected" && bot_type == "scraper")
+        );
+    }
+
+    #[test]
+    fn test_wget_scraper_tarpit() {
+        let detector = create_test_detector();
+        let result = detector.check(Some("Wget/1.21.3"));
+        assert!(
+            matches!(result, BotDetectionResult::Tarpit { ref reason, ref bot_type } 
+            if reason == "scraper_detected" && bot_type == "scraper")
+        );
+    }
+
+    #[test]
+    fn test_python_requests_scraper_tarpit() {
+        let detector = create_test_detector();
+        let result = detector.check(Some("python-requests/2.31.0"));
+        assert!(
+            matches!(result, BotDetectionResult::Tarpit { ref reason, ref bot_type } 
+            if reason == "scraper_detected" && bot_type == "scraper")
+        );
+    }
+
+    #[test]
+    fn test_normal_browser_allowed() {
+        let detector = create_test_detector();
+        let result = detector.check(Some("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"));
+        assert!(matches!(result, BotDetectionResult::Allowed { reason } if reason == "legitimate"));
+    }
+
+    #[test]
+    fn test_firefox_allowed() {
+        let detector = create_test_detector();
+        let result = detector.check(Some(
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:120.0) Gecko/20100101 Firefox/120.0",
+        ));
+        assert!(matches!(result, BotDetectionResult::Allowed { reason } if reason == "legitimate"));
+    }
+
+    #[test]
+    fn test_empty_user_agent_blocked() {
+        let detector = create_test_detector();
+        let result = detector.check(Some(""));
+        assert!(
+            matches!(result, BotDetectionResult::Tarpit { reason, bot_type } 
+            if reason == "empty_user_agent" && bot_type == "missing_ua")
+        );
+    }
+
+    #[test]
+    fn test_unknown_bot_blocked_by_isbot() {
+        let detector = create_test_detector();
+        let result = detector.check(Some("AhrefsBot/6.1"));
+        assert!(
+            matches!(result, BotDetectionResult::Blocked { ref reason, ref bot_type } 
+            if reason == "detected_as_bot" && bot_type == "isbot")
+        );
+    }
 }

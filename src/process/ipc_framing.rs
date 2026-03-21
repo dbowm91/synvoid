@@ -271,3 +271,58 @@ pub fn endpoint_to_pipe_name(endpoint: &str) -> String {
 pub fn endpoint_to_socket_path(endpoint: &str) -> std::path::PathBuf {
     super::socket_path::get_secure_socket_path(&format!("{}.sock", endpoint))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_write_read_message_sync() {
+        let mut buffer = Vec::new();
+        let msg = "test message".to_string();
+
+        write_message_sync(&mut buffer, &msg).unwrap();
+
+        let len = u32::from_be_bytes([buffer[0], buffer[1], buffer[2], buffer[3]]) as usize;
+        assert_eq!(len, buffer.len() - 4);
+
+        let mut read_buffer = Vec::new();
+        let decoded: String = read_message_sync(&mut &buffer[..], &mut read_buffer)
+            .unwrap()
+            .unwrap();
+        assert_eq!(decoded, msg);
+    }
+
+    #[test]
+    fn test_write_message_too_large() {
+        let mut buffer = Vec::new();
+        let large_msg = vec![0u8; MAX_MESSAGE_SIZE + 1];
+
+        let result: Result<(), _> = write_message_sync(&mut buffer, &large_msg);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_encode_pipe_name() {
+        let name = "test";
+        let encoded = encode_pipe_name(name);
+        let expected: Vec<u16> = format!("\\\\.\\pipe\\{}", name)
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
+        assert_eq!(encoded, expected);
+    }
+
+    #[test]
+    fn test_endpoint_to_pipe_name() {
+        let endpoint = "worker-1";
+        let name = endpoint_to_pipe_name(endpoint);
+        assert_eq!(name, "\\\\.\\pipe\\maluwaf-worker-1");
+    }
+
+    #[test]
+    fn test_max_message_size() {
+        assert_eq!(MAX_MESSAGE_SIZE, 1024 * 1024);
+        assert_eq!(DEFAULT_BUFFER_SIZE, 64 * 1024);
+    }
+}

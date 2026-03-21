@@ -19,6 +19,7 @@ use crate::tunnel::quic::framing::{write_message, read_message_default};
 use crate::tunnel::quic::validation::JitteredBackoff;
 use crate::buffer::BufferPool;
 
+#[allow(dead_code)]
 pub struct QuicTunnelClient {
     config: TunnelQuicConfig,
     tls_config: QuicTlsConfig,

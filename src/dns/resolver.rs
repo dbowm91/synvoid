@@ -50,7 +50,7 @@ use async_trait::async_trait;
 use tokio::time::{interval, Duration};
 
 use hickory_proto::rr::{RecordType, RData};
-use hickory_proto::dnssec::{Proven, PublicKey};
+use hickory_proto::dnssec::PublicKey;
 
 use crate::dns::trust_anchor::{TrustAnchorManager, TrustAnchorConfig, Rfc5011Event, TrustAnchorStatus};
 
@@ -235,8 +235,8 @@ impl HickoryResolver {
     /// privacy leakage to upstream resolvers by sending minimal query names
     /// during recursive resolution.
     /// 
-    /// Currently, this method enables privacy-friendly options but full
-    /// QNAME minimization requires a Hickory DNS version that supports it.
+    /// Note: QNAME minimization requires hickory-resolver with the feature enabled.
+    /// The current implementation configures privacy-friendly options.
     pub fn with_qname_minimization(upstream_ips: &[IpAddr]) -> Result<Self, ResolverError> {
         let mut opts = hickory_resolver::config::ResolverOpts::default();
         
@@ -244,10 +244,9 @@ impl HickoryResolver {
         opts.timeout = std::time::Duration::from_secs(5);
         opts.attempts = 3;
         
-        // Note: opts.qname_minimization = true would enable RFC 7816
-        // but requires hickory-resolver >= 0.25.2
-        // For now, we configure privacy-friendly defaults
-        // TODO: Enable qname_minimization when hickory-resolver is updated
+        // Privacy-friendly configuration
+        // Note: QNAME minimization (RFC 7816) requires hickory-resolver >= 0.25.2
+        // with proper support. Current version may not expose this option.
         
         Self::with_upstream_servers_and_options(upstream_ips, Some(opts))
     }
@@ -364,6 +363,10 @@ impl DnsResolver for HickoryResolver {
             .map_err(|e| ResolverError::QueryFailed(format!("A lookup failed: {}", e)))?;
 
         let ttl = Some(lookup.valid_until().saturating_duration_since(Instant::now()).as_secs() as u32);
+        
+        // NOTE: DNSSEC validation status is not exposed by hickory-resolver's lookup API.
+        // For proper DNSSEC validation, use HickoryRecursor which tracks validation status.
+        // See HickoryResolver::lookup_ip_hickory_recursor() for DNSSEC-aware lookups.
         Ok(IpRecord {
             addrs: lookup.into_iter().collect(),
             ttl,
@@ -532,6 +535,7 @@ pub struct LookupResult {
     pub is_dnssec_validated: bool,
 }
 
+#[allow(dead_code)]
 pub struct HickoryRecursor {
     recursor: Arc<hickory_recursor::Recursor>,
     enable_dnssec: bool,
@@ -656,7 +660,7 @@ impl HickoryRecursor {
             None => return Err(ResolverError::QueryFailed("No trust anchor manager configured".to_string())),
         };
 
-        let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(());
+        let (_shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(());
 
         tracing::info!("Starting RFC 5011 trust anchor update task");
 

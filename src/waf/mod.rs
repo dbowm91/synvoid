@@ -68,31 +68,30 @@ use crate::mesh::yara_rules::YaraRulesManager;
 use parking_lot::RwLock;
 use std::net::IpAddr;
 use std::sync::Arc;
-use std::cell::RefCell;
 
 thread_local! {
-    static THREAT_INTEL: RefCell<Option<Arc<ThreatIntelligenceManager>>> = const { RefCell::new(None) };
-    static YARA_RULES: RefCell<Option<Arc<YaraRulesManager>>> = const { RefCell::new(None) };
+    static THREAT_INTEL: RwLock<Option<Arc<ThreatIntelligenceManager>>> = const { RwLock::new(None) };
+    static YARA_RULES: RwLock<Option<Arc<YaraRulesManager>>> = const { RwLock::new(None) };
 }
 
 pub fn set_threat_intel(ti: Option<Arc<ThreatIntelligenceManager>>) {
     THREAT_INTEL.with(|t| {
-        *t.borrow_mut() = ti;
+        *t.write() = ti;
     });
 }
 
 pub fn get_threat_intel() -> Option<Arc<ThreatIntelligenceManager>> {
-    THREAT_INTEL.with(|t| t.borrow().clone())
+    THREAT_INTEL.with(|t| t.read().clone())
 }
 
 pub fn set_yara_rules(yr: Option<Arc<YaraRulesManager>>) {
     YARA_RULES.with(|y| {
-        *y.borrow_mut() = yr;
+        *y.write() = yr;
     });
 }
 
 pub fn get_yara_rules() -> Option<Arc<YaraRulesManager>> {
-    YARA_RULES.with(|y| y.borrow().clone())
+    YARA_RULES.with(|y| y.read().clone())
 }
 use std::collections::HashSet;
 use rand::Rng;

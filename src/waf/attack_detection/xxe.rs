@@ -27,7 +27,8 @@ impl XxeDetector {
         input: &str,
         location: InputLocation,
     ) -> Option<AttackDetectionResult> {
-        let normalized = normalize_xml(input);
+        let decoded = crate::utils::url_decode_all(input);
+        let normalized = normalize_xml(&decoded);
         let normalized_lower = normalized.to_lowercase();
 
         if let Some(mat) = self.inner.patterns_ref().find(&normalized_lower) {
@@ -189,6 +190,13 @@ mod tests {
     fn test_xxe_mixed_case() {
         let detector = XxeDetector::new(2, &[]);
         let input = r#"<!DoCtYpE foo [<!EnTiTy xxe SyStEm "file:///etc/passwd">]>"#;
+        assert!(detector.detect(input, InputLocation::PostBody).is_some());
+    }
+
+    #[test]
+    fn test_xxe_url_encoded() {
+        let detector = XxeDetector::new(2, &[]);
+        let input = "%3C!DOCTYPE foo%3E";
         assert!(detector.detect(input, InputLocation::PostBody).is_some());
     }
 }

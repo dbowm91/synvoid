@@ -9,6 +9,7 @@ use tokio::time::timeout;
 
 use crate::config::ConnectionLimitsConfig;
 
+#[allow(dead_code)]
 pub struct ConnectionLimiter {
     config: ConnectionLimitsConfig,
     total_connections: AtomicU32,
@@ -196,6 +197,7 @@ impl std::fmt::Display for ConnectionLimitError {
 
 impl std::error::Error for ConnectionLimitError {}
 
+#[allow(dead_code)]
 pub struct SiteConnectionLimiter {
     site_id: String,
     limiter: Arc<ConnectionLimiter>,

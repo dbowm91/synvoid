@@ -63,6 +63,7 @@ impl ViolationEntry {
     }
 }
 
+#[allow(dead_code)]
 pub struct ViolationTracker {
     store: Arc<RwLock<HashMap<String, ViolationEntry>>>,
     config: ThreatLevelEscalation,

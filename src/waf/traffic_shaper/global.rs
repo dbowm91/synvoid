@@ -1,6 +1,6 @@
 use crate::config::traffic::{BandwidthConfig, BandwidthLimitAction};
 use crate::config::GlobalTrafficShapingConfig;
-use crate::metrics::bandwidth::get_global_bandwidth_tracker;
+use crate::metrics::bandwidth::get_global_bandwidth_tracker_or_log;
 use crate::waf::ThreatLevelManager;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -8,6 +8,7 @@ use tokio::sync::RwLock;
 use super::async_bucket::AsyncTokenBucket;
 
 #[derive(Clone)]
+#[allow(dead_code)]
 pub struct GlobalTrafficShaper {
     config: GlobalTrafficShapingConfig,
     bandwidth_config: BandwidthConfig,
@@ -74,10 +75,15 @@ impl GlobalTrafficShaper {
     }
 
     pub fn get_bandwidth_status(&self) -> BandwidthStatus {
-        let tracker = get_global_bandwidth_tracker();
-        let (total_received, total_sent) = tracker.get_total_excluding_mesh();
-        let (ingress_rate, egress_rate) = tracker.get_current_rate();
-        let (monthly_received, monthly_sent) = tracker.get_monthly_usage();
+        let (total_received, total_sent) = get_global_bandwidth_tracker_or_log()
+            .map(|t| t.get_total_excluding_mesh())
+            .unwrap_or((0, 0));
+        let (ingress_rate, egress_rate) = get_global_bandwidth_tracker_or_log()
+            .map(|t| t.get_current_rate())
+            .unwrap_or((0, 0));
+        let (monthly_received, monthly_sent) = get_global_bandwidth_tracker_or_log()
+            .map(|t| t.get_monthly_usage())
+            .unwrap_or((0, 0));
 
         let (monthly_cap_ingress, monthly_cap_egress) =
             self.bandwidth_config.calculate_rate_limit();
@@ -98,8 +104,9 @@ impl GlobalTrafficShaper {
     }
 
     pub fn is_over_monthly_limit(&self) -> (bool, bool) {
-        let tracker = get_global_bandwidth_tracker();
-        let (monthly_received, monthly_sent) = tracker.get_monthly_usage();
+        let (monthly_received, monthly_sent) = get_global_bandwidth_tracker_or_log()
+            .map(|t| t.get_monthly_usage())
+            .unwrap_or((0, 0));
 
         let ingress_cap_bytes = self.bandwidth_config.monthly_cap_ingress_gb * 1024 * 1024 * 1024;
         let egress_cap_bytes = self.bandwidth_config.monthly_cap_egress_gb * 1024 * 1024 * 1024;

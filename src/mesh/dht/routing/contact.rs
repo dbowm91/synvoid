@@ -22,29 +22,8 @@ mod serde_secs {
     where
         D: Deserializer<'de>,
     {
-        let secs = serde::Deserialize::deserialize(deserializer)?;
+        let secs: u64 = serde::Deserialize::deserialize(deserializer)?;
         Ok(Instant::now() - std::time::Duration::from_secs(secs))
-    }
-
-    pub fn serialize_opt<S>(instant: &Option<Instant>, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        match instant {
-            Some(i) => {
-                let secs = i.elapsed().as_secs();
-                serializer.serialize_some(&secs)
-            }
-            None => serializer.serialize_none(),
-        }
-    }
-
-    pub fn deserialize_opt<'de, D>(deserializer: D) -> Result<Option<Instant>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let secs: Option<u64> = serde::Deserialize::deserialize(deserializer)?;
-        Ok(secs.map(|s| Instant::now() - std::time::Duration::from_secs(s)))
     }
 }
 

@@ -372,9 +372,9 @@ pub fn create_listening_socket_v6(port: u16, _reuse_port: bool) -> Result<isize,
 /// # Safety
 /// The caller must not use the file descriptor after this call.
 #[cfg(unix)]
-pub unsafe fn raw_fd_to_tcp_listener(fd: RawFd) -> std::net::TcpListener { unsafe {
+pub unsafe fn raw_fd_to_tcp_listener(fd: RawFd) -> std::net::TcpListener {
     OwnedTcpListener::from_raw_fd(fd).into_inner()
-}}
+}
 
 /// Converts a raw file descriptor into a TcpListener, taking ownership.
 /// This is a safe wrapper that handles the raw fd properly.
@@ -397,9 +397,9 @@ pub unsafe fn raw_fd_to_tcp_stream(fd: isize) -> std::net::TcpStream {
 /// # Safety
 /// The caller must not use the file descriptor after this call.
 #[cfg(unix)]
-pub unsafe fn raw_fd_to_tcp_stream(fd: RawFd) -> std::net::TcpStream { unsafe {
+pub unsafe fn raw_fd_to_tcp_stream(fd: RawFd) -> std::net::TcpStream {
     OwnedTcpStream::from_raw_fd(fd).into_inner()
-}}
+}
 
 #[cfg(unix)]
 pub fn close_fd(fd: RawFd) -> io::Result<()> {
@@ -561,6 +561,12 @@ impl SocketHolder {
             self.add_existing_fd(*fd, port, SocketType::Tcp);
         }
 
+        for fd in fds.into_iter().skip(ports.len()) {
+            if let Err(e) = close_fd(fd) {
+                tracing::warn!("Failed to close leaked socket fd {}: {}", fd, e);
+            }
+        }
+
         Ok(data)
     }
 
@@ -577,7 +583,9 @@ impl SocketHolder {
 
     pub fn close_all(&mut self) {
         for socket in self.sockets.drain(..) {
-            let _ = close_fd(socket.fd);
+            if let Err(e) = close_fd(socket.fd) {
+                tracing::warn!("Failed to close socket fd {}: {}", socket.fd, e);
+            }
         }
     }
 

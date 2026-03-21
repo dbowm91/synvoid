@@ -17,7 +17,7 @@ use crate::tunnel;
 use crate::tunnel::quic::messages::TunnelMessage;
 use crate::streaming::bidirectional::copy_bidirectional_native;
 use crate::buffer::BufferPool;
-use crate::metrics::bandwidth::{get_global_bandwidth_tracker, BandwidthProtocol, EgressDirection};
+use crate::metrics::bandwidth::{get_global_bandwidth_tracker_or_log, BandwidthProtocol, EgressDirection};
 
 #[derive(Debug, Clone)]
 pub struct TcpSocketOptions {
@@ -192,6 +192,7 @@ impl Default for TcpListenerPoolConfig {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct TcpListenerInstance {
     config: TcpListenerConfig,
     listen_addr: SocketAddr,
@@ -506,7 +507,7 @@ impl TcpListenerPool {
         };
 
         // Handle TCP and Unix upstreams
-        let bandwidth = get_global_bandwidth_tracker();
+        let bandwidth = get_global_bandwidth_tracker_or_log();
         match upstream_addr {
             UpstreamAddress::Tcp(addr) => {
                 let mut stream = tokio::time::timeout(
@@ -516,9 +517,11 @@ impl TcpListenerPool {
                 let _ = apply_tcp_socket_options(&stream, socket_options);
                 match copy_bidirectional_native(&mut client_stream, &mut stream).await {
                     Ok((client_bytes, upstream_bytes)) => {
-                        bandwidth.record_ingress(client_bytes, BandwidthProtocol::Tcp);
-                        bandwidth.record_egress(client_bytes, BandwidthProtocol::Tcp, EgressDirection::Proxied);
-                        bandwidth.record_proxied(client_bytes, upstream_bytes, &addr.to_string());
+                        if let Some(bandwidth) = &bandwidth {
+                            bandwidth.record_ingress(client_bytes, BandwidthProtocol::Tcp);
+                            bandwidth.record_egress(client_bytes, BandwidthProtocol::Tcp, EgressDirection::Proxied);
+                            bandwidth.record_proxied(client_bytes, upstream_bytes, &addr.to_string());
+                        }
                     }
                     Err(e) => {
                         return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())));
@@ -533,9 +536,11 @@ impl TcpListenerPool {
                 match copy_bidirectional_native(&mut client_stream, &mut stream).await {
                     Ok((client_bytes, upstream_bytes)) => {
                         let path_str = path.to_string_lossy().to_string();
-                        bandwidth.record_ingress(client_bytes, BandwidthProtocol::Tcp);
-                        bandwidth.record_egress(client_bytes, BandwidthProtocol::Tcp, EgressDirection::Proxied);
-                        bandwidth.record_proxied(client_bytes, upstream_bytes, &path_str);
+                        if let Some(bandwidth) = &bandwidth {
+                            bandwidth.record_ingress(client_bytes, BandwidthProtocol::Tcp);
+                            bandwidth.record_egress(client_bytes, BandwidthProtocol::Tcp, EgressDirection::Proxied);
+                            bandwidth.record_proxied(client_bytes, upstream_bytes, &path_str);
+                        }
                     }
                     Err(e) => {
                         return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())));

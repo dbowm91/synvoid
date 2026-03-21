@@ -136,7 +136,7 @@ pub struct MainConfig {
 impl MainConfig {
     pub fn from_file<P: AsRef<std::path::Path>>(
         path: P,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let content = std::fs::read_to_string(path)?;
         let mut config: MainConfig = toml::from_str(&content)?;
 

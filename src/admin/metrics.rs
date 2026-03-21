@@ -6,8 +6,6 @@ use std::time::{Duration, Instant};
 use sysinfo::System;
 use tokio::time::interval;
 
-const LATENCY_SAMPLE_SIZE: usize = 1000;
-
 fn calculate_percentile(sorted: &[f64], percentile: f64) -> f64 {
     if sorted.is_empty() {
         return 0.0;

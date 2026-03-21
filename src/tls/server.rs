@@ -26,7 +26,7 @@ use crate::proxy::{filter_response_headers, build_headers_to_filter, ProxyServer
 use crate::proxy_cache::{ProxyCache, ProxyCacheSettings};
 use crate::challenge::HONEYPOT_PREFIX;
 use crate::http::headers::{inject_security_headers, generate_stealth_timestamp};
-use crate::metrics::bandwidth::{get_global_bandwidth_tracker, BandwidthProtocol, EgressDirection};
+use crate::metrics::bandwidth::{get_global_bandwidth_tracker_or_log, BandwidthProtocol, EgressDirection};
 
 use super::config::InternalTlsConfig;
 use super::cert_resolver::CertResolver;
@@ -361,14 +361,17 @@ impl HttpsServer {
             .and_then(|v| v.to_str().ok())
             .map(|s| s.to_string());
 
-        let bandwidth = get_global_bandwidth_tracker();
+        let bandwidth = get_global_bandwidth_tracker_or_log();
+
         let mut request_body_size: u64 = 0;
         if let Some(content_length) = parts.headers.get("content-length") {
             if let Ok(len_str) = content_length.to_str() {
                 if let Ok(len) = len_str.parse::<u64>() {
                     request_body_size = len;
-                    bandwidth.record_ingress(len, BandwidthProtocol::Https);
-                    bandwidth.record_site_ingress(&host, len);
+                    if let Some(ref bw) = bandwidth {
+                        bw.record_ingress(len, BandwidthProtocol::Https);
+                        bw.record_site_ingress(&host, len);
+                    }
                 }
             }
         }
@@ -459,28 +462,36 @@ impl HttpsServer {
                     .map(|theme_config| theme_config.to_theme_config(waf.error_page_manager.theme()));
                 let body = waf.error_page_manager.render_page_with_theme(status, Some(&message), site_theme.as_ref());
                 let body_len = body.len() as u64;
-                bandwidth.record_egress(body_len, BandwidthProtocol::Https, EgressDirection::Blocked);
-                bandwidth.record_site_egress(&site_id, body_len);
+                if let Some(ref bw) = bandwidth {
+                    bw.record_egress(body_len, BandwidthProtocol::Https, EgressDirection::Blocked);
+                    bw.record_site_egress(&site_id, body_len);
+                }
                 Ok(Self::build_response(status, body, "text/html"))
             }
             crate::proxy::WafDecision::Challenge(html) => {
                 let body_len = html.len() as u64;
-                bandwidth.record_egress(body_len, BandwidthProtocol::Https, EgressDirection::Challenged);
-                bandwidth.record_site_egress(&site_id, body_len);
+                if let Some(ref bw) = bandwidth {
+                    bw.record_egress(body_len, BandwidthProtocol::Https, EgressDirection::Challenged);
+                    bw.record_site_egress(&site_id, body_len);
+                }
                 Ok(Self::build_response(200, html, "text/html"))
             }
             crate::proxy::WafDecision::ChallengeWithCookie { html, session_cookie_name, session_cookie_value, session_cookie_max_age } => {
                 let body_len = html.len() as u64;
-                bandwidth.record_egress(body_len, BandwidthProtocol::Https, EgressDirection::Challenged);
-                bandwidth.record_site_egress(&site_id, body_len);
+                if let Some(ref bw) = bandwidth {
+                    bw.record_egress(body_len, BandwidthProtocol::Https, EgressDirection::Challenged);
+                    bw.record_site_egress(&site_id, body_len);
+                }
                 let cookie = format!("{}={}; path=/; max-age={}; Secure; SameSite=Strict", session_cookie_name, session_cookie_value, session_cookie_max_age);
                 Ok(Self::build_response_with_cookie(200, html, "text/html", &cookie))
             }
             crate::proxy::WafDecision::Tarpit(tar_path) => {
                 let html = waf.generate_tarpit_response(&tar_path);
                 let body_len = html.len() as u64;
-                bandwidth.record_egress(body_len, BandwidthProtocol::Https, EgressDirection::Blocked);
-                bandwidth.record_site_egress(&site_id, body_len);
+                if let Some(ref bw) = bandwidth {
+                    bw.record_egress(body_len, BandwidthProtocol::Https, EgressDirection::Blocked);
+                    bw.record_site_egress(&site_id, body_len);
+                }
                 Ok(Self::build_response(200, html, "text/html"))
             }
             crate::proxy::WafDecision::Pass => {
@@ -603,10 +614,12 @@ impl HttpsServer {
                         let body = resp.body;
                         let body_len = body.len() as u64;
                         
-                        bandwidth.record_proxied(request_body_size, body_len, &target.upstream);
-                        bandwidth.record_site_proxied(&site_id, request_body_size, body_len);
-                        bandwidth.record_egress(body_len, BandwidthProtocol::Https, EgressDirection::Proxied);
-                        bandwidth.record_site_egress(&site_id, body_len);
+                        if let Some(ref bw) = bandwidth {
+                            bw.record_proxied(request_body_size, body_len, &target.upstream);
+                            bw.record_site_proxied(&site_id, request_body_size, body_len);
+                            bw.record_egress(body_len, BandwidthProtocol::Https, EgressDirection::Proxied);
+                            bw.record_site_egress(&site_id, body_len);
+                        }
                         
                         let mut builder = Response::builder().status(status);
                         for (key, value) in headers {
@@ -634,8 +647,10 @@ impl HttpsServer {
                         tracing::error!("Upstream error: {}", e);
                         let error_body = "Bad Gateway".to_string();
                         let error_len = error_body.len() as u64;
-                        bandwidth.record_egress(error_len, BandwidthProtocol::Https, EgressDirection::Error);
-                        bandwidth.record_site_egress(&site_id, error_len);
+                        if let Some(ref bw) = bandwidth {
+                            bw.record_egress(error_len, BandwidthProtocol::Https, EgressDirection::Error);
+                            bw.record_site_egress(&site_id, error_len);
+                        }
                         Ok(Self::build_response(502, error_body, "text/plain"))
                     }
                 }

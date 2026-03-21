@@ -15,6 +15,7 @@ use crate::DrainFlag;
 pub mod basic;
 pub use basic::{BasicAuthManager, BasicAuthResult};
 
+#[allow(dead_code)]
 async fn verify_dummy_password(password: &str) {
     let dummy_hash = "$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5GyYzS.xJ5mW6";
     let start = std::time::Instant::now();
@@ -26,6 +27,7 @@ async fn verify_dummy_password(password: &str) {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct User {
     pub id: String,
     pub username: String,
@@ -91,6 +93,7 @@ pub struct LoginLog {
     pub reason: Option<String>,
 }
 
+#[allow(dead_code)]
 pub struct AuthManager {
     data_dir: PathBuf,
     store: Arc<RwLock<AuthStore>>,
@@ -119,7 +122,7 @@ impl AuthManager {
         let flush_flag = DrainFlag::new();
         let flush_flag_clone = flush_flag.clone();
         
-        tokio::spawn(async move {
+        let _handle = tokio::spawn(async move {
             let mut interval = tokio::time::interval(TokioDuration::from_secs(5));
             let mut pending_stores: Vec<AuthStore> = Vec::new();
             let mut flush_completion_tx: Option<mpsc::Sender<()>> = None;
@@ -697,27 +700,310 @@ struct SessionData {
     user_agent: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum AuthError {
+    #[error("Invalid username or password")]
     InvalidCredentials,
+    #[error("User already exists")]
     UserAlreadyExists,
+    #[error("User not found")]
     UserNotFound,
+    #[error("Invalid username")]
     InvalidUsername,
+    #[error("Password must be at least {0} characters")]
     PasswordTooShort(usize),
+    #[error("Account locked until {0}")]
     AccountLocked(DateTime<Utc>),
+    #[error("Password hashing error")]
     HashingError,
 }
 
-impl std::fmt::Display for AuthError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            AuthError::InvalidCredentials => write!(f, "Invalid username or password"),
-            AuthError::UserAlreadyExists => write!(f, "User already exists"),
-            AuthError::UserNotFound => write!(f, "User not found"),
-            AuthError::InvalidUsername => write!(f, "Invalid username"),
-            AuthError::PasswordTooShort(len) => write!(f, "Password must be at least {} characters", len),
-            AuthError::AccountLocked(until) => write!(f, "Account locked until {}", until),
-            AuthError::HashingError => write!(f, "Password hashing error"),
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+    use tempfile::TempDir;
+
+    proptest::proptest! {
+        #[test]
+        fn test_auth_error_display_password_too_short(len: usize) {
+            let err = AuthError::PasswordTooShort(len);
+            let display = format!("{}", err);
+            proptest::prop_assert!(display.contains(&len.to_string()));
         }
+
+        #[test]
+        fn test_auth_error_equality(password_len: usize, password_len2: usize) {
+            let err1 = AuthError::PasswordTooShort(password_len);
+            let err2 = AuthError::PasswordTooShort(password_len);
+            let err3 = AuthError::PasswordTooShort(password_len2);
+            proptest::prop_assert_eq!(err1, err2);
+            if password_len != password_len2 {
+                let err1_new = AuthError::PasswordTooShort(password_len);
+                proptest::prop_assert_ne!(err1_new, err3);
+            }
+        }
+
+        #[test]
+        fn test_auth_error_clone(err in prop_oneof![
+            any::<usize>().prop_map(AuthError::PasswordTooShort),
+            Just(AuthError::InvalidCredentials),
+            Just(AuthError::UserAlreadyExists),
+            Just(AuthError::UserNotFound),
+            Just(AuthError::InvalidUsername),
+            Just(AuthError::HashingError),
+        ]) {
+            let cloned = err.clone();
+            proptest::prop_assert_eq!(err, cloned);
+        }
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn test_auth_error_display_invariants(err in prop_oneof![
+            any::<usize>().prop_map(AuthError::PasswordTooShort),
+            Just(AuthError::InvalidCredentials),
+            Just(AuthError::UserAlreadyExists),
+            Just(AuthError::UserNotFound),
+            Just(AuthError::InvalidUsername),
+            Just(AuthError::HashingError),
+        ]) {
+            let display = format!("{}", err);
+            proptest::prop_assert!(!display.is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn test_create_user_short_password() {
+        let temp_dir = TempDir::new().unwrap();
+        let data_dir = temp_dir.path().to_path_buf();
+        let manager = AuthManager::new(data_dir, 3600, 3, 300);
+
+        let result = manager
+            .create_user(
+                "testuser".to_string(),
+                "short".to_string(),
+                UserRole::User,
+                vec![],
+            )
+            .await;
+
+        assert!(matches!(result, Err(AuthError::PasswordTooShort(_))));
+    }
+
+    #[tokio::test]
+    async fn test_create_user_empty_username() {
+        let temp_dir = TempDir::new().unwrap();
+        let data_dir = temp_dir.path().to_path_buf();
+        let manager = AuthManager::new(data_dir, 3600, 3, 300);
+
+        let result = manager
+            .create_user(
+                "".to_string(),
+                "password123".to_string(),
+                UserRole::User,
+                vec![],
+            )
+            .await;
+
+        assert!(matches!(result, Err(AuthError::InvalidUsername)));
+    }
+
+    #[tokio::test]
+    async fn test_create_and_verify_user() {
+        let temp_dir = TempDir::new().unwrap();
+        let data_dir = temp_dir.path().to_path_buf();
+        let manager = AuthManager::new(data_dir, 3600, 3, 300);
+
+        let create_result = manager
+            .create_user(
+                "testuser".to_string(),
+                "password123".to_string(),
+                UserRole::User,
+                vec![],
+            )
+            .await;
+        assert!(create_result.is_ok());
+
+        let verify_result = manager
+            .verify_login("testuser", "password123", None, None)
+            .await;
+        assert!(verify_result.is_ok());
+        let session = verify_result.unwrap();
+        assert_eq!(session.username, "testuser");
+    }
+
+    #[tokio::test]
+    async fn test_verify_wrong_password() {
+        let temp_dir = TempDir::new().unwrap();
+        let data_dir = temp_dir.path().to_path_buf();
+        let manager = AuthManager::new(data_dir, 3600, 3, 300);
+
+        let _ = manager
+            .create_user(
+                "testuser".to_string(),
+                "password123".to_string(),
+                UserRole::User,
+                vec![],
+            )
+            .await;
+
+        let result = manager
+            .verify_login("testuser", "wrongpassword", None, None)
+            .await;
+        assert!(matches!(result, Err(AuthError::InvalidCredentials)));
+    }
+
+    #[tokio::test]
+    async fn test_verify_nonexistent_user() {
+        let temp_dir = TempDir::new().unwrap();
+        let data_dir = temp_dir.path().to_path_buf();
+        let manager = AuthManager::new(data_dir, 3600, 3, 300);
+
+        let result = manager
+            .verify_login("nonexistent", "password123", None, None)
+            .await;
+        assert!(matches!(result, Err(AuthError::InvalidCredentials)));
+    }
+
+    #[tokio::test]
+    async fn test_delete_user() {
+        let temp_dir = TempDir::new().unwrap();
+        let data_dir = temp_dir.path().to_path_buf();
+        let manager = AuthManager::new(data_dir, 3600, 3, 300);
+
+        let user = manager
+            .create_user(
+                "testuser".to_string(),
+                "password123".to_string(),
+                UserRole::User,
+                vec![],
+            )
+            .await
+            .unwrap();
+
+        let delete_result = manager.delete_user(&user.id).await;
+        assert!(delete_result.is_ok());
+
+        let verify_result = manager
+            .verify_login("testuser", "password123", None, None)
+            .await;
+        assert!(matches!(verify_result, Err(AuthError::InvalidCredentials)));
+    }
+
+    #[tokio::test]
+    async fn test_delete_nonexistent_user() {
+        let temp_dir = TempDir::new().unwrap();
+        let data_dir = temp_dir.path().to_path_buf();
+        let manager = AuthManager::new(data_dir, 3600, 3, 300);
+
+        let result = manager.delete_user("nonexistent-id").await;
+        assert!(matches!(result, Err(AuthError::UserNotFound)));
+    }
+
+    #[tokio::test]
+    async fn test_update_user_sites() {
+        let temp_dir = TempDir::new().unwrap();
+        let data_dir = temp_dir.path().to_path_buf();
+        let manager = AuthManager::new(data_dir, 3600, 3, 300);
+
+        let user = manager
+            .create_user(
+                "testuser".to_string(),
+                "password123".to_string(),
+                UserRole::User,
+                vec![],
+            )
+            .await
+            .unwrap();
+
+        let update_result = manager
+            .update_user_sites(&user.id, vec!["site1".to_string(), "site2".to_string()])
+            .await;
+        assert!(update_result.is_ok());
+
+        let users = manager.list_users().await;
+        assert_eq!(users.len(), 1);
+        assert_eq!(users[0].sites, vec!["site1", "site2"]);
+    }
+
+    #[tokio::test]
+    async fn test_list_users() {
+        let temp_dir = TempDir::new().unwrap();
+        let data_dir = temp_dir.path().to_path_buf();
+        let manager = AuthManager::new(data_dir, 3600, 3, 300);
+
+        manager
+            .create_user(
+                "user1".to_string(),
+                "password123".to_string(),
+                UserRole::User,
+                vec![],
+            )
+            .await
+            .unwrap();
+
+        manager
+            .create_user(
+                "user2".to_string(),
+                "password456".to_string(),
+                UserRole::Admin,
+                vec!["admin".to_string()],
+            )
+            .await
+            .unwrap();
+
+        let users = manager.list_users().await;
+        assert_eq!(users.len(), 2);
+
+        let usernames: Vec<_> = users.iter().map(|u| u.username.clone()).collect();
+        assert!(usernames.contains(&"user1".to_string()));
+        assert!(usernames.contains(&"user2".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_user_role_default() {
+        let temp_dir = TempDir::new().unwrap();
+        let data_dir = temp_dir.path().to_path_buf();
+        let manager = AuthManager::new(data_dir, 3600, 3, 300);
+
+        let user = manager
+            .create_user(
+                "testuser".to_string(),
+                "password123".to_string(),
+                UserRole::default(),
+                vec![],
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(user.role, UserRole::User);
+    }
+
+    #[tokio::test]
+    async fn test_duplicate_user() {
+        let temp_dir = TempDir::new().unwrap();
+        let data_dir = temp_dir.path().to_path_buf();
+        let manager = AuthManager::new(data_dir, 3600, 3, 300);
+
+        let _ = manager
+            .create_user(
+                "testuser".to_string(),
+                "password123".to_string(),
+                UserRole::User,
+                vec![],
+            )
+            .await;
+
+        let result = manager
+            .create_user(
+                "testuser".to_string(),
+                "differentpassword".to_string(),
+                UserRole::User,
+                vec![],
+            )
+            .await;
+
+        assert!(matches!(result, Err(AuthError::UserAlreadyExists)));
     }
 }

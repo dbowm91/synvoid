@@ -306,15 +306,11 @@ pub const EDGE_TOKEN_PREFIX: &str = "edge:";
 
 pub struct KeyExchangeService {
     config: Arc<MeshConfig>,
-    timeout: Duration,
 }
 
 impl KeyExchangeService {
     pub fn new(config: Arc<MeshConfig>) -> Self {
-        Self {
-            config,
-            timeout: Duration::from_secs(10),
-        }
+        Self { config }
     }
 }
 

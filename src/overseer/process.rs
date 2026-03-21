@@ -17,6 +17,7 @@ use crate::process::{
 use crate::utils::errors;
 use crate::RunningFlag;
 
+#[allow(dead_code)]
 pub struct OverseerProcess {
     master_child: Option<Child>,
     upgraded_master_child: Option<Child>,
@@ -141,8 +142,16 @@ impl OverseerProcess {
                             workers_healthy: true,
                         }
                     }
-                    _ => IpcHealthResult {
-                        is_responsive: true,
+                    Ok(None) => IpcHealthResult {
+                        is_responsive: false,
+                        workers_healthy: false,
+                    },
+                    Ok(Some(_)) => IpcHealthResult {
+                        is_responsive: false,
+                        workers_healthy: false,
+                    },
+                    Err(_) => IpcHealthResult {
+                        is_responsive: false,
                         workers_healthy: false,
                     },
                 }

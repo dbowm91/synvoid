@@ -1,7 +1,7 @@
-use serde::{Deserialize, Serialize};
-use yew::prelude::*;
 use crate::services::api::ApiService;
+use serde::{Deserialize, Serialize};
 use wasm_bindgen_futures::spawn_local;
+use yew::prelude::*;
 
 #[derive(Serialize, Deserialize, Clone, PartialEq)]
 pub struct TierKeyInfo {
@@ -101,7 +101,8 @@ impl Component for TierKeys {
                 let api = ApiService::new();
                 let body = serde_json::json!({ "org_id": org_id, "key_id": key_id });
                 spawn_local(async move {
-                    let _: Result<serde_json::Value, _> = api.post("/tier-keys/revoke", &body).await;
+                    let _: Result<serde_json::Value, _> =
+                        api.post("/tier-keys/revoke", &body).await;
                 });
                 true
             }
@@ -109,7 +110,8 @@ impl Component for TierKeys {
                 let api = ApiService::new();
                 let body = serde_json::json!({ "org_id": org_id, "key_id": key_id });
                 spawn_local(async move {
-                    let _: Result<serde_json::Value, _> = api.post("/tier-keys/unbind", &body).await;
+                    let _: Result<serde_json::Value, _> =
+                        api.post("/tier-keys/unbind", &body).await;
                 });
                 true
             }
@@ -118,7 +120,7 @@ impl Component for TierKeys {
 
     fn view(&self, ctx: &Context<Self>) -> Html {
         let on_issue = ctx.link().callback(|_| Msg::ToggleIssueModal);
-        
+
         html! {
             <div class="space-y-6">
                 <div class="flex justify-between items-center">
@@ -126,7 +128,7 @@ impl Component for TierKeys {
                         <h1 class="text-2xl font-bold">{ "Tier Keys" }</h1>
                         <p class="text-secondary">{ "Manage tier keys and their binding status" }</p>
                     </div>
-                    <button 
+                    <button
                         onclick={on_issue}
                         class="px-4 py-2 bg-accent text-white rounded-lg hover:opacity-80"
                     >
@@ -164,14 +166,14 @@ impl Component for TierKeys {
                                     } else {
                                         html! { <span class="text-green-400">{ "Active" }</span> }
                                     };
-                                    
+
                                     let bound_to = key.bound_to.clone().unwrap_or_else(|| "None".to_string());
                                     let key_id = key.key_id.clone();
                                     let bound_for_revoke = key.bound_to.clone().unwrap_or_default();
                                     let key_id_for_revoke = key.key_id.clone();
                                     let bound_for_unbind = key.bound_to.clone().unwrap_or_default();
                                     let key_id_for_unbind = key.key_id.clone();
-                                    
+
                                     let on_revoke = {
                                         let link = ctx.link().clone();
                                         move |_| {
@@ -184,7 +186,7 @@ impl Component for TierKeys {
                                             link.send_message(Msg::UnbindKey(bound_for_unbind.clone(), key_id_for_unbind.clone()));
                                         }
                                     };
-                                    
+
                                     html! {
                                         <tr class="hover:bg-tertiary/50">
                                             <td class="px-4 py-3 font-mono text-sm">{ &key.key_id[..8] }</td>
@@ -194,7 +196,7 @@ impl Component for TierKeys {
                                             <td class="px-4 py-3">{ key.valid_until }</td>
                                             <td class="px-4 py-3">
                                                 if !key.revoked && !key.is_unspent {
-                                                    <button 
+                                                    <button
                                                         onclick={on_unbind}
                                                         class="text-yellow-400 hover:text-yellow-300 text-sm mr-2"
                                                     >
@@ -202,7 +204,7 @@ impl Component for TierKeys {
                                                     </button>
                                                 }
                                                 if !key.revoked {
-                                                    <button 
+                                                    <button
                                                         onclick={on_revoke}
                                                         class="text-red-400 hover:text-red-300 text-sm"
                                                     >

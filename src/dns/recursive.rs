@@ -22,7 +22,7 @@ use super::recursive_cache::{
     CachedRecord, RecursiveCacheKey, RecursiveDnsCache,
 };
 use super::resolver::{
-    CNameRecord, MxRecord, PtrRecord, SoaRecord, SrvRecord,
+    MxRecord, SrvRecord,
 };
 use super::wire::{
     build_error_response, build_response_header,
@@ -422,7 +422,7 @@ impl RecursiveDnsServer {
             return Ok(response);
         }
 
-        let (response, is_dnssec_validated) = self.resolve_upstream(&qname_bytes, question.qtype, message_id).await?;
+        let (response, _is_dnssec_validated) = self.resolve_upstream(&qname_bytes, question.qtype, message_id).await?;
 
         if let Some(metrics) = &self.metrics {
             metrics.record_cache_miss();
@@ -719,7 +719,7 @@ impl RecursiveDnsServer {
                 response_code: 0,
             };
 
-            let mut header = build_response_header(
+            let header = build_response_header(
                 message_id,
                 flags,
                 qdcount,
@@ -745,7 +745,7 @@ impl RecursiveDnsServer {
                 response_code: 0,
             };
 
-            let mut header = build_response_header(
+            let header = build_response_header(
                 message_id,
                 flags,
                 qdcount,

@@ -24,17 +24,17 @@ pub fn Sites() -> Html {
             let error = error.clone();
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
-                
+
                 match api.list_sites().await {
                     Ok(s) => sites.set(s),
                     Err(e) => error.set(Some(e)),
                 }
-                
+
                 match api.get_stats_sites().await {
                     Ok(s) => site_stats.set(s),
                     Err(e) => tracing::error!("Failed to fetch site stats: {}", e),
                 }
-                
+
                 loading.set(false);
             });
             || {}
@@ -129,7 +129,11 @@ fn SiteCard(props: &SiteCardProps) -> Html {
     } else {
         "bg-red-500"
     };
-    let primary_domain = props.domains.first().cloned().unwrap_or_else(|| props.site_id.clone());
+    let primary_domain = props
+        .domains
+        .first()
+        .cloned()
+        .unwrap_or_else(|| props.site_id.clone());
 
     let on_delete = {
         let site_id = props.site_id.clone();

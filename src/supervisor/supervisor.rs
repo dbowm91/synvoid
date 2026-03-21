@@ -11,6 +11,7 @@ use crate::supervisor::worker::{Worker, WorkerId, WorkerStatus};
 use crate::supervisor::autoscaler::AutoScaler;
 use crate::RunningFlag;
 
+#[allow(dead_code)]
 pub struct Supervisor {
     config: SupervisorConfig,
     workers: Arc<PLRwLock<Vec<Arc<Worker>>>>,
@@ -134,15 +135,6 @@ impl Supervisor {
         tracing::info!("Worker {} spawned", id.0);
         
         worker_arc
-    }
-
-    async fn stop_worker(&self, worker_id: WorkerId) {
-        let workers = self.workers.read();
-        
-        if let Some(worker) = workers.iter().find(|w| w.id == worker_id) {
-            worker.shutdown().await;
-            let _ = self.event_tx.send(SupervisorEvent::WorkerStopped(worker_id));
-        }
     }
 
     pub async fn handle_worker_failure(&self, worker_id: WorkerId, error: String) {

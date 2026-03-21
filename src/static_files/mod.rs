@@ -17,6 +17,7 @@ use crate::mime::MIME_REGISTRY;
 use crate::mesh::config::{MeshCompressionConfig, MeshImageProtectionConfig, MeshMinificationConfig};
 use minifier::MinifierCache;
 
+#[allow(dead_code)]
 #[derive(Clone)]
 pub struct NormalizedLocation {
     pub url_prefix: String,
@@ -26,6 +27,7 @@ pub struct NormalizedLocation {
     pub cache_ttl: Option<u64>,
 }
 
+#[allow(dead_code)]
 #[derive(Clone)]
 pub struct StaticFileHandler {
     config: Arc<SiteStaticConfig>,

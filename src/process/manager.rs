@@ -111,6 +111,29 @@ impl WorkerProcess {
             last_restart_at: if restart_count > 0 { Some(Instant::now()) } else { None },
         }
     }
+
+    pub fn new_placeholder(id: WorkerId, port: u16, restart_count: u32) -> Self {
+        Self {
+            id,
+            base: BaseWorkerProcess {
+                pid: None,
+                status: WorkerStatus::Starting,
+                child: None,
+                started_at: Instant::now(),
+                last_heartbeat: Instant::now(),
+            },
+            port,
+            metrics: WorkerMetricsPayload::default(),
+            restart_count,
+            last_restart_at: if restart_count > 0 { Some(Instant::now()) } else { None },
+        }
+    }
+
+    pub fn set_child(&mut self, child: Child) {
+        let pid = child.id();
+        self.base.pid = Some(pid);
+        self.base.child = Some(child);
+    }
 }
 
 delegate_to_base!(WorkerProcess);
@@ -469,15 +492,27 @@ impl ProcessManager {
             .arg("--port")
             .arg(port.to_string());
 
-        let child = cmd.spawn()?;
-
-        let pid = child.id();
-        let worker_process = WorkerProcess::new(id.clone(), pid, port, child, restart_count);
-
-        {
+        let pid = {
             let mut workers = self.workers.write();
+            let worker_process = WorkerProcess::new_placeholder(id.clone(), port, restart_count);
             workers.insert(id.as_usize(), worker_process);
-        }
+            drop(workers);
+            
+            let child = match cmd.spawn() {
+                Ok(c) => c,
+                Err(e) => {
+                    self.workers.write().remove(&id.as_usize());
+                    return Err(e);
+                }
+            };
+            let pid = child.id();
+            
+            let mut workers = self.workers.write();
+            if let Some(worker) = workers.get_mut(&id.as_usize()) {
+                worker.set_child(child);
+            }
+            pid
+        };
 
         self.record_spawn(&id, pid, Some(port), ProcessEvent::WorkerStarted(id.clone(), pid, port));
         Ok(id)
@@ -597,24 +632,36 @@ impl ProcessManager {
     }
 
     pub fn handle_unified_server_worker_heartbeat(&self, worker_id: WorkerId, metrics: WorkerMetricsPayload) {
-        let mut unified_server_worker = self.unified_server_worker.write();
-        if let Some(worker) = unified_server_worker.as_mut() {
-            *worker.last_heartbeat_mut() = Instant::now();
-            worker.metrics = metrics;
-            
-            if *worker.status() == WorkerStatus::Starting {
-                *worker.status_mut() = WorkerStatus::Ready;
-                let _ = self.event_tx.blocking_send(ProcessEvent::UnifiedServerWorkerReady(worker_id));
+        let event = {
+            let mut unified_server_worker = self.unified_server_worker.write();
+            if let Some(worker) = unified_server_worker.as_mut() {
+                *worker.last_heartbeat_mut() = Instant::now();
+                worker.metrics = metrics;
+                
+                if *worker.status() == WorkerStatus::Starting {
+                    *worker.status_mut() = WorkerStatus::Ready;
+                    Some(ProcessEvent::UnifiedServerWorkerReady(worker_id))
+                } else {
+                    None
+                }
+            } else {
+                None
             }
+        };
+        
+        if let Some(evt) = event {
+            let _ = self.event_tx.try_send(evt);
         }
     }
 
     pub fn handle_unified_server_worker_ready(&self, worker_id: WorkerId) {
-        let mut unified_server_worker = self.unified_server_worker.write();
-        if let Some(worker) = unified_server_worker.as_mut() {
-            *worker.status_mut() = WorkerStatus::Ready;
+        {
+            let mut unified_server_worker = self.unified_server_worker.write();
+            if let Some(worker) = unified_server_worker.as_mut() {
+                *worker.status_mut() = WorkerStatus::Ready;
+            }
         }
-        let _ = self.event_tx.blocking_send(ProcessEvent::UnifiedServerWorkerReady(worker_id));
+        let _ = self.event_tx.try_send(ProcessEvent::UnifiedServerWorkerReady(worker_id));
     }
 
     pub fn is_unified_server_worker_ready(&self) -> bool {
@@ -800,24 +847,36 @@ impl ProcessManager {
     }
 
     pub fn handle_heartbeat(&self, worker_id: WorkerId, metrics: WorkerMetricsPayload) {
-        let mut workers = self.workers.write();
-        if let Some(worker) = workers.get_mut(&worker_id.as_usize()) {
-            *worker.last_heartbeat_mut() = Instant::now();
-            worker.metrics = metrics;
-            
-            if *worker.status() == WorkerStatus::Starting {
-                *worker.status_mut() = WorkerStatus::Ready;
-                let _ = self.event_tx.blocking_send(ProcessEvent::WorkerReady(worker_id));
+        let event = {
+            let mut workers = self.workers.write();
+            if let Some(worker) = workers.get_mut(&worker_id.as_usize()) {
+                *worker.last_heartbeat_mut() = Instant::now();
+                worker.metrics = metrics;
+                
+                if *worker.status() == WorkerStatus::Starting {
+                    *worker.status_mut() = WorkerStatus::Ready;
+                    Some(ProcessEvent::WorkerReady(worker_id))
+                } else {
+                    None
+                }
+            } else {
+                None
             }
+        };
+        
+        if let Some(evt) = event {
+            let _ = self.event_tx.try_send(evt);
         }
     }
 
     pub fn handle_worker_ready(&self, worker_id: WorkerId) {
-        let mut workers = self.workers.write();
-        if let Some(worker) = workers.get_mut(&worker_id.as_usize()) {
-            *worker.status_mut() = WorkerStatus::Ready;
+        {
+            let mut workers = self.workers.write();
+            if let Some(worker) = workers.get_mut(&worker_id.as_usize()) {
+                *worker.status_mut() = WorkerStatus::Ready;
+            }
         }
-        let _ = self.event_tx.blocking_send(ProcessEvent::WorkerReady(worker_id));
+        let _ = self.event_tx.try_send(ProcessEvent::WorkerReady(worker_id));
     }
 
     const MAX_REQUEST_LOGS: usize = 10000;
@@ -1102,21 +1161,19 @@ impl ProcessManager {
     }
 
     fn restart_worker(&self, worker_id: WorkerId, port: u16, restart_count: u32) {
-        {
-            let mut workers = self.workers.write();
-            workers.remove(&worker_id.as_usize());
-        }
-
         tracing::info!("Restarting worker {} on port {} (attempt {})", worker_id, port, restart_count);
         
-        if let Err(e) = self.spawn_worker_with_id_and_count(worker_id.clone(), port, restart_count) {
-            tracing::error!("Failed to restart worker {}: {}", worker_id, e);
-        } else {
-            self.metrics.total_restarts.fetch_add(1, Ordering::Relaxed);
-            let _ = self.event_tx.blocking_send(ProcessEvent::WorkerRestarted(
-                worker_id,
-                restart_count,
-            ));
+        match self.spawn_worker_with_id_and_count(worker_id.clone(), port, restart_count) {
+            Ok(_) => {
+                self.metrics.total_restarts.fetch_add(1, Ordering::Relaxed);
+                let _ = self.event_tx.blocking_send(ProcessEvent::WorkerRestarted(
+                    worker_id,
+                    restart_count,
+                ));
+            }
+            Err(e) => {
+                tracing::error!("Failed to restart worker {}: {}", worker_id, e);
+            }
         }
     }
 

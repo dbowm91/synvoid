@@ -17,7 +17,6 @@ pub struct IpFeedEntry {
 
 #[derive(Clone, Debug)]
 enum BlockedNetwork {
-    Single(IpAddr),
     Ipv4(Ipv4Addr, u8),
     Ipv6(Ipv6Addr, u8),
 }
@@ -25,7 +24,6 @@ enum BlockedNetwork {
 impl BlockedNetwork {
     fn contains(&self, ip: &IpAddr) -> bool {
         match (self, ip) {
-            (BlockedNetwork::Single(blocked), target) => blocked == target,
             (BlockedNetwork::Ipv4(net, prefix), IpAddr::V4(target)) => {
                 let network = u32::from(*net);
                 let target_bits = u32::from(*target);
@@ -55,6 +53,7 @@ impl BlockedNetwork {
     }
 }
 
+#[allow(dead_code)]
 pub struct IpFeedManager {
     blocked_networks: Arc<RwLock<Vec<BlockedNetwork>>>,
     blocked_ips: Arc<RwLock<HashSet<IpAddr>>>,
@@ -223,6 +222,7 @@ impl IpFeedManager {
     }
 }
 
+#[allow(dead_code)]
 pub struct MultiFeedManager {
     feeds: Vec<Arc<IpFeedManager>>,
     config: IpFeedConfig,

@@ -216,21 +216,6 @@ impl ProxyCache {
         });
     }
 
-    fn clone_inner(&self) -> Self {
-        let state = self.state.read();
-        Self {
-            state: RwLock::new(CacheState {
-                entries: state.entries.clone(),
-                access_order: state.access_order.clone(),
-                current_memory_size: state.current_memory_size,
-            }),
-            settings: self.settings.clone(),
-            disk_path: self.disk_path.clone(),
-            cache_hits: AtomicU64::new(self.cache_hits.load(Ordering::Relaxed)),
-            cache_misses: AtomicU64::new(self.cache_misses.load(Ordering::Relaxed)),
-        }
-    }
-
     #[inline]
     pub fn get(&self, key: &CacheKey) -> Option<ProxyCacheEntry> {
         if !self.settings.enabled {
@@ -506,19 +491,6 @@ impl ProxyCache {
 
     pub fn is_status_cacheable(&self, status: u16) -> bool {
         self.settings.valid_status.contains(&status)
-    }
-
-    fn write_to_disk(&self, key: &CacheKey, content: &[u8]) -> PathBuf {
-        let filename = Self::key_to_filename(key);
-        let path = self.disk_path.join(&filename);
-
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-
-        let _ = std::fs::write(&path, content);
-
-        path
     }
 
     pub async fn write_to_disk_async(&self, key: &CacheKey, content: Bytes) -> PathBuf {

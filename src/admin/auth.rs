@@ -120,4 +120,4 @@ pub fn constant_time_compare(a: &str, b: &str) -> bool {
     a_bytes.ct_eq(b_bytes).into()
 }
 
-pub type OptionalAuth = Option<TypedHeader<Authorization<Bearer>>>;
+

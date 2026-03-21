@@ -5,6 +5,7 @@ pub mod proxy;
 pub mod cert;
 pub mod backend;
 pub mod transport;
+pub mod transport_core;
 pub mod security;
 pub mod audit;
 pub mod security_challenge;
@@ -32,10 +33,14 @@ pub use cert::MeshCertManager;
 pub use backend::{MeshBackend, MeshBackendPool, create_mesh_backend_from_config, initialize_mesh_transports};
 pub use passover_key_exchange::KeyExchangeService;
 pub use transport::{MeshTransport, MeshPeerConnection};
-pub use transport::MeshTransportError as MeshTransportErrorV1;
+pub use transport_core::MeshTransportError as MeshTransportErrorV1;
+pub use transport_core::{
+    MeshTransportError, validate_system_time, get_time_validation_error_count,
+    MIN_REASONABLE_TIMESTAMP, MAX_REASONABLE_TIMESTAMP,
+};
 pub use transports::{
     MeshTransportTrait, MeshTransportType, MeshPeerConnectionTrait,
-    MeshTransportError, DatagramPacket, MeshDatagramHandler,
+    DatagramPacket, MeshDatagramHandler,
     QuicMeshTransport,
     WireGuardMeshTransport,
     MeshTransportManager,

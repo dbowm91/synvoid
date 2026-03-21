@@ -11,6 +11,7 @@ use tokio::net::TcpStream;
 
 pub use crate::listener::ConnectionContext;
 
+#[allow(dead_code)]
 pub struct TcpProxy {
     config: TcpProxyConfig,
     protocol_detector: ProtocolDetector,

@@ -93,6 +93,7 @@ pub struct TunnelPortForward {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct TunnelManager {
     config: TunnelConfig,
     sessions: Arc<RwLock<HashMap<String, TunnelSession>>>,

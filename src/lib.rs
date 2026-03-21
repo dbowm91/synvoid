@@ -1,4 +1,4 @@
-#![allow(clippy::all, dead_code, elided_lifetimes_in_paths, mismatched_lifetime_syntaxes)]
+#![allow(clippy::all, elided_lifetimes_in_paths, mismatched_lifetime_syntaxes)]
 
 pub mod buffer;
 pub mod challenge;
@@ -59,6 +59,7 @@ pub mod honeypot_port;
 #[cfg(feature = "icmp-filter")]
 pub mod icmp_filter;
 
+#[cfg(feature = "dns")]
 pub mod dns;
 
 pub use config::ConfigManager;

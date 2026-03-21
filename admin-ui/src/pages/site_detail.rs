@@ -25,7 +25,7 @@ fn format_bytes(n: u64) -> String {
     const GB: u64 = 1024 * 1024 * 1024;
     const MB: u64 = 1024 * 1024;
     const KB: u64 = 1024;
-    
+
     if n >= TB {
         format!("{:.2} TB", n as f64 / TB as f64)
     } else if n >= GB {
@@ -69,33 +69,33 @@ pub fn SiteDetail(props: &SiteDetailProps) -> Html {
         "/api/stats/summary",
         5000,
     );
-    
+
     {
         let site_stats = site_stats.clone();
         let sites_list = sites_list.clone();
         let error = error.clone();
         let site_id = site_id.clone();
-        
+
         use_effect_with((), move |_| {
             let site_stats = site_stats.clone();
             let sites_list = sites_list.clone();
             let error = error.clone();
             let site_id = site_id.clone();
-            
+
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
-                
+
                 match api.get_stats_sites().await {
                     Ok(sites) => {
                         sites_list.set(sites.clone());
                         if let Some(site) = sites.iter().find(|s| s.site_id == site_id) {
                             site_stats.set(Some(site.clone()));
                         }
-                    },
+                    }
                     Err(e) => error.set(Some(e)),
                 }
             });
-            
+
             || {}
         });
     }
@@ -207,11 +207,11 @@ pub fn SiteDetail(props: &SiteDetailProps) -> Html {
                 <div class="bg-secondary rounded-lg p-6 border border-default">
                     <h3 class="text-lg font-semibold mb-4">{ "Connection Status" }</h3>
                     <div class="flex justify-around mb-4">
-                        <Gauge 
-                            value={current.map(|s| s.active_connections as f64).unwrap_or(0.0)} 
-                            max={100.0} 
-                            label="Active" 
-                            unit="" 
+                        <Gauge
+                            value={current.map(|s| s.active_connections as f64).unwrap_or(0.0)}
+                            max={100.0}
+                            label="Active"
+                            unit=""
                         />
                         <div class="flex flex-col items-center">
                             <span class={format!("w-4 h-4 rounded-full mb-2 {}", if current.map(|s| s.upstream_healthy).unwrap_or(false) { "bg-green-500" } else { "bg-red-500" })} />

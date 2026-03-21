@@ -180,7 +180,7 @@ impl DnsSecKeyManager {
         dnskey_rdata.push(key.algorithm.to_u8());
         dnskey_rdata.extend_from_slice(&key.public_key);
 
-        use sha2::{Digest, Sha256, Sha384};
+        use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
         hasher.update(&dnskey_rdata);
         let digest = hasher.finalize();
@@ -269,7 +269,7 @@ impl DnsSecKeyManager {
         &mut self,
         algorithm: Algorithm,
         key_type: KeyType,
-        rsa_key_size: u32,
+        _rsa_key_size: u32,
         validity_days: u32,
     ) -> Result<(), String> {
         let now = SystemTime::now()
@@ -362,7 +362,7 @@ impl DnsSecKeyManager {
         &mut self,
         algorithm: Algorithm,
         key_type: KeyType,
-        rsa_key_size: u32,
+        _rsa_key_size: u32,
         validity_days: u32,
     ) -> Result<(), String> {
         let now = SystemTime::now()
@@ -1103,7 +1103,7 @@ pub fn create_rrsig_record(
     rrsig
 }
 
-pub fn create_nsec_record(current_name: &str, next_name: &str, type_bitmap: &[u16]) -> Vec<u8> {
+pub fn create_nsec_record(_current_name: &str, next_name: &str, type_bitmap: &[u16]) -> Vec<u8> {
     let mut nsec = Vec::new();
 
     let next_name_labels = next_name.trim_end_matches('.');
@@ -1481,109 +1481,6 @@ fn base32_encode(input: &[u8]) -> String {
     result
 }
 
-fn encode_rsa_public_key_rfc3110_from_bytes(raw_bytes: &[u8]) -> Vec<u8> {
-    parse_rsa_public_key_asn1(raw_bytes).unwrap_or_default()
-}
-
-fn extract_public_key_from_pkcs8(pkcs8_der: &[u8]) -> Result<Vec<u8>, String> {
-    if pkcs8_der.len() < 100 {
-        return Err("PKCS#8 too short".to_string());
-    }
-
-    let mut i = 0;
-    if pkcs8_der[i] != 0x30 {
-        return Err("Invalid PKCS#8: expected SEQUENCE".to_string());
-    }
-    i += 1;
-    i += len_of_der_length(pkcs8_der[i]);
-
-    if pkcs8_der[i] != 0x02 {
-        return Err("Invalid PKCS#8: expected integer".to_string());
-    }
-    i += 1;
-    i += len_of_der_length(pkcs8_der[i]);
-    while i < pkcs8_der.len() && pkcs8_der[i] == 0x02 {
-        i += 1;
-        i += len_of_der_length(pkcs8_der[i]);
-        while i < pkcs8_der.len() && (pkcs8_der[i] & 0x80) == 0x80 {
-            i += 1;
-        }
-        i += 1;
-    }
-
-    if i >= pkcs8_der.len() || pkcs8_der[i] != 0x03 {
-        return Err("Invalid PKCS#8: expected bit string".to_string());
-    }
-    i += 1;
-    let _bit_string_len = decode_der_length(&pkcs8_der[i..]).ok_or("Invalid length")?;
-    i += len_of_der_length(pkcs8_der[i]);
-
-    if i >= pkcs8_der.len() || pkcs8_der[i] != 0x30 {
-        return Err("Invalid PKCS#8: expected subjectPublicKeyInfo SEQUENCE".to_string());
-    }
-    i += 1;
-    let spki_len = decode_der_length(&pkcs8_der[i..]).ok_or("Invalid length")?;
-    i += len_of_der_length(pkcs8_der[i]);
-
-    if i >= pkcs8_der.len() || pkcs8_der[i] != 0x30 {
-        return Err("Invalid PKCS#8: expected algorithm SEQUENCE".to_string());
-    }
-    i += 1;
-    let alg_len = decode_der_length(&pkcs8_der[i..]).ok_or("Invalid length")?;
-    i += len_of_der_length(pkcs8_der[i]);
-    i += alg_len;
-
-    if i >= pkcs8_der.len() {
-        return Err("Invalid PKCS#8: truncated".to_string());
-    }
-
-    let key_start = i;
-    let key_end = std::cmp::min(i + spki_len - alg_len - 2, pkcs8_der.len());
-
-    let subject_public_key = &pkcs8_der[key_start..key_end];
-
-    parse_rsa_public_key_asn1(subject_public_key)
-}
-
-fn parse_rsa_public_key_asn1(der: &[u8]) -> Result<Vec<u8>, String> {
-    let mut i = 0;
-
-    if der.len() < 2 || der[i] != 0x30 {
-        return Err("Invalid RSAPublicKey: expected SEQUENCE".to_string());
-    }
-    i += 1;
-    let _total_len = decode_der_length(&der[i..]).ok_or("Invalid length")?;
-    i += len_of_der_length(der[i]);
-
-    if i >= der.len() || der[i] != 0x02 {
-        return Err("Invalid RSAPublicKey: expected integer (n)".to_string());
-    }
-    i += 1;
-    let n_len = decode_der_length(&der[i..]).ok_or("Invalid length")?;
-    i += len_of_der_length(der[i]);
-
-    let n_start = i;
-    if der[n_start] == 0x00 {
-        i += 1;
-    }
-    i += n_len;
-    let n = &der[n_start..i];
-
-    if i >= der.len() || der[i] != 0x02 {
-        return Err("Invalid RSAPublicKey: expected integer (e)".to_string());
-    }
-    i += 1;
-    let e_len = decode_der_length(&der[i..]).ok_or("Invalid length")?;
-    i += len_of_der_length(der[i]);
-    let e = &der[i..i + e_len];
-
-    let mut result = Vec::new();
-    result.extend_from_slice(e);
-    result.extend_from_slice(n);
-
-    Ok(result)
-}
-
 fn len_of_der_length(byte: u8) -> usize {
     if byte < 0x80 {
         1
@@ -1611,7 +1508,7 @@ fn decode_der_length(bytes: &[u8]) -> Option<usize> {
     }
 }
 
-pub fn canonical_rdata(record_type: u16, value: &str, priority: Option<u32>, ttl: u32) -> Vec<u8> {
+pub fn canonical_rdata(record_type: u16, value: &str, priority: Option<u32>, _ttl: u32) -> Vec<u8> {
     match record_type {
         1 => {
             if let Ok(ip) = value.parse::<std::net::Ipv4Addr>() {
@@ -1773,7 +1670,7 @@ pub fn sign_record(
     record_type: u16,
     ttl: u32,
     key: &ZoneSigningKey,
-    signer_name: &str,
+    _signer_name: &str,
 ) -> Result<Vec<u8>, String> {
     let rdata_value = String::new();
     let priority = None;
@@ -2181,7 +2078,7 @@ impl ZoneSigner {
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect();
 
-            for ((name, _), records) in records_to_sign {
+            for ((_name, _), records) in records_to_sign {
                 for record in records {
                     let rt_val = rt.to_u16();
                     let canonical =

@@ -340,7 +340,8 @@ impl ProxyServer {
             }
             WafDecision::Stall => {
                 counter!("maluwaf.requests.stalled").increment(1);
-                tokio::time::sleep(std::time::Duration::from_secs(300)).await;
+                histogram!("maluwaf.request.duration").record(start.elapsed());
+                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
                 std::future::pending::<()>().await;
                 return Err("stalled".to_string());
             }

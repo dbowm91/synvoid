@@ -30,7 +30,7 @@ use crate::worker::drain_state::WorkerDrainState;
 use crate::mesh::config::MeshConfig;
 use crate::mesh::MeshNodeRole;
 use crate::mesh::transports::MeshTransportManager;
-use crate::http::headers::{inject_security_headers, inject_cors_headers, is_websocket_upgrade, compute_websocket_accept_key, generate_stealth_timestamp};
+use crate::http::headers::{inject_security_headers, is_websocket_upgrade, compute_websocket_accept_key, generate_stealth_timestamp};
 use crate::metrics::bandwidth::{BandwidthProtocol, EgressDirection};
 use crate::metrics::WorkerMetrics;
 use crate::process::{current_timestamp, RequestLogPayload};
@@ -972,13 +972,6 @@ impl HttpServer {
         inject_security_headers(builder, config)
     }
 
-    fn inject_cors_headers(
-        builder: http::response::Builder,
-        config: &crate::config::SiteCorsConfig,
-    ) -> http::response::Builder {
-        inject_cors_headers(builder, config)
-    }
-
     fn handle_drain_request(
         _req: hyper::Request<hyper::body::Incoming>,
         drain_state: &Arc<WorkerDrainState>,
@@ -1168,19 +1161,6 @@ impl HttpServer {
         builder = builder.header("Date", generate_stealth_timestamp(5));
         
         builder
-            .body(Full::new(Bytes::from(body)))
-            .unwrap_or_else(|_| Response::builder()
-                .status(500)
-                .body(Full::new(Bytes::from("Internal Server Error")))
-                .unwrap())
-    }
-
-    fn build_response(status: u16, body: String, content_type: &str) -> Response<Full<Bytes>> {
-        Response::builder()
-            .status(status)
-            .header("Content-Type", content_type)
-            .header("Content-Length", body.len())
-            .header("Date", generate_stealth_timestamp(5))
             .body(Full::new(Bytes::from(body)))
             .unwrap_or_else(|_| Response::builder()
                 .status(500)

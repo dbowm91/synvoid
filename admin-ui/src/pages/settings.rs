@@ -1,5 +1,5 @@
 use crate::components::forms::{Input, Select};
-use crate::components::{toast_success, toast_error};
+use crate::components::{toast_error, toast_success};
 use crate::services::ApiService;
 use crate::types::{ThemeResponse, UpdateThemeRequest};
 use wasm_bindgen::JsCast;
@@ -485,12 +485,12 @@ fn ThemeSection() -> Html {
                 let theme_result = api.get_theme().await;
                 let css_result = api.get_theme_css().await;
                 let use_light = *preview_light;
-                
+
                 if let Ok(data) = theme_result {
                     theme_data.set(Some(data.clone()));
                     selected_preset.set(data.preset.clone());
                     selected_mode.set(data.mode.clone());
-                    
+
                     if let Ok(css) = css_result {
                         let html = generate_preview_html(&css, &data.colors, use_light);
                         preview_html.set(html);
@@ -508,11 +508,12 @@ fn ThemeSection() -> Html {
         let preview_light = preview_light.clone();
         Callback::from(move |e: Event| {
             let target = e.target().unwrap();
-            let value = target.dyn_ref::<web_sys::HtmlSelectElement>()
+            let value = target
+                .dyn_ref::<web_sys::HtmlSelectElement>()
                 .map(|el| el.value())
                 .unwrap_or_default();
             selected_preset.set(value.clone());
-            
+
             if let Some(ref data) = *theme_data {
                 let colors = get_preset_colors(&value);
                 let use_light = *preview_light;
@@ -526,7 +527,8 @@ fn ThemeSection() -> Html {
         let selected_mode = selected_mode.clone();
         Callback::from(move |e: Event| {
             let target = e.target().unwrap();
-            let value = target.dyn_ref::<web_sys::HtmlSelectElement>()
+            let value = target
+                .dyn_ref::<web_sys::HtmlSelectElement>()
                 .map(|el| el.value())
                 .unwrap_or_default();
             selected_mode.set(value);
@@ -541,7 +543,7 @@ fn ThemeSection() -> Html {
         Callback::from(move |_| {
             let new_value = !*preview_light;
             preview_light.set(new_value);
-            
+
             if let Some(ref data) = *theme_data {
                 let colors = get_preset_colors(&selected_preset);
                 let html = generate_preview_html("", &colors, new_value);
@@ -564,7 +566,7 @@ fn ThemeSection() -> Html {
             let preview_html = preview_html.clone();
             let preview_light = *preview_light;
             let saving = saving.clone();
-            
+
             saving.set(true);
 
             wasm_bindgen_futures::spawn_local(async move {
@@ -574,12 +576,12 @@ fn ThemeSection() -> Html {
                     mode: Some(mode),
                     allow_only: None,
                 };
-                
+
                 match api.update_theme(&request).await {
                     Ok(data) => {
                         theme_data.set(Some(data.clone()));
                         toast_success("Theme updated successfully");
-                        
+
                         match api.get_theme_css().await {
                             Ok(css) => {
                                 let html = generate_preview_html(&css, &data.colors, preview_light);
@@ -609,20 +611,20 @@ fn ThemeSection() -> Html {
         Callback::from(move |_| {
             selected_preset.set("default".to_string());
             selected_mode.set("auto".to_string());
-            
+
             if let Some(ref data) = *theme_data {
                 let colors = get_preset_colors("default");
                 let use_light = *preview_light;
                 let html = generate_preview_html("", &colors, use_light);
                 preview_html.set(html);
             }
-            
+
             let request = UpdateThemeRequest {
                 preset: Some("default".to_string()),
                 mode: Some("auto".to_string()),
                 allow_only: None,
             };
-            
+
             let theme_data = theme_data.clone();
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
@@ -658,7 +660,7 @@ fn ThemeSection() -> Html {
         <div class="space-y-6">
             <div>
                 <label class="block text-sm font-medium text-primary mb-2">{ "Theme Preset" }</label>
-                <select 
+                <select
                     class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary"
                     value={(*selected_preset).clone()}
                     onchange={on_preset_change}
@@ -674,7 +676,7 @@ fn ThemeSection() -> Html {
 
             <div>
                 <label class="block text-sm font-medium text-primary mb-2">{ "Theme Mode" }</label>
-                <select 
+                <select
                     class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary"
                     value={(*selected_mode).clone()}
                     onchange={on_mode_change}
@@ -691,7 +693,7 @@ fn ThemeSection() -> Html {
             <div>
                 <div class="flex items-center justify-between mb-2">
                     <label class="block text-sm font-medium text-primary">{ "Preview" }</label>
-                    <button 
+                    <button
                         onclick={on_toggle_preview}
                         class="px-3 py-1 text-sm bg-tertiary border border-default rounded-lg text-primary hover:opacity-80"
                     >
@@ -699,7 +701,7 @@ fn ThemeSection() -> Html {
                     </button>
                 </div>
                 <div class="border border-default rounded-lg overflow-hidden">
-                    <iframe 
+                    <iframe
                         srcdoc={(*preview_html).clone()}
                         class="w-full h-64"
                         sandbox="allow-same-origin"
@@ -709,14 +711,14 @@ fn ThemeSection() -> Html {
             </div>
 
             <div class="flex justify-between gap-4">
-                <button 
+                <button
                     onclick={on_reset}
                     disabled={*saving}
                     class="px-4 py-2 bg-tertiary text-primary rounded-lg hover:opacity-80 disabled:opacity-50"
                 >
                     { "Reset to Default" }
                 </button>
-                <button 
+                <button
                     onclick={on_save}
                     disabled={*saving}
                     class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
@@ -843,9 +845,18 @@ fn get_preset_colors(preset: &str) -> crate::types::ThemeColorsResponse {
     }
 }
 
-fn generate_preview_html(_css: &str, colors: &crate::types::ThemeColorsResponse, use_light: bool) -> String {
-    let c = if use_light { &colors.light } else { &colors.dark };
-    format!(r#"
+fn generate_preview_html(
+    _css: &str,
+    colors: &crate::types::ThemeColorsResponse,
+    use_light: bool,
+) -> String {
+    let c = if use_light {
+        &colors.light
+    } else {
+        &colors.dark
+    };
+    format!(
+        r#"
 <!DOCTYPE html>
 <html>
 <head>

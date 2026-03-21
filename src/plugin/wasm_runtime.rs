@@ -27,6 +27,7 @@ impl Default for WasmResourceLimits {
     }
 }
 
+#[allow(dead_code)]
 pub struct WasmRuntime {
     engine: Engine,
     module: Module,

@@ -59,6 +59,7 @@ impl SyslogConfig {
 }
 
 #[derive(Clone)]
+#[allow(dead_code)]
 pub struct SyslogLogger {
     min_level: log::Level,
     app_name: String,

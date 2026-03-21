@@ -36,6 +36,7 @@ struct ServerSharedState {
 }
 
 #[derive(Clone)]
+#[allow(dead_code)]
 pub struct UnifiedServer {
     config: Arc<RwLock<ConfigManager>>,
     http_addr: SocketAddr,

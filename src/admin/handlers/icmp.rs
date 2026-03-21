@@ -9,6 +9,7 @@ use super::super::state::AdminState;
 
 use super::common::{require_auth, OptionalAuth};
 
+#[allow(dead_code)]
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct IcmpStatusResponse {
     pub enabled: bool,
@@ -33,6 +34,7 @@ pub struct IcmpConfigResponse {
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[allow(dead_code)]
 pub struct UpdateIcmpConfigRequest {
     pub config: serde_json::Value,
 }

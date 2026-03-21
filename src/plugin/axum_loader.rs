@@ -6,8 +6,6 @@ use libloading::{Library, Symbol};
 use super::AxumPluginError;
 
 const AXUM_ABI_VERSION: &str = env!("CARGO_PKG_VERSION");
-const REQUIRED_AXUM_VERSION: &str = "0.8";
-const REQUIRED_YEW_VERSION: &str = "0.21";
 
 /// Function pointer type for plugin factory, returning a raw pointer to a Router.
 /// # Safety
@@ -118,16 +116,15 @@ pub fn load_plugin(path: &Path) -> Result<(axum::Router<()>, String), AxumPlugin
             .into_owned();
 
         if plugin_version != AXUM_ABI_VERSION {
-            tracing::warn!(
-                "Plugin ABI version {} does not match MaluWAF axum version {}. \
-                For best stability, recompile plugin against MaluWAF {}. \
-                Required: axum {}, yew {}",
+            tracing::error!(
+                "Plugin ABI version mismatch: plugin={}, expected={}",
                 plugin_version,
-                AXUM_ABI_VERSION,
-                AXUM_ABI_VERSION,
-                REQUIRED_AXUM_VERSION,
-                REQUIRED_YEW_VERSION
+                AXUM_ABI_VERSION
             );
+            return Err(AxumPluginError::AbiMismatch {
+                plugin: plugin_version,
+                expected: AXUM_ABI_VERSION.to_string(),
+            });
         }
 
         let factory: Symbol<AxumFactory> = lib

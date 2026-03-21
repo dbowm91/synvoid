@@ -134,7 +134,7 @@ impl AnycastZoneSync {
             None => return Err("Mesh transport not configured".to_string()),
         };
 
-        let (serial, record_count) = {
+        let (serial, _record_count) = {
             let z = self.local_zones.read();
             match z.get(zone_origin) {
                 Some(zone) => (zone.serial, zone.records.len()),
@@ -194,7 +194,7 @@ impl AnycastZoneSync {
         node_id: &str,
         zone_origin: &str,
     ) -> Result<(), String> {
-        let (serial, record_count) = {
+        let (serial, _record_count) = {
             let z = local_zones.read();
             match z.get(zone_origin) {
                 Some(zone) => (zone.serial, zone.records.len()),
@@ -243,7 +243,7 @@ impl AnycastZoneSync {
         tracing::debug!("Broadcasting zone availability for {:?} from node {}", zones, node_id);
 
         for zone_origin in zones {
-            let (serial, record_count) = {
+            let (serial, _record_count) = {
                 let z = local_zones.read();
                 if let Some(zone) = z.get(&zone_origin) {
                     (zone.serial, zone.records.len())
@@ -723,7 +723,7 @@ impl AnycastZoneSync {
             timestamp: crate::mesh::protocol::MeshMessage::generate_timestamp(),
         };
 
-        let (sent, failed) = transport.broadcast_to_random_peers(message, 0.3, Some(crate::mesh::config::MeshNodeRole::Global)).await;
+        let (_sent, failed) = transport.broadcast_to_random_peers(message, 0.3, Some(crate::mesh::config::MeshNodeRole::Global)).await;
         if failed > 0 {
             tracing::warn!("Failed to send zone sync request to {} peers", failed);
         }

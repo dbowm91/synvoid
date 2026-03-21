@@ -83,13 +83,6 @@ pub struct ProbeEventResponse {
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct ProbesListResponse {
-    pub probes: Vec<ProbeResponse>,
-    pub total: usize,
-    pub has_more: bool,
-}
-
-#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ProbeStatsResponse {
     pub total_records: usize,
     pub active_records: usize,

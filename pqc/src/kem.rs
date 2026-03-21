@@ -5,7 +5,7 @@
 use aws_lc_rs::digest::SHA256_OUTPUT_LEN;
 use aws_lc_rs::kem::{
     Ciphertext as AwsCiphertext, DecapsulationKey as AwsDecapsulationKey,
-    EncapsulationKey as AwsEncapsulationKey, ML_KEM_768, ML_KEM_1024,
+    EncapsulationKey as AwsEncapsulationKey, ML_KEM_1024, ML_KEM_768,
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use thiserror::Error;
@@ -183,7 +183,10 @@ impl MlKem768 {
             .map_err(|e| KemError::EncapsulationFailed(e.to_string()))?
     }
 
-    pub async fn decapsulate_async(ct: &Ciphertext, sk: &SecretKey) -> Result<SharedSecret, KemError> {
+    pub async fn decapsulate_async(
+        ct: &Ciphertext,
+        sk: &SecretKey,
+    ) -> Result<SharedSecret, KemError> {
         let ct = ct.clone();
         let sk = sk.clone();
         tokio::task::spawn_blocking(move || Self::decapsulate(&ct, &sk))
@@ -347,7 +350,10 @@ impl MlKem1024 {
             .map_err(|e| KemError::EncapsulationFailed(e.to_string()))?
     }
 
-    pub async fn decapsulate_async(ct: &Ciphertext, sk: &SecretKey) -> Result<SharedSecret, KemError> {
+    pub async fn decapsulate_async(
+        ct: &Ciphertext,
+        sk: &SecretKey,
+    ) -> Result<SharedSecret, KemError> {
         let ct = ct.clone();
         let sk = sk.clone();
         tokio::task::spawn_blocking(move || Self::decapsulate(&ct, &sk))
@@ -394,9 +400,10 @@ mod tests {
         let ss_recv = MlKem768::decapsulate(&ct, &sk).expect("Decapsulation failed");
 
         assert!(ss_send.compare(&ss_recv));
-        
+
         let (_, sk2) = MlKem768::generate_keypair().expect("Key generation failed");
-        let ss_wrong = MlKem768::decapsulate(&ct, &sk2).expect("Decapsulation with wrong key doesn't panic");
+        let ss_wrong =
+            MlKem768::decapsulate(&ct, &sk2).expect("Decapsulation with wrong key doesn't panic");
         assert!(!ss_send.compare(&ss_wrong));
     }
 
@@ -405,14 +412,14 @@ mod tests {
         let (pk, sk) = MlKem768::generate_keypair().expect("Key generation failed");
 
         let pk_b64 = pk.to_base64();
-        
+
         let pk_roundtrip =
             MlKem768::public_key_from_base64(&pk_b64).expect("PK from base64 failed");
-        
+
         assert_eq!(pk.0, pk_roundtrip.0);
 
-        let sk_b64 = SecretKey::from_base64(&sk.to_base64())
-            .expect("SecretKey::from_base64 should work");
+        let sk_b64 =
+            SecretKey::from_base64(&sk.to_base64()).expect("SecretKey::from_base64 should work");
         assert_eq!(sk.0, sk_b64.0);
     }
 
@@ -486,9 +493,10 @@ mod tests {
         let ss_recv = MlKem1024::decapsulate(&ct, &sk).expect("Decapsulation failed");
 
         assert!(ss_send.compare(&ss_recv));
-        
+
         let (_, sk2) = MlKem1024::generate_keypair().expect("Key generation failed");
-        let ss_wrong = MlKem1024::decapsulate(&ct, &sk2).expect("Decapsulation with wrong key doesn't panic");
+        let ss_wrong =
+            MlKem1024::decapsulate(&ct, &sk2).expect("Decapsulation with wrong key doesn't panic");
         assert!(!ss_send.compare(&ss_wrong));
     }
 
@@ -497,14 +505,14 @@ mod tests {
         let (pk, sk) = MlKem1024::generate_keypair().expect("Key generation failed");
 
         let pk_b64 = pk.to_base64();
-        
+
         let pk_roundtrip =
             MlKem1024::public_key_from_base64(&pk_b64).expect("PK from base64 failed");
-        
+
         assert_eq!(pk.0, pk_roundtrip.0);
 
-        let sk_b64 = SecretKey::from_base64(&sk.to_base64())
-            .expect("SecretKey::from_base64 should work");
+        let sk_b64 =
+            SecretKey::from_base64(&sk.to_base64()).expect("SecretKey::from_base64 should work");
         assert_eq!(sk.0, sk_b64.0);
     }
 }

@@ -1270,6 +1270,7 @@ impl DnsConfig {
             ));
         }
 
+        #[allow(unused_comparisons)]
         if self.port > 65535 {
             return Err(DnsConfigError::InvalidPort(
                 "Port cannot exceed 65535".to_string(),

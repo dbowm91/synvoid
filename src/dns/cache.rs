@@ -53,6 +53,7 @@ struct InnerDnsCache {
     max_capacity: usize,
     serve_stale_enabled: bool,
     serve_stale_max_stale: Duration,
+    #[allow(dead_code)]
     serve_stale_max_count: usize,
 }
 
@@ -154,7 +155,7 @@ impl DnsCache {
         if inner.enable_fingerprinting {
             let fingerprint = Self::compute_fingerprint(data);
             let qname = key.qname.clone();
-            let mut fingerprints = inner.cache_fingerprints.write();
+            let fingerprints = inner.cache_fingerprints.write();
 
             if let Some(existing) = fingerprints.get(&qname) {
                 if existing.len() >= inner.max_fingerprints_per_name {
@@ -488,7 +489,7 @@ impl SecureDnsCache {
         key: CacheKey,
         data: Vec<u8>,
         record_ttl: u32,
-        source_ip: Option<IpAddr>,
+        _source_ip: Option<IpAddr>,
         _is_dnssec_signed: bool,
     ) {
         self.0.insert(key, data, record_ttl);
@@ -523,5 +524,124 @@ impl SecureDnsCache {
 impl Default for SecureDnsCache {
     fn default() -> Self {
         Self::new(10000, 3600, 60, 65535, true, true)
+    }
+}
+
+#[allow(dead_code)]
+fn skip_name(data: &[u8], mut offset: usize) -> Option<usize> {
+    loop {
+        if offset >= data.len() {
+            return None;
+        }
+        let octet = data[offset];
+        if octet == 0 {
+            return Some(offset + 1);
+        }
+        if octet >= 192 {
+            if offset + 1 >= data.len() {
+                return None;
+            }
+            return Some(offset + 2);
+        } else {
+            offset += 1 + octet as usize;
+        }
+    }
+}
+
+#[allow(dead_code)]
+pub(crate) fn detect_dnssec_signed(data: &[u8]) -> bool {
+    if data.len() < 12 {
+        return false;
+    }
+
+    let qdcount = u16::from_be_bytes([data[4], data[5]]);
+    let ancount = u16::from_be_bytes([data[6], data[7]]);
+
+    let mut offset = 12;
+    for _ in 0..qdcount {
+        if let Some(pos) = data[offset..].iter().position(|&b| b == 0) {
+            offset += pos + 5;
+            if offset > data.len() {
+                return false;
+            }
+        } else {
+            return false;
+        }
+    }
+
+    for _ in 0..ancount {
+        if let Some(name_end) = skip_name(data, offset) {
+            offset = name_end;
+            if offset + 10 > data.len() {
+                return false;
+            }
+            let record_type = u16::from_be_bytes([data[offset], data[offset + 1]]);
+            if record_type == 46 {
+                return true;
+            }
+            offset += 8;
+            let rdlen = u16::from_be_bytes([data[offset], data[offset + 1]]) as usize;
+            offset += 2 + rdlen;
+            if offset > data.len() {
+                return false;
+            }
+        } else {
+            return false;
+        }
+    }
+
+    false
+}
+
+#[cfg(test)]
+mod dnssec_detection_tests {
+    use super::*;
+
+    #[test]
+    fn test_detect_dnssec_signed_with_rrsig() {
+        // ANCOUNT must be 2 for two records (A and RRSIG)!
+        let data = vec![
+            // Header: QDCOUNT=1, ANCOUNT=2
+            0x00, 0x00, 0x81, 0x80, 0x00, 0x01, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00,
+            // Question: root QNAME + QTYPE=A + QCLASS=IN
+            0x00, 0x00, 0x01, 0x00, 0x01,
+            // Answer A: root NAME + TYPE=A + CLASS + TTL + RDLENGTH + RDATA
+            0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00,
+            0x22,
+            // Answer RRSIG: root NAME + TYPE=RRSIG + CLASS + TTL + RDLENGTH + RDATA
+            0x00, 0x00, 0x2E, 0x00, 0x01, 0x00, 0x00, 0x03, 0x84, 0x00, 0x17, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ];
+        assert!(detect_dnssec_signed(&data));
+    }
+
+    #[test]
+    fn test_detect_dnssec_signed_without_rrsig() {
+        let data = vec![
+            0x00, 0x00, 0x81, 0x80, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x01, 0x00, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04,
+            0x00, 0x00, 0x00, 0x22,
+        ];
+        assert!(!detect_dnssec_signed(&data));
+    }
+
+    #[test]
+    fn test_detect_dnssec_signed_empty_answer() {
+        let data = vec![
+            0x00, 0x00, 0x81, 0x83, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x01, 0x00, 0x01,
+        ];
+        assert!(!detect_dnssec_signed(&data));
+    }
+
+    #[test]
+    fn test_detect_dnssec_signed_truncated_data() {
+        assert!(!detect_dnssec_signed(&[]));
+        assert!(!detect_dnssec_signed(&[0x00, 0x00, 0x00]));
+        assert!(!detect_dnssec_signed(&[0x00; 11]));
+        assert!(!detect_dnssec_signed(&[
+            0x00, 0x00, 0x81, 0x80, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00
+        ]));
     }
 }

@@ -36,26 +36,28 @@ pub fn use_websocket<T: DeserializeOwned + Clone + 'static>(path: &str) -> UseWe
             let ws = match WebSocket::new(&path) {
                 Ok(ws) => ws,
                 Err(e) => {
-                    state.set(UseWebSocketState::Error(format!("Failed to connect: {:?}", e)));
+                    state.set(UseWebSocketState::Error(format!(
+                        "Failed to connect: {:?}",
+                        e
+                    )));
                     return Box::new(|| {}) as Box<dyn FnOnce()>;
                 }
             };
 
             {
                 let state = state.clone();
-                let closure = wasm_bindgen::closure::Closure::<dyn FnMut(_)>::new(
-                    move |_: MessageEvent| {
+                let closure =
+                    wasm_bindgen::closure::Closure::<dyn FnMut(_)>::new(move |_: MessageEvent| {
                         state.set(UseWebSocketState::Connecting);
-                    },
-                );
+                    });
                 ws.set_onopen(Some(closure.as_ref().unchecked_ref()));
                 closure.forget();
             }
 
             {
                 let state = state.clone();
-                let closure = wasm_bindgen::closure::Closure::<dyn FnMut(_)>::new(
-                    move |e: MessageEvent| {
+                let closure =
+                    wasm_bindgen::closure::Closure::<dyn FnMut(_)>::new(move |e: MessageEvent| {
                         if let Ok(txt) = e.data().dyn_into::<js_sys::JsString>() {
                             let msg = String::from(txt);
                             match serde_json::from_str::<T>(&msg) {
@@ -65,8 +67,7 @@ pub fn use_websocket<T: DeserializeOwned + Clone + 'static>(path: &str) -> UseWe
                                 Err(_) => {}
                             }
                         }
-                    },
-                );
+                    });
                 ws.set_onmessage(Some(closure.as_ref().unchecked_ref()));
                 closure.forget();
             }
@@ -158,19 +159,18 @@ pub fn use_websocket_or_poll<T: DeserializeOwned + Clone + 'static>(
 
             {
                 let state = state.clone();
-                let closure = wasm_bindgen::closure::Closure::<dyn FnMut(_)>::new(
-                    move |_: MessageEvent| {
+                let closure =
+                    wasm_bindgen::closure::Closure::<dyn FnMut(_)>::new(move |_: MessageEvent| {
                         state.set(UseWebSocketState::Connecting);
-                    },
-                );
+                    });
                 ws.set_onopen(Some(closure.as_ref().unchecked_ref()));
                 closure.forget();
             }
 
             {
                 let state = state.clone();
-                let closure = wasm_bindgen::closure::Closure::<dyn FnMut(_)>::new(
-                    move |e: MessageEvent| {
+                let closure =
+                    wasm_bindgen::closure::Closure::<dyn FnMut(_)>::new(move |e: MessageEvent| {
                         if let Ok(txt) = e.data().dyn_into::<js_sys::JsString>() {
                             let msg = String::from(txt);
                             match serde_json::from_str::<T>(&msg) {
@@ -180,8 +180,7 @@ pub fn use_websocket_or_poll<T: DeserializeOwned + Clone + 'static>(
                                 Err(_) => {}
                             }
                         }
-                    },
-                );
+                    });
                 ws.set_onmessage(Some(closure.as_ref().unchecked_ref()));
                 closure.forget();
             }

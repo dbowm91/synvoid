@@ -1,7 +1,7 @@
-use serde::{Deserialize, Serialize};
-use yew::prelude::*;
 use crate::services::ApiService;
 use crate::types::{RequestLogEntry, SiteInfo};
+use serde::{Deserialize, Serialize};
+use yew::prelude::*;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct RequestLogsResponse {
@@ -48,13 +48,13 @@ pub fn RequestLogs() -> Html {
     let loading = use_state(|| true);
     let total = use_state(|| 0);
     let has_more = use_state(|| false);
-    
+
     let selected_site = use_state(|| "".to_string());
     let selected_method = use_state(|| "".to_string());
     let selected_status = use_state(|| "".to_string());
     let search_query = use_state(|| "".to_string());
     let offset = use_state(|| 0);
-    
+
     let limit = 50;
 
     {
@@ -65,7 +65,7 @@ pub fn RequestLogs() -> Html {
                 let api = ApiService::new();
                 match api.list_sites().await {
                     Ok(s) => sites.set(s),
-                    Err(_) => {},
+                    Err(_) => {}
                 }
             });
             || {}
@@ -82,9 +82,15 @@ pub fn RequestLogs() -> Html {
         let selected_status = selected_status.clone();
         let search_query = search_query.clone();
         let offset = offset.clone();
-        
+
         use_effect_with(
-            (selected_site.clone(), selected_method.clone(), selected_status.clone(), search_query.clone(), (*offset)),
+            (
+                selected_site.clone(),
+                selected_method.clone(),
+                selected_status.clone(),
+                search_query.clone(),
+                (*offset),
+            ),
             move |_| {
                 let logs = logs.clone();
                 let loading = loading.clone();
@@ -95,24 +101,50 @@ pub fn RequestLogs() -> Html {
                 let selected_status = selected_status.clone();
                 let search_query = search_query.clone();
                 let offset = offset.clone();
-                
+
                 wasm_bindgen_futures::spawn_local(async move {
                     loading.set(true);
                     let api = ApiService::new();
-                    
-                    let site_id = if (*selected_site).is_empty() { None } else { Some((*selected_site).as_str()) };
-                    let method = if (*selected_method).is_empty() { None } else { Some((*selected_method).as_str()) };
-                    let status = if (*selected_status).is_empty() { None } else { Some((*selected_status).as_str()) };
-                    let search = if (*search_query).is_empty() { None } else { Some((*search_query).as_str()) };
+
+                    let site_id = if (*selected_site).is_empty() {
+                        None
+                    } else {
+                        Some((*selected_site).as_str())
+                    };
+                    let method = if (*selected_method).is_empty() {
+                        None
+                    } else {
+                        Some((*selected_method).as_str())
+                    };
+                    let status = if (*selected_status).is_empty() {
+                        None
+                    } else {
+                        Some((*selected_status).as_str())
+                    };
+                    let search = if (*search_query).is_empty() {
+                        None
+                    } else {
+                        Some((*search_query).as_str())
+                    };
                     let current_offset = *offset;
-                    
-                    match api.get_request_logs(site_id, method, status, search, Some(limit), Some(current_offset)).await {
+
+                    match api
+                        .get_request_logs(
+                            site_id,
+                            method,
+                            status,
+                            search,
+                            Some(limit),
+                            Some(current_offset),
+                        )
+                        .await
+                    {
                         Ok(resp) => {
                             logs.set(resp.entries);
                             total.set(resp.total);
                             has_more.set(resp.has_more);
                         }
-                        Err(_) => {},
+                        Err(_) => {}
                     }
                     loading.set(false);
                 });
@@ -125,7 +157,9 @@ pub fn RequestLogs() -> Html {
         let selected_site = selected_site.clone();
         let offset = offset.clone();
         Callback::from(move |e: Event| {
-            let value = e.target_unchecked_into::<web_sys::HtmlSelectElement>().value();
+            let value = e
+                .target_unchecked_into::<web_sys::HtmlSelectElement>()
+                .value();
             selected_site.set(value);
             offset.set(0);
         })
@@ -135,7 +169,9 @@ pub fn RequestLogs() -> Html {
         let selected_method = selected_method.clone();
         let offset = offset.clone();
         Callback::from(move |e: Event| {
-            let value = e.target_unchecked_into::<web_sys::HtmlSelectElement>().value();
+            let value = e
+                .target_unchecked_into::<web_sys::HtmlSelectElement>()
+                .value();
             selected_method.set(value);
             offset.set(0);
         })
@@ -145,7 +181,9 @@ pub fn RequestLogs() -> Html {
         let selected_status = selected_status.clone();
         let offset = offset.clone();
         Callback::from(move |e: Event| {
-            let value = e.target_unchecked_into::<web_sys::HtmlSelectElement>().value();
+            let value = e
+                .target_unchecked_into::<web_sys::HtmlSelectElement>()
+                .value();
             selected_status.set(value);
             offset.set(0);
         })
@@ -155,7 +193,9 @@ pub fn RequestLogs() -> Html {
         let search_query = search_query.clone();
         let offset = offset.clone();
         Callback::from(move |e: InputEvent| {
-            let value = e.target_unchecked_into::<web_sys::HtmlInputElement>().value();
+            let value = e
+                .target_unchecked_into::<web_sys::HtmlInputElement>()
+                .value();
             search_query.set(value);
             offset.set(0);
         })
@@ -197,7 +237,7 @@ pub fn RequestLogs() -> Html {
 
             <div class="bg-secondary rounded-lg p-4 border border-default mb-6">
                 <div class="flex flex-wrap gap-4">
-                    <select 
+                    <select
                         class="px-3 py-2 bg-tertiary border border-default rounded-lg text-primary text-sm min-w-[150px]"
                         onchange={on_site_change}
                     >
@@ -210,7 +250,7 @@ pub fn RequestLogs() -> Html {
                         })}
                     </select>
 
-                    <select 
+                    <select
                         class="px-3 py-2 bg-tertiary border border-default rounded-lg text-primary text-sm min-w-[150px]"
                         onchange={on_method_change}
                     >
@@ -222,7 +262,7 @@ pub fn RequestLogs() -> Html {
                         <option value="PATCH">{ "PATCH" }</option>
                     </select>
 
-                    <select 
+                    <select
                         class="px-3 py-2 bg-tertiary border border-default rounded-lg text-primary text-sm min-w-[180px]"
                         onchange={on_status_change}
                     >
@@ -300,14 +340,14 @@ pub fn RequestLogs() -> Html {
                         { format!("Showing {}-{} of {} entries", current_offset + 1, showing_end, *total) }
                     </span>
                     <div class="flex gap-2">
-                        <button 
+                        <button
                             onclick={on_prev}
                             disabled={current_offset == 0}
                             class="px-3 py-1 bg-tertiary rounded text-sm text-secondary hover:text-primary disabled:opacity-50"
                         >
                             { "Previous" }
                         </button>
-                        <button 
+                        <button
                             onclick={on_next}
                             disabled={!*has_more}
                             class="px-3 py-1 bg-tertiary rounded text-sm text-secondary hover:text-primary disabled:opacity-50"

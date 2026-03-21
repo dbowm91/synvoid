@@ -3,12 +3,11 @@ use std::sync::Arc;
 
 use parking_lot::RwLock;
 use tokio::sync::mpsc;
-use async_trait::async_trait;
 
-use metrics::{counter, gauge};
+use metrics::gauge;
 
-use crate::dns::messages::{DnsAnycastHealthUpdate, DnsAnycastNodeRegistration, DnsEdgeHealthReport, DnsHealthUpdate, DnsNodeRole, DnsRegistration, DnsRegistrationRequest, DnsNodeShutdown, DomainVerificationRequest, DomainVerificationStatus, DomainVerificationType, DnsRegistrationWithVerificationRequest, DnsRegistrationWithVerificationResponse, DomainVerificationStatusUpdate};
-use crate::dns::resolver::{DnsResolver, ResolverError};
+use crate::dns::messages::{DnsAnycastHealthUpdate, DnsAnycastNodeRegistration, DnsEdgeHealthReport, DnsHealthUpdate, DnsNodeRole, DnsRegistration, DnsRegistrationRequest, DnsNodeShutdown, DomainVerificationRequest, DomainVerificationStatus, DomainVerificationType, DnsRegistrationWithVerificationRequest, DnsRegistrationWithVerificationResponse};
+use crate::dns::resolver::DnsResolver;
 
 #[derive(Clone)]
 pub struct RegisteredEdgeNode {
@@ -228,10 +227,7 @@ pub struct VerificationMetricsSummary {
 }
 
 impl MeshDnsRegistry {
-    const DEFAULT_VERIFICATION_TIMEOUT_SECS: u64 = 600;
-    const DEFAULT_VERIFICATION_RETRY_INTERVAL_SECS: u64 = 30;
     const MAX_REGISTRATION_RETRIES: usize = 3;
-    const REGISTRATION_TIMEOUT_SECS: u64 = 10;
 
     pub fn new(node_id: String, is_global: bool) -> Self {
         Self::with_config(node_id, is_global, MeshDnsRegistryConfig::default())
@@ -1248,7 +1244,7 @@ impl MeshDnsRegistry {
         Ok(())
     }
 
-    pub fn apply_dht_domain_registration(&self, domain: String, origin_node_id: String, ip_addresses: Vec<String>) {
+    pub fn apply_dht_domain_registration(&self, domain: String, origin_node_id: String, _ip_addresses: Vec<String>) {
         if !self.is_global {
             tracing::debug!("Ignoring DHT domain registration on non-global node");
             return;
@@ -1542,7 +1538,7 @@ impl MeshDnsRegistry {
 
         let request_id = format!("{}-{}-{}", registration.domain, registration.node_id, chrono::Utc::now().timestamp());
         
-        let verification_request = DnsRegistrationWithVerificationRequest {
+        let _verification_request = DnsRegistrationWithVerificationRequest {
             request_id: request_id.clone(),
             registration: registration.clone(),
             verify_domain_ownership,
@@ -1720,9 +1716,6 @@ impl MeshDnsRegistry {
         })
     }
 
-    const VERIFICATION_RETRY_INTERVAL_SECS: u64 = 30;
-    const VERIFICATION_MAX_RETRIES: u32 = 10;
-
     pub async fn start_verification_loop(&self) {
         let resolver = match &self.dns_resolver {
             Some(r) => Arc::clone(r),
@@ -1738,7 +1731,7 @@ impl MeshDnsRegistry {
         let dht_store = self.dht_record_store.clone();
         let verification_tx = self.verification_tx.clone();
         let failure_tx = self.verification_failure_tx.clone();
-        let node_id = self.node_id.clone();
+        let _node_id = self.node_id.clone();
         let metrics = self.verification_metrics.clone();
         
         let retry_interval = self.config.verification_retry_interval_secs;

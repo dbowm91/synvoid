@@ -3,8 +3,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use futures::future::BoxFuture;
-use futures::FutureExt;
+
 use parking_lot::RwLock;
 use tokio::net::UdpSocket;
 use tokio::sync::oneshot;
@@ -27,18 +26,12 @@ use super::wire;
 pub use hickory_proto::rr::RecordType;
 
 pub trait RecordTypeExt {
-    fn from_u16(value: u16) -> Self;
     fn to_u16(&self) -> u16;
     fn is_signed(&self) -> bool;
-    const Unknown: Self;
+    const UNKNOWN: Self;
 }
 
 impl RecordTypeExt for RecordType {
-    fn from_u16(value: u16) -> Self {
-        use hickory_proto::rr::RecordType;
-        RecordType::from_u16(value)
-    }
-
     fn to_u16(&self) -> u16 {
         match self {
             RecordType::A => 1,
@@ -79,7 +72,7 @@ impl RecordTypeExt for RecordType {
         )
     }
 
-    const Unknown: Self = RecordType::NULL;
+    const UNKNOWN: Self = RecordType::NULL;
 }
 
 impl crate::config::dns::QnamePrivacyConfig {
@@ -478,7 +471,6 @@ impl TokenBucket {
 
 use parking_lot::RwLock as PLRwLock;
 
-use super::cache::CacheStats;
 
 const MAX_IP_BUCKETS: usize = 100000;
 const MAX_RRL_BUCKETS: usize = 100000;
@@ -547,19 +539,12 @@ impl<K: Eq + std::hash::Hash + Clone> TimedBucketMap<K> {
         }
     }
 
-    fn len(&self) -> usize {
-        self.buckets.len()
-    }
-
-    fn is_full(&self) -> bool {
-        self.buckets.len() >= self.max_buckets
-    }
-
     fn is_over_limit(&self, limit: usize) -> bool {
         self.buckets.len() >= limit
     }
 }
 
+#[allow(dead_code)]
 pub struct DnsRateLimiter {
     global_bucket: PLRwLock<TokenBucket>,
     ip_buckets: PLRwLock<TimedBucketMap<IpAddr>>,
@@ -667,6 +652,7 @@ impl DnsRateLimiter {
     }
 }
 
+#[allow(dead_code)]
 pub struct DnsServer {
     config: Arc<DnsConfig>,
     zones: Arc<RwLock<HashMap<String, Zone>>>,
@@ -819,7 +805,7 @@ impl DnsServer {
         };
 
         let hsm_manager = if config.dnssec.enabled || config.dnssec.hsm.enabled {
-            let mut hsm = super::hsm::HsmManager::new();
+            let hsm = super::hsm::HsmManager::new();
             if let Err(e) = hsm.initialize(&config.dnssec.hsm) {
                 tracing::warn!("Failed to initialize HSM: {}", e);
             }
@@ -1042,36 +1028,6 @@ impl DnsServer {
         *self.zone_trie.write() = trie;
     }
 
-    fn find_zone_origin_btree(&self, qname: &str) -> Option<String> {
-        let qname_lower = qname.trim_end_matches('.').to_lowercase();
-        let qname_reversed = Self::reverse_domain(&qname_lower);
-        
-        let btree = self.zone_index_btree.read();
-        
-        if btree.is_empty() {
-            return None;
-        }
-        
-        let mut best_match: Option<(usize, String)> = None;
-        
-        for (reversed_origin, origin) in btree.iter() {
-            if qname_reversed == *reversed_origin || qname_reversed.ends_with(reversed_origin) {
-                let origin_len = reversed_origin.len();
-                match best_match {
-                    None => {
-                        best_match = Some((origin_len, origin.clone()));
-                    }
-                    Some((best_len, _)) if origin_len > best_len => {
-                        best_match = Some((origin_len, origin.clone()));
-                    }
-                    _ => {}
-                }
-            }
-        }
-        
-        best_match.map(|(_, origin)| origin)
-    }
-
     pub fn with_mesh_registry(mut self, registry: Arc<MeshDnsRegistry>) -> Self {
         self.mesh_registry = Some(registry);
         self
@@ -1130,9 +1086,9 @@ impl DnsServer {
                         crate::config::dns::DnsRecordType::Https => RecordType::HTTPS,
                         crate::config::dns::DnsRecordType::Naptr => RecordType::NAPTR,
                         crate::config::dns::DnsRecordType::Sshfp => RecordType::SSHFP,
-                        crate::config::dns::DnsRecordType::Uri => RecordType::from_u16(256),
-                        crate::config::dns::DnsRecordType::Rp => RecordType::from_u16(17),
-                        crate::config::dns::DnsRecordType::Afsdb => RecordType::from_u16(18),
+                        crate::config::dns::DnsRecordType::Uri => RecordType::from(256),
+                        crate::config::dns::DnsRecordType::Rp => RecordType::from(17),
+                        crate::config::dns::DnsRecordType::Afsdb => RecordType::from(18),
                         crate::config::dns::DnsRecordType::Ds => RecordType::DS,
                         crate::config::dns::DnsRecordType::Other => RecordType::NULL,
                     },
@@ -1412,13 +1368,13 @@ impl DnsServer {
         let config = self.config.clone();
         
         let (tx_udp, mut rx_udp) = tokio::sync::oneshot::channel::<()>();
-        let (tx_tcp, mut rx_tcp) = tokio::sync::oneshot::channel::<()>();
+        let (tx_tcp, _rx_tcp) = tokio::sync::oneshot::channel::<()>();
         let tx = tx_udp;
         self.shutdown_tx = Some(tx);
 
         let zones_udp = zones.clone();
         let zone_trie_udp = zone_trie.clone();
-        let zone_index_udp = zone_index.clone();
+        let _zone_index_udp = zone_index.clone();
         let rate_limiter_udp = rate_limiter.clone();
         let query_validator_udp = query_validator.clone();
         let firewall_udp = firewall.clone();
@@ -1854,7 +1810,7 @@ update_handler_udp.as_ref(),
 
         let zones_udp = zones.clone();
         let zone_trie_udp = self.zone_trie.clone();
-        let zone_index_udp = zone_index.clone();
+        let _zone_index_udp = zone_index.clone();
         let rate_limiter_udp = rate_limiter.clone();
         let query_validator_udp = query_validator.clone();
         let firewall_udp = firewall.clone();
@@ -2175,13 +2131,13 @@ update_handler_udp.as_ref(),
         let query_coalescer_tcp = query_coalescer.clone();
 
         tokio::spawn(async move {
-            let mut buf = vec![0u8; udp_buffer_size];
+            let _buf = vec![0u8; udp_buffer_size];
             
             loop {
                 tokio::select! {
                     result = tcp_listener.accept() => {
                         match result {
-                            Ok((stream, src)) => {
+                            Ok((stream, _src)) => {
                                 let client_ip = stream.peer_addr().map(|a| a.ip()).unwrap_or_else(|_| IpAddr::from([0,0,0,0]));
                                 
                                 let allowed = if let Some(rl) = &rate_limiter_tcp {
@@ -2283,7 +2239,7 @@ update_handler_udp.as_ref(),
         mut stream: tokio::net::TcpStream,
         zones: &Arc<RwLock<HashMap<String, Zone>>>,
         zone_trie: &Arc<RwLock<super::zone_trie::ZoneTrie>>,
-        zone_index: &Arc<RwLock<Vec<(String, String)>>>,
+        _zone_index: &Arc<RwLock<Vec<(String, String)>>>,
         mesh_registry: Option<&Arc<MeshDnsRegistry>>,
         geoip_lookup: Option<&Arc<crate::geoip::GeoIpManager>>,
         min_geo_ttl: u32,
@@ -2742,7 +2698,7 @@ update_handler_udp.as_ref(),
             return None;
         }
         
-        let record_type = RecordType::from_u16(qtype);
+        let record_type = RecordType::from(qtype);
 
         cache_key.qname = qname.clone();
         use super::server::RecordTypeExt;
@@ -2920,7 +2876,7 @@ update_handler_udp.as_ref(),
         query: &[u8],
         mesh_registry: Option<&Arc<MeshDnsRegistry>>,
         geoip_lookup: Option<&Arc<crate::geoip::GeoIpManager>>,
-        min_geo_ttl: u32,
+        _min_geo_ttl: u32,
         client_ip: Option<std::net::IpAddr>,
         ecs_filter_config: &super::edns::EcsFilterConfig,
         update_handler: Option<&super::update::DynamicUpdateHandler>,
@@ -2998,7 +2954,7 @@ update_handler_udp.as_ref(),
             return Self::build_simple_nxdomain_response(query);
         }
 
-        let record_type = RecordType::from_u16(qtype);
+        let record_type = RecordType::from(qtype);
         
         let zones_guard = zones.read();
         let trie_guard = zone_trie.read();
@@ -3038,7 +2994,7 @@ update_handler_udp.as_ref(),
             return Some(Self::build_response(&qname, qtype, records, dnssec_ok, edns_options.as_ref(), zone.zsk_key.as_ref(), &origin_canonical));
         }
 
-        if record_type == RecordTypeExt::Unknown || record_type == RecordType::A {
+        if record_type == RecordTypeExt::UNKNOWN || record_type == RecordType::A {
             let cname_key = (lookup_name.clone(), RecordType::CNAME);
             if let Some(cname_records) = zone.records.get(&cname_key) {
                 if let Some(cname) = cname_records.first() {
@@ -3058,7 +3014,7 @@ update_handler_udp.as_ref(),
             let mut seen_cname = false;
             let lookup_name_for_qtype = lookup_name.clone();
 
-            for ((name, rt), records) in &zone.records {
+            for ((name, _rt), records) in &zone.records {
                 if name == &lookup_name_for_qtype || (name == "@" && lookup_name_for_qtype.is_empty()) {
                     for record in records {
                         if record.record_type == RecordType::CNAME {
@@ -3414,7 +3370,7 @@ update_handler_udp.as_ref(),
         records
     }
 
-    fn build_nsec3_records(zone: &Zone, qname: &str, qtype: RecordType) -> Vec<DnsZoneRecord> {
+    fn build_nsec3_records(zone: &Zone, qname: &str, _qtype: RecordType) -> Vec<DnsZoneRecord> {
         let mut records = Vec::new();
         
         let Some(ref nsec3param) = zone.nsec3param else {
@@ -3472,7 +3428,7 @@ update_handler_udp.as_ref(),
         } else {
             next_closer_name.trim_start_matches('.').to_string()
         };
-        let next_closer_hash = super::dnssec::hash_name_nsec3(&next_closer, nsec3param);
+        let _next_closer_hash = super::dnssec::hash_name_nsec3(&next_closer, nsec3param);
         
         let wildcard_types = vec![1, 2, 5, 6, 16, 28, 33];
         
@@ -3578,7 +3534,7 @@ update_handler_udp.as_ref(),
         let qname_hash = super::dnssec::hash_name_nsec3(qname, nsec3param);
         let qname_hash_b32 = super::dnssec::create_nsec3_owner_name(zone_origin, &qname_hash);
         
-        let types_exists = zone.records.keys().any(|(name, rt)| {
+        let _types_exists = zone.records.keys().any(|(name, _rt)| {
             let full_name = if name == "@" || name.is_empty() {
                 zone_origin.to_string()
             } else {
@@ -3696,7 +3652,7 @@ update_handler_udp.as_ref(),
         response.extend_from_slice(&qr_aa.to_be_bytes());
         
         response.extend_from_slice(&1u16.to_be_bytes());
-        let mut ancount = records.len() as u16;
+        let ancount = records.len() as u16;
         response.extend_from_slice(&ancount.to_be_bytes());
         response.extend_from_slice(&0u16.to_be_bytes());
         
@@ -3717,7 +3673,7 @@ update_handler_udp.as_ref(),
             compressor.add_label(&qname_for_compression, question_name_offset as u16);
         }
 
-        let mut name_parts: Vec<&str> = if qname.is_empty() || qname == "@" {
+        let name_parts: Vec<&str> = if qname.is_empty() || qname == "@" {
             vec![""]
         } else {
             qname.split('.').collect()
@@ -3887,7 +3843,7 @@ update_handler_udp.as_ref(),
         if dnssec_ok && !records.is_empty() && records[0].record_type != RecordType::DNSKEY {
             if let Some(key) = zsk {
                 for record in records {
-                    let rrname_offset = response.len();
+                    let _rrname_offset = response.len();
                     if !qname_for_compression.is_empty() {
                         response.push(0xC0 | (question_name_offset >> 8) as u8);
                         response.push((question_name_offset & 0xFF) as u8);
@@ -3957,12 +3913,6 @@ update_handler_udp.as_ref(),
         };
 
         let mut included_records = Vec::new();
-        let mut response_size_before_answers = 12;
-        
-        for part in &name_parts {
-            response_size_before_answers += 1 + part.len();
-        }
-        response_size_before_answers += 4 + 4;
         
         for record in records {
             let record_size = Self::estimate_record_size(record, &name_parts);

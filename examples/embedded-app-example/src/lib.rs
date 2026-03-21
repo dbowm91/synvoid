@@ -41,10 +41,7 @@
 // cargo build --release -C rustflags="-C link-args=-shared" -p myapp
 //
 
-use axum::{
-    routing::get,
-    Router,
-};
+use axum::{routing::get, Router};
 
 pub fn create_app() -> Router {
     Router::new()
@@ -73,7 +70,10 @@ async fn data() -> axum::Json<serde_json::Value> {
 }
 
 async fn fallback(uri: axum::http::Uri) -> (axum::http::StatusCode, String) {
-    (axum::http::StatusCode::NOT_FOUND, format!("Not found: {}", uri))
+    (
+        axum::http::StatusCode::NOT_FOUND,
+        format!("Not found: {}", uri),
+    )
 }
 
 #[cfg(test)]
@@ -90,7 +90,7 @@ mod tests {
             .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
             .await
             .unwrap();
-        
+
         assert_eq!(response.status(), StatusCode::OK);
     }
 
@@ -98,10 +98,15 @@ mod tests {
     async fn test_health() {
         let app = create_app();
         let response = app
-            .oneshot(Request::builder().uri("/api/health").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/api/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
-        
+
         assert_eq!(response.status(), StatusCode::OK);
     }
 
@@ -109,10 +114,15 @@ mod tests {
     async fn test_fallback() {
         let app = create_app();
         let response = app
-            .oneshot(Request::builder().uri("/nonexistent").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/nonexistent")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
-        
+
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 }

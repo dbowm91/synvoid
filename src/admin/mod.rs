@@ -5,7 +5,6 @@ mod handlers;
 mod rate_limit;
 mod middleware;
 mod metrics;
-mod csrf;
 pub mod alerting;
 pub mod openapi;
 

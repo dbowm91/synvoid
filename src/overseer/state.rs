@@ -127,6 +127,7 @@ impl OverseerState {
             UpgradeState::RecoveryNeeded
                 | UpgradeState::DualMasterActive
                 | UpgradeState::DrainingOldMaster
+                | UpgradeState::RollingBack
         )
     }
 

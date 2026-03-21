@@ -3,7 +3,7 @@
 use nix::fcntl::{flock, FlockArg};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
-use std::io::{Read, Write};
+use std::io::Read;
 use std::path::PathBuf;
 
 const DEFAULT_RUSTWAF_DIR: &str = ".maluwaf";
@@ -119,7 +119,7 @@ impl PidFileManager {
 
         // Try to open with O_EXCL to atomically check-and-create
         // This avoids the TOCTOU race between is_running() and write_pid()
-        let mut file = match OpenOptions::new().write(true).create_new(true).open(&path) {
+        let file = match OpenOptions::new().write(true).create_new(true).open(&path) {
             Ok(f) => f,
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
                 // File exists - check if the process is actually running

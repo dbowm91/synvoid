@@ -461,6 +461,7 @@ pub struct SuspiciousWordRecord {
     pub timestamp: u64,
 }
 
+#[allow(dead_code)]
 pub struct SuspiciousWordTracker {
     store: Arc<RwLock<HashMap<IpAddr, Vec<SuspiciousWordRecord>>>>,
     config: crate::config::SuspiciousWordsConfig,
@@ -603,6 +604,7 @@ pub struct UpstreamErrorRecord {
     pub timestamp: u64,
 }
 
+#[allow(dead_code)]
 pub struct UpstreamErrorTracker {
     store: Arc<RwLock<HashMap<IpAddr, Vec<UpstreamErrorRecord>>>>,
     config: crate::config::UpstreamErrorsConfig,

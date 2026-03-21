@@ -1,9 +1,9 @@
 mod app;
 mod components;
+mod hooks;
 mod pages;
 mod services;
 mod types;
-mod hooks;
 
 use wasm_bindgen::prelude::*;
 use yew::Renderer;

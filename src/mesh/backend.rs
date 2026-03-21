@@ -78,6 +78,7 @@ pub fn create_record_store(
     Some(rs)
 }
 
+#[allow(dead_code)]
 pub struct MeshBackend {
     upstream_id: String,
     proxy: Arc<MeshProxy>,

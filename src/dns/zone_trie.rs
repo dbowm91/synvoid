@@ -4,7 +4,6 @@
 //! This replaces the O(N) linear scan with O(L) lookup where L is the number of labels.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 
 /// A node in the zone trie
 #[derive(Debug, Clone)]

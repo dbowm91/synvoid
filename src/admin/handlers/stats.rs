@@ -329,7 +329,11 @@ pub async fn get_bandwidth(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    let tracker = get_global_bandwidth_tracker();
+    let tracker = get_global_bandwidth_tracker()
+        .map_err(|e| {
+            tracing::error!("{}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
     let payload = tracker.to_payload();
 
     Ok(Json(payload))

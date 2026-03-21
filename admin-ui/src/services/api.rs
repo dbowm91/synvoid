@@ -24,19 +24,19 @@ impl ApiService {
             token: None,
         }
     }
-    
+
     pub fn with_token(mut self, token: String) -> Self {
         self.token = Some(token);
         self
     }
-    
+
     pub fn set_token(&mut self, token: String) {
         self.token = Some(token);
     }
-    
+
     async fn request(&self, method: &str, path: &str) -> Result<Response, String> {
         let url = format!("{}{}", self.base_url, path);
-        
+
         let mut builder = match method {
             "GET" => Request::get(&url),
             "POST" => Request::post(&url),
@@ -44,43 +44,43 @@ impl ApiService {
             "DELETE" => Request::delete(&url),
             _ => return Err(format!("Unsupported HTTP method: {}", method)),
         };
-        
+
         if let Some(token) = &self.token {
             builder = builder.header("Authorization", &format!("Bearer {}", token));
         }
-        
+
         builder
             .send()
             .await
             .map_err(|e| format!("Request failed: {}", e))
     }
-    
+
     pub async fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T, String> {
         let response = self.request("GET", path).await?;
-        
+
         if !response.ok() {
             return Err(format!("HTTP error: {}", response.status()));
         }
-        
+
         response
             .json()
             .await
             .map_err(|e| format!("JSON parse error: {}", e))
     }
-    
+
     pub async fn get_text(&self, path: &str) -> Result<String, String> {
         let response = self.request("GET", path).await?;
-        
+
         if !response.ok() {
             return Err(format!("HTTP error: {}", response.status()));
         }
-        
+
         response
             .text()
             .await
             .map_err(|e| format!("Text parse error: {}", e))
     }
-    
+
     pub async fn health_check(&self) -> Result<bool, String> {
         match self.get_text("/health").await {
             Ok(_) => Ok(true),
@@ -96,7 +96,10 @@ impl ApiService {
         self.get("/stats/sites").await
     }
 
-    pub async fn get_stats_history(&self, seconds: Option<u64>) -> Result<Vec<crate::types::RealtimeMetrics>, String> {
+    pub async fn get_stats_history(
+        &self,
+        seconds: Option<u64>,
+    ) -> Result<Vec<crate::types::RealtimeMetrics>, String> {
         let path = match seconds {
             Some(s) => format!("/stats/history?seconds={}", s),
             None => "/stats/history".to_string(),
@@ -126,7 +129,7 @@ impl ApiService {
         offset: Option<usize>,
     ) -> Result<crate::types::RequestLogsResponse, String> {
         let mut params = Vec::new();
-        
+
         if let Some(site_id) = site_id {
             params.push(format!("site_id={}", site_id));
         }
@@ -145,13 +148,13 @@ impl ApiService {
         if let Some(offset) = offset {
             params.push(format!("offset={}", offset));
         }
-        
+
         let path = if params.is_empty() {
             "/stats/requests".to_string()
         } else {
             format!("/stats/requests?{}", params.join("&"))
         };
-        
+
         self.get(&path).await
     }
 
@@ -180,41 +183,57 @@ impl ApiService {
     }
 
     pub async fn restart_worker(&self, worker_id: &str) -> Result<serde_json::Value, String> {
-        self.post(&format!("/system/worker/{}/restart", worker_id), &serde_json::json!({})).await
+        self.post(
+            &format!("/system/worker/{}/restart", worker_id),
+            &serde_json::json!({}),
+        )
+        .await
     }
 
     pub async fn get_worker_count(&self) -> Result<crate::types::WorkerCountResponse, String> {
         self.get("/system/workers/count").await
     }
 
-    pub async fn scale_workers(&self, target_count: usize) -> Result<crate::types::ScaleWorkersResponse, String> {
-        self.post("/system/workers/scale", &serde_json::json!({ "target_count": target_count })).await
+    pub async fn scale_workers(
+        &self,
+        target_count: usize,
+    ) -> Result<crate::types::ScaleWorkersResponse, String> {
+        self.post(
+            "/system/workers/scale",
+            &serde_json::json!({ "target_count": target_count }),
+        )
+        .await
     }
 
-    pub async fn post<T: DeserializeOwned, B: Serialize>(&self, path: &str, body: &B) -> Result<T, String> {
+    pub async fn post<T: DeserializeOwned, B: Serialize>(
+        &self,
+        path: &str,
+        body: &B,
+    ) -> Result<T, String> {
         let url = format!("{}{}", self.base_url, path);
-        
-        let body_str = serde_json::to_string(body).map_err(|e| format!("Serialization error: {}", e))?;
-        
+
+        let body_str =
+            serde_json::to_string(body).map_err(|e| format!("Serialization error: {}", e))?;
+
         let mut builder = Request::post(&url);
-        
+
         if let Some(token) = &self.token {
             builder = builder.header("Authorization", &format!("Bearer {}", token));
         }
-        
+
         builder = builder.header("Content-Type", "application/json");
-        
+
         let response = builder
             .body(body_str)
             .map_err(|e| format!("Request failed: {}", e))?
             .send()
             .await
             .map_err(|e| format!("Request failed: {}", e))?;
-        
+
         if !response.ok() {
             return Err(format!("HTTP error: {}", response.status()));
         }
-        
+
         response
             .json()
             .await
@@ -225,34 +244,42 @@ impl ApiService {
         self.get("/theme").await
     }
 
-    pub async fn update_theme(&self, request: &crate::types::UpdateThemeRequest) -> Result<crate::types::ThemeResponse, String> {
+    pub async fn update_theme(
+        &self,
+        request: &crate::types::UpdateThemeRequest,
+    ) -> Result<crate::types::ThemeResponse, String> {
         self.put("/theme", request).await
     }
 
-    pub async fn put<T: DeserializeOwned, B: Serialize>(&self, path: &str, body: &B) -> Result<T, String> {
+    pub async fn put<T: DeserializeOwned, B: Serialize>(
+        &self,
+        path: &str,
+        body: &B,
+    ) -> Result<T, String> {
         let url = format!("{}{}", self.base_url, path);
-        
-        let body_str = serde_json::to_string(body).map_err(|e| format!("Serialization error: {}", e))?;
-        
+
+        let body_str =
+            serde_json::to_string(body).map_err(|e| format!("Serialization error: {}", e))?;
+
         let mut builder = Request::put(&url);
-        
+
         if let Some(token) = &self.token {
             builder = builder.header("Authorization", &format!("Bearer {}", token));
         }
-        
+
         builder = builder.header("Content-Type", "application/json");
-        
+
         let response = builder
             .body(body_str)
             .map_err(|e| format!("Request failed: {}", e))?
             .send()
             .await
             .map_err(|e| format!("Request failed: {}", e))?;
-        
+
         if !response.ok() {
             return Err(format!("HTTP error: {}", response.status()));
         }
-        
+
         response
             .json()
             .await
@@ -263,44 +290,68 @@ impl ApiService {
         self.get_text("/theme/css").await
     }
 
-    pub async fn get_site_theme(&self, site_id: &str) -> Result<Option<crate::types::SiteThemeResponse>, String> {
+    pub async fn get_site_theme(
+        &self,
+        site_id: &str,
+    ) -> Result<Option<crate::types::SiteThemeResponse>, String> {
         self.get(&format!("/sites/{}/theme", site_id)).await
     }
 
-    pub async fn update_site_theme(&self, site_id: &str, request: &crate::types::UpdateThemeRequest) -> Result<crate::types::SiteThemeResponse, String> {
-        self.put(&format!("/sites/{}/theme", site_id), request).await
+    pub async fn update_site_theme(
+        &self,
+        site_id: &str,
+        request: &crate::types::UpdateThemeRequest,
+    ) -> Result<crate::types::SiteThemeResponse, String> {
+        self.put(&format!("/sites/{}/theme", site_id), request)
+            .await
     }
 
     pub async fn get_threat_level_status(&self) -> Result<crate::types::ThreatLevelStatus, String> {
         self.get("/threat-level/status").await
     }
 
-    pub async fn get_threat_level_history(&self) -> Result<crate::types::ThreatLevelHistory, String> {
+    pub async fn get_threat_level_history(
+        &self,
+    ) -> Result<crate::types::ThreatLevelHistory, String> {
         self.get("/threat-level/history").await
     }
 
-    pub async fn get_threat_level_baseline(&self) -> Result<crate::types::ThreatLevelBaseline, String> {
+    pub async fn get_threat_level_baseline(
+        &self,
+    ) -> Result<crate::types::ThreatLevelBaseline, String> {
         self.get("/threat-level/baseline").await
     }
 
     pub async fn reset_threat_level_baseline(&self) -> Result<serde_json::Value, String> {
-        self.post("/threat-level/baseline/reset", &serde_json::json!({})).await
+        self.post("/threat-level/baseline/reset", &serde_json::json!({}))
+            .await
     }
 
     pub async fn set_threat_level(&self, level: u8) -> Result<serde_json::Value, String> {
-        self.post(&format!("/threat-level/level/{}", level), &serde_json::json!({})).await
+        self.post(
+            &format!("/threat-level/level/{}", level),
+            &serde_json::json!({}),
+        )
+        .await
     }
 
     pub async fn set_threat_level_auto(&self, _enabled: bool) -> Result<serde_json::Value, String> {
-        self.post("/threat-level/auto", &serde_json::json!({})).await
+        self.post("/threat-level/auto", &serde_json::json!({}))
+            .await
     }
 
-    pub async fn list_threat_level_backups(&self) -> Result<crate::types::BackupsListResponse, String> {
+    pub async fn list_threat_level_backups(
+        &self,
+    ) -> Result<crate::types::BackupsListResponse, String> {
         self.get("/threat-level/backups").await
     }
 
-    pub async fn create_threat_level_backup(&self, _name: Option<&str>) -> Result<crate::types::BackupInfo, String> {
-        self.post("/threat-level/backup", &serde_json::json!({})).await
+    pub async fn create_threat_level_backup(
+        &self,
+        _name: Option<&str>,
+    ) -> Result<crate::types::BackupInfo, String> {
+        self.post("/threat-level/backup", &serde_json::json!({}))
+            .await
     }
 
     pub async fn delete_threat_level_backup(&self, backup_id: &str) -> Result<bool, String> {
@@ -308,7 +359,14 @@ impl ApiService {
         struct DeleteQuery {
             path: String,
         }
-        let _: serde_json::Value = self.post("/threat-level/backup", &DeleteQuery { path: backup_id.to_string() }).await?;
+        let _: serde_json::Value = self
+            .post(
+                "/threat-level/backup",
+                &DeleteQuery {
+                    path: backup_id.to_string(),
+                },
+            )
+            .await?;
         Ok(true)
     }
 
@@ -320,11 +378,18 @@ impl ApiService {
         self.get(&format!("/sites/{}", site_id)).await
     }
 
-    pub async fn create_site(&self, request: &serde_json::Value) -> Result<crate::types::SiteInfo, String> {
+    pub async fn create_site(
+        &self,
+        request: &serde_json::Value,
+    ) -> Result<crate::types::SiteInfo, String> {
         self.post("/sites", request).await
     }
 
-    pub async fn update_site(&self, site_id: &str, request: &serde_json::Value) -> Result<crate::types::SiteInfo, String> {
+    pub async fn update_site(
+        &self,
+        site_id: &str,
+        request: &serde_json::Value,
+    ) -> Result<crate::types::SiteInfo, String> {
         self.put(&format!("/sites/{}", site_id), request).await
     }
 
@@ -347,7 +412,11 @@ impl ApiService {
     }
 
     pub async fn trigger_health_check(&self, site_id: &str) -> Result<serde_json::Value, String> {
-        self.post(&format!("/upstreams/{}/check", site_id), &serde_json::json!({})).await
+        self.post(
+            &format!("/upstreams/{}/check", site_id),
+            &serde_json::json!({}),
+        )
+        .await
     }
 
     pub async fn get_logs(&self, limit: Option<u32>) -> Result<serde_json::Value, String> {
@@ -362,7 +431,10 @@ impl ApiService {
         self.get("/config/main").await
     }
 
-    pub async fn update_config_main(&self, config: &serde_json::Value) -> Result<serde_json::Value, String> {
+    pub async fn update_config_main(
+        &self,
+        config: &serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
         self.put("/config/main", config).await
     }
 
@@ -374,19 +446,26 @@ impl ApiService {
         self.get("/alerts/config").await
     }
 
-    pub async fn update_alert_config(&self, config: &serde_json::Value) -> Result<serde_json::Value, String> {
+    pub async fn update_alert_config(
+        &self,
+        config: &serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
         self.put("/alerts/config", config).await
     }
 
     pub async fn test_alert_webhook(&self) -> Result<serde_json::Value, String> {
-        self.post("/alerts/test-webhook", &serde_json::json!({})).await
+        self.post("/alerts/test-webhook", &serde_json::json!({}))
+            .await
     }
 
     pub async fn get_overseer_config(&self) -> Result<serde_json::Value, String> {
         self.get("/config/overseer").await
     }
 
-    pub async fn update_overseer_config(&self, config: &serde_json::Value) -> Result<serde_json::Value, String> {
+    pub async fn update_overseer_config(
+        &self,
+        config: &serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
         self.put("/config/overseer", config).await
     }
 
@@ -394,7 +473,10 @@ impl ApiService {
         self.get("/config/process-manager").await
     }
 
-    pub async fn update_process_manager_config(&self, config: &serde_json::Value) -> Result<serde_json::Value, String> {
+    pub async fn update_process_manager_config(
+        &self,
+        config: &serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
         self.put("/config/process-manager", config).await
     }
 
@@ -402,7 +484,10 @@ impl ApiService {
         self.get("/config/supervisor").await
     }
 
-    pub async fn update_supervisor_config(&self, config: &serde_json::Value) -> Result<serde_json::Value, String> {
+    pub async fn update_supervisor_config(
+        &self,
+        config: &serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
         self.put("/config/supervisor", config).await
     }
 }

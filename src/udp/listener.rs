@@ -20,7 +20,7 @@ use crate::tunnel;
 use crate::tunnel::quic::messages::TunnelMessage;
 use crate::tunnel::udp_manager::{UdpTunnelManager, UdpTunnelConfig};
 use crate::buffer::BufferPool;
-use crate::metrics::bandwidth::{get_global_bandwidth_tracker, BandwidthProtocol, EgressDirection};
+use crate::metrics::bandwidth::{get_global_bandwidth_tracker_or_log, BandwidthProtocol, EgressDirection};
 
 static UDP_TUNNEL_MANAGER: Lazy<parking_lot::RwLock<Option<Arc<UdpTunnelManager>>>> = 
     Lazy::new(|| parking_lot::RwLock::new(None));
@@ -121,6 +121,7 @@ impl Default for UdpListenerPoolConfig {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct UdpListenerInstance {
     config: UdpListenerConfig,
     listen_addr: SocketAddr,
@@ -339,8 +340,10 @@ impl UdpListenerPool {
                 result = socket.recv_from(pooled_buf.as_mut_slice()) => {
                     match result {
                         Ok((n, client_addr)) => {
-                            let bandwidth = get_global_bandwidth_tracker();
-                            bandwidth.record_ingress(n as u64, BandwidthProtocol::Udp);
+                            let bandwidth = get_global_bandwidth_tracker_or_log();
+                            if let Some(ref bw) = bandwidth {
+                                bw.record_ingress(n as u64, BandwidthProtocol::Udp);
+                            }
                             
                             let start = std::time::Instant::now();
                             let client_ip = client_addr.ip();
@@ -507,8 +510,10 @@ impl UdpListenerPool {
                                         UpstreamAddress::Unix(path) => path.to_string_lossy().to_string(),
                                         UpstreamAddress::QuicTunnel { peer, port } => format!("{}:{}", peer, port),
                                     };
-                                    bandwidth.record_proxied(n as u64, 0, &upstream_str);
-                                    bandwidth.record_egress(n as u64, BandwidthProtocol::Udp, EgressDirection::Proxied);
+                                    if let Some(ref bw) = bandwidth {
+                                        bw.record_proxied(n as u64, 0, &upstream_str);
+                                        bw.record_egress(n as u64, BandwidthProtocol::Udp, EgressDirection::Proxied);
+                                    }
                                 }
                                 Err(e) => {
                                     tracing::debug!("Failed to forward UDP packet: {}", e);
@@ -636,10 +641,6 @@ impl UdpRateLimiter {
         if total_removed > 0 {
             self.total_tracked.fetch_sub(total_removed, Ordering::Relaxed);
         }
-    }
-    
-    fn tracked_count(&self) -> u64 {
-        self.total_tracked.load(Ordering::Relaxed)
     }
 }
 

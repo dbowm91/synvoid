@@ -112,7 +112,7 @@ impl ZoneStore {
                     2 => RecordType::NS,
                     6 => RecordType::SOA,
                     33 => RecordType::SRV,
-                    _ => RecordTypeExt::Unknown,
+                    _ => RecordTypeExt::UNKNOWN,
                 };
 
                 let record = DnsZoneRecord {
@@ -143,7 +143,7 @@ impl ZoneStore {
         records: &[(String, RecordType, String, u32, Option<u32>)],
     ) -> Result<(), String> {
         let conn = self.conn.write();
-        let now = chrono::Utc::now().timestamp();
+        let _now = chrono::Utc::now().timestamp();
 
         let zone_id: i64 = conn
             .query_row(

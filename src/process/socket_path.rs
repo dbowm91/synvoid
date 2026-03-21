@@ -126,20 +126,21 @@ pub fn find_active_master_socket() -> Option<PathBuf> {
     }
 
     let socket_dir = base_path.parent()?;
-    match std::fs::read_dir(socket_dir) { Ok(entries) => {
-        let mut sockets: Vec<(u32, PathBuf)> = entries
-            .filter_map(|e| e.ok())
-            .filter_map(|e| {
-                let name = e.file_name().to_string_lossy().to_string();
-                parse_master_generation(&name).map(|r#gen| (r#gen, e.path()))
-            })
-            .collect();
+    match std::fs::read_dir(socket_dir) {
+        Ok(entries) => {
+            let mut sockets: Vec<(u32, PathBuf)> = entries
+                .filter_map(|e| e.ok())
+                .filter_map(|e| {
+                    let name = e.file_name().to_string_lossy().to_string();
+                    parse_master_generation(&name).map(|r#gen| (r#gen, e.path()))
+                })
+                .collect();
 
-        sockets.sort_by_key(|(r#gen, _)| std::cmp::Reverse(*r#gen));
-        sockets.into_iter().map(|(_, path)| path).next()
-    } _ => {
-        None
-    }}
+            sockets.sort_by_key(|(r#gen, _)| std::cmp::Reverse(*r#gen));
+            sockets.into_iter().map(|(_, path)| path).next()
+        }
+        _ => None,
+    }
 }
 
 pub fn cleanup_old_master_sockets(keep_generation: u32) {
@@ -162,7 +163,7 @@ pub fn cleanup_old_master_sockets(keep_generation: u32) {
 #[cfg(unix)]
 pub fn set_socket_permissions(path: &std::path::Path) -> std::io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
 }
 
 #[cfg(not(unix))]

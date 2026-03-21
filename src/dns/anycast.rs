@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
-use std::os::fd::AsRawFd;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -12,7 +11,7 @@ use nix::cmsg_space;
 
 use metrics::counter;
 use parking_lot::RwLock;
-use tokio::net::{TcpListener as TokioTcpListener, UdpSocket};
+use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 use tokio_dstip::TcpListenerWithDst;
 
@@ -379,7 +378,6 @@ impl AnycastSocketManager {
             1 => Self::recv_from_single(&sockets[0], platform, buf).await,
             _ => {
                 let mut errors = Vec::new();
-                let mut last_err = String::new();
                 
                 for socket in &sockets {
                     let mut buf_4096 = [0u8; 4096];
@@ -402,9 +400,8 @@ impl AnycastSocketManager {
                             return Ok((len, src, dest_ip));
                         }
                         Err(e) => {
-                            last_err = format!("{}: {}", socket.local_addr, e);
                             tracing::debug!("recv_from on {} failed: {}", socket.local_addr, e);
-                            errors.push(last_err.clone());
+                            errors.push(format!("{}: {}", socket.local_addr, e));
                         }
                     }
                 }
@@ -444,10 +441,10 @@ impl AnycastSocketManager {
 
     fn infer_destination_ip_from_src(src: &SocketAddr, fallback_ip: IpAddr) -> IpAddr {
         match (src, fallback_ip) {
-            (SocketAddr::V4(src), IpAddr::V4(_)) => {
+            (SocketAddr::V4(_src), IpAddr::V4(_)) => {
                 IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))
             }
-            (SocketAddr::V6(src), IpAddr::V6(_)) => {
+            (SocketAddr::V6(_src), IpAddr::V6(_)) => {
                 IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0))
             }
             _ => fallback_ip,

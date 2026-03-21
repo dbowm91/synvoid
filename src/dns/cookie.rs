@@ -17,6 +17,7 @@ struct InnerCookieServer {
     enable_validation: bool,
 }
 
+#[allow(dead_code)]
 struct CookieEntry {
     client_ip: IpAddr,
     created_at: Instant,
@@ -38,7 +39,7 @@ impl DnsCookieServer {
         }
     }
 
-    pub fn with_validation(self, enable: bool) -> Self {
+    pub fn with_validation(self, _enable: bool) -> Self {
         self
     }
 

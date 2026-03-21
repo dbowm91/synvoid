@@ -1,35 +1,59 @@
+#[derive(Debug, thiserror::Error)]
+pub enum CryptoRngError {
+    #[error("Failed to get random bytes: {0}")]
+    EntropyError(#[from] getrandom::Error),
+}
+
+impl CryptoRngError {
+    pub fn log_and_get_fallback(&self) {
+        tracing::error!("Crypto RNG entropy failure: {}", self);
+    }
+}
+
 pub fn random_u16() -> u16 {
     let mut bytes = [0u8; 2];
-    getrandom::getrandom(&mut bytes).unwrap();
+    if let Err(e) = getrandom::getrandom(&mut bytes) {
+        CryptoRngError::EntropyError(e).log_and_get_fallback();
+    }
     u16::from_be_bytes(bytes)
 }
 
 pub fn random_u32() -> u32 {
     let mut bytes = [0u8; 4];
-    getrandom::getrandom(&mut bytes).unwrap();
+    if let Err(e) = getrandom::getrandom(&mut bytes) {
+        CryptoRngError::EntropyError(e).log_and_get_fallback();
+    }
     u32::from_be_bytes(bytes)
 }
 
 pub fn random_u64() -> u64 {
     let mut bytes = [0u8; 8];
-    getrandom::getrandom(&mut bytes).unwrap();
+    if let Err(e) = getrandom::getrandom(&mut bytes) {
+        CryptoRngError::EntropyError(e).log_and_get_fallback();
+    }
     u64::from_be_bytes(bytes)
 }
 
 pub fn random_bytes(len: usize) -> Vec<u8> {
     let mut bytes = vec![0u8; len];
-    getrandom::getrandom(&mut bytes).unwrap();
+    if let Err(e) = getrandom::getrandom(&mut bytes) {
+        CryptoRngError::EntropyError(e).log_and_get_fallback();
+    }
     bytes
 }
 
 pub fn random_array<const N: usize>() -> [u8; N] {
     let mut bytes = [0u8; N];
-    getrandom::getrandom(&mut bytes).unwrap();
+    if let Err(e) = getrandom::getrandom(&mut bytes) {
+        CryptoRngError::EntropyError(e).log_and_get_fallback();
+    }
     bytes
 }
 
 pub fn fill_bytes(dest: &mut [u8]) {
-    getrandom::getrandom(dest).unwrap();
+    if let Err(e) = getrandom::getrandom(dest) {
+        CryptoRngError::EntropyError(e).log_and_get_fallback();
+    }
 }
 
 #[cfg(test)]

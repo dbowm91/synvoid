@@ -17,6 +17,7 @@ pub enum WireGuardBackend {
     Userspace(UserspaceWireGuard),
 }
 
+#[allow(dead_code)]
 pub struct WireGuardRuntime {
     config: WireGuardConfig,
     backend: Option<WireGuardBackend>,

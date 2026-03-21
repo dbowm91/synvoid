@@ -14,8 +14,6 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-const MAX_INLINE_DOMAINS: usize = 4;
-
 #[derive(Clone)]
 pub struct Router {
     domain_map: HashMap<Arc<str>, Arc<SiteConfig>>,

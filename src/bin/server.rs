@@ -9,11 +9,11 @@ use axum::{
     Router,
 };
 use serde::{Deserialize, Serialize};
-use tokio::sync::{broadcast, RwLock};
 use subtle::ConstantTimeEq;
+use tokio::sync::{broadcast, RwLock};
 
-use maluwaf::vpn_client::{VpnClient, VpnClientConfig, ClientPortMapping};
 use maluwaf::vpn_client::config::Protocol as VpnProtocol;
+use maluwaf::vpn_client::{ClientPortMapping, VpnClient, VpnClientConfig};
 
 pub struct VpnState {
     pub client: RwLock<Option<VpnClient>>,
@@ -105,9 +105,7 @@ fn check_auth(state: &Arc<VpnState>, api_key: Option<&str>) -> bool {
     let stored = state.api_key.blocking_read();
     match (&*stored, api_key) {
         (None, _) => true,
-        (Some(stored_key), Some(key)) => {
-            stored_key.as_bytes().ct_eq(key.as_bytes()).into()
-        }
+        (Some(stored_key), Some(key)) => stored_key.as_bytes().ct_eq(key.as_bytes()).into(),
         _ => false,
     }
 }
@@ -123,29 +121,31 @@ fn sanitize_html(s: &str) -> String {
 async fn get_status(State(state): State<Arc<VpnState>>) -> Json<StatusResponse> {
     let client = state.client.read().await;
     let config = state.config.read().await;
-    
+
     let (connected, stats) = if let Some(ref c) = *client {
         let s = c.get_stats();
         (c.is_connected(), s)
     } else {
         (false, maluwaf::vpn_client::VpnStats::default())
     };
-    
-    let port_mappings: Vec<PortMappingResponse> = config.port_mappings.iter().map(|m| {
-        PortMappingResponse {
+
+    let port_mappings: Vec<PortMappingResponse> = config
+        .port_mappings
+        .iter()
+        .map(|m| PortMappingResponse {
             local_port: m.local_port,
             remote_port: m.remote_port,
             protocol: m.protocol.to_string(),
             upstream_host: m.upstream_host.clone(),
-        }
-    }).collect();
-    
+        })
+        .collect();
+
     let duration = if connected {
         stats.connected_at.map(|t| t.elapsed().as_secs())
     } else {
         None
     };
-    
+
     Json(StatusResponse {
         connected,
         server: config.server_host.clone(),
@@ -161,60 +161,67 @@ async fn get_status(State(state): State<Arc<VpnState>>) -> Json<StatusResponse> 
     })
 }
 
-async fn connect(State(state): State<Arc<VpnState>>, Json(req): Json<ConnectRequest>) -> Json<serde_json::Value> {
+async fn connect(
+    State(state): State<Arc<VpnState>>,
+    Json(req): Json<ConnectRequest>,
+) -> Json<serde_json::Value> {
     if !check_auth(&state, req.api_key.as_deref()) {
         return Json(serde_json::json!({"status": "error", "message": "Unauthorized"}));
     }
-    
+
     let server = req.server.trim();
     if server.is_empty() {
         return Json(serde_json::json!({"status": "error", "message": "Server is required"}));
     }
-    
+
     let client_id = req.client_id.trim();
     if client_id.is_empty() {
         return Json(serde_json::json!({"status": "error", "message": "Client ID is required"}));
     }
-    
+
     let token = req.token.trim();
     if token.is_empty() {
         return Json(serde_json::json!({"status": "error", "message": "Token is required"}));
     }
-    
+
     let port = req.port.unwrap_or(51821);
     if port == 0 {
         return Json(serde_json::json!({"status": "error", "message": "Invalid port"}));
     }
-    
+
     let mut config = VpnClientConfig::new(server, port, client_id, token)
         .with_verify_server(req.verify_server.unwrap_or(true));
-    
+
     if let Some(t) = req.transport {
         if t.eq_ignore_ascii_case("wireguard") {
             config = config.with_transport(maluwaf::vpn_client::TransportType::WireGuard);
         }
     }
-    
+
     if let Some(tcp) = req.tcp_mappings {
         for m in tcp {
             if m.local_port == 0 || m.remote_port == 0 {
-                return Json(serde_json::json!({"status": "error", "message": "Invalid port mapping ports"}));
+                return Json(
+                    serde_json::json!({"status": "error", "message": "Invalid port mapping ports"}),
+                );
             }
             config = config.with_tcp_mapping(m.local_port, m.remote_port);
         }
     }
-    
+
     if let Some(udp) = req.udp_mappings {
         for m in udp {
             if m.local_port == 0 || m.remote_port == 0 {
-                return Json(serde_json::json!({"status": "error", "message": "Invalid port mapping ports"}));
+                return Json(
+                    serde_json::json!({"status": "error", "message": "Invalid port mapping ports"}),
+                );
             }
             config = config.with_udp_mapping(m.local_port, m.remote_port);
         }
     }
-    
+
     *state.config.write().await = config.clone();
-    
+
     match VpnClient::new(config) {
         Ok(client) => {
             let mut c = state.client.write().await;
@@ -225,12 +232,15 @@ async fn connect(State(state): State<Arc<VpnState>>, Json(req): Json<ConnectRequ
     }
 }
 
-async fn disconnect(State(state): State<Arc<VpnState>>, Json(req): Json<serde_json::Value>) -> Json<serde_json::Value> {
+async fn disconnect(
+    State(state): State<Arc<VpnState>>,
+    Json(req): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
     let api_key = req.get("api_key").and_then(|v| v.as_str());
     if !check_auth(&state, api_key) {
         return Json(serde_json::json!({"status": "error", "message": "Unauthorized"}));
     }
-    
+
     let mut client = state.client.write().await;
     if let Some(ref mut c) = *client {
         c.disconnect().await;
@@ -241,48 +251,55 @@ async fn disconnect(State(state): State<Arc<VpnState>>, Json(req): Json<serde_js
     }
 }
 
-async fn add_mapping(State(state): State<Arc<VpnState>>, Json(req): Json<AddMappingRequest>) -> Json<serde_json::Value> {
+async fn add_mapping(
+    State(state): State<Arc<VpnState>>,
+    Json(req): Json<AddMappingRequest>,
+) -> Json<serde_json::Value> {
     let api_key = req.api_key.as_deref();
     if !check_auth(&state, api_key) {
         return Json(serde_json::json!({"status": "error", "message": "Unauthorized"}));
     }
-    
+
     if req.local_port == 0 || req.remote_port == 0 {
         return Json(serde_json::json!({"status": "error", "message": "Invalid ports"}));
     }
-    
+
     let mut config = state.config.write().await;
-    
+
     let protocol = if req.protocol.eq_ignore_ascii_case("udp") {
         VpnProtocol::Udp
     } else {
         VpnProtocol::Tcp
     };
-    
+
     let mapping = ClientPortMapping {
         local_port: req.local_port,
         remote_port: req.remote_port,
         protocol,
         upstream_host: req.upstream_host,
     };
-    
+
     config.port_mappings.push(mapping);
-    
+
     Json(serde_json::json!({"status": "ok", "message": "Mapping added"}))
 }
 
-async fn remove_mapping(State(state): State<Arc<VpnState>>, Json(req): Json<AddMappingRequest>) -> Json<serde_json::Value> {
+async fn remove_mapping(
+    State(state): State<Arc<VpnState>>,
+    Json(req): Json<AddMappingRequest>,
+) -> Json<serde_json::Value> {
     let api_key = req.api_key.as_deref();
     if !check_auth(&state, api_key) {
         return Json(serde_json::json!({"status": "error", "message": "Unauthorized"}));
     }
-    
+
     let mut config = state.config.write().await;
-    
+
     config.port_mappings.retain(|m| {
-        !(m.local_port == req.local_port && m.protocol.to_string().eq_ignore_ascii_case(&req.protocol))
+        !(m.local_port == req.local_port
+            && m.protocol.to_string().eq_ignore_ascii_case(&req.protocol))
     });
-    
+
     Json(serde_json::json!({"status": "ok", "message": "Mapping removed"}))
 }
 
@@ -612,7 +629,7 @@ async fn dashboard() -> Html<String> {
 
 pub async fn start_server(addr: &str, api_key: Option<String>) {
     let state = Arc::new(VpnState::new(api_key));
-    
+
     let app = Router::new()
         .route("/", get(dashboard))
         .route("/api/status", get(get_status))
@@ -621,7 +638,7 @@ pub async fn start_server(addr: &str, api_key: Option<String>) {
         .route("/api/mapping/add", post(add_mapping))
         .route("/api/mapping/remove", post(remove_mapping))
         .with_state(state);
-    
+
     let listener = match tokio::net::TcpListener::bind(addr).await {
         Ok(l) => l,
         Err(e) => {
@@ -629,9 +646,9 @@ pub async fn start_server(addr: &str, api_key: Option<String>) {
             return;
         }
     };
-    
+
     tracing::info!("VPN Dashboard: http://{}/", addr);
-    
+
     if let Err(e) = axum::serve(listener, app).await {
         tracing::error!("Server error: {}", e);
     }
@@ -639,5 +656,7 @@ pub async fn start_server(addr: &str, api_key: Option<String>) {
 
 #[tokio::main]
 async fn main() {
-    tracing::info!("Use 'maluwaf --help' to see available commands. This binary is not yet fully implemented.");
+    tracing::info!(
+        "Use 'maluwaf --help' to see available commands. This binary is not yet fully implemented."
+    );
 }

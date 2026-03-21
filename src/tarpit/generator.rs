@@ -17,8 +17,6 @@ static CORPORA: Lazy<Vec<&'static str>> = Lazy::new(|| {
     ]
 });
 
-static RAND_GUARD: Lazy<()> = Lazy::new(|| ());
-
 pub struct MarkovChain {
     model: HashMap<String, Vec<String>>,
     order: usize,

@@ -9,7 +9,6 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use subtle::ConstantTimeEq;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ArcStr(Arc<str>);
@@ -82,8 +81,6 @@ use crate::mesh::transports::MeshTransportType;
 
 pub const MESH_MESSAGE_VERSION: u8 = 1;
 const COMPRESSION_THRESHOLD: usize = 512;
-
-const SIGNATURE_SIZE: usize = 32;
 const NONCE_SIZE: usize = 16;
 const REPLAY_WINDOW_SECS: u64 = 300;
 const MAX_REPLAY_CACHE_SIZE: usize = 10000;
@@ -153,10 +150,6 @@ impl MeshMessageSigner {
     pub fn get_public_key_bytes(&self) -> Vec<u8> {
         self.verifying_key_bytes.clone()
     }
-}
-
-fn constant_time_compare(a: &[u8], b: &[u8]) -> bool {
-    a.ct_eq(b).into()
 }
 
 #[derive(Clone)]
@@ -2751,7 +2744,7 @@ impl From<&MeshMessage> for proto::MeshMessage {
             MeshMessage::DnsRegistrationRequest {
                 request_id,
                 registration,
-                timestamp,
+                timestamp: _,
             } => proto::MeshMessage {
                 message_type: 116,
                 payload: Some(proto::mesh_message::Payload::DnsRegistrationRequest(
@@ -2795,7 +2788,7 @@ impl From<&MeshMessage> for proto::MeshMessage {
             MeshMessage::DnsRegistrationResponse {
                 request_id,
                 response,
-                timestamp,
+                timestamp: _,
             } => proto::MeshMessage {
                 message_type: 117,
                 payload: Some(proto::mesh_message::Payload::DnsRegistrationResponse(

@@ -153,36 +153,18 @@ impl OpenRedirectDetector {
             return None;
         }
 
-        if self.is_redirect_param(input) && self.inner.patterns_ref().is_match(&input_lower) {
-            if let Some(mat) = self.inner.patterns_ref().find(&input_lower) {
-                let matched = input[mat.start()..mat.end()].to_string();
-                tracing::warn!(
-                    attack_type = "open_redirect",
-                    matched_pattern = %matched,
-                    location = %location,
-                    "Open redirect detected"
-                );
-                return Some(AttackDetectionResult {
-                    attack_type: AttackType::OpenRedirect,
-                    fingerprint: None,
-                    matched_pattern: Some(matched),
-                    input_location: location,
-                });
-            }
-        } else if input_lower.starts_with("javascript:")
-            || input_lower.starts_with("vbscript:")
-            || input_lower.starts_with("data:")
-        {
-            let matched = if let Some(mat) = self.inner.patterns_ref().find(&input_lower) {
-                input[mat.start()..mat.end()].to_string()
-            } else {
-                input.chars().take(20).collect()
-            };
+        let is_redirect_param = self.is_redirect_param(input);
+        let matched_pattern = self.inner.patterns_ref().find(&input_lower);
+
+        if is_redirect_param {
+            let matched = matched_pattern
+                .map(|m| input_lower[m.start()..m.end()].to_string())
+                .unwrap_or_else(|| "redirect_param_external_url".to_string());
             tracing::warn!(
                 attack_type = "open_redirect",
                 matched_pattern = %matched,
                 location = %location,
-                "Open redirect detected"
+                "Open redirect detected: redirect param with external URL"
             );
             return Some(AttackDetectionResult {
                 attack_type: AttackType::OpenRedirect,
@@ -190,22 +172,21 @@ impl OpenRedirectDetector {
                 matched_pattern: Some(matched),
                 input_location: location,
             });
-        } else if input_lower.starts_with("//") || input_lower.starts_with("\\\\") {
-            let matched = if let Some(mat) = self.inner.patterns_ref().find(&input_lower) {
-                input[mat.start()..mat.end()].to_string()
-            } else {
-                input.chars().take(20).collect()
-            };
+        }
+
+        if matched_pattern.is_some() {
+            let matched = matched_pattern.unwrap();
+            let matched_str = input_lower[matched.start()..matched.end()].to_string();
             tracing::warn!(
                 attack_type = "open_redirect",
-                matched_pattern = %matched,
+                matched_pattern = %matched_str,
                 location = %location,
                 "Open redirect detected"
             );
             return Some(AttackDetectionResult {
                 attack_type: AttackType::OpenRedirect,
                 fingerprint: None,
-                matched_pattern: Some(matched),
+                matched_pattern: Some(matched_str),
                 input_location: location,
             });
         }

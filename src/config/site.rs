@@ -1058,7 +1058,7 @@ impl std::error::Error for SiteConfigValidationError {}
 impl SiteConfig {
     pub fn from_file<P: AsRef<std::path::Path>>(
         path: P,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let content = std::fs::read_to_string(path)?;
         let config: SiteConfig = toml::from_str(&content)?;
 

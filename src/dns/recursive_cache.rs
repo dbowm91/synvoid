@@ -174,6 +174,7 @@ struct InnerRecursiveCache {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct CacheConfig {
     capacity: usize,
     negative_cache_capacity: usize,

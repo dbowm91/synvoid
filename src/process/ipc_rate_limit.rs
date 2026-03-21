@@ -2,11 +2,13 @@ use parking_lot::Mutex;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+#[allow(dead_code)]
 #[derive(Clone)]
 pub struct IpcRateLimiter {
     inner: Arc<IpcRateLimiterInner>,
 }
 
+#[allow(dead_code)]
 struct IpcRateLimiterInner {
     max_messages_per_second: u64,
     max_burst: u64,
@@ -196,5 +198,71 @@ pub mod config {
                 max_burst: default_max_burst(),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use config::IpcRateLimitConfig;
+
+    #[test]
+    fn test_rate_limiter_allows_requests() {
+        let limiter = IpcRateLimiter::new(100, 100);
+        for _ in 0..50 {
+            assert!(limiter.check().is_ok());
+        }
+    }
+
+    #[test]
+    fn test_rate_limiter_blocks_excess() {
+        let limiter = IpcRateLimiter::new(5, 5);
+        for _ in 0..5 {
+            let _ = limiter.check();
+        }
+        let result = limiter.check();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_rate_limiter_worker() {
+        let limiter = IpcRateLimiter::new(100, 100);
+        for _ in 0..10 {
+            assert!(limiter.check_worker(1).is_ok());
+        }
+    }
+
+    #[test]
+    fn test_rate_limiter_worker_isolation() {
+        let limiter = IpcRateLimiter::new(100, 100);
+        for i in 0..5 {
+            assert!(limiter.check_worker(i).is_ok());
+        }
+    }
+
+    #[test]
+    fn test_rate_limiter_reset_worker() {
+        let limiter = IpcRateLimiter::new(100, 100);
+        assert!(limiter.check_worker(42).is_ok());
+        limiter.reset_worker(42);
+    }
+
+    #[test]
+    fn test_rate_limit_exceeded_display() {
+        let err = RateLimitExceeded {
+            worker_id: 1,
+            limit: 100,
+        };
+        let display = format!("{}", err);
+        assert!(display.contains("IPC rate limit exceeded"));
+        assert!(display.contains("worker_id=1"));
+        assert!(display.contains("limit=100"));
+    }
+
+    #[test]
+    fn test_rate_limit_config_default() {
+        let config = IpcRateLimitConfig::default();
+        assert_eq!(config.max_messages_per_second, 1000);
+        assert_eq!(config.max_burst, 2000);
     }
 }

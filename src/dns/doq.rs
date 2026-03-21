@@ -102,7 +102,7 @@ impl DoqServer {
     }
 
     async fn accept_loop(
-        mut endpoint: quinn::Endpoint,
+        endpoint: quinn::Endpoint,
         dns_server: Arc<RwLock<Option<DnsServer>>>,
         config: Arc<DnsDoqConfig>,
         mut shutdown_rx: oneshot::Receiver<()>,
@@ -140,7 +140,7 @@ impl DoqServer {
     async fn handle_connection(
         incoming: quinn::Incoming,
         dns_server: Arc<RwLock<Option<DnsServer>>>,
-        config: Arc<DnsDoqConfig>,
+        _config: Arc<DnsDoqConfig>,
     ) -> Result<(), String> {
         let connection = match incoming.await {
             Ok(conn) => conn,

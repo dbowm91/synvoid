@@ -254,9 +254,30 @@ impl SiteMetrics {
             blocked_by_type.insert(k.to_string(), v.load(Ordering::Relaxed));
         }
 
-        let bandwidth = get_global_bandwidth_tracker();
-        let per_site_bandwidth = bandwidth.get_per_site();
-        let site_bw = per_site_bandwidth.get(site_id);
+        let (
+            bytes_received,
+            bytes_sent,
+            proxied_bytes_sent,
+            proxied_bytes_received,
+            mesh_bytes_sent,
+            mesh_bytes_received,
+        ) = if let Ok(bandwidth) = get_global_bandwidth_tracker() {
+            let per_site_bandwidth = bandwidth.get_per_site();
+            if let Some(bw) = per_site_bandwidth.get(site_id) {
+                (
+                    bw.bytes_received,
+                    bw.bytes_sent,
+                    bw.proxied_bytes_sent,
+                    bw.proxied_bytes_received,
+                    bw.mesh_bytes_sent,
+                    bw.mesh_bytes_received,
+                )
+            } else {
+                (0, 0, 0, 0, 0, 0)
+            }
+        } else {
+            (0, 0, 0, 0, 0, 0)
+        };
 
         SiteMetricsPayload {
             total_requests: self.total_requests.load(Ordering::Relaxed),
@@ -276,12 +297,12 @@ impl SiteMetrics {
             proxy_cache_misses: 0,
             static_cache_hits: 0,
             static_cache_misses: 0,
-            bytes_received: site_bw.map(|b| b.bytes_received).unwrap_or(0),
-            bytes_sent: site_bw.map(|b| b.bytes_sent).unwrap_or(0),
-            proxied_bytes_sent: site_bw.map(|b| b.proxied_bytes_sent).unwrap_or(0),
-            proxied_bytes_received: site_bw.map(|b| b.proxied_bytes_received).unwrap_or(0),
-            mesh_bytes_sent: site_bw.map(|b| b.mesh_bytes_sent).unwrap_or(0),
-            mesh_bytes_received: site_bw.map(|b| b.mesh_bytes_received).unwrap_or(0),
+            bytes_received,
+            bytes_sent,
+            proxied_bytes_sent,
+            proxied_bytes_received,
+            mesh_bytes_sent,
+            mesh_bytes_received,
         }
     }
 }
@@ -383,8 +404,9 @@ impl WorkerMetrics {
 
     pub fn shared_with_bandwidth(_retention_days: u32, _mesh_excluded: bool) -> Arc<Self> {
         let mut metrics = Self::default();
-        // Use global tracker so all protocols report to the same place
-        metrics.bandwidth = bandwidth::get_global_bandwidth_tracker();
+        if let Some(tracker) = bandwidth::get_global_bandwidth_tracker_or_log() {
+            metrics.bandwidth = tracker;
+        }
         Arc::new(metrics)
     }
 

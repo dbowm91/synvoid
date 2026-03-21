@@ -31,6 +31,7 @@ use tokio::sync::broadcast;
 
 use crate::config::{TunnelVpnConfig, WireGuardPeerConfig as ConfigWireGuardPeerConfig};
 
+#[allow(dead_code)]
 pub struct WireGuardServerWrapper {
     config: TunnelVpnConfig,
     inner: Option<WireGuardServer>,

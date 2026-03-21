@@ -1,6 +1,6 @@
-use yew::prelude::*;
 use crate::services::api::ApiService;
 use serde::{Deserialize, Serialize};
+use yew::prelude::*;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AlertConfig {
@@ -39,20 +39,20 @@ pub fn Alerts() -> Html {
     {
         let config = config.clone();
         let error = error.clone();
-        
+
         use_effect_with((), move |_| {
             let config = config.clone();
             let error = error.clone();
-            
+
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
-                
+
                 match api.get::<AlertConfigResponse>("/alerts/config").await {
                     Ok(resp) => config.set(Some(resp.config)),
                     Err(e) => error.set(Some(e)),
                 }
             });
-            
+
             || {}
         });
     }
@@ -61,22 +61,30 @@ pub fn Alerts() -> Html {
         let config = config.clone();
         let saving = saving.clone();
         let error = error.clone();
-        
+
         Callback::from(move |_| {
             let config = config.clone();
             let saving = saving.clone();
             let error = error.clone();
-            
+
             if let Some(c) = (*config).clone() {
                 saving.set(true);
-                
+
                 wasm_bindgen_futures::spawn_local(async move {
                     let api = ApiService::new();
-                    
+
                     #[derive(Serialize)]
-                    struct UpdateRequest { config: AlertConfig }
-                    
-                    match api.put::<AlertConfigResponse, _>("/alerts/config", &UpdateRequest { config: c }).await {
+                    struct UpdateRequest {
+                        config: AlertConfig,
+                    }
+
+                    match api
+                        .put::<AlertConfigResponse, _>(
+                            "/alerts/config",
+                            &UpdateRequest { config: c },
+                        )
+                        .await
+                    {
                         Ok(resp) => {
                             config.set(Some(resp.config));
                         }
@@ -92,14 +100,17 @@ pub fn Alerts() -> Html {
 
     let on_test_webhook = {
         let error = error.clone();
-        
+
         Callback::from(move |_| {
             let error = error.clone();
-            
+
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
-                
-                match api.post::<serde_json::Value, _>("/alerts/test-webhook", &()).await {
+
+                match api
+                    .post::<serde_json::Value, _>("/alerts/test-webhook", &())
+                    .await
+                {
                     Ok(_) => {
                         tracing::info!("Test webhook sent");
                     }
@@ -231,7 +242,7 @@ pub fn Alerts() -> Html {
         <div class="space-y-6">
             <div class="flex justify-between items-center">
                 <h1 class="text-2xl font-bold">{ "Alerting" }</h1>
-                <button 
+                <button
                     onclick={on_save}
                     disabled={*saving}
                     class="px-4 py-2 bg-accent text-[#0a0a0f] rounded-lg hover:opacity-80 disabled:opacity-50"
@@ -250,7 +261,7 @@ pub fn Alerts() -> Html {
                 <div class="bg-secondary rounded-lg border border-default p-6">
                     <div class="flex items-center justify-between mb-4">
                         <h2 class="text-lg font-semibold">{ "Alert System" }</h2>
-                        <button 
+                        <button
                             onclick={toggle_config}
                             class={format!("px-4 py-2 rounded-lg text-sm font-medium {}", if c.enabled { "bg-green-600 text-white" } else { "bg-tertiary text-secondary" })}
                         >
@@ -266,20 +277,20 @@ pub fn Alerts() -> Html {
                     <div class="bg-secondary rounded-lg border border-default p-6">
                         <div class="flex items-center justify-between mb-4">
                             <h2 class="text-lg font-semibold">{ "Email Notifications" }</h2>
-                            <button 
+                            <button
                                 onclick={toggle_email}
                                 class={format!("px-3 py-1 rounded text-sm font-medium {}", if c.email_enabled { "bg-green-600 text-white" } else { "bg-tertiary text-secondary" })}
                             >
                                 { if c.email_enabled { "Enabled" } else { "Disabled" } }
                             </button>
                         </div>
-                        
+
                         if c.email_enabled {
                             <div class="space-y-4">
                                 <div>
                                     <label class="block text-sm text-secondary mb-1">{ "SMTP Host" }</label>
-                                    <input 
-                                        type="text" 
+                                    <input
+                                        type="text"
                                         value={c.email_smtp_host.clone().unwrap_or_default()}
                                         oninput={Callback::from(move |e: InputEvent| {
                                             let value = e.target_unchecked_into::<web_sys::HtmlInputElement>().value();
@@ -291,8 +302,8 @@ pub fn Alerts() -> Html {
                                 </div>
                                 <div>
                                     <label class="block text-sm text-secondary mb-1">{ "SMTP Port" }</label>
-                                    <input 
-                                        type="number" 
+                                    <input
+                                        type="number"
                                         value={c.email_smtp_port.unwrap_or(587).to_string()}
                                         oninput={Callback::from(move |e: InputEvent| {
                                             if let Ok(value) = e.target_unchecked_into::<web_sys::HtmlInputElement>().value().parse::<u16>() {
@@ -305,8 +316,8 @@ pub fn Alerts() -> Html {
                                 </div>
                                 <div>
                                     <label class="block text-sm text-secondary mb-1">{ "Username" }</label>
-                                    <input 
-                                        type="text" 
+                                    <input
+                                        type="text"
                                         value={c.email_username.clone().unwrap_or_default()}
                                         oninput={Callback::from(move |e: InputEvent| {
                                             let value = e.target_unchecked_into::<web_sys::HtmlInputElement>().value();
@@ -318,8 +329,8 @@ pub fn Alerts() -> Html {
                                 </div>
                                 <div>
                                     <label class="block text-sm text-secondary mb-1">{ "Password" }</label>
-                                    <input 
-                                        type="password" 
+                                    <input
+                                        type="password"
                                         value={c.email_password.clone().unwrap_or_default()}
                                         oninput={Callback::from(move |e: InputEvent| {
                                             let value = e.target_unchecked_into::<web_sys::HtmlInputElement>().value();
@@ -331,8 +342,8 @@ pub fn Alerts() -> Html {
                                 </div>
                                 <div>
                                     <label class="block text-sm text-secondary mb-1">{ "Recipients (comma separated)" }</label>
-                                    <input 
-                                        type="text" 
+                                    <input
+                                        type="text"
                                         value={c.email_recipients.join(", ")}
                                         oninput={Callback::from(move |e: InputEvent| {
                                             let value = e.target_unchecked_into::<web_sys::HtmlInputElement>().value();
@@ -349,19 +360,19 @@ pub fn Alerts() -> Html {
                     <div class="bg-secondary rounded-lg border border-default p-6">
                         <div class="flex items-center justify-between mb-4">
                             <h2 class="text-lg font-semibold">{ "Webhook Notifications" }</h2>
-                            <button 
+                            <button
                                 onclick={toggle_webhook}
                                 class={format!("px-3 py-1 rounded text-sm font-medium {}", if c.webhook_enabled { "bg-green-600 text-white" } else { "bg-tertiary text-secondary" })}
                             >
                                 { if c.webhook_enabled { "Enabled" } else { "Disabled" } }
                             </button>
                         </div>
-                        
+
                         if c.webhook_enabled {
                             <div class="space-y-4">
                                 <div>
                                     <label class="block text-sm text-secondary mb-1">{ "Webhook URLs (one per line)" }</label>
-                                    <textarea 
+                                    <textarea
                                         value={c.webhook_urls.join("\n")}
                                         oninput={Callback::from(move |e: InputEvent| {
                                             let value = e.target_unchecked_into::<web_sys::HtmlTextAreaElement>().value();
@@ -371,7 +382,7 @@ pub fn Alerts() -> Html {
                                         placeholder="https://hooks.slack.com/services/...\nhttps://your-server.com/webhook"
                                     />
                                 </div>
-                                <button 
+                                <button
                                     onclick={on_test_webhook}
                                     class="px-4 py-2 bg-tertiary text-secondary rounded-lg hover:text-primary"
                                 >
@@ -390,8 +401,8 @@ pub fn Alerts() -> Html {
                             html! {
                                 <div class="flex items-center justify-between p-4 bg-tertiary rounded-lg">
                                     <div class="flex items-center gap-4">
-                                        <input 
-                                            type="checkbox" 
+                                        <input
+                                            type="checkbox"
                                             checked={rule.enabled}
                                             onchange={{
                                                 let config = config.clone();

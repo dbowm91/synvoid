@@ -201,7 +201,10 @@ impl UploadConfig {
 
         let patterns = COMPILED_PATTERNS.get_or_init(|| std::sync::Mutex::new(Vec::new()));
 
-        let mut patterns = patterns.lock().unwrap();
+        let mut patterns = match patterns.lock() {
+            Ok(p) => p,
+            Err(poisoned) => poisoned.into_inner(),
+        };
 
         if patterns.len() != self.paths.len() {
             patterns.clear();

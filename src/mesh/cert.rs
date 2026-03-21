@@ -66,7 +66,6 @@ fn load_private_key(
     Err("No private key found in file".into())
 }
 
-type HmacSha256 = Hmac<sha2::Sha256>;
 type HmacSha3_256 = Hmac<sha3::Sha3_256>;
 
 #[cfg(feature = "audit")]

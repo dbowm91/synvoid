@@ -47,6 +47,7 @@ fn connect_to_static_worker(_socket_path: &PathBuf) -> io::Result<IpcStream> {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Clone)]
 pub struct MinifierClient {
     socket_path: PathBuf,

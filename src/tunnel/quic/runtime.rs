@@ -151,8 +151,9 @@ impl QuicRuntime {
                 .datagram_receive_buffer_size(Some(self.config.udp_max_datagram_size * 1024))
                 .receive_window(conn_window);
             
-            // TODO: Apply congestion_control and initial_congestion_window when Quinn exposes these APIs
-            // Quinn currently uses BBR by default which is suitable for high-throughput scenarios
+            // NOTE: congestion_control and initial_congestion_window cannot be configured via
+            // Quinn's public API (as of quinn 0.11). Quinn defaults to BBR which is suitable
+            // for high-throughput scenarios. Tracking: https://github.com/quinn-rs/quinn/issues
             
             tracing::info!(
                 "QUIC high-throughput mode enabled: streams={}, stream_window={}MB, conn_window={}MB, cc={}",

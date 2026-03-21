@@ -8,6 +8,7 @@ pub use filter::{UdpProtocolFilter, UdpFilterAction, UdpFilterConfig};
 
 pub use crate::listener::ConnectionContext;
 
+#[allow(dead_code)]
 pub struct UdpProxy {
     config: UdpProxyConfig,
     protocol_detector: UdpProtocolDetector,

@@ -78,7 +78,7 @@ impl RpzZone {
         let policies = self.policies.read();
         let qname_lower = qname.to_lowercase();
 
-        for (pattern, policy) in policies.iter() {
+        for (_pattern, policy) in policies.iter() {
             if let Some(ref qname_pattern) = policy.qname_pattern {
                 let pattern_lower = qname_pattern.to_lowercase();
                 if pattern_lower.starts_with('*') {
@@ -98,7 +98,7 @@ impl RpzZone {
     pub fn check_ip(&self, ip: &IpAddr) -> Option<RpzAction> {
         let policies = self.policies.read();
 
-        for (pattern, policy) in policies.iter() {
+        for (_pattern, policy) in policies.iter() {
             if let Some(ref ip_pattern) = policy.ip_pattern {
                 if let Ok(cidr) = ip_pattern.parse::<ipnetwork::IpNetwork>() {
                     if cidr.contains(*ip) {

@@ -199,7 +199,7 @@ mod tests {
 
     #[test]
     fn test_request_log_message() {
-        use maluwaf::process::{Message, WorkerId, RequestLogPayload};
+        use maluwaf::process::{Message, RequestLogPayload, WorkerId};
 
         let request_log = Message::WorkerRequestLog {
             id: WorkerId(1),
@@ -476,109 +476,120 @@ mod tests {
 
 #[cfg(unix)]
 mod socket_tests {
+    use maluwaf::process::ipc_transport::IpcStream;
+    use maluwaf::process::{IpcEndpoint, Message, WorkerId};
     use std::path::PathBuf;
     use tempfile::TempDir;
-    use tokio::net::UnixListener;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    use maluwaf::process::{Message, WorkerId, IpcEndpoint};
-    use maluwaf::process::ipc_transport::IpcStream;
-    
+    use tokio::net::UnixListener;
+
     #[tokio::test]
     async fn test_ipc_unix_socket_send_recv() {
         let temp_dir = TempDir::new().unwrap();
         let socket_path = temp_dir.path().join("test_ipc.sock");
-        
+
         let listener = UnixListener::bind(&socket_path).unwrap();
-        
+
         let server = tokio::spawn(async move {
             let (mut stream, _) = listener.accept().await.unwrap();
-            
+
             let mut len_buf = [0u8; 4];
             stream.read_exact(&mut len_buf).await.unwrap();
             let len = u32::from_be_bytes(len_buf) as usize;
-            
+
             let mut data = vec![0u8; len];
             stream.read_exact(&mut data).await.unwrap();
-            
+
             stream.write_all(&len_buf).await.unwrap();
             stream.write_all(&data).await.unwrap();
         });
-        
+
         let socket_path_clone = socket_path.clone();
         let client = tokio::spawn(async move {
-            let stream = tokio::net::UnixStream::connect(&socket_path_clone).await.unwrap();
+            let stream = tokio::net::UnixStream::connect(&socket_path_clone)
+                .await
+                .unwrap();
             let mut ipc_stream = IpcStream::from_unix_stream(stream);
-            
+
             let msg = Message::WorkerStarted {
                 id: WorkerId(1),
                 pid: 1234,
                 port: 8080,
                 timestamp: 1234567890,
             };
-            
+
             ipc_stream.send(&msg).await.unwrap();
-            
+
             let received: Message = ipc_stream.recv().await.unwrap().unwrap();
-            
-            assert!(matches!(received, Message::WorkerStarted { id: WorkerId(1), pid: 1234, .. }));
+
+            assert!(matches!(
+                received,
+                Message::WorkerStarted {
+                    id: WorkerId(1),
+                    pid: 1234,
+                    ..
+                }
+            ));
         });
-        
+
         server.await.unwrap();
         client.await.unwrap();
     }
-    
+
     #[tokio::test]
     async fn test_ipc_multiple_messages() {
         let temp_dir = TempDir::new().unwrap();
         let socket_path = temp_dir.path().join("test_multi.sock");
-        
+
         let listener = UnixListener::bind(&socket_path).unwrap();
-        
+
         let server = tokio::spawn(async move {
             let (mut stream, _) = listener.accept().await.unwrap();
-            
+
             for _ in 0..3usize {
                 let mut len_buf = [0u8; 4];
                 stream.read_exact(&mut len_buf).await.unwrap();
                 let len = u32::from_be_bytes(len_buf) as usize;
                 let mut data: Vec<u8> = vec![0u8; len];
                 stream.read_exact(&mut data).await.unwrap();
-                
+
                 stream.write_all(&len_buf).await.unwrap();
                 stream.write_all(&data).await.unwrap();
             }
         });
-        
+
         let socket_path_clone = socket_path.clone();
         let client: tokio::task::JoinHandle<()> = tokio::spawn(async move {
-            let stream = tokio::net::UnixStream::connect(&socket_path_clone).await.unwrap();
+            let stream = tokio::net::UnixStream::connect(&socket_path_clone)
+                .await
+                .unwrap();
             let mut ipc_stream = IpcStream::from_unix_stream(stream);
-            
+
             for i in 0..3usize {
                 let msg = Message::WorkerReady { id: WorkerId(i) };
                 ipc_stream.send(&msg).await.unwrap();
-                
+
                 let _received: Message = ipc_stream.recv().await.unwrap().unwrap();
             }
         });
-        
+
         server.await.unwrap();
         client.await.unwrap();
     }
-    
+
     #[tokio::test]
     async fn test_ipc_endpoint_path_generation() {
         let endpoint = IpcEndpoint::new("test-socket");
         let path = endpoint.socket_path();
-        
+
         assert!(path.to_string_lossy().contains("test-socket"));
         assert!(path.to_string_lossy().contains("maluwaf"));
     }
-    
+
     #[test]
     fn test_ipc_message_validation_rejects_long_strings() {
-        use maluwaf::process::{Message, WorkerId, IpcValidationError, ErrorSeverity, ErrorCode};
-        
+        use maluwaf::process::{ErrorCode, ErrorSeverity, IpcValidationError, Message, WorkerId};
+
         // Test WorkerError with too long error string
         let long_error = "x".repeat(100_000);
         let msg = Message::WorkerError {
@@ -589,7 +600,7 @@ mod socket_tests {
         };
         let result = msg.validate();
         assert!(result.is_err());
-        
+
         // Test with valid length
         let valid_msg = Message::WorkerError {
             id: WorkerId(1),
@@ -599,69 +610,72 @@ mod socket_tests {
         };
         assert!(valid_msg.validate().is_ok());
     }
-    
+
     #[test]
     fn test_ipc_message_validation_rejects_long_paths() {
         use maluwaf::process::Message;
-        
+
         let long_path = "/".repeat(5000);
-        let msg = Message::MasterConfigReload { config_path: long_path };
+        let msg = Message::MasterConfigReload {
+            config_path: long_path,
+        };
         let result = msg.validate();
         assert!(result.is_err());
-        
-        let valid_msg = Message::MasterConfigReload { 
-            config_path: "/etc/maluwaf/config.toml".to_string() 
+
+        let valid_msg = Message::MasterConfigReload {
+            config_path: "/etc/maluwaf/config.toml".to_string(),
         };
         assert!(valid_msg.validate().is_ok());
     }
-    
+
     #[test]
     fn test_ipc_signed_message_hmac_verification() {
-        use maluwaf::process::ipc_signed::{IpcSigner, SignedIpcMessage, generate_session_key};
-        
+        use maluwaf::process::ipc_signed::{generate_session_key, IpcSigner, SignedIpcMessage};
+
         let key = generate_session_key();
         let signer = IpcSigner::new(&key);
-        
+
         let msg = vec![1u8, 2, 3, 4];
         let signed = SignedIpcMessage::serialize_signed(&msg, &signer).unwrap();
-        
+
         // Verify it works
         let decoded: Vec<u8> = SignedIpcMessage::deserialize_signed(&signed, &signer).unwrap();
         assert_eq!(msg, decoded);
-        
+
         // Verify wrong key fails
         let wrong_key = generate_session_key();
         let wrong_signer = IpcSigner::new(&wrong_key);
-        let result: Result<Vec<u8>, _> = SignedIpcMessage::deserialize_signed(&signed, &wrong_signer);
+        let result: Result<Vec<u8>, _> =
+            SignedIpcMessage::deserialize_signed(&signed, &wrong_signer);
         assert!(result.is_err());
-        
+
         // Verify tampered message fails
         let mut tampered = signed.clone();
         tampered[10] ^= 0xFF;
         let result: Result<Vec<u8>, _> = SignedIpcMessage::deserialize_signed(&tampered, &signer);
         assert!(result.is_err());
     }
-    
+
     #[test]
     fn test_constant_time_compare_security() {
         use maluwaf::admin::constant_time_compare;
-        
+
         // Equal strings should match
         assert!(constant_time_compare("test", "test"));
-        
+
         // Different strings should not match
         assert!(!constant_time_compare("test", "Test"));
         assert!(!constant_time_compare("test", "test "));
-        
+
         // Different lengths should not match (timing safe)
         assert!(!constant_time_compare("test", "testing"));
         assert!(!constant_time_compare("testing", "test"));
     }
-    
+
     #[test]
     fn test_admin_token_validation_rejects_weak_tokens() {
         use maluwaf::config::admin::AdminConfig;
-        
+
         // Test weak tokens are rejected
         let weak_tokens = vec![
             "short",
@@ -671,7 +685,7 @@ mod socket_tests {
             "12345678",
             "qwertyui",
         ];
-        
+
         for token in weak_tokens {
             let mut config = AdminConfig::default();
             config.port = 8081;
@@ -682,14 +696,17 @@ mod socket_tests {
             let resolved = config.resolve_token();
             assert!(!resolved.is_empty());
         }
-        
+
         // Test strong token is accepted
         let strong_token = "ThisIsAveryLongSecureTokenThatIsHardToGuessABCDEF!@#$%";
         let mut config = AdminConfig::default();
         config.port = 8081;
         config.token = strong_token.to_string();
         if config.validate().is_err() {
-            panic!("Validation failed for strong token: {:?}", config.validate());
+            panic!(
+                "Validation failed for strong token: {:?}",
+                config.validate()
+            );
         }
         assert!(config.validate().is_ok());
     }
@@ -739,8 +756,8 @@ mod socket_tests {
 
     #[test]
     fn test_recursive_dns_config_upstream_ips_google() {
-        use std::net::IpAddr;
         use maluwaf::config::dns::{RecursiveDnsConfig, RecursiveUpstreamProvider};
+        use std::net::IpAddr;
 
         let mut config = RecursiveDnsConfig::default();
         config.upstream_provider = RecursiveUpstreamProvider::Google;
@@ -748,7 +765,9 @@ mod socket_tests {
         let ips = config.upstream_ips();
 
         assert!(!ips.is_empty());
-        assert!(ips.iter().any(|ip: &IpAddr| ip.to_string() == "8.8.8.8" || ip.to_string() == "8.8.4.4"));
+        assert!(ips
+            .iter()
+            .any(|ip: &IpAddr| ip.to_string() == "8.8.8.8" || ip.to_string() == "8.8.4.4"));
     }
 
     #[test]
@@ -765,18 +784,18 @@ mod socket_tests {
 
     #[test]
     fn test_recursive_dns_config_custom_servers() {
+        use maluwaf::config::dns::{
+            RecursiveDnsConfig, RecursiveUpstreamProvider, RecursiveUpstreamServer,
+        };
         use std::net::IpAddr;
-        use maluwaf::config::dns::{RecursiveDnsConfig, RecursiveUpstreamServer, RecursiveUpstreamProvider};
 
         let mut config = RecursiveDnsConfig::default();
         config.upstream_provider = RecursiveUpstreamProvider::Custom;
-        config.upstream_servers = vec![
-            RecursiveUpstreamServer {
-                address: "1.1.1.1".to_string(),
-                port: 53,
-                ip: Some(IpAddr::from([1, 1, 1, 1])),
-            }
-        ];
+        config.upstream_servers = vec![RecursiveUpstreamServer {
+            address: "1.1.1.1".to_string(),
+            port: 53,
+            ip: Some(IpAddr::from([1, 1, 1, 1])),
+        }];
 
         let ips = config.upstream_ips();
         assert!(ips.contains(&IpAddr::from([1, 1, 1, 1])));
@@ -789,7 +808,10 @@ mod socket_tests {
         let mut config = RecursiveDnsConfig::default();
         config.upstream_provider = RecursiveUpstreamProvider::Recursive;
 
-        assert_eq!(config.upstream_provider, RecursiveUpstreamProvider::Recursive);
+        assert_eq!(
+            config.upstream_provider,
+            RecursiveUpstreamProvider::Recursive
+        );
         assert_eq!(config.root_hints_path, "root.hints");
         assert_eq!(config.trust_anchor_path, "trusted-key.key");
     }
@@ -818,8 +840,8 @@ mod socket_tests {
 
     #[test]
     fn test_recursive_cache_key_equality() {
-        use std::net::IpAddr;
         use maluwaf::dns::recursive_cache::RecursiveCacheKey;
+        use std::net::IpAddr;
 
         let key1 = RecursiveCacheKey::new(b"example.com", 1, None);
         let key2 = RecursiveCacheKey::new(b"example.com", 1, None);
@@ -862,7 +884,7 @@ mod socket_tests {
         }];
 
         cache.insert_positive(key.clone(), records.clone(), 300, false);
-        
+
         let result = cache.get(&key);
         assert!(result.is_some());
         let (retrieved, _stale, _validated) = result.unwrap();
@@ -880,7 +902,7 @@ mod socket_tests {
 
         let key = RecursiveCacheKey::new(b"nonexistent.com", 1, None);
         cache.insert_negative(key.clone(), true, 300);
-        
+
         let result = cache.get(&key);
         assert!(result.is_none());
     }
@@ -902,7 +924,7 @@ mod socket_tests {
         }];
 
         cache.insert_positive(key.clone(), records, 300, false);
-        
+
         // Check stats incremented
         let stats = cache.stats();
         assert_eq!(stats.insertions, 1);
@@ -931,13 +953,13 @@ mod socket_tests {
         }];
 
         cache.insert_positive(key.clone(), records, 300, false);
-        
+
         // Verify it's cached
         assert!(cache.get(&key).is_some());
 
         // Invalidate
         cache.invalidate(b"example.com");
-        
+
         // Should be gone
         assert!(cache.get(&key).is_none());
     }
@@ -1002,21 +1024,22 @@ mod socket_tests {
 
     #[test]
     fn test_rfc5011_trust_anchor_state_machine() {
-        use tempfile::TempDir;
-        use maluwaf::dns::trust_anchor::{TrustAnchorManager, TrustAnchorConfig, TrustAnchorState, Rfc5011Event, TrustAnchor};
         use maluwaf::dns::dnssec::compute_ds_digest;
+        use maluwaf::dns::trust_anchor::{
+            Rfc5011Event, TrustAnchor, TrustAnchorConfig, TrustAnchorManager, TrustAnchorState,
+        };
+        use tempfile::TempDir;
 
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("trust_anchors.db");
 
         let public_key = vec![
-            0x04, 0x8F, 0xF1, 0xBE, 0x04, 0x1F, 0x9E, 0x4A, 0x22, 0xD5, 0x6E, 0xE8,
-            0x0A, 0x5C, 0x9D, 0xE5, 0x80, 0xF8, 0x64, 0x97, 0xD7, 0xF3, 0xBF, 0x1C,
-            0x9C, 0x7E, 0x2B, 0x8F, 0xE3, 0x1E, 0x8C, 0x9C, 0xB5, 0x6E, 0xF8, 0x0C,
-            0xF8, 0x0E, 0xC7, 0x89, 0x2C, 0x3E, 0xD3, 0x65, 0x4F, 0x5E, 0x70, 0x7F,
-            0x1E, 0x4D, 0x8E, 0x4A, 0x7B, 0x8A, 0x03, 0x8A, 0x6D, 0xD0, 0x7F, 0x9E,
-            0xF1, 0xC4, 0x6A, 0x1C, 0x9C, 0x5E, 0x4B, 0x3D, 0x8D, 0xF7, 0x6E, 0x0D,
-            0x5A, 0x8E, 0x4F, 0x3D, 0xAA, 0xB5, 0xA8, 0x5E, 0x0B, 0x1F, 0xC2, 0x9B,
+            0x04, 0x8F, 0xF1, 0xBE, 0x04, 0x1F, 0x9E, 0x4A, 0x22, 0xD5, 0x6E, 0xE8, 0x0A, 0x5C,
+            0x9D, 0xE5, 0x80, 0xF8, 0x64, 0x97, 0xD7, 0xF3, 0xBF, 0x1C, 0x9C, 0x7E, 0x2B, 0x8F,
+            0xE3, 0x1E, 0x8C, 0x9C, 0xB5, 0x6E, 0xF8, 0x0C, 0xF8, 0x0E, 0xC7, 0x89, 0x2C, 0x3E,
+            0xD3, 0x65, 0x4F, 0x5E, 0x70, 0x7F, 0x1E, 0x4D, 0x8E, 0x4A, 0x7B, 0x8A, 0x03, 0x8A,
+            0x6D, 0xD0, 0x7F, 0x9E, 0xF1, 0xC4, 0x6A, 0x1C, 0x9C, 0x5E, 0x4B, 0x3D, 0x8D, 0xF7,
+            0x6E, 0x0D, 0x5A, 0x8E, 0x4F, 0x3D, 0xAA, 0xB5, 0xA8, 0x5E, 0x0B, 0x1F, 0xC2, 0x9B,
             0xE1, 0xE5, 0x8E, 0x5B, 0x6B, 0x7F, 0xA6, 0xE8, 0xE0, 0xF9, 0x89, 0x5D,
         ];
 
@@ -1043,7 +1066,8 @@ mod socket_tests {
         let event = manager.observe_dnskey_at_root(20326, 8, &public_key, false);
         assert!(matches!(event, Rfc5011Event::KeySeen { key_tag: 20326 }));
 
-        let digest = compute_ds_digest(2, 257, 3, 8, &public_key).expect("digest computation should succeed");
+        let digest = compute_ds_digest(2, 257, 3, 8, &public_key)
+            .expect("digest computation should succeed");
         let event = manager.trust_anchor_check(20326, 8, 2, &digest);
         assert!(matches!(event, Rfc5011Event::KeyPending { key_tag: 20326 }));
 
@@ -1057,7 +1081,7 @@ mod socket_tests {
 
         let key_id_1 = TrustAnchor::generate_key_id(20326, 8);
         let key_id_2 = TrustAnchor::generate_key_id(20326, 8);
-        
+
         assert_eq!(key_id_1, key_id_2);
         assert_eq!(key_id_1, "20326-8");
 
@@ -1225,8 +1249,10 @@ mod socket_tests {
 
     #[test]
     fn test_rfc5011_trust_anchor_full_flow() {
+        use maluwaf::dns::trust_anchor::{
+            Rfc5011Event, TrustAnchorConfig, TrustAnchorManager, TrustAnchorState,
+        };
         use tempfile::TempDir;
-        use maluwaf::dns::trust_anchor::{TrustAnchorManager, TrustAnchorConfig, TrustAnchorState, Rfc5011Event};
 
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("trust_anchors_full.db");
@@ -1246,7 +1272,12 @@ mod socket_tests {
         let manager = TrustAnchorManager::new(config);
 
         let public_key = vec![0x01, 0x02, 0x03, 0x04];
-        let key_tag = maluwaf::dns::trust_anchor::TrustAnchorManager::calculate_dnskey_key_tag(257, 3, 8, &public_key);
+        let key_tag = maluwaf::dns::trust_anchor::TrustAnchorManager::calculate_dnskey_key_tag(
+            257,
+            3,
+            8,
+            &public_key,
+        );
 
         let event1 = manager.observe_dnskey_at_root(key_tag, 8, &public_key, false);
         assert!(matches!(event1, Rfc5011Event::NewKeySeen { key_tag: kt } if kt == key_tag));
@@ -1266,8 +1297,8 @@ mod socket_tests {
 
     #[test]
     fn test_rfc5011_revocation_flow() {
+        use maluwaf::dns::trust_anchor::{Rfc5011Event, TrustAnchorConfig, TrustAnchorManager};
         use tempfile::TempDir;
-        use maluwaf::dns::trust_anchor::{TrustAnchorManager, TrustAnchorConfig, Rfc5011Event};
 
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("trust_anchors_revoked.db");
@@ -1283,7 +1314,12 @@ mod socket_tests {
         let manager = TrustAnchorManager::new(config);
 
         let public_key = vec![0x01, 0x02, 0x03, 0x04];
-        let key_tag = maluwaf::dns::trust_anchor::TrustAnchorManager::calculate_dnskey_key_tag(257, 3, 8, &public_key);
+        let key_tag = maluwaf::dns::trust_anchor::TrustAnchorManager::calculate_dnskey_key_tag(
+            257,
+            3,
+            8,
+            &public_key,
+        );
 
         manager.observe_dnskey_at_root(key_tag, 8, &public_key, false);
 
@@ -1293,8 +1329,8 @@ mod socket_tests {
 
     #[test]
     fn test_dnssec_trust_anchor_status() {
+        use maluwaf::dns::trust_anchor::{TrustAnchorConfig, TrustAnchorManager};
         use tempfile::TempDir;
-        use maluwaf::dns::trust_anchor::{TrustAnchorManager, TrustAnchorConfig};
 
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("trust_anchors_status.db");
@@ -1322,7 +1358,8 @@ mod socket_tests {
         let algorithm: u8 = 8;
         let public_key = vec![0x01, 0x02, 0x03, 0x04];
 
-        let canonical = maluwaf::dns::dnssec::compute_dnskey_canonical(flags, protocol, algorithm, &public_key);
+        let canonical =
+            maluwaf::dns::dnssec::compute_dnskey_canonical(flags, protocol, algorithm, &public_key);
 
         assert_eq!(canonical.len(), 4 + public_key.len());
         assert_eq!(u16::from_be_bytes([canonical[0], canonical[1]]), 257);
@@ -1351,8 +1388,9 @@ mod socket_tests {
         assert!(result);
 
         let wrong_digest = vec![0xFF; 32];
-        let result = maluwaf::dns::dnssec::verify_ds_digest(2, 257, 3, 8, &public_key, &wrong_digest)
-            .expect("verification should succeed");
+        let result =
+            maluwaf::dns::dnssec::verify_ds_digest(2, 257, 3, 8, &public_key, &wrong_digest)
+                .expect("verification should succeed");
         assert!(!result);
     }
 
@@ -1396,8 +1434,8 @@ mod socket_tests {
 
     #[test]
     fn test_recursive_cache_stats_tracking() {
-        use maluwaf::dns::recursive_cache::{CachedRecord, RecursiveCacheKey, RecursiveDnsCache};
         use maluwaf::config::dns::RecursiveCacheConfig;
+        use maluwaf::dns::recursive_cache::{CachedRecord, RecursiveCacheKey, RecursiveDnsCache};
 
         let config = RecursiveCacheConfig::default();
         let cache = RecursiveDnsCache::new(100, &config);
@@ -1424,7 +1462,9 @@ mod socket_tests {
 
     #[tokio::test]
     async fn test_recursive_server_creation() {
-        use maluwaf::config::dns::{RecursiveCacheConfig, RecursiveDnsConfig, RecursiveUpstreamProvider};
+        use maluwaf::config::dns::{
+            RecursiveCacheConfig, RecursiveDnsConfig, RecursiveUpstreamProvider,
+        };
         use maluwaf::dns::recursive::RecursiveDnsServer;
 
         let config = RecursiveDnsConfig {
@@ -1444,12 +1484,9 @@ mod socket_tests {
             trust_anchor_path: String::new(),
         };
 
-        let server = RecursiveDnsServer::new(
-            config,
-            None,
-            None,
-            None,
-        ).await.unwrap();
+        let server = RecursiveDnsServer::new(config, None, None, None)
+            .await
+            .unwrap();
 
         assert_eq!(server.cache().len(), 0);
         assert!(server.cache().is_empty());
@@ -1496,8 +1533,8 @@ mod socket_tests {
 
     #[test]
     fn test_recursive_cache_invalidation_by_name() {
-        use maluwaf::dns::recursive_cache::{CachedRecord, RecursiveCacheKey, RecursiveDnsCache};
         use maluwaf::config::dns::RecursiveCacheConfig;
+        use maluwaf::dns::recursive_cache::{CachedRecord, RecursiveCacheKey, RecursiveDnsCache};
 
         let config = RecursiveCacheConfig::default();
         let cache = RecursiveDnsCache::new(100, &config);
@@ -1532,8 +1569,8 @@ mod socket_tests {
 
     #[test]
     fn test_recursive_cache_len_operations() {
-        use maluwaf::dns::recursive_cache::{CachedRecord, RecursiveCacheKey, RecursiveDnsCache};
         use maluwaf::config::dns::RecursiveCacheConfig;
+        use maluwaf::dns::recursive_cache::{CachedRecord, RecursiveCacheKey, RecursiveDnsCache};
 
         let config = RecursiveCacheConfig::default();
         let cache = RecursiveDnsCache::new(100, &config);
@@ -1568,7 +1605,10 @@ mod socket_tests {
         framed_message.extend_from_slice(&dns_message);
 
         assert_eq!(framed_message.len(), 12);
-        assert_eq!(u16::from_be_bytes([framed_message[0], framed_message[1]]), 10);
+        assert_eq!(
+            u16::from_be_bytes([framed_message[0], framed_message[1]]),
+            10
+        );
         assert_eq!(&framed_message[2..], &dns_message[..]);
     }
 
@@ -1619,8 +1659,8 @@ mod socket_tests {
 
         let algorithm = Algorithm::RSA;
         let key_bytes = vec![
-            0x04, 0x8F, 0xF1, 0xBE, 0x04, 0x1F, 0x9E, 0x4A,
-            0x22, 0xD5, 0x6E, 0xE8, 0x0A, 0x5C, 0x9D, 0xE5,
+            0x04, 0x8F, 0xF1, 0xBE, 0x04, 0x1F, 0x9E, 0x4A, 0x22, 0xD5, 0x6E, 0xE8, 0x0A, 0x5C,
+            0x9D, 0xE5,
         ];
 
         let algorithm_u8 = algorithm.to_u8();
@@ -1648,7 +1688,10 @@ mod socket_tests {
         let events = vec![
             Rfc5011Event::NewKeySeen { key_tag: 12345 },
             Rfc5011Event::KeyPending { key_tag: 12345 },
-            Rfc5011Event::KeyWaiting { key_tag: 12345, remaining_secs: 86400 },
+            Rfc5011Event::KeyWaiting {
+                key_tag: 12345,
+                remaining_secs: 86400,
+            },
             Rfc5011Event::KeyPromoted { key_tag: 12345 },
             Rfc5011Event::KeyRevoked { key_tag: 12345 },
             Rfc5011Event::KeyRemoved { key_tag: 12345 },
@@ -1678,5 +1721,292 @@ mod socket_tests {
         for qtype in type_names {
             assert!(qtype != QueryType::All);
         }
+    }
+}
+
+#[cfg(test)]
+mod mesh_transport_tests {
+    use maluwaf::mesh::transport_core::{
+        MeshTransportError, MAX_REASONABLE_TIMESTAMP, MIN_REASONABLE_TIMESTAMP,
+    };
+
+    #[test]
+    fn test_mesh_transport_error_display() {
+        let error = MeshTransportError::NoSeedsAvailable;
+        assert_eq!(error.to_string(), "No seed nodes available");
+
+        let error = MeshTransportError::ConnectionFailed("test".to_string());
+        assert_eq!(error.to_string(), "Connection failed: test");
+
+        let error = MeshTransportError::VersionMismatch {
+            expected: 1,
+            got: 2,
+        };
+        assert_eq!(error.to_string(), "Version mismatch: expected 1, got 2");
+
+        let error = MeshTransportError::Timeout;
+        assert_eq!(error.to_string(), "Timeout");
+
+        let error = MeshTransportError::RateLimited;
+        assert_eq!(
+            error.to_string(),
+            "Rate limited - too many connection attempts"
+        );
+    }
+
+    #[test]
+    fn test_mesh_transport_error_from_quinn() {
+        let error = MeshTransportError::from(quinn::ConnectionError::TimedOut);
+        assert!(matches!(error, MeshTransportError::ConnectionFailed(_)));
+    }
+
+    #[test]
+    fn test_timestamp_constants() {
+        assert!(MIN_REASONABLE_TIMESTAMP > 0);
+        assert!(MAX_REASONABLE_TIMESTAMP > MIN_REASONABLE_TIMESTAMP);
+        assert_eq!(
+            MAX_REASONABLE_TIMESTAMP - MIN_REASONABLE_TIMESTAMP,
+            31536000
+        );
+    }
+
+    #[test]
+    fn test_mesh_transport_error_variants() {
+        let variants = vec![
+            MeshTransportError::NoSeedsAvailable,
+            MeshTransportError::ConnectionFailed("test".to_string()),
+            MeshTransportError::SendFailed("test".to_string()),
+            MeshTransportError::ReceiveFailed("test".to_string()),
+            MeshTransportError::VersionMismatch {
+                expected: 1,
+                got: 2,
+            },
+            MeshTransportError::UnexpectedMessage,
+            MeshTransportError::PeerError {
+                code: 404,
+                message: "Not found".to_string(),
+            },
+            MeshTransportError::PeerNotFound("peer1".to_string()),
+            MeshTransportError::NoRouteToUpstream("upstream1".to_string()),
+            MeshTransportError::ServiceNotAllowed("service1".to_string()),
+            MeshTransportError::RuntimeNotSet,
+            MeshTransportError::Timeout,
+            MeshTransportError::RateLimited,
+            MeshTransportError::AuthFailed("auth error".to_string()),
+        ];
+
+        assert_eq!(variants.len(), 14);
+    }
+}
+
+#[cfg(test)]
+mod rate_limit_tests {
+    use maluwaf::utils::ratelimit::{IpRateLimiter, RateLimitResult, RateLimitStatsProvider};
+    use maluwaf::waf::ratelimit::core::{IpRateLimitConfig, SlottedIpRateLimiter};
+
+    #[test]
+    fn test_slotted_ip_rate_limiter_ip_rate_limiter_trait() {
+        let config = IpRateLimitConfig {
+            per_second: 100,
+            per_minute: 1000,
+            per_5min: 5000,
+            per_10min: 8000,
+            per_hour: 10000,
+            per_day: 20000,
+        };
+        let limiter = SlottedIpRateLimiter::new(config);
+
+        let ip: std::net::IpAddr = "192.168.1.1".parse().unwrap();
+
+        let result = IpRateLimiter::check(&limiter, ip);
+        assert!(matches!(result, RateLimitResult::Allowed));
+    }
+
+    #[test]
+    fn test_slotted_ip_rate_limiter_stats_provider() {
+        let config = IpRateLimitConfig::default();
+        let limiter = SlottedIpRateLimiter::new(config);
+
+        let stats = limiter.get_stats();
+        assert!(stats.is_some());
+
+        let stats = stats.unwrap();
+        assert_eq!(stats.limit, 10);
+        assert!(stats.remaining >= 0);
+    }
+
+    #[test]
+    fn test_rate_limit_result_variants() {
+        let allowed = RateLimitResult::Allowed;
+        assert!(matches!(allowed, RateLimitResult::Allowed));
+
+        let limited = RateLimitResult::Limited {
+            retry_after_secs: 60,
+        };
+        assert!(matches!(
+            limited,
+            RateLimitResult::Limited {
+                retry_after_secs: 60
+            }
+        ));
+    }
+}
+
+#[cfg(test)]
+mod tls_config_tests {
+    use std::path::PathBuf;
+
+    #[test]
+    fn test_tls_config_default() {
+        use maluwaf::tls::config::InternalTlsConfig;
+
+        let config = InternalTlsConfig::default();
+
+        assert!(!config.enabled);
+        assert!(config.prefer_post_quantum);
+        assert!(config.tls_1_3_only);
+        assert!(!config.enable_tls_12_fallback);
+        assert!(config.ocsp_stapling_enabled);
+        assert_eq!(config.port, 443);
+        assert!(!config.acme.enabled);
+        assert!(!config.client_auth.enabled);
+    }
+
+    #[test]
+    fn test_acme_config_default() {
+        use maluwaf::tls::config::InternalAcmeConfig;
+
+        let config = InternalAcmeConfig::default();
+
+        assert!(!config.enabled);
+        assert!(config.email.is_none());
+        assert!(config.cache_dir.is_none());
+        assert!(!config.staging);
+        assert!(config.domains.is_empty());
+    }
+
+    #[test]
+    fn test_client_auth_config_default() {
+        use maluwaf::tls::config::InternalClientAuthConfig;
+
+        let config = InternalClientAuthConfig::default();
+
+        assert!(!config.enabled);
+        assert!(config.ca_cert_path.is_none());
+    }
+
+    #[test]
+    fn test_tls_config_with_values() {
+        use maluwaf::tls::config::{
+            InternalAcmeConfig, InternalClientAuthConfig, InternalTlsConfig,
+        };
+
+        let config = InternalTlsConfig {
+            enabled: true,
+            cert_path: Some(PathBuf::from("/etc/ssl/cert.pem")),
+            key_path: Some(PathBuf::from("/etc/ssl/key.pem")),
+            watch_dir: Some(PathBuf::from("/etc/ssl")),
+            prefer_post_quantum: false,
+            tls_1_3_only: false,
+            enable_tls_12_fallback: true,
+            ocsp_stapling_enabled: false,
+            ocsp_response_path: Some(PathBuf::from("/etc/ssl/ocsp.der")),
+            port: 8443,
+            acme: InternalAcmeConfig {
+                enabled: true,
+                email: Some("admin@example.com".to_string()),
+                cache_dir: Some(PathBuf::from("/var/lib/acme")),
+                staging: true,
+                domains: vec!["example.com".to_string(), "www.example.com".to_string()],
+            },
+            client_auth: InternalClientAuthConfig {
+                enabled: true,
+                ca_cert_path: Some(PathBuf::from("/etc/ssl/ca.pem")),
+            },
+        };
+
+        assert!(config.enabled);
+        assert_eq!(config.port, 8443);
+        assert!(config.enable_tls_12_fallback);
+        assert!(!config.tls_1_3_only);
+        assert!(config.acme.enabled);
+        assert_eq!(config.acme.domains.len(), 2);
+        assert!(config.client_auth.enabled);
+    }
+}
+
+#[cfg(test)]
+mod block_store_tests {
+    use maluwaf::block_store::{BlockEntry, BlockStore, BlockStoreStats};
+    use maluwaf::config::DenyListLimitsConfig;
+    use std::net::IpAddr;
+    use tempfile::TempDir;
+
+    fn default_config() -> DenyListLimitsConfig {
+        DenyListLimitsConfig {
+            max_entries: 1000,
+            persist_interval_secs: 0,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_block_store_stats_calculation() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        store.block_ip(
+            "10.0.0.1".parse().unwrap(),
+            "permanent",
+            0,
+            "global",
+        );
+        store.block_ip(
+            "10.0.0.2".parse().unwrap(),
+            "temp",
+            3600,
+            "global",
+        );
+
+        let stats = store.get_stats();
+
+        assert_eq!(stats.total_entries, 2);
+        assert_eq!(stats.permanent_count, 1);
+        assert!(stats.utilization_percent >= 0.0);
+    }
+
+    #[test]
+    fn test_block_entry_key_format() {
+        let ip: IpAddr = "192.168.1.1".parse().unwrap();
+        let key = BlockEntry::key("global", &ip);
+
+        assert!(key.starts_with("block:"));
+        assert!(key.contains("global"));
+        assert!(key.contains("192.168.1.1"));
+    }
+
+    #[test]
+    fn test_block_entry_permanent_detection() {
+        let ip: IpAddr = "127.0.0.1".parse().unwrap();
+
+        let permanent = BlockEntry::new(ip, "test".to_string(), 0, "global".to_string());
+        assert!(permanent.is_permanent());
+
+        let temporary = BlockEntry::new(ip, "test".to_string(), 3600, "global".to_string());
+        assert!(!temporary.is_permanent());
+    }
+
+    #[test]
+    fn test_block_store_stats_default() {
+        let stats = BlockStoreStats {
+            total_entries: 0,
+            max_entries: 1000,
+            permanent_count: 0,
+            expired_count: 0,
+            utilization_percent: 0.0,
+        };
+
+        assert_eq!(stats.total_entries, 0);
+        assert_eq!(stats.max_entries, 1000);
+        assert_eq!(stats.utilization_percent, 0.0);
     }
 }
