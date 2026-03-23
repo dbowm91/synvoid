@@ -652,6 +652,28 @@ impl DnsRateLimiter {
     }
 }
 
+#[derive(Clone)]
+struct DnsHandlerState {
+    zones: Arc<RwLock<HashMap<String, Zone>>>,
+    zone_trie: Arc<RwLock<super::zone_trie::ZoneTrie>>,
+    zone_index: Arc<RwLock<Vec<(String, String)>>>,
+    rate_limiter: Option<Arc<DnsRateLimiter>>,
+    query_validator: Option<DnsQueryValidator>,
+    firewall: Option<Arc<RwLock<super::firewall::DnsFirewall>>>,
+    connection_limits: Arc<super::limits::ConnectionLimits>,
+    min_geo_ttl: u32,
+    negative_cache_ttl: u32,
+    cache: Option<Arc<DnsCache>>,
+    dnssec: Option<Arc<RwLock<DnsSecKeyManager>>>,
+    signer_name: Option<String>,
+    rrl_enabled: bool,
+    zone_transfer: Option<Arc<super::transfer::ZoneTransfer>>,
+    ecs_filter_config: super::edns::EcsFilterConfig,
+    update_handler: Option<super::update::DynamicUpdateHandler>,
+    notify_handler: Option<super::notify::NotifyHandler>,
+    query_coalescer: Option<Arc<super::query_coalesce::QueryCoalescer>>,
+}
+
 #[allow(dead_code)]
 pub struct DnsServer {
     config: Arc<DnsConfig>,
@@ -942,6 +964,29 @@ impl DnsServer {
             mesh_transport: None,
             zone_sync: None,
             recursive_server: None,
+        }
+    }
+
+    fn build_handler_state(&self) -> DnsHandlerState {
+        DnsHandlerState {
+            zones: self.zones.clone(),
+            zone_trie: self.zone_trie.clone(),
+            zone_index: self.zone_index.clone(),
+            rate_limiter: self.rate_limiter.clone(),
+            query_validator: self.query_validator.clone(),
+            firewall: self.firewall.clone(),
+            connection_limits: self.connection_limits.clone(),
+            min_geo_ttl: self.config.settings.min_geo_ttl,
+            negative_cache_ttl: self.config.settings.negative_cache_ttl,
+            cache: self.cache.clone(),
+            dnssec: self.dnssec.clone(),
+            signer_name: self.signer_name.clone(),
+            rrl_enabled: self.rrl_enabled,
+            zone_transfer: self.zone_transfer.clone(),
+            ecs_filter_config: self.ecs_filter_config.clone(),
+            update_handler: self.update_handler.clone(),
+            notify_handler: self.notify_handler.clone(),
+            query_coalescer: self.query_coalescer.clone(),
         }
     }
 
@@ -1344,26 +1389,9 @@ impl DnsServer {
         
         tracing::info!("Starting anycast DNS on {:?}", bound_addresses);
 
-        let zones = self.zones.clone();
-        let zone_trie = self.zone_trie.clone();
-        let zone_index = self.zone_index.clone();
-        let rate_limiter = self.rate_limiter.clone();
+        let state = self.build_handler_state();
         let mesh_registry = self.mesh_registry.clone();
         let geoip_lookup = self.geoip_lookup.clone();
-        let query_validator = self.query_validator.clone();
-        let firewall = self.firewall.clone();
-        let connection_limits = self.connection_limits.clone();
-        let min_geo_ttl = self.config.settings.min_geo_ttl;
-        let negative_cache_ttl = self.config.settings.negative_cache_ttl;
-        let cache = self.cache.clone();
-        let dnssec = self.dnssec.clone();
-        let signer_name = self.signer_name.clone();
-        let rrl_enabled = self.rrl_enabled;
-        let zone_transfer = self.zone_transfer.clone();
-        let ecs_filter_config = self.ecs_filter_config.clone();
-        let update_handler = self.update_handler.clone();
-        let notify_handler = self.notify_handler.clone();
-        let query_coalescer = self.query_coalescer.clone();
         let anycast_mgr = anycast_manager.clone();
         let config = self.config.clone();
         
@@ -1372,28 +1400,33 @@ impl DnsServer {
         let tx = tx_udp;
         self.shutdown_tx = Some(tx);
 
-        let zones_udp = zones.clone();
-        let zone_trie_udp = zone_trie.clone();
-        let _zone_index_udp = zone_index.clone();
-        let rate_limiter_udp = rate_limiter.clone();
-        let query_validator_udp = query_validator.clone();
-        let firewall_udp = firewall.clone();
+        let udp_state = state.clone();
         let mesh_registry_udp = mesh_registry.clone();
         let geoip_lookup_udp = geoip_lookup.clone();
-        let cache_udp = cache.clone();
-        let dnssec_udp = dnssec.clone();
-        let signer_name_udp = signer_name.clone();
-        let rrl_enabled_udp = rrl_enabled;
-        let zone_transfer_udp = zone_transfer.clone();
-        let ecs_filter_config_udp = ecs_filter_config.clone();
-        let update_handler_udp = update_handler.clone();
-        let notify_handler_udp = notify_handler.clone();
-        let query_coalescer_udp = query_coalescer.clone();
         let anycast_udp = anycast_mgr.clone();
-        
         let udp_buffer_size = config.limits.udp_buffer_size;
 
         tokio::spawn(async move {
+            let DnsHandlerState {
+                zones: zones_udp,
+                zone_trie: zone_trie_udp,
+                zone_index: _zone_index_udp,
+                rate_limiter: rate_limiter_udp,
+                query_validator: query_validator_udp,
+                firewall: firewall_udp,
+                connection_limits: _connection_limits_udp,
+                min_geo_ttl,
+                negative_cache_ttl,
+                cache: cache_udp,
+                dnssec: dnssec_udp,
+                signer_name: signer_name_udp,
+                rrl_enabled: rrl_enabled_udp,
+                zone_transfer: zone_transfer_udp,
+                ecs_filter_config: ecs_filter_config_udp,
+                update_handler: update_handler_udp,
+                notify_handler: notify_handler_udp,
+                query_coalescer: query_coalescer_udp,
+            } = udp_state;
             let mut buf = vec![0u8; udp_buffer_size];
             
             loop {
@@ -1678,27 +1711,31 @@ update_handler_udp.as_ref(),
         let (shutdown_tx, _) = tokio::sync::broadcast::channel::<()>(1);
         let mut shutdown_rx = shutdown_tx.subscribe();
 
-        let zones_tcp = zones.clone();
-        let zone_trie_tcp = zone_trie.clone();
-        let zone_index_tcp = zone_index.clone();
-        let rate_limiter_tcp = rate_limiter.clone();
-        let query_validator_tcp = query_validator.clone();
-        let firewall_tcp = firewall.clone();
-        let connection_limits_tcp = connection_limits.clone();
-        let mesh_registry_tcp = mesh_registry.clone();
-        let geoip_lookup_tcp = geoip_lookup.clone();
-        let min_geo_ttl = min_geo_ttl;
-        let cache_tcp = cache.clone();
-        let dnssec_tcp = dnssec.clone();
-        let signer_name_tcp = signer_name.clone();
-        let zone_transfer_tcp = zone_transfer.clone();
-        let ecs_filter_config_tcp = ecs_filter_config.clone();
-        let update_handler_tcp = update_handler.clone();
-        let notify_handler_tcp = notify_handler.clone();
-        let rrl_enabled_tcp = rrl_enabled;
-        let query_coalescer_tcp = query_coalescer.clone();
+        let tcp_state = state;
+        let mesh_registry_tcp = mesh_registry;
+        let geoip_lookup_tcp = geoip_lookup;
         
         tokio::spawn(async move {
+            let DnsHandlerState {
+                zones: zones_tcp,
+                zone_trie: zone_trie_tcp,
+                zone_index: zone_index_tcp,
+                rate_limiter: rate_limiter_tcp,
+                query_validator: query_validator_tcp,
+                firewall: firewall_tcp,
+                connection_limits: connection_limits_tcp,
+                min_geo_ttl,
+                negative_cache_ttl,
+                cache: cache_tcp,
+                dnssec: dnssec_tcp,
+                signer_name: signer_name_tcp,
+                rrl_enabled: rrl_enabled_tcp,
+                zone_transfer: zone_transfer_tcp,
+                ecs_filter_config: ecs_filter_config_tcp,
+                update_handler: update_handler_tcp,
+                notify_handler: notify_handler_tcp,
+                query_coalescer: query_coalescer_tcp,
+            } = tcp_state;
             loop {
                 tokio::select! {
                     result = anycast_mgr_tcp.accept_tcp() => {
@@ -1783,51 +1820,41 @@ update_handler_udp.as_ref(),
 
         tracing::info!("DNS server listening on {} (UDP + TCP)", bind_addr);
 
-        let zones = self.zones.clone();
-        let zone_index = self.zone_index.clone();
-        let rate_limiter = self.rate_limiter.clone();
+        let state = self.build_handler_state();
         let mesh_registry = self.mesh_registry.clone();
         let geoip_lookup = self.geoip_lookup.clone();
-        let query_validator = self.query_validator.clone();
-        let firewall = self.firewall.clone();
-        let connection_limits = self.connection_limits.clone();
-        let min_geo_ttl = self.config.settings.min_geo_ttl;
-        let negative_cache_ttl = self.config.settings.negative_cache_ttl;
-        let cache = self.cache.clone();
-        let dnssec = self.dnssec.clone();
-        let signer_name = self.signer_name.clone();
-        let rrl_enabled = self.rrl_enabled;
-        let zone_transfer = self.zone_transfer.clone();
-        let ecs_filter_config = self.ecs_filter_config.clone();
-        let update_handler = self.update_handler.clone();
-        let notify_handler = self.notify_handler.clone();
-        let query_coalescer = self.query_coalescer.clone();
+        let udp_buffer_size = self.config.limits.udp_buffer_size;
         
         let (tx_udp, mut rx_udp) = tokio::sync::oneshot::channel::<()>();
         let (tx_tcp, mut rx_tcp) = tokio::sync::oneshot::channel::<()>();
         let tx = tx_udp;
         self.shutdown_tx = Some(tx);
 
-        let zones_udp = zones.clone();
-        let zone_trie_udp = self.zone_trie.clone();
-        let _zone_index_udp = zone_index.clone();
-        let rate_limiter_udp = rate_limiter.clone();
-        let query_validator_udp = query_validator.clone();
-        let firewall_udp = firewall.clone();
+        let udp_state = state.clone();
         let mesh_registry_udp = mesh_registry.clone();
         let geoip_lookup_udp = geoip_lookup.clone();
-        let cache_udp = cache.clone();
-        let dnssec_udp = dnssec.clone();
-        let signer_name_udp = signer_name.clone();
-        let rrl_enabled_udp = rrl_enabled;
-        let zone_transfer_udp = zone_transfer.clone();
-        let ecs_filter_config_udp = ecs_filter_config.clone();
-        let update_handler_udp = update_handler.clone();
-        let notify_handler_udp = notify_handler.clone();
-        let query_coalescer_udp = query_coalescer.clone();
-        let udp_buffer_size = self.config.limits.udp_buffer_size;
         
         tokio::spawn(async move {
+            let DnsHandlerState {
+                zones: zones_udp,
+                zone_trie: zone_trie_udp,
+                zone_index: _zone_index_udp,
+                rate_limiter: rate_limiter_udp,
+                query_validator: query_validator_udp,
+                firewall: firewall_udp,
+                connection_limits: _connection_limits_udp,
+                min_geo_ttl,
+                negative_cache_ttl,
+                cache: cache_udp,
+                dnssec: dnssec_udp,
+                signer_name: signer_name_udp,
+                rrl_enabled: rrl_enabled_udp,
+                zone_transfer: zone_transfer_udp,
+                ecs_filter_config: ecs_filter_config_udp,
+                update_handler: update_handler_udp,
+                notify_handler: notify_handler_udp,
+                query_coalescer: query_coalescer_udp,
+            } = udp_state;
             let mut buf = vec![0u8; udp_buffer_size];
             
             loop {
@@ -2108,30 +2135,33 @@ update_handler_udp.as_ref(),
             }
         });
 
-        let zones_tcp = zones.clone();
-        let zone_trie_tcp = self.zone_trie.clone();
-        let zone_index_tcp = zone_index.clone();
-        let rate_limiter_tcp = rate_limiter.clone();
-        let query_validator_tcp = query_validator.clone();
-        let firewall_tcp = firewall.clone();
-        let connection_limits_tcp = connection_limits.clone();
-        let mesh_registry_tcp = mesh_registry.clone();
-        let geoip_lookup_tcp = geoip_lookup.clone();
-        let min_geo_ttl = min_geo_ttl;
-        let cache_tcp = cache;
-        let dnssec_tcp = dnssec;
-        let signer_name_tcp = signer_name;
-        let zone_transfer_tcp = zone_transfer;
-        let ecs_filter_config = self.ecs_filter_config.clone();
-        let ecs_filter_config_tcp = ecs_filter_config.clone();
-        let update_handler_tcp = self.update_handler.clone();
-        let notify_handler_tcp = self.notify_handler.clone();
-        let rrl_enabled_tcp = rrl_enabled;
-        let udp_buffer_size = self.config.limits.udp_buffer_size;
-        let query_coalescer_tcp = query_coalescer.clone();
+        let tcp_state = state;
+        let mesh_registry_tcp = mesh_registry;
+        let geoip_lookup_tcp = geoip_lookup;
+        let tcp_buffer_size = self.config.limits.udp_buffer_size;
 
         tokio::spawn(async move {
-            let _buf = vec![0u8; udp_buffer_size];
+            let DnsHandlerState {
+                zones: zones_tcp,
+                zone_trie: zone_trie_tcp,
+                zone_index: zone_index_tcp,
+                rate_limiter: rate_limiter_tcp,
+                query_validator: query_validator_tcp,
+                firewall: firewall_tcp,
+                connection_limits: connection_limits_tcp,
+                min_geo_ttl,
+                negative_cache_ttl,
+                cache: cache_tcp,
+                dnssec: dnssec_tcp,
+                signer_name: signer_name_tcp,
+                rrl_enabled: rrl_enabled_tcp,
+                zone_transfer: zone_transfer_tcp,
+                ecs_filter_config: ecs_filter_config_tcp,
+                update_handler: update_handler_tcp,
+                notify_handler: notify_handler_tcp,
+                query_coalescer: query_coalescer_tcp,
+            } = tcp_state;
+            let _buf = vec![0u8; tcp_buffer_size];
             
             loop {
                 tokio::select! {
