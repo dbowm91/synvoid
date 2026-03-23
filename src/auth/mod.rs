@@ -15,7 +15,6 @@ use crate::DrainFlag;
 pub mod basic;
 pub use basic::{BasicAuthManager, BasicAuthResult};
 
-#[allow(dead_code)]
 async fn verify_dummy_password(password: &str) {
     let dummy_hash = "$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5GyYzS.xJ5mW6";
     let start = std::time::Instant::now();
@@ -27,7 +26,6 @@ async fn verify_dummy_password(password: &str) {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[allow(dead_code)]
 pub struct User {
     pub id: String,
     pub username: String,
@@ -93,7 +91,6 @@ pub struct LoginLog {
     pub reason: Option<String>,
 }
 
-#[allow(dead_code)]
 pub struct AuthManager {
     data_dir: PathBuf,
     store: Arc<RwLock<AuthStore>>,

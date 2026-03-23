@@ -504,7 +504,6 @@ impl RateLimiterManager {
     }
 }
 
-#[allow(dead_code)]
 pub struct GlobalConnectionPermit {
     semaphore: Arc<Semaphore>,
     _permit: tokio::sync::OwnedSemaphorePermit,

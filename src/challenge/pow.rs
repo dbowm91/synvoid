@@ -1,4 +1,4 @@
-#![allow(unused_variables, dead_code)]
+#![allow(dead_code)]
 
 use crate::theme::{ChallengePageTemplate, ThemeConfig};
 use crate::utils::current_timestamp;

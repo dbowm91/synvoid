@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use chrono::{DateTime, Datelike, TimeZone, Utc};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
@@ -8,9 +6,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
-
-const DEFAULT_ROLLING_WINDOW_DAYS: u32 = 30;
+use std::time::Instant;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct BandwidthPersistedState {
@@ -21,7 +17,6 @@ struct BandwidthPersistedState {
     monthly_period_start: DateTime<Utc>,
 }
 
-const WINDOW_SIZE_SECS: u64 = 60;
 const EMA_ALPHA: f64 = 0.3;
 
 static GLOBAL_TRACKER: parking_lot::Mutex<Option<Arc<BandwidthTracker>>> =
@@ -135,7 +130,6 @@ pub struct BandwidthTracker {
     pub per_site: RwLock<HashMap<String, SiteBandwidth>>,
     pub per_upstream: RwLock<HashMap<String, UpstreamBandwidth>>,
 
-    retention_duration: Duration,
     mesh_excluded: bool,
 
     ingress_rate: AtomicU64,
@@ -190,7 +184,7 @@ impl std::fmt::Debug for BandwidthTracker {
 }
 
 impl BandwidthTracker {
-    pub fn new(retention_days: u32, mesh_excluded: bool) -> Self {
+    pub fn new(_retention_days: u32, mesh_excluded: bool) -> Self {
         let now = Instant::now();
         let period_start = Utc::now();
         Self {
@@ -217,7 +211,6 @@ impl BandwidthTracker {
             mesh_bytes_sent: AtomicU64::new(0),
             per_site: RwLock::new(HashMap::new()),
             per_upstream: RwLock::new(HashMap::new()),
-            retention_duration: Duration::from_secs(retention_days as u64 * 24 * 60 * 60),
             mesh_excluded,
             ingress_rate: AtomicU64::new(0),
             egress_rate: AtomicU64::new(0),

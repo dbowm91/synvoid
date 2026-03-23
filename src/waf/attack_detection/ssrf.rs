@@ -7,7 +7,6 @@ use crate::waf::attack_detection::config::{AttackDetectionResult, AttackType, In
 use crate::waf::attack_detection::detector_common::{BasePatternDetector, PatternDetector};
 use crate::waf::attack_detection::patterns::DefaultPatterns;
 
-#[allow(dead_code)]
 pub struct SsrfDetector {
     inner: BasePatternDetector,
     block_private_ips: bool,

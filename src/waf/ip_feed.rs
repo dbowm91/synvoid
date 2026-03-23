@@ -53,7 +53,6 @@ impl BlockedNetwork {
     }
 }
 
-#[allow(dead_code)]
 pub struct IpFeedManager {
     blocked_networks: Arc<RwLock<Vec<BlockedNetwork>>>,
     blocked_ips: Arc<RwLock<HashSet<IpAddr>>>,
@@ -222,7 +221,6 @@ impl IpFeedManager {
     }
 }
 
-#[allow(dead_code)]
 pub struct MultiFeedManager {
     feeds: Vec<Arc<IpFeedManager>>,
     config: IpFeedConfig,

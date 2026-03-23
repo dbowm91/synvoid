@@ -1,9 +1,6 @@
 pub struct GeoIpUpdater {
-    #[allow(dead_code)]
     update_url: String,
-    #[allow(dead_code)]
     database_path: String,
-    #[allow(dead_code)]
     update_interval_secs: u64,
 }
 

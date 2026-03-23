@@ -17,7 +17,6 @@ fn get_monotonic_time_ms() -> u64 {
     start.elapsed().as_millis() as u64
 }
 
-#[allow(dead_code)]
 pub struct ShardedRateLimiter {
     shards: Box<[RateLimitShard]>,
     config: RateLimitConfig,
@@ -29,7 +28,6 @@ struct RateLimitShard {
 }
 
 #[derive(Clone)]
-#[allow(dead_code)]
 pub struct RateLimitConfig {
     pub per_second: u32,
     pub per_minute: u32,

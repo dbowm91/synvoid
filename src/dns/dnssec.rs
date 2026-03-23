@@ -1008,7 +1008,6 @@ pub fn sign_data(data: &[u8], key: &ZoneSigningKey) -> Result<Vec<u8>, String> {
     }
 }
 
-#[allow(dead_code)]
 fn extract_rsa_modulus(der_bytes: &[u8]) -> Vec<u8> {
     let mut i = 0;
     if der_bytes.len() < 2 || der_bytes[0] != 0x30 {

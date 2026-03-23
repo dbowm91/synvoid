@@ -53,7 +53,6 @@ struct InnerDnsCache {
     max_capacity: usize,
     serve_stale_enabled: bool,
     serve_stale_max_stale: Duration,
-    #[allow(dead_code)]
     serve_stale_max_count: usize,
 }
 
@@ -527,7 +526,6 @@ impl Default for SecureDnsCache {
     }
 }
 
-#[allow(dead_code)]
 fn skip_name(data: &[u8], mut offset: usize) -> Option<usize> {
     loop {
         if offset >= data.len() {
@@ -548,7 +546,6 @@ fn skip_name(data: &[u8], mut offset: usize) -> Option<usize> {
     }
 }
 
-#[allow(dead_code)]
 pub(crate) fn detect_dnssec_signed(data: &[u8]) -> bool {
     if data.len() < 12 {
         return false;

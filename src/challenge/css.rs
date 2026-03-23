@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use crate::theme::{ChallengePageTemplate, ThemeConfig};
 use crate::utils::current_timestamp;
 use parking_lot::RwLock;
@@ -19,13 +17,11 @@ pub struct CssManager {
     asset_path: String,
     verification_window_secs: u32,
     sessions: Arc<RwLock<CssSessionStore>>,
-    max_sessions: usize,
     theme: ThemeConfig,
 }
 
 struct CssSessionStore {
     sessions: HashMap<String, CssSession>,
-    cleanup_counter: u64,
     max_sessions: usize,
 }
 
@@ -33,7 +29,6 @@ impl CssSessionStore {
     fn new(max_sessions: usize) -> Self {
         Self {
             sessions: HashMap::new(),
-            cleanup_counter: 0,
             max_sessions,
         }
     }
@@ -71,7 +66,6 @@ impl CssManager {
             asset_path,
             verification_window_secs: verification_window_secs.max(30),
             sessions: Arc::new(RwLock::new(CssSessionStore::new(DEFAULT_MAX_SESSIONS))),
-            max_sessions: DEFAULT_MAX_SESSIONS,
             theme: ThemeConfig::default(),
         }
     }

@@ -11,7 +11,6 @@ use crate::supervisor::worker::{Worker, WorkerId, WorkerStatus};
 use crate::supervisor::autoscaler::AutoScaler;
 use crate::RunningFlag;
 
-#[allow(dead_code)]
 pub struct Supervisor {
     config: SupervisorConfig,
     workers: Arc<PLRwLock<Vec<Arc<Worker>>>>,

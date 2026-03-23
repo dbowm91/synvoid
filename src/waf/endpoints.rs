@@ -6,7 +6,6 @@ use regex::Regex;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-#[allow(dead_code)]
 pub struct EndpointBlocker {
     blocked_patterns: Vec<Regex>,
     invalid_patterns: Vec<String>,

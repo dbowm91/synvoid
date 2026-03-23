@@ -17,7 +17,6 @@ struct InnerCookieServer {
     enable_validation: bool,
 }
 
-#[allow(dead_code)]
 struct CookieEntry {
     client_ip: IpAddr,
     created_at: Instant,

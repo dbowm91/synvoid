@@ -1,5 +1,3 @@
-#![allow(unused_mut)]
-
 pub mod config;
 mod local_listener;
 mod events;

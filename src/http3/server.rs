@@ -20,7 +20,6 @@ pub struct Http3Server {
     router: Arc<Router>,
     waf: Arc<WafCore>,
     flood_protector: Option<Arc<FloodProtector>>,
-    #[allow(dead_code)]
     shutdown_rx: broadcast::Receiver<()>,
 }
 

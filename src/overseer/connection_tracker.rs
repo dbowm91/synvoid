@@ -1,4 +1,4 @@
-#![allow(unused_variables, dead_code)]
+#![allow(dead_code)]
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -146,7 +146,7 @@ impl ConnectionTracker {
             None => (false, None),
         };
 
-        let drain_remaining_secs = if is_draining {
+        let _drain_remaining_secs = if is_draining {
             drain_elapsed_secs.map(|elapsed| drain_timeout.saturating_sub(elapsed))
         } else {
             None

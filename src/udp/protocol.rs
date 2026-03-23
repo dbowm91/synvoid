@@ -176,7 +176,6 @@ impl UdpProtocolDetector {
         UdpProtocol::Unknown
     }
 
-    #[allow(dead_code)]
     fn has_valid_dns_question(&self, data: &[u8], _is_query: bool) -> bool {
         let mut pos = 12;
         let max_pos = data.len();
@@ -361,7 +360,6 @@ impl UdpProtocolDetector {
         false
     }
 
-    #[allow(dead_code)]
     fn looks_like_mdns(&self, data: &[u8]) -> bool {
         if data.len() < 12 {
             return false;

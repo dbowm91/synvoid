@@ -17,7 +17,6 @@ use crate::process::{
 use crate::utils::errors;
 use crate::RunningFlag;
 
-#[allow(dead_code)]
 pub struct OverseerProcess {
     master_child: Option<Child>,
     upgraded_master_child: Option<Child>,

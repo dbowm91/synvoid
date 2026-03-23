@@ -1,13 +1,9 @@
-#![allow(dead_code)]
-
 use crate::theme::{ChallengePageTemplate, ThemeConfig};
 use crate::utils::current_timestamp;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-
-const MAX_NONCE: u64 = 100_000_000;
 
 #[derive(Debug, Clone)]
 pub struct MeshPowChallenge {
@@ -262,7 +258,9 @@ pub enum MeshPowResult {
     Invalid,
 }
 
-pub fn solve_pow_sync(challenge: &str, difficulty: u8) -> Option<String> {
+#[cfg(test)]
+pub(crate) fn solve_pow_sync(challenge: &str, difficulty: u8) -> Option<String> {
+    const MAX_NONCE: u64 = 100_000_000;
     let zeros = difficulty as usize;
 
     for nonce in 0..MAX_NONCE {

@@ -15,13 +15,11 @@ struct IpcConnectionPoolInner {
 }
 
 #[derive(Clone)]
-#[allow(dead_code)]
 struct PoolConfig {
     max_connections_per_endpoint: usize,
     connection_ttl: Duration,
 }
 
-#[allow(dead_code)]
 #[derive(Clone, Default)]
 struct EndpointStats {
     active_connections: Arc<AtomicUsize>,
@@ -106,7 +104,6 @@ impl IpcConnectionPool {
     }
 }
 
-#[allow(dead_code)]
 pub struct ConnectionPermit {
     endpoint_name: String,
     active_counter: Arc<AtomicUsize>,

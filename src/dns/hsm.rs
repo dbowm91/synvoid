@@ -56,7 +56,6 @@ pub enum HsmBackend {
     Soft(SoftHsm),
 }
 
-#[allow(dead_code)]
 pub struct Pkcs11Hsm {
     context: cryptoki::context::Pkcs11,
     slot: cryptoki::slot::Slot,

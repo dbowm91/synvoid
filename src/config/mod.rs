@@ -1,5 +1,3 @@
-#![allow(unused_mut)]
-
 pub mod admin;
 pub mod defaults;
 pub mod dns;

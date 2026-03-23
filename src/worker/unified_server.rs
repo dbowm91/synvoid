@@ -604,7 +604,7 @@ pub async fn run_unified_server_worker(args: UnifiedServerWorkerArgs) -> Result<
         }
     });
 
-    let bandwidth_persist_handle = tokio::spawn(async move {
+    let _bandwidth_persist_handle = tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(60));
         
         loop {
@@ -733,7 +733,7 @@ pub async fn run_unified_server_worker(args: UnifiedServerWorkerArgs) -> Result<
                         ipc_state.worker_id
                     );
 
-                    let remaining = wait_for_drain(
+                    let _remaining = wait_for_drain(
                         &ipc_state.drain_state,
                         timeout_secs,
                         &ipc_state.worker_id,

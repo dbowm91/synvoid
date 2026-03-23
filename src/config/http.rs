@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use serde::{Deserialize, Serialize};
 
 use super::validation::ConfigValidationError;
@@ -178,10 +176,4 @@ impl Default for TokioConfig {
                 .unwrap_or(4),
         }
     }
-}
-
-fn default_worker_threads() -> usize {
-    std::thread::available_parallelism()
-        .map(|p| p.get())
-        .unwrap_or(4)
 }

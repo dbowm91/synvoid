@@ -93,7 +93,6 @@ impl Default for QueryCoalescerMetrics {
     }
 }
 
-#[allow(dead_code)]
 pub struct QueryCoalescer {
     in_flight: Arc<RwLock<HashMap<QueryKey, CoalescerEntry>>>,
     max_wait_time: Duration,

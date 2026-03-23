@@ -8,7 +8,6 @@ use tokio::sync::RwLock;
 use super::async_bucket::AsyncTokenBucket;
 
 #[derive(Clone)]
-#[allow(dead_code)]
 pub struct GlobalTrafficShaper {
     config: GlobalTrafficShapingConfig,
     bandwidth_config: BandwidthConfig,

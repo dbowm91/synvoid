@@ -18,7 +18,6 @@ use crate::platform::{OwnedTcpListener, OwnedTcpStream};
 const MAX_FDS_PER_MESSAGE: usize = 254;
 
 #[cfg(not(unix))]
-#[allow(dead_code)]
 const MAX_FDS_PER_MESSAGE: usize = 1;
 
 #[cfg(unix)]
@@ -89,7 +88,6 @@ pub struct SocketFDPassing {
 }
 
 #[cfg(not(unix))]
-#[allow(dead_code)]
 pub struct SocketFDPassing {
     connected: bool,
 }
@@ -220,34 +218,29 @@ impl SocketFDPassing {
         Self { connected: false }
     }
 
-    #[allow(dead_code)]
     pub fn connect(&mut self, _path: &Path) -> io::Result<()> {
         self.connected = true;
         Ok(())
     }
 
-    #[allow(dead_code)]
     pub fn send_fds(&self, _fds: &[i32]) -> Result<(), SocketFDError> {
         Err(SocketFDError::NotSupported(
             "File descriptor passing is not supported on this platform".to_string(),
         ))
     }
 
-    #[allow(dead_code)]
     pub fn send_fds_with_data(&self, _fds: &[i32], _data: &[u8]) -> Result<(), SocketFDError> {
         Err(SocketFDError::NotSupported(
             "File descriptor passing is not supported on this platform".to_string(),
         ))
     }
 
-    #[allow(dead_code)]
     pub fn recv_fds(&self, _max_fds: usize) -> Result<(Vec<i32>, Vec<u8>), SocketFDError> {
         Err(SocketFDError::NotSupported(
             "File descriptor passing is not supported on this platform".to_string(),
         ))
     }
 
-    #[allow(dead_code)]
     pub fn recv_fds_only(&self, _max_fds: usize) -> Result<Vec<i32>, SocketFDError> {
         Err(SocketFDError::NotSupported(
             "File descriptor passing is not supported on this platform".to_string(),
@@ -293,7 +286,6 @@ pub fn create_listening_socket(port: u16, reuse_port: bool) -> Result<RawFd, Soc
 }
 
 #[cfg(not(unix))]
-#[allow(dead_code)]
 pub fn create_listening_socket(port: u16, _reuse_port: bool) -> Result<isize, SocketFDError> {
     use std::net::TcpListener;
 
@@ -351,7 +343,6 @@ pub fn create_listening_socket_v6(port: u16, reuse_port: bool) -> Result<RawFd, 
 }
 
 #[cfg(not(unix))]
-#[allow(dead_code)]
 pub fn create_listening_socket_v6(port: u16, _reuse_port: bool) -> Result<isize, SocketFDError> {
     use std::net::TcpListener;
 
@@ -379,7 +370,6 @@ pub unsafe fn raw_fd_to_tcp_listener(fd: RawFd) -> std::net::TcpListener {
 /// Converts a raw file descriptor into a TcpListener, taking ownership.
 /// This is a safe wrapper that handles the raw fd properly.
 #[cfg(not(unix))]
-#[allow(dead_code)]
 pub unsafe fn raw_fd_to_tcp_listener(fd: isize) -> std::net::TcpListener {
     std::net::TcpListener::from_raw_fd(fd as i32)
 }
@@ -387,7 +377,6 @@ pub unsafe fn raw_fd_to_tcp_listener(fd: isize) -> std::net::TcpListener {
 /// Converts a raw file descriptor into a TcpStream, taking ownership.
 /// This is a safe wrapper that handles the raw fd properly.
 #[cfg(not(unix))]
-#[allow(dead_code)]
 pub unsafe fn raw_fd_to_tcp_stream(fd: isize) -> std::net::TcpStream {
     std::net::TcpStream::from_raw_fd(fd as i32)
 }
@@ -407,7 +396,6 @@ pub fn close_fd(fd: RawFd) -> io::Result<()> {
 }
 
 #[cfg(not(unix))]
-#[allow(dead_code)]
 pub fn close_fd(_fd: isize) -> io::Result<()> {
     Ok(())
 }

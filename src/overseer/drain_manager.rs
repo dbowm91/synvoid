@@ -1,4 +1,4 @@
-#![allow(unused_variables, dead_code)]
+#![allow(dead_code)]
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -118,7 +118,7 @@ impl DrainManager {
         
         let total_active: u64 = workers.values().map(|w| w.active_connections).sum();
         let total_idle: u64 = workers.values().map(|w| w.idle_connections).sum();
-        let total_drained: u64 = workers.values().map(|w| w.connections_drained).sum();
+        let _total_drained: u64 = workers.values().map(|w| w.connections_drained).sum();
         let all_complete = !workers.is_empty() && workers.values().all(|w| w.drain_complete);
         
         let start_time = self.drain_start_time.blocking_lock();
@@ -224,7 +224,7 @@ impl DrainProtocol {
                     is_draining,
                     active_connections,
                     idle_connections,
-                    connections_drained,
+                    connections_drained: _,
                     drain_elapsed_secs,
                     drain_complete,
                 } = msg

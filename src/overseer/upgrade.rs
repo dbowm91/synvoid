@@ -799,20 +799,14 @@ impl Orchestrator {
         use serde::Deserialize;
         
         #[derive(Deserialize)]
-        #[allow(dead_code)]
         struct DrainStatusResponse {
-            #[allow(dead_code)]
             drain_id: u64,
             is_draining: bool,
             active_connections: u64,
-            #[allow(dead_code)]
             idle_connections: u64,
-            #[allow(dead_code)]
             connections_drained: u64,
-            #[allow(dead_code)]
             drain_elapsed_secs: u64,
             drain_complete: bool,
-            #[allow(dead_code)]
             stopped_accepting: bool,
         }
 

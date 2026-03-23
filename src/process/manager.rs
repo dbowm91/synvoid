@@ -1,4 +1,3 @@
-#![allow(unused_variables)]
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -881,7 +880,7 @@ impl ProcessManager {
 
     const MAX_REQUEST_LOGS: usize = 10000;
 
-    pub fn handle_request_log(&self, worker_id: WorkerId, log: RequestLogPayload) {
+    pub fn handle_request_log(&self, _worker_id: WorkerId, log: RequestLogPayload) {
         let mut logs = self.request_logs.write();
         if logs.len() >= Self::MAX_REQUEST_LOGS {
             logs.remove(0);

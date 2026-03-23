@@ -79,7 +79,6 @@ pub struct PluginManager {
     axum_plugins: RwLock<Vec<Arc<AxumPluginWrapper>>>,
 }
 
-#[allow(dead_code)]
 struct AxumPluginWrapper {
     router: axum::Router<()>,
     name: String,

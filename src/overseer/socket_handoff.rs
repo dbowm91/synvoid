@@ -1,4 +1,4 @@
-#![allow(unused_variables, dead_code)]
+#![allow(dead_code)]
 
 use std::io;
 #[cfg(unix)]
@@ -356,7 +356,7 @@ impl SocketHandoffClient {
     #[cfg(unix)]
     pub async fn request_socket_handoff(
         &self,
-        expected_ports: &[u16],
+        _expected_ports: &[u16],
     ) -> Result<SocketHolder, SocketHandoffError> {
         let start = std::time::Instant::now();
         let timeout = Duration::from_secs(HANDOFF_TIMEOUT_SECS);

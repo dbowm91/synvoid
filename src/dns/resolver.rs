@@ -535,7 +535,6 @@ pub struct LookupResult {
     pub is_dnssec_validated: bool,
 }
 
-#[allow(dead_code)]
 pub struct HickoryRecursor {
     recursor: Arc<hickory_recursor::Recursor>,
     enable_dnssec: bool,

@@ -9,7 +9,6 @@ use super::super::state::AdminState;
 
 use super::common::{ErrorPage, require_auth, OptionalAuth};
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct LogsQuery {
     pub level: Option<String>,

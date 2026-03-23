@@ -2,13 +2,11 @@ use parking_lot::Mutex;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-#[allow(dead_code)]
 #[derive(Clone)]
 pub struct IpcRateLimiter {
     inner: Arc<IpcRateLimiterInner>,
 }
 
-#[allow(dead_code)]
 struct IpcRateLimiterInner {
     max_messages_per_second: u64,
     max_burst: u64,

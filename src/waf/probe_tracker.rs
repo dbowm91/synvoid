@@ -1,4 +1,4 @@
-#![allow(unused_variables, unused_mut)]
+#![allow(unused_mut)]
 
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
@@ -461,7 +461,6 @@ pub struct SuspiciousWordRecord {
     pub timestamp: u64,
 }
 
-#[allow(dead_code)]
 pub struct SuspiciousWordTracker {
     store: Arc<RwLock<HashMap<IpAddr, Vec<SuspiciousWordRecord>>>>,
     config: crate::config::SuspiciousWordsConfig,
@@ -604,7 +603,6 @@ pub struct UpstreamErrorRecord {
     pub timestamp: u64,
 }
 
-#[allow(dead_code)]
 pub struct UpstreamErrorTracker {
     store: Arc<RwLock<HashMap<IpAddr, Vec<UpstreamErrorRecord>>>>,
     config: crate::config::UpstreamErrorsConfig,

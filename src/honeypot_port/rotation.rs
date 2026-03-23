@@ -40,7 +40,6 @@ struct ActivePort {
     started_at: Instant,
 }
 
-#[allow(dead_code)]
 pub struct PortManager {
     mode: PortMode,
     config: Arc<PortHoneypotConfig>,

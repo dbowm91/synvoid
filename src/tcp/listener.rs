@@ -192,7 +192,6 @@ impl Default for TcpListenerPoolConfig {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 struct TcpListenerInstance {
     config: TcpListenerConfig,
     listen_addr: SocketAddr,

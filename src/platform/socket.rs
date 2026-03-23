@@ -1,4 +1,4 @@
-#![allow(unused_variables, dead_code)]
+#![allow(dead_code)]
 
 use std::io;
 use std::net::{TcpListener, TcpStream};
