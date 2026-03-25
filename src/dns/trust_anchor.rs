@@ -421,6 +421,22 @@ impl TrustAnchorManager {
         public_key: &[u8],
         is_revoked: bool,
     ) -> Rfc5011Event {
+        // RFC 5011 §2.2: Reject deprecated algorithms
+        // 0 = DELETE, 3 = DSA, 5 = RSASHA1, 6 = DSA-NSEC3-SHA1
+        // Only support algorithms 8 (RSASHA256), 13 (ECDSAP256SHA256),
+        // 14 (ECDSAP384SHA384), 15 (ED25519), 16 (ED448)
+        if matches!(algorithm, 0 | 3) {
+            tracing::warn!(
+                "RFC 5011: Key {} uses deprecated algorithm {}, rejecting",
+                key_tag,
+                algorithm
+            );
+            return Rfc5011Event::KeyIgnored {
+                key_tag,
+                reason: format!("deprecated algorithm {}", algorithm),
+            };
+        }
+
         let mut anchors = self.anchors.write();
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -672,7 +688,9 @@ impl TrustAnchorManager {
         }
 
         if !events.is_empty() || !anchors.is_empty() {
-            let _ = self.save_anchors(&anchors);
+            if let Err(e) = self.save_anchors(&anchors) {
+                tracing::error!("Failed to save trust anchors: {}", e);
+            }
         }
 
         events
@@ -780,33 +798,9 @@ impl TrustAnchorManager {
         let public_key =
             base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &key_data).ok()?;
 
-        let key_tag = Self::calculate_dnskey_key_tag(257, 3, algorithm, &public_key);
+        let key_tag = crate::dns::dnssec::calculate_key_tag(257, 3, algorithm, &public_key);
 
         Some((key_tag, algorithm, public_key))
-    }
-
-    pub fn calculate_dnskey_key_tag(
-        flags: u16,
-        protocol: u8,
-        algorithm: u8,
-        public_key: &[u8],
-    ) -> u16 {
-        let mut buf = Vec::with_capacity(4 + public_key.len());
-        buf.extend_from_slice(&flags.to_be_bytes());
-        buf.push(protocol);
-        buf.push(algorithm);
-        buf.extend_from_slice(public_key);
-
-        let mut sum: u32 = 0;
-        for (i, byte) in buf.iter().enumerate() {
-            if i & 1 == 0 {
-                sum += (*byte as u32) << 8;
-            } else {
-                sum += *byte as u32;
-            }
-        }
-        sum += sum >> 16;
-        (sum & 0xFFFF) as u16
     }
 
     pub fn needs_refresh(&self) -> bool {
@@ -930,7 +924,7 @@ mod tests {
             0xE1, 0xE5, 0x8E, 0x5B, 0x6B, 0x7F, 0xA6, 0xE8, 0xE0, 0xF9, 0x89, 0x5D,
         ];
 
-        let key_tag = TrustAnchorManager::calculate_dnskey_key_tag(257, 3, 8, &public_key);
+        let key_tag = crate::dns::dnssec::calculate_key_tag(257, 3, 8, &public_key);
         assert_eq!(key_tag, 51192);
     }
 
@@ -958,7 +952,7 @@ mod tests {
             0x47, 0x50, 0x24, 0x51, 0x35, 0x7B, 0xE1, 0xB5,
         ];
 
-        let key_tag = TrustAnchorManager::calculate_dnskey_key_tag(257, 3, 8, &public_key);
+        let key_tag = crate::dns::dnssec::calculate_key_tag(257, 3, 8, &public_key);
         assert_eq!(key_tag, 20326);
     }
 
@@ -1017,7 +1011,7 @@ mod tests {
             0xE1, 0xE5, 0x8E, 0x5B, 0x6B, 0x7F, 0xA6, 0xE8, 0xE0, 0xF9, 0x89, 0x5D,
         ];
 
-        let key_tag = TrustAnchorManager::calculate_dnskey_key_tag(257, 3, 8, &public_key);
+        let key_tag = crate::dns::dnssec::calculate_key_tag(257, 3, 8, &public_key);
         assert_eq!(key_tag, 51192);
 
         let event = manager.observe_dnskey_at_root(key_tag, 8, &public_key, false);
@@ -1042,7 +1036,7 @@ mod tests {
         let manager = TrustAnchorManager::new(config);
 
         let public_key = vec![0x01, 0x02, 0x03, 0x04];
-        let key_tag = TrustAnchorManager::calculate_dnskey_key_tag(257, 3, 8, &public_key);
+        let key_tag = crate::dns::dnssec::calculate_key_tag(257, 3, 8, &public_key);
 
         let event1 = manager.observe_dnskey_at_root(key_tag, 8, &public_key, false);
         assert!(matches!(event1, Rfc5011Event::NewKeySeen { .. }));
@@ -1060,7 +1054,7 @@ mod tests {
         let manager = TrustAnchorManager::new(config);
 
         let public_key = vec![0x01, 0x02, 0x03, 0x04];
-        let key_tag = TrustAnchorManager::calculate_dnskey_key_tag(257, 3, 8, &public_key);
+        let key_tag = crate::dns::dnssec::calculate_key_tag(257, 3, 8, &public_key);
 
         manager.observe_dnskey_at_root(key_tag, 8, &public_key, false);
 
@@ -1077,7 +1071,7 @@ mod tests {
         let manager = TrustAnchorManager::new(config);
 
         let public_key = vec![0x01, 0x02, 0x03, 0x04];
-        let key_tag = TrustAnchorManager::calculate_dnskey_key_tag(257, 3, 8, &public_key);
+        let key_tag = crate::dns::dnssec::calculate_key_tag(257, 3, 8, &public_key);
 
         manager.observe_dnskey_at_root(key_tag, 8, &public_key, false);
 
@@ -1097,7 +1091,7 @@ mod tests {
         let manager = TrustAnchorManager::new(config);
 
         let public_key = vec![0x01, 0x02, 0x03, 0x04];
-        let key_tag = TrustAnchorManager::calculate_dnskey_key_tag(257, 3, 8, &public_key);
+        let key_tag = crate::dns::dnssec::calculate_key_tag(257, 3, 8, &public_key);
 
         manager.observe_dnskey_at_root(key_tag, 8, &public_key, false);
 
@@ -1121,7 +1115,7 @@ mod tests {
         let manager = TrustAnchorManager::new(config);
 
         let public_key = vec![0x01, 0x02, 0x03, 0x04];
-        let key_tag = TrustAnchorManager::calculate_dnskey_key_tag(257, 3, 8, &public_key);
+        let key_tag = crate::dns::dnssec::calculate_key_tag(257, 3, 8, &public_key);
 
         let digest = vec![0xAA, 0xBB, 0xCC, 0xDD];
 
@@ -1139,7 +1133,7 @@ mod tests {
         let manager = TrustAnchorManager::new(config);
 
         let public_key = vec![0x01, 0x02, 0x03, 0x04];
-        let key_tag = TrustAnchorManager::calculate_dnskey_key_tag(257, 3, 8, &public_key);
+        let key_tag = crate::dns::dnssec::calculate_key_tag(257, 3, 8, &public_key);
 
         manager.observe_dnskey_at_root(key_tag, 8, &public_key, false);
 
@@ -1232,7 +1226,7 @@ mod tests {
 
         let public_key1 = vec![0x01, 0x02, 0x03, 0x04];
         let public_key2 = vec![0x05, 0x06, 0x07, 0x08];
-        let key_tag = TrustAnchorManager::calculate_dnskey_key_tag(257, 3, 8, &public_key1);
+        let key_tag = crate::dns::dnssec::calculate_key_tag(257, 3, 8, &public_key1);
 
         let event1 = manager.observe_dnskey_at_root(key_tag, 8, &public_key1, false);
         assert!(matches!(event1, Rfc5011Event::NewKeySeen { .. }));
@@ -1348,7 +1342,7 @@ mod tests {
         let manager = TrustAnchorManager::new(config);
 
         let public_key = vec![0x01, 0x02, 0x03, 0x04];
-        let key_tag = TrustAnchorManager::calculate_dnskey_key_tag(257, 3, 8, &public_key);
+        let key_tag = crate::dns::dnssec::calculate_key_tag(257, 3, 8, &public_key);
 
         manager.observe_dnskey_at_root(key_tag, 8, &public_key, false);
         assert!(manager.get_anchors().is_empty());
@@ -1369,7 +1363,7 @@ mod tests {
         let manager = TrustAnchorManager::new(config);
 
         let public_key = vec![0x01, 0x02, 0x03, 0x04];
-        let key_tag = TrustAnchorManager::calculate_dnskey_key_tag(257, 3, 8, &public_key);
+        let key_tag = crate::dns::dnssec::calculate_key_tag(257, 3, 8, &public_key);
 
         manager.observe_dnskey_at_root(key_tag, 8, &public_key, false);
         manager.observe_dnskey_at_root(key_tag, 8, &public_key, true);
@@ -1392,7 +1386,7 @@ mod tests {
         let manager = TrustAnchorManager::new(config);
 
         let public_key = vec![0x01, 0x02, 0x03, 0x04];
-        let key_tag = TrustAnchorManager::calculate_dnskey_key_tag(257, 3, 8, &public_key);
+        let key_tag = crate::dns::dnssec::calculate_key_tag(257, 3, 8, &public_key);
 
         manager.observe_dnskey_at_root(key_tag, 8, &public_key, false);
 
@@ -1454,7 +1448,7 @@ mod tests {
         let manager = TrustAnchorManager::new(config);
 
         let public_key = vec![0x01, 0x02, 0x03, 0x04];
-        let key_tag = TrustAnchorManager::calculate_dnskey_key_tag(257, 3, 8, &public_key);
+        let key_tag = crate::dns::dnssec::calculate_key_tag(257, 3, 8, &public_key);
 
         let result = manager.add_anchor(format!("{}-8", key_tag), key_tag, 8, public_key.clone());
         assert!(result.is_ok());

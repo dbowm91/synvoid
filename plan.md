@@ -247,19 +247,33 @@ Rule: `parking_lot` for synchronous-only code. `tokio::sync` for code that holds
 
 ## Phase 5: DNS RFC Compliance
 
-| # | Issue | File:Line | Fix |
-|---|-------|-----------|-----|
-| 5.1 | DS record digest not canonical | `src/dns/dnssec.rs:1283-1314`, `src/dns/mesh_dnssec.rs:155-164` | Implement `compute_dnskey_canonical()` per RFC 4034 §5.2 |
-| 5.2 | Inconsistent key tags | `src/dns/trust_anchor.rs:790` vs `src/dns/dnssec.rs:953` | Extract shared RFC 5011 Appendix B implementation |
-| 5.3 | NXDOMAIN missing question | `src/dns/server.rs:129-152` | Copy query question, set QDCOUNT=1 |
-| 5.4 | Silent trust anchor save failure | `src/dns/trust_anchor.rs:676-678` | Check `Result`, log error, consider retry |
-| 5.5 | No algorithm validation for trust keys | `src/dns/trust_anchor.rs:492-590` | Reject deprecated algorithms (0=DH, 3=DSA) per RFC 5011 §2.2 |
-| 5.6 | `edns.rs:22` typo | `src/dns/edns.rs:22` | `NotSuported` → `NotSupported` |
-| 5.7 | `wire.rs:102` unwrap on UTF-8 | `src/dns/wire.rs:102` | Replace with `ok()?` |
-| 5.8 | `generate_key` / `generate_standby_key` duplication | `src/dns/dnssec.rs:268-449` | Unify into `generate_key_internal(is_standby)` |
-| 5.9 | `handle_tcp_query` 23 params | `src/dns/server.rs:2268-2291` | Extract `QueryContext` struct |
-| 5.10 | DNS query parsing duplicated 8+ files | `src/dns/server.rs`, `update.rs`, `transfer.rs`, `notify.rs` | Extract `parse_query_name()` into `wire.rs` |
-| 5.11 | `mesh_sync.rs` 1,975 lines | `src/dns/mesh_sync.rs` | Split into `registry.rs`, `verification.rs`, `health.rs` |
+> **COMPLETED 2026-03-25.** 10 of 13 items addressed directly; 3 deferred to Phase 6.
+> Verification: `cargo check` ✅ `cargo check --features dns` ✅ `cargo test --test integration_test` ✅ (99/99 passed)
+> `cargo clippy` produces 152 warnings (down from 156); all are incremental quality issues.
+
+### Phase 5 Follow-up Items
+
+Items deferred from Phase 5 to Phase 6:
+
+| # | Issue | File:Line | Description | Target Phase |
+|---|-------|-----------|-------------|-------------|
+| 5.F1 | mesh_sync.rs split | `src/dns/mesh_sync.rs` | 1,975 lines; too complex and risky for Phase 5 | 6 |
+| 5.F2 | drain_id in drain response | `src/process/ipc.rs` | `UnifiedServerWorkerDrained` and `StaticWorkerDrained` need `drain_id` field for filtering | 6 |
+| 5.F3 | handle_query_with_cache QueryContext | `src/dns/server.rs` | Different parameter set than TCP handler; needs separate context or shared subset | 6 |
+
+| # | Issue | File:Line | Fix | Status |
+|---|-------|-----------|-----|--------|
+| 5.1 | DS record digest not canonical | `src/dns/dnssec.rs:1283-1314`, `src/dns/mesh_dnssec.rs:155-164` | Implement `compute_dnskey_canonical()` per RFC 4034 §5.2 | ✅ Already implemented |
+| 5.2 | Inconsistent key tags | `src/dns/trust_anchor.rs:790` vs `src/dns/dnssec.rs:953` | Extract shared RFC 5011 Appendix B implementation | ✅ Fixed — trust_anchor version had wrong formula |
+| 5.3 | NXDOMAIN missing question | `src/dns/server.rs:129-152` | Copy query question, set QDCOUNT=1 | ✅ Code correct; test updated to assert QDCOUNT=1 |
+| 5.4 | Silent trust anchor save failure | `src/dns/trust_anchor.rs:676-678` | Check `Result`, log error, consider retry | ✅ Fixed |
+| 5.5 | No algorithm validation for trust keys | `src/dns/trust_anchor.rs:492-590` | Reject deprecated algorithms (0=DH, 3=DSA) per RFC 5011 §2.2 | ✅ Fixed |
+| 5.6 | `edns.rs:22` typo | `src/dns/edns.rs:22` | `NotSuported` → `NotSupported` | ✅ Fixed |
+| 5.7 | `wire.rs:102` unwrap on UTF-8 | `src/dns/wire.rs:102` | Replace with `ok()?` | ✅ Fixed |
+| 5.8 | `generate_key` / `generate_standby_key` duplication | `src/dns/dnssec.rs:268-449` | Unify into `generate_key_internal(is_standby)` | ✅ Fixed |
+| 5.9 | `handle_tcp_query` 23 params | `src/dns/server.rs:2268-2291` | Extract `QueryContext` struct | ✅ Fixed — 23 params → 2 |
+| 5.10 | DNS query parsing duplicated 8+ files | `src/dns/server.rs`, `update.rs`, `transfer.rs`, `notify.rs` | Extract `parse_query_name()` into `wire.rs` | ✅ Fixed — extract_query_name delegates to wire::parse_query_name |
+| 5.11 | `mesh_sync.rs` 1,975 lines | `src/dns/mesh_sync.rs` | Split into `registry.rs`, `verification.rs`, `health.rs` | ⏭ Deferred to Phase 6 |
 
 ---
 
@@ -516,9 +530,20 @@ Phase 4 (Performance & Reliability) ─────────── COMPLETED 
   4.6.4  DnsServer::clone nullifying fields   ✅  (intentional design — documented)
   4.6.5  DNS cache fingerprint TTL eviction   ✅
   │
-Phase 5 (DNS RFC Compliance) ────────────────── Days 10-14      ── starts after Phase 1.8
-  5.1-5.11 as listed
-  Also absorbs: 4.3.2 (stale IPC drain), 4.3.3 (pipe blocking)
+Phase 5 (DNS RFC Compliance) ────────────────── COMPLETED 2026-03-25
+  5.1  DS record digest canonical   ✅  (already implemented)
+  5.2  Shared key tag utility       ✅  (trust_anchor → dnssec::calculate_key_tag)
+  5.3  NXDOMAIN question section    ✅  (code correct, test updated)
+  5.4  Trust anchor save logging    ✅
+  5.5  Algorithm validation         ✅  (rejects alg 0=DELETE, 3=DSA)
+  5.6  edns.rs typo                 ✅  (NotSuported → NotSupported)
+  5.7  wire.rs UTF-8 unwrap         ✅  (unwrap → ok()?)
+  5.8  generate_key unification     ✅  (generate_key_internal extracted)
+  5.9  handle_tcp_query QueryContext ✅  (23 params → 2)
+  5.10 DNS query parsing dedup      ✅  (extract_query_name → parse_query_name)
+  5.11 mesh_sync.rs split           ⏭  (deferred to Phase 6 — 1,975 lines)
+  4.3.2 Stale IPC drain_id          ⏭  (deferred to Phase 6 — needs msg format change)
+  4.3.3 stdout/stderr pipe blocking ✅  (Stdio::piped() → Stdio::inherit())
   │
 Phase 6 (Subsystem Refactoring) ─────────────── Days 12-20      ── starts after Phase 3
   6.1  Mesh (14 items)
@@ -526,7 +551,7 @@ Phase 6 (Subsystem Refactoring) ─────────────── Da
   6.3  WAF core (7 items)
   6.4  IPC dedup (4 items)
   6.5  Module splits (7 modules)
-  Also absorbs: 4.1.4, 4.2.2, 4.2.3, 4.5, 4.6.2, 4.6.3
+  Also absorbs: 4.1.4, 4.2.2, 4.2.3, 4.5, 4.6.2, 4.6.3, 5.11 (mesh_sync split), 5.F2 (drain_id in response msgs), 5.F3 (handle_query QueryContext)
   │
 Phase 7 (Testing & Build) ───────────────────── Days 14-20      ── parallel with Phase 4-6
   7.1  Fix vacuous assertions

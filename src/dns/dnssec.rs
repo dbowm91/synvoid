@@ -265,12 +265,13 @@ impl DnsSecKeyManager {
         results
     }
 
-    pub fn generate_key(
+    fn generate_key_internal(
         &mut self,
         algorithm: Algorithm,
         key_type: KeyType,
         _rsa_key_size: u32,
         validity_days: u32,
+        is_standby: bool,
     ) -> Result<(), String> {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -299,18 +300,24 @@ impl DnsSecKeyManager {
             }
         };
 
-        let key_id = match key_type {
-            KeyType::KSK => "ksk",
-            KeyType::ZSK => "zsk",
+        let key_id = match (key_type, is_standby) {
+            (KeyType::KSK, false) => "ksk",
+            (KeyType::ZSK, false) => "zsk",
+            (KeyType::KSK, true) => "ksk-standby",
+            (KeyType::ZSK, true) => "zsk-standby",
         };
 
-        let key_name = format!("dnssec-{}-{}", key_id, now);
+        let key_name = if is_standby {
+            format!("{}-{}", key_id, now)
+        } else {
+            format!("dnssec-{}-{}", key_id, now)
+        };
         let key_dir = self.key_path.join(key_id);
         std::fs::create_dir_all(&key_dir)
             .map_err(|e| format!("Failed to create key directory: {}", e))?;
 
         let key_file = key_dir.join(format!("{}.key", key_name));
-        let meta = serde_json::json!({
+        let mut meta = serde_json::json!({
             "key_id": key_id,
             "algorithm": algorithm.to_u8(),
             "key_type": key_type as u8,
@@ -320,6 +327,9 @@ impl DnsSecKeyManager {
             "flags": flags,
             "key_size": key_size,
         });
+        if is_standby {
+            meta["standby"] = serde_json::Value::Bool(true);
+        }
 
         std::fs::write(
             &key_file,
@@ -348,13 +358,21 @@ impl DnsSecKeyManager {
             key_size,
         };
 
-        match key_type {
-            KeyType::KSK => self.key_signing_key = Some(zone_key),
-            KeyType::ZSK => self.zone_signing_key = Some(zone_key),
+        if is_standby {
+            match key_type {
+                KeyType::KSK => self.standby_ksk = Some(zone_key),
+                KeyType::ZSK => self.standby_zsk = Some(zone_key),
+            }
+        } else {
+            match key_type {
+                KeyType::KSK => self.key_signing_key = Some(zone_key),
+                KeyType::ZSK => self.zone_signing_key = Some(zone_key),
+            }
         }
 
         tracing::info!(
-            "Generated {} {} key: {}",
+            "Generated {}{} {} key: {}",
+            if is_standby { "standby " } else { "" },
             algorithm.dns_algorithm_name(),
             key_id,
             key_name
@@ -363,103 +381,24 @@ impl DnsSecKeyManager {
         Ok(())
     }
 
+    pub fn generate_key(
+        &mut self,
+        algorithm: Algorithm,
+        key_type: KeyType,
+        rsa_key_size: u32,
+        validity_days: u32,
+    ) -> Result<(), String> {
+        self.generate_key_internal(algorithm, key_type, rsa_key_size, validity_days, false)
+    }
+
     pub fn generate_standby_key(
         &mut self,
         algorithm: Algorithm,
         key_type: KeyType,
-        _rsa_key_size: u32,
+        rsa_key_size: u32,
         validity_days: u32,
     ) -> Result<(), String> {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        let expires_at = now + (validity_days as u64 * 86400);
-
-        let (public_key, private_key, key_tag, flags, key_size) = match algorithm {
-            Algorithm::Ed25519 => {
-                let bytes = super::crypto_rng::random_bytes(32);
-                let signing_key = SigningKey::from_bytes(
-                    bytes
-                        .as_slice()
-                        .try_into()
-                        .expect("random_bytes(32) always returns 32 bytes"),
-                );
-                let public = signing_key.verifying_key().to_bytes().to_vec();
-                let private = signing_key.to_bytes().to_vec();
-                let flags = if key_type == KeyType::KSK { 257 } else { 256 };
-                let key_tag = calculate_key_tag(flags, 3, Algorithm::Ed25519.to_u8(), &public);
-                let key_size = None;
-                (public, private, key_tag, flags, key_size)
-            }
-            Algorithm::RSA => {
-                return Err("RSA key generation not yet implemented. Use Ed25519 or generate RSA keys externally.".to_string());
-            }
-        };
-
-        let key_id = match key_type {
-            KeyType::KSK => "ksk-standby",
-            KeyType::ZSK => "zsk-standby",
-        };
-
-        let key_name = format!("{}-{}", key_id, now);
-        let key_dir = self.key_path.join(key_id);
-        std::fs::create_dir_all(&key_dir)
-            .map_err(|e| format!("Failed to create key directory: {}", e))?;
-
-        let key_file = key_dir.join(format!("{}.key", key_name));
-        let meta = serde_json::json!({
-            "key_id": key_id,
-            "algorithm": algorithm.to_u8(),
-            "key_type": key_type as u8,
-            "created_at": now,
-            "expires_at": expires_at,
-            "key_tag": key_tag,
-            "flags": flags,
-            "key_size": key_size,
-            "standby": true,
-        });
-
-        std::fs::write(
-            &key_file,
-            serde_json::to_string_pretty(&meta).map_err(|e| format!("JSON error: {}", e))?,
-        )
-        .map_err(|e| format!("Failed to write key metadata: {}", e))?;
-
-        let pub_file = key_dir.join(format!("{}.pub", key_name));
-        std::fs::write(&pub_file, &public_key)
-            .map_err(|e| format!("Failed to write public key: {}", e))?;
-
-        let priv_file = key_dir.join(format!("{}.priv", key_name));
-        std::fs::write(&priv_file, &private_key)
-            .map_err(|e| format!("Failed to write private key: {}", e))?;
-
-        let zone_key = ZoneSigningKey {
-            key_id: key_id.to_string(),
-            algorithm,
-            key_type,
-            created_at: now,
-            expires_at,
-            public_key,
-            private_key,
-            key_tag,
-            flags,
-            key_size,
-        };
-
-        match key_type {
-            KeyType::KSK => self.standby_ksk = Some(zone_key),
-            KeyType::ZSK => self.standby_zsk = Some(zone_key),
-        }
-
-        tracing::info!(
-            "Generated standby {} {} key: {}",
-            algorithm.dns_algorithm_name(),
-            key_id,
-            key_name
-        );
-
-        Ok(())
+        self.generate_key_internal(algorithm, key_type, rsa_key_size, validity_days, true)
     }
 
     pub fn start_key_rollover(&mut self, key_type: KeyType) -> Result<(), String> {
@@ -958,7 +897,7 @@ pub enum KeyType {
     ZSK,
 }
 
-fn calculate_key_tag(flags: u16, protocol: u8, algorithm: u8, public_key: &[u8]) -> u16 {
+pub fn calculate_key_tag(flags: u16, protocol: u8, algorithm: u8, public_key: &[u8]) -> u16 {
     let mut buf = Vec::with_capacity(4 + public_key.len());
     buf.extend_from_slice(&flags.to_be_bytes());
     buf.push(protocol);

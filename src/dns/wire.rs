@@ -99,7 +99,7 @@ pub fn parse_query_name(bytes: &[u8], mut pos: usize) -> Option<String> {
             return None;
         }
 
-        name.push_str(std::str::from_utf8(label).unwrap());
+        name.push_str(std::str::from_utf8(label).ok()?);
         pos += len;
     }
     let _ = pos;

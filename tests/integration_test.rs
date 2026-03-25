@@ -1272,7 +1272,7 @@ mod socket_tests {
         let manager = TrustAnchorManager::new(config);
 
         let public_key = vec![0x01, 0x02, 0x03, 0x04];
-        let key_tag = maluwaf::dns::trust_anchor::TrustAnchorManager::calculate_dnskey_key_tag(
+        let key_tag = maluwaf::dns::dnssec::calculate_key_tag(
             257,
             3,
             8,
@@ -1314,7 +1314,7 @@ mod socket_tests {
         let manager = TrustAnchorManager::new(config);
 
         let public_key = vec![0x01, 0x02, 0x03, 0x04];
-        let key_tag = maluwaf::dns::trust_anchor::TrustAnchorManager::calculate_dnskey_key_tag(
+        let key_tag = maluwaf::dns::dnssec::calculate_key_tag(
             257,
             3,
             8,

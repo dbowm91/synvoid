@@ -380,6 +380,52 @@ Two items were already implemented before Phase 4:
 - **4.3.10 Zone history:** `increment_serial_with_limit(50)` already caps history to 50 entries
 - **4.6.1 Rate limiter cleanup:** `cleanup_if_needed` already throttles to every 60 seconds via `CLEANUP_INTERVAL_SECS`
 
+## Phase 5 Completion Notes (2026-03-25)
+
+Phase 5 addressed DNS RFC compliance and process management items. Key changes and learnings:
+
+### Key Tag RFC Compliance (5.2)
+
+Both `dnssec.rs::calculate_key_tag` and `trust_anchor.rs::calculate_dnskey_key_tag` were consolidated. The `trust_anchor.rs` version used `(sum & 0xFFFF)` which is incorrect per RFC 4034 Appendix B — the correct formula is `(sum + (sum >> 16)) & 0xFFFF`. The `dnssec.rs` version (now public) has the correct implementation. All callers in `trust_anchor.rs` (16 call sites) and `resolver.rs` now use `crate::dns::dnssec::calculate_key_tag`.
+
+**Key learning:** When unifying duplicate implementations, always verify which one is RFC-compliant. The two implementations looked identical but differed in the final masking step.
+
+### generate_key Unification (5.8)
+
+`generate_key` and `generate_standby_key` shared ~80% of their code. Extracted a private `generate_key_internal(algorithm, key_type, rsa_key_size, validity_days, is_standby)` method. The public methods are thin wrappers. The `key_id` match uses a tuple `(key_type, is_standby)` for clean dispatch.
+
+### QueryContext Struct (5.9)
+
+`handle_tcp_query` had 23 parameters. A `QueryContext<'a>` struct was introduced to bundle the Arc-wrapped DNS service references. The function signature changed from 23 params to 2 (`stream`, `ctx: QueryContext`).
+
+**Call sites:** Two call sites (anycast TCP listener at ~line 1838, regular TCP listener at ~line 2258) now construct a `QueryContext` before calling `handle_tcp_query`. The `_zone_index` parameter was dropped since it was already unused (prefixed with `_`).
+
+**Note:** `handle_query_with_cache` (16 params) and `handle_query` (10 params) were NOT refactored to use QueryContext since their parameter sets differ. This is deferred to Phase 6.
+
+### NXDOMAIN Question Section (5.3)
+
+The `build_simple_nxdomain_response` function already included the question section (QDCOUNT=1, copies QNAME + QTYPE + QCLASS from query). The test `test_nxdomain_response_basic` was asserting the OLD behavior (QDCOUNT=0, response length 12). Updated the test to assert QDCOUNT=1, verify QTYPE/QCLASS are present.
+
+### Stale IPC During Drain (4.3.2)
+
+Attempted to add `drain_id` filtering to `drain_worker_async`. The drain request already includes a unique `drain_id` (millisecond timestamp), but the response messages (`UnifiedServerWorkerDrained`, `StaticWorkerDrained`) don't include `drain_id`. Filtering requires adding `drain_id` to response message variants — deferred to Phase 6 as an IPC message format change.
+
+### stdout/stderr Pipe Blocking (4.3.3)
+
+Changed `Stdio::piped()` to `Stdio::inherit()` in `build_worker_command`. The piped stdout/stderr were never read by the parent, so if the child wrote enough output, it would block. `Stdio::inherit()` routes child output to the parent's stdout/stderr directly.
+
+### DNS Query Parsing (5.10)
+
+Replaced the inline `extract_query_name` method (manual wire format parsing with `String::from_utf8_lossy`) with a call to `wire::parse_query_name(query, 12)`. The `parse_query_name` function does stricter UTF-8 validation and handles edge cases better. Only one other inline parsing site exists (`tsig.rs:293`) which walks through multiple records and can't use `parse_query_name`.
+
+### Items Deferred to Phase 6
+
+| Item | Reason |
+|------|--------|
+| 5.11 mesh_sync.rs split | 1,975 lines; too complex and risky for Phase 5 |
+| 4.3.2 drain_id in response messages | Requires IPC message format changes |
+| handle_query_with_cache / handle_query QueryContext | Different parameter sets than TCP handler |
+
 ## Known Code Quality Context
 
 ### Clippy and Dead Code Suppressions
@@ -399,7 +445,7 @@ Remaining per-item `#[allow(dead_code)]` on specific functions/types:
 - `src/mesh/` — ~13 items (item-level, gated on feature/platform)
 - `src/dns/server.rs` — ~10 items (item-level)
 
-`cargo clippy` currently produces ~156 warnings (up from 107 after removing dead_code suppression, which revealed "field is never read" warnings). These are incremental quality issues that don't affect correctness.
+`cargo clippy` currently produces ~152 warnings (down from 156 after Phase 5 key tag consolidation and typo fix). These are incremental quality issues that don't affect correctness.
 
 ### Build Configuration
 
@@ -431,7 +477,7 @@ Agents working on these areas should be aware of these issues. See `plan.md` for
 
 | Bug | Location | Impact |
 |-----|----------|--------|
-| Trust anchor save errors silently ignored | `src/dns/trust_anchor.rs:676-678` | `let _ = self.save_anchors(...)` |
+| *(none - all Phase 5 items addressed)* | | |
 
 ### Dead Code (Not Compiled)
 

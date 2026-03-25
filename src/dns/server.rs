@@ -381,7 +381,8 @@ mod nxdomain_tests {
         let query = build_query(0x1234, "example.com");
         let response = DnsServer::build_simple_nxdomain_response(&query).unwrap();
         
-        assert_eq!(response.len(), 12);
+        // Response should include 12-byte header + question section
+        assert!(response.len() > 12, "Response should include question section");
         
         let id = u16::from_be_bytes([response[0], response[1]]);
         assert_eq!(id, 0x1234);
@@ -393,7 +394,7 @@ mod nxdomain_tests {
         assert_eq!(rcode, 3, "RCODE should be 3 (NXDOMAIN)");
         
         let qdcount = u16::from_be_bytes([response[4], response[5]]);
-        assert_eq!(qdcount, 0, "QDCOUNT should be 0");
+        assert_eq!(qdcount, 1, "QDCOUNT should be 1 (include question)");
         
         let ancount = u16::from_be_bytes([response[6], response[7]]);
         assert_eq!(ancount, 0, "ANCOUNT should be 0");
@@ -403,6 +404,12 @@ mod nxdomain_tests {
         
         let arcount = u16::from_be_bytes([response[10], response[11]]);
         assert_eq!(arcount, 0, "ARCOUNT should be 0");
+        
+        // Verify QTYPE and QCLASS are included (last 4 bytes)
+        let qtype = u16::from_be_bytes([response[response.len()-4], response[response.len()-3]]);
+        assert_eq!(qtype, 1, "QTYPE should be A (1)");
+        let qclass = u16::from_be_bytes([response[response.len()-2], response[response.len()-1]]);
+        assert_eq!(qclass, 1, "QCLASS should be IN (1)");
     }
 
     #[test]
@@ -694,6 +701,31 @@ struct DnsHandlerState {
     update_handler: Option<super::update::DynamicUpdateHandler>,
     notify_handler: Option<super::notify::NotifyHandler>,
     query_coalescer: Option<Arc<super::query_coalesce::QueryCoalescer>>,
+}
+
+/// Shared DNS query context to reduce function parameter count.
+/// Contains the Arc-wrapped service references needed to handle queries.
+pub struct QueryContext<'a> {
+    pub zones: &'a Arc<RwLock<HashMap<String, Zone>>>,
+    pub zone_trie: &'a Arc<RwLock<super::zone_trie::ZoneTrie>>,
+    pub mesh_registry: Option<&'a Arc<MeshDnsRegistry>>,
+    pub geoip_lookup: Option<&'a Arc<crate::geoip::GeoIpManager>>,
+    pub min_geo_ttl: u32,
+    pub negative_cache_ttl: u32,
+    pub cache: Option<&'a Arc<DnsCache>>,
+    pub dnssec: Option<&'a Arc<RwLock<DnsSecKeyManager>>>,
+    pub signer_name: Option<&'a String>,
+    pub query_validator: Option<&'a DnsQueryValidator>,
+    pub firewall: Option<&'a Arc<RwLock<super::firewall::DnsFirewall>>>,
+    pub connection_limits: Option<&'a Arc<super::limits::ConnectionLimits>>,
+    pub max_idle_time: Option<std::time::Duration>,
+    pub zone_transfer: Option<&'a Arc<super::transfer::ZoneTransfer>>,
+    pub ecs_filter_config: &'a super::edns::EcsFilterConfig,
+    pub rate_limiter: Option<&'a Arc<DnsRateLimiter>>,
+    pub rrl_enabled: bool,
+    pub update_handler: Option<&'a super::update::DynamicUpdateHandler>,
+    pub notify_handler: Option<&'a super::notify::NotifyHandler>,
+    pub query_coalescer: Option<&'a Arc<super::query_coalesce::QueryCoalescer>>,
 }
 
 #[allow(dead_code)]
@@ -1783,7 +1815,7 @@ impl DnsServer {
                                 
                                 let zones_clone = zones_tcp.clone();
                                 let zone_trie_clone = zone_trie_tcp.clone();
-                                let zone_index_clone = zone_index_tcp.clone();
+                                let _zone_index_clone = zone_index_tcp.clone();
                                 let mesh_registry_clone = mesh_registry_tcp.clone();
                                 let geoip_lookup_clone = geoip_lookup_tcp.clone();
                                 let cache_clone = cache_tcp.clone();
@@ -1803,7 +1835,29 @@ impl DnsServer {
                                         connection_limits.max_tcp_idle_time().as_secs()
                                     ));
                                     tracing::debug!("TCP connection from {} to anycast IP {}", client_ip, dest_ip);
-                                    if let Err(e) = Self::handle_tcp_query(conn.stream, &zones_clone, &zone_trie_clone, &zone_index_clone, mesh_registry_clone.as_ref(), geoip_lookup_clone.as_ref(), min_geo_ttl, negative_cache_ttl, cache_clone.as_ref(), dnssec_clone.as_ref(), signer_name_clone.as_ref(), query_validator_clone.as_ref(), firewall_clone.as_ref(), Some(&connection_limits), max_idle_time, zone_transfer_clone.as_ref(), &ecs_filter_clone, rate_limiter_clone.as_ref(), rrl_enabled_tcp, update_handler_clone.as_ref(), notify_handler_clone.as_ref(), query_coalescer_clone.as_ref()).await {
+                                    let ctx = QueryContext {
+                                        zones: &zones_clone,
+                                        zone_trie: &zone_trie_clone,
+                                        mesh_registry: mesh_registry_clone.as_ref(),
+                                        geoip_lookup: geoip_lookup_clone.as_ref(),
+                                        min_geo_ttl,
+                                        negative_cache_ttl,
+                                        cache: cache_clone.as_ref(),
+                                        dnssec: dnssec_clone.as_ref(),
+                                        signer_name: signer_name_clone.as_ref(),
+                                        query_validator: query_validator_clone.as_ref(),
+                                        firewall: firewall_clone.as_ref(),
+                                        connection_limits: Some(&connection_limits),
+                                        max_idle_time,
+                                        zone_transfer: zone_transfer_clone.as_ref(),
+                                        ecs_filter_config: &ecs_filter_clone,
+                                        rate_limiter: rate_limiter_clone.as_ref(),
+                                        rrl_enabled: rrl_enabled_tcp,
+                                        update_handler: update_handler_clone.as_ref(),
+                                        notify_handler: notify_handler_clone.as_ref(),
+                                        query_coalescer: query_coalescer_clone.as_ref(),
+                                    };
+                                    if let Err(e) = Self::handle_tcp_query(conn.stream, ctx).await {
                                         tracing::debug!("Anycast TCP DNS error: {}", e);
                                     }
                                 });
@@ -2204,7 +2258,7 @@ impl DnsServer {
                                 
                                 let zones_clone = zones_tcp.clone();
                                 let zone_trie_clone = zone_trie_tcp.clone();
-                                let zone_index_clone = zone_index_tcp.clone();
+                                let _zone_index_clone = zone_index_tcp.clone();
                                 let mesh_registry_clone = mesh_registry_tcp.clone();
                                 let geoip_lookup_clone = geoip_lookup_tcp.clone();
                                 let cache_clone = cache_tcp.clone();
@@ -2223,7 +2277,29 @@ impl DnsServer {
                                     let max_idle_time = Some(std::time::Duration::from_secs(
                                         connection_limits.max_tcp_idle_time().as_secs()
                                     ));
-                                    if let Err(e) = Self::handle_tcp_query(stream, &zones_clone, &zone_trie_clone, &zone_index_clone, mesh_registry_clone.as_ref(), geoip_lookup_clone.as_ref(), min_geo_ttl, negative_cache_ttl, cache_clone.as_ref(), dnssec_clone.as_ref(), signer_name_clone.as_ref(), query_validator_clone.as_ref(), firewall_clone.as_ref(), Some(&connection_limits), max_idle_time, zone_transfer_clone.as_ref(), &ecs_filter_clone, rate_limiter_clone.as_ref(), rrl_enabled_tcp, update_handler_clone.as_ref(), notify_handler_clone.as_ref(), query_coalescer_clone.as_ref()).await {
+                                    let ctx = QueryContext {
+                                        zones: &zones_clone,
+                                        zone_trie: &zone_trie_clone,
+                                        mesh_registry: mesh_registry_clone.as_ref(),
+                                        geoip_lookup: geoip_lookup_clone.as_ref(),
+                                        min_geo_ttl,
+                                        negative_cache_ttl,
+                                        cache: cache_clone.as_ref(),
+                                        dnssec: dnssec_clone.as_ref(),
+                                        signer_name: signer_name_clone.as_ref(),
+                                        query_validator: query_validator_clone.as_ref(),
+                                        firewall: firewall_clone.as_ref(),
+                                        connection_limits: Some(&connection_limits),
+                                        max_idle_time,
+                                        zone_transfer: zone_transfer_clone.as_ref(),
+                                        ecs_filter_config: &ecs_filter_clone,
+                                        rate_limiter: rate_limiter_clone.as_ref(),
+                                        rrl_enabled: rrl_enabled_tcp,
+                                        update_handler: update_handler_clone.as_ref(),
+                                        notify_handler: notify_handler_clone.as_ref(),
+                                        query_coalescer: query_coalescer_clone.as_ref(),
+                                    };
+                                    if let Err(e) = Self::handle_tcp_query(stream, ctx).await {
                                         tracing::debug!("TCP DNS error: {}", e);
                                     }
                                 });
@@ -2279,34 +2355,14 @@ impl DnsServer {
 
     async fn handle_tcp_query(
         mut stream: tokio::net::TcpStream,
-        zones: &Arc<RwLock<HashMap<String, Zone>>>,
-        zone_trie: &Arc<RwLock<super::zone_trie::ZoneTrie>>,
-        _zone_index: &Arc<RwLock<Vec<(String, String)>>>,
-        mesh_registry: Option<&Arc<MeshDnsRegistry>>,
-        geoip_lookup: Option<&Arc<crate::geoip::GeoIpManager>>,
-        min_geo_ttl: u32,
-        negative_cache_ttl: u32,
-        cache: Option<&Arc<DnsCache>>,
-        dnssec: Option<&Arc<RwLock<DnsSecKeyManager>>>,
-        signer_name: Option<&String>,
-        query_validator: Option<&DnsQueryValidator>,
-        firewall: Option<&Arc<RwLock<super::firewall::DnsFirewall>>>,
-        connection_limits: Option<&Arc<super::limits::ConnectionLimits>>,
-        max_idle_time: Option<std::time::Duration>,
-        zone_transfer: Option<&Arc<super::transfer::ZoneTransfer>>,
-        ecs_filter_config: &super::edns::EcsFilterConfig,
-        rate_limiter: Option<&Arc<DnsRateLimiter>>,
-        rrl_enabled: bool,
-        update_handler: Option<&super::update::DynamicUpdateHandler>,
-        notify_handler: Option<&super::notify::NotifyHandler>,
-        query_coalescer: Option<&Arc<super::query_coalesce::QueryCoalescer>>,
+        ctx: QueryContext<'_>,
     ) -> Result<(), String> {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         use tokio::time::{timeout, Duration};
         
         let client_ip = stream.peer_addr().map(|a| a.ip()).unwrap_or_else(|_| IpAddr::from([0,0,0,0]));
         
-        let idle_timeout = max_idle_time.unwrap_or(Duration::from_secs(30));
+        let idle_timeout = ctx.max_idle_time.unwrap_or(Duration::from_secs(30));
         
         let mut length_buf = [0u8; 2];
         let read_result = timeout(idle_timeout, stream.read_exact(&mut length_buf)).await;
@@ -2340,7 +2396,7 @@ impl DnsServer {
         }
         
         // Validate query structure
-        if let Some(validator) = query_validator {
+        if let Some(validator) = ctx.query_validator {
             if let Err(resp) = validator.validate_query_with_response(&query) {
                 if let Some(response) = resp {
                     let len = response.len() as u16;
@@ -2356,7 +2412,7 @@ impl DnsServer {
         }
         
         // Firewall check
-        if let Some(fw) = firewall.as_ref() {
+        if let Some(fw) = ctx.firewall.as_ref() {
             let qname = Self::extract_query_name(&query);
             let mut fw_read = fw.write();
             match fw_read.evaluate_query(&query, client_ip, &qname) {
@@ -2383,7 +2439,7 @@ impl DnsServer {
             Some(client_ip),
         );
         
-        let response = if let Some(coalescer) = query_coalescer {
+        let response = if let Some(coalescer) = ctx.query_coalescer {
             let query_key = super::query_coalesce::QueryKey::from_query(&query, Some(client_ip));
             
             if let Some(key) = query_key {
@@ -2392,181 +2448,181 @@ impl DnsServer {
                         Some(resp)
                     }
                     Some(super::query_coalesce::CoalesceResult::NewQuery(_)) => {
-                        if let Some(c) = cache {
+                        if let Some(c) = ctx.cache {
                             Self::handle_query_with_cache(
-                                zones,
-                                zone_trie,
+                                ctx.zones,
+                                ctx.zone_trie,
                                 &query,
-                                mesh_registry,
-                                geoip_lookup,
-                                min_geo_ttl,
-                                negative_cache_ttl,
+                                ctx.mesh_registry,
+                                ctx.geoip_lookup,
+                                ctx.min_geo_ttl,
+                                ctx.negative_cache_ttl,
                                 c,
                                 cache_key,
-                                dnssec,
-                                signer_name,
+                                ctx.dnssec,
+                                ctx.signer_name,
                                 Some(client_ip),
-                                zone_transfer,
-                                ecs_filter_config,
-                                update_handler,
-                                notify_handler,
+                                ctx.zone_transfer,
+                                ctx.ecs_filter_config,
+                                ctx.update_handler,
+                                ctx.notify_handler,
                             )
                         } else {
                             Self::handle_query(
-                                zones,
-                                zone_trie,
+                                ctx.zones,
+                                ctx.zone_trie,
                                 &query,
-                                mesh_registry,
-                                geoip_lookup,
-                                min_geo_ttl,
+                                ctx.mesh_registry,
+                                ctx.geoip_lookup,
+                                ctx.min_geo_ttl,
                                 Some(client_ip),
-                                ecs_filter_config,
-                                update_handler,
-                                notify_handler,
+                                ctx.ecs_filter_config,
+                                ctx.update_handler,
+                                ctx.notify_handler,
                             )
                         }
                     }
                     None => {
-                        if let Some(c) = cache {
+                        if let Some(c) = ctx.cache {
                             Self::handle_query_with_cache(
-                                zones,
-                                zone_trie,
+                                ctx.zones,
+                                ctx.zone_trie,
                                 &query,
-                                mesh_registry,
-                                geoip_lookup,
-                                min_geo_ttl,
-                                negative_cache_ttl,
+                                ctx.mesh_registry,
+                                ctx.geoip_lookup,
+                                ctx.min_geo_ttl,
+                                ctx.negative_cache_ttl,
                                 c,
                                 cache_key,
-                                dnssec,
-                                signer_name,
+                                ctx.dnssec,
+                                ctx.signer_name,
                                 Some(client_ip),
-                                zone_transfer,
-                                ecs_filter_config,
-                                update_handler,
-                                notify_handler,
+                                ctx.zone_transfer,
+                                ctx.ecs_filter_config,
+                                ctx.update_handler,
+                                ctx.notify_handler,
                             )
                         } else {
                             Self::handle_query(
-                                zones,
-                                zone_trie,
+                                ctx.zones,
+                                ctx.zone_trie,
                                 &query,
-                                mesh_registry,
-                                geoip_lookup,
-                                min_geo_ttl,
+                                ctx.mesh_registry,
+                                ctx.geoip_lookup,
+                                ctx.min_geo_ttl,
                                 Some(client_ip),
-                                ecs_filter_config,
-                                update_handler,
-                                notify_handler,
+                                ctx.ecs_filter_config,
+                                ctx.update_handler,
+                                ctx.notify_handler,
                             )
                         }
                     }
                     _ => {
-                        if let Some(c) = cache {
+                        if let Some(c) = ctx.cache {
                             Self::handle_query_with_cache(
-                                zones,
-                                zone_trie,
+                                ctx.zones,
+                                ctx.zone_trie,
                                 &query,
-                                mesh_registry,
-                                geoip_lookup,
-                                min_geo_ttl,
-                                negative_cache_ttl,
+                                ctx.mesh_registry,
+                                ctx.geoip_lookup,
+                                ctx.min_geo_ttl,
+                                ctx.negative_cache_ttl,
                                 c,
                                 cache_key,
-                                dnssec,
-                                signer_name,
+                                ctx.dnssec,
+                                ctx.signer_name,
                                 Some(client_ip),
-                                zone_transfer,
-                                ecs_filter_config,
-                                update_handler,
-                                notify_handler,
+                                ctx.zone_transfer,
+                                ctx.ecs_filter_config,
+                                ctx.update_handler,
+                                ctx.notify_handler,
                             )
                         } else {
                             Self::handle_query(
-                                zones,
-                                zone_trie,
+                                ctx.zones,
+                                ctx.zone_trie,
                                 &query,
-                                mesh_registry,
-                                geoip_lookup,
-                                min_geo_ttl,
+                                ctx.mesh_registry,
+                                ctx.geoip_lookup,
+                                ctx.min_geo_ttl,
                                 Some(client_ip),
-                                ecs_filter_config,
-                                update_handler,
-                                notify_handler,
+                                ctx.ecs_filter_config,
+                                ctx.update_handler,
+                                ctx.notify_handler,
                             )
                         }
                     }
                 }
-            } else if let Some(c) = cache {
+            } else if let Some(c) = ctx.cache {
                 Self::handle_query_with_cache(
-                    zones,
-                    zone_trie,
+                    ctx.zones,
+                    ctx.zone_trie,
                     &query,
-                    mesh_registry,
-                    geoip_lookup,
-                    min_geo_ttl,
-                    negative_cache_ttl,
+                    ctx.mesh_registry,
+                    ctx.geoip_lookup,
+                    ctx.min_geo_ttl,
+                    ctx.negative_cache_ttl,
                     c,
                     cache_key,
-                    dnssec,
-                    signer_name,
+                    ctx.dnssec,
+                    ctx.signer_name,
                     Some(client_ip),
-                    zone_transfer,
-                    ecs_filter_config,
-                    update_handler,
-                    notify_handler,
+                    ctx.zone_transfer,
+                    ctx.ecs_filter_config,
+                    ctx.update_handler,
+                    ctx.notify_handler,
                 )
             } else {
                 Self::handle_query(
-                    zones,
-                    zone_trie,
+                    ctx.zones,
+                    ctx.zone_trie,
                     &query,
-                    mesh_registry,
-                    geoip_lookup,
-                    min_geo_ttl,
+                    ctx.mesh_registry,
+                    ctx.geoip_lookup,
+                    ctx.min_geo_ttl,
                     Some(client_ip),
-                    ecs_filter_config,
-                    update_handler,
-                    notify_handler,
+                    ctx.ecs_filter_config,
+                    ctx.update_handler,
+                    ctx.notify_handler,
                 )
             }
-        } else if let Some(c) = cache {
+        } else if let Some(c) = ctx.cache {
             Self::handle_query_with_cache(
-                zones,
-                zone_trie,
+                ctx.zones,
+                ctx.zone_trie,
                 &query,
-                mesh_registry,
-                geoip_lookup,
-                min_geo_ttl,
-                negative_cache_ttl,
+                ctx.mesh_registry,
+                ctx.geoip_lookup,
+                ctx.min_geo_ttl,
+                ctx.negative_cache_ttl,
                 c,
                 cache_key,
-                dnssec,
-                signer_name,
+                ctx.dnssec,
+                ctx.signer_name,
                 Some(client_ip),
-                zone_transfer,
-                ecs_filter_config,
-                update_handler,
-                notify_handler,
+                ctx.zone_transfer,
+                ctx.ecs_filter_config,
+                ctx.update_handler,
+                ctx.notify_handler,
             )
         } else {
             Self::handle_query(
-                zones,
-                zone_trie,
+                ctx.zones,
+                ctx.zone_trie,
                 &query,
-                mesh_registry,
-                geoip_lookup,
-                min_geo_ttl,
+                ctx.mesh_registry,
+                ctx.geoip_lookup,
+                ctx.min_geo_ttl,
                 Some(client_ip),
-                ecs_filter_config,
-                update_handler,
-                notify_handler,
+                ctx.ecs_filter_config,
+                ctx.update_handler,
+                ctx.notify_handler,
             )
         };
         
         if let Some(resp) = response {
             // Check if this is a zone transfer (AXFR/IXFR) - need special multi-message handling for TCP
-            if let Some(zt) = zone_transfer {
+            if let Some(zt) = ctx.zone_transfer {
                 // Detect zone transfer by checking query type at offset 20
                 let query_qtype = if query.len() >= 22 {
                     u16::from_be_bytes([query[20], query[21]])
@@ -2615,8 +2671,8 @@ impl DnsServer {
             }
             
             // Apply RRL for TCP queries if enabled
-            if rrl_enabled {
-                if let Some(rl) = rate_limiter {
+            if ctx.rrl_enabled {
+                if let Some(rl) = ctx.rate_limiter {
                     if !rl.should_respond(client_ip) {
                         tracing::debug!("RRL dropping TCP response to {}", client_ip);
                         return Ok(());
@@ -2624,7 +2680,7 @@ impl DnsServer {
                 }
             }
             
-            if let Some(limits) = connection_limits {
+            if let Some(limits) = ctx.connection_limits {
                 if let Err(e) = limits.validate_response_size(resp.len()) {
                     tracing::warn!("Response size {} exceeds limit: {}", resp.len(), e);
                 }
@@ -4515,27 +4571,7 @@ impl DnsServer {
     }
 
     fn extract_query_name(query: &[u8]) -> String {
-        let mut pos = 12;
-        let mut qname = String::new();
-        
-        while pos < query.len() {
-            let len = query[pos] as usize;
-            if len == 0 {
-                break;
-            }
-            if !qname.is_empty() {
-                qname.push('.');
-            }
-            let label = String::from_utf8_lossy(&query[pos + 1..pos + 1 + len]);
-            qname.push_str(&label);
-            pos += 1 + len;
-        }
-        
-        if qname.is_empty() {
-            "unknown".to_string()
-        } else {
-            qname
-        }
+        wire::parse_query_name(query, 12).unwrap_or_else(|| "unknown".to_string())
     }
 
     #[allow(dead_code)]

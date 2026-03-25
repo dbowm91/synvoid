@@ -1124,7 +1124,7 @@ impl HickoryRecursor {
     }
 
     fn compute_key_tag_from_rdata(algorithm: u8, public_key: &[u8]) -> u16 {
-        crate::dns::trust_anchor::TrustAnchorManager::calculate_dnskey_key_tag(257, 3, algorithm, public_key)
+        crate::dns::dnssec::calculate_key_tag(257, 3, algorithm, public_key)
     }
 }
 

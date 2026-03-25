@@ -462,8 +462,8 @@ impl ProcessManager {
             .arg(&self.config.config_path)
             .arg("--master-socket")
             .arg(&self.config.master_socket_path)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit());
         
         cmd
     }
