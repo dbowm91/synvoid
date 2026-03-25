@@ -676,10 +676,10 @@ pub async fn run_static_worker(args: StaticWorkerArgs) -> Result<(), Box<dyn std
                     }).await;
                 }
                 Ok(Some(crate::process::Message::MinifyRequest { request_id, site_id, path, encoding })) => {
-                    handle_minify_request_sync(&ipc_state, request_id, site_id, path, encoding);
+                    handle_minify_request(&ipc_state, request_id, site_id, path, encoding).await;
                 }
                 Ok(Some(crate::process::Message::GetCompressedRequest { request_id, site_id, path, encoding })) => {
-                    handle_compressed_request_sync(&ipc_state, request_id, site_id, path, encoding);
+                    handle_compressed_request(&ipc_state, request_id, site_id, path, encoding).await;
                 }
                 Ok(Some(_)) => {}
                 Ok(None) => {}
@@ -1216,55 +1216,54 @@ fn check_and_invalidate_cache(state: &StaticWorkerState, site_id: &str, root: &P
     }
 }
 
-fn handle_minify_request_sync(
+async fn handle_minify_request(
     state: &StaticWorkerState,
     request_id: u64,
     site_id: String,
     path: String,
     encoding: Option<String>,
 ) {
-    let cache = {
-        let caches = match state.minifier_caches.read() {
-            Ok(c) => c,
-            Err(_) => {
-                send_error_sync(state, request_id, "Cache lock poisoned".to_string());
-                return;
-            }
-        };
-        match caches.get(&site_id).cloned() {
-            Some(c) => c,
-            None => {
-                send_error_sync(state, request_id, format!("No cache for site: {}", site_id));
-                return;
-            }
+    let cache_result: Result<Arc<minifier::MinifierCache>, String> = {
+        let guard = state.minifier_caches.read();
+        match guard {
+            Ok(ref c) => match c.get(&site_id).cloned() {
+                Some(val) => Ok(val),
+                None => Err(format!("No cache for site: {}", site_id)),
+            },
+            Err(_) => Err("Cache lock poisoned".to_string()),
         }
     };
-    
-    let config = cache.config();
-    let source_root = {
-        let config_manager = match state.config_manager.read() {
-            Ok(c) => c,
-            Err(_) => {
-                send_error_sync(state, request_id, "Config lock poisoned".to_string());
-                return;
-            }
-        };
-        match config_manager.sites.get(&site_id) {
-            Some(s) => s.r#static.locations.first().map(|l| PathBuf::from(&l.root)),
-            None => None,
+    let cache = match cache_result {
+        Ok(c) => c,
+        Err(e) => {
+            send_error(state, request_id, e).await;
+            return;
         }
     };
 
-    let source_root = match source_root {
-        Some(r) => r,
-        None => {
-            send_error_sync(state, request_id, "No source root found".to_string());
+    let config = cache.config();
+    let source_root_result: Result<Option<PathBuf>, String> = {
+        let guard = state.config_manager.read();
+        match guard {
+            Ok(ref cm) => Ok(cm.sites.get(&site_id)
+                .and_then(|s| s.r#static.locations.first().map(|l| PathBuf::from(&l.root)))),
+            Err(_) => Err("Config lock poisoned".to_string()),
+        }
+    };
+    let source_root = match source_root_result {
+        Ok(Some(r)) => r,
+        Ok(None) => {
+            send_error(state, request_id, "No source root found".to_string()).await;
+            return;
+        }
+        Err(e) => {
+            send_error(state, request_id, e).await;
             return;
         }
     };
 
     let source_path = source_root.join(path.trim_start_matches('/'));
-    
+
     // Use spawn_blocking to run blocking file I/O in the blocking thread pool
     // This prevents blocking the async runtime
     let file_result = task::block_in_place(|| {
@@ -1278,7 +1277,7 @@ fn handle_minify_request_sync(
     let (original_content, mtime) = match file_result {
         (Ok(content), mtime) => (content, mtime),
         (Err(e), _) => {
-            send_error_sync(state, request_id, format!("Failed to read file: {}", e));
+            send_error(state, request_id, format!("Failed to read file: {}", e)).await;
             return;
         }
     };
@@ -1308,7 +1307,7 @@ fn handle_minify_request_sync(
                     entry.content.to_vec()
                 }
                 Err(e) => {
-                    send_error_sync(state, request_id, format!("Minification failed: {}", e));
+                    send_error(state, request_id, format!("Minification failed: {}", e)).await;
                     return;
                 }
             }
@@ -1348,7 +1347,7 @@ fn handle_minify_request_sync(
                                 content.to_vec()
                             }
                             Err(e) => {
-                                send_error_sync(state, request_id, format!("Gzip compression failed: {}", e));
+                                send_error(state, request_id, format!("Gzip compression failed: {}", e)).await;
                                 return;
                             }
                         }
@@ -1379,7 +1378,7 @@ fn handle_minify_request_sync(
                                 content.to_vec()
                             }
                             Err(e) => {
-                                send_error_sync(state, request_id, format!("Brotli compression failed: {}", e));
+                                send_error(state, request_id, format!("Brotli compression failed: {}", e)).await;
                                 return;
                             }
                         }
@@ -1411,8 +1410,7 @@ fn handle_minify_request_sync(
         }
     }
 
-    let mut ipc = state.ipc.blocking_lock();
-    // TODO: send() is async but this is a sync context; refactor to async or use block_in_place
+    let mut ipc = state.ipc.lock().await;
     let _ = ipc.send(&crate::process::Message::MinifyResponse {
             request_id,
             site_id,
@@ -1421,16 +1419,15 @@ fn handle_minify_request_sync(
             content_type,
             encoding,
             queued_encodings,
-        });
+        }).await;
 }
 
-fn send_error_sync(state: &StaticWorkerState, request_id: u64, error: String) {
-    let mut ipc = state.ipc.blocking_lock();
-    // TODO: send() is async but this is a sync context; refactor to async or use block_in_place
+async fn send_error(state: &StaticWorkerState, request_id: u64, error: String) {
+    let mut ipc = state.ipc.lock().await;
     let _ = ipc.send(&crate::process::Message::MinifyError {
         request_id,
         error,
-    });
+    }).await;
 }
 
 fn poison_image_sync(
@@ -1448,27 +1445,28 @@ fn poison_image_sync(
     body
 }
 
-fn handle_compressed_request_sync(
+async fn handle_compressed_request(
     state: &StaticWorkerState,
     request_id: u64,
     site_id: String,
     path: String,
     encoding: String,
 ) {
-    let cache = {
-        let caches = match state.minifier_caches.read() {
-            Ok(c) => c,
-            Err(_) => {
-                send_error_sync(state, request_id, "Cache lock poisoned".to_string());
-                return;
-            }
-        };
-        match caches.get(&site_id).cloned() {
-            Some(c) => c,
-            None => {
-                send_error_sync(state, request_id, format!("No cache for site: {}", site_id));
-                return;
-            }
+    let cache_result: Result<Arc<minifier::MinifierCache>, String> = {
+        let guard = state.minifier_caches.read();
+        match guard {
+            Ok(ref c) => match c.get(&site_id).cloned() {
+                Some(val) => Ok(val),
+                None => Err(format!("No cache for site: {}", site_id)),
+            },
+            Err(_) => Err("Cache lock poisoned".to_string()),
+        }
+    };
+    let cache = match cache_result {
+        Ok(c) => c,
+        Err(e) => {
+            send_error(state, request_id, e).await;
+            return;
         }
     };
 
@@ -1476,7 +1474,7 @@ fn handle_compressed_request_sync(
         "gzip" => minifier::Encoding::Gzip,
         "br" => minifier::Encoding::Br,
         _ => {
-            send_error_sync(state, request_id, format!("Unknown encoding: {}", encoding));
+            send_error(state, request_id, format!("Unknown encoding: {}", encoding)).await;
             return;
         }
     };
@@ -1490,17 +1488,16 @@ fn handle_compressed_request_sync(
     let content = match cache.get(&enc_key) {
         Some(entry) => entry.content.to_vec(),
         None => {
-            send_error_sync(state, request_id, "Compressed version not cached".to_string());
+            send_error(state, request_id, "Compressed version not cached".to_string()).await;
             return;
         }
     };
 
-    let mut ipc = state.ipc.blocking_lock();
-    // TODO: send() is async but this is a sync context; refactor to async or use block_in_place
+    let mut ipc = state.ipc.lock().await;
     let _ = ipc.send(&crate::process::Message::GetCompressedResponse {
         request_id,
         content,
-    });
+    }).await;
 }
 
 fn process_compression_queue(state: &StaticWorkerState) {
@@ -1558,14 +1555,6 @@ fn process_compression_queue(state: &StaticWorkerState) {
             }
         }
     }
-}
-
-async fn send_error(state: &StaticWorkerState, request_id: u64, error: String) {
-    let mut ipc = state.ipc.lock().await;
-    let _ = ipc.send(&crate::process::Message::MinifyError {
-        request_id,
-        error,
-    }).await;
 }
 
 async fn send_compressed_error(state: &StaticWorkerState, request_id: u64, error: String) {
