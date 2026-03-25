@@ -867,7 +867,7 @@ impl HttpServer {
                             let compression = mt.get_compression_for_site(&site_id).await;
                             if let Some(ref comp_config) = compression {
                                 if comp_config.enabled.unwrap_or(false) {
-                                    let accept_encoding: &str = resp.headers.get("accept-encoding")
+                                    let accept_encoding: &str = parts.headers.get("accept-encoding")
                                         .and_then(|v: &http::HeaderValue| v.to_str().ok())
                                         .unwrap_or("");
                                     

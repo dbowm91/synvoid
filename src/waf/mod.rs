@@ -579,18 +579,16 @@ impl WafCore {
 
                 match challenge_result {
                     ChallengeResult::NotSet | ChallengeResult::Failed => {
-                        if path == "/" || path.is_empty() {
-                            let (html, session_id) = self.challenge_manager.generate_challenge_page(&client_ip);
-                            if let Some(sid) = session_id {
-                                let session_cookie_name = self.challenge_manager.css_session_cookie_name();
-                                let window_secs = self.challenge_manager.css_window_secs();
-                                return WafDecision::ChallengeWithCookie {
-                                    html,
-                                    session_cookie_name,
-                                    session_cookie_value: sid,
-                                    session_cookie_max_age: window_secs,
-                                };
-                            }
+                        let (html, session_id) = self.challenge_manager.generate_challenge_page(&client_ip);
+                        if let Some(sid) = session_id {
+                            let session_cookie_name = self.challenge_manager.css_session_cookie_name();
+                            let window_secs = self.challenge_manager.css_window_secs();
+                            return WafDecision::ChallengeWithCookie {
+                                html,
+                                session_cookie_name,
+                                session_cookie_value: sid,
+                                session_cookie_max_age: window_secs,
+                            };
                         }
                     }
                     ChallengeResult::Passed => {}

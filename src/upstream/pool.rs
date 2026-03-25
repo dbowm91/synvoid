@@ -192,7 +192,9 @@ impl Backend {
 
     #[inline]
     pub fn decrement_connections(&self) {
-        self.current_connections.fetch_sub(1, Ordering::Relaxed);
+        let _ = self
+            .current_connections
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_sub(1));
     }
 
     #[inline]
@@ -340,13 +342,19 @@ impl UpstreamPool {
     fn apply_ip_hash(
         &self,
         candidates: &[&Backend],
-        _client_ip_hint: Option<&str>,
+        client_ip_hint: Option<&str>,
     ) -> Option<Backend> {
         let len = candidates.len();
         if len == 0 {
             return None;
         }
-        let hash = self.round_robin_index.fetch_add(1, Ordering::Relaxed);
+        let hash = if let Some(ip) = client_ip_hint {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            std::hash::Hash::hash(ip.as_bytes(), &mut hasher);
+            std::hash::Hasher::finish(&hasher) as usize
+        } else {
+            self.round_robin_index.fetch_add(1, Ordering::Relaxed)
+        };
         let idx = hash % len;
         Some(candidates[idx].clone())
     }

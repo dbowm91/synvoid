@@ -8,7 +8,7 @@ use crate::config::site::{ProxyHeadersConfig, RetryConfig, BufferingConfig, Prox
 use crate::waf::{
     BotDetectionResult, EndpointCheckResult, RateLimitResult, UpstreamErrorTracker, WafCore,
 };
-use crate::http_client::{create_http_client_with_config, send_request_with_timeout, HttpClient};
+use crate::http_client::{create_http_client_with_config, send_request_with_timeout, send_request_with_body_and_timeout, HttpClient};
 use crate::metrics::{record_proxy_cache_hit, record_proxy_cache_miss};
 use crate::upstream::{UpstreamPool, Backend, LoadBalanceAlgorithm};
 use crate::proxy_cache::{ProxyCache, ProxyCacheSettings, CacheKey, CacheKeyBuilder, ProxyCacheEntry, CacheHit};
@@ -91,56 +91,48 @@ pub fn build_headers_to_filter(global_headers: &[String], site_headers: &[String
 }
 
 pub fn sanitize_request_path(path: &str) -> String {
-    let mut result = String::with_capacity(path.len());
-    let mut prev_was_percent = false;
-    let mut decode_buffer = String::new();
-    
-    for c in path.chars() {
-        if c == '%' && !prev_was_percent {
-            prev_was_percent = true;
-            decode_buffer.clear();
-            continue;
-        }
-        
-        if prev_was_percent {
-            decode_buffer.push(c);
-            if decode_buffer.len() == 2 {
-                if let (Ok(h), Ok(l)) = (
-                    u8::from_str_radix(&decode_buffer[0..1], 16),
-                    u8::from_str_radix(&decode_buffer[1..2], 16),
-                ) {
-                    let decoded_byte = (h << 4) | l;
-                    if decoded_byte == 0 {
-                        continue;
-                    }
-                    if let Some(decoded_char) = char::from_u32(decoded_byte as u32) {
-                        result.push(decoded_char);
+    let mut result = Vec::<u8>::with_capacity(path.len());
+    let mut bytes = path.bytes();
+
+    while let Some(b) = bytes.next() {
+        match b {
+            b'%' => {
+                let h = bytes.next();
+                let l = bytes.next();
+                if let (Some(h), Some(l)) = (h, l) {
+                    if let (Ok(h), Ok(l)) = (
+                        u8::from_str_radix(std::str::from_utf8(&[h]).unwrap_or(""), 16),
+                        u8::from_str_radix(std::str::from_utf8(&[l]).unwrap_or(""), 16),
+                    ) {
+                        let decoded = (h << 4) | l;
+                        if decoded != 0 {
+                            result.push(decoded);
+                        }
                     } else {
-                        result.push_str(&decode_buffer);
+                        result.push(b'%');
+                        result.push(h);
+                        result.push(l);
                     }
                 } else {
-                    result.push('%');
-                    result.push_str(&decode_buffer);
+                    result.push(b'%');
+                    if let Some(h) = h {
+                        result.push(h);
+                    }
                 }
-                decode_buffer.clear();
             }
-            prev_was_percent = false;
-        } else if c == '.' && result.ends_with('/') {
-            continue;
-        } else if c == '/' && result.ends_with('/') {
-            continue;
-        } else if c.is_control() {
-            continue;
-        } else {
-            result.push(c);
+            b'.' if result.last() == Some(&b'/') => {}
+            b'/' if result.last() == Some(&b'/') => {}
+            b if b < 0x20 => {}
+            _ => result.push(b),
         }
     }
-    
-    if prev_was_percent {
-        result.push('%');
-    }
-    
-    result
+
+    String::from_utf8(result).unwrap_or_else(|e| {
+        let valid_up_to = e.utf8_error().valid_up_to();
+        let bytes = e.into_bytes();
+        let (valid, _) = bytes.split_at(valid_up_to);
+        String::from_utf8_lossy(valid).into_owned()
+    })
 }
 
 #[inline]
@@ -315,6 +307,7 @@ impl ProxyServer {
         method: http::Method,
         path: String,
         user_agent: Option<String>,
+        body: Option<bytes::Bytes>,
     ) -> Result<Response<String>, String> {
         let start = Instant::now();
 
@@ -388,7 +381,7 @@ impl ProxyServer {
             WafDecision::Pass => {}
         }
 
-        let forward_result = self.forward_request(method, &path).await;
+        let forward_result = self.forward_request(method, &path, body).await;
 
         match forward_result {
             Ok(response) => {
@@ -594,13 +587,14 @@ impl ProxyServer {
         &self,
         method: http::Method,
         path: &str,
+        body: Option<bytes::Bytes>,
     ) -> Result<Response<String>, Box<dyn std::error::Error + Send + Sync>> {
         if let Some(ref pool) = self.upstream_pool {
-            return self.forward_with_pool(method, path, pool).await;
+            return self.forward_with_pool(method, path, pool, body).await;
         }
 
         let url = format!("{}{}", self.upstream_url, path);
-        self.send_single_request(method, &url, None).await
+        self.send_single_request(method, &url, None, body).await
     }
 
     pub async fn forward_request_via_tunnel(
@@ -609,10 +603,10 @@ impl ProxyServer {
         tunnel_url: &str,
         path: &str,
         headers: Option<&http::HeaderMap>,
-        _body: Option<bytes::Bytes>,
+        body: Option<bytes::Bytes>,
     ) -> Result<Response<String>, Box<dyn std::error::Error + Send + Sync>> {
         let full_url = format!("{}{}", tunnel_url, path);
-        self.send_single_request(method, &full_url, headers).await
+        self.send_single_request(method, &full_url, headers, body).await
     }
 
     pub async fn handle_request_with_cache(
@@ -622,13 +616,14 @@ impl ProxyServer {
         host: &str,
         headers: &http::HeaderMap,
         scheme: &str,
+        body: Option<bytes::Bytes>,
     ) -> Result<Response<String>, String> {
         if method.as_str() == "PURGE" {
             return self.handle_cache_purge(path, host).await;
         }
 
         if !self.is_cacheable_method(&method) {
-            return self.forward_request(method, path).await.map_err(|e| e.to_string());
+            return self.forward_request(method, path, body).await.map_err(|e| e.to_string());
         }
 
         if let (Some(cache), Some(key_builder)) = (&self.cache, &self.cache_key_builder) {
@@ -683,7 +678,7 @@ impl ProxyServer {
                     cache.record_cache_miss();
                     record_proxy_cache_miss();
                     
-                    let result = self.forward_request(method.clone(), path).await;
+                    let result = self.forward_request(method.clone(), path, body.clone()).await;
                     
                     match result {
                         Ok(response) => {
@@ -707,7 +702,7 @@ impl ProxyServer {
             }
         }
         
-        self.forward_request(method, path).await.map_err(|e| e.to_string())
+        self.forward_request(method, path, body).await.map_err(|e| e.to_string())
     }
 
     fn filter_sensitive_headers(&self, headers: &http::HeaderMap) -> http::HeaderMap {
@@ -964,6 +959,7 @@ impl ProxyServer {
         method: http::Method,
         path: &str,
         pool: &UpstreamPool,
+        body: Option<bytes::Bytes>,
     ) -> Result<Response<String>, Box<dyn std::error::Error + Send + Sync>> {
         let retry_config = self.retry_config.as_ref();
         let max_retries = retry_config.map(|c| c.max_retries).unwrap_or(3);
@@ -1001,7 +997,7 @@ impl ProxyServer {
             
             tracing::debug!("Attempting request to upstream: {} (attempt {}/{})", url, attempt, max_retries + 1);
 
-            let result = self.send_single_request(method.clone(), &url, None).await;
+            let result = self.send_single_request(method.clone(), &url, None, body.clone()).await;
 
             backend.decrement_connections();
 
@@ -1097,6 +1093,7 @@ impl ProxyServer {
         method: http::Method,
         url: &str,
         headers: Option<&http::HeaderMap>,
+        body: Option<bytes::Bytes>,
     ) -> Result<Response<String>, Box<dyn std::error::Error + Send + Sync>> {
         let hop_by_hop_headers = [
             "connection",
@@ -1114,7 +1111,7 @@ impl ProxyServer {
                 method,
                 url,
                 headers,
-                None,
+                body,
                 Some(std::time::Duration::from_secs(30)),
             ).await?;
             
@@ -1140,10 +1137,11 @@ impl ProxyServer {
             return Ok(builder.body(body)?);
         }
         
-        let response = send_request_with_timeout(
+        let response = send_request_with_body_and_timeout(
             &self.client,
             method,
             url,
+            body,
             Some(std::time::Duration::from_secs(30)),
         ).await?;
         

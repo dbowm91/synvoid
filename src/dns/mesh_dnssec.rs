@@ -157,8 +157,15 @@ impl MeshDnsSecValidator {
             ds_data.push(key.algorithm.to_u8());
             ds_data.push(2);
 
+            let canonical_dnskey = crate::dns::dnssec::compute_dnskey_canonical(
+                key.flags,
+                3, // protocol
+                key.algorithm.to_u8(),
+                &key.public_key,
+            );
+
             let mut hasher = Sha256::new();
-            hasher.update(&key.public_key);
+            hasher.update(&canonical_dnskey);
             let digest = hasher.finalize();
 
             ds_data.extend_from_slice(&digest);

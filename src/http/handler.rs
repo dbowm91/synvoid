@@ -1335,6 +1335,7 @@ impl RequestHandler {
                 host,
                 headers,
                 scheme,
+                None,
             ).await {
                 Ok(resp) => {
                     let (parts, body) = resp.into_parts();

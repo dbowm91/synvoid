@@ -801,7 +801,11 @@ impl TrustAnchorManager {
 
         let mut sum: u32 = 0;
         for (i, byte) in buf.iter().enumerate() {
-            sum += (*byte as u32) << (8 * ((i + 1) % 2));
+            if i & 1 == 0 {
+                sum += (*byte as u32) << 8;
+            } else {
+                sum += *byte as u32;
+            }
         }
         sum += sum >> 16;
         (sum & 0xFFFF) as u16

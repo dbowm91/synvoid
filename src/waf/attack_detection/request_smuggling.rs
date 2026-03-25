@@ -53,8 +53,11 @@ impl RequestSmugglingDetector {
                     });
                 }
 
-                if te_lower.contains("x")
-                    || te_lower.contains("identity") && te_lower.contains("chunked")
+                let is_obfuscated_te = te_lower
+                    .split_whitespace()
+                    .any(|v| v.starts_with("x") || v.contains("/x"));
+                if is_obfuscated_te
+                    || (te_lower.contains("identity") && te_lower.contains("chunked"))
                 {
                     tracing::warn!(
                         attack_type = "request_smuggling",

@@ -547,6 +547,7 @@ impl HttpsServer {
                                 &host,
                                 &parts.headers,
                                 "https",
+                                None,
                             ).await {
                                 Ok(resp) => {
                                     let (parts, body) = resp.into_parts();

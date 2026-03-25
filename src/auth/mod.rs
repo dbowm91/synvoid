@@ -128,14 +128,14 @@ impl AuthManager {
                 tokio::select! {
                     _ = interval.tick() => {
                         if !pending_stores.is_empty() {
-                            let store = pending_stores.pop().unwrap();
-                            Self::write_store_to_disk(&data_dir_clone, &store).await;
+                            let merged = Self::merge_stores(&pending_stores);
+                            Self::write_store_to_disk(&data_dir_clone, &merged).await;
                             pending_stores.clear();
                         }
                         if flush_flag_clone.is_draining() {
                             if !pending_stores.is_empty() {
-                                let store = pending_stores.pop().unwrap();
-                                Self::write_store_to_disk(&data_dir_clone, &store).await;
+                                let merged = Self::merge_stores(&pending_stores);
+                                Self::write_store_to_disk(&data_dir_clone, &merged).await;
                                 pending_stores.clear();
                             }
                             if let Some(tx) = flush_completion_tx.take() {
@@ -163,6 +163,20 @@ impl AuthManager {
             write_tx,
             flush_requested: flush_flag,
         }
+    }
+
+    fn merge_stores(stores: &[AuthStore]) -> AuthStore {
+        if stores.is_empty() {
+            return AuthStore::default();
+        }
+        if stores.len() == 1 {
+            return stores[0].clone();
+        }
+        let mut merged = stores.last().unwrap().clone();
+        for store in stores.iter().take(stores.len() - 1) {
+            merged.login_logs.extend(store.login_logs.iter().cloned());
+        }
+        merged
     }
 
     fn load_store(data_dir: &PathBuf) -> AuthStore {

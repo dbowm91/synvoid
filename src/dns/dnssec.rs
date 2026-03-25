@@ -284,8 +284,8 @@ impl DnsSecKeyManager {
                 let signing_key = SigningKey::from_bytes(bytes.as_slice().try_into().unwrap());
                 let public = signing_key.verifying_key().to_bytes().to_vec();
                 let private = signing_key.to_bytes().to_vec();
-                let key_tag = calculate_key_tag(&public, Algorithm::Ed25519);
                 let flags = if key_type == KeyType::KSK { 257 } else { 256 };
+                let key_tag = calculate_key_tag(flags, 3, Algorithm::Ed25519.to_u8(), &public);
                 let key_size = None;
                 (public, private, key_tag, flags, key_size)
             }
@@ -377,8 +377,8 @@ impl DnsSecKeyManager {
                 let signing_key = SigningKey::from_bytes(bytes.as_slice().try_into().unwrap());
                 let public = signing_key.verifying_key().to_bytes().to_vec();
                 let private = signing_key.to_bytes().to_vec();
-                let key_tag = calculate_key_tag(&public, Algorithm::Ed25519);
                 let flags = if key_type == KeyType::KSK { 257 } else { 256 };
+                let key_tag = calculate_key_tag(flags, 3, Algorithm::Ed25519.to_u8(), &public);
                 let key_size = None;
                 (public, private, key_tag, flags, key_size)
             }
@@ -950,18 +950,20 @@ pub enum KeyType {
     ZSK,
 }
 
-fn calculate_key_tag(public_key: &[u8], algorithm: Algorithm) -> u16 {
+fn calculate_key_tag(flags: u16, protocol: u8, algorithm: u8, public_key: &[u8]) -> u16 {
+    let mut buf = Vec::with_capacity(4 + public_key.len());
+    buf.extend_from_slice(&flags.to_be_bytes());
+    buf.push(protocol);
+    buf.push(algorithm);
+    buf.extend_from_slice(public_key);
+
     let mut sum: u32 = 0;
-    for (i, byte) in public_key.iter().enumerate() {
+    for (i, byte) in buf.iter().enumerate() {
         if i & 1 == 0 {
             sum += (*byte as u32) << 8;
         } else {
             sum += *byte as u32;
         }
-    }
-
-    if algorithm == Algorithm::Ed25519 {
-        sum += (public_key.len() as u32) * 2;
     }
 
     (sum + (sum >> 16)) as u16 & 0xFFFF
@@ -1290,20 +1292,27 @@ pub fn create_ds_record(
     ds_data.push(key.algorithm.to_u8());
     ds_data.push(digest_type.to_u8());
 
+    let canonical_dnskey = compute_dnskey_canonical(
+        key.flags,
+        3, // protocol
+        key.algorithm.to_u8(),
+        &key.public_key,
+    );
+
     let digest = match digest_type {
         DsDigestType::Sha1 => {
             let mut hasher = sha1::Sha1::new();
-            hasher.update(&key.public_key);
+            hasher.update(&canonical_dnskey);
             hasher.finalize().to_vec()
         }
         DsDigestType::Sha256 => {
             let mut hasher = Sha256::new();
-            hasher.update(&key.public_key);
+            hasher.update(&canonical_dnskey);
             hasher.finalize().to_vec()
         }
         DsDigestType::Sha384 => {
             let mut hasher = Sha384::new();
-            hasher.update(&key.public_key);
+            hasher.update(&canonical_dnskey);
             hasher.finalize().to_vec()
         }
     };
@@ -1842,7 +1851,7 @@ mod tests {
             0x15, 0x16, 0x2e, 0x86, 0x4a, 0x7f, 0x52, 0x91, 0x3c, 0xc1, 0x96, 0x4d, 0x89, 0x2c,
             0x7b, 0x5e, 0x9f, 0x43,
         ];
-        let key_tag = calculate_key_tag(&public_key, Algorithm::Ed25519);
+        let key_tag = calculate_key_tag(257, 3, Algorithm::Ed25519.to_u8(), &public_key);
         assert!(key_tag > 0);
     }
 

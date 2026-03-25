@@ -149,6 +149,20 @@ impl SsrfDetector {
         false
     }
 
+    fn is_allowed_domain(&self, input: &str) -> bool {
+        if self.allowed_domains.is_empty() {
+            return false;
+        }
+        let input_lower = input.to_lowercase();
+        for domain in &self.allowed_domains {
+            let domain_lower = domain.to_lowercase();
+            if input_lower.contains(&domain_lower) {
+                return true;
+            }
+        }
+        false
+    }
+
     fn detect_with_url_decode(
         &self,
         input: &str,
@@ -156,6 +170,10 @@ impl SsrfDetector {
     ) -> Option<AttackDetectionResult> {
         let input_lower = input.to_lowercase();
         let decoded = url_decode_all(&input_lower);
+
+        if self.is_allowed_domain(&decoded) {
+            return None;
+        }
 
         if let Some(mat) = self.inner.patterns_ref().find(&decoded) {
             let matched = decoded[mat.start()..mat.end()].to_string();

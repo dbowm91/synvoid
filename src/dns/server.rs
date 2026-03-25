@@ -146,7 +146,29 @@ impl DnsServer {
             response_code: 3, // NXDOMAIN
         };
 
-        let response = build_response_header(id, flags, 0, 0, 0, 0);
+        let mut response = build_response_header(id, flags, 1, 0, 0, 0);
+
+        let mut pos = 12;
+        while pos < query.len() {
+            let len = query[pos] as usize;
+            if len == 0 {
+                response.push(query[pos]);
+                pos += 1;
+                break;
+            }
+            if pos + 1 + len > query.len() {
+                break;
+            }
+            response.push(query[pos]);
+            response.extend_from_slice(&query[pos + 1..pos + 1 + len]);
+            pos += 1 + len;
+        }
+        if pos == 12 {
+            response.push(0);
+        }
+        if pos + 4 <= query.len() {
+            response.extend_from_slice(&query[pos..pos + 4]);
+        }
 
         Some(Arc::new(response))
     }

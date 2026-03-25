@@ -177,13 +177,23 @@ pub async fn send_request_with_timeout(
     url: &str,
     timeout: Option<Duration>,
 ) -> Result<HttpResponse, Box<dyn std::error::Error + Send + Sync>> {
+    send_request_with_body_and_timeout(client, method, url, None, timeout).await
+}
+
+pub async fn send_request_with_body_and_timeout(
+    client: &HttpClient,
+    method: Method,
+    url: &str,
+    body: Option<Bytes>,
+    timeout: Option<Duration>,
+) -> Result<HttpResponse, Box<dyn std::error::Error + Send + Sync>> {
     let uri: Uri = url.parse()?;
-    let body = Full::new(Bytes::new());
+    let body = Full::new(body.unwrap_or_else(Bytes::new));
     let req = Request::builder()
         .method(method)
         .uri(uri)
         .body(body)?;
-    
+
     let response = if let Some(t) = timeout {
         match tokio::time::timeout(t, client.request(req)).await {
             Ok(Ok(resp)) => resp,
@@ -193,7 +203,7 @@ pub async fn send_request_with_timeout(
     } else {
         client.request(req).await?
     };
-    
+
     Ok(HttpResponse::from_hyper(response).await)
 }
 
