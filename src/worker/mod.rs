@@ -846,13 +846,17 @@ fn handle_minify_client_connection(
                         let result = process_minify_request(&state, request_id, site_id, path, encoding);
                         match result {
                             Ok(response) => {
-                                let _ = ipc.send(&response);
+                                if let Err(e) = ipc.send(&response) {
+                                    tracing::warn!("Failed to send minify response for request {}: {}", request_id, e);
+                                }
                             }
                             Err(error_msg) => {
-                                let _ = ipc.send(&crate::process::Message::MinifyError {
+                                if let Err(e) = ipc.send(&crate::process::Message::MinifyError {
                                     request_id,
                                     error: error_msg,
-                                });
+                                }) {
+                                    tracing::warn!("Failed to send minify error for request {}: {}", request_id, e);
+                                }
                             }
                         }
                     }
@@ -860,22 +864,28 @@ fn handle_minify_client_connection(
                         let result = process_compressed_request(&state, request_id, site_id, path, encoding);
                         match result {
                             Ok(response) => {
-                                let _ = ipc.send(&response);
+                                if let Err(e) = ipc.send(&response) {
+                                    tracing::warn!("Failed to send compressed response for request {}: {}", request_id, e);
+                                }
                             }
                             Err(error_msg) => {
-                                let _ = ipc.send(&crate::process::Message::MinifyError {
+                                if let Err(e) = ipc.send(&crate::process::Message::MinifyError {
                                     request_id,
                                     error: error_msg,
-                                });
+                                }) {
+                                    tracing::warn!("Failed to send compressed error for request {}: {}", request_id, e);
+                                }
                             }
                         }
                     }
                     crate::process::Message::PoisonImageRequest { request_id, site_id, body, last_modified } => {
                         let poisoned = poison_image_sync(&state, &site_id, body, last_modified);
-                        let _ = ipc.send(&crate::process::Message::PoisonImageResponse {
+                        if let Err(e) = ipc.send(&crate::process::Message::PoisonImageResponse {
                             request_id,
                             poisoned_body: poisoned,
-                        });
+                        }) {
+                            tracing::warn!("Failed to send poison image response for request {}: {}", request_id, e);
+                        }
                     }
                     _ => {}
                 }
@@ -1402,6 +1412,7 @@ fn handle_minify_request_sync(
     }
 
     let mut ipc = state.ipc.blocking_lock();
+    // TODO: send() is async but this is a sync context; refactor to async or use block_in_place
     let _ = ipc.send(&crate::process::Message::MinifyResponse {
             request_id,
             site_id,
@@ -1415,6 +1426,7 @@ fn handle_minify_request_sync(
 
 fn send_error_sync(state: &StaticWorkerState, request_id: u64, error: String) {
     let mut ipc = state.ipc.blocking_lock();
+    // TODO: send() is async but this is a sync context; refactor to async or use block_in_place
     let _ = ipc.send(&crate::process::Message::MinifyError {
         request_id,
         error,
@@ -1484,6 +1496,7 @@ fn handle_compressed_request_sync(
     };
 
     let mut ipc = state.ipc.blocking_lock();
+    // TODO: send() is async but this is a sync context; refactor to async or use block_in_place
     let _ = ipc.send(&crate::process::Message::GetCompressedResponse {
         request_id,
         content,

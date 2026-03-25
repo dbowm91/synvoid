@@ -175,11 +175,15 @@ pub fn handle_shutdown_message(
             
             lifecycle.stop();
             
-            let _ = lifecycle.send_shutdown_complete();
+            if let Err(e) = lifecycle.send_shutdown_complete() {
+                tracing::warn!("Worker {} failed to send shutdown complete: {}", lifecycle.worker_id, e);
+            }
             true
         }
         Message::MasterHealthCheck { timestamp } => {
-            let _ = lifecycle.ipc.lock().send(&Message::HealthCheckAck { timestamp: *timestamp });
+            if let Err(e) = lifecycle.ipc.lock().send(&Message::HealthCheckAck { timestamp: *timestamp }) {
+                tracing::warn!("Worker {} failed to send health check ack: {}", lifecycle.worker_id, e);
+            }
             false
         }
         Message::MasterConfigReload { config_path } => {

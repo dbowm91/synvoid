@@ -462,7 +462,9 @@ impl ProcessManager {
 
     fn record_spawn(&self, id: &WorkerId, pid: u32, port: Option<u16>, event: ProcessEvent) {
         self.metrics.total_spawns.fetch_add(1, Ordering::Relaxed);
-        let _ = self.event_tx.blocking_send(event);
+        if let Err(e) = self.event_tx.blocking_send(event) {
+            tracing::debug!("Failed to send spawn event: {:?}", e);
+        }
         if let Some(p) = port {
             tracing::info!("Spawned worker {} with PID {} on port {}", id, pid, p);
         } else {
@@ -649,7 +651,9 @@ impl ProcessManager {
         };
         
         if let Some(evt) = event {
-            let _ = self.event_tx.try_send(evt);
+            if let Err(e) = self.event_tx.try_send(evt) {
+                tracing::debug!("Failed to send worker event: {:?}", e);
+            }
         }
     }
 
@@ -660,7 +664,9 @@ impl ProcessManager {
                 *worker.status_mut() = WorkerStatus::Ready;
             }
         }
-        let _ = self.event_tx.try_send(ProcessEvent::UnifiedServerWorkerReady(worker_id));
+        if let Err(e) = self.event_tx.try_send(ProcessEvent::UnifiedServerWorkerReady(worker_id)) {
+            tracing::debug!("Failed to send UnifiedServerWorkerReady event: {:?}", e);
+        }
     }
 
     pub fn is_unified_server_worker_ready(&self) -> bool {
@@ -1222,7 +1228,9 @@ impl ProcessManager {
 
     pub async fn graceful_shutdown(&self) {
         tracing::info!("Initiating graceful shutdown");
-        let _ = self.event_tx.blocking_send(ProcessEvent::ShutdownInitiated);
+        if let Err(e) = self.event_tx.blocking_send(ProcessEvent::ShutdownInitiated) {
+            tracing::debug!("Failed to send ShutdownInitiated event: {:?}", e);
+        }
         
         self.running.store(false, Ordering::SeqCst);
         
@@ -1231,7 +1239,9 @@ impl ProcessManager {
         self.kill_remaining_workers();
 
         tracing::info!("Shutdown complete");
-        let _ = self.event_tx.blocking_send(ProcessEvent::ShutdownComplete);
+        if let Err(e) = self.event_tx.blocking_send(ProcessEvent::ShutdownComplete) {
+            tracing::debug!("Failed to send ShutdownComplete event: {:?}", e);
+        }
     }
 
     async fn wait_for_workers_to_stop(&self) {

@@ -959,7 +959,9 @@ pub mod origin_key_exchange {
 
     impl OriginKeyExchangeManager {
         pub fn new(_: [u8; 32], _: u64, _: usize) -> Self {
-            panic!("origin_key_exchange feature not enabled")
+            unreachable!(
+                "OriginKeyExchangeManager::new() called without origin_key_exchange feature enabled"
+            )
         }
     }
 
@@ -975,7 +977,7 @@ pub mod origin_key_exchange {
         _: i64,
         _: &str,
     ) -> bool {
-        panic!("origin_key_exchange feature not enabled")
+        unreachable!("verify_origin_signature() called without origin_key_exchange feature enabled")
     }
 
     pub fn verify_global_signature(
@@ -987,6 +989,6 @@ pub mod origin_key_exchange {
         _: i64,
         _: &str,
     ) -> bool {
-        panic!("origin_key_exchange feature not enabled")
+        unreachable!("verify_global_signature() called without origin_key_exchange feature enabled")
     }
 }

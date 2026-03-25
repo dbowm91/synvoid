@@ -192,20 +192,16 @@ impl SqlitePersistence {
     }
 
     pub fn load(&self, site_id: Option<&str>) -> std::io::Result<Option<Vec<BaselineStats>>> {
-        let table = if site_id.is_some() {
-            "baselines"
+        let query = if site_id.is_some() {
+            "SELECT data FROM baselines WHERE id = 1"
         } else {
-            "baselines_global"
+            "SELECT data FROM baselines_global WHERE id = 1"
         };
 
         let conn = self.conn.lock();
 
         let result: Option<String> = conn
-            .query_row(
-                &format!("SELECT data FROM {} WHERE id = 1", table),
-                [],
-                |row| row.get(0),
-            )
+            .query_row(query, [], |row| row.get(0))
             .optional()
             .map_err(|e| {
                 std::io::Error::new(
@@ -233,16 +229,13 @@ impl SqlitePersistence {
     }
 
     pub fn exists(&self, site_id: Option<&str>) -> bool {
-        let table = if site_id.is_some() {
-            "baselines"
+        let query = if site_id.is_some() {
+            "SELECT 1 FROM baselines WHERE id = 1"
         } else {
-            "baselines_global"
+            "SELECT 1 FROM baselines_global WHERE id = 1"
         };
         let conn = self.conn.lock();
-        conn.query_row(&format!("SELECT 1 FROM {} WHERE id = 1", table), [], |_| {
-            Ok(())
-        })
-        .is_ok()
+        conn.query_row(query, [], |_| Ok(())).is_ok()
     }
 
     pub fn get_connection(&self) -> Arc<Mutex<Connection>> {

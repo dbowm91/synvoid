@@ -728,7 +728,7 @@ impl WafCore {
                                     store.block_ip(client_ip, "rate_limit_violation", ban_duration, "global");
                                 }
                                 if let Some(ref threat_intel) = get_threat_intel() {
-                                    let _ = threat_intel.announce_local_block(
+                                    threat_intel.announce_local_block(
                                         client_ip,
                                         "rate_limit_violation".to_string(),
                                         ban_duration,
@@ -759,7 +759,7 @@ impl WafCore {
                     store.block_ip(client_ip, "ip_feed", 0, "global");
                 }
                 if let Some(ref threat_intel) = self.threat_intel {
-                    let _ = threat_intel.announce_local_block(
+                    threat_intel.announce_local_block(
                         client_ip,
                         "ip_feed".to_string(),
                         0,
@@ -823,7 +823,7 @@ impl WafCore {
                                     store.block_ip(client_ip, "probe_auto_ban", ban_duration, "global");
                                 }
                                 if let Some(ref threat_intel) = get_threat_intel() {
-                                    let _ = threat_intel.announce_local_block(
+                                    threat_intel.announce_local_block(
                                         client_ip,
                                         "probe_auto_ban".to_string(),
                                         ban_duration,
@@ -841,7 +841,7 @@ impl WafCore {
                 store.block_ip(client_ip, "honeypot", self.honeypot_ban_duration_secs, "global");
             }
             if let Some(ref threat_intel) = self.threat_intel {
-                let _ = threat_intel.announce_local_block(
+                threat_intel.announce_local_block(
                     client_ip,
                     "honeypot".to_string(),
                     self.honeypot_ban_duration_secs,
@@ -886,7 +886,7 @@ impl WafCore {
                                     store.block_ip(client_ip, "probe_auto_ban", ban_duration, "global");
                                 }
                                 if let Some(ref threat_intel) = get_threat_intel() {
-                                    let _ = threat_intel.announce_local_block(
+                                    threat_intel.announce_local_block(
                                         client_ip,
                                         "probe_auto_ban".to_string(),
                                         ban_duration,
@@ -904,7 +904,7 @@ impl WafCore {
                 store.block_ip(client_ip, "honeypot", self.honeypot_ban_duration_secs, "global");
             }
             if let Some(ref threat_intel) = self.threat_intel {
-                let _ = threat_intel.announce_local_block(
+                threat_intel.announce_local_block(
                     client_ip,
                     "honeypot".to_string(),
                     self.honeypot_ban_duration_secs,
@@ -995,7 +995,7 @@ impl WafCore {
                                 store.block_ip(client_ip, "attack", ban_duration, "global");
                             }
                             if let Some(ref threat_intel) = get_threat_intel() {
-                                let _ = threat_intel.announce_local_block(
+                                threat_intel.announce_local_block(
                                     client_ip,
                                     "attack".to_string(),
                                     ban_duration,

@@ -362,17 +362,13 @@ impl AdminState {
 
     pub fn get_metrics_history(&self, seconds: u64) -> Vec<AggregatedMetrics> {
         let history = self.metrics_history.read();
-        let _cutoff = std::time::Instant::now() - std::time::Duration::from_secs(seconds);
-        let mut result = Vec::new();
-
-        for (i, m) in history.iter().enumerate() {
-            if i >= MAX_HISTORY_SIZE {
-                break;
-            }
-            result.push(m.clone());
-        }
-
-        result
+        let count = seconds.min(MAX_HISTORY_SIZE as u64) as usize;
+        let start = if history.len() > count {
+            history.len() - count
+        } else {
+            0
+        };
+        history[start..].to_vec()
     }
 
     pub fn update_site_metrics(&self, site_metrics: HashMap<String, SiteMetricsPayload>) {

@@ -55,6 +55,7 @@ pub use attestation::{
     AttestationVerifier, OriginAttestation,
 };
 pub use config::{IntegrityConfig, IntegrityMode};
+#[cfg(feature = "origin_key_exchange")]
 pub use protocol::origin_key_exchange::{
     verify_global_signature, verify_origin_signature, OriginKeyExchangeManager,
     OriginSignedSessionKey, PendingOriginSession,

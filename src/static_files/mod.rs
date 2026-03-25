@@ -384,8 +384,14 @@ impl StaticFileHandler {
         if let Some(etag_header) = if_none_match {
             if etag_header.contains(&etag) || etag_header == "*" {
                 return Ok(StaticResponse {
-                    status: StatusCode::NOT_FOUND,
-                    headers: vec![],
+                    status: StatusCode::NOT_MODIFIED,
+                    headers: vec![
+                        ("ETag".to_string(), etag.clone()),
+                        (
+                            "Cache-Control".to_string(),
+                            "public, max-age=31536000, immutable".to_string(),
+                        ),
+                    ],
                     body: Bytes::new(),
                     zero_copy_path: None,
                 });

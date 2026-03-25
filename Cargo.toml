@@ -22,7 +22,6 @@ path = "src/bin/server.rs"
 default = ["socket-handoff", "post-quantum", "mesh", "dns"]
 dns = []
 socket-handoff = []
-daemonize = []
 wireguard = ["dep:boringtun"]
 icmp-filter = []
 flood-ebpf = []
