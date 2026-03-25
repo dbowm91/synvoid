@@ -103,40 +103,50 @@ pub fn clear_global_patterns() {
 
 pub fn update_patterns_for_category(category: &str, patterns: Vec<String>) {
     let mut store = RULE_PATTERN_STORE.write();
-    match category {
-        "sqli" => store.sqli = Some(patterns),
-        "xss" => store.xss = Some(patterns),
-        "cmd_injection" => store.cmd_injection = Some(patterns),
-        "path_traversal" => store.path_traversal = Some(patterns),
-        "ssrf" => store.ssrf = Some(patterns),
-        "ssti" => store.ssti = Some(patterns),
-        "open_redirect" => store.open_redirect = Some(patterns),
-        "xxe" => store.xxe = Some(patterns),
-        "rfi" => store.rfi = Some(patterns),
-        "ldap_injection" => store.ldap_injection = Some(patterns),
-        "xpath_injection" => store.xpath_injection = Some(patterns),
-        "jwt" => store.jwt = Some(patterns),
-        _ => {}
+    macro_rules! set_cat {
+        ($name:expr, $field:ident) => {
+            if category == $name {
+                store.$field = Some(patterns);
+                return;
+            }
+        };
     }
+    set_cat!("sqli", sqli);
+    set_cat!("xss", xss);
+    set_cat!("cmd_injection", cmd_injection);
+    set_cat!("path_traversal", path_traversal);
+    set_cat!("ssrf", ssrf);
+    set_cat!("ssti", ssti);
+    set_cat!("open_redirect", open_redirect);
+    set_cat!("xxe", xxe);
+    set_cat!("rfi", rfi);
+    set_cat!("ldap_injection", ldap_injection);
+    set_cat!("xpath_injection", xpath_injection);
+    set_cat!("jwt", jwt);
 }
 
 pub fn get_custom_patterns_for_category(category: &str) -> Vec<String> {
     let patterns = RULE_PATTERN_STORE.read();
-    match category {
-        "sqli" => patterns.sqli.clone().unwrap_or_default(),
-        "xss" => patterns.xss.clone().unwrap_or_default(),
-        "cmd_injection" => patterns.cmd_injection.clone().unwrap_or_default(),
-        "path_traversal" => patterns.path_traversal.clone().unwrap_or_default(),
-        "ssrf" => patterns.ssrf.clone().unwrap_or_default(),
-        "ssti" => patterns.ssti.clone().unwrap_or_default(),
-        "open_redirect" => patterns.open_redirect.clone().unwrap_or_default(),
-        "xxe" => patterns.xxe.clone().unwrap_or_default(),
-        "rfi" => patterns.rfi.clone().unwrap_or_default(),
-        "ldap_injection" => patterns.ldap_injection.clone().unwrap_or_default(),
-        "xpath_injection" => patterns.xpath_injection.clone().unwrap_or_default(),
-        "jwt" => patterns.jwt.clone().unwrap_or_default(),
-        _ => Vec::new(),
+    macro_rules! get_cat {
+        ($name:expr, $field:ident) => {
+            if category == $name {
+                return patterns.$field.clone().unwrap_or_default();
+            }
+        };
     }
+    get_cat!("sqli", sqli);
+    get_cat!("xss", xss);
+    get_cat!("cmd_injection", cmd_injection);
+    get_cat!("path_traversal", path_traversal);
+    get_cat!("ssrf", ssrf);
+    get_cat!("ssti", ssti);
+    get_cat!("open_redirect", open_redirect);
+    get_cat!("xxe", xxe);
+    get_cat!("rfi", rfi);
+    get_cat!("ldap_injection", ldap_injection);
+    get_cat!("xpath_injection", xpath_injection);
+    get_cat!("jwt", jwt);
+    Vec::new()
 }
 
 pub fn get_merged_patterns(category: &str, default_patterns: &[&'static str], config_custom: &[String]) -> Vec<String> {
@@ -152,21 +162,26 @@ pub fn get_merged_patterns(category: &str, default_patterns: &[&'static str], co
 
 pub fn has_custom_patterns(category: &str) -> bool {
     let patterns = RULE_PATTERN_STORE.read();
-    match category {
-        "sqli" => patterns.sqli.is_some(),
-        "xss" => patterns.xss.is_some(),
-        "cmd_injection" => patterns.cmd_injection.is_some(),
-        "path_traversal" => patterns.path_traversal.is_some(),
-        "ssrf" => patterns.ssrf.is_some(),
-        "ssti" => patterns.ssti.is_some(),
-        "open_redirect" => patterns.open_redirect.is_some(),
-        "xxe" => patterns.xxe.is_some(),
-        "rfi" => patterns.rfi.is_some(),
-        "ldap_injection" => patterns.ldap_injection.is_some(),
-        "xpath_injection" => patterns.xpath_injection.is_some(),
-        "jwt" => patterns.jwt.is_some(),
-        _ => false,
+    macro_rules! has_cat {
+        ($name:expr, $field:ident) => {
+            if category == $name {
+                return patterns.$field.is_some();
+            }
+        };
     }
+    has_cat!("sqli", sqli);
+    has_cat!("xss", xss);
+    has_cat!("cmd_injection", cmd_injection);
+    has_cat!("path_traversal", path_traversal);
+    has_cat!("ssrf", ssrf);
+    has_cat!("ssti", ssti);
+    has_cat!("open_redirect", open_redirect);
+    has_cat!("xxe", xxe);
+    has_cat!("rfi", rfi);
+    has_cat!("ldap_injection", ldap_injection);
+    has_cat!("xpath_injection", xpath_injection);
+    has_cat!("jwt", jwt);
+    false
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -569,102 +584,31 @@ impl RuleFeedManagerForWaf {
 fn convert_rules_to_ipc_patterns(rules: &RuleSet) -> Vec<crate::process::ipc::RulePatternData> {
     let mut patterns = Vec::new();
     
-    if let Some(ref sqli) = rules.sqli {
-        if let Some(ref p) = sqli.patterns {
-            patterns.push(crate::process::ipc::RulePatternData {
-                category: "sqli".to_string(),
-                patterns: p.clone(),
-            });
-        }
+    macro_rules! push_if_present {
+        ($field:ident, $category:expr) => {
+            if let Some(ref rule) = rules.$field {
+                if let Some(ref p) = rule.patterns {
+                    patterns.push(crate::process::ipc::RulePatternData {
+                        category: $category.to_string(),
+                        patterns: p.clone(),
+                    });
+                }
+            }
+        };
     }
-    if let Some(ref xss) = rules.xss {
-        if let Some(ref p) = xss.patterns {
-            patterns.push(crate::process::ipc::RulePatternData {
-                category: "xss".to_string(),
-                patterns: p.clone(),
-            });
-        }
-    }
-    if let Some(ref pt) = rules.path_traversal {
-        if let Some(ref p) = pt.patterns {
-            patterns.push(crate::process::ipc::RulePatternData {
-                category: "path_traversal".to_string(),
-                patterns: p.clone(),
-            });
-        }
-    }
-    if let Some(ref rfi) = rules.rfi {
-        if let Some(ref p) = rfi.patterns {
-            patterns.push(crate::process::ipc::RulePatternData {
-                category: "rfi".to_string(),
-                patterns: p.clone(),
-            });
-        }
-    }
-    if let Some(ref ssrf) = rules.ssrf {
-        if let Some(ref p) = ssrf.patterns {
-            patterns.push(crate::process::ipc::RulePatternData {
-                category: "ssrf".to_string(),
-                patterns: p.clone(),
-            });
-        }
-    }
-    if let Some(ref ssti) = rules.ssti {
-        if let Some(ref p) = ssti.patterns {
-            patterns.push(crate::process::ipc::RulePatternData {
-                category: "ssti".to_string(),
-                patterns: p.clone(),
-            });
-        }
-    }
-    if let Some(ref cmd) = rules.cmd_injection {
-        if let Some(ref p) = cmd.patterns {
-            patterns.push(crate::process::ipc::RulePatternData {
-                category: "cmd_injection".to_string(),
-                patterns: p.clone(),
-            });
-        }
-    }
-    if let Some(ref xxe) = rules.xxe {
-        if let Some(ref p) = xxe.patterns {
-            patterns.push(crate::process::ipc::RulePatternData {
-                category: "xxe".to_string(),
-                patterns: p.clone(),
-            });
-        }
-    }
-    if let Some(ref jwt) = rules.jwt {
-        if let Some(ref p) = jwt.patterns {
-            patterns.push(crate::process::ipc::RulePatternData {
-                category: "jwt".to_string(),
-                patterns: p.clone(),
-            });
-        }
-    }
-    if let Some(ref ldap) = rules.ldap_injection {
-        if let Some(ref p) = ldap.patterns {
-            patterns.push(crate::process::ipc::RulePatternData {
-                category: "ldap_injection".to_string(),
-                patterns: p.clone(),
-            });
-        }
-    }
-    if let Some(ref xpath) = rules.xpath_injection {
-        if let Some(ref p) = xpath.patterns {
-            patterns.push(crate::process::ipc::RulePatternData {
-                category: "xpath_injection".to_string(),
-                patterns: p.clone(),
-            });
-        }
-    }
-    if let Some(ref or) = rules.open_redirect {
-        if let Some(ref p) = or.patterns {
-            patterns.push(crate::process::ipc::RulePatternData {
-                category: "open_redirect".to_string(),
-                patterns: p.clone(),
-            });
-        }
-    }
+    
+    push_if_present!(sqli, "sqli");
+    push_if_present!(xss, "xss");
+    push_if_present!(path_traversal, "path_traversal");
+    push_if_present!(rfi, "rfi");
+    push_if_present!(ssrf, "ssrf");
+    push_if_present!(ssti, "ssti");
+    push_if_present!(cmd_injection, "cmd_injection");
+    push_if_present!(xxe, "xxe");
+    push_if_present!(jwt, "jwt");
+    push_if_present!(ldap_injection, "ldap_injection");
+    push_if_present!(xpath_injection, "xpath_injection");
+    push_if_present!(open_redirect, "open_redirect");
     
     patterns
 }

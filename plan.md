@@ -165,16 +165,16 @@ Add `// SAFETY:` comments documenting invariants:
 
 Items deferred from Phase 4 to later phases:
 
-| # | Issue | File:Line | Description | Target Phase |
-|---|-------|-----------|-------------|-------------|
-| 4.F1 | Binary body in cache | `src/proxy.rs:891` | `String::from_utf8_lossy` corrupts binary content (images, compressed). Requires `Response<String>` → `Response<Bytes>` refactor throughout proxy pipeline. | 6 |
-| 4.F2 | WAF `to_uppercase` allocation | `src/waf/mod.rs:942-951` | Method allocates `String` per request for comparison. Use pre-lowercased `&str` constants. | 6 |
-| 4.F3 | `InputLocation::Header` allocation | `src/waf/attack_detection/detector_common.rs:237,303,343,375` | Creates `String` per header check. Requires `Cow<str>` or lifetime refactoring. | 6 |
-| 4.F4 | Stale IPC during drain | `src/process/manager.rs:730-768` | Filter by drain_id, skip intermediate heartbeats. Needs identification of where stale messages arrive. | 5 |
-| 4.F5 | stdout/stderr pipe blocking | `src/process/manager.rs:457-458` | Child process pipes can block if not drained. Platform-specific, needs careful testing. | 5 |
-| 4.F6 | Async mutex standardization | `src/mesh/topology.rs:980,992` | `_sync` methods use `blocking_read()` on `tokio::sync::RwLock`. Correct for current sync callers; migrate callers to async. | 6 |
-| 4.F7 | Arc\<Firewall\> per query | `src/dns/recursive.rs:266-276,349-359` | Firewall cloned per DNS query. Requires DNS server modular split. | 6 |
-| 4.F8 | Batch zone index rebuild | `src/dns/server.rs:1052-1074` | Zone index rebuilt on every load. Batch all loads and rebuild once. | 6 |
+| # | Issue | File:Line | Description | Target Phase | Status |
+|---|-------|-----------|-------------|-------------|--------|
+| 4.F1 | Binary body in cache | `src/proxy.rs:913` | `String::from_utf8_lossy` corrupts binary content (images, compressed). Requires `Response<String>` → `Response<Bytes>` refactor throughout proxy pipeline. | 7+ | ⏭ Deferred |
+| ~~4.F2~~ | ~~WAF `to_uppercase` allocation~~ | `src/waf/endpoints.rs:94` | ~~Method allocates `String` per request~~ | ~~6~~ | ✅ Fixed — `eq_ignore_ascii_case` |
+| 4.F3 | `InputLocation::Header` allocation | `src/waf/attack_detection/detector_common.rs:237,303,343,375` | Creates `String` per header check. Requires `Cow<str>` or lifetime refactoring. | 7+ | ⏭ Deferred |
+| ~~4.F4~~ | ~~Stale IPC during drain~~ | `src/process/manager.rs:760` | ~~Filter by drain_id~~ | ~~6~~ | ✅ Fixed — drain_id in response messages |
+| 4.F5 | stdout/stderr pipe blocking | `src/process/manager.rs:457-458` | Child process pipes can block if not drained. Platform-specific, needs careful testing. | 7+ | ✅ Fixed in Phase 5 — `Stdio::inherit()` |
+| 4.F6 | Async mutex standardization | `src/mesh/topology.rs:980,992` | `_sync` methods use `blocking_read()` on `tokio::sync::RwLock`. Correct for current sync callers; migrate callers to async. | 7+ | ⏭ Deferred — `_sync` variants are correct |
+| 4.F7 | Arc\<Firewall\> per query | `src/dns/recursive.rs:266-276,349-359` | Firewall cloned per DNS query. Requires DNS server modular split. | 7+ | ⏭ Deferred |
+| 4.F8 | Batch zone index rebuild | `src/dns/server.rs:1106-1128` | Zone index rebuilt on every load. Batch all loads and rebuild once. | 7+ | ⏭ Deferred |
 
 ### 4.1 Fix O(n) Cache Operations
 
@@ -255,11 +255,11 @@ Rule: `parking_lot` for synchronous-only code. `tokio::sync` for code that holds
 
 Items deferred from Phase 5 to Phase 6:
 
-| # | Issue | File:Line | Description | Target Phase |
-|---|-------|-----------|-------------|-------------|
-| 5.F1 | mesh_sync.rs split | `src/dns/mesh_sync.rs` | 1,975 lines; too complex and risky for Phase 5 | 6 |
-| 5.F2 | drain_id in drain response | `src/process/ipc.rs` | `UnifiedServerWorkerDrained` and `StaticWorkerDrained` need `drain_id` field for filtering | 6 |
-| 5.F3 | handle_query_with_cache QueryContext | `src/dns/server.rs` | Different parameter set than TCP handler; needs separate context or shared subset | 6 |
+| # | Issue | File:Line | Description | Target Phase | Status |
+|---|-------|-----------|-------------|-------------|--------|
+| 5.F1 | mesh_sync.rs split | `src/dns/mesh_sync.rs` | 1,975 lines; too complex and risky for Phase 5 | 7+ | ⏭ Deferred |
+| ~~5.F2~~ | ~~drain_id in drain response~~ | `src/process/ipc.rs` | ~~`UnifiedServerWorkerDrained` and `StaticWorkerDrained` need `drain_id` field~~ | ~~6~~ | ✅ Fixed in Phase 6 |
+| 5.F3 | handle_query_with_cache QueryContext | `src/dns/server.rs` | 18 call sites across 4 files | 7+ | ⏭ Deferred |
 
 | # | Issue | File:Line | Fix | Status |
 |---|-------|-----------|-----|--------|
@@ -279,89 +279,102 @@ Items deferred from Phase 5 to Phase 6:
 
 ## Phase 6: Subsystem Refactoring
 
+> **PARTIALLY COMPLETED 2026-03-25.** 12 of 40+ items addressed directly; remaining deferred to Phase 7+.
+> Verification: `cargo check` ✅ `cargo check --features dns` ✅ `cargo test --test integration_test` ✅ (99/99 passed)
+> `cargo clippy` produces 154 warnings (up from 152; all are pre-existing categories).
+
+### Phase 6 Follow-up Items
+
+Items discovered during Phase 6 review:
+
+| # | Issue | File:Line | Description | Priority |
+|---|-------|-----------|-------------|----------|
+| 6.F1 | Latent XSS in `generate_login_page` | `src/admin/legacy.rs:342-343` | The `error` parameter is not passed through `escape_html()`. Currently dead code (zero callers) but exported via `pub use`. Fix: add `escape_html()` call on the `error` parameter, or remove the function if truly unused. | Low |
+| 6.F2 | Duplicate match arms in `load_private_key` | `src/mesh/cert.rs:50-56` | `PrivateKey`, `EcPrivateKey`, and `RsaPrivateKey` each appear twice in the `||` chain. Remove the three duplicate conditions. | Trivial |
+
 ### 6.1 Mesh Subsystem (38K lines, 55 files)
 
 **HIGH:**
 
-| # | Issue | File:Line | Fix |
-|---|-------|-----------|-----|
-| 6.1.1 | God object: `transport.rs` 6,464 lines | `src/mesh/transport.rs` | Split into handler modules per category (routing, DHT, org, DNS) |
-| 6.1.2 | Duplicate `MeshTransportError` | `src/mesh/transport_core/error.rs`, `transports/mod.rs` | Consolidate into single error type |
-| 6.1.3 | Blocking `RwLock` in async | `src/mesh/topology.rs:980,992` | Remove `_sync` variants |
-| 6.1.4 | ~80+ `unwrap()` on `duration_since(UNIX_EPOCH)` | `src/mesh/protocol.rs`, `transport.rs`, `organization.rs`, `cert.rs` | Use `.unwrap_or(Duration::ZERO)` or helper |
-| 6.1.5 | ~10 `expect()` in crypto paths | `src/mesh/config.rs:1515,1523`, `cert.rs:643` | Return `Result` |
-| 6.1.6 | 22 files with `#![allow(dead_code)]` | Various mesh files | Remove; implement or delete |
+| # | Issue | File:Line | Fix | Status |
+|---|-------|-----------|-----|--------|
+| 6.1.1 | God object: `transport.rs` 6,464 lines | `src/mesh/transport.rs` | Split into handler modules per category (routing, DHT, org, DNS) | ⏭ Deferred to Phase 7+ |
+| 6.1.2 | Duplicate `MeshTransportError` | `src/mesh/transport_core/error.rs`, `transports/mod.rs` | Consolidate into single error type | ⏭ Deferred — needs 6.1.1 first |
+| 6.1.3 | Blocking `RwLock` in async | `src/mesh/topology.rs:980,992` | Remove `_sync` variants | ✅ N/A — `_sync` variants are correct for sync callers |
+| 6.1.4 | ~80+ `unwrap()` on `duration_since(UNIX_EPOCH)` | `src/mesh/protocol.rs`, `transport.rs`, `organization.rs`, `cert.rs` | Use `.unwrap_or(Duration::ZERO)` or helper | ⏭ Deferred to Phase 7+ |
+| 6.1.5 | ~10 `expect()` in crypto paths | `src/mesh/config.rs:1515,1523`, `cert.rs:643` | Return `Result` | ⏭ Deferred to Phase 7+ |
+| 6.1.6 | 22 files with `#![allow(dead_code)]` | Various mesh files | Remove; implement or delete | ⏭ Deferred — 27 suppressions, needs per-item audit |
 
 **MEDIUM:**
 
-| # | Issue | File:Line | Fix |
-|---|-------|-----------|-----|
-| 6.1.7 | `MeshConfig` 40+ fields | `src/mesh/config.rs:654-738` | Builder pattern or composable sub-configs |
-| 6.1.8 | `MeshTransport::new()` 10+ params | `src/mesh/transport.rs:254-264` | Introduce `MeshTransportConfig` |
-| 6.1.9 | `MeshMessage` 70+ variants | `src/mesh/protocol.rs:266-978` | Group into `RoutingMessage`, `DhtMessage`, `OrgMessage` sub-enums |
-| 6.1.10 | Mixed lock types | `src/mesh/topology.rs`, `transport.rs` | Standardize per context |
-| 6.1.11 | Unbounded collections | `src/mesh/protocol.rs`, `transport.rs:71-72`, `topology.rs:247` | Add periodic cleanup, use `LruCache` |
-| 6.1.12 | Duplicate PEM loading | `src/mesh/cert.rs:252-334` | Extract shared helper |
-| 6.1.13 | Regex compiled per `detect_attack()` call | `src/mesh/security_challenge.rs:364` | Pre-compile when patterns added |
-| 6.1.14 | `SequenceCounter` `Relaxed` ordering | `src/mesh/config.rs:146-167` | Use `SeqCst` or document rationale |
+| # | Issue | File:Line | Fix | Status |
+|---|-------|-----------|-----|--------|
+| 6.1.7 | `MeshConfig` 40+ fields | `src/mesh/config.rs:654-738` | Builder pattern or composable sub-configs | ⏭ Deferred to Phase 7+ |
+| 6.1.8 | `MeshTransport::new()` 10+ params | `src/mesh/transport.rs:254-264` | Introduce `MeshTransportConfig` | ⏭ Deferred to Phase 7+ |
+| 6.1.9 | `MeshMessage` 70+ variants | `src/mesh/protocol.rs:266-978` | Group into `RoutingMessage`, `DhtMessage`, `OrgMessage` sub-enums | ⏭ Deferred to Phase 7+ |
+| 6.1.10 | Mixed lock types | `src/mesh/topology.rs`, `transport.rs` | Standardize per context | ⏭ Deferred to Phase 7+ |
+| 6.1.11 | Unbounded collections | `src/mesh/protocol.rs`, `transport.rs:71-72`, `topology.rs:247` | Add periodic cleanup, use `LruCache` | ⏭ Deferred to Phase 7+ |
+| 6.1.12 | Duplicate PEM loading | `src/mesh/cert.rs:252-334` | Extract shared helper | ✅ Fixed — `load_cert_chain_and_key()` extracted |
+| 6.1.13 | Regex compiled per `detect_attack()` call | `src/mesh/security_challenge.rs:364` | Pre-compile when patterns added | ✅ Fixed — `SuspiciousPattern::new()` pre-compiles regexes |
+| 6.1.14 | `SequenceCounter` `Relaxed` ordering | `src/mesh/config.rs:146-167` | Use `SeqCst` or document rationale | ⏭ Deferred to Phase 7+ |
 
 ### 6.2 Admin Subsystem (~7.5K lines, 28 files)
 
 **HIGH:**
 
-| # | Issue | File:Line | Fix |
-|---|-------|-----------|-----|
-| 6.2.1 | `block_on` in async context | `src/admin/mod.rs:105` | Make async or pass config as param |
-| 6.2.2 | Theme/honeypot endpoints lack auth | `src/admin/handlers/theme.rs:134-209`, `handlers/honeypot.rs:34-62` | Add `require_auth()` calls |
-| 6.2.3 | XSS in legacy HTML | `src/admin/legacy.rs:116-165` | HTML-escape all interpolated values |
-| 6.2.4 | Three separate rate limiters | `src/admin/rate_limit.rs`, `state.rs:19-60`, `auth.rs:14-78` | Consolidate into single abstraction |
-| 6.2.5 | Unbounded auth token map | `src/admin/auth.rs:14-16` | Add periodic cleanup or LRU cache |
-| 6.2.6 | CSRF tokens never cleaned | `src/admin/state.rs:459-479` | Invoke `cleanup_expired_csrf_tokens()` periodically |
+| # | Issue | File:Line | Fix | Status |
+|---|-------|-----------|-----|--------|
+| 6.2.1 | `block_on` in async context | `src/admin/mod.rs:116` | Make async or pass config as param | ⏭ Deferred to Phase 7+ |
+| 6.2.2 | Theme/honeypot endpoints lack auth | `src/admin/handlers/theme.rs:134-209`, `handlers/honeypot.rs:34-62` | Add `require_auth()` calls | ⏭ Deferred to Phase 7+ |
+| 6.2.3 | XSS in legacy HTML | `src/admin/legacy.rs:116-165` | HTML-escape all interpolated values | ✅ Fixed — `escape_html()` added, all user fields escaped |
+| 6.2.4 | Three separate rate limiters | `src/admin/rate_limit.rs`, `state.rs:19-60`, `auth.rs:14-78` | Consolidate into single abstraction | ⏭ Deferred to Phase 7+ |
+| 6.2.5 | Unbounded auth token map | `src/admin/auth.rs:14-16` | Add periodic cleanup or LRU cache | ⏭ Deferred to Phase 7+ |
+| 6.2.6 | CSRF tokens never cleaned | `src/admin/state.rs:459-479` | Invoke `cleanup_expired_csrf_tokens()` periodically | ✅ Fixed — called in 60s alert_ticker |
 
 **MEDIUM:**
 
-| # | Issue | File:Line | Fix |
-|---|-------|-----------|-----|
-| 6.2.7 | `Vec::remove(0)` O(n) for metrics | `src/admin/state.rs:355-361` | Use `VecDeque` for O(1) pop_front |
-| 6.2.8 | Same O(n) for request logs | `src/admin/state.rs:382-388` | Use `VecDeque` |
-| 6.2.9 | Hardcoded file paths | `src/admin/handlers/config.rs:971+` | Use config-driven paths |
-| 6.2.10 | Duplicate `get_client_ip` | `src/admin/middleware.rs:16-29`, `handlers/common.rs:74-86` | Remove `common.rs` version; use `ClientIp` extension |
-| 6.2.11 | Config write race (no file locking) | `src/admin/handlers/config.rs`, `handlers/sites.rs` | Serialize writes through channel |
-| 6.2.12 | `AdminState` god object 20+ fields | `src/admin/state.rs` | Break into domain-specific state objects |
-| 6.2.13 | Per-handler auth boilerplate | All handlers | Use Axum middleware |
+| # | Issue | File:Line | Fix | Status |
+|---|-------|-----------|-----|--------|
+| 6.2.7 | `Vec::remove(0)` O(n) for metrics | `src/admin/state.rs:355-361` | Use `VecDeque` for O(1) pop_front | ✅ Fixed — `VecDeque::pop_front()` |
+| 6.2.8 | Same O(n) for request logs | `src/admin/state.rs:382-388` | Use `VecDeque` | ✅ Fixed — `VecDeque::pop_front()` |
+| 6.2.9 | Hardcoded file paths | `src/admin/handlers/config.rs:971+` | Use config-driven paths | ⏭ Deferred to Phase 7+ |
+| 6.2.10 | Duplicate `get_client_ip` | `src/admin/middleware.rs:16-29`, `handlers/common.rs:74-86` | Remove `common.rs` version; use `ClientIp` extension | ✅ Fixed — `common.rs` now checks `ClientIp` extension first |
+| 6.2.11 | Config write race (no file locking) | `src/admin/handlers/config.rs`, `handlers/sites.rs` | Serialize writes through channel | ⏭ Deferred to Phase 7+ |
+| 6.2.12 | `AdminState` god object 20+ fields | `src/admin/state.rs` | Break into domain-specific state objects | ⏭ Deferred to Phase 7+ |
+| 6.2.13 | Per-handler auth boilerplate | All handlers | Use Axum middleware | ⏭ Deferred to Phase 7+ |
 
 ### 6.3 WAF Core Simplification
 
-| # | Issue | File:Line | Fix |
-|---|-------|-----------|-----|
-| 6.3.1 | `WafCore::new()` 19 params | `src/waf/mod.rs:253` | Introduce `WafCoreBuilder` or `WafCoreConfig` struct |
-| 6.3.2 | `check_request_full()` ~400 lines | `src/waf/mod.rs:667` | Extract rate limit, bot, honeypot, challenge checks into separate methods |
-| 6.3.3 | `reload_attack_detector()` 10x repeat | `src/waf/mod.rs:458-510` | Macro or iterator over `(category, config_field)` pairs |
-| 6.3.4 | `get_custom_patterns_for_category` 3x repeat | `src/waf/rule_feed.rs:104-170` | Macro or generic accessor |
-| 6.3.5 | `convert_rules_to_ipc_patterns` 100 lines | `src/waf/rule_feed.rs:555-656` | Macro |
-| 6.3.6 | Status text mapping 3x repeat | `src/waf/endpoints.rs:415-494` | Extract shared function |
-| 6.3.7 | Memory limits on state | `src/block_store.rs` | Add configurable max entries with LRU eviction |
+| # | Issue | File:Line | Fix | Status |
+|---|-------|-----------|-----|--------|
+| 6.3.1 | `WafCore::new()` 19 params | `src/waf/mod.rs:253` | Introduce `WafCoreBuilder` or `WafCoreConfig` struct | ⏭ Deferred to Phase 7+ |
+| 6.3.2 | `check_request_full()` ~400 lines | `src/waf/mod.rs:667` | Extract rate limit, bot, honeypot, challenge checks into separate methods | ⏭ Deferred to Phase 7+ |
+| 6.3.3 | `reload_attack_detector()` 10x repeat | `src/waf/mod.rs:458-510` | Macro or iterator over `(category, config_field)` pairs | ✅ Fixed — `merge_patterns!` macro |
+| 6.3.4 | `get_custom_patterns_for_category` 3x repeat | `src/waf/rule_feed.rs:104-170` | Macro or generic accessor | ✅ Fixed — local `macro_rules!` per function |
+| 6.3.5 | `convert_rules_to_ipc_patterns` 100 lines | `src/waf/rule_feed.rs:555-656` | Macro | ✅ Fixed — `push_if_present!` macro |
+| 6.3.6 | Status text mapping 3x repeat | `src/waf/endpoints.rs:415-494` | Extract shared function | ✅ Fixed — `status_text()` helper |
+| 6.3.7 | Memory limits on state | `src/block_store.rs` | Add configurable max entries with LRU eviction | ⏭ Deferred to Phase 7+ |
 
 ### 6.4 Code Duplication (IPC)
 
-| # | Issue | File:Line | Fix |
-|---|-------|-----------|-----|
-| 6.4.1 | Unix/Windows IPC handler duplication | `src/worker/mod.rs` | Extract common logic into trait or helper |
-| 6.4.2 | Windows IPC pipe code duplication | `src/main.rs:1177-1314` | Consolidate into reusable IPC helper |
-| 6.4.3 | Static worker client handling | `src/worker/mod.rs` | Unify `handle_minify_client_connection` and Windows variant |
-| 6.4.4 | Sync/async `IpcStream` dual API | `src/process/ipc.rs:838-1038` vs `ipc_transport.rs:20-407` | Document divergence; consider unifying |
+| # | Issue | File:Line | Fix | Status |
+|---|-------|-----------|-----|--------|
+| 6.4.1 | Unix/Windows IPC handler duplication | `src/worker/mod.rs` | Extract common logic into trait or helper | ⏭ Deferred to Phase 7+ |
+| 6.4.2 | Windows IPC pipe code duplication | `src/main.rs:1177-1314` | Consolidate into reusable IPC helper | ⏭ Deferred to Phase 7+ |
+| 6.4.3 | Static worker client handling | `src/worker/mod.rs` | Unify `handle_minify_client_connection` and Windows variant | ⏭ Deferred to Phase 7+ |
+| 6.4.4 | Sync/async `IpcStream` dual API | `src/process/ipc.rs:838-1038` vs `ipc_transport.rs:20-407` | Document divergence; consider unifying | ⏭ Deferred to Phase 7+ |
 
 ### 6.5 Large Module Splits
 
-| Module | Current Lines | Target | Submodules to Extract |
-|--------|--------------|--------|----------------------|
-| `src/mesh/transport.rs` | 6,464 | <1,000 | `handler_routing.rs`, `handler_dht.rs`, `handler_org.rs`, `handler_dns.rs` |
-| `src/proxy.rs` | 50KB | <500 lines | `upstream.rs`, `waf_integration.rs` |
-| `src/router.rs` | 29KB | <500 lines | `domain_matcher.rs`, `site_resolver.rs` |
-| `src/worker/mod.rs` | 1,566 | <500 | `connection.rs`, `image_poisoning.rs`, `drain_state.rs` |
-| `src/dns/server.rs` | 4,500+ | <1,000 | `query_handler.rs`, `zone_manager.rs`, `rate_limiter.rs` |
-| `src/dns/mesh_sync.rs` | 1,975 | <500 | `registry.rs`, `verification.rs`, `health.rs` |
-| `src/admin/state.rs` | 20+ fields | Split | `metrics_state.rs`, `auth_state.rs`, `csrf_state.rs` |
+| Module | Current Lines | Target | Submodules to Extract | Status |
+|--------|--------------|--------|----------------------|--------|
+| `src/mesh/transport.rs` | 6,464 | <1,000 | `handler_routing.rs`, `handler_dht.rs`, `handler_org.rs`, `handler_dns.rs` | ⏭ Deferred to Phase 7+ |
+| `src/proxy.rs` | 1,364 | <500 lines | `upstream.rs`, `waf_integration.rs` | ⏭ Deferred to Phase 7+ |
+| `src/router.rs` | 762 | <500 lines | `domain_matcher.rs`, `site_resolver.rs` | ⏭ Deferred to Phase 7+ |
+| `src/worker/mod.rs` | 1,586 | <500 | `connection.rs`, `image_poisoning.rs`, `drain_state.rs` | ⏭ Deferred to Phase 7+ |
+| `src/dns/server.rs` | 4,733 | <1,000 | `query_handler.rs`, `zone_manager.rs`, `rate_limiter.rs` | ⏭ Deferred to Phase 7+ |
+| `src/dns/mesh_sync.rs` | 1,975 | <500 | `registry.rs`, `verification.rs`, `health.rs` | ⏭ Deferred to Phase 7+ |
+| `src/admin/state.rs` | 511 lines | Split | `metrics_state.rs`, `auth_state.rs`, `csrf_state.rs` | ⏭ Deferred to Phase 7+ |
 
 ---
 
@@ -542,16 +555,33 @@ Phase 5 (DNS RFC Compliance) ─────────────────
   5.9  handle_tcp_query QueryContext ✅  (23 params → 2)
   5.10 DNS query parsing dedup      ✅  (extract_query_name → parse_query_name)
   5.11 mesh_sync.rs split           ⏭  (deferred to Phase 6 — 1,975 lines)
-  4.3.2 Stale IPC drain_id          ⏭  (deferred to Phase 6 — needs msg format change)
+  4.3.2 Stale IPC drain_id          ✅  (drain_id added to UnifiedServerWorkerDrained and StaticWorkerDrained)
   4.3.3 stdout/stderr pipe blocking ✅  (Stdio::piped() → Stdio::inherit())
   │
-Phase 6 (Subsystem Refactoring) ─────────────── Days 12-20      ── starts after Phase 3
-  6.1  Mesh (14 items)
-  6.2  Admin (13 items)
-  6.3  WAF core (7 items)
-  6.4  IPC dedup (4 items)
-  6.5  Module splits (7 modules)
-  Also absorbs: 4.1.4, 4.2.2, 4.2.3, 4.5, 4.6.2, 4.6.3, 5.11 (mesh_sync split), 5.F2 (drain_id in response msgs), 5.F3 (handle_query QueryContext)
+Phase 6 (Subsystem Refactoring) ─────────────── PARTIALLY COMPLETED 2026-03-25
+  6.1.12 PEM loading extraction     ✅
+  6.1.13 Pre-compiled regex         ✅
+  6.2.3  XSS in legacy HTML         ✅
+  6.2.6  CSRF token cleanup         ✅
+  6.2.7  VecDeque for metrics       ✅
+  6.2.8  VecDeque for request logs  ✅
+  6.2.10 get_client_ip consolidation ✅
+  6.3.3  reload_attack_detector macro ✅
+  6.3.4  rule_feed match consolidation ✅
+  6.3.5  convert_rules_to_ipc_patterns macro ✅
+  6.3.6  status_text extraction     ✅
+  5.F2   drain_id in response msgs  ✅
+  4.2.2  to_uppercase allocation    ✅
+  6.1.1-6.1.11 mesh structural      ⏭  (deferred to Phase 7+)
+  6.2.1-6.2.2,6.2.4-6.2.5,6.2.9-6.2.13 admin  ⏭  (deferred to Phase 7+)
+  6.3.1-6.3.2,6.3.7 WAF structural  ⏭  (deferred to Phase 7+)
+  6.4    IPC dedup (4 items)        ⏭  (deferred to Phase 7+)
+  6.5    Module splits (7 modules)  ⏭  (deferred to Phase 7+)
+  4.1.4  Binary body in cache       ⏭  (needs Response<String> → Response<Bytes>)
+  4.6.2  Arc<Firewall> shared       ⏭  (needs DnsFirewall interior mutability)
+  4.6.3  Batch zone index rebuild   ⏭  (needs zone load batching)
+  5.11   mesh_sync.rs split         ⏭  (1,975 lines, complex state)
+  5.F3   handle_query_with_cache QueryContext ⏭  (18 call sites, 4 files)
   │
 Phase 7 (Testing & Build) ───────────────────── Days 14-20      ── parallel with Phase 4-6
   7.1  Fix vacuous assertions
@@ -562,6 +592,7 @@ Phase 7 (Testing & Build) ──────────────────
   7.6  Fuzzing expansion
   7.7  Dependency hygiene
   7.8  Documentation
+  Also absorbs all Phase 6 deferred items (6.1.1-6.1.11, 6.2.1-6.2.5, 6.2.9-6.2.13, 6.3.1-6.3.2, 6.3.7, 6.4, 6.5)
 ```
 
 ---

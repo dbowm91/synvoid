@@ -249,11 +249,10 @@ impl MeshCertManager {
         self.ca_path.is_some()
     }
 
-    pub fn build_server_config(&self) -> Result<ServerConfig, MeshCertError> {
-        let (Some(cert_path), Some(key_path)) = (&self.cert_path, &self.key_path) else {
-            return Err(MeshCertError::MissingCert);
-        };
-
+    fn load_cert_chain_and_key(
+        cert_path: &std::path::Path,
+        key_path: &std::path::Path,
+    ) -> Result<(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>), MeshCertError> {
         let cert_file = File::open(cert_path)
             .map_err(|e| MeshCertError::IoError(cert_path.display().to_string(), e))?;
         let key_file = File::open(key_path)
@@ -275,6 +274,16 @@ impl MeshCertManager {
 
         let private_key = PrivateKeyDer::from_pem(key_pem.0, key_pem.1)
             .ok_or_else(|| MeshCertError::NoPrivateKey(key_path.display().to_string()))?;
+
+        Ok((cert_chain, private_key))
+    }
+
+    pub fn build_server_config(&self) -> Result<ServerConfig, MeshCertError> {
+        let (Some(cert_path), Some(key_path)) = (&self.cert_path, &self.key_path) else {
+            return Err(MeshCertError::MissingCert);
+        };
+
+        let (cert_chain, private_key) = Self::load_cert_chain_and_key(cert_path, key_path)?;
 
         let server_config = rustls::ServerConfig::builder()
             .with_no_client_auth()
@@ -303,7 +312,6 @@ impl MeshCertManager {
             let client_config = ClientConfig::try_with_platform_verifier().map_err(|e| {
                 MeshCertError::ConfigError(format!("Failed to create client config: {}", e))
             })?;
-            // Quinn 0.11 with rustls automatically supports 0-RTT when available
             tracing::debug!(
                 "Mesh TLS client configured (no client cert) for node {}",
                 self.node_id
@@ -311,27 +319,7 @@ impl MeshCertManager {
             return Ok(client_config);
         };
 
-        let cert_file = File::open(cert_path)
-            .map_err(|e| MeshCertError::IoError(cert_path.display().to_string(), e))?;
-        let key_file = File::open(key_path)
-            .map_err(|e| MeshCertError::IoError(key_path.display().to_string(), e))?;
-
-        let cert_reader = &mut BufReader::new(cert_file);
-        let key_reader = &mut BufReader::new(key_file);
-
-        let mut cert_chain = Vec::new();
-        while let Ok(Some((kind, der))) = pem::from_buf(cert_reader) {
-            if kind == pem::SectionKind::Certificate {
-                cert_chain.push(CertificateDer::from(der));
-            }
-        }
-
-        let key_pem = pem::from_buf(key_reader)
-            .map_err(|e| MeshCertError::ParseError(format!("{:?}", e)))?
-            .ok_or_else(|| MeshCertError::NoPrivateKey(key_path.display().to_string()))?;
-
-        let private_key = PrivateKeyDer::from_pem(key_pem.0, key_pem.1)
-            .ok_or_else(|| MeshCertError::NoPrivateKey(key_path.display().to_string()))?;
+        let (cert_chain, private_key) = Self::load_cert_chain_and_key(cert_path, key_path)?;
 
         let mut client_config = rustls::ClientConfig::builder()
             .with_root_certificates({

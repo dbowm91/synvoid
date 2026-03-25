@@ -266,6 +266,7 @@ pub enum Message {
     StaticWorkerDrained {
         worker_id: usize,
         remaining_tasks: u64,
+        drain_id: u64,
     },
     StaticWorkerDrainStatus {
         drain_id: u64,
@@ -429,6 +430,7 @@ pub enum Message {
     UnifiedServerWorkerDrained {
         id: WorkerId,
         remaining_connections: u64,
+        drain_id: u64,
     },
     UnifiedServerWorkerResize {
         worker_threads: u32,

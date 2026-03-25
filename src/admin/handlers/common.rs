@@ -72,6 +72,9 @@ pub fn check_rate_limit(
 }
 
 pub fn get_client_ip(req: &axum::extract::Request) -> String {
+    if let Some(client_ip) = req.extensions().get::<super::super::middleware::ClientIp>() {
+        return client_ip.0.clone();
+    }
     req.headers()
         .get("x-forwarded-for")
         .and_then(|v| v.to_str().ok())

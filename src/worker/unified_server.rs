@@ -749,6 +749,7 @@ pub async fn run_unified_server_worker(args: UnifiedServerWorkerArgs) -> Result<
                     drop(app_servers);
 
                     let remaining = ipc_state.drain_state.get_active_connections();
+                    let current_drain_id = ipc_state.drain_id.load(std::sync::atomic::Ordering::SeqCst);
                     tracing::info!(
                         "Unified Server Worker {} drain complete, {} remaining connections",
                         ipc_state.worker_id,
@@ -763,6 +764,7 @@ pub async fn run_unified_server_worker(args: UnifiedServerWorkerArgs) -> Result<
                     let _ = ipc.send(&Message::UnifiedServerWorkerDrained {
                         id: ipc_state.worker_id,
                         remaining_connections: remaining,
+                        drain_id: current_drain_id,
                     }).await;
                 }
                 Some(Message::UnifiedServerWorkerResize { worker_threads }) => {

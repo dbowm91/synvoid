@@ -423,8 +423,70 @@ Replaced the inline `extract_query_name` method (manual wire format parsing with
 | Item | Reason |
 |------|--------|
 | 5.11 mesh_sync.rs split | 1,975 lines; too complex and risky for Phase 5 |
-| 4.3.2 drain_id in response messages | Requires IPC message format changes |
-| handle_query_with_cache / handle_query QueryContext | Different parameter sets than TCP handler |
+| ~~4.3.2 drain_id in response messages~~ | ✅ Fixed in Phase 6 — `drain_id` added to `UnifiedServerWorkerDrained` and `StaticWorkerDrained` |
+| handle_query_with_cache / handle_query QueryContext | 18 call sites across 4 files; too risky for Phase 6 |
+
+## Phase 6 Completion Notes (2026-03-25)
+
+Phase 6 addressed subsystem refactoring items. 12 of 40+ items completed; remaining deferred to Phase 7+. Verification: `cargo check` ✅ `cargo check --features dns` ✅ `cargo test --test integration_test` ✅ (99/99 passed). `cargo clippy` produces 154 warnings (up from 152; all are pre-existing categories).
+
+### WAF Code Duplication (6.3.3-6.3.6)
+
+**`reload_attack_detector` macro (6.3.3):** The 10x repeated `get_custom_patterns_for_category` + `extend` pattern was collapsed into a local `macro_rules! merge_patterns` macro. Each invocation is now 1 line instead of 3. The macro works because both `DetectorConfig` and `SsrfConfig` have a `custom_patterns: Vec<String>` field.
+
+**Rule feed match consolidation (6.3.4):** `update_patterns_for_category`, `get_custom_patterns_for_category`, and `has_custom_patterns` each had 12-variant match arms matching the same category strings. Each was refactored to use a local `macro_rules!` macro that reduces each arm to 1 line. Note: these could alternatively use a `HashMap<String, Option<Vec<String>>>` but the macro approach preserves the current `RwLock<GlobalRulePatterns>` structure.
+
+**`convert_rules_to_ipc_patterns` macro (6.3.5):** 100 lines of repeated `if let Some(ref x) = rules.x { if let Some(ref p) = x.patterns { ... } }` collapsed into a `push_if_present!` macro. Each invocation is 1 line instead of 7.
+
+**Status text extraction (6.3.6):** Three duplicated 15-variant `match status_code` blocks in `endpoints.rs` consolidated into a single `fn status_text(code: u16) -> &'static str` method. One inconsistency fixed: `minimal_page` used `"Error"` as default while others used `"An Error Occurred"` — now all use `"An Error Occurred"`.
+
+### Admin Subsystem (6.2.3, 6.2.6, 6.2.7, 6.2.8, 6.2.10)
+
+**XSS in legacy HTML (6.2.3):** Added `escape_html()` function to `src/admin/legacy.rs`. All user-controlled fields (`username`, `sites`, `ip_address`, `reason`, `session id`) are now HTML-escaped before interpolation into the admin dashboard HTML. This prevents stored XSS if a user registers with a username containing `<script>` tags.
+
+**CSRF token cleanup (6.2.6):** `cleanup_expired_csrf_tokens()` existed but was never called. Added a call in the 60-second `alert_ticker` in `src/admin/metrics.rs:44`. Expired tokens are now cleaned up every 60 seconds.
+
+**VecDeque for metrics/logs (6.2.7/6.2.8):** `metrics_history` and `request_logs` changed from `Vec` to `VecDeque`. `Vec::remove(0)` (O(n) shift) replaced with `VecDeque::pop_front()` (O(1)). The `get_metrics_history` method's `history[start..].to_vec()` was changed to `history.iter().skip(start).cloned().collect()` since `VecDeque` doesn't support `Index<RangeFrom<usize>>`.
+
+**get_client_ip consolidation (6.2.10):** `common.rs::get_client_ip` now checks for the `ClientIp` extension (set by middleware) first, falling back to header extraction. This avoids redundant header parsing when the middleware has already run.
+
+### Mesh Subsystem (6.1.12, 6.1.13)
+
+**PEM loading extraction (6.1.12):** `build_server_config` and `build_client_config` in `src/mesh/cert.rs` had identical 21-line blocks for loading cert chain and private key from PEM files. Extracted into `fn load_cert_chain_and_key(cert_path, key_path) -> Result<(Vec<CertificateDer>, PrivateKeyDer), MeshCertError>`.
+
+**Pre-compiled regex (6.1.13):** `MeshAttackDetector::detect_attack` compiled regex patterns on every call via `regex::Regex::new(&pattern.pattern)`. Added `compiled_regex: Option<Arc<regex::Regex>>` field to `SuspiciousPattern` and a `SuspiciousPattern::new()` constructor that pre-compiles regexes. `detect_attack` now uses the pre-compiled regex when available. Regex compilation is expensive (microseconds to milliseconds per pattern) so this is significant for hot paths.
+
+### IPC Drain ID (5.F2 / 4.3.2)
+
+**`drain_id` in response messages:** Added `drain_id: u64` field to `UnifiedServerWorkerDrained` and `StaticWorkerDrained` IPC message variants. The `drain_worker_async` function's `drain_response_fn` closure now takes `(msg, expected_drain_id)` and filters responses by matching drain_id. This prevents stale drain responses from a previous drain operation from being accepted. The worker captures `drain_id` before clearing it to 0.
+
+### Performance Fix (4.2.2)
+
+**`to_uppercase` allocation elimination:** `EndpointBlocker::check` allocated a `String` via `method.to_uppercase()` on every request. Replaced with `guard.block_methods.iter().any(|m| m.eq_ignore_ascii_case(method))` which avoids the allocation entirely. Since HTTP methods are a fixed small set, the linear scan is faster than allocation + hash lookup.
+
+### Items Deferred to Later Phases
+
+| Item | Phase | Reason |
+|------|-------|--------|
+| 6.1.1 transport.rs split (6,448 lines) | 7+ | God object; needs careful incremental extraction of handler modules |
+| 6.1.2 Duplicate MeshTransportError | 7+ | Requires transport.rs split first |
+| 6.1.3 blocking_read in async | N/A | `_sync` variants are correct for sync callers (see Phase 4.5 notes) |
+| 6.1.4 duration_since unwrap | 7+ | ~80+ occurrences across mesh; mechanical but widespread |
+| 6.1.5 expect in crypto paths | 7+ | Needs Result return type changes |
+| 6.1.6 mesh dead_code allows | 7+ | 27 suppressions; need per-item audit |
+| 6.1.7-6.1.14 mesh config/message/lock | 7+ | Large structural changes |
+| 6.2.1 block_on in admin | 7+ | Needs async refactor of router creation |
+| 6.2.2 theme/honeypot auth | 7+ | Needs auth middleware integration |
+| 6.2.4-6.2.5 rate limiter/auth consolidation | 7+ | Structural refactor |
+| 6.2.8-6.2.13 admin state/config | 7+ | AdminState god object split |
+| 6.3.2 check_request_full split | 7+ | ~400 lines; extract rate limit, bot, honeypot, challenge checks |
+| 6.4 IPC dedup | 7+ | Platform-specific IPC code |
+| 6.5 Large module splits | 7+ | All modules >1,000 lines |
+| 5.F3 handle_query_with_cache QueryContext | 7+ | 18 call sites across 4 files |
+| 4.1.4 Binary body in cache | 7+ | Needs Response<String> → Response<Bytes> throughout proxy pipeline |
+| 4.6.2 Arc<Firewall> shared | 7+ | Needs DnsFirewall interior mutability change |
+| 4.6.3 Batch zone index rebuild | 7+ | Needs zone load batching |
+| mesh_sync.rs split (1,975 lines) | 7+ | Complex with verification loop state |
 
 ## Known Code Quality Context
 
@@ -445,7 +507,7 @@ Remaining per-item `#[allow(dead_code)]` on specific functions/types:
 - `src/mesh/` — ~13 items (item-level, gated on feature/platform)
 - `src/dns/server.rs` — ~10 items (item-level)
 
-`cargo clippy` currently produces ~152 warnings (down from 156 after Phase 5 key tag consolidation and typo fix). These are incremental quality issues that don't affect correctness.
+`cargo clippy` currently produces ~154 warnings (up from 152 after Phase 6 additions; all are pre-existing categories). These are incremental quality issues that don't affect correctness.
 
 ### Build Configuration
 
@@ -500,10 +562,11 @@ Agents modifying these areas should be aware of performance characteristics:
 
 These patterns repeat and should be consolidated (see `plan.md` Phase 6.3):
 
-- `reload_attack_detector` repeats the same "check category, extend patterns" block 10 times (`src/waf/mod.rs:458-510`)
-- `get_custom_patterns_for_category`, `update_patterns_for_category`, `has_custom_patterns` have identical match arms (`src/waf/rule_feed.rs:104-170`)
-- `convert_rules_to_ipc_patterns` is 100 lines of repetitive matching (`src/waf/rule_feed.rs:555-656`)
-- Error page status text mapping repeated 3 times (`src/waf/endpoints.rs:415-494`)
+- ~~`reload_attack_detector` repeats the same block 10 times~~ ✅ Fixed in Phase 6 — now uses `merge_patterns!` macro
+- ~~`get_custom_patterns_for_category`, `update_patterns_for_category`, `has_custom_patterns` have identical match arms~~ ✅ Fixed in Phase 6 — each uses local `macro_rules!` macro
+- ~~`convert_rules_to_ipc_patterns` is 100 lines of repetitive matching~~ ✅ Fixed in Phase 6 — now uses `push_if_present!` macro
+- ~~Error page status text mapping repeated 3 times~~ ✅ Fixed in Phase 6 — consolidated into `status_text()` helper
+- PEM cert+key loading duplicated in `src/mesh/cert.rs` — ✅ Fixed in Phase 6 — extracted `load_cert_chain_and_key()`
 
 ## Module Size Guide
 

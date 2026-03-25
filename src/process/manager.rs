@@ -750,8 +750,8 @@ impl ProcessManager {
             ipc,
             "UnifiedServerWorker",
             |_, drain_id| Message::UnifiedServerWorkerDrain { timeout_secs, drain_id },
-            |msg| match msg {
-                Message::UnifiedServerWorkerDrained { id: _, remaining_connections } => Some(*remaining_connections),
+            |msg, expected_drain_id| match msg {
+                Message::UnifiedServerWorkerDrained { remaining_connections, drain_id, .. } if *drain_id == expected_drain_id => Some(*remaining_connections),
                 _ => None,
             },
         ).await
@@ -762,7 +762,7 @@ impl ProcessManager {
         ipc: Option<SharedIpc>,
         worker_name: &str,
         drain_msg_fn: impl FnOnce(u64, u64) -> Message,
-        drain_response_fn: impl Fn(&Message) -> Option<u64>,
+        drain_response_fn: impl Fn(&Message, u64) -> Option<u64>,
     ) -> Result<u64, String> {
         if let Some(ipc) = ipc {
             let drain_id = std::time::SystemTime::now()
@@ -782,7 +782,7 @@ impl ProcessManager {
                 {
                     let mut ipc = ipc.lock().await;
                     if let Ok(Some(msg)) = ipc.recv(100) {
-                        if let Some(remaining) = drain_response_fn(&msg) {
+                        if let Some(remaining) = drain_response_fn(&msg, drain_id) {
                             tracing::info!("{} drained, {} remaining connections", worker_name, remaining);
                             return Ok(remaining);
                         }
@@ -874,8 +874,8 @@ impl ProcessManager {
             ipc,
             "StaticWorker",
             |_, drain_id| Message::StaticWorkerDrain { timeout_secs, drain_id },
-            |msg| match msg {
-                Message::StaticWorkerDrained { worker_id: _, remaining_tasks } => Some(*remaining_tasks),
+            |msg, expected_drain_id| match msg {
+                Message::StaticWorkerDrained { remaining_tasks, drain_id, .. } if *drain_id == expected_drain_id => Some(*remaining_tasks),
                 _ => None,
             },
         ).await

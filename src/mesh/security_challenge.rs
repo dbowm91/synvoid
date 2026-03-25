@@ -273,6 +273,29 @@ pub struct SuspiciousPattern {
     pub pattern_type: PatternType,
     pub severity: AttackSeverity,
     pub description: String,
+    pub compiled_regex: Option<Arc<regex::Regex>>,
+}
+
+impl SuspiciousPattern {
+    pub fn new(
+        pattern: String,
+        pattern_type: PatternType,
+        severity: AttackSeverity,
+        description: String,
+    ) -> Self {
+        let compiled_regex = if pattern_type == PatternType::Regex {
+            regex::Regex::new(&pattern).ok().map(Arc::new)
+        } else {
+            None
+        };
+        Self {
+            pattern,
+            pattern_type,
+            severity,
+            description,
+            compiled_regex,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -315,36 +338,36 @@ impl MeshAttackDetector {
 
     fn init_default_patterns(&mut self) {
         let patterns = vec![
-            SuspiciousPattern {
-                pattern: r"(?i)(union.*select|select.*from|drop\s+table|insert\s+into)".to_string(),
-                pattern_type: PatternType::Regex,
-                severity: AttackSeverity::High,
-                description: "SQL Injection attempt detected".to_string(),
-            },
-            SuspiciousPattern {
-                pattern: r"(?i)<script|javascript:|on\w+\s*=".to_string(),
-                pattern_type: PatternType::Regex,
-                severity: AttackSeverity::High,
-                description: "XSS attempt detected".to_string(),
-            },
-            SuspiciousPattern {
-                pattern: r"\.\./|\.\.\\".to_string(),
-                pattern_type: PatternType::Regex,
-                severity: AttackSeverity::Medium,
-                description: "Path traversal attempt detected".to_string(),
-            },
-            SuspiciousPattern {
-                pattern: r"[;&|`$]".to_string(),
-                pattern_type: PatternType::Regex,
-                severity: AttackSeverity::High,
-                description: "Command injection attempt detected".to_string(),
-            },
-            SuspiciousPattern {
-                pattern: r"http[s]?://".to_string(),
-                pattern_type: PatternType::Regex,
-                severity: AttackSeverity::Medium,
-                description: "Potential SSRF attempt detected".to_string(),
-            },
+            SuspiciousPattern::new(
+                r"(?i)(union.*select|select.*from|drop\s+table|insert\s+into)".to_string(),
+                PatternType::Regex,
+                AttackSeverity::High,
+                "SQL Injection attempt detected".to_string(),
+            ),
+            SuspiciousPattern::new(
+                r"(?i)<script|javascript:|on\w+\s*=".to_string(),
+                PatternType::Regex,
+                AttackSeverity::High,
+                "XSS attempt detected".to_string(),
+            ),
+            SuspiciousPattern::new(
+                r"\.\./|\.\.\\".to_string(),
+                PatternType::Regex,
+                AttackSeverity::Medium,
+                "Path traversal attempt detected".to_string(),
+            ),
+            SuspiciousPattern::new(
+                r"[;&|`$]".to_string(),
+                PatternType::Regex,
+                AttackSeverity::High,
+                "Command injection attempt detected".to_string(),
+            ),
+            SuspiciousPattern::new(
+                r"http[s]?://".to_string(),
+                PatternType::Regex,
+                AttackSeverity::Medium,
+                "Potential SSRF attempt detected".to_string(),
+            ),
         ];
 
         let mut patterns_guard = self.suspicious_patterns.write();
@@ -361,7 +384,9 @@ impl MeshAttackDetector {
 
         for pattern in patterns.iter() {
             let matches = match pattern.pattern_type {
-                PatternType::Regex => regex::Regex::new(&pattern.pattern)
+                PatternType::Regex => pattern
+                    .compiled_regex
+                    .as_ref()
                     .map(|re| re.is_match(data))
                     .unwrap_or(false),
                 PatternType::Contains => data.contains(&pattern.pattern),

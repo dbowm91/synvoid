@@ -452,46 +452,25 @@ impl WafCore {
         
         // Merge custom patterns from config with global rule feed patterns
         // Note: sqli and xss use libinjection and don't support custom_patterns
-        let patterns = crate::waf::rule_feed::get_custom_patterns_for_category("path_traversal");
-        if !patterns.is_empty() {
-            new_config.path_traversal.custom_patterns.extend(patterns.iter().cloned());
+        macro_rules! merge_patterns {
+            ($category:expr, $field:ident) => {
+                let patterns = crate::waf::rule_feed::get_custom_patterns_for_category($category);
+                if !patterns.is_empty() {
+                    new_config.$field.custom_patterns.extend(patterns);
+                }
+            };
         }
-        let patterns = crate::waf::rule_feed::get_custom_patterns_for_category("rfi");
-        if !patterns.is_empty() {
-            new_config.rfi.custom_patterns.extend(patterns.iter().cloned());
-        }
-        let patterns = crate::waf::rule_feed::get_custom_patterns_for_category("ssrf");
-        if !patterns.is_empty() {
-            new_config.ssrf.custom_patterns.extend(patterns.iter().cloned());
-        }
-        let patterns = crate::waf::rule_feed::get_custom_patterns_for_category("ssti");
-        if !patterns.is_empty() {
-            new_config.ssti.custom_patterns.extend(patterns.iter().cloned());
-        }
-        let patterns = crate::waf::rule_feed::get_custom_patterns_for_category("cmd_injection");
-        if !patterns.is_empty() {
-            new_config.cmd_injection.custom_patterns.extend(patterns.iter().cloned());
-        }
-        let patterns = crate::waf::rule_feed::get_custom_patterns_for_category("xxe");
-        if !patterns.is_empty() {
-            new_config.xxe.custom_patterns.extend(patterns.iter().cloned());
-        }
-        let patterns = crate::waf::rule_feed::get_custom_patterns_for_category("jwt");
-        if !patterns.is_empty() {
-            new_config.jwt.custom_patterns.extend(patterns.iter().cloned());
-        }
-        let patterns = crate::waf::rule_feed::get_custom_patterns_for_category("ldap_injection");
-        if !patterns.is_empty() {
-            new_config.ldap_injection.custom_patterns.extend(patterns.iter().cloned());
-        }
-        let patterns = crate::waf::rule_feed::get_custom_patterns_for_category("xpath_injection");
-        if !patterns.is_empty() {
-            new_config.xpath_injection.custom_patterns.extend(patterns.iter().cloned());
-        }
-        let patterns = crate::waf::rule_feed::get_custom_patterns_for_category("open_redirect");
-        if !patterns.is_empty() {
-            new_config.open_redirect.custom_patterns.extend(patterns.iter().cloned());
-        }
+        
+        merge_patterns!("path_traversal", path_traversal);
+        merge_patterns!("rfi", rfi);
+        merge_patterns!("ssrf", ssrf);
+        merge_patterns!("ssti", ssti);
+        merge_patterns!("cmd_injection", cmd_injection);
+        merge_patterns!("xxe", xxe);
+        merge_patterns!("jwt", jwt);
+        merge_patterns!("ldap_injection", ldap_injection);
+        merge_patterns!("xpath_injection", xpath_injection);
+        merge_patterns!("open_redirect", open_redirect);
         
         *self.attack_detector.write() = Some(Arc::new(AttackDetector::new(new_config)));
         

@@ -2,6 +2,14 @@ use crate::auth::{AuthManager, SessionInfo, UserInfo, LoginLog};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+fn escape_html(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#x27;")
+}
+
 #[derive(Clone)]
 pub struct AdminManager {
     auth_manager: Arc<AuthManager>,
@@ -103,11 +111,11 @@ pub fn generate_dashboard_html(
             crate::auth::UserRole::Admin => "Admin",
             crate::auth::UserRole::User => "User",
         };
-        let sites = u.sites.join(", ");
+        let sites = escape_html(&u.sites.join(", "));
         let last_login = u.last_login.map(|t| t.format("%Y-%m-%d %H:%M").to_string()).unwrap_or_else(|| "Never".to_string());
         let locked = u.locked_until.map(|t| {
             if t > chrono::Utc::now() {
-                format!("<span class=\"badge badge-danger\">Locked until {}</span>", t.format("%H:%M"))
+                format!("<span class=\"badge badge-danger\">Locked until {}</span>", escape_html(&t.format("%H:%M").to_string()))
             } else {
                 String::new()
             }
@@ -127,7 +135,7 @@ pub fn generate_dashboard_html(
                     </form>
                 </td>
             </tr>
-        "#, u.username, role, sites, last_login, u.failed_attempts, locked, u.id)
+        "#, escape_html(&u.username), escape_html(role), sites, escape_html(&last_login), u.failed_attempts, locked, escape_html(&u.id))
     }).collect::<Vec<_>>().join("\n");
 
     let sessions_html = sessions.iter().map(|s| {
@@ -142,7 +150,7 @@ pub fn generate_dashboard_html(
                     </form>
                 </td>
             </tr>
-        "#, s.username, s.expires_at.format("%Y-%m-%d %H:%M"), s.id.split('-').next().unwrap_or(&s.id), s.id)
+        "#, escape_html(&s.username), escape_html(&s.expires_at.format("%Y-%m-%d %H:%M").to_string()), escape_html(s.id.split('-').next().unwrap_or(&s.id)), escape_html(&s.id))
     }).collect::<Vec<_>>().join("\n");
 
     let logs_html = logs.iter().map(|l| {
@@ -151,7 +159,7 @@ pub fn generate_dashboard_html(
         } else {
             "<span class=\"badge badge-danger\">Failed</span>"
         };
-        let reason = l.reason.as_deref().unwrap_or("-");
+        let reason = escape_html(l.reason.as_deref().unwrap_or("-"));
         
         format!(r#"
             <tr>
@@ -161,7 +169,7 @@ pub fn generate_dashboard_html(
                 <td>{}</td>
                 <td>{}</td>
             </tr>
-        "#, l.timestamp.format("%Y-%m-%d %H:%M"), l.username, status, l.ip_address.as_deref().unwrap_or("-"), reason)
+        "#, escape_html(&l.timestamp.format("%Y-%m-%d %H:%M").to_string()), escape_html(&l.username), status, escape_html(l.ip_address.as_deref().unwrap_or("-")), reason)
     }).collect::<Vec<_>>().join("\n");
 
     format!(r#"<!DOCTYPE html>

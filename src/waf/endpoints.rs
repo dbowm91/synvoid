@@ -91,9 +91,13 @@ impl EndpointBlockerManager {
 
     pub fn check(&self, path: &str, method: &str) -> EndpointCheckResult {
         let guard = self.inner.read();
-        let method_upper = method.to_uppercase();
 
-        if !guard.block_methods.is_empty() && !guard.block_methods.contains(&method_upper) {
+        if !guard.block_methods.is_empty()
+            && !guard
+                .block_methods
+                .iter()
+                .any(|m| m.eq_ignore_ascii_case(method))
+        {
             return EndpointCheckResult::Allowed;
         }
 
@@ -412,24 +416,7 @@ impl ErrorPageManager {
         };
 
         let timestamp = generate_stealth_timestamp(5).replace("GMT", "UTC");
-        let message = message.unwrap_or(match status_code {
-            400 => "Bad Request",
-            401 => "Unauthorized",
-            403 => "Forbidden",
-            404 => "Not Found",
-            405 => "Method Not Allowed",
-            408 => "Request Timeout",
-            413 => "Payload Too Large",
-            414 => "URI Too Long",
-            429 => "Too Many Requests",
-            431 => "Request Header Fields Too Large",
-            500 => "Internal Server Error",
-            501 => "Not Implemented",
-            502 => "Bad Gateway",
-            503 => "Service Unavailable",
-            504 => "Gateway Timeout",
-            _ => "An Error Occurred",
-        });
+        let message = message.unwrap_or(Self::status_text(status_code));
 
         let escaped_message = escape_html(message);
         let escaped_timestamp = escape_html(&timestamp);
@@ -447,34 +434,8 @@ impl ErrorPageManager {
         result
     }
 
-    fn minimal_page(status_code: u16, message: Option<&str>) -> String {
-        let status_text = match status_code {
-            400 => "Bad Request",
-            401 => "Unauthorized",
-            403 => "Forbidden",
-            404 => "Not Found",
-            405 => "Method Not Allowed",
-            408 => "Request Timeout",
-            413 => "Payload Too Large",
-            414 => "URI Too Long",
-            429 => "Too Many Requests",
-            431 => "Request Header Fields Too Large",
-            500 => "Internal Server Error",
-            501 => "Not Implemented",
-            502 => "Bad Gateway",
-            503 => "Service Unavailable",
-            504 => "Gateway Timeout",
-            _ => "Error",
-        };
-        let msg = message.unwrap_or(status_text);
-        format!(
-            "<!DOCTYPE html><html><head><title>{} {}</title></head><body><h1>{}</h1><p>{}</p></body></html>",
-            status_code, status_text, status_code, msg
-        )
-    }
-
-    fn fallback_page(status_code: u16, message: Option<&str>, theme: &ThemeConfig) -> String {
-        let message = message.unwrap_or(match status_code {
+    fn status_text(code: u16) -> &'static str {
+        match code {
             400 => "Bad Request",
             401 => "Unauthorized",
             403 => "Forbidden",
@@ -491,7 +452,20 @@ impl ErrorPageManager {
             503 => "Service Unavailable",
             504 => "Gateway Timeout",
             _ => "An Error Occurred",
-        });
+        }
+    }
+
+    fn minimal_page(status_code: u16, message: Option<&str>) -> String {
+        let status_text = Self::status_text(status_code);
+        let msg = message.unwrap_or(status_text);
+        format!(
+            "<!DOCTYPE html><html><head><title>{} {}</title></head><body><h1>{}</h1><p>{}</p></body></html>",
+            status_code, status_text, status_code, msg
+        )
+    }
+
+    fn fallback_page(status_code: u16, message: Option<&str>, theme: &ThemeConfig) -> String {
+        let message = message.unwrap_or(Self::status_text(status_code));
 
         ErrorPageTemplate::new(theme.clone())
             .status(status_code)

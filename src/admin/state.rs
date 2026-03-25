@@ -10,7 +10,7 @@ use crate::waf::{
 };
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::RwLock as TokioRwLock;
@@ -102,7 +102,7 @@ pub struct AdminState {
     pub threat_level_manager: Option<Arc<ThreatLevelManager>>,
     pub metrics: Arc<RwLock<AggregatedMetrics>>,
     pub system_resources: Arc<RwLock<SystemResources>>,
-    pub metrics_history: Arc<RwLock<Vec<AggregatedMetrics>>>,
+    pub metrics_history: Arc<RwLock<VecDeque<AggregatedMetrics>>>,
     pub site_metrics: Arc<RwLock<HashMap<String, SiteMetricsPayload>>>,
     pub start_time: Instant,
     pub process_manager: Option<Arc<ProcessManager>>,
@@ -116,7 +116,7 @@ pub struct AdminState {
     pub icmp_filter: Option<Arc<TokioRwLock<IcmpFilterManager>>>,
     pub port_honeypot_controller: Option<Arc<crate::honeypot_port::HoneypotMeshController>>,
     pub port_honeypot_runner: Option<Arc<crate::honeypot_port::PortHoneypotRunner>>,
-    pub request_logs: Arc<RwLock<Vec<RequestLogEntry>>>,
+    pub request_logs: Arc<RwLock<VecDeque<RequestLogEntry>>>,
 }
 
 #[derive(Clone)]
@@ -178,7 +178,7 @@ impl AdminState {
             threat_level_manager: None,
             metrics: Arc::new(RwLock::new(AggregatedMetrics::default())),
             system_resources: Arc::new(RwLock::new(SystemResources::default())),
-            metrics_history: Arc::new(RwLock::new(Vec::with_capacity(MAX_HISTORY_SIZE))),
+            metrics_history: Arc::new(RwLock::new(VecDeque::with_capacity(MAX_HISTORY_SIZE))),
             site_metrics: Arc::new(RwLock::new(HashMap::new())),
             start_time: Instant::now(),
             process_manager: None,
@@ -192,7 +192,7 @@ impl AdminState {
             icmp_filter: None,
             port_honeypot_controller: None,
             port_honeypot_runner: None,
-            request_logs: Arc::new(RwLock::new(Vec::with_capacity(MAX_REQUEST_LOGS))),
+            request_logs: Arc::new(RwLock::new(VecDeque::with_capacity(MAX_REQUEST_LOGS))),
         }
     }
 
@@ -355,9 +355,9 @@ impl AdminState {
     pub fn add_metrics_to_history(&self, metrics: AggregatedMetrics) {
         let mut history = self.metrics_history.write();
         if history.len() >= MAX_HISTORY_SIZE {
-            history.remove(0);
+            history.pop_front();
         }
-        history.push(metrics);
+        history.push_back(metrics);
     }
 
     pub fn get_metrics_history(&self, seconds: u64) -> Vec<AggregatedMetrics> {
@@ -368,7 +368,7 @@ impl AdminState {
         } else {
             0
         };
-        history[start..].to_vec()
+        history.iter().skip(start).cloned().collect()
     }
 
     pub fn update_site_metrics(&self, site_metrics: HashMap<String, SiteMetricsPayload>) {
@@ -382,9 +382,9 @@ impl AdminState {
     pub fn add_request_log(&self, entry: RequestLogEntry) {
         let mut logs = self.request_logs.write();
         if logs.len() >= MAX_REQUEST_LOGS {
-            logs.remove(0);
+            logs.pop_front();
         }
-        logs.push(entry);
+        logs.push_back(entry);
     }
 
     pub fn get_request_logs(
