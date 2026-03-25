@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 
 use bytes::Bytes;
 use std::collections::HashMap;
@@ -34,8 +33,10 @@ pub use traits::{BaseWorkerState, WorkerLifecycle};
 
 pub use unified_server::{UnifiedServerWorkerArgs, run_unified_server_worker, setup_unified_server_panic_handler};
 
+#[allow(dead_code)]
 type MinifierCache = Arc<minifier::MinifierCache>;
 
+#[allow(dead_code)]
 fn get_content_type(path: &str) -> String {
     path.rsplit('.')
         .next()
@@ -43,6 +44,7 @@ fn get_content_type(path: &str) -> String {
         .unwrap_or_else(|| "application/octet-stream".to_string())
 }
 
+#[allow(dead_code)]
 fn get_compressed_content(
     cache: &MinifierCache,
     site_id: &str,
@@ -81,6 +83,7 @@ fn get_compressed_content(
 }
 
 #[cfg(unix)]
+#[allow(dead_code)]
 enum ListenerType {
     Unix(UnixListener),
 }
@@ -585,6 +588,9 @@ pub async fn run_static_worker(args: StaticWorkerArgs) -> Result<(), Box<dyn std
                 }
                 
                 // Create a new pipe instance for each connection
+                // SAFETY: CreateNamedPipeW is called with valid UTF-16 pipe name, correct pipe
+                // access mode and type flags. The handle is checked for INVALID_HANDLE_VALUE (0)
+                // immediately after creation and closed on failure.
                 let pipe_handle = unsafe {
                     windows_sys::Win32::System::Pipes::CreateNamedPipeW(
                         pipe_name_wide.as_ptr(),
@@ -607,6 +613,9 @@ pub async fn run_static_worker(args: StaticWorkerArgs) -> Result<(), Box<dyn std
                 }
 
                 // Wait for client connection
+                // SAFETY: ConnectNamedPipe is called on a valid pipe handle created above.
+                // The handle remains valid until explicitly closed. The return value is checked
+                // and GetLastError is inspected to distinguish real errors from ERROR_PIPE_CONNECTED.
                 let connected = unsafe {
                     windows_sys::Win32::System::Pipes::ConnectNamedPipe(
                         pipe_handle,
@@ -615,9 +624,13 @@ pub async fn run_static_worker(args: StaticWorkerArgs) -> Result<(), Box<dyn std
                 };
 
                 if connected == 0 {
+                    // SAFETY: GetLastError returns the calling thread's last error code.
+                    // This is a thread-local read with no side effects.
                     let error = unsafe { *windows_sys::Win32::Foundation::GetLastError() };
                     if error != windows_sys::Win32::Foundation::ERROR_PIPE_CONNECTED {
                         tracing::warn!("ConnectNamedPipe failed with error: {}", error);
+                        // SAFETY: CloseHandle is called on the pipe handle created above.
+                        // The handle is valid and ownership is being released on the error path.
                         unsafe { windows_sys::Win32::Foundation::CloseHandle(pipe_handle); }
                         std::thread::sleep(Duration::from_millis(100));
                         continue;
@@ -625,6 +638,9 @@ pub async fn run_static_worker(args: StaticWorkerArgs) -> Result<(), Box<dyn std
                 }
 
                 // Convert raw handle to File and handle connection
+                // SAFETY: from_raw_handle takes ownership of the valid pipe handle.
+                // The handle was successfully created and connected (or returned ERROR_PIPE_CONNECTED).
+                // No other code will use this handle after this transfer of ownership.
                 let stream = unsafe { std::fs::File::from_raw_handle(pipe_handle as std::os::windows::io::RawHandle) };
                 let state = socket_state.clone();
                 std::thread::spawn(move || {
@@ -1556,6 +1572,7 @@ fn process_compression_queue(state: &StaticWorkerState) {
     }
 }
 
+#[allow(dead_code)]
 async fn send_compressed_error(state: &StaticWorkerState, request_id: u64, error: String) {
     let mut ipc = state.ipc.lock().await;
     let _ = ipc.send(&crate::process::Message::MinifyError {

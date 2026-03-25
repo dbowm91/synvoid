@@ -44,6 +44,9 @@ impl super::socket::SocketHandle for WindowsSocketHandle {
     
     fn close(&mut self) -> io::Result<()> {
         if self.owned && self.socket != 0 {
+            // SAFETY: CloseHandle is called on a valid socket handle we own.
+            // The `owned` flag ensures we have exclusive ownership, and the handle
+            // is set to 0 (invalid) after closing via the owned=false flag.
             unsafe {
                 windows_sys::Win32::Foundation::CloseHandle(self.socket as _);
             }
@@ -130,6 +133,11 @@ pub fn duplicate_socket_for_child(socket: RawSocket, target_pid: u32) -> io::Res
     }
     
     let protocol_info = protocol_info.assume_init();
+    // SAFETY: protocol_info is a valid WSAPROTOCOL_INFOW that was initialized by
+    // WSADuplicateSocketW. Reinterpreting the struct as a byte slice is safe because:
+    // 1. The struct is fully initialized (assume_init was called)
+    // 2. The pointer is valid for size_of::<WSAPROTOCOL_INFOW>() bytes
+    // 3. No alignment issues (reading bytes from a valid struct)
     let bytes = unsafe {
         std::slice::from_raw_parts(
             &protocol_info as *const _ as *const u8,

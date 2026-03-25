@@ -32,7 +32,7 @@ pub struct ActiveUdpTunnel {
     pub max_datagram_size: usize,
     pub connection: Connection,
     pub created_at: Instant,
-    pub last_activity: Arc<std::sync::RwLock<Instant>>,
+    pub last_activity: Arc<parking_lot::RwLock<Instant>>,
     pending_requests: Arc<DashMap<u64, PendingRequest>>,
     sequence: Arc<AtomicU64>,
     response_tx: mpsc::Sender<UdpResponse>,
@@ -90,7 +90,7 @@ impl UdpTunnelManager {
         let key = format!("{}:{}", peer_id, port);
         
         if let Some(tunnel) = self.tunnels.get(&key) {
-            *tunnel.last_activity.write().unwrap() = Instant::now();
+            *tunnel.last_activity.write() = Instant::now();
             return Ok(Arc::new(tunnel.clone()));
         }
         
@@ -138,7 +138,7 @@ impl UdpTunnelManager {
             max_datagram_size: session.datagram_capabilities.max_size.min(self.max_datagram_size),
             connection,
             created_at: Instant::now(),
-            last_activity: Arc::new(std::sync::RwLock::new(Instant::now())),
+            last_activity: Arc::new(parking_lot::RwLock::new(Instant::now())),
             pending_requests: Arc::new(DashMap::new()),
             sequence: Arc::new(AtomicU64::new(0)),
             response_tx,
@@ -230,7 +230,7 @@ impl UdpTunnelManager {
         let now = Instant::now();
         let keys_to_remove: Vec<String> = self.tunnels.iter()
             .filter_map(|entry| {
-                let last_activity = *entry.last_activity.read().unwrap();
+                let last_activity = *entry.last_activity.read();
                 if now.duration_since(last_activity) > self.tunnel_timeout {
                     Some(entry.key().clone())
                 } else {
@@ -378,7 +378,7 @@ impl ActiveUdpTunnel {
     }
 
     pub fn is_expired(&self, timeout: Duration) -> bool {
-        let last_activity = *self.last_activity.read().unwrap();
+        let last_activity = *self.last_activity.read();
         last_activity.elapsed() > timeout
     }
 }

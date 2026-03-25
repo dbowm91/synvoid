@@ -46,6 +46,7 @@ struct IpRateLimitState {
 }
 
 impl IpRateLimitState {
+    #[allow(dead_code)]
     fn new() -> Self {
         Self {
             per_second: RingBuffer::with_capacity(10),
@@ -92,6 +93,7 @@ impl<T> Default for RingBuffer<T> {
 }
 
 impl<T: Copy> RingBuffer<T> {
+    #[allow(dead_code)]
     fn with_capacity(capacity: usize) -> Self {
         Self {
             data: Vec::with_capacity(capacity),

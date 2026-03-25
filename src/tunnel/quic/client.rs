@@ -332,7 +332,7 @@ impl QuicTunnelClient {
         self.sessions.get(peer_id).and_then(|session| {
             session.connection.as_ref().map(|conn| {
                 QuicConnection {
-                    remote_addr: session.remote_addr.parse().unwrap_or_else(|_| "0.0.0.0:0".parse().unwrap()),
+                    remote_addr: session.remote_addr.parse().unwrap_or_else(|_| "0.0.0.0:0".parse().expect("valid socket address literal")),
                     peer_id: Some(peer_id.to_string()),
                     session_id: session.id.clone(),
                     client_id: peer_id.to_string(),

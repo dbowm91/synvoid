@@ -136,7 +136,7 @@ impl ProbeTracker {
                                     .filter(|e| !e.is_expired(now, retention_secs))
                                     .take(max_records)
                                     .map(|e| {
-                                        let ip: IpAddr = e.ip.parse().unwrap_or_else(|_| "0.0.0.0".parse().unwrap());
+                                        let ip: IpAddr = e.ip.parse().unwrap_or_else(|_| "0.0.0.0".parse().expect("valid IPv4 literal"));
                                         (ProbeRecord::key(&ip), e)
                                     })
                                     .collect();
@@ -161,7 +161,7 @@ impl ProbeTracker {
         let initial_count = store.len();
         let persist_tx = if persist_path.is_some() {
             let (tx, mut rx): (mpsc::Sender<PersistRequest>, mpsc::Receiver<PersistRequest>) = mpsc::channel(100);
-            let path = persist_path.clone().unwrap();
+            let path = persist_path.clone().expect("checked is_some above");
             let config_clone = config.clone();
             
             tokio::spawn(async move {

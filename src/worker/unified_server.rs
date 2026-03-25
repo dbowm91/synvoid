@@ -361,7 +361,7 @@ pub async fn run_unified_server_worker(args: UnifiedServerWorkerArgs) -> Result<
                 // Announce edge's public key to DHT for global nodes to verify tokens
                 transport_manager.announce_edge_key(
                     &mesh_config.node_id(),
-                    mesh_config.global_node_key.as_ref().unwrap(),
+                    mesh_config.global_node_key.as_ref().expect("guarded by is_some check above"),
                 );
             }
             
@@ -406,7 +406,7 @@ pub async fn run_unified_server_worker(args: UnifiedServerWorkerArgs) -> Result<
                     
                     // Start background fetching for feed if enabled
                     if yara_rules.has_feed_manager() {
-                        let fm = yara_rules.get_feed_manager().unwrap();
+                        let fm = yara_rules.get_feed_manager().expect("guarded by has_feed_manager check");
                         let elevated_clone = is_elevated.clone();
                         fm.start_background_fetching(elevated_clone);
                         

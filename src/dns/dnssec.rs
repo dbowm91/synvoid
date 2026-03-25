@@ -274,14 +274,19 @@ impl DnsSecKeyManager {
     ) -> Result<(), String> {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs();
         let expires_at = now + (validity_days as u64 * 86400);
 
         let (public_key, private_key, key_tag, flags, key_size) = match algorithm {
             Algorithm::Ed25519 => {
                 let bytes = super::crypto_rng::random_bytes(32);
-                let signing_key = SigningKey::from_bytes(bytes.as_slice().try_into().unwrap());
+                let signing_key = SigningKey::from_bytes(
+                    bytes
+                        .as_slice()
+                        .try_into()
+                        .expect("random_bytes(32) always returns 32 bytes"),
+                );
                 let public = signing_key.verifying_key().to_bytes().to_vec();
                 let private = signing_key.to_bytes().to_vec();
                 let flags = if key_type == KeyType::KSK { 257 } else { 256 };
@@ -367,14 +372,19 @@ impl DnsSecKeyManager {
     ) -> Result<(), String> {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs();
         let expires_at = now + (validity_days as u64 * 86400);
 
         let (public_key, private_key, key_tag, flags, key_size) = match algorithm {
             Algorithm::Ed25519 => {
                 let bytes = super::crypto_rng::random_bytes(32);
-                let signing_key = SigningKey::from_bytes(bytes.as_slice().try_into().unwrap());
+                let signing_key = SigningKey::from_bytes(
+                    bytes
+                        .as_slice()
+                        .try_into()
+                        .expect("random_bytes(32) always returns 32 bytes"),
+                );
                 let public = signing_key.verifying_key().to_bytes().to_vec();
                 let private = signing_key.to_bytes().to_vec();
                 let flags = if key_type == KeyType::KSK { 257 } else { 256 };
@@ -455,7 +465,7 @@ impl DnsSecKeyManager {
     pub fn start_key_rollover(&mut self, key_type: KeyType) -> Result<(), String> {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs();
 
         match key_type {
@@ -556,7 +566,7 @@ impl DnsSecKeyManager {
     pub fn check_key_rotation(&mut self, config: KeyRotationConfig) -> Result<(), String> {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs();
 
         if let Some(ksk) = &self.key_signing_key {
@@ -607,13 +617,12 @@ impl DnsSecKeyManager {
             return Err("No KSK key to rotate".to_string());
         }
 
-        let algorithm = self.key_signing_key.as_ref().unwrap().algorithm;
-        let key_size = self
+        let ksk = self
             .key_signing_key
             .as_ref()
-            .unwrap()
-            .key_size
-            .unwrap_or(2048);
+            .expect("checked is_some above");
+        let algorithm = ksk.algorithm;
+        let key_size = ksk.key_size.unwrap_or(2048);
 
         self.generate_key(
             algorithm,
@@ -630,13 +639,12 @@ impl DnsSecKeyManager {
             return Err("No ZSK key to rotate".to_string());
         }
 
-        let algorithm = self.zone_signing_key.as_ref().unwrap().algorithm;
-        let key_size = self
+        let zsk = self
             .zone_signing_key
             .as_ref()
-            .unwrap()
-            .key_size
-            .unwrap_or(2048);
+            .expect("checked is_some above");
+        let algorithm = zsk.algorithm;
+        let key_size = zsk.key_size.unwrap_or(2048);
 
         self.generate_key(
             algorithm,
@@ -686,7 +694,7 @@ impl DnsSecKeyManager {
 
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs();
 
         // Clone key data to avoid borrow checker issues
@@ -755,7 +763,7 @@ impl DnsSecKeyManager {
     pub fn get_key_status(&self) -> Result<DnsSecKeyStatus, String> {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs();
 
         let ksk_info = self.key_signing_key.as_ref().map(|k| KeyInfo {
@@ -795,7 +803,7 @@ impl DnsSecKeyManager {
     pub fn cleanup_expired_keys(&self) -> Result<(), String> {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs();
 
         for key_type in ["ksk", "zsk"] {
@@ -1010,6 +1018,7 @@ pub fn sign_data(data: &[u8], key: &ZoneSigningKey) -> Result<Vec<u8>, String> {
     }
 }
 
+#[allow(dead_code)]
 fn extract_rsa_modulus(der_bytes: &[u8]) -> Vec<u8> {
     let mut i = 0;
     if der_bytes.len() < 2 || der_bytes[0] != 0x30 {
@@ -1064,7 +1073,6 @@ fn extract_rsa_modulus(der_bytes: &[u8]) -> Vec<u8> {
     let key_start = i;
     let key_end = std::cmp::min(i + bit_string_len - alg_len - 2, der_bytes.len());
 
-    
     der_bytes[key_start..key_end].to_vec()
 }
 
@@ -1489,6 +1497,7 @@ fn base32_encode(input: &[u8]) -> String {
     result
 }
 
+#[allow(dead_code)]
 fn len_of_der_length(byte: u8) -> usize {
     if byte < 0x80 {
         1
@@ -1497,6 +1506,7 @@ fn len_of_der_length(byte: u8) -> usize {
     }
 }
 
+#[allow(dead_code)]
 fn decode_der_length(bytes: &[u8]) -> Option<usize> {
     if bytes.is_empty() {
         return None;
@@ -2030,10 +2040,7 @@ impl ZoneSigner {
         };
 
         let key = ("@".to_string(), super::server::RecordType::DNSKEY);
-        zone.records
-            .entry(key)
-            .or_default()
-            .push(key_record);
+        zone.records.entry(key).or_default().push(key_record);
 
         if let Ok(ds_data) = create_ds_record(ksk, DsDigestType::Sha256) {
             let ds_value =
@@ -2046,10 +2053,7 @@ impl ZoneSigner {
                 priority: None,
             };
             let ds_key = ("@".to_string(), super::server::RecordType::DS);
-            zone.records
-                .entry(ds_key)
-                .or_default()
-                .push(ds_record);
+            zone.records.entry(ds_key).or_default().push(ds_record);
         }
 
         Ok(())
@@ -2156,10 +2160,7 @@ impl ZoneSigner {
             };
 
             let nsec_key = (name.clone(), super::server::RecordType::NSEC);
-            zone.records
-                .entry(nsec_key)
-                .or_default()
-                .push(nsec_record);
+            zone.records.entry(nsec_key).or_default().push(nsec_record);
         }
 
         let soa_key = ("@".to_string(), super::server::RecordType::SOA);

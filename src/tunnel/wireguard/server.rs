@@ -325,7 +325,7 @@ impl AddressPool {
     }
 
     fn default_pool() -> Self {
-        Self::new("10.0.0.0/24").unwrap()
+        Self::new("10.0.0.0/24").expect("hardcoded CIDR should always be valid")
     }
 
     fn allocate(&self) -> Option<String> {

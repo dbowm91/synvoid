@@ -310,24 +310,98 @@ The `Message::validate()` function was expanded from 7 validated variants to 30+
 
 Six admin endpoints that returned success without doing anything now return `501 NOT_IMPLEMENTED` with `tracing::warn!` logs. This is a breaking API change — clients calling these endpoints will receive HTTP 501 instead of 200.
 
+## Phase 3 Completion Notes (2026-03-25)
+
+Phase 3 addressed error handling, unsafe documentation, and dead code. Key learnings for future agents:
+
+### Centralized Error Type
+
+Created `src/error.rs` with `WafError` enum and `WafResult<T>`. The enum covers common error categories (I/O, JSON, IPC, config, crypto, upstream) with `From` impls for `std::io::Error`, `serde_json::Error`, `String`, and `&str`. A `WafErrorExt` trait provides `.waf_internal()`, `.waf_ipc()`, `.waf_config()`, `.waf_upstream()` convenience methods for mapping any error with context.
+
+**Usage pattern for new code:**
+```rust
+use maluwaf::error::{WafError, WafResult, WafErrorExt};
+
+fn do_thing() -> WafResult<()> {
+    let data = std::fs::read("file").waf_internal("reading config")?;
+    Ok(())
+}
+```
+
+### Unwrap/Expect Audit
+
+The plan cited 580 unwrap/expect calls, but ~540 were in test code (acceptable). Only ~44 were in non-test production code. Fixes applied:
+
+| Category | Count | Fix Pattern |
+|----------|-------|-------------|
+| `duration_since(UNIX_EPOCH).unwrap()` | 9 | `.unwrap_or_default()` — clock before epoch returns 0 |
+| Guarded `as_ref().unwrap()` | 4 | `.expect("checked is_some above")` — documents the guard |
+| Response builder fallback | 12 | `.expect("building static 500 response should never fail")` |
+| Hardcoded literal parse | 5 | `.expect("valid socket address literal")` inside `unwrap_or_else` |
+| `RwLock::read/write().unwrap()` | 3 | Switched to `parking_lot::RwLock` (no Result return) |
+| `Mutex::lock().unwrap()` | 4 | Switched to `parking_lot::Mutex` (no Result return) |
+
+**Pattern: `duration_since(UNIX_EPOCH).unwrap()`**
+```rust
+// BEFORE (panics if system clock is before 1970)
+let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+
+// AFTER (returns 0 for pathological clock)
+let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+```
+
+**Pattern: Mutex/RwLock in sync contexts**
+```rust
+// BEFORE (std::sync::Mutex — can panic on poisoned lock)
+use std::sync::Mutex;
+let guard = self.data.lock().unwrap();
+
+// AFTER (parking_lot::Mutex — no poisoning, no Result)
+use parking_lot::Mutex;
+let guard = self.data.lock();
+```
+
+### Unsafe Block Documentation
+
+Added `// SAFETY:` comments to 7 previously undocumented unsafe blocks:
+- `src/worker/mod.rs` — 5 blocks (Windows named pipe IPC: CreateNamedPipeW, ConnectNamedPipe, GetLastError, CloseHandle, from_raw_handle)
+- `src/platform/windows_impl.rs` — 2 blocks (CloseHandle, from_raw_parts for WSAPROTOCOL_INFOW)
+
+Added `# Safety` doc comments to 2 `unsafe fn` declarations in `src/process/socket_fd.rs` (non-Unix stubs).
+
+**Current unsafe documentation status:** ~95% of unsafe blocks now have SAFETY comments. Remaining undocumented items are `unsafe fn` with `# Safety` doc on the signature (standard Rust convention).
+
+### Dead Code Removal
+
+Removed crate-level `#![allow(dead_code)]` from `src/lib.rs` and module-level `#![allow(dead_code)]` from `src/worker/mod.rs`. This revealed 12 genuinely unused items, which were given targeted `#[allow(dead_code)]` annotations with descriptive context. Each was evaluated:
+- Items conditionally compiled (`#[cfg(unix)]`, `#[cfg(windows)]`) — kept with allow
+- Items for future use (RSA key generation helpers) — kept with allow
+- Items in API completeness (RingBuffer::with_capacity) — kept with allow
+
+### Pre-existing Clippy Warning Increase
+
+Removing the `dead_code` suppression increased clippy warnings from ~107 to ~156. The new warnings are primarily "field is never read" (previously suppressed by the crate-level allow). These are deferred to later phases as they indicate fields that may be written but not yet read by the codebase.
+
 ## Known Code Quality Context
 
 ### Clippy and Dead Code Suppressions
 
-Phase 2.1 removed `#![allow(clippy::all)]` from `src/lib.rs`. Current crate-level suppressions (see `src/lib.rs:1-8`):
+Phase 2.1 removed `#![allow(clippy::all)]` from `src/lib.rs`. Phase 3.4 removed `#![allow(dead_code)]` from both `src/lib.rs` and `src/worker/mod.rs`. Current crate-level suppressions (see `src/lib.rs:1-7`):
 
 - `elided_lifetimes_in_paths` — compiler style preference
 - `mismatched_lifetime_syntaxes` — compiler style preference
 - `clippy::too_many_arguments` — deferred to Phase 6 (builder/config struct refactoring)
 - `clippy::await_holding_lock` — deferred to Phase 4.5 (async mutex standardization)
-- `dead_code` — deferred to Phase 3.4 (dead code removal)
 
-Remaining per-module suppressions:
-- `src/worker/mod.rs:1` — `#![allow(dead_code)]`
-- ~22 files in `src/mesh/` — `#![allow(dead_code)]`
-- ~10 items in `src/dns/server.rs` — `#[allow(dead_code)]`
+Remaining per-item `#[allow(dead_code)]` on specific functions/types:
+- `src/worker/mod.rs` — 5 items (MinifierCache, get_content_type, get_compressed_content, ListenerType, send_compressed_error)
+- `src/waf/ratelimit.rs` — 2 items (IpRateLimitState::new, RingBuffer::with_capacity)
+- `src/dns/cache.rs` — 2 items (skip_name, detect_dnssec_signed)
+- `src/dns/dnssec.rs` — 3 items (extract_rsa_modulus, len_of_der_length, decode_der_length)
+- `src/mesh/` — ~13 items (item-level, gated on feature/platform)
+- `src/dns/server.rs` — ~10 items (item-level)
 
-`cargo clippy` currently produces ~107 warnings (down from 750). These are incremental quality issues that don't affect correctness.
+`cargo clippy` currently produces ~156 warnings (up from 107 after removing dead_code suppression, which revealed "field is never read" warnings). These are incremental quality issues that don't affect correctness.
 
 ### Build Configuration
 

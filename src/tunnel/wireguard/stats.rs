@@ -309,7 +309,7 @@ impl WgStatsCollector {
         let stats = get_interface_stats(&self.interface).await?;
         self.last_stats = Some(stats);
         self.last_update = Some(Instant::now());
-        Ok(self.last_stats.as_ref().unwrap())
+        Ok(self.last_stats.as_ref().expect("just assigned Some above"))
     }
 
     pub fn stats(&self) -> Option<&WgInterfaceStats> {

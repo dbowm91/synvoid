@@ -368,14 +368,22 @@ pub unsafe fn raw_fd_to_tcp_listener(fd: RawFd) -> std::net::TcpListener {
 }
 
 /// Converts a raw file descriptor into a TcpListener, taking ownership.
-/// This is a safe wrapper that handles the raw fd properly.
+/// This is a non-Unix stub that casts isize to i32.
+///
+/// # Safety
+/// The fd must be a valid, open file descriptor. The caller must not use the
+/// file descriptor after this call (ownership is transferred to the TcpListener).
 #[cfg(not(unix))]
 pub unsafe fn raw_fd_to_tcp_listener(fd: isize) -> std::net::TcpListener {
     std::net::TcpListener::from_raw_fd(fd as i32)
 }
 
 /// Converts a raw file descriptor into a TcpStream, taking ownership.
-/// This is a safe wrapper that handles the raw fd properly.
+/// This is a non-Unix stub that casts isize to i32.
+///
+/// # Safety
+/// The fd must be a valid, open file descriptor. The caller must not use the
+/// file descriptor after this call (ownership is transferred to the TcpStream).
 #[cfg(not(unix))]
 pub unsafe fn raw_fd_to_tcp_stream(fd: isize) -> std::net::TcpStream {
     std::net::TcpStream::from_raw_fd(fd as i32)

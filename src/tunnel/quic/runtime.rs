@@ -403,7 +403,7 @@ impl QuicRuntime {
     pub fn bind_address(&self) -> SocketAddr {
         format!("{}:{}", self.config.bind_address, self.config.port)
             .parse()
-            .unwrap_or_else(|_| "0.0.0.0:51821".parse().unwrap())
+            .unwrap_or_else(|_| "0.0.0.0:51821".parse().expect("valid socket address literal"))
     }
 
     pub async fn local_addr(&self) -> Option<SocketAddr> {

@@ -1362,7 +1362,7 @@ impl DnsServer {
                         load_percent: update.error_count.checked_div(update.query_count.max(1)).map(|v| v as u8),
                         timestamp: std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap()
+                            .unwrap_or_default()
                             .as_secs(),
                     };
                     let _ = registry.update_anycast_health(health_update).await;
@@ -4368,7 +4368,7 @@ impl DnsServer {
         let mut result = Vec::new();
 
         if mbox.contains('@') {
-            let (local, domain) = mbox.split_once('@').unwrap();
+            let (local, domain) = mbox.split_once('@').expect("guarded by contains('@') check");
             let mbox_parts: Vec<&str> = domain.split('.').filter(|s| !s.is_empty()).collect();
             result.push(local.len() as u8);
             result.extend_from_slice(local.as_bytes());

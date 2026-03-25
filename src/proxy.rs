@@ -357,7 +357,7 @@ impl ProxyServer {
                     .unwrap_or_else(|_| Response::builder()
                         .status(500)
                         .body("Internal Server Error".to_string())
-                        .unwrap()));
+                        .expect("building static 500 response should never fail")));
             }
             WafDecision::ChallengeWithCookie { html, session_cookie_name, session_cookie_value, session_cookie_max_age } => {
                 counter!("maluwaf.requests.challenged").increment(1);
@@ -372,7 +372,7 @@ impl ProxyServer {
                     .unwrap_or_else(|_| Response::builder()
                         .status(500)
                         .body("Internal Server Error".to_string())
-                        .unwrap()));
+                        .expect("building static 500 response should never fail")));
             }
             WafDecision::Tarpit(_) => {
                 counter!("maluwaf.requests.tarpitted").increment(1);
@@ -445,7 +445,7 @@ impl ProxyServer {
                     .unwrap_or_else(|_| Response::builder()
                         .status(500)
                         .body("Internal Server Error".to_string())
-                        .unwrap()))
+                        .expect("building static 500 response should never fail")))
             }
         }
     }
@@ -772,7 +772,7 @@ impl ProxyServer {
         Ok(Response::builder()
             .status(200)
             .body(format!("Purged {} entries\n", count))
-            .unwrap())
+            .expect("building purge response should never fail"))
     }
 
     fn process_cache_invalidate_header(&self, headers: &http::HeaderMap) {
@@ -892,7 +892,7 @@ impl ProxyServer {
             Response::builder()
                 .status(500)
                 .body("Internal Server Error".to_string())
-                .unwrap()
+                .expect("building static 500 response should never fail")
         })
     }
     

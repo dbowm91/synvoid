@@ -685,7 +685,7 @@ impl HttpsServer {
             .unwrap_or_else(|_| Response::builder()
                 .status(500)
                 .body(Full::new(Bytes::from("Internal Server Error")))
-                .unwrap()))
+                .expect("building static 500 response should never fail")))
     }
 
     fn build_response(status: u16, body: String, content_type: &str) -> Response<Full<Bytes>> {
@@ -698,7 +698,7 @@ impl HttpsServer {
             .unwrap_or_else(|_| Response::builder()
                 .status(500)
                 .body(Full::new(Bytes::from("Internal Server Error")))
-                .unwrap())
+                .expect("building static 500 response should never fail"))
     }
 
     fn build_response_with_cookie(status: u16, body: String, content_type: &str, cookie: &str) -> Response<Full<Bytes>> {
@@ -714,7 +714,7 @@ impl HttpsServer {
             .unwrap_or_else(|_| Response::builder()
                 .status(500)
                 .body(Full::new(Bytes::from("Internal Server Error")))
-                .unwrap())
+                .expect("building static 500 response should never fail"))
     }
 }
 
