@@ -574,8 +574,48 @@ Large modules that need splitting (see `plan.md` Phase 6.5):
 
 | Module | Lines | Notes |
 |--------|-------|-------|
-| `src/mesh/transport.rs` | 6,464 | God object — split by message handler category |
+| `src/mesh/transport.rs` | 6,448 | God object — split by message handler category |
 | `src/dns/server.rs` | 4,500+ | Extract query handler, zone manager, rate limiter |
 | `src/dns/mesh_sync.rs` | 1,975 | Split into registry, verification, health |
 | `src/worker/mod.rs` | 1,566 | Extract connection handling, drain state |
-| `tests/integration_test.rs` | 2,012 | Mixes DNS, IPC, config tests — split per module |
+| `tests/integration_test.rs` | 760 | IPC and DNS tests extracted to separate files |
+
+## Phase 7 Completion Notes (2026-03-25)
+
+Phase 7 addressed testing and build hygiene. 5 of 8 items completed; 3 deferred.
+
+### Test File Split
+
+`tests/integration_test.rs` was split from 2,012 lines into 3 files:
+
+| File | Lines | Tests | Feature Gate |
+|------|-------|-------|-------------|
+| `tests/integration_test.rs` | 760 | 40 | none |
+| `tests/ipc_test.rs` | 197 | 7 | `#[cfg(unix)]` |
+| `tests/dns_config_test.rs` | 1,054 | 52 | `#![cfg(feature = "dns")]` |
+| `tests/dns_integration_test.rs` | 814 | 45 | `#![cfg(feature = "dns")]` |
+
+Total test count: 112 (up from 99 before Phase 7).
+
+**Key learning:** When extracting tests from a `#[cfg(unix)]` module, verify whether the tests actually need Unix-specific APIs. The DNS config tests were inside `socket_tests` (unix-gated) but only used standard library and DNS types — they run fine on all platforms. Extracting them to a `#![cfg(feature = "dns")]` file is more correct than `#[cfg(unix)]`.
+
+### Vacuous Assertion Fixes
+
+6 vacuous assertions were fixed. Common patterns to watch for:
+- `A || !B` where A and B are unrelated conditions — always true if A is true
+- `is_ok() || is_err()` — always true for any `Result`
+- `is_some() || is_none()` — always true for any `Option`
+- `assert!(true)` — never fails, provides no validation
+
+### Property-Based Testing
+
+13 proptest cases added across `tests/property_tests.rs` (DNS, feature-gated) and `tests/property_tests_common.rs` (common). Proptest was already in `[dev-dependencies]` but only used in 2 source files (`src/auth/mod.rs`, `src/block_store.rs`). The new tests cover:
+- DNS wire format roundtrips (encode_name → parse_query_name)
+- URL encoding decode/encode identity
+- Normalizer idempotency (normalize(normalize(x)) == normalize(x))
+
+### Dependency Hygiene
+
+Removed 3 duplicate entries from `[dev-dependencies]`: `aes-gcm`, `ahash`, `async-trait`. These were already in `[dependencies]` and redundant in `[dev-dependencies]` (Cargo makes all `[dependencies]` available for tests).
+
+**Important:** `verify-pq` feature is NOT dead — it's used in `src/mesh/cert.rs:74,180` and `src/mesh/transports/quic.rs:29`. The original plan incorrectly listed it as a dead feature.

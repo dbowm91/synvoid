@@ -235,9 +235,6 @@ panic = "unwind"
 strip = true
 
 [dev-dependencies]
-aes-gcm = "0.10.3"
-ahash = "0.8.12"
-async-trait = "0.1.89"
 libfuzzer-sys = "0.4"
 proptest = "1.5"
 proptest-derive = "0.4"

@@ -326,10 +326,7 @@ mod tests {
         ];
 
         // Should not panic on valid query
-        assert!(
-            validator.validate_query(&valid_query).is_ok()
-                || validator.validate_query(&valid_query).is_err()
-        );
+        assert!(validator.validate_query(&valid_query).is_ok());
     }
 
     #[test]
@@ -343,7 +340,7 @@ mod tests {
         let ip: IpAddr = "192.168.1.1".parse().unwrap();
 
         // First request should succeed
-        assert!(limiter.check_ip(ip).is_ok() || limiter.check_ip(ip).is_err());
+        assert!(limiter.check_ip(ip).is_ok());
     }
 
     #[test]
@@ -368,10 +365,8 @@ mod tests {
             .records
             .contains_key(&("@".to_string(), RecordType::SOA)));
 
-        // Note: Zone doesn't automatically parse SOA serial on insert
-        // This requires using the server's load_zones method
-        // For testing purposes, we just verify the record exists
-        assert!(zone.serial == 0 || zone.serial == 2024010101);
+        // Zone::new initializes serial to 0; SOA record insertion does not parse serial
+        assert_eq!(zone.serial, 0);
     }
 
     #[test]
@@ -397,7 +392,8 @@ mod tests {
 
         // Should be able to get the previous version
         let prev = zone.get_previous_version(first_serial);
-        assert!(prev.is_some() || prev.is_none()); // Either is valid depending on history
+        // Zone was just created with no history entries, so no previous version exists
+        assert!(prev.is_none());
     }
 
     #[test]
