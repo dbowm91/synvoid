@@ -172,24 +172,21 @@ pub struct UpdateErrorPageRequest {
     )
 )]
 pub async fn update_error_page(
-    State(_state): State<Arc<AdminState>>,
+    State(state): State<Arc<AdminState>>,
     auth: OptionalAuth,
     Path(code): Path<u16>,
     Json(payload): Json<UpdateErrorPageRequest>,
 ) -> Result<Json<ErrorPageResponse>, StatusCode> {
-    if !require_auth(&auth, &_state.admin_token) {
+    if !require_auth(&auth, &state.admin_token) {
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    let error_page = ErrorPage::from_code(code).ok_or(StatusCode::NOT_FOUND)?;
+    let _error_page = ErrorPage::from_code(code).ok_or(StatusCode::NOT_FOUND)?;
 
-    tracing::info!("Updating error page {}: title={:?}, message={:?}, content_present={}", 
-        code, payload.title, payload.message, payload.content.is_some());
-
-    Ok(Json(ErrorPageResponse {
-        code: error_page.code,
-        name: payload.title.unwrap_or(error_page.name),
-        description: payload.message.unwrap_or(error_page.description),
-        html_preview: payload.content,
-    }))
+    tracing::warn!(
+        "update_error_page called for {} but is not yet implemented (title={:?})",
+        code, payload.title
+    );
+    
+    Err(StatusCode::NOT_IMPLEMENTED)
 }

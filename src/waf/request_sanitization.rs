@@ -28,7 +28,7 @@ impl TrustedProxy {
                 let prefix_bytes = prefix / 8;
                 let prefix_bits = prefix % 8;
 
-                if &network[..prefix_bytes as usize] != &ip_bits[..prefix_bytes as usize] {
+                if network[..prefix_bytes as usize] != ip_bits[..prefix_bytes as usize] {
                     return false;
                 }
 
@@ -140,8 +140,8 @@ impl RequestSanitizer {
     }
 
     pub fn get_real_ip(&self, headers: &HeaderMap, client_ip: IpAddr) -> Option<IpAddr> {
-        if self.sanitize_forwarded {
-            if self.is_trusted_proxy(client_ip) {
+        if self.sanitize_forwarded
+            && self.is_trusted_proxy(client_ip) {
                 if let Some(forwarded_for) = headers.get("x-forwarded-for") {
                     if let Ok(value) = forwarded_for.to_str() {
                         if let Some(first_ip) = value.split(',').next() {
@@ -171,7 +171,6 @@ impl RequestSanitizer {
                     }
                 }
             }
-        }
 
         Some(client_ip)
     }

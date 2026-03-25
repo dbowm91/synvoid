@@ -275,7 +275,7 @@ impl DnsSecKeyManager {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
-            .as_secs() as u64;
+            .as_secs();
         let expires_at = now + (validity_days as u64 * 86400);
 
         let (public_key, private_key, key_tag, flags, key_size) = match algorithm {
@@ -368,7 +368,7 @@ impl DnsSecKeyManager {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
-            .as_secs() as u64;
+            .as_secs();
         let expires_at = now + (validity_days as u64 * 86400);
 
         let (public_key, private_key, key_tag, flags, key_size) = match algorithm {
@@ -456,7 +456,7 @@ impl DnsSecKeyManager {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
-            .as_secs() as u64;
+            .as_secs();
 
         match key_type {
             KeyType::KSK => {
@@ -557,7 +557,7 @@ impl DnsSecKeyManager {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
-            .as_secs() as u64;
+            .as_secs();
 
         if let Some(ksk) = &self.key_signing_key {
             let age = now - ksk.created_at;
@@ -687,7 +687,7 @@ impl DnsSecKeyManager {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
-            .as_secs() as u64;
+            .as_secs();
 
         // Clone key data to avoid borrow checker issues
         let ksk_needs_rotation = self.key_signing_key.as_ref().map(|ksk| {
@@ -756,7 +756,7 @@ impl DnsSecKeyManager {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
-            .as_secs() as u64;
+            .as_secs();
 
         let ksk_info = self.key_signing_key.as_ref().map(|k| KeyInfo {
             key_type: "KSK".to_string(),
@@ -796,7 +796,7 @@ impl DnsSecKeyManager {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
-            .as_secs() as u64;
+            .as_secs();
 
         for key_type in ["ksk", "zsk"] {
             let key_dir = self.key_path.join(key_type);
@@ -966,7 +966,7 @@ fn calculate_key_tag(flags: u16, protocol: u8, algorithm: u8, public_key: &[u8])
         }
     }
 
-    (sum + (sum >> 16)) as u16 & 0xFFFF
+    (sum + (sum >> 16)) as u16
 }
 
 pub fn compute_dnskey(key: &ZoneSigningKey) -> Vec<u8> {
@@ -1064,8 +1064,8 @@ fn extract_rsa_modulus(der_bytes: &[u8]) -> Vec<u8> {
     let key_start = i;
     let key_end = std::cmp::min(i + bit_string_len - alg_len - 2, der_bytes.len());
 
-    let result = der_bytes[key_start..key_end].to_vec();
-    result
+    
+    der_bytes[key_start..key_end].to_vec()
 }
 
 pub fn create_rrsig_record(
@@ -1482,7 +1482,7 @@ fn base32_encode(input: &[u8]) -> String {
         result.push(BASE32_ALPHABET[index] as char);
     }
 
-    while result.len() % 8 != 0 {
+    while !result.len().is_multiple_of(8) {
         result.push('=');
     }
 
@@ -2032,7 +2032,7 @@ impl ZoneSigner {
         let key = ("@".to_string(), super::server::RecordType::DNSKEY);
         zone.records
             .entry(key)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(key_record);
 
         if let Ok(ds_data) = create_ds_record(ksk, DsDigestType::Sha256) {
@@ -2048,7 +2048,7 @@ impl ZoneSigner {
             let ds_key = ("@".to_string(), super::server::RecordType::DS);
             zone.records
                 .entry(ds_key)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(ds_record);
         }
 
@@ -2120,7 +2120,7 @@ impl ZoneSigner {
                     let rrsig_key = (record.name.clone(), super::server::RecordType::RRSIG);
                     zone.records
                         .entry(rrsig_key)
-                        .or_insert_with(Vec::new)
+                        .or_default()
                         .push(rrsig_record);
                 }
             }
@@ -2158,7 +2158,7 @@ impl ZoneSigner {
             let nsec_key = (name.clone(), super::server::RecordType::NSEC);
             zone.records
                 .entry(nsec_key)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(nsec_record);
         }
 
@@ -2182,7 +2182,7 @@ impl ZoneSigner {
                 let nsec3_key = ("@".to_string(), super::server::RecordType::NSEC3);
                 zone.records
                     .entry(nsec3_key)
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(nsec3_record);
 
                 let nsec3param_data = create_nsec3param_record(&self.nsec3_config);
@@ -2202,7 +2202,7 @@ impl ZoneSigner {
                 let nsec3param_key = ("@".to_string(), super::server::RecordType::NSEC3PARAM);
                 zone.records
                     .entry(nsec3param_key)
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(nsec3param_record);
             }
         }

@@ -99,6 +99,12 @@ pub struct DnsFirewall {
     geoip_lookup: Option<Arc<crate::geoip::GeoIpManager>>,
 }
 
+impl Default for DnsFirewall {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DnsFirewall {
     pub fn new() -> Self {
         Self {
@@ -453,7 +459,7 @@ impl std::str::FromStr for GeoLocation {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let parts: Vec<&str> = s.split(',').map(|p| p.trim()).collect();
-        if parts.len() < 1 {
+        if parts.is_empty() {
             return Err("Invalid geo location format".to_string());
         }
 
@@ -613,7 +619,7 @@ pub fn check_rebinding_protection(
         return RebindingCheckResult::Allowed;
     }
 
-    let has_internal_ip = resolved_ips.iter().any(|ip| is_private_ip(ip));
+    let has_internal_ip = resolved_ips.iter().any(is_private_ip);
 
     if has_internal_ip {
         if config.block_short_ttl_internal && record_ttl < config.min_ttl_for_internal {

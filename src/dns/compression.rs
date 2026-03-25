@@ -153,7 +153,7 @@ impl DnsMessageDecompressor {
                     return Err("Invalid compression pointer".to_string());
                 }
 
-                let offset = ((len & 0x3F) as usize) << 8 | data[pos + 1] as usize;
+                let offset = (len & 0x3F) << 8 | data[pos + 1] as usize;
 
                 if !jumped {
                     jumped = true;
@@ -224,7 +224,7 @@ impl DnsMessageDecompressor {
                     return Err("Invalid pointer".to_string());
                 }
 
-                let offset = ((len & 0x3F) as usize) << 8 | data[pos + 1] as usize;
+                let offset = (len & 0x3F) << 8 | data[pos + 1] as usize;
 
                 pos = offset;
                 jumps += 1;

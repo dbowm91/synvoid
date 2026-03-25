@@ -404,7 +404,7 @@ impl RateLimiterManager {
         let shard = self.get_shard(ip);
         let mut requests = shard.ip_requests.write();
         
-        let ip_state = requests.entry(ip).or_insert_with(IpRateLimitState::new);
+        let ip_state = requests.entry(ip).or_default();
         
         ip_state.per_second.retain(|t| now.duration_since(*t) < Duration::from_secs(1));
         ip_state.per_minute.retain(|t| now.duration_since(*t) < Duration::from_secs(60));

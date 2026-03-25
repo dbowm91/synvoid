@@ -203,7 +203,7 @@ impl ConfigManager {
         let domains: Vec<String> = self.sites.keys().cloned().collect();
 
         for domain in domains {
-            let result = self.reload_site(&domain).map_err(|e| e);
+            let result = self.reload_site(&domain);
             results.push((domain, result));
         }
 

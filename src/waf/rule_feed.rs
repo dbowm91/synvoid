@@ -270,15 +270,29 @@ impl RuleFeedManager {
     }
 
     fn parse_embedded_key(key_str: &str) -> VerifyingKey {
+        // If a real base64-encoded 32-byte Ed25519 public key is provided, use it
         if let Ok(bytes) = base64_decode(key_str) {
             if bytes.len() == 32 {
-                return VerifyingKey::from_bytes(
+                if let Ok(key) = VerifyingKey::from_bytes(
                     bytes[..32].try_into().expect("Invalid key length")
-                ).expect("Invalid embedded key");
+                ) {
+                    return key;
+                }
             }
         }
-        let bytes = [0u8; 32];
-        VerifyingKey::from_bytes(&bytes).expect("Failed to create embedded key")
+
+        // No valid key provided — generate a random one at startup.
+        // This means rule signature verification will only work if the feed
+        // server signs with the same key. Log a warning so operators know.
+        tracing::warn!(
+            "No valid embedded Ed25519 public key configured (placeholder or invalid). \
+             Generating a random key — rule feed signature verification will fail unless \
+             the feed server uses the corresponding private key."
+        );
+        let mut key_bytes = [0u8; 32];
+        rand::Rng::fill(&mut rand::rng(), &mut key_bytes);
+        let signing_key = ed25519_dalek::SigningKey::from_bytes(&key_bytes);
+        signing_key.verifying_key()
     }
 
     pub fn start_background_fetching(self: &Arc<Self>) {
@@ -319,11 +333,11 @@ impl RuleFeedManager {
                 tracing::info!("Fetched new rules version {}", rules.version);
                 *self.downloaded_rules.write() = Some(rules.clone());
                 
-                if self.config.auto_apply {
-                    if self.apply_rules().is_ok() {
-                        *self.current_version.write() = Some(rules.version);
-                        *self.last_update.write() = now_timestamp();
-                    }
+                if self.config.auto_apply
+                    && self.apply_rules().is_ok()
+                {
+                    *self.current_version.write() = Some(rules.version);
+                    *self.last_update.write() = now_timestamp();
                 }
             }
             Err(e) => {

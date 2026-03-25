@@ -81,8 +81,7 @@ impl RpzZone {
         for (_pattern, policy) in policies.iter() {
             if let Some(ref qname_pattern) = policy.qname_pattern {
                 let pattern_lower = qname_pattern.to_lowercase();
-                if pattern_lower.starts_with('*') {
-                    let suffix = &pattern_lower[1..];
+                if let Some(suffix) = pattern_lower.strip_prefix('*') {
                     if qname_lower.ends_with(suffix) {
                         return Some(policy.action);
                     }

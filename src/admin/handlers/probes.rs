@@ -335,7 +335,7 @@ pub async fn block_probes(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    let ban_duration = parse_duration(&req.duration);
+    let _ban_duration = parse_duration(&req.duration);
     
     let mut blocked = Vec::new();
     let mut failed = Vec::new();
@@ -348,12 +348,12 @@ pub async fn block_probes(
         }
     }
 
-    let _ = state;
-    Ok(Json(serde_json::json!({
-        "blocked": blocked,
-        "failed": failed,
-        "duration_secs": ban_duration,
-    })))
+    tracing::warn!(
+        "block_probes called but is not yet implemented ({} IPs to block)",
+        blocked.len()
+    );
+    
+    Err(StatusCode::NOT_IMPLEMENTED)
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]

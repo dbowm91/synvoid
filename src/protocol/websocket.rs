@@ -46,6 +46,12 @@ struct WsMetrics {
     blocked_messages: AtomicU64,
 }
 
+impl Default for WebSocketHandler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl WebSocketHandler {
     pub fn new() -> Self {
         tracing::debug!("Initializing WebSocket protocol handler");
@@ -82,7 +88,7 @@ impl WebSocketHandler {
             || first_line.starts_with("GET")
                 && data
                     .windows(10)
-                    .any(|w| w[0].to_ascii_uppercase() == b'U' && &w[1..9] == b"PGRADE".as_slice())
+                    .any(|w| w[0].eq_ignore_ascii_case(&b'U') && &w[1..9] == b"PGRADE".as_slice())
         {
             return true;
         }

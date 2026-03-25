@@ -390,10 +390,8 @@ impl TrustAnchorManager {
             .map_err(|e| format!("Failed to query anchors: {}", e))?;
 
         let mut anchors = self.anchors.write();
-        for anchor_result in anchor_iter {
-            if let Ok(anchor) = anchor_result {
-                anchors.insert(anchor.key_id.clone(), anchor);
-            }
+        for anchor in anchor_iter.flatten() {
+            anchors.insert(anchor.key_id.clone(), anchor);
         }
 
         Ok(())

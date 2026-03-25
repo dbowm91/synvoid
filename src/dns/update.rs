@@ -63,8 +63,8 @@ impl DynamicUpdate {
         let mut pos = 12;
 
         let zone = if qdcount > 0 {
-            let (name, class) = Self::parse_rr(&query, pos)?;
-            pos = Self::skip_rr(&query, pos);
+            let (name, class) = Self::parse_rr(query, pos)?;
+            pos = Self::skip_rr(query, pos);
             Some(UpdateZone { name, class })
         } else {
             None
@@ -72,7 +72,7 @@ impl DynamicUpdate {
 
         let mut prerequisites = Vec::new();
         for _ in 0..ancount {
-            let (name, rtype, rclass, rdata) = Self::parse_rr_with_rdata(&query, pos)?;
+            let (name, rtype, rclass, rdata) = Self::parse_rr_with_rdata(query, pos)?;
             let condition = match rclass {
                 1 => PrerequisiteCondition::Exists,
                 2 => PrerequisiteCondition::NotExists,
@@ -86,13 +86,13 @@ impl DynamicUpdate {
                 rdata,
                 condition,
             });
-            pos = Self::skip_rr_with_rdata(&query, pos);
+            pos = Self::skip_rr_with_rdata(query, pos);
         }
 
         let mut updates = Vec::new();
         let total_updates = nscount + arcount;
         for _ in 0..total_updates {
-            let (name, rtype, rclass, ttl, rdata) = Self::parse_rr_full(&query, pos)?;
+            let (name, rtype, rclass, ttl, rdata) = Self::parse_rr_full(query, pos)?;
             updates.push(UpdateRecord {
                 name,
                 rtype,
@@ -100,7 +100,7 @@ impl DynamicUpdate {
                 ttl,
                 rdata,
             });
-            pos = Self::skip_rr_full(&query, pos);
+            pos = Self::skip_rr_full(query, pos);
         }
 
         Ok(Self {
@@ -183,7 +183,7 @@ impl DynamicUpdate {
                 if jumps > 10 {
                     return Err("Too many jumps".to_string());
                 }
-                let offset = ((len & 0x3F) as usize) << 8 | query[pos + 1] as usize;
+                let offset = (len & 0x3F) << 8 | query[pos + 1] as usize;
                 pos = offset;
                 continue;
             }

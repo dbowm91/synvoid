@@ -33,8 +33,7 @@ impl EarlyHttpParser {
             .headers
             .iter()
             .find(|h| h.name.eq_ignore_ascii_case("cookie"))
-            .map(|h| std::str::from_utf8(h.value).ok().map(|s| s.to_string()))
-            .flatten();
+            .and_then(|h| std::str::from_utf8(h.value).ok().map(|s| s.to_string()));
 
         let content_length = req
             .headers
@@ -46,8 +45,7 @@ impl EarlyHttpParser {
             .headers
             .iter()
             .find(|h| h.name.eq_ignore_ascii_case("host"))
-            .map(|h| std::str::from_utf8(h.value).ok().map(|s| s.to_string()))
-            .flatten();
+            .and_then(|h| std::str::from_utf8(h.value).ok().map(|s| s.to_string()));
 
         Some(EarlyHttpRequest {
             method: method_str,

@@ -194,7 +194,7 @@ impl HttpServer {
         let mesh_config = self.mesh_config.clone();
         let mesh_transport = self.mesh_transport.clone();
         let metrics = self.metrics.clone();
-        let worker_id = self.worker_id.clone();
+        let worker_id = self.worker_id;
         
         let header_read_timeout = Duration::from_secs(self.http_config.header_read_timeout_secs);
         let max_headers = self.http_config.max_headers;
@@ -268,7 +268,7 @@ impl HttpServer {
                                     let metrics = metrics.clone();
                                     let http_conn = http_conn_clone.clone();
                                     let ipc_for_request = ipc.clone();
-                                    let worker_id_for_request = worker_id.clone();
+                                    let worker_id_for_request = worker_id;
                                     async move {
                                         Self::handle_request(req, client_addr, local_addr, router, waf, client, alt_svc, main_config, drain_state, http_config, mesh_config, mesh_transport, metrics, http_conn, ipc_for_request, worker_id_for_request).await
                                     }
@@ -345,10 +345,8 @@ impl HttpServer {
             if path == INTERNAL_READY_PATH {
                 return Self::handle_ready_request(&drain_state, &alt_svc, &main_config);
             }
-        } else {
-            if path == INTERNAL_HEALTH_PATH || path == INTERNAL_READY_PATH {
-                return Self::handle_health_request(&drain_state, &alt_svc, &main_config);
-            }
+        } else if path == INTERNAL_HEALTH_PATH || path == INTERNAL_READY_PATH {
+            return Self::handle_health_request(&drain_state, &alt_svc, &main_config);
         }
 
         // Handle key exchange requests for global nodes
@@ -370,7 +368,7 @@ impl HttpServer {
                     tracing::warn!("Connection limit exceeded for {}: {}", client_ip, e);
                     counter!("maluwaf.traffic.connection_limited").increment(1);
                     let ipc_clone = ipc.clone();
-                    let worker_id_clone = worker_id.clone();
+                    let worker_id_clone = worker_id;
                     Self::send_request_log_if_enabled(
                         ipc_clone, worker_id_clone, &main_config,
                         client_ip, "UNKNOWN".to_string(), path.to_string(),
@@ -390,7 +388,7 @@ impl HttpServer {
             tracing::warn!("Monthly bandwidth limit exceeded - returning 503");
             counter!("maluwaf.bandwidth.limit_exceeded").increment(1);
             let ipc_clone = ipc.clone();
-            let worker_id_clone = worker_id.clone();
+            let worker_id_clone = worker_id;
             Self::send_request_log_if_enabled(
                 ipc_clone, worker_id_clone, &main_config,
                 client_ip, "UNKNOWN".to_string(), path.to_string(),
@@ -444,7 +442,7 @@ impl HttpServer {
             counter!("maluwaf.honeypot.hit").increment(1);
             tracing::info!("HTTP honeypot accessed: {} by {}", path, client_ip);
             let ipc_clone = ipc.clone();
-            let worker_id_clone = worker_id.clone();
+            let worker_id_clone = worker_id;
             Self::send_request_log_if_enabled(
                 ipc_clone, worker_id_clone, &main_config,
                 client_ip, method.to_string(), path.clone(),
@@ -457,7 +455,7 @@ impl HttpServer {
         if path.starts_with("/_waf_css_challenge") {
             let (html, _) = waf.challenge_manager.generate_challenge_page(&client_ip);
             let ipc_clone = ipc.clone();
-            let worker_id_clone = worker_id.clone();
+            let worker_id_clone = worker_id;
             Self::send_request_log_if_enabled(
                 ipc_clone, worker_id_clone, &main_config,
                 client_ip, method.to_string(), path.clone(),
@@ -472,7 +470,7 @@ impl HttpServer {
                 Some(name) => name.strip_suffix(".png").unwrap_or(name),
                 None => {
                     let ipc_clone = ipc.clone();
-                    let worker_id_clone = worker_id.clone();
+                    let worker_id_clone = worker_id;
                     Self::send_request_log_if_enabled(
                         ipc_clone, worker_id_clone, &main_config,
                         client_ip, method.to_string(), path.clone(),
@@ -488,7 +486,7 @@ impl HttpServer {
             
             if !waf.challenge_manager.css_enabled() {
                 let ipc_clone = ipc.clone();
-                let worker_id_clone = worker_id.clone();
+                let worker_id_clone = worker_id;
                 Self::send_request_log_if_enabled(
                     ipc_clone, worker_id_clone, &main_config,
                     client_ip, method.to_string(), path.clone(),
@@ -512,7 +510,7 @@ impl HttpServer {
                 Some(sid) => sid,
                 None => {
                     let ipc_clone = ipc.clone();
-                    let worker_id_clone = worker_id.clone();
+                    let worker_id_clone = worker_id;
                     Self::send_request_log_if_enabled(
                         ipc_clone, worker_id_clone, &main_config,
                         client_ip, method.to_string(), path.clone(),
@@ -568,7 +566,7 @@ impl HttpServer {
             crate::router::RouteResult::NotFound(msg) => {
                 tracing::debug!("Route not found: {} for host: {}", msg, host);
                 let ipc_clone = ipc.clone();
-                let worker_id_clone = worker_id.clone();
+                let worker_id_clone = worker_id;
                 Self::send_request_log_if_enabled(
                     ipc_clone, worker_id_clone, &main_config,
                     client_ip, method.to_string(), path.clone(),
@@ -580,7 +578,7 @@ impl HttpServer {
             crate::router::RouteResult::Error(msg) => {
                 tracing::error!("Router error: {}", msg);
                 let ipc_clone = ipc.clone();
-                let worker_id_clone = worker_id.clone();
+                let worker_id_clone = worker_id;
                 Self::send_request_log_if_enabled(
                     ipc_clone, worker_id_clone, &main_config,
                     client_ip, method.to_string(), path.clone(),
@@ -612,7 +610,7 @@ impl HttpServer {
                 counter!("maluwaf.http.blackhole_drop").increment(1);
                 http_conn.request_drop();
                 let ipc_clone = ipc.clone();
-                let worker_id_clone = worker_id.clone();
+                let worker_id_clone = worker_id;
                 Self::send_request_log_if_enabled(
                     ipc_clone, worker_id_clone, &main_config,
                     client_ip, method_str.clone(), path.clone(),
@@ -629,7 +627,7 @@ impl HttpServer {
                     _ = tokio::time::sleep(stall_timeout) => {
                         let latency_ms = stall_timeout.as_millis() as u64;
                         let ipc_clone = ipc.clone();
-                        let worker_id_clone = worker_id.clone();
+                        let worker_id_clone = worker_id;
                         Self::send_request_log_if_enabled(
                             ipc_clone, worker_id_clone, &main_config,
                             client_ip, method_str.clone(), path.clone(),
@@ -653,7 +651,7 @@ impl HttpServer {
                     m.bandwidth.record_site_egress(&site_id, body_len);
                 }
                 let ipc_clone = ipc.clone();
-                let worker_id_clone = worker_id.clone();
+                let worker_id_clone = worker_id;
                 Self::send_request_log_if_enabled(
                     ipc_clone, worker_id_clone, &main_config,
                     client_ip, method_str.clone(), path.clone(),
@@ -672,7 +670,7 @@ impl HttpServer {
                     m.bandwidth.record_site_egress(&site_id, body_len);
                 }
                 let ipc_clone = ipc.clone();
-                let worker_id_clone = worker_id.clone();
+                let worker_id_clone = worker_id;
                 Self::send_request_log_if_enabled(
                     ipc_clone, worker_id_clone, &main_config,
                     client_ip, method_str.clone(), path.clone(),
@@ -692,7 +690,7 @@ impl HttpServer {
                 }
                 let cookie = format!("{}={}; path=/; max-age={}; Secure; SameSite=Strict", session_cookie_name, session_cookie_value, session_cookie_max_age);
                 let ipc_clone = ipc.clone();
-                let worker_id_clone = worker_id.clone();
+                let worker_id_clone = worker_id;
                 Self::send_request_log_if_enabled(
                     ipc_clone, worker_id_clone, &main_config,
                     client_ip, method_str.clone(), path.clone(),
@@ -712,7 +710,7 @@ impl HttpServer {
                     m.bandwidth.record_site_egress(&site_id, body_len);
                 }
                 let ipc_clone = ipc.clone();
-                let worker_id_clone = worker_id.clone();
+                let worker_id_clone = worker_id;
                 Self::send_request_log_if_enabled(
                     ipc_clone, worker_id_clone, &main_config,
                     client_ip, method_str.clone(), path.clone(),
@@ -872,10 +870,10 @@ impl HttpServer {
                                         .unwrap_or("");
                                     
                                     let generator = crate::static_files::minifier::MinifierGenerator::new();
-                                    let gzip_level = comp_config.gzip_level.unwrap_or(6) as u32;
+                                    let gzip_level = comp_config.gzip_level.unwrap_or(6);
                                     
                                     if accept_encoding.contains("br") {
-                                        if let Ok(compressed) = generator.compress_brotli(&body, comp_config.brotli_level.unwrap_or(6) as u32) {
+                                        if let Ok(compressed) = generator.compress_brotli(&body, comp_config.brotli_level.unwrap_or(6)) {
                                             body = Bytes::from(compressed);
                                             body_len = body.len() as u64;
                                             let mut headers_clone = headers.clone();
@@ -927,7 +925,7 @@ impl HttpServer {
                         }
                         
                         Ok(builder
-                            .body(Full::new(Bytes::from(body)))
+                            .body(Full::new(body))
                             .unwrap_or_else(|_| Self::build_response_with_alt_svc(500, "Internal Server Error".to_string(), "text/plain", &alt_svc, &main_config)))
                     }
                     Err(e) => {
@@ -954,7 +952,7 @@ impl HttpServer {
 
         let status = response.as_ref().map(|r| r.status().as_u16()).unwrap_or(0);
         let ipc_clone = ipc.clone();
-        let worker_id_clone = worker_id.clone();
+        let worker_id_clone = worker_id;
         Self::send_request_log_if_enabled(
             ipc_clone, worker_id_clone, &main_config,
             client_ip, method_str, path.clone(),
@@ -1524,16 +1522,22 @@ impl HttpServer {
             return;
         }
 
-        let max_per_second = verbose_config.max_logs_per_second as u32;
+        let max_per_second = verbose_config.max_logs_per_second;
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as u64)
+            .map(|d| d.as_secs())
             .unwrap_or(0);
         
         let last_reset = REQUEST_LOG_RATE_LIMITER_RESET.load(Ordering::Relaxed);
         if now != last_reset {
-            REQUEST_LOG_RATE_LIMITER_RESET.store(now, Ordering::Relaxed);
-            REQUEST_LOG_RATE_LIMITER.store(0, Ordering::Relaxed);
+            // Only one thread should reset the counter per second.
+            // compare_exchange ensures only the first caller resets.
+            if REQUEST_LOG_RATE_LIMITER_RESET
+                .compare_exchange(last_reset, now, Ordering::Relaxed, Ordering::Relaxed)
+                .is_ok()
+            {
+                REQUEST_LOG_RATE_LIMITER.store(0, Ordering::Relaxed);
+            }
         }
         
         let current_count = REQUEST_LOG_RATE_LIMITER.fetch_add(1, Ordering::Relaxed);
@@ -1555,7 +1559,7 @@ impl HttpServer {
                 bytes_received: 0,
             };
             let ipc = ipc.clone();
-            let worker_id = worker_id.clone();
+            let worker_id = *worker_id;
             tokio::spawn(async move {
                 let mut ipc_guard = ipc.lock().await;
                 let msg = crate::process::Message::WorkerRequestLog {

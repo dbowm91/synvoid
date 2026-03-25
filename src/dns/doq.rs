@@ -126,7 +126,7 @@ impl DoqServer {
                 }
                 _ = &mut shutdown_rx => {
                     tracing::info!("DoQ server received shutdown signal");
-                    let _ = endpoint.close(0u32.into(), b"Server shutdown");
+                    endpoint.close(0u32.into(), b"Server shutdown");
                     break;
                 }
             }

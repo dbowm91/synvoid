@@ -599,10 +599,10 @@ pub async fn key_confirm_http(
         StaticSecret::from(secret_bytes)
     };
     let server_x25519_pubkey = {
-        let pubkey_bytes = state.config.global_node.x25519_public_key_base64
+        
+        state.config.global_node.x25519_public_key_base64
             .clone()
-            .ok_or_else(|| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, "Global node X25519 public key not derived".to_string()))?;
-        pubkey_bytes
+            .ok_or_else(|| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, "Global node X25519 public key not derived".to_string()))?
     };
     
     // Decode client's X25519 public key

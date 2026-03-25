@@ -270,11 +270,11 @@ impl UdpProtocolDetector {
         let vn = (first_byte >> 3) & 0x7;
         let mode = first_byte & 0x7;
 
-        if vn < 1 || vn > 4 {
+        if !(1..=4).contains(&vn) {
             return false;
         }
 
-        if mode < 1 || mode > 7 {
+        if !(1..=7).contains(&mode) {
             return false;
         }
 
@@ -297,11 +297,10 @@ impl UdpProtocolDetector {
 
         if data.len() > 2 && data[2] == 0x02 && data[3] == 0x01 {
             let version = data[4];
-            if version <= 2 {
-                if data.len() > 5 && data[5] == 0x04 {
+            if version <= 2
+                && data.len() > 5 && data[5] == 0x04 {
                     return true;
                 }
-            }
         }
 
         false
@@ -455,18 +454,16 @@ impl UdpProtocolDetector {
 
         let first_line = String::from_utf8_lossy(&data[..20.min(data.len())]);
 
-        if first_line.starts_with("M-SEARCH ")
+        if (first_line.starts_with("M-SEARCH ")
             || first_line.starts_with("NOTIFY ")
-            || first_line.starts_with("HTTP/1.")
-        {
-            if first_line.contains("* HTTP")
+            || first_line.starts_with("HTTP/1."))
+            && (first_line.contains("* HTTP")
                 || first_line.contains("ST:")
                 || first_line.contains("NT:")
-                || first_line.contains("LOCATION:")
+                || first_line.contains("LOCATION:"))
             {
                 return true;
             }
-        }
 
         false
     }
@@ -508,7 +505,7 @@ impl UdpProtocolDetector {
 
         let msg_type = data[0];
 
-        if msg_type >= 1 && msg_type <= 4 {
+        if (1..=4).contains(&msg_type) {
             let reserved = u32::from_le_bytes([data[1], data[2], data[3], 0]);
             if reserved == 0 {
                 match msg_type {
@@ -529,18 +526,16 @@ impl UdpProtocolDetector {
             return false;
         }
 
-        if data[0] == 0x38 || data[0] == 0x40 {
-            if data.len() >= 14 {
+        if (data[0] == 0x38 || data[0] == 0x40)
+            && data.len() >= 14 {
                 let opcode = data[0] >> 3;
                 let _key_id = data[0] & 0x07;
 
-                if opcode >= 1 && opcode <= 10 {
-                    if data[1] == 0x00 || data[1] == 0x01 {
+                if (1..=10).contains(&opcode)
+                    && (data[1] == 0x00 || data[1] == 0x01) {
                         return true;
                     }
-                }
             }
-        }
 
         false
     }
@@ -551,7 +546,7 @@ impl UdpProtocolDetector {
         }
 
         let content_type = data[0];
-        if content_type < 20 || content_type > 26 {
+        if !(20..=26).contains(&content_type) {
             return false;
         }
 

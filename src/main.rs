@@ -918,7 +918,56 @@ async fn run_master(
         }
     }
 
-    let ipc_session_key = if let Some(ref env_var) = main_config.security.ipc_session_key_env {
+    let ipc_session_key = if let Ok(key_file) = std::env::var("MALUWAF_IPC_KEY_FILE") {
+        // Master passed IPC key via temp file (preferred over env var for security)
+        match std::fs::read_to_string(&key_file) {
+            Ok(key_hex) => {
+                let key_hex = key_hex.trim();
+                if key_hex.len() == 64 {
+                    let mut key = [0u8; 32];
+                    let mut valid = true;
+                    for (i, chunk) in key_hex.as_bytes().chunks(2).enumerate() {
+                        if chunk.len() != 2 {
+                            valid = false;
+                            break;
+                        }
+                        let Ok(s) = std::str::from_utf8(chunk) else {
+                            valid = false;
+                            break;
+                        };
+                        match u8::from_str_radix(s, 16) {
+                            Ok(b) => key[i] = b,
+                            Err(_) => {
+                                valid = false;
+                                break;
+                            }
+                        }
+                    }
+                    if valid {
+                        // Clean up the temp file after reading
+                        let _ = std::fs::remove_file(&key_file);
+                        Some(key)
+                    } else {
+                        tracing::error!("IPC key file {} contains invalid hex", key_file);
+                        return Err(Box::new(std::io::Error::new(
+                            std::io::ErrorKind::InvalidInput,
+                            "Invalid IPC session key in file",
+                        )));
+                    }
+                } else {
+                    tracing::error!("IPC key file {} has wrong length: expected 64 hex chars, got {}", key_file, key_hex.len());
+                    return Err(Box::new(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "Invalid IPC session key length in file",
+                    )));
+                }
+            }
+            Err(e) => {
+                tracing::error!("Failed to read IPC key file {}: {}", key_file, e);
+                return Err(Box::new(e));
+            }
+        }
+    } else if let Some(ref env_var) = main_config.security.ipc_session_key_env {
         match std::env::var(env_var) {
             Ok(key_hex) => {
                 if key_hex.len() == 64 {

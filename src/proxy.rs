@@ -392,44 +392,41 @@ impl ProxyServer {
                     if status_code >= 400 {
                         let result = tracker.record_error(client_ip, &path, status_code);
                         
-                        match result {
-                            crate::waf::UpstreamErrorResult::ProbingDetected { unique_endpoints, error_count } => {
-                                tracing::warn!(
-                                    ip = %client_ip,
-                                    endpoints = ?unique_endpoints,
-                                    error_count = error_count,
-                                    status_code = status_code,
-                                    "Potential upstream vulnerability probe detected - healthy upstream returning errors"
-                                );
-                                
-                                let config = tracker.get_config();
-                                if config.auto_ban_elevated_threat {
-                                    let threat_level = self.waf.threat_level.as_ref()
-                                        .map(|tl| tl.get_level().as_u8())
-                                        .unwrap_or(1);
-                                    if threat_level >= config.elevated_threat_threshold {
-                                        let ban_duration = config.elevated_ban_duration;
-                                        tracing::warn!(
-                                            ip = %client_ip,
-                                            threat_level = threat_level,
-                                            ban_duration_secs = ban_duration,
-                                            "Auto-banning source of upstream error probing"
+                        if let crate::waf::UpstreamErrorResult::ProbingDetected { unique_endpoints, error_count } = result {
+                            tracing::warn!(
+                                ip = %client_ip,
+                                endpoints = ?unique_endpoints,
+                                error_count = error_count,
+                                status_code = status_code,
+                                "Potential upstream vulnerability probe detected - healthy upstream returning errors"
+                            );
+                            
+                            let config = tracker.get_config();
+                            if config.auto_ban_elevated_threat {
+                                let threat_level = self.waf.threat_level.as_ref()
+                                    .map(|tl| tl.get_level().as_u8())
+                                    .unwrap_or(1);
+                                if threat_level >= config.elevated_threat_threshold {
+                                    let ban_duration = config.elevated_ban_duration;
+                                    tracing::warn!(
+                                        ip = %client_ip,
+                                        threat_level = threat_level,
+                                        ban_duration_secs = ban_duration,
+                                        "Auto-banning source of upstream error probing"
+                                    );
+                                    if let Some(ref store) = self.waf.block_store {
+                                        store.block_ip(client_ip, "upstream_error_probe", ban_duration, "global");
+                                    }
+                                    if let Some(ref threat_intel) = crate::waf::get_threat_intel() {
+                                        threat_intel.announce_local_block(
+                                            client_ip,
+                                            "upstream_error_probe".to_string(),
+                                            ban_duration,
+                                            "global".to_string(),
                                         );
-                                        if let Some(ref store) = self.waf.block_store {
-                                            store.block_ip(client_ip, "upstream_error_probe", ban_duration, "global");
-                                        }
-                                        if let Some(ref threat_intel) = crate::waf::get_threat_intel() {
-                                            let _ = threat_intel.announce_local_block(
-                                                client_ip,
-                                                "upstream_error_probe".to_string(),
-                                                ban_duration,
-                                                "global".to_string(),
-                                            );
-                                        }
                                     }
                                 }
                             }
-                            _ => {}
                         }
                     }
                 }
@@ -528,7 +525,7 @@ impl ProxyServer {
                 store.block_ip(*client_ip, "honeypot", ban_duration, "global");
             }
             if let Some(ref threat_intel) = crate::waf::get_threat_intel() {
-                let _ = threat_intel.announce_local_block(
+                threat_intel.announce_local_block(
                     *client_ip,
                     "honeypot".to_string(),
                     24 * 60 * 60,
@@ -545,7 +542,7 @@ impl ProxyServer {
                 store.block_ip(*client_ip, "honeypot", ban_duration, "global");
             }
             if let Some(ref threat_intel) = crate::waf::get_threat_intel() {
-                let _ = threat_intel.announce_local_block(
+                threat_intel.announce_local_block(
                     *client_ip,
                     "honeypot".to_string(),
                     24 * 60 * 60,
@@ -752,8 +749,7 @@ impl ProxyServer {
             } else {
                 0
             }
-        } else if path.starts_with("*/") {
-            let pattern = &path[2..];
+        } else if let Some(pattern) = path.strip_prefix("*/") {
             if let Some(ref cache) = self.cache {
                 let count = cache.invalidate_by_pattern(pattern);
                 tracing::info!("Purged {} cache entries matching pattern {}", count, pattern);
@@ -761,18 +757,16 @@ impl ProxyServer {
             } else {
                 0
             }
-        } else {
-            if let Some(ref cache) = self.cache {
-                if let Some(cache_key) = CacheKey::from_cache_string(
-                    &format!("GET:{}:{}", host, path)
-                ) {
-                    cache.invalidate(&cache_key);
-                    tracing::info!("Purged cache entry for {}", path);
-                }
-                1
-            } else {
-                0
+        } else if let Some(ref cache) = self.cache {
+            if let Some(cache_key) = CacheKey::from_cache_string(
+                &format!("GET:{}:{}", host, path)
+            ) {
+                cache.invalidate(&cache_key);
+                tracing::info!("Purged cache entry for {}", path);
             }
+            1
+        } else {
+            0
         };
 
         Ok(Response::builder()
@@ -1005,7 +999,7 @@ impl ProxyServer {
                 Ok(response) => {
                     let status = response.status().as_u16();
                     
-                    if let Some(ref config) = retry_config {
+                    if let Some(config) = retry_config {
                         if self.is_retryable_status(status, config) && attempt <= max_retries {
                             if let Some(ref be) = current_backend {
                                 pool.mark_failed(&be.url);
@@ -1027,7 +1021,7 @@ impl ProxyServer {
                     let error_str = e.to_string();
                     last_error = Some(error_str.clone());
                     
-                    if let Some(ref config) = retry_config {
+                    if let Some(config) = retry_config {
                         let should_retry = (config.retry_on_error && self.is_connection_error(&error_str))
                             || (config.retry_on_timeout && self.is_timeout_error(&error_str));
                         
@@ -1214,8 +1208,8 @@ pub fn apply_response_header_transforms(
         return;
     }
     
-    let clear_patterns: Vec<String> = config.clear.iter().cloned().collect();
-    let hide_patterns: Vec<String> = config.hide.iter().cloned().collect();
+    let clear_patterns: Vec<String> = config.clear.to_vec();
+    let hide_patterns: Vec<String> = config.hide.to_vec();
     
     let should_remove = |name: &http::header::HeaderName| -> bool {
         let name_str = name.as_str();

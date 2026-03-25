@@ -32,6 +32,12 @@ struct GrpcMetrics {
     invalid_frames: AtomicU64,
 }
 
+impl Default for GrpcHandler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GrpcHandler {
     pub fn new() -> Self {
         tracing::debug!("Initializing gRPC protocol handler");

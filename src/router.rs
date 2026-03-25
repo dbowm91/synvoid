@@ -196,7 +196,7 @@ impl Router {
 
                         listen_map
                             .entry(bind_addr)
-                            .or_insert_with(Vec::new)
+                            .or_default()
                             .push(config_arc.site_id());
 
                         if listen_config.is_default_server() {
@@ -291,11 +291,10 @@ impl Router {
     fn route_to_target(&self, site_config: &Arc<SiteConfig>, path: &str) -> RouteResult {
         let site_id = site_config.site_id();
 
-        if site_config.security.reject_unknown_hosts.unwrap_or(false) {
-            if !self.is_host_valid_for_site(&site_id, site_config) {
+        if site_config.security.reject_unknown_hosts.unwrap_or(false)
+            && !self.is_host_valid_for_site(&site_id, site_config) {
                 return RouteResult::NotFound("Host not allowed".to_string());
             }
-        }
 
         if let Some(ref backend) = site_config.proxy.backend {
             match backend {
@@ -665,7 +664,7 @@ impl Router {
                     if let Some(addr) = listen_config.to_socket_addr(80) {
                         self.listen_map
                             .entry(addr)
-                            .or_insert_with(Vec::new)
+                            .or_default()
                             .push(site_id_str.clone());
 
                         if listen_config.is_default_server() {

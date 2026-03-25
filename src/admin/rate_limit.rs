@@ -198,7 +198,7 @@ where
 
         let mut inner = self.inner.clone();
         Box::pin(async move {
-            Ok(inner.ready().await?.call(request).await?)
+            inner.ready().await?.call(request).await
         })
     }
 }

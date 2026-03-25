@@ -376,7 +376,7 @@ impl UnifiedServer {
     }
 
     fn create_waf(main_config: &crate::config::MainConfig) -> WafCore {
-        let data_dir = main_config.persistence.data_dir.as_ref().map(|d| std::path::PathBuf::from(d));
+        let data_dir = main_config.persistence.data_dir.as_ref().map(std::path::PathBuf::from);
         
         WafCore::new(
             RateLimitConfigStore {
@@ -593,7 +593,7 @@ impl UnifiedServer {
             mesh_transport: self.mesh_transport.clone(),
             metrics: self.metrics.clone(),
             ipc: self.ipc.clone(),
-            worker_id: self.worker_id.clone(),
+            worker_id: self.worker_id,
         });
         
         let http_jh = {
@@ -812,7 +812,7 @@ impl UnifiedServer {
             server = server.with_metrics(m);
         }
 
-        if let (Some(ipc), Some(worker_id)) = (state.ipc.clone(), state.worker_id.clone()) {
+        if let (Some(ipc), Some(worker_id)) = (state.ipc.clone(), state.worker_id) {
             server = server.with_ipc(ipc, worker_id);
         }
         

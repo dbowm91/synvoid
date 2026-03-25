@@ -17,7 +17,7 @@ pub fn handle_status() -> Result<(), Box<dyn std::error::Error>> {
                     println!("Master PID: {}", status.master_pid);
                     println!("Version: {}", status.version);
                     println!("Uptime: {} seconds", status.uptime_secs);
-                    println!("");
+                    println!();
                     println!("Workers:");
                     println!(
                         "  {:<4} {:<8} {:<6} {:<10} {:<12} {:<10}",
@@ -35,7 +35,7 @@ pub fn handle_status() -> Result<(), Box<dyn std::error::Error>> {
                             worker.blocked
                         );
                     }
-                    println!("");
+                    println!();
                     println!("Stats (last hour):");
                     println!("  Total Requests:    {}", status.stats.total_requests);
                     println!(
@@ -51,7 +51,7 @@ pub fn handle_status() -> Result<(), Box<dyn std::error::Error>> {
                     );
                     println!("  Challenged:        {}", status.stats.challenged_last_hour);
                     println!("  Proxied:           {}", status.stats.proxied_last_hour);
-                    println!("");
+                    println!();
                     println!("Threat Summary:");
                     println!("  Active Blocks:     {}", status.stats.active_blocks);
                     println!(
@@ -336,6 +336,22 @@ auto_scale = true
         eprintln!("Error: Failed to write config file: {}", e);
         return;
     }
+
+    // Restrict permissions on config file since it contains the admin token
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Err(e) =
+            std::fs::set_permissions(&main_config_path, std::fs::Permissions::from_mode(0o600))
+        {
+            eprintln!("Warning: Failed to set config file permissions: {}", e);
+        }
+    }
+
+    tracing::warn!(
+        "Admin token is stored in plaintext in the config file. \
+         Ensure the file has restricted permissions (0600) and is not world-readable."
+    );
 
     println!("Config file updated: {:?}", main_config_path);
     println!("Admin token has been set in [admin] section");

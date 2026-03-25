@@ -683,8 +683,7 @@ impl MeshTransportManager {
         match crate::utils::get_first_non_loopback_ip() {
             Ok(ip) => Some(format!("https://{}:{}", ip, port)),
             Err(_) => {
-                let bind_address = self.config.bind_address.as_ref()
-                    .map(|s| s.as_str())
+                let bind_address = self.config.bind_address.as_deref()
                     .unwrap_or("0.0.0.0");
                 Some(format!("https://{}:{}", bind_address, port))
             }

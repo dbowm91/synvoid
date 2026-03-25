@@ -16,7 +16,7 @@ use crate::RunningFlag;
 const MAX_FDS_PER_MESSAGE: usize = 254;
 
 fn nix_to_io_error(e: nix::errno::Errno) -> io::Error {
-    io::Error::new(io::ErrorKind::Other, e.to_string())
+    io::Error::other(e.to_string())
 }
 
 pub struct UnixSocketHandle {
@@ -41,14 +41,14 @@ impl UnixSocketHandle {
 impl super::socket::SocketHandle for UnixSocketHandle {
     fn as_tcp_listener(&self) -> io::Result<TcpListener> {
         let fd_dup = nix::unistd::dup(self.fd)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            .map_err(io::Error::other)?;
         // SAFETY: fd_dup is a valid file descriptor from dup(), we transfer ownership to TcpListener
         Ok(unsafe { OwnedTcpListener::from_raw_fd(fd_dup).into_inner() })
     }
     
     fn as_tcp_stream(&self) -> io::Result<TcpStream> {
         let fd_dup = nix::unistd::dup(self.fd)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            .map_err(io::Error::other)?;
         // SAFETY: fd_dup is a valid file descriptor from dup(), we transfer ownership to TcpStream
         Ok(unsafe { OwnedTcpStream::from_raw_fd(fd_dup).into_inner() })
     }
@@ -332,7 +332,7 @@ impl ProcessControl for UnixProcessControl {
         unsafe { daemon.start() }
             // SAFETY: daemon.start() must be called before any threads exist.
             // This runs during early initialization before Tokio runtime starts.
-            .map_err(|e| PlatformError::Io(io::Error::new(io::ErrorKind::Other, e)))?;
+            .map_err(|e| PlatformError::Io(io::Error::other(e)))?;
         
         Ok(())
     }
@@ -395,7 +395,7 @@ impl SignalHandler for UnixSignalHandler {
 
 pub fn close_socket_fd(fd: RawFd) -> io::Result<()> {
     nix::unistd::close(fd)
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+        .map_err(io::Error::other)
 }
 
 /// Converts a raw file descriptor into an OwnedTcpListener, taking ownership.

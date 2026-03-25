@@ -120,7 +120,7 @@ impl UdpFloodProtector {
         if let Some(p) = port {
             let port_count = self.per_port_counters[p as usize].fetch_add(1, Ordering::Relaxed) + 1;
             let port_threshold = self.global_rate / 100;
-            if port_count > port_threshold as u32 {
+            if port_count > port_threshold {
                 metrics::counter!("maluwaf.udp_flood.port_limited").increment(1);
                 return FloodDecision::RateLimited;
             }
@@ -225,8 +225,8 @@ impl UdpFloodProtector {
 
     fn rotate_window(&self, now_secs: u64) {
         let current = self.current_window.load(Ordering::Relaxed);
-        if now_secs > current {
-            if self
+        if now_secs > current
+            && self
                 .current_window
                 .compare_exchange(current, now_secs, Ordering::SeqCst, Ordering::Relaxed)
                 .is_ok()
@@ -254,7 +254,6 @@ impl UdpFloodProtector {
                 let mut tracker = self.amplification_tracker.write();
                 tracker.retain(|_, entry| entry.last_seen.elapsed().as_secs() < 60);
             }
-        }
     }
 
     pub fn get_stats(&self) -> UdpFloodStats {

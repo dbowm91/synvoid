@@ -105,7 +105,7 @@ impl ProtocolDetector {
 
         let regex_patterns: Vec<String> = patterns.iter().map(|(_, _, p)| p.clone()).collect();
         let ac =
-            AhoCorasick::new(&regex_patterns).unwrap_or_else(|_| AhoCorasick::new(&[""]).unwrap());
+            AhoCorasick::new(&regex_patterns).unwrap_or_else(|_| AhoCorasick::new([""]).unwrap());
 
         let compiled: Vec<(String, String, String, Regex)> = patterns
             .into_iter()
@@ -223,7 +223,7 @@ impl ProtocolDetector {
 
         if payload.len() >= 3 && payload[0] == 0x16 && (payload[1] & 0x80) != 0 {
             let tls_versions = match payload[1] {
-                0x01 | 0x02 | 0x03 => "TLS",
+                0x01..=0x03 => "TLS",
                 0x00 => "SSL",
                 _ => "TLS",
             };

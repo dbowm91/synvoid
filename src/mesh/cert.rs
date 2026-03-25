@@ -149,7 +149,7 @@ impl MeshCertManager {
         let cert_rotation_interval = config
             .tls
             .cert_rotation_interval_secs
-            .map(|secs| std::time::Duration::from_secs(secs));
+            .map(std::time::Duration::from_secs);
         let cert_expiration_monitor = if config.tls.auto_monitor_expiration {
             Some(std::time::Instant::now())
         } else {

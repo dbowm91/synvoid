@@ -225,7 +225,7 @@ impl HickoryResolver {
 
         let resolver = builder.build();
 
-        Ok(Self { resolver: resolver.into() })
+        Ok(Self { resolver })
     }
 
     /// Create a resolver with QNAME minimization enabled (RFC 7816)
@@ -269,7 +269,7 @@ impl HickoryResolver {
         )
         .build();
 
-        Ok(Self { resolver: resolver.into() })
+        Ok(Self { resolver })
     }
 
     pub fn with_cloudflare() -> Result<Self, ResolverError> {
@@ -281,7 +281,7 @@ impl HickoryResolver {
         )
         .build();
 
-        Ok(Self { resolver: resolver.into() })
+        Ok(Self { resolver })
     }
 }
 
@@ -741,7 +741,7 @@ impl HickoryRecursor {
             let parts: Vec<&str> = line.split_whitespace().collect();
             if parts.len() >= 4 {
                 let qtype = parts.get(2).unwrap_or(&"");
-                let qname = parts.get(0).unwrap_or(&"");
+                let qname = parts.first().unwrap_or(&"");
                 
                 // Parse both A and AAAA records for root servers
                 // Format: "servername. TTL IN A IPv4" or "servername. TTL IN AAAA IPv6"

@@ -32,7 +32,9 @@ pub trait ProtocolHandler: Send + Sync {
 }
 
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub enum WafAction {
+    #[default]
     Allow,
     Block,
     Challenge,
@@ -41,11 +43,6 @@ pub enum WafAction {
     LogOnly,
 }
 
-impl Default for WafAction {
-    fn default() -> Self {
-        Self::Allow
-    }
-}
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProtocolError {

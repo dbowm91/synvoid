@@ -182,7 +182,7 @@ impl CgiHandler {
         env.insert("SCRIPT_NAME".to_string(), path.to_string());
         
         let safe_path = sanitize_cgi_path(path);
-        let script_filename = self.root.join(&safe_path.trim_start_matches('/'));
+        let script_filename = self.root.join(safe_path.trim_start_matches('/'));
         env.insert("SCRIPT_FILENAME".to_string(), script_filename.to_string_lossy().to_string());
         
         let request_uri = if let Some(query) = uri.query() {

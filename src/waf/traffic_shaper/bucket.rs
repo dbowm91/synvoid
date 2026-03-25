@@ -76,8 +76,8 @@ impl TokenBucket {
         let now = now_ms();
         let last = self.last_refill.load(Ordering::Acquire);
 
-        if now >= last + self.refill_interval_ms {
-            if self
+        if now >= last + self.refill_interval_ms
+            && self
                 .last_refill
                 .compare_exchange(last, now, Ordering::AcqRel, Ordering::Acquire)
                 .is_ok()
@@ -89,7 +89,6 @@ impl TokenBucket {
                 let new = (current + tokens_to_add).min(self.capacity);
                 self.available.store(new, Ordering::Release);
             }
-        }
     }
 }
 

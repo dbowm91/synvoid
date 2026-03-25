@@ -174,7 +174,7 @@ impl HealthChecker {
         match send_request_with_timeout(&client, method, &url, Some(Duration::from_secs(config.timeout_secs))).await {
             Ok(resp) => {
                 let status = resp.status_code();
-                status >= 200 && status < 400
+                (200..400).contains(&status)
             }
             Err(e) => {
                 tracing::debug!("Backend {} health check failed: {}", backend.url, e);

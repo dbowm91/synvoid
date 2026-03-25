@@ -1,6 +1,7 @@
 use parking_lot::RwLock;
 use std::sync::Arc;
 use thiserror::Error;
+use zeroize::Zeroizing;
 
 #[derive(Debug, Clone, Error)]
 pub enum HsmError {
@@ -59,7 +60,7 @@ pub enum HsmBackend {
 pub struct Pkcs11Hsm {
     context: cryptoki::context::Pkcs11,
     slot: cryptoki::slot::Slot,
-    pin: cryptoki::types::AuthPin,
+    pin: Zeroizing<String>,
     key_label: String,
     algorithm: Algorithm,
     key_id: Vec<u8>,
@@ -87,17 +88,16 @@ impl Pkcs11Hsm {
             .get_all_slots()
             .map_err(|e| HsmError::Provider(e.to_string()))?;
 
-        let slot = slots
+        let slot = *slots
             .get(slot_id)
-            .ok_or_else(|| HsmError::Provider(format!("Slot {} not found", slot_id)))?
-            .clone();
+            .ok_or_else(|| HsmError::Provider(format!("Slot {} not found", slot_id)))?;
 
         let key_id = key_label.as_bytes().to_vec();
 
         Ok(Self {
             context,
             slot,
-            pin: cryptoki::types::AuthPin::new(pin.into()),
+            pin: Zeroizing::new(pin.to_string()),
             key_label: key_label.to_string(),
             algorithm: Algorithm::from(algorithm),
             key_id,
@@ -109,11 +109,16 @@ impl Pkcs11Hsm {
 
         let session = self
             .context
-            .open_rw_session(self.slot.clone())
+            .open_rw_session(self.slot)
             .map_err(|e| HsmError::SessionError(e.to_string()))?;
 
         session
-            .login(cryptoki::session::UserType::User, Some(&self.pin))
+            .login(
+                cryptoki::session::UserType::User,
+                Some(&cryptoki::types::AuthPin::new(
+                    (*self.pin).clone().into_boxed_str(),
+                )),
+            )
             .map_err(|e| HsmError::SessionError(e.to_string()))?;
 
         let template = vec![
@@ -140,11 +145,16 @@ impl Pkcs11Hsm {
 
         let session = self
             .context
-            .open_rw_session(self.slot.clone())
+            .open_rw_session(self.slot)
             .map_err(|e| HsmError::SessionError(e.to_string()))?;
 
         session
-            .login(cryptoki::session::UserType::User, Some(&self.pin))
+            .login(
+                cryptoki::session::UserType::User,
+                Some(&cryptoki::types::AuthPin::new(
+                    (*self.pin).clone().into_boxed_str(),
+                )),
+            )
             .map_err(|e| HsmError::SessionError(e.to_string()))?;
 
         let template = vec![
@@ -173,11 +183,16 @@ impl Pkcs11Hsm {
 
         let session = self
             .context
-            .open_rw_session(self.slot.clone())
+            .open_rw_session(self.slot)
             .map_err(|e| HsmError::SessionError(e.to_string()))?;
 
         session
-            .login(cryptoki::session::UserType::User, Some(&self.pin))
+            .login(
+                cryptoki::session::UserType::User,
+                Some(&cryptoki::types::AuthPin::new(
+                    (*self.pin).clone().into_boxed_str(),
+                )),
+            )
             .map_err(|e| HsmError::SessionError(e.to_string()))?;
 
         let mechanism = self.algorithm.to_cryptoki_mechanism();
@@ -200,11 +215,16 @@ impl Pkcs11Hsm {
 
         let session = self
             .context
-            .open_rw_session(self.slot.clone())
+            .open_rw_session(self.slot)
             .map_err(|e| HsmError::SessionError(e.to_string()))?;
 
         session
-            .login(cryptoki::session::UserType::User, Some(&self.pin))
+            .login(
+                cryptoki::session::UserType::User,
+                Some(&cryptoki::types::AuthPin::new(
+                    (*self.pin).clone().into_boxed_str(),
+                )),
+            )
             .map_err(|e| HsmError::SessionError(e.to_string()))?;
 
         let attributes = session
@@ -216,9 +236,9 @@ impl Pkcs11Hsm {
 
         let _ = session.logout();
 
-        if let Some(Attribute::EcPoint(params)) = attributes.get(0) {
+        if let Some(Attribute::EcPoint(params)) = attributes.first() {
             Ok(params.clone())
-        } else if let Some(Attribute::Modulus(modulus)) = attributes.get(0) {
+        } else if let Some(Attribute::Modulus(modulus)) = attributes.first() {
             Ok(modulus.clone())
         } else {
             Err(HsmError::ObjectNotFound)

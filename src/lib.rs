@@ -1,4 +1,10 @@
-#![allow(clippy::all, elided_lifetimes_in_paths, mismatched_lifetime_syntaxes)]
+#![allow(
+    elided_lifetimes_in_paths,
+    mismatched_lifetime_syntaxes,
+    clippy::too_many_arguments,       // Phase 6: refactor with builder/config structs
+    clippy::await_holding_lock,       // Phase 4.5: async mutex standardization
+    dead_code,                        // Phase 3.4: remove dead code suppressions
+)]
 
 pub mod buffer;
 pub mod challenge;

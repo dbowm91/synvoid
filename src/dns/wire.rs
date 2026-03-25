@@ -59,7 +59,7 @@ pub fn parse_query_name(bytes: &[u8], mut pos: usize) -> Option<String> {
                 return None;
             }
             // Follow the pointer - offset is in bytes 14 bits (0x3FFF)
-            let offset = ((len & 0x3F) as usize) << 8 | bytes[pos + 1] as usize;
+            let offset = (len & 0x3F) << 8 | bytes[pos + 1] as usize;
             // RFC 1035: pointer must point to a location BEFORE the current position
             // (except for the first label where it can point anywhere in the message)
             if offset >= bytes.len() {
@@ -95,7 +95,7 @@ pub fn parse_query_name(bytes: &[u8], mut pos: usize) -> Option<String> {
         }
 
         // Validate UTF-8 encoding strictly - reject invalid sequences
-        if !std::str::from_utf8(label).is_ok() {
+        if std::str::from_utf8(label).is_err() {
             return None;
         }
 

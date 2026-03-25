@@ -147,7 +147,7 @@ impl TunnelMessage {
             Vec::new()
         });
         let len = (encoded.len() as u32).to_be_bytes().to_vec();
-        len.into_iter().chain(encoded.into_iter()).collect()
+        len.into_iter().chain(encoded).collect()
     }
 
     pub fn decode_with_length(data: &[u8]) -> Option<(Self, usize)> {
@@ -289,7 +289,7 @@ impl DatagramMessage {
     }
 
     pub fn is_first_fragment(&self) -> bool {
-        self.fragment_info.as_ref().map_or(false, |f| f.fragment_index == 0)
+        self.fragment_info.as_ref().is_some_and(|f| f.fragment_index == 0)
     }
 
     pub fn estimated_header_size() -> usize {
@@ -298,19 +298,12 @@ impl DatagramMessage {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default)]
 pub struct DatagramCapabilities {
     pub supported: bool,
     pub max_size: usize,
 }
 
-impl Default for DatagramCapabilities {
-    fn default() -> Self {
-        Self {
-            supported: false,
-            max_size: 0,
-        }
-    }
-}
 
 impl DatagramCapabilities {
     pub fn new(supported: bool, max_size: usize) -> Self {

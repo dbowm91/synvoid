@@ -15,16 +15,13 @@ pub mod stack;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum MeshTransportType {
     Quic,
+    #[default]
     WireGuard,
 }
 
-impl Default for MeshTransportType {
-    fn default() -> Self {
-        Self::WireGuard
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TransportHint {

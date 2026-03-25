@@ -196,7 +196,7 @@ impl QuicTunnelClient {
         runtime: Arc<QuicRuntime>,
     ) -> Result<(QuicClientSession, Connection), Box<dyn std::error::Error + Send + Sync>> {
         let server_name = peer_config.server_name.as_deref()
-            .unwrap_or_else(|| peer_name);
+            .unwrap_or(peer_name);
 
         let quic_conn = runtime.connect_to_peer(&peer_config.address, server_name).await?;
         
@@ -338,7 +338,7 @@ impl QuicTunnelClient {
                     client_id: peer_id.to_string(),
                     mappings: session.mappings.iter().map(|(k, v)| (k.clone(), v.port)).collect(),
                     connection: Some(conn.clone()),
-                    datagram_capabilities: session.datagram_capabilities.clone(),
+                    datagram_capabilities: session.datagram_capabilities,
                 }
             })
         })
@@ -546,7 +546,7 @@ impl QuicTunnelClient {
             let mut pooled = BufferPool::acquire(64 * 1024);
             let mut sequence: u64 = 0;
             loop {
-                match tcp_read.read(&mut pooled.as_mut_slice()).await {
+                match tcp_read.read(pooled.as_mut_slice()).await {
                     Ok(0) => {
                         let fin_msg = TunnelMessage::DataChunk {
                             identifier: identifier_clone.clone(),
@@ -605,7 +605,7 @@ impl QuicTunnelClient {
                 } else {
                     data_pooled.resize(len);
                 }
-                recv_stream.read_exact(&mut data_pooled.as_mut_slice()).await?;
+                recv_stream.read_exact(data_pooled.as_mut_slice()).await?;
                 
                 let msg = TunnelMessage::decode(data_pooled.as_slice())
                     .ok_or_else(|| "Failed to decode message".to_string())?;

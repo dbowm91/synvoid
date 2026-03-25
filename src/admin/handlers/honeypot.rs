@@ -61,7 +61,7 @@ pub async fn control_honeypot(
     Json(req): Json<HoneypotControlRequest>,
 ) -> Result<Json<HoneypotControlResponse>, StatusCode> {
     let hp_controller = state.port_honeypot_controller.as_ref()
-        .ok_or_else(|| StatusCode::NOT_FOUND)?;
+        .ok_or(StatusCode::NOT_FOUND)?;
     
     let command = match req.command.as_str() {
         "enable" => crate::honeypot_port::HoneypotControlCommand::Enable,

@@ -49,7 +49,7 @@ impl WgInterfaceStats {
     pub fn connected_peers(&self) -> usize {
         self.peers
             .iter()
-            .filter(|p| p.latest_handshake.map_or(false, |h| h > 0))
+            .filter(|p| p.latest_handshake.is_some_and(|h| h > 0))
             .count()
     }
 }

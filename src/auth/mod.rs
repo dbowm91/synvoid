@@ -21,7 +21,7 @@ async fn verify_dummy_password(password: &str) {
     let _ = verify(password, dummy_hash);
     let elapsed = start.elapsed();
     if elapsed < std::time::Duration::from_millis(200) {
-        sleep(TokioDuration::from_millis(200) - TokioDuration::from(elapsed)).await;
+        sleep(TokioDuration::from_millis(200) - elapsed).await;
     }
 }
 
@@ -40,16 +40,13 @@ pub struct User {
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum UserRole {
     Admin,
+    #[default]
     User,
 }
 
-impl Default for UserRole {
-    fn default() -> Self {
-        UserRole::User
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
@@ -64,21 +61,13 @@ pub struct Session {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct AuthStore {
     pub users: HashMap<String, User>,
     pub sessions: HashMap<String, Session>,
     pub login_logs: Vec<LoginLog>,
 }
 
-impl Default for AuthStore {
-    fn default() -> Self {
-        Self {
-            users: HashMap::new(),
-            sessions: HashMap::new(),
-            login_logs: Vec::new(),
-        }
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoginLog {
@@ -464,7 +453,7 @@ impl AuthManager {
     pub async fn validate_session(&self, session_id: &str) -> Option<SessionInfo> {
         let mut store = self.store.write().await;
         
-        let session_data = store.sessions.get(session_id).map(|s| {
+        let session_data = store.sessions.get(session_id).and_then(|s| {
             if s.expires_at > Utc::now() {
                 Some(SessionData {
                     user_id: s.user_id.clone(),
@@ -477,7 +466,7 @@ impl AuthManager {
             } else {
                 None
             }
-        }).flatten();
+        });
 
         if let Some(data) = session_data {
             let now = Utc::now();
@@ -521,11 +510,9 @@ impl AuthManager {
                 username: data.username,
                 expires_at: data.expires_at,
             });
-        } else {
-            if store.sessions.contains_key(session_id) {
-                store.sessions.remove(session_id);
-                self.save_store(&store).await;
-            }
+        } else if store.sessions.contains_key(session_id) {
+            store.sessions.remove(session_id);
+            self.save_store(&store).await;
         }
         
         None
@@ -534,7 +521,7 @@ impl AuthManager {
     pub async fn validate_session_with_ip(&self, session_id: &str, client_ip: &str) -> Option<SessionInfo> {
         let mut store = self.store.write().await;
         
-        let session_data = store.sessions.get(session_id).map(|s| {
+        let session_data = store.sessions.get(session_id).and_then(|s| {
             if s.expires_at > Utc::now() {
                 Some(SessionData {
                     user_id: s.user_id.clone(),
@@ -547,7 +534,7 @@ impl AuthManager {
             } else {
                 None
             }
-        }).flatten();
+        });
 
         if let Some(data) = session_data {
             if data.ip_address.as_deref() != Some(client_ip) {
@@ -599,11 +586,9 @@ impl AuthManager {
                 username: data.username,
                 expires_at: data.expires_at,
             });
-        } else {
-            if store.sessions.contains_key(session_id) {
-                store.sessions.remove(session_id);
-                self.save_store(&store).await;
-            }
+        } else if store.sessions.contains_key(session_id) {
+            store.sessions.remove(session_id);
+            self.save_store(&store).await;
         }
         
         None

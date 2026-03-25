@@ -141,7 +141,7 @@ pub async fn get_sites_stats(
         let site_metric = site_metrics.get(id);
         
         let site_uptime = uptime.max(1);
-        let site_rps = if let Some(ref sm) = site_metric {
+        let site_rps = if let Some(sm) = site_metric {
             sm.total_requests as f64 / site_uptime as f64
         } else {
             0.0

@@ -349,7 +349,7 @@ impl UdpListenerPool {
                             let data = &pooled_buf.as_slice()[..n];
 
                             cleanup_counter = cleanup_counter.wrapping_add(1);
-                            if cleanup_counter % 1000 == 0 {
+                            if cleanup_counter.is_multiple_of(1000) {
                                 rate_limiter.cleanup_stale(60);
                             }
 
@@ -431,7 +431,7 @@ impl UdpListenerPool {
                                             Err(e) => Err(e),
                                         }
                                     }).await.unwrap_or_else(|e| {
-                                        Err(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+                                        Err(std::io::Error::other(e.to_string()))
                                     })
                                 }
                                 UpstreamAddress::QuicTunnel { peer, port } => {

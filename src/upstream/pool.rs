@@ -41,7 +41,9 @@ fn validate_upstream_url(url: &str) -> Result<String, String> {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+#[derive(Default)]
 pub enum LoadBalanceAlgorithm {
+    #[default]
     RoundRobin,
     Random,
     LeastConnections,
@@ -49,14 +51,11 @@ pub enum LoadBalanceAlgorithm {
     IpHash,
 }
 
-impl Default for LoadBalanceAlgorithm {
-    fn default() -> Self {
-        Self::RoundRobin
-    }
-}
 
 #[derive(Clone, Debug, PartialEq, Eq, Copy)]
+#[derive(Default)]
 pub enum BackendProtocol {
+    #[default]
     Http,
     Https,
     WebSocket,
@@ -67,11 +66,6 @@ pub enum BackendProtocol {
     QuicTunnel,
 }
 
-impl Default for BackendProtocol {
-    fn default() -> Self {
-        Self::Http
-    }
-}
 
 fn protocol_name(protocol: BackendProtocol) -> &'static str {
     match protocol {

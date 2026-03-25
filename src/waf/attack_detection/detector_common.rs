@@ -227,7 +227,7 @@ where
     F: FnMut(&str) -> bool,
 {
     for header_name in SECURITY_HEADERS {
-        if !check_header(*header_name) {
+        if !check_header(header_name) {
             continue;
         }
 
@@ -335,7 +335,7 @@ pub trait PatternDetector: Send + Sync {
         F: FnMut(&str) -> bool,
     {
         for header_name in SECURITY_HEADERS {
-            if !check_header(*header_name) {
+            if !check_header(header_name) {
                 continue;
             }
             if let Some(value) = headers.get(*header_name) {

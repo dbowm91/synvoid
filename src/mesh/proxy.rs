@@ -378,9 +378,7 @@ impl MeshProxy {
             .ok_or_else(|| MeshProxyError::UpstreamNotFound("No host found".to_string()))?;
 
         let path = uri.path();
-        let first_segment = path.split('/')
-            .filter(|s| !s.is_empty())
-            .next()
+        let first_segment = path.split('/').find(|s| !s.is_empty())
             .map(|s| s.to_string());
 
         let upstream_id = match first_segment {
@@ -768,7 +766,7 @@ impl MeshProxy {
                     
                     if let Some(bandwidth) = get_global_bandwidth_tracker_or_log() {
                         bandwidth.record_site_mesh_egress(upstream_id, request_size as u64);
-                        bandwidth.record_site_mesh_ingress(upstream_id, response_size as u64);
+                        bandwidth.record_site_mesh_ingress(upstream_id, response_size);
                     }
                     
                     tracing::info!(
@@ -780,8 +778,8 @@ impl MeshProxy {
                 Err(e) => {
                     let failure_count = self.record_provider_failure(&provider.node_id);
                     
-                    if failure_count >= BLOCK_BROADCAST_FAILURE_THRESHOLD {
-                        if !self.topology.is_upstream_blocked(upstream_id).await {
+                    if failure_count >= BLOCK_BROADCAST_FAILURE_THRESHOLD
+                        && !self.topology.is_upstream_blocked(upstream_id).await {
                             tracing::warn!(
                                 upstream_id, failure_count,
                                 "Upstream {} has {} consecutive failures - broadcasting block to mesh",
@@ -793,7 +791,6 @@ impl MeshProxy {
                                 BLOCK_DURATION_SECS,
                             ).await;
                         }
-                    }
                     
                     tracing::warn!(
                         "Provider {} failed for {} (attempt {}/{}): {}",
@@ -1056,13 +1053,13 @@ impl MeshProxy {
                     .unwrap_or("");
                 
                 if accept_encoding.contains("br") {
-                    if let Ok(compressed) = self.minifier_generator.compress_brotli(&transformed, comp_config.brotli_level.unwrap_or(6) as u32) {
+                    if let Ok(compressed) = self.minifier_generator.compress_brotli(&transformed, comp_config.brotli_level.unwrap_or(6)) {
                         transformed = Bytes::from(compressed);
                         response.headers_mut()
                             .insert("Content-Encoding", "br".parse().unwrap());
                     }
                 } else if accept_encoding.contains("gzip") {
-                    let gzip_level = comp_config.gzip_level.unwrap_or(6) as u32;
+                    let gzip_level = comp_config.gzip_level.unwrap_or(6);
                     if let Ok(compressed) = self.minifier_generator.compress_gzip(&transformed, gzip_level) {
                         transformed = Bytes::from(compressed);
                         response.headers_mut()

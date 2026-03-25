@@ -10,6 +10,7 @@ pub struct WorkerConnectionInfo {
 }
 
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct DrainStatus {
     pub drain_id: u64,
     pub is_draining: bool,
@@ -23,22 +24,6 @@ pub struct DrainStatus {
     pub by_worker: HashMap<usize, WorkerConnectionInfo>,
 }
 
-impl Default for DrainStatus {
-    fn default() -> Self {
-        Self {
-            drain_id: 0,
-            is_draining: false,
-            active_connections: 0,
-            idle_connections: 0,
-            connections_drained: 0,
-            drain_start: None,
-            drain_elapsed_secs: None,
-            drain_remaining_secs: None,
-            drain_complete: false,
-            by_worker: HashMap::new(),
-        }
-    }
-}
 
 impl DrainStatus {
     pub fn new() -> Self {

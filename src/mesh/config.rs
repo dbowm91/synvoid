@@ -167,6 +167,7 @@ impl Default for SequenceCounter {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct MeshSeedNode {
     pub address: String,
     #[serde(default)]
@@ -558,19 +559,6 @@ impl Default for ReconnectionPriority {
     }
 }
 
-impl Default for MeshSeedNode {
-    fn default() -> Self {
-        Self {
-            address: String::new(),
-            node_id: None,
-            public_key: None,
-            network_id: None,
-            global_node_key: None,
-            quic_port: None,
-            wireguard_port: None,
-        }
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MeshUpstreamConfig {
@@ -962,6 +950,7 @@ impl GlobalNodeConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct GenesisKeyConfig {
     #[serde(default)]
     pub private_key_base64: Option<String>,
@@ -973,16 +962,6 @@ pub struct GenesisKeyConfig {
     pub is_first_node: bool,
 }
 
-impl Default for GenesisKeyConfig {
-    fn default() -> Self {
-        Self {
-            private_key_base64: None,
-            private_key: None,
-            public_key: None,
-            is_first_node: false,
-        }
-    }
-}
 
 impl GenesisKeyConfig {
     pub fn generate() -> Self {
@@ -1297,18 +1276,15 @@ impl Default for MeshDhtConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum MlKemVariant {
     #[serde(rename = "ml-kem-768")]
+    #[default]
     MlKem768,
     #[serde(rename = "ml-kem-1024")]
     MlKem1024,
 }
 
-impl Default for MlKemVariant {
-    fn default() -> Self {
-        MlKemVariant::MlKem768
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MeshMlKemConfig {
@@ -1400,6 +1376,7 @@ impl From<MeshDhtConfig> for crate::mesh::dht::DhtConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct NodeIdentityConfig {
     #[serde(default)]
     pub private_key_path: Option<String>,
@@ -1419,20 +1396,6 @@ pub struct NodeIdentityConfig {
     pub genesis_org_id: Option<String>,
 }
 
-impl Default for NodeIdentityConfig {
-    fn default() -> Self {
-        Self {
-            private_key_path: None,
-            private_key: None,
-            public_key: None,
-            node_id: None,
-            router_id: None,
-            encryption_passphrase_path: None,
-            is_trusted: false,
-            genesis_org_id: None,
-        }
-    }
-}
 
 impl NodeIdentityConfig {
     pub fn genesis_org_id(&self) -> String {
@@ -1558,7 +1521,7 @@ impl NodeIdentityConfig {
     }
 
     pub fn public_key_hex(&self) -> Option<String> {
-        self.public_key.as_ref().map(|k| hex::encode(k))
+        self.public_key.as_ref().map(hex::encode)
     }
 
     pub fn node_id(&self) -> Option<&String> {
@@ -1962,16 +1925,14 @@ impl MeshConfig {
 
     pub fn apply_dht_role_defaults(&mut self) {
         if let Some(ref mut dht) = self.dht {
-            if self.role.is_global() {
-                if dht.full_network_view == false {
+            if self.role.is_global()
+                && !dht.full_network_view {
                     dht.full_network_view = true;
                 }
-            }
-            if self.role.is_edge() {
-                if dht.routing_enabled == false {
+            if self.role.is_edge()
+                && !dht.routing_enabled {
                     dht.routing_enabled = true;
                 }
-            }
         }
     }
 
@@ -2090,7 +2051,7 @@ impl MeshConfig {
     pub fn cert_rotation_interval(&self) -> Option<std::time::Duration> {
         self.tls
             .cert_rotation_interval_secs
-            .map(|secs| std::time::Duration::from_secs(secs))
+            .map(std::time::Duration::from_secs)
     }
 
     pub fn is_tls_configured(&self) -> bool {

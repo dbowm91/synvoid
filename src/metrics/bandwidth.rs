@@ -409,7 +409,7 @@ impl BandwidthTracker {
         let mut upstreams = self.per_upstream.write();
         let upstream = upstreams
             .entry(upstream_id.to_string())
-            .or_insert_with(UpstreamBandwidth::default);
+            .or_default();
         upstream.bytes_sent.fetch_add(bytes_sent, Ordering::Relaxed);
         upstream
             .bytes_received
@@ -427,7 +427,7 @@ impl BandwidthTracker {
         let mut sites = self.per_site.write();
         let site = sites
             .entry(site_id.to_string())
-            .or_insert_with(SiteBandwidth::default);
+            .or_default();
         site.bytes_received.fetch_add(bytes, Ordering::Relaxed);
     }
 
@@ -435,7 +435,7 @@ impl BandwidthTracker {
         let mut sites = self.per_site.write();
         let site = sites
             .entry(site_id.to_string())
-            .or_insert_with(SiteBandwidth::default);
+            .or_default();
         site.bytes_sent.fetch_add(bytes, Ordering::Relaxed);
     }
 
@@ -443,7 +443,7 @@ impl BandwidthTracker {
         let mut sites = self.per_site.write();
         let site = sites
             .entry(site_id.to_string())
-            .or_insert_with(SiteBandwidth::default);
+            .or_default();
         site.proxied_bytes_sent
             .fetch_add(bytes_sent, Ordering::Relaxed);
         site.proxied_bytes_received
@@ -454,7 +454,7 @@ impl BandwidthTracker {
         let mut sites = self.per_site.write();
         let site = sites
             .entry(site_id.to_string())
-            .or_insert_with(SiteBandwidth::default);
+            .or_default();
         site.mesh_bytes_sent.fetch_add(bytes, Ordering::Relaxed);
         self.mesh_bytes_sent.fetch_add(bytes, Ordering::Relaxed);
     }
@@ -463,7 +463,7 @@ impl BandwidthTracker {
         let mut sites = self.per_site.write();
         let site = sites
             .entry(site_id.to_string())
-            .or_insert_with(SiteBandwidth::default);
+            .or_default();
         site.mesh_bytes_received.fetch_add(bytes, Ordering::Relaxed);
         self.mesh_bytes_received.fetch_add(bytes, Ordering::Relaxed);
     }
@@ -625,7 +625,7 @@ impl BandwidthTracker {
             }
         };
         let days_elapsed = (now - period_start).num_days().max(1) as f64;
-        let days_remaining = days_in_period.saturating_sub(days_elapsed as u32).max(0);
+        let days_remaining = days_in_period.saturating_sub(days_elapsed as u32);
 
         MonthlyPeriodInfo {
             period_start,

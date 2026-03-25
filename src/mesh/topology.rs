@@ -1520,7 +1520,7 @@ impl MeshTopology {
     }
 
     pub async fn load_peers_from_file(&self, path: &str) -> Result<usize, std::io::Error> {
-        if !tokio::fs::metadata(path).await.is_ok() {
+        if tokio::fs::metadata(path).await.is_err() {
             tracing::debug!("No peer cache file found at {}", path);
             return Ok(0);
         }
@@ -1584,7 +1584,7 @@ impl MeshTopology {
                 healthy_peers: 0,
                 has_global_node: has_global,
             })
-        } else if !has_global && self.role.is_global() == false {
+        } else if !has_global && !self.role.is_global() {
             Some(NetworkPartitionState::DisconnectedFromGlobal {
                 healthy_peers: healthy_count,
             })

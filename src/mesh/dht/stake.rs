@@ -396,7 +396,7 @@ impl StakeManager {
 
         let entry = votes
             .entry(vote.target_node_id.clone())
-            .or_insert_with(Vec::new);
+            .or_default();
 
         if !entry.iter().any(|v| v.voter_node_id == vote.voter_node_id) {
             entry.push(vote);

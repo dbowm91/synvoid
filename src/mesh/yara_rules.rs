@@ -138,7 +138,7 @@ impl YaraRulesManager {
                 YaraRuleSource::MeshGlobal => "Mesh",
                 YaraRuleSource::MeshEdgeApproved => "MeshApproved",
             };
-            let _ = fm.add_to_history_inline(version.clone(), rules, source_str.to_string());
+            fm.add_to_history_inline(version.clone(), rules, source_str.to_string());
         }
         
         tracing::info!("Applied YARA rules version {} from {:?}", version, source);
@@ -308,7 +308,7 @@ impl YaraRulesManager {
             let message = MeshMessage::YaraRuleAnnounce {
                 request_id: uuid::Uuid::new_v4().to_string().into(),
                 version: version.into(),
-                rules: rules.into(),
+                rules,
                 timestamp: crate::mesh::protocol::MeshMessage::generate_timestamp(),
                 source_node_id: self.node_id.clone().into(),
                 source_role: self.node_role,
@@ -516,8 +516,8 @@ impl YaraRulesManager {
                     let signer_public_key = self.signer.as_ref().map(|s| s.get_public_key()).unwrap_or_default();
                     Some(MeshMessage::YaraRuleSyncResponse {
                         request_id: request_id.clone(),
-                        version: ver.unwrap_or_default().into(),
-                        rules: rules.into(),
+                        version: ver.unwrap_or_default(),
+                        rules,
                         is_full: true,
                         timestamp: crate::mesh::protocol::MeshMessage::generate_timestamp(),
                         signature: Vec::new(),

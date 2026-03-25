@@ -259,15 +259,14 @@ impl QuicHealthMonitor {
 
             histogram!("maluwaf.tunnel.quic.health.rtt").record(rtt.as_secs_f64() * 1000.0);
 
-            if health.consecutive_successes == self.config.recovery_threshold {
-                if old_quality == ConnectionQuality::Failed || old_quality == ConnectionQuality::Poor {
+            if health.consecutive_successes == self.config.recovery_threshold
+                && (old_quality == ConnectionQuality::Failed || old_quality == ConnectionQuality::Poor) {
                     let _ = self.health_event_tx.try_send(HealthEvent::ConnectionRecovered {
                         session_id: session_id.to_string(),
                         peer_id: health.peer_id.clone(),
                     });
                     counter!("maluwaf.tunnel.quic.health.recovered").increment(1);
                 }
-            }
 
             if old_quality != health.quality {
                 let _ = self.health_event_tx.try_send(HealthEvent::QualityChanged {

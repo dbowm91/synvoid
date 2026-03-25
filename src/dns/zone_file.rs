@@ -78,7 +78,7 @@ impl ZoneFileParser {
                 self.parse_record_line(line, &mut current_name, &mut current_ttl)?
             {
                 let key = (record.name.clone(), record.record_type);
-                records.entry(key).or_insert_with(Vec::new).push(
+                records.entry(key).or_default().push(
                     crate::dns::server::DnsZoneRecord {
                         name: record.name.clone(),
                         record_type: record.record_type,
@@ -111,7 +111,7 @@ impl ZoneFileParser {
         let soa_key = ("@".to_string(), RecordType::SOA);
         records
             .entry(soa_key)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(crate::dns::server::DnsZoneRecord {
                 name: "@".to_string(),
                 record_type: RecordType::SOA,

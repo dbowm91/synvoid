@@ -34,7 +34,18 @@ fn create_cors_layer(cors_config: &AdminCorsConfig) -> CorsLayer {
     
     if let Some(ref origin) = cors_config.allow_origin {
         if origin == "*" {
-            cors = cors.allow_origin(axum::http::HeaderValue::from_static("*"));
+            if cfg!(debug_assertions) {
+                tracing::warn!(
+                    "CORS allow_origin='*' is insecure — only allowed in debug builds. \
+                     Specify explicit origins for production."
+                );
+                cors = cors.allow_origin(axum::http::HeaderValue::from_static("*"));
+            } else {
+                tracing::error!(
+                    "CORS allow_origin='*' is rejected in release builds for security. \
+                     Set admin.cors.allow_origin to specific origins."
+                );
+            }
         } else {
             match origin.as_str().parse::<axum::http::HeaderValue>() { Ok(header_value) => {
                 cors = cors.allow_origin(header_value);
@@ -208,7 +219,7 @@ fn build_router_from_state(state: Arc<AdminState>, admin_cors_config: AdminCorsC
         .nest("/api", api_routes)
         .merge(SwaggerUi::new("/api/swagger-ui").url("/api/openapi.json", openapi::ApiDoc::openapi()))
         .route("/api/openapi.json", get(|| async { 
-            axum::Json(utoipa::openapi::OpenApi::from(openapi::ApiDoc::default()))
+            axum::Json(utoipa::openapi::OpenApi::from(openapi::ApiDoc))
         }))
         .route("/health", get(health_check))
         .fallback_service(ServeDir::new("admin-ui/dist"))

@@ -275,8 +275,7 @@ impl RecursiveDnsCache {
         let inner = &self.inner;
         let ttl = Duration::from_secs(
             ncache_ttl
-                .min(inner.config.negative_ttl.as_secs() as u32)
-                .max(0) as u64,
+                .min(inner.config.negative_ttl.as_secs() as u32) as u64,
         );
 
         let entry = NegativeCacheEntry {
@@ -298,7 +297,7 @@ impl RecursiveDnsCache {
         let mut positive_cache = inner.positive_cache.write();
         let keys_to_remove: Vec<RecursiveCacheKey> = positive_cache
             .iter()
-            .filter(|(key, _)| &key.qname == qname)
+            .filter(|(key, _)| key.qname == qname)
             .map(|(key, _)| key.clone())
             .collect();
 
@@ -312,7 +311,7 @@ impl RecursiveDnsCache {
         let mut negative_cache = inner.negative_cache.write();
         let nx_keys_to_remove: Vec<RecursiveCacheKey> = negative_cache
             .iter()
-            .filter(|(key, _)| &key.qname == qname)
+            .filter(|(key, _)| key.qname == qname)
             .map(|(key, _)| key.clone())
             .collect();
 

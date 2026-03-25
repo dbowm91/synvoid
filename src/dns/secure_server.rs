@@ -46,7 +46,7 @@ impl<C: DnsServerConfig> SecureDnsServerBase<C> {
             .and_then(|resolver| {
                 resolver
                     .build_server_config()
-                    .map(|cfg| TlsAcceptor::from(cfg))
+                    .map(TlsAcceptor::from)
                     .map_err(|e| format!("Failed to build TLS config: {}", e))
             })
     }

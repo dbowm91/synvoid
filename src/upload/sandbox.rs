@@ -210,11 +210,10 @@ impl Sandbox {
                 if let Ok(metadata) = entry.metadata().await {
                     if let Ok(modified) = metadata.modified() {
                         let modified: chrono::DateTime<chrono::Utc> = modified.into();
-                        if modified < cutoff {
-                            if fs::remove_dir_all(&path).await.is_ok() {
+                        if modified < cutoff
+                            && fs::remove_dir_all(&path).await.is_ok() {
                                 removed_count += 1;
                             }
-                        }
                     }
                 }
             }

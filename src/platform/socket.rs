@@ -46,7 +46,7 @@ impl OwnedTcpListener {
     /// Creates a new OwnedTcpListener from a duplicated file descriptor.
     /// This is the safe way to create an OwnedTcpListener from an existing fd.
     pub fn try_from_dup(fd: RawFd) -> io::Result<Self> {
-        let fd_dup = nix::unistd::dup(fd).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        let fd_dup = nix::unistd::dup(fd).map_err(io::Error::other)?;
         // SAFETY: fd_dup is a valid file descriptor from dup()
         Ok(unsafe { Self::from_raw_fd(fd_dup) })
     }
@@ -93,7 +93,7 @@ impl OwnedTcpStream {
     /// Creates a new OwnedTcpStream from a duplicated file descriptor.
     /// This is the safe way to create an OwnedTcpStream from an existing fd.
     pub fn try_from_dup(fd: RawFd) -> io::Result<Self> {
-        let fd_dup = nix::unistd::dup(fd).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        let fd_dup = nix::unistd::dup(fd).map_err(io::Error::other)?;
         // SAFETY: fd_dup is a valid file descriptor from dup()
         Ok(unsafe { Self::from_raw_fd(fd_dup) })
     }

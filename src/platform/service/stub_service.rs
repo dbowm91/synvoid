@@ -10,16 +10,13 @@ pub const SERVICE_DESCRIPTION: &str =
     "High-performance Web Application Firewall with advanced attack detection and bot mitigation";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default)]
 pub enum ServiceState {
+    #[default]
     Stopped,
     Running,
 }
 
-impl Default for ServiceState {
-    fn default() -> Self {
-        ServiceState::Stopped
-    }
-}
 
 #[derive(Debug, Clone)]
 pub struct ServiceConfig {

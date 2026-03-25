@@ -151,7 +151,7 @@ impl CaptchaManager {
                 let y = 55;
                 let rotation = rng.random_range(-20..20);
                 let font_size = rng.random_range(28..36);
-                let font_family = vec!["monospace", "Arial", "Courier New", "Verdana"];
+                let font_family = ["monospace", "Arial", "Courier New", "Verdana"];
                 let ff = font_family[rng.random_range(0..font_family.len())];
                 let color = format!("rgb({},{},{})", 
                     rng.random_range(0..80),

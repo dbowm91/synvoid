@@ -32,6 +32,7 @@ pub enum TunnelType {
 }
 
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct TunnelStats {
     pub bytes_sent: u64,
     pub bytes_received: u64,
@@ -41,18 +42,6 @@ pub struct TunnelStats {
     pub connected_at: Option<std::time::Instant>,
 }
 
-impl Default for TunnelStats {
-    fn default() -> Self {
-        Self {
-            bytes_sent: 0,
-            bytes_received: 0,
-            packets_sent: 0,
-            packets_received: 0,
-            latency_ms: None,
-            connected_at: None,
-        }
-    }
-}
 
 #[derive(Debug, Clone)]
 pub struct PeerInfo {

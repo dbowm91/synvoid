@@ -24,8 +24,7 @@ pub fn looks_like_dns(data: &[u8]) -> bool {
 #[inline]
 pub fn extract_first_line(data: &[u8]) -> String {
     let end = data.iter().position(|&b| b == b'\n').unwrap_or(data.len());
-    let start = data
-        .get(0)
+    let start = data.first()
         .map(|&b| if b == b'\r' { 1 } else { 0 })
         .unwrap_or(0);
 

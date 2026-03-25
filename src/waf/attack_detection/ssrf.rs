@@ -36,7 +36,7 @@ impl SsrfDetector {
     }
 
     fn is_private_ip(ip: &str) -> bool {
-        ip.parse::<IpAddr>().map_or(false, |addr| match addr {
+        ip.parse::<IpAddr>().is_ok_and(|addr| match addr {
             IpAddr::V4(v4) => {
                 let octets = v4.octets();
                 octets[0] == 10
@@ -113,10 +113,8 @@ impl SsrfDetector {
                     if Self::looks_like_ip(potential_ip) {
                         ips.push(potential_ip.to_string());
                     }
-                } else {
-                    if Self::looks_like_ip(remaining) {
-                        ips.push(remaining.to_string());
-                    }
+                } else if Self::looks_like_ip(remaining) {
+                    ips.push(remaining.to_string());
                 }
             }
 
@@ -127,7 +125,7 @@ impl SsrfDetector {
     }
 
     fn looks_like_ip(s: &str) -> bool {
-        let s = s.trim_end_matches(|c| c == ']' || c == ':' || c == '/');
+        let s = s.trim_end_matches([']', ':', '/']);
         s.chars()
             .all(|c| c.is_ascii_digit() || c == '.' || c == ':')
             && s.contains('.')

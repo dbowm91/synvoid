@@ -307,8 +307,7 @@ impl IpcStream {
         } else {
             if self.enforce_signing {
                 tracing::error!("IPC signing is enforced but no signer available - rejecting message");
-                return Err(io::Error::new(
-                    io::ErrorKind::Other,
+                return Err(io::Error::other(
                     "IPC signing enforced but no signer configured",
                 ));
             }
@@ -338,7 +337,7 @@ impl IpcStream {
             
             let mut data = vec![0u8; len];
             self.inner.read_exact(&mut data).await
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+                .map_err(io::Error::other)?;
             
             match SignedIpcMessage::deserialize_signed(&data, signer) {
                 Ok(msg) => Ok(Some(msg)),
@@ -347,8 +346,7 @@ impl IpcStream {
         } else {
             if self.enforce_signing {
                 tracing::error!("IPC signing is enforced but no signer available - rejecting connection");
-                return Err(io::Error::new(
-                    io::ErrorKind::Other,
+                return Err(io::Error::other(
                     "IPC signing enforced but no signer configured",
                 ));
             }
@@ -379,8 +377,7 @@ impl IpcStream {
         } else {
             if self.enforce_signing {
                 tracing::error!("IPC signing is enforced but no signer available - rejecting connection");
-                return Err(io::Error::new(
-                    io::ErrorKind::Other,
+                return Err(io::Error::other(
                     "IPC signing enforced but no signer configured",
                 ));
             }

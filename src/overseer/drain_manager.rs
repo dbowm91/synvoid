@@ -57,9 +57,9 @@ impl DrainManager {
     pub fn register_worker(&self, worker_id: WorkerId, active_connections: u64, idle_connections: u64) {
         let drain_id = self.current_drain_id.load(Ordering::SeqCst);
         
-        let state = WorkerDrainState::new(worker_id.clone(), drain_id, active_connections, idle_connections);
+        let state = WorkerDrainState::new(worker_id, drain_id, active_connections, idle_connections);
         
-        self.workers.write().insert(worker_id.clone(), state);
+        self.workers.write().insert(worker_id, state);
         
         tracing::debug!(
             "Registered worker {} for drain {} with {} active connections",
@@ -298,7 +298,7 @@ impl DrainProtocol {
             tracing::warn!("Worker {} did not accept stop accepting request", worker_id);
         }
         
-        self.manager.register_worker(worker_id.clone(), 0, 0);
+        self.manager.register_worker(*worker_id, 0, 0);
         
         let start = Instant::now();
         let timeout = Duration::from_secs(drain_timeout_secs);

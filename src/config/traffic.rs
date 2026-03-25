@@ -19,18 +19,15 @@ const fn default_monthly_cap_egress() -> u64 {
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+#[derive(Default)]
 pub enum BandwidthLimitAction {
     #[serde(rename = "block")]
+    #[default]
     Block,
     #[serde(rename = "throttle")]
     Throttle,
 }
 
-impl Default for BandwidthLimitAction {
-    fn default() -> Self {
-        Self::Block
-    }
-}
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct BandwidthConfig {
@@ -246,6 +243,7 @@ fn default_site_burst_allowance() -> u64 {
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Default)]
 pub struct SiteConnectionDefaults {
     #[serde(default = "default_site_max_connections")]
     pub max_connections: Option<u32>,
@@ -257,16 +255,6 @@ pub struct SiteConnectionDefaults {
     pub connection_burst: Option<u32>,
 }
 
-impl Default for SiteConnectionDefaults {
-    fn default() -> Self {
-        Self {
-            max_connections: None,
-            max_connections_per_ip: None,
-            connection_queue_size: None,
-            connection_burst: None,
-        }
-    }
-}
 
 fn default_site_max_connections() -> Option<u32> {
     None

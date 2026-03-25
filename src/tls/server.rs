@@ -446,7 +446,7 @@ impl HttpsServer {
                 counter!("maluwaf.https.blackhole_drop").increment(1);
                 http_conn.request_drop();
                 let resp = Response::new(Full::new(Bytes::new()));
-                return Ok(resp);
+                Ok(resp)
             }
             crate::proxy::WafDecision::Stall => {
                 counter!("maluwaf.https.stalled").increment(1);
@@ -512,7 +512,7 @@ impl HttpsServer {
                                 cache_cfg.path.clone(),
                                 cache_cfg.max_size.clone(),
                                 cache_cfg.inactive,
-                                cache_cfg.use_temp_file.clone(),
+                                cache_cfg.use_temp_file,
                                 cache_cfg.valid_status.clone(),
                                 cache_cfg.methods.clone(),
                                 cache_cfg.use_stale.clone(),

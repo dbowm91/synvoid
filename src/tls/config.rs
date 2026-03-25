@@ -17,6 +17,7 @@ pub struct InternalTlsConfig {
 }
 
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct InternalAcmeConfig {
     pub enabled: bool,
     pub email: Option<String>,
@@ -50,17 +51,6 @@ impl Default for InternalTlsConfig {
     }
 }
 
-impl Default for InternalAcmeConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            email: None,
-            cache_dir: None,
-            staging: false,
-            domains: Vec::new(),
-        }
-    }
-}
 
 impl From<crate::config::TlsConfig> for InternalTlsConfig {
     fn from(config: crate::config::TlsConfig) -> Self {

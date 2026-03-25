@@ -282,7 +282,7 @@ impl AnycastZoneSync {
         let records: Vec<SerializedRecord> = zone
             .records
             .iter()
-            .map(|((name, record_type), records)| {
+            .flat_map(|((name, record_type), records)| {
                 records.iter().map(|r| SerializedRecord {
                     name: name.clone(),
                     record_type: record_type.to_string(),
@@ -291,7 +291,6 @@ impl AnycastZoneSync {
                     priority: r.priority,
                 }).collect::<Vec<_>>()
             })
-            .flatten()
             .collect();
 
         let history: Vec<SerializedZoneVersion> = zone
@@ -301,7 +300,7 @@ impl AnycastZoneSync {
                 let records: Vec<SerializedRecord> = h
                     .records
                     .iter()
-                    .map(|((name, record_type), records)| {
+                    .flat_map(|((name, record_type), records)| {
                         records.iter().map(|r| SerializedRecord {
                             name: name.clone(),
                             record_type: record_type.to_string(),
@@ -310,7 +309,6 @@ impl AnycastZoneSync {
                             priority: r.priority,
                         }).collect::<Vec<_>>()
                     })
-                    .flatten()
                     .collect();
 
                 SerializedZoneVersion {
@@ -330,9 +328,9 @@ impl AnycastZoneSync {
     }
 
     pub fn serialize_zone_to_json(&self, zone_origin: &str) -> Option<String> {
-        self.serialize_zone(zone_origin).map(|data| {
+        self.serialize_zone(zone_origin).and_then(|data| {
             serde_json::to_string(&data).ok()
-        }).flatten()
+        })
     }
 
     pub fn serialize_ixfr_diff(&self, zone_origin: &str, previous_serial: u32) -> Option<SerializedIxfrData> {
@@ -355,7 +353,7 @@ impl AnycastZoneSync {
             for record in records {
                 old_record_map
                     .entry(key.clone())
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(record.clone());
             }
         }
@@ -370,8 +368,8 @@ impl AnycastZoneSync {
         }
 
         for (name, record_type) in all_keys {
-            let old_recs = old_record_map.get(&(name.clone(), record_type.clone()));
-            let new_recs = zone.records.get(&(name.clone(), record_type.clone()));
+            let old_recs = old_record_map.get(&(name.clone(), record_type));
+            let new_recs = zone.records.get(&(name.clone(), record_type));
 
             match (old_recs, new_recs) {
                 (Some(old), None) => {
@@ -438,8 +436,7 @@ impl AnycastZoneSync {
 
     pub fn serialize_ixfr_diff_to_json(&self, zone_origin: &str, previous_serial: u32) -> Option<String> {
         self.serialize_ixfr_diff(zone_origin, previous_serial)
-            .map(|data| serde_json::to_string(&data).ok())
-            .flatten()
+            .and_then(|data| serde_json::to_string(&data).ok())
     }
 
     pub fn get_zone_version(&self, zone_origin: &str, serial: u32) -> Option<SerializedZoneVersion> {
@@ -450,7 +447,7 @@ impl AnycastZoneSync {
             let records: Vec<SerializedRecord> = zone
                 .records
                 .iter()
-                .map(|((name, record_type), records)| {
+                .flat_map(|((name, record_type), records)| {
                     records.iter().map(|r| SerializedRecord {
                         name: name.clone(),
                         record_type: record_type.to_string(),
@@ -459,7 +456,6 @@ impl AnycastZoneSync {
                         priority: r.priority,
                     }).collect::<Vec<_>>()
                 })
-                .flatten()
                 .collect();
 
             return Some(SerializedZoneVersion {
@@ -478,7 +474,7 @@ impl AnycastZoneSync {
                 let records: Vec<SerializedRecord> = h
                     .records
                     .iter()
-                    .map(|((name, record_type), records)| {
+                    .flat_map(|((name, record_type), records)| {
                         records.iter().map(|r| SerializedRecord {
                             name: name.clone(),
                             record_type: record_type.to_string(),
@@ -487,7 +483,6 @@ impl AnycastZoneSync {
                             priority: r.priority,
                         }).collect::<Vec<_>>()
                     })
-                    .flatten()
                     .collect();
 
                 SerializedZoneVersion {
@@ -524,7 +519,7 @@ impl AnycastZoneSync {
                 _ => continue,
             };
 
-            let entry = records.entry((record.name.clone(), record_type)).or_insert_with(Vec::new);
+            let entry = records.entry((record.name.clone(), record_type)).or_default();
             entry.push(DnsZoneRecord {
                 name: record.name,
                 record_type,
@@ -555,7 +550,7 @@ impl AnycastZoneSync {
                     "CAA" => RecordType::CAA,
                     _ => continue,
                 };
-                let entry = hrecords.entry((record.name.clone(), record_type)).or_insert_with(Vec::new);
+                let entry = hrecords.entry((record.name.clone(), record_type)).or_default();
                 entry.push(DnsZoneRecord {
                     name: record.name.clone(),
                     record_type,

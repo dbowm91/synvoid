@@ -402,7 +402,7 @@ impl AdminState {
             .iter()
             .filter(|log| {
                 if let Some(site_id) = site_id {
-                    if &log.site_id != site_id {
+                    if log.site_id != site_id {
                         return false;
                     }
                 }

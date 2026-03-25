@@ -37,7 +37,7 @@ impl BlockEntry {
     pub fn new(ip: IpAddr, reason: String, ban_expire_seconds: u64, site_scope: String) -> Self {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap_or_else(|_| std::time::Duration::ZERO)
+            .unwrap_or(std::time::Duration::ZERO)
             .as_secs();
         Self {
             ip: ip.to_string(),
@@ -60,7 +60,7 @@ impl BlockEntry {
         }
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap_or_else(|_| std::time::Duration::ZERO)
+            .unwrap_or(std::time::Duration::ZERO)
             .as_secs();
         now > self.blocked_at + self.ban_expire_seconds
     }
@@ -72,7 +72,7 @@ impl BlockEntry {
     pub fn update_access(&mut self) {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap_or_else(|_| std::time::Duration::ZERO)
+            .unwrap_or(std::time::Duration::ZERO)
             .as_secs();
         self.access_count += 1;
         self.last_access = now;

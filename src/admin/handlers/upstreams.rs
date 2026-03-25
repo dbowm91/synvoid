@@ -151,8 +151,7 @@ pub async fn trigger_health_check(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    Ok(Json(HealthCheckResponse {
-        status: "triggered".to_string(),
-        message: "Health check initiated".to_string(),
-    }))
+    tracing::warn!("trigger_health_check endpoint called but is not yet implemented");
+    
+    Err(StatusCode::NOT_IMPLEMENTED)
 }

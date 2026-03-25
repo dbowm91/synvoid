@@ -105,7 +105,7 @@ impl Orchestrator {
 
         if let Some(ref expected) = expected_checksum {
             let actual = compute_sha256(&binary_path)
-                .map_err(|e| UpgradeError::IoError(e))?;
+                .map_err(UpgradeError::IoError)?;
             
             if &actual != expected {
                 return Err(UpgradeError::ChecksumMismatch {
@@ -698,7 +698,7 @@ impl Orchestrator {
             };
 
             match std::process::Command::new(&config.binary_path)
-                .args(&["--worker", "--worker-id", &i.to_string(), "--port", &port.to_string()])
+                .args(["--worker", "--worker-id", &i.to_string(), "--port", &port.to_string()])
                 .arg("--config-path")
                 .arg(&config.config_path)
                 .arg("--master-socket")
@@ -927,9 +927,9 @@ impl Orchestrator {
         &self,
         ports: &[u16],
     ) -> Result<ValidationMetrics, Vec<(u16, super::health::HealthStatus)>> {
-        Ok(self.health_checker
+        self.health_checker
             .validate_with_metrics(ports, "127.0.0.1", 3, 10)
-            .await?)
+            .await
     }
 }
 

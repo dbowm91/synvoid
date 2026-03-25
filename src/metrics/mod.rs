@@ -573,7 +573,7 @@ impl WorkerMetrics {
         let mut sites = self.per_site.lock();
         let site = sites
             .entry(site_id.to_string())
-            .or_insert_with(SiteMetrics::new);
+            .or_default();
         site.record_request_start()
     }
 

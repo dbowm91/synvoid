@@ -36,7 +36,7 @@ impl BlockedNetwork {
                 let prefix_bytes = prefix / 8;
                 let prefix_bits = prefix % 8;
 
-                if &network[..prefix_bytes as usize] != &target_bits[..prefix_bytes as usize] {
+                if network[..prefix_bytes as usize] != target_bits[..prefix_bytes as usize] {
                     return false;
                 }
 
@@ -160,10 +160,8 @@ impl IpFeedManager {
                 if let Some(network) = self.parse_cidr(ip_or_cidr) {
                     networks.push(network);
                 }
-            } else {
-                if let Ok(addr) = ip_or_cidr.parse::<IpAddr>() {
-                    ips.push(addr);
-                }
+            } else if let Ok(addr) = ip_or_cidr.parse::<IpAddr>() {
+                ips.push(addr);
             }
         }
 

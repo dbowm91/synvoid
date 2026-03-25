@@ -119,7 +119,7 @@ impl KernelWireGuard {
                 let _endpoint_port = endpoint.parse::<SocketAddr>()
                     .map(|a| a.port())
                     .unwrap_or(51820);
-                format!("10.0.0.2/24")
+                "10.0.0.2/24".to_string()
             } else {
                 "10.0.0.1/24".to_string()
             }
@@ -128,7 +128,7 @@ impl KernelWireGuard {
         };
 
         let result = Command::new("ip")
-            .args(&["addr", "add", &address, "dev", iface])
+            .args(["addr", "add", &address, "dev", iface])
             .output()
             .await;
 
@@ -156,7 +156,7 @@ impl KernelWireGuard {
         let iface = &self.interface_name;
         
         Command::new("ip")
-            .args(&["link", "set", "dev", iface, "up"])
+            .args(["link", "set", "dev", iface, "up"])
             .output()
             .await
             .map_err(|e| format!("Failed to bring interface up: {}", e))?;

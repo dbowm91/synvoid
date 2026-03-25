@@ -222,7 +222,7 @@ impl EdnsOptions {
                     let scope = query[rdata_pos + 3];
 
                     if scope == 0 && prefix_len > 0 {
-                        let addr_bytes = (prefix_len + 7) / 8;
+                        let addr_bytes = prefix_len.div_ceil(8);
                         if rdata_pos + 4 + addr_bytes as usize <= pos + rdlen as usize {
                             let ip = if family == 1 {
                                 let mut octets = [0u8; 4];
@@ -561,7 +561,7 @@ impl DnsPadding {
         use crate::dns::crypto_rng::random_bytes;
 
         let block_size = self.block_size;
-        let blocks = (target_size + block_size - 1) / block_size;
+        let blocks = target_size.div_ceil(block_size);
         let total_size = blocks * block_size;
 
         let padding = random_bytes(total_size);

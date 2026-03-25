@@ -4,17 +4,14 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum IntegrityMode {
+    #[default]
     Disabled,
     Audit,
     Enforced,
 }
 
-impl Default for IntegrityMode {
-    fn default() -> Self {
-        Self::Disabled
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IntegrityConfig {
@@ -198,7 +195,7 @@ impl IntegrityConfig {
             );
             config.insert(
                 "audit_pow_timeout".to_string(),
-                serde_json::Value::Number(serde_json::Number::from(self.audit_pow_timeout as u64)),
+                serde_json::Value::Number(serde_json::Number::from(self.audit_pow_timeout)),
             );
         }
 

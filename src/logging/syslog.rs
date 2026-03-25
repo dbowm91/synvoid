@@ -1,7 +1,9 @@
 use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default)]
 pub enum SyslogFacility {
+    #[default]
     Daemon,
     Local0,
     Local1,
@@ -16,11 +18,6 @@ pub enum SyslogFacility {
     User,
 }
 
-impl Default for SyslogFacility {
-    fn default() -> Self {
-        SyslogFacility::Daemon
-    }
-}
 
 #[derive(Debug, Clone)]
 pub struct SyslogConfig {

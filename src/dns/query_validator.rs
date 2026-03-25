@@ -307,8 +307,8 @@ impl DnsQueryValidator {
                         return Err(format!("Response contains private IP: {}", ip));
                     }
                 }
-            } else if record_type == 28 {
-                if rdlen == 16 {
+            } else if record_type == 28
+                && rdlen == 16 {
                     let segments = [
                         u16::from_be_bytes([response[pos], response[pos + 1]]),
                         u16::from_be_bytes([response[pos + 2], response[pos + 3]]),
@@ -324,7 +324,6 @@ impl DnsQueryValidator {
                         return Err(format!("Response contains private IPv6: {}", ip));
                     }
                 }
-            }
 
             pos += rdlen;
         }

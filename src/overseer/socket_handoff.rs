@@ -113,7 +113,7 @@ impl SocketHandoffServer {
             .iter()
             .map(|info| {
                 let fd_dup = nix::unistd::dup(info.fd)
-                    .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+                    .map_err(io::Error::other)?;
                 // SAFETY: fd_dup is a valid file descriptor from dup(), we transfer ownership
                 Ok(unsafe { raw_fd_to_tcp_listener(fd_dup) })
             })

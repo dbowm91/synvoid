@@ -442,26 +442,24 @@ body {{
     }
 
     fn generate_neon_css(&self) -> String {
-        format!(
-            r#".waf-container {{
+        r#".waf-container {
     box-shadow: 
         var(--waf-shadow),
         0 0 20px rgba(var(--waf-primary), 0.3),
         inset 0 0 20px rgba(var(--waf-primary), 0.05);
-}}
+}
 
-.waf-title {{
+.waf-title {
     text-shadow: 0 0 10px var(--waf-primary), 0 0 20px var(--waf-primary);
-}}
+}
 
-.waf-button {{
+.waf-button {
     box-shadow: 0 0 15px rgba(var(--waf-primary), 0.5);
-}}
+}
 
-.waf-button:hover {{
+.waf-button:hover {
     box-shadow: 0 0 25px rgba(var(--waf-primary), 0.7);
-}}"#
-        )
+}"#.to_string()
     }
 
     pub fn generate_spinner_svg(&self) -> String {
@@ -509,44 +507,43 @@ body {{
     pub fn generate_theme_toggle_script(&self) -> String {
         match self.config.restriction {
             ThemeRestriction::Both => {
-                format!(
-                    r#"<script>
-(function() {{
+                r#"<script>
+(function() {
     const COOKIE_NAME = 'waf_theme';
     const COOKIE_MAX_AGE = 31536000;
     
-    function getTheme() {{
+    function getTheme() {
         const match = document.cookie.match(new RegExp('(^| )' + COOKIE_NAME + '=([^;]+)'));
         if (match) return match[2];
         return null;
-    }}
+    }
     
-    function setTheme(theme) {{
+    function setTheme(theme) {
         document.documentElement.setAttribute('data-waf-theme', theme);
         document.cookie = COOKIE_NAME + '=' + theme + '; path=/; max-age=' + COOKIE_MAX_AGE + '; SameSite=Lax';
-    }}
+    }
     
-    function initTheme() {{
+    function initTheme() {
         const saved = getTheme();
-        if (saved) {{
+        if (saved) {
             document.documentElement.setAttribute('data-waf-theme', saved);
-        }}
-    }}
+        }
+    }
     
-    function toggleTheme() {{
+    function toggleTheme() {
         const current = document.documentElement.getAttribute('data-waf-theme');
         const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
         
-        if (current === 'dark' || (!current && prefersDark)) {{
+        if (current === 'dark' || (!current && prefersDark)) {
             setTheme('light');
-        }} else {{
+        } else {
             setTheme('dark');
-        }}
+        }
         
         updateToggleIcon();
-    }}
+    }
     
-    function updateToggleIcon() {{
+    function updateToggleIcon() {
         const toggle = document.querySelector('.waf-theme-toggle svg');
         if (!toggle) return;
         
@@ -557,20 +554,19 @@ body {{
         toggle.innerHTML = isDark 
             ? '<circle cx="10" cy="10" r="4"/><path d="M10 1v2M10 17v2M1 10h2M17 10h2M3.5 3.5l1.4 1.4M15.1 15.1l1.4 1.4M3.5 16.5l1.4-1.4M15.1 4.9l1.4-1.4"/>'
             : '<path d="M17 10a7 7 0 11-14 0 7 7 0 0114 0zM10 3v14M6.5 6.5l7 7M13.5 6.5l-7 7"/>';
-    }}
+    }
     
     initTheme();
     
-    document.addEventListener('DOMContentLoaded', function() {{
+    document.addEventListener('DOMContentLoaded', function() {
         updateToggleIcon();
         const toggle = document.querySelector('.waf-theme-toggle');
-        if (toggle) {{
+        if (toggle) {
             toggle.addEventListener('click', toggleTheme);
-        }}
-    }});
-}})();
-</script>"#
-                )
+        }
+    });
+})();
+</script>"#.to_string()
             }
             ThemeRestriction::DarkOnly | ThemeRestriction::LightOnly => "".to_string(),
         }

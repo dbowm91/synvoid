@@ -82,7 +82,7 @@ impl WireGuardServer {
     }
 
     pub fn is_running(&self) -> bool {
-        self.runtime.as_ref().map_or(false, |r| r.is_running())
+        self.runtime.as_ref().is_some_and(|r| r.is_running())
     }
 
     pub fn add_peer(&self, peer: WireGuardPeerConfig) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {

@@ -638,7 +638,7 @@ impl RecursiveDnsServer {
             full_query.extend_from_slice(&1u16.to_be_bytes());
             
             let response = build_error_response(&full_query, RCODE_NXDOMAIN)
-                .unwrap_or_else(|| Vec::new());
+                .unwrap_or_default();
             return Ok((response, is_dnssec_validated));
         }
 

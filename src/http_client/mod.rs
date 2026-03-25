@@ -64,6 +64,7 @@ pub struct UpstreamTlsConfig {
     pub ca_cert_path: Option<String>,
     pub server_name: Option<String>,
     pub skip_verify: bool,
+    pub allow_plaintext: bool,
 }
 
 impl Default for UpstreamTlsConfig {
@@ -73,6 +74,7 @@ impl Default for UpstreamTlsConfig {
             ca_cert_path: None,
             server_name: None,
             skip_verify: false,
+            allow_plaintext: false,
         }
     }
 }
@@ -95,11 +97,12 @@ pub fn create_http_client_with_config(
     http_connector.enforce_http(false);
     http_connector.set_nodelay(true);
     http_connector.set_keepalive(Some(Duration::from_secs(60)));
-    
+
+    let tls_config = build_tls_config(None, false);
+
     let https_connector = hyper_rustls::HttpsConnectorBuilder::new()
-        .with_native_roots()
-        .unwrap()
-        .https_or_http()
+        .with_tls_config(tls_config)
+        .https_only()
         .enable_http2()
         .wrap_connector(http_connector);
 
@@ -108,6 +111,145 @@ pub fn create_http_client_with_config(
         .pool_idle_timeout(pool_idle_timeout)
         .http2_only(false)
         .build(https_connector)
+}
+
+pub fn create_upstream_client(
+    connect_timeout: Duration,
+    pool_max_idle_per_host: usize,
+    pool_idle_timeout: Duration,
+    tls_config: &UpstreamTlsConfig,
+) -> HttpClient {
+    let mut http_connector = HttpConnector::new();
+    http_connector.set_connect_timeout(Some(connect_timeout));
+    http_connector.enforce_http(false);
+    http_connector.set_nodelay(true);
+    http_connector.set_keepalive(Some(Duration::from_secs(60)));
+
+    let rustls_config = build_tls_config(
+        tls_config.ca_cert_path.as_deref(),
+        tls_config.skip_verify,
+    );
+
+    let mut builder = hyper_rustls::HttpsConnectorBuilder::new()
+        .with_tls_config(rustls_config);
+
+    let builder = if tls_config.allow_plaintext {
+        builder.https_or_http()
+    } else {
+        builder.https_only()
+    };
+
+    let https_connector = builder
+        .enable_http2()
+        .wrap_connector(http_connector);
+
+    Client::builder(TokioExecutor::new())
+        .pool_max_idle_per_host(pool_max_idle_per_host)
+        .pool_idle_timeout(pool_idle_timeout)
+        .http2_only(false)
+        .build(https_connector)
+}
+
+fn build_tls_config(
+    _ca_cert_path: Option<&str>,
+    skip_verify: bool,
+) -> rustls::ClientConfig {
+    use rustls::crypto::aws_lc_rs;
+    use std::sync::Arc;
+
+    let provider = Arc::new(aws_lc_rs::default_provider());
+
+    let builder = rustls::ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .expect("failed to set TLS protocol versions");
+
+    if skip_verify {
+        tracing::warn!(
+            "TLS certificate verification is DISABLED for upstream connections — \
+             this is insecure and should only be used in development"
+        );
+        let mut config = builder
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(NoVerifier))
+            .with_no_client_auth();
+        config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+        return config;
+    }
+
+    // Try native roots, fall back to webpki
+    let mut root_store = rustls::RootCertStore::empty();
+    let native_certs = rustls_native_certs::load_native_certs();
+    for cert in native_certs.certs {
+        let _ = root_store.add(cert);
+    }
+    if root_store.is_empty() {
+        tracing::warn!(
+            "No native root certificates available, falling back to webpki roots"
+        );
+        root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    }
+    if !native_certs.errors.is_empty() {
+        tracing::warn!(
+            "Some native root certificates failed to load: {} errors",
+            native_certs.errors.len()
+        );
+    }
+
+    let mut config = builder
+        .with_root_certificates(root_store)
+        .with_no_client_auth();
+    config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+    config
+}
+
+#[derive(Debug)]
+struct NoVerifier;
+
+impl rustls::client::danger::ServerCertVerifier for NoVerifier {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &rustls_pki_types::CertificateDer<'_>,
+        _intermediates: &[rustls_pki_types::CertificateDer<'_>],
+        _server_name: &rustls_pki_types::ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: rustls_pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls_pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls_pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        vec![
+            rustls::SignatureScheme::RSA_PKCS1_SHA256,
+            rustls::SignatureScheme::RSA_PKCS1_SHA384,
+            rustls::SignatureScheme::RSA_PKCS1_SHA512,
+            rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
+            rustls::SignatureScheme::ECDSA_NISTP384_SHA384,
+            rustls::SignatureScheme::ECDSA_NISTP521_SHA512,
+            rustls::SignatureScheme::ED25519,
+            rustls::SignatureScheme::ED448,
+            rustls::SignatureScheme::RSA_PSS_SHA256,
+            rustls::SignatureScheme::RSA_PSS_SHA384,
+            rustls::SignatureScheme::RSA_PSS_SHA512,
+        ]
+    }
 }
 
 pub fn create_unix_http_client() -> UnixHttpClient {
@@ -188,7 +330,7 @@ pub async fn send_request_with_body_and_timeout(
     timeout: Option<Duration>,
 ) -> Result<HttpResponse, Box<dyn std::error::Error + Send + Sync>> {
     let uri: Uri = url.parse()?;
-    let body = Full::new(body.unwrap_or_else(Bytes::new));
+    let body = Full::new(body.unwrap_or_default());
     let req = Request::builder()
         .method(method)
         .uri(uri)

@@ -1169,7 +1169,7 @@ impl DnsServer {
                 }
 
                 let key = (record_config.name.clone(), record.record_type);
-                zone.records.entry(key).or_insert_with(Vec::new).push(record);
+                zone.records.entry(key).or_default().push(record);
             }
 
             if zone.serial == 0 {
@@ -1239,7 +1239,7 @@ impl DnsServer {
             let records: Vec<(String, RecordType, String, u32, Option<u32>)> = zone.records
                 .values()
                 .flat_map(|v| v.iter())
-                .map(|r| (r.name.clone(), r.record_type.clone(), r.value.clone(), r.ttl, r.priority))
+                .map(|r| (r.name.clone(), r.record_type, r.value.clone(), r.ttl, r.priority))
                 .collect();
             
             store.save_zone(origin, &records)?;
@@ -1487,17 +1487,14 @@ impl DnsServer {
                                     let mut firewall = fw.write();
                                     match firewall.evaluate_query(&buf[..len], client_ip, &query_name) {
                                         Ok(decision) => {
-                                            match decision.action {
-                                                super::firewall::DnsFirewallAction::Block => {
-                                                    tracing::warn!(
-                                                        "Anycast DNS query blocked by firewall: rule={} client={} qname={}",
-                                                        decision.rule_id,
-                                                        client_ip,
-                                                        query_name
-                                                    );
-                                                    continue;
-                                                }
-                                                _ => {}
+                                            if decision.action == super::firewall::DnsFirewallAction::Block {
+                                                tracing::warn!(
+                                                    "Anycast DNS query blocked by firewall: rule={} client={} qname={}",
+                                                    decision.rule_id,
+                                                    client_ip,
+                                                    query_name
+                                                );
+                                                continue;
                                             }
                                         }
                                         Err(e) => {
@@ -1629,41 +1626,39 @@ impl DnsServer {
                                                 }
                                             }
                                         }
-                                    } else {
-                                        if let Some(ref c) = cache_udp {
-                                            Self::handle_query_with_cache(
-                                                &zones_udp,
-                                                &zone_trie_udp,
-                                                &buf[..len],
-                                                mesh_registry_udp.as_ref(),
-                                                geoip_lookup_udp.as_ref(),
-                                                min_geo_ttl,
-                                                negative_cache_ttl,
-                                                c,
-                                                cache_key,
-                                                dnssec.as_ref(),
-                                                signer_name.as_ref(),
-                                                Some(client_ip),
-                                                zone_transfer_udp.as_ref(),
-                                                &ecs_filter_config_udp,
-update_handler_udp.as_ref(),
-                                                        notify_handler_udp.as_ref(),
-                                                    )
-                                                } else {
-                                                    Self::handle_query(
-                                                        &zones_udp,
-                                                        &zone_trie_udp,
-                                                        &buf[..len],
-                                                        mesh_registry_udp.as_ref(),
-                                                        geoip_lookup_udp.as_ref(),
-                                                        min_geo_ttl,
-                                                        Some(client_ip),
-                                                        &ecs_filter_config_udp,
-                                                        update_handler_udp.as_ref(),
-                                                        notify_handler_udp.as_ref(),
-                                                    )
-                                                }
-                                    }
+                                    } else if let Some(ref c) = cache_udp {
+                                                                                Self::handle_query_with_cache(
+                                                                                    &zones_udp,
+                                                                                    &zone_trie_udp,
+                                                                                    &buf[..len],
+                                                                                    mesh_registry_udp.as_ref(),
+                                                                                    geoip_lookup_udp.as_ref(),
+                                                                                    min_geo_ttl,
+                                                                                    negative_cache_ttl,
+                                                                                    c,
+                                                                                    cache_key,
+                                                                                    dnssec.as_ref(),
+                                                                                    signer_name.as_ref(),
+                                                                                    Some(client_ip),
+                                                                                    zone_transfer_udp.as_ref(),
+                                                                                    &ecs_filter_config_udp,
+                                    update_handler_udp.as_ref(),
+                                                                                            notify_handler_udp.as_ref(),
+                                                                                        )
+                                                                                    } else {
+                                                                                        Self::handle_query(
+                                                                                            &zones_udp,
+                                                                                            &zone_trie_udp,
+                                                                                            &buf[..len],
+                                                                                            mesh_registry_udp.as_ref(),
+                                                                                            geoip_lookup_udp.as_ref(),
+                                                                                            min_geo_ttl,
+                                                                                            Some(client_ip),
+                                                                                            &ecs_filter_config_udp,
+                                                                                            update_handler_udp.as_ref(),
+                                                                                            notify_handler_udp.as_ref(),
+                                                                                        )
+                                                                                    }
                                 } else if let Some(ref c) = cache_udp {
                                     Self::handle_query_with_cache(
                                         &zones_udp,
@@ -1918,17 +1913,14 @@ update_handler_udp.as_ref(),
                                     let mut firewall = fw.write();
                                     match firewall.evaluate_query(&buf[..len], client_ip, &query_name) {
                                         Ok(decision) => {
-                                            match decision.action {
-                                                super::firewall::DnsFirewallAction::Block => {
-                                                    tracing::warn!(
-                                                        "DNS query blocked by firewall: rule={} client={} qname={}",
-                                                        decision.rule_id,
-                                                        client_ip,
-                                                        query_name
-                                                    );
-                                                    continue;
-                                                }
-                                                _ => {}
+                                            if decision.action == super::firewall::DnsFirewallAction::Block {
+                                                tracing::warn!(
+                                                    "DNS query blocked by firewall: rule={} client={} qname={}",
+                                                    decision.rule_id,
+                                                    client_ip,
+                                                    query_name
+                                                );
+                                                continue;
                                             }
                                         }
                                         Err(e) => {
@@ -2062,40 +2054,38 @@ update_handler_udp.as_ref(),
                                                 }
                                             }
                                         }
-                                    } else {
-                                        if let Some(ref c) = cache_udp {
-                                            Self::handle_query_with_cache(
-                                                &zones_udp,
-                                                &zone_trie_udp,
-                                                &buf[..len],
-                                                mesh_registry_udp.as_ref(),
-                                                geoip_lookup_udp.as_ref(),
-                                                min_geo_ttl,
-                                                negative_cache_ttl,
-                                                c,
-                                                cache_key,
-                                                dnssec.as_ref(),
-                                                signer_name.as_ref(),
-                                                Some(client_ip),
-                                                zone_transfer_udp.as_ref(),
-                                                &ecs_filter_config_udp,
-                                                update_handler_udp.as_ref(),
-                                                notify_handler_udp.as_ref(),
-                                            )
-                                                } else {
-                                                    Self::handle_query(
-                                                        &zones_udp,
-                                                        &zone_trie_udp,
-                                                        &buf[..len],
-                                                mesh_registry_udp.as_ref(),
-                                                geoip_lookup_udp.as_ref(),
-                                                min_geo_ttl,
-                                                Some(client_ip),
-                                                &ecs_filter_config_udp,
-                                                update_handler_udp.as_ref(),
-                                                notify_handler_udp.as_ref(),
-                                            )
-                                        }
+                                    } else if let Some(ref c) = cache_udp {
+                                        Self::handle_query_with_cache(
+                                            &zones_udp,
+                                            &zone_trie_udp,
+                                            &buf[..len],
+                                            mesh_registry_udp.as_ref(),
+                                            geoip_lookup_udp.as_ref(),
+                                            min_geo_ttl,
+                                            negative_cache_ttl,
+                                            c,
+                                            cache_key,
+                                            dnssec.as_ref(),
+                                            signer_name.as_ref(),
+                                            Some(client_ip),
+                                            zone_transfer_udp.as_ref(),
+                                            &ecs_filter_config_udp,
+                                            update_handler_udp.as_ref(),
+                                            notify_handler_udp.as_ref(),
+                                        )
+                                            } else {
+                                                Self::handle_query(
+                                                    &zones_udp,
+                                                    &zone_trie_udp,
+                                                    &buf[..len],
+                                            mesh_registry_udp.as_ref(),
+                                            geoip_lookup_udp.as_ref(),
+                                            min_geo_ttl,
+                                            Some(client_ip),
+                                            &ecs_filter_config_udp,
+                                            update_handler_udp.as_ref(),
+                                            notify_handler_udp.as_ref(),
+                                        )
                                     }
                                 } else if let Some(ref c) = cache_udp {
                                     Self::handle_query_with_cache(
@@ -2371,17 +2361,14 @@ update_handler_udp.as_ref(),
             let mut fw_read = fw.write();
             match fw_read.evaluate_query(&query, client_ip, &qname) {
                 Ok(decision) => {
-                    match decision.action {
-                        super::firewall::DnsFirewallAction::Block => {
-                            tracing::warn!(
-                                "DNS TCP query blocked by firewall: rule={} client={} qname={}",
-                                decision.rule_id,
-                                client_ip,
-                                qname
-                            );
-                            return Err("Blocked by firewall".to_string());
-                        }
-                        _ => {}
+                    if decision.action == super::firewall::DnsFirewallAction::Block {
+                        tracing::warn!(
+                            "DNS TCP query blocked by firewall: rule={} client={} qname={}",
+                            decision.rule_id,
+                            client_ip,
+                            qname
+                        );
+                        return Err("Blocked by firewall".to_string());
                     }
                 }
                 Err(e) => {
@@ -2510,40 +2497,38 @@ update_handler_udp.as_ref(),
                         }
                     }
                 }
+            } else if let Some(c) = cache {
+                Self::handle_query_with_cache(
+                    zones,
+                    zone_trie,
+                    &query,
+                    mesh_registry,
+                    geoip_lookup,
+                    min_geo_ttl,
+                    negative_cache_ttl,
+                    c,
+                    cache_key,
+                    dnssec,
+                    signer_name,
+                    Some(client_ip),
+                    zone_transfer,
+                    ecs_filter_config,
+                    update_handler,
+                    notify_handler,
+                )
             } else {
-                if let Some(c) = cache {
-                    Self::handle_query_with_cache(
-                        zones,
-                        zone_trie,
-                        &query,
-                        mesh_registry,
-                        geoip_lookup,
-                        min_geo_ttl,
-                        negative_cache_ttl,
-                        c,
-                        cache_key,
-                        dnssec,
-                        signer_name,
-                        Some(client_ip),
-                        zone_transfer,
-                        ecs_filter_config,
-                        update_handler,
-                        notify_handler,
-                    )
-                } else {
-                    Self::handle_query(
-                        zones,
-                        zone_trie,
-                        &query,
-                        mesh_registry,
-                        geoip_lookup,
-                        min_geo_ttl,
-                        Some(client_ip),
-                        ecs_filter_config,
-                        update_handler,
-                        notify_handler,
-                    )
-                }
+                Self::handle_query(
+                    zones,
+                    zone_trie,
+                    &query,
+                    mesh_registry,
+                    geoip_lookup,
+                    min_geo_ttl,
+                    Some(client_ip),
+                    ecs_filter_config,
+                    update_handler,
+                    notify_handler,
+                )
             }
         } else if let Some(c) = cache {
             Self::handle_query_with_cache(
@@ -2681,7 +2666,7 @@ update_handler_udp.as_ref(),
         if opcode as u8 == super::wire::OPCODE_NOTIFY {
             if let Some(handler) = notify_handler {
                 if let Some(ip) = client_ip {
-                    return handler.handle_notify(query, ip).map(|r| Arc::new(r));
+                    return handler.handle_notify(query, ip).map(Arc::new);
                 }
             }
             return None;
@@ -2946,7 +2931,7 @@ update_handler_udp.as_ref(),
         if opcode as u8 == super::wire::OPCODE_NOTIFY {
             if let Some(handler) = notify_handler {
                 if let Some(ip) = client_ip {
-                    return handler.handle_notify(query, ip).map(|r| Arc::new(r));
+                    return handler.handle_notify(query, ip).map(Arc::new);
                 }
             }
             return None;
@@ -3507,7 +3492,7 @@ update_handler_udp.as_ref(),
         });
         
         if let Some(soa_record) = zone.records.get(&("@".to_string(), RecordType::SOA)) {
-            if let Some(_) = soa_record.first() {
+            if !soa_record.is_empty() {
                 let soa_hash = super::dnssec::hash_name_nsec3(zone_origin, nsec3param);
                 let soa_hash_b32 = super::dnssec::create_nsec3_owner_name(zone_origin, &soa_hash);
                 
@@ -3619,7 +3604,7 @@ update_handler_udp.as_ref(),
         });
         
         if let Some(soa_record) = zone.records.get(&("@".to_string(), RecordType::SOA)) {
-            if let Some(_) = soa_record.first() {
+            if !soa_record.is_empty() {
                 let soa_hash = super::dnssec::hash_name_nsec3(zone_origin, nsec3param);
                 let soa_hash_b32 = super::dnssec::create_nsec3_owner_name(zone_origin, &soa_hash);
                 
@@ -4610,7 +4595,7 @@ update_handler_udp.as_ref(),
         let zone_entry = zones.entry(zone.to_string()).or_insert_with(|| Zone::new(zone.to_string()));
 
         let key = (record.name.clone(), record.record_type);
-        zone_entry.records.entry(key).or_insert_with(Vec::new).push(record);
+        zone_entry.records.entry(key).or_default().push(record);
         
         let zone_origin = zone_entry.origin.clone();
         drop(zones);

@@ -51,7 +51,7 @@ impl TunnelMessageCodec {
 
         let mut pooled = BufferPool::acquire(len);
         recv_stream
-            .read_exact(&mut pooled.as_mut_slice())
+            .read_exact(pooled.as_mut_slice())
             .await
             .map_err(|e| TunnelFramingError::ReadMessage(e.to_string()))?;
 

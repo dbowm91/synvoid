@@ -362,7 +362,7 @@ impl QuicTunnelServer {
                     mappings: Self::convert_mappings(&mappings),
                     connection: connection.clone(),
                     active_streams: Arc::new(AtomicU32::new(0)),
-                    datagram_capabilities: datagram_caps.clone(),
+                    datagram_capabilities: datagram_caps,
                     access_level: auth_result.access_level,
                     allowed_ports_tcp: auth_result.allowed_ports_tcp,
                     allowed_ports_udp: auth_result.allowed_ports_udp,
@@ -390,7 +390,7 @@ impl QuicTunnelServer {
                     client_id: client_id.clone(),
                     mappings: registry_mappings,
                     connection: Some(connection.clone()),
-                    datagram_capabilities: datagram_caps.clone(),
+                    datagram_capabilities: datagram_caps,
                 }).await;
 
                 let ack = TunnelMessage::HelloAck {
@@ -455,7 +455,7 @@ impl QuicTunnelServer {
                     mappings: HashMap::new(),
                     connection: connection.clone(),
                     active_streams: Arc::new(AtomicU32::new(0)),
-                    datagram_capabilities: datagram_caps.clone(),
+                    datagram_capabilities: datagram_caps,
                     access_level: VpnAccessLevel::Admin,
                     allowed_ports_tcp: vec![],
                     allowed_ports_udp: vec![],
@@ -480,7 +480,7 @@ impl QuicTunnelServer {
                     client_id: peer_id.clone(),
                     mappings: HashMap::new(),
                     connection: Some(connection.clone()),
-                    datagram_capabilities: datagram_caps.clone(),
+                    datagram_capabilities: datagram_caps,
                 }).await;
 
                 let ack = TunnelMessage::PeerHelloAck {
@@ -803,13 +803,12 @@ impl QuicTunnelServer {
                         client_map_for_local.insert(sequence_counter, client_addr);
                         timestamps_for_local.insert(client_addr, std::time::Instant::now());
                         
-                        if len >= 2 {
-                            if dns_id_map_for_local.len() < MAX_DNS_IDS {
+                        if len >= 2
+                            && dns_id_map_for_local.len() < MAX_DNS_IDS {
                                 let dns_id = u16::from_be_bytes([data[0], data[1]]);
                                 dns_id_map_for_local.insert(dns_id, client_addr);
                                 counter!("maluwaf.tunnel.quic.server.udp_tunnels.dns_tracked").increment(1);
                             }
-                        }
                         
                         let msg = DatagramMessage::new(
                             identifier_for_local.clone(),
@@ -874,30 +873,28 @@ impl QuicTunnelServer {
                                     client_map_for_quic.get(&msg.sequence)
                                         .map(|e| *e.value())
                                 }
-                            } else {
-                                if let Ok(client_addr) = msg.source_addr.parse::<SocketAddr>() {
-                                    let known_client = client_map_for_quic.iter()
-                                        .any(|entry| *entry.value() == client_addr);
-                                    let known_dns = dns_id_map_for_quic.iter()
-                                        .any(|entry| *entry.value() == client_addr);
-                                    
-                                    if known_client || known_dns {
-                                        Some(client_addr)
-                                    } else {
-                                        tracing::warn!(
-                                            "UDP packet from unknown source address {}, rejecting",
-                                            client_addr
-                                        );
-                                        None
-                                    }
-                                } else if msg.data.len() >= 2 {
-                                    let dns_id = u16::from_be_bytes([msg.data[0], msg.data[1]]);
-                                    dns_id_map_for_quic.get(&dns_id)
-                                        .map(|e| *e.value())
+                            } else if let Ok(client_addr) = msg.source_addr.parse::<SocketAddr>() {
+                                let known_client = client_map_for_quic.iter()
+                                    .any(|entry| *entry.value() == client_addr);
+                                let known_dns = dns_id_map_for_quic.iter()
+                                    .any(|entry| *entry.value() == client_addr);
+                                
+                                if known_client || known_dns {
+                                    Some(client_addr)
                                 } else {
-                                    client_map_for_quic.get(&msg.sequence)
-                                        .map(|e| *e.value())
+                                    tracing::warn!(
+                                        "UDP packet from unknown source address {}, rejecting",
+                                        client_addr
+                                    );
+                                    None
                                 }
+                            } else if msg.data.len() >= 2 {
+                                let dns_id = u16::from_be_bytes([msg.data[0], msg.data[1]]);
+                                dns_id_map_for_quic.get(&dns_id)
+                                    .map(|e| *e.value())
+                            } else {
+                                client_map_for_quic.get(&msg.sequence)
+                                    .map(|e| *e.value())
                             };
                             
                             if let Some(client_addr) = target_client {
@@ -1033,7 +1030,7 @@ impl QuicTunnelServer {
                 } else {
                     data_pooled.resize(len);
                 }
-                recv_stream.read_exact(&mut data_pooled.as_mut_slice()).await?;
+                recv_stream.read_exact(data_pooled.as_mut_slice()).await?;
                 
                 if let Some((_, _, data, fin)) = TunnelMessage::decode_data_chunk_zero_copy(data_pooled.as_slice()) {
                     if !data.is_empty() {
@@ -1075,7 +1072,7 @@ impl QuicTunnelServer {
             let mut pooled = BufferPool::acquire(64 * 1024);
             let mut sequence: u64 = 0;
             loop {
-                match tcp_read.read(&mut pooled.as_mut_slice()).await {
+                match tcp_read.read(pooled.as_mut_slice()).await {
                     Ok(0) => {
                         tracing::debug!("TCP connection closed for {}", identifier_clone);
                         TunnelMessage::write_data_chunk_zero_copy(

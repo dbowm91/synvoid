@@ -11,32 +11,30 @@ pub fn render_directory_listing(
 
     let mut items: Vec<DirEntry> = Vec::new();
 
-    for entry in entries {
-        if let Ok(entry) = entry {
-            let name = entry.file_name().to_string_lossy().to_string();
-            let path = entry.path();
-            let is_dir = path.is_dir();
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        let path = entry.path();
+        let is_dir = path.is_dir();
 
-            let metadata = entry.metadata().ok();
-            let modified = metadata
-                .as_ref()
-                .and_then(|m| m.modified().ok())
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|d| d.as_secs())
-                .unwrap_or(0);
+        let metadata = entry.metadata().ok();
+        let modified = metadata
+            .as_ref()
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
 
-            let size = metadata
-                .as_ref()
-                .map(|m| if is_dir { 0 } else { m.len() })
-                .unwrap_or(0);
+        let size = metadata
+            .as_ref()
+            .map(|m| if is_dir { 0 } else { m.len() })
+            .unwrap_or(0);
 
-            items.push(DirEntry {
-                name,
-                is_dir,
-                modified,
-                size,
-            });
-        }
+        items.push(DirEntry {
+            name,
+            is_dir,
+            modified,
+            size,
+        });
     }
 
     items.sort_by(|a, b| match (a.is_dir, b.is_dir) {

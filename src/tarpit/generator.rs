@@ -140,7 +140,7 @@ impl MarkovChain {
             } else {
                 current_depth + 1
             };
-            let random_path = generate_random_path(&mut rng, path_seed, i as u32);
+            let random_path = generate_random_path(&mut rng, path_seed, i);
             links.push(format!(
                 "<a href=\"/{}/{}\">{}</a>",
                 link_depth,

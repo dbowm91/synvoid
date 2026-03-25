@@ -70,7 +70,7 @@ impl WorkerLifecycle {
     pub fn send_started(&self, pid: u32, port: Option<u16>) -> Result<(), std::io::Error> {
         let mut ipc = self.ipc.lock();
         ipc.send(&Message::WorkerStarted {
-            id: self.worker_id.clone(),
+            id: self.worker_id,
             pid,
             port: port.unwrap_or(0),
             timestamp: current_timestamp(),
@@ -80,14 +80,14 @@ impl WorkerLifecycle {
     pub fn send_ready(&self) -> Result<(), std::io::Error> {
         let mut ipc = self.ipc.lock();
         ipc.send(&Message::WorkerReady {
-            id: self.worker_id.clone(),
+            id: self.worker_id,
         })
     }
 
     pub fn send_heartbeat(&self, metrics: &WorkerMetricsPayload) -> Result<(), std::io::Error> {
         let mut ipc = self.ipc.lock();
         ipc.send(&Message::WorkerHeartbeat {
-            id: self.worker_id.clone(),
+            id: self.worker_id,
             timestamp: current_timestamp(),
             metrics: metrics.clone(),
         })
@@ -96,7 +96,7 @@ impl WorkerLifecycle {
     pub fn send_request_log(&self, log: RequestLogPayload) -> Result<(), std::io::Error> {
         let mut ipc = self.ipc.lock();
         ipc.send(&Message::WorkerRequestLog {
-            id: self.worker_id.clone(),
+            id: self.worker_id,
             log,
         })
     }
@@ -104,7 +104,7 @@ impl WorkerLifecycle {
     pub fn send_shutdown_complete(&self) -> Result<(), std::io::Error> {
         let mut ipc = self.ipc.lock();
         ipc.send(&Message::WorkerShutdownComplete {
-            id: self.worker_id.clone(),
+            id: self.worker_id,
         })
     }
 

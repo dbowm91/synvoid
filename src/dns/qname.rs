@@ -21,12 +21,11 @@ impl QnameMinimizer {
 
         for zone in zones {
             let zone_lower = zone.to_lowercase();
-            if qname_lower.ends_with(&zone_lower) || qname_lower == zone_lower {
-                if zone_lower.len() > best_match_len {
+            if (qname_lower.ends_with(&zone_lower) || qname_lower == zone_lower)
+                && zone_lower.len() > best_match_len {
                     best_match = Some(zone);
                     best_match_len = zone_lower.len();
                 }
-            }
         }
 
         if let Some(zone) = best_match {
@@ -78,13 +77,10 @@ impl RebindingChecker {
 
     pub fn is_private_ip(&self, ip: &IpAddr) -> bool {
         for (network, prefix) in &self.private_ip_ranges {
-            match (ip, network) {
-                (IpAddr::V4(client), IpAddr::V4(net)) => {
-                    if self.ipv4_in_prefix(client, net, *prefix) {
-                        return true;
-                    }
+            if let (IpAddr::V4(client), IpAddr::V4(net)) = (ip, network) {
+                if self.ipv4_in_prefix(client, net, *prefix) {
+                    return true;
                 }
-                _ => {}
             }
         }
         false

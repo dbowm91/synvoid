@@ -36,8 +36,7 @@ impl SqlitePersistence {
         };
 
         let conn = Connection::open(&db_path).map_err(|e| {
-            std::io::Error::new(
-                std::io::ErrorKind::Other,
+            std::io::Error::other(
                 format!("Failed to open database: {}", e),
             )
         })?;
@@ -45,8 +44,7 @@ impl SqlitePersistence {
             "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA cache_size=1000;",
         )
         .map_err(|e| {
-            std::io::Error::new(
-                std::io::ErrorKind::Other,
+            std::io::Error::other(
                 format!("Failed to set PRAGMA: {}", e),
             )
         })?;
@@ -68,8 +66,7 @@ impl SqlitePersistence {
             [],
         )
         .map_err(|e| {
-            std::io::Error::new(
-                std::io::ErrorKind::Other,
+            std::io::Error::other(
                 format!("Failed to create table: {}", e),
             )
         })?;
@@ -80,8 +77,7 @@ impl SqlitePersistence {
             [],
         )
         .map_err(|e| {
-            std::io::Error::new(
-                std::io::ErrorKind::Other,
+            std::io::Error::other(
                 format!("Failed to create index: {}", e),
             )
         })?;
@@ -95,8 +91,7 @@ impl SqlitePersistence {
             [],
         )
         .map_err(|e| {
-            std::io::Error::new(
-                std::io::ErrorKind::Other,
+            std::io::Error::other(
                 format!("Failed to create sites table: {}", e),
             )
         })?;
@@ -110,7 +105,7 @@ impl SqlitePersistence {
                 "INSERT OR IGNORE INTO sites (site_id, created_at, last_sample_at) VALUES (?1, ?2, ?2)",
                 params![sid, now],
             ).map_err(|e| {
-                std::io::Error::new(std::io::ErrorKind::Other, format!("Failed to insert site: {}", e))
+                std::io::Error::other(format!("Failed to insert site: {}", e))
             })?;
         }
 
@@ -167,8 +162,7 @@ impl SqlitePersistence {
             [],
         )
         .map_err(|e| {
-            std::io::Error::new(
-                std::io::ErrorKind::Other,
+            std::io::Error::other(
                 format!("Failed to create table: {}", e),
             )
         })?;
@@ -181,8 +175,7 @@ impl SqlitePersistence {
             params![json, now],
         )
         .map_err(|e| {
-            std::io::Error::new(
-                std::io::ErrorKind::Other,
+            std::io::Error::other(
                 format!("Failed to insert baseline: {}", e),
             )
         })?;
@@ -204,8 +197,7 @@ impl SqlitePersistence {
             .query_row(query, [], |row| row.get(0))
             .optional()
             .map_err(|e| {
-                std::io::Error::new(
-                    std::io::ErrorKind::Other,
+                std::io::Error::other(
                     format!("Failed to query baseline: {}", e),
                 )
             })?;
@@ -268,15 +260,13 @@ impl SqliteHistory {
         };
 
         let conn = Connection::open(&db_path).map_err(|e| {
-            std::io::Error::new(
-                std::io::ErrorKind::Other,
+            std::io::Error::other(
                 format!("Failed to open database: {}", e),
             )
         })?;
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")
             .map_err(|e| {
-                std::io::Error::new(
-                    std::io::ErrorKind::Other,
+                std::io::Error::other(
                     format!("Failed to set PRAGMA: {}", e),
                 )
             })?;
@@ -298,8 +288,7 @@ impl SqliteHistory {
             [],
         )
         .map_err(|e| {
-            std::io::Error::new(
-                std::io::ErrorKind::Other,
+            std::io::Error::other(
                 format!("Failed to create table: {}", e),
             )
         })?;
@@ -310,8 +299,7 @@ impl SqliteHistory {
             [],
         )
         .map_err(|e| {
-            std::io::Error::new(
-                std::io::ErrorKind::Other,
+            std::io::Error::other(
                 format!("Failed to create index: {}", e),
             )
         })?;
@@ -646,12 +634,11 @@ impl SqliteHistory {
                 params![cutoff, self.site_id],
             )
             .map_err(|e| {
-                std::io::Error::new(std::io::ErrorKind::Other, format!("Failed to prune: {}", e))
+                std::io::Error::other(format!("Failed to prune: {}", e))
             })?;
 
         conn.execute("VACUUM", []).map_err(|e| {
-            std::io::Error::new(
-                std::io::ErrorKind::Other,
+            std::io::Error::other(
                 format!("Failed to VACUUM: {}", e),
             )
         })?;
@@ -722,8 +709,7 @@ impl SqliteBackup {
         std::fs::copy(db_path, &backup_path)?;
 
         let conn = Connection::open(&backup_path).map_err(|e| {
-            std::io::Error::new(
-                std::io::ErrorKind::Other,
+            std::io::Error::other(
                 format!("Failed to open backup for counting: {}", e),
             )
         })?;

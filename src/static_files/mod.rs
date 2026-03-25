@@ -152,7 +152,7 @@ impl StaticFileHandler {
             });
         }
 
-        let default_root = config.default_root.as_ref().map(|p| PathBuf::from(p));
+        let default_root = config.default_root.as_ref().map(PathBuf::from);
         let mut locations = Vec::new();
 
         for loc in &config.locations {
@@ -611,7 +611,7 @@ impl StaticFileHandler {
                 continue;
             }
             let tf = try_file
-                .replace("$uri", &url_path.to_string())
+                .replace("$uri", url_path)
                 .trim_start_matches('/')
                 .to_string();
             let tf_path = dir_path.join(&tf);
@@ -868,7 +868,7 @@ mod httpdate {
     }
 
     fn is_leap_year(year: u64) -> bool {
-        (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
+        (year.is_multiple_of(4) && !year.is_multiple_of(100)) || year.is_multiple_of(400)
     }
 
     fn days_in_month_of(year: u64, month: u64) -> u64 {

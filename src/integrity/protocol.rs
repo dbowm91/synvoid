@@ -187,7 +187,7 @@ impl IntegrityHeader {
         let mut hasher = Sha256::new();
         hasher.update(Utc::now().timestamp_nanos_opt().unwrap_or(0).to_le_bytes());
         hasher.update(rand::random::<[u8; 16]>());
-        let nonce = URL_SAFE_NO_PAD.encode(hasher.finalize()[..12].to_vec());
+        let nonce = URL_SAFE_NO_PAD.encode(&hasher.finalize()[..12]);
 
         Self {
             session_id,
@@ -516,7 +516,7 @@ impl SessionKeyManager {
                 SessionKeyData {
                     session,
                     x25519_secret,
-                    ml_kem_secret: ml_kem_secret.map(|ss| PqcSecretKey(ss)),
+                    ml_kem_secret: ml_kem_secret.map(PqcSecretKey),
                     ml_kem_ciphertext: server_ml_kem_ciphertext
                         .as_ref()
                         .and_then(|ct| MlKem768::ciphertext_from_base64(ct).ok()),

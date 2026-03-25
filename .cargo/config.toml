@@ -1,6 +1,3 @@
-[build]
-target-dir = "target/fuzz"
-
 [profile.dev]
 opt-level = 0
 

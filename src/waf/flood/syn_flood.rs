@@ -145,8 +145,8 @@ impl SynFloodProtector {
 
     fn rotate_window(&self, now_secs: u64) {
         let current = self.current_window.load(Ordering::Relaxed);
-        if now_secs > current {
-            if self
+        if now_secs > current
+            && self
                 .current_window
                 .compare_exchange(current, now_secs, Ordering::SeqCst, Ordering::Relaxed)
                 .is_ok()
@@ -156,22 +156,20 @@ impl SynFloodProtector {
                 }
                 self.global_counter.store(0, Ordering::Relaxed);
             }
-        }
     }
 
     fn maybe_cleanup(&self) {
         let now_secs = self.start_instant.elapsed().as_secs();
         let last = self.last_cleanup.load(Ordering::Relaxed);
 
-        if now_secs.saturating_sub(last) > HALF_OPEN_CLEANUP_INTERVAL_SECS {
-            if self
+        if now_secs.saturating_sub(last) > HALF_OPEN_CLEANUP_INTERVAL_SECS
+            && self
                 .last_cleanup
                 .compare_exchange(last, now_secs, Ordering::SeqCst, Ordering::Relaxed)
                 .is_ok()
             {
                 self.cleanup_stale_half_opens();
             }
-        }
     }
 
     fn cleanup_stale_half_opens(&self) {

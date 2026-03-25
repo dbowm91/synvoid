@@ -1048,8 +1048,8 @@ impl OrganizationManager {
     pub fn validate_tier_claim(&self, claim: &TierClaim) -> bool {
         if let Some(org) = self.organizations.get(&claim.org_id) {
             if let Some(key) = org.get_valid_tier_key(claim.tier) {
-                if key.key_id == claim.key_id {
-                    if claim.verify_signature(&key.key) {
+                if key.key_id == claim.key_id
+                    && claim.verify_signature(&key.key) {
                         // Organization must have an org_key to validate tier claims
                         let Some(ref org_key) = org.org_key else {
                             return false;
@@ -1062,7 +1062,6 @@ impl OrganizationManager {
                         }
                         return false;
                     }
-                }
             }
         }
         false
@@ -1071,15 +1070,14 @@ impl OrganizationManager {
     pub fn validate_tier_claim_with_org_verification(&self, claim: &TierClaim) -> bool {
         if let Some(org) = self.organizations.get(&claim.org_id) {
             if let Some(key) = org.get_valid_tier_key(claim.tier) {
-                if key.key_id == claim.key_id {
-                    if claim.verify_signature(&key.key) {
+                if key.key_id == claim.key_id
+                    && claim.verify_signature(&key.key) {
                         if let Some(ref org_key) = org.org_key {
                             if let Some(cert) = org.get_valid_member_certificate(&claim.mesh_id) {
                                 return cert.verify(&org_key.private_key);
                             }
                         }
                     }
-                }
             }
         }
         false

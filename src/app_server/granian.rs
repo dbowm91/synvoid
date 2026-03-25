@@ -13,18 +13,15 @@ use crate::app_server::AppServerConfig;
 use crate::RunningFlag;
 
 #[derive(Clone, Debug, Copy, PartialEq, Eq)]
+#[derive(Default)]
 pub enum GranianInterface {
+    #[default]
     Asgi,
     AsgiNl,
     Rsgi,
     Wsgi,
 }
 
-impl Default for GranianInterface {
-    fn default() -> Self {
-        Self::Asgi
-    }
-}
 
 impl std::fmt::Display for GranianInterface {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -585,7 +582,7 @@ impl GranianSupervisor {
         ).await {
             Ok(resp) => {
                 let status = resp.status_code();
-                status >= 200 && status < 400
+                (200..400).contains(&status)
             }
             Err(e) => {
                 tracing::warn!(

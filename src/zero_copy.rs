@@ -74,8 +74,7 @@ pub fn sendfile_to_socket(
     _offset: u64,
     _count: usize,
 ) -> Result<usize> {
-    Err(std::io::Error::new(
-        std::io::ErrorKind::Other,
+    Err(std::io::Error::other(
         "sendfile not supported on this platform, use regular read/write",
     ))
 }

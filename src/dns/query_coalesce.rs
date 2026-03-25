@@ -73,6 +73,7 @@ pub struct CoalescerEntry {
     pub created_at: Instant,
 }
 
+#[derive(Default)]
 pub struct QueryCoalescerMetrics {
     pub hits: usize,
     pub misses: usize,
@@ -81,17 +82,6 @@ pub struct QueryCoalescerMetrics {
     pub lagged: usize,
 }
 
-impl Default for QueryCoalescerMetrics {
-    fn default() -> Self {
-        Self {
-            hits: 0,
-            misses: 0,
-            evictions: 0,
-            timeouts: 0,
-            lagged: 0,
-        }
-    }
-}
 
 pub struct QueryCoalescer {
     in_flight: Arc<RwLock<HashMap<QueryKey, CoalescerEntry>>>,

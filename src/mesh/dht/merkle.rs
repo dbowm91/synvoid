@@ -338,7 +338,7 @@ impl MerkleTree {
 
         let mut current_node = self.root.as_ref()?;
 
-        for (_level, &child_index) in path_indices.iter().enumerate() {
+        for &child_index in path_indices.iter() {
             let child_count = current_node.children_hashes.len();
             if child_count == 0 || child_index >= child_count {
                 return None;

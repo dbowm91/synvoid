@@ -252,7 +252,7 @@ impl RoutingTable {
                     } else {
                         let max_dist = candidates
                             .iter()
-                            .map(|(_, d)| d.clone())
+                            .map(|(_, d)| *d)
                             .max()
                             .unwrap_or(NodeId([0xff; 32]));
 

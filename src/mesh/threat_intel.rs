@@ -878,13 +878,13 @@ impl ThreatIntelligenceManager {
                 None,
             ).await;
             tracing::debug!("Fanout threat announce: {} sent, {} failed", success, fail);
-        } else { match self.mesh_sender.read().clone() { Some(sender) => {
+        } else if let Some(sender) = self.mesh_sender.read().clone() {
             if let Err(e) = sender.send(message).await {
                 tracing::warn!("Failed to broadcast threat announce: {}", e);
             } else {
                 tracing::debug!("Broadcast threat announce to mesh");
             }
-        } _ => {}}}
+        }
     }
 
     pub fn handle_mesh_message(
@@ -926,7 +926,7 @@ impl ThreatIntelligenceManager {
                             Vec::new()
                         } else {
                             base64::engine::general_purpose::URL_SAFE_NO_PAD
-                                .decode(&signer_public_key)
+                                .decode(signer_public_key)
                                 .unwrap_or_default()
                         };
                         if !signer.verify(&content, signature, &pk_bytes) {
@@ -935,7 +935,7 @@ impl ThreatIntelligenceManager {
                                 from_node
                             );
                             return Some(MeshMessage::ThreatAcknowledgement {
-                                original_request_id: request_id.clone().into(),
+                                original_request_id: request_id.clone(),
                                 node_id: self.node_id.clone().into(),
                                 accepted: false,
                                 reason: "Invalid signature".into(),
@@ -965,7 +965,7 @@ impl ThreatIntelligenceManager {
                 );
 
                 Some(MeshMessage::ThreatAcknowledgement {
-                    original_request_id: request_id.clone().into(),
+                    original_request_id: request_id.clone(),
                     node_id: self.node_id.clone().into(),
                     accepted: true,
                     reason: format!("Accepted {}/{} indicators", accepted_count, indicators.len()).into(),

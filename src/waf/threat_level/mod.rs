@@ -431,7 +431,7 @@ impl ThreatLevelManager {
             return 0;
         }
 
-        let multiplier = 2u64.saturating_pow(violations_count.saturating_sub(1) as u32);
+        let multiplier = 2u64.saturating_pow(violations_count.saturating_sub(1));
         base_seconds * multiplier
     }
 

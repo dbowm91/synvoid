@@ -159,8 +159,8 @@ impl AtomicSlidingWindow {
         let current_bucket = now_ms / self.bucket_duration_ms;
         let last_rotate = self.last_rotate_ms.load(Ordering::Acquire);
 
-        if current_bucket > last_rotate {
-            if self
+        if current_bucket > last_rotate
+            && self
                 .last_rotate_ms
                 .compare_exchange(
                     last_rotate,
@@ -190,7 +190,6 @@ impl AtomicSlidingWindow {
 
                 self.total_count.store(total, Ordering::Release);
             }
-        }
     }
 
     pub fn reset(&self) {
@@ -284,7 +283,7 @@ impl GlobalRateLimiter {
         let sample_rate = self.sample_rate.load(Ordering::Relaxed);
         let sample_counter = self.second_window.total_count.load(Ordering::Relaxed);
 
-        if sample_counter % sample_rate as u64 == 0 {
+        if sample_counter.is_multiple_of(sample_rate as u64) {
             let exit_threshold =
                 (self.config.per_second as f64 * self.config.blackhole_exit_threshold) as u64;
             let estimated_rate = current_rate.saturating_mul(sample_rate as u64);
@@ -459,19 +458,18 @@ impl SlottedIpRateLimiter {
         let current_5min = now_secs / 300;
 
         let last_sec = self.current_second.load(Ordering::Relaxed);
-        if current_sec > last_sec {
-            if self
+        if current_sec > last_sec
+            && self
                 .current_second
                 .compare_exchange(last_sec, current_sec, Ordering::SeqCst, Ordering::Relaxed)
                 .is_ok()
             {
                 // Per-second resets naturally since we check every second
             }
-        }
 
         let last_min = self.current_minute.load(Ordering::Relaxed);
-        if current_min > last_min {
-            if self
+        if current_min > last_min
+            && self
                 .current_minute
                 .compare_exchange(last_min, current_min, Ordering::SeqCst, Ordering::Relaxed)
                 .is_ok()
@@ -479,7 +477,6 @@ impl SlottedIpRateLimiter {
                 // Reset minute counters would require tracking which slots to reset
                 // For simplicity, we use a decay approach in a separate cleanup
             }
-        }
 
         let last_5min = self.current_five_min.load(Ordering::Relaxed);
         if current_5min > last_5min {

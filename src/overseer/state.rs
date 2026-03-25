@@ -6,7 +6,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use super::mode::UpgradeMode;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum UpgradeState {
+    #[default]
     Idle,
     Staging,
     Spawning,
@@ -20,11 +22,6 @@ pub enum UpgradeState {
     DrainingOldMaster,
 }
 
-impl Default for UpgradeState {
-    fn default() -> Self {
-        UpgradeState::Idle
-    }
-}
 
 impl std::fmt::Display for UpgradeState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -352,6 +349,6 @@ mod kill {
             .arg(pid.to_string())
             .output()
             .map(|_| std::process::Command::new("echo").spawn().unwrap())
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+            .map_err(std::io::Error::other)
     }
 }

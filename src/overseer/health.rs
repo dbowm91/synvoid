@@ -161,7 +161,7 @@ where
             });
         }
 
-        let failures: Vec<_> = results.iter().cloned().collect();
+        let failures: Vec<_> = results.to_vec();
         tracing::debug!(
             "Poll attempt {}/{} failed: {}",
             attempt,
@@ -175,7 +175,7 @@ where
     }
 
     let results = operation().await;
-    let failures: Vec<_> = results.iter().cloned().collect();
+    let failures: Vec<_> = results.to_vec();
     Err(failures)
 }
 
@@ -339,7 +339,7 @@ impl HealthChecker {
         interval_secs: u64,
     ) -> Result<(), Vec<(u16, HealthStatus)>> {
         let host = host.to_string();
-        let this = &*self;
+        let this = self;
 
         poll_until_success(
             retries,
@@ -354,7 +354,7 @@ impl HealthChecker {
         )
         .await
         .map(|_| ())
-        .map_err(|failures| failures.into_iter().map(|(p, s)| (p, s)).collect())
+        .map_err(|failures| failures.into_iter().collect())
     }
 
     pub async fn validate_readiness(

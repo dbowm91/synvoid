@@ -8,19 +8,12 @@ use super::server::Zone;
 use super::wire;
 
 #[derive(Clone, Debug)]
+#[derive(Default)]
 pub struct NotifyConfig {
     pub enabled: bool,
     pub also_notify: Vec<String>,
 }
 
-impl Default for NotifyConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            also_notify: Vec::new(),
-        }
-    }
-}
 
 impl From<&crate::config::dns::NotifyConfig> for NotifyConfig {
     fn from(config: &crate::config::dns::NotifyConfig) -> Self {
@@ -236,7 +229,7 @@ fn parse_notify_zone_name(query: &[u8], mut pos: usize) -> Option<String> {
                 return None;
             }
             jumps += 1;
-            let offset = ((len & 0x3F) as usize) << 8 | query[pos + 1] as usize;
+            let offset = (len & 0x3F) << 8 | query[pos + 1] as usize;
             pos = offset;
             continue;
         }

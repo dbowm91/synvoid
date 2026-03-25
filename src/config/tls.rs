@@ -126,6 +126,7 @@ pub struct AcmeConfig {
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Default)]
 pub struct ClientAuthConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -133,11 +134,3 @@ pub struct ClientAuthConfig {
     pub ca_cert_path: Option<String>,
 }
 
-impl Default for ClientAuthConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            ca_cert_path: None,
-        }
-    }
-}

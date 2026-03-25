@@ -523,7 +523,7 @@ impl TcpListenerPool {
                         }
                     }
                     Err(e) => {
-                        return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())));
+                        return Err(Box::new(std::io::Error::other(e.to_string())));
                     }
                 }
             }
@@ -542,7 +542,7 @@ impl TcpListenerPool {
                         }
                     }
                     Err(e) => {
-                        return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())));
+                        return Err(Box::new(std::io::Error::other(e.to_string())));
                     }
                 }
             }
@@ -615,7 +615,7 @@ impl TcpListenerPool {
                     let mut pooled = BufferPool::acquire(buffer_size);
                     let mut sequence: u64 = 0;
                     loop {
-                        match client_read.read(&mut pooled.as_mut_slice()).await {
+                        match client_read.read(pooled.as_mut_slice()).await {
                             Ok(0) => {
                                 TunnelMessage::write_data_chunk_zero_copy(
                                     &mut send_stream,
@@ -663,7 +663,7 @@ impl TcpListenerPool {
                         } else {
                             data_pooled.resize(len);
                         }
-                        recv_stream.read_exact(&mut data_pooled.as_mut_slice()).await?;
+                        recv_stream.read_exact(data_pooled.as_mut_slice()).await?;
                         
                         if let Some((_, _, data, fin)) = TunnelMessage::decode_data_chunk_zero_copy(data_pooled.as_slice()) {
                             if !data.is_empty() {
@@ -714,7 +714,7 @@ impl TcpListenerPool {
         loop {
             match tokio::time::timeout(
                 std::time::Duration::from_secs(300),
-                stream.read(&mut pooled.as_mut_slice())
+                stream.read(pooled.as_mut_slice())
             ).await {
                 Ok(Ok(0)) => break,
                 Ok(Ok(_)) => continue,

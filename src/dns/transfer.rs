@@ -220,8 +220,8 @@ impl ZoneTransfer {
             return Err("Zone transfer not allowed".to_string());
         }
 
-        if self.is_wildcard_transfer(origin) && self.wildcard_requires_tsig() {
-            if tsig.is_none() {
+        if self.is_wildcard_transfer(origin) && self.wildcard_requires_tsig()
+            && tsig.is_none() {
                 tracing::warn!(
                     "SECURITY: AXFR request DENIED for zone={} client={} reason=wildcard_requires_tsig",
                     origin,
@@ -229,7 +229,6 @@ impl ZoneTransfer {
                 );
                 return Err("Zone transfer requires TSIG authentication".to_string());
             }
-        }
 
         let tsig_key_name = tsig.as_ref().map(|t| t.key_name.clone());
         let tsig_configured = self.tsig_verifier.is_some();
@@ -246,7 +245,7 @@ impl ZoneTransfer {
             tsig_status
         );
 
-        if let Some(ref tsig) = tsig {
+        if let Some(tsig) = tsig {
             if let Some(verifier) = &self.tsig_verifier {
                 if let Err(e) = verifier.verify(
                     &[],
@@ -369,8 +368,8 @@ impl ZoneTransfer {
             return Err("Zone transfer not allowed".to_string());
         }
 
-        if self.is_wildcard_transfer(origin) && self.wildcard_requires_tsig() {
-            if tsig.is_none() {
+        if self.is_wildcard_transfer(origin) && self.wildcard_requires_tsig()
+            && tsig.is_none() {
                 tracing::warn!(
                     "IXFR request denied for {} from {} - wildcard requires TSIG",
                     origin,
@@ -378,7 +377,6 @@ impl ZoneTransfer {
                 );
                 return Err("Zone transfer requires TSIG authentication".to_string());
             }
-        }
 
         let tsig_key_name = tsig.as_ref().map(|t| t.key_name.clone());
         let tsig_configured = self.tsig_verifier.is_some();
@@ -396,7 +394,7 @@ impl ZoneTransfer {
             tsig_status
         );
 
-        if let Some(ref tsig) = tsig {
+        if let Some(tsig) = tsig {
             if let Some(verifier) = &self.tsig_verifier {
                 if let Err(e) = verifier.verify(
                     &[],

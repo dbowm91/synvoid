@@ -190,8 +190,7 @@ impl InputNormalizer {
     }
 
     fn decode_html_entity_simple(&self, entity: &str) -> Option<char> {
-        if entity.starts_with('#') {
-            let rest = &entity[1..];
+        if let Some(rest) = entity.strip_prefix('#') {
             if rest.starts_with('x') || rest.starts_with('X') {
                 let hex = &rest[1..];
                 if let Ok(code) = u32::from_str_radix(hex, 16) {

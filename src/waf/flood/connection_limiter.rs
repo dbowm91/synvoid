@@ -113,8 +113,8 @@ impl ConnectionLimiter {
         let current_sec = self.current_second.load(Ordering::Relaxed);
         let current_min = self.current_minute.load(Ordering::Relaxed);
 
-        if now_secs > current_sec {
-            if self
+        if now_secs > current_sec
+            && self
                 .current_second
                 .compare_exchange(current_sec, now_secs, Ordering::SeqCst, Ordering::Relaxed)
                 .is_ok()
@@ -124,11 +124,10 @@ impl ConnectionLimiter {
                 }
                 self.global_second.store(0, Ordering::Relaxed);
             }
-        }
 
         let current_min_val = now_secs / 60;
-        if current_min_val > current_min {
-            if self
+        if current_min_val > current_min
+            && self
                 .current_minute
                 .compare_exchange(
                     current_min,
@@ -143,7 +142,6 @@ impl ConnectionLimiter {
                 }
                 self.global_minute.store(0, Ordering::Relaxed);
             }
-        }
     }
 
     pub fn get_stats(&self) -> ConnectionStats {

@@ -53,12 +53,9 @@ pub fn probe_reuseport_support() -> bool {
 
     drop(listener1);
 
-    let listener2 = match TcpListener::bind(bound_addr) {
-        Ok(_) => true,
-        Err(_) => false,
-    };
+    
 
-    listener2
+    TcpListener::bind(bound_addr).is_ok()
 }
 
 #[cfg(unix)]

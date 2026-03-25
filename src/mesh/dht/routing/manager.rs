@@ -33,7 +33,7 @@ impl Clone for DhtRoutingManager {
         Self {
             routing_table: self.routing_table.clone(),
             node_id: self.node_id.clone(),
-            node_id_hash: self.node_id_hash.clone(),
+            node_id_hash: self.node_id_hash,
             config: self.config.clone(),
             routing_enabled: self.routing_enabled,
             full_network_view: self.full_network_view,
@@ -58,11 +58,11 @@ impl DhtRoutingManager {
         
         let geo_config = dht_config
             .and_then(|d| d.geo_routing.clone())
-            .unwrap_or_else(GeoRoutingConfig::default);
+            .unwrap_or_default();
         
         let hub_config = dht_config
             .and_then(|d| d.regional_hubs.clone())
-            .unwrap_or_else(RegionalHubConfig::default);
+            .unwrap_or_default();
         
         Self {
             routing_table: Arc::new(RwLock::new(None)),
@@ -123,7 +123,7 @@ impl DhtRoutingManager {
         };
         
         let mut table = RoutingTable::new(
-            self.node_id_hash.clone(),
+            self.node_id_hash,
             self.node_id.clone(),
         );
         
@@ -178,7 +178,7 @@ impl DhtRoutingManager {
             return;
         }
         
-        let table = RoutingTable::from_persisted(persisted, self.node_id_hash.clone());
+        let table = RoutingTable::from_persisted(persisted, self.node_id_hash);
         
         let mut rt = self.routing_table.write().await;
         *rt = Some(table);
@@ -420,7 +420,7 @@ impl DhtRoutingManager {
     }
 
     pub async fn init_with_persisted_bytes(&self, data: Vec<u8>) -> bool {
-        match RoutingTable::from_persisted_bytes(data, self.node_id_hash.clone()) {
+        match RoutingTable::from_persisted_bytes(data, self.node_id_hash) {
             Ok(table) => {
                 let mut rt = self.routing_table.write().await;
                 *rt = Some(table);
@@ -502,7 +502,7 @@ impl DhtBootstrapper {
             ).await;
         }
 
-        let local_id = self.routing_manager.local_node_id_hash().clone();
+        let local_id = *self.routing_manager.local_node_id_hash();
         
         for seed in seed_nodes {
             if self.is_duplicate_request(&seed.node_id) {
@@ -629,7 +629,7 @@ impl DhtQueryExecutor {
             }
 
             let query_futures: Vec<_> = limited_peers.iter().map(|peer| {
-                let target_node_id = target_node_id.clone();
+                let target_node_id = target_node_id;
                 let local_id = local_id.clone();
                 let target_key = target_key.to_string();
                 

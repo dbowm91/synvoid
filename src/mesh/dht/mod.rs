@@ -54,7 +54,7 @@ impl DhtRateLimiter {
         let now = Instant::now();
         let mut peer_requests = self.peer_requests.write();
         
-        let requests = peer_requests.entry(peer_id.to_string()).or_insert_with(Vec::new);
+        let requests = peer_requests.entry(peer_id.to_string()).or_default();
         
         requests.retain(|t| now.duration_since(*t).as_secs() < self.window_secs);
         
@@ -112,17 +112,14 @@ pub enum DhtError {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
+#[derive(Default)]
 pub enum DhtConsistencyLevel {
     Low,
+    #[default]
     Medium,
     High,
 }
 
-impl Default for DhtConsistencyLevel {
-    fn default() -> Self {
-        DhtConsistencyLevel::Medium
-    }
-}
 
 // Note: DhtConfig has complex dependencies - add rkyv derives to individual fields as needed
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -534,6 +531,12 @@ pub struct TierKeyStoreEntry {
 
 pub struct TierKeyStore {
     keys: HashMap<String, TierKeyStoreEntry>,
+}
+
+impl Default for TierKeyStore {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl TierKeyStore {

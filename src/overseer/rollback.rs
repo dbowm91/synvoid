@@ -30,9 +30,7 @@ impl RollbackManager {
     pub async fn get_rollback_target(&self) -> Option<RollbackTarget> {
         let state = self.persistence.load().unwrap_or_default();
 
-        if state.current_version.is_none() {
-            return None;
-        }
+        state.current_version.as_ref()?;
 
         if let Some(last_error) = &state.last_error {
             Some(RollbackTarget {
@@ -66,7 +64,7 @@ impl RollbackManager {
             }
             
             let actual_checksum = compute_sha256(&path)
-                .map_err(|e| RollbackError::IoError(e))?;
+                .map_err(RollbackError::IoError)?;
             
             if &actual_checksum != expected_checksum {
                 return Err(RollbackError::ChecksumMismatch);
@@ -175,8 +173,7 @@ impl RollbackManager {
                                 path,
                                 created_at: metadata
                                     .and_then(|m| m.created().ok())
-                                    .map(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                                    .flatten()
+                                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                                     .map(|d| d.as_secs())
                                     .unwrap_or(0),
                             });

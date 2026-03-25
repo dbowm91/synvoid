@@ -600,7 +600,7 @@ impl MeshTransport {
             };
 
             let message = MeshMessage::SiteConfigSync {
-                request_id: request_id.into(),
+                request_id: request_id,
                 site_id: site_id.into(),
                 config_version,
                 config_json: config_json.into(),
@@ -937,7 +937,7 @@ impl MeshTransport {
                 signature,
                 key_exchange_endpoint,
             } => {
-                self.handle_global_node_announce(&peer_id, &node_id, &public_key, action, timestamp, &signature, key_exchange_endpoint.as_deref()).await;
+                self.handle_global_node_announce(peer_id, &node_id, &public_key, action, timestamp, &signature, key_exchange_endpoint.as_deref()).await;
             }
             MeshMessage::UnspentTierKeyAnnounce {
                 org_id,
@@ -1950,7 +1950,7 @@ impl MeshTransport {
             let signable = format!("{}:{}:{}:{}", node_id, public_key, action as u8, timestamp);
             
             // Check if we have a genesis key configured
-            if let Some(ref genesis) = self.config.genesis_key() {
+            if let Some(genesis) = self.config.genesis_key() {
                 if let Some(ref priv_key) = genesis.private_key {
                     // Derive the genesis public key from the private key and verify with Ed25519
                     if let Some(genesis_pk) = crate::mesh::cert::get_ed25519_public_key(priv_key) {
@@ -2107,8 +2107,7 @@ impl MeshTransport {
             Ok(ip) => Some(format!("https://{}:{}", ip, port)),
             Err(_) => {
                 // Fallback to bind address if we can't determine our IP
-                let bind_address = self.config.bind_address.as_ref()
-                    .map(|s| s.as_str())
+                let bind_address = self.config.bind_address.as_deref()
                     .unwrap_or("0.0.0.0");
                 Some(format!("https://{}:{}", bind_address, port))
             }
@@ -3179,7 +3178,7 @@ impl MeshTransport {
                         // Client needs full transfer
                         let records: Vec<crate::dns::anycast_sync::SerializedRecord> = zone.records
                             .iter()
-                            .map(|((name, rt), records)| {
+                            .flat_map(|((name, rt), records)| {
                                 records.iter().map(|r| crate::dns::anycast_sync::SerializedRecord {
                                     name: name.clone(),
                                     record_type: rt.to_string(),
@@ -3188,7 +3187,6 @@ impl MeshTransport {
                                     priority: r.priority,
                                 }).collect::<Vec<_>>()
                             })
-                            .flatten()
                             .collect();
 
                         let json = serde_json::to_string(&crate::dns::anycast_sync::SerializedZoneData {
@@ -3205,11 +3203,7 @@ impl MeshTransport {
                             zone_origin, client_serial, current_serial);
                         
                         // Try to get the client's version from history
-                        let old_records = if let Some(old_version) = zone.get_previous_version(client_serial) {
-                            Some(old_version.records.clone())
-                        } else {
-                            None
-                        };
+                        let old_records = zone.get_previous_version(client_serial).map(|old_version| old_version.records.clone());
 
                         if let Some(old_records) = old_records {
                             // Compute IXFR: find additions and deletions
@@ -3289,7 +3283,7 @@ impl MeshTransport {
                             
                             let records: Vec<crate::dns::anycast_sync::SerializedRecord> = zone.records
                                 .iter()
-                                .map(|((name, rt), records)| {
+                                .flat_map(|((name, rt), records)| {
                                     records.iter().map(|r| crate::dns::anycast_sync::SerializedRecord {
                                         name: name.clone(),
                                         record_type: rt.to_string(),
@@ -3298,7 +3292,6 @@ impl MeshTransport {
                                         priority: r.priority,
                                     }).collect::<Vec<_>>()
                                 })
-                                .flatten()
                                 .collect();
 
                             let json = serde_json::to_string(&crate::dns::anycast_sync::SerializedZoneData {
@@ -3594,11 +3587,7 @@ impl MeshTransport {
             crate::mesh::protocol::LookupType::Route => {
                 if let Some((provider, hops)) = self.topology.get_cached_route(key).await {
                     Some(format!("{}:{}", provider, hops).into_bytes())
-                } else if let Some(local) = self.topology.get_upstream_info(key).await {
-                    Some(format!("local:{}", self.config.node_id()).into_bytes())
-                } else {
-                    None
-                }
+                } else { self.topology.get_upstream_info(key).await.map(|local| format!("local:{}", self.config.node_id()).into_bytes()) }
             }
             crate::mesh::protocol::LookupType::Peer => {
                 if let Some(peer) = self.topology.get_peer(key).await {
@@ -3681,7 +3670,7 @@ impl MeshTransport {
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
-                .as_secs() as u64,
+                .as_secs(),
         };
 
         if let Err(e) = self.send_datagram_to_peer(from_peer, &response).await {
@@ -4095,8 +4084,7 @@ impl MeshTransport {
             return false;
         }
 
-        if challenge_token.starts_with("txt:") {
-            let expected_token = &challenge_token[4..];
+        if let Some(expected_token) = challenge_token.strip_prefix("txt:") {
             return self.verify_txt_challenge(domain, expected_token).await;
         }
 
@@ -4105,8 +4093,7 @@ impl MeshTransport {
             return self.verify_oauth_challenge(domain, origin_node_id, oauth_config).await;
         }
 
-        if challenge_token.starts_with("signed:") {
-            let signature_hex = &challenge_token[7..];
+        if let Some(signature_hex) = challenge_token.strip_prefix("signed:") {
             return self.verify_signed_challenge(domain, origin_node_id, signature_hex).await;
         }
 
@@ -4236,13 +4223,13 @@ impl MeshTransport {
         let response = MeshMessage::TopologySyncResponse {
             request_id: request_id.into(),
             peers: peers.into_iter().map(|p| crate::mesh::protocol::MeshPeerInfo {
-                node_id: p.node_id.into(),
-                address: p.address.into(),
+                node_id: p.node_id,
+                address: p.address,
                 role: p.role,
                 capabilities: p.capabilities,
                 is_global: p.is_global,
                 latency_ms: p.latency_ms,
-                upstreams: p.upstreams.into_iter().map(|s| s.into()).collect(),
+                upstreams: p.upstreams.into_iter().collect(),
                 is_trusted: p.role.is_global(),
                 quic_port: p.quic_port,
                 wireguard_port: p.wireguard_port,
@@ -4655,12 +4642,9 @@ impl MeshTransport {
                 _ = async {
                     for entry in peer_connections.iter() {
                         let connection = &entry.value().connection;
-                        match connection.read_datagram().await {
-                            Ok(data) => {
-                                let peer_id = entry.key().clone();
-                                tracing::debug!("Received datagram from {}: {} bytes", peer_id, data.len());
-                            }
-                            Err(_) => {}
+                        if let Ok(data) = connection.read_datagram().await {
+                            let peer_id = entry.key().clone();
+                            tracing::debug!("Received datagram from {}: {} bytes", peer_id, data.len());
                         }
                     }
                     tokio::time::sleep(Duration::from_millis(1)).await;
@@ -4783,7 +4767,7 @@ impl MeshTransport {
                     None,
                 ).await;
 
-                let local_id = routing_manager.local_node_id_hash().clone();
+                let local_id = *routing_manager.local_node_id_hash();
                 let request_id = format!("dht-bootstrap-{}", uuid::Uuid::new_v4());
                 
                 let find_node = MeshMessage::FindNode {
@@ -4832,7 +4816,7 @@ impl MeshTransport {
                     None,
                 ).await;
 
-                let local_id = rm.local_node_id_hash().clone();
+                let local_id = *rm.local_node_id_hash();
                 let request_id = format!("dht-ping-{}", uuid::Uuid::new_v4());
                 
                 let ping = MeshMessage::Ping {
@@ -4881,7 +4865,7 @@ impl MeshTransport {
         
         let edge_count = edge_nodes.len();
         for node in edge_nodes {
-            if !self.topology.get_peer(&node.node_id).await.is_some() {
+            if self.topology.get_peer(&node.node_id).await.is_none() {
                 self.topology.add_peer(node, PeerStatus::Connecting).await;
             }
         }
@@ -5179,7 +5163,7 @@ impl MeshTransport {
 
         let peer_node_id = peer_info.node_id.clone();
         let peer_address = peer_info.address.clone();
-        let peer_role = peer_info.role.clone();
+        let peer_role = peer_info.role;
         let peer_info_return = peer_info.clone();
         self.peer_connections.insert(session_id.to_string(), peer_info);
 
@@ -6319,7 +6303,7 @@ impl MeshTransport {
         let max_failures = self.config.connection.max_auth_failures;
         
         let mut failures = self.auth_failures.write();
-        let node_failures = failures.entry(node_id.to_string()).or_insert_with(Vec::new);
+        let node_failures = failures.entry(node_id.to_string()).or_default();
         
         node_failures.retain(|t| now.duration_since(*t) < window);
         
@@ -6360,7 +6344,7 @@ impl MeshTransport {
         let max_rate = self.config.routing.mesh_messages_per_sec * 60;
         
         let mut times = self.peer_message_times.write();
-        let peer_times = times.entry(peer_id.to_string()).or_insert_with(Vec::new);
+        let peer_times = times.entry(peer_id.to_string()).or_default();
         
         peer_times.retain(|t| now.duration_since(*t) < window);
         

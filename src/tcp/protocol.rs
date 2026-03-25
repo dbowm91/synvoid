@@ -276,7 +276,7 @@ impl ProtocolDetector {
 
         if data.starts_with(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n") {
             tracing::debug!("HTTP/2 connection preface detected");
-            if self.looks_like_grpc(&data) {
+            if self.looks_like_grpc(data) {
                 return Protocol::Grpc;
             }
             return Protocol::Http2;
@@ -338,12 +338,11 @@ impl ProtocolDetector {
             return Protocol::Ssh;
         }
 
-        if data.len() >= 2 {
-            if data.starts_with(&[0xff, 0xfb]) || data.starts_with(&[0xff, 0xfe])
-                || data.starts_with(&[0xff, 0xfd]) || data.starts_with(&[0xff, 0xfc]) {
+        if data.len() >= 2
+            && (data.starts_with(&[0xff, 0xfb]) || data.starts_with(&[0xff, 0xfe])
+                || data.starts_with(&[0xff, 0xfd]) || data.starts_with(&[0xff, 0xfc])) {
                 return Protocol::Telnet;
             }
-        }
 
         if first_line.starts_with("NICK ") || first_line.starts_with("USER ")
             || first_line.starts_with("JOIN ") || first_line.starts_with("PRIVMSG ") {
@@ -379,12 +378,11 @@ impl ProtocolDetector {
             return Protocol::Postgres;
         }
 
-        if first_line.starts_with("*") || first_line.starts_with("$") 
-            || first_line.starts_with(":") {
-            if self.looks_like_redis(data) {
+        if (first_line.starts_with("*") || first_line.starts_with("$") 
+            || first_line.starts_with(":"))
+            && self.looks_like_redis(data) {
                 return Protocol::Redis;
             }
-        }
 
         if first_line.starts_with("+OK") || first_line.starts_with("-ERR") {
             if self.looks_like_redis(data) {
@@ -400,20 +398,18 @@ impl ProtocolDetector {
             return Protocol::Memcached;
         }
 
-        if data.len() >= 24 && data[0] == 0x80 && (data[1] == 0x80 || data[1] == 0x00) {
-            if self.looks_like_memcached_binary(data) {
+        if data.len() >= 24 && data[0] == 0x80 && (data[1] == 0x80 || data[1] == 0x00)
+            && self.looks_like_memcached_binary(data) {
                 return Protocol::MemcachedBinary;
             }
-        }
 
-        if data[0] == 0x30 && data.len() >= 6 {
-            if self.looks_like_ldap(data) {
+        if data[0] == 0x30 && data.len() >= 6
+            && self.looks_like_ldap(data) {
                 if data.len() >= 9 && data[9] == 0x02 {
                     return Protocol::Ldaps;
                 }
                 return Protocol::Ldap;
             }
-        }
 
         if data.len() >= 18 && data[0] == 0x03 && data[1] == 0x00 {
             return Protocol::Rdp;
@@ -482,22 +478,21 @@ impl ProtocolDetector {
 
         if data.len() >= 4 && data[0] == 0x01 && data[2] == 0x00 {
             let code = data[1];
-            if (code >= 0x01 && code <= 0x0C) || code == 0x0E || code == 0x10 {
+            if (0x01..=0x0C).contains(&code) || code == 0x0E || code == 0x10 {
                 return Protocol::Radius;
             }
         }
 
-        if first_line.starts_with("INVITE ") || first_line.starts_with("ACK ")
+        if (first_line.starts_with("INVITE ") || first_line.starts_with("ACK ")
             || first_line.starts_with("BYE ") || first_line.starts_with("CANCEL ")
-            || first_line.starts_with("OPTIONS ") || first_line.starts_with("REGISTER ") {
-            if upper_line.contains("SIP/") {
+            || first_line.starts_with("OPTIONS ") || first_line.starts_with("REGISTER "))
+            && upper_line.contains("SIP/") {
                 return Protocol::Sip;
             }
-        }
 
-        if first_line.starts_with("GET /") || first_line.starts_with("POST /")
-            || first_line.starts_with("PUT /") || first_line.starts_with("DELETE /") {
-            if upper_line.contains("HTTP/") {
+        if (first_line.starts_with("GET /") || first_line.starts_with("POST /")
+            || first_line.starts_with("PUT /") || first_line.starts_with("DELETE /"))
+            && upper_line.contains("HTTP/") {
                 let data_upper = String::from_utf8_lossy(data).to_uppercase();
                 if data_upper.contains("ELASTICSEARCH") || data_upper.contains("X-ELASTICSEARCH") {
                     return Protocol::Elasticsearch;
@@ -506,7 +501,6 @@ impl ProtocolDetector {
                     return Protocol::Solr;
                 }
             }
-        }
 
         let lower_data = String::from_utf8_lossy(data).to_lowercase();
         if lower_data.contains("minecraft") || lower_data.contains("yggdrasil") {
@@ -528,8 +522,8 @@ impl ProtocolDetector {
         let first_byte = data[0];
         let is_long_header = (first_byte & 0x80) != 0;
 
-        if is_long_header {
-            if data.len() >= 5 {
+        if is_long_header
+            && data.len() >= 5 {
                 let version = u32::from_be_bytes([data[1], data[2], data[3], data[4]]);
                 if version == 0 || (version & 0xFF000000) == 0xFF000000 {
                     return true;
@@ -538,7 +532,6 @@ impl ProtocolDetector {
                     return true;
                 }
             }
-        }
 
         false
     }
@@ -550,27 +543,21 @@ impl ProtocolDetector {
         let first_char = data[0] as char;
         let line = extract_first_line(data);
         
-        if first_char == '*' {
-            if line.len() > 1 {
-                if let Ok(_) = line[1..].parse::<u32>() {
+        if first_char == '*'
+            && line.len() > 1
+                && line[1..].parse::<u32>().is_ok() {
                     return true;
                 }
-            }
-        }
-        if first_char == '$' {
-            if line.len() > 1 {
-                if let Ok(_) = line[1..].parse::<i32>() {
+        if first_char == '$'
+            && line.len() > 1
+                && line[1..].parse::<i32>().is_ok() {
                     return true;
                 }
-            }
-        }
-        if first_char == ':' {
-            if line.len() > 1 {
-                if line[1..].chars().all(|c| c.is_ascii_digit() || c == '-') {
+        if first_char == ':'
+            && line.len() > 1
+                && line[1..].chars().all(|c| c.is_ascii_digit() || c == '-') {
                     return true;
                 }
-            }
-        }
         false
     }
 
@@ -579,16 +566,15 @@ impl ProtocolDetector {
             return false;
         }
         let msg_len = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
-        if msg_len > 0 && msg_len < 48000000 && data.len() >= msg_len {
-            if data.len() >= 12 {
+        if msg_len > 0 && msg_len < 48000000 && data.len() >= msg_len
+            && data.len() >= 12 {
                 let _request_id = u32::from_le_bytes([data[4], data[5], data[6], data[7]]);
                 let _response_to = u32::from_le_bytes([data[8], data[9], data[10], data[11]]);
                 let opcode = u32::from_le_bytes([data[12], data[13], data[14], data[15]]);
-                if opcode >= 1 && opcode <= 2010 {
+                if (1..=2010).contains(&opcode) {
                     return true;
                 }
             }
-        }
         false
     }
 
@@ -611,15 +597,14 @@ impl ProtocolDetector {
     }
 
     fn looks_like_kafka(&self, data: &[u8], api_key: u16) -> bool {
-        if api_key <= 64 {
-            if data.len() >= 6 {
+        if api_key <= 64
+            && data.len() >= 6 {
                 let api_version = u16::from_be_bytes([data[6], data[7]]);
                 if api_version <= 20 {
                     let correlation_id = u32::from_be_bytes([data[8], data[9], data[10], data[11]]);
                     return correlation_id > 0 || api_key == 18;
                 }
             }
-        }
         false
     }
 
@@ -752,11 +737,10 @@ impl ProtocolDetector {
         }
 
         let version = data[0];
-        if version < 1 || version > 5 {
-            if version < 0x81 || version > 0x85 {
+        if (!(1..=5).contains(&version))
+            && (!(0x81..=0x85).contains(&version)) {
                 return false;
             }
-        }
 
         let flags = data[1];
         if flags > 0x07 {

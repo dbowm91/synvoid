@@ -443,11 +443,19 @@ impl ProcessManager {
             cmd.arg("--log-level").arg(level);
         }
 
-        // Pass IPC session key via environment variable instead of CLI argument
-        // to avoid exposing it in process listings (ps aux)
+        // Pass IPC session key via a temporary file to avoid exposing it
+        // in process listings (/proc/<pid>/environ, ps aux, etc.)
         if let Some(ref key) = self.config.ipc_session_key {
             let key_hex = key.iter().map(|b| format!("{:02x}", b)).collect::<String>();
-            cmd.env("MALUWAF_IPC_KEY", key_hex);
+            match self.write_ipc_key_to_tempfile(&key_hex) {
+                Ok(path) => {
+                    cmd.env("MALUWAF_IPC_KEY_FILE", path);
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to write IPC key to temp file: {}, falling back to env var", e);
+                    cmd.env("MALUWAF_IPC_KEY", key_hex);
+                }
+            }
         }
 
         cmd.arg("--config-path")
@@ -458,6 +466,28 @@ impl ProcessManager {
             .stderr(Stdio::piped());
         
         cmd
+    }
+
+    fn write_ipc_key_to_tempfile(&self, key_hex: &str) -> std::io::Result<String> {
+        use std::io::Write;
+        
+        let temp_dir = std::env::temp_dir();
+        let file_path = temp_dir.join(format!("maluwaf_ipc_key_{}", std::process::id()));
+        
+        {
+            let mut file = std::fs::File::create(&file_path)?;
+            
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+            }
+            
+            file.write_all(key_hex.as_bytes())?;
+            file.flush()?;
+        }
+        
+        Ok(file_path.to_string_lossy().into_owned())
     }
 
     fn record_spawn(&self, id: &WorkerId, pid: u32, port: Option<u16>, event: ProcessEvent) {
@@ -495,7 +525,7 @@ impl ProcessManager {
 
         let pid = {
             let mut workers = self.workers.write();
-            let worker_process = WorkerProcess::new_placeholder(id.clone(), port, restart_count);
+            let worker_process = WorkerProcess::new_placeholder(id, port, restart_count);
             workers.insert(id.as_usize(), worker_process);
             drop(workers);
             
@@ -515,7 +545,7 @@ impl ProcessManager {
             pid
         };
 
-        self.record_spawn(&id, pid, Some(port), ProcessEvent::WorkerStarted(id.clone(), pid, port));
+        self.record_spawn(&id, pid, Some(port), ProcessEvent::WorkerStarted(id, pid, port));
         Ok(id)
     }
 
@@ -555,7 +585,7 @@ impl ProcessManager {
         let child = cmd.spawn()?;
 
         let pid = child.id();
-        let worker_process = WorkerProcess::new(id.clone(), pid, port, child, 0);
+        let worker_process = WorkerProcess::new(id, pid, port, child, 0);
 
         {
             let mut workers = self.workers.write();
@@ -566,7 +596,7 @@ impl ProcessManager {
             &id, 
             pid, 
             Some(port), 
-            ProcessEvent::WorkerStarted(id.clone(), pid, port)
+            ProcessEvent::WorkerStarted(id, pid, port)
         );
         tracing::info!("Spawned upgrade worker {} with PID {} on port {} (upgrade={}, reuse_port={})", 
             id, pid, port, upgrade_mode, reuse_port);
@@ -616,7 +646,7 @@ impl ProcessManager {
         })?;
 
         let pid = child.id();
-        let unified_worker_process = UnifiedServerWorkerProcess::new(id.clone(), pid, child);
+        let unified_worker_process = UnifiedServerWorkerProcess::new(id, pid, child);
 
         {
             let mut unified_server_worker = self.unified_server_worker.write();
@@ -627,7 +657,7 @@ impl ProcessManager {
             &id, 
             pid, 
             None, 
-            ProcessEvent::UnifiedServerWorkerStarted(id.clone(), pid)
+            ProcessEvent::UnifiedServerWorkerStarted(id, pid)
         );
         Ok(id)
     }
@@ -987,7 +1017,7 @@ impl ProcessManager {
                 *w.status() == WorkerStatus::Ready 
                     && now.duration_since(w.last_heartbeat()) > timeout
             })
-            .map(|(_, w)| w.id.clone())
+            .map(|(_, w)| w.id)
             .collect();
         drop(workers);
 
@@ -1168,7 +1198,7 @@ impl ProcessManager {
     fn restart_worker(&self, worker_id: WorkerId, port: u16, restart_count: u32) {
         tracing::info!("Restarting worker {} on port {} (attempt {})", worker_id, port, restart_count);
         
-        match self.spawn_worker_with_id_and_count(worker_id.clone(), port, restart_count) {
+        match self.spawn_worker_with_id_and_count(worker_id, port, restart_count) {
             Ok(_) => {
                 self.metrics.total_restarts.fetch_add(1, Ordering::Relaxed);
                 let _ = self.event_tx.blocking_send(ProcessEvent::WorkerRestarted(
@@ -1206,7 +1236,7 @@ impl ProcessManager {
         };
 
         if let Some(ref worker) = *self.unified_server_worker.read() {
-            if let Some(ref child) = worker.child_ref().as_ref() {
+            if let Some(child) = worker.child_ref().as_ref() {
                 pids.push((child.id(), graceful));
             }
         }
@@ -1346,9 +1376,7 @@ impl ProcessManager {
 
     pub fn get_worker_metrics(&self) -> Vec<(WorkerId, WorkerMetricsPayload)> {
         self.workers
-            .read()
-            .iter()
-            .map(|(_id, w)| (w.id.clone(), w.metrics.clone()))
+            .read().values().map(|w| (w.id, w.metrics.clone()))
             .collect()
     }
 

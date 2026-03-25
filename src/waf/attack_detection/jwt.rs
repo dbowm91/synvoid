@@ -219,8 +219,7 @@ impl JwtDetector {
     pub fn detect_in_headers(&self, headers: &http::HeaderMap) -> Option<AttackDetectionResult> {
         if let Some(auth_header) = headers.get("authorization") {
             if let Ok(auth_str) = auth_header.to_str() {
-                if auth_str.starts_with("Bearer ") {
-                    let token = &auth_str[7..];
+                if let Some(token) = auth_str.strip_prefix("Bearer ") {
                     return self
                         .analyze_jwt(token, InputLocation::Header("authorization".to_string()));
                 }
@@ -282,7 +281,7 @@ fn extract_jwt_token(input: &str) -> Option<String> {
 }
 
 fn decode_jwt_part(part: &str) -> Option<String> {
-    let padded = if part.len() % 4 == 0 {
+    let padded = if part.len().is_multiple_of(4) {
         part.to_string()
     } else {
         let padding = 4 - (part.len() % 4);

@@ -382,7 +382,7 @@ impl MeshDnsRegistry {
         {
             let mut mapping = self.domain_to_origin_mapping.write();
             mapping.entry(registration.domain.clone())
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(registration.node_id.clone());
         }
 
@@ -479,7 +479,7 @@ impl MeshDnsRegistry {
         for zone in &registration.dns_zones {
             let mut mapping = self.domain_to_anycast_mapping.write();
             mapping.entry(zone.clone())
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(registration.node_id.clone());
         }
 
@@ -604,7 +604,7 @@ impl MeshDnsRegistry {
                     Some(RegisteredAnycastNode {
                         node_id: node_id.to_string(),
                         anycast_ips,
-                        geo: geo.map(String::into),
+                        geo,
                         healthy,
                         capacity,
                         latency_ms: None,
@@ -855,7 +855,7 @@ impl MeshDnsRegistry {
                     origins.insert(reg.node_id.clone(), origin);
                     
                     mapping.entry(reg.domain.clone())
-                        .or_insert_with(Vec::new)
+                        .or_default()
                         .push(reg.node_id.clone());
                     
                     tracing::info!("Registered origin {} for domain {} (authenticated: {})", reg.node_id, reg.domain, authenticated);
@@ -1004,7 +1004,7 @@ impl MeshDnsRegistry {
         let filtered: Vec<RegisteredOriginNode> = origins
             .into_iter()
             .filter(|origin| {
-                if let Some(ref edge) = edge {
+                if let Some(edge) = edge {
                     origin.edge_node_id.as_ref() == Some(&edge.node_id) || 
                     origin.edge_node_id.is_none()
                 } else {
@@ -1269,7 +1269,7 @@ impl MeshDnsRegistry {
         {
             let mut mapping = self.domain_to_origin_mapping.write();
             mapping.entry(domain.clone())
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(origin_node_id.clone());
         }
 
@@ -1313,7 +1313,7 @@ impl MeshDnsRegistry {
                         let anycast = RegisteredAnycastNode {
                             node_id: node_id.to_string(),
                             anycast_ips,
-                            geo: Some(geo.into()),
+                            geo: Some(geo),
                             healthy,
                             capacity,
                             latency_ms: None,
@@ -1328,7 +1328,7 @@ impl MeshDnsRegistry {
                         for zone in &dns_zones {
                             let mut mapping = self.domain_to_anycast_mapping.write();
                             mapping.entry(zone.clone())
-                                .or_insert_with(Vec::new)
+                                .or_default()
                                 .push(node_id.to_string());
                         }
 
@@ -1355,7 +1355,7 @@ impl MeshDnsRegistry {
             request_id: request_id.clone(),
             domain: domain.clone(),
             origin_node_id: origin_node_id.clone(),
-            verification_type: verification_type.clone(),
+            verification_type,
             challenge_token: Some(challenge_token),
             ip_addresses,
             created_at: now,
@@ -1500,7 +1500,7 @@ impl MeshDnsRegistry {
         {
             let mut mapping = self.domain_to_origin_mapping.write();
             mapping.entry(registration.domain.clone())
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(registration.node_id.clone());
         }
 
@@ -1682,8 +1682,8 @@ impl MeshDnsRegistry {
             );
 
             return Ok(DnsRegistrationWithVerificationResponse {
-                request_id: request_id,
-                domain: domain,
+                request_id,
+                domain,
                 registration_accepted: true,
                 verification_status: DomainVerificationStatus::Pending,
                 verification_type: Some(DomainVerificationType::TxtChallenge),
@@ -1703,8 +1703,8 @@ impl MeshDnsRegistry {
         );
 
         Ok(DnsRegistrationWithVerificationResponse {
-            request_id: request_id,
-            domain: domain,
+            request_id,
+            domain,
             registration_accepted: true,
             verification_status: DomainVerificationStatus::Pending,
             verification_type: Some(DomainVerificationType::NsRecord),
@@ -1869,7 +1869,7 @@ impl MeshDnsRegistry {
                         {
                             let mut mapping = domain_mapping.write();
                             mapping.entry(domain.clone())
-                                .or_insert_with(Vec::new)
+                                .or_default()
                                 .push(request_id.clone());
                         }
 

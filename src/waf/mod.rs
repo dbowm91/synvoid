@@ -151,6 +151,7 @@ pub struct WafCore {
 }
 
 #[derive(Clone)]
+#[derive(Default)]
 pub struct TestModeConfig {
     pub enabled: bool,
     pub ratelimit_off: bool,
@@ -160,18 +161,6 @@ pub struct TestModeConfig {
     pub flood_off: bool,
 }
 
-impl Default for TestModeConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            ratelimit_off: false,
-            attack_off: false,
-            bot_off: false,
-            challenge_off: false,
-            flood_off: false,
-        }
-    }
-}
 
 impl TestModeConfig {
     pub fn all_off() -> Self {
@@ -554,8 +543,8 @@ impl WafCore {
             }
         }
 
-        if self.config.enable_css_honeypot {
-            if !path.starts_with("/_waf_css_challenge") && !path.starts_with("/_waf_assets") {
+        if self.config.enable_css_honeypot
+            && !path.starts_with("/_waf_css_challenge") && !path.starts_with("/_waf_assets") {
                 if self.test_mode.enabled && self.test_mode.challenge_off {
                     return WafDecision::Pass;
                 }
@@ -597,7 +586,6 @@ impl WafCore {
                     }
                 }
             }
-        }
 
         WafDecision::Pass
     }
@@ -797,41 +785,38 @@ impl WafCore {
                     user_agent.map(String::from),
                 );
                 
-                match result {
-                    ProbeResult::ProbingDetected { unique_endpoints, event_count } => {
-                        tracing::warn!(
-                            ip = %client_ip,
-                            endpoints = ?unique_endpoints,
-                            total_events = event_count,
-                            "Probing pattern detected - multiple honeypot endpoints accessed"
-                        );
-                        
-                        let config = tracker.get_config();
-                        if config.auto_ban_elevated_threat {
-                            let threat_level = self.threat_level.as_ref().map(|tl| tl.get_level().as_u8()).unwrap_or(1);
-                            if threat_level >= config.elevated_threat_threshold {
-                                let ban_duration = config.elevated_ban_duration;
-                                tracing::warn!(
-                                    ip = %client_ip,
-                                    threat_level = threat_level,
-                                    ban_duration_secs = ban_duration,
-                                    "Auto-banning probe source due to elevated threat level"
+                if let ProbeResult::ProbingDetected { unique_endpoints, event_count } = result {
+                    tracing::warn!(
+                        ip = %client_ip,
+                        endpoints = ?unique_endpoints,
+                        total_events = event_count,
+                        "Probing pattern detected - multiple honeypot endpoints accessed"
+                    );
+                    
+                    let config = tracker.get_config();
+                    if config.auto_ban_elevated_threat {
+                        let threat_level = self.threat_level.as_ref().map(|tl| tl.get_level().as_u8()).unwrap_or(1);
+                        if threat_level >= config.elevated_threat_threshold {
+                            let ban_duration = config.elevated_ban_duration;
+                            tracing::warn!(
+                                ip = %client_ip,
+                                threat_level = threat_level,
+                                ban_duration_secs = ban_duration,
+                                "Auto-banning probe source due to elevated threat level"
+                            );
+                            if let Some(ref store) = self.block_store {
+                                store.block_ip(client_ip, "probe_auto_ban", ban_duration, "global");
+                            }
+                            if let Some(ref threat_intel) = get_threat_intel() {
+                                threat_intel.announce_local_block(
+                                    client_ip,
+                                    "probe_auto_ban".to_string(),
+                                    ban_duration,
+                                    "global".to_string(),
                                 );
-                                if let Some(ref store) = self.block_store {
-                                    store.block_ip(client_ip, "probe_auto_ban", ban_duration, "global");
-                                }
-                                if let Some(ref threat_intel) = get_threat_intel() {
-                                    threat_intel.announce_local_block(
-                                        client_ip,
-                                        "probe_auto_ban".to_string(),
-                                        ban_duration,
-                                        "global".to_string(),
-                                    );
-                                }
                             }
                         }
                     }
-                    _ => {}
                 }
             }
             
@@ -860,41 +845,38 @@ impl WafCore {
                     user_agent.map(String::from),
                 );
                 
-                match result {
-                    ProbeResult::ProbingDetected { unique_endpoints, event_count } => {
-                        tracing::warn!(
-                            ip = %client_ip,
-                            endpoints = ?unique_endpoints,
-                            total_events = event_count,
-                            "Probing pattern detected - multiple honeypot endpoints accessed"
-                        );
-                        
-                        let config = tracker.get_config();
-                        if config.auto_ban_elevated_threat {
-                            let threat_level = self.threat_level.as_ref().map(|tl| tl.get_level().as_u8()).unwrap_or(1);
-                            if threat_level >= config.elevated_threat_threshold {
-                                let ban_duration = config.elevated_ban_duration;
-                                tracing::warn!(
-                                    ip = %client_ip,
-                                    threat_level = threat_level,
-                                    ban_duration_secs = ban_duration,
-                                    "Auto-banning probe source due to elevated threat level"
+                if let ProbeResult::ProbingDetected { unique_endpoints, event_count } = result {
+                    tracing::warn!(
+                        ip = %client_ip,
+                        endpoints = ?unique_endpoints,
+                        total_events = event_count,
+                        "Probing pattern detected - multiple honeypot endpoints accessed"
+                    );
+                    
+                    let config = tracker.get_config();
+                    if config.auto_ban_elevated_threat {
+                        let threat_level = self.threat_level.as_ref().map(|tl| tl.get_level().as_u8()).unwrap_or(1);
+                        if threat_level >= config.elevated_threat_threshold {
+                            let ban_duration = config.elevated_ban_duration;
+                            tracing::warn!(
+                                ip = %client_ip,
+                                threat_level = threat_level,
+                                ban_duration_secs = ban_duration,
+                                "Auto-banning probe source due to elevated threat level"
+                            );
+                            if let Some(ref store) = self.block_store {
+                                store.block_ip(client_ip, "probe_auto_ban", ban_duration, "global");
+                            }
+                            if let Some(ref threat_intel) = get_threat_intel() {
+                                threat_intel.announce_local_block(
+                                    client_ip,
+                                    "probe_auto_ban".to_string(),
+                                    ban_duration,
+                                    "global".to_string(),
                                 );
-                                if let Some(ref store) = self.block_store {
-                                    store.block_ip(client_ip, "probe_auto_ban", ban_duration, "global");
-                                }
-                                if let Some(ref threat_intel) = get_threat_intel() {
-                                    threat_intel.announce_local_block(
-                                        client_ip,
-                                        "probe_auto_ban".to_string(),
-                                        ban_duration,
-                                        "global".to_string(),
-                                    );
-                                }
                             }
                         }
                     }
-                    _ => {}
                 }
             }
             

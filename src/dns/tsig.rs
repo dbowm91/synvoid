@@ -90,14 +90,10 @@ impl TsigVerifier {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
-            .as_secs() as u64;
+            .as_secs();
 
         let fudge_val = fudge as u64;
-        let time_diff = if time_signed > now {
-            time_signed - now
-        } else {
-            now - time_signed
-        };
+        let time_diff = time_signed.abs_diff(now);
 
         if time_diff > fudge_val {
             return Err(TsigError::TimeInvalid);
@@ -191,7 +187,7 @@ impl TsigVerifier {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
-            .as_secs() as u64;
+            .as_secs();
         let fudge: u16 = 300;
 
         let mut data_to_sign = Vec::new();

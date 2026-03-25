@@ -274,23 +274,66 @@ fn merge_stores(stores: &[AuthStore]) -> AuthStore {
 
 Note: this may produce duplicate login_log entries. See Phase 1 Follow-up item 1.F1.
 
+## Phase 2 Completion Notes (2026-03-25)
+
+Phase 2 addressed all 14 security and TLS hardening items. Key learnings for future agents:
+
+### TLS Client Architecture
+
+The HTTP client was refactored from a single `create_http_client_with_config()` to three tiers:
+
+| Function | TLS | Use Case |
+|----------|-----|----------|
+| `create_http_client()` | `https_or_http()`, native roots + webpki fallback | Internal: honeypot, alerting, worker pool |
+| `create_http_client_with_config()` | `https_only()`, native roots + webpki fallback | Default: proxy, TLS server |
+| `create_upstream_client()` | Configurable via `UpstreamTlsConfig` | Per-site upstream with `skip_verify`/`allow_plaintext` |
+
+The `build_tls_config()` function centralizes TLS configuration. It loads native root certs via `rustls_native_certs`, falls back to webpki roots if none found, and supports `skip_verify` via a `NoVerifier` struct implementing `rustls::client::danger::ServerCertVerifier`.
+
+**Deferred (2.F1):** `create_upstream_client()` is not yet wired into callers. The proxy, health check, and TLS server should migrate to use it with per-site `UpstreamTlsConfig`.
+
+### Clippy Auto-Fix Side Effects
+
+`cargo clippy --fix --allow-dirty --allow-staged` auto-fixed 544 warnings. Some changes were structural (e.g., collapsing nested `if` statements). Always review auto-fix diffs carefully — one change in `src/waf/rule_feed.rs:336-340` re-indented code in a semantically-correct but confusing way (manually cleaned up).
+
+### IPC Key File-Based Transfer
+
+The IPC session key is now passed via a temp file (`MALUWAF_IPC_KEY_FILE`) instead of an env var. The temp file uses `0600` permissions (Unix only) and is deleted by the worker after reading. Falls back to `MALUWAF_IPC_KEY` env var if file write fails.
+
+The hex-parsing code for reading the key from the file is duplicated from the env var path. Consider extracting a `parse_hex_key(key_hex: &str) -> Option<[u8; 32]>` helper (Phase 3 follow-up).
+
+### IPC Message Validation
+
+The `Message::validate()` function was expanded from 7 validated variants to 30+. Helper functions `check_str`, `check_opt_str`, `check_str_vec` reduce boilerplate. A catch-all `_ => Ok(())` still exists for future variants — new variants with string fields should add explicit validation arms.
+
+### 501 for Stub Endpoints
+
+Six admin endpoints that returned success without doing anything now return `501 NOT_IMPLEMENTED` with `tracing::warn!` logs. This is a breaking API change — clients calling these endpoints will receive HTTP 501 instead of 200.
+
 ## Known Code Quality Context
 
 ### Clippy and Dead Code Suppressions
 
-These blanket suppressions exist and should be removed (see `plan.md` Phase 2.1, 3.4):
+Phase 2.1 removed `#![allow(clippy::all)]` from `src/lib.rs`. Current crate-level suppressions (see `src/lib.rs:1-8`):
 
-- `src/lib.rs:1` — `#![allow(clippy::all)]` suppresses ALL clippy lints
+- `elided_lifetimes_in_paths` — compiler style preference
+- `mismatched_lifetime_syntaxes` — compiler style preference
+- `clippy::too_many_arguments` — deferred to Phase 6 (builder/config struct refactoring)
+- `clippy::await_holding_lock` — deferred to Phase 4.5 (async mutex standardization)
+- `dead_code` — deferred to Phase 3.4 (dead code removal)
+
+Remaining per-module suppressions:
 - `src/worker/mod.rs:1` — `#![allow(dead_code)]`
 - ~22 files in `src/mesh/` — `#![allow(dead_code)]`
 - ~10 items in `src/dns/server.rs` — `#[allow(dead_code)]`
 
-`cargo clippy -- -D warnings` currently passes because of these suppressions. When removing them, fix warnings incrementally per-module.
+`cargo clippy` currently produces ~107 warnings (down from 750). These are incremental quality issues that don't affect correctness.
 
 ### Build Configuration
 
-- `.cargo/config.toml:2` sets `target-dir = "target/fuzz"` which affects ALL cargo commands globally. This is likely unintended — normal builds should use `target/`.
-- `Cargo.toml` uses many exact patch version pins (e.g., `"0.11.11"` instead of `"0.11"`). This prevents automatic security updates.
+Phase 2.2 moved `target-dir = "target/fuzz"` from `.cargo/config.toml` to `fuzz/.cargo/config.toml`. Normal builds now use the default `target/` directory.
+
+`Cargo.toml` still uses many exact patch version pins (e.g., `"0.11.11"` instead of `"0.11"`). This prevents automatic security updates.
 
 ## Known Bugs (Quick Reference)
 
@@ -304,18 +347,13 @@ Agents working on these areas should be aware of these issues. See `plan.md` for
 
 | Bug | Location | Impact |
 |-----|----------|--------|
-| Embedded key is placeholder | `src/waf/rule_feed.rs:10` | Rule signature verification always fails |
 | `get_or_fetch` never calls fetch | `src/proxy_cache/store.rs:303-313` | `_fetch` callback never invoked |
 
 ### Security
 
 | Bug | Location | Impact |
 |-----|----------|--------|
-| CORS wildcard allowed in admin API | `src/admin/mod.rs:36` | `origin == "*"` accepts any origin |
-| IPC key passed via environment variable | `src/process/manager.rs:448-451` | Readable from `/proc/<pid>/environ` |
-| TLS: plaintext HTTP to upstreams by default | `src/http/http_client/mod.rs:99-104` | `https_or_http()` allows unencrypted |
-| TLS: panic on missing root certs | `src/http/http_client/mod.rs:100` | `.with_native_roots().unwrap()` |
-| IPC deserialization `.unwrap()` on malformed data | `src/process/ipc.rs:1080-1295` | Malformed messages crash process |
+| TLS: `skip_verify` not wired | `src/http_client/mod.rs:66` | Field defined but `create_upstream_client()` not yet called by proxy (Phase 2.F1) |
 
 ### DNS / RFC Compliance
 

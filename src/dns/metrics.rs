@@ -293,106 +293,82 @@ impl DnsMetrics {
         let summary = self.get_summary();
         let mut output = String::new();
 
-        output.push_str(&format!(
-            "# HELP dns_queries_received Total DNS queries received\n"
-        ));
-        output.push_str(&format!("# TYPE dns_queries_received counter\n"));
+        output.push_str("# HELP dns_queries_received Total DNS queries received\n");
+        output.push_str("# TYPE dns_queries_received counter\n");
         output.push_str(&format!(
             "dns_queries_received {}\n\n",
             summary.queries_received
         ));
 
-        output.push_str(&format!(
-            "# HELP dns_queries_blocked Total DNS queries blocked\n"
-        ));
-        output.push_str(&format!("# TYPE dns_queries_blocked counter\n"));
+        output.push_str("# HELP dns_queries_blocked Total DNS queries blocked\n");
+        output.push_str("# TYPE dns_queries_blocked counter\n");
         output.push_str(&format!(
             "dns_queries_blocked {}\n\n",
             summary.queries_blocked
         ));
 
-        output.push_str(&format!(
-            "# HELP dns_cache_hits_total Total DNS cache hits\n"
-        ));
-        output.push_str(&format!("# TYPE dns_cache_hits_total counter\n"));
+        output.push_str("# HELP dns_cache_hits_total Total DNS cache hits\n");
+        output.push_str("# TYPE dns_cache_hits_total counter\n");
         output.push_str(&format!("dns_cache_hits_total {}\n\n", summary.cache_hits));
 
-        output.push_str(&format!(
-            "# HELP dns_cache_misses_total Total DNS cache misses\n"
-        ));
-        output.push_str(&format!("# TYPE dns_cache_misses_total counter\n"));
+        output.push_str("# HELP dns_cache_misses_total Total DNS cache misses\n");
+        output.push_str("# TYPE dns_cache_misses_total counter\n");
         output.push_str(&format!(
             "dns_cache_misses_total {}\n\n",
             summary.cache_misses
         ));
 
-        output.push_str(&format!(
-            "# HELP dns_cache_hit_rate Cache hit rate percentage\n"
-        ));
-        output.push_str(&format!("# TYPE dns_cache_hit_rate gauge\n"));
+        output.push_str("# HELP dns_cache_hit_rate Cache hit rate percentage\n");
+        output.push_str("# TYPE dns_cache_hit_rate gauge\n");
         output.push_str(&format!(
             "dns_cache_hit_rate {:.2}\n\n",
             summary.cache_hit_rate
         ));
 
-        output.push_str(&format!(
-            "# HELP dns_rate_limited_total Total rate-limited queries\n"
-        ));
-        output.push_str(&format!("# TYPE dns_rate_limited_total counter\n"));
+        output.push_str("# HELP dns_rate_limited_total Total rate-limited queries\n");
+        output.push_str("# TYPE dns_rate_limited_total counter\n");
         output.push_str(&format!(
             "dns_rate_limited_total {}\n\n",
             summary.rate_limited_queries
         ));
 
-        output.push_str(&format!(
-            "# HELP dns_rrl_limited_total Total RRL-limited responses\n"
-        ));
-        output.push_str(&format!("# TYPE dns_rrl_limited_total counter\n"));
+        output.push_str("# HELP dns_rrl_limited_total Total RRL-limited responses\n");
+        output.push_str("# TYPE dns_rrl_limited_total counter\n");
         output.push_str(&format!(
             "dns_rrl_limited_total {}\n\n",
             summary.rrl_limited_responses
         ));
 
-        output.push_str(&format!(
-            "# HELP dns_malformed_queries_total Total malformed queries\n"
-        ));
-        output.push_str(&format!("# TYPE dns_malformed_queries_total counter\n"));
+        output.push_str("# HELP dns_malformed_queries_total Total malformed queries\n");
+        output.push_str("# TYPE dns_malformed_queries_total counter\n");
         output.push_str(&format!(
             "dns_malformed_queries_total {}\n\n",
             summary.malformed_queries
         ));
 
-        output.push_str(&format!(
-            "# HELP dns_firewall_queries_allowed Total firewall-allowed queries\n"
-        ));
-        output.push_str(&format!("# TYPE dns_firewall_queries_allowed counter\n"));
+        output.push_str("# HELP dns_firewall_queries_allowed Total firewall-allowed queries\n");
+        output.push_str("# TYPE dns_firewall_queries_allowed counter\n");
         output.push_str(&format!(
             "dns_firewall_queries_allowed {}\n\n",
             summary.firewall_queries_allowed
         ));
 
-        output.push_str(&format!(
-            "# HELP dns_firewall_queries_blocked Total firewall-blocked queries\n"
-        ));
-        output.push_str(&format!("# TYPE dns_firewall_queries_blocked counter\n"));
+        output.push_str("# HELP dns_firewall_queries_blocked Total firewall-blocked queries\n");
+        output.push_str("# TYPE dns_firewall_queries_blocked counter\n");
         output.push_str(&format!(
             "dns_firewall_queries_blocked {}\n\n",
             summary.firewall_queries_blocked
         ));
 
-        output.push_str(&format!(
-            "# HELP dns_active_tcp_connections Current active TCP connections\n"
-        ));
-        output.push_str(&format!("# TYPE dns_active_tcp_connections gauge\n"));
+        output.push_str("# HELP dns_active_tcp_connections Current active TCP connections\n");
+        output.push_str("# TYPE dns_active_tcp_connections gauge\n");
         output.push_str(&format!(
             "dns_active_tcp_connections {}\n\n",
             summary.active_tcp_connections
         ));
 
-        output.push_str(&format!(
-            "# HELP dns_avg_query_latency_ms Average query latency in milliseconds\n"
-        ));
-        output.push_str(&format!("# TYPE dns_avg_query_latency_ms gauge\n"));
+        output.push_str("# HELP dns_avg_query_latency_ms Average query latency in milliseconds\n");
+        output.push_str("# TYPE dns_avg_query_latency_ms gauge\n");
         output.push_str(&format!(
             "dns_avg_query_latency_ms {}\n\n",
             summary.avg_query_latency_ms

@@ -256,6 +256,7 @@ impl Default for WgSessionManager {
 }
 
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct WgConnectionStats {
     pub total_tx_bytes: u64,
     pub total_rx_bytes: u64,
@@ -266,19 +267,6 @@ pub struct WgConnectionStats {
     pub errors: u64,
 }
 
-impl Default for WgConnectionStats {
-    fn default() -> Self {
-        Self {
-            total_tx_bytes: 0,
-            total_rx_bytes: 0,
-            total_packets_tx: 0,
-            total_packets_rx: 0,
-            handshakes: 0,
-            rekey_count: 0,
-            errors: 0,
-        }
-    }
-}
 
 impl WgConnectionStats {
     pub fn add_tx(&mut self, bytes: u64, packets: u64) {

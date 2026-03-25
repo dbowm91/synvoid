@@ -214,12 +214,9 @@ pub async fn restart_worker(
 
     let _pm = state.process_manager.as_ref().ok_or(StatusCode::NOT_FOUND)?;
     
-    tracing::info!("Restarting worker via admin API: {}", worker_id);
+    tracing::warn!("restart_worker endpoint called for {} but is not yet implemented", worker_id);
     
-    Ok(Json(StatusResponse::success(format!(
-        "Worker {} restart signal sent",
-        worker_id
-    ))))
+    Err(StatusCode::NOT_IMPLEMENTED)
 }
 
 #[derive(Debug, serde::Deserialize, utoipa::ToSchema)]

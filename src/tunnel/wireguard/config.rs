@@ -5,17 +5,14 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum WgImplementation {
+    #[default]
     Auto,
     Kernel,
     Userspace,
 }
 
-impl Default for WgImplementation {
-    fn default() -> Self {
-        Self::Auto
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WireGuardConfig {

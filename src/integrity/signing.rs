@@ -369,7 +369,7 @@ impl HttpMessageVerifier {
         let ed25519_verifying_key = {
             let keys = self.client_ed25519_verifying_keys.read();
             match keys.get(&integrity_header.session_id) {
-                Some(k) => k.clone(),
+                Some(k) => *k,
                 None => return Err("No client Ed25519 key for session".to_string()),
             }
         };
@@ -465,7 +465,7 @@ impl HttpMessageVerifier {
         let ed25519_verifying_key = {
             let keys = self.client_ed25519_verifying_keys.read();
             match keys.get(&integrity_header.session_id) {
-                Some(k) => k.clone(),
+                Some(k) => *k,
                 None => return Err("No client Ed25519 key for session".to_string()),
             }
         };

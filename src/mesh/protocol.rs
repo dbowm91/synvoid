@@ -232,7 +232,7 @@ impl AuthChallenge {
     }
 
     pub fn as_base64(&self) -> String {
-        base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &self.challenge)
+        base64::Engine::encode(&base64::engine::general_purpose::STANDARD, self.challenge)
     }
 }
 
@@ -988,7 +988,7 @@ impl MeshMessage {
     pub fn generate_nonce() -> ArcStr {
         let mut bytes = [0u8; NONCE_SIZE];
         rand::fill(&mut bytes);
-        base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, &bytes).into()
+        base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, bytes).into()
     }
 
     pub fn message_id(&self) -> Option<std::borrow::Cow<'_, str>> {
@@ -1099,7 +1099,7 @@ impl MeshMessage {
             Vec::new()
         });
         let len = (encoded.len() as u32).to_be_bytes().to_vec();
-        len.into_iter().chain(encoded.into_iter()).collect()
+        len.into_iter().chain(encoded).collect()
     }
 
     pub fn decode_with_length(data: &[u8]) -> Option<(Self, usize)> {
@@ -2157,7 +2157,7 @@ impl From<&MeshMessage> for proto::MeshMessage {
                         timestamp: *timestamp,
                         source_node_id: source_node_id.to_string(),
                         source_role: source_role.bits() as u32,
-                        source_reputation: *source_reputation as u64,
+                        source_reputation: *source_reputation,
                         signature: signature.clone(),
                         signer_public_key: signer_public_key.clone(),
                     },
@@ -3349,11 +3349,11 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                 priority_tier: r.priority_tier,
                 tier_claim: r.tier_claim.clone().map(|tc| TierClaim {
                     tier: tc.tier,
-                    key_id: tc.key_id.into(),
-                    org_id: tc.org_id.into(),
-                    mesh_id: tc.mesh_id.into(),
+                    key_id: tc.key_id,
+                    org_id: tc.org_id,
+                    mesh_id: tc.mesh_id,
                     timestamp: tc.timestamp,
-                    nonce: tc.nonce.into(),
+                    nonce: tc.nonce,
                     signature: tc.signature,
                 }),
                 org_id: r.org_id.map(|s| s.into()),
@@ -3378,7 +3378,7 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                     .alternatives
                     .into_iter()
                     .map(|a| AlternativeProvider {
-                        node_id: a.node_id.into(),
+                        node_id: a.node_id,
                         priority_tier: a.priority_tier,
                     })
                     .collect(),
@@ -3388,24 +3388,24 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                 key: t
                     .key
                     .map(|k| crate::mesh::organization::TierKey {
-                        key_id: k.key_id.into(),
+                        key_id: k.key_id,
                         tier: k.tier,
                         key: k.key,
                         valid_from: k.valid_from,
                         valid_until: k.valid_until,
-                        issued_by: k.issued_by.into(),
+                        issued_by: k.issued_by,
                         revoked: k.revoked,
                         revoked_at: None,
                         bound_to: None,
                         is_unspent: true,
                     })
                     .unwrap_or_else(|| crate::mesh::organization::TierKey {
-                        key_id: String::new().into(),
+                        key_id: String::new(),
                         tier: 0,
                         key: Vec::new(),
                         valid_from: 0,
                         valid_until: 0,
-                        issued_by: String::new().into(),
+                        issued_by: String::new(),
                         revoked: false,
                         revoked_at: None,
                         bound_to: None,
@@ -3434,12 +3434,12 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                         .keys
                         .into_iter()
                         .map(|k| crate::mesh::organization::TierKey {
-                            key_id: k.key_id.into(),
+                            key_id: k.key_id,
                             tier: k.tier,
                             key: k.key,
                             valid_from: k.valid_from,
                             valid_until: k.valid_until,
-                            issued_by: k.issued_by.into(),
+                            issued_by: k.issued_by,
                             revoked: k.revoked,
                             revoked_at: None,
                             bound_to: None,
@@ -3461,7 +3461,7 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                             key: k.key,
                             valid_from: k.valid_from,
                             valid_until: k.valid_until,
-                            issued_by: k.issued_by.into(),
+                            issued_by: k.issued_by,
                             revoked: k.revoked,
                             revoked_at: None,
                             bound_to: None,
@@ -3491,12 +3491,12 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                     reason: r.reason.into(),
                     initial_tier_key: r.initial_tier_key.map(|k| {
                         crate::mesh::organization::TierKey {
-                            key_id: k.key_id.into(),
+                            key_id: k.key_id,
                             tier: k.tier,
                             key: k.key,
                             valid_from: k.valid_from,
                             valid_until: k.valid_until,
-                            issued_by: k.issued_by.into(),
+                            issued_by: k.issued_by,
                             revoked: k.revoked,
                             revoked_at: None,
                             bound_to: None,
@@ -3541,12 +3541,12 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                     org_id: r.org_id.into(),
                     accepted: r.accepted,
                     org_key: r.org_key.map(|k| crate::mesh::organization::TierKey {
-                        key_id: k.key_id.into(),
+                        key_id: k.key_id,
                         tier: k.tier,
                         key: k.key,
                         valid_from: k.valid_from,
                         valid_until: k.valid_until,
-                        issued_by: k.issued_by.into(),
+                        issued_by: k.issued_by,
                         revoked: k.revoked,
                         revoked_at: None,
                         bound_to: None,
@@ -4438,7 +4438,7 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                     origin_pubkey: if r.origin_pubkey.is_empty() {
                         None
                     } else {
-                        Some(r.origin_pubkey.into())
+                        Some(r.origin_pubkey)
                     },
                     previous_serial: r.previous_serial,
                     compressed: r.compressed,
@@ -4713,7 +4713,9 @@ pub struct UpstreamOwner {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Default)]
 pub enum UpstreamProtocol {
+    #[default]
     Unknown = 0,
     Http = 1,
     Https = 2,
@@ -4724,11 +4726,6 @@ pub enum UpstreamProtocol {
     Websockets = 7,
 }
 
-impl Default for UpstreamProtocol {
-    fn default() -> Self {
-        Self::Unknown
-    }
-}
 
 impl From<UpstreamProtocol> for proto::UpstreamProtocol {
     fn from(p: UpstreamProtocol) -> Self {
@@ -4787,6 +4784,7 @@ pub struct WafPolicy {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Default)]
 pub struct RateLimitOverride {
     pub requests_per_second: Option<u64>,
     pub requests_per_minute: Option<u64>,
@@ -4796,18 +4794,6 @@ pub struct RateLimitOverride {
     pub burst_size: Option<u64>,
 }
 
-impl Default for RateLimitOverride {
-    fn default() -> Self {
-        Self {
-            requests_per_second: None,
-            requests_per_minute: None,
-            requests_per_hour: None,
-            concurrent_connections: None,
-            bandwidth_mbps: None,
-            burst_size: None,
-        }
-    }
-}
 
 pub const PRIORITY_TIER_FREE: u32 = 0;
 pub const PRIORITY_TIER_PAID: u32 = 1;

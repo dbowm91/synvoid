@@ -251,7 +251,7 @@ impl DohServer {
     fn base64url_decode(input: &str) -> Result<Vec<u8>, String> {
         use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 
-        let padded = if input.len() % 4 != 0 {
+        let padded = if !input.len().is_multiple_of(4) {
             format!("{}{}", input, "=".repeat(4 - input.len() % 4))
         } else {
             input.to_string()

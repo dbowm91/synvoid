@@ -614,142 +614,321 @@ impl std::fmt::Display for IpcValidationError {
 impl std::error::Error for IpcValidationError {}
 
 impl Message {
+    /// Validate string field lengths to prevent memory exhaustion from
+    /// maliciously large IPC messages.
     pub fn validate(&self) -> Result<(), IpcValidationError> {
-        match self {
-            Message::WorkerError { error, .. } if error.len() > MAX_STRING_LENGTH => {
+        // Helper: validate a single string field
+        fn check_str(
+            field: &'static str,
+            value: &str,
+            max: usize,
+        ) -> Result<(), IpcValidationError> {
+            if value.len() > max {
                 Err(IpcValidationError {
-                    field: "WorkerError.error".into(),
-                    message: format!("{} > {}", error.len(), MAX_STRING_LENGTH),
+                    field: field.into(),
+                    message: format!("{} > {}", value.len(), max),
                 })
+            } else {
+                Ok(())
             }
-            Message::MasterConfigReload { config_path } if config_path.len() > MAX_PATH_LENGTH => {
-                Err(IpcValidationError {
-                    field: "MasterConfigReload.config_path".into(),
-                    message: format!("{} > {}", config_path.len(), MAX_PATH_LENGTH),
-                })
+        }
+        // Helper: validate an optional string field
+        fn check_opt_str(
+            field: &'static str,
+            value: &Option<String>,
+            max: usize,
+        ) -> Result<(), IpcValidationError> {
+            if let Some(ref v) = value {
+                check_str(field, v, max)
+            } else {
+                Ok(())
+            }
+        }
+        // Helper: validate a Vec of strings (e.g., pattern lists)
+        fn check_str_vec(
+            field: &'static str,
+            values: &[String],
+            max: usize,
+        ) -> Result<(), IpcValidationError> {
+            for v in values {
+                check_str(field, v, max)?;
+            }
+            Ok(())
+        }
+
+        match self {
+            // Variants with no string fields — always valid
+            Message::WorkerStarted { .. }
+            | Message::WorkerReady { .. }
+            | Message::WorkerHeartbeat { .. }
+            | Message::WorkerShutdownComplete { .. }
+            | Message::MasterShutdown { .. }
+            | Message::MasterProcessConfigReload { .. }
+            | Message::MasterSupervisorConfigReload { .. }
+            | Message::MasterHealthCheck { .. }
+            | Message::MasterResizeThreadpool { .. }
+            | Message::HealthCheckAck { .. }
+            | Message::WorkerResizeAck { .. }
+            | Message::StaticWorkerStarted { .. }
+            | Message::StaticWorkerReady { .. }
+            | Message::StaticWorkerHeartbeat { .. }
+            | Message::StaticWorkerShutdownComplete { .. }
+            | Message::StaticWorkerBackgroundTasksDone { .. }
+            | Message::StaticWorkerResizeAck { .. }
+            | Message::StaticWorkerDrain { .. }
+            | Message::StaticWorkerDrained { .. }
+            | Message::StaticWorkerDrainStatus { .. }
+            | Message::ThreatSyncRequest { .. }
+            | Message::ThreatSyncResponse { .. }
+            | Message::BlocklistRequest { .. }
+            | Message::BlocklistResponse { .. }
+            | Message::BlocklistUpdate { .. }
+            | Message::BlocklistWriteComplete { .. }
+            | Message::PoisonImageResponse { .. }
+            | Message::GetCompressedResponse { .. }
+            | Message::UnifiedServerWorkerStarted { .. }
+            | Message::UnifiedServerWorkerReady { .. }
+            | Message::UnifiedServerWorkerHeartbeat { .. }
+            | Message::UnifiedServerWorkerShutdownComplete { .. }
+            | Message::UnifiedServerWorkerDrain { .. }
+            | Message::UnifiedServerWorkerDrained { .. }
+            | Message::UnifiedServerWorkerResize { .. }
+            | Message::UnifiedServerWorkerResizeAck { .. }
+            | Message::WorkerDrain { .. }
+            | Message::WorkerDrained { .. }
+            | Message::UpgradeReady { .. }
+            | Message::OverseerUpgradeCommit { .. }
+            | Message::OverseerDrainWorkers { .. }
+            | Message::OverseerDrainWorkersAck { .. }
+            | Message::OverseerGetStatus { .. }
+            | Message::MasterDrainMode { .. }
+            | Message::MasterDrainModeAck { .. }
+            | Message::MasterReportConnections { .. }
+            | Message::MasterConnectionsReport { .. }
+            | Message::MasterStopAccepting { .. }
+            | Message::MasterStopAcceptingAck { .. }
+            | Message::WorkerConnectionCount { .. }
+            | Message::WorkerDrainComplete { .. }
+            | Message::OverseerCommitUpgrade { .. }
+            | Message::SocketHandoffReady { .. }
+            | Message::SocketHandoffComplete { .. }
+            | Message::WindowsSocketInfo { .. }
+            | Message::DrainRequest { .. }
+            | Message::DrainStatusRequest { .. }
+            | Message::DrainStatusResponse { .. }
+            | Message::DrainComplete { .. }
+            | Message::OverseerCommitUpgradeAck { .. } => Ok(()),
+
+            // Variants with string fields that need validation
+            Message::WorkerError { error, .. } => {
+                check_str("WorkerError.error", error, MAX_STRING_LENGTH)
+            }
+            Message::MasterConfigReload { config_path } => check_str(
+                "MasterConfigReload.config_path",
+                config_path,
+                MAX_PATH_LENGTH,
+            ),
+            Message::StaticWorkerScan { site_id } => {
+                check_str("StaticWorkerScan.site_id", site_id, MAX_STRING_LENGTH)
+            }
+            Message::StaticWorkerCacheUpdate {
+                site_id,
+                path,
+                minified_path,
+            } => {
+                check_str(
+                    "StaticWorkerCacheUpdate.site_id",
+                    site_id,
+                    MAX_STRING_LENGTH,
+                )?;
+                check_str("StaticWorkerCacheUpdate.path", path, MAX_PATH_LENGTH)?;
+                check_str(
+                    "StaticWorkerCacheUpdate.minified_path",
+                    minified_path,
+                    MAX_PATH_LENGTH,
+                )
             }
             Message::ThreatIndicatorAnnounce {
                 indicator_value,
                 reason,
                 site_scope,
+                suspicious_pattern,
                 ..
             } => {
-                if indicator_value.len() > MAX_STRING_LENGTH {
-                    return Err(IpcValidationError {
-                        field: "indicator_value".into(),
-                        message: "too long".into(),
-                    });
-                }
-                if reason.len() > MAX_STRING_LENGTH {
-                    return Err(IpcValidationError {
-                        field: "reason".into(),
-                        message: "too long".into(),
-                    });
-                }
-                if site_scope.len() > MAX_STRING_LENGTH {
-                    return Err(IpcValidationError {
-                        field: "site_scope".into(),
-                        message: "too long".into(),
-                    });
-                }
-                Ok(())
+                check_str("indicator_value", indicator_value, MAX_STRING_LENGTH)?;
+                check_str("reason", reason, MAX_STRING_LENGTH)?;
+                check_str("site_scope", site_scope, MAX_STRING_LENGTH)?;
+                check_opt_str("suspicious_pattern", suspicious_pattern, MAX_STRING_LENGTH)
             }
             Message::ThreatIndicatorFromMesh {
+                source_node_id,
                 indicator_value,
                 reason,
                 site_scope,
                 ..
             } => {
-                if indicator_value.len() > MAX_STRING_LENGTH {
-                    return Err(IpcValidationError {
-                        field: "indicator_value".into(),
-                        message: "too long".into(),
-                    });
-                }
-                if reason.len() > MAX_STRING_LENGTH {
-                    return Err(IpcValidationError {
-                        field: "reason".into(),
-                        message: "too long".into(),
-                    });
-                }
-                if site_scope.len() > MAX_STRING_LENGTH {
-                    return Err(IpcValidationError {
-                        field: "site_scope".into(),
-                        message: "too long".into(),
-                    });
+                check_str("source_node_id", source_node_id, MAX_STRING_LENGTH)?;
+                check_str("indicator_value", indicator_value, MAX_STRING_LENGTH)?;
+                check_str("reason", reason, MAX_STRING_LENGTH)?;
+                check_str("site_scope", site_scope, MAX_STRING_LENGTH)
+            }
+            Message::RulePatternsUpdate { version, patterns } => {
+                check_str("version", version, MAX_STRING_LENGTH)?;
+                for p in patterns {
+                    check_str("pattern.category", &p.category, MAX_STRING_LENGTH)?;
+                    check_str_vec("pattern.patterns", &p.patterns, MAX_STRING_LENGTH)?;
                 }
                 Ok(())
+            }
+            Message::MinifyRequest {
+                site_id,
+                path,
+                encoding,
+                ..
+            } => {
+                check_str("MinifyRequest.site_id", site_id, MAX_STRING_LENGTH)?;
+                check_str("MinifyRequest.path", path, MAX_PATH_LENGTH)?;
+                check_opt_str("MinifyRequest.encoding", encoding, MAX_STRING_LENGTH)
+            }
+            Message::MinifyResponse {
+                site_id,
+                path,
+                content_type,
+                encoding,
+                queued_encodings,
+                ..
+            } => {
+                check_str("MinifyResponse.site_id", site_id, MAX_STRING_LENGTH)?;
+                check_str("MinifyResponse.path", path, MAX_PATH_LENGTH)?;
+                check_str(
+                    "MinifyResponse.content_type",
+                    content_type,
+                    MAX_STRING_LENGTH,
+                )?;
+                check_opt_str("MinifyResponse.encoding", encoding, MAX_STRING_LENGTH)?;
+                check_str_vec(
+                    "MinifyResponse.queued_encodings",
+                    queued_encodings,
+                    MAX_STRING_LENGTH,
+                )
+            }
+            Message::MinifyError { error, .. } => {
+                check_str("MinifyError.error", error, MAX_STRING_LENGTH)
+            }
+            Message::PoisonImageRequest {
+                site_id,
+                last_modified,
+                ..
+            } => {
+                check_str("PoisonImageRequest.site_id", site_id, MAX_STRING_LENGTH)?;
+                check_opt_str(
+                    "PoisonImageRequest.last_modified",
+                    last_modified,
+                    MAX_STRING_LENGTH,
+                )
+            }
+            Message::PoisonImageError { error, .. } => {
+                check_str("PoisonImageError.error", error, MAX_STRING_LENGTH)
+            }
+            Message::GetCompressedRequest {
+                site_id,
+                path,
+                encoding,
+                ..
+            } => {
+                check_str("GetCompressedRequest.site_id", site_id, MAX_STRING_LENGTH)?;
+                check_str("GetCompressedRequest.path", path, MAX_PATH_LENGTH)?;
+                check_str("GetCompressedRequest.encoding", encoding, MAX_STRING_LENGTH)
+            }
+            Message::AppServerStarted {
+                site_id,
+                socket_path,
+                ..
+            } => {
+                check_str("AppServerStarted.site_id", site_id, MAX_STRING_LENGTH)?;
+                check_opt_str("AppServerStarted.socket_path", socket_path, MAX_PATH_LENGTH)
+            }
+            Message::AppServerReady { site_id, .. } => {
+                check_str("AppServerReady.site_id", site_id, MAX_STRING_LENGTH)
+            }
+            Message::AppServerHealth { site_id, .. } => {
+                check_str("AppServerHealth.site_id", site_id, MAX_STRING_LENGTH)
+            }
+            Message::AppServerStopped { site_id, .. } => {
+                check_str("AppServerStopped.site_id", site_id, MAX_STRING_LENGTH)
+            }
+            Message::AppServerRestarted { site_id, .. } => {
+                check_str("AppServerRestarted.site_id", site_id, MAX_STRING_LENGTH)
+            }
+            Message::AppServerError { site_id, error, .. } => {
+                check_str("AppServerError.site_id", site_id, MAX_STRING_LENGTH)?;
+                check_str("AppServerError.error", error, MAX_STRING_LENGTH)
+            }
+            Message::UnifiedServerWorkerError { error, .. } => {
+                check_str("UnifiedServerWorkerError.error", error, MAX_STRING_LENGTH)
+            }
+            Message::WorkerRequestLog { log, .. } | Message::StaticWorkerRequestLog { log, .. } => {
+                check_str(
+                    "RequestLogPayload.client_ip",
+                    &log.client_ip,
+                    MAX_STRING_LENGTH,
+                )?;
+                check_str("RequestLogPayload.method", &log.method, MAX_STRING_LENGTH)?;
+                check_str("RequestLogPayload.path", &log.path, MAX_STRING_LENGTH)?;
+                check_str("RequestLogPayload.site_id", &log.site_id, MAX_STRING_LENGTH)?;
+                check_opt_str(
+                    "RequestLogPayload.user_agent",
+                    &log.user_agent,
+                    MAX_STRING_LENGTH,
+                )
+            }
+            Message::UpgradeFailed { error } => {
+                check_str("UpgradeFailed.error", error, MAX_STRING_LENGTH)
+            }
+            Message::OverseerUpgradePrepare {
+                binary_path,
+                config_path,
+                version,
+            } => {
+                check_str("binary_path", binary_path, MAX_PATH_LENGTH)?;
+                check_opt_str("config_path", config_path, MAX_PATH_LENGTH)?;
+                check_str("version", version, MAX_STRING_LENGTH)
+            }
+            Message::OverseerUpgradePrepareAck { error, .. } => {
+                check_opt_str("error", error, MAX_STRING_LENGTH)
+            }
+            Message::OverseerUpgradeCommitAck { error, .. } => {
+                check_opt_str("error", error, MAX_STRING_LENGTH)
+            }
+            Message::OverseerUpgradeRollback { reason } => {
+                check_str("reason", reason, MAX_STRING_LENGTH)
+            }
+            Message::OverseerUpgradeRollbackAck { error, .. } => {
+                check_opt_str("error", error, MAX_STRING_LENGTH)
+            }
+            Message::OverseerStatusResponse { version, .. } => {
+                check_str("version", version, MAX_STRING_LENGTH)
             }
             Message::OverseerDualMasterPrepare {
                 binary_path,
                 config_path,
-                ..
+                version,
             } => {
-                if binary_path.len() > MAX_PATH_LENGTH {
-                    return Err(IpcValidationError {
-                        field: "binary_path".into(),
-                        message: "too long".into(),
-                    });
-                }
-                if let Some(cp) = config_path {
-                    if cp.len() > MAX_PATH_LENGTH {
-                        return Err(IpcValidationError {
-                            field: "config_path".into(),
-                            message: "too long".into(),
-                        });
-                    }
-                }
-                Ok(())
+                check_str("binary_path", binary_path, MAX_PATH_LENGTH)?;
+                check_opt_str("config_path", config_path, MAX_PATH_LENGTH)?;
+                check_str("version", version, MAX_STRING_LENGTH)
             }
-            Message::SocketHandoffRequest { socket_path }
-                if socket_path.len() > MAX_PATH_LENGTH =>
-            {
-                Err(IpcValidationError {
-                    field: "socket_path".into(),
-                    message: "too long".into(),
-                })
+            Message::OverseerDualMasterPrepareAck { error, .. } => {
+                check_opt_str("error", error, MAX_STRING_LENGTH)
             }
-            Message::SocketHandoffFailed { error } if error.len() > MAX_STRING_LENGTH => {
-                Err(IpcValidationError {
-                    field: "error".into(),
-                    message: "too long".into(),
-                })
+            Message::OverseerCommitUpgradeAck { error, .. } => {
+                check_opt_str("error", error, MAX_STRING_LENGTH)
             }
-            Message::WorkerRequestLog { log, .. } | Message::StaticWorkerRequestLog { log, .. } => {
-                if log.client_ip.len() > MAX_STRING_LENGTH {
-                    return Err(IpcValidationError {
-                        field: "RequestLogPayload.client_ip".into(),
-                        message: "too long".into(),
-                    });
-                }
-                if log.method.len() > MAX_STRING_LENGTH {
-                    return Err(IpcValidationError {
-                        field: "RequestLogPayload.method".into(),
-                        message: "too long".into(),
-                    });
-                }
-                if log.path.len() > MAX_STRING_LENGTH {
-                    return Err(IpcValidationError {
-                        field: "RequestLogPayload.path".into(),
-                        message: "too long".into(),
-                    });
-                }
-                if log.site_id.len() > MAX_STRING_LENGTH {
-                    return Err(IpcValidationError {
-                        field: "RequestLogPayload.site_id".into(),
-                        message: "too long".into(),
-                    });
-                }
-                if let Some(ref ua) = log.user_agent {
-                    if ua.len() > MAX_STRING_LENGTH {
-                        return Err(IpcValidationError {
-                            field: "RequestLogPayload.user_agent".into(),
-                            message: "too long".into(),
-                        });
-                    }
-                }
-                Ok(())
+            Message::SocketHandoffRequest { socket_path } => {
+                check_str("socket_path", socket_path, MAX_PATH_LENGTH)
             }
+            Message::SocketHandoffFailed { error } => check_str("error", error, MAX_STRING_LENGTH),
+            // Catch-all for any variants added in the future
             _ => Ok(()),
         }
     }

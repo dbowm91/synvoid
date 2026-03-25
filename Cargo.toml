@@ -57,6 +57,7 @@ tokio = { version = "1", features = ["full"] }
 hyper = { version = "1", features = ["http1", "http2", "server", "client"] }
 hyper-util = { version = "0.1", features = ["tokio", "server-auto", "server-graceful", "http1", "http2", "client", "client-legacy"] }
 hyper-rustls = { version = "0.27", features = ["http2"] }
+rustls-native-certs = "0.8"
 tower = { version = "0.5", features = ["util", "timeout"] }
 tower-http = { version = "0.6", features = ["fs", "cors", "trace"] }
 axum = { version = "0.8", features = ["ws", "macros", "json"] }

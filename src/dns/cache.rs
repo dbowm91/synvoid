@@ -193,7 +193,7 @@ impl DnsCache {
         let qname = key.qname.clone();
         let mut fingerprints = inner.cache_fingerprints.write();
 
-        let entry = fingerprints.entry(qname).or_insert_with(Vec::new);
+        let entry = fingerprints.entry(qname).or_default();
 
         if !entry.contains(&fingerprint) {
             entry.push(fingerprint);
@@ -350,7 +350,7 @@ impl DnsCache {
         }
 
         let to_remove = fingerprints.len() - max_entries;
-        let keys: Vec<String> = fingerprints.keys().cloned().take(to_remove).collect();
+        let keys: Vec<String> = fingerprints.keys().take(to_remove).cloned().collect();
 
         for key in keys {
             fingerprints.remove(&key);

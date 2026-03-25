@@ -68,19 +68,19 @@ impl PlatformPaths {
         let (data_dir, config_dir, log_dir, cache_dir, runtime_dir) = match platform {
             Platform::Linux | Platform::LinuxMusl => {
                 let data = std::env::var_os("XDG_DATA_DIRS")
-                    .map(|s| PathBuf::from(s))
+                    .map(PathBuf::from)
                     .unwrap_or_else(|| PathBuf::from("/var/lib/maluwaf"));
 
                 let config = std::env::var_os("XDG_CONFIG_DIRS")
-                    .map(|s| PathBuf::from(s))
+                    .map(PathBuf::from)
                     .unwrap_or_else(|| PathBuf::from("/etc/maluwaf"));
 
                 let log = std::env::var_os("XDG_LOG_DIR")
-                    .map(|s| PathBuf::from(s))
+                    .map(PathBuf::from)
                     .unwrap_or_else(|| PathBuf::from("/var/log/maluwaf"));
 
                 let cache = std::env::var_os("XDG_CACHE_DIR")
-                    .map(|s| PathBuf::from(s))
+                    .map(PathBuf::from)
                     .unwrap_or_else(|| PathBuf::from("/var/cache/maluwaf"));
 
                 let runtime = std::env::var_os("XDG_RUNTIME_DIR")

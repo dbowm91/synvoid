@@ -515,7 +515,7 @@ impl SuspiciousWordTracker {
                 {
                     let mut store = self.store.write();
                     
-                    let entry = store.entry(ip).or_insert_with(Vec::new);
+                    let entry = store.entry(ip).or_default();
                     
                     if entry.len() >= 10 {
                         entry.remove(0);
@@ -655,7 +655,7 @@ impl UpstreamErrorTracker {
         {
             let mut store = self.store.write();
             
-            let entry = store.entry(ip).or_insert_with(Vec::new);
+            let entry = store.entry(ip).or_default();
             entry.retain(|r| r.timestamp >= window_start);
 
             if entry.len() >= 20 {

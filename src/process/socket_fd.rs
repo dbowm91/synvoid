@@ -22,7 +22,7 @@ const MAX_FDS_PER_MESSAGE: usize = 1;
 
 #[cfg(unix)]
 fn nix_to_io_error(e: nix::errno::Errno) -> io::Error {
-    io::Error::new(io::ErrorKind::Other, e.to_string())
+    io::Error::other(e.to_string())
 }
 
 #[derive(Debug, Clone)]
@@ -392,7 +392,7 @@ pub unsafe fn raw_fd_to_tcp_stream(fd: RawFd) -> std::net::TcpStream {
 
 #[cfg(unix)]
 pub fn close_fd(fd: RawFd) -> io::Result<()> {
-    nix::unistd::close(fd).map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+    nix::unistd::close(fd).map_err(io::Error::other)
 }
 
 #[cfg(not(unix))]

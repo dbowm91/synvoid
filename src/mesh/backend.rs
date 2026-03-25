@@ -22,7 +22,7 @@ pub fn create_record_store(
     }
 
     let node_id = config.node_id().to_string();
-    let role = config.role.clone();
+    let role = config.role;
     
     let dht_config = config.dht.as_ref().unwrap();
     
@@ -223,10 +223,8 @@ impl MeshBackendPool {
                     }
                     _ => {}
                 }
-            } else {
-                if best.is_none() {
-                    best = Some((backend.clone(), 0.5));
-                }
+            } else if best.is_none() {
+                best = Some((backend.clone(), 0.5));
             }
         }
         
@@ -269,7 +267,7 @@ pub fn create_mesh_backend_from_config(
             cc.path.clone(),
             cc.max_size.clone(),
             cc.inactive,
-            cc.use_temp_file.clone(),
+            cc.use_temp_file,
             cc.valid_status.clone(),
             cc.methods.clone(),
             cc.use_stale.clone(),

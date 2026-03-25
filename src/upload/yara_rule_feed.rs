@@ -147,12 +147,11 @@ impl YaraRuleFeedManager {
                 tracing::info!("Fetched new YARA rules version {}", rules.version);
                 *self.downloaded_rules.write() = Some(rules.clone());
                 
-                if self.config.auto_apply {
-                    if self.apply_rules().is_ok() {
+                if self.config.auto_apply
+                    && self.apply_rules().is_ok() {
                         *self.current_version.write() = Some(rules.version.clone());
                         *self.last_update.write() = now_timestamp();
                     }
-                }
             }
             Err(e) => {
                 tracing::error!("Failed to fetch YARA rule feed: {}", e);

@@ -4128,6 +4128,7 @@ dependencies = [
  "rkyv 0.8.15",
  "rusqlite",
  "rustls",
+ "rustls-native-certs",
  "rustls-pki-types",
  "rustls-post-quantum",
  "serde",

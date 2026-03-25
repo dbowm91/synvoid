@@ -258,7 +258,7 @@ impl LocalListener {
             let mut pooled = BufferPool::acquire(64 * 1024);
             let mut sequence: u64 = 0;
             loop {
-                match tcp_read.read(&mut pooled.as_mut_slice()).await {
+                match tcp_read.read(pooled.as_mut_slice()).await {
                     Ok(0) => {
                         let fin_msg = TunnelMessage::DataChunk {
                             identifier: identifier.clone(),
@@ -316,7 +316,7 @@ impl LocalListener {
                 } else {
                     data_pooled.resize(len);
                 }
-                recv_stream.read_exact(&mut data_pooled.as_mut_slice()).await?;
+                recv_stream.read_exact(data_pooled.as_mut_slice()).await?;
                 
                 let msg = TunnelMessage::decode(data_pooled.as_slice())
                     .ok_or_else(|| "Failed to decode message".to_string())?;

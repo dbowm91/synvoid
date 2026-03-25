@@ -135,7 +135,7 @@ pub async fn run_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Erro
     {
         let mut ipc_guard = ipc.lock().await;
         ipc_guard.send(&Message::WorkerStarted {
-            id: worker_id.clone(),
+            id: worker_id,
             pid: std::process::id(),
             port: args.port,
             timestamp: current_timestamp(),
@@ -152,7 +152,7 @@ pub async fn run_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Erro
     let draining = DrainFlag::new();
     
     let state = WorkerState {
-        worker_id: worker_id.clone(),
+        worker_id,
         metrics: metrics.clone(),
         start_time: Instant::now(),
         ipc: ipc.clone(),
@@ -163,7 +163,7 @@ pub async fn run_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Erro
     {
         let mut ipc_guard = ipc.lock().await;
         ipc_guard.send(&Message::WorkerReady {
-            id: worker_id.clone(),
+            id: worker_id,
         }).await?;
     }
 
@@ -185,7 +185,7 @@ pub async fn run_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Erro
 
             let mut ipc = heartbeat_state.ipc.lock().await;
             let _ = ipc.send(&Message::WorkerHeartbeat {
-                id: heartbeat_state.worker_id.clone(),
+                id: heartbeat_state.worker_id,
                 timestamp: current_timestamp(),
                 metrics: payload,
             }).await;
@@ -214,7 +214,7 @@ pub async fn run_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Erro
                     
                     let mut ipc = ipc_state.ipc.lock().await;
                     let _ = ipc.send(&Message::WorkerShutdownComplete {
-                        id: ipc_state.worker_id.clone(),
+                        id: ipc_state.worker_id,
                     }).await;
                     break;
                 }
@@ -235,7 +235,7 @@ pub async fn run_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Erro
                     
                     let mut ipc = ipc_state.ipc.lock().await;
                     let _ = ipc.send(&Message::WorkerResizeAck {
-                        id: ipc_state.worker_id.clone(),
+                        id: ipc_state.worker_id,
                         worker_threads,
                     }).await;
                 }
@@ -249,7 +249,7 @@ pub async fn run_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Erro
     });
 
     let server_state = state.clone();
-    let worker_id_for_log = worker_id.clone();
+    let worker_id_for_log = worker_id;
     let port = args.port;
     let server_handle = tokio::spawn(async move {
         let addr: std::net::SocketAddr = format!("127.0.0.1:{}", port)
@@ -779,7 +779,7 @@ pub async fn run_static_worker(args: StaticWorkerArgs) -> Result<(), Box<dyn std
             }
 
             let mut cm = ConfigManager::new(config_path.clone());
-            if cm.load_main(&config_path.join("main.toml")).is_ok() {
+            if cm.load_main(config_path.join("main.toml")).is_ok() {
                 cm.discover_sites();
                 let main_config = cm.main.clone();
                 
@@ -1182,13 +1182,12 @@ fn init_minifier_caches(state: &StaticWorkerState, _main_config: &crate::config:
     };
     
     for (site_id, site) in config.sites.iter() {
-        if !caches.contains_key(site_id) {
-            if site.r#static.enable_minification.unwrap_or(true) {
+        if !caches.contains_key(site_id)
+            && site.r#static.enable_minification.unwrap_or(true) {
                 let min_config = minifier::MinifierConfig::from_site_config(site_id, &site.r#static);
                 caches.insert(site_id.clone(), Arc::new(minifier::MinifierCache::new(min_config)));
                 tracing::info!("Initialized minifier cache for site: {}", site_id);
             }
-        }
     }
 }
 

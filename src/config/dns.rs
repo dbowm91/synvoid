@@ -1018,6 +1018,7 @@ pub enum TsigAlgorithm {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
+#[derive(Default)]
 pub struct TsigKeyConfig {
     pub name: String,
     pub secret_base64: String,
@@ -1025,15 +1026,6 @@ pub struct TsigKeyConfig {
     pub algorithm: TsigAlgorithm,
 }
 
-impl Default for TsigKeyConfig {
-    fn default() -> Self {
-        Self {
-            name: String::new(),
-            secret_base64: String::new(),
-            algorithm: TsigAlgorithm::default(),
-        }
-    }
-}
 
 impl TsigAlgorithm {
     pub fn to_u16(&self) -> u16 {
@@ -1270,21 +1262,13 @@ impl DnsConfig {
             ));
         }
 
-        #[allow(unused_comparisons)]
-        if self.port > 65535 {
-            return Err(DnsConfigError::InvalidPort(
-                "Port cannot exceed 65535".to_string(),
-            ));
-        }
-
-        if self.bind_address.parse::<std::net::IpAddr>().is_err() {
-            if self.bind_address != "0.0.0.0" && self.bind_address != "::" {
+        if self.bind_address.parse::<std::net::IpAddr>().is_err()
+            && self.bind_address != "0.0.0.0" && self.bind_address != "::" {
                 return Err(DnsConfigError::InvalidBindAddress(format!(
                     "Invalid bind address: {}",
                     self.bind_address
                 )));
             }
-        }
 
         self.ratelimit.validate()?;
         self.rrl.validate()?;

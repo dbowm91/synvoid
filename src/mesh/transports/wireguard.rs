@@ -208,7 +208,7 @@ impl WireGuardMeshTransport {
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let msg = match MeshMessage::decode(&data) {
             Some(m) => m,
-            None => return Err(format!("Failed to decode message").into()),
+            None => return Err("Failed to decode message".to_string().into()),
         };
 
         tracing::debug!("Received mesh message from {}: {:?}", addr, msg);

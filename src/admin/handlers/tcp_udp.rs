@@ -98,16 +98,12 @@ pub async fn create_listener(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    let listener = TcpUdpListener {
-        id: format!("{}-{}", req.site_id, req.protocol),
-        port: req.port,
-        protocol: req.protocol,
-        upstream: req.upstream,
-        enabled: true,
-        active_connections: 0,
-    };
-
-    Ok(Json(CreateListenerResponse { listener }))
+    tracing::warn!(
+        "create_listener called for {}/{} but is not yet implemented",
+        req.site_id, req.protocol
+    );
+    
+    Err(StatusCode::NOT_IMPLEMENTED)
 }
 
 #[utoipa::path(
@@ -135,8 +131,12 @@ pub async fn delete_listener(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    let _ = (state, listener_id);
-    Ok(StatusCode::NO_CONTENT)
+    tracing::warn!(
+        "delete_listener called for {} but is not yet implemented",
+        listener_id
+    );
+    
+    Err(StatusCode::NOT_IMPLEMENTED)
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]

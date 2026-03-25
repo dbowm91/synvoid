@@ -622,7 +622,9 @@ impl RecordStoreManager {
         
         let change_count = recent.len();
         
-        let interval = if change_count > 10 {
+        
+
+        if change_count > 10 {
             (base_interval / 4).max(60)
         } else if change_count > 5 {
             (base_interval / 2).max(120)
@@ -630,9 +632,7 @@ impl RecordStoreManager {
             (base_interval * 2).min(self.config.max_sync_interval_secs)
         } else {
             base_interval
-        };
-
-        interval
+        }
     }
 
     pub fn record_change(&self) {
@@ -1131,14 +1131,12 @@ impl RecordStoreManager {
                 if self.store_record(record, source_reputation) {
                     stored_count += 1;
                 }
-            } else {
-                if self.can_cache_on_edge(&record.key) {
-                    if self.store_record(record, source_reputation) {
-                        stored_count += 1;
-                    }
-                } else {
-                    skipped_count += 1;
+            } else if self.can_cache_on_edge(&record.key) {
+                if self.store_record(record, source_reputation) {
+                    stored_count += 1;
                 }
+            } else {
+                skipped_count += 1;
             }
         }
 
@@ -1714,7 +1712,7 @@ impl RecordStoreManager {
                             Vec::new()
                         } else {
                             base64::engine::general_purpose::URL_SAFE_NO_PAD
-                                .decode(&signer_public_key)
+                                .decode(signer_public_key)
                                 .unwrap_or_default()
                         };
                         if !signer.verify(&content, signature, &pk_bytes) {
@@ -1934,7 +1932,7 @@ impl RecordStoreManager {
 
         let my_root_hash = self.get_merkle_root_hash();
         
-        if my_root_hash.as_ref().map(|h| h.as_slice()) == Some(local_root_hash) {
+        if my_root_hash.as_deref() == Some(local_root_hash) {
             tracing::debug!("DHT anti-entropy: {} has same root hash as {}", from_node, self.node_id);
             return Some(MeshMessage::DhtAntiEntropyResponse {
                 request_id: request_id.into(),

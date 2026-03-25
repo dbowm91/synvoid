@@ -293,8 +293,8 @@ impl AnycastSocketManager {
         while iterations < max_iterations {
             match tokio::time::timeout(Duration::from_millis(20), socket.recv_from(&mut buf)).await {
                 Ok(Ok((len, src))) => {
-                    if src.ip() == anycast_ip || src.ip() == IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)) {
-                        if len >= 12 {
+                    if (src.ip() == anycast_ip || src.ip() == IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)))
+                        && len >= 12 {
                             let response_id = u16::from_be_bytes([buf[0], buf[1]]);
                             if response_id == query_id {
                                 let flags = u16::from_be_bytes([buf[2], buf[3]]);
@@ -311,7 +311,6 @@ impl AnycastSocketManager {
                                 }
                             }
                         }
-                    }
                 }
                 Ok(Err(_)) => {
                     break;

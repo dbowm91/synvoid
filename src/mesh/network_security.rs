@@ -129,7 +129,7 @@ impl NetworkAccessControl {
         for rule in rules.iter() {
             if self.rule_matches(rule, source, destination, port, protocol) {
                 return AccessDecision {
-                    action: rule.action.clone(),
+                    action: rule.action,
                     rule_id: rule.id.clone(),
                     reason: rule.description.clone(),
                 };

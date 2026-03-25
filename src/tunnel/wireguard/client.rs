@@ -81,7 +81,7 @@ impl WireGuardClient {
     }
 
     pub fn is_connected(&self) -> bool {
-        self.runtime.as_ref().map_or(false, |r| r.is_running())
+        self.runtime.as_ref().is_some_and(|r| r.is_running())
     }
 
     pub fn stats(&self) -> TunnelStats {

@@ -47,7 +47,7 @@ async fn setup_worker_ipc(
     let mut stream = connect_to_master_async(master_socket, 5, std::time::Duration::from_secs(2), "Unified server worker").await?;
     
     stream.send(&Message::UnifiedServerWorkerStarted {
-        id: worker_id.clone(),
+        id: *worker_id,
         pid: std::process::id(),
         timestamp: current_timestamp(),
     }).await?;
@@ -135,7 +135,7 @@ pub async fn run_unified_server_worker(args: UnifiedServerWorkerArgs) -> Result<
     let drain_state = Arc::new(WorkerDrainState::new());
     let metrics = WorkerMetrics::shared_with_bandwidth(bandwidth_retention_days, bandwidth_mesh_excluded);
     let ipc_for_server = ipc.clone();
-    let worker_id_for_server = worker_id.clone();
+    let worker_id_for_server = worker_id;
     let unified_server = UnifiedServer::new(shared_config.clone(), None)
         .await?
         .with_drain_state(drain_state.clone())
@@ -196,7 +196,7 @@ pub async fn run_unified_server_worker(args: UnifiedServerWorkerArgs) -> Result<
             };
             
             // Create DHT record store if DHT is enabled
-            let record_store = create_record_store(&mesh_config, routing_manager);
+            let record_store = create_record_store(mesh_config, routing_manager);
             
             // Create mesh transport manager with config, topology, and record_store
             let transport_manager = Arc::new(MeshTransportManager::new(
@@ -253,7 +253,7 @@ pub async fn run_unified_server_worker(args: UnifiedServerWorkerArgs) -> Result<
                 threat_config.clone(),
                 block_store.clone(),
                 node_id.clone(),
-                mesh_config.role.clone(),
+                mesh_config.role,
                 Some(Arc::new(signer_for_threat)),
             ));
             
@@ -332,7 +332,7 @@ pub async fn run_unified_server_worker(args: UnifiedServerWorkerArgs) -> Result<
                     }
                 };
                 
-                if let Err(e) = crate::mesh::backend::initialize_mesh_transports(&mesh_config, transport_manager.clone(), Some(threat_intel.clone()), Some(Arc::new(signer_for_mesh)), dns_registry).await {
+                if let Err(e) = crate::mesh::backend::initialize_mesh_transports(mesh_config, transport_manager.clone(), Some(threat_intel.clone()), Some(Arc::new(signer_for_mesh)), dns_registry).await {
                     tracing::warn!("Mesh transport initialization failed: {}", e);
                 }
             }
@@ -395,7 +395,7 @@ pub async fn run_unified_server_worker(args: UnifiedServerWorkerArgs) -> Result<
                     let yara_rules = Arc::new(YaraRulesManager::new(
                         mesh_config.yara_rules.clone(),
                         node_id.clone(),
-                        mesh_config.role.clone(),
+                        mesh_config.role,
                         signer_for_yara,
                         feed_mgr,
                         yara_data_dir,
@@ -455,7 +455,7 @@ pub async fn run_unified_server_worker(args: UnifiedServerWorkerArgs) -> Result<
     {
         let mut ipc_guard = ipc.lock().await;
         ipc_guard.send(&Message::UnifiedServerWorkerReady {
-            id: worker_id.clone(),
+            id: worker_id,
         }).await?;
     }
     
@@ -546,7 +546,7 @@ pub async fn run_unified_server_worker(args: UnifiedServerWorkerArgs) -> Result<
     let stop_accepting_tx = Arc::new(TokioMutex::new(Some(stop_accepting_sender)));
 
     let state = UnifiedServerWorkerState {
-        worker_id: worker_id.clone(),
+        worker_id,
         metrics: metrics.clone(),
         start_time: Instant::now(),
         ipc: ipc.clone(),
@@ -564,7 +564,7 @@ pub async fn run_unified_server_worker(args: UnifiedServerWorkerArgs) -> Result<
     {
         let mut ipc_guard = ipc.lock().await;
         ipc_guard.send(&Message::UnifiedServerWorkerReady {
-            id: worker_id.clone(),
+            id: worker_id,
         }).await?;
     }
 
@@ -586,7 +586,7 @@ pub async fn run_unified_server_worker(args: UnifiedServerWorkerArgs) -> Result<
 
             let mut ipc = heartbeat_state.ipc.lock().await;
             let _ = ipc.send(&Message::UnifiedServerWorkerHeartbeat {
-                id: heartbeat_state.worker_id.clone(),
+                id: heartbeat_state.worker_id,
                 timestamp: current_timestamp(),
                 metrics: payload,
             }).await;
@@ -595,7 +595,7 @@ pub async fn run_unified_server_worker(args: UnifiedServerWorkerArgs) -> Result<
             for (site_id, supervisor) in app_servers.iter() {
                 let mut ipc = heartbeat_state.ipc.lock().await;
                 let _ = ipc.send(&Message::AppServerHealth {
-                    id: heartbeat_state.worker_id.clone(),
+                    id: heartbeat_state.worker_id,
                     site_id: site_id.clone(),
                     healthy: supervisor.is_healthy(),
                     timestamp: current_timestamp(),
@@ -659,7 +659,7 @@ pub async fn run_unified_server_worker(args: UnifiedServerWorkerArgs) -> Result<
                     
                     let mut ipc = ipc_state.ipc.lock().await;
                     let _ = ipc.send(&Message::UnifiedServerWorkerShutdownComplete {
-                        id: ipc_state.worker_id.clone(),
+                        id: ipc_state.worker_id,
                     }).await;
                     break;
                 }
@@ -761,7 +761,7 @@ pub async fn run_unified_server_worker(args: UnifiedServerWorkerArgs) -> Result<
 
                     let mut ipc = ipc_state.ipc.lock().await;
                     let _ = ipc.send(&Message::UnifiedServerWorkerDrained {
-                        id: ipc_state.worker_id.clone(),
+                        id: ipc_state.worker_id,
                         remaining_connections: remaining,
                     }).await;
                 }
@@ -802,7 +802,7 @@ pub async fn run_unified_server_worker(args: UnifiedServerWorkerArgs) -> Result<
 
                     let mut ipc = ipc_state.ipc.lock().await;
                     let _ = ipc.send(&Message::UnifiedServerWorkerResizeAck {
-                        id: ipc_state.worker_id.clone(),
+                        id: ipc_state.worker_id,
                         worker_threads,
                     }).await;
 

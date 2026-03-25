@@ -364,6 +364,12 @@ pub struct OverseerLockFile {
     lock_file: Option<()>,
 }
 
+impl Default for OverseerLockFile {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl OverseerLockFile {
     pub fn new() -> Self {
         let data_dir = dirs::data_dir()
@@ -392,7 +398,7 @@ impl OverseerLockFile {
 
     pub fn acquire(&mut self) -> Result<(), OverseerLockError> {
         if let Some(parent) = self.lock_path.parent() {
-            fs::create_dir_all(parent).map_err(|e| OverseerLockError::IoError(e))?;
+            fs::create_dir_all(parent).map_err(OverseerLockError::IoError)?;
         }
 
         OverseerLockFile::cleanup_stale_locks(300);
@@ -413,9 +419,9 @@ impl OverseerLockFile {
 
         let temp_path = self.lock_path.with_extension("lock.tmp");
 
-        fs::write(&temp_path, content.as_bytes()).map_err(|e| OverseerLockError::IoError(e))?;
+        fs::write(&temp_path, content.as_bytes()).map_err(OverseerLockError::IoError)?;
 
-        fs::rename(&temp_path, &self.lock_path).map_err(|e| OverseerLockError::IoError(e))?;
+        fs::rename(&temp_path, &self.lock_path).map_err(OverseerLockError::IoError)?;
 
         if !self.is_locked() {
             return Err(OverseerLockError::LockError(

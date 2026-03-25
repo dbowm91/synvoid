@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum ProtocolType {
     Http,
     Https,
@@ -12,14 +13,10 @@ pub enum ProtocolType {
     GrpcTls,
     Tcp,
     Udp,
+    #[default]
     Unknown,
 }
 
-impl Default for ProtocolType {
-    fn default() -> Self {
-        Self::Unknown
-    }
-}
 
 impl ProtocolType {
     pub fn is_secure(&self) -> bool {
@@ -115,7 +112,9 @@ impl ProtocolMetrics {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum ProtocolFamily {
+    #[default]
     Http,
     WebSocket,
     Grpc,
@@ -123,8 +122,3 @@ pub enum ProtocolFamily {
     Udp,
 }
 
-impl Default for ProtocolFamily {
-    fn default() -> Self {
-        Self::Http
-    }
-}
