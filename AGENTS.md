@@ -312,75 +312,73 @@ Six admin endpoints that returned success without doing anything now return `501
 
 ## Phase 3 Completion Notes (2026-03-25)
 
-Phase 3 addressed error handling, unsafe documentation, and dead code. Key learnings for future agents:
+> **Completed.** See section above for details.
 
-### Centralized Error Type
+## Phase 4 Completion Notes (2026-03-25)
 
-Created `src/error.rs` with `WafError` enum and `WafResult<T>`. The enum covers common error categories (I/O, JSON, IPC, config, crypto, upstream) with `From` impls for `std::io::Error`, `serde_json::Error`, `String`, and `&str`. A `WafErrorExt` trait provides `.waf_internal()`, `.waf_ipc()`, `.waf_config()`, `.waf_upstream()` convenience methods for mapping any error with context.
+Phase 4 addressed performance and reliability items. Key changes and learnings:
 
-**Usage pattern for new code:**
-```rust
-use maluwaf::error::{WafError, WafResult, WafErrorExt};
+### Cache Store Refactoring (`src/proxy_cache/store.rs`)
 
-fn do_thing() -> WafResult<()> {
-    let data = std::fs::read("file").waf_internal("reading config")?;
-    Ok(())
-}
-```
+**`VecDeque::retain` replaced with `position/remove`:** All 7 `retain` calls were replaced with `VecDeque::position()` + `remove()`. While both are O(n), `position/remove` avoids allocating a closure on every call and short-circuits on the first match. A helper function `move_to_back()` was added for the common pattern of "remove from current position + push to back".
 
-### Unwrap/Expect Audit
+**`get_hit_status` already used read lock:** The plan suggested switching from write lock to read lock, but `get_hit_status` was already using `self.state.read()`. The `get` method still requires a write lock because it updates access order.
 
-The plan cited 580 unwrap/expect calls, but ~540 were in test code (acceptable). Only ~44 were in non-test production code. Fixes applied:
+**`get_or_fetch` made async and functional:** The method was changed from sync (returning `Option<ProxyCacheEntry>` and never calling `_fetch`) to `async` (calling `fetch().await` on cache miss, storing the result, then returning it). Has no callers currently but is now correct as a public API.
 
-| Category | Count | Fix Pattern |
-|----------|-------|-------------|
-| `duration_since(UNIX_EPOCH).unwrap()` | 9 | `.unwrap_or_default()` — clock before epoch returns 0 |
-| Guarded `as_ref().unwrap()` | 4 | `.expect("checked is_some above")` — documents the guard |
-| Response builder fallback | 12 | `.expect("building static 500 response should never fail")` |
-| Hardcoded literal parse | 5 | `.expect("valid socket address literal")` inside `unwrap_or_else` |
-| `RwLock::read/write().unwrap()` | 3 | Switched to `parking_lot::RwLock` (no Result return) |
-| `Mutex::lock().unwrap()` | 4 | Switched to `parking_lot::Mutex` (no Result return) |
+**Cache-Control parsing enhanced (`src/proxy.rs`):** Both `get_cache_max_age` and `get_cache_max_age_static` now parse `s-maxage` (takes precedence for shared/proxy caches), `no-cache`, and quoted values. Previously only `max-age=` was parsed.
 
-**Pattern: `duration_since(UNIX_EPOCH).unwrap()`**
-```rust
-// BEFORE (panics if system clock is before 1970)
-let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+**Binary corruption deferred (4.1.4):** `build_cached_response` uses `String::from_utf8_lossy` which corrupts binary content (images, compressed data). Fix requires changing `Response<String>` to `Response<Bytes>` throughout the proxy pipeline — deferred to Phase 6 refactoring.
 
-// AFTER (returns 0 for pathological clock)
-let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
-```
+### Normalizer (`src/waf/attack_detection/normalizer.rs`)
 
-**Pattern: Mutex/RwLock in sync contexts**
-```rust
-// BEFORE (std::sync::Mutex — can panic on poisoned lock)
-use std::sync::Mutex;
-let guard = self.data.lock().unwrap();
+**Removed `original` field:** `NormalizedInput.original` was always a clone of the input but never read by any code. Removing it eliminates one `String` allocation per WAF-checked request. The `original` field was removed from the struct and the `normalize` method no longer clones.
 
-// AFTER (parking_lot::Mutex — no poisoning, no Result)
-use parking_lot::Mutex;
-let guard = self.data.lock();
-```
+### Process Management (`src/process/manager.rs`)
 
-### Unsafe Block Documentation
+**Unified worker restart limit:** `handle_unified_worker_restart` now checks `restart_count < max_restart_attempts` before restarting, matching the behavior of regular workers. The `UnifiedServerWorkerProcess` struct already had `restart_count` and `last_restart_at` fields — they just weren't being checked.
 
-Added `// SAFETY:` comments to 7 previously undocumented unsafe blocks:
-- `src/worker/mod.rs` — 5 blocks (Windows named pipe IPC: CreateNamedPipeW, ConnectNamedPipe, GetLastError, CloseHandle, from_raw_handle)
-- `src/platform/windows_impl.rs` — 2 blocks (CloseHandle, from_raw_parts for WSAPROTOCOL_INFOW)
+**Dummy IPC panic removed (`src/worker/mod.rs`):** The reload handler used `futures::executor::block_on` + `unwrap_or_else(|_| panic!(...))` to create a dummy IPC connection inside an async context. Replaced with a proper `await` and `continue` on failure, removing both the `block_on` (which can deadlock the Tokio runtime) and the unconditional panic.
 
-Added `# Safety` doc comments to 2 `unsafe fn` declarations in `src/process/socket_fd.rs` (non-Unix stubs).
+### Connection Tracker (`src/overseer/connection_tracker.rs`)
 
-**Current unsafe documentation status:** ~95% of unsafe blocks now have SAFETY comments. Remaining undocumented items are `unsafe fn` with `# Safety` doc on the signature (standard Rust convention).
+**Switched to `parking_lot::Mutex`:** `std::sync::Mutex` was used for `drain_start_time`. Replaced with `parking_lot::Mutex` which doesn't return a `Result` from `lock()` (no poisoning), eliminating 4x `.unwrap()` calls. `parking_lot` was already a dependency.
 
-### Dead Code Removal
+### Overseer Lock File (`src/process/pidfile.rs`)
 
-Removed crate-level `#![allow(dead_code)]` from `src/lib.rs` and module-level `#![allow(dead_code)]` from `src/worker/mod.rs`. This revealed 12 genuinely unused items, which were given targeted `#[allow(dead_code)]` annotations with descriptive context. Each was evaluated:
-- Items conditionally compiled (`#[cfg(unix)]`, `#[cfg(windows)]`) — kept with allow
-- Items for future use (RSA key generation helpers) — kept with allow
-- Items in API completeness (RingBuffer::with_capacity) — kept with allow
+**`flock` as primary mechanism:** The `OverseerLockFile` previously used a check-then-write pattern (check if lock exists → check if process is alive → write lock file) which has a TOCTOU race. Now uses `flock(FlockArg::LockExclusiveNonblock)` on the lock file before writing the PID, making the acquire operation atomic. The `lock_file` field was changed from `Option<()>` to `Option<File>` to hold the file descriptor for the flock lifetime.
 
-### Pre-existing Clippy Warning Increase
+### Socket Handoff (`src/overseer/socket_handoff.rs`)
 
-Removing the `dead_code` suppression increased clippy warnings from ~107 to ~156. The new warnings are primarily "field is never read" (previously suppressed by the crate-level allow). These are deferred to later phases as they indicate fields that may be written but not yet read by the codebase.
+**FD count assertion:** Added an explicit check that `fds.len() == ports.len()` after receiving file descriptors. Previously, a mismatch would silently zip fewer FDs with ports, leading to port→FD mapping errors.
+
+### Drain IPC Retry (`src/overseer/drain_manager.rs`)
+
+**Retry with exponential backoff:** `drain_worker_with_confirmation` previously failed immediately if `poll_drain_status` returned an error. Now retries up to 3 times with exponential backoff (100ms, 200ms, 400ms) for transient IPC errors, only failing if all retries are exhausted.
+
+### DNS Cache (`src/dns/cache.rs`)
+
+**TTL-based fingerprint eviction:** Cache fingerprints (used for poisoning detection) were bounded only by count (`max_fingerprints_per_name`). Now also evict entries older than 1 hour via `Instant` timestamps stored alongside each fingerprint.
+
+### Items Deferred to Later Phases
+
+| Item | Reason | Target Phase |
+|------|--------|-------------|
+| Binary body in cache (4.1.4) | Needs `Response<String>` → `Response<Bytes>` refactor | 6 |
+| Async mutex standardization (4.5) | `_sync` variants are used from sync callers, `blocking_read` is correct for those contexts | 6 |
+| Arc\<Firewall\> shared queries (4.6.2) | DNS server is large; needs modular split first | 6 |
+| Batch zone index rebuild (4.6.3) | DNS server refactoring dependency | 6 |
+| WAF `to_uppercase` allocation (4.2.2) | Requires pre-lowercased constant comparison | 6 |
+| InputLocation::Header allocation (4.2.3) | Requires `Cow<str>` or lifetime refactoring | 6 |
+| stdout/stderr pipe blocking (4.3.3) | Platform-specific, needs careful testing | 5 |
+| Stale IPC drain filter (4.3.2) | Need to identify where stale messages are received | 5 |
+
+### Pre-existing Items Already Implemented
+
+Two items were already implemented before Phase 4:
+
+- **4.3.10 Zone history:** `increment_serial_with_limit(50)` already caps history to 50 entries
+- **4.6.1 Rate limiter cleanup:** `cleanup_if_needed` already throttles to every 60 seconds via `CLEANUP_INTERVAL_SECS`
 
 ## Known Code Quality Context
 
@@ -421,7 +419,7 @@ Agents working on these areas should be aware of these issues. See `plan.md` for
 
 | Bug | Location | Impact |
 |-----|----------|--------|
-| `get_or_fetch` never calls fetch | `src/proxy_cache/store.rs:303-313` | `_fetch` callback never invoked |
+| *(none - all Phase 4 bugs fixed)* | | |
 
 ### Security
 
@@ -446,8 +444,8 @@ Agents modifying these areas should be aware of performance characteristics:
 | Area | Concern | Location |
 |------|---------|----------|
 | WAF detection | Runs ~20+ checks per request, lock acquisition per request | `src/waf/mod.rs:667-1056` |
-| Cache lookups | O(n) `VecDeque::retain` on every operation; write lock on read | `src/proxy_cache/store.rs:225,241` |
-| Input normalization | Always clones input string unnecessarily | `src/waf/normalizer.rs:38` |
+| Cache lookups | O(n) `VecDeque::position/remove` per operation; write lock on LRU update | `src/proxy_cache/store.rs:225,241` |
+| Input normalization | Allocates `String` per request via NFKC normalization | `src/waf/attack_detection/normalizer.rs:349` |
 | Rate limiting | `retain` is O(n) per call, 6 sequential calls | `src/waf/ratelimit.rs:122-142` |
 | HTTP path sanitization | Allocates `String` on every request | `src/proxy.rs:94` |
 | Response header filtering | Allocates `Vec` on every proxied response | `src/proxy.rs:151-158` |

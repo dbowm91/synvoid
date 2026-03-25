@@ -410,6 +410,15 @@ impl SocketHandoffClient {
 
         tracing::info!("Received {} socket FDs", fds.len());
 
+        if fds.len() != ports.len() {
+            return Err(SocketHandoffError::IpcError(format!(
+                "FD count mismatch: expected {} FDs for ports {:?}, received {}",
+                ports.len(),
+                ports,
+                fds.len()
+            )));
+        }
+
         let mut holder = SocketHolder::new();
         for (fd, port) in fds.iter().zip(ports.iter()) {
             holder.add_existing_fd(*fd, *port, crate::process::SocketType::Tcp);

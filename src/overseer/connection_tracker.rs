@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
+use parking_lot::Mutex;
 
 use crate::drain::DrainStatus;
 use crate::process::ipc::WorkerId;
@@ -17,7 +18,7 @@ pub struct ConnectionTracker {
     total_active: Arc<AtomicU64>,
     total_idle: Arc<AtomicU64>,
     by_worker: DashMap<WorkerId, WorkerConnections>,
-    drain_start_time: Arc<std::sync::Mutex<Option<Instant>>>,
+    drain_start_time: Arc<Mutex<Option<Instant>>>,
     drain_timeout_secs: Arc<AtomicU64>,
 }
 
@@ -50,7 +51,7 @@ impl ConnectionTracker {
             total_active: Arc::new(AtomicU64::new(0)),
             total_idle: Arc::new(AtomicU64::new(0)),
             by_worker: DashMap::new(),
-            drain_start_time: Arc::new(std::sync::Mutex::new(None)),
+            drain_start_time: Arc::new(Mutex::new(None)),
             drain_timeout_secs: Arc::new(AtomicU64::new(0)),
         }
     }
@@ -112,20 +113,20 @@ impl ConnectionTracker {
     }
 
     pub fn start_drain(&self, timeout_secs: u64) {
-        let mut drain_start = self.drain_start_time.lock().unwrap();
+        let mut drain_start = self.drain_start_time.lock();
         *drain_start = Some(Instant::now());
         self.drain_timeout_secs
             .store(timeout_secs, Ordering::Relaxed);
     }
 
     pub fn stop_drain(&self) {
-        let mut drain_start = self.drain_start_time.lock().unwrap();
+        let mut drain_start = self.drain_start_time.lock();
         *drain_start = None;
         self.drain_timeout_secs.store(0, Ordering::Relaxed);
     }
 
     pub fn is_draining(&self) -> bool {
-        let drain_start = self.drain_start_time.lock().unwrap();
+        let drain_start = self.drain_start_time.lock();
         drain_start.is_some()
     }
 
@@ -138,7 +139,7 @@ impl ConnectionTracker {
     }
 
     pub fn get_drain_status(&self) -> DrainStatus {
-        let drain_start = self.drain_start_time.lock().unwrap();
+        let drain_start = self.drain_start_time.lock();
         let drain_timeout = self.drain_timeout_secs.load(Ordering::Relaxed);
 
         let (is_draining, drain_elapsed_secs) = match *drain_start {

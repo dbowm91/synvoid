@@ -4,6 +4,7 @@ use nix::fcntl::{flock, FlockArg};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
 use std::io::Read;
+use std::os::unix::io::AsRawFd;
 use std::path::PathBuf;
 
 const DEFAULT_RUSTWAF_DIR: &str = ".maluwaf";
@@ -361,7 +362,7 @@ impl Default for PidFileManager {
 
 pub struct OverseerLockFile {
     lock_path: PathBuf,
-    lock_file: Option<()>,
+    lock_file: Option<File>,
 }
 
 impl Default for OverseerLockFile {
@@ -401,10 +402,16 @@ impl OverseerLockFile {
             fs::create_dir_all(parent).map_err(OverseerLockError::IoError)?;
         }
 
-        OverseerLockFile::cleanup_stale_locks(300);
+        let file = File::create(&self.lock_path).map_err(OverseerLockError::IoError)?;
 
-        if self.check_lock(true) {
-            return Err(OverseerLockError::AlreadyLocked);
+        match flock(file.as_raw_fd(), FlockArg::LockExclusiveNonblock) {
+            Ok(()) => {}
+            Err(e) => {
+                if e == nix::errno::Errno::EWOULDBLOCK {
+                    return Err(OverseerLockError::AlreadyLocked);
+                }
+                return Err(OverseerLockError::LockError(format!("flock failed: {}", e)));
+            }
         }
 
         let pid = std::process::id();
@@ -417,24 +424,20 @@ impl OverseerLockFile {
                 .as_secs()
         );
 
-        let temp_path = self.lock_path.with_extension("lock.tmp");
+        use std::io::Write;
+        let mut f = &file;
+        f.write_all(content.as_bytes())
+            .map_err(OverseerLockError::IoError)?;
+        f.flush().map_err(OverseerLockError::IoError)?;
 
-        fs::write(&temp_path, content.as_bytes()).map_err(OverseerLockError::IoError)?;
-
-        fs::rename(&temp_path, &self.lock_path).map_err(OverseerLockError::IoError)?;
-
-        if !self.is_locked() {
-            return Err(OverseerLockError::LockError(
-                "Failed to verify lock".to_string(),
-            ));
-        }
-
-        self.lock_file = Some(());
+        self.lock_file = Some(file);
         Ok(())
     }
 
     pub fn release(&mut self) {
-        self.lock_file = None;
+        if let Some(file) = self.lock_file.take() {
+            let _ = flock(file.as_raw_fd(), FlockArg::Unlock);
+        }
         let _ = fs::remove_file(&self.lock_path);
     }
 

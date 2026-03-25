@@ -833,13 +833,35 @@ impl ProxyServer {
     fn get_cache_max_age(&self, headers: &http::HeaderMap) -> Option<std::time::Duration> {
         if let Some(cc) = headers.get("cache-control") {
             if let Ok(cc_str) = cc.to_str() {
+                let mut max_age: Option<u64> = None;
+                let mut s_maxage: Option<u64> = None;
+                let mut no_cache = false;
+
                 for part in cc_str.split(',') {
-                    let part = part.trim();
-                    if part.starts_with("max-age=") {
-                        if let Ok(age) = part[8..].parse::<u64>() {
-                            return Some(std::time::Duration::from_secs(age));
+                    let part = part.trim().to_ascii_lowercase();
+                    if let Some(val) = part.strip_prefix("s-maxage=") {
+                        if let Ok(age) = val.trim_matches('"').parse::<u64>() {
+                            s_maxage = Some(age);
                         }
+                    } else if let Some(val) = part.strip_prefix("max-age=") {
+                        if let Ok(age) = val.trim_matches('"').parse::<u64>() {
+                            max_age = Some(age);
+                        }
+                    } else if part == "no-cache" || part.starts_with("no-cache=") {
+                        no_cache = true;
                     }
+                }
+
+                if no_cache {
+                    return Some(std::time::Duration::from_secs(0));
+                }
+
+                // s-maxage takes precedence for shared caches (like a proxy cache)
+                if let Some(age) = s_maxage {
+                    return Some(std::time::Duration::from_secs(age));
+                }
+                if let Some(age) = max_age {
+                    return Some(std::time::Duration::from_secs(age));
                 }
             }
         }
@@ -935,13 +957,34 @@ impl ProxyServer {
     fn get_cache_max_age_static(headers: &http::HeaderMap) -> Option<Duration> {
         if let Some(cc) = headers.get("cache-control") {
             if let Ok(cc_str) = cc.to_str() {
+                let mut max_age: Option<u64> = None;
+                let mut s_maxage: Option<u64> = None;
+                let mut no_cache = false;
+
                 for part in cc_str.split(',') {
-                    let part = part.trim();
-                    if part.starts_with("max-age=") {
-                        if let Ok(age) = part[8..].parse::<u64>() {
-                            return Some(Duration::from_secs(age));
+                    let part = part.trim().to_ascii_lowercase();
+                    if let Some(val) = part.strip_prefix("s-maxage=") {
+                        if let Ok(age) = val.trim_matches('"').parse::<u64>() {
+                            s_maxage = Some(age);
                         }
+                    } else if let Some(val) = part.strip_prefix("max-age=") {
+                        if let Ok(age) = val.trim_matches('"').parse::<u64>() {
+                            max_age = Some(age);
+                        }
+                    } else if part == "no-cache" || part.starts_with("no-cache=") {
+                        no_cache = true;
                     }
+                }
+
+                if no_cache {
+                    return Some(Duration::from_secs(0));
+                }
+
+                if let Some(age) = s_maxage {
+                    return Some(Duration::from_secs(age));
+                }
+                if let Some(age) = max_age {
+                    return Some(Duration::from_secs(age));
                 }
             }
         }
@@ -1264,7 +1307,7 @@ pub fn build_forward_headers(
     config: &ProxyHeadersConfig,
     is_tls: bool,
 ) -> Vec<(String, String)> {
-    let mut forward_headers = Vec::new();
+    let mut forward_headers = Vec::with_capacity(8);
     
     let headers_to_forward: Vec<&str> = if config.forward.is_empty() {
         vec!["X-Real-IP", "X-Forwarded-For", "X-Forwarded-Proto", "Host"]

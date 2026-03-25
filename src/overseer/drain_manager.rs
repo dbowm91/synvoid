@@ -303,19 +303,43 @@ impl DrainProtocol {
         let start = Instant::now();
         let timeout = Duration::from_secs(drain_timeout_secs);
         let poll_interval = Duration::from_millis(poll_interval_ms);
+        let max_retries: u32 = 3;
         
         while start.elapsed() < timeout {
-            let status = self.poll_drain_status(ipc, drain_id).await?;
+            let mut last_error = None;
             
-            self.manager.update_worker_connections(
-                worker_id,
-                status.active_connections,
-                status.idle_connections,
-            );
+            for attempt in 0..max_retries {
+                match self.poll_drain_status(ipc, drain_id).await {
+                    Ok(status) => {
+                        self.manager.update_worker_connections(
+                            worker_id,
+                            status.active_connections,
+                            status.idle_connections,
+                        );
+                        
+                        if status.drain_complete {
+                            self.manager.mark_worker_drain_complete(worker_id, status.connections_drained);
+                            return Ok(true);
+                        }
+                        
+                        break;
+                    }
+                    Err(e) => {
+                        last_error = Some(e);
+                        if attempt < max_retries - 1 {
+                            let backoff = Duration::from_millis(100 * (1 << attempt));
+                            tracing::warn!(
+                                "Drain status poll failed for worker {} (attempt {}/{}), retrying in {:?}",
+                                worker_id, attempt + 1, max_retries, backoff
+                            );
+                            tokio::time::sleep(backoff).await;
+                        }
+                    }
+                }
+            }
             
-            if status.drain_complete {
-                self.manager.mark_worker_drain_complete(worker_id, status.connections_drained);
-                return Ok(true);
+            if let Some(e) = last_error {
+                return Err(e);
             }
             
             tokio::time::sleep(poll_interval).await;

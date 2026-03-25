@@ -46,7 +46,7 @@ struct InnerDnsCache {
     max_ttl: Duration,
     min_ttl: Duration,
     max_entry_size: usize,
-    cache_fingerprints: RwLock<HashMap<String, Vec<u64>>>,
+    cache_fingerprints: RwLock<HashMap<String, Vec<(u64, Instant)>>>,
     enable_source_validation: bool,
     enable_fingerprinting: bool,
     max_fingerprints_per_name: usize,
@@ -157,15 +157,17 @@ impl DnsCache {
             let fingerprints = inner.cache_fingerprints.write();
 
             if let Some(existing) = fingerprints.get(&qname) {
+                let has_fingerprint = existing.iter().any(|(fp, _)| *fp == fingerprint);
                 if existing.len() >= inner.max_fingerprints_per_name {
-                    if !existing.contains(&fingerprint) {
+                    if !has_fingerprint {
+                        let fps: Vec<u64> = existing.iter().map(|(fp, _)| *fp).collect();
                         return Err(CachePoisoningError::FingerprintMismatch {
                             qname: qname.clone(),
-                            expected: existing.clone(),
+                            expected: fps,
                             actual: fingerprint,
                         });
                     }
-                } else if !existing.is_empty() && !existing.contains(&fingerprint) {
+                } else if !existing.is_empty() && !has_fingerprint {
                     tracing::warn!(
                         "Potential cache poisoning attempt detected for {} (new fingerprint: {})",
                         qname,
@@ -191,12 +193,17 @@ impl DnsCache {
 
         let fingerprint = Self::compute_fingerprint(data);
         let qname = key.qname.clone();
+        let now = Instant::now();
         let mut fingerprints = inner.cache_fingerprints.write();
 
         let entry = fingerprints.entry(qname).or_default();
 
-        if !entry.contains(&fingerprint) {
-            entry.push(fingerprint);
+        // Evict entries older than 1 hour
+        let max_age = Duration::from_secs(3600);
+        entry.retain(|(_, ts)| now.duration_since(*ts) < max_age);
+
+        if !entry.iter().any(|(fp, _)| *fp == fingerprint) {
+            entry.push((fingerprint, now));
             if entry.len() > inner.max_fingerprints_per_name {
                 entry.remove(0);
             }

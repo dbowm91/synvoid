@@ -1170,19 +1170,34 @@ impl ProcessManager {
                                 self.metrics.total_restarts.fetch_add(1, Ordering::Relaxed);
                             }
                         } else {
+                            let restart_count = worker.restart_count;
+                            
                             tracing::error!(
-                                "UnifiedServerWorker (PID {:?}) exited unexpectedly with status: {}",
+                                "UnifiedServerWorker (PID {:?}) exited unexpectedly with status: {} (restart {}/{})",
                                 worker.pid(),
-                                status
+                                status,
+                                restart_count,
+                                self.config.max_restart_attempts
                             );
                             *worker.status_mut() = WorkerStatus::Failed;
                             *worker.child_mut() = None;
                             
-                            tracing::info!("Respawning UnifiedServerWorker after unexpected exit");
-                            if let Err(e) = self.spawn_unified_server_worker() {
-                                tracing::error!("Failed to respawn UnifiedServerWorker: {}", e);
+                            if restart_count < self.config.max_restart_attempts {
+                                let new_count = restart_count + 1;
+                                worker.restart_count = new_count;
+                                worker.last_restart_at = Some(Instant::now());
+                                
+                                tracing::info!("Respawning UnifiedServerWorker (attempt {})", new_count);
+                                if let Err(e) = self.spawn_unified_server_worker() {
+                                    tracing::error!("Failed to respawn UnifiedServerWorker: {}", e);
+                                } else {
+                                    self.metrics.total_restarts.fetch_add(1, Ordering::Relaxed);
+                                }
                             } else {
-                                self.metrics.total_restarts.fetch_add(1, Ordering::Relaxed);
+                                tracing::error!(
+                                    "UnifiedServerWorker exceeded max restart attempts ({}), not restarting",
+                                    self.config.max_restart_attempts
+                                );
                             }
                         }
                     }

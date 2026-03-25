@@ -35,7 +35,6 @@ impl InputNormalizer {
         self.apply_normalizations_inplace(&mut buffer);
 
         NormalizedInput {
-            original: input.to_string(),
             normalized: buffer,
             passes,
         }
@@ -356,7 +355,6 @@ impl InputNormalizer {
 
 #[derive(Debug, Clone)]
 pub struct NormalizedInput {
-    pub original: String,
     pub normalized: String,
     pub passes: usize,
 }

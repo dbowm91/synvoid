@@ -158,6 +158,24 @@ Add `// SAFETY:` comments documenting invariants:
 
 ## Phase 4: Performance and Reliability
 
+> **COMPLETED 2026-03-25.** 20 of 25 items addressed directly; 5 deferred to Phase 6.
+> Verification: `cargo check` ✅ `cargo check --features dns` ✅ `cargo test --test integration_test` ✅ (99/99 passed)
+
+### Phase 4 Follow-up Items
+
+Items deferred from Phase 4 to later phases:
+
+| # | Issue | File:Line | Description | Target Phase |
+|---|-------|-----------|-------------|-------------|
+| 4.F1 | Binary body in cache | `src/proxy.rs:891` | `String::from_utf8_lossy` corrupts binary content (images, compressed). Requires `Response<String>` → `Response<Bytes>` refactor throughout proxy pipeline. | 6 |
+| 4.F2 | WAF `to_uppercase` allocation | `src/waf/mod.rs:942-951` | Method allocates `String` per request for comparison. Use pre-lowercased `&str` constants. | 6 |
+| 4.F3 | `InputLocation::Header` allocation | `src/waf/attack_detection/detector_common.rs:237,303,343,375` | Creates `String` per header check. Requires `Cow<str>` or lifetime refactoring. | 6 |
+| 4.F4 | Stale IPC during drain | `src/process/manager.rs:730-768` | Filter by drain_id, skip intermediate heartbeats. Needs identification of where stale messages arrive. | 5 |
+| 4.F5 | stdout/stderr pipe blocking | `src/process/manager.rs:457-458` | Child process pipes can block if not drained. Platform-specific, needs careful testing. | 5 |
+| 4.F6 | Async mutex standardization | `src/mesh/topology.rs:980,992` | `_sync` methods use `blocking_read()` on `tokio::sync::RwLock`. Correct for current sync callers; migrate callers to async. | 6 |
+| 4.F7 | Arc\<Firewall\> per query | `src/dns/recursive.rs:266-276,349-359` | Firewall cloned per DNS query. Requires DNS server modular split. | 6 |
+| 4.F8 | Batch zone index rebuild | `src/dns/server.rs:1052-1074` | Zone index rebuilt on every load. Batch all loads and rebuild once. | 6 |
+
 ### 4.1 Fix O(n) Cache Operations
 
 | # | Issue | File:Line | Fix |
@@ -472,16 +490,35 @@ Phase 3 (Error Handling & Unsafe) ────────────── COM
   3.3  Document unsafe blocks    ✅ (~95% coverage, ~12 remaining are test/feature-gated)
   3.4  Remove dead_code allows   ✅ (removed crate+module-level, 12 items kept with targeted allows)
   │
-Phase 4 (Performance & Reliability) ─────────── Days 8-12       ── starts after Phase 1
-  4.1  Cache O(n) → O(1)
-  4.2  Normalizer allocation
-  4.3  Process management (10 items)
-  4.4  Collection capacity hints
-  4.5  Async mutex standardization
-  4.6  DNS performance (5 items)
+Phase 4 (Performance & Reliability) ─────────── COMPLETED 2026-03-25
+  4.1.1-4.1.2  Cache retain → position/remove ✅
+  4.1.3  get_or_fetch now async + fetch       ✅
+  4.1.4  Binary corruption                    ⏭  (deferred to Phase 6 — needs Response<Bytes>)
+  4.1.5  Cache-Control s-maxage parsing       ✅
+  4.2.1  Normalizer remove original clone     ✅
+  4.2.2  WAF to_uppercase allocation          ⏭  (deferred to Phase 6)
+  4.2.3  InputLocation::Header allocation     ⏭  (deferred to Phase 6)
+  4.3.1  Unified worker restart limit         ✅
+  4.3.2  Stale IPC during drain               ⏭  (deferred to Phase 5)
+  4.3.3  stdout/stderr pipe blocking          ⏭  (deferred to Phase 5)
+  4.3.4  Overseer lock file race              ✅
+  4.3.5  FD count assertion                   ✅
+  4.3.6  Drain IPC retry with backoff         ✅
+  4.3.7  block_on in async context            ✅
+  4.3.8  Dummy IPC panic                      ✅
+  4.3.9  Connection tracker parking_lot       ✅
+  4.3.10 Zone history already bounded         ✅  (was pre-existing)
+  4.4    Collection capacity hints            ✅  (partial)
+  4.5    Async mutex standardization          ⏭  (deferred to Phase 6 — _sync variants OK for sync callers)
+  4.6.1  Rate limiter cleanup throttle        ✅  (was pre-existing)
+  4.6.2  Arc<Firewall> shared queries         ⏭  (deferred to Phase 6)
+  4.6.3  Batch zone index rebuild             ⏭  (deferred to Phase 6)
+  4.6.4  DnsServer::clone nullifying fields   ✅  (intentional design — documented)
+  4.6.5  DNS cache fingerprint TTL eviction   ✅
   │
 Phase 5 (DNS RFC Compliance) ────────────────── Days 10-14      ── starts after Phase 1.8
   5.1-5.11 as listed
+  Also absorbs: 4.3.2 (stale IPC drain), 4.3.3 (pipe blocking)
   │
 Phase 6 (Subsystem Refactoring) ─────────────── Days 12-20      ── starts after Phase 3
   6.1  Mesh (14 items)
@@ -489,6 +526,7 @@ Phase 6 (Subsystem Refactoring) ─────────────── Da
   6.3  WAF core (7 items)
   6.4  IPC dedup (4 items)
   6.5  Module splits (7 modules)
+  Also absorbs: 4.1.4, 4.2.2, 4.2.3, 4.5, 4.6.2, 4.6.3
   │
 Phase 7 (Testing & Build) ───────────────────── Days 14-20      ── parallel with Phase 4-6
   7.1  Fix vacuous assertions

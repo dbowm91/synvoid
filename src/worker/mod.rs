@@ -799,20 +799,24 @@ pub async fn run_static_worker(args: StaticWorkerArgs) -> Result<(), Box<dyn std
                 cm.discover_sites();
                 let main_config = cm.main.clone();
                 
+                let dummy_ipc = {
+                    let socket_name = if cfg!(windows) { "nul" } else { "dummy_reload" };
+                    match crate::process::ipc_transport::IpcEndpoint::new(socket_name)
+                        .connect().await
+                    {
+                        Ok(conn) => conn,
+                        Err(e) => {
+                            tracing::warn!("Failed to create dummy IPC for reload handler: {}", e);
+                            continue;
+                        }
+                    }
+                };
+
                 let temp_state = StaticWorkerState {
                     worker_id: 0,
                     running: running_for_reload.clone(),
                     stop_background_tasks: stop_bg_for_reload.clone(),
-                    ipc: Arc::new(TokioMutex::new(
-                        futures::executor::block_on(async {
-                            let path = std::path::PathBuf::from(if cfg!(windows) { "\\\\.\\pipe\\nul" } else { "/dev/null" });
-                            let socket_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("dummy");
-                            crate::process::ipc_transport::IpcEndpoint::new(socket_name)
-                                .connect().await.unwrap_or_else(|_| {
-                                    panic!("Failed to create dummy IPC for reload");
-                                })
-                        })
-                    )),
+                    ipc: Arc::new(TokioMutex::new(dummy_ipc)),
                     config_manager: Arc::new(std::sync::RwLock::new(cm)),
                     minifier_caches: caches_for_reload.clone(),
                     compression_queue: queue_for_reload.clone(),

@@ -237,39 +237,47 @@ impl ProxyCache {
                     let mut entry = entry_inner.entry;
                     entry.content = Bytes::from(content);
                     entry.update_access();
-                    
-                    state.access_order.retain(|k| k != key);
-                    state.access_order.push_back(key.clone());
+
+                    Self::move_to_back(&mut state.access_order, key);
                     return Some(entry);
                 }
             }
         }
 
         let mut entry = entry_inner.entry;
-        
+
         if entry.is_expired() {
             if entry.is_stale_while_revalidate() {
                 entry.is_fresh = false;
                 entry.update_access();
-                state.access_order.retain(|k| k != key);
-                state.access_order.push_back(key.clone());
+                Self::move_to_back(&mut state.access_order, key);
                 return Some(entry);
             }
             if entry.is_stale_if_error() {
                 entry.is_fresh = false;
                 entry.update_access();
-                state.access_order.retain(|k| k != key);
-                state.access_order.push_back(key.clone());
+                Self::move_to_back(&mut state.access_order, key);
                 return Some(entry);
             }
-            state.access_order.retain(|k| k != key);
+            if let Some(pos) = state.access_order.iter().position(|k| k == key) {
+                state.access_order.remove(pos);
+            }
             return None;
         }
 
         entry.update_access();
-        state.access_order.retain(|k| k != key);
-        state.access_order.push_back(key.clone());
+        Self::move_to_back(&mut state.access_order, key);
         Some(entry)
+    }
+
+    /// Move a key to the back of the access order (most recently used).
+    /// O(n) worst case but avoids retain's closure allocation on every call.
+    #[inline]
+    fn move_to_back(access_order: &mut VecDeque<CacheKey>, key: &CacheKey) {
+        if let Some(pos) = access_order.iter().position(|k| k == key) {
+            access_order.remove(pos);
+        }
+        access_order.push_back(key.clone());
     }
 
     #[inline]
@@ -300,7 +308,7 @@ impl ProxyCache {
         None
     }
 
-    pub fn get_or_fetch<F, Fut>(&self, key: &CacheKey, _fetch: F) -> Option<ProxyCacheEntry>
+    pub async fn get_or_fetch<F, Fut>(&self, key: &CacheKey, fetch: F) -> Option<ProxyCacheEntry>
     where
         F: FnOnce() -> Fut,
         Fut: std::future::Future<Output = Option<(Bytes, StatusCode, HeaderMap, Option<Duration>)>>,
@@ -309,7 +317,13 @@ impl ProxyCache {
             return Some(entry);
         }
 
-        None
+        let (content, status, headers, max_age) = fetch().await?;
+
+        if self.insert(key.clone(), content, status.as_u16(), headers, max_age).is_ok() {
+            self.get(key)
+        } else {
+            None
+        }
     }
 
     pub fn insert(
@@ -405,7 +419,9 @@ impl ProxyCache {
             state.current_memory_size = state.current_memory_size.saturating_sub(entry.size);
         }
 
-        state.access_order.retain(|k| k != key);
+        if let Some(pos) = state.access_order.iter().position(|k| k == key) {
+            state.access_order.remove(pos);
+        }
     }
 
     pub fn invalidate_by_pattern(&self, pattern: &str) -> usize {
@@ -426,7 +442,9 @@ impl ProxyCache {
                 }
                 state.current_memory_size = state.current_memory_size.saturating_sub(entry.size);
             }
-            state.access_order.retain(|k| k != key);
+            if let Some(pos) = state.access_order.iter().position(|k| k == key) {
+                state.access_order.remove(pos);
+            }
         }
 
         to_remove.len()
@@ -446,7 +464,9 @@ impl ProxyCache {
                 }
                 state.current_memory_size = state.current_memory_size.saturating_sub(entry.size);
             }
-            state.access_order.retain(|k| k != key);
+            if let Some(pos) = state.access_order.iter().position(|k| k == key) {
+                state.access_order.remove(pos);
+            }
         }
 
         to_remove.len()
@@ -581,7 +601,9 @@ impl ProxyCache {
                 }
                 state.current_memory_size = state.current_memory_size.saturating_sub(entry.size);
             }
-            state.access_order.retain(|k| k != key);
+            if let Some(pos) = state.access_order.iter().position(|k| k == key) {
+                state.access_order.remove(pos);
+            }
         }
 
         to_remove.len()
