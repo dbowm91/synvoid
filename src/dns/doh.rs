@@ -176,45 +176,37 @@ impl DohServer {
 
         let zones = server.get_zones();
         let zone_trie = server.get_zone_trie();
-        let _zone_index = server.get_zone_index();
         let cache = server.get_cache();
-        let dnssec = server.get_dnssec();
-        let signer_name = server.get_signer_name();
         let ecs_config = server.get_ecs_filter_config();
 
-        let response = if let Some(ref c) = cache {
+        let ctx = crate::dns::server::QueryContext {
+            zones: &zones,
+            zone_trie: &zone_trie,
+            mesh_registry: None,
+            geoip_lookup: None,
+            min_geo_ttl: 60,
+            negative_cache_ttl: 300,
+            cache: cache.as_ref(),
+            dnssec: None,
+            signer_name: None,
+            query_validator: None,
+            firewall: None,
+            connection_limits: None,
+            max_idle_time: None,
+            zone_transfer: None,
+            ecs_filter_config: &ecs_config,
+            rate_limiter: None,
+            rrl_enabled: false,
+            update_handler: None,
+            notify_handler: None,
+            query_coalescer: None,
+        };
+
+        let response = if let Some(c) = &ctx.cache {
             let cache_key = CacheKey::new(String::new(), RecordType::NULL, Some(client_ip));
-            DnsServer::handle_query_with_cache(
-                &zones,
-                &zone_trie,
-                &dns_query,
-                None,
-                None,
-                60,
-                300,
-                c,
-                cache_key,
-                dnssec.as_ref(),
-                signer_name.as_ref(),
-                Some(client_ip),
-                None,
-                &ecs_config,
-                None,
-                None,
-            )
+            DnsServer::handle_query_with_cache(&ctx, &dns_query, c, cache_key, Some(client_ip))
         } else {
-            DnsServer::handle_query(
-                &zones,
-                &zone_trie,
-                &dns_query,
-                None,
-                None,
-                60,
-                Some(client_ip),
-                &ecs_config,
-                None,
-                None,
-            )
+            DnsServer::handle_query(&ctx, &dns_query, Some(client_ip))
         };
 
         match response {

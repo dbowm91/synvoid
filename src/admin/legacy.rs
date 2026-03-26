@@ -340,7 +340,7 @@ pub fn generate_dashboard_html(
 
 pub fn generate_login_page(error: Option<&str>) -> String {
     let error_html = error.map(|e| {
-        format!(r#"<div class="alert alert-error">{}</div>"#, e)
+        format!(r#"<div class="alert alert-error">{}</div>"#, escape_html(e))
     }).unwrap_or_default();
 
     format!(r#"<!DOCTYPE html>

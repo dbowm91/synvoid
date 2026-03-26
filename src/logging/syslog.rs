@@ -1,7 +1,6 @@
 use std::fmt;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SyslogFacility {
     #[default]
     Daemon,
@@ -17,7 +16,6 @@ pub enum SyslogFacility {
     Auth,
     User,
 }
-
 
 #[derive(Debug, Clone)]
 pub struct SyslogConfig {
@@ -56,6 +54,7 @@ impl SyslogConfig {
 }
 
 #[derive(Clone)]
+#[allow(dead_code)] // app_name kept for syslog facility identification
 pub struct SyslogLogger {
     min_level: log::Level,
     app_name: String,

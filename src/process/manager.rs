@@ -1526,11 +1526,9 @@ impl ProcessManager {
             while start.elapsed() < timeout {
                 {
                     let mut ipc = ipc.lock().await;
-                    if let Ok(Some(msg)) = ipc.recv(100) {
-                        if let Message::UnifiedServerWorkerResizeAck { id: _, worker_threads: ack_threads } = msg {
-                            tracing::info!("UnifiedServerWorker acknowledged resize to {} threads", ack_threads);
-                            return Ok(());
-                        }
+                    if let Ok(Some(Message::UnifiedServerWorkerResizeAck { id: _, worker_threads: ack_threads })) = ipc.recv(100) {
+                        tracing::info!("UnifiedServerWorker acknowledged resize to {} threads", ack_threads);
+                        return Ok(());
                     }
                 }
                 tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;

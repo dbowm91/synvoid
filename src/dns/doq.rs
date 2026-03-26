@@ -264,50 +264,17 @@ impl DoqServer {
     }
 
     fn process_query(server: &DnsServer, query: &[u8], client_ip: IpAddr) -> Option<Arc<Vec<u8>>> {
-        let zones = server.get_zones();
-        let zone_trie = server.get_zone_trie();
-        let cache = server.get_cache();
-        let dnssec = server.get_dnssec();
-        let signer_name = server.get_signer_name();
-        let ecs_config = server.get_ecs_filter_config();
+        let ctx = server.query_context();
 
-        if let Some(ref c) = cache {
+        if let Some(c) = &ctx.cache {
             let cache_key = crate::dns::cache::CacheKey::new(
                 String::new(),
                 crate::dns::server::RecordType::NULL,
                 Some(client_ip),
             );
-            crate::dns::server::DnsServer::handle_query_with_cache(
-                &zones,
-                &zone_trie,
-                query,
-                None,
-                None,
-                60,
-                300,
-                c,
-                cache_key,
-                dnssec.as_ref(),
-                signer_name.as_ref(),
-                Some(client_ip),
-                None,
-                &ecs_config,
-                None,
-                None,
-            )
+            crate::dns::server::DnsServer::handle_query_with_cache(&ctx, query, c, cache_key, Some(client_ip))
         } else {
-            crate::dns::server::DnsServer::handle_query(
-                &zones,
-                &zone_trie,
-                query,
-                None,
-                None,
-                60,
-                Some(client_ip),
-                &ecs_config,
-                None,
-                None,
-            )
+            crate::dns::server::DnsServer::handle_query(&ctx, query, Some(client_ip))
         }
     }
 

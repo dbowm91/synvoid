@@ -548,7 +548,7 @@ impl DnsPadding {
 
     pub fn with_block_size(block_size: usize) -> Self {
         Self {
-            block_size: block_size.max(32).min(256),
+            block_size: block_size.clamp(32, 256),
             generated_padding: Vec::new(),
         }
     }

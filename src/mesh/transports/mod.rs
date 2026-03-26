@@ -1,4 +1,4 @@
-#![allow(unused_variables, dead_code, async_fn_in_trait)]
+#![allow(unused_variables, async_fn_in_trait)]
 
 use std::time::Instant;
 

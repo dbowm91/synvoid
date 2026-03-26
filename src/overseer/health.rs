@@ -230,7 +230,7 @@ impl HealthChecker {
         match get_with_timeout(&self.client, &url, Duration::from_secs(2)).await {
             Ok(response) => {
                 let status = response.status;
-                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&response.body) {
+                if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&response.body) {
                     let ready = json["ready"].as_bool().unwrap_or(status.is_success());
                     let is_draining = json["reason"].as_str() == Some("draining");
                     let active_connections = json["active_connections"].as_u64().unwrap_or(0);
@@ -268,7 +268,7 @@ impl HealthChecker {
         match get_with_timeout(&self.client, &url, Duration::from_secs(2)).await {
             Ok(response) => {
                 let status = response.status;
-                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&response.body) {
+                if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&response.body) {
                     if let Some(status_str) = json["status"].as_str() {
                         if status_str == "draining" {
                             let active = json["active_connections"].as_u64().unwrap_or(0);

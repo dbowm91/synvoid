@@ -28,7 +28,7 @@ impl RequestSmugglingDetector {
                             matched_pattern: Some(
                                 "Content-Length + Transfer-Encoding: chunked".to_string(),
                             ),
-                            input_location: InputLocation::Header("transfer-encoding".to_string()),
+                            input_location: InputLocation::Header("transfer-encoding".into()),
                         });
                     }
                 }
@@ -49,7 +49,7 @@ impl RequestSmugglingDetector {
                         attack_type: AttackType::RequestSmuggling,
                         fingerprint: Some("multiple_te".to_string()),
                         matched_pattern: Some(te_str.to_string()),
-                        input_location: InputLocation::Header("transfer-encoding".to_string()),
+                        input_location: InputLocation::Header("transfer-encoding".into()),
                     });
                 }
 
@@ -68,7 +68,7 @@ impl RequestSmugglingDetector {
                         attack_type: AttackType::RequestSmuggling,
                         fingerprint: Some("obfuscated_te".to_string()),
                         matched_pattern: Some(te_str.to_string()),
-                        input_location: InputLocation::Header("transfer-encoding".to_string()),
+                        input_location: InputLocation::Header("transfer-encoding".into()),
                     });
                 }
             }
@@ -87,7 +87,7 @@ impl RequestSmugglingDetector {
                             attack_type: AttackType::RequestSmuggling,
                             fingerprint: Some("large_cl".to_string()),
                             matched_pattern: Some(format!("Content-Length: {}", cl_num)),
-                            input_location: InputLocation::Header("content-length".to_string()),
+                            input_location: InputLocation::Header("content-length".into()),
                         });
                     }
                 } else {
@@ -100,7 +100,7 @@ impl RequestSmugglingDetector {
                         attack_type: AttackType::RequestSmuggling,
                         fingerprint: Some("invalid_cl".to_string()),
                         matched_pattern: Some(cl_str.to_string()),
-                        input_location: InputLocation::Header("content-length".to_string()),
+                        input_location: InputLocation::Header("content-length".into()),
                     });
                 }
             }
@@ -125,7 +125,7 @@ impl RequestSmugglingDetector {
                             attack_type: AttackType::RequestSmuggling,
                             fingerprint: Some("crlf_injection".to_string()),
                             matched_pattern: Some(format!("{}: {}", header_name, value_str)),
-                            input_location: InputLocation::Header(header_name.to_string()),
+                            input_location: InputLocation::Header((*header_name).into()),
                         });
                     }
                 }

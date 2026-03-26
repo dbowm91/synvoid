@@ -789,7 +789,7 @@ impl HttpServer {
                         
                         let mut headers = filter_response_headers(&resp.headers, &headers_to_filter);
                         
-                        let mut body = Bytes::from(resp.body);
+                        let mut body = resp.body;
                         let mut body_len = body.len() as u64;
                         
                         if let Some(ref mt) = mesh_transport {

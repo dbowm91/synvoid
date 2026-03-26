@@ -7,9 +7,10 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use super::super::state::AdminState;
 
-use super::common::{ErrorPage, require_auth, OptionalAuth};
+use super::common::{ErrorPage, OptionalAuth};
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[allow(dead_code)] // Fields used for OpenAPI schema/documentation
 pub struct LogsQuery {
     pub level: Option<String>,
     pub site_id: Option<String>,
@@ -57,12 +58,9 @@ pub struct LogsResponse {
 )]
 pub async fn get_logs(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
     Query(_query): Query<LogsQuery>,
 ) -> Result<Json<LogsResponse>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     Ok(Json(LogsResponse {
         entries: vec![],
@@ -93,11 +91,8 @@ pub struct ErrorPageResponse {
 )]
 pub async fn list_error_pages(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
 ) -> Result<Json<Vec<ErrorPageResponse>>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let error_pages: Vec<ErrorPageResponse> = ErrorPage::list()
         .into_iter()
@@ -130,12 +125,9 @@ pub async fn list_error_pages(
 )]
 pub async fn get_error_page(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
     Path(code): Path<u16>,
 ) -> Result<Json<ErrorPageResponse>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let error_page = ErrorPage::from_code(code).ok_or(StatusCode::NOT_FOUND)?;
 
@@ -173,13 +165,10 @@ pub struct UpdateErrorPageRequest {
 )]
 pub async fn update_error_page(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
     Path(code): Path<u16>,
     Json(payload): Json<UpdateErrorPageRequest>,
 ) -> Result<Json<ErrorPageResponse>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let _error_page = ErrorPage::from_code(code).ok_or(StatusCode::NOT_FOUND)?;
 

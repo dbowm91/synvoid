@@ -531,10 +531,7 @@ impl StakeManager {
 }
 
 fn current_timestamp() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs()
+    crate::mesh::safe_unix_timestamp()
 }
 
 #[cfg(test)]

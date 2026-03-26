@@ -19,6 +19,7 @@ fn get_monotonic_time_ms() -> u64 {
 
 pub struct ShardedRateLimiter {
     shards: Box<[RateLimitShard]>,
+    #[allow(dead_code)] // Config retained for future reconfiguration support
     config: RateLimitConfig,
 }
 
@@ -169,27 +170,26 @@ impl AtomicSlidingWindow {
                     Ordering::Acquire,
                 )
                 .is_ok()
-            {
-                let buckets_to_clear =
-                    std::cmp::min(current_bucket - last_rotate, self.bucket_count);
+        {
+            let buckets_to_clear = std::cmp::min(current_bucket - last_rotate, self.bucket_count);
 
-                let mut total = 0u64;
-                for i in 0..self.bucket_count {
-                    let idx = (current_bucket.wrapping_sub(i) % self.bucket_count) as usize;
-                    total += self.buckets[idx].load(Ordering::Acquire);
-                }
-
-                for i in 0..buckets_to_clear {
-                    let idx = (current_bucket
-                        .wrapping_sub(self.bucket_count)
-                        .wrapping_add(i)
-                        % self.bucket_count) as usize;
-                    let cleared = self.buckets[idx].swap(0, Ordering::AcqRel);
-                    total = total.saturating_sub(cleared);
-                }
-
-                self.total_count.store(total, Ordering::Release);
+            let mut total = 0u64;
+            for i in 0..self.bucket_count {
+                let idx = (current_bucket.wrapping_sub(i) % self.bucket_count) as usize;
+                total += self.buckets[idx].load(Ordering::Acquire);
             }
+
+            for i in 0..buckets_to_clear {
+                let idx = (current_bucket
+                    .wrapping_sub(self.bucket_count)
+                    .wrapping_add(i)
+                    % self.bucket_count) as usize;
+                let cleared = self.buckets[idx].swap(0, Ordering::AcqRel);
+                total = total.saturating_sub(cleared);
+            }
+
+            self.total_count.store(total, Ordering::Release);
+        }
     }
 
     pub fn reset(&self) {
@@ -463,9 +463,9 @@ impl SlottedIpRateLimiter {
                 .current_second
                 .compare_exchange(last_sec, current_sec, Ordering::SeqCst, Ordering::Relaxed)
                 .is_ok()
-            {
-                // Per-second resets naturally since we check every second
-            }
+        {
+            // Per-second resets naturally since we check every second
+        }
 
         let last_min = self.current_minute.load(Ordering::Relaxed);
         if current_min > last_min
@@ -473,10 +473,10 @@ impl SlottedIpRateLimiter {
                 .current_minute
                 .compare_exchange(last_min, current_min, Ordering::SeqCst, Ordering::Relaxed)
                 .is_ok()
-            {
-                // Reset minute counters would require tracking which slots to reset
-                // For simplicity, we use a decay approach in a separate cleanup
-            }
+        {
+            // Reset minute counters would require tracking which slots to reset
+            // For simplicity, we use a decay approach in a separate cleanup
+        }
 
         let last_5min = self.current_five_min.load(Ordering::Relaxed);
         if current_5min > last_5min {

@@ -507,6 +507,7 @@ impl RateLimiterManager {
 }
 
 pub struct GlobalConnectionPermit {
+    #[allow(dead_code)] // Held for lifetime; semaphore guards permit lifetime
     semaphore: Arc<Semaphore>,
     _permit: tokio::sync::OwnedSemaphorePermit,
 }

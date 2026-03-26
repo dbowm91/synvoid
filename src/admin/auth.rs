@@ -1,7 +1,3 @@
-use axum_extra::{
-    headers::{authorization::Bearer, Authorization},
-    TypedHeader,
-};
 use std::sync::Arc;
 use parking_lot::RwLock;
 use std::collections::HashMap;
@@ -10,9 +6,33 @@ use std::time::{Duration, Instant};
 const MAX_AUTH_ATTEMPTS: usize = 5;
 const AUTH_LOCKOUT_DURATION: Duration = Duration::from_secs(300);
 const AUTH_WINDOW_DURATION: Duration = Duration::from_secs(60);
+const BCRYPT_COST: u32 = 4;
 
 pub struct AuthRateLimiter {
     attempts: Arc<RwLock<HashMap<String, (Vec<Instant>, bool)>>>,
+}
+
+pub fn hash_admin_token(token: &str) -> String {
+    match bcrypt::hash(token, BCRYPT_COST) {
+        Ok(hash) => hash,
+        Err(e) => {
+            tracing::error!(
+                "bcrypt hashing failed ({}), falling back to plaintext comparison — \
+                 this is less secure but allows the admin API to function",
+                e
+            );
+            // Return token prefixed with a marker so verify_admin_token can detect the fallback
+            format!("__plaintext__:{}", token)
+        }
+    }
+}
+
+pub fn verify_admin_token(token: &str, hash: &str) -> bool {
+    // Detect plaintext fallback (bcrypt failed during startup)
+    if let Some(plain_hash) = hash.strip_prefix("__plaintext__:") {
+        return token == plain_hash;
+    }
+    bcrypt::verify(token, hash).unwrap_or(false)
 }
 
 impl AuthRateLimiter {
@@ -69,6 +89,18 @@ impl AuthRateLimiter {
         let mut attempts = self.attempts.write();
         attempts.remove(identifier);
     }
+
+    pub fn cleanup_expired(&self) {
+        let mut attempts = self.attempts.write();
+        let now = Instant::now();
+        attempts.retain(|_, (times, locked)| {
+            if *locked {
+                return true;
+            }
+            times.retain(|t| now.duration_since(*t) < AUTH_LOCKOUT_DURATION);
+            !times.is_empty()
+        });
+    }
 }
 
 impl Default for AuthRateLimiter {
@@ -79,45 +111,5 @@ impl Default for AuthRateLimiter {
 
 pub static AUTH_RATE_LIMITER: std::sync::LazyLock<AuthRateLimiter> = 
     std::sync::LazyLock::new(AuthRateLimiter::new);
-
-pub fn require_auth(
-    auth: &Option<TypedHeader<Authorization<Bearer>>>,
-    expected_token: &str,
-    client_ip: Option<&str>,
-) -> bool {
-    let client_id = client_ip.unwrap_or("unknown");
-    
-    if !AUTH_RATE_LIMITER.check(client_id) {
-        tracing::warn!("Authentication rate limit exceeded for {} - too many failed attempts", client_id);
-        return false;
-    }
-    
-    let result = match auth {
-        Some(TypedHeader(auth_header)) => {
-            let token = auth_header.token();
-            constant_time_compare(token, expected_token)
-        }
-        None => false,
-    };
-    
-    if !result {
-        AUTH_RATE_LIMITER.record_failure(client_id);
-    } else {
-        AUTH_RATE_LIMITER.record_success(client_id);
-    }
-    
-    result
-}
-
-pub fn constant_time_compare(a: &str, b: &str) -> bool {
-    use subtle::ConstantTimeEq;
-
-    let a_bytes = a.as_bytes();
-    let b_bytes = b.as_bytes();
-
-    // Use constant-time comparison to avoid timing attacks
-    // that could leak information about token length
-    a_bytes.ct_eq(b_bytes).into()
-}
 
 

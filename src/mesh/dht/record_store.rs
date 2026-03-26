@@ -362,10 +362,7 @@ impl RecordStoreManager {
     }
 
     fn store_record_global(&self, mut record: DhtRecord) -> bool {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = crate::mesh::safe_unix_timestamp();
 
         let expires_at = record.timestamp + record.ttl_seconds;
         if now > expires_at {
@@ -459,10 +456,7 @@ impl RecordStoreManager {
     }
 
     fn store_record_edge_cache(&self, record: DhtRecord) -> bool {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = crate::mesh::safe_unix_timestamp();
 
         let expires_at = record.timestamp + record.ttl_seconds;
         if now > expires_at {
@@ -524,10 +518,7 @@ impl RecordStoreManager {
             let records = self.records.read();
             match records.get(key) {
                 Some(entry) => {
-                    let now = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs();
+                    let now = crate::mesh::safe_unix_timestamp();
                     let expires_at = entry.record.timestamp + entry.record.ttl_seconds;
                     (Some(entry.record.clone()), now >= expires_at)
                 }
@@ -588,10 +579,7 @@ impl RecordStoreManager {
         records
             .values()
             .filter(|entry| {
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs();
+                let now = crate::mesh::safe_unix_timestamp();
                 let expires_at = entry.record.timestamp + entry.record.ttl_seconds;
                 now < expires_at
             })
@@ -651,10 +639,7 @@ impl RecordStoreManager {
             .values()
             .filter(|entry| entry.version > from_version)
             .filter(|entry| {
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs();
+                let now = crate::mesh::safe_unix_timestamp();
                 let expires_at = entry.record.timestamp + entry.record.ttl_seconds;
                 now < expires_at
             })
@@ -667,10 +652,7 @@ impl RecordStoreManager {
         let mut changed = false;
 
         for record in records {
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs();
+            let now = crate::mesh::safe_unix_timestamp();
 
             let expires_at = record.timestamp + record.ttl_seconds;
             if now > expires_at {
@@ -704,10 +686,7 @@ impl RecordStoreManager {
     }
 
     pub fn cleanup_expired(&self) {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = crate::mesh::safe_unix_timestamp();
 
         let count_before = self.records.read().len();
         
@@ -790,10 +769,7 @@ impl RecordStoreManager {
         }
 
         let key = format!("global_node_key:{}", self.node_id);
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = crate::mesh::safe_unix_timestamp();
 
         let value = serde_json::json!({
             "public_key": public_key,
@@ -830,10 +806,7 @@ impl RecordStoreManager {
             return false;
         }
 
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = crate::mesh::safe_unix_timestamp();
 
         let record = DhtRecord {
             key: key.clone(),
@@ -1127,11 +1100,7 @@ impl RecordStoreManager {
                 continue;
             }
 
-            if self.is_global_node() {
-                if self.store_record(record, source_reputation) {
-                    stored_count += 1;
-                }
-            } else if self.can_cache_on_edge(&record.key) {
+            if self.is_global_node() || self.can_cache_on_edge(&record.key) {
                 if self.store_record(record, source_reputation) {
                     stored_count += 1;
                 }
@@ -2153,10 +2122,7 @@ impl RecordStoreManager {
             return false;
         }
 
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = crate::mesh::safe_unix_timestamp();
 
         let value = serde_json::json!({
             "domain": domain,
@@ -2253,10 +2219,7 @@ impl RecordStoreManager {
             return false;
         }
 
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = crate::mesh::safe_unix_timestamp();
 
         let value = serde_json::json!({
             "node_id": node_id,

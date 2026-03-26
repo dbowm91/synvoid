@@ -1,4 +1,4 @@
-#![allow(unused_variables, dead_code)]
+#![allow(unused_variables)]
 
 use std::net::SocketAddr;
 use std::sync::Arc;

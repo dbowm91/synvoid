@@ -1026,7 +1026,6 @@ pub struct TsigKeyConfig {
     pub algorithm: TsigAlgorithm,
 }
 
-
 impl TsigAlgorithm {
     pub fn to_u16(&self) -> u16 {
         match self {
@@ -1263,12 +1262,14 @@ impl DnsConfig {
         }
 
         if self.bind_address.parse::<std::net::IpAddr>().is_err()
-            && self.bind_address != "0.0.0.0" && self.bind_address != "::" {
-                return Err(DnsConfigError::InvalidBindAddress(format!(
-                    "Invalid bind address: {}",
-                    self.bind_address
-                )));
-            }
+            && self.bind_address != "0.0.0.0"
+            && self.bind_address != "::"
+        {
+            return Err(DnsConfigError::InvalidBindAddress(format!(
+                "Invalid bind address: {}",
+                self.bind_address
+            )));
+        }
 
         self.ratelimit.validate()?;
         self.rrl.validate()?;

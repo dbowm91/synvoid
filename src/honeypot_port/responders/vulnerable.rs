@@ -301,9 +301,7 @@ impl VulnerableAppResponder {
 
         let response: String = if cmd.starts_with("PING") {
             "+PONG\r\n".to_string()
-        } else if cmd.starts_with("AUTH") {
-            "+OK\r\n".to_string()
-        } else if cmd.starts_with("GET ") || cmd.starts_with("SET ") {
+        } else if cmd.starts_with("AUTH") || cmd.starts_with("GET ") || cmd.starts_with("SET ") {
             "+OK\r\n".to_string()
         } else if cmd.starts_with("CONFIG") {
             "-ERR syntax error\r\n".to_string()

@@ -1,4 +1,4 @@
-#![allow(unused_variables, dead_code)]
+#![allow(unused_variables)]
 
 use std::collections::VecDeque;
 use std::path::PathBuf;
@@ -67,6 +67,7 @@ pub enum AuditSeverity {
     Critical,
 }
 
+#[allow(dead_code)] // config kept for future log filtering
 pub struct AuditLogger {
     config: Arc<MeshConfig>,
     events: Arc<RwLock<VecDeque<AuditEvent>>>,
@@ -356,8 +357,7 @@ impl AuditLogger {
 
     pub fn export(&self, path: &PathBuf) -> std::io::Result<()> {
         let events = self.events.read();
-        let json = serde_json::to_string_pretty(&*events)
-            .map_err(std::io::Error::other)?;
+        let json = serde_json::to_string_pretty(&*events).map_err(std::io::Error::other)?;
 
         std::fs::write(path, json)?;
 

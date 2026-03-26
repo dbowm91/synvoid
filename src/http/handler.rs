@@ -1304,12 +1304,16 @@ impl RequestHandler {
         );
 
         let cache = Arc::new(crate::proxy_cache::ProxyCache::new(settings));
-        let proxy_server = ProxyServer::new(
+        let tls_config = target.site_config.proxy.upstream.as_ref()
+            .and_then(|u| u.tls.as_ref())
+            .and_then(crate::http_client::UpstreamTlsConfig::from_site_config);
+        let proxy_server = ProxyServer::new_with_tls(
             target.upstream.clone(),
             self.waf.clone(),
             self.main_config.proxy_limits.max_response_size,
             self.waf.upstream_error_tracker.clone(),
             site_id.clone(),
+            tls_config.as_ref(),
         ).with_cache(cache);
 
         let proxy_server = Arc::new(proxy_server);
@@ -1340,7 +1344,6 @@ impl RequestHandler {
                 Ok(resp) => {
                     let (parts, body) = resp.into_parts();
                     let status = parts.status.as_u16();
-                    let body_bytes = Bytes::from(body);
                     
                     let headers_to_filter = build_headers_to_filter(
                         &self.main_config.security.more_clear_headers,
@@ -1366,7 +1369,7 @@ impl RequestHandler {
                     }
                     
                     return builder
-                        .body(Full::new(body_bytes))
+                        .body(Full::new(body))
                         .unwrap_or_else(|_| self.internal_error_response());
                 }
                 Err(e) => {

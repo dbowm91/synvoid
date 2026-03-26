@@ -83,6 +83,7 @@ pub struct QueryCoalescerMetrics {
 }
 
 
+#[allow(dead_code)] // max_wait_time reserved for future timeout enforcement
 pub struct QueryCoalescer {
     in_flight: Arc<RwLock<HashMap<QueryKey, CoalescerEntry>>>,
     max_wait_time: Duration,

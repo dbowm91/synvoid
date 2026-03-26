@@ -37,9 +37,9 @@ impl DnsQueryValidator {
     ) -> Self {
         Self {
             max_query_size: max_query_size.max(512),
-            max_labels: max_labels.max(1).min(127),
-            max_label_length: max_label_length.max(1).min(63),
-            max_name_length: max_name_length.max(1).min(255),
+            max_labels: max_labels.clamp(1, 127),
+            max_label_length: max_label_length.clamp(1, 63),
+            max_name_length: max_name_length.clamp(1, 255),
             max_records: max_records.max(1),
             max_record_size: max_record_size.max(512),
             max_ttl: max_ttl.min(86400 * 7),
@@ -307,23 +307,22 @@ impl DnsQueryValidator {
                         return Err(format!("Response contains private IP: {}", ip));
                     }
                 }
-            } else if record_type == 28
-                && rdlen == 16 {
-                    let segments = [
-                        u16::from_be_bytes([response[pos], response[pos + 1]]),
-                        u16::from_be_bytes([response[pos + 2], response[pos + 3]]),
-                        u16::from_be_bytes([response[pos + 4], response[pos + 5]]),
-                        u16::from_be_bytes([response[pos + 6], response[pos + 7]]),
-                        u16::from_be_bytes([response[pos + 8], response[pos + 9]]),
-                        u16::from_be_bytes([response[pos + 10], response[pos + 11]]),
-                        u16::from_be_bytes([response[pos + 12], response[pos + 13]]),
-                        u16::from_be_bytes([response[pos + 14], response[pos + 15]]),
-                    ];
-                    let ip = IpAddr::V6(std::net::Ipv6Addr::from(segments));
-                    if Self::is_internal_ip(ip) {
-                        return Err(format!("Response contains private IPv6: {}", ip));
-                    }
+            } else if record_type == 28 && rdlen == 16 {
+                let segments = [
+                    u16::from_be_bytes([response[pos], response[pos + 1]]),
+                    u16::from_be_bytes([response[pos + 2], response[pos + 3]]),
+                    u16::from_be_bytes([response[pos + 4], response[pos + 5]]),
+                    u16::from_be_bytes([response[pos + 6], response[pos + 7]]),
+                    u16::from_be_bytes([response[pos + 8], response[pos + 9]]),
+                    u16::from_be_bytes([response[pos + 10], response[pos + 11]]),
+                    u16::from_be_bytes([response[pos + 12], response[pos + 13]]),
+                    u16::from_be_bytes([response[pos + 14], response[pos + 15]]),
+                ];
+                let ip = IpAddr::V6(std::net::Ipv6Addr::from(segments));
+                if Self::is_internal_ip(ip) {
+                    return Err(format!("Response contains private IPv6: {}", ip));
                 }
+            }
 
             pos += rdlen;
         }

@@ -25,7 +25,7 @@ impl MeshPeerRateLimiter {
     pub fn check(&self) -> RateLimitCheck {
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_millis() as u64;
 
         let second_count = self.per_second.get_count(now_ms);
@@ -43,7 +43,7 @@ impl MeshPeerRateLimiter {
     pub fn record(&self) {
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_millis() as u64;
 
         self.per_second.increment(now_ms);

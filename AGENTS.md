@@ -209,6 +209,13 @@ assert!(matches!(event, Rfc5011Event::KeyPending { .. }));
 let events = manager.process_rfc5011_updates();
 ```
 
+## Remediation Plan Status
+
+- **Phases 1-7:** Completed. See `plan.md` for details and completion notes.
+- **Deferred items:** ~75 remaining items organized into Waves 1-3 in `deferred.md`.
+- **Start with:** `deferred.md` Phase 8 (quick wins), then proceed by wave.
+- **Key insight:** Waves 1 phases (8-13, 16) run in parallel on different subsystems. Wall-clock is ~17 days vs ~32-49 sequential.
+
 ## Important Notes
 
 1. **Never commit secrets** - Use `.gitignore` for credentials
@@ -619,3 +626,135 @@ Total test count: 112 (up from 99 before Phase 7).
 Removed 3 duplicate entries from `[dev-dependencies]`: `aes-gcm`, `ahash`, `async-trait`. These were already in `[dependencies]` and redundant in `[dev-dependencies]` (Cargo makes all `[dependencies]` available for tests).
 
 **Important:** `verify-pq` feature is NOT dead — it's used in `src/mesh/cert.rs:74,180` and `src/mesh/transports/quic.rs:29`. The original plan incorrectly listed it as a dead feature.
+
+## Waves 1-4 Completion Notes (2026-03-26)
+
+All waves from `deferred.md` have been executed. Waves 1-3 complete; Wave 4 planned but not yet executed.
+
+### Wave 1 (7 parallel agents): Phases 8, 9, 10, 11, 12, 13, 16
+
+120 files changed, 2,665 additions, 14,674 deletions across the session.
+
+**Key changes:**
+
+**Phase 8 — Quick Wins:**
+- CSS path exemptions made configurable via `css_exempt_paths: Vec<String>` on `WafConfig`
+- SSRF test fix: private IP patterns removed from `DefaultPatterns::ssrf()` (runtime `contains_private_ip_or_localhost` handles them)
+- `create_upstream_client` wiring: `ProxyServer::from_config()` and `new()` were dead code (zero callers). Both active code paths (`tls/server.rs`, `http/handler.rs`) already used `new_with_tls` with per-site `UpstreamTlsConfig`
+- 48 new tests added (endpoints.rs, rule_feed.rs, config/mod.rs)
+
+**Phase 9 — Binary Body in Cache:**
+- `HttpResponse.body` changed from `String` to `Bytes` through entire proxy chain
+- Eliminates binary content corruption (images, compressed data) in proxy cache
+- `InputLocation::Header`/`Cookie` changed from `String` to `Arc<str>` (22 call sites)
+- `DnsFirewall` in recursive resolver changed to `Arc<RwLock<>>` (avoids clone per query)
+
+**Phase 11 — DNS Refactoring:**
+- `mesh_sync.rs` (1,975 lines) → `mesh_sync/mod.rs` + 6 submodules (registry, registration, health, query, dht, verification)
+- `handle_query`/`handle_query_with_cache` reduced to 3-5 params via `QueryContext` struct
+
+**Phase 12 — Admin Auth Overhaul:**
+- Auth middleware made single source of truth — removed 94 per-handler `require_auth` calls
+- Fixed per-IP rate limiting bypass: old `common::require_auth` hardcoded `None` for client_ip
+- Config write TOCTOU fixed: `config_write_lock` now held across both file write AND in-memory update
+- bcrypt plaintext fallback uses `__plaintext__:` marker prefix (detectable by `verify_admin_token`)
+- `/health` endpoint excluded from auth middleware
+
+### Wave 2 (1 agent): Phase 14 — IPC Deduplication
+
+**Key changes:**
+
+- Merged `handle_minify_client_connection` (Unix, ~70 lines) and `_windows` variant (Windows, ~91 lines) into single cross-platform function using `IpcStream`
+- Fixed Windows bug: `state.running.load(std::io::Ordering::SeqCst)` → `state.running.is_running()` (`std::io::Ordering` doesn't exist)
+- Windows now handles `PoisonImageRequest` (was Unix-only feature gap)
+- `WindowsIpcListener::accept()` added — consolidates `CreateNamedPipeW` + `ConnectNamedPipe` + `GetLastError(ERROR_PIPE_CONNECTED)` + `CloseHandle` + `from_raw_handle` pattern from 4 call sites into 1
+- Worker accept loop: Windows reduced from 80+ lines of unsafe FFI to 15 lines
+- `main.rs`: `windows_ipc_accept_loop` and `windows_command_pipe_listener` each reduced from ~70 lines to ~15 lines
+- Added rustdoc documenting sync vs async `IpcStream` API divergence
+
+### Wave 3 (3 parallel agents): Phase 15 — Module Splits
+
+| Module | Before | After (core) | Submodules |
+|--------|--------|-------------|------------|
+| `mesh/transport.rs` | 6,406 | 1,897 | 8 files (routing, dht, org, dns, global, connection, peer, rate_limit) |
+| `dns/server.rs` | 4,366 | 763 (mod.rs) | 6 files (query, startup, response, dnssec_impl, zone, rate_limit) |
+| `worker/mod.rs` | ~1,439 | 786 (mod.rs) | 3 new files (connection, image_poisoning, response_builder) |
+
+**Key decisions:**
+- Struct definitions stay in parent file; submodules add `impl StructName { ... }` blocks
+- Submodules use `use super::*` or `use crate::module::*` for imports
+- Fields made `pub(crate)` where accessed from sibling modules (not `pub`)
+- Module declarations go in parent module file, not in the struct's file
+
+### Review Fixes (post-wave)
+
+6 issues found during review and fixed:
+
+1. `theme.rs::get_theme_presets` — added `_auth: OptionalAuth` for consistency
+2. Removed dead `require_auth` function from `auth.rs` (was old per-handler auth)
+3. Removed dead `constant_time_compare` from `auth.rs` + its test in `ipc_test.rs`
+4. Removed dead `Authenticated` extension marker from `middleware.rs`
+5. `tls/server.rs:647` — simplified `Bytes::from(body)` to `body` (no-op conversion)
+6. `transport.rs` — changed 2 fields from `pub` to `pub(crate)`
+
+### Critical Lessons for Future Waves
+
+**sed for bulk handler changes:** When removing per-handler auth checks from 94 handlers, `sed` with a 3-line pattern worked well:
+```bash
+sed -i '/if !require_auth/,/^    }$/d' handler_file.rs
+```
+But it also matches similar-looking blocks. Always verify with `grep` after. The sed also renamed variables in functions you didn't intend to change (e.g., `require_auth_async`'s `auth` param).
+
+**Module split pattern:** The proven approach for splitting large `impl` blocks:
+1. Struct stays in `mod.rs` with its `new()` constructor
+2. Each submodule is a sibling file (`foo_bar.rs`), NOT a subdirectory
+3. Each submodule starts with `use super::*` and adds `impl StructName { ... }`
+4. Fields accessed from submodules must be `pub(crate)`, not private
+5. Module declarations go in the module root (`mod.rs` or parent file)
+
+**Windows IPC code:** Can't test on this platform (macOS). Always:
+- Keep platform-specific code in `#[cfg(windows)]` blocks
+- Use the existing `IpcStream` abstraction rather than manual framing
+- The sync `IpcStream` wraps `std::fs::File` on Windows and works cross-platform
+
+**Auth middleware pattern:** When making middleware the single source of truth:
+- Remove per-handler auth checks entirely
+- Keep `_auth: OptionalAuth` parameter (axum needs to extract the header even if unused)
+- The middleware must handle rate limiting with the correct client IP
+- `/health` and similar probe endpoints need explicit middleware bypass
+
+**bcrypt fallback:** `bcrypt::hash()` can fail. Don't return the raw token as the "hash" (auth becomes plaintext comparison silently). Use a marker prefix like `__plaintext__:` so `verify_admin_token` can detect the fallback mode.
+
+### Wave 4 Plan (deferred.md)
+
+Wave 4 is planned but not yet executed. It covers:
+- Phase 18: AdminState god object split (22 fields → 6 sub-structs)
+- Phase 19: Mesh module splits (protocol.rs 5,263 lines, record_store.rs 2,393, config.rs 2,217)
+- Phase 20: Clippy warning reduction (~307 remaining)
+- Phase 21: Dead field cleanup (36 remaining)
+- Phase 22: Documentation and fuzzing
+
+All 5 phases can run in parallel. Phase 19 (mesh splits) is the critical path at 3-4 days.
+
+## Updated Module Size Guide
+
+| Module | Lines | Status |
+|--------|-------|--------|
+| `src/mesh/protocol.rs` | 5,263 | Needs split (Wave 4 Phase 19) |
+| `src/mesh/dht/record_store.rs` | 2,393 | Needs split (Wave 4 Phase 19) |
+| `src/mesh/config.rs` | 2,217 | Needs split (Wave 4 Phase 19) |
+| `src/dns/dnssec.rs` | 2,152 | Above 1,500 but below threshold |
+| `src/mesh/transport.rs` | 1,897 | Split done (Wave 3) |
+| `src/dns/server/mod.rs` | 763 | Split done (Wave 3) |
+| `src/worker/mod.rs` | 786 | Split done (Wave 3) |
+
+## Updated Known Bugs
+
+| Bug | Location | Status |
+|-----|----------|--------|
+| TLS: `skip_verify` not wired | `src/http_client/mod.rs` | ✅ Fixed (Wave 1 Phase 8.3.1 — was already wired, dead `from_config` had zero callers) |
+| Binary body in cache | `src/proxy.rs` | ✅ Fixed (Wave 1 Phase 9.1 — `HttpResponse.body` is now `Bytes`) |
+| Admin per-IP rate limiting bypass | `src/admin/handlers/common.rs` | ✅ Fixed (Wave 1 Phase 12 — middleware is single auth source) |
+| Config write TOCTOU | `src/admin/handlers/sites.rs` | ✅ Fixed (Wave 1 Phase 12.3 — lock held across write + in-memory update) |
+| Windows `std::io::Ordering` bug | `src/worker/mod.rs` | ✅ Fixed (Wave 2 — unified handler uses `is_running()`) |
+| Windows missing PoisonImageRequest | `src/worker/mod.rs` | ✅ Fixed (Wave 2 — unified handler supports all message types) |

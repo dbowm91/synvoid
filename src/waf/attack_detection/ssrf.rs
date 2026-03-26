@@ -125,10 +125,31 @@ impl SsrfDetector {
     }
 
     fn looks_like_ip(s: &str) -> bool {
-        let s = s.trim_end_matches([']', ':', '/']);
-        s.chars()
-            .all(|c| c.is_ascii_digit() || c == '.' || c == ':')
-            && s.contains('.')
+        // Strip IPv6 brackets: find matching [ and ] and extract inner content
+        let s = if s.starts_with('[') {
+            if let Some(bracket_end) = s.find(']') {
+                &s[1..bracket_end]
+            } else {
+                s
+            }
+        } else {
+            s
+        };
+        // Count colons to distinguish IPv4:port (1 colon) from IPv6 (2+ colons)
+        let colon_count = s.chars().filter(|&c| c == ':').count();
+        let s = if colon_count == 1 && s.contains('.') {
+            // IPv4 with port: strip port
+            if let Some(colon_pos) = s.find(':') {
+                &s[..colon_pos]
+            } else {
+                s
+            }
+        } else {
+            s
+        };
+        let is_ipv4 = s.contains('.') && s.chars().all(|c| c.is_ascii_digit() || c == '.');
+        let is_ipv6 = s.contains(':') && s.chars().all(|c| c.is_ascii_hexdigit() || c == ':');
+        is_ipv4 || is_ipv6
     }
 
     fn contains_private_ip_or_localhost(input: &str) -> bool {
@@ -139,12 +160,34 @@ impl SsrfDetector {
         }
 
         for ip in Self::extract_ips_from_url(&input_lower) {
-            if Self::is_private_ip(&ip) {
+            let normalized = Self::normalize_ip_for_parse(&ip);
+            if Self::is_private_ip(&normalized) {
                 return true;
             }
         }
 
         false
+    }
+
+    fn normalize_ip_for_parse(s: &str) -> String {
+        // Strip IPv6 brackets
+        let s = if s.starts_with('[') {
+            if let Some(bracket_end) = s.find(']') {
+                &s[1..bracket_end]
+            } else {
+                s
+            }
+        } else {
+            s
+        };
+        // Strip IPv4 port (single colon + digits)
+        let colon_count = s.chars().filter(|&c| c == ':').count();
+        if colon_count == 1 && s.contains('.') {
+            if let Some(colon_pos) = s.find(':') {
+                return s[..colon_pos].to_string();
+            }
+        }
+        s.to_string()
     }
 
     fn is_allowed_domain(&self, input: &str) -> bool {

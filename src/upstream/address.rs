@@ -233,9 +233,9 @@ impl SocketErrorTracker {
         }
     }
     
-    pub fn should_log_error(&self, path: &PathBuf) -> bool {
+    pub fn should_log_error(&self, path: &std::path::Path) -> bool {
         let mut errors = self.errors.lock();
-        let state = errors.entry(path.clone()).or_insert(SocketErrorState {
+        let state = errors.entry(path.to_path_buf()).or_insert(SocketErrorState {
             last_error_time: Instant::now(),
             consecutive_errors: 0,
             last_logged: Instant::now(),

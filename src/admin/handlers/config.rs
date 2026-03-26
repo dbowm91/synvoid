@@ -8,7 +8,7 @@ use std::sync::Arc;
 use super::super::state::AdminState;
 use crate::log_controller;
 
-use super::common::{require_auth, OptionalAuth, StatusResponse};
+use super::common::{OptionalAuth, StatusResponse};
 
 #[derive(Debug, Serialize)]
 pub struct MainConfigResponse {
@@ -29,11 +29,8 @@ pub struct MainConfigResponse {
 )]
 pub async fn get_main_config(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
 ) -> Result<Json<MainConfigResponse>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let config = state.config.read().await;
     
@@ -72,11 +69,8 @@ pub struct ConfigFieldSchema {
 )]
 pub async fn get_config_schema(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
 ) -> Result<Json<Vec<ConfigFieldSchema>>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let mut schema = Vec::new();
 
@@ -955,12 +949,9 @@ pub async fn get_config_schema(
 
 pub async fn update_main_config(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
     Json(req): Json<UpdateMainConfigRequest>,
 ) -> Result<Json<StatusResponse>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let toml_content = toml::to_string_pretty(&req.config)
         .map_err(|e| {
@@ -968,12 +959,20 @@ pub async fn update_main_config(
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
-    tokio::fs::write("config/main.toml", toml_content)
-        .await
-        .map_err(|e| {
-            tracing::error!("Failed to write main config: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+    let main_config_path = {
+        let cfg = state.config.read().await;
+        cfg.config_dir.join("main.toml")
+    };
+
+    {
+        let _guard = state.config_write_lock.write().await;
+        tokio::fs::write(&main_config_path, toml_content)
+            .await
+            .map_err(|e| {
+                tracing::error!("Failed to write main config: {}", e);
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
+    }
 
     Ok(Json(StatusResponse::success("Configuration updated. Reload required.")))
 }
@@ -992,11 +991,8 @@ pub async fn update_main_config(
 )]
 pub async fn reload_config(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
 ) -> Result<Json<StatusResponse>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let mut config = state.config.write().await;
     let results = config.reload_all();
@@ -1056,12 +1052,9 @@ pub struct SetLogLevelRequest {
 )]
 pub async fn set_log_level(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
     Json(req): Json<SetLogLevelRequest>,
 ) -> Result<Json<StatusResponse>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     match log_controller::set_log_level(&req.level) {
         Ok(level) => Ok(Json(StatusResponse {
@@ -1089,11 +1082,8 @@ pub async fn set_log_level(
 )]
 pub async fn get_log_level(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
 ) -> Result<Json<StatusResponse>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let level = log_controller::get_log_level();
     Ok(Json(StatusResponse {
@@ -1116,11 +1106,8 @@ pub async fn get_log_level(
 )]
 pub async fn export_config(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
 ) -> Result<String, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let config = state.config.read().await;
     let toml_content = toml::to_string_pretty(&config.main)
@@ -1154,12 +1141,9 @@ pub struct ImportConfigRequest {
 )]
 pub async fn import_config(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
     Json(req): Json<ImportConfigRequest>,
 ) -> Result<Json<StatusResponse>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let parsed: crate::config::main::MainConfig = toml::from_str(&req.config)
         .map_err(|e| {
@@ -1173,12 +1157,20 @@ pub async fn import_config(
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
-    tokio::fs::write("config/main.toml", toml_content)
-        .await
-        .map_err(|e| {
-            tracing::error!("Failed to write main config: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+    let main_config_path = {
+        let cfg = state.config.read().await;
+        cfg.config_dir.join("main.toml")
+    };
+
+    {
+        let _guard = state.config_write_lock.write().await;
+        tokio::fs::write(&main_config_path, toml_content)
+            .await
+            .map_err(|e| {
+                tracing::error!("Failed to write main config: {}", e);
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
+    }
 
     Ok(Json(StatusResponse::success("Configuration imported. Reload required.")))
 }
@@ -1212,12 +1204,9 @@ pub struct CheckRegexRequest {
 )]
 pub async fn check_regex(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
     Json(req): Json<CheckRegexRequest>,
 ) -> Result<Json<RegexCheckResult>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let result = check_regex_complexity(&req.pattern);
     
@@ -1252,11 +1241,8 @@ pub struct UpdateOverseerConfigRequest {
 )]
 pub async fn get_overseer_config(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
 ) -> Result<Json<OverseerConfigResponse>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let config = state.config.read().await;
     Ok(Json(OverseerConfigResponse {
@@ -1279,19 +1265,23 @@ pub async fn get_overseer_config(
 )]
 pub async fn update_overseer_config(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
     Json(req): Json<UpdateOverseerConfigRequest>,
 ) -> Result<Json<StatusResponse>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     {
         let mut config = state.config.write().await;
         config.main.overseer = req.config.clone();
     }
 
-    let toml_content = tokio::fs::read_to_string("config/main.toml")
+    let main_config_path = {
+        let cfg = state.config.read().await;
+        cfg.config_dir.join("main.toml")
+    };
+
+    let _guard = state.config_write_lock.write().await;
+
+    let toml_content = tokio::fs::read_to_string(&main_config_path)
         .await
         .map_err(|e| {
             tracing::error!("Failed to read main config: {}", e);
@@ -1312,7 +1302,7 @@ pub async fn update_overseer_config(
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
-    tokio::fs::write("config/main.toml", toml_content)
+    tokio::fs::write(&main_config_path, toml_content)
         .await
         .map_err(|e| {
             tracing::error!("Failed to write main config: {}", e);
@@ -1361,11 +1351,8 @@ pub struct UpdateProcessManagerConfigRequest {
 )]
 pub async fn get_process_manager_config(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
 ) -> Result<Json<ProcessManagerConfigResponse>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     if let Some(ref pm) = state.process_manager {
         Ok(Json(ProcessManagerConfigResponse {
@@ -1394,12 +1381,9 @@ pub async fn get_process_manager_config(
 )]
 pub async fn update_process_manager_config(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
     Json(req): Json<UpdateProcessManagerConfigRequest>,
 ) -> Result<Json<StatusResponse>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let needs_restart = if let Some(ref pm) = state.process_manager {
         match pm.update_config(req.config.clone()) {
@@ -1417,6 +1401,7 @@ pub async fn update_process_manager_config(
     };
 
     let toml_content = {
+        let _guard = state.config_write_lock.write().await;
         let mut config = state.config.write().await;
         config.main.process_manager = req.config;
         toml::to_string_pretty(&config.main)
@@ -1426,12 +1411,20 @@ pub async fn update_process_manager_config(
             })?
     };
 
-    tokio::fs::write("config/main.toml", toml_content)
-        .await
-        .map_err(|e| {
-            tracing::error!("Failed to write main config: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+    let main_config_path = {
+        let cfg = state.config.read().await;
+        cfg.config_dir.join("main.toml")
+    };
+
+    {
+        let _guard = state.config_write_lock.write().await;
+        tokio::fs::write(&main_config_path, toml_content)
+            .await
+            .map_err(|e| {
+                tracing::error!("Failed to write main config: {}", e);
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
+    }
 
     if needs_restart {
         Ok(Json(StatusResponse::success("Process manager config updated. Restart required for changes to take effect.")))
@@ -1464,11 +1457,8 @@ pub struct UpdateSupervisorConfigRequest {
 )]
 pub async fn get_supervisor_config(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
 ) -> Result<Json<SupervisorConfigResponse>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let config = state.config.read().await;
     Ok(Json(SupervisorConfigResponse {
@@ -1491,19 +1481,23 @@ pub async fn get_supervisor_config(
 )]
 pub async fn update_supervisor_config(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
     Json(req): Json<UpdateSupervisorConfigRequest>,
 ) -> Result<Json<StatusResponse>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     {
         let mut config = state.config.write().await;
         config.main.supervisor = req.config.clone();
     }
 
-    let toml_content = tokio::fs::read_to_string("config/main.toml")
+    let main_config_path = {
+        let cfg = state.config.read().await;
+        cfg.config_dir.join("main.toml")
+    };
+
+    let _guard = state.config_write_lock.write().await;
+
+    let toml_content = tokio::fs::read_to_string(&main_config_path)
         .await
         .map_err(|e| {
             tracing::error!("Failed to read main config: {}", e);
@@ -1524,7 +1518,7 @@ pub async fn update_supervisor_config(
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
-    tokio::fs::write("config/main.toml", toml_content)
+    tokio::fs::write(&main_config_path, toml_content)
         .await
         .map_err(|e| {
             tracing::error!("Failed to write main config: {}", e);

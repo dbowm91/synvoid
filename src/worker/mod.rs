@@ -1,14 +1,18 @@
+//! Worker process implementation.
+//!
+//! Handles HTTP request processing, TLS termination, connection management,
+//! and WAF enforcement. Workers are spawned by the master process and
+//! communicate via IPC.
 
 use bytes::Bytes;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 
 #[cfg(unix)]
 use std::os::unix::net::UnixListener;
 
-use tokio::task;
 use tokio::sync::Mutex as TokioMutex;
 
 use crate::config::ConfigManager;
@@ -16,7 +20,6 @@ use crate::metrics::WorkerMetrics;
 use crate::process::ipc_transport::IpcStream as AsyncIpcStream;
 use crate::process::{Message, WorkerId, current_timestamp};
 use crate::static_files::minifier;
-use crate::waf::WafCore;
 use crate::{RunningFlag, DrainFlag};
 
 use crate::common::setup_panic_handler;
@@ -28,6 +31,10 @@ pub mod connect;
 pub mod metrics;
 pub mod unified_server;
 pub mod traits;
+
+mod connection;
+mod image_poisoning;
+mod response_builder;
 
 pub use traits::{BaseWorkerState, WorkerLifecycle};
 
@@ -106,16 +113,6 @@ pub fn setup_worker_panic_handler() {
     setup_panic_handler("WORKER", Some(&worker_panic_log));
 }
 
-#[derive(Clone)]
-struct WorkerState {
-    worker_id: WorkerId,
-    metrics: Arc<WorkerMetrics>,
-    start_time: Instant,
-    ipc: Arc<TokioMutex<AsyncIpcStream>>,
-    running: RunningFlag,
-    draining: DrainFlag,
-}
-
 pub async fn run_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let worker_id = WorkerId(args.worker_id);
 
@@ -148,13 +145,13 @@ pub async fn run_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Erro
     let config_manager = load_config(&args.config_path);
     let main_config = config_manager.main.clone();
 
-    let _waf = create_waf(&main_config);
+    let _waf = connection::create_waf(&main_config);
 
     let metrics = Arc::new(WorkerMetrics::default());
     let running = RunningFlag::new();
     let draining = DrainFlag::new();
     
-    let state = WorkerState {
+    let state = connection::WorkerState {
         worker_id,
         metrics: metrics.clone(),
         start_time: Instant::now(),
@@ -339,91 +336,6 @@ pub async fn run_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Erro
     Ok(())
 }
 
-fn create_waf(main_config: &crate::config::MainConfig) -> Arc<WafCore> {
-    let data_dir = main_config.persistence.data_dir.as_ref()
-        .map(std::path::PathBuf::from);
-
-    let waf = WafCore::new(
-        crate::waf::RateLimitConfigStore {
-            ip: main_config.defaults.ratelimit.ip.clone(),
-            global: main_config.defaults.ratelimit.global.clone(),
-            cleanup_interval_secs: main_config.rate_limit_memory.cleanup_interval_secs,
-        },
-        main_config.rate_limit_memory.clone(),
-        crate::waf::BotProtectionConfig {
-            block_ai_crawlers: main_config.defaults.bot.block_ai_crawlers,
-            enable_css_honeypot: main_config.defaults.bot.enable_css_honeypot,
-            enable_pow_challenge: main_config.defaults.pow_challenge.enabled,
-            known_bots_allow: main_config.defaults.bot.known_bots_allow.clone(),
-            ai_crawlers_block: main_config.defaults.bot.ai_crawlers_block.clone(),
-            scraper_patterns: Vec::new(),
-            challenge_cookie_name: main_config.defaults.bot.challenge_cookie_name.clone(),
-            challenge_window_secs: main_config.defaults.bot.challenge_window_secs,
-            pow_difficulty: main_config.defaults.pow_challenge.difficulty,
-            pow_timeout_secs: main_config.defaults.pow_challenge.timeout_secs,
-            pow_window_secs: main_config.defaults.pow_challenge.window_secs,
-            css_enabled: main_config.defaults.css_challenge.enabled,
-            css_invalid_min: main_config.defaults.css_challenge.invalid_count_min,
-            css_invalid_max: main_config.defaults.css_challenge.invalid_count_max,
-            css_valid_count: main_config.defaults.css_challenge.valid_count,
-            css_asset_path: main_config.defaults.css_challenge.asset_path.clone(),
-            css_window_secs: main_config.defaults.css_challenge.challenge_window_secs,
-            css_verification_window_secs: main_config.defaults.css_challenge.verification_window_secs,
-            challenge_priority: crate::challenge::ChallengePriority::PowThenCss,
-            challenge_max_attempts: 3,
-            challenge_rate_limit_window_secs: 60,
-            honeypot_endpoints_file: main_config.defaults.honeypot.endpoints_file.clone(),
-            honeypot_enabled: true,
-            honeypot_paths_per_ip: main_config.defaults.honeypot.paths_per_ip,
-            honeypot_ttl_secs: main_config.defaults.honeypot.ttl_secs,
-            honeypot_ban_duration: main_config.defaults.honeypot.block.ban_duration.clone(),
-            error_pages_enabled: main_config.defaults.error_pages.enabled,
-            error_pages_mode: "default".to_string(),
-            error_pages_directory: main_config.defaults.error_pages.directory.clone(),
-            error_pages_custom_directory: None,
-            theme: crate::theme::ThemeConfig::from(main_config.defaults.theme.clone()),
-            mesh_pow_enabled: false,
-            mesh_pow_key_exchange_enabled: false,
-            mesh_pow_auditing_enabled: false,
-            mesh_id: None,
-            mesh_global_node_url: None,
-            mesh_audit_urls: Vec::new(),
-        },
-        crate::waf::EndpointBlockerConfig {
-            paths: main_config.defaults.blocked.paths.clone(),
-            use_regex: main_config.defaults.blocked.use_regex,
-            block_methods: main_config.defaults.blocked.block_methods.clone(),
-            block_response_code: main_config.defaults.blocked.block_response_code,
-            block_page_html: None,
-        },
-        crate::waf::WafConfig {
-            enable_css_honeypot: main_config.defaults.css_challenge.enabled,
-            enable_pow_challenge: main_config.defaults.pow_challenge.enabled,
-            enable_auth_challenge: main_config.defaults.auth.enabled,
-            auth_login_path: main_config.defaults.auth.login_path.clone(),
-            block_ai_crawlers: main_config.defaults.bot.block_ai_crawlers,
-            drop_blocked_requests: false,
-            test_mode: crate::waf::TestModeConfig::default(),
-            honeypot_ban_duration_secs: 86400,
-        },
-        Vec::new(),
-        None,
-        None,
-        Some(crate::waf::AttackDetectionConfig::default()),
-        None,
-        Some(main_config.threat_level.clone()),
-        Some(main_config.ip_feeds.clone()),
-        Some(main_config.defaults.honeypot_probe.clone()),
-        Some(main_config.defaults.suspicious_words.clone()),
-        Some(main_config.defaults.upstream_errors.clone()),
-        Some(main_config.traffic_shaping.clone()),
-        data_dir,
-        crate::waf::TestModeConfig::default(),
-    );
-
-    Arc::new(waf)
-}
-
 #[derive(Clone)]
 pub struct StaticWorkerArgs {
     pub worker_id: usize,
@@ -462,6 +374,7 @@ impl StaticWorkerState {
 }
 
 #[derive(Clone)]
+#[allow(dead_code)] // queued_at reserved for future queue management
 struct CompressionTask {
     site_id: String,
     path: String,
@@ -524,7 +437,7 @@ pub async fn run_static_worker(args: StaticWorkerArgs) -> Result<(), Box<dyn std
         next_request_id: Arc::new(std::sync::atomic::AtomicU64::new(1)),
     };
 
-    init_minifier_caches(&state, &main_config);
+    response_builder::init_minifier_caches(&state, &main_config);
 
     let socket_path = args.static_worker_socket.clone();
     if socket_path.exists() {
@@ -534,7 +447,7 @@ pub async fn run_static_worker(args: StaticWorkerArgs) -> Result<(), Box<dyn std
     #[cfg(unix)]
     {
         use std::os::unix::net::UnixListener;
-        
+
         let listener = match UnixListener::bind(&socket_path) {
             Ok(l) => {
                 tracing::info!("Static worker listening on {}", socket_path.display());
@@ -555,9 +468,10 @@ pub async fn run_static_worker(args: StaticWorkerArgs) -> Result<(), Box<dyn std
 
                 match listener.accept() {
                     Ok((stream, _)) => {
+                        let ipc = crate::process::IpcStream::new(stream);
                         let state = socket_state.clone();
                         std::thread::spawn(move || {
-                            handle_minify_client_connection(stream, state);
+                            handle_minify_client_connection(ipc, state);
                         });
                     }
                     Err(e) => {
@@ -571,82 +485,30 @@ pub async fn run_static_worker(args: StaticWorkerArgs) -> Result<(), Box<dyn std
 
     #[cfg(windows)]
     {
-        use std::os::windows::ffi::OsStrExt;
-        
-        let pipe_name = format!("\\\\.\\pipe\\rustwaf-static-worker");
-        let pipe_name_wide: Vec<u16> = std::ffi::OsStr::new(&pipe_name)
-            .encode_wide()
-            .chain(std::iter::once(0))
-            .collect();
-        
+        let listener = crate::process::ipc::WindowsIpcListener::new("rustwaf-static-worker");
         let socket_state = state.clone();
-        
+
         std::thread::spawn(move || {
             loop {
                 if !socket_state.running.is_running() {
                     break;
                 }
-                
-                // Create a new pipe instance for each connection
-                // SAFETY: CreateNamedPipeW is called with valid UTF-16 pipe name, correct pipe
-                // access mode and type flags. The handle is checked for INVALID_HANDLE_VALUE (0)
-                // immediately after creation and closed on failure.
-                let pipe_handle = unsafe {
-                    windows_sys::Win32::System::Pipes::CreateNamedPipeW(
-                        pipe_name_wide.as_ptr(),
-                        windows_sys::Win32::System::Pipes::PIPE_ACCESS_DUPLEX,
-                        windows_sys::Win32::System::Pipes::PIPE_TYPE_MESSAGE 
-                            | windows_sys::Win32::System::Pipes::PIPE_READMODE_MESSAGE 
-                            | windows_sys::Win32::System::Pipes::PIPE_WAIT,
-                        1,
-                        65536,
-                        65536,
-                        0,
-                        std::ptr::null_mut(),
-                    )
-                };
 
-                if pipe_handle == 0 {
-                    tracing::error!("Failed to create static worker named pipe: {:?}", std::io::Error::last_os_error());
-                    std::thread::sleep(Duration::from_millis(100));
-                    continue;
-                }
-
-                // Wait for client connection
-                // SAFETY: ConnectNamedPipe is called on a valid pipe handle created above.
-                // The handle remains valid until explicitly closed. The return value is checked
-                // and GetLastError is inspected to distinguish real errors from ERROR_PIPE_CONNECTED.
-                let connected = unsafe {
-                    windows_sys::Win32::System::Pipes::ConnectNamedPipe(
-                        pipe_handle,
-                        std::ptr::null_mut(),
-                    )
-                };
-
-                if connected == 0 {
-                    // SAFETY: GetLastError returns the calling thread's last error code.
-                    // This is a thread-local read with no side effects.
-                    let error = unsafe { *windows_sys::Win32::Foundation::GetLastError() };
-                    if error != windows_sys::Win32::Foundation::ERROR_PIPE_CONNECTED {
-                        tracing::warn!("ConnectNamedPipe failed with error: {}", error);
-                        // SAFETY: CloseHandle is called on the pipe handle created above.
-                        // The handle is valid and ownership is being released on the error path.
-                        unsafe { windows_sys::Win32::Foundation::CloseHandle(pipe_handle); }
+                match listener.accept() {
+                    Ok(stream) => {
+                        let ipc = crate::process::IpcStream::new(stream);
+                        let state = socket_state.clone();
+                        std::thread::spawn(move || {
+                            handle_minify_client_connection(ipc, state);
+                        });
+                    }
+                    Err(e) => {
+                        tracing::warn!("Static worker pipe accept error: {}", e);
                         std::thread::sleep(Duration::from_millis(100));
                         continue;
                     }
                 }
 
-                // Convert raw handle to File and handle connection
-                // SAFETY: from_raw_handle takes ownership of the valid pipe handle.
-                // The handle was successfully created and connected (or returned ERROR_PIPE_CONNECTED).
-                // No other code will use this handle after this transfer of ownership.
-                let stream = unsafe { std::fs::File::from_raw_handle(pipe_handle as std::os::windows::io::RawHandle) };
-                let state = socket_state.clone();
-                std::thread::spawn(move || {
-                    handle_minify_client_connection_windows(stream, state);
-                });
-                
                 std::thread::sleep(Duration::from_millis(10));
             }
         });
@@ -684,7 +546,7 @@ pub async fn run_static_worker(args: StaticWorkerArgs) -> Result<(), Box<dyn std
                     
                     ipc_state.stop_background_tasks.start_drain();
                     
-                    process_compression_queue(&ipc_state);
+                    response_builder::process_compression_queue(&ipc_state);
                     tracing::info!("Static worker {} completed final cache refresh", ipc_state.worker_id);
                     
                     let _ = ipc.send(&crate::process::Message::StaticWorkerBackgroundTasksDone {
@@ -692,10 +554,10 @@ pub async fn run_static_worker(args: StaticWorkerArgs) -> Result<(), Box<dyn std
                     }).await;
                 }
                 Ok(Some(crate::process::Message::MinifyRequest { request_id, site_id, path, encoding })) => {
-                    handle_minify_request(&ipc_state, request_id, site_id, path, encoding).await;
+                    response_builder::handle_minify_request(&ipc_state, request_id, site_id, path, encoding).await;
                 }
                 Ok(Some(crate::process::Message::GetCompressedRequest { request_id, site_id, path, encoding })) => {
-                    handle_compressed_request(&ipc_state, request_id, site_id, path, encoding).await;
+                    response_builder::handle_compressed_request(&ipc_state, request_id, site_id, path, encoding).await;
                 }
                 Ok(Some(_)) => {}
                 Ok(None) => {}
@@ -720,7 +582,7 @@ pub async fn run_static_worker(args: StaticWorkerArgs) -> Result<(), Box<dyn std
                 break;
             }
 
-            process_compression_queue(&queue_state);
+            response_builder::process_compression_queue(&queue_state);
         }
     });
 
@@ -755,7 +617,7 @@ pub async fn run_static_worker(args: StaticWorkerArgs) -> Result<(), Box<dyn std
                         for location in &static_config.locations {
                             let root = PathBuf::from(location.root.as_str());
                             if root.exists() {
-                                check_and_invalidate_cache(&watch_state, site_id, &root);
+                                response_builder::check_and_invalidate_cache(&watch_state, site_id, &root);
                             }
                         }
                     }
@@ -822,7 +684,7 @@ pub async fn run_static_worker(args: StaticWorkerArgs) -> Result<(), Box<dyn std
                     compression_queue: queue_for_reload.clone(),
                     next_request_id: Arc::new(std::sync::atomic::AtomicU64::new(1)),
                 };
-                init_minifier_caches(&temp_state, &main_config);
+                response_builder::init_minifier_caches(&temp_state, &main_config);
             }
         }
     });
@@ -851,19 +713,20 @@ pub async fn run_static_worker(args: StaticWorkerArgs) -> Result<(), Box<dyn std
     Ok(())
 }
 
-#[cfg(unix)]
+/// Handle a static worker IPC connection (cross-platform).
+///
+/// Uses the sync `IpcStream` abstraction for framed message I/O on both
+/// Unix (UnixStream) and Windows (named pipe as File).
 fn handle_minify_client_connection(
-    stream: std::os::unix::net::UnixStream,
+    mut ipc: crate::process::IpcStream,
     state: StaticWorkerState,
 ) {
-    let mut ipc = crate::process::IpcStream::new(stream);
-
     loop {
         match ipc.try_recv() {
             Ok(Some(message)) => {
                 match message {
                     crate::process::Message::MinifyRequest { request_id, site_id, path, encoding } => {
-                        let result = process_minify_request(&state, request_id, site_id, path, encoding);
+                        let result = response_builder::process_minify_request(&state, request_id, site_id, path, encoding);
                         match result {
                             Ok(response) => {
                                 if let Err(e) = ipc.send(&response) {
@@ -881,7 +744,7 @@ fn handle_minify_client_connection(
                         }
                     }
                     crate::process::Message::GetCompressedRequest { request_id, site_id, path, encoding } => {
-                        let result = process_compressed_request(&state, request_id, site_id, path, encoding);
+                        let result = response_builder::process_compressed_request(&state, request_id, site_id, path, encoding);
                         match result {
                             Ok(response) => {
                                 if let Err(e) = ipc.send(&response) {
@@ -899,7 +762,7 @@ fn handle_minify_client_connection(
                         }
                     }
                     crate::process::Message::PoisonImageRequest { request_id, site_id, body, last_modified } => {
-                        let poisoned = poison_image_sync(&state, &site_id, body, last_modified);
+                        let poisoned = image_poisoning::poison_image_sync(&state, &site_id, body, last_modified);
                         if let Err(e) = ipc.send(&crate::process::Message::PoisonImageResponse {
                             request_id,
                             poisoned_body: poisoned,
@@ -915,672 +778,9 @@ fn handle_minify_client_connection(
             }
             Err(_) => break,
         }
-        
+
         if !state.running.is_running() {
             break;
         }
     }
-}
-
-#[cfg(windows)]
-fn handle_minify_client_connection_windows(
-    stream: std::fs::File,
-    state: StaticWorkerState,
-) {
-    use std::io::{Read, Write};
-    
-    let mut ipc = crate::process::IpcStream::new(stream);
-    let mut read_buffer = Vec::new();
-
-    loop {
-        // Read messages from the pipe
-        let mut length_buf = [0u8; 4];
-        match ipc.stream.read(&mut length_buf) {
-            Ok(0) => break, // Client disconnected
-            Ok(4) => {}
-            Ok(n) => {
-                tracing::debug!("Unexpected read size: {}", n);
-                continue;
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                std::thread::sleep(Duration::from_millis(10));
-                continue;
-            }
-            Err(_) => break,
-        }
-
-        let len = u32::from_be_bytes(length_buf) as usize;
-        if len > 1024 * 1024 {
-            break;
-        }
-
-        let mut json_buf = vec![0u8; len];
-        let mut total_read = 0;
-        while total_read < len {
-            match ipc.stream.read(&mut json_buf[total_read..]) {
-                Ok(0) => break,
-                Ok(n) => total_read += n,
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    std::thread::sleep(Duration::from_millis(10));
-                    continue;
-                }
-                Err(_) => break,
-            }
-        }
-
-        let message: crate::process::Message = match serde_json::from_slice(&json_buf) {
-            Ok(m) => m,
-            Err(e) => {
-                tracing::warn!("Failed to parse message: {}", e);
-                break;
-            }
-        };
-
-        match message {
-            crate::process::Message::MinifyRequest { request_id, site_id, path, encoding } => {
-                let result = process_minify_request(&state, request_id, site_id, path, encoding);
-                match result {
-                    Ok(response) => {
-                        let _ = send_message_windows(&mut ipc, &response);
-                    }
-                    Err(error_msg) => {
-                        let _ = send_message_windows(&mut ipc, &crate::process::Message::MinifyError {
-                            request_id,
-                            error: error_msg,
-                        });
-                    }
-                }
-            }
-            crate::process::Message::GetCompressedRequest { request_id, site_id, path, encoding } => {
-                let result = process_compressed_request(&state, request_id, site_id, path, encoding);
-                match result {
-                    Ok(response) => {
-                        let _ = send_message_windows(&mut ipc, &response);
-                    }
-                    Err(error_msg) => {
-                        let _ = send_message_windows(&mut ipc, &crate::process::Message::MinifyError {
-                            request_id,
-                            error: error_msg,
-                        });
-                    }
-                }
-            }
-            _ => {}
-        }
-
-        if !state.running.load(std::io::Ordering::SeqCst) {
-            break;
-        }
-    }
-}
-
-#[cfg(windows)]
-fn send_message_windows(ipc: &mut crate::process::IpcStream, msg: &crate::process::Message) -> std::io::Result<()> {
-    use std::io::Write;
-    
-    let json = serde_json::to_vec(msg).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-    let len = json.len() as u32;
-    ipc.stream.write_all(&len.to_be_bytes())?;
-    ipc.stream.write_all(&json)?;
-    ipc.stream.flush()?;
-    Ok(())
-}
-
-fn process_minify_request(
-    state: &StaticWorkerState,
-    request_id: u64,
-    site_id: String,
-    path: String,
-    encoding: Option<String>,
-) -> Result<crate::process::Message, String> {
-    let cache = {
-        let caches = state.minifier_caches.read()
-            .map_err(|_| "Cache lock poisoned".to_string())?;
-        caches.get(&site_id).cloned()
-            .ok_or_else(|| format!("No cache for site: {}", site_id))?
-    };
-    
-    let config = cache.config();
-    let source_root = {
-        let config_manager = state.config_manager.read()
-            .map_err(|_| "Config lock poisoned".to_string())?;
-        config_manager.sites.get(&site_id)
-            .and_then(|s| s.r#static.locations.first())
-            .map(|l| PathBuf::from(&l.root))
-            .ok_or("No source root found".to_string())?
-    };
-
-    let source_path = source_root.join(path.trim_start_matches('/'));
-    
-    let original_content = std::fs::read(&source_path)
-        .map_err(|e| format!("Failed to read file: {}", e))?;
-
-    let mtime = std::fs::metadata(&source_path)
-        .and_then(|m| m.modified())
-        .unwrap_or(SystemTime::UNIX_EPOCH);
-
-    let key = minifier::CacheKey {
-        site_id: Arc::from(site_id.as_str()),
-        path: Arc::from(path.as_str()),
-        encoding: minifier::Encoding::None,
-    };
-
-    let minified_content = match cache.get(&key) {
-        Some(entry) if entry.mtime >= mtime => entry.content.to_vec(),
-        _ => {
-            let entry = cache.minify_and_cache(&site_id, &path, &original_content, mtime)
-                .map_err(|e| format!("Minification failed: {}", e))?;
-            let _ = cache.write_to_disk(&site_id, &path, &entry.content, mtime);
-            entry.content.to_vec()
-        }
-    };
-
-    let content_type = path.rsplit('.')
-        .next()
-        .and_then(|e| crate::mime::MIME_REGISTRY.read().get_mime_for_extension(e))
-        .unwrap_or_else(|| "application/octet-stream".to_string());
-
-    let mut queued_encodings = Vec::new();
-
-    let response_content = if let Some(ref enc) = encoding {
-        match enc.as_str() {
-            "gzip" => {
-                let enc_key = minifier::CacheKey {
-                    site_id: Arc::from(site_id.as_str()),
-                    path: Arc::from(path.as_str()),
-                    encoding: minifier::Encoding::Gzip,
-                };
-
-                match cache.get(&enc_key) {
-                    Some(entry) => entry.content.to_vec(),
-                    _ => {
-                        let content = cache.generate_compressed(&site_id, &path, &minified_content, &minifier::Encoding::Gzip)
-                            .map_err(|e| format!("Gzip compression failed: {}", e))?;
-                        let _ = cache.write_compressed_to_disk(&site_id, &path, &content, &minifier::Encoding::Gzip);
-                        content.to_vec()
-                    }
-                }
-            }
-            "br" => {
-                let enc_key = minifier::CacheKey {
-                    site_id: Arc::from(site_id.as_str()),
-                    path: Arc::from(path.as_str()),
-                    encoding: minifier::Encoding::Br,
-                };
-
-                match cache.get(&enc_key) {
-                    Some(entry) => entry.content.to_vec(),
-                    _ => {
-                        let content = cache.generate_compressed(&site_id, &path, &minified_content, &minifier::Encoding::Br)
-                            .map_err(|e| format!("Brotli compression failed: {}", e))?;
-                        let _ = cache.write_compressed_to_disk(&site_id, &path, &content, &minifier::Encoding::Br);
-                        content.to_vec()
-                    }
-                }
-            }
-            _ => minified_content,
-        }
-    } else {
-        minified_content
-    };
-
-    if config.enable_gzip && encoding.as_ref().map(|e| e != "gzip").unwrap_or(true) {
-        queued_encodings.push("gzip".to_string());
-    }
-    if config.enable_brotli && encoding.as_ref().map(|e| e != "br").unwrap_or(true) {
-        queued_encodings.push("br".to_string());
-    }
-
-    for enc in &queued_encodings {
-        let compression_task = CompressionTask {
-            site_id: site_id.clone(),
-            path: path.clone(),
-            encoding: enc.clone(),
-            queued_at: Instant::now(),
-        };
-        if let Ok(mut queue) = state.compression_queue.write() {
-            queue.push(compression_task);
-        }
-    }
-
-    Ok(crate::process::Message::MinifyResponse {
-        request_id,
-        site_id,
-        path,
-        content: response_content,
-        content_type,
-        encoding,
-        queued_encodings,
-    })
-}
-
-fn process_compressed_request(
-    state: &StaticWorkerState,
-    request_id: u64,
-    site_id: String,
-    path: String,
-    encoding: String,
-) -> Result<crate::process::Message, String> {
-    let cache = {
-        let caches = state.minifier_caches.read()
-            .map_err(|_| "Cache lock poisoned".to_string())?;
-        caches.get(&site_id).cloned()
-            .ok_or_else(|| format!("No cache for site: {}", site_id))?
-    };
-
-    let enc = match encoding.as_str() {
-        "gzip" => minifier::Encoding::Gzip,
-        "br" => minifier::Encoding::Br,
-        _ => return Err(format!("Unknown encoding: {}", encoding)),
-    };
-
-    let enc_key = minifier::CacheKey {
-        site_id: Arc::from(site_id.as_str()),
-        path: Arc::from(path.as_str()),
-        encoding: enc,
-    };
-
-    let content = cache.get(&enc_key)
-        .ok_or("Compressed version not cached".to_string())?
-        .content.to_vec();
-
-    Ok(crate::process::Message::GetCompressedResponse {
-        request_id,
-        content,
-    })
-}
-
-fn init_minifier_caches(state: &StaticWorkerState, _main_config: &crate::config::MainConfig) {
-    let config = match state.config_manager.read() {
-        Ok(c) => c,
-        Err(_) => return,
-    };
-    
-    let mut caches = match state.minifier_caches.write() {
-        Ok(c) => c,
-        Err(_) => return,
-    };
-    
-    for (site_id, site) in config.sites.iter() {
-        if !caches.contains_key(site_id)
-            && site.r#static.enable_minification.unwrap_or(true) {
-                let min_config = minifier::MinifierConfig::from_site_config(site_id, &site.r#static);
-                caches.insert(site_id.clone(), Arc::new(minifier::MinifierCache::new(min_config)));
-                tracing::info!("Initialized minifier cache for site: {}", site_id);
-            }
-    }
-}
-
-fn check_and_invalidate_cache(state: &StaticWorkerState, site_id: &str, root: &PathBuf) {
-    if let Ok(caches) = state.minifier_caches.read() {
-        if let Some(cache) = caches.get(site_id) {
-            if let Ok(entries) = std::fs::read_dir(root) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if let Ok(metadata) = entry.metadata() {
-                        if metadata.is_file() {
-                            let relative = path.strip_prefix(root)
-                                .map(|p| p.to_string_lossy().to_string())
-                                .unwrap_or_default();
-                            let full_path = format!("/{}", relative);
-                            
-                            if cache.check_and_invalidate(site_id, &full_path) {
-                                tracing::debug!("Invalidated cache for {}: {}", site_id, full_path);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-async fn handle_minify_request(
-    state: &StaticWorkerState,
-    request_id: u64,
-    site_id: String,
-    path: String,
-    encoding: Option<String>,
-) {
-    let cache_result: Result<Arc<minifier::MinifierCache>, String> = {
-        let guard = state.minifier_caches.read();
-        match guard {
-            Ok(ref c) => match c.get(&site_id).cloned() {
-                Some(val) => Ok(val),
-                None => Err(format!("No cache for site: {}", site_id)),
-            },
-            Err(_) => Err("Cache lock poisoned".to_string()),
-        }
-    };
-    let cache = match cache_result {
-        Ok(c) => c,
-        Err(e) => {
-            send_error(state, request_id, e).await;
-            return;
-        }
-    };
-
-    let config = cache.config();
-    let source_root_result: Result<Option<PathBuf>, String> = {
-        let guard = state.config_manager.read();
-        match guard {
-            Ok(ref cm) => Ok(cm.sites.get(&site_id)
-                .and_then(|s| s.r#static.locations.first().map(|l| PathBuf::from(&l.root)))),
-            Err(_) => Err("Config lock poisoned".to_string()),
-        }
-    };
-    let source_root = match source_root_result {
-        Ok(Some(r)) => r,
-        Ok(None) => {
-            send_error(state, request_id, "No source root found".to_string()).await;
-            return;
-        }
-        Err(e) => {
-            send_error(state, request_id, e).await;
-            return;
-        }
-    };
-
-    let source_path = source_root.join(path.trim_start_matches('/'));
-
-    // Use spawn_blocking to run blocking file I/O in the blocking thread pool
-    // This prevents blocking the async runtime
-    let file_result = task::block_in_place(|| {
-        let read_result = std::fs::read(&source_path);
-        let mtime = std::fs::metadata(&source_path)
-            .and_then(|m| m.modified())
-            .unwrap_or(SystemTime::UNIX_EPOCH);
-        (read_result, mtime)
-    });
-
-    let (original_content, mtime) = match file_result {
-        (Ok(content), mtime) => (content, mtime),
-        (Err(e), _) => {
-            send_error(state, request_id, format!("Failed to read file: {}", e)).await;
-            return;
-        }
-    };
-
-    let key = minifier::CacheKey {
-        site_id: Arc::from(site_id.as_str()),
-        path: Arc::from(path.as_str()),
-        encoding: minifier::Encoding::None,
-    };
-
-    let minified_content = match cache.get(&key) {
-        Some(entry) if entry.mtime >= mtime => entry.content.to_vec(),
-        _ => {
-            match cache.minify_and_cache(&site_id, &path, &original_content, mtime) {
-                Ok(entry) => {
-                    let site_id_clone = site_id.clone();
-                    let path_clone = path.clone();
-                    let content = entry.content.clone();
-                    let mtime_clone = mtime;
-                    // Run disk write in blocking thread to avoid blocking async runtime
-                    let write_result = task::block_in_place(|| {
-                        cache.write_to_disk(&site_id_clone, &path_clone, &content, mtime_clone)
-                    });
-                    if let Err(e) = write_result {
-                        tracing::warn!("Failed to write minified file: {}", e);
-                    }
-                    entry.content.to_vec()
-                }
-                Err(e) => {
-                    send_error(state, request_id, format!("Minification failed: {}", e)).await;
-                    return;
-                }
-            }
-        }
-    };
-
-    let content_type = path.rsplit('.')
-        .next()
-        .and_then(|e| crate::mime::MIME_REGISTRY.read().get_mime_for_extension(e))
-        .unwrap_or_else(|| "application/octet-stream".to_string());
-
-    let mut queued_encodings = Vec::new();
-
-    let response_content = if let Some(ref enc) = encoding {
-        match enc.as_str() {
-            "gzip" => {
-                let enc_key = minifier::CacheKey {
-                    site_id: Arc::from(site_id.as_str()),
-                    path: Arc::from(path.as_str()),
-                    encoding: minifier::Encoding::Gzip,
-                };
-
-                match cache.get(&enc_key) {
-                    Some(entry) => entry.content.to_vec(),
-                    _ => {
-                        match cache.generate_compressed(&site_id, &path, &minified_content, &minifier::Encoding::Gzip) {
-                            Ok(content) => {
-                                let site_id_clone = site_id.clone();
-                                let path_clone = path.clone();
-                                let content_clone = content.clone();
-                                let write_result = task::block_in_place(|| {
-                                    cache.write_compressed_to_disk(&site_id_clone, &path_clone, &content_clone, &minifier::Encoding::Gzip)
-                                });
-                                if let Err(e) = write_result {
-                                    tracing::warn!("Failed to write gzip file: {}", e);
-                                }
-                                content.to_vec()
-                            }
-                            Err(e) => {
-                                send_error(state, request_id, format!("Gzip compression failed: {}", e)).await;
-                                return;
-                            }
-                        }
-                    }
-                }
-            }
-            "br" => {
-                let enc_key = minifier::CacheKey {
-                    site_id: Arc::from(site_id.as_str()),
-                    path: Arc::from(path.as_str()),
-                    encoding: minifier::Encoding::Br,
-                };
-
-                match cache.get(&enc_key) {
-                    Some(entry) => entry.content.to_vec(),
-                    _ => {
-                        match cache.generate_compressed(&site_id, &path, &minified_content, &minifier::Encoding::Br) {
-                            Ok(content) => {
-                                let site_id_clone = site_id.clone();
-                                let path_clone = path.clone();
-                                let content_clone = content.clone();
-                                let write_result = task::block_in_place(|| {
-                                    cache.write_compressed_to_disk(&site_id_clone, &path_clone, &content_clone, &minifier::Encoding::Br)
-                                });
-                                if let Err(e) = write_result {
-                                    tracing::warn!("Failed to write brotli file: {}", e);
-                                }
-                                content.to_vec()
-                            }
-                            Err(e) => {
-                                send_error(state, request_id, format!("Brotli compression failed: {}", e)).await;
-                                return;
-                            }
-                        }
-                    }
-                }
-            }
-            _ => minified_content,
-        }
-    } else {
-        minified_content
-    };
-
-    if config.enable_gzip && encoding.as_ref().map(|e| e != "gzip").unwrap_or(true) {
-        queued_encodings.push("gzip".to_string());
-    }
-    if config.enable_brotli && encoding.as_ref().map(|e| e != "br").unwrap_or(true) {
-        queued_encodings.push("br".to_string());
-    }
-
-    for enc in &queued_encodings {
-        let compression_task = CompressionTask {
-            site_id: site_id.clone(),
-            path: path.clone(),
-            encoding: enc.clone(),
-            queued_at: Instant::now(),
-        };
-        if let Ok(mut queue) = state.compression_queue.write() {
-            queue.push(compression_task);
-        }
-    }
-
-    let mut ipc = state.ipc.lock().await;
-    let _ = ipc.send(&crate::process::Message::MinifyResponse {
-            request_id,
-            site_id,
-            path,
-            content: response_content,
-            content_type,
-            encoding,
-            queued_encodings,
-        }).await;
-}
-
-async fn send_error(state: &StaticWorkerState, request_id: u64, error: String) {
-    let mut ipc = state.ipc.lock().await;
-    let _ = ipc.send(&crate::process::Message::MinifyError {
-        request_id,
-        error,
-    }).await;
-}
-
-fn poison_image_sync(
-    _state: &StaticWorkerState,
-    _site_id: &str,
-    body: Vec<u8>,
-    _last_modified: Option<String>,
-) -> Vec<u8> {
-    if body.is_empty() {
-        return body;
-    }
-    // STUB - returns body unchanged
-    // TODO: Implement actual image poisoning algorithm
-    // The last_modified date is available for metadata preservation
-    body
-}
-
-async fn handle_compressed_request(
-    state: &StaticWorkerState,
-    request_id: u64,
-    site_id: String,
-    path: String,
-    encoding: String,
-) {
-    let cache_result: Result<Arc<minifier::MinifierCache>, String> = {
-        let guard = state.minifier_caches.read();
-        match guard {
-            Ok(ref c) => match c.get(&site_id).cloned() {
-                Some(val) => Ok(val),
-                None => Err(format!("No cache for site: {}", site_id)),
-            },
-            Err(_) => Err("Cache lock poisoned".to_string()),
-        }
-    };
-    let cache = match cache_result {
-        Ok(c) => c,
-        Err(e) => {
-            send_error(state, request_id, e).await;
-            return;
-        }
-    };
-
-    let enc = match encoding.as_str() {
-        "gzip" => minifier::Encoding::Gzip,
-        "br" => minifier::Encoding::Br,
-        _ => {
-            send_error(state, request_id, format!("Unknown encoding: {}", encoding)).await;
-            return;
-        }
-    };
-
-    let enc_key = minifier::CacheKey {
-        site_id: Arc::from(site_id.as_str()),
-        path: Arc::from(path.as_str()),
-        encoding: enc,
-    };
-
-    let content = match cache.get(&enc_key) {
-        Some(entry) => entry.content.to_vec(),
-        None => {
-            send_error(state, request_id, "Compressed version not cached".to_string()).await;
-            return;
-        }
-    };
-
-    let mut ipc = state.ipc.lock().await;
-    let _ = ipc.send(&crate::process::Message::GetCompressedResponse {
-        request_id,
-        content,
-    }).await;
-}
-
-fn process_compression_queue(state: &StaticWorkerState) {
-    let tasks: Vec<CompressionTask> = match state.compression_queue.write() {
-        Ok(mut queue) => queue.drain(..).collect(),
-        Err(_) => return,
-    };
-
-    for task in tasks {
-        if !state.running.is_running() {
-            break;
-        }
-
-        let caches = match state.minifier_caches.read() {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-        
-        if let Some(cache) = caches.get(&task.site_id) {
-            let minified_key = minifier::CacheKey {
-                site_id: Arc::from(task.site_id.as_str()),
-                path: Arc::from(task.path.as_str()),
-                encoding: minifier::Encoding::None,
-            };
-
-            let minified_content = match cache.get(&minified_key) {
-                Some(e) => e.content.to_vec(),
-                None => continue,
-            };
-
-            let enc = match task.encoding.as_str() {
-                "gzip" => minifier::Encoding::Gzip,
-                "br" => minifier::Encoding::Br,
-                _ => continue,
-            };
-
-            match cache.generate_compressed(&task.site_id, &task.path, &minified_content, &enc) {
-                Ok(content) => {
-                    let site_id_clone = task.site_id.clone();
-                    let path_clone = task.path.clone();
-                    let content_clone = content.clone();
-                    let enc_clone = enc.clone();
-                    let write_result = task::block_in_place(|| {
-                        cache.write_compressed_to_disk(&site_id_clone, &path_clone, &content_clone, &enc_clone)
-                    });
-                    if let Err(e) = write_result {
-                        tracing::warn!("Failed to write {} file: {}", task.encoding, e);
-                    } else {
-                        tracing::debug!("Generated {} for {}/{}", task.encoding, task.site_id, task.path);
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to generate {}: {}", task.encoding, e);
-                }
-            }
-        }
-    }
-}
-
-#[allow(dead_code)]
-async fn send_compressed_error(state: &StaticWorkerState, request_id: u64, error: String) {
-    let mut ipc = state.ipc.lock().await;
-    let _ = ipc.send(&crate::process::Message::MinifyError {
-        request_id,
-        error,
-    }).await;
 }

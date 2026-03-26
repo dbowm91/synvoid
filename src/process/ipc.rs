@@ -1016,6 +1016,31 @@ pub enum WorkerStatus {
     Failed,
 }
 
+/// Synchronous IPC stream for framed message passing.
+///
+/// This is a blocking wrapper around `UnixStream` (Unix) or `std::fs::File`
+/// (Windows named pipe) that provides length-prefixed JSON framing via
+/// `send()` and `try_recv()`.
+///
+/// # Sync vs Async IpcStream
+///
+/// There are two IpcStream types with intentionally different APIs:
+///
+/// | Aspect | `ipc::IpcStream` (this) | `ipc_transport::IpcStream` |
+/// |--------|------------------------|---------------------------|
+/// | Runtime | Synchronous (std) | Async (tokio) |
+/// | Unix inner | `std::os::unix::net::UnixStream` | `tokio::net::UnixStream` |
+/// | Windows inner | `std::fs::File` | `tokio::net::windows::named_pipe::NamedPipeClient` |
+/// | Message signing | Not supported | Supported via `IpcSigner` |
+/// | Recv with timeout | Polling via `recv()` | Native `recv_with_timeout()` |
+/// | AsyncRead/Write | No | Yes |
+/// | Use case | Static worker threads, command handling | Master↔Worker IPC, mesh transport |
+///
+/// The sync version is used from `std::thread::spawn` contexts (static worker
+/// connections) where tokio is not available. The async version is used from
+/// tokio tasks for the main worker IPC channel. Unifying these behind a single
+/// trait would add complexity without clear benefit, since the use sites have
+/// fundamentally different runtime constraints.
 pub struct IpcStream {
     #[cfg(unix)]
     stream: UnixStream,
@@ -1075,6 +1100,71 @@ impl WindowsIpcListener {
 
     pub fn path(&self) -> &str {
         &self.pipe_path
+    }
+
+    /// Create a new named pipe instance and wait for a client connection.
+    ///
+    /// Returns a `File` handle representing the connected pipe. On failure,
+    /// returns an error after logging. The caller owns the returned handle
+    /// and is responsible for closing it.
+    ///
+    /// This implements the Windows named pipe accept pattern:
+    /// 1. CreateNamedPipeW — create pipe instance
+    /// 2. ConnectNamedPipe — wait for client
+    /// 3. Convert to File for Rust I/O
+    pub fn accept(&self) -> io::Result<std::fs::File> {
+        use std::os::windows::ffi::OsStrExt;
+        use std::os::windows::io::FromRawHandle;
+
+        let pipe_name_wide: Vec<u16> = std::ffi::OsStr::new(&self.pipe_path)
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+
+        // SAFETY: CreateNamedPipeW is called with a valid UTF-16 pipe name
+        // and correct pipe type/access flags. The handle is checked for zero.
+        let pipe_handle = unsafe {
+            windows_sys::Win32::System::Pipes::CreateNamedPipeW(
+                pipe_name_wide.as_ptr(),
+                windows_sys::Win32::System::Pipes::PIPE_ACCESS_DUPLEX,
+                windows_sys::Win32::System::Pipes::PIPE_TYPE_MESSAGE
+                    | windows_sys::Win32::System::Pipes::PIPE_READMODE_MESSAGE
+                    | windows_sys::Win32::System::Pipes::PIPE_WAIT,
+                1,
+                65536,
+                65536,
+                0,
+                std::ptr::null_mut(),
+            )
+        };
+
+        if pipe_handle == 0 {
+            return Err(io::Error::last_os_error());
+        }
+
+        // SAFETY: ConnectNamedPipe is called on a valid pipe handle.
+        // The handle remains valid until we either return it or close it.
+        let connected = unsafe {
+            windows_sys::Win32::System::Pipes::ConnectNamedPipe(pipe_handle, std::ptr::null_mut())
+        };
+
+        if connected == 0 {
+            // SAFETY: GetLastError returns thread-local error code.
+            let error = unsafe { *windows_sys::Win32::Foundation::GetLastError() };
+            if error != windows_sys::Win32::Foundation::ERROR_PIPE_CONNECTED {
+                // SAFETY: CloseHandle on valid handle we own on error path.
+                unsafe {
+                    windows_sys::Win32::Foundation::CloseHandle(pipe_handle);
+                }
+                return Err(io::Error::from_raw_os_error(error as i32));
+            }
+        }
+
+        // SAFETY: from_raw_handle takes ownership of the valid, connected pipe handle.
+        // No other code will use this handle after this transfer of ownership.
+        Ok(unsafe {
+            std::fs::File::from_raw_handle(pipe_handle as std::os::windows::io::RawHandle)
+        })
     }
 }
 

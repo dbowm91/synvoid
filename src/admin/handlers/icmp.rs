@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use super::super::state::AdminState;
 
-use super::common::{require_auth, OptionalAuth};
+use super::common::{OptionalAuth};
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct IcmpStatusResponse {
@@ -69,11 +69,8 @@ pub struct IcmpBackendsResponse {
 )]
 pub async fn get_status(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
 ) -> Result<Json<IcmpStatusResponse>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     #[cfg(feature = "icmp-filter")]
     {
@@ -153,11 +150,8 @@ pub async fn get_status(
 )]
 pub async fn get_config(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
 ) -> Result<Json<IcmpConfigResponse>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let config = state.config.read().await;
 
@@ -191,12 +185,9 @@ pub async fn get_config(
 )]
 pub async fn update_config(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
     Json(req): Json<UpdateIcmpConfigRequest>,
 ) -> Result<Json<IcmpEnableResponse>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     #[cfg(feature = "icmp-filter")]
     {
@@ -272,11 +263,8 @@ pub async fn update_config(
 )]
 pub async fn enable(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
 ) -> Result<Json<IcmpEnableResponse>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     #[cfg(feature = "icmp-filter")]
     {
@@ -334,11 +322,8 @@ pub async fn enable(
 )]
 pub async fn disable(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
 ) -> Result<Json<IcmpEnableResponse>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     #[cfg(feature = "icmp-filter")]
     {
@@ -395,11 +380,8 @@ pub async fn disable(
 )]
 pub async fn list_backends(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
 ) -> Result<Json<IcmpBackendsResponse>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     #[cfg(feature = "icmp-filter")]
     {

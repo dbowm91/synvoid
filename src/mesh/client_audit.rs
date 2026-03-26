@@ -1,4 +1,4 @@
-#![allow(unused_variables, dead_code, unused_mut)]
+#![allow(unused_variables, unused_mut)]
 
 use std::sync::Arc;
 use std::collections::HashMap;

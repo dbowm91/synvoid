@@ -5,6 +5,22 @@ pub mod proxy;
 pub mod cert;
 pub mod backend;
 pub mod transport;
+#[cfg(feature = "mesh")]
+pub mod transport_routing;
+#[cfg(feature = "mesh")]
+pub mod transport_dht;
+#[cfg(feature = "mesh")]
+pub mod transport_org;
+#[cfg(feature = "mesh")]
+pub mod transport_dns;
+#[cfg(feature = "mesh")]
+pub mod transport_global;
+#[cfg(feature = "mesh")]
+pub mod transport_peer;
+#[cfg(feature = "mesh")]
+pub mod transport_connection;
+#[cfg(feature = "mesh")]
+pub mod transport_rate_limit;
 pub mod transport_core;
 pub mod security;
 pub mod audit;
@@ -24,6 +40,13 @@ pub mod yara_rules;
 pub mod kem;
 pub mod session;
 pub mod ml_kem_key_exchange;
+
+pub fn safe_unix_timestamp() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
 
 pub use config::{MeshConfig, MeshNodeRole, MeshWireGuardConfig, MeshWireGuardPeer, MeshTransportPreference, NodeIdentityConfig, MeshMlKemConfig};
 pub use protocol::MeshMessage;

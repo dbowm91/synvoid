@@ -83,6 +83,7 @@ pub struct AlertEvent {
     pub message: String,
 }
 
+#[allow(dead_code)] // http_client reserved for future webhook delivery
 pub struct AlertManager {
     config: Arc<TokioRwLock<AlertConfig>>,
     http_client: HttpClient,

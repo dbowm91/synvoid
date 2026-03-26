@@ -516,10 +516,7 @@ impl DhtBootstrapper {
                 request_id: request_id.into(),
                 target_node_id: local_id.as_bytes().to_vec(),
                 requester_node_id: self.routing_manager.local_node_id().into(),
-                timestamp: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs(),
+                timestamp: crate::mesh::safe_unix_timestamp(),
             };
 
             if let Err(e) = transport.send_to_peer(&seed.node_id, find_node).await {
@@ -640,10 +637,7 @@ impl DhtQueryExecutor {
                         request_id: request_id.into(),
                         target_node_id: target_node_id.as_bytes().to_vec(),
                         requester_node_id: local_id.into(),
-                        timestamp: std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap()
-                            .as_secs(),
+                        timestamp: crate::mesh::safe_unix_timestamp(),
                     };
 
                     let result = transport.send_and_wait(peer.node_id_string.as_str(), find_node).await;

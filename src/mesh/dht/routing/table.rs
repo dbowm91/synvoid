@@ -521,10 +521,7 @@ impl RoutingTable {
         PersistedRoutingTable {
             local_node_id: self.local_node_id_string.clone(),
             buckets,
-            last_updated: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
+            last_updated: crate::mesh::safe_unix_timestamp(),
         }
     }
 

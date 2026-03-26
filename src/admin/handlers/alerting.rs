@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use crate::admin::alerting::{AlertConfig, AlertEvent};
 use crate::admin::state::AdminState;
-use crate::admin::handlers::common::{require_auth, OptionalAuth};
+use crate::admin::handlers::common::{OptionalAuth};
 
 #[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct AlertConfigResponse {
@@ -29,11 +29,8 @@ pub struct AlertConfigResponse {
 )]
 pub async fn get_alert_config(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
 ) -> Result<Json<AlertConfigResponse>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let alert_manager = state.alert_manager.as_ref().ok_or(StatusCode::NOT_FOUND)?;
     let config = alert_manager.get_config().await;
@@ -62,12 +59,9 @@ pub struct UpdateAlertConfigRequest {
 )]
 pub async fn update_alert_config(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
     Json(req): Json<UpdateAlertConfigRequest>,
 ) -> Result<Json<AlertConfigResponse>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let alert_manager = state.alert_manager.as_ref().ok_or(StatusCode::NOT_FOUND)?;
     
@@ -98,11 +92,8 @@ pub struct TestAlertResponse {
 )]
 pub async fn test_webhook(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
 ) -> Result<Json<TestAlertResponse>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let alert_manager = state.alert_manager.as_ref().ok_or(StatusCode::NOT_FOUND)?;
     let config = alert_manager.get_config().await;

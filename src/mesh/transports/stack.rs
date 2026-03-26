@@ -1,4 +1,4 @@
-#![allow(unused_variables, dead_code)]
+#![allow(unused_variables)]
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -26,6 +26,7 @@ impl TransportPeerId {
 }
 
 #[derive(Clone)]
+#[allow(dead_code)] // config/topology kept for future transport selection logic
 pub struct MeshTransportStack {
     config: Arc<MeshConfig>,
     quic_transport: Option<Arc<QuicTransportWrapper>>,

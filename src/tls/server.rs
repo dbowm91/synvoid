@@ -526,12 +526,16 @@ impl HttpsServer {
                             );
 
                             let cache = Arc::new(ProxyCache::new(settings));
-                            let ps = ProxyServer::new(
+                            let tls_config = target.site_config.proxy.upstream.as_ref()
+                                .and_then(|u| u.tls.as_ref())
+                                .and_then(crate::http_client::UpstreamTlsConfig::from_site_config);
+                            let ps = ProxyServer::new_with_tls(
                                 target.upstream.to_string(),
                                 waf.clone(),
                                 main_config.proxy_limits.max_response_size,
                                 waf.upstream_error_tracker.clone(),
                                 site_id.clone(),
+                                tls_config.as_ref(),
                             ).with_cache(cache);
 
                             let ps = Arc::new(ps);
@@ -552,7 +556,6 @@ impl HttpsServer {
                                 Ok(resp) => {
                                     let (parts, body) = resp.into_parts();
                                     let status = parts.status.as_u16();
-                                    let body_bytes = Bytes::from(body);
                                     
                                     let headers_to_filter = build_headers_to_filter(
                                         &main_config.security.more_clear_headers,
@@ -578,7 +581,7 @@ impl HttpsServer {
                                     }
                                     
                                     return Ok(builder
-                                        .body(Full::new(body_bytes))
+                                        .body(Full::new(body))
                                         .unwrap_or_else(|_| Self::build_response(500, "Internal Server Error".to_string(), "text/plain")));
                                 }
                                 Err(e) => {
@@ -641,7 +644,7 @@ impl HttpsServer {
                         }
                         
                         Ok(builder
-                            .body(Full::new(Bytes::from(body)))
+.body(Full::new(body))
                             .unwrap_or_else(|_| Self::build_response(500, "Internal Server Error".to_string(), "text/plain")))
                     }
                     Err(e) => {

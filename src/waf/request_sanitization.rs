@@ -140,30 +140,28 @@ impl RequestSanitizer {
     }
 
     pub fn get_real_ip(&self, headers: &HeaderMap, client_ip: IpAddr) -> Option<IpAddr> {
-        if self.sanitize_forwarded
-            && self.is_trusted_proxy(client_ip) {
-                if let Some(forwarded_for) = headers.get("x-forwarded-for") {
-                    if let Ok(value) = forwarded_for.to_str() {
-                        if let Some(first_ip) = value.split(',').next() {
-                            if let Ok(ip) = first_ip.trim().parse::<IpAddr>() {
-                                if !self.is_private_ip(&ip) {
-                                    return Some(ip);
-                                }
+        if self.sanitize_forwarded && self.is_trusted_proxy(client_ip) {
+            if let Some(forwarded_for) = headers.get("x-forwarded-for") {
+                if let Ok(value) = forwarded_for.to_str() {
+                    if let Some(first_ip) = value.split(',').next() {
+                        if let Ok(ip) = first_ip.trim().parse::<IpAddr>() {
+                            if !self.is_private_ip(&ip) {
+                                return Some(ip);
                             }
                         }
                     }
                 }
+            }
 
-                if let Some(forwarded) = headers.get("forwarded") {
-                    if let Ok(value) = forwarded.to_str() {
-                        for part in value.split(';') {
-                            if let Some((key, val)) = part.split_once('=') {
-                                if key.trim().eq_ignore_ascii_case("for") {
-                                    let ip_str = val.trim().trim_matches('"');
-                                    if let Ok(ip) = ip_str.parse::<IpAddr>() {
-                                        if !self.is_private_ip(&ip) {
-                                            return Some(ip);
-                                        }
+            if let Some(forwarded) = headers.get("forwarded") {
+                if let Ok(value) = forwarded.to_str() {
+                    for part in value.split(';') {
+                        if let Some((key, val)) = part.split_once('=') {
+                            if key.trim().eq_ignore_ascii_case("for") {
+                                let ip_str = val.trim().trim_matches('"');
+                                if let Ok(ip) = ip_str.parse::<IpAddr>() {
+                                    if !self.is_private_ip(&ip) {
+                                        return Some(ip);
                                     }
                                 }
                             }
@@ -171,6 +169,7 @@ impl RequestSanitizer {
                     }
                 }
             }
+        }
 
         Some(client_ip)
     }
@@ -189,7 +188,6 @@ impl RequestSanitizer {
                 let segments = ipv6.segments();
                 segments[0] == 0xfc00
                     || segments[0] == 0xfe00
-                    || segments[0] == 0xfc00
                     || (segments[0] & 0xffc0) == 0xfe80
                     || segments == [0, 0, 0, 0, 0, 0, 0, 1]
                     || segments == [0, 0, 0, 0, 0, 0, 0, 0]

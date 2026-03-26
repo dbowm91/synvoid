@@ -6,7 +6,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use super::super::state::{AdminState, AggregatedMetrics};
-use super::common::{require_auth, OptionalAuth};
+use super::common::{OptionalAuth};
 use crate::metrics::{get_proxy_cache_hits, get_proxy_cache_misses};
 use crate::process::RequestLogPayload;
 
@@ -72,11 +72,8 @@ pub struct SiteStats {
 )]
 pub async fn get_summary(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
 ) -> Result<Json<SystemStats>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let config = state.config.read().await;
     let sites_count = config.sites.len();
@@ -126,11 +123,8 @@ pub async fn get_summary(
 )]
 pub async fn get_sites_stats(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
 ) -> Result<Json<Vec<SiteStats>>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let config = state.config.read().await;
     let site_metrics = state.get_site_metrics();
@@ -195,12 +189,9 @@ pub struct MetricsHistoryParams {
 )]
 pub async fn get_metrics_history(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
     axum::extract::Query(params): axum::extract::Query<MetricsHistoryParams>,
 ) -> Result<Json<Vec<AggregatedMetrics>>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let seconds = params.seconds.unwrap_or(300);
     let history = state.get_metrics_history(seconds);
@@ -228,11 +219,8 @@ pub struct AttackStats {
 )]
 pub async fn get_attack_stats(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
 ) -> Result<Json<AttackStats>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let metrics = state.get_metrics();
 
@@ -268,11 +256,8 @@ pub struct CacheStats {
 )]
 pub async fn get_cache_stats(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
 ) -> Result<Json<CacheStats>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let proxy_hits = get_proxy_cache_hits();
     let proxy_misses = get_proxy_cache_misses();
@@ -323,11 +308,8 @@ use crate::metrics::bandwidth::{get_global_bandwidth_tracker, BandwidthPayload};
 )]
 pub async fn get_bandwidth(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
 ) -> Result<Json<BandwidthPayload>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let tracker = get_global_bandwidth_tracker()
         .map_err(|e| {
@@ -393,12 +375,9 @@ pub struct RequestLogsQuery {
 )]
 pub async fn get_request_logs(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
     Query(query): Query<RequestLogsQuery>,
 ) -> Result<Json<RequestLogsResponse>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let limit = query.limit.unwrap_or(100).min(1000);
     let offset = query.offset.unwrap_or(0);

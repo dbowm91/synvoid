@@ -1,3 +1,8 @@
+//! HTTP client abstraction for upstream proxy connections.
+//!
+//! Provides TLS-configurable HTTP/1.1 and HTTP/2 clients using hyper,
+//! with support for connection pooling, timeouts, and per-site TLS settings.
+
 use std::time::Duration;
 use std::path::PathBuf;
 
@@ -79,6 +84,23 @@ impl Default for UpstreamTlsConfig {
     }
 }
 
+impl UpstreamTlsConfig {
+    pub fn from_site_config(config: &crate::config::site::UpstreamTlsConfig) -> Option<Self> {
+        let enabled = config.enabled.unwrap_or(true);
+        if !enabled {
+            return None;
+        }
+        let skip_verify = config.skip_verify.unwrap_or(false);
+        Some(Self {
+            verify: !skip_verify,
+            ca_cert_path: config.ca_cert.clone(),
+            server_name: None,
+            skip_verify,
+            allow_plaintext: false,
+        })
+    }
+}
+
 pub fn create_http_client() -> HttpClient {
     create_http_client_with_config(
         Duration::from_secs(5),
@@ -150,8 +172,21 @@ pub fn create_upstream_client(
         .build(https_connector)
 }
 
+fn load_ca_certs_from_path(
+    path: &str,
+) -> Result<Vec<rustls_pki_types::CertificateDer<'static>>, Box<dyn std::error::Error + Send + Sync>> {
+    let file = std::fs::File::open(path)?;
+    let mut reader = std::io::BufReader::new(file);
+    let certs: Vec<_> = rustls_pemfile::certs(&mut reader)
+        .collect::<Result<Vec<_>, _>>()?;
+    if certs.is_empty() {
+        return Err(format!("No certificates found in {}", path).into());
+    }
+    Ok(certs)
+}
+
 fn build_tls_config(
-    _ca_cert_path: Option<&str>,
+    ca_cert_path: Option<&str>,
     skip_verify: bool,
 ) -> rustls::ClientConfig {
     use rustls::crypto::aws_lc_rs;
@@ -193,6 +228,28 @@ fn build_tls_config(
             "Some native root certificates failed to load: {} errors",
             native_certs.errors.len()
         );
+    }
+
+    // Load custom CA certificates from file
+    if let Some(ca_path) = ca_cert_path {
+        match load_ca_certs_from_path(ca_path) {
+            Ok(certs) => {
+                let added = certs.len();
+                for cert in certs {
+                    let _ = root_store.add(cert);
+                }
+                tracing::info!(
+                    "Loaded {} custom CA certificate(s) from {}",
+                    added, ca_path
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to load custom CA certificates from {}: {}",
+                    ca_path, e
+                );
+            }
+        }
     }
 
     let mut config = builder
@@ -352,22 +409,20 @@ pub async fn send_request_with_body_and_timeout(
 pub struct HttpResponse {
     pub status: http::StatusCode,
     pub headers: http::HeaderMap,
-    pub body: String,
+    pub body: Bytes,
 }
 
 impl HttpResponse {
     pub async fn from_hyper(response: Response<Incoming>) -> Self {
         let status = response.status();
         let headers = response.headers().clone();
-        
-        let body_bytes = response
+
+        let body = response
             .collect()
             .await
             .map(|collected| collected.to_bytes())
             .unwrap_or_default();
-        
-        let body = String::from_utf8_lossy(&body_bytes).to_string();
-        
+
         Self { status, headers, body }
     }
     
@@ -543,8 +598,8 @@ pub async fn send_request_via_quic_tunnel(
     let body_start = response_str.find("\r\n\r\n")
         .map(|pos| pos + 4)
         .unwrap_or(0);
-    let response_body = response_str[body_start..].to_string();
-    
+    let response_body = Bytes::from(result[body_start..].to_vec());
+
     Ok(HttpResponse {
         status: http::StatusCode::from_u16(status_code).unwrap_or(http::StatusCode::INTERNAL_SERVER_ERROR),
         headers: response_headers,
@@ -616,7 +671,9 @@ pub async fn post_json_response<T: Serialize, R: DeserializeOwned>(
     body: &T,
 ) -> Result<R, String> {
     let response = post_json(client, url, body).await?;
-    serde_json::from_str(&response.body).map_err(|e| e.to_string())
+    let s = String::from_utf8(response.body.to_vec())
+        .map_err(|e| e.to_string())?;
+    serde_json::from_str(&s).map_err(|e| e.to_string())
 }
 
 pub async fn post_json_response_with_timeout<T: Serialize, R: DeserializeOwned>(
@@ -626,7 +683,9 @@ pub async fn post_json_response_with_timeout<T: Serialize, R: DeserializeOwned>(
     timeout: Duration,
 ) -> Result<R, String> {
     let response = post_json_with_timeout(client, url, body, timeout).await?;
-    serde_json::from_str(&response.body).map_err(|e| e.to_string())
+    let s = String::from_utf8(response.body.to_vec())
+        .map_err(|e| e.to_string())?;
+    serde_json::from_str(&s).map_err(|e| e.to_string())
 }
 
 pub fn create_simple_http_client(timeout: Duration) -> HttpClient {

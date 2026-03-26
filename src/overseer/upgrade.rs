@@ -856,7 +856,7 @@ impl Orchestrator {
                 
                 match get_with_timeout(&client, &status_url, Duration::from_secs(2)).await {
                     Ok(resp) => {
-                        if let Ok(status) = serde_json::from_str::<DrainStatusResponse>(&resp.body) {
+                        if let Ok(status) = serde_json::from_slice::<DrainStatusResponse>(&resp.body) {
                             if status.drain_complete || status.active_connections == 0 {
                                 drained_count += 1;
                                 tracing::debug!(

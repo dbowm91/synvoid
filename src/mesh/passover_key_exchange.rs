@@ -712,10 +712,7 @@ pub async fn verify_edge_token(
     }
 
     // Verify timestamp and expiration
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs() as i64;
+    let now = crate::mesh::safe_unix_timestamp() as i64;
 
     if payload.timestamp > now + 60 || payload.timestamp < now - 60 {
         return Err("Token timestamp out of range".to_string());

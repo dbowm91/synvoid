@@ -461,6 +461,7 @@ pub struct SuspiciousWordRecord {
     pub timestamp: u64,
 }
 
+#[allow(dead_code)] // access_order reserved for future LRU eviction
 pub struct SuspiciousWordTracker {
     store: Arc<RwLock<HashMap<IpAddr, Vec<SuspiciousWordRecord>>>>,
     config: crate::config::SuspiciousWordsConfig,

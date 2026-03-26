@@ -165,10 +165,7 @@ impl ReplayProtection {
     }
 
     pub fn check_and_add(&mut self, nonce: &str, timestamp: u64) -> ReplayResult {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = crate::mesh::safe_unix_timestamp();
 
         if timestamp > now + 60 {
             return ReplayResult::FutureTimestamp;
@@ -979,10 +976,7 @@ pub enum MeshMessage {
 
 impl MeshMessage {
     pub fn generate_timestamp() -> u64 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs()
+        crate::mesh::safe_unix_timestamp()
     }
 
     pub fn generate_nonce() -> ArcStr {
@@ -1164,10 +1158,7 @@ impl MeshMessage {
                 provider_node_id,
                 hops,
                 ttl_secs,
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs()
+                crate::mesh::safe_unix_timestamp()
             )),
             Self::UpstreamAnnounce {
                 upstream_id,
@@ -1196,10 +1187,7 @@ impl MeshMessage {
                 request_id,
                 source_node_id,
                 highest_severity,
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs()
+                crate::mesh::safe_unix_timestamp()
             )),
             Self::ThreatSyncResponse {
                 request_id,
@@ -1215,10 +1203,7 @@ impl MeshMessage {
                 "{},{},{}",
                 node_id,
                 reputation_score,
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs()
+                crate::mesh::safe_unix_timestamp()
             )),
             _ => None,
         }

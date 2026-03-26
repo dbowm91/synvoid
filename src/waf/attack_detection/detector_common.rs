@@ -234,7 +234,7 @@ where
         if let Some(value) = headers.get(*header_name) {
             if let Ok(value_str) = value.to_str() {
                 let input = value_str.as_bytes();
-                let location = InputLocation::Header(header_name.to_string());
+                let location = InputLocation::Header((*header_name).into());
 
                 if let Some(result) = detect(input, location.clone()) {
                     return Some(result);
@@ -300,7 +300,7 @@ pub trait PatternDetector: Send + Sync {
         for header_name in SECURITY_HEADERS {
             if let Some(value) = headers.get(*header_name) {
                 if let Ok(value_str) = value.to_str() {
-                    let location = InputLocation::Header(header_name.to_string());
+                    let location = InputLocation::Header((*header_name).into());
                     if let Some(r) = self.detect(value_str, location.clone()) {
                         return Some(r);
                     }
@@ -340,7 +340,7 @@ pub trait PatternDetector: Send + Sync {
             }
             if let Some(value) = headers.get(*header_name) {
                 if let Ok(value_str) = value.to_str() {
-                    let location = InputLocation::Header(header_name.to_string());
+                    let location = InputLocation::Header((*header_name).into());
                     if let Some(r) = self.detect(value_str, location.clone()) {
                         return Some(r);
                     }
@@ -372,7 +372,7 @@ pub trait PatternDetector: Send + Sync {
     ) -> Option<AttackDetectionResult> {
         for (header_name, header_value) in headers.iter() {
             if let Ok(value) = header_value.to_str() {
-                let location = InputLocation::Header(header_name.to_string());
+                let location = InputLocation::Header(header_name.as_str().into());
                 if let Some(r) = self.detect(value, location.clone()) {
                     return Some(r);
                 }

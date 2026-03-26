@@ -122,7 +122,7 @@ impl AiResponder for OllamaResponder {
             Duration::from_secs(self.config.timeout_secs),
         ).await?;
 
-        let result: serde_json::Value = serde_json::from_str(&response.body)?;
+        let result: serde_json::Value = serde_json::from_slice(&response.body)?;
 
         if let Some(content) = result["message"]["content"].as_str() {
             Ok(content.to_string())
@@ -242,7 +242,7 @@ impl AiResponder for OpenAIResponder {
         };
 
         let http_response = crate::http_client::HttpResponse::from_hyper(response).await;
-        let result: OpenAIResponse = serde_json::from_str(&http_response.body)?;
+        let result: OpenAIResponse = serde_json::from_slice(&http_response.body)?;
 
         if let Some(choice) = result.choices.first() {
             Ok(choice.message.content.clone())
@@ -350,7 +350,7 @@ impl AiResponder for AnthropicResponder {
         };
 
         let http_response = crate::http_client::HttpResponse::from_hyper(response).await;
-        let result: AnthropicResponse = serde_json::from_str(&http_response.body)?;
+        let result: AnthropicResponse = serde_json::from_slice(&http_response.body)?;
 
         if let Some(content) = result.content.first() {
             Ok(content.text.clone())

@@ -6,7 +6,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use super::super::state::AdminState;
-use super::common::OptionalAuth;
+use super::common::{OptionalAuth};
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct HoneypotStatusResponse {
@@ -35,6 +35,7 @@ pub async fn get_honeypot_status(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<HoneypotStatusResponse>, StatusCode> {
+
     let (enabled, paused, pause_reason, active_ports) = if let Some(ref hp_controller) = state.port_honeypot_controller {
         let status = hp_controller.get_status();
         (status.enabled, status.paused, status.pause_reason, status.active_ports)
@@ -60,6 +61,7 @@ pub async fn control_honeypot(
     _auth: OptionalAuth,
     Json(req): Json<HoneypotControlRequest>,
 ) -> Result<Json<HoneypotControlResponse>, StatusCode> {
+
     let hp_controller = state.port_honeypot_controller.as_ref()
         .ok_or(StatusCode::NOT_FOUND)?;
     

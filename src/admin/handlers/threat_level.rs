@@ -10,7 +10,7 @@ use super::super::state::AdminState;
 use crate::waf::ThreatHistorySample;
 use crate::waf::threat_level::SqliteBackup;
 
-use super::common::{StatusResponse, require_auth, OptionalAuth};
+use super::common::{StatusResponse, OptionalAuth};
 
 const DEFAULT_THREAT_LEVEL_DB_PATH: &str = "/var/lib/maluwaf/threat_level/history.db";
 const DEFAULT_THREAT_LEVEL_BACKUP_DIR: &str = "/var/lib/maluwaf/threat_level/backups";
@@ -88,11 +88,8 @@ pub struct SetLevelRequest {
 )]
 pub async fn get_status(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
 ) -> Result<Json<ThreatLevelStatusResponse>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let threat_level = state.threat_level_manager().ok_or(StatusCode::NOT_FOUND)?.clone();
 
@@ -139,11 +136,8 @@ pub async fn get_status(
 )]
 pub async fn get_history(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
 ) -> Result<Json<ThreatLevelHistoryResponse>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let threat_level = state.threat_level_manager().ok_or(StatusCode::NOT_FOUND)?.clone();
 
@@ -190,11 +184,8 @@ pub async fn get_history(
 )]
 pub async fn get_baseline(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
 ) -> Result<Json<BaselineStatsResponse>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let threat_level = state.threat_level_manager().ok_or(StatusCode::NOT_FOUND)?.clone();
 
@@ -235,11 +226,8 @@ pub async fn get_baseline(
 )]
 pub async fn reset_baseline(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
 ) -> Result<Json<StatusResponse>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let threat_level = state.threat_level_manager().ok_or(StatusCode::NOT_FOUND)?;
 
@@ -262,12 +250,9 @@ pub async fn reset_baseline(
 )]
 pub async fn set_level(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
     Path(level): Path<u8>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let threat_level = state.threat_level_manager().ok_or(StatusCode::NOT_FOUND)?;
 
@@ -294,11 +279,8 @@ pub async fn set_level(
 )]
 pub async fn set_auto(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
 ) -> Result<Json<StatusResponse>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let threat_level = state.threat_level_manager().ok_or(StatusCode::NOT_FOUND)?;
 
@@ -339,11 +321,8 @@ pub struct PruneResponse {
 )]
 pub async fn create_backup(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
 ) -> Result<Json<BackupResponse>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let _threat_level = state.threat_level_manager().ok_or(StatusCode::NOT_FOUND)?;
 
@@ -386,11 +365,8 @@ pub async fn create_backup(
 )]
 pub async fn list_backups(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
 ) -> Result<Json<BackupsListResponse>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let backup_dir = PathBuf::from("/var/lib/maluwaf/threat_level/backups");
 
@@ -430,11 +406,8 @@ pub struct DeleteBackupQuery {
 pub async fn delete_backup(
     State(state): State<Arc<AdminState>>,
     Query(query): Query<DeleteBackupQuery>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
 ) -> Result<Json<StatusResponse>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let path = query.path.clone();
 
@@ -469,11 +442,8 @@ pub async fn delete_backup(
 )]
 pub async fn prune_history(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
 ) -> Result<Json<PruneResponse>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let threat_level = state.threat_level_manager().ok_or(StatusCode::NOT_FOUND)?.clone();
 
@@ -511,11 +481,8 @@ pub async fn prune_history(
 )]
 pub async fn get_history_stats(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let threat_level = state.threat_level_manager().ok_or(StatusCode::NOT_FOUND)?.clone();
 

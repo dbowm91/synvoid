@@ -218,26 +218,24 @@ impl DrainProtocol {
         let timeout = Duration::from_secs(5);
         
         while start.elapsed() < timeout {
-            if let Some(msg) = ipc.recv(100)? {
-                if let Message::DrainStatusResponse {
-                    drain_id: resp_drain_id,
-                    is_draining,
-                    active_connections,
-                    idle_connections,
-                    connections_drained: _,
-                    drain_elapsed_secs,
-                    drain_complete,
-                } = msg
-                {
-                    if resp_drain_id == drain_id {
-                        let status = DrainStatus::default()
-                            .with_drain_id(drain_id)
-                            .with_draining(is_draining)
-                            .with_connections(active_connections, idle_connections)
-                            .with_drain_start(Some(Instant::now() - Duration::from_secs(drain_elapsed_secs)), 0)
-                            .with_complete(drain_complete);
-                        return Ok(status);
-                    }
+            if let Some(Message::DrainStatusResponse {
+                drain_id: resp_drain_id,
+                is_draining,
+                active_connections,
+                idle_connections,
+                connections_drained: _,
+                drain_elapsed_secs,
+                drain_complete,
+            }) = ipc.recv(100)?
+            {
+                if resp_drain_id == drain_id {
+                    let status = DrainStatus::default()
+                        .with_drain_id(drain_id)
+                        .with_draining(is_draining)
+                        .with_connections(active_connections, idle_connections)
+                        .with_drain_start(Some(Instant::now() - Duration::from_secs(drain_elapsed_secs)), 0)
+                        .with_complete(drain_complete);
+                    return Ok(status);
                 }
             }
         }
@@ -259,21 +257,19 @@ impl DrainProtocol {
         let timeout = Duration::from_secs(5);
         
         while start.elapsed() < timeout {
-            if let Some(msg) = ipc.recv(100)? {
-                if let Message::StopAcceptingAck {
-                    drain_id: resp_drain_id,
-                    accepted,
-                    active_connections,
-                } = msg
-                {
-                    if resp_drain_id == drain_id {
-                        tracing::info!(
-                            "Worker stopped accepting: accepted={}, active={}",
-                            accepted,
-                            active_connections
-                        );
-                        return Ok(accepted);
-                    }
+            if let Some(Message::StopAcceptingAck {
+                drain_id: resp_drain_id,
+                accepted,
+                active_connections,
+            }) = ipc.recv(100)?
+            {
+                if resp_drain_id == drain_id {
+                    tracing::info!(
+                        "Worker stopped accepting: accepted={}, active={}",
+                        accepted,
+                        active_connections
+                    );
+                    return Ok(accepted);
                 }
             }
         }

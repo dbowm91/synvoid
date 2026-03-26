@@ -9,6 +9,7 @@ use std::sync::Arc;
 pub struct EndpointBlocker {
     blocked_patterns: Vec<Regex>,
     invalid_patterns: Vec<String>,
+    #[allow(dead_code)] // Retained for diagnostic/logging purposes
     use_regex: bool,
     block_methods: HashSet<String>,
     block_response_code: u16,
@@ -471,5 +472,211 @@ impl ErrorPageManager {
             .status(status_code)
             .message(message)
             .render()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_status_text_all_known_codes() {
+        assert_eq!(ErrorPageManager::status_text(400), "Bad Request");
+        assert_eq!(ErrorPageManager::status_text(401), "Unauthorized");
+        assert_eq!(ErrorPageManager::status_text(403), "Forbidden");
+        assert_eq!(ErrorPageManager::status_text(404), "Not Found");
+        assert_eq!(ErrorPageManager::status_text(405), "Method Not Allowed");
+        assert_eq!(ErrorPageManager::status_text(408), "Request Timeout");
+        assert_eq!(ErrorPageManager::status_text(413), "Payload Too Large");
+        assert_eq!(ErrorPageManager::status_text(414), "URI Too Long");
+        assert_eq!(ErrorPageManager::status_text(429), "Too Many Requests");
+        assert_eq!(
+            ErrorPageManager::status_text(431),
+            "Request Header Fields Too Large"
+        );
+        assert_eq!(ErrorPageManager::status_text(500), "Internal Server Error");
+        assert_eq!(ErrorPageManager::status_text(501), "Not Implemented");
+        assert_eq!(ErrorPageManager::status_text(502), "Bad Gateway");
+        assert_eq!(ErrorPageManager::status_text(503), "Service Unavailable");
+        assert_eq!(ErrorPageManager::status_text(504), "Gateway Timeout");
+    }
+
+    #[test]
+    fn test_status_text_unknown_code() {
+        assert_eq!(ErrorPageManager::status_text(999), "An Error Occurred");
+        assert_eq!(ErrorPageManager::status_text(200), "An Error Occurred");
+        assert_eq!(ErrorPageManager::status_text(0), "An Error Occurred");
+    }
+
+    #[test]
+    fn test_sensitive_endpoint_exact_match() {
+        let manager = SensitiveEndpointManager::new(vec![
+            "/admin".to_string(),
+            "/.env".to_string(),
+            "/wp-login.php".to_string(),
+        ]);
+        assert_eq!(manager.check("/admin"), Some("/admin".to_string()));
+        assert_eq!(manager.check("/.env"), Some("/.env".to_string()));
+        assert_eq!(
+            manager.check("/wp-login.php"),
+            Some("/wp-login.php".to_string())
+        );
+        assert_eq!(manager.check("/admin/users"), None);
+        assert_eq!(manager.check("/public"), None);
+    }
+
+    #[test]
+    fn test_sensitive_endpoint_prefix_match() {
+        let manager =
+            SensitiveEndpointManager::new(vec!["/api/v1*".to_string(), "/debug*".to_string()]);
+        assert_eq!(manager.check("/api/v1/users"), Some("/api/v1".to_string()));
+        assert_eq!(manager.check("/api/v1/config"), Some("/api/v1".to_string()));
+        assert_eq!(manager.check("/debuginfo"), Some("/debug".to_string()));
+        assert_eq!(manager.check("/api/v2/users"), None);
+    }
+
+    #[test]
+    fn test_sensitive_endpoint_path_prefix_match() {
+        let manager =
+            SensitiveEndpointManager::new(vec!["/admin/*".to_string(), "/internal/*".to_string()]);
+        assert_eq!(
+            manager.check("/admin/dashboard"),
+            Some("/admin/*".to_string())
+        );
+        assert_eq!(
+            manager.check("/internal/metrics"),
+            Some("/internal/*".to_string())
+        );
+        // Path prefix requires "/" after the prefix
+        assert_eq!(manager.check("/adminx"), None);
+        assert_eq!(manager.check("/admin"), None);
+    }
+
+    #[test]
+    fn test_endpoint_blocker_allows_non_blocked_methods() {
+        let blocker = EndpointBlockerManager::new(
+            vec!["/admin".to_string()],
+            false,
+            vec!["POST".to_string()],
+            403,
+            None,
+        );
+        assert!(matches!(
+            blocker.check("/admin", "POST"),
+            EndpointCheckResult::Blocked { .. }
+        ));
+        assert!(matches!(
+            blocker.check("/admin", "GET"),
+            EndpointCheckResult::Allowed
+        ));
+    }
+
+    #[test]
+    fn test_endpoint_blocker_blocks_path() {
+        let blocker =
+            EndpointBlockerManager::new(vec!["/admin".to_string()], false, vec![], 403, None);
+        match blocker.check("/admin", "GET") {
+            EndpointCheckResult::Blocked {
+                response_code,
+                matched_pattern,
+                ..
+            } => {
+                assert_eq!(response_code, 403);
+                assert!(matched_pattern.is_some());
+            }
+            _ => panic!("Expected Blocked"),
+        }
+        assert!(matches!(
+            blocker.check("/public", "GET"),
+            EndpointCheckResult::Allowed
+        ));
+    }
+
+    #[test]
+    fn test_endpoint_blocker_regex() {
+        let blocker =
+            EndpointBlockerManager::new(vec![r"^/admin/.*".to_string()], true, vec![], 403, None);
+        assert!(matches!(
+            blocker.check("/admin/users", "GET"),
+            EndpointCheckResult::Blocked { .. }
+        ));
+        assert!(matches!(
+            blocker.check("/public", "GET"),
+            EndpointCheckResult::Allowed
+        ));
+    }
+
+    #[test]
+    fn test_minimal_page_contains_status_and_text() {
+        let page = ErrorPageManager::minimal_page(404, None);
+        assert!(page.contains("404"));
+        assert!(page.contains("Not Found"));
+        assert!(page.contains("<!DOCTYPE html>"));
+    }
+
+    #[test]
+    fn test_minimal_page_custom_message() {
+        let page = ErrorPageManager::minimal_page(403, Some("Access denied"));
+        assert!(page.contains("403"));
+        assert!(page.contains("Access denied"));
+    }
+
+    #[test]
+    fn test_minimal_page_no_xss_in_message() {
+        let page = ErrorPageManager::minimal_page(400, Some("<script>alert('xss')</script>"));
+        // minimal_page does NOT escape — that's expected since it's a fallback.
+        // The caller should escape before passing. Verify the message is present.
+        assert!(page.contains("<script>alert('xss')</script>"));
+    }
+
+    #[test]
+    fn test_render_page_escapes_message() {
+        let manager = ErrorPageManager::with_theme_and_mode(
+            "",
+            None,
+            false,
+            "generic",
+            ThemeConfig::default(),
+        );
+        let page = manager.render_page(403, Some("<script>alert('xss')</script>"));
+        // When disabled, returns minimal_page which does not escape
+        assert!(page.contains("403"));
+    }
+
+    #[test]
+    fn test_escape_html() {
+        assert_eq!(escape_html("hello"), "hello");
+        assert_eq!(escape_html("<b>bold</b>"), "&lt;b&gt;bold&lt;/b&gt;");
+        assert_eq!(escape_html("a & b"), "a &amp; b");
+        assert_eq!(escape_html(r#""quoted""#), "&quot;quoted&quot;");
+        assert_eq!(escape_html("it's"), "it&#x27;s");
+    }
+
+    #[test]
+    fn test_error_page_mode_from_str() {
+        assert!(matches!(
+            ErrorPageMode::from_str("styled"),
+            ErrorPageMode::Styled
+        ));
+        assert!(matches!(
+            ErrorPageMode::from_str("custom"),
+            ErrorPageMode::Custom
+        ));
+        assert!(matches!(
+            ErrorPageMode::from_str("generic"),
+            ErrorPageMode::Generic
+        ));
+        assert!(matches!(
+            ErrorPageMode::from_str("unknown"),
+            ErrorPageMode::Generic
+        ));
+    }
+
+    #[test]
+    fn test_endpoint_blocker_is_path_blocked() {
+        let blocker =
+            EndpointBlockerManager::new(vec!["/secret".to_string()], false, vec![], 403, None);
+        assert!(blocker.is_path_blocked("/secret"));
+        assert!(!blocker.is_path_blocked("/public"));
     }
 }

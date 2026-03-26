@@ -66,8 +66,10 @@ impl ViolationEntry {
 pub struct ViolationTracker {
     store: Arc<RwLock<HashMap<String, ViolationEntry>>>,
     config: ThreatLevelEscalation,
+    #[allow(dead_code)] // Retained for future periodic persistence
     persist_path: Option<PathBuf>,
     persist_tx: Option<mpsc::Sender<PersistRequest>>,
+    #[allow(dead_code)] // Retained for future periodic persistence
     persist_interval: Duration,
     is_attack_mode: Arc<RwLock<bool>>,
 }

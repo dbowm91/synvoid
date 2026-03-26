@@ -8,7 +8,7 @@ use crate::config::site::{ProxyHeadersConfig, RetryConfig, BufferingConfig, Prox
 use crate::waf::{
     BotDetectionResult, EndpointCheckResult, RateLimitResult, UpstreamErrorTracker, WafCore,
 };
-use crate::http_client::{create_http_client_with_config, send_request_with_timeout, send_request_with_body_and_timeout, HttpClient};
+use crate::http_client::{create_http_client_with_config, create_upstream_client, send_request_with_timeout, send_request_with_body_and_timeout, HttpClient, UpstreamTlsConfig};
 use crate::metrics::{record_proxy_cache_hit, record_proxy_cache_miss};
 use crate::upstream::{UpstreamPool, Backend, LoadBalanceAlgorithm};
 use crate::proxy_cache::{ProxyCache, ProxyCacheSettings, CacheKey, CacheKeyBuilder, ProxyCacheEntry, CacheHit};
@@ -173,17 +173,46 @@ impl ProxyServer {
         upstream_error_tracker: Option<Arc<UpstreamErrorTracker>>,
         site_id: String,
     ) -> Self {
-        let client = create_http_client_with_config(
-            std::time::Duration::from_secs(5),
-            100,
-            std::time::Duration::from_secs(30),
-        );
+        Self::new_with_tls(upstream_url, waf, max_response_size, upstream_error_tracker, site_id, None)
+    }
 
-        let revalidation_client = create_http_client_with_config(
-            std::time::Duration::from_secs(5),
-            50,
-            std::time::Duration::from_secs(15),
-        );
+    pub fn new_with_tls(
+        upstream_url: String,
+        waf: Arc<WafCore>,
+        max_response_size: usize,
+        upstream_error_tracker: Option<Arc<UpstreamErrorTracker>>,
+        site_id: String,
+        tls_config: Option<&UpstreamTlsConfig>,
+    ) -> Self {
+        let (client, revalidation_client) = if let Some(tls) = tls_config {
+            (
+                create_upstream_client(
+                    std::time::Duration::from_secs(5),
+                    100,
+                    std::time::Duration::from_secs(30),
+                    tls,
+                ),
+                create_upstream_client(
+                    std::time::Duration::from_secs(5),
+                    50,
+                    std::time::Duration::from_secs(15),
+                    tls,
+                ),
+            )
+        } else {
+            (
+                create_http_client_with_config(
+                    std::time::Duration::from_secs(5),
+                    100,
+                    std::time::Duration::from_secs(30),
+                ),
+                create_http_client_with_config(
+                    std::time::Duration::from_secs(5),
+                    50,
+                    std::time::Duration::from_secs(15),
+                ),
+            )
+        };
 
         ProxyServer {
             client,
@@ -308,7 +337,7 @@ impl ProxyServer {
         path: String,
         user_agent: Option<String>,
         body: Option<bytes::Bytes>,
-    ) -> Result<Response<String>, String> {
+    ) -> Result<Response<bytes::Bytes>, String> {
         let start = Instant::now();
 
         if let Some(ref conn_limiter) = self.waf.connection_limiter {
@@ -353,10 +382,10 @@ impl ProxyServer {
                     .status(200)
                     .header("Content-Type", "text/html")
                     .header("Cache-Control", "no-store, no-cache, must-revalidate")
-                    .body(html)
+                    .body(bytes::Bytes::from(html))
                     .unwrap_or_else(|_| Response::builder()
                         .status(500)
-                        .body("Internal Server Error".to_string())
+                        .body(bytes::Bytes::from_static(b"Internal Server Error"))
                         .expect("building static 500 response should never fail")));
             }
             WafDecision::ChallengeWithCookie { html, session_cookie_name, session_cookie_value, session_cookie_max_age } => {
@@ -368,10 +397,10 @@ impl ProxyServer {
                     .header("Content-Type", "text/html")
                     .header("Cache-Control", "no-store, no-cache, must-revalidate")
                     .header("Set-Cookie", cookie)
-                    .body(html)
+                    .body(bytes::Bytes::from(html))
                     .unwrap_or_else(|_| Response::builder()
                         .status(500)
-                        .body("Internal Server Error".to_string())
+                        .body(bytes::Bytes::from_static(b"Internal Server Error"))
                         .expect("building static 500 response should never fail")));
             }
             WafDecision::Tarpit(_) => {
@@ -441,10 +470,10 @@ impl ProxyServer {
                 histogram!("maluwaf.request.duration").record(start.elapsed());
                 Ok(Response::builder()
                     .status(502)
-                    .body("Bad Gateway".to_string())
+                    .body(bytes::Bytes::from_static(b"Bad Gateway"))
                     .unwrap_or_else(|_| Response::builder()
                         .status(500)
-                        .body("Internal Server Error".to_string())
+                        .body(bytes::Bytes::from_static(b"Internal Server Error"))
                         .expect("building static 500 response should never fail")))
             }
         }
@@ -585,7 +614,7 @@ impl ProxyServer {
         method: http::Method,
         path: &str,
         body: Option<bytes::Bytes>,
-    ) -> Result<Response<String>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<Response<bytes::Bytes>, Box<dyn std::error::Error + Send + Sync>> {
         if let Some(ref pool) = self.upstream_pool {
             return self.forward_with_pool(method, path, pool, body).await;
         }
@@ -601,7 +630,7 @@ impl ProxyServer {
         path: &str,
         headers: Option<&http::HeaderMap>,
         body: Option<bytes::Bytes>,
-    ) -> Result<Response<String>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<Response<bytes::Bytes>, Box<dyn std::error::Error + Send + Sync>> {
         let full_url = format!("{}{}", tunnel_url, path);
         self.send_single_request(method, &full_url, headers, body).await
     }
@@ -614,7 +643,7 @@ impl ProxyServer {
         headers: &http::HeaderMap,
         scheme: &str,
         body: Option<bytes::Bytes>,
-    ) -> Result<Response<String>, String> {
+    ) -> Result<Response<bytes::Bytes>, String> {
         if method.as_str() == "PURGE" {
             return self.handle_cache_purge(path, host).await;
         }
@@ -683,7 +712,7 @@ impl ProxyServer {
                             
                             if self.is_response_cacheable(&response, headers) {
                                 let status = response.status().as_u16();
-                                let body = bytes::Bytes::from(response.body().clone());
+                                let body = response.body().clone();
                                 let headers = self.filter_sensitive_headers(response.headers());
                                 let max_age = self.get_cache_max_age(&headers);
                                 
@@ -740,7 +769,7 @@ impl ProxyServer {
         }
     }
 
-    async fn handle_cache_purge(&self, path: &str, host: &str) -> Result<Response<String>, String> {
+    async fn handle_cache_purge(&self, path: &str, host: &str) -> Result<Response<bytes::Bytes>, String> {
         let count = if path == "*" {
             if let Some(ref cache) = self.cache {
                 cache.clear();
@@ -771,7 +800,7 @@ impl ProxyServer {
 
         Ok(Response::builder()
             .status(200)
-            .body(format!("Purged {} entries\n", count))
+            .body(bytes::Bytes::from(format!("Purged {} entries\n", count)))
             .expect("building purge response should never fail"))
     }
 
@@ -810,7 +839,7 @@ impl ProxyServer {
         false
     }
 
-    fn is_response_cacheable(&self, response: &Response<String>, _request_headers: &http::HeaderMap) -> bool {
+    fn is_response_cacheable(&self, response: &Response<bytes::Bytes>, _request_headers: &http::HeaderMap) -> bool {
         if let Some(ref cache) = self.cache {
             let status = response.status().as_u16();
             if !cache.settings().valid_status.contains(&status) {
@@ -868,7 +897,7 @@ impl ProxyServer {
         None
     }
 
-    fn build_cached_response(&self, entry: ProxyCacheEntry) -> Response<String> {
+    fn build_cached_response(&self, entry: ProxyCacheEntry) -> Response<bytes::Bytes> {
         let mut builder = Response::builder().status(entry.status);
         
         for (name, value) in entry.headers.iter() {
@@ -910,10 +939,10 @@ impl ProxyServer {
             builder = builder.header("X-Cache", "STALE");
         }
         
-        builder.body(String::from_utf8_lossy(&entry.content).to_string()).unwrap_or_else(|_| {
+        builder.body(entry.content).unwrap_or_else(|_| {
             Response::builder()
                 .status(500)
-                .body("Internal Server Error".to_string())
+                .body(bytes::Bytes::from_static(b"Internal Server Error"))
                 .expect("building static 500 response should never fail")
         })
     }
@@ -935,7 +964,7 @@ impl ProxyServer {
             Ok(response) => {
                 let status = response.status_code();
                 let headers = response.headers.clone();
-                let body = bytes::Bytes::from(response.body.clone());
+                let body = response.body.clone();
                 
                 if cache.is_status_cacheable(status) {
                     let max_age = Self::get_cache_max_age_static(&headers);
@@ -997,7 +1026,7 @@ impl ProxyServer {
         path: &str,
         pool: &UpstreamPool,
         body: Option<bytes::Bytes>,
-    ) -> Result<Response<String>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<Response<bytes::Bytes>, Box<dyn std::error::Error + Send + Sync>> {
         let retry_config = self.retry_config.as_ref();
         let max_retries = retry_config.map(|c| c.max_retries).unwrap_or(3);
         
@@ -1131,7 +1160,7 @@ impl ProxyServer {
         url: &str,
         headers: Option<&http::HeaderMap>,
         body: Option<bytes::Bytes>,
-    ) -> Result<Response<String>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<Response<bytes::Bytes>, Box<dyn std::error::Error + Send + Sync>> {
         let hop_by_hop_headers = [
             "connection",
             "keep-alive",

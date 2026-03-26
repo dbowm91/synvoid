@@ -15,10 +15,7 @@ pub struct RecordMetadata {
 
 impl RecordMetadata {
     pub fn new(publisher: Option<String>) -> Self {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = crate::mesh::safe_unix_timestamp();
 
         Self {
             created_at: now,
@@ -30,10 +27,7 @@ impl RecordMetadata {
 
     pub fn increment_version(&mut self) {
         self.version += 1;
-        self.updated_at = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        self.updated_at = crate::mesh::safe_unix_timestamp();
     }
 }
 

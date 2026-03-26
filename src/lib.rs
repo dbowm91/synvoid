@@ -69,7 +69,7 @@ pub mod icmp_filter;
 pub mod dns;
 
 pub use config::ConfigManager;
-pub use waf::WafCore;
+pub use waf::{WafCore, WafCoreConfig};
 pub use utils::{
     urlencoding_decode, RunningFlag, DrainFlag,
     ResultExt, OptionExt,

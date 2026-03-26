@@ -1,3 +1,8 @@
+//! Configuration types and defaults for MaluWAF.
+//!
+//! Provides strongly-typed configuration structs for all subsystems
+//! including site configs, DNS, mesh, admin, and TLS settings.
+
 pub mod admin;
 pub mod defaults;
 pub mod dns;
@@ -95,6 +100,7 @@ pub struct ConfigManager {
     pub main: MainConfig,
     pub sites: HashMap<String, SiteConfig>,
     pub sites_dir: PathBuf,
+    pub config_dir: PathBuf,
 }
 
 impl ConfigManager {
@@ -103,6 +109,7 @@ impl ConfigManager {
             main: MainConfig::default_config(),
             sites: HashMap::new(),
             sites_dir: config_dir.join("sites"),
+            config_dir,
         }
     }
 
@@ -208,5 +215,210 @@ impl ConfigManager {
         }
 
         results
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const VALID_SITE_TOML: &str = r#"
+[site]
+domains = ["example.com"]
+
+[site.upstream]
+default = "http://localhost:3000"
+
+[[site.listen]]
+port = 8080
+"#;
+
+    const VALID_SITE_TOML_2: &str = r#"
+[site]
+domains = ["other.com"]
+
+[site.upstream]
+default = "http://localhost:3001"
+
+[[site.listen]]
+port = 8081
+"#;
+
+    const INVALID_SITE_TOML: &str = r#"
+[site]
+domains = []
+
+[site.upstream]
+default = "http://localhost:3000"
+"#;
+
+    #[test]
+    fn test_config_manager_new() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let manager = ConfigManager::new(dir.path().to_path_buf());
+        assert!(manager.sites.is_empty());
+        assert_eq!(manager.config_dir, dir.path());
+    }
+
+    #[test]
+    fn test_discover_sites_empty_dir() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut manager = ConfigManager::new(dir.path().to_path_buf());
+        let results = manager.discover_sites();
+        assert!(results.is_empty());
+        // Sites dir should have been created
+        assert!(dir.path().join("sites").exists());
+    }
+
+    #[test]
+    fn test_discover_sites_with_configs() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let sites_dir = dir.path().join("sites");
+        std::fs::create_dir_all(&sites_dir).unwrap();
+
+        std::fs::write(sites_dir.join("example.com.toml"), VALID_SITE_TOML).unwrap();
+        std::fs::write(sites_dir.join("other.com.toml"), VALID_SITE_TOML_2).unwrap();
+
+        let mut manager = ConfigManager::new(dir.path().to_path_buf());
+        let results = manager.discover_sites();
+
+        assert_eq!(results.len(), 2);
+        for (_, result) in &results {
+            assert!(result.is_ok());
+        }
+        assert_eq!(manager.sites.len(), 2);
+    }
+
+    #[test]
+    fn test_discover_sites_skips_non_toml() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let sites_dir = dir.path().join("sites");
+        std::fs::create_dir_all(&sites_dir).unwrap();
+
+        std::fs::write(sites_dir.join("example.com.toml"), VALID_SITE_TOML).unwrap();
+        std::fs::write(sites_dir.join("readme.txt"), "not a config").unwrap();
+        std::fs::write(sites_dir.join(".DS_Store"), "").unwrap();
+
+        let mut manager = ConfigManager::new(dir.path().to_path_buf());
+        let results = manager.discover_sites();
+
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn test_discover_sites_invalid_config() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let sites_dir = dir.path().join("sites");
+        std::fs::create_dir_all(&sites_dir).unwrap();
+
+        std::fs::write(sites_dir.join("bad.toml"), INVALID_SITE_TOML).unwrap();
+
+        let mut manager = ConfigManager::new(dir.path().to_path_buf());
+        let results = manager.discover_sites();
+
+        assert_eq!(results.len(), 1);
+        assert!(results[0].1.is_err());
+        assert!(manager.sites.is_empty());
+    }
+
+    #[test]
+    fn test_load_site() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let sites_dir = dir.path().join("sites");
+        std::fs::create_dir_all(&sites_dir).unwrap();
+
+        let site_path = sites_dir.join("example.com.toml");
+        std::fs::write(&site_path, VALID_SITE_TOML).unwrap();
+
+        let mut manager = ConfigManager::new(dir.path().to_path_buf());
+        let site_id = manager.load_site(&site_path).unwrap();
+        assert_eq!(site_id, "example.com");
+        assert!(manager.get_site("example.com").is_some());
+    }
+
+    #[test]
+    fn test_get_site_nonexistent() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let manager = ConfigManager::new(dir.path().to_path_buf());
+        assert!(manager.get_site("nonexistent.com").is_none());
+    }
+
+    #[test]
+    fn test_reload_site() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let sites_dir = dir.path().join("sites");
+        std::fs::create_dir_all(&sites_dir).unwrap();
+
+        std::fs::write(sites_dir.join("example.com.toml"), VALID_SITE_TOML).unwrap();
+
+        let mut manager = ConfigManager::new(dir.path().to_path_buf());
+        manager.discover_sites();
+
+        let result = manager.reload_site("example.com");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_reload_site_not_found() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut manager = ConfigManager::new(dir.path().to_path_buf());
+        let result = manager.reload_site("nonexistent.com");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_reload_all() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let sites_dir = dir.path().join("sites");
+        std::fs::create_dir_all(&sites_dir).unwrap();
+
+        std::fs::write(sites_dir.join("example.com.toml"), VALID_SITE_TOML).unwrap();
+        std::fs::write(sites_dir.join("other.com.toml"), VALID_SITE_TOML_2).unwrap();
+
+        let mut manager = ConfigManager::new(dir.path().to_path_buf());
+        manager.discover_sites();
+
+        let results = manager.reload_all();
+        assert_eq!(results.len(), 2);
+        for (_, result) in &results {
+            assert!(result.is_ok());
+        }
+    }
+
+    #[test]
+    fn test_site_config_from_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("test.toml");
+        std::fs::write(&path, VALID_SITE_TOML).unwrap();
+
+        let config = SiteConfig::from_file(&path).unwrap();
+        assert_eq!(config.site.domains, vec!["example.com"]);
+        assert_eq!(config.site.listen[0].port, Some(8080));
+    }
+
+    #[test]
+    fn test_site_config_site_id() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("test.toml");
+        std::fs::write(&path, VALID_SITE_TOML).unwrap();
+
+        let config = SiteConfig::from_file(&path).unwrap();
+        assert_eq!(config.site_id(), "example.com");
+    }
+
+    #[test]
+    fn test_site_config_validation_empty_domains() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("bad.toml");
+        std::fs::write(&path, INVALID_SITE_TOML).unwrap();
+
+        let result = SiteConfig::from_file(&path);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_site_config_from_file_not_found() {
+        let result = SiteConfig::from_file("/nonexistent/path.toml");
+        assert!(result.is_err());
     }
 }

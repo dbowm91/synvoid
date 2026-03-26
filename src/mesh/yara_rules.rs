@@ -156,10 +156,7 @@ impl YaraRulesManager {
 
         let submission_id = uuid::Uuid::new_v4().to_string();
         let submission_id_clone = submission_id.clone();
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = crate::mesh::safe_unix_timestamp();
 
         let mut signature = Vec::new();
         if let Some(ref signer) = self.signer {
@@ -230,10 +227,7 @@ impl YaraRulesManager {
             return Err("Submission already processed".to_string());
         }
 
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = crate::mesh::safe_unix_timestamp();
 
         submission.status = YaraRuleSubmissionStatus::Approved;
         submission.reviewed_by = Some(self.node_id.clone());
@@ -269,10 +263,7 @@ impl YaraRulesManager {
             return Err("Submission already processed".to_string());
         }
 
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = crate::mesh::safe_unix_timestamp();
 
         submission.status = YaraRuleSubmissionStatus::Rejected;
         submission.reviewed_by = Some(self.node_id.clone());

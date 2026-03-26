@@ -173,25 +173,26 @@ impl IpcCommand for SimpleIpcCommand {
 }
 
 pub fn connect_and_expect(
-    socket_path: &PathBuf,
+    socket_path: &std::path::Path,
     request: &Message,
     expected: impl FnOnce(&Message) -> bool,
     timeout_ms: Option<u64>,
 ) -> Result<Message, String> {
-    let mut client = IpcClient::new(socket_path.clone()).with_timeout(timeout_ms.unwrap_or(5000));
+    let mut client =
+        IpcClient::new(socket_path.to_path_buf()).with_timeout(timeout_ms.unwrap_or(5000));
     client.send_and_expect(request, expected)
 }
 
 pub fn send_and_receive(
-    socket_path: &PathBuf,
+    socket_path: &std::path::Path,
     request: &Message,
     timeout_ms: u64,
 ) -> Result<Message, String> {
-    let mut client = IpcClient::new(socket_path.clone()).with_timeout(timeout_ms);
+    let mut client = IpcClient::new(socket_path.to_path_buf()).with_timeout(timeout_ms);
     client.send_and_recv(request)
 }
 
-pub fn send_message(socket_path: &PathBuf, msg: &Message) -> Result<(), String> {
+pub fn send_message(socket_path: &std::path::Path, msg: &Message) -> Result<(), String> {
     let mut stream =
         IpcStream::connect_unix(socket_path).map_err(|e| ipc_errors::connect_failed(&e))?;
     stream.send(msg).map_err(|e| ipc_errors::send_failed(&e))
@@ -222,7 +223,7 @@ pub fn require_status_response(msg: &Message) -> bool {
 }
 
 pub fn send_and_expect_response(
-    socket_path: &PathBuf,
+    socket_path: &std::path::Path,
     msg: Message,
     expected: fn(&Message) -> bool,
     timeout_ms: u64,

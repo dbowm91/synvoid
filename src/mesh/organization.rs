@@ -1,8 +1,7 @@
-#![allow(unused_variables, dead_code, unused_mut)]
+#![allow(unused_variables, unused_mut)]
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
 pub const GENESIS_ORG_ID: &str = "_genesis";
@@ -28,10 +27,7 @@ impl OrgKey {
             key_id: Uuid::new_v4().to_string(),
             private_key,
             public_key,
-            created_at: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
+            created_at: crate::mesh::safe_unix_timestamp(),
             issued_by,
         }
     }
@@ -70,10 +66,7 @@ pub struct MemberCertificate {
 
 impl MemberCertificate {
     pub fn new(mesh_id: String, org_id: String, org_key: &OrgKey, validity_days: u64) -> Self {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = crate::mesh::safe_unix_timestamp();
 
         let valid_from = now;
         let valid_until = if validity_days == 0 {
@@ -126,10 +119,7 @@ impl MemberCertificate {
     }
 
     pub fn is_valid(&self) -> bool {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = crate::mesh::safe_unix_timestamp();
         self.valid_from <= now && self.valid_until >= now
     }
 }
@@ -157,10 +147,7 @@ impl Organization {
             tier_keys: Vec::new(),
             member_certificates: Vec::new(),
             member_nodes: Vec::new(),
-            created_at: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
+            created_at: crate::mesh::safe_unix_timestamp(),
             is_genesis: false,
             genesis_signed: false,
         }
@@ -174,10 +161,7 @@ impl Organization {
             tier_keys: Vec::new(),
             member_certificates: Vec::new(),
             member_nodes: Vec::new(),
-            created_at: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
+            created_at: crate::mesh::safe_unix_timestamp(),
             is_genesis: true,
             genesis_signed: true,
         }
@@ -191,10 +175,7 @@ impl Organization {
             tier_keys: Vec::new(),
             member_certificates: Vec::new(),
             member_nodes: Vec::new(),
-            created_at: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
+            created_at: crate::mesh::safe_unix_timestamp(),
             is_genesis: false,
             genesis_signed: false,
         }
@@ -277,10 +258,7 @@ impl Organization {
     }
 
     pub fn get_valid_tier_key(&self, tier: u32) -> Option<&TierKey> {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = crate::mesh::safe_unix_timestamp();
 
         self.tier_keys
             .iter()
@@ -288,10 +266,7 @@ impl Organization {
     }
 
     pub fn get_all_valid_keys(&self) -> Vec<&TierKey> {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = crate::mesh::safe_unix_timestamp();
 
         self.tier_keys
             .iter()
@@ -337,22 +312,14 @@ impl TierKey {
     }
 
     pub fn is_valid(&self) -> bool {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = crate::mesh::safe_unix_timestamp();
 
         !self.revoked && self.valid_from <= now && self.valid_until >= now
     }
 
     pub fn revoke(&mut self) {
         self.revoked = true;
-        self.revoked_at = Some(
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
-        );
+        self.revoked_at = Some(crate::mesh::safe_unix_timestamp());
     }
 
     pub fn bind(&mut self, org_id: &str) {
@@ -384,10 +351,7 @@ impl TierClaim {
             key_id,
             org_id,
             mesh_id,
-            timestamp: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
+            timestamp: crate::mesh::safe_unix_timestamp(),
             nonce,
             signature: Vec::new(),
         }
@@ -624,7 +588,7 @@ pub fn generate_invitation_token() -> String {
 pub fn derive_symmetric_key_from_token_and_pubkey(
     invitation_token: &str,
     node_public_key: &[u8],
-) -> Vec<u8> {
+) -> Result<Vec<u8>, String> {
     use crate::mesh::cert::sign_hmac;
     let data = format!("{}:{}", invitation_token, hex::encode(node_public_key));
     sign_hmac(&data, invitation_token.as_bytes())
@@ -636,13 +600,13 @@ pub fn generate_invitation_proof(
     org_id: &str,
     node_id: &str,
     node_public_key: &[u8],
-) -> String {
+) -> Result<String, String> {
     use crate::mesh::cert::sign_hmac;
     let symmetric_key =
-        derive_symmetric_key_from_token_and_pubkey(invitation_token, node_public_key);
+        derive_symmetric_key_from_token_and_pubkey(invitation_token, node_public_key)?;
     let data = format!("{}:{}:{}", org_id, node_id, invitation_token);
-    let hash = sign_hmac(&data, &symmetric_key);
-    hex::encode(hash)
+    let hash = sign_hmac(&data, &symmetric_key)?;
+    Ok(hex::encode(hash))
 }
 
 pub fn verify_invitation_proof(
@@ -654,9 +618,15 @@ pub fn verify_invitation_proof(
 ) -> bool {
     use crate::mesh::cert::sign_hmac;
     let symmetric_key =
-        derive_symmetric_key_from_token_and_pubkey(invitation_token, node_public_key);
+        match derive_symmetric_key_from_token_and_pubkey(invitation_token, node_public_key) {
+            Ok(k) => k,
+            Err(_) => return false,
+        };
     let data = format!("{}:{}:{}", org_id, node_id, invitation_token);
-    let expected = sign_hmac(&data, &symmetric_key);
+    let expected = match sign_hmac(&data, &symmetric_key) {
+        Ok(h) => h,
+        Err(_) => return false,
+    };
     if let Ok(decoded) = hex::decode(proof) {
         expected == decoded
     } else {
@@ -731,16 +701,10 @@ impl OrgPendingRequest {
             org_name,
             requesting_node_id,
             requesting_node_pubkey,
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
+            timestamp: crate::mesh::safe_unix_timestamp(),
             signature: Vec::new(),
             status: OrgRequestStatus::Pending,
-            created_at: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
+            created_at: crate::mesh::safe_unix_timestamp(),
         }
     }
 }
@@ -778,10 +742,7 @@ impl OrgInvitation {
         invitation_token: String,
         validity_hours: u64,
     ) -> Self {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = crate::mesh::safe_unix_timestamp();
         Self {
             request_id,
             org_id,
@@ -798,10 +759,7 @@ impl OrgInvitation {
     }
 
     pub fn is_expired(&self) -> bool {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = crate::mesh::safe_unix_timestamp();
         now > self.expires_at
     }
 }
@@ -934,12 +892,7 @@ impl OrganizationManager {
         if let Some(inv) = self.invitations.get_mut(node_id) {
             if inv.status == OrgInvitationStatus::Pending && !inv.is_expired() {
                 inv.status = OrgInvitationStatus::Accepted;
-                inv.accepted_at = Some(
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs(),
-                );
+                inv.accepted_at = Some(crate::mesh::safe_unix_timestamp());
                 return Some(inv.clone());
             }
         }
@@ -1048,20 +1001,19 @@ impl OrganizationManager {
     pub fn validate_tier_claim(&self, claim: &TierClaim) -> bool {
         if let Some(org) = self.organizations.get(&claim.org_id) {
             if let Some(key) = org.get_valid_tier_key(claim.tier) {
-                if key.key_id == claim.key_id
-                    && claim.verify_signature(&key.key) {
-                        // Organization must have an org_key to validate tier claims
-                        let Some(ref org_key) = org.org_key else {
-                            return false;
-                        };
-                        // Member must have a valid certificate
-                        if let Some(cert) = org.get_valid_member_certificate(&claim.mesh_id) {
-                            if cert.org_public_key_id == org_key.key_id {
-                                return cert.verify(&org_key.private_key);
-                            }
-                        }
+                if key.key_id == claim.key_id && claim.verify_signature(&key.key) {
+                    // Organization must have an org_key to validate tier claims
+                    let Some(ref org_key) = org.org_key else {
                         return false;
+                    };
+                    // Member must have a valid certificate
+                    if let Some(cert) = org.get_valid_member_certificate(&claim.mesh_id) {
+                        if cert.org_public_key_id == org_key.key_id {
+                            return cert.verify(&org_key.private_key);
+                        }
                     }
+                    return false;
+                }
             }
         }
         false
@@ -1070,14 +1022,13 @@ impl OrganizationManager {
     pub fn validate_tier_claim_with_org_verification(&self, claim: &TierClaim) -> bool {
         if let Some(org) = self.organizations.get(&claim.org_id) {
             if let Some(key) = org.get_valid_tier_key(claim.tier) {
-                if key.key_id == claim.key_id
-                    && claim.verify_signature(&key.key) {
-                        if let Some(ref org_key) = org.org_key {
-                            if let Some(cert) = org.get_valid_member_certificate(&claim.mesh_id) {
-                                return cert.verify(&org_key.private_key);
-                            }
+                if key.key_id == claim.key_id && claim.verify_signature(&key.key) {
+                    if let Some(ref org_key) = org.org_key {
+                        if let Some(cert) = org.get_valid_member_certificate(&claim.mesh_id) {
+                            return cert.verify(&org_key.private_key);
                         }
                     }
+                }
             }
         }
         false
@@ -1168,10 +1119,7 @@ mod tests {
 
     #[test]
     fn test_tier_key_validity() {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = crate::mesh::safe_unix_timestamp();
 
         let mut org = Organization::new(None, Some("Test".to_string()));
         let key = TierKey::new(
@@ -1189,10 +1137,7 @@ mod tests {
 
     #[test]
     fn test_tier_key_expiration() {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = crate::mesh::safe_unix_timestamp();
 
         let mut org = Organization::new(None, Some("Test".to_string()));
         let key = TierKey::new(
@@ -1212,10 +1157,7 @@ mod tests {
 
     #[test]
     fn test_tier_key_revocation() {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = crate::mesh::safe_unix_timestamp();
 
         let mut org = Organization::new(None, Some("Test".to_string()));
         let mut key = TierKey::new(
@@ -1268,7 +1210,8 @@ mod tests {
         let org_id = "test_org";
         let node_id = "test_node";
 
-        let proof = generate_invitation_proof(signing_key, &token, org_id, node_id, node_pubkey);
+        let proof =
+            generate_invitation_proof(signing_key, &token, org_id, node_id, node_pubkey).unwrap();
 
         assert!(verify_invitation_proof(
             &proof,
@@ -1337,10 +1280,7 @@ mod tests {
 
     #[test]
     fn test_invitation_expiration() {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = crate::mesh::safe_unix_timestamp();
 
         let mut invitation = OrgInvitation {
             request_id: "req_1".to_string(),
@@ -1479,10 +1419,7 @@ mod tests {
     fn test_validate_tier_claim_with_certificate() {
         let org_key = OrgKey::generate(None);
 
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = crate::mesh::safe_unix_timestamp();
         let future = now + 86400 * 365; // 1 year from now
 
         let mut org = Organization::new(Some("org_1".to_string()), Some("Test Org".to_string()));

@@ -252,7 +252,7 @@ impl RegionalHub {
         // Normalize recency: peer seen in last 10 min = 10 pts, scales down linearly
         // Capped at 10 points to match other component scales
         let recency_mins = peer.last_seen.elapsed().as_secs() as f64 / 60.0;
-        let recency_score = (10.0 - recency_mins).max(0.0).min(10.0);
+        let recency_score = (10.0 - recency_mins).clamp(0.0, 10.0);
         score += recency_score;
 
         score.min(100.0)

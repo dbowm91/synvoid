@@ -41,6 +41,7 @@ pub struct DnsCache {
     inner: Arc<InnerDnsCache>,
 }
 
+#[allow(dead_code)] // serve_stale_max_count reserved for future rate limiting of stale responses
 struct InnerDnsCache {
     cache: RwLock<LruCache<CacheKey, CachedResponse>>,
     max_ttl: Duration,

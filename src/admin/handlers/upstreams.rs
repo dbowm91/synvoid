@@ -6,7 +6,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use super::super::state::AdminState;
-use super::common::{require_auth, OptionalAuth};
+use super::common::{OptionalAuth};
 
 const DEFAULT_MAX_CONNECTIONS: usize = 100;
 const DEFAULT_WEIGHT: u32 = 1;
@@ -55,11 +55,8 @@ pub struct SiteUpstreams {
 )]
 pub async fn list_upstreams(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
 ) -> Result<Json<Vec<SiteUpstreams>>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let config = state.config.read().await;
     
@@ -92,12 +89,9 @@ pub async fn list_upstreams(
 )]
 pub async fn get_site_upstreams(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
     Path(site_id): Path<String>,
 ) -> Result<Json<SiteUpstreams>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let config = state.config.read().await;
     
@@ -143,13 +137,10 @@ pub struct HealthCheckResponse {
 )]
 pub async fn trigger_health_check(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
     Path(_site_id): Path<String>,
     Json(_req): Json<TriggerHealthCheckRequest>,
 ) -> Result<Json<HealthCheckResponse>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     tracing::warn!("trigger_health_check endpoint called but is not yet implemented");
     

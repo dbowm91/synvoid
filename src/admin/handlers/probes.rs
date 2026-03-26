@@ -8,7 +8,7 @@ use std::net::IpAddr;
 use std::sync::Arc;
 use super::super::state::AdminState;
 
-use super::common::{PaginationQuery, PaginatedResponse, PAGINATION_LIMITS_DEFAULT, require_auth, OptionalAuth, parse_ip};
+use super::common::{PaginationQuery, PaginatedResponse, PAGINATION_LIMITS_DEFAULT, OptionalAuth, parse_ip};
 
 const MAX_PROBE_EVENTS_ALL: usize = 10000;
 const MAX_RECENT_ENDPOINTS_LIST: usize = 5;
@@ -110,12 +110,9 @@ pub struct ProbeEndpointStatsResponse {
 )]
 pub async fn list_probes(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
     Query(query): Query<PaginationQuery>,
 ) -> Result<Json<PaginatedResponse<ProbeResponse>>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let tracker = match state.probe_tracker() {
         Some(t) => t,
@@ -175,12 +172,9 @@ pub async fn list_probes(
 )]
 pub async fn get_probe(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
     Path(ip): Path<String>,
 ) -> Result<Json<ProbeResponse>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let tracker = match state.probe_tracker() {
         Some(t) => t,
@@ -229,11 +223,8 @@ pub async fn get_probe(
 )]
 pub async fn get_probe_stats(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
 ) -> Result<Json<ProbeStatsResponse>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let tracker = match state.probe_tracker() {
         Some(t) => t,
@@ -272,12 +263,9 @@ pub async fn get_probe_stats(
 )]
 pub async fn delete_probe(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
     Path(ip): Path<String>,
 ) -> Result<StatusCode, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let tracker = state.probe_tracker().ok_or(StatusCode::NOT_FOUND)?;
 
@@ -328,12 +316,9 @@ fn parse_duration(duration: &str) -> u64 {
 )]
 pub async fn block_probes(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
     Json(req): Json<BlockProbesRequest>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let _ban_duration = parse_duration(&req.duration);
     
@@ -398,12 +383,9 @@ pub struct SuspiciousWordCountResponse {
 )]
 pub async fn list_suspicious_words(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
     Query(query): Query<PaginationQuery>,
 ) -> Result<Json<SuspiciousWordListResponse>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let tracker = match state.suspicious_word_tracker() {
         Some(t) => t,
@@ -448,11 +430,8 @@ pub async fn list_suspicious_words(
 )]
 pub async fn get_suspicious_word_stats(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
 ) -> Result<Json<SuspiciousWordStatsResponse>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let tracker = match state.suspicious_word_tracker() {
         Some(t) => t,
@@ -486,12 +465,9 @@ pub async fn get_suspicious_word_stats(
 )]
 pub async fn delete_suspicious_word(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
     Path(ip): Path<String>,
 ) -> Result<StatusCode, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let tracker = state.suspicious_word_tracker().ok_or(StatusCode::NOT_FOUND)?;
 
@@ -545,12 +521,9 @@ pub struct UpstreamErrorEndpointCountResponse {
 )]
 pub async fn list_upstream_errors(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
     Query(query): Query<PaginationQuery>,
 ) -> Result<Json<UpstreamErrorListResponse>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let tracker = match state.upstream_error_tracker() {
         Some(t) => t,
@@ -594,11 +567,8 @@ pub async fn list_upstream_errors(
 )]
 pub async fn get_upstream_error_stats(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
 ) -> Result<Json<UpstreamErrorStatsResponse>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let tracker = match state.upstream_error_tracker() {
         Some(t) => t,
@@ -632,12 +602,9 @@ pub async fn get_upstream_error_stats(
 )]
 pub async fn delete_upstream_error(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
     Path(ip): Path<String>,
 ) -> Result<StatusCode, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let tracker = state.upstream_error_tracker().ok_or(StatusCode::NOT_FOUND)?;
 

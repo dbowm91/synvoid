@@ -143,6 +143,7 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 # TLS + Post-Quantum Cryptography
 tokio-rustls = "0.26"
 rustls = { version = "0.23", features = ["prefer-post-quantum", "aws-lc-rs"] }
+rustls-pemfile = "2"
 rustls-pki-types = "1"
 rustls-post-quantum = { version = "0.2", optional = true }
 x509-parser = "0.16"
@@ -157,7 +158,7 @@ subtle = "2"
 cryptoki = "0.12"
 
 # HTTP/3 + QUIC
-quinn = { version = "0.11.9", features = ["runtime-tokio"] }
+quinn = { version = "0.11", features = ["runtime-tokio"] }
 h3 = "0.0.8"
 h3-quinn = "0.0.10"
 rcgen = "0.13"
@@ -198,24 +199,24 @@ utoipa-axum = "0.2"
 utoipa-swagger-ui = { version = "9", features = ["axum"] }
 prost = "0.13"
 prost-build = "0.13"
-lru_time_cache = "0.11.11"
+lru_time_cache = "0.11"
 linked-hash-map = "0.5"
-ahash = "0.8.12"
-aes-gcm = "0.10.3"
-async-trait = "0.1.89"
-daemonize2 = "0.6.2"
+ahash = "0.8"
+aes-gcm = "0.10"
+async-trait = "0.1"
+daemonize2 = "0.6"
 digest = "0.10"
-ed25519-dalek = "2.2.0"
-hkdf = "0.12.4"
-hmac = "0.12.1"
-socket2 = "0.6.2"
-httparse = "1.10.1"
-pbkdf2 = "0.12.2"
-sha1 = "0.10.6"
-sha3 = "0.10.8"
+ed25519-dalek = "2"
+hkdf = "0.12"
+hmac = "0.12"
+socket2 = "0.6"
+httparse = "1"
+pbkdf2 = "0.12"
+sha1 = "0.10"
+sha3 = "0.10"
 x25519-dalek = { version = "2", features = ["static_secrets"] }
-base32 = "0.5.1"
-libc = "0.2.182"
+base32 = "0.5"
+libc = "0.2"
 tonic = { version = "0.12", features = ["gzip", "prost"] }
 tonic-reflection = "0.12"
 
@@ -238,3 +239,21 @@ strip = true
 libfuzzer-sys = "0.4"
 proptest = "1.5"
 proptest-derive = "0.4"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "bench_attack_detection"
+harness = false
+
+[[bench]]
+name = "bench_proxy_cache"
+harness = false
+
+[[bench]]
+name = "bench_ratelimit"
+harness = false
+
+[[bench]]
+name = "bench_dns"
+harness = false
+required-features = ["dns"]

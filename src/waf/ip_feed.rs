@@ -136,7 +136,8 @@ impl IpFeedManager {
             return Err(format!("HTTP error: {}", response.status));
         }
 
-        self.parse_feed(&response.body)
+        let body_str = String::from_utf8_lossy(&response.body);
+        self.parse_feed(&body_str)
     }
 
     fn parse_feed(&self, content: &str) -> Result<(Vec<BlockedNetwork>, Vec<IpAddr>), String> {
@@ -219,6 +220,7 @@ impl IpFeedManager {
     }
 }
 
+#[allow(dead_code)] // config kept for feed reconfiguration
 pub struct MultiFeedManager {
     feeds: Vec<Arc<IpFeedManager>>,
     config: IpFeedConfig,

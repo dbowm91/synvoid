@@ -13,6 +13,7 @@ pub struct GlobalTrafficShaper {
     bandwidth_config: BandwidthConfig,
     ingress_bucket: Arc<AsyncTokenBucket>,
     egress_bucket: Arc<AsyncTokenBucket>,
+    #[allow(dead_code)] // Retained for future threat-level-based throttling
     threat_level: Arc<RwLock<Option<Arc<ThreatLevelManager>>>>,
 }
 

@@ -188,13 +188,15 @@ impl std::fmt::Display for AttackType {
     }
 }
 
+use std::sync::Arc;
+
 #[derive(Debug, Clone)]
 pub enum InputLocation {
     QueryString,
     PostBody,
-    Header(String),
+    Header(Arc<str>),
     Path,
-    Cookie(String),
+    Cookie(Arc<str>),
 }
 
 impl std::fmt::Display for InputLocation {

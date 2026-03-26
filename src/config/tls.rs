@@ -125,12 +125,10 @@ pub struct AcmeConfig {
     pub domains: Vec<String>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
-#[derive(Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
 pub struct ClientAuthConfig {
     #[serde(default)]
     pub enabled: bool,
     #[serde(default)]
     pub ca_cert_path: Option<String>,
 }
-

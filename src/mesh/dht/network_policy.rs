@@ -18,10 +18,7 @@ impl NetworkPolicy {
         min_reputation_for_write: i64,
         updated_by: String,
     ) -> Self {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = crate::mesh::safe_unix_timestamp();
 
         Self {
             min_reputation_for_read,
@@ -59,10 +56,7 @@ impl NetworkPolicy {
     }
 
     pub fn is_expired(&self, max_age_secs: u64) -> bool {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = crate::mesh::safe_unix_timestamp();
         now.saturating_sub(self.last_updated) > max_age_secs
     }
 }
@@ -86,10 +80,7 @@ impl BlockedNode {
         reason: String,
         blocked_by: String,
     ) -> Self {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = crate::mesh::safe_unix_timestamp();
 
         Self {
             node_id,
@@ -109,10 +100,7 @@ impl BlockedNode {
 
     pub fn is_expired(&self) -> bool {
         if let Some(expires_at) = self.expires_at {
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs();
+            let now = crate::mesh::safe_unix_timestamp();
             now > expires_at
         } else {
             false
@@ -130,10 +118,7 @@ pub struct GlobalNodeBlocklist {
 
 impl GlobalNodeBlocklist {
     pub fn new(updated_by: String) -> Self {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = crate::mesh::safe_unix_timestamp();
 
         Self {
             blocked_nodes: Vec::new(),
@@ -146,18 +131,12 @@ impl GlobalNodeBlocklist {
     pub fn add_block(&mut self, node: BlockedNode) {
         self.blocked_nodes.retain(|b| b.node_id != node.node_id);
         self.blocked_nodes.push(node);
-        self.last_updated = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        self.last_updated = crate::mesh::safe_unix_timestamp();
     }
 
     pub fn remove_block(&mut self, node_id: &str) {
         self.blocked_nodes.retain(|b| b.node_id != node_id);
-        self.last_updated = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        self.last_updated = crate::mesh::safe_unix_timestamp();
     }
 
     pub fn is_blocked(&self, node_id: &str, ip: Option<&str>) -> bool {

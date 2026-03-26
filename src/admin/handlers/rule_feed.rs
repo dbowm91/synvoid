@@ -6,7 +6,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use super::super::state::AdminState;
-use super::common::{StatusResponse, require_auth, OptionalAuth};
+use super::common::{StatusResponse, OptionalAuth};
 
 #[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct RuleFeedStatusResponse {
@@ -48,11 +48,8 @@ pub struct RuleFeedApplyResponse {
 )]
 pub async fn get_status(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
 ) -> Result<Json<RuleFeedStatusResponse>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let rule_feed_manager = state.rule_feed_manager.as_ref().ok_or(StatusCode::NOT_FOUND)?;
 
@@ -84,11 +81,8 @@ pub async fn get_status(
 )]
 pub async fn check_for_updates(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
 ) -> Result<Json<RuleFeedCheckResponse>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let rule_feed_manager = state.rule_feed_manager.as_ref().ok_or(StatusCode::NOT_FOUND)?;
 
@@ -133,11 +127,8 @@ pub async fn check_for_updates(
 )]
 pub async fn apply_pending(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
 ) -> Result<Json<RuleFeedApplyResponse>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let rule_feed_manager = state.rule_feed_manager.as_ref().ok_or(StatusCode::NOT_FOUND)?;
 
@@ -180,11 +171,8 @@ pub async fn apply_pending(
 )]
 pub async fn discard_pending(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
 ) -> Result<Json<StatusResponse>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let rule_feed_manager = state.rule_feed_manager.as_ref().ok_or(StatusCode::NOT_FOUND)?;
 

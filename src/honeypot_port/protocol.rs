@@ -17,6 +17,7 @@ pub struct ServiceBanner {
     pub response_for_payload: Option<Vec<u8>>,
 }
 
+#[allow(dead_code)] // ac field pre-compiled for pattern matching performance
 pub struct ProtocolDetector {
     patterns: Vec<(String, String, String, Regex)>,
     ac: AhoCorasick,
@@ -319,8 +320,6 @@ impl ProtocolDetector {
 
         let key = if service == "tls" && port == 443 {
             "https"
-        } else if service == "http" && port == 80 {
-            "http"
         } else if service == "http" {
             "http"
         } else {

@@ -378,14 +378,14 @@ impl UnifiedServer {
     fn create_waf(main_config: &crate::config::MainConfig) -> WafCore {
         let data_dir = main_config.persistence.data_dir.as_ref().map(std::path::PathBuf::from);
         
-        WafCore::new(
-            RateLimitConfigStore {
+        WafCore::new(crate::waf::WafCoreConfig {
+            rate_config: RateLimitConfigStore {
                 ip: main_config.defaults.ratelimit.ip.clone(),
                 global: main_config.defaults.ratelimit.global.clone(),
                 cleanup_interval_secs: main_config.rate_limit_memory.cleanup_interval_secs,
             },
-            main_config.rate_limit_memory.clone(),
-            crate::waf::BotProtectionConfig {
+            memory_config: main_config.rate_limit_memory.clone(),
+            bot_config: crate::waf::BotProtectionConfig {
                 block_ai_crawlers: main_config.defaults.bot.block_ai_crawlers,
                 enable_css_honeypot: main_config.defaults.bot.enable_css_honeypot,
                 enable_pow_challenge: main_config.defaults.pow_challenge.enabled,
@@ -424,37 +424,38 @@ impl UnifiedServer {
                 mesh_global_node_url: None,
                 mesh_audit_urls: vec![],
             },
-            crate::waf::EndpointBlockerConfig {
+            endpoint_config: crate::waf::EndpointBlockerConfig {
                 paths: main_config.defaults.blocked.paths.clone(),
                 use_regex: main_config.defaults.blocked.use_regex,
                 block_methods: main_config.defaults.blocked.block_methods.clone(),
                 block_response_code: main_config.defaults.blocked.block_response_code,
                 block_page_html: None,
             },
-            crate::waf::WafConfig::new(
-                main_config.defaults.css_challenge.enabled,
-                main_config.defaults.pow_challenge.enabled,
-                main_config.defaults.auth.enabled,
-                main_config.defaults.auth.login_path.clone(),
-                main_config.defaults.bot.block_ai_crawlers,
-                false,
-                crate::waf::TestModeConfig::default(),
-                86400,
-            ),
-            Vec::new(),
-            None,
-            None, // threat_intel - set later by worker
-            Some(AttackDetectionConfig::default()),
-            None,
-            Some(main_config.threat_level.clone()),
-            Some(main_config.ip_feeds.clone()),
-            Some(main_config.defaults.honeypot_probe.clone()),
-            Some(main_config.defaults.suspicious_words.clone()),
-            Some(main_config.defaults.upstream_errors.clone()),
-            Some(main_config.traffic_shaping.clone()),
+            waf_config: crate::waf::WafConfig {
+                enable_css_honeypot: main_config.defaults.css_challenge.enabled,
+                enable_pow_challenge: main_config.defaults.pow_challenge.enabled,
+                enable_auth_challenge: main_config.defaults.auth.enabled,
+                auth_login_path: main_config.defaults.auth.login_path.clone(),
+                block_ai_crawlers: main_config.defaults.bot.block_ai_crawlers,
+                drop_blocked_requests: false,
+                test_mode: crate::waf::TestModeConfig::default(),
+                honeypot_ban_duration_secs: 86400,
+                css_exempt_paths: main_config.defaults.css_challenge.exempt_paths.clone(),
+            },
+            whitelist: Vec::new(),
+            block_store: None,
+            threat_intel: None,
+            attack_detection_config: Some(AttackDetectionConfig::default()),
+            auth_manager: None,
+            threat_level_config: Some(main_config.threat_level.clone()),
+            ip_feed_config: Some(main_config.ip_feeds.clone()),
+            probe_config: Some(main_config.defaults.honeypot_probe.clone()),
+            suspicious_words_config: Some(main_config.defaults.suspicious_words.clone()),
+            upstream_errors_config: Some(main_config.defaults.upstream_errors.clone()),
+            traffic_shaping_config: Some(main_config.traffic_shaping.clone()),
             data_dir,
-            crate::waf::TestModeConfig::default(),
-        )
+            test_mode: crate::waf::TestModeConfig::default(),
+        })
     }
 
     fn create_tcp_pool(main_config: &crate::config::MainConfig, waf: Arc<WafCore>) -> Result<(TcpListenerPool, Arc<FloodProtector>), Box<dyn std::error::Error + Send + Sync>> {

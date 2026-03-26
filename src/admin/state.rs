@@ -23,6 +23,7 @@ pub struct AdminRateLimiter {
 struct AdminRateLimiterInner {
     requests: RwLock<HashMap<String, (u32, Instant)>>,
     requests_per_minute: u32,
+    #[allow(dead_code)] // Retained for future burst configuration
     burst: u32,
 }
 
@@ -117,6 +118,7 @@ pub struct AdminState {
     pub port_honeypot_controller: Option<Arc<crate::honeypot_port::HoneypotMeshController>>,
     pub port_honeypot_runner: Option<Arc<crate::honeypot_port::PortHoneypotRunner>>,
     pub request_logs: Arc<RwLock<VecDeque<RequestLogEntry>>>,
+    pub config_write_lock: Arc<TokioRwLock<()>>,
 }
 
 #[derive(Clone)]
@@ -193,6 +195,7 @@ impl AdminState {
             port_honeypot_controller: None,
             port_honeypot_runner: None,
             request_logs: Arc::new(RwLock::new(VecDeque::with_capacity(MAX_REQUEST_LOGS))),
+            config_write_lock: Arc::new(TokioRwLock::new(())),
         }
     }
 
@@ -319,6 +322,7 @@ impl AdminState {
         mesh_transport.set_site_config_sync_callback(tx);
 
         let config = self.config.clone();
+        let config_write_lock = self.config_write_lock.clone();
         
         tokio::spawn(async move {
             while let Some((site_id, config_json)) = rx.recv().await {
@@ -329,9 +333,12 @@ impl AdminState {
                     cfg.sites_dir.join(format!("{}.toml", site_id.replace('.', "_")))
                 };
 
-                if let Err(e) = tokio::fs::write(&config_path, &config_json).await {
-                    tracing::error!("Failed to write synced site config for {}: {}", site_id, e);
-                    continue;
+                {
+                    let _guard = config_write_lock.write().await;
+                    if let Err(e) = tokio::fs::write(&config_path, &config_json).await {
+                        tracing::error!("Failed to write synced site config for {}: {}", site_id, e);
+                        continue;
+                    }
                 }
 
                 let mut cfg = config.write().await;

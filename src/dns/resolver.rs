@@ -967,57 +967,52 @@ impl HickoryRecursor {
         let mut records = Vec::new();
 
         for proven_record in lookup.dnssec_record_iter() {
-            if let Ok(record) = proven_record.require_as_ref(hickory_proto::dnssec::Proof::Secure | hickory_proto::dnssec::Proof::Insecure) {
-                if let RData::DNSSEC(dnskey_rdata) = record.data() {
-                    if let hickory_proto::dnssec::rdata::DNSSECRData::DNSKEY(dnskey) = dnskey_rdata {
-                        let algorithm: Algorithm = dnskey.public_key().algorithm();
-                        let algorithm_u8: u8 = algorithm.into();
-                        let public_key_bytes = dnskey.public_key().public_bytes();
-                        let key_tag = Self::compute_key_tag_from_rdata(algorithm_u8, public_key_bytes);
-                        let is_revoked = dnskey.revoke();
+            let Ok(record) = proven_record.require_as_ref(hickory_proto::dnssec::Proof::Secure | hickory_proto::dnssec::Proof::Insecure) else { continue };
+            let RData::DNSSEC(hickory_proto::dnssec::rdata::DNSSECRData::DNSKEY(dnskey)) = record.data() else { continue };
 
-                        if let Some(manager) = &self.trust_anchor_manager {
-                            let _ = manager.observe_dnskey_at_root(
-                                key_tag,
-                                algorithm_u8,
-                                public_key_bytes,
-                                is_revoked,
-                            );
-                        }
+            let algorithm: Algorithm = dnskey.public_key().algorithm();
+            let algorithm_u8: u8 = algorithm.into();
+            let public_key_bytes = dnskey.public_key().public_bytes();
+            let key_tag = Self::compute_key_tag_from_rdata(algorithm_u8, public_key_bytes);
+            let is_revoked = dnskey.revoke();
 
-                        records.push(DnsKeyRecord {
-                            key_tag,
-                            algorithm: algorithm_u8,
-                            flags: dnskey.flags(),
-                            public_key: public_key_bytes.to_vec(),
-                            is_secure: proven_record.proof().is_secure(),
-                            is_revoked,
-                            ttl,
-                        });
-                    }
-                }
+            if let Some(manager) = &self.trust_anchor_manager {
+                let _ = manager.observe_dnskey_at_root(
+                    key_tag,
+                    algorithm_u8,
+                    public_key_bytes,
+                    is_revoked,
+                );
             }
+
+            records.push(DnsKeyRecord {
+                key_tag,
+                algorithm: algorithm_u8,
+                flags: dnskey.flags(),
+                public_key: public_key_bytes.to_vec(),
+                is_secure: proven_record.proof().is_secure(),
+                is_revoked,
+                ttl,
+            });
         }
 
         if records.is_empty() {
             for record in lookup.records() {
-                if let RData::DNSSEC(dnskey_rdata) = record.data() {
-                    if let hickory_proto::dnssec::rdata::DNSSECRData::DNSKEY(dnskey) = dnskey_rdata {
-                        let algorithm: Algorithm = dnskey.public_key().algorithm();
-                        let algorithm_u8: u8 = algorithm.into();
-                        let public_key_bytes = dnskey.public_key().public_bytes();
-                        let key_tag = Self::compute_key_tag_from_rdata(algorithm_u8, public_key_bytes);
+                if let RData::DNSSEC(hickory_proto::dnssec::rdata::DNSSECRData::DNSKEY(dnskey)) = record.data() {
+                    let algorithm: Algorithm = dnskey.public_key().algorithm();
+                    let algorithm_u8: u8 = algorithm.into();
+                    let public_key_bytes = dnskey.public_key().public_bytes();
+                    let key_tag = Self::compute_key_tag_from_rdata(algorithm_u8, public_key_bytes);
 
-                        records.push(DnsKeyRecord {
-                            key_tag,
-                            algorithm: algorithm_u8,
-                            flags: dnskey.flags(),
-                            public_key: public_key_bytes.to_vec(),
-                            is_secure: false,
-                            is_revoked: dnskey.revoke(),
-                            ttl,
-                        });
-                    }
+                    records.push(DnsKeyRecord {
+                        key_tag,
+                        algorithm: algorithm_u8,
+                        flags: dnskey.flags(),
+                        public_key: public_key_bytes.to_vec(),
+                        is_secure: false,
+                        is_revoked: dnskey.revoke(),
+                        ttl,
+                    });
                 }
             }
         }
@@ -1046,37 +1041,34 @@ impl HickoryRecursor {
         let mut records = Vec::new();
 
         for proven_record in lookup.dnssec_record_iter() {
-            if let Ok(record) = proven_record.require_as_ref(hickory_proto::dnssec::Proof::Secure | hickory_proto::dnssec::Proof::Insecure) {
-                if let RData::DNSSEC(cds_rdata) = record.data() {
-                    if let hickory_proto::dnssec::rdata::DNSSECRData::CDS(cds) = cds_rdata {
-                        let key_tag = cds.key_tag();
-                        let algorithm_opt = cds.algorithm();
-                        
-                        if let Some(algorithm) = algorithm_opt {
-                            let algorithm_u8: u8 = algorithm.into();
-                            let digest_type: u8 = cds.digest_type().into();
-                            let digest = cds.digest();
+            let Ok(record) = proven_record.require_as_ref(hickory_proto::dnssec::Proof::Secure | hickory_proto::dnssec::Proof::Insecure) else { continue };
+            let RData::DNSSEC(hickory_proto::dnssec::rdata::DNSSECRData::CDS(cds)) = record.data() else { continue };
 
-                            if let Some(manager) = &self.trust_anchor_manager {
-                                let _ = manager.trust_anchor_check(
-                                    key_tag,
-                                    algorithm_u8,
-                                    digest_type,
-                                    digest,
-                                );
-                            }
+            let key_tag = cds.key_tag();
+            let algorithm_opt = cds.algorithm();
 
-                            records.push(CdsRecord {
-                                key_tag,
-                                algorithm: algorithm_u8,
-                                digest_type,
-                                digest: digest.to_vec(),
-                                is_secure: proven_record.proof().is_secure(),
-                                ttl,
-                            });
-                        }
-                    }
+            if let Some(algorithm) = algorithm_opt {
+                let algorithm_u8: u8 = algorithm.into();
+                let digest_type: u8 = cds.digest_type().into();
+                let digest = cds.digest();
+
+                if let Some(manager) = &self.trust_anchor_manager {
+                    let _ = manager.trust_anchor_check(
+                        key_tag,
+                        algorithm_u8,
+                        digest_type,
+                        digest,
+                    );
                 }
+
+                records.push(CdsRecord {
+                    key_tag,
+                    algorithm: algorithm_u8,
+                    digest_type,
+                    digest: digest.to_vec(),
+                    is_secure: proven_record.proof().is_secure(),
+                    ttl,
+                });
             }
         }
 

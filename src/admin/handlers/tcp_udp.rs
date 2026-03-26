@@ -6,7 +6,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use super::super::state::AdminState;
-use super::common::{require_auth, OptionalAuth};
+use super::common::{OptionalAuth};
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct TcpUdpListener {
@@ -37,11 +37,8 @@ pub struct ListListenersResponse {
 )]
 pub async fn list_listeners(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
 ) -> Result<Json<ListListenersResponse>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let config = state.config.read().await;
     let mut listeners = Vec::new();
@@ -91,12 +88,9 @@ pub struct CreateListenerResponse {
 )]
 pub async fn create_listener(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
     Json(req): Json<CreateListenerRequest>,
 ) -> Result<Json<CreateListenerResponse>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     tracing::warn!(
         "create_listener called for {}/{} but is not yet implemented",
@@ -124,12 +118,9 @@ pub async fn create_listener(
 )]
 pub async fn delete_listener(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
     Path(listener_id): Path<String>,
 ) -> Result<StatusCode, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     tracing::warn!(
         "delete_listener called for {} but is not yet implemented",
@@ -160,11 +151,8 @@ pub struct ProtocolInfo {
 )]
 pub async fn list_protocols(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
 ) -> Result<Json<Vec<ProtocolInfo>>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let protocols = vec![
         ProtocolInfo {

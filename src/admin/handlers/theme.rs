@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::super::state::AdminState;
-use super::common::OptionalAuth;
+use super::common::{OptionalAuth};
 use crate::theme::{ThemeDefaults, ThemePreset, ThemeRenderer, ThemeConfig};
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -135,6 +135,7 @@ pub async fn get_theme(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<ThemeResponse>, StatusCode> {
+
     let config = state.config.read().await;
     let theme = &config.main.defaults.theme;
     Ok(Json(build_theme_response(theme)))
@@ -154,6 +155,7 @@ pub async fn update_theme(
     _auth: OptionalAuth,
     Json(req): Json<UpdateThemeRequest>,
 ) -> Result<Json<ThemeResponse>, StatusCode> {
+
     let mut config = state.config.write().await;
     
     if let Some(preset) = req.preset {
@@ -171,6 +173,7 @@ pub async fn update_theme(
     let response = build_theme_response(&theme);
 
     let main_config = config.main.clone();
+    let config_dir = config.config_dir.clone();
     drop(config);
 
     let toml_content = toml::to_string_pretty(&main_config)
@@ -179,12 +182,17 @@ pub async fn update_theme(
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
-    tokio::fs::write("config/main.toml", toml_content)
-        .await
-        .map_err(|e| {
-            tracing::error!("Failed to write main config: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+    let main_config_path = config_dir.join("main.toml");
+
+    {
+        let _guard = state.config_write_lock.write().await;
+        tokio::fs::write(&main_config_path, toml_content)
+            .await
+            .map_err(|e| {
+                tracing::error!("Failed to write main config: {}", e);
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
+    }
 
     Ok(Json(response))
 }
@@ -202,6 +210,7 @@ pub async fn get_theme_css(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<String, StatusCode> {
+
     let config = state.config.read().await;
     let theme_config: ThemeConfig = config.main.defaults.theme.clone().into();
     let renderer = ThemeRenderer::new(theme_config);
@@ -218,6 +227,7 @@ pub async fn get_theme_css(
     )
 )]
 pub async fn get_theme_presets(
+    _auth: OptionalAuth,
 ) -> Result<Json<Vec<ThemePresetInfo>>, StatusCode> {
     Ok(Json(vec![
         ThemePresetInfo {

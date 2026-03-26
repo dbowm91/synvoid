@@ -237,7 +237,7 @@ impl PatternDetector for OpenRedirectDetector {
                                 attack_type: AttackType::OpenRedirect,
                                 fingerprint: None,
                                 matched_pattern: Some(matched),
-                                input_location: InputLocation::Header(header_name.to_string()),
+                                input_location: InputLocation::Header(header_name.into()),
                             });
                         }
                     }
@@ -313,7 +313,7 @@ mod tests {
         let detector = OpenRedirectDetector::new(2, &[]);
         let input = "//evil.com/path";
         assert!(detector
-            .detect(input, InputLocation::Header("location".to_string()))
+            .detect(input, InputLocation::Header("location".into()))
             .is_some());
     }
 

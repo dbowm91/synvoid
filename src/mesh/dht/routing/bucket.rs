@@ -18,7 +18,6 @@ pub enum BucketError {
 pub struct KBucket {
     pub index: usize,
     peers: Vec<PeerContact>,
-    #[allow(dead_code)]
     last_updated: Instant,
 }
 

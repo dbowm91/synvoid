@@ -1224,141 +1224,42 @@ async fn run_master(
 }
 
 #[cfg(windows)]
-async fn windows_ipc_accept_loop(process_manager: Arc<ProcessManager>, pipe_name: PathBuf) {
-    use std::os::windows::ffi::OsStrExt;
-
-    let pipe_name_str = format!("\\\\.\\pipe\\maluwaf-master");
-    let pipe_name_wide: Vec<u16> = std::ffi::OsStr::new(&pipe_name_str)
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect();
+async fn windows_ipc_accept_loop(process_manager: Arc<ProcessManager>, _pipe_name: PathBuf) {
+    let listener = crate::process::ipc::WindowsIpcListener::new("maluwaf-master");
 
     loop {
-        // Create a new pipe instance for each connection
-        // SAFETY: CreateNamedPipeW called with valid pipe name; we check for zero handle.
-        let pipe_handle = unsafe {
-            windows_sys::Win32::System::Pipes::CreateNamedPipeW(
-                pipe_name_wide.as_ptr(),
-                windows_sys::Win32::System::Pipes::PIPE_ACCESS_DUPLEX,
-                windows_sys::Win32::System::Pipes::PIPE_TYPE_MESSAGE
-                    | windows_sys::Win32::System::Pipes::PIPE_READMODE_MESSAGE
-                    | windows_sys::Win32::System::Pipes::PIPE_WAIT,
-                1,
-                65536,
-                65536,
-                0,
-                std::ptr::null_mut(),
-            )
-        };
-
-        if pipe_handle == 0 {
-            tracing::error!(
-                "Failed to create named pipe: {:?}",
-                std::io::Error::last_os_error()
-            );
-            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-            continue;
-        }
-
-        // Wait for client connection
-        // SAFETY: ConnectNamedPipe called with valid pipe handle; we check return value.
-        let connected = unsafe {
-            windows_sys::Win32::System::Pipes::ConnectNamedPipe(pipe_handle, std::ptr::null_mut())
-        };
-
-        if connected == 0 {
-            // SAFETY: GetLastError reads thread-local errno; always safe.
-            let error = unsafe { *windows_sys::Win32::Foundation::GetLastError() };
-            if error != windows_sys::Win32::Foundation::ERROR_PIPE_CONNECTED {
-                tracing::warn!("ConnectNamedPipe failed with error: {}", error);
-                // SAFETY: CloseHandle called on valid handle we own from failed ConnectNamedPipe.
-                unsafe {
-                    windows_sys::Win32::Foundation::CloseHandle(pipe_handle);
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                continue;
+        match listener.accept() {
+            Ok(stream) => {
+                let pm = process_manager.clone();
+                tokio::spawn(async move {
+                    let ipc = IpcStream::new(stream);
+                    handle_worker_connection(ipc, pm).await;
+                });
+            }
+            Err(e) => {
+                tracing::warn!("Named pipe accept error: {}", e);
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
             }
         }
-
-        // Convert raw handle to File
-        // SAFETY: from_raw_handle takes ownership of pipe_handle; we validated it's non-zero above.
-        let stream = unsafe {
-            std::fs::File::from_raw_handle(pipe_handle as std::os::windows::io::RawHandle)
-        };
-
-        let pm = process_manager.clone();
-        tokio::spawn(async move {
-            let ipc = IpcStream::new(stream);
-            handle_worker_connection(ipc, pm).await;
-        });
     }
 }
 
 #[cfg(windows)]
 async fn windows_command_pipe_listener(config_manager: Arc<RwLock<ConfigManager>>) {
-    use std::os::windows::ffi::OsStrExt;
-
-    let pipe_name_str = "\\\\.\\pipe\\maluwaf-commands";
-    let pipe_name_wide: Vec<u16> = std::ffi::OsStr::new(pipe_name_str)
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect();
+    let listener = crate::process::ipc::WindowsIpcListener::new("maluwaf-commands");
 
     loop {
-        // Create a new pipe instance for each connection
-        // SAFETY: CreateNamedPipeW called with valid pipe name; we check for zero handle.
-        let pipe_handle = unsafe {
-            windows_sys::Win32::System::Pipes::CreateNamedPipeW(
-                pipe_name_wide.as_ptr(),
-                windows_sys::Win32::System::Pipes::PIPE_ACCESS_DUPLEX,
-                windows_sys::Win32::System::Pipes::PIPE_TYPE_MESSAGE
-                    | windows_sys::Win32::System::Pipes::PIPE_READMODE_MESSAGE
-                    | windows_sys::Win32::System::Pipes::PIPE_WAIT,
-                1,
-                65536,
-                65536,
-                0,
-                std::ptr::null_mut(),
-            )
-        };
-
-        if pipe_handle == 0 {
-            tracing::error!(
-                "Failed to create command pipe: {:?}",
-                std::io::Error::last_os_error()
-            );
-            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-            continue;
-        }
-
-        // Wait for client connection
-        // SAFETY: ConnectNamedPipe called with valid pipe handle; we check return value.
-        let connected = unsafe {
-            windows_sys::Win32::System::Pipes::ConnectNamedPipe(pipe_handle, std::ptr::null_mut())
-        };
-
-        if connected == 0 {
-            // SAFETY: GetLastError reads thread-local errno; always safe.
-            let error = unsafe { *windows_sys::Win32::Foundation::GetLastError() };
-            if error != windows_sys::Win32::Foundation::ERROR_PIPE_CONNECTED {
-                tracing::warn!("ConnectNamedPipe failed with error: {}", error);
-                // SAFETY: CloseHandle called on valid handle we own from failed ConnectNamedPipe.
-                unsafe {
-                    windows_sys::Win32::Foundation::CloseHandle(pipe_handle);
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                continue;
+        match listener.accept() {
+            Ok(stream) => {
+                tokio::spawn(async move {
+                    handle_command_connection(stream, config_manager.clone()).await;
+                });
+            }
+            Err(e) => {
+                tracing::warn!("Command pipe accept error: {}", e);
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
             }
         }
-
-        // Convert raw handle to File and handle command
-        // SAFETY: from_raw_handle takes ownership of pipe_handle; we validated it's non-zero above.
-        let stream = unsafe {
-            std::fs::File::from_raw_handle(pipe_handle as std::os::windows::io::RawHandle)
-        };
-        tokio::spawn(async move {
-            handle_command_connection(stream, config_manager.clone()).await;
-        });
     }
 }
 

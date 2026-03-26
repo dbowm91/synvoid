@@ -76,7 +76,7 @@ impl PatternDetector for XxeDetector {
                 let header_name = name.as_str();
                 if check_header(header_name) {
                     if let Some(result) =
-                        self.detect(header_value, InputLocation::Header(header_name.to_string()))
+                        self.detect(header_value, InputLocation::Header(header_name.into()))
                     {
                         return Some(result);
                     }

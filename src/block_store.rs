@@ -278,9 +278,33 @@ impl BlockStore {
         self.enabled
     }
 
+    /// Evict the least recently accessed entry from the store.
+    ///
+    /// Called when the store reaches capacity to make room for new entries.
+    ///
+    /// # Returns
+    /// `true` if an entry was evicted, `false` if the store is empty
+    fn evict_lru(&self) -> bool {
+        let mut store = self.store.write();
+        if let Some(lru_key) = store
+            .iter()
+            .min_by_key(|(_, entry)| entry.last_access)
+            .map(|(k, _)| k.clone())
+        {
+            store.remove(&lru_key);
+            self.total_entries.fetch_sub(1, Ordering::Relaxed);
+            tracing::debug!("Evicted LRU block entry: {}", lru_key);
+            true
+        } else {
+            false
+        }
+    }
+
     /// Block an IP address.
     ///
     /// Adds an IP to the blocklist with the given reason and duration.
+    /// If the store is at capacity, the least recently accessed entry is
+    /// evicted to make room (LRU eviction).
     ///
     /// # Arguments
     /// * `ip` - The IP address to block
@@ -289,7 +313,7 @@ impl BlockStore {
     /// * `site_scope` - Scope of block ("global" or site-specific)
     ///
     /// # Returns
-    /// `true` if the IP was successfully blocked, `false` if store is full or disabled
+    /// `true` if the IP was successfully blocked, `false` if store is disabled
     pub fn block_ip(
         &self,
         ip: IpAddr,
@@ -303,14 +327,17 @@ impl BlockStore {
 
         let max_entries = self.config.max_entries;
         let current = self.total_entries.load(Ordering::Relaxed);
-        
+
         if current >= max_entries {
-            tracing::warn!(
-                "Block store at capacity ({} >= {}), cannot add new block",
+            tracing::info!(
+                "Block store at capacity ({} >= {}), evicting LRU entry",
                 current,
                 max_entries
             );
-            return false;
+            if !self.evict_lru() {
+                tracing::warn!("Failed to evict LRU entry, cannot add new block");
+                return false;
+            }
         }
 
         let entry = BlockEntry::new(
@@ -323,7 +350,7 @@ impl BlockStore {
 
         self.store.write().insert(key, entry);
         self.total_entries.fetch_add(1, Ordering::Relaxed);
-        
+
         tracing::info!("Blocked IP {} for {} (scope: {})", ip, reason, site_scope);
 
         self.trigger_persist();
@@ -717,5 +744,40 @@ mod tests {
         let ip: IpAddr = "2001:db8::1".parse().unwrap();
         assert!(store.block_ip(ip, "ipv6_test", 3600, "global"));
         assert!(store.is_blocked(&ip, "global").is_some());
+    }
+
+    #[tokio::test]
+    async fn test_block_store_lru_eviction() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(
+            true,
+            Some(temp_dir.path().to_path_buf()),
+            DenyListLimitsConfig {
+                max_entries: 2,
+                persist_interval_secs: 0,
+            },
+        );
+
+        let ip1: IpAddr = "10.0.0.1".parse().unwrap();
+        let ip2: IpAddr = "10.0.0.2".parse().unwrap();
+        let ip3: IpAddr = "10.0.0.3".parse().unwrap();
+
+        // Fill to capacity
+        assert!(store.block_ip(ip1, "test", 3600, "global"));
+        assert!(store.block_ip(ip2, "test", 3600, "global"));
+
+        // Access ip1 to make it more recently used (ip2 becomes LRU)
+        store.is_blocked(&ip1, "global");
+
+        // Adding a third entry should evict the LRU entry (ip2)
+        assert!(store.block_ip(ip3, "test", 3600, "global"));
+
+        // ip1 and ip3 should exist, ip2 should have been evicted
+        assert!(store.is_blocked(&ip1, "global").is_some());
+        assert!(store.is_blocked(&ip2, "global").is_none());
+        assert!(store.is_blocked(&ip3, "global").is_some());
+
+        let stats = store.get_stats();
+        assert_eq!(stats.total_entries, 2);
     }
 }

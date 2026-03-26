@@ -1,4 +1,4 @@
-#![allow(unused_variables, dead_code)]
+#![allow(unused_variables)]
 
 use std::collections::HashMap;
 use std::convert::Infallible;
@@ -47,6 +47,7 @@ const BLOCK_BROADCAST_FAILURE_THRESHOLD: u32 = 5;
 /// from the origin WAF is preserved when we receive blocks from other nodes.
 const BLOCK_DURATION_SECS: u64 = 300;
 
+#[allow(dead_code)] // topology, proxy_cache, cache_key_builder reserved for future use
 pub struct MeshProxy {
     config: Arc<MeshConfig>,
     topology: Arc<MeshTopology>,
@@ -64,6 +65,7 @@ pub struct MeshProxy {
     transform_cache: Arc<PLMutex<LruCache<String, TransformCacheEntry>>>,
 }
 
+#[allow(dead_code)] // peer_node_id/request_id for future request tracking
 struct MeshConnection {
     peer_node_id: String,
     request_id: String,

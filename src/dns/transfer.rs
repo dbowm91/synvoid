@@ -220,15 +220,14 @@ impl ZoneTransfer {
             return Err("Zone transfer not allowed".to_string());
         }
 
-        if self.is_wildcard_transfer(origin) && self.wildcard_requires_tsig()
-            && tsig.is_none() {
-                tracing::warn!(
-                    "SECURITY: AXFR request DENIED for zone={} client={} reason=wildcard_requires_tsig",
-                    origin,
-                    client_ip
-                );
-                return Err("Zone transfer requires TSIG authentication".to_string());
-            }
+        if self.is_wildcard_transfer(origin) && self.wildcard_requires_tsig() && tsig.is_none() {
+            tracing::warn!(
+                "SECURITY: AXFR request DENIED for zone={} client={} reason=wildcard_requires_tsig",
+                origin,
+                client_ip
+            );
+            return Err("Zone transfer requires TSIG authentication".to_string());
+        }
 
         let tsig_key_name = tsig.as_ref().map(|t| t.key_name.clone());
         let tsig_configured = self.tsig_verifier.is_some();
@@ -278,7 +277,7 @@ impl ZoneTransfer {
 
         let soa_record = self.find_soa_record(zone);
         if let Some(ref soa) = soa_record {
-            responses.push(self.build_axfr_first_message(qname, &[soa.clone()]));
+            responses.push(self.build_axfr_first_message(qname, std::slice::from_ref(soa)));
         }
 
         for ((name, record_type), records) in &zone.records {
@@ -293,7 +292,7 @@ impl ZoneTransfer {
         }
 
         if let Some(ref soa) = soa_record {
-            responses.push(self.build_axfr_last_message(qname, &[soa.clone()]));
+            responses.push(self.build_axfr_last_message(qname, std::slice::from_ref(soa)));
         }
 
         tracing::info!(
@@ -368,15 +367,14 @@ impl ZoneTransfer {
             return Err("Zone transfer not allowed".to_string());
         }
 
-        if self.is_wildcard_transfer(origin) && self.wildcard_requires_tsig()
-            && tsig.is_none() {
-                tracing::warn!(
-                    "IXFR request denied for {} from {} - wildcard requires TSIG",
-                    origin,
-                    client_ip
-                );
-                return Err("Zone transfer requires TSIG authentication".to_string());
-            }
+        if self.is_wildcard_transfer(origin) && self.wildcard_requires_tsig() && tsig.is_none() {
+            tracing::warn!(
+                "IXFR request denied for {} from {} - wildcard requires TSIG",
+                origin,
+                client_ip
+            );
+            return Err("Zone transfer requires TSIG authentication".to_string());
+        }
 
         let tsig_key_name = tsig.as_ref().map(|t| t.key_name.clone());
         let tsig_configured = self.tsig_verifier.is_some();
@@ -466,7 +464,7 @@ impl ZoneTransfer {
         let mut responses = Vec::new();
 
         let soa_record = self.find_soa_record(zone).ok_or("Zone has no SOA record")?;
-        responses.push(self.build_axfr_first_message(qname, &[soa_record.clone()]));
+        responses.push(self.build_axfr_first_message(qname, std::slice::from_ref(&soa_record)));
 
         for ((name, record_type), records) in &zone.records {
             if *record_type != RecordType::SOA {
@@ -479,7 +477,7 @@ impl ZoneTransfer {
             }
         }
 
-        responses.push(self.build_axfr_last_message(qname, &[soa_record.clone()]));
+        responses.push(self.build_axfr_last_message(qname, std::slice::from_ref(&soa_record)));
 
         tracing::debug!("IXFR full response: {} messages", responses.len());
         Ok(responses)
@@ -584,7 +582,11 @@ impl ZoneTransfer {
                 format!("{}.{}", name, qname)
             };
             for record in recs {
-                let rr = self.build_axfr_record(&full_name, &record.record_type, &[record.clone()]);
+                let rr = self.build_axfr_record(
+                    &full_name,
+                    &record.record_type,
+                    std::slice::from_ref(record),
+                );
                 response.extend_from_slice(&rr[12..]);
             }
         }

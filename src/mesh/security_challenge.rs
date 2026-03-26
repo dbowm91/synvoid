@@ -33,7 +33,7 @@ pub enum ChallengeType {
     Crypto,
 }
 
-#[allow(dead_code)]
+#[allow(dead_code)] // config kept for future policy customization
 pub struct MeshSecurityChallengeManager {
     config: Arc<MeshConfig>,
     active_challenges: Arc<RwLock<HashMap<String, MeshSecurityChallenge>>>,
@@ -259,7 +259,6 @@ impl MeshSecurityChallengeManager {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct MeshAttackDetector {
     config: Arc<MeshConfig>,
     suspicious_patterns: Arc<RwLock<Vec<SuspiciousPattern>>>,

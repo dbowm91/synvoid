@@ -1,3 +1,8 @@
+//! Inter-process communication and process management.
+//!
+//! Provides IPC transport over Unix domain sockets, message framing,
+//! rate limiting for IPC connections, and connection pooling.
+
 pub mod command;
 pub mod ipc;
 pub mod ipc_framing;

@@ -17,6 +17,7 @@ use tracing::{debug, error, info, warn};
 use crate::config::dns::RecursiveDnsConfig;
 use crate::dns::firewall::DnsFirewall;
 use crate::dns::metrics::DnsMetrics;
+use parking_lot::RwLock;
 
 use super::recursive_cache::{
     CachedRecord, RecursiveCacheKey, RecursiveDnsCache,
@@ -55,7 +56,7 @@ pub struct RecursiveDnsServer {
     resolver: Arc<dyn DnsResolver>,
     cache: RecursiveDnsCache,
     rate_limiter: Option<Arc<DnsRateLimiter>>,
-    firewall: Option<Arc<DnsFirewall>>,
+    firewall: Option<Arc<RwLock<DnsFirewall>>>,
     metrics: Option<Arc<DnsMetrics>>,
     query_semaphore: Arc<Semaphore>,
     running: Arc<tokio::sync::RwLock<bool>>,
@@ -65,7 +66,7 @@ impl RecursiveDnsServer {
     pub async fn new(
         config: RecursiveDnsConfig,
         rate_limiter: Option<Arc<DnsRateLimiter>>,
-        firewall: Option<Arc<DnsFirewall>>,
+        firewall: Option<Arc<RwLock<DnsFirewall>>>,
         metrics: Option<Arc<DnsMetrics>>,
     ) -> RecursiveDnsResult<Self> {
         let resolver = Self::create_resolver(&config)?;
@@ -264,7 +265,7 @@ impl RecursiveDnsServer {
         }
 
         if let Some(ref firewall) = self.firewall {
-            let mut fw = (**firewall).clone();
+            let mut fw = firewall.write();
             if let Ok(decision) = fw.evaluate_query(&query, client_addr.ip(), "") {
                 if decision.action == crate::dns::firewall::DnsFirewallAction::Block {
                     if let Some(metrics) = &self.metrics {
@@ -347,7 +348,7 @@ impl RecursiveDnsServer {
         }
 
         if let Some(ref firewall) = self.firewall {
-            let mut fw = (**firewall).clone();
+            let mut fw = firewall.write();
             if let Ok(decision) = fw.evaluate_query(&packet, client_addr.ip(), "") {
                 if decision.action == crate::dns::firewall::DnsFirewallAction::Block {
                     if let Some(metrics) = &self.metrics {

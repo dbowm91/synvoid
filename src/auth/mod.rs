@@ -80,6 +80,7 @@ pub struct LoginLog {
     pub reason: Option<String>,
 }
 
+#[allow(dead_code)] // data_dir kept for future migration support
 pub struct AuthManager {
     data_dir: PathBuf,
     store: Arc<RwLock<AuthStore>>,
@@ -165,10 +166,16 @@ impl AuthManager {
         for store in stores.iter().take(stores.len() - 1) {
             merged.login_logs.extend(store.login_logs.iter().cloned());
         }
+        let mut seen = std::collections::HashSet::new();
+        merged.login_logs.retain(|log| seen.insert(log.id.clone()));
+        const MAX_LOGIN_LOGS: usize = 10_000;
+        if merged.login_logs.len() > MAX_LOGIN_LOGS {
+            merged.login_logs.truncate(MAX_LOGIN_LOGS);
+        }
         merged
     }
 
-    fn load_store(data_dir: &PathBuf) -> AuthStore {
+    fn load_store(data_dir: &std::path::Path) -> AuthStore {
         let auth_dir = data_dir.join("auth");
         let store_path = auth_dir.join("store.json");
         
@@ -210,7 +217,7 @@ impl AuthManager {
         let _ = self.write_tx.send((store_clone, None)).await;
     }
 
-    async fn write_store_to_disk(data_dir: &PathBuf, store: &AuthStore) {
+    async fn write_store_to_disk(data_dir: &std::path::Path, store: &AuthStore) {
         let auth_dir = data_dir.join("auth");
         let store_path = auth_dir.join("store.json");
         

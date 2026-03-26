@@ -1,3 +1,8 @@
+//! Master process lifecycle management.
+//!
+//! Manages upgrade coordination, health monitoring, rollback,
+//! socket handoff, and drain lifecycle for worker processes.
+
 pub mod mode;
 pub mod state;
 pub mod health;

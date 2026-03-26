@@ -199,7 +199,8 @@ impl YaraRuleFeedManager {
             return Err(format!("Rules size {}KB exceeds limit {}KB", rules_size / 1024, self.config.max_rules_size_kb));
         }
 
-        let feed_response: YaraRuleFeedResponse = serde_json::from_str(&response.body)
+        let body_str = String::from_utf8_lossy(&response.body);
+        let feed_response: YaraRuleFeedResponse = serde_json::from_str(&body_str)
             .map_err(|e| format!("Failed to parse JSON: {}", e))?;
 
         let timestamp = Self::parse_timestamp(&feed_response.timestamp)

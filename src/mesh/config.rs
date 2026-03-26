@@ -1,4 +1,4 @@
-#![allow(unused_variables, dead_code, non_snake_case, non_upper_case_globals)]
+#![allow(unused_variables, non_snake_case, non_upper_case_globals)]
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use parking_lot::RwLock;
@@ -155,6 +155,11 @@ impl SequenceCounter {
         }
     }
 
+    // SAFETY: Relaxed ordering is correct here because each SequenceCounter
+    // is used independently — there is no accompanying data that needs to be
+    // synchronized via the counter's ordering. The only guarantee needed is
+    // that successive calls to `next()` return monotonically increasing values,
+    // which `fetch_add(Relaxed)` provides on a single atomic.
     pub fn next(&self) -> u32 {
         self.counter.fetch_add(1, Ordering::Relaxed)
     }
@@ -166,8 +171,7 @@ impl Default for SequenceCounter {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct MeshSeedNode {
     pub address: String,
     #[serde(default)]
@@ -559,7 +563,6 @@ impl Default for ReconnectionPriority {
     }
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MeshUpstreamConfig {
     pub upstream_url: String,
@@ -949,8 +952,7 @@ impl GlobalNodeConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct GenesisKeyConfig {
     #[serde(default)]
     pub private_key_base64: Option<String>,
@@ -961,7 +963,6 @@ pub struct GenesisKeyConfig {
     #[serde(default)]
     pub is_first_node: bool,
 }
-
 
 impl GenesisKeyConfig {
     pub fn generate() -> Self {
@@ -1034,10 +1035,7 @@ pub struct TrustedNodeConfig {
 
 impl TrustedNodeConfig {
     pub fn new(node_id: String, granted_by: Option<String>, is_genesis: bool) -> Self {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = crate::mesh::safe_unix_timestamp();
         Self {
             node_id,
             trusted_at: now,
@@ -1285,7 +1283,6 @@ pub enum MlKemVariant {
     MlKem1024,
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MeshMlKemConfig {
     #[serde(default = "default_mlkem_enabled")]
@@ -1375,8 +1372,7 @@ impl From<MeshDhtConfig> for crate::mesh::dht::DhtConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct NodeIdentityConfig {
     #[serde(default)]
     pub private_key_path: Option<String>,
@@ -1395,7 +1391,6 @@ pub struct NodeIdentityConfig {
     #[serde(default)]
     pub genesis_org_id: Option<String>,
 }
-
 
 impl NodeIdentityConfig {
     pub fn genesis_org_id(&self) -> String {
@@ -1448,7 +1443,7 @@ impl NodeIdentityConfig {
                 if let Some(parent) = std::path::Path::new(path).parent() {
                     let _ = std::fs::create_dir_all(parent);
                 }
-                let encrypted = self.encrypt_key(key, passphrase);
+                let encrypted = self.encrypt_key(key, passphrase)?;
                 std::fs::write(path, encrypted)
                     .map_err(|e| format!("Failed to write signing key: {}", e))?;
             }
@@ -1465,7 +1460,7 @@ impl NodeIdentityConfig {
         pbkdf2_hmac_array::<Sha256, 32>(passphrase.as_bytes(), SALT, 100_000)
     }
 
-    fn encrypt_key(&self, plaintext: &[u8], passphrase: Option<&str>) -> Vec<u8> {
+    fn encrypt_key(&self, plaintext: &[u8], passphrase: Option<&str>) -> Result<Vec<u8>, String> {
         match passphrase {
             Some(pass) if !pass.is_empty() => {
                 use aes_gcm::{
@@ -1475,7 +1470,8 @@ impl NodeIdentityConfig {
                 use rand::RngCore;
 
                 let key = Self::derive_encryption_key(pass);
-                let cipher = Aes256Gcm::new_from_slice(&key).expect("Valid key");
+                let cipher = Aes256Gcm::new_from_slice(&key)
+                    .map_err(|e| format!("Cipher init failed: {}", e))?;
 
                 let mut nonce_bytes = [0u8; 12];
                 rand::rng().fill_bytes(&mut nonce_bytes);
@@ -1483,14 +1479,14 @@ impl NodeIdentityConfig {
 
                 let ciphertext = cipher
                     .encrypt(nonce, plaintext)
-                    .expect("Encryption success");
+                    .map_err(|e| format!("Encryption failed: {}", e))?;
 
                 let mut result = Vec::with_capacity(12 + ciphertext.len() + 16);
                 result.extend_from_slice(&nonce_bytes);
                 result.extend_from_slice(&ciphertext);
-                result
+                Ok(result)
             }
-            _ => plaintext.to_vec(),
+            _ => Ok(plaintext.to_vec()),
         }
     }
 
@@ -1925,14 +1921,12 @@ impl MeshConfig {
 
     pub fn apply_dht_role_defaults(&mut self) {
         if let Some(ref mut dht) = self.dht {
-            if self.role.is_global()
-                && !dht.full_network_view {
-                    dht.full_network_view = true;
-                }
-            if self.role.is_edge()
-                && !dht.routing_enabled {
-                    dht.routing_enabled = true;
-                }
+            if self.role.is_global() && !dht.full_network_view {
+                dht.full_network_view = true;
+            }
+            if self.role.is_edge() && !dht.routing_enabled {
+                dht.routing_enabled = true;
+            }
         }
     }
 
@@ -2036,16 +2030,15 @@ impl MeshConfig {
         false
     }
 
-    pub fn generate_global_node_key() -> String {
+    pub fn generate_global_node_key() -> Result<String, hkdf::InvalidLength> {
         use hkdf::Hkdf;
         use sha2::Sha256;
         let uuid = uuid::Uuid::new_v4();
         let entropy = uuid.as_bytes();
         let hk = Hkdf::<Sha256>::new(None, entropy);
         let mut okm = [0u8; 32];
-        hk.expand(b"maluwaf-global-node-key", &mut okm)
-            .expect("HKDF expand failed");
-        hex::encode(okm)
+        hk.expand(b"maluwaf-global-node-key", &mut okm)?;
+        Ok(hex::encode(okm))
     }
 
     pub fn cert_rotation_interval(&self) -> Option<std::time::Duration> {
@@ -2135,7 +2128,7 @@ mod tests {
         let plaintext = b"this is a 32-byte secret key!!!!";
         let passphrase = "test_passphrase";
 
-        let encrypted = config.encrypt_key(plaintext, Some(passphrase));
+        let encrypted = config.encrypt_key(plaintext, Some(passphrase)).unwrap();
         assert_ne!(
             encrypted.as_slice(),
             plaintext,
@@ -2156,8 +2149,8 @@ mod tests {
         let plaintext = b"test data for nonce check";
         let passphrase = "my_secure_pass";
 
-        let encrypted1 = config.encrypt_key(plaintext, Some(passphrase));
-        let encrypted2 = config.encrypt_key(plaintext, Some(passphrase));
+        let encrypted1 = config.encrypt_key(plaintext, Some(passphrase)).unwrap();
+        let encrypted2 = config.encrypt_key(plaintext, Some(passphrase)).unwrap();
 
         assert_ne!(encrypted1, encrypted2, "Same plaintext with same passphrase should produce different ciphertext due to random nonce");
 
@@ -2172,7 +2165,7 @@ mod tests {
         let plaintext = b"secret data";
         let passphrase = "correct_pass";
 
-        let encrypted = config.encrypt_key(plaintext, Some(passphrase));
+        let encrypted = config.encrypt_key(plaintext, Some(passphrase)).unwrap();
         let result = config.decrypt_key(&encrypted, Some("wrong_pass"));
         assert!(
             result.is_err(),
@@ -2185,7 +2178,7 @@ mod tests {
         let config = NodeIdentityConfig::default();
         let plaintext = b"unencrypted_key_data";
 
-        let encrypted = config.encrypt_key(plaintext, None);
+        let encrypted = config.encrypt_key(plaintext, None).unwrap();
         assert_eq!(
             encrypted, plaintext,
             "No passphrase should mean no encryption"
@@ -2204,7 +2197,7 @@ mod tests {
         let plaintext = b"12345678901234567890123456789012"; // 32 bytes
         let passphrase = "test";
 
-        let encrypted = config.encrypt_key(plaintext, Some(passphrase));
+        let encrypted = config.encrypt_key(plaintext, Some(passphrase)).unwrap();
 
         // Should be: 12 byte nonce + 32 byte ciphertext + 16 byte tag
         assert_eq!(

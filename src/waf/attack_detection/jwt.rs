@@ -220,8 +220,7 @@ impl JwtDetector {
         if let Some(auth_header) = headers.get("authorization") {
             if let Ok(auth_str) = auth_header.to_str() {
                 if let Some(token) = auth_str.strip_prefix("Bearer ") {
-                    return self
-                        .analyze_jwt(token, InputLocation::Header("authorization".to_string()));
+                    return self.analyze_jwt(token, InputLocation::Header("authorization".into()));
                 }
             }
         }
@@ -236,11 +235,7 @@ impl JwtDetector {
                         if let Some(result) = self.analyze_jwt(
                             token,
                             InputLocation::Cookie(
-                                cookie_part
-                                    .split('=')
-                                    .next()
-                                    .unwrap_or("cookie")
-                                    .to_string(),
+                                cookie_part.split('=').next().unwrap_or("cookie").into(),
                             ),
                         ) {
                             return Some(result);

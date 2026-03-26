@@ -9,7 +9,7 @@ pub mod stake;
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
@@ -284,10 +284,7 @@ impl NodeHealth {
             memory_usage,
             request_rate,
             error_rate,
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
+            timestamp: crate::mesh::safe_unix_timestamp(),
         }
     }
 }
@@ -313,10 +310,7 @@ impl NodeLoad {
             active_connections,
             queue_depth,
             upstream_capacity,
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
+            timestamp: crate::mesh::safe_unix_timestamp(),
         }
     }
 }
@@ -337,10 +331,7 @@ impl GlobalNodeEntry {
             address,
             port,
             public_key,
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
+            timestamp: crate::mesh::safe_unix_timestamp(),
         }
     }
 }
@@ -589,8 +580,5 @@ impl TierKeyStore {
 }
 
 fn now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs()
+    crate::mesh::safe_unix_timestamp()
 }

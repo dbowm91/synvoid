@@ -1,4 +1,4 @@
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use base64::Engine;
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
@@ -152,10 +152,7 @@ impl SignedDhtRecord {
         publisher_id: String,
         record_type: SignedRecordType,
     ) -> Self {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = crate::mesh::safe_unix_timestamp();
 
         let default_ttl = record_type.default_ttl();
         let ttl_seconds = default_ttl.map(|ttl| ttl.as_secs()).unwrap_or(3600);
@@ -178,10 +175,7 @@ impl SignedDhtRecord {
     }
 
     pub fn with_ttl(mut self, ttl: Duration) -> Self {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = crate::mesh::safe_unix_timestamp();
         self.ttl_seconds = ttl.as_secs();
         self.expires_at = Some(now + ttl.as_secs());
         self
@@ -204,10 +198,7 @@ impl SignedDhtRecord {
 
     pub fn is_expired(&self) -> bool {
         if let Some(expires_at) = self.expires_at {
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs();
+            let now = crate::mesh::safe_unix_timestamp();
             now > expires_at
         } else {
             false
@@ -216,10 +207,7 @@ impl SignedDhtRecord {
 
     pub fn time_until_expiry(&self) -> Option<Duration> {
         if let Some(expires_at) = self.expires_at {
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs();
+            let now = crate::mesh::safe_unix_timestamp();
             if expires_at > now {
                 Some(Duration::from_secs(expires_at - now))
             } else {
@@ -348,10 +336,7 @@ impl RecordSigner {
 }
 
 pub fn validate_message_timestamp(timestamp: u64) -> bool {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs() as i64;
+    let now = crate::mesh::safe_unix_timestamp() as i64;
 
     let msg_time = timestamp as i64;
     let diff = (now - msg_time).abs();
@@ -440,10 +425,7 @@ impl TtlManager {
     }
 
     pub fn expires_at_for(&self, record_type: SignedRecordType) -> u64 {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = crate::mesh::safe_unix_timestamp();
         now + self.ttl_for(record_type).as_secs()
     }
 }
@@ -476,11 +458,7 @@ mod tests {
 
         assert!(record.needs_refresh());
 
-        record.created_at = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs()
-            - 100;
+        record.created_at = crate::mesh::safe_unix_timestamp() - 100;
 
         assert!(!record.needs_refresh());
     }

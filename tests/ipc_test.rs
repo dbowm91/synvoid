@@ -178,20 +178,4 @@ mod ipc_tests {
         let result: Result<Vec<u8>, _> = SignedIpcMessage::deserialize_signed(&tampered, &signer);
         assert!(result.is_err());
     }
-
-    #[test]
-    fn test_constant_time_compare_security() {
-        use maluwaf::admin::constant_time_compare;
-
-        // Equal strings should match
-        assert!(constant_time_compare("test", "test"));
-
-        // Different strings should not match
-        assert!(!constant_time_compare("test", "Test"));
-        assert!(!constant_time_compare("test", "test "));
-
-        // Different lengths should not match (timing safe)
-        assert!(!constant_time_compare("test", "testing"));
-        assert!(!constant_time_compare("testing", "test"));
-    }
 }

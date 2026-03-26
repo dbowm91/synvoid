@@ -40,8 +40,7 @@ fn validate_upstream_url(url: &str) -> Result<String, String> {
     Ok(url.to_string())
 }
 
-#[derive(Clone, Debug, PartialEq)]
-#[derive(Default)]
+#[derive(Clone, Debug, PartialEq, Default)]
 pub enum LoadBalanceAlgorithm {
     #[default]
     RoundRobin,
@@ -51,9 +50,7 @@ pub enum LoadBalanceAlgorithm {
     IpHash,
 }
 
-
-#[derive(Clone, Debug, PartialEq, Eq, Copy)]
-#[derive(Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Copy, Default)]
 pub enum BackendProtocol {
     #[default]
     Http,
@@ -65,7 +62,6 @@ pub enum BackendProtocol {
     Tcp,
     QuicTunnel,
 }
-
 
 fn protocol_name(protocol: BackendProtocol) -> &'static str {
     match protocol {
@@ -186,9 +182,12 @@ impl Backend {
 
     #[inline]
     pub fn decrement_connections(&self) {
-        let _ = self
-            .current_connections
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_sub(1));
+        let result =
+            self.current_connections
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_sub(1));
+        if result.is_err() {
+            tracing::warn!("Attempted to decrement connection count below zero");
+        }
     }
 
     #[inline]
@@ -227,7 +226,7 @@ impl Backend {
     }
 
     pub fn set_cpu_percent(&self, value: f32) {
-        let scaled = (value.min(100.0).max(0.0) * 100.0) as u32;
+        let scaled = (value.clamp(0.0, 100.0) * 100.0) as u32;
         self.cpu_percent.store(scaled, Ordering::Relaxed);
     }
 
@@ -236,7 +235,7 @@ impl Backend {
     }
 
     pub fn set_memory_percent(&self, value: f32) {
-        let scaled = (value.min(100.0).max(0.0) * 100.0) as u32;
+        let scaled = (value.clamp(0.0, 100.0) * 100.0) as u32;
         self.memory_percent.store(scaled, Ordering::Relaxed);
     }
 

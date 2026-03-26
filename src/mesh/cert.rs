@@ -50,9 +50,6 @@ fn load_private_key(
                 if kind == pem::SectionKind::PrivateKey
                     || kind == pem::SectionKind::EcPrivateKey
                     || kind == pem::SectionKind::RsaPrivateKey
-                    || kind == pem::SectionKind::PrivateKey
-                    || kind == pem::SectionKind::EcPrivateKey
-                    || kind == pem::SectionKind::RsaPrivateKey
                 {
                     if let Some(key) = PrivateKeyDer::from_pem(kind, der) {
                         return Ok(key);
@@ -414,7 +411,7 @@ impl MeshCertManager {
 
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_nanos();
         let rotated_node_id = format!("{}-{:x}", self.node_id, timestamp);
 
@@ -627,21 +624,25 @@ pub fn extract_public_key_from_cert(cert_der: &[u8]) -> Option<Vec<u8>> {
     Some(public_key.raw.to_vec())
 }
 
-pub fn sign_message(data: &[u8], key: &[u8]) -> Vec<u8> {
-    let mut mac = HmacSha3_256::new_from_slice(key).expect("HMAC can take key of any size");
+pub fn sign_message(data: &[u8], key: &[u8]) -> Result<Vec<u8>, String> {
+    let mut mac =
+        HmacSha3_256::new_from_slice(key).map_err(|e| format!("HMAC key error: {}", e))?;
     mac.update(data);
-    mac.finalize().into_bytes().to_vec()
+    Ok(mac.finalize().into_bytes().to_vec())
 }
 
 pub fn verify_signature(data: &[u8], signature: &[u8], key: &[u8]) -> bool {
-    let expected = sign_message(data, key);
+    let expected = match sign_message(data, key) {
+        Ok(sig) => sig,
+        Err(_) => return false,
+    };
     if expected.len() != signature.len() {
         return false;
     }
     expected.as_slice().ct_eq(signature).into()
 }
 
-pub fn sign_hmac(data: &str, key: &[u8]) -> Vec<u8> {
+pub fn sign_hmac(data: &str, key: &[u8]) -> Result<Vec<u8>, String> {
     sign_message(data.as_bytes(), key)
 }
 

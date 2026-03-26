@@ -611,6 +611,15 @@ pub struct CssChallengeDefaults {
     #[serde(default = "default_css_verification_window")]
     pub verification_window_secs: u32,
     pub block: CssBlockDefaults,
+    #[serde(default = "default_css_exempt_paths")]
+    pub exempt_paths: Vec<String>,
+}
+
+fn default_css_exempt_paths() -> Vec<String> {
+    vec![
+        "/_waf_css_challenge".to_string(),
+        "/_waf_assets".to_string(),
+    ]
 }
 
 impl Default for CssChallengeDefaults {
@@ -624,6 +633,7 @@ impl Default for CssChallengeDefaults {
             challenge_window_secs: 300,
             verification_window_secs: 30,
             block: CssBlockDefaults::default(),
+            exempt_paths: default_css_exempt_paths(),
         }
     }
 }

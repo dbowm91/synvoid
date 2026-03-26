@@ -7,7 +7,7 @@ use serde::Serialize;
 use std::sync::Arc;
 use super::super::state::AdminState;
 
-use super::common::{require_auth, OptionalAuth, StatusResponse};
+use super::common::{OptionalAuth, StatusResponse};
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct MasterStatusResponse {
@@ -56,11 +56,8 @@ pub struct SystemInfoResponse {
 )]
 pub async fn get_master_status(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
 ) -> Result<Json<MasterStatusResponse>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let metrics = state.get_metrics();
 
@@ -98,11 +95,8 @@ pub async fn get_master_status(
 )]
 pub async fn get_system_info(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
 ) -> Result<Json<SystemInfoResponse>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let mut features = Vec::new();
     
@@ -151,11 +145,8 @@ pub struct WorkerStatusResponse {
 )]
 pub async fn get_workers(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
 ) -> Result<Json<Vec<WorkerStatusResponse>>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let pm = state.process_manager.as_ref().ok_or(StatusCode::NOT_FOUND)?;
     let worker_metrics = pm.get_worker_metrics();
@@ -206,11 +197,8 @@ pub async fn get_workers(
 pub async fn restart_worker(
     State(state): State<Arc<AdminState>>,
     Path(worker_id): Path<String>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
 ) -> Result<Json<StatusResponse>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let _pm = state.process_manager.as_ref().ok_or(StatusCode::NOT_FOUND)?;
     
@@ -254,11 +242,8 @@ pub struct WorkerCountResponse {
 )]
 pub async fn get_worker_count(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
 ) -> Result<Json<WorkerCountResponse>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let pm = state.process_manager.as_ref().ok_or(StatusCode::NOT_FOUND)?;
     
@@ -290,12 +275,9 @@ pub async fn get_worker_count(
 )]
 pub async fn scale_workers(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
     Json(req): Json<ScaleWorkersRequest>,
 ) -> Result<Json<ScaleWorkersResponse>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let pm = state.process_manager.as_ref().ok_or(StatusCode::NOT_FOUND)?;
     
@@ -364,11 +346,8 @@ pub struct OverseerStatusResponse {
 )]
 pub async fn get_overseer(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
 ) -> Result<Json<OverseerStatusResponse>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let pm = state.process_manager.as_ref().ok_or(StatusCode::NOT_FOUND)?;
     

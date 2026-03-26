@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 use std::sync::Arc;
 use super::super::state::AdminState;
-use super::common::{require_auth, OptionalAuth, PaginationQuery};
+use super::common::{OptionalAuth, PaginationQuery};
 use crate::mesh::client_audit::{ClientAuditReport, AuditReportResponse};
 
 #[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
@@ -203,11 +203,8 @@ fn role_to_string(role: crate::mesh::config::MeshNodeRole) -> String {
 pub async fn list_mesh_nodes(
     State(state): State<Arc<AdminState>>,
     Query(query): Query<PaginationQuery>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
 ) -> Result<Json<MeshNodeListResponse>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let (limit, offset) = query.with_defaults(100, 500);
     let mut all_nodes = Vec::new();
@@ -299,11 +296,8 @@ pub async fn list_mesh_nodes(
 pub async fn get_mesh_node(
     State(state): State<Arc<AdminState>>,
     Path(node_id): Path<String>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
 ) -> Result<Json<MeshNodeInfo>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let topology_opt = state.mesh_transport.as_ref().map(|t| t.get_topology());
     
@@ -355,12 +349,9 @@ pub async fn get_mesh_node(
 )]
 pub async fn ban_ip(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
     Json(payload): Json<BanIpRequest>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let ip: IpAddr = payload.ip.parse().map_err(|_| StatusCode::BAD_REQUEST)?;
     let reason = if payload.reason.is_empty() {
@@ -419,12 +410,9 @@ pub async fn ban_ip(
 )]
 pub async fn ban_mesh_id(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
     Json(payload): Json<BanMeshIdRequest>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let mesh_id = payload.mesh_id;
     let reason = if payload.reason.is_empty() {
@@ -483,11 +471,8 @@ pub async fn ban_mesh_id(
 pub async fn unban(
     State(state): State<Arc<AdminState>>,
     Query(params): Query<UnbanRequest>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let identifier = params.identifier;
     let ban_type = params.ban_type;
@@ -540,11 +525,8 @@ pub async fn unban(
 pub async fn list_bans(
     State(state): State<Arc<AdminState>>,
     Query(query): Query<PaginationQuery>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
 ) -> Result<Json<BanListResponse>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let (limit, offset) = query.with_defaults(100, 500);
     let mut bans = Vec::new();
@@ -607,11 +589,8 @@ pub async fn list_bans(
 )]
 pub async fn get_mesh_status(
     State(state): State<Arc<AdminState>>,
-    auth: OptionalAuth,
+    _auth: OptionalAuth,
 ) -> Result<Json<MeshAdminStatusResponse>, StatusCode> {
-    if !require_auth(&auth, &state.admin_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
 
     let mut is_global_node = false;
     let mut node_id = None;

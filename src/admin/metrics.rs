@@ -43,6 +43,7 @@ pub async fn start_metrics_publisher(
                     }
                     _ = alert_ticker.tick() => {
                         admin_state.cleanup_expired_csrf_tokens();
+                        crate::admin::auth::AUTH_RATE_LIMITER.cleanup_expired();
                         if let Some(ref am) = alert_manager {
                             if let Some(ref metrics) = latest_metrics {
                                 let events = am.check_and_notify(metrics).await;

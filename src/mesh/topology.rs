@@ -253,7 +253,7 @@ pub struct MeshTopology {
 }
 
 #[derive(Debug, Clone, Default)]
-#[allow(dead_code)]
+#[allow(dead_code)] // Fields used for categorization, read dynamically
 struct PeerCategories {
     local_region: HashSet<String>,
     regional: HashSet<String>,
@@ -261,7 +261,7 @@ struct PeerCategories {
 }
 
 #[derive(Debug, Clone, Default)]
-#[allow(dead_code)]
+#[allow(dead_code)] // Metrics tracked but not yet exposed
 struct CacheMetrics {
     hits: u64,
     misses: u64,
@@ -269,7 +269,7 @@ struct CacheMetrics {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
+#[allow(dead_code)] // stability_score reserved for routing decisions
 struct CachedRoute {
     provider_node_id: String,
     hops: u8,
@@ -277,7 +277,7 @@ struct CachedRoute {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
+#[allow(dead_code)] // upstream_id reserved for multi-upstream routing
 struct RouteStability {
     upstream_id: String,
     provider_history: Vec<(String, Instant)>,
@@ -319,8 +319,7 @@ impl PeerScore {
             + self.load_score * weights.load
             + self.traffic_score * weights.traffic
             + self.upstream_score * weights.upstream)
-            .min(1.0)
-            .max(0.0);
+            .clamp(0.0, 1.0);
         self.last_updated = Instant::now();
     }
 }
@@ -390,7 +389,6 @@ impl RouteUsage {
     }
 }
 
-#[allow(dead_code)]
 pub struct RouteUsageTracker {
     usages: HashMap<String, RouteUsage>,
     window: Duration,
@@ -1138,7 +1136,7 @@ impl MeshTopology {
     fn calculate_adaptive_ttl(&self, base_ttl: Duration, stability: f64) -> Duration {
         let ttl_multiplier = 0.5 + (stability * 0.5);
         let adaptive_ttl_secs = (base_ttl.as_secs() as f64 * ttl_multiplier) as u64;
-        Duration::from_secs(adaptive_ttl_secs.max(60).min(7200))
+        Duration::from_secs(adaptive_ttl_secs.clamp(60, 7200))
     }
 
     pub async fn get_cached_route(&self, upstream_id: &str) -> Option<(String, u8)> {
@@ -1509,10 +1507,7 @@ impl MeshTopology {
             version: 1,
             peers: peer_data,
             peer_scores: score_data,
-            saved_at: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
+            saved_at: crate::mesh::safe_unix_timestamp(),
         };
 
         let json = serde_json::to_string_pretty(&persist_data)?;

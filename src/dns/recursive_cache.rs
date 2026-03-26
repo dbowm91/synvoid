@@ -174,6 +174,7 @@ struct InnerRecursiveCache {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // capacity/negative_cache_capacity kept for future eviction tuning
 struct CacheConfig {
     capacity: usize,
     negative_cache_capacity: usize,
@@ -273,10 +274,8 @@ impl RecursiveDnsCache {
 
     pub fn insert_negative(&self, key: RecursiveCacheKey, is_nxdomain: bool, ncache_ttl: u32) {
         let inner = &self.inner;
-        let ttl = Duration::from_secs(
-            ncache_ttl
-                .min(inner.config.negative_ttl.as_secs() as u32) as u64,
-        );
+        let ttl =
+            Duration::from_secs(ncache_ttl.min(inner.config.negative_ttl.as_secs() as u32) as u64);
 
         let entry = NegativeCacheEntry {
             qname: key.qname.clone(),

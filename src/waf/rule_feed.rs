@@ -395,7 +395,8 @@ impl RuleFeedManager {
             return Err(format!("HTTP error: {}", response.status));
         }
 
-        let feed_response: RuleFeedResponse = serde_json::from_str(&response.body)
+        let body_str = String::from_utf8_lossy(&response.body);
+        let feed_response: RuleFeedResponse = serde_json::from_str(&body_str)
             .map_err(|e| format!("Failed to parse JSON: {}", e))?;
 
         let timestamp = Self::parse_timestamp(&feed_response.timestamp)
@@ -656,5 +657,249 @@ impl RuleFeedManagerForWaf {
     pub fn get_changelog(&self) -> Vec<ChangelogEntry> {
         let rules = self.inner.downloaded_rules.read();
         rules.as_ref().map(|r| r.changelog.clone()).unwrap_or_default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_newer_version_basic() {
+        assert!(RuleFeedManager::is_newer_version("2.0.0", "1.0.0"));
+        assert!(RuleFeedManager::is_newer_version("1.1.0", "1.0.0"));
+        assert!(RuleFeedManager::is_newer_version("1.0.1", "1.0.0"));
+        assert!(!RuleFeedManager::is_newer_version("1.0.0", "2.0.0"));
+        assert!(!RuleFeedManager::is_newer_version("1.0.0", "1.1.0"));
+        assert!(!RuleFeedManager::is_newer_version("1.0.0", "1.0.1"));
+    }
+
+    #[test]
+    fn test_is_newer_version_equal() {
+        assert!(!RuleFeedManager::is_newer_version("1.0.0", "1.0.0"));
+    }
+
+    #[test]
+    fn test_is_newer_version_from_none() {
+        assert!(RuleFeedManager::is_newer_version("0.0.1", "none"));
+        assert!(RuleFeedManager::is_newer_version("10.0.0", "none"));
+    }
+
+    #[test]
+    fn test_is_newer_version_different_lengths() {
+        assert!(RuleFeedManager::is_newer_version("1.0.0.1", "1.0.0"));
+        assert!(RuleFeedManager::is_newer_version("2.0", "1.9.9"));
+        assert!(!RuleFeedManager::is_newer_version("1.0", "1.0.1"));
+    }
+
+    #[test]
+    fn test_base64_decode_valid() {
+        let decoded = base64_decode("SGVsbG8=").unwrap();
+        assert_eq!(decoded, b"Hello");
+    }
+
+    #[test]
+    fn test_base64_decode_no_padding() {
+        let decoded = base64_decode("SGVsbG8gV29ybGQ").unwrap();
+        assert_eq!(decoded, b"Hello World");
+    }
+
+    #[test]
+    fn test_base64_decode_invalid_char() {
+        assert!(base64_decode("!invalid!").is_err());
+    }
+
+    #[test]
+    fn test_base64_decode_with_newlines() {
+        let decoded = base64_decode("SGVs\nbG8=").unwrap();
+        assert_eq!(decoded, b"Hello");
+    }
+
+    #[test]
+    fn test_parse_timestamp_rfc3339() {
+        let ts = RuleFeedManager::parse_timestamp("2025-01-15T12:00:00Z").unwrap();
+        assert!(ts > 0);
+    }
+
+    #[test]
+    fn test_parse_timestamp_unix() {
+        let ts = RuleFeedManager::parse_timestamp("1700000000").unwrap();
+        assert_eq!(ts, 1700000000);
+    }
+
+    #[test]
+    fn test_parse_timestamp_invalid() {
+        assert!(RuleFeedManager::parse_timestamp("not-a-timestamp").is_err());
+    }
+
+    #[test]
+    fn test_convert_rules_to_ipc_patterns_roundtrip() {
+        let rules = RuleSet {
+            sqli: Some(RuleCategory {
+                enabled: true,
+                threshold: Some(5),
+                patterns: Some(vec!["' OR 1=1".to_string(), "UNION SELECT".to_string()]),
+            }),
+            xss: Some(RuleCategory {
+                enabled: true,
+                threshold: Some(3),
+                patterns: Some(vec!["<script>".to_string()]),
+            }),
+            cmd_injection: None,
+            path_traversal: None,
+            ssrf: None,
+            ssti: None,
+            open_redirect: None,
+            xxe: None,
+            rfi: None,
+            ldap_injection: None,
+            xpath_injection: None,
+            jwt: None,
+        };
+
+        let ipc_patterns = convert_rules_to_ipc_patterns(&rules);
+        assert_eq!(ipc_patterns.len(), 2);
+
+        let sqli = ipc_patterns.iter().find(|p| p.category == "sqli").unwrap();
+        assert_eq!(
+            sqli.patterns,
+            vec!["' OR 1=1", "UNION SELECT"]
+        );
+
+        let xss = ipc_patterns.iter().find(|p| p.category == "xss").unwrap();
+        assert_eq!(xss.patterns, vec!["<script>"]);
+    }
+
+    #[test]
+    fn test_convert_rules_to_ipc_patterns_empty() {
+        let rules = RuleSet::default();
+        let ipc_patterns = convert_rules_to_ipc_patterns(&rules);
+        assert!(ipc_patterns.is_empty());
+    }
+
+    #[test]
+    fn test_global_rule_patterns_update_from_rule_set() {
+        let mut patterns = GlobalRulePatterns::default();
+        let rules = RuleSet {
+            sqli: Some(RuleCategory {
+                enabled: true,
+                threshold: None,
+                patterns: Some(vec!["pat1".to_string(), "pat2".to_string()]),
+            }),
+            ..RuleSet::default()
+        };
+        patterns.update_from_rule_set(&rules);
+        assert_eq!(patterns.sqli, Some(vec!["pat1".to_string(), "pat2".to_string()]));
+        assert!(patterns.xss.is_none());
+    }
+
+    #[test]
+    fn test_global_rule_patterns_update_preserves_none() {
+        let mut patterns = GlobalRulePatterns::default();
+        let rules = RuleSet {
+            sqli: Some(RuleCategory {
+                enabled: true,
+                threshold: None,
+                patterns: None, // no patterns, should set to None
+            }),
+            ..RuleSet::default()
+        };
+        patterns.update_from_rule_set(&rules);
+        assert!(patterns.sqli.is_none());
+    }
+
+    #[test]
+    fn test_update_and_get_custom_patterns() {
+        clear_global_patterns();
+
+        update_patterns_for_category("sqli", vec!["custom1".to_string()]);
+        assert!(has_custom_patterns("sqli"));
+        assert!(!has_custom_patterns("xss"));
+
+        let retrieved = get_custom_patterns_for_category("sqli");
+        assert_eq!(retrieved, vec!["custom1"]);
+
+        let empty = get_custom_patterns_for_category("xss");
+        assert!(empty.is_empty());
+
+        clear_global_patterns();
+        assert!(!has_custom_patterns("sqli"));
+    }
+
+    #[test]
+    fn test_get_merged_patterns() {
+        clear_global_patterns();
+        update_patterns_for_category("sqli", vec!["feed_pattern".to_string()]);
+
+        let defaults = vec!["default1", "default2"];
+        let config_custom = vec!["config1".to_string()];
+        let merged = get_merged_patterns("sqli", &defaults, &config_custom);
+
+        assert!(merged.contains(&"default1".to_string()));
+        assert!(merged.contains(&"default2".to_string()));
+        assert!(merged.contains(&"config1".to_string()));
+        assert!(merged.contains(&"feed_pattern".to_string()));
+
+        clear_global_patterns();
+    }
+
+    #[test]
+    fn test_parse_embedded_key_invalid() {
+        // Placeholder key should generate a random key (no panic)
+        let key = RuleFeedManager::parse_embedded_key("DEFAULT_EMBEDDED_PUBLIC_KEY_PLACEHOLDER");
+        // Returns a valid VerifyingKey (randomly generated)
+        let _ = key;
+    }
+
+    #[test]
+    fn test_parse_embedded_key_valid_base64() {
+        // Generate a real Ed25519 key, encode as base64, and verify parse works
+        use ed25519_dalek::SigningKey;
+        let signing_key = SigningKey::from_bytes(&[42u8; 32]);
+        let verifying_key = signing_key.verifying_key();
+        let key_bytes = verifying_key.as_bytes();
+
+        // Manual base64 encode
+        const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut encoded = String::new();
+        for chunk in key_bytes.chunks(3) {
+            let b0 = chunk[0] as u32;
+            let b1 = if chunk.len() > 1 { chunk[1] as u32 } else { 0 };
+            let b2 = if chunk.len() > 2 { chunk[2] as u32 } else { 0 };
+            let triple = (b0 << 16) | (b1 << 8) | b2;
+            encoded.push(CHARS[((triple >> 18) & 0x3F) as usize] as char);
+            encoded.push(CHARS[((triple >> 12) & 0x3F) as usize] as char);
+            if chunk.len() > 1 {
+                encoded.push(CHARS[((triple >> 6) & 0x3F) as usize] as char);
+            } else {
+                encoded.push('=');
+            }
+            if chunk.len() > 2 {
+                encoded.push(CHARS[(triple & 0x3F) as usize] as char);
+            } else {
+                encoded.push('=');
+            }
+        }
+
+        let parsed = RuleFeedManager::parse_embedded_key(&encoded);
+        assert_eq!(parsed.as_bytes(), verifying_key.as_bytes());
+    }
+
+    #[test]
+    fn test_create_payload_for_signature() {
+        let response = RuleFeedResponse {
+            version: "1.0.0".to_string(),
+            previous_version: None,
+            timestamp: "2025-01-01T00:00:00Z".to_string(),
+            signature: "somesig".to_string(),
+            rules: RuleSet::default(),
+            changelog: vec![],
+        };
+        let payload = RuleFeedManager::create_payload_for_signature(&response);
+        // Signature field should be empty in payload
+        assert!(payload.contains(r#""signature":""#));
+        assert!(payload.contains(r#""version":"1.0.0""#));
+        // Original signature should NOT be in payload
+        assert!(!payload.contains("somesig"));
     }
 }

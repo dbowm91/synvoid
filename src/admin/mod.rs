@@ -8,7 +8,7 @@ mod metrics;
 pub mod alerting;
 pub mod openapi;
 
-pub use auth::constant_time_compare;
+pub use auth::{hash_admin_token, verify_admin_token};
 pub use state::{AdminState, AdminRateLimiter, AggregatedMetrics, SystemResources, get_current_connections, get_cpu_memory_usage, set_current_connections};
 pub use ws::broadcaster::Broadcaster;
 pub use metrics::start_metrics_publisher;
@@ -94,7 +94,8 @@ pub fn create_admin_router(
     mesh_transport: Option<Arc<MeshTransport>>,
     #[cfg(feature = "icmp-filter")] icmp_filter: Option<Arc<TokioRwLock<IcmpFilterManager>>>,
 ) -> Router {
-    let state_builder = AdminState::new(config, admin_token)
+    let token_hash = hash_admin_token(&admin_token);
+    let state_builder = AdminState::new(config, token_hash)
         .with_probe_tracker(probe_tracker)
         .with_suspicious_word_tracker(suspicious_word_tracker)
         .with_upstream_error_tracker(upstream_error_tracker)
@@ -112,8 +113,8 @@ pub fn create_admin_router(
     build_router_from_state(state, admin_cors_config, admin_rate_limit_config)
 }
 
-pub fn create_admin_router_with_state(state: Arc<AdminState>) -> Router {
-    let cfg = tokio::runtime::Handle::current().block_on(async { state.config.read().await });
+pub async fn create_admin_router_with_state(state: Arc<AdminState>) -> Router {
+    let cfg = state.config.read().await;
     let admin_cors_config = cfg.main.admin.cors.clone();
     let rate_limit_config = cfg.main.admin.rate_limit.clone();
     drop(cfg);
@@ -219,12 +220,13 @@ fn build_router_from_state(state: Arc<AdminState>, admin_cors_config: AdminCorsC
         .nest("/api", api_routes)
         .merge(SwaggerUi::new("/api/swagger-ui").url("/api/openapi.json", openapi::ApiDoc::openapi()))
         .route("/api/openapi.json", get(|| async { 
-            axum::Json(utoipa::openapi::OpenApi::from(openapi::ApiDoc))
+            axum::Json(utoipa::openapi::OpenApi::from(openapi::ApiDoc::openapi()))
         }))
         .route("/health", get(health_check))
         .fallback_service(ServeDir::new("admin-ui/dist"))
         .layer(create_cors_layer(&admin_cors_config))
         .layer(axum::middleware::from_fn(middleware::extract_client_ip_middleware))
+        .layer(axum::middleware::from_fn_with_state(state.clone(), middleware::auth_middleware_with_state))
         .layer(rate_limit_layer)
         .with_state(state)
 }
@@ -252,7 +254,7 @@ pub async fn start_admin_server(
     }
 
     let port = cfg.port;
-    let token = cfg.resolve_token();
+    let token = hash_admin_token(&cfg.resolve_token());
     let _cors_config = cfg.cors.clone();
     let rate_limit_config = cfg.rate_limit.clone();
     tracing::info!("Admin API token resolved from config/env var");
@@ -299,7 +301,7 @@ pub async fn start_admin_server(
     
     admin_state.setup_site_config_sync().await;
     
-    let app = create_admin_router_with_state(admin_state.clone());
+    let app = create_admin_router_with_state(admin_state.clone()).await;
 
     let listener = match tokio::net::TcpListener::bind(addr).await {
         Ok(l) => l,

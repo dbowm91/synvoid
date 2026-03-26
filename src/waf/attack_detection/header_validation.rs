@@ -30,7 +30,7 @@ impl HeaderValidator {
                     headers.len(),
                     self.max_header_count
                 )),
-                input_location: InputLocation::Header("__total__".to_string()),
+                input_location: InputLocation::Header("__total__".into()),
             });
         }
 
@@ -56,7 +56,7 @@ impl HeaderValidator {
                         value_bytes.len(),
                         self.max_header_size
                     )),
-                    input_location: InputLocation::Header(name_str.to_string()),
+                    input_location: InputLocation::Header(name_str.into()),
                 });
             }
 
@@ -72,7 +72,7 @@ impl HeaderValidator {
                     attack_type: AttackType::RequestSmuggling,
                     fingerprint: Some("crlf_injection".to_string()),
                     matched_pattern: Some(format!("{}: {}", name_str, value_str)),
-                    input_location: InputLocation::Header(name_str.to_string()),
+                    input_location: InputLocation::Header(name_str.into()),
                 });
             }
 
@@ -88,7 +88,7 @@ impl HeaderValidator {
                     attack_type: AttackType::RequestSmuggling,
                     fingerprint: Some("invalid_header_value".to_string()),
                     matched_pattern: Some(format!("{}: {}", name_str, value_str)),
-                    input_location: InputLocation::Header(name_str.to_string()),
+                    input_location: InputLocation::Header(name_str.into()),
                 });
             }
         }
@@ -131,7 +131,7 @@ impl HeaderValidator {
                 attack_type: AttackType::RequestSmuggling,
                 fingerprint: Some("empty_host".to_string()),
                 matched_pattern: Some("Host header is empty".to_string()),
-                input_location: InputLocation::Header("host".to_string()),
+                input_location: InputLocation::Header("host".into()),
             });
         }
 
@@ -145,7 +145,7 @@ impl HeaderValidator {
                 attack_type: AttackType::RequestSmuggling,
                 fingerprint: Some("host_crlf_injection".to_string()),
                 matched_pattern: Some(host_str.to_string()),
-                input_location: InputLocation::Header("host".to_string()),
+                input_location: InputLocation::Header("host".into()),
             });
         }
 
@@ -176,8 +176,8 @@ impl HeaderValidator {
                 return Some(AttackDetectionResult {
                     attack_type: AttackType::RequestSmuggling,
                     fingerprint: Some("duplicate_header".to_string()),
-                    matched_pattern: Some(matched.clone()),
-                    input_location: InputLocation::Header(matched),
+                    matched_pattern: Some(matched),
+                    input_location: InputLocation::Header(name_str.into()),
                 });
             }
         }

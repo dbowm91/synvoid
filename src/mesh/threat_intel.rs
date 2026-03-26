@@ -1,4 +1,4 @@
-#![allow(unused_variables, dead_code)]
+#![allow(unused_variables)]
 
 use std::collections::HashMap;
 use std::net::IpAddr;
@@ -235,10 +235,7 @@ impl ThreatIntelligenceManager {
         ban_expire_seconds: u64,
         site_scope: String,
     ) {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = crate::mesh::safe_unix_timestamp();
 
         let indicator = ThreatIndicator {
             threat_type: ThreatType::IpBlock,
@@ -290,10 +287,7 @@ impl ThreatIntelligenceManager {
         ttl_seconds: Option<u64>,
         site_scope: &str,
     ) {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = crate::mesh::safe_unix_timestamp();
 
         let indicator = ThreatIndicator {
             threat_type,
@@ -343,10 +337,7 @@ impl ThreatIntelligenceManager {
         window_secs: u64,
         site_scope: String,
     ) {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = crate::mesh::safe_unix_timestamp();
 
         let ttl = window_secs.max(self.config.min_ttl_seconds);
 
@@ -402,10 +393,7 @@ impl ThreatIntelligenceManager {
         severity: ThreatSeverity,
         site_scope: String,
     ) {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = crate::mesh::safe_unix_timestamp();
 
         let ttl = match severity {
             ThreatSeverity::Critical => 7200,
@@ -523,10 +511,7 @@ impl ThreatIntelligenceManager {
 
         let key = format!("{}:{}", indicator.site_scope, indicator.indicator_value);
 
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = crate::mesh::safe_unix_timestamp();
 
         let expires_at = indicator.timestamp + indicator.ttl_seconds;
         if now > expires_at {
@@ -722,10 +707,7 @@ impl ThreatIntelligenceManager {
     }
 
     pub fn cleanup_expired(&self) {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = crate::mesh::safe_unix_timestamp();
 
         let mut indicators = self.indicators.write();
         indicators.retain(|_, entry| {
