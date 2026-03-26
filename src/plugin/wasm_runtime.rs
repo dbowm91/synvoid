@@ -28,8 +28,11 @@ impl Default for WasmResourceLimits {
 }
 
 pub struct WasmRuntime {
+    #[allow(dead_code)] // Reserved for WASM execution
     engine: Engine,
+    #[allow(dead_code)]
     module: Module,
+    #[allow(dead_code)]
     limits: WasmResourceLimits,
     name: String,
 }

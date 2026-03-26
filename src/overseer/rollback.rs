@@ -6,6 +6,7 @@ use super::upgrade::Orchestrator;
 
 pub struct RollbackManager {
     persistence: Persistence,
+    #[allow(dead_code)] // Reserved for future backup and rollback operations
     data_dir: PathBuf,
 }
 

@@ -295,6 +295,7 @@ pub struct AccessDecision {
 }
 
 pub struct MeshDataEncryption {
+    #[allow(dead_code)] // Reserved for configurable data encryption
     config: Arc<MeshConfig>,
     encryption_key: Arc<RwLock<Option<[u8; 32]>>>,
 }

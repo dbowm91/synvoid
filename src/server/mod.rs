@@ -52,6 +52,7 @@ pub struct UnifiedServer {
     tls_config: InternalTlsConfig,
     http3_config: Http3Config,
     cert_resolver: Option<Arc<CertResolver>>,
+    #[allow(dead_code)] // Reserved for future tunnel support
     tunnel_manager: Option<Arc<TunnelManager>>,
     tunnel_router: Option<Arc<Mutex<TunnelRouter>>>,
     tunnel_config: Option<TunnelConfig>,

@@ -1,3 +1,10 @@
+//! Admin dashboard and API for MaluWAF.
+//!
+//! Exposes an HTTP/HTTPS management interface built on Axum, providing
+//! site configuration, user management, metrics, alerting, WebSocket
+//! broadcasting, and OpenAPI documentation. Handles authentication,
+//! rate limiting, CSRF protection, and CORS via middleware layers.
+
 mod auth;
 mod state;
 mod ws;
@@ -114,7 +121,7 @@ pub fn create_admin_router(
 }
 
 pub async fn create_admin_router_with_state(state: Arc<AdminState>) -> Router {
-    let cfg = state.config.read().await;
+    let cfg = state.process.config.read().await;
     let admin_cors_config = cfg.main.admin.cors.clone();
     let rate_limit_config = cfg.main.admin.rate_limit.clone();
     drop(cfg);
@@ -315,7 +322,7 @@ pub async fn start_admin_server(
     
     if let Some(pm) = process_manager {
         let state_for_metrics = admin_state.clone();
-        let alert_manager = admin_state.alert_manager.clone();
+        let alert_manager = admin_state.process.alert_manager.clone();
         tokio::spawn(async move {
             start_metrics_publisher(state_for_metrics, pm, alert_manager, shutdown_rx).await;
         });

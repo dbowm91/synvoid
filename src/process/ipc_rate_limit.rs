@@ -9,6 +9,7 @@ pub struct IpcRateLimiter {
 
 struct IpcRateLimiterInner {
     max_messages_per_second: u64,
+    #[allow(dead_code)] // Reserved for future burst configuration
     max_burst: u64,
     tokens: Mutex<TokenBucket>,
     worker_message_counts: Mutex<std::collections::HashMap<u64, WorkerMessageState>>,

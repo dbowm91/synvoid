@@ -1,3 +1,11 @@
+//! Reverse proxy and request forwarding.
+//!
+//! Handles proxied HTTP/HTTPS requests end-to-end: upstream selection
+//! with load balancing, header filtering (stripping hop-by-hop and
+//! information-leaking headers), proxy caching, retry with backoff,
+//! request buffering, and metrics collection. Integrates with the WAF
+//! for attack detection before forwarding.
+
 use http::{header::HeaderName, Method, Response};
 use ::metrics::{counter, histogram};
 use std::sync::Arc;

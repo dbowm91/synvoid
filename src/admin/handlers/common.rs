@@ -14,7 +14,7 @@ pub fn check_rate_limit(
     state: &super::super::state::AdminState,
     ip: &str,
 ) -> Result<(), axum::http::StatusCode> {
-    if let Some(ref limiter) = state.rate_limiter {
+    if let Some(ref limiter) = state.security.rate_limiter {
         if !limiter.check(ip) {
             tracing::warn!("Admin API rate limit exceeded for IP: {}", ip);
             return Err(axum::http::StatusCode::TOO_MANY_REQUESTS);

@@ -1,21 +1,12 @@
 use crate::mesh::transport::*;
 use super::*;
-use std::collections::HashMap;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use bytes::Bytes;
-use dashmap::DashMap;
-use futures::future::join_all;
-use base64::Engine;
-use parking_lot::RwLock;
 use rand::Rng;
-use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
-use quinn::{Connection, SendStream, RecvStream};
+use quinn::SendStream;
 
-use crate::mesh::protocol::{{MeshMessage, MeshPeerInfo, UpstreamInfo, RouteQueryResult, ProviderInfo, MESH_MESSAGE_VERSION}};
-use crate::mesh::topology::{{MeshTopology, PeerStatus}};
-use crate::mesh::config::{{MeshConfig, MeshPeerConfig}};
+use crate::mesh::protocol::{MeshMessage, RouteQueryResult, ProviderInfo};
+use crate::mesh::topology::MeshTopology;
 
 
 impl MeshTransport {
@@ -400,7 +391,7 @@ impl MeshTransport {
     pub(crate) async fn wait_for_route_event(
         &self,
         upstream_id: &str,
-        timeout: Duration,
+        _timeout: Duration,
     ) -> Option<RouteQueryResult> {
         // First check if already cached (fast path)
         if let Some(cached) = self.topology.get_cached_route(upstream_id).await {

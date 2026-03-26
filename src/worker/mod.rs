@@ -354,6 +354,7 @@ struct StaticWorkerState {
     config_manager: Arc<std::sync::RwLock<ConfigManager>>,
     minifier_caches: Arc<std::sync::RwLock<HashMap<String, Arc<minifier::MinifierCache>>>>,
     compression_queue: Arc<std::sync::RwLock<Vec<CompressionTask>>>,
+    #[allow(dead_code)] // Reserved for future request ID tracking
     next_request_id: Arc<std::sync::atomic::AtomicU64>,
 }
 

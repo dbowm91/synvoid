@@ -51,6 +51,7 @@ fn connect_to_static_worker(_socket_path: &PathBuf) -> io::Result<IpcStream> {
 pub struct MinifierClient {
     socket_path: PathBuf,
     timeout_ms: u64,
+    #[allow(dead_code)] // Reserved for future request tracking and concurrency limiting
     pending_requests: Arc<RwLock<Vec<(u64, std::time::Instant)>>>,
 }
 

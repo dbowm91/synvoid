@@ -1,5 +1,12 @@
 #![no_main]
 
+//! Fuzz target for IPC message handling.
+//!
+//! Tests deserialization and validation of [`maluwaf::process::Message`]
+//! variants from arbitrary byte input, including signed IPC messages
+//! with randomly generated keys. Verifies that malformed input is
+//! rejected without panicking.
+
 use libfuzzer_sys::fuzz_target;
 use maluwaf::process::ipc_signed::{IpcSigner, SignedIpcMessage};
 use maluwaf::process::{ErrorCode, ErrorSeverity, Message, WorkerId};

@@ -94,7 +94,7 @@ pub async fn get_master_status(
     )
 )]
 pub async fn get_system_info(
-    State(state): State<Arc<AdminState>>,
+    State(_state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<SystemInfoResponse>, StatusCode> {
 
@@ -148,7 +148,7 @@ pub async fn get_workers(
     _auth: OptionalAuth,
 ) -> Result<Json<Vec<WorkerStatusResponse>>, StatusCode> {
 
-    let pm = state.process_manager.as_ref().ok_or(StatusCode::NOT_FOUND)?;
+    let pm = state.process.process_manager.as_ref().ok_or(StatusCode::NOT_FOUND)?;
     let worker_metrics = pm.get_worker_metrics();
 
     let workers: Vec<WorkerStatusResponse> = worker_metrics
@@ -200,7 +200,7 @@ pub async fn restart_worker(
     _auth: OptionalAuth,
 ) -> Result<Json<StatusResponse>, StatusCode> {
 
-    let _pm = state.process_manager.as_ref().ok_or(StatusCode::NOT_FOUND)?;
+    let _pm = state.process.process_manager.as_ref().ok_or(StatusCode::NOT_FOUND)?;
     
     tracing::warn!("restart_worker endpoint called for {} but is not yet implemented", worker_id);
     
@@ -245,10 +245,10 @@ pub async fn get_worker_count(
     _auth: OptionalAuth,
 ) -> Result<Json<WorkerCountResponse>, StatusCode> {
 
-    let pm = state.process_manager.as_ref().ok_or(StatusCode::NOT_FOUND)?;
+    let pm = state.process.process_manager.as_ref().ok_or(StatusCode::NOT_FOUND)?;
     
     let current = pm.get_running_worker_count();
-    let config = state.config.read().await;
+    let config = state.process.config.read().await;
     let min = config.main.process_manager.min_workers;
     let max = config.main.process_manager.max_workers;
 
@@ -279,10 +279,10 @@ pub async fn scale_workers(
     Json(req): Json<ScaleWorkersRequest>,
 ) -> Result<Json<ScaleWorkersResponse>, StatusCode> {
 
-    let pm = state.process_manager.as_ref().ok_or(StatusCode::NOT_FOUND)?;
+    let pm = state.process.process_manager.as_ref().ok_or(StatusCode::NOT_FOUND)?;
     
     let current = pm.get_running_worker_count();
-    let config = state.config.read().await;
+    let config = state.process.config.read().await;
     let min_workers = config.main.process_manager.min_workers;
     let max_workers = config.main.process_manager.max_workers;
     
@@ -349,7 +349,7 @@ pub async fn get_overseer(
     _auth: OptionalAuth,
 ) -> Result<Json<OverseerStatusResponse>, StatusCode> {
 
-    let pm = state.process_manager.as_ref().ok_or(StatusCode::NOT_FOUND)?;
+    let pm = state.process.process_manager.as_ref().ok_or(StatusCode::NOT_FOUND)?;
     
     let running = pm.is_running();
     let master_pid = pm.get_master_pid();

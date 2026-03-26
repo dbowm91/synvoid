@@ -1,21 +1,4 @@
 use crate::mesh::transport::*;
-use super::*;
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-
-use bytes::Bytes;
-use dashmap::DashMap;
-use futures::future::join_all;
-use base64::Engine;
-use parking_lot::RwLock;
-use rand::Rng;
-use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
-use quinn::{Connection, SendStream, RecvStream};
-
-use crate::mesh::protocol::{{MeshMessage, MeshPeerInfo, UpstreamInfo, RouteQueryResult, ProviderInfo, MESH_MESSAGE_VERSION}};
-use crate::mesh::topology::{{MeshTopology, PeerStatus}};
-use crate::mesh::config::{{MeshConfig, MeshPeerConfig}};
 
 
 impl MeshTransport {
@@ -153,7 +136,7 @@ impl MeshTransport {
         }
     }
 
-    pub(crate) async fn get_effective_read_threshold(&self, peer_id: &str) -> i64 {
+    pub(crate) async fn get_effective_read_threshold(&self, _peer_id: &str) -> i64 {
         if let Some(override_val) = self.config.dht.as_ref().and_then(|d| d.manual_threshold_override) {
             return override_val;
         }
@@ -172,7 +155,7 @@ impl MeshTransport {
             .unwrap_or(10)
     }
 
-    pub(crate) async fn get_effective_write_threshold(&self, peer_id: &str) -> i64 {
+    pub(crate) async fn get_effective_write_threshold(&self, _peer_id: &str) -> i64 {
         if let Some(override_val) = self.config.dht.as_ref().and_then(|d| d.manual_threshold_override) {
             return override_val;
         }
@@ -221,7 +204,7 @@ impl MeshTransport {
         from_peer: &str,
         request_id: &str,
         target_node_id: Vec<u8>,
-        requester_node_id: &str,
+        _requester_node_id: &str,
     ) {
         tracing::debug!("Received FindNode from {} for target of length {}", from_peer, target_node_id.len());
 

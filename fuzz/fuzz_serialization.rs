@@ -1,5 +1,11 @@
 #![no_main]
 
+//! Fuzz target for serialization roundtrips.
+//!
+//! Feeds arbitrary byte slices into postcard deserialization for common
+//! types (String, Vec\<u8\>, HashMap, integers) and verifies that
+//! serialize/deserialize roundtrips do not panic on malformed input.
+
 use libfuzzer_sys::fuzz_target;
 use maluwaf::serialization::{deserialize, serialize};
 

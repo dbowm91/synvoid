@@ -364,7 +364,7 @@ pub async fn create_backup(
     )
 )]
 pub async fn list_backups(
-    State(state): State<Arc<AdminState>>,
+    State(_state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<BackupsListResponse>, StatusCode> {
 
@@ -404,7 +404,7 @@ pub struct DeleteBackupQuery {
     )
 )]
 pub async fn delete_backup(
-    State(state): State<Arc<AdminState>>,
+    State(_state): State<Arc<AdminState>>,
     Query(query): Query<DeleteBackupQuery>,
     _auth: OptionalAuth,
 ) -> Result<Json<StatusResponse>, StatusCode> {

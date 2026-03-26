@@ -157,6 +157,7 @@ struct TransformCacheEntry {
     body: Bytes,
     content_encoding: Option<String>,
     content_type: Option<String>,
+    #[allow(dead_code)] // Reserved for cache TTL management
     created_at: Instant,
 }
 

@@ -1,3 +1,11 @@
+//! Request routing and domain resolution.
+//!
+//! Maps incoming requests to site configurations based on the `Host`
+//! header, supporting exact domain matching, suffix/wildcard matching,
+//! and per-listener default sites. Resolves backend targets (upstream
+//! pools, FastCGI, static files, QUIC tunnels) and integrates with
+//! the static file handler and minifier.
+
 use crate::config::site::BackendConfig;
 use crate::config::{MainConfig, SiteConfig};
 use crate::mesh::config::{
@@ -292,9 +300,10 @@ impl Router {
         let site_id = site_config.site_id();
 
         if site_config.security.reject_unknown_hosts.unwrap_or(false)
-            && !self.is_host_valid_for_site(&site_id, site_config) {
-                return RouteResult::NotFound("Host not allowed".to_string());
-            }
+            && !self.is_host_valid_for_site(&site_id, site_config)
+        {
+            return RouteResult::NotFound("Host not allowed".to_string());
+        }
 
         if let Some(ref backend) = site_config.proxy.backend {
             match backend {

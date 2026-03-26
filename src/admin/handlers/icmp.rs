@@ -34,6 +34,7 @@ pub struct IcmpConfigResponse {
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UpdateIcmpConfigRequest {
+    #[allow(dead_code)] // Reserved for ICMP configuration updates
     pub config: serde_json::Value,
 }
 
@@ -153,7 +154,7 @@ pub async fn get_config(
     _auth: OptionalAuth,
 ) -> Result<Json<IcmpConfigResponse>, StatusCode> {
 
-    let config = state.config.read().await;
+    let config = state.process.config.read().await;
 
     #[cfg(feature = "icmp-filter")]
     {
@@ -226,7 +227,7 @@ pub async fn update_config(
         }
 
         {
-            let mut config = state.config.write().await;
+            let mut config = state.process.config.write().await;
             let icmp_cfg = icmp_filter.read().await;
             if let Some(cfg) = icmp_cfg.config() {
                 config.main.icmp_filter = cfg.clone();
@@ -386,7 +387,7 @@ pub async fn list_backends(
     #[cfg(feature = "icmp-filter")]
     {
         let backends = crate::icmp_filter::available_backends();
-        let current = state.icmp_filter.as_ref().and_then(|f| {
+        let current = state.honeypot.icmp_filter.as_ref().and_then(|f| {
             let cfg = f.blocking_read();
             cfg.config().map(|c| format!("{:?}", c.filter_type))
         });

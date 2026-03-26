@@ -39,7 +39,7 @@ pub async fn list_sites(
     _auth: OptionalAuth,
 ) -> Result<Json<Vec<SiteInfo>>, StatusCode> {
 
-    let config = state.config.read().await;
+    let config = state.process.config.read().await;
     
     let sites: Vec<SiteInfo> = config.sites.iter().map(|(id, site)| {
         SiteInfo {
@@ -72,7 +72,7 @@ pub async fn get_site(
     Path(site_id): Path<String>,
 ) -> Result<Json<SiteDetail>, StatusCode> {
 
-    let config = state.config.read().await;
+    let config = state.process.config.read().await;
     
     match config.sites.get(&site_id) {
         Some(site) => {
@@ -133,7 +133,7 @@ pub async fn create_site(
     };
 
     let config_path = {
-        let cfg = state.config.read().await;
+        let cfg = state.process.config.read().await;
         config_path(&cfg.sites_dir, &site_id)
     };
     
@@ -143,7 +143,7 @@ pub async fn create_site(
     let toml_content_for_broadcast = toml_content.clone();
 
     // Hold write lock across both file write and in-memory update to prevent TOCTOU
-    let _guard = state.config_write_lock.write().await;
+    let _guard = state.metrics.config_write_lock.write().await;
     tokio::fs::write(&config_path, toml_content)
         .await
         .map_err(|e| {
@@ -151,7 +151,7 @@ pub async fn create_site(
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
-    let mut config = state.config.write().await;
+    let mut config = state.process.config.write().await;
     config.load_site(config_path.clone())
         .map_err(|e| {
             tracing::error!("Failed to load new site: {}", e);
@@ -162,7 +162,7 @@ pub async fn create_site(
     drop(config);
     drop(_guard);
 
-    if let Some(ref mesh_transport) = state.mesh_transport {
+    if let Some(ref mesh_transport) = state.mesh.mesh_transport {
         let mesh_transport_clone = mesh_transport.clone();
         let version = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -207,12 +207,12 @@ pub async fn delete_site(
 ) -> Result<StatusCode, StatusCode> {
 
     let config_path = {
-        let cfg = state.config.read().await;
+        let cfg = state.process.config.read().await;
         config_path(&cfg.sites_dir, &site_id)
     };
 
     // Hold write lock across both file removal and in-memory update to prevent TOCTOU
-    let _guard = state.config_write_lock.write().await;
+    let _guard = state.metrics.config_write_lock.write().await;
     tokio::fs::remove_file(&config_path)
         .await
         .map_err(|e| {
@@ -220,7 +220,7 @@ pub async fn delete_site(
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
-    let mut config = state.config.write().await;
+    let mut config = state.process.config.write().await;
     config.sites.remove(&site_id);
 
     Ok(StatusCode::NO_CONTENT)
@@ -264,7 +264,7 @@ pub async fn update_site(
     }
 
     let config_path = {
-        let cfg = state.config.read().await;
+        let cfg = state.process.config.read().await;
         config_path(&cfg.sites_dir, &site_id)
     };
 
@@ -277,7 +277,7 @@ pub async fn update_site(
     let toml_content_for_broadcast = toml_content.clone();
 
     // Hold write lock across both file write and in-memory update to prevent TOCTOU
-    let _guard = state.config_write_lock.write().await;
+    let _guard = state.metrics.config_write_lock.write().await;
     tokio::fs::write(&config_path, toml_content)
         .await
         .map_err(|e| {
@@ -285,7 +285,7 @@ pub async fn update_site(
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
-    let mut state_config = state.config.write().await;
+    let mut state_config = state.process.config.write().await;
     state_config.sites.insert(site_id.clone(), config.clone());
 
     let site_id_for_broadcast = site_id.clone();
@@ -296,7 +296,7 @@ pub async fn update_site(
     drop(state_config);
     drop(_guard);
 
-    if let Some(ref mesh_transport) = state.mesh_transport {
+    if let Some(ref mesh_transport) = state.mesh.mesh_transport {
         let mesh_transport_clone = mesh_transport.clone();
         
         tokio::spawn(async move {
@@ -354,7 +354,7 @@ pub async fn get_site_theme(
     Path(site_id): Path<String>,
 ) -> Result<Json<SiteThemeResponse>, StatusCode> {
 
-    let config = state.config.read().await;
+    let config = state.process.config.read().await;
     
     let site = config.sites.get(&site_id)
         .ok_or(StatusCode::NOT_FOUND)?;
@@ -390,8 +390,8 @@ pub async fn update_site_theme(
 ) -> Result<Json<SiteThemeResponse>, StatusCode> {
 
     // Hold write lock across both in-memory update and file write to prevent TOCTOU
-    let _guard = state.config_write_lock.write().await;
-    let mut config = state.config.write().await;
+    let _guard = state.metrics.config_write_lock.write().await;
+    let mut config = state.process.config.write().await;
 
     let site = config.sites.get_mut(&site_id)
         .ok_or(StatusCode::NOT_FOUND)?;
@@ -417,7 +417,7 @@ pub async fn update_site_theme(
     drop(config);
 
     let config_path = {
-        let cfg = state.config.read().await;
+        let cfg = state.process.config.read().await;
         config_path(&cfg.sites_dir, &site_id)
     };
     let toml_content = toml::to_string_pretty(&site_config)

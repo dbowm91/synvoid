@@ -1,19 +1,13 @@
 use crate::mesh::transport::*;
 use super::*;
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use bytes::Bytes;
 use dashmap::DashMap;
-use futures::future::join_all;
-use base64::Engine;
 use parking_lot::RwLock;
-use rand::Rng;
-use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
-use quinn::{Connection, SendStream, RecvStream};
+use tokio::sync::broadcast;
 
-use crate::mesh::protocol::{{MeshMessage, MeshPeerInfo, UpstreamInfo, RouteQueryResult, ProviderInfo, MESH_MESSAGE_VERSION}};
+use crate::mesh::protocol::MeshMessage;
 use crate::mesh::topology::{{MeshTopology, PeerStatus}};
 use crate::mesh::config::{{MeshConfig, MeshPeerConfig}};
 
@@ -196,7 +190,7 @@ impl MeshTransport {
                     None,
                 ).await;
 
-                let local_id = *rm.local_node_id_hash();
+                let _local_id = *rm.local_node_id_hash();
                 let request_id = format!("dht-ping-{}", uuid::Uuid::new_v4());
                 
                 let ping = MeshMessage::Ping {

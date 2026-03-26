@@ -136,7 +136,7 @@ pub async fn get_theme(
     _auth: OptionalAuth,
 ) -> Result<Json<ThemeResponse>, StatusCode> {
 
-    let config = state.config.read().await;
+    let config = state.process.config.read().await;
     let theme = &config.main.defaults.theme;
     Ok(Json(build_theme_response(theme)))
 }
@@ -156,7 +156,7 @@ pub async fn update_theme(
     Json(req): Json<UpdateThemeRequest>,
 ) -> Result<Json<ThemeResponse>, StatusCode> {
 
-    let mut config = state.config.write().await;
+    let mut config = state.process.config.write().await;
     
     if let Some(preset) = req.preset {
         config.main.defaults.theme.preset = preset;
@@ -185,7 +185,7 @@ pub async fn update_theme(
     let main_config_path = config_dir.join("main.toml");
 
     {
-        let _guard = state.config_write_lock.write().await;
+        let _guard = state.metrics.config_write_lock.write().await;
         tokio::fs::write(&main_config_path, toml_content)
             .await
             .map_err(|e| {
@@ -211,7 +211,7 @@ pub async fn get_theme_css(
     _auth: OptionalAuth,
 ) -> Result<String, StatusCode> {
 
-    let config = state.config.read().await;
+    let config = state.process.config.read().await;
     let theme_config: ThemeConfig = config.main.defaults.theme.clone().into();
     let renderer = ThemeRenderer::new(theme_config);
     Ok(renderer.generate_css())

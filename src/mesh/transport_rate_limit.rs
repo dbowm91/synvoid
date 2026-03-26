@@ -1,22 +1,5 @@
 use crate::mesh::transport::*;
-use super::*;
-use std::collections::HashMap;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
-
-use bytes::Bytes;
-use dashmap::DashMap;
-use futures::future::join_all;
-use base64::Engine;
-use parking_lot::RwLock;
-use rand::Rng;
-use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
-use quinn::{Connection, SendStream, RecvStream};
-
-use crate::mesh::protocol::{{MeshMessage, MeshPeerInfo, UpstreamInfo, RouteQueryResult, ProviderInfo, MESH_MESSAGE_VERSION}};
-use crate::mesh::topology::{{MeshTopology, PeerStatus}};
-use crate::mesh::config::{{MeshConfig, MeshPeerConfig}};
-
 
 impl MeshTransport {
     pub(crate) fn verify_auth_token(&self, node_id: &str, token: &str) -> bool {
@@ -34,18 +17,25 @@ impl MeshTransport {
         let now = Instant::now();
         let window = Duration::from_secs(self.config.connection.auth_failure_window_secs);
         let max_failures = self.config.connection.max_auth_failures;
-        
+
         let mut failures = self.auth_failures.write();
         let node_failures = failures.entry(node_id.to_string()).or_default();
-        
+
         node_failures.retain(|t| now.duration_since(*t) < window);
-        
+
         if node_failures.len() >= max_failures {
-            tracing::error!("Node {} blocked due to repeated authentication failures", node_id);
+            tracing::error!(
+                "Node {} blocked due to repeated authentication failures",
+                node_id
+            );
             node_failures.push(now);
         } else {
             node_failures.push(now);
-            tracing::warn!("Authentication failure for node {} ({} failures)", node_id, node_failures.len());
+            tracing::warn!(
+                "Authentication failure for node {} ({} failures)",
+                node_id,
+                node_failures.len()
+            );
         }
     }
 
@@ -53,15 +43,16 @@ impl MeshTransport {
         let now = Instant::now();
         let window = Duration::from_secs(self.config.connection.auth_failure_window_secs);
         let max_failures = self.config.connection.max_auth_failures;
-        
+
         let failures = self.auth_failures.read();
         if let Some(node_failures) = failures.get(node_id) {
-            let recent_failures: Vec<_> = node_failures.iter()
+            let recent_failures: Vec<_> = node_failures
+                .iter()
                 .filter(|t| now.duration_since(**t) < window)
                 .collect();
             return recent_failures.len() >= max_failures;
         }
-        
+
         false
     }
 
@@ -73,20 +64,25 @@ impl MeshTransport {
     pub(crate) fn check_peer_rate_limit(&self, peer_id: &str) -> bool {
         let now = Instant::now();
         let window = Duration::from_secs(PEER_RATE_LIMIT_WINDOW_SECS);
-        
+
         let max_rate = self.config.routing.mesh_messages_per_sec * 60;
-        
+
         let mut times = self.peer_message_times.write();
         let peer_times = times.entry(peer_id.to_string()).or_default();
-        
+
         peer_times.retain(|t| now.duration_since(*t) < window);
-        
+
         if peer_times.len() >= max_rate {
-            tracing::warn!("Peer {} rate limit exceeded: {} messages in {}s (limit: {})", 
-                peer_id, peer_times.len(), PEER_RATE_LIMIT_WINDOW_SECS, max_rate);
+            tracing::warn!(
+                "Peer {} rate limit exceeded: {} messages in {}s (limit: {})",
+                peer_id,
+                peer_times.len(),
+                PEER_RATE_LIMIT_WINDOW_SECS,
+                max_rate
+            );
             return false;
         }
-        
+
         peer_times.push(now);
         true
     }
@@ -103,7 +99,7 @@ impl MeshTransport {
 
     pub(crate) fn cleanup_rate_limit_state(&self) {
         let now = Instant::now();
-        
+
         {
             let mut failures = self.auth_failures.write();
             let window = Duration::from_secs(self.config.connection.auth_failure_window_secs);
@@ -112,7 +108,7 @@ impl MeshTransport {
             }
             failures.retain(|_, v| !v.is_empty());
         }
-        
+
         {
             let mut times = self.peer_message_times.write();
             let window = Duration::from_secs(PEER_RATE_LIMIT_WINDOW_SECS);
@@ -122,5 +118,4 @@ impl MeshTransport {
             times.retain(|_, v| !v.is_empty());
         }
     }
-
 }

@@ -15,14 +15,14 @@ pub async fn ws_metrics_handler(
     ws: WebSocketUpgrade,
     State(state): State<Arc<AdminState>>,
 ) -> Response {
-    ws.on_upgrade(move |socket| handle_metrics_socket(socket, state.metrics_broadcaster.clone()))
+    ws.on_upgrade(move |socket| handle_metrics_socket(socket, state.metrics.metrics_broadcaster.clone()))
 }
 
 pub async fn ws_logs_handler(
     ws: WebSocketUpgrade,
     State(state): State<Arc<AdminState>>,
 ) -> Response {
-    ws.on_upgrade(move |socket| handle_logs_socket(socket, state.logs_broadcaster.clone()))
+    ws.on_upgrade(move |socket| handle_logs_socket(socket, state.metrics.logs_broadcaster.clone()))
 }
 
 async fn handle_metrics_socket(socket: WebSocket, broadcaster: Arc<broadcaster::Broadcaster>) {

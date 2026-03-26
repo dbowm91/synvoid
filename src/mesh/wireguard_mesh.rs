@@ -26,6 +26,7 @@ pub struct WireGuardMeshPeer {
 
 pub struct WireGuardMeshRuntime {
     config: Arc<MeshWireGuardConfig>,
+    #[allow(dead_code)] // Reserved for WireGuard runtime management
     runtime: WireGuardRuntime,
     peers: Arc<DashMap<String, WireGuardMeshPeer>>,
     running: Arc<RwLock<bool>>,

@@ -17,6 +17,7 @@ struct IpcConnectionPoolInner {
 #[derive(Clone)]
 struct PoolConfig {
     max_connections_per_endpoint: usize,
+    #[allow(dead_code)] // Reserved for future connection lifetime management
     connection_ttl: Duration,
 }
 
@@ -105,9 +106,12 @@ impl IpcConnectionPool {
 }
 
 pub struct ConnectionPermit {
+    #[allow(dead_code)] // Reserved for future permit tracking
     endpoint_name: String,
     active_counter: Arc<AtomicUsize>,
+    #[allow(dead_code)] // Reserved for future connection statistics
     total_counter: Arc<AtomicU64>,
+    #[allow(dead_code)] // Reserved for future connection lifetime tracking
     acquired_at: Instant,
 }
 

@@ -57,7 +57,7 @@ pub struct LogsResponse {
     )
 )]
 pub async fn get_logs(
-    State(state): State<Arc<AdminState>>,
+    State(_state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Query(_query): Query<LogsQuery>,
 ) -> Result<Json<LogsResponse>, StatusCode> {
@@ -90,7 +90,7 @@ pub struct ErrorPageResponse {
     )
 )]
 pub async fn list_error_pages(
-    State(state): State<Arc<AdminState>>,
+    State(_state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<Vec<ErrorPageResponse>>, StatusCode> {
 
@@ -124,7 +124,7 @@ pub async fn list_error_pages(
     )
 )]
 pub async fn get_error_page(
-    State(state): State<Arc<AdminState>>,
+    State(_state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Path(code): Path<u16>,
 ) -> Result<Json<ErrorPageResponse>, StatusCode> {
@@ -142,7 +142,9 @@ pub async fn get_error_page(
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UpdateErrorPageRequest {
     pub title: Option<String>,
+    #[allow(dead_code)] // Reserved for future error page customization
     pub message: Option<String>,
+    #[allow(dead_code)]
     pub content: Option<String>,
 }
 
@@ -164,7 +166,7 @@ pub struct UpdateErrorPageRequest {
     )
 )]
 pub async fn update_error_page(
-    State(state): State<Arc<AdminState>>,
+    State(_state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Path(code): Path<u16>,
     Json(payload): Json<UpdateErrorPageRequest>,

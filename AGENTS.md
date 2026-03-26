@@ -212,9 +212,10 @@ let events = manager.process_rfc5011_updates();
 ## Remediation Plan Status
 
 - **Phases 1-7:** Completed. See `plan.md` for details and completion notes.
-- **Deferred items:** ~75 remaining items organized into Waves 1-3 in `deferred.md`.
-- **Start with:** `deferred.md` Phase 8 (quick wins), then proceed by wave.
-- **Key insight:** Waves 1 phases (8-13, 16) run in parallel on different subsystems. Wall-clock is ~17 days vs ~32-49 sequential.
+- **Waves 1-4:** Completed. See `deferred.md` completion notes.
+- **Wave 5:** Planned — 6 remaining actionable items in `deferred.md` (Phases 23-28).
+- **Deferred indefinitely:** ~7 items blocked on upstream changes or design decisions (see `deferred.md` Phase 17).
+- **Key insight:** All wave phases run in parallel on different subsystems. Wave 5 wall-clock is ~2 days.
 
 ## Important Notes
 
@@ -725,36 +726,71 @@ But it also matches similar-looking blocks. Always verify with `grep` after. The
 
 **bcrypt fallback:** `bcrypt::hash()` can fail. Don't return the raw token as the "hash" (auth becomes plaintext comparison silently). Use a marker prefix like `__plaintext__:` so `verify_admin_token` can detect the fallback mode.
 
-### Wave 4 Plan (deferred.md)
+### Wave 4 Completion Notes (2026-03-26)
 
-Wave 4 is planned but not yet executed. It covers:
-- Phase 18: AdminState god object split (22 fields → 6 sub-structs)
-- Phase 19: Mesh module splits (protocol.rs 5,263 lines, record_store.rs 2,393, config.rs 2,217)
-- Phase 20: Clippy warning reduction (~307 remaining)
-- Phase 21: Dead field cleanup (36 remaining)
-- Phase 22: Documentation and fuzzing
+All 5 phases completed. 76 files changed, 496 insertions, 7,329 deletions.
 
-All 5 phases can run in parallel. Phase 19 (mesh splits) is the critical path at 3-4 days.
+**Phase 18 — AdminState Split:**
+- 22 fields → 6 sub-structs (`MetricsState`, `WafTrackingState`, `SecurityState`, `MeshState`, `HoneypotState`, `ProcessState`)
+- All 132 consumer access paths updated across 12 handler files
+- `with_*` builder methods updated to use sub-struct paths
+
+**Phase 19 — Mesh God Object Splits:**
+- `protocol.rs` 5,263→1,196 lines (4 new submodules: `protocol_types.rs`, `protocol_message.rs`, `protocol_proto_decode.rs`, `protocol_proto_encode.rs`)
+- `config.rs` 2,217→1,450 lines (4 new submodules: `config_mesh.rs`, `config_identity.rs`, `config_defaults.rs`, `config_conversion.rs`)
+- `record_store.rs` was already split (312 lines, 4 submodules from prior waves)
+- `dht/record_store_crud.rs` — 2 methods changed to `pub(crate)` after clippy auto-fix broke visibility
+
+**Phase 20 — Clippy Warnings:**
+- Reduced from 307→88 warnings (71% reduction)
+- `cargo fix` auto-resolved 168+ warnings (unused imports, variables, patterns)
+- Side effect: `can_cache_on_edge` and `store_record_global` in `record_store_crud.rs` were made private — fixed manually with `pub(crate)`
+
+**Phase 21 — Dead Fields:**
+- Reduced from 36→0 warnings (resolved by Phase 20's `cargo fix`)
+
+**Phase 22 — Documentation:**
+- Rustdoc added to 8 modules: `mesh/mod.rs` (NOT done — see Wave 5), `admin/mod.rs`, `auth/mod.rs`, `proxy.rs`, `tls/mod.rs`, `supervisor/mod.rs`, `master/mod.rs`, `router.rs`
+- Fuzz target docs added to 3 files
+- All 59 `unsafe` blocks already had `// SAFETY:` comments
+
+**Key lessons:**
+- **Clippy auto-fix can break visibility.** `cargo fix` changed method visibility from `fn` to private in submodules. Always verify cross-module method access after auto-fixes.
+- **AdminState sub-struct naming.** The agent used `state.metrics.*` (not `state.metrics_state.*`). This matches the plan's intent but the sub-struct field name (`metrics`) collides conceptually with the inner `metrics` field of `MetricsState`. Access pattern is `state.metrics.metrics` which reads oddly but compiles.
+- **Config write TOCTOU still partially present.** `config_write_lock` is held for disk writes but `update_overseer_config` and `update_supervisor_config` update in-memory state BEFORE acquiring the lock. See Wave 5 Phase 25.
+
+### Wave 5 Plan (deferred.md)
+
+Wave 5 covers remaining actionable items from the Phase 1-7 + Wave 1-4 audit:
+- Phase 23: Missing tests for `rule_feed.rs`, `endpoints.rs`, `config/mod.rs`
+- Phase 24: Wire `create_upstream_client` into `tls/server.rs` and `http/server.rs`
+- Phase 25: Fix config write TOCTOU in `admin/handlers/config.rs`
+- Phase 26: Replace 6 `.expect()` in PQ crypto test code
+- Phase 27: Audit 29 `#[allow(dead_code)]` in mesh files
+- Phase 28: Add `//!` rustdoc to `src/mesh/mod.rs`
+
+All 6 phases are independent. Wall-clock: ~2 days.
 
 ## Updated Module Size Guide
 
 | Module | Lines | Status |
 |--------|-------|--------|
-| `src/mesh/protocol.rs` | 5,263 | Needs split (Wave 4 Phase 19) |
-| `src/mesh/dht/record_store.rs` | 2,393 | Needs split (Wave 4 Phase 19) |
-| `src/mesh/config.rs` | 2,217 | Needs split (Wave 4 Phase 19) |
+| `src/mesh/protocol_proto_encode.rs` | 1,989 | Proto conversion (generated pattern, acceptable) |
 | `src/dns/dnssec.rs` | 2,152 | Above 1,500 but below threshold |
 | `src/mesh/transport.rs` | 1,897 | Split done (Wave 3) |
+| `src/mesh/config.rs` | 1,450 | Split done (Wave 4) |
+| `src/mesh/protocol.rs` | 1,196 | Split done (Wave 4) |
 | `src/dns/server/mod.rs` | 763 | Split done (Wave 3) |
 | `src/worker/mod.rs` | 786 | Split done (Wave 3) |
+| `src/admin/state.rs` | 561 | Split done (Wave 4) |
 
 ## Updated Known Bugs
 
 | Bug | Location | Status |
 |-----|----------|--------|
-| TLS: `skip_verify` not wired | `src/http_client/mod.rs` | ✅ Fixed (Wave 1 Phase 8.3.1 — was already wired, dead `from_config` had zero callers) |
-| Binary body in cache | `src/proxy.rs` | ✅ Fixed (Wave 1 Phase 9.1 — `HttpResponse.body` is now `Bytes`) |
-| Admin per-IP rate limiting bypass | `src/admin/handlers/common.rs` | ✅ Fixed (Wave 1 Phase 12 — middleware is single auth source) |
-| Config write TOCTOU | `src/admin/handlers/sites.rs` | ✅ Fixed (Wave 1 Phase 12.3 — lock held across write + in-memory update) |
-| Windows `std::io::Ordering` bug | `src/worker/mod.rs` | ✅ Fixed (Wave 2 — unified handler uses `is_running()`) |
-| Windows missing PoisonImageRequest | `src/worker/mod.rs` | ✅ Fixed (Wave 2 — unified handler supports all message types) |
+| TLS: `skip_verify` not wired (TLS/HTTP server paths) | `src/tls/server.rs:606`, `src/http/server.rs:121` | ⚠️ Partial — `proxy.rs` wired but TLS/HTTP servers still use `create_http_client_with_config` (Wave 5 Phase 24) |
+| Config write TOCTOU | `src/admin/handlers/config.rs:1266,1482` | ⚠️ Partial — `config_write_lock` exists but in-memory updates happen before lock in 2 handlers (Wave 5 Phase 25) |
+| Binary body in cache | `src/proxy.rs` | ✅ Fixed (Wave 1 Phase 9.1) |
+| Admin per-IP rate limiting bypass | `src/admin/handlers/common.rs` | ✅ Fixed (Wave 1 Phase 12) |
+| Windows `std::io::Ordering` bug | `src/worker/mod.rs` | ✅ Fixed (Wave 2) |
+| Windows missing PoisonImageRequest | `src/worker/mod.rs` | ✅ Fixed (Wave 2) |

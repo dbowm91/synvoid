@@ -1,3 +1,10 @@
+//! Master process management.
+//!
+//! Implements the parent (master) process that spawns and communicates
+//! with worker processes via IPC. Provides CLI command handlers
+//! (status, stop, rehash, token generation) and platform-specific
+//! IPC accept loops (Unix domain sockets, Windows named pipes).
+
 pub mod commands;
 pub mod ipc;
 

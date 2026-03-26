@@ -312,6 +312,7 @@ pub enum SecureConfigError {
 }
 
 pub struct SecurityEventLogger {
+    #[allow(dead_code)] // Reserved for configurable security event logging
     config: Arc<MeshConfig>,
     event_buffer: Arc<RwLock<Vec<SecurityEvent>>>,
     max_buffer_size: usize,

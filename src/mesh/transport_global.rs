@@ -1,21 +1,7 @@
 use crate::mesh::transport::*;
-use super::*;
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-
-use bytes::Bytes;
-use dashmap::DashMap;
-use futures::future::join_all;
 use base64::Engine;
-use parking_lot::RwLock;
-use rand::Rng;
-use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
-use quinn::{Connection, SendStream, RecvStream};
 
-use crate::mesh::protocol::{{MeshMessage, MeshPeerInfo, UpstreamInfo, RouteQueryResult, ProviderInfo, MESH_MESSAGE_VERSION}};
-use crate::mesh::topology::{{MeshTopology, PeerStatus}};
-use crate::mesh::config::{{MeshConfig, MeshPeerConfig}};
+use crate::mesh::protocol::MeshMessage;
 
 
 impl MeshTransport {
@@ -309,10 +295,10 @@ impl MeshTransport {
         }
         
         // Verify signature
-        let invitation_data = format!("{}:{}:{}:add_global", mesh_id, timestamp, expires_at);
-        let genesis_key = self.config.genesis_key()?;
+        let _invitation_data = format!("{}:{}:{}:add_global", mesh_id, timestamp, expires_at);
+        let _genesis_key = self.config.genesis_key()?;
         
-        let signature = match hex::decode(signature_hex) {
+        let _signature = match hex::decode(signature_hex) {
             Ok(s) => s,
             Err(_) => {
                 tracing::warn!("Invalid signature hex");
@@ -387,7 +373,7 @@ impl MeshTransport {
         session_id: &str,
         key_id: &str,
         mesh_id: &str,
-        client_x25519_pubkey: &str,
+        _client_x25519_pubkey: &str,
     ) {
         tracing::debug!("Handling key forward as origin for mesh={}", mesh_id);
 
@@ -518,7 +504,7 @@ impl MeshTransport {
         }
     }
 
-    pub(crate) async fn send_error_response(&self, peer_id: &str, session_id: &str, error: &str) {
+    pub(crate) async fn send_error_response(&self, _peer_id: &str, session_id: &str, error: &str) {
         tracing::error!("Key exchange error for session {}: {}", session_id, error);
     }
 
@@ -529,9 +515,9 @@ impl MeshTransport {
         key_id: &str,
         mesh_id: &str,
         origin_mesh_id: &str,
-        origin_ed25519_pubkey: &str,
-        server_x25519_pubkey: &str,
-        origin_signature: &[u8],
+        _origin_ed25519_pubkey: &str,
+        _server_x25519_pubkey: &str,
+        _origin_signature: &[u8],
     ) {
         tracing::debug!(
             "Received key signed from {}: session={} key={} mesh={} origin={}",

@@ -260,6 +260,7 @@ impl MeshSecurityChallengeManager {
 
 #[derive(Debug, Clone)]
 pub struct MeshAttackDetector {
+    #[allow(dead_code)] // Reserved for configurable attack detection
     config: Arc<MeshConfig>,
     suspicious_patterns: Arc<RwLock<Vec<SuspiciousPattern>>>,
     blocked_nodes: Arc<RwLock<std::collections::HashSet<String>>>,

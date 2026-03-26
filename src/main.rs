@@ -151,6 +151,7 @@ struct MasterState {
     upstream_error_tracker: Option<Arc<UpstreamErrorTracker>>,
     threat_level_manager: Option<Arc<ThreatLevelManager>>,
     rule_feed_manager: Option<Arc<RuleFeedManagerForWaf>>,
+    #[allow(dead_code)] // Reserved for master-level IP blocking
     block_store: Arc<BlockStore>,
     mesh_transport: Option<Arc<maluwaf::mesh::transport::MeshTransport>>,
 }

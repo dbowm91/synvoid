@@ -211,7 +211,7 @@ pub async fn list_mesh_nodes(
     let mut global_count = 0;
     let mut connected_count = 0;
 
-    let topology_opt = state.mesh_transport.as_ref().map(|t| t.get_topology());
+    let topology_opt = state.mesh.mesh_transport.as_ref().map(|t| t.get_topology());
     
     if let Some(topology) = topology_opt {
         let peers = topology.get_all_peers().await;
@@ -299,7 +299,7 @@ pub async fn get_mesh_node(
     _auth: OptionalAuth,
 ) -> Result<Json<MeshNodeInfo>, StatusCode> {
 
-    let topology_opt = state.mesh_transport.as_ref().map(|t| t.get_topology());
+    let topology_opt = state.mesh.mesh_transport.as_ref().map(|t| t.get_topology());
     
     if let Some(topology) = topology_opt {
         if let Some(peer) = topology.get_peer(&node_id).await {
@@ -362,7 +362,7 @@ pub async fn ban_ip(
     let duration = payload.duration_seconds.unwrap_or(0);
     let site_scope = payload.site_scope.unwrap_or_else(|| "global".to_string());
 
-    if let Some(transport) = &state.mesh_transport {
+    if let Some(transport) = &state.mesh.mesh_transport {
         if let Some(threat_intel) = transport.get_threat_intel() {
             let block_store = threat_intel.get_block_store();
             
@@ -422,7 +422,7 @@ pub async fn ban_mesh_id(
     };
     let duration = payload.duration_seconds.unwrap_or(0);
 
-    if let Some(transport) = &state.mesh_transport {
+    if let Some(transport) = &state.mesh.mesh_transport {
         if let Some(threat_intel) = transport.get_threat_intel() {
             let block_store = threat_intel.get_block_store();
             
@@ -477,7 +477,7 @@ pub async fn unban(
     let identifier = params.identifier;
     let ban_type = params.ban_type;
 
-    if let Some(transport) = &state.mesh_transport {
+    if let Some(transport) = &state.mesh.mesh_transport {
         if let Some(threat_intel) = transport.get_threat_intel() {
             let block_store = threat_intel.get_block_store();
 
@@ -531,7 +531,7 @@ pub async fn list_bans(
     let (limit, offset) = query.with_defaults(100, 500);
     let mut bans = Vec::new();
 
-    if let Some(transport) = &state.mesh_transport {
+    if let Some(transport) = &state.mesh.mesh_transport {
         if let Some(threat_intel) = transport.get_threat_intel() {
             let block_store = threat_intel.get_block_store();
             let entries = block_store.get_all_entries();
@@ -598,7 +598,7 @@ pub async fn get_mesh_status(
     let mut global_nodes = 0;
     let mut edge_nodes = 0;
 
-    if let Some(transport) = &state.mesh_transport {
+    if let Some(transport) = &state.mesh.mesh_transport {
         is_global_node = transport.is_global_node();
         node_id = transport.get_node_mesh_id();
         connected_peers = transport.connected_peer_count();
@@ -670,7 +670,7 @@ pub async fn submit_audit_report(
         },
     };
     
-    if let Some(ref manager) = state.client_audit_manager {
+    if let Some(ref manager) = state.mesh.client_audit_manager {
         let response = manager.process_audit_report(report).await;
         Ok(Json(AuditReportResponseDto::from(response)))
     } else {
@@ -727,7 +727,7 @@ pub async fn report_signature_failure(
         report.mesh_id.as_deref().unwrap_or("unknown")
     );
 
-    if let Some(ref _manager) = state.client_audit_manager {
+    if let Some(ref _manager) = state.mesh.client_audit_manager {
         let session_id = report.session_id.clone();
         
         if let Some(ref sid) = session_id {

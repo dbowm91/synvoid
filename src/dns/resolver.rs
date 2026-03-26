@@ -540,6 +540,7 @@ pub struct HickoryRecursor {
     enable_dnssec: bool,
     trust_anchor_manager: Option<Arc<TrustAnchorManager>>,
     shutdown_tx: Option<tokio::sync::watch::Sender<()>>,
+    #[allow(dead_code)] // Reserved for RFC 5011 trust anchor rollover
     rfc5011_handle: Option<tokio::task::JoinHandle<()>>,
 }
 

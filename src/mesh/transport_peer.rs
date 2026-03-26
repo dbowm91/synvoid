@@ -5,17 +5,11 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
-use dashmap::DashMap;
-use futures::future::join_all;
-use base64::Engine;
-use parking_lot::RwLock;
-use rand::Rng;
-use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
+use tokio::sync::broadcast;
 use quinn::{Connection, SendStream, RecvStream};
 
-use crate::mesh::protocol::{{MeshMessage, MeshPeerInfo, UpstreamInfo, RouteQueryResult, ProviderInfo, MESH_MESSAGE_VERSION}};
+use crate::mesh::protocol::MeshMessage;
 use crate::mesh::topology::{{MeshTopology, PeerStatus}};
-use crate::mesh::config::{{MeshConfig, MeshPeerConfig}};
 
 
 impl MeshTransport {
@@ -503,7 +497,7 @@ impl MeshTransport {
                 verified,
                 reason,
                 timestamp,
-                signature,
+                signature: _,
             } => {
                 self.handle_dns_domain_register_response(
                     peer_id,
@@ -522,7 +516,7 @@ impl MeshTransport {
                 origin_node_id,
                 reason,
                 timestamp,
-                signature,
+                signature: _,
             } => {
                 self.handle_dns_domain_deregister_request(
                     peer_id,
@@ -700,7 +694,7 @@ impl MeshTransport {
             crate::mesh::protocol::LookupType::Route => {
                 if let Some((provider, hops)) = self.topology.get_cached_route(key).await {
                     Some(format!("{}:{}", provider, hops).into_bytes())
-                } else { self.topology.get_upstream_info(key).await.map(|local| format!("local:{}", self.config.node_id()).into_bytes()) }
+                } else { self.topology.get_upstream_info(key).await.map(|_local| format!("local:{}", self.config.node_id()).into_bytes()) }
             }
             crate::mesh::protocol::LookupType::Peer => {
                 if let Some(peer) = self.topology.get_peer(key).await {
@@ -762,7 +756,7 @@ impl MeshTransport {
         &self,
         from_peer: &str,
         target_peer_id: &str,
-        timestamp: u64,
+        _timestamp: u64,
     ) {
         tracing::trace!("Received health check request for {} from {}", target_peer_id, from_peer);
         
@@ -798,7 +792,7 @@ impl MeshTransport {
         address: &str,
         role: crate::mesh::config::MeshNodeRole,
         capabilities: &crate::mesh::protocol::MeshCapabilities,
-        announced_at: u64,
+        _announced_at: u64,
     ) {
         tracing::debug!("Received peer announce: {} ({}) from {}", node_id, address, from_peer);
         
@@ -837,8 +831,8 @@ impl MeshTransport {
 
     pub(crate) async fn handle_site_config_sync(
         &self,
-        from_peer: &str,
-        request_id: &str,
+        _from_peer: &str,
+        _request_id: &str,
         site_id: &str,
         config_version: u64,
         config_json: &str,
@@ -1094,7 +1088,7 @@ impl MeshTransport {
         bytes_received: u64,
         request_count: u64,
         interval_secs: u64,
-        timestamp: u64,
+        _timestamp: u64,
     ) {
         tracing::trace!(
             "Received bandwidth report for {}: {}B sent, {}B recv, {} reqs in {}s",
@@ -1203,7 +1197,7 @@ impl MeshTransport {
                     topology,
                 ).await?;
             }
-            MeshMessage::RouteResponse { query_id, upstream_id, provider_node_id, hops, ttl_secs, upstream_url, waf_policy, priority_tier, .. } => {
+            MeshMessage::RouteResponse { query_id, upstream_id, provider_node_id, hops, ttl_secs, upstream_url: _, waf_policy: _, priority_tier: _, .. } => {
                 let _ = query_id;
                 tracing::debug!("Got route response: {} -> {} ({} hops)", upstream_id, provider_node_id, hops);
                 topology.cache_route(&upstream_id, provider_node_id.to_string(), hops, Duration::from_secs(ttl_secs as u64)).await;

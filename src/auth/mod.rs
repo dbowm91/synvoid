@@ -1,3 +1,10 @@
+//! Authentication and user management.
+//!
+//! Provides user registration, login with bcrypt password hashing,
+//! session management with persistent storage, brute-force protection
+//! (account locking after repeated failures), and login audit logging.
+//! Also includes HTTP Basic auth support via the `basic` submodule.
+
 use bcrypt::{hash, verify, DEFAULT_COST};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};

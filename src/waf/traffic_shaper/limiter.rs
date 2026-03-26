@@ -15,7 +15,6 @@ pub struct ConnectionLimiter {
     connection_queue: RwLock<Vec<mpsc::Sender<ConnectionToken>>>,
     ip_connections: RwLock<HashMap<IpAddr, AtomicU32>>,
     ip_burst_tokens: RwLock<HashMap<IpAddr, AtomicU32>>,
-    waiting_queue: RwLock<Vec<mpsc::Receiver<ConnectionToken>>>,
 }
 
 #[derive(Debug)]
@@ -33,7 +32,6 @@ impl ConnectionLimiter {
             connection_queue: RwLock::new(Vec::new()),
             ip_connections: RwLock::new(HashMap::new()),
             ip_burst_tokens: RwLock::new(HashMap::new()),
-            waiting_queue: RwLock::new(Vec::new()),
         })
     }
 
@@ -199,9 +197,13 @@ impl std::error::Error for ConnectionLimitError {}
 pub struct SiteConnectionLimiter {
     site_id: String,
     limiter: Arc<ConnectionLimiter>,
+    #[allow(dead_code)] // Reserved for future site-specific connection limits
     max_connections: Option<u32>,
+    #[allow(dead_code)]
     max_connections_per_ip: Option<u32>,
+    #[allow(dead_code)]
     queue_size: Option<u32>,
+    #[allow(dead_code)]
     burst: Option<u32>,
 }
 

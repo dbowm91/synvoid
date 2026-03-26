@@ -36,14 +36,14 @@ pub async fn get_honeypot_status(
     _auth: OptionalAuth,
 ) -> Result<Json<HoneypotStatusResponse>, StatusCode> {
 
-    let (enabled, paused, pause_reason, active_ports) = if let Some(ref hp_controller) = state.port_honeypot_controller {
+    let (enabled, paused, pause_reason, active_ports) = if let Some(ref hp_controller) = state.honeypot.port_honeypot_controller {
         let status = hp_controller.get_status();
         (status.enabled, status.paused, status.pause_reason, status.active_ports)
     } else {
         (false, false, None, vec![])
     };
     
-    let total_connections = state.port_honeypot_runner.as_ref()
+    let total_connections = state.honeypot.port_honeypot_runner.as_ref()
         .map(|r| r.storage().get_connection_count().unwrap_or(0) as u64)
         .unwrap_or(0);
     
@@ -62,7 +62,7 @@ pub async fn control_honeypot(
     Json(req): Json<HoneypotControlRequest>,
 ) -> Result<Json<HoneypotControlResponse>, StatusCode> {
 
-    let hp_controller = state.port_honeypot_controller.as_ref()
+    let hp_controller = state.honeypot.port_honeypot_controller.as_ref()
         .ok_or(StatusCode::NOT_FOUND)?;
     
     let command = match req.command.as_str() {
@@ -84,7 +84,7 @@ pub async fn control_honeypot(
         .map_err(|_e| StatusCode::BAD_REQUEST)?;
     
     let status = hp_controller.get_status();
-    let total_connections = state.port_honeypot_runner.as_ref()
+    let total_connections = state.honeypot.port_honeypot_runner.as_ref()
         .map(|r| r.storage().get_connection_count().unwrap_or(0) as u64)
         .unwrap_or(0);
     

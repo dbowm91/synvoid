@@ -32,7 +32,7 @@ pub async fn get_alert_config(
     _auth: OptionalAuth,
 ) -> Result<Json<AlertConfigResponse>, StatusCode> {
 
-    let alert_manager = state.alert_manager.as_ref().ok_or(StatusCode::NOT_FOUND)?;
+    let alert_manager = state.process.alert_manager.as_ref().ok_or(StatusCode::NOT_FOUND)?;
     let config = alert_manager.get_config().await;
     let json = serde_json::to_value(&config).unwrap_or(serde_json::Value::Null);
 
@@ -63,7 +63,7 @@ pub async fn update_alert_config(
     Json(req): Json<UpdateAlertConfigRequest>,
 ) -> Result<Json<AlertConfigResponse>, StatusCode> {
 
-    let alert_manager = state.alert_manager.as_ref().ok_or(StatusCode::NOT_FOUND)?;
+    let alert_manager = state.process.alert_manager.as_ref().ok_or(StatusCode::NOT_FOUND)?;
     
     let config: AlertConfig = serde_json::from_value(req.config.clone()).map_err(|_| StatusCode::BAD_REQUEST)?;
     alert_manager.update_config(config).await;
@@ -95,7 +95,7 @@ pub async fn test_webhook(
     _auth: OptionalAuth,
 ) -> Result<Json<TestAlertResponse>, StatusCode> {
 
-    let alert_manager = state.alert_manager.as_ref().ok_or(StatusCode::NOT_FOUND)?;
+    let alert_manager = state.process.alert_manager.as_ref().ok_or(StatusCode::NOT_FOUND)?;
     let config = alert_manager.get_config().await;
 
     if !config.webhook_enabled || config.webhook_urls.is_empty() {

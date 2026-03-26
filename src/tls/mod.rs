@@ -1,3 +1,10 @@
+//! TLS configuration and HTTPS server.
+//!
+//! Provides TLS config parsing, ACME certificate management, certificate
+//! resolution (supporting multiple domains), and the HTTPS listener
+//! implementation. Re-exports [`ServerTlsConfig`], [`CertResolver`], and
+//! [`HttpsServer`] for convenience.
+
 pub mod config;
 pub mod cert_resolver;
 pub mod acme;

@@ -255,7 +255,7 @@ pub async fn start_metrics_publisher(
                 admin_state.update_system_resources(resources);
 
                 let json = serde_json::to_string(&metrics).unwrap_or_default();
-                admin_state.metrics_broadcaster.broadcast(json);
+                admin_state.metrics.metrics_broadcaster.broadcast(json);
 
                 crate::admin::state::set_current_connections(current_concurrent);
             }

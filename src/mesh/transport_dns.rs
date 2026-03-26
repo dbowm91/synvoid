@@ -7,30 +7,15 @@ use flate2::read::ZlibDecoder as ReadZlibDecoder;
 use crate::dns::server::Zone as DnsZone;
 
 use metrics::{counter, gauge};
-use super::*;
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
 
-use bytes::Bytes;
-use dashmap::DashMap;
-use futures::future::join_all;
-use base64::Engine;
-use parking_lot::RwLock;
-use rand::Rng;
-use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
-use quinn::{Connection, SendStream, RecvStream};
-
-use crate::mesh::protocol::{{MeshMessage, MeshPeerInfo, UpstreamInfo, RouteQueryResult, ProviderInfo, MESH_MESSAGE_VERSION}};
-use crate::mesh::topology::{{MeshTopology, PeerStatus}};
-use crate::mesh::config::{{MeshConfig, MeshPeerConfig}};
+use crate::mesh::protocol::MeshMessage;
 
 
 impl MeshTransport {
     pub(crate) async fn handle_anycast_registration(
         &self,
-        from_peer: &str,
-        request_id: &str,
+        _from_peer: &str,
+        _request_id: &str,
         registration: crate::dns::messages::DnsAnycastNodeRegistration,
     ) {
         tracing::debug!("Received anycast node registration for node: {}", registration.node_id);
@@ -551,7 +536,7 @@ impl MeshTransport {
 
     pub(crate) async fn handle_node_shutdown(
         &self,
-        from_peer: &str,
+        _from_peer: &str,
         node_id: &str,
         role: crate::mesh::config::MeshNodeRole,
         domains: &[std::sync::Arc<str>],
@@ -601,7 +586,7 @@ impl MeshTransport {
         geo: Option<&str>,
         capacity: u32,
         timestamp: u64,
-        signature: &[u8],
+        _signature: &[u8],
     ) {
         tracing::info!("Received DNS domain register request: {} from {} for domain {}", 
             request_id, origin_node_id, domain);
@@ -687,13 +672,13 @@ impl MeshTransport {
 
     pub(crate) async fn handle_dns_domain_register_response(
         &self,
-        from_peer: &str,
-        request_id: &str,
+        _from_peer: &str,
+        _request_id: &str,
         domain: &str,
-        origin_node_id: &str,
+        _origin_node_id: &str,
         verified: bool,
         reason: &str,
-        timestamp: u64,
+        _timestamp: u64,
     ) {
         tracing::info!("Received DNS domain register response for {}: verified={}, reason={}", 
             domain, verified, reason);
@@ -701,12 +686,12 @@ impl MeshTransport {
 
     pub(crate) async fn handle_dns_domain_deregister_request(
         &self,
-        from_peer: &str,
+        _from_peer: &str,
         request_id: &str,
         domain: &str,
         origin_node_id: &str,
         reason: &str,
-        timestamp: u64,
+        _timestamp: u64,
     ) {
         tracing::info!("Received DNS domain deregister request: {} from {} for domain {}",
             request_id, origin_node_id, domain);
@@ -749,14 +734,14 @@ impl MeshTransport {
 
     pub(crate) async fn handle_dns_domain_registered(
         &self,
-        from_peer: &str,
+        _from_peer: &str,
         domain: &str,
         origin_node_id: &str,
         verified_by_global_node: &str,
         geo: Option<&str>,
         capacity: u32,
-        registered_at: u64,
-        expires_at: u64,
+        _registered_at: u64,
+        _expires_at: u64,
     ) {
         tracing::info!("Received DnsDomainRegistered: domain={} origin={} verified_by={}",
             domain, origin_node_id, verified_by_global_node);
@@ -791,12 +776,12 @@ impl MeshTransport {
 
     pub(crate) async fn handle_dns_domain_deregistered(
         &self,
-        from_peer: &str,
+        _from_peer: &str,
         domain: &str,
         origin_node_id: &str,
         deregistered_by_global_node: &str,
         reason: &str,
-        deregistered_at: u64,
+        _deregistered_at: u64,
     ) {
         tracing::info!("Received DnsDomainDeregistered: domain={} origin={} by={} reason={}",
             domain, origin_node_id, deregistered_by_global_node, reason);
@@ -853,7 +838,7 @@ impl MeshTransport {
         true
     }
 
-    pub(crate) async fn verify_oauth_challenge(&self, domain: &str, origin_node_id: &str, oauth_config: &str) -> bool {
+    pub(crate) async fn verify_oauth_challenge(&self, domain: &str, origin_node_id: &str, _oauth_config: &str) -> bool {
         tracing::debug!("Verifying OAuth/DNS-OAUTH challenge for {} with node {}", domain, origin_node_id);
         
         tracing::debug!("Would perform OAuth DNS challenge verification for {}", domain);

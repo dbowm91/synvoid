@@ -323,8 +323,8 @@ impl DnsServer {
                                     Some(client_ip),
                                 );
 
-                                let dnssec = dnssec_udp.clone();
-                                let signer_name = signer_name_udp.clone();
+                                let _dnssec = dnssec_udp.clone();
+                                let _signer_name = signer_name_udp.clone();
 
                                 let response = if let Some(coalescer) = &ctx.query_coalescer {
                                     let query_key = crate::dns::query_coalesce::QueryKey::from_query(&buf[..len], Some(client_ip));
@@ -653,8 +653,8 @@ impl DnsServer {
                                     Some(client_ip),
                                 );
 
-                                let dnssec = dnssec_udp.clone();
-                                let signer_name = signer_name_udp.clone();
+                                let _dnssec = dnssec_udp.clone();
+                                let _signer_name = signer_name_udp.clone();
                                 let rate_limiter = rate_limiter_udp.clone();
                                 let rrl_enabled = rrl_enabled_udp;
 

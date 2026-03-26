@@ -1,5 +1,11 @@
 #![no_main]
 
+//! Fuzz target for WAF attack detection.
+//!
+//! Constructs synthetic HTTP requests from fuzzed byte data (method,
+//! path, query) and passes them through [`AttackDetector::check_request`]
+//! to verify that pattern matching does not panic on adversarial input.
+
 use http::Method;
 use libfuzzer_sys::fuzz_target;
 use maluwaf::waf::attack_detection::{AttackDetectionConfig, AttackDetector};

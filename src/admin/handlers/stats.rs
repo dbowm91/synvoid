@@ -75,7 +75,7 @@ pub async fn get_summary(
     _auth: OptionalAuth,
 ) -> Result<Json<SystemStats>, StatusCode> {
 
-    let config = state.config.read().await;
+    let config = state.process.config.read().await;
     let sites_count = config.sites.len();
     drop(config);
 
@@ -126,7 +126,7 @@ pub async fn get_sites_stats(
     _auth: OptionalAuth,
 ) -> Result<Json<Vec<SiteStats>>, StatusCode> {
 
-    let config = state.config.read().await;
+    let config = state.process.config.read().await;
     let site_metrics = state.get_site_metrics();
     let _global_metrics = state.get_metrics();
     let uptime = state.uptime();
@@ -268,7 +268,7 @@ pub async fn get_cache_stats(
         0.0
     };
 
-    let (static_cache_hits, static_cache_misses) = if let Some(ref pm) = state.process_manager {
+    let (static_cache_hits, static_cache_misses) = if let Some(ref pm) = state.process.process_manager {
         pm.get_static_worker_cache_stats()
     } else {
         (0, 0)
@@ -307,7 +307,7 @@ use crate::metrics::bandwidth::{get_global_bandwidth_tracker, BandwidthPayload};
     )
 )]
 pub async fn get_bandwidth(
-    State(state): State<Arc<AdminState>>,
+    State(_state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<BandwidthPayload>, StatusCode> {
 
@@ -382,7 +382,7 @@ pub async fn get_request_logs(
     let limit = query.limit.unwrap_or(100).min(1000);
     let offset = query.offset.unwrap_or(0);
 
-    let all_logs = if let Some(ref pm) = state.process_manager {
+    let all_logs = if let Some(ref pm) = state.process.process_manager {
         pm.get_request_logs()
     } else {
         Vec::new()

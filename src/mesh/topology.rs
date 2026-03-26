@@ -391,6 +391,7 @@ impl RouteUsage {
 
 pub struct RouteUsageTracker {
     usages: HashMap<String, RouteUsage>,
+    #[allow(dead_code)] // Reserved for configurable time window
     window: Duration,
 }
 

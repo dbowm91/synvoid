@@ -52,7 +52,8 @@ fn validate_plugin_path(path: &Path) -> Result<(), AxumPluginError> {
     let extensions: Vec<String> = canonical_path
         .extension()
         .and_then(|e| e.to_str())
-        .map(|e| e.to_lowercase()).into_iter()
+        .map(|e| e.to_lowercase())
+        .into_iter()
         .collect();
 
     if !extensions.contains(&"so".to_string())

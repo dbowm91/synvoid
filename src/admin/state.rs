@@ -92,33 +92,63 @@ pub struct SystemResources {
 }
 
 #[derive(Clone)]
-pub struct AdminState {
-    pub config: Arc<TokioRwLock<ConfigManager>>,
-    pub admin_token: String,
+pub struct MetricsState {
     pub metrics_broadcaster: Arc<Broadcaster>,
-    pub logs_broadcaster: Arc<Broadcaster>,
-    pub probe_tracker: Option<Arc<ProbeTracker>>,
-    pub suspicious_word_tracker: Option<Arc<SuspiciousWordTracker>>,
-    pub upstream_error_tracker: Option<Arc<UpstreamErrorTracker>>,
-    pub threat_level_manager: Option<Arc<ThreatLevelManager>>,
     pub metrics: Arc<RwLock<AggregatedMetrics>>,
     pub system_resources: Arc<RwLock<SystemResources>>,
     pub metrics_history: Arc<RwLock<VecDeque<AggregatedMetrics>>>,
     pub site_metrics: Arc<RwLock<HashMap<String, SiteMetricsPayload>>>,
     pub start_time: Instant,
-    pub process_manager: Option<Arc<ProcessManager>>,
-    pub alert_manager: Option<Arc<AlertManager>>,
+    pub request_logs: Arc<RwLock<VecDeque<RequestLogEntry>>>,
+    pub logs_broadcaster: Arc<Broadcaster>,
+    pub config_write_lock: Arc<TokioRwLock<()>>,
+}
+
+#[derive(Clone)]
+pub struct WafTrackingState {
+    pub probe_tracker: Option<Arc<ProbeTracker>>,
+    pub suspicious_word_tracker: Option<Arc<SuspiciousWordTracker>>,
+    pub upstream_error_tracker: Option<Arc<UpstreamErrorTracker>>,
+    pub threat_level_manager: Option<Arc<ThreatLevelManager>>,
+    pub rule_feed_manager: Option<Arc<RuleFeedManagerForWaf>>,
+}
+
+#[derive(Clone)]
+pub struct SecurityState {
+    pub admin_token: String,
+    pub csrf_tokens: Arc<RwLock<std::collections::HashMap<String, CsrfTokenState>>>,
+    pub rate_limiter: Option<Arc<AdminRateLimiter>>,
+}
+
+#[derive(Clone)]
+pub struct MeshState {
     pub mesh_transport: Option<Arc<MeshTransport>>,
     pub client_audit_manager: Option<Arc<crate::mesh::client_audit::ClientAuditManager>>,
-    csrf_tokens: Arc<RwLock<std::collections::HashMap<String, CsrfTokenState>>>,
-    pub rate_limiter: Option<Arc<AdminRateLimiter>>,
-    pub rule_feed_manager: Option<Arc<RuleFeedManagerForWaf>>,
-    #[cfg(feature = "icmp-filter")]
-    pub icmp_filter: Option<Arc<TokioRwLock<IcmpFilterManager>>>,
+}
+
+#[derive(Clone)]
+pub struct HoneypotState {
     pub port_honeypot_controller: Option<Arc<crate::honeypot_port::HoneypotMeshController>>,
     pub port_honeypot_runner: Option<Arc<crate::honeypot_port::PortHoneypotRunner>>,
-    pub request_logs: Arc<RwLock<VecDeque<RequestLogEntry>>>,
-    pub config_write_lock: Arc<TokioRwLock<()>>,
+    #[cfg(feature = "icmp-filter")]
+    pub icmp_filter: Option<Arc<TokioRwLock<IcmpFilterManager>>>,
+}
+
+#[derive(Clone)]
+pub struct ProcessState {
+    pub config: Arc<TokioRwLock<ConfigManager>>,
+    pub process_manager: Option<Arc<ProcessManager>>,
+    pub alert_manager: Option<Arc<AlertManager>>,
+}
+
+#[derive(Clone)]
+pub struct AdminState {
+    pub metrics: MetricsState,
+    pub waf_tracking: WafTrackingState,
+    pub security: SecurityState,
+    pub mesh: MeshState,
+    pub honeypot: HoneypotState,
+    pub process: ProcessState,
 }
 
 #[derive(Clone)]
@@ -170,42 +200,54 @@ const MAX_HISTORY_SIZE: usize = 3600;
 impl AdminState {
     pub fn new(config: Arc<TokioRwLock<ConfigManager>>, admin_token: String) -> Self {
         Self {
-            config,
-            admin_token,
-            metrics_broadcaster: Arc::new(Broadcaster::new(100)),
-            logs_broadcaster: Arc::new(Broadcaster::new(1000)),
-            probe_tracker: None,
-            suspicious_word_tracker: None,
-            upstream_error_tracker: None,
-            threat_level_manager: None,
-            metrics: Arc::new(RwLock::new(AggregatedMetrics::default())),
-            system_resources: Arc::new(RwLock::new(SystemResources::default())),
-            metrics_history: Arc::new(RwLock::new(VecDeque::with_capacity(MAX_HISTORY_SIZE))),
-            site_metrics: Arc::new(RwLock::new(HashMap::new())),
-            start_time: Instant::now(),
-            process_manager: None,
-            alert_manager: Some(Arc::new(AlertManager::new())),
-            mesh_transport: None,
-            client_audit_manager: None,
-            csrf_tokens: Arc::new(RwLock::new(std::collections::HashMap::new())),
-            rate_limiter: None,
-            rule_feed_manager: None,
-            #[cfg(feature = "icmp-filter")]
-            icmp_filter: None,
-            port_honeypot_controller: None,
-            port_honeypot_runner: None,
-            request_logs: Arc::new(RwLock::new(VecDeque::with_capacity(MAX_REQUEST_LOGS))),
-            config_write_lock: Arc::new(TokioRwLock::new(())),
+            metrics: MetricsState {
+                metrics_broadcaster: Arc::new(Broadcaster::new(100)),
+                metrics: Arc::new(RwLock::new(AggregatedMetrics::default())),
+                system_resources: Arc::new(RwLock::new(SystemResources::default())),
+                metrics_history: Arc::new(RwLock::new(VecDeque::with_capacity(MAX_HISTORY_SIZE))),
+                site_metrics: Arc::new(RwLock::new(HashMap::new())),
+                start_time: Instant::now(),
+                request_logs: Arc::new(RwLock::new(VecDeque::with_capacity(MAX_REQUEST_LOGS))),
+                logs_broadcaster: Arc::new(Broadcaster::new(1000)),
+                config_write_lock: Arc::new(TokioRwLock::new(())),
+            },
+            waf_tracking: WafTrackingState {
+                probe_tracker: None,
+                suspicious_word_tracker: None,
+                upstream_error_tracker: None,
+                threat_level_manager: None,
+                rule_feed_manager: None,
+            },
+            security: SecurityState {
+                admin_token,
+                csrf_tokens: Arc::new(RwLock::new(std::collections::HashMap::new())),
+                rate_limiter: None,
+            },
+            mesh: MeshState {
+                mesh_transport: None,
+                client_audit_manager: None,
+            },
+            honeypot: HoneypotState {
+                port_honeypot_controller: None,
+                port_honeypot_runner: None,
+                #[cfg(feature = "icmp-filter")]
+                icmp_filter: None,
+            },
+            process: ProcessState {
+                config,
+                process_manager: None,
+                alert_manager: Some(Arc::new(AlertManager::new())),
+            },
         }
     }
 
     pub fn with_rate_limiter(mut self, rate_limiter: Option<Arc<AdminRateLimiter>>) -> Self {
-        self.rate_limiter = rate_limiter;
+        self.security.rate_limiter = rate_limiter;
         self
     }
 
     pub fn with_probe_tracker(mut self, tracker: Option<Arc<ProbeTracker>>) -> Self {
-        self.probe_tracker = tracker;
+        self.waf_tracking.probe_tracker = tracker;
         self
     }
 
@@ -213,7 +255,7 @@ impl AdminState {
         mut self,
         tracker: Option<Arc<SuspiciousWordTracker>>,
     ) -> Self {
-        self.suspicious_word_tracker = tracker;
+        self.waf_tracking.suspicious_word_tracker = tracker;
         self
     }
 
@@ -221,27 +263,27 @@ impl AdminState {
         mut self,
         tracker: Option<Arc<UpstreamErrorTracker>>,
     ) -> Self {
-        self.upstream_error_tracker = tracker;
+        self.waf_tracking.upstream_error_tracker = tracker;
         self
     }
 
     pub fn with_threat_level_manager(mut self, manager: Option<Arc<ThreatLevelManager>>) -> Self {
-        self.threat_level_manager = manager;
+        self.waf_tracking.threat_level_manager = manager;
         self
     }
 
     pub fn with_rule_feed_manager(mut self, manager: Option<Arc<RuleFeedManagerForWaf>>) -> Self {
-        self.rule_feed_manager = manager;
+        self.waf_tracking.rule_feed_manager = manager;
         self
     }
 
     pub fn with_process_manager(mut self, manager: Option<Arc<ProcessManager>>) -> Self {
-        self.process_manager = manager;
+        self.process.process_manager = manager;
         self
     }
 
     pub fn with_mesh_transport(mut self, transport: Option<Arc<MeshTransport>>) -> Self {
-        self.mesh_transport = transport;
+        self.mesh.mesh_transport = transport;
         self
     }
 
@@ -249,13 +291,13 @@ impl AdminState {
         mut self,
         manager: Option<Arc<crate::mesh::client_audit::ClientAuditManager>>,
     ) -> Self {
-        self.client_audit_manager = manager;
+        self.mesh.client_audit_manager = manager;
         self
     }
 
     #[cfg(feature = "icmp-filter")]
     pub fn with_icmp_filter(mut self, filter: Option<Arc<TokioRwLock<IcmpFilterManager>>>) -> Self {
-        self.icmp_filter = filter;
+        self.honeypot.icmp_filter = filter;
         self
     }
 
@@ -263,7 +305,7 @@ impl AdminState {
         mut self,
         controller: Option<Arc<crate::honeypot_port::HoneypotMeshController>>,
     ) -> Self {
-        self.port_honeypot_controller = controller;
+        self.honeypot.port_honeypot_controller = controller;
         self
     }
 
@@ -271,7 +313,7 @@ impl AdminState {
         mut self,
         runner: Option<Arc<crate::honeypot_port::PortHoneypotRunner>>,
     ) -> Self {
-        self.port_honeypot_runner = runner;
+        self.honeypot.port_honeypot_runner = runner;
         self
     }
 
@@ -281,36 +323,36 @@ impl AdminState {
     }
 
     pub fn probe_tracker(&self) -> Option<&Arc<ProbeTracker>> {
-        self.probe_tracker.as_ref()
+        self.waf_tracking.probe_tracker.as_ref()
     }
 
     pub fn suspicious_word_tracker(&self) -> Option<&Arc<SuspiciousWordTracker>> {
-        self.suspicious_word_tracker.as_ref()
+        self.waf_tracking.suspicious_word_tracker.as_ref()
     }
 
     pub fn upstream_error_tracker(&self) -> Option<&Arc<UpstreamErrorTracker>> {
-        self.upstream_error_tracker.as_ref()
+        self.waf_tracking.upstream_error_tracker.as_ref()
     }
 
     pub fn threat_level_manager(&self) -> Option<&Arc<ThreatLevelManager>> {
-        self.threat_level_manager.as_ref()
+        self.waf_tracking.threat_level_manager.as_ref()
     }
 
     #[cfg(feature = "icmp-filter")]
     pub fn icmp_filter(&self) -> Option<&Arc<TokioRwLock<IcmpFilterManager>>> {
-        self.icmp_filter.as_ref()
+        self.honeypot.icmp_filter.as_ref()
     }
 
     pub fn update_metrics(&self, metrics: AggregatedMetrics) {
-        *self.metrics.write() = metrics;
+        *self.metrics.metrics.write() = metrics;
     }
 
     pub fn get_metrics(&self) -> AggregatedMetrics {
-        self.metrics.read().clone()
+        self.metrics.metrics.read().clone()
     }
 
     pub async fn setup_site_config_sync(&self) {
-        let mesh_transport = match &self.mesh_transport {
+        let mesh_transport = match &self.mesh.mesh_transport {
             Some(t) => t.clone(),
             None => {
                 tracing::debug!("No mesh transport available for site config sync");
@@ -321,8 +363,8 @@ impl AdminState {
         let (tx, mut rx) = tokio::sync::mpsc::channel::<(String, String)>(32);
         mesh_transport.set_site_config_sync_callback(tx);
 
-        let config = self.config.clone();
-        let config_write_lock = self.config_write_lock.clone();
+        let config = self.process.config.clone();
+        let config_write_lock = self.metrics.config_write_lock.clone();
         
         tokio::spawn(async move {
             while let Some((site_id, config_json)) = rx.recv().await {
@@ -352,15 +394,15 @@ impl AdminState {
     }
 
     pub fn update_system_resources(&self, resources: SystemResources) {
-        *self.system_resources.write() = resources;
+        *self.metrics.system_resources.write() = resources;
     }
 
     pub fn get_system_resources(&self) -> SystemResources {
-        (*self.system_resources.read()).clone()
+        (*self.metrics.system_resources.read()).clone()
     }
 
     pub fn add_metrics_to_history(&self, metrics: AggregatedMetrics) {
-        let mut history = self.metrics_history.write();
+        let mut history = self.metrics.metrics_history.write();
         if history.len() >= MAX_HISTORY_SIZE {
             history.pop_front();
         }
@@ -368,7 +410,7 @@ impl AdminState {
     }
 
     pub fn get_metrics_history(&self, seconds: u64) -> Vec<AggregatedMetrics> {
-        let history = self.metrics_history.read();
+        let history = self.metrics.metrics_history.read();
         let count = seconds.min(MAX_HISTORY_SIZE as u64) as usize;
         let start = if history.len() > count {
             history.len() - count
@@ -379,15 +421,15 @@ impl AdminState {
     }
 
     pub fn update_site_metrics(&self, site_metrics: HashMap<String, SiteMetricsPayload>) {
-        *self.site_metrics.write() = site_metrics;
+        *self.metrics.site_metrics.write() = site_metrics;
     }
 
     pub fn get_site_metrics(&self) -> HashMap<String, SiteMetricsPayload> {
-        self.site_metrics.read().clone()
+        self.metrics.site_metrics.read().clone()
     }
 
     pub fn add_request_log(&self, entry: RequestLogEntry) {
-        let mut logs = self.request_logs.write();
+        let mut logs = self.metrics.request_logs.write();
         if logs.len() >= MAX_REQUEST_LOGS {
             logs.pop_front();
         }
@@ -403,7 +445,7 @@ impl AdminState {
         limit: usize,
         offset: usize,
     ) -> (Vec<RequestLogEntry>, usize, bool) {
-        let logs = self.request_logs.read();
+        let logs = self.metrics.request_logs.read();
 
         let filtered: Vec<RequestLogEntry> = logs
             .iter()
@@ -445,14 +487,14 @@ impl AdminState {
     }
 
     pub fn uptime(&self) -> u64 {
-        self.start_time.elapsed().as_secs()
+        self.metrics.start_time.elapsed().as_secs()
     }
 
     pub fn validate_csrf(&self, token: &str) -> bool {
         use std::time::Duration;
 
         let now = Instant::now();
-        let csrf_tokens = self.csrf_tokens.read();
+        let csrf_tokens = self.security.csrf_tokens.read();
 
         if let Some(valid_token) = csrf_tokens.get(token) {
             if now.duration_since(valid_token.created) < Duration::from_secs(3600) {
@@ -469,7 +511,8 @@ impl AdminState {
         let token = Uuid::new_v4().to_string();
         let now = Instant::now();
 
-        self.csrf_tokens
+        self.security
+            .csrf_tokens
             .write()
             .insert(token.clone(), CsrfTokenState { created: now });
 
@@ -480,14 +523,14 @@ impl AdminState {
         use std::time::Duration;
 
         let now = Instant::now();
-        let mut tokens = self.csrf_tokens.write();
+        let mut tokens = self.security.csrf_tokens.write();
 
         tokens.retain(|_, v| now.duration_since(v.created) < Duration::from_secs(3600));
     }
 }
 
-struct CsrfTokenState {
-    created: Instant,
+pub struct CsrfTokenState {
+    pub created: Instant,
 }
 
 static CURRENT_CONNECTIONS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);

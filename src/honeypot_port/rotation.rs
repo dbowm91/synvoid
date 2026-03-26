@@ -42,6 +42,7 @@ struct ActivePort {
 
 pub struct PortManager {
     mode: PortMode,
+    #[allow(dead_code)] // Reserved for configurable port management
     config: Arc<PortHoneypotConfig>,
     current_ports: Arc<RwLock<HashMap<u16, ActivePort>>>,
     responder_registry: Arc<HoneypotResponderRegistry>,

@@ -5,9 +5,6 @@ use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use flate2::{Compression};
-use flate2::write::ZlibEncoder;
-use flate2::read::{ZlibDecoder as ReadZlibDecoder};
 
 #[cfg(feature = "dns")]
 use crate::dns::server::Zone as DnsZone;
@@ -17,19 +14,14 @@ use lru_time_cache::LruCache;
 use bytes::Bytes;
 use dashmap::DashMap;
 use futures::future::join_all;
-use base64::Engine;
 use http_body::Body as HttpBody;
 use http_body_util::combinators::BoxBody;
 use hyper::{Request, Response};
-use metrics::counter;
-#[cfg(feature = "dns")]
-use metrics::gauge;
 use parking_lot::RwLock;
-use rand::Rng;
 
 use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 
-use quinn::{Connection, SendStream, RecvStream};
+use quinn::Connection;
 
 use crate::mesh::cert::MeshCertManager;
 use crate::mesh::config::{MeshConfig, MeshPeerConfig};

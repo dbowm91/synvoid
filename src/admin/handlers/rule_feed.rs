@@ -51,7 +51,7 @@ pub async fn get_status(
     _auth: OptionalAuth,
 ) -> Result<Json<RuleFeedStatusResponse>, StatusCode> {
 
-    let rule_feed_manager = state.rule_feed_manager.as_ref().ok_or(StatusCode::NOT_FOUND)?;
+    let rule_feed_manager = state.waf_tracking.rule_feed_manager.as_ref().ok_or(StatusCode::NOT_FOUND)?;
 
     let status = RuleFeedStatusResponse {
         enabled: rule_feed_manager.inner.config.enabled,
@@ -84,7 +84,7 @@ pub async fn check_for_updates(
     _auth: OptionalAuth,
 ) -> Result<Json<RuleFeedCheckResponse>, StatusCode> {
 
-    let rule_feed_manager = state.rule_feed_manager.as_ref().ok_or(StatusCode::NOT_FOUND)?;
+    let rule_feed_manager = state.waf_tracking.rule_feed_manager.as_ref().ok_or(StatusCode::NOT_FOUND)?;
 
     let result = rule_feed_manager.check_for_updates().await;
 
@@ -130,7 +130,7 @@ pub async fn apply_pending(
     _auth: OptionalAuth,
 ) -> Result<Json<RuleFeedApplyResponse>, StatusCode> {
 
-    let rule_feed_manager = state.rule_feed_manager.as_ref().ok_or(StatusCode::NOT_FOUND)?;
+    let rule_feed_manager = state.waf_tracking.rule_feed_manager.as_ref().ok_or(StatusCode::NOT_FOUND)?;
 
     if !rule_feed_manager.has_pending_update() {
         return Ok(Json(RuleFeedApplyResponse {
@@ -174,7 +174,7 @@ pub async fn discard_pending(
     _auth: OptionalAuth,
 ) -> Result<Json<StatusResponse>, StatusCode> {
 
-    let rule_feed_manager = state.rule_feed_manager.as_ref().ok_or(StatusCode::NOT_FOUND)?;
+    let rule_feed_manager = state.waf_tracking.rule_feed_manager.as_ref().ok_or(StatusCode::NOT_FOUND)?;
 
     rule_feed_manager.discard_pending();
 

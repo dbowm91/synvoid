@@ -80,7 +80,9 @@ pub struct PluginManager {
 }
 
 struct AxumPluginWrapper {
+    #[allow(dead_code)] // Reserved for future Axum plugin routing
     router: axum::Router<()>,
+    #[allow(dead_code)] // Used for logging but not read after construction
     name: String,
 }
 

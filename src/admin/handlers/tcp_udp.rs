@@ -40,7 +40,7 @@ pub async fn list_listeners(
     _auth: OptionalAuth,
 ) -> Result<Json<ListListenersResponse>, StatusCode> {
 
-    let config = state.config.read().await;
+    let config = state.process.config.read().await;
     let mut listeners = Vec::new();
 
     for (site_id, site_config) in &config.sites {
@@ -64,8 +64,10 @@ pub async fn list_listeners(
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateListenerRequest {
     pub site_id: String,
+    #[allow(dead_code)] // Reserved for future listener creation
     pub port: u16,
     pub protocol: String,
+    #[allow(dead_code)]
     pub upstream: String,
 }
 
@@ -87,7 +89,7 @@ pub struct CreateListenerResponse {
     )
 )]
 pub async fn create_listener(
-    State(state): State<Arc<AdminState>>,
+    State(_state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<CreateListenerRequest>,
 ) -> Result<Json<CreateListenerResponse>, StatusCode> {
@@ -117,7 +119,7 @@ pub async fn create_listener(
     )
 )]
 pub async fn delete_listener(
-    State(state): State<Arc<AdminState>>,
+    State(_state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Path(listener_id): Path<String>,
 ) -> Result<StatusCode, StatusCode> {
@@ -150,7 +152,7 @@ pub struct ProtocolInfo {
     )
 )]
 pub async fn list_protocols(
-    State(state): State<Arc<AdminState>>,
+    State(_state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<Vec<ProtocolInfo>>, StatusCode> {
 

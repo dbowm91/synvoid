@@ -32,7 +32,7 @@ fn extract_client_ip_from_request(request: &Request) -> String {
 
 pub async fn auth_middleware_with_state(
     axum::extract::State(state): axum::extract::State<std::sync::Arc<super::state::AdminState>>,
-    mut request: Request,
+    request: Request,
     next: Next,
 ) -> Response {
     // Skip auth for health endpoint
@@ -54,7 +54,7 @@ pub async fn auth_middleware_with_state(
         .map(|t| t.to_string());
 
     if let Some(token) = bearer_token {
-        if super::auth::verify_admin_token(&token, &state.admin_token) {
+        if super::auth::verify_admin_token(&token, &state.security.admin_token) {
             super::auth::AUTH_RATE_LIMITER.record_success(client_ip);
             return next.run(request).await;
         }

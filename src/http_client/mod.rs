@@ -152,7 +152,7 @@ pub fn create_upstream_client(
         tls_config.skip_verify,
     );
 
-    let mut builder = hyper_rustls::HttpsConnectorBuilder::new()
+    let builder = hyper_rustls::HttpsConnectorBuilder::new()
         .with_tls_config(rustls_config);
 
     let builder = if tls_config.allow_plaintext {

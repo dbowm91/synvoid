@@ -58,7 +58,7 @@ pub async fn list_upstreams(
     _auth: OptionalAuth,
 ) -> Result<Json<Vec<SiteUpstreams>>, StatusCode> {
 
-    let config = state.config.read().await;
+    let config = state.process.config.read().await;
     
     let upstreams: Vec<SiteUpstreams> = config.sites.iter().map(|(id, site)| {
         SiteUpstreams {
@@ -93,7 +93,7 @@ pub async fn get_site_upstreams(
     Path(site_id): Path<String>,
 ) -> Result<Json<SiteUpstreams>, StatusCode> {
 
-    let config = state.config.read().await;
+    let config = state.process.config.read().await;
     
     match config.sites.get(&site_id) {
         Some(site) => {
@@ -136,7 +136,7 @@ pub struct HealthCheckResponse {
     )
 )]
 pub async fn trigger_health_check(
-    State(state): State<Arc<AdminState>>,
+    State(_state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Path(_site_id): Path<String>,
     Json(_req): Json<TriggerHealthCheckRequest>,

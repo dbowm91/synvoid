@@ -30,6 +30,7 @@ pub struct NormalizedLocation {
 pub struct StaticFileHandler {
     config: Arc<SiteStaticConfig>,
     locations: Vec<NormalizedLocation>,
+    #[allow(dead_code)] // Reserved for custom MIME type handling
     mime_types: Vec<String>,
     gzip_types: Vec<String>,
     max_file_size: u64,
@@ -40,12 +41,16 @@ pub struct StaticFileHandler {
     enable_compression: bool,
     gzip_on_the_fly: bool,
     directory_listing: bool,
+    #[allow(dead_code)] // Reserved for custom directory listing format
     directory_listing_format: Option<String>,
     default_cache_ttl: Option<u64>,
     site_id: String,
     minified_cache_dir: Option<PathBuf>,
+    #[allow(dead_code)] // Reserved for minifier integration
     minifier_cache: Option<Arc<MinifierCache>>,
+    #[allow(dead_code)]
     minifier_client: Option<client::MinifierClient>,
+    #[allow(dead_code)]
     async_minifier_client: Option<client::AsyncMinifierClient>,
     enable_zero_copy: bool,
     mesh_image_protection: Option<MeshImageProtectionConfig>,

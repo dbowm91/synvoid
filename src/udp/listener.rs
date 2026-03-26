@@ -123,6 +123,7 @@ impl Default for UdpListenerPoolConfig {
 #[derive(Debug, Clone)]
 struct UdpListenerInstance {
     config: UdpListenerConfig,
+    #[allow(dead_code)] // Retained for logging and debugging
     listen_addr: SocketAddr,
 }
 

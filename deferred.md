@@ -923,6 +923,265 @@ Run `cargo check 2>&1 | grep "never read"` to list all 36 fields. For each:
 
 ---
 
+## Wave 5: Remaining Items (post-Wave 4 audit)
+
+> **Created 2026-03-26.** Consolidates all actionable items not completed by Waves 1-4.
+> Total items: 10. All are independent and can run in parallel.
+
+**Current state after Wave 4:**
+- `cargo check` ✅ (19 pre-existing warnings)
+- `cargo check --features dns` ✅
+- `cargo test --test integration_test` ✅ (40/40 passed)
+- Clippy warnings: 88 (down from 307)
+- Dead field warnings: 0
+- Max module size: 1,450 lines (`mesh/config.rs`)
+
+### 23. Missing Test Modules (7.F1, 7.F2, 7.F3)
+
+> Estimated effort: 1-2 days. All 3 modules are independent.
+
+Three modules still have zero tests despite prior deferral. Add targeted tests.
+
+#### 23.1 `src/waf/rule_feed.rs` tests (7.F1)
+
+**File:** `src/waf/rule_feed.rs` (905 lines, 20 existing `#[test]` functions).
+
+**Status:** Existing tests cover: `is_newer_version` (4 tests), `base64_decode` (4 tests), `parse_timestamp` (3 tests), `convert_rules_to_ipc_patterns` (2 tests), `GlobalRulePatterns` updates (2 tests), `parse_embedded_key` (2 tests), `create_payload_for_signature` (1 test), `get_merged_patterns` (1 test), custom pattern update/get/clear (1 test).
+
+**What's missing:** `reload_attack_detector` is in `src/waf/mod.rs:474`, not `rule_feed.rs` — test belongs in `waf/mod.rs` test module. No `verify_rule_signature` function exists in the codebase (signatures are verified inline in `apply_rule_set`).
+
+**Add tests for (in `src/waf/mod.rs` test module):**
+
+| Function | Test | Input |
+|----------|------|-------|
+| `reload_attack_detector()` | Pattern merge | Custom + default patterns merge correctly |
+
+**Steps:**
+1. Add `reload_attack_detector` test to `src/waf/mod.rs` test module
+2. Run `cargo test --lib -- rule_feed` and `cargo test --lib -- waf`
+
+#### 23.2 `src/waf/endpoints.rs` tests (7.F2)
+
+**File:** `src/waf/endpoints.rs` (682 lines, 15 existing tests).
+
+**Add tests for:**
+
+| Function | Test | Input |
+|----------|------|-------|
+| `status_text()` | Correct text for all 15+ codes | 200, 400, 403, 404, 500, 502, 503, etc. |
+| `status_text()` | Default for unknown codes | 999, 123 |
+| Sensitive path matching | `/admin` blocked, `/public` allowed | Various paths |
+| Error page rendering | No XSS in interpolated values | Error message with `<script>` |
+
+**Steps:**
+1. Read existing test module
+2. Add `status_text` tests for all 15 status codes
+3. Add XSS-in-error-page test
+4. Run `cargo test --lib -- endpoints`
+
+#### 23.3 `src/config/mod.rs` tests (7.F3)
+
+**File:** `src/config/mod.rs` (424 lines, 14 existing tests).
+
+**Add tests for:**
+
+| Function | Test | Input |
+|----------|------|-------|
+| Site discovery | Finds `.toml` files in sites dir | TempDir with test configs |
+| Config reload | Re-reads after file change | Write new config, reload |
+| Validation | Rejects invalid configs | Missing required fields |
+
+**Steps:**
+1. Read existing test module
+2. Use `tempfile::TempDir` for filesystem isolation
+3. Add 3-5 tests for discovery/reload/validation
+4. Run `cargo test --lib -- config`
+
+---
+
+### 24. Wire `create_upstream_client` into TLS/HTTP Servers (2.F1 completion)
+
+> Estimated effort: 2-4 hours. Medium priority — enables per-site `skip_verify` for TLS/HTTP paths.
+
+**Current state:** `proxy.rs` already calls `create_upstream_client()`. But `tls/server.rs:606` and `http/server.rs:121` still use `create_http_client_with_config()`, meaning per-site TLS config (skip_verify, ca_cert, server_name) is ignored for those code paths.
+
+**Files to modify:**
+
+| File | Line | Current | Target |
+|------|------|---------|--------|
+| `src/tls/server.rs` | 24 | `use crate::http_client::create_http_client_with_config` | Add `create_upstream_client`, `UpstreamTlsConfig` |
+| `src/tls/server.rs` | 606 | `create_http_client_with_config(...)` | `create_upstream_client(tls_config)` |
+| `src/http/server.rs` | 19 | `use crate::http_client::create_http_client_with_config` | Add `create_upstream_client`, `UpstreamTlsConfig` |
+| `src/http/server.rs` | 121 | `create_http_client_with_config(...)` | `create_upstream_client(tls_config)` |
+
+**Implementation steps:**
+
+1. Read `src/tls/server.rs` around line 606 to understand how the TLS config is constructed
+2. Map the existing TLS config fields into `UpstreamTlsConfig` (derive `skip_verify`, `ca_cert_path`, `server_name` from site config)
+3. Replace `create_http_client_with_config()` call with `create_upstream_client(tls_config)`
+4. Repeat for `src/http/server.rs` around line 121
+5. Optionally update `HealthChecker::http_health_check()` if it has per-site TLS config
+6. Run `cargo test --test integration_test`
+
+---
+
+### 25. Config Write TOCTOU Fix (6.2.11 completion)
+
+> Estimated effort: 1-2 hours. Medium priority — prevents concurrent config corruption.
+
+**Current state:** `config_write_lock` exists but is used inconsistently:
+
+| Handler | In-memory update | Disk write | Issue |
+|---------|-----------------|------------|-------|
+| `update_main_config` | Never | Under lock ✅ | In-memory stale after write |
+| `update_overseer_config` | **Before lock** ❌ | Under lock ✅ | TOCTOU: memory updated without lock |
+| `update_supervisor_config` | **Before lock** ❌ | Under lock ✅ | TOCTOU: memory updated without lock |
+| `update_process_manager_config` | Under lock ✅ | Separate lock ⚠️ | Lock dropped between memory + disk write |
+
+**Fix pattern:** Hold `config_write_lock` across BOTH the in-memory update AND the disk write atomically:
+
+```rust
+pub async fn update_overseer_config(...) {
+    let _guard = state.metrics.config_write_lock.write().await;
+
+    // 1. Update in-memory (under lock)
+    {
+        let mut config = state.process.config.write().await;
+        config.main.overseer = req.config.clone();
+    }
+
+    // 2. Write to disk (still under lock)
+    let main_config_path = {
+        let cfg = state.process.config.read().await;
+        cfg.config_dir.join("main.toml")
+    };
+    let toml_content = toml::to_string_pretty(&state.process.config.read().await.main)?;
+    tokio::fs::write(&main_config_path, toml_content).await?;
+
+    Ok(Json(StatusResponse::success("Config updated")))
+}
+```
+
+**Steps:**
+1. `update_overseer_config` — move `config_write_lock` acquisition to BEFORE in-memory update (lines 1272-1299)
+2. `update_supervisor_config` — same (lines 1488-1510)
+3. `update_process_manager_config` — merge the two separate lock acquisitions into one (lines 1404 + 1420)
+4. `update_main_config` — add in-memory update under the same lock (lines 967-975)
+5. Run `cargo test --test integration_test`
+
+---
+
+### 26. Remove `expect()` from PQ Crypto Test Code (6.1.5)
+
+> Estimated effort: 1-2 hours. Low priority — all 6 calls are in `#[cfg(test)]` blocks.
+
+Six `.expect()` calls in post-quantum crypto **test** modules panic on key generation failure. While acceptable in tests (panicking is the standard test failure mode), they can be replaced with `?` propagation for better error messages:
+
+| File | Line | Call |
+|------|------|------|
+| `passover_key_exchange.rs` | 992 | `MlKem768::generate_keypair().expect("Failed to generate ML-KEM keypair")` |
+| `passover_key_exchange.rs` | 999 | `perform_ml_kem_encapsulation(...).expect("ML-KEM encapsulation failed")` |
+| `passover_key_exchange.rs` | 1004 | `URL_SAFE_NO_PAD.decode(...).expect("Invalid base64 ciphertext")` |
+| `kem/ml_kem.rs` | 136 | `MlKem768::generate_keypair().expect("Key generation failed")` |
+| `kem/ml_kem.rs` | 141 | `MlKem768::encapsulate(&pk).expect("Encapsulation failed")` |
+| `kem/ml_kem.rs` | 146 | `MlKem768::decapsulate(&ct, &sk).expect("Decapsulation failed")` |
+
+**Note:** These are all in `#[cfg(test)]` modules. Replacing with `?` requires test functions to return `Result`. Optional — the `.expect()` messages are descriptive enough for test debugging.
+
+**Steps:**
+1. Read both files to understand the test function signatures
+2. Change test function return types to `Result<..., Box<dyn std::error::Error>>` where needed
+3. Replace `.expect()` with `?`
+4. Run `cargo test`
+
+---
+
+### 27. Remove Dead Code Allows from Mesh (6.1.6)
+
+> Estimated effort: 1-2 hours. Low priority — code hygiene.
+
+29 item-level `#[allow(dead_code)]` remain across 12 mesh files:
+
+| File | Count | Likely Reason |
+|------|-------|---------------|
+| `transports/wireguard.rs` | 8 | Feature-gated on `wireguard` |
+| `topology.rs` | 5 | Reserved for future topology features |
+| `proxy.rs` | 3 | Config fields for proxy behavior |
+| `security.rs` | 2 | Security policy fields |
+| `security_challenge.rs` | 2 | Challenge config |
+| `client_audit.rs` | 2 | Audit fields |
+| `network_security.rs` | 2 | Network policy fields |
+| Other (5 files) | 5 | Various |
+
+**Steps:**
+1. For each `#[allow(dead_code)]`, check if the item is used behind `#[cfg(feature = "...")]`
+2. If feature-gated: replace `#[allow(dead_code)]` with `#[cfg(feature = "...")]`
+3. If truly dead: delete the item and its write sites
+4. If kept for future use: keep `#[allow(dead_code)]` but add a comment explaining why
+5. Run `cargo check` and `cargo clippy` after
+
+---
+
+### 28. `mesh/mod.rs` Rustdoc (22.1 completion)
+
+> Estimated effort: 5 minutes. Trivial.
+
+Add `//!` module-level doc comment to `src/mesh/mod.rs` (currently starts at line 1 with `pub mod config;`):
+
+```rust
+//! Mesh networking subsystem for MaluWAF.
+//!
+//! Provides peer-to-peer connectivity, DHT-based service discovery,
+//! encrypted transport (QUIC, WireGuard), multi-tenant organization
+//! management, and distributed DNS with DNSSEC support.
+```
+
+**Steps:**
+1. Add the doc comment at the top of `src/mesh/mod.rs`
+2. Run `cargo check`
+
+---
+
+### Wave 5 Execution Order
+
+All 6 phases are independent and can run in parallel:
+
+| Phase | Scope | Effort | Risk | Files |
+|-------|-------|--------|------|-------|
+| **23** Missing tests | rule_feed, endpoints, config tests | 1-2d | Low | `waf/rule_feed.rs`, `waf/endpoints.rs`, `config/mod.rs` |
+| **24** Upstream client wiring | TLS/HTTP server constructors | 2-4h | Med | `tls/server.rs`, `http/server.rs` |
+| **25** Config write TOCTOU | Lock held across memory + disk | 1-2h | Med | `admin/handlers/config.rs` |
+| **26** PQ crypto expects | Replace 6 `.expect()` with `Result` | 1-2h | Low | `mesh/passover_key_exchange.rs`, `mesh/kem/ml_kem.rs` |
+| **27** Dead code allows | Audit 29 `#[allow(dead_code)]` | 1-2h | Low | 12 mesh files |
+| **28** mesh/mod.rs rustdoc | Add 5-line doc comment | 5min | Trivial | `src/mesh/mod.rs` |
+
+**Wave 5 wall-clock: 1-2 days** (Phase 23 is the critical path).
+
+### Wave 5 Verification
+
+```bash
+cargo check
+cargo check --features dns
+cargo test --test integration_test
+cargo test --lib -- rule_feed
+cargo test --lib -- endpoints
+cargo test --lib -- config
+cargo clippy  # verify no new warnings
+```
+
+### After Wave 5
+
+| Metric | Before Wave 5 | Target After Wave 5 |
+|--------|--------------|---------------------|
+| Modules with zero tests | 3 | 0 |
+| `expect()` in mesh prod code | 6 | 0 |
+| Dead code allows in mesh | 29 | ≤10 (documented) |
+| Config write race conditions | 4 handlers | 0 |
+| TLS per-site config coverage | proxy only | proxy + TLS + HTTP |
+| Module rustdoc coverage | 9/10 | 10/10 |
+
+---
+
 ## Summary: Parallel Execution Timeline
 
 ```
@@ -949,9 +1208,17 @@ Week 5-6:  Wave 4 (5 parallel streams)           ~4 days wall-clock
            ├── Phase 20 (clippy warnings)
            ├── Phase 21 (dead fields)
            └── Phase 22 (documentation)
+
+Week 6:    Wave 5 (6 parallel streams)            ~2 days wall-clock
+           ├── Phase 23 (missing tests)            * critical path
+           ├── Phase 24 (upstream client wiring)
+           ├── Phase 25 (config write TOCTOU)
+           ├── Phase 26 (PQ crypto expects)
+           ├── Phase 27 (dead code allows)
+           └── Phase 28 (mesh/mod.rs rustdoc)
 ```
 
-**Total wall-clock with full parallelization: ~21 days** (vs ~40-55 days sequential).
+**Total wall-clock with full parallelization: ~22 days** (vs ~42-57 days sequential).
 
 ---
 
@@ -972,15 +1239,18 @@ cargo test --test integration_test
 
 ## Success Metrics
 
-| Metric | Start | After Wave 3 | Target After Wave 4 |
-|--------|-------|-------------|---------------------|
-| `unwrap()` in production | ~12 | <10 | <10 |
-| Unsafe blocks with SAFETY docs | ~95% | ~95% | 100% |
-| Max module size (lines) | 6,448 | 1,290 | <1,500 (all files) |
-| Modules with zero tests | 3 | ~1 | 0 |
-| Clippy warnings | ~154 | ~307 | <50 |
-| Dead field warnings | ~85 | 36 | 0 |
-| Binary content in cache | Corrupted | Correct | Correct |
-| Mesh nodes with `skip_verify` | Not wired | Per-site | Per-site |
-| Wall-clock effort (parallel) | — | ~17d | ~21d |
-| Wall-clock effort (sequential) | — | ~32-49d | ~40-55d |
+| Metric | Start | After Wave 3 | Target After Wave 4 | Target After Wave 5 |
+|--------|-------|-------------|---------------------|---------------------|
+| `unwrap()` in production | ~12 | <10 | <10 | <10 |
+| Unsafe blocks with SAFETY docs | ~95% | ~95% | 100% | 100% |
+| Max module size (lines) | 6,448 | 1,290 | <1,500 (all files) | <1,500 (all files) |
+| Modules with zero tests | 3 | ~1 | 0 | 0 |
+| Clippy warnings | ~154 | ~307 | <50 | <50 |
+| Dead field warnings | ~85 | 36 | 0 | 0 |
+| Binary content in cache | Corrupted | Correct | Correct | Correct |
+| Mesh nodes with `skip_verify` | Not wired | Per-site | Per-site | Per-site (all paths) |
+| Config write race conditions | 4 handlers | 4 | 4 | 0 |
+| `expect()` in mesh test code | ~10 | 6 | 6 | 0 |
+| Dead code allows (mesh) | 27 | 29 | 29 | ≤10 (documented) |
+| Wall-clock effort (parallel) | — | ~17d | ~21d | ~22d |
+| Wall-clock effort (sequential) | — | ~32-49d | ~40-55d | ~42-57d |

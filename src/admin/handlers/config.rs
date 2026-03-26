@@ -32,7 +32,7 @@ pub async fn get_main_config(
     _auth: OptionalAuth,
 ) -> Result<Json<MainConfigResponse>, StatusCode> {
 
-    let config = state.config.read().await;
+    let config = state.process.config.read().await;
     
     Ok(Json(MainConfigResponse {
         config: config.main.clone(),
@@ -68,7 +68,7 @@ pub struct ConfigFieldSchema {
     )
 )]
 pub async fn get_config_schema(
-    State(state): State<Arc<AdminState>>,
+    State(_state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<Vec<ConfigFieldSchema>>, StatusCode> {
 
@@ -960,12 +960,12 @@ pub async fn update_main_config(
         })?;
 
     let main_config_path = {
-        let cfg = state.config.read().await;
+        let cfg = state.process.config.read().await;
         cfg.config_dir.join("main.toml")
     };
 
     {
-        let _guard = state.config_write_lock.write().await;
+        let _guard = state.metrics.config_write_lock.write().await;
         tokio::fs::write(&main_config_path, toml_content)
             .await
             .map_err(|e| {
@@ -994,7 +994,7 @@ pub async fn reload_config(
     _auth: OptionalAuth,
 ) -> Result<Json<StatusResponse>, StatusCode> {
 
-    let mut config = state.config.write().await;
+    let mut config = state.process.config.write().await;
     let results = config.reload_all();
     
     let loaded = results.iter().filter(|r| r.1.is_ok()).count();
@@ -1051,7 +1051,7 @@ pub struct SetLogLevelRequest {
     )
 )]
 pub async fn set_log_level(
-    State(state): State<Arc<AdminState>>,
+    State(_state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<SetLogLevelRequest>,
 ) -> Result<Json<StatusResponse>, StatusCode> {
@@ -1081,7 +1081,7 @@ pub async fn set_log_level(
     )
 )]
 pub async fn get_log_level(
-    State(state): State<Arc<AdminState>>,
+    State(_state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<StatusResponse>, StatusCode> {
 
@@ -1109,7 +1109,7 @@ pub async fn export_config(
     _auth: OptionalAuth,
 ) -> Result<String, StatusCode> {
 
-    let config = state.config.read().await;
+    let config = state.process.config.read().await;
     let toml_content = toml::to_string_pretty(&config.main)
         .map_err(|e| {
             tracing::error!("Failed to serialize config: {}", e);
@@ -1158,12 +1158,12 @@ pub async fn import_config(
         })?;
 
     let main_config_path = {
-        let cfg = state.config.read().await;
+        let cfg = state.process.config.read().await;
         cfg.config_dir.join("main.toml")
     };
 
     {
-        let _guard = state.config_write_lock.write().await;
+        let _guard = state.metrics.config_write_lock.write().await;
         tokio::fs::write(&main_config_path, toml_content)
             .await
             .map_err(|e| {
@@ -1203,7 +1203,7 @@ pub struct CheckRegexRequest {
     )
 )]
 pub async fn check_regex(
-    State(state): State<Arc<AdminState>>,
+    State(_state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<CheckRegexRequest>,
 ) -> Result<Json<RegexCheckResult>, StatusCode> {
@@ -1244,7 +1244,7 @@ pub async fn get_overseer_config(
     _auth: OptionalAuth,
 ) -> Result<Json<OverseerConfigResponse>, StatusCode> {
 
-    let config = state.config.read().await;
+    let config = state.process.config.read().await;
     Ok(Json(OverseerConfigResponse {
         config: config.main.overseer.clone(),
     }))
@@ -1270,16 +1270,16 @@ pub async fn update_overseer_config(
 ) -> Result<Json<StatusResponse>, StatusCode> {
 
     {
-        let mut config = state.config.write().await;
+        let mut config = state.process.config.write().await;
         config.main.overseer = req.config.clone();
     }
 
     let main_config_path = {
-        let cfg = state.config.read().await;
+        let cfg = state.process.config.read().await;
         cfg.config_dir.join("main.toml")
     };
 
-    let _guard = state.config_write_lock.write().await;
+    let _guard = state.metrics.config_write_lock.write().await;
 
     let toml_content = tokio::fs::read_to_string(&main_config_path)
         .await
@@ -1354,12 +1354,12 @@ pub async fn get_process_manager_config(
     _auth: OptionalAuth,
 ) -> Result<Json<ProcessManagerConfigResponse>, StatusCode> {
 
-    if let Some(ref pm) = state.process_manager {
+    if let Some(ref pm) = state.process.process_manager {
         Ok(Json(ProcessManagerConfigResponse {
             config: pm.get_config(),
         }))
     } else {
-        let config = state.config.read().await;
+        let config = state.process.config.read().await;
         Ok(Json(ProcessManagerConfigResponse {
             config: config.main.process_manager.clone(),
         }))
@@ -1385,7 +1385,7 @@ pub async fn update_process_manager_config(
     Json(req): Json<UpdateProcessManagerConfigRequest>,
 ) -> Result<Json<StatusResponse>, StatusCode> {
 
-    let needs_restart = if let Some(ref pm) = state.process_manager {
+    let needs_restart = if let Some(ref pm) = state.process.process_manager {
         match pm.update_config(req.config.clone()) {
             Ok(restart_needed) => {
                 tracing::info!("Process manager config updated dynamically");
@@ -1401,8 +1401,8 @@ pub async fn update_process_manager_config(
     };
 
     let toml_content = {
-        let _guard = state.config_write_lock.write().await;
-        let mut config = state.config.write().await;
+        let _guard = state.metrics.config_write_lock.write().await;
+        let mut config = state.process.config.write().await;
         config.main.process_manager = req.config;
         toml::to_string_pretty(&config.main)
             .map_err(|e| {
@@ -1412,12 +1412,12 @@ pub async fn update_process_manager_config(
     };
 
     let main_config_path = {
-        let cfg = state.config.read().await;
+        let cfg = state.process.config.read().await;
         cfg.config_dir.join("main.toml")
     };
 
     {
-        let _guard = state.config_write_lock.write().await;
+        let _guard = state.metrics.config_write_lock.write().await;
         tokio::fs::write(&main_config_path, toml_content)
             .await
             .map_err(|e| {
@@ -1460,7 +1460,7 @@ pub async fn get_supervisor_config(
     _auth: OptionalAuth,
 ) -> Result<Json<SupervisorConfigResponse>, StatusCode> {
 
-    let config = state.config.read().await;
+    let config = state.process.config.read().await;
     Ok(Json(SupervisorConfigResponse {
         config: config.main.supervisor.clone(),
     }))
@@ -1486,16 +1486,16 @@ pub async fn update_supervisor_config(
 ) -> Result<Json<StatusResponse>, StatusCode> {
 
     {
-        let mut config = state.config.write().await;
+        let mut config = state.process.config.write().await;
         config.main.supervisor = req.config.clone();
     }
 
     let main_config_path = {
-        let cfg = state.config.read().await;
+        let cfg = state.process.config.read().await;
         cfg.config_dir.join("main.toml")
     };
 
-    let _guard = state.config_write_lock.write().await;
+    let _guard = state.metrics.config_write_lock.write().await;
 
     let toml_content = tokio::fs::read_to_string(&main_config_path)
         .await
@@ -1538,7 +1538,7 @@ pub async fn update_supervisor_config(
         tracing::info!("Worker reload signal written to {:?}", reload_path);
     }
 
-    if let Some(ref pm) = state.process_manager {
+    if let Some(ref pm) = state.process.process_manager {
         pm.reload_config();
     }
 

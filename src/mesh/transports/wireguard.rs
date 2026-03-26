@@ -23,24 +23,32 @@ pub struct WireGuardMeshTransport {
     config: Arc<MeshConfig>,
     wireguard_config: Arc<MeshWireGuardConfig>,
     topology: Arc<MeshTopology>,
+    #[allow(dead_code)] // Reserved for WireGuard runtime lifecycle
     runtime: Option<Arc<WireGuardMeshRuntime>>,
     running: Arc<ParkingRwLock<bool>>,
     shutdown_tx: Arc<ParkingRwLock<Option<broadcast::Sender<()>>>>,
     peer_states: Arc<DashMap<String, WireGuardPeerState>>,
+    #[allow(dead_code)] // Reserved for datagram forwarding
     datagram_tx: mpsc::Sender<DatagramPacket>,
     local_addresses: Arc<ParkingRwLock<Vec<String>>>,
     socket: Arc<RwLock<Option<Arc<UdpSocket>>>>,
 }
 
 struct WireGuardPeerState {
+    #[allow(dead_code)] // Reserved for peer identification
     pub peer_id: String,
     pub address: String,
     pub wireguard_ip: String,
+    #[allow(dead_code)] // Reserved for role-based routing
     pub role: MeshNodeRole,
+    #[allow(dead_code)] // Reserved for upstream discovery
     pub upstreams: Vec<String>,
+    #[allow(dead_code)] // Reserved for connection lifetime tracking
     pub connected_at: Instant,
     pub last_seen: Instant,
+    #[allow(dead_code)] // Reserved for multi-protocol support
     pub quic_port: Option<u16>,
+    #[allow(dead_code)]
     pub wireguard_port: Option<u16>,
 }
 

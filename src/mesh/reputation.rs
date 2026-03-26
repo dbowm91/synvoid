@@ -61,6 +61,7 @@ pub struct ReputationManager {
 
 struct PeerReputationState {
     reputation: PeerReputation,
+    #[allow(dead_code)] // Reserved for reputation event history
     history: Vec<ReputationEvent>,
 }
 

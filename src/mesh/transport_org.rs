@@ -1,21 +1,7 @@
 use crate::mesh::transport::*;
-use super::*;
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
 
-use bytes::Bytes;
-use dashmap::DashMap;
-use futures::future::join_all;
-use base64::Engine;
-use parking_lot::RwLock;
-use rand::Rng;
-use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
-use quinn::{Connection, SendStream, RecvStream};
 
-use crate::mesh::protocol::{{MeshMessage, MeshPeerInfo, UpstreamInfo, RouteQueryResult, ProviderInfo, MESH_MESSAGE_VERSION}};
-use crate::mesh::topology::{{MeshTopology, PeerStatus}};
-use crate::mesh::config::{{MeshConfig, MeshPeerConfig}};
+use crate::mesh::protocol::MeshMessage;
 
 
 impl MeshTransport {
@@ -102,7 +88,7 @@ impl MeshTransport {
         request_id: &str,
         org_name: &str,
         requesting_node_id: &str,
-        requesting_node_pubkey: &str,
+        _requesting_node_pubkey: &str,
         from_peer: &str,
     ) {
         let org_id = uuid::Uuid::new_v4().to_string();
@@ -380,8 +366,8 @@ impl MeshTransport {
         from_peer: &str,
         request_id: &str,
         upstream_id: &str,
-        upstream_url: &str,
-        org_id: Option<&str>,
+        _upstream_url: &str,
+        _org_id: Option<&str>,
         requesting_node_id: &str,
     ) {
         tracing::info!("Received upstream registration request: {} from node {} for upstream {}", 
@@ -446,7 +432,7 @@ impl MeshTransport {
 
     pub(crate) async fn handle_org_invitation_request(
         &self,
-        from_peer: &str,
+        _from_peer: &str,
         request_id: &str,
         org_id: &str,
         inviter_node_id: &str,
@@ -476,8 +462,8 @@ impl MeshTransport {
 
     pub(crate) async fn handle_org_invitation_accept(
         &self,
-        from_peer: &str,
-        request_id: &str,
+        _from_peer: &str,
+        _request_id: &str,
         org_id: &str,
         invited_node_id: &str,
         invitation_token: &str,
@@ -517,7 +503,7 @@ impl MeshTransport {
         org_id: &str,
         member_node_id: &str,
         announced_by: &str,
-        joined_at: u64,
+        _joined_at: u64,
     ) {
         tracing::info!("Received org member announce: {} joined org {} (announced by {})", 
             member_node_id, org_id, announced_by);

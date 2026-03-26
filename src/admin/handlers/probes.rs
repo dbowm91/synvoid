@@ -315,7 +315,7 @@ fn parse_duration(duration: &str) -> u64 {
     )
 )]
 pub async fn block_probes(
-    State(state): State<Arc<AdminState>>,
+    State(_state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<BlockProbesRequest>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
