@@ -1,5 +1,5 @@
-use std::time::Instant;
 use serde::{Deserialize, Serialize};
+use std::time::Instant;
 
 #[derive(Clone)]
 pub struct HoneypotContext {
@@ -79,9 +79,9 @@ impl HoneypotResponse {
 #[async_trait::async_trait]
 pub trait HoneypotResponder: Send + Sync {
     fn name(&self) -> &str;
-    
+
     fn service_type(&self) -> &str;
-    
+
     fn respond(&self, payload: &[u8], context: &HoneypotContext) -> HoneypotResponse;
 
     async fn respond_async(&self, payload: &[u8], context: &HoneypotContext) -> HoneypotResponse {
@@ -116,7 +116,8 @@ impl HoneypotResponderRegistry {
     }
 
     pub fn register(&mut self, responder: std::sync::Arc<dyn HoneypotResponder>) {
-        self.responders.insert(responder.name().to_string(), responder);
+        self.responders
+            .insert(responder.name().to_string(), responder);
     }
 
     pub fn register_ai(&mut self, name: String, responder: std::sync::Arc<dyn AiResponder>) {

@@ -211,9 +211,7 @@ impl BaselineLearner {
         }
 
         let mut stats = self.statistics.write();
-        let stats_entry = stats
-            .entry(metric_name.to_string())
-            .or_default();
+        let stats_entry = stats.entry(metric_name.to_string()).or_default();
         stats_entry.update(value);
 
         let mut collected = self.collected_samples.write();

@@ -22,10 +22,11 @@ impl QnameMinimizer {
         for zone in zones {
             let zone_lower = zone.to_lowercase();
             if (qname_lower.ends_with(&zone_lower) || qname_lower == zone_lower)
-                && zone_lower.len() > best_match_len {
-                    best_match = Some(zone);
-                    best_match_len = zone_lower.len();
-                }
+                && zone_lower.len() > best_match_len
+            {
+                best_match = Some(zone);
+                best_match_len = zone_lower.len();
+            }
         }
 
         if let Some(zone) = best_match {

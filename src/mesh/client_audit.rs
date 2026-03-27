@@ -1,13 +1,10 @@
 #![allow(unused_variables, unused_mut)]
 
-use std::sync::Arc;
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Instant;
 
-use axum::{
-    extract::State,
-    Json,
-};
+use axum::{extract::State, Json};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use parking_lot::RwLock;
 use rand::Rng;
@@ -15,9 +12,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::sync::RwLock as TokioRwLock;
 
+use crate::mesh::audit_session::{AuditSessionManager, SessionValidationResult};
 use crate::mesh::config::MeshConfig;
 use crate::mesh::topology::MeshTopology;
-use crate::mesh::audit_session::{AuditSessionManager, SessionValidationResult};
 
 const DEFAULT_AUDIT_REPORT_COOLDOWN_SECS: u64 = 60;
 const SIGNED_REPORT_COOLDOWN_SECS: u64 = 60;
@@ -218,12 +215,14 @@ impl ClientAuditManager {
     fn cleanup_old_reports(&self) {
         let mut pending = self.pending_reports.write();
         let now = Instant::now();
-        pending.retain(|_, v| now.duration_since(*v).as_secs() < DEFAULT_AUDIT_REPORT_COOLDOWN_SECS * 2);
+        pending.retain(|_, v| {
+            now.duration_since(*v).as_secs() < DEFAULT_AUDIT_REPORT_COOLDOWN_SECS * 2
+        });
     }
 
     pub async fn process_audit_report(&self, report: ClientAuditReport) -> AuditReportResponse {
         let node_id = &report.edge_node_id;
-        
+
         if node_id.is_empty() {
             return AuditReportResponse {
                 accepted: false,
@@ -246,20 +245,21 @@ impl ClientAuditManager {
             };
         }
 
-        let session_validation: Option<SessionValidationResult> = if let Some(session_id) = &report.session_id {
-            match self.session_manager.validate_session(session_id, node_id) {
-                Ok(val) => Some(val),
-                Err(e) => {
-                    tracing::debug!("Session validation failed for {}: {:?}", session_id, e);
-                    None
+        let session_validation: Option<SessionValidationResult> =
+            if let Some(session_id) = &report.session_id {
+                match self.session_manager.validate_session(session_id, node_id) {
+                    Ok(val) => Some(val),
+                    Err(e) => {
+                        tracing::debug!("Session validation failed for {}: {:?}", session_id, e);
+                        None
+                    }
                 }
-            }
-        } else {
-            None
-        };
+            } else {
+                None
+            };
 
         let has_valid_session = session_validation.is_some();
-        
+
         if has_valid_session {
             if let Some(session_id) = &report.session_id {
                 tracing::debug!("Authenticated audit report from session {}", session_id);
@@ -308,7 +308,11 @@ impl ClientAuditManager {
         {
             let pending = self.pending_reports.read();
             if let Some(last_report) = pending.get(node_id) {
-                let cooldown = if has_valid_session { SIGNED_REPORT_COOLDOWN_SECS } else { DEFAULT_AUDIT_REPORT_COOLDOWN_SECS };
+                let cooldown = if has_valid_session {
+                    SIGNED_REPORT_COOLDOWN_SECS
+                } else {
+                    DEFAULT_AUDIT_REPORT_COOLDOWN_SECS
+                };
                 if last_report.elapsed().as_secs() < cooldown {
                     return AuditReportResponse {
                         accepted: false,
@@ -337,7 +341,11 @@ impl ClientAuditManager {
             };
         }
 
-        let max_per_report = if has_valid_session { SIGNED_MAX_REPORTS_PER_MINUTE } else { UNSIGNED_MAX_REPORTS_PER_MINUTE };
+        let max_per_report = if has_valid_session {
+            SIGNED_MAX_REPORTS_PER_MINUTE
+        } else {
+            UNSIGNED_MAX_REPORTS_PER_MINUTE
+        };
         if passed > max_per_report || failed > max_per_report {
             return AuditReportResponse {
                 accepted: false,
@@ -359,7 +367,9 @@ impl ClientAuditManager {
 
         let new_reputation = {
             let mut topology = self.topology.write().await;
-            topology.update_peer_audit_stats(node_id, passed_u64, failed_u64).await;
+            topology
+                .update_peer_audit_stats(node_id, passed_u64, failed_u64)
+                .await;
             topology.get_peer_audit_reputation(node_id).await
         };
 
@@ -367,10 +377,15 @@ impl ClientAuditManager {
             let quarantined = self.should_quarantine_by_reputation(rep);
 
             if quarantined {
-                self.topology.write().await.update_peer_status(node_id, crate::mesh::topology::PeerStatus::Unhealthy).await;
+                self.topology
+                    .write()
+                    .await
+                    .update_peer_status(node_id, crate::mesh::topology::PeerStatus::Unhealthy)
+                    .await;
                 tracing::warn!(
                     "Node {} quarantined due to audit failures (reputation: {:.2})",
-                    node_id, rep
+                    node_id,
+                    rep
                 );
                 (
                     Some(rep),
@@ -421,8 +436,14 @@ impl ClientAuditManager {
         reputation < self.min_reputation_threshold
     }
 
-    pub fn create_session(&self, session_id: String, edge_node_id: String, mesh_id: String) -> bool {
-        self.session_manager.create_session(session_id, edge_node_id, mesh_id)
+    pub fn create_session(
+        &self,
+        session_id: String,
+        edge_node_id: String,
+        mesh_id: String,
+    ) -> bool {
+        self.session_manager
+            .create_session(session_id, edge_node_id, mesh_id)
     }
 
     pub fn generate_new_pow_challenge(&self) -> String {
@@ -430,7 +451,11 @@ impl ClientAuditManager {
     }
 
     pub async fn get_node_reputation(&self, node_id: &str) -> Option<f64> {
-        self.topology.read().await.get_peer_audit_reputation(node_id).await
+        self.topology
+            .read()
+            .await
+            .get_peer_audit_reputation(node_id)
+            .await
     }
 }
 

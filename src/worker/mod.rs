@@ -18,19 +18,19 @@ use tokio::sync::Mutex as TokioMutex;
 use crate::config::ConfigManager;
 use crate::metrics::WorkerMetrics;
 use crate::process::ipc_transport::IpcStream as AsyncIpcStream;
-use crate::process::{Message, WorkerId, current_timestamp};
+use crate::process::{current_timestamp, Message, WorkerId};
 use crate::static_files::minifier;
-use crate::{RunningFlag, DrainFlag};
+use crate::{DrainFlag, RunningFlag};
 
 use crate::common::setup_panic_handler;
 use crate::worker::common::load_config;
 
-pub mod drain_state;
 pub mod common;
 pub mod connect;
+pub mod drain_state;
 pub mod metrics;
-pub mod unified_server;
 pub mod traits;
+pub mod unified_server;
 
 mod connection;
 mod image_poisoning;
@@ -38,7 +38,9 @@ mod response_builder;
 
 pub use traits::{BaseWorkerState, WorkerLifecycle};
 
-pub use unified_server::{UnifiedServerWorkerArgs, run_unified_server_worker, setup_unified_server_panic_handler};
+pub use unified_server::{
+    run_unified_server_worker, setup_unified_server_panic_handler, UnifiedServerWorkerArgs,
+};
 
 #[allow(dead_code)]
 type MinifierCache = Arc<minifier::MinifierCache>;
@@ -109,7 +111,10 @@ pub struct WorkerArgs {
 }
 
 pub fn setup_worker_panic_handler() {
-    let worker_panic_log = format!("{}/maluwaf-worker-panic.log", std::env::temp_dir().display());
+    let worker_panic_log = format!(
+        "{}/maluwaf-worker-panic.log",
+        std::env::temp_dir().display()
+    );
     setup_panic_handler("WORKER", Some(&worker_panic_log));
 }
 
@@ -129,17 +134,25 @@ pub async fn run_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Erro
     );
 
     let ipc = Arc::new(TokioMutex::new(
-        connect::connect_to_master_async(&args.master_socket, 5, std::time::Duration::from_secs(2), "Worker").await?
+        connect::connect_to_master_async(
+            &args.master_socket,
+            5,
+            std::time::Duration::from_secs(2),
+            "Worker",
+        )
+        .await?,
     ));
 
     {
         let mut ipc_guard = ipc.lock().await;
-        ipc_guard.send(&Message::WorkerStarted {
-            id: worker_id,
-            pid: std::process::id(),
-            port: args.port,
-            timestamp: current_timestamp(),
-        }).await?;
+        ipc_guard
+            .send(&Message::WorkerStarted {
+                id: worker_id,
+                pid: std::process::id(),
+                port: args.port,
+                timestamp: current_timestamp(),
+            })
+            .await?;
     }
 
     let config_manager = load_config(&args.config_path);
@@ -150,7 +163,7 @@ pub async fn run_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Erro
     let metrics = Arc::new(WorkerMetrics::default());
     let running = RunningFlag::new();
     let draining = DrainFlag::new();
-    
+
     let state = connection::WorkerState {
         worker_id,
         metrics: metrics.clone(),
@@ -162,9 +175,9 @@ pub async fn run_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Erro
 
     {
         let mut ipc_guard = ipc.lock().await;
-        ipc_guard.send(&Message::WorkerReady {
-            id: worker_id,
-        }).await?;
+        ipc_guard
+            .send(&Message::WorkerReady { id: worker_id })
+            .await?;
     }
 
     tracing::info!("Worker {} ready", worker_id);
@@ -172,10 +185,10 @@ pub async fn run_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Erro
     let heartbeat_state = state.clone();
     let heartbeat_handle = tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(5));
-        
+
         loop {
             interval.tick().await;
-            
+
             if !heartbeat_state.running.is_running() {
                 break;
             }
@@ -184,11 +197,13 @@ pub async fn run_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Erro
             let payload = heartbeat_state.metrics.to_payload(uptime);
 
             let mut ipc = heartbeat_state.ipc.lock().await;
-            let _ = ipc.send(&Message::WorkerHeartbeat {
-                id: heartbeat_state.worker_id,
-                timestamp: current_timestamp(),
-                metrics: payload,
-            }).await;
+            let _ = ipc
+                .send(&Message::WorkerHeartbeat {
+                    id: heartbeat_state.worker_id,
+                    timestamp: current_timestamp(),
+                    metrics: payload,
+                })
+                .await;
         }
     });
 
@@ -203,7 +218,10 @@ pub async fn run_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Erro
 
             let mut ipc = ipc_state.ipc.lock().await;
             match ipc.recv_with_timeout::<Message>(100).await {
-                Ok(Some(Message::MasterShutdown { graceful, timeout_secs })) => {
+                Ok(Some(Message::MasterShutdown {
+                    graceful,
+                    timeout_secs,
+                })) => {
                     tracing::info!(
                         "Worker {} received shutdown signal (graceful: {}, timeout: {}s)",
                         ipc_state.worker_id,
@@ -211,15 +229,21 @@ pub async fn run_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Erro
                         timeout_secs
                     );
                     ipc_state.running.stop();
-                    
+
                     let mut ipc = ipc_state.ipc.lock().await;
-                    let _ = ipc.send(&Message::WorkerShutdownComplete {
-                        id: ipc_state.worker_id,
-                    }).await;
+                    let _ = ipc
+                        .send(&Message::WorkerShutdownComplete {
+                            id: ipc_state.worker_id,
+                        })
+                        .await;
                     break;
                 }
                 Ok(Some(Message::MasterConfigReload { config_path })) => {
-                    tracing::info!("Worker {} received config reload: {}", ipc_state.worker_id, config_path);
+                    tracing::info!(
+                        "Worker {} received config reload: {}",
+                        ipc_state.worker_id,
+                        config_path
+                    );
                 }
                 Ok(Some(Message::MasterHealthCheck { timestamp })) => {
                     let mut ipc = ipc_state.ipc.lock().await;
@@ -232,12 +256,14 @@ pub async fn run_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Erro
                         worker_threads
                     );
                     ipc_state.draining.start_drain();
-                    
+
                     let mut ipc = ipc_state.ipc.lock().await;
-                    let _ = ipc.send(&Message::WorkerResizeAck {
-                        id: ipc_state.worker_id,
-                        worker_threads,
-                    }).await;
+                    let _ = ipc
+                        .send(&Message::WorkerResizeAck {
+                            id: ipc_state.worker_id,
+                            worker_threads,
+                        })
+                        .await;
                 }
                 Ok(Some(_)) => {}
                 Ok(None) => {}
@@ -255,7 +281,7 @@ pub async fn run_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Erro
         let addr: std::net::SocketAddr = format!("127.0.0.1:{}", port)
             .parse()
             .expect("Invalid address");
-        
+
         let listener = match tokio::net::TcpListener::bind(addr).await {
             Ok(l) => l,
             Err(e) => {
@@ -264,16 +290,30 @@ pub async fn run_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Erro
             }
         };
 
-        tracing::info!("Worker {} HTTP server listening on {}", worker_id_for_log, addr);
+        tracing::info!(
+            "Worker {} HTTP server listening on {}",
+            worker_id_for_log,
+            addr
+        );
 
         loop {
             if server_state.draining.is_draining() {
-                let concurrent = server_state.metrics.current_concurrent.load(std::sync::atomic::Ordering::SeqCst);
+                let concurrent = server_state
+                    .metrics
+                    .current_concurrent
+                    .load(std::sync::atomic::Ordering::SeqCst);
                 if concurrent == 0 {
-                    tracing::info!("Worker {} finished draining, exiting for threadpool resize", worker_id_for_log);
+                    tracing::info!(
+                        "Worker {} finished draining, exiting for threadpool resize",
+                        worker_id_for_log
+                    );
                     break;
                 }
-                tracing::debug!("Worker {} draining, waiting for {} connections", worker_id_for_log, concurrent);
+                tracing::debug!(
+                    "Worker {} draining, waiting for {} connections",
+                    worker_id_for_log,
+                    concurrent
+                );
                 tokio::time::sleep(Duration::from_millis(100)).await;
                 continue;
             }
@@ -283,10 +323,10 @@ pub async fn run_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Erro
                     match accept_result {
                         Ok((stream, _client_addr)) => {
                             let metrics = server_state.metrics.clone();
-                            
+
                             metrics.total_requests.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                             let current = metrics.current_concurrent.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-                            
+
                             let peak = metrics.peak_concurrent.load(std::sync::atomic::Ordering::Relaxed);
                             if current > peak {
                                 metrics.peak_concurrent.store(current, std::sync::atomic::Ordering::Relaxed);
@@ -294,11 +334,11 @@ pub async fn run_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Erro
 
                             tokio::spawn(async move {
                                 let start = Instant::now();
-                                
+
                                 let _ = stream;
-                                
+
                                 tokio::time::sleep(Duration::from_millis(10)).await;
-                                
+
                                 let elapsed = start.elapsed().as_millis() as u64;
                                 metrics.record_request_end(elapsed);
                             });
@@ -317,7 +357,7 @@ pub async fn run_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Erro
         }
 
         tracing::info!("Worker {} HTTP server stopped", worker_id_for_log);
-        
+
         if server_state.draining.is_draining() {
             tracing::info!("Worker {} exiting for threadpool resize", worker_id_for_log);
             std::process::exit(100);
@@ -362,14 +402,14 @@ impl StaticWorkerState {
     fn get_cache_stats(&self) -> (u64, u64) {
         let mut total_hits = 0u64;
         let mut total_misses = 0u64;
-        
+
         if let Ok(caches) = self.minifier_caches.read() {
             for cache in caches.values() {
                 total_hits += cache.cache_hits();
                 total_misses += cache.cache_misses();
             }
         }
-        
+
         (total_hits, total_misses)
     }
 }
@@ -383,7 +423,9 @@ struct CompressionTask {
     queued_at: Instant,
 }
 
-pub async fn run_static_worker(args: StaticWorkerArgs) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub async fn run_static_worker(
+    args: StaticWorkerArgs,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if let Some(ref level) = args.log_level {
         crate::log_controller::init_logging_with_dynamic_level(level);
     }
@@ -396,20 +438,28 @@ pub async fn run_static_worker(args: StaticWorkerArgs) -> Result<(), Box<dyn std
     );
 
     let ipc = Arc::new(TokioMutex::new(
-        connect::connect_to_master_async(&args.master_socket, 5, std::time::Duration::from_secs(2), "Static worker").await?
+        connect::connect_to_master_async(
+            &args.master_socket,
+            5,
+            std::time::Duration::from_secs(2),
+            "Static worker",
+        )
+        .await?,
     ));
 
     {
         let mut ipc_guard = ipc.lock().await;
-        ipc_guard.send(&crate::process::Message::StaticWorkerStarted {
-            worker_id: args.worker_id,
-            pid: std::process::id(),
-        }).await?;
+        ipc_guard
+            .send(&crate::process::Message::StaticWorkerStarted {
+                worker_id: args.worker_id,
+                pid: std::process::id(),
+            })
+            .await?;
     }
 
     let mut config_manager = ConfigManager::new(args.config_path.clone());
     let main_config_path = args.config_path.join("main.toml");
-    
+
     if let Err(e) = config_manager.load_main(&main_config_path) {
         tracing::warn!("Failed to load main config: {}, using defaults", e);
     }
@@ -455,32 +505,34 @@ pub async fn run_static_worker(args: StaticWorkerArgs) -> Result<(), Box<dyn std
                 l
             }
             Err(e) => {
-                tracing::warn!("Failed to bind static worker socket {}: {}", socket_path.display(), e);
+                tracing::warn!(
+                    "Failed to bind static worker socket {}: {}",
+                    socket_path.display(),
+                    e
+                );
                 return Err(Box::new(e));
             }
         };
 
         let socket_state = state.clone();
-        std::thread::spawn(move || {
-            loop {
-                if !socket_state.running.is_running() {
-                    break;
-                }
-
-                match listener.accept() {
-                    Ok((stream, _)) => {
-                        let ipc = crate::process::IpcStream::new(stream);
-                        let state = socket_state.clone();
-                        std::thread::spawn(move || {
-                            handle_minify_client_connection(ipc, state);
-                        });
-                    }
-                    Err(e) => {
-                        tracing::debug!("Static worker socket accept error: {}", e);
-                    }
-                }
-                std::thread::sleep(Duration::from_millis(10));
+        std::thread::spawn(move || loop {
+            if !socket_state.running.is_running() {
+                break;
             }
+
+            match listener.accept() {
+                Ok((stream, _)) => {
+                    let ipc = crate::process::IpcStream::new(stream);
+                    let state = socket_state.clone();
+                    std::thread::spawn(move || {
+                        handle_minify_client_connection(ipc, state);
+                    });
+                }
+                Err(e) => {
+                    tracing::debug!("Static worker socket accept error: {}", e);
+                }
+            }
+            std::thread::sleep(Duration::from_millis(10));
         });
     }
 
@@ -489,29 +541,27 @@ pub async fn run_static_worker(args: StaticWorkerArgs) -> Result<(), Box<dyn std
         let listener = crate::process::ipc::WindowsIpcListener::new("rustwaf-static-worker");
         let socket_state = state.clone();
 
-        std::thread::spawn(move || {
-            loop {
-                if !socket_state.running.is_running() {
-                    break;
-                }
-
-                match listener.accept() {
-                    Ok(stream) => {
-                        let ipc = crate::process::IpcStream::new(stream);
-                        let state = socket_state.clone();
-                        std::thread::spawn(move || {
-                            handle_minify_client_connection(ipc, state);
-                        });
-                    }
-                    Err(e) => {
-                        tracing::warn!("Static worker pipe accept error: {}", e);
-                        std::thread::sleep(Duration::from_millis(100));
-                        continue;
-                    }
-                }
-
-                std::thread::sleep(Duration::from_millis(10));
+        std::thread::spawn(move || loop {
+            if !socket_state.running.is_running() {
+                break;
             }
+
+            match listener.accept() {
+                Ok(stream) => {
+                    let ipc = crate::process::IpcStream::new(stream);
+                    let state = socket_state.clone();
+                    std::thread::spawn(move || {
+                        handle_minify_client_connection(ipc, state);
+                    });
+                }
+                Err(e) => {
+                    tracing::warn!("Static worker pipe accept error: {}", e);
+                    std::thread::sleep(Duration::from_millis(100));
+                    continue;
+                }
+            }
+
+            std::thread::sleep(Duration::from_millis(10));
         });
     }
 
@@ -519,9 +569,11 @@ pub async fn run_static_worker(args: StaticWorkerArgs) -> Result<(), Box<dyn std
 
     {
         let mut ipc_guard = ipc.lock().await;
-        ipc_guard.send(&crate::process::Message::StaticWorkerReady {
-            worker_id: args.worker_id,
-        }).await?;
+        ipc_guard
+            .send(&crate::process::Message::StaticWorkerReady {
+                worker_id: args.worker_id,
+            })
+            .await?;
     }
 
     tracing::info!("Static worker {} ready", args.worker_id);
@@ -537,28 +589,52 @@ pub async fn run_static_worker(args: StaticWorkerArgs) -> Result<(), Box<dyn std
 
             let mut ipc = ipc_state.ipc.lock().await;
             match ipc.recv_with_timeout::<crate::process::Message>(50).await {
-                Ok(Some(crate::process::Message::MasterShutdown { graceful, timeout_secs })) => {
+                Ok(Some(crate::process::Message::MasterShutdown {
+                    graceful,
+                    timeout_secs,
+                })) => {
                     tracing::info!(
                         "Static worker {} received shutdown signal (graceful: {}, timeout: {}s), stopping background tasks",
                         ipc_state.worker_id,
                         graceful,
                         timeout_secs
                     );
-                    
+
                     ipc_state.stop_background_tasks.start_drain();
-                    
+
                     response_builder::process_compression_queue(&ipc_state);
-                    tracing::info!("Static worker {} completed final cache refresh", ipc_state.worker_id);
-                    
-                    let _ = ipc.send(&crate::process::Message::StaticWorkerBackgroundTasksDone {
-                        worker_id: ipc_state.worker_id,
-                    }).await;
+                    tracing::info!(
+                        "Static worker {} completed final cache refresh",
+                        ipc_state.worker_id
+                    );
+
+                    let _ = ipc
+                        .send(&crate::process::Message::StaticWorkerBackgroundTasksDone {
+                            worker_id: ipc_state.worker_id,
+                        })
+                        .await;
                 }
-                Ok(Some(crate::process::Message::MinifyRequest { request_id, site_id, path, encoding })) => {
-                    response_builder::handle_minify_request(&ipc_state, request_id, site_id, path, encoding).await;
+                Ok(Some(crate::process::Message::MinifyRequest {
+                    request_id,
+                    site_id,
+                    path,
+                    encoding,
+                })) => {
+                    response_builder::handle_minify_request(
+                        &ipc_state, request_id, site_id, path, encoding,
+                    )
+                    .await;
                 }
-                Ok(Some(crate::process::Message::GetCompressedRequest { request_id, site_id, path, encoding })) => {
-                    response_builder::handle_compressed_request(&ipc_state, request_id, site_id, path, encoding).await;
+                Ok(Some(crate::process::Message::GetCompressedRequest {
+                    request_id,
+                    site_id,
+                    path,
+                    encoding,
+                })) => {
+                    response_builder::handle_compressed_request(
+                        &ipc_state, request_id, site_id, path, encoding,
+                    )
+                    .await;
                 }
                 Ok(Some(_)) => {}
                 Ok(None) => {}
@@ -570,16 +646,19 @@ pub async fn run_static_worker(args: StaticWorkerArgs) -> Result<(), Box<dyn std
     let queue_state = state.clone();
     let queue_handle = tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(10));
-        
+
         loop {
             interval.tick().await;
-            
+
             if !queue_state.running.is_running() {
                 break;
             }
 
             if queue_state.stop_background_tasks.is_draining() {
-                tracing::info!("Static worker {} queue handler stopping (background tasks disabled)", queue_state.worker_id);
+                tracing::info!(
+                    "Static worker {} queue handler stopping (background tasks disabled)",
+                    queue_state.worker_id
+                );
                 break;
             }
 
@@ -588,22 +667,27 @@ pub async fn run_static_worker(args: StaticWorkerArgs) -> Result<(), Box<dyn std
     });
 
     let watch_state = state.clone();
-    let watch_interval = main_config.static_config.as_ref()
+    let watch_interval = main_config
+        .static_config
+        .as_ref()
         .and_then(|c| c.watch_interval_ms)
         .unwrap_or(5000);
-    
+
     let watch_handle = tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_millis(watch_interval));
-        
+
         loop {
             interval.tick().await;
-            
+
             if !watch_state.running.is_running() {
                 break;
             }
 
             if watch_state.stop_background_tasks.is_draining() {
-                tracing::info!("Static worker {} watch handler stopping (background tasks disabled)", watch_state.worker_id);
+                tracing::info!(
+                    "Static worker {} watch handler stopping (background tasks disabled)",
+                    watch_state.worker_id
+                );
                 break;
             }
 
@@ -618,7 +702,11 @@ pub async fn run_static_worker(args: StaticWorkerArgs) -> Result<(), Box<dyn std
                         for location in &static_config.locations {
                             let root = PathBuf::from(location.root.as_str());
                             if root.exists() {
-                                response_builder::check_and_invalidate_cache(&watch_state, site_id, &root);
+                                response_builder::check_and_invalidate_cache(
+                                    &watch_state,
+                                    site_id,
+                                    &root,
+                                );
                             }
                         }
                     }
@@ -626,14 +714,16 @@ pub async fn run_static_worker(args: StaticWorkerArgs) -> Result<(), Box<dyn std
             }
 
             let (cache_hits, cache_misses) = watch_state.get_cache_stats();
-            
+
             let mut ipc = watch_state.ipc.lock().await;
-            let _ = ipc.send(&crate::process::Message::StaticWorkerHeartbeat {
-                worker_id: watch_state.worker_id,
-                timestamp: crate::process::current_timestamp(),
-                static_cache_hits: cache_hits,
-                static_cache_misses: cache_misses,
-            }).await;
+            let _ = ipc
+                .send(&crate::process::Message::StaticWorkerHeartbeat {
+                    worker_id: watch_state.worker_id,
+                    timestamp: crate::process::current_timestamp(),
+                    static_cache_hits: cache_hits,
+                    static_cache_misses: cache_misses,
+                })
+                .await;
         }
     });
 
@@ -644,10 +734,10 @@ pub async fn run_static_worker(args: StaticWorkerArgs) -> Result<(), Box<dyn std
     let queue_for_reload = state.compression_queue.clone();
     let reload_handle = tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(30));
-        
+
         loop {
             interval.tick().await;
-            
+
             if !running_for_reload.is_running() {
                 break;
             }
@@ -661,11 +751,12 @@ pub async fn run_static_worker(args: StaticWorkerArgs) -> Result<(), Box<dyn std
             if cm.load_main(config_path.join("main.toml")).is_ok() {
                 cm.discover_sites();
                 let main_config = cm.main.clone();
-                
+
                 let dummy_ipc = {
                     let socket_name = if cfg!(windows) { "nul" } else { "dummy_reload" };
                     match crate::process::ipc_transport::IpcEndpoint::new(socket_name)
-                        .connect().await
+                        .connect()
+                        .await
                     {
                         Ok(conn) => conn,
                         Err(e) => {
@@ -718,62 +809,97 @@ pub async fn run_static_worker(args: StaticWorkerArgs) -> Result<(), Box<dyn std
 ///
 /// Uses the sync `IpcStream` abstraction for framed message I/O on both
 /// Unix (UnixStream) and Windows (named pipe as File).
-fn handle_minify_client_connection(
-    mut ipc: crate::process::IpcStream,
-    state: StaticWorkerState,
-) {
+fn handle_minify_client_connection(mut ipc: crate::process::IpcStream, state: StaticWorkerState) {
     loop {
         match ipc.try_recv() {
-            Ok(Some(message)) => {
-                match message {
-                    crate::process::Message::MinifyRequest { request_id, site_id, path, encoding } => {
-                        let result = response_builder::process_minify_request(&state, request_id, site_id, path, encoding);
-                        match result {
-                            Ok(response) => {
-                                if let Err(e) = ipc.send(&response) {
-                                    tracing::warn!("Failed to send minify response for request {}: {}", request_id, e);
-                                }
-                            }
-                            Err(error_msg) => {
-                                if let Err(e) = ipc.send(&crate::process::Message::MinifyError {
+            Ok(Some(message)) => match message {
+                crate::process::Message::MinifyRequest {
+                    request_id,
+                    site_id,
+                    path,
+                    encoding,
+                } => {
+                    let result = response_builder::process_minify_request(
+                        &state, request_id, site_id, path, encoding,
+                    );
+                    match result {
+                        Ok(response) => {
+                            if let Err(e) = ipc.send(&response) {
+                                tracing::warn!(
+                                    "Failed to send minify response for request {}: {}",
                                     request_id,
-                                    error: error_msg,
-                                }) {
-                                    tracing::warn!("Failed to send minify error for request {}: {}", request_id, e);
-                                }
+                                    e
+                                );
                             }
                         }
-                    }
-                    crate::process::Message::GetCompressedRequest { request_id, site_id, path, encoding } => {
-                        let result = response_builder::process_compressed_request(&state, request_id, site_id, path, encoding);
-                        match result {
-                            Ok(response) => {
-                                if let Err(e) = ipc.send(&response) {
-                                    tracing::warn!("Failed to send compressed response for request {}: {}", request_id, e);
-                                }
-                            }
-                            Err(error_msg) => {
-                                if let Err(e) = ipc.send(&crate::process::Message::MinifyError {
+                        Err(error_msg) => {
+                            if let Err(e) = ipc.send(&crate::process::Message::MinifyError {
+                                request_id,
+                                error: error_msg,
+                            }) {
+                                tracing::warn!(
+                                    "Failed to send minify error for request {}: {}",
                                     request_id,
-                                    error: error_msg,
-                                }) {
-                                    tracing::warn!("Failed to send compressed error for request {}: {}", request_id, e);
-                                }
+                                    e
+                                );
                             }
                         }
                     }
-                    crate::process::Message::PoisonImageRequest { request_id, site_id, body, last_modified } => {
-                        let poisoned = image_poisoning::poison_image_sync(&state, &site_id, body, last_modified);
-                        if let Err(e) = ipc.send(&crate::process::Message::PoisonImageResponse {
-                            request_id,
-                            poisoned_body: poisoned,
-                        }) {
-                            tracing::warn!("Failed to send poison image response for request {}: {}", request_id, e);
-                        }
-                    }
-                    _ => {}
                 }
-            }
+                crate::process::Message::GetCompressedRequest {
+                    request_id,
+                    site_id,
+                    path,
+                    encoding,
+                } => {
+                    let result = response_builder::process_compressed_request(
+                        &state, request_id, site_id, path, encoding,
+                    );
+                    match result {
+                        Ok(response) => {
+                            if let Err(e) = ipc.send(&response) {
+                                tracing::warn!(
+                                    "Failed to send compressed response for request {}: {}",
+                                    request_id,
+                                    e
+                                );
+                            }
+                        }
+                        Err(error_msg) => {
+                            if let Err(e) = ipc.send(&crate::process::Message::MinifyError {
+                                request_id,
+                                error: error_msg,
+                            }) {
+                                tracing::warn!(
+                                    "Failed to send compressed error for request {}: {}",
+                                    request_id,
+                                    e
+                                );
+                            }
+                        }
+                    }
+                }
+                crate::process::Message::PoisonImageRequest {
+                    request_id,
+                    site_id,
+                    body,
+                    last_modified,
+                } => {
+                    let poisoned =
+                        image_poisoning::poison_image_sync(&state, &site_id, body, last_modified);
+                    if let Err(e) = ipc.send(&crate::process::Message::PoisonImageResponse {
+                        request_id,
+                        poisoned_body: poisoned,
+                    }) {
+                        tracing::warn!(
+                            "Failed to send poison image response for request {}: {}",
+                            request_id,
+                            e
+                        );
+                    }
+                }
+                _ => {}
+            },
             Ok(None) => {
                 std::thread::sleep(Duration::from_millis(10));
             }

@@ -8,9 +8,9 @@ use metrics::{counter, gauge, histogram};
 use quinn::{Connection, RecvStream};
 use tokio::sync::{broadcast, mpsc};
 
+use super::quic::framing::{read_message, write_message};
 use super::quic::messages::{DatagramMessage, TunnelMessage};
 use super::quic::registry::QUIC_TUNNEL_REGISTRY;
-use super::quic::framing::{read_message, write_message};
 
 const DEFAULT_UDP_TUNNEL_TIMEOUT_SECS: u64 = 60;
 const DEFAULT_MAX_DATAGRAM_SIZE: usize = 1200;
@@ -68,7 +68,7 @@ impl Default for UdpTunnelConfig {
 impl UdpTunnelManager {
     pub fn new(config: UdpTunnelConfig) -> Self {
         let (shutdown_tx, _) = broadcast::channel(1);
-        
+
         Self {
             tunnels: Arc::new(DashMap::new()),
             tunnel_timeout: Duration::from_secs(config.tunnel_timeout_secs),
@@ -88,54 +88,70 @@ impl UdpTunnelManager {
         port: u16,
     ) -> Result<Arc<ActiveUdpTunnel>, Box<dyn std::error::Error + Send + Sync>> {
         let key = format!("{}:{}", peer_id, port);
-        
+
         if let Some(tunnel) = self.tunnels.get(&key) {
             *tunnel.last_activity.write() = Instant::now();
             return Ok(Arc::new(tunnel.clone()));
         }
-        
-        let runtime = QUIC_TUNNEL_REGISTRY.get_runtime().await
+
+        let runtime = QUIC_TUNNEL_REGISTRY
+            .get_runtime()
+            .await
             .ok_or_else(|| "QUIC tunnel runtime not available".to_string())?;
-        
-        let session = runtime.get_session_by_peer(peer_id)
+
+        let session = runtime
+            .get_session_by_peer(peer_id)
             .ok_or_else(|| format!("No session found for peer: {}", peer_id))?;
-        
-        let connection = session.connection.clone()
+
+        let connection = session
+            .connection
+            .clone()
             .ok_or_else(|| "No active connection for session".to_string())?;
-        
+
         let identifier = format!("udp-port-{}", port);
-        
-        let (mut send_stream, mut recv_stream) = connection.open_bi().await
+
+        let (mut send_stream, mut recv_stream) = connection
+            .open_bi()
+            .await
             .map_err(|e| format!("Failed to open bidirectional stream: {}", e))?;
-        
+
         let open_msg = TunnelMessage::UdpTunnelOpen {
             identifier: identifier.clone(),
             port,
         };
-        write_message(&mut send_stream, &open_msg).await
+        write_message(&mut send_stream, &open_msg)
+            .await
             .map_err(|e| format!("Failed to send UdpTunnelOpen: {}", e))?;
-        
-        let response = read_message(&mut recv_stream, 65536).await
+
+        let response = read_message(&mut recv_stream, 65536)
+            .await
             .map_err(|e| format!("Failed to read UdpTunnelOpenAck: {}", e))?;
-        
+
         match response {
-            TunnelMessage::UdpTunnelOpenAck { success, message, .. } => {
+            TunnelMessage::UdpTunnelOpenAck {
+                success, message, ..
+            } => {
                 if !success {
-                    return Err(format!("UDP tunnel open failed: {}", message.unwrap_or_default()).into());
+                    return Err(
+                        format!("UDP tunnel open failed: {}", message.unwrap_or_default()).into(),
+                    );
                 }
             }
             _ => return Err("Unexpected response to UdpTunnelOpen".into()),
         }
-        
+
         counter!("maluwaf.tunnel.udp.tunnels.opened").increment(1);
-        
+
         let (response_tx, response_rx) = mpsc::channel::<UdpResponse>(256);
-        
+
         let tunnel = ActiveUdpTunnel {
             identifier: identifier.clone(),
             peer_id: peer_id.to_string(),
             port,
-            max_datagram_size: session.datagram_capabilities.max_size.min(self.max_datagram_size),
+            max_datagram_size: session
+                .datagram_capabilities
+                .max_size
+                .min(self.max_datagram_size),
             connection,
             created_at: Instant::now(),
             last_activity: Arc::new(parking_lot::RwLock::new(Instant::now())),
@@ -143,12 +159,12 @@ impl UdpTunnelManager {
             sequence: Arc::new(AtomicU64::new(0)),
             response_tx,
         };
-        
+
         self.tunnels.insert(key.clone(), tunnel.clone());
         gauge!("maluwaf.tunnel.udp.tunnels.active").set(self.tunnels.len() as f64);
-        
+
         self.spawn_response_handler(tunnel.clone(), recv_stream, response_rx);
-        
+
         Ok(Arc::new(tunnel))
     }
 
@@ -163,7 +179,7 @@ impl UdpTunnelManager {
         let identifier = tunnel.identifier.clone();
         let tunnel_key = format!("{}:{}", tunnel.peer_id, tunnel.port);
         let tunnels = self.tunnels.clone();
-        
+
         tokio::spawn(async move {
             loop {
                 match connection.read_datagram().await {
@@ -172,12 +188,12 @@ impl UdpTunnelManager {
                             if msg.identifier != identifier {
                                 continue;
                             }
-                            
+
                             if let Some((_, pending)) = pending_requests.remove(&msg.sequence) {
                                 counter!("maluwaf.tunnel.udp.responses.routed").increment(1);
                                 histogram!("maluwaf.tunnel.udp.response_latency")
                                     .record(pending.timestamp.elapsed().as_millis() as f64);
-                                
+
                                 // Route response back to client
                                 // This will be handled by the UDP listener
                             }
@@ -212,14 +228,16 @@ impl UdpTunnelManager {
         client_addr: SocketAddr,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let tunnel = self.get_or_open_tunnel(peer_id, port).await?;
-        
+
         let dns_transaction_id = if data.len() >= 2 {
             Some(u16::from_be_bytes([data[0], data[1]]))
         } else {
             None
         };
-        
-        tunnel.send_with_tracking(data, client_addr, dns_transaction_id).await
+
+        tunnel
+            .send_with_tracking(data, client_addr, dns_transaction_id)
+            .await
     }
 
     pub fn tunnel_count(&self) -> usize {
@@ -228,7 +246,9 @@ impl UdpTunnelManager {
 
     pub fn cleanup_idle_tunnels(&self) {
         let now = Instant::now();
-        let keys_to_remove: Vec<String> = self.tunnels.iter()
+        let keys_to_remove: Vec<String> = self
+            .tunnels
+            .iter()
             .filter_map(|entry| {
                 let last_activity = *entry.last_activity.read();
                 if now.duration_since(last_activity) > self.tunnel_timeout {
@@ -238,12 +258,12 @@ impl UdpTunnelManager {
                 }
             })
             .collect();
-        
+
         let removed = keys_to_remove.len();
         for key in keys_to_remove {
             self.tunnels.remove(&key);
         }
-        
+
         if removed > 0 {
             counter!("maluwaf.tunnel.udp.tunnels.cleaned").increment(removed as u64);
             gauge!("maluwaf.tunnel.udp.tunnels.active").set(self.tunnels.len() as f64);
@@ -263,9 +283,9 @@ impl ActiveUdpTunnel {
         client_addr: SocketAddr,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let sequence = self.sequence.fetch_add(1, Ordering::SeqCst);
-        
+
         let effective_max = self.max_datagram_size.saturating_sub(HEADER_OVERHEAD);
-        
+
         if data.len() <= effective_max {
             self.send_datagram(data, client_addr, sequence).await
         } else {
@@ -280,15 +300,18 @@ impl ActiveUdpTunnel {
         dns_transaction_id: Option<u16>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let sequence = self.sequence.fetch_add(1, Ordering::SeqCst);
-        
-        self.pending_requests.insert(sequence, PendingRequest {
-            client_addr,
-            timestamp: Instant::now(),
-            dns_transaction_id,
-        });
-        
+
+        self.pending_requests.insert(
+            sequence,
+            PendingRequest {
+                client_addr,
+                timestamp: Instant::now(),
+                dns_transaction_id,
+            },
+        );
+
         counter!("maluwaf.tunnel.udp.requests.tracked").increment(1);
-        
+
         self.send(data, client_addr).await
     }
 
@@ -305,20 +328,22 @@ impl ActiveUdpTunnel {
             self.port,
             client_addr.to_string(),
         );
-        
-        let encoded = msg.encode()
+
+        let encoded = msg
+            .encode()
             .map_err(|e| format!("Failed to encode datagram: {}", e))?;
-        
+
         if encoded.len() > self.max_datagram_size {
             return self.send_stream(data, client_addr, sequence).await;
         }
-        
-        self.connection.send_datagram(encoded.into())
+
+        self.connection
+            .send_datagram(encoded.into())
             .map_err(|e| format!("Failed to send datagram: {}", e))?;
-        
+
         counter!("maluwaf.tunnel.udp.datagrams.sent").increment(1);
         histogram!("maluwaf.tunnel.udp.packet_size").record(data.len() as f64);
-        
+
         Ok(())
     }
 
@@ -329,26 +354,31 @@ impl ActiveUdpTunnel {
         sequence: u64,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         counter!("maluwaf.tunnel.udp.stream_fallback").increment(1);
-        
-        let (mut send_stream, _) = self.connection.open_bi().await
+
+        let (mut send_stream, _) = self
+            .connection
+            .open_bi()
+            .await
             .map_err(|e| format!("Failed to open stream: {}", e))?;
-        
+
         let msg = TunnelMessage::DataChunk {
             identifier: self.identifier.clone(),
             sequence,
             data: data.to_vec(),
             fin: true,
         };
-        
-        write_message(&mut send_stream, &msg).await
+
+        write_message(&mut send_stream, &msg)
+            .await
             .map_err(|e| format!("Failed to write data chunk: {}", e))?;
-        
-        send_stream.finish()
+
+        send_stream
+            .finish()
             .map_err(|e| format!("Failed to finish stream: {}", e))?;
-        
+
         counter!("maluwaf.tunnel.udp.streams.sent").increment(1);
         histogram!("maluwaf.tunnel.udp.large_packet_size").record(data.len() as f64);
-        
+
         Ok(())
     }
 
@@ -406,7 +436,7 @@ impl UdpTunnelManager {
         for tunnel in self.tunnels.iter() {
             total_pending += tunnel.pending_count();
         }
-        
+
         UdpTunnelStats {
             active_tunnels: self.tunnels.len(),
             total_pending_requests: total_pending,

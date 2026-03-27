@@ -4,12 +4,12 @@ use std::io;
 use std::sync::Arc;
 
 use bytes::{BufMut, BytesMut};
-use std::sync::atomic::{AtomicU64, Ordering};
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
-use tokio::sync::{broadcast, mpsc};
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{UnixStream, UnixListener};
+use tokio::net::{UnixListener, UnixStream};
+use tokio::sync::{broadcast, mpsc};
 
 #[cfg(windows)]
 use tokio::net::TcpListener;
@@ -82,7 +82,7 @@ impl MultiplexFrame {
 
     pub fn encode(&self) -> Vec<u8> {
         let mut buf = BytesMut::with_capacity(4 + 8 + 1 + 1 + 4 + self.payload.len());
-        
+
         buf.put_u32(0);
         buf.put_u64(self.stream_id);
         buf.put_u8(self.stream_type as u8);
@@ -92,7 +92,7 @@ impl MultiplexFrame {
 
         let len = buf.len() as u32;
         buf[0..4].copy_from_slice(&len.to_be_bytes());
-        
+
         buf.to_vec()
     }
 
@@ -103,7 +103,10 @@ impl MultiplexFrame {
 
         let len = u32::from_be_bytes([data[0], data[1], data[2], data[3]]) as usize;
         if len > MAX_FRAME_SIZE {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "Frame too large"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Frame too large",
+            ));
         }
 
         if data.len() < len {
@@ -111,32 +114,39 @@ impl MultiplexFrame {
         }
 
         let stream_id = u64::from_be_bytes([
-            data[4], data[5], data[6], data[7],
-            data[8], data[9], data[10], data[11],
+            data[4], data[5], data[6], data[7], data[8], data[9], data[10], data[11],
         ]);
-        
+
         let stream_type = match data[12] {
             0 => StreamType::Control,
             1 => StreamType::Tcp,
             2 => StreamType::Udp,
-            _ => return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid stream type")),
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Invalid stream type",
+                ))
+            }
         };
-        
+
         let flags = data[13];
         let payload_len = u32::from_be_bytes([data[14], data[15], data[16], data[17]]) as usize;
-        
+
         if data.len() < 18 + payload_len {
             return Ok(None);
         }
 
         let payload = data[18..18 + payload_len].to_vec();
 
-        Ok(Some((Self {
-            stream_id,
-            stream_type,
-            flags,
-            payload,
-        }, len)))
+        Ok(Some((
+            Self {
+                stream_id,
+                stream_type,
+                flags,
+                payload,
+            },
+            len,
+        )))
     }
 }
 
@@ -180,7 +190,7 @@ impl MultiplexServer {
 
     pub async fn accept(&self) -> io::Result<MultiplexConnection> {
         let (stream, _addr) = self.listener.accept().await?;
-        
+
         Ok(MultiplexConnection::new(
             stream,
             self.streams.clone(),
@@ -200,14 +210,17 @@ impl MultiplexServer {
     }
 
     pub fn list_streams(&self) -> Vec<StreamInfo> {
-        self.streams.iter().map(|s| StreamInfo {
-            stream_id: s.stream_id,
-            stream_type: s.stream_type,
-            created_at: s.created_at,
-            bytes_sent: s.bytes_sent,
-            bytes_received: s.bytes_received,
-            is_closed: s.is_closed,
-        }).collect()
+        self.streams
+            .iter()
+            .map(|s| StreamInfo {
+                stream_id: s.stream_id,
+                stream_type: s.stream_type,
+                created_at: s.created_at,
+                bytes_sent: s.bytes_sent,
+                bytes_received: s.bytes_received,
+                is_closed: s.is_closed,
+            })
+            .collect()
     }
 
     pub fn active_stream_count(&self) -> usize {
@@ -228,21 +241,20 @@ pub struct MultiplexClient {
 impl MultiplexClient {
     pub async fn connect(path: &std::path::Path) -> io::Result<(Self, MultiplexConnection)> {
         let stream = UnixStream::connect(path).await?;
-        
+
         let streams = Arc::new(DashMap::new());
         let (frame_tx, frame_rx) = mpsc::channel(1024);
-        
-        let conn = MultiplexConnection::new(
-            stream,
-            streams.clone(),
-            frame_tx.clone(),
-        );
 
-        Ok((Self {
-            streams,
-            next_stream_id: AtomicU64::new(1),
-            frame_tx,
-        }, conn))
+        let conn = MultiplexConnection::new(stream, streams.clone(), frame_tx.clone());
+
+        Ok((
+            Self {
+                streams,
+                next_stream_id: AtomicU64::new(1),
+                frame_tx,
+            },
+            conn,
+        ))
     }
 
     pub fn next_stream_id(&self) -> u64 {
@@ -251,15 +263,18 @@ impl MultiplexClient {
 
     pub fn open_stream(&self, stream_type: StreamType) -> MultiplexStream {
         let stream_id = self.next_stream_id();
-        
-        self.streams.insert(stream_id, StreamInfo {
+
+        self.streams.insert(
             stream_id,
-            stream_type,
-            created_at: std::time::Instant::now(),
-            bytes_sent: 0,
-            bytes_received: 0,
-            is_closed: false,
-        });
+            StreamInfo {
+                stream_id,
+                stream_type,
+                created_at: std::time::Instant::now(),
+                bytes_sent: 0,
+                bytes_received: 0,
+                is_closed: false,
+            },
+        );
 
         MultiplexStream {
             stream_id,
@@ -319,13 +334,13 @@ impl MultiplexConnection {
 
         counter!("maluwaf.tunnel.ipc.frames_sent").increment(1);
         histogram!("maluwaf.tunnel.ipc.frame_size").record(frame.payload.len() as f64);
-        
+
         Ok(())
     }
 
     pub async fn recv_frame(&mut self) -> io::Result<Option<MultiplexFrame>> {
         let mut temp_buf = [0u8; 4096];
-        
+
         match self.stream.read(&mut temp_buf).await {
             Ok(0) => {
                 return Err(io::Error::new(
@@ -350,14 +365,17 @@ impl MultiplexConnection {
             }
 
             if frame.is_syn() {
-                self.streams.insert(frame.stream_id, StreamInfo {
-                    stream_id: frame.stream_id,
-                    stream_type: frame.stream_type,
-                    created_at: std::time::Instant::now(),
-                    bytes_sent: 0,
-                    bytes_received: 0,
-                    is_closed: false,
-                });
+                self.streams.insert(
+                    frame.stream_id,
+                    StreamInfo {
+                        stream_id: frame.stream_id,
+                        stream_type: frame.stream_type,
+                        created_at: std::time::Instant::now(),
+                        bytes_sent: 0,
+                        bytes_received: 0,
+                        is_closed: false,
+                    },
+                );
                 counter!("maluwaf.tunnel.ipc.streams_created").increment(1);
             } else if frame.is_fin() || frame.is_rst() {
                 if let Some(mut info) = self.streams.get_mut(&frame.stream_id) {
@@ -396,21 +414,27 @@ impl MultiplexStream {
 
     pub async fn send(&self, data: Vec<u8>) -> io::Result<()> {
         let frame = MultiplexFrame::data(self.stream_id, self.stream_type, data);
-        self.frame_tx.send((self.stream_id, frame)).await
+        self.frame_tx
+            .send((self.stream_id, frame))
+            .await
             .map_err(|e| io::Error::new(io::ErrorKind::BrokenPipe, e))?;
         Ok(())
     }
 
     pub async fn close(&self) -> io::Result<()> {
         let frame = MultiplexFrame::fin(self.stream_id, self.stream_type);
-        self.frame_tx.send((self.stream_id, frame)).await
+        self.frame_tx
+            .send((self.stream_id, frame))
+            .await
             .map_err(|e| io::Error::new(io::ErrorKind::BrokenPipe, e))?;
         Ok(())
     }
 
     pub async fn reset(&self) -> io::Result<()> {
         let frame = MultiplexFrame::rst(self.stream_id, self.stream_type);
-        self.frame_tx.send((self.stream_id, frame)).await
+        self.frame_tx
+            .send((self.stream_id, frame))
+            .await
             .map_err(|e| io::Error::new(io::ErrorKind::BrokenPipe, e))?;
         Ok(())
     }
@@ -504,7 +528,7 @@ impl WindowsMultiplexServer {
 
     pub async fn accept(&self) -> io::Result<WindowsMultiplexConnection> {
         let (stream, _addr) = self.listener.accept().await?;
-        
+
         Ok(WindowsMultiplexConnection::new(
             stream,
             self.streams.clone(),
@@ -549,7 +573,7 @@ impl WindowsMultiplexConnection {
 
     pub async fn recv_frame(&mut self) -> io::Result<Option<MultiplexFrame>> {
         let mut temp_buf = [0u8; 4096];
-        
+
         match self.stream.read(&mut temp_buf).await {
             Ok(0) => {
                 return Err(io::Error::new(
@@ -625,12 +649,18 @@ mod tests {
             protocol: "tcp".to_string(),
             request_id: 1,
         };
-        
+
         let encoded = msg.encode();
         let decoded = QuicIpcMessage::decode(&encoded).unwrap();
 
         match decoded {
-            QuicIpcMessage::OpenStream { peer_id, identifier, port, protocol, request_id } => {
+            QuicIpcMessage::OpenStream {
+                peer_id,
+                identifier,
+                port,
+                protocol,
+                request_id,
+            } => {
                 assert_eq!(peer_id, "peer1");
                 assert_eq!(identifier, "stream-1");
                 assert_eq!(port, 8080);

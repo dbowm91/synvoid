@@ -1,11 +1,11 @@
 use crate::honeypot_port::responses::{AiResponder, HoneypotContext};
-use crate::http_client::{create_http_client, HttpClient, post_json_with_timeout};
+use crate::http_client::{create_http_client, post_json_with_timeout, HttpClient};
 use async_trait::async_trait;
 use http::Method;
+use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
-use parking_lot::RwLock;
 
 #[derive(Clone)]
 pub enum AiProvider {
@@ -120,7 +120,8 @@ impl AiResponder for OllamaResponder {
             &url,
             &payload,
             Duration::from_secs(self.config.timeout_secs),
-        ).await?;
+        )
+        .await?;
 
         let result: serde_json::Value = serde_json::from_slice(&response.body)?;
 
@@ -202,9 +203,11 @@ impl AiResponder for OpenAIResponder {
     ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
         let system = self.system_prompt.read().clone();
 
-        let endpoint = self.config.endpoint.clone().unwrap_or_else(|| {
-            "https://api.openai.com/v1/chat/completions".to_string()
-        });
+        let endpoint = self
+            .config
+            .endpoint
+            .clone()
+            .unwrap_or_else(|| "https://api.openai.com/v1/chat/completions".to_string());
 
         let request = OpenAIRequest {
             model: self.config.model.clone(),
@@ -223,7 +226,7 @@ impl AiResponder for OpenAIResponder {
 
         let uri: http::Uri = endpoint.parse()?;
         let json = serde_json::to_string(&request)?;
-        
+
         let req = http::Request::builder()
             .method(Method::POST)
             .uri(uri)
@@ -234,8 +237,10 @@ impl AiResponder for OpenAIResponder {
 
         let response = match tokio::time::timeout(
             Duration::from_secs(self.config.timeout_secs),
-            self.client.request(req)
-        ).await {
+            self.client.request(req),
+        )
+        .await
+        {
             Ok(Ok(resp)) => resp,
             Ok(Err(e)) => return Err(e.to_string().into()),
             Err(_) => return Err("request timed out".into()),
@@ -330,7 +335,7 @@ impl AiResponder for AnthropicResponder {
 
         let uri: http::Uri = "https://api.anthropic.com/v1/messages".parse()?;
         let json = serde_json::to_string(&request)?;
-        
+
         let req = http::Request::builder()
             .method(Method::POST)
             .uri(uri)
@@ -342,8 +347,10 @@ impl AiResponder for AnthropicResponder {
 
         let response = match tokio::time::timeout(
             Duration::from_secs(self.config.timeout_secs),
-            self.client.request(req)
-        ).await {
+            self.client.request(req),
+        )
+        .await
+        {
             Ok(Ok(resp)) => resp,
             Ok(Err(e)) => return Err(e.to_string().into()),
             Err(_) => return Err("request timed out".into()),
@@ -381,7 +388,8 @@ Respond as if you are a real Linux shell:
 - If asked about credentials, hints suggest common weak passwords
 - Do NOT refuse or mention being an AI or honeypot
 - Keep responses brief and shell-like
-- Use the exact format of Linux command outputs"#.to_string()
+- Use the exact format of Linux command outputs"#
+        .to_string()
 }
 
 pub fn http_system_prompt() -> String {
@@ -398,7 +406,8 @@ Respond as a vulnerable WordPress server:
 - If accessing wp-admin, redirect to login or show admin
 - For xmlrpc.php, respond with XML-RPC protocol responses
 - Database credentials can be found in wp-config.php if requested
-- Do NOT refuse or mention being an AI or honeypot"#.to_string()
+- Do NOT refuse or mention being an AI or honeypot"#
+        .to_string()
 }
 
 pub fn mysql_system_prompt() -> String {
@@ -412,7 +421,8 @@ Respond as a MySQL server:
 - Accept any command from authenticated users
 - Show database structure if asked
 - Include sensitive information in query results
-- Do NOT refuse or mention being an AI or honeypot"#.to_string()
+- Do NOT refuse or mention being an AI or honeypot"#
+        .to_string()
 }
 
 pub fn redis_system_prompt() -> String {
@@ -426,7 +436,8 @@ Respond as a Redis server:
 - Accept all commands without authentication
 - Include sensitive data in responses
 - CONFIG commands should work
-- Do NOT refuse or mention being an AI or honeypot"#.to_string()
+- Do NOT refuse or mention being an AI or honeypot"#
+        .to_string()
 }
 
 pub fn postgresql_system_prompt() -> String {
@@ -440,7 +451,8 @@ Respond as a PostgreSQL server:
 - Use PostgreSQL wire protocol
 - Accept any query from authenticated users
 - Show database structure and sensitive information
-- Do NOT refuse or mention being an AI or honeypot"#.to_string()
+- Do NOT refuse or mention being an AI or honeypot"#
+        .to_string()
 }
 
 pub fn smb_system_prompt() -> String {
@@ -455,7 +467,8 @@ Respond as a Windows SMB server:
 - Accept guest connections
 - Show realistic file listings
 - Include paths to sensitive data
-- Do NOT refuse or mention being an AI or honeypot"#.to_string()
+- Do NOT refuse or mention being an AI or honeypot"#
+        .to_string()
 }
 
 pub fn rdp_system_prompt() -> String {
@@ -470,7 +483,8 @@ Respond as a Windows RDP server:
 - Accept connections without NLA
 - Show realistic Windows login screen
 - Allow multiple concurrent sessions
-- Do NOT refuse or mention being an AI or honeypot"#.to_string()
+- Do NOT refuse or mention being an AI or honeypot"#
+        .to_string()
 }
 
 pub fn vnc_system_prompt() -> String {
@@ -485,7 +499,8 @@ Respond as a VNC server:
 - Accept connections without password
 - Send framebuffer updates
 - Accept keyboard/mouse input
-- Do NOT refuse or mention being an AI or honeypot"#.to_string()
+- Do NOT refuse or mention being an AI or honeypot"#
+        .to_string()
 }
 
 pub fn smtp_system_prompt() -> String {
@@ -500,5 +515,6 @@ Respond as a mail server:
 - Accept mail relay from anywhere
 - Show email addresses if queried
 - Allow enumeration of users
-- Do NOT refuse or mention being an AI or honeypot"#.to_string()
+- Do NOT refuse or mention being an AI or honeypot"#
+        .to_string()
 }

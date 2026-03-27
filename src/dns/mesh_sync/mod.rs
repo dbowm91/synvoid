@@ -4,14 +4,19 @@ use std::sync::Arc;
 use parking_lot::RwLock;
 use tokio::sync::mpsc;
 
-use crate::dns::messages::{DnsAnycastHealthUpdate, DnsAnycastNodeRegistration, DnsEdgeHealthReport, DnsHealthUpdate, DnsNodeRole, DnsRegistration, DnsRegistrationRequest, DnsNodeShutdown, DomainVerificationRequest, DomainVerificationStatus, DomainVerificationType, DnsRegistrationWithVerificationRequest, DnsRegistrationWithVerificationResponse};
+use crate::dns::messages::{
+    DnsAnycastHealthUpdate, DnsAnycastNodeRegistration, DnsEdgeHealthReport, DnsHealthUpdate,
+    DnsNodeRole, DnsNodeShutdown, DnsRegistration, DnsRegistrationRequest,
+    DnsRegistrationWithVerificationRequest, DnsRegistrationWithVerificationResponse,
+    DomainVerificationRequest, DomainVerificationStatus, DomainVerificationType,
+};
 use crate::dns::resolver::DnsResolver;
 
-mod registry;
-mod registration;
+mod dht;
 mod health;
 mod query;
-mod dht;
+mod registration;
+mod registry;
 mod verification;
 
 #[derive(Clone)]
@@ -184,33 +189,55 @@ impl VerificationMetrics {
     }
 
     pub fn record_initiated(&self, verification_type: &DomainVerificationType) {
-        self.verifications_initiated.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.verifications_initiated
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         match verification_type {
-            DomainVerificationType::TxtChallenge => { self.txt_verifications.fetch_add(1, std::sync::atomic::Ordering::Relaxed); }
-            DomainVerificationType::NsRecord => { self.ns_verifications.fetch_add(1, std::sync::atomic::Ordering::Relaxed); }
+            DomainVerificationType::TxtChallenge => {
+                self.txt_verifications
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+            DomainVerificationType::NsRecord => {
+                self.ns_verifications
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
         }
     }
 
     pub fn record_succeeded(&self) {
-        self.verifications_succeeded.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.verifications_succeeded
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
     pub fn record_failed(&self) {
-        self.verifications_failed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.verifications_failed
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
     pub fn record_timeout(&self) {
-        self.verifications_timeout.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.verifications_timeout
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
     pub fn get_summary(&self) -> VerificationMetricsSummary {
         VerificationMetricsSummary {
-            initiated: self.verifications_initiated.load(std::sync::atomic::Ordering::Relaxed),
-            succeeded: self.verifications_succeeded.load(std::sync::atomic::Ordering::Relaxed),
-            failed: self.verifications_failed.load(std::sync::atomic::Ordering::Relaxed),
-            timeouts: self.verifications_timeout.load(std::sync::atomic::Ordering::Relaxed),
-            txt_verifications: self.txt_verifications.load(std::sync::atomic::Ordering::Relaxed),
-            ns_verifications: self.ns_verifications.load(std::sync::atomic::Ordering::Relaxed),
+            initiated: self
+                .verifications_initiated
+                .load(std::sync::atomic::Ordering::Relaxed),
+            succeeded: self
+                .verifications_succeeded
+                .load(std::sync::atomic::Ordering::Relaxed),
+            failed: self
+                .verifications_failed
+                .load(std::sync::atomic::Ordering::Relaxed),
+            timeouts: self
+                .verifications_timeout
+                .load(std::sync::atomic::Ordering::Relaxed),
+            txt_verifications: self
+                .txt_verifications
+                .load(std::sync::atomic::Ordering::Relaxed),
+            ns_verifications: self
+                .ns_verifications
+                .load(std::sync::atomic::Ordering::Relaxed),
         }
     }
 }
@@ -298,7 +325,13 @@ mod tests {
         let config = MeshDnsRegistryConfig::default();
         let cloned = config.clone();
 
-        assert_eq!(cloned.verification_timeout_secs, config.verification_timeout_secs);
-        assert_eq!(cloned.verification_retry_interval_secs, config.verification_retry_interval_secs);
+        assert_eq!(
+            cloned.verification_timeout_secs,
+            config.verification_timeout_secs
+        );
+        assert_eq!(
+            cloned.verification_retry_interval_secs,
+            config.verification_retry_interval_secs
+        );
     }
 }

@@ -53,9 +53,12 @@ impl HoneypotMeshController {
         status
     }
 
-    pub fn handle_control_command(&self, command: HoneypotControlCommand) -> Result<(), HoneypotControlError> {
+    pub fn handle_control_command(
+        &self,
+        command: HoneypotControlCommand,
+    ) -> Result<(), HoneypotControlError> {
         let now = crate::utils::current_timestamp();
-        
+
         match &command {
             HoneypotControlCommand::Enable => {
                 self.port_manager.resume();
@@ -76,7 +79,10 @@ impl HoneypotMeshController {
                 status.last_control_time = Some(now);
                 tracing::info!("Honeypot disabled via mesh control");
             }
-            HoneypotControlCommand::Pause { reason, duration_secs } => {
+            HoneypotControlCommand::Pause {
+                reason,
+                duration_secs,
+            } => {
                 let reason_str = reason.clone();
                 self.port_manager.pause(&reason_str);
                 let mut status = self.status.write();
@@ -86,12 +92,12 @@ impl HoneypotMeshController {
                 status.last_control_command = Some(command.clone());
                 status.last_control_time = Some(now);
                 let reason_for_log = reason_str.clone();
-                
+
                 if let Some(duration) = duration_secs {
                     let duration_secs = *duration;
                     let reason_for_task = reason_str;
                     let status_clone = self.status.clone();
-                    
+
                     tokio::spawn(async move {
                         tokio::time::sleep(Duration::from_secs(duration_secs as u64)).await;
                         let mut status = status_clone.write();
@@ -103,7 +109,7 @@ impl HoneypotMeshController {
                         }
                     });
                 }
-                
+
                 tracing::info!("Honeypot paused via mesh control: {}", reason_for_log);
             }
             HoneypotControlCommand::Resume => {
@@ -164,9 +170,9 @@ impl Serialize for HoneypotControlError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
     use crate::honeypot_port::config::PortHoneypotConfig;
     use crate::honeypot_port::rotation::PortManager;
+    use std::sync::Arc;
 
     fn make_controller() -> HoneypotMeshController {
         let config = Arc::new(PortHoneypotConfig::default());
@@ -179,7 +185,7 @@ mod tests {
     fn test_initial_status() {
         let controller = make_controller();
         let status = controller.get_status();
-        
+
         assert!(status.enabled);
         assert!(!status.paused);
     }
@@ -187,30 +193,36 @@ mod tests {
     #[test]
     fn test_enable_command() {
         let controller = make_controller();
-        
+
         // Initially enabled
         assert!(controller.is_enabled());
-        
+
         // Disable
-        controller.handle_control_command(HoneypotControlCommand::Disable).unwrap();
+        controller
+            .handle_control_command(HoneypotControlCommand::Disable)
+            .unwrap();
         assert!(!controller.is_enabled());
-        
+
         // Enable again
-        controller.handle_control_command(HoneypotControlCommand::Enable).unwrap();
+        controller
+            .handle_control_command(HoneypotControlCommand::Enable)
+            .unwrap();
         assert!(controller.is_enabled());
     }
 
     #[test]
     fn test_pause_command() {
         let controller = make_controller();
-        
-        controller.handle_control_command(HoneypotControlCommand::Pause {
-            reason: "maintenance".to_string(),
-            duration_secs: None,
-        }).unwrap();
-        
+
+        controller
+            .handle_control_command(HoneypotControlCommand::Pause {
+                reason: "maintenance".to_string(),
+                duration_secs: None,
+            })
+            .unwrap();
+
         assert!(controller.is_paused());
-        
+
         let status = controller.get_status();
         assert!(status.paused);
         assert_eq!(status.pause_reason, Some("maintenance".to_string()));
@@ -219,44 +231,54 @@ mod tests {
     #[test]
     fn test_resume_command() {
         let controller = make_controller();
-        
-        controller.handle_control_command(HoneypotControlCommand::Pause {
-            reason: "test".to_string(),
-            duration_secs: None,
-        }).unwrap();
-        
+
+        controller
+            .handle_control_command(HoneypotControlCommand::Pause {
+                reason: "test".to_string(),
+                duration_secs: None,
+            })
+            .unwrap();
+
         assert!(controller.is_paused());
-        
-        controller.handle_control_command(HoneypotControlCommand::Resume).unwrap();
-        
+
+        controller
+            .handle_control_command(HoneypotControlCommand::Resume)
+            .unwrap();
+
         assert!(!controller.is_paused());
     }
 
     #[test]
     fn test_can_accept_connection() {
         let controller = make_controller();
-        
+
         // Should accept by default
         assert!(controller.can_accept_connection());
-        
+
         // After disable, should not accept
-        controller.handle_control_command(HoneypotControlCommand::Disable).unwrap();
+        controller
+            .handle_control_command(HoneypotControlCommand::Disable)
+            .unwrap();
         assert!(!controller.can_accept_connection());
-        
+
         // After enable, should accept again
-        controller.handle_control_command(HoneypotControlCommand::Enable).unwrap();
+        controller
+            .handle_control_command(HoneypotControlCommand::Enable)
+            .unwrap();
         assert!(controller.can_accept_connection());
     }
 
     #[test]
     fn test_pause_blocks_connections() {
         let controller = make_controller();
-        
-        controller.handle_control_command(HoneypotControlCommand::Pause {
-            reason: "test".to_string(),
-            duration_secs: None,
-        }).unwrap();
-        
+
+        controller
+            .handle_control_command(HoneypotControlCommand::Pause {
+                reason: "test".to_string(),
+                duration_secs: None,
+            })
+            .unwrap();
+
         // Even if enabled, paused should block
         assert!(!controller.can_accept_connection());
     }

@@ -10,11 +10,11 @@ use metrics::{counter, gauge};
 use tokio::sync::{broadcast, mpsc};
 
 use super::config::{WireGuardConfig, WireGuardPeerConfig};
-use super::session::{WgSessionManager, WgPeerSession, WgConnectionStats};
-use crate::tunnel::{TunnelTransport, TunnelType, TunnelStats, PeerInfo};
-use crate::tunnel::tun::{TunInterface, is_tun_available};
+use super::session::{WgConnectionStats, WgPeerSession, WgSessionManager};
+use crate::tunnel::tun::{is_tun_available, TunInterface};
 #[cfg(feature = "tun-rs")]
 use crate::tunnel::tun::{TunReader, TunWriter};
+use crate::tunnel::{PeerInfo, TunnelStats, TunnelTransport, TunnelType};
 
 const MAX_PACKET_SIZE: usize = 65535;
 const QUEUE_SIZE: usize = 1024;
@@ -93,9 +93,9 @@ impl UserspaceWireGuard {
         let sessions = Arc::new(WgSessionManager::new());
         let stats = Arc::new(DashMap::new());
         let (tx_queue, tx_queue_rx) = mpsc::channel(QUEUE_SIZE);
-        
+
         let interface_name = config.interface_name.clone();
-        
+
         tracing::info!(
             "Userspace WireGuard initialized: interface={}, port={}",
             interface_name,
@@ -117,14 +117,15 @@ impl UserspaceWireGuard {
 
     fn decode_private_key(&self) -> Result<[u8; 32], Box<dyn std::error::Error + Send + Sync>> {
         use base64::{engine::general_purpose::STANDARD, Engine as _};
-        
-        let decoded = STANDARD.decode(&self.config.private_key)
+
+        let decoded = STANDARD
+            .decode(&self.config.private_key)
             .map_err(|e| format!("Failed to decode private key: {}", e))?;
-        
+
         if decoded.len() != 32 {
             return Err(format!("Invalid private key length: {}", decoded.len()).into());
         }
-        
+
         let mut key = [0u8; 32];
         key.copy_from_slice(&decoded);
         Ok(key)
@@ -134,87 +135,99 @@ impl UserspaceWireGuard {
     async fn start_boringtun(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         use boringtun::noise::{Tunn, TunnResult};
         use boringtun::x25519::StaticSecret;
-        
+
         tracing::info!("Starting boringtun userspace WireGuard");
-        
+
         let private_key = self.decode_private_key()?;
         let secret = StaticSecret::from(private_key);
-        
+
         let tun_config = TunConfig::new(
             &self.interface_name,
             IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)),
             IpAddr::V4(Ipv4Addr::new(255, 255, 255, 0)),
-        ).with_mtu(self.config.mtu);
-        
+        )
+        .with_mtu(self.config.mtu);
+
         let (tun, async_device) = TunInterface::create(tun_config)?;
         let tun = Arc::new(tun);
         let async_device = Arc::new(async_device);
         self.tun = Some(tun);
-        
+
         for peer_config in &self.config.peers {
             let peer_public_key = super::config::base64_decode_key(&peer_config.public_key)
                 .ok_or_else(|| format!("Invalid peer public key: {}", peer_config.public_key))?;
-            
-            let endpoint: Option<SocketAddr> = peer_config.endpoint.as_ref()
-                .and_then(|s| s.parse().ok());
-            
-            let allowed_ips: Vec<ipnetwork::IpNetwork> = peer_config.allowed_ips.iter()
+
+            let endpoint: Option<SocketAddr> =
+                peer_config.endpoint.as_ref().and_then(|s| s.parse().ok());
+
+            let allowed_ips: Vec<ipnetwork::IpNetwork> = peer_config
+                .allowed_ips
+                .iter()
                 .filter_map(|s| s.parse().ok())
                 .collect();
-            
+
             let peer_session = WgPeerSession::new(
                 peer_config.public_key.clone(),
                 peer_config.allowed_ips.clone(),
             )
             .with_endpoint(peer_config.endpoint.clone().unwrap_or_default());
-            
+
             self.sessions.add_session(peer_session);
             counter!("maluwaf.tunnel.wireguard.peers.added").increment(1);
         }
-        
+
         self.running = true;
         gauge!("maluwaf.tunnel.wireguard.running").set(1.0);
-        
-        tracing::info!("boringtun WireGuard started with {} peers", self.config.peers.len());
-        
+
+        tracing::info!(
+            "boringtun WireGuard started with {} peers",
+            self.config.peers.len()
+        );
+
         Ok(())
     }
 
     #[cfg(not(feature = "wireguard"))]
     async fn start_boringtun(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         tracing::warn!("WireGuard userspace support not compiled in (enable 'wireguard' feature)");
-        
+
         for peer_config in &self.config.peers {
             let peer_session = WgPeerSession::new(
                 peer_config.public_key.clone(),
                 peer_config.allowed_ips.clone(),
             )
             .with_endpoint(peer_config.endpoint.clone().unwrap_or_default());
-            
+
             self.sessions.add_session(peer_session);
         }
-        
+
         self.running = true;
         gauge!("maluwaf.tunnel.wireguard.running").set(1.0);
-        
+
         tracing::info!("WireGuard stub started (no actual tunnel)");
         Ok(())
     }
 
-    pub fn add_peer(&self, peer_config: WireGuardPeerConfig) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn add_peer(
+        &self,
+        peer_config: WireGuardPeerConfig,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let peer_session = WgPeerSession::new(
             peer_config.public_key.clone(),
             peer_config.allowed_ips.clone(),
         )
         .with_endpoint(peer_config.endpoint.clone().unwrap_or_default());
-        
+
         self.sessions.add_session(peer_session);
-        
+
         tracing::info!("Added WireGuard peer: {}", peer_config.public_key);
         Ok(())
     }
 
-    pub fn remove_peer(&self, public_key: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn remove_peer(
+        &self,
+        public_key: &str,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if let Some(session) = self.sessions.get_session_by_public_key(public_key) {
             self.sessions.remove_session(&session.id);
             tracing::info!("Removed WireGuard peer: {}", public_key);
@@ -222,23 +235,31 @@ impl UserspaceWireGuard {
         Ok(())
     }
 
-    pub async fn send_datagram(&self, peer_public_key: &str, data: &[u8]) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let session = self.sessions.get_session_by_public_key(peer_public_key)
+    pub async fn send_datagram(
+        &self,
+        peer_public_key: &str,
+        data: &[u8],
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let session = self
+            .sessions
+            .get_session_by_public_key(peer_public_key)
             .ok_or_else(|| format!("Peer not found: {}", peer_public_key))?;
-        
+
         if !session.is_established() {
             return Err("Session not established".into());
         }
-        
-        self.tx_queue.send(data.to_vec()).await
+
+        self.tx_queue
+            .send(data.to_vec())
+            .await
             .map_err(|e| format!("Failed to queue packet: {}", e))?;
-        
+
         self.sessions.update_session(&session.id, |s| {
             s.add_tx_bytes(data.len() as u64);
         });
-        
+
         counter!("maluwaf.tunnel.wireguard.packets.sent").increment(1);
-        
+
         Ok(())
     }
 
@@ -251,11 +272,11 @@ impl UserspaceWireGuard {
         let shutdown_rx = self.shutdown_tx.subscribe();
         let sessions = self.sessions.clone();
         let tx_queue_rx = self.tx_queue_rx.take();
-        
+
         tokio::spawn(async move {
             let mut shutdown_rx = shutdown_rx;
             let mut rx_buf = vec![0u8; MAX_PACKET_SIZE];
-            
+
             if let Some(mut tx_queue) = tx_queue_rx {
                 loop {
                     tokio::select! {
@@ -263,11 +284,11 @@ impl UserspaceWireGuard {
                             match result {
                                 Ok(n) if n > 0 => {
                                     let packet = TunPacket::new(rx_buf[..n].to_vec());
-                                    
+
                                     if let Some(src) = packet.src_addr() {
                                         tracing::trace!("Received packet from TUN: {} bytes, src={}", n, src);
                                     }
-                                    
+
                                     counter!("maluwaf.tunnel.wireguard.packets.received").increment(1);
                                     counter!("maluwaf.tunnel.wireguard.bytes.received").increment(n as u64);
                                 }
@@ -312,13 +333,13 @@ impl TunnelTransport for UserspaceWireGuard {
     async fn stop(&mut self) {
         self.running = false;
         gauge!("maluwaf.tunnel.wireguard.running").set(0.0);
-        
+
         for session in self.sessions.list_sessions() {
             self.sessions.remove_session(&session.id);
         }
-        
+
         self.tun = None;
-        
+
         tracing::info!("WireGuard stopped");
     }
 
@@ -329,12 +350,12 @@ impl TunnelTransport for UserspaceWireGuard {
     fn stats(&self) -> TunnelStats {
         let mut total_tx = 0u64;
         let mut total_rx = 0u64;
-        
+
         for session in self.sessions.list_sessions() {
             total_tx += session.tx_bytes;
             total_rx += session.rx_bytes;
         }
-        
+
         TunnelStats {
             bytes_sent: total_tx,
             bytes_received: total_rx,

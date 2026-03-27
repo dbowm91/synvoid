@@ -5,12 +5,14 @@ use tokio::sync::RwLock;
 
 use crate::config::ConfigManager;
 use crate::process::ipc_transport::IpcStream as AsyncIpcStream;
-use crate::process::{MasterCommand, MasterStatus, CommandResponse, ProcessManager, StatusStats, ThreatSummary};
+use crate::process::{
+    CommandResponse, MasterCommand, MasterStatus, ProcessManager, StatusStats, ThreatSummary,
+};
 
 #[cfg(windows)]
 pub async fn windows_ipc_accept_loop(process_manager: Arc<ProcessManager>, pipe_name: PathBuf) {
     use std::os::windows::ffi::OsStrExt;
-    
+
     let pipe_name_str = format!("\\\\.\\pipe\\maluwaf-master");
     let pipe_name_wide: Vec<u16> = std::ffi::OsStr::new(&pipe_name_str)
         .encode_wide()
@@ -23,8 +25,8 @@ pub async fn windows_ipc_accept_loop(process_manager: Arc<ProcessManager>, pipe_
             windows_sys::Win32::System::Pipes::CreateNamedPipeW(
                 pipe_name_wide.as_ptr(),
                 windows_sys::Win32::System::Pipes::PIPE_ACCESS_DUPLEX,
-                windows_sys::Win32::System::Pipes::PIPE_TYPE_MESSAGE 
-                    | windows_sys::Win32::System::Pipes::PIPE_READMODE_MESSAGE 
+                windows_sys::Win32::System::Pipes::PIPE_TYPE_MESSAGE
+                    | windows_sys::Win32::System::Pipes::PIPE_READMODE_MESSAGE
                     | windows_sys::Win32::System::Pipes::PIPE_WAIT,
                 1,
                 65536,
@@ -35,17 +37,17 @@ pub async fn windows_ipc_accept_loop(process_manager: Arc<ProcessManager>, pipe_
         };
 
         if pipe_handle == 0 {
-            tracing::error!("Failed to create named pipe: {:?}", std::io::Error::last_os_error());
+            tracing::error!(
+                "Failed to create named pipe: {:?}",
+                std::io::Error::last_os_error()
+            );
             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
             continue;
         }
 
         // SAFETY: ConnectNamedPipe called with valid pipe handle; we check return value.
         let connected = unsafe {
-            windows_sys::Win32::System::Pipes::ConnectNamedPipe(
-                pipe_handle,
-                std::ptr::null_mut(),
-            )
+            windows_sys::Win32::System::Pipes::ConnectNamedPipe(pipe_handle, std::ptr::null_mut())
         };
 
         if connected == 0 {
@@ -54,15 +56,19 @@ pub async fn windows_ipc_accept_loop(process_manager: Arc<ProcessManager>, pipe_
             if error != windows_sys::Win32::Foundation::ERROR_PIPE_CONNECTED {
                 tracing::warn!("ConnectNamedPipe failed with error: {}", error);
                 // SAFETY: CloseHandle called on valid handle we own from failed ConnectNamedPipe.
-                unsafe { windows_sys::Win32::Foundation::CloseHandle(pipe_handle); }
+                unsafe {
+                    windows_sys::Win32::Foundation::CloseHandle(pipe_handle);
+                }
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                 continue;
             }
         }
 
         // SAFETY: from_raw_handle takes ownership of pipe_handle; we validated it's non-zero above.
-        let stream = unsafe { std::fs::File::from_raw_handle(pipe_handle as std::os::windows::io::RawHandle) };
-        
+        let stream = unsafe {
+            std::fs::File::from_raw_handle(pipe_handle as std::os::windows::io::RawHandle)
+        };
+
         let pm = process_manager.clone();
         tokio::spawn(async move {
             super::handle_worker_connection(IpcStream::new(stream), pm).await;
@@ -73,7 +79,7 @@ pub async fn windows_ipc_accept_loop(process_manager: Arc<ProcessManager>, pipe_
 #[cfg(windows)]
 pub async fn windows_command_pipe_listener(config_manager: Arc<RwLock<ConfigManager>>) {
     use std::os::windows::ffi::OsStrExt;
-    
+
     let pipe_name_str = "\\\\.\\pipe\\maluwaf-commands";
     let pipe_name_wide: Vec<u16> = std::ffi::OsStr::new(pipe_name_str)
         .encode_wide()
@@ -86,8 +92,8 @@ pub async fn windows_command_pipe_listener(config_manager: Arc<RwLock<ConfigMana
             windows_sys::Win32::System::Pipes::CreateNamedPipeW(
                 pipe_name_wide.as_ptr(),
                 windows_sys::Win32::System::Pipes::PIPE_ACCESS_DUPLEX,
-                windows_sys::Win32::System::Pipes::PIPE_TYPE_MESSAGE 
-                    | windows_sys::Win32::System::Pipes::PIPE_READMODE_MESSAGE 
+                windows_sys::Win32::System::Pipes::PIPE_TYPE_MESSAGE
+                    | windows_sys::Win32::System::Pipes::PIPE_READMODE_MESSAGE
                     | windows_sys::Win32::System::Pipes::PIPE_WAIT,
                 1,
                 65536,
@@ -98,17 +104,17 @@ pub async fn windows_command_pipe_listener(config_manager: Arc<RwLock<ConfigMana
         };
 
         if pipe_handle == 0 {
-            tracing::error!("Failed to create command pipe: {:?}", std::io::Error::last_os_error());
+            tracing::error!(
+                "Failed to create command pipe: {:?}",
+                std::io::Error::last_os_error()
+            );
             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
             continue;
         }
 
         // SAFETY: ConnectNamedPipe called with valid pipe handle; we check return value.
         let connected = unsafe {
-            windows_sys::Win32::System::Pipes::ConnectNamedPipe(
-                pipe_handle,
-                std::ptr::null_mut(),
-            )
+            windows_sys::Win32::System::Pipes::ConnectNamedPipe(pipe_handle, std::ptr::null_mut())
         };
 
         if connected == 0 {
@@ -117,14 +123,18 @@ pub async fn windows_command_pipe_listener(config_manager: Arc<RwLock<ConfigMana
             if error != windows_sys::Win32::Foundation::ERROR_PIPE_CONNECTED {
                 tracing::warn!("ConnectNamedPipe failed with error: {}", error);
                 // SAFETY: CloseHandle called on valid handle we own from failed ConnectNamedPipe.
-                unsafe { windows_sys::Win32::Foundation::CloseHandle(pipe_handle); }
+                unsafe {
+                    windows_sys::Win32::Foundation::CloseHandle(pipe_handle);
+                }
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                 continue;
             }
         }
 
         // SAFETY: from_raw_handle takes ownership of pipe_handle; we validated it's non-zero above.
-        let stream = unsafe { std::fs::File::from_raw_handle(pipe_handle as std::os::windows::io::RawHandle) };
+        let stream = unsafe {
+            std::fs::File::from_raw_handle(pipe_handle as std::os::windows::io::RawHandle)
+        };
         tokio::spawn(async move {
             handle_command_connection(stream, config_manager.clone()).await;
         });
@@ -132,11 +142,14 @@ pub async fn windows_command_pipe_listener(config_manager: Arc<RwLock<ConfigMana
 }
 
 #[cfg(windows)]
-async fn handle_command_connection(stream: std::fs::File, config_manager: Arc<RwLock<ConfigManager>>) {
+async fn handle_command_connection(
+    stream: std::fs::File,
+    config_manager: Arc<RwLock<ConfigManager>>,
+) {
     use std::io::{Read, Write};
-    
+
     let mut stream = stream;
-    
+
     let mut length_buf = [0u8; 4];
     match stream.read_exact(&mut length_buf) {
         Ok(_) => {}
@@ -145,19 +158,19 @@ async fn handle_command_connection(stream: std::fs::File, config_manager: Arc<Rw
             return;
         }
     }
-    
+
     let len = u32::from_be_bytes(length_buf) as usize;
     if len > 1024 * 1024 {
         let _ = stream.write_all(&0u32.to_be_bytes());
         return;
     }
-    
+
     let mut json_buf = vec![0u8; len];
     if let Err(e) = stream.read_exact(&mut json_buf) {
         tracing::warn!("Failed to read command: {}", e);
         return;
     }
-    
+
     let command: MasterCommand = match serde_json::from_slice(&json_buf) {
         Ok(c) => c,
         Err(e) => {
@@ -166,7 +179,7 @@ async fn handle_command_connection(stream: std::fs::File, config_manager: Arc<Rw
             return;
         }
     };
-    
+
     match command {
         MasterCommand::Stop { graceful } => {
             tracing::info!("CLI: Stop command received (graceful: {})", graceful);
@@ -186,7 +199,11 @@ async fn handle_command_connection(stream: std::fs::File, config_manager: Arc<Rw
                                 tracing::info!("MIME types reloaded from {}", mimes_file);
                             }
                             Err(e) => {
-                                tracing::warn!("Failed to reload MIME types from {}: {}", mimes_file, e);
+                                tracing::warn!(
+                                    "Failed to reload MIME types from {}: {}",
+                                    mimes_file,
+                                    e
+                                );
                             }
                         }
                     }

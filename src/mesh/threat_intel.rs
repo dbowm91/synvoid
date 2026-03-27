@@ -12,7 +12,9 @@ use tokio::sync::mpsc;
 
 use crate::block_store::BlockStore;
 use crate::mesh::config::MeshNodeRole;
-use crate::mesh::protocol::{MeshMessage, MeshPeerInfo, ThreatIndicator, ThreatSeverity, ThreatType};
+use crate::mesh::protocol::{
+    MeshMessage, MeshPeerInfo, ThreatIndicator, ThreatSeverity, ThreatType,
+};
 use crate::mesh::reputation::{ReputationConfig, ReputationManager};
 
 const DEFAULT_SYNC_INTERVAL_SECS: u64 = 300;
@@ -305,7 +307,10 @@ impl ThreatIntelligenceManager {
             signer_public_key: None,
         };
 
-        let key = format!("honeypot:{}:{}:{}", site_scope, threat_type as u8 as char, ip);
+        let key = format!(
+            "honeypot:{}:{}:{}",
+            site_scope, threat_type as u8 as char, ip
+        );
 
         {
             let mut indicators = self.indicators.write();
@@ -326,7 +331,7 @@ impl ThreatIntelligenceManager {
         if self.config.push_enabled && (severity as u32) >= threshold {
             self.queue_for_push(indicator);
         }
-        
+
         tracing::debug!("Announced honeypot indicator: {} from {}", reason, ip);
     }
 
@@ -854,11 +859,9 @@ impl ThreatIntelligenceManager {
         let transport_opt = self.transport.read().clone();
         let fanout_factor = self.config.fanout_factor;
         if let Some(transport) = transport_opt {
-            let (success, fail) = transport.broadcast_to_random_peers(
-                message,
-                fanout_factor,
-                None,
-            ).await;
+            let (success, fail) = transport
+                .broadcast_to_random_peers(message, fanout_factor, None)
+                .await;
             tracing::debug!("Fanout threat announce: {} sent, {} failed", success, fail);
         } else if let Some(sender) = self.mesh_sender.read().clone() {
             if let Err(e) = sender.send(message).await {
@@ -929,12 +932,8 @@ impl ThreatIntelligenceManager {
 
                 let mut accepted_count = 0;
                 for indicator in indicators {
-                    if self.handle_incoming_threat(
-                        indicator.clone(),
-                        from_node,
-                        from_role,
-                        signer,
-                    ) {
+                    if self.handle_incoming_threat(indicator.clone(), from_node, from_role, signer)
+                    {
                         accepted_count += 1;
                     }
                 }
@@ -950,7 +949,12 @@ impl ThreatIntelligenceManager {
                     original_request_id: request_id.clone(),
                     node_id: self.node_id.clone().into(),
                     accepted: true,
-                    reason: format!("Accepted {}/{} indicators", accepted_count, indicators.len()).into(),
+                    reason: format!(
+                        "Accepted {}/{} indicators",
+                        accepted_count,
+                        indicators.len()
+                    )
+                    .into(),
                     timestamp: MeshMessage::generate_timestamp(),
                 })
             }
@@ -960,7 +964,11 @@ impl ThreatIntelligenceManager {
                 from_version,
                 prefer_delta: _,
             } => {
-                tracing::debug!("Received ThreatSyncRequest from {} (version: {})", from_node, from_version);
+                tracing::debug!(
+                    "Received ThreatSyncRequest from {} (version: {})",
+                    from_node,
+                    from_version
+                );
                 Some(self.create_sync_response(request_id, *from_version))
             }
             MeshMessage::ThreatAcknowledgement {
@@ -1002,12 +1010,14 @@ impl ThreatIntelligenceManager {
 
                 if let Some(ref transport) = transport {
                     if let Some(message) = None::<MeshMessage> {
-                        let (success, fail) = transport.broadcast_to_random_peers(
-                            message,
-                            0.5,
-                            None,
-                        ).await;
-                        tracing::debug!("Fanout threat announce: {} sent, {} failed", success, fail);
+                        let (success, fail) = transport
+                            .broadcast_to_random_peers(message, 0.5, None)
+                            .await;
+                        tracing::debug!(
+                            "Fanout threat announce: {} sent, {} failed",
+                            success,
+                            fail
+                        );
                     }
                 }
 

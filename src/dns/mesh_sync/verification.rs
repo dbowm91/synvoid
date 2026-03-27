@@ -1,7 +1,13 @@
 use super::*;
 
 impl MeshDnsRegistry {
-    pub fn initiate_domain_verification(&self, domain: String, origin_node_id: String, verify_ownership: bool, ip_addresses: Vec<String>) -> DomainVerificationRequest {
+    pub fn initiate_domain_verification(
+        &self,
+        domain: String,
+        origin_node_id: String,
+        verify_ownership: bool,
+        ip_addresses: Vec<String>,
+    ) -> DomainVerificationRequest {
         let now = chrono::Utc::now().timestamp() as u64;
         let request_id = format!("{}-{}-{}", domain, origin_node_id, now);
 
@@ -24,10 +30,17 @@ impl MeshDnsRegistry {
             expires_at: now + self.config.verification_timeout_secs,
         };
 
-        self.pending_verifications.write().insert(request_id, request.clone());
+        self.pending_verifications
+            .write()
+            .insert(request_id, request.clone());
 
-        self.verification_metrics.record_initiated(&verification_type);
-        tracing::info!("Initiated domain verification for {} (type: {:?})", domain, verification_type);
+        self.verification_metrics
+            .record_initiated(&verification_type);
+        tracing::info!(
+            "Initiated domain verification for {} (type: {:?})",
+            domain,
+            verification_type
+        );
 
         request
     }
@@ -36,8 +49,12 @@ impl MeshDnsRegistry {
         self.pending_verifications.read().get(request_id).cloned()
     }
 
-    pub fn get_pending_verifications_for_domain(&self, domain: &str) -> Vec<DomainVerificationRequest> {
-        self.pending_verifications.read()
+    pub fn get_pending_verifications_for_domain(
+        &self,
+        domain: &str,
+    ) -> Vec<DomainVerificationRequest> {
+        self.pending_verifications
+            .read()
             .values()
             .filter(|v| v.domain == domain)
             .cloned()
@@ -48,17 +65,30 @@ impl MeshDnsRegistry {
         self.verification_metrics.get_summary()
     }
 
-    pub fn update_verification_status(&self, request_id: &str, status: DomainVerificationStatus, error_message: Option<String>) -> bool {
+    pub fn update_verification_status(
+        &self,
+        request_id: &str,
+        status: DomainVerificationStatus,
+        error_message: Option<String>,
+    ) -> bool {
         let mut pending = self.pending_verifications.write();
 
         if let Some(verification) = pending.get_mut(request_id) {
             match status {
                 DomainVerificationStatus::Verified => {
-                    tracing::info!("Domain verification completed for {}: {}", verification.domain, request_id);
+                    tracing::info!(
+                        "Domain verification completed for {}: {}",
+                        verification.domain,
+                        request_id
+                    );
                 }
                 DomainVerificationStatus::Failed => {
-                    tracing::warn!("Domain verification failed for {}: {} - {:?}",
-                        verification.domain, request_id, error_message);
+                    tracing::warn!(
+                        "Domain verification failed for {}: {} - {:?}",
+                        verification.domain,
+                        request_id,
+                        error_message
+                    );
                 }
                 _ => {}
             }
@@ -83,11 +113,19 @@ impl MeshDnsRegistry {
         removed
     }
 
-    pub async fn verify_domain_ns_records(&self, domain: &str, expected_nameservers: &[String]) -> Result<bool, String> {
-        let resolver = self.dns_resolver.as_ref()
+    pub async fn verify_domain_ns_records(
+        &self,
+        domain: &str,
+        expected_nameservers: &[String],
+    ) -> Result<bool, String> {
+        let resolver = self
+            .dns_resolver
+            .as_ref()
             .ok_or_else(|| "DNS resolver not configured".to_string())?;
 
-        let ns_record = resolver.lookup_ns(domain).await
+        let ns_record = resolver
+            .lookup_ns(domain)
+            .await
             .map_err(|e| format!("NS lookup failed: {}", e))?;
 
         for expected in expected_nameservers {
@@ -98,7 +136,11 @@ impl MeshDnsRegistry {
             });
 
             if !found {
-                tracing::warn!("Expected nameserver {} not found for domain {}", expected, domain);
+                tracing::warn!(
+                    "Expected nameserver {} not found for domain {}",
+                    expected,
+                    domain
+                );
                 return Ok(false);
             }
         }
@@ -107,11 +149,19 @@ impl MeshDnsRegistry {
         Ok(true)
     }
 
-    pub async fn verify_domain_txt_challenge(&self, domain: &str, expected_token: &str) -> Result<bool, String> {
-        let resolver = self.dns_resolver.as_ref()
+    pub async fn verify_domain_txt_challenge(
+        &self,
+        domain: &str,
+        expected_token: &str,
+    ) -> Result<bool, String> {
+        let resolver = self
+            .dns_resolver
+            .as_ref()
             .ok_or_else(|| "DNS resolver not configured".to_string())?;
 
-        let txt_record = resolver.lookup_txt(&format!("_acme-challenge.{}", domain)).await
+        let txt_record = resolver
+            .lookup_txt(&format!("_acme-challenge.{}", domain))
+            .await
             .map_err(|e| format!("TXT lookup failed: {}", e))?;
 
         for txt_value in &txt_record.values {
@@ -121,14 +171,22 @@ impl MeshDnsRegistry {
             }
         }
 
-        tracing::warn!("TXT challenge verification failed for domain {} - token not found", domain);
+        tracing::warn!(
+            "TXT challenge verification failed for domain {} - token not found",
+            domain
+        );
         Ok(false)
     }
 
-    pub fn complete_verification_and_register(&self, request_id: &str, registration: DnsRegistration) -> Result<(), String> {
+    pub fn complete_verification_and_register(
+        &self,
+        request_id: &str,
+        registration: DnsRegistration,
+    ) -> Result<(), String> {
         let pending = self.pending_verifications.read();
 
-        let verification = pending.get(request_id)
+        let verification = pending
+            .get(request_id)
             .ok_or_else(|| "Verification request not found".to_string())?;
 
         if verification.domain != registration.domain {
@@ -157,11 +215,14 @@ impl MeshDnsRegistry {
             edge_node_geo: registration.edge_node_geo.clone(),
         };
 
-        self.origin_nodes.write().insert(registration.node_id.clone(), origin);
+        self.origin_nodes
+            .write()
+            .insert(registration.node_id.clone(), origin);
 
         {
             let mut mapping = self.domain_to_origin_mapping.write();
-            mapping.entry(registration.domain.clone())
+            mapping
+                .entry(registration.domain.clone())
                 .or_default()
                 .push(registration.node_id.clone());
         }
@@ -177,14 +238,20 @@ impl MeshDnsRegistry {
                     ttl,
                 );
                 if stored {
-                    tracing::info!("Registered domain {} in DHT after verification", registration.domain);
+                    tracing::info!(
+                        "Registered domain {} in DHT after verification",
+                        registration.domain
+                    );
                 }
             }
         }
 
         self.pending_verifications.write().remove(request_id);
 
-        tracing::info!("Domain {} registered after verification", registration.domain);
+        tracing::info!(
+            "Domain {} registered after verification",
+            registration.domain
+        );
 
         Ok(())
     }
@@ -198,7 +265,12 @@ impl MeshDnsRegistry {
             return Err("Use register_origin_node for global nodes".to_string());
         }
 
-        let request_id = format!("{}-{}-{}", registration.domain, registration.node_id, chrono::Utc::now().timestamp());
+        let request_id = format!(
+            "{}-{}-{}",
+            registration.domain,
+            registration.node_id,
+            chrono::Utc::now().timestamp()
+        );
 
         let _verification_request = DnsRegistrationWithVerificationRequest {
             request_id: request_id.clone(),
@@ -221,8 +293,12 @@ impl MeshDnsRegistry {
                     break;
                 }
 
-                tracing::info!("Attempting registration to global node {} (attempt {}/{})",
-                    global_node.node_id, attempt + 1, Self::MAX_REGISTRATION_RETRIES);
+                tracing::info!(
+                    "Attempting registration to global node {} (attempt {}/{})",
+                    global_node.node_id,
+                    attempt + 1,
+                    Self::MAX_REGISTRATION_RETRIES
+                );
 
                 if let Some(ref tx) = self.registration_tx {
                     let request = DnsRegistrationRequest {
@@ -235,7 +311,10 @@ impl MeshDnsRegistry {
 
                     match tx.try_send(request) {
                         Ok(_) => {
-                            tracing::info!("Registration request sent to global node {}", global_node.node_id);
+                            tracing::info!(
+                                "Registration request sent to global node {}",
+                                global_node.node_id
+                            );
 
                             return Ok(DnsRegistrationWithVerificationResponse {
                                 request_id,
@@ -256,8 +335,11 @@ impl MeshDnsRegistry {
                         }
                         Err(e) => {
                             last_error = Some(e.to_string());
-                            tracing::warn!("Registration attempt {} failed: {:?}",
-                                attempt + 1, last_error);
+                            tracing::warn!(
+                                "Registration attempt {} failed: {:?}",
+                                attempt + 1,
+                                last_error
+                            );
                         }
                     }
                 }
@@ -277,7 +359,9 @@ impl MeshDnsRegistry {
                 role: DnsNodeRole::Origin,
             };
 
-            tx.send(request).await.map_err(|e| format!("Failed to send registration: {}", e))?;
+            tx.send(request)
+                .await
+                .map_err(|e| format!("Failed to send registration: {}", e))?;
 
             tracing::info!("Registration request sent via local channel");
 
@@ -317,7 +401,7 @@ impl MeshDnsRegistry {
 
         let authenticated = self.verify_registration(
             &request.registration.node_id,
-            request.registration.certificate_fingerprint.as_deref()
+            request.registration.certificate_fingerprint.as_deref(),
         );
 
         if !authenticated && self.config.require_mtls {
@@ -397,7 +481,10 @@ impl MeshDnsRegistry {
         let metrics = self.verification_metrics.clone();
 
         let retry_interval = self.config.verification_retry_interval_secs;
-        let timeout_message = format!("Verification timeout - DNS challenge not completed within {} seconds", self.config.verification_timeout_secs);
+        let timeout_message = format!(
+            "Verification timeout - DNS challenge not completed within {} seconds",
+            self.config.verification_timeout_secs
+        );
 
         tokio::spawn(async move {
             loop {
@@ -448,13 +535,11 @@ impl MeshDnsRegistry {
 
                 for (request_id, domain, token, verification_type, ip_addresses) in to_retry {
                     let verified = match verification_type {
-                        DomainVerificationType::TxtChallenge => {
-                            resolver.lookup_txt(&format!("_acme-challenge.{}", domain)).await
-                                .map(|txt| {
-                                    txt.values.iter().any(|v| v.contains(&token))
-                                })
-                                .unwrap_or(false)
-                        }
+                        DomainVerificationType::TxtChallenge => resolver
+                            .lookup_txt(&format!("_acme-challenge.{}", domain))
+                            .await
+                            .map(|txt| txt.values.iter().any(|v| v.contains(&token)))
+                            .unwrap_or(false),
                         DomainVerificationType::NsRecord => {
                             let ns_result = resolver.lookup_ns(&domain).await;
                             match ns_result {
@@ -462,7 +547,8 @@ impl MeshDnsRegistry {
                                     if ns.nameservers.is_empty() {
                                         false
                                     } else {
-                                        let expected_ips: Vec<std::net::IpAddr> = ip_addresses.iter()
+                                        let expected_ips: Vec<std::net::IpAddr> = ip_addresses
+                                            .iter()
                                             .filter_map(|ip| ip.parse().ok())
                                             .collect();
 
@@ -506,7 +592,9 @@ impl MeshDnsRegistry {
 
                         {
                             let mut origins = origin_nodes.write();
-                            if !origins.contains_key(&request_id.split('-').nth(1).unwrap_or("").to_string()) {
+                            if !origins.contains_key(
+                                &request_id.split('-').nth(1).unwrap_or("").to_string(),
+                            ) {
                                 let origin = RegisteredOriginNode {
                                     node_id: request_id.split('-').nth(1).unwrap_or("").to_string(),
                                     domains: vec![domain.clone()],
@@ -526,7 +614,8 @@ impl MeshDnsRegistry {
 
                         {
                             let mut mapping = domain_mapping.write();
-                            mapping.entry(domain.clone())
+                            mapping
+                                .entry(domain.clone())
                                 .or_default()
                                 .push(request_id.clone());
                         }
@@ -543,13 +632,19 @@ impl MeshDnsRegistry {
                         pending.write().remove(&request_id);
 
                         if let Some(tx) = &verification_tx {
-                            let _ = tx.send(VerificationTask {
-                                request_id: request_id.clone(),
-                                domain: domain.clone(),
-                                origin_node_id: request_id.split('-').nth(1).unwrap_or("").to_string(),
-                                challenge_token: token,
-                                verification_type,
-                            }).await;
+                            let _ = tx
+                                .send(VerificationTask {
+                                    request_id: request_id.clone(),
+                                    domain: domain.clone(),
+                                    origin_node_id: request_id
+                                        .split('-')
+                                        .nth(1)
+                                        .unwrap_or("")
+                                        .to_string(),
+                                    challenge_token: token,
+                                    verification_type,
+                                })
+                                .await;
                         }
                     } else {
                         metrics.record_failed();

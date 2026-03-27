@@ -1,9 +1,9 @@
+use dashmap::DashMap;
+use parking_lot::RwLock;
+use quinn::{RecvStream, SendStream};
 use std::collections::HashMap;
 use std::sync::Arc;
-use dashmap::DashMap;
-use quinn::{SendStream, RecvStream};
-use once_cell::sync::Lazy;
-use parking_lot::RwLock;
+use std::sync::LazyLock;
 
 use super::runtime::QuicRuntime;
 
@@ -47,14 +47,16 @@ impl QuicTunnelRegistry {
     pub async fn register(&self, info: TunnelSessionInfo) {
         let session_id = info.session_id.clone();
         let client_id = info.client_id.clone();
-        
+
         if let Some(ref peer_id) = info.peer_id {
-            self.sessions_by_peer.insert(peer_id.clone(), session_id.clone());
+            self.sessions_by_peer
+                .insert(peer_id.clone(), session_id.clone());
         }
-        
-        self.sessions_by_client.insert(client_id, session_id.clone());
+
+        self.sessions_by_client
+            .insert(client_id, session_id.clone());
         self.sessions.insert(session_id, info);
-        
+
         tracing::trace!("Tunnel session registered: {}", self.sessions.len());
     }
 
@@ -106,7 +108,8 @@ impl Default for QuicTunnelRegistry {
     }
 }
 
-pub static QUIC_TUNNEL_REGISTRY: Lazy<QuicTunnelRegistry> = Lazy::new(QuicTunnelRegistry::new);
+pub static QUIC_TUNNEL_REGISTRY: LazyLock<QuicTunnelRegistry> =
+    LazyLock::new(QuicTunnelRegistry::new);
 
 pub struct QuicTunnelProxy {
     pub send: SendStream,

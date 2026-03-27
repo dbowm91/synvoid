@@ -25,13 +25,9 @@ impl TarpitHandler {
         }
     }
 
-    pub async fn handle_request(
-        &self,
-        path: &str,
-        _user_agent: Option<&str>,
-    ) -> String {
+    pub async fn handle_request(&self, path: &str, _user_agent: Option<&str>) -> String {
         let start = std::time::Instant::now();
-        
+
         let depth = self.extract_depth_from_path(path);
         let path_seed = self.generate_path_seed(path);
 
@@ -54,27 +50,28 @@ impl TarpitHandler {
 
     fn extract_depth_from_path(&self, path: &str) -> u32 {
         let parts: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-        
+
         if let Some(first) = parts.first() {
             if let Ok(depth) = first.parse::<u32>() {
                 return depth.min(self.config.max_depth);
             }
         }
-        
+
         0
     }
 
     fn generate_path_seed(&self, path: &str) -> String {
         let mut rng = rand::rng();
-        
+
         if path.is_empty() || path == "/" {
             return format!("page{}", rng.random_range(1..100));
         }
 
-        let clean_path = path.chars()
+        let clean_path = path
+            .chars()
             .filter(|c| c.is_alphanumeric())
             .collect::<String>();
-        
+
         if clean_path.len() >= 3 {
             clean_path[..clean_path.len().min(10)].to_string()
         } else {
@@ -84,10 +81,11 @@ impl TarpitHandler {
 
     pub fn generate_redirect_page(&self, target_path: &str) -> String {
         let mut rng = rand::rng();
-        
+
         let sentences = self.chain.generate_sentences(8);
-        
-        format!(r#"<!DOCTYPE html>
+
+        format!(
+            r#"<!DOCTYPE html>
 <html>
 <head>
     <meta http-equiv="refresh" content="0;url={}">

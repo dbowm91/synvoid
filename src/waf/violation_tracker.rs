@@ -89,30 +89,32 @@ impl ViolationTracker {
         let persist_path = data_dir.map(|d| d.join("violations.json"));
         let is_attack_mode = Arc::new(RwLock::new(false));
 
-        let path_for_load = persist_path.as_ref().and_then(|p| if p.exists() { Some(p.clone()) } else { None });
-        
+        let path_for_load =
+            persist_path
+                .as_ref()
+                .and_then(|p| if p.exists() { Some(p.clone()) } else { None });
+
         let store: HashMap<String, ViolationEntry> = if let Some(path) = path_for_load {
             match std::fs::read_to_string(&path) {
-                Ok(content) => {
-                    match serde_json::from_str::<Vec<ViolationEntry>>(&content) {
-                        Ok(entries) => {
-                            let validated: HashMap<String, ViolationEntry> = entries
-                                .into_iter()
-                                .filter(|e| !e.is_expired())
-                                .map(|e| {
-                                    let ip: IpAddr = e.ip.parse().unwrap_or_else(|_| "0.0.0.0".parse().unwrap());
-                                    (ViolationEntry::key(&ip), e)
-                                })
-                                .collect();
-                            tracing::info!("Loaded {} valid violation entries", validated.len());
-                            validated
-                        }
-                        Err(e) => {
-                            tracing::warn!("Failed to parse violations.json: {}", e);
-                            HashMap::new()
-                        }
+                Ok(content) => match serde_json::from_str::<Vec<ViolationEntry>>(&content) {
+                    Ok(entries) => {
+                        let validated: HashMap<String, ViolationEntry> = entries
+                            .into_iter()
+                            .filter(|e| !e.is_expired())
+                            .map(|e| {
+                                let ip: IpAddr =
+                                    e.ip.parse().unwrap_or_else(|_| "0.0.0.0".parse().unwrap());
+                                (ViolationEntry::key(&ip), e)
+                            })
+                            .collect();
+                        tracing::info!("Loaded {} valid violation entries", validated.len());
+                        validated
                     }
-                }
+                    Err(e) => {
+                        tracing::warn!("Failed to parse violations.json: {}", e);
+                        HashMap::new()
+                    }
+                },
                 Err(_) => HashMap::new(),
             }
         } else {
@@ -126,16 +128,16 @@ impl ViolationTracker {
         let persist_tx = persist_path.as_ref().map(|path| {
             let path = path.clone();
             let (tx, mut rx) = mpsc::channel::<PersistRequest>(100);
-            
+
             tokio::spawn(async move {
                 let mut current_interval_secs = normal_interval_secs;
-                
+
                 loop {
                     tokio::select! {
                         _ = time::sleep(Duration::from_secs(current_interval_secs.into())) => {
                             let is_attack = *is_attack_mode_clone.read();
                             current_interval_secs = if is_attack { attack_interval_secs } else { normal_interval_secs };
-                            
+
                             let entries = store_clone.read().clone();
                             if !entries.is_empty() {
                                 Self::persist_to_disk(&path, entries).await;
@@ -170,7 +172,7 @@ impl ViolationTracker {
         let key = ViolationEntry::key(&ip);
         let count = {
             let mut store = self.store.write();
-            
+
             if let Some(entry) = store.get_mut(&key) {
                 entry.increment(threat_level, self.config.violation_window_secs as u64);
                 entry.violations_count
@@ -199,7 +201,7 @@ impl ViolationTracker {
 
         let key = ViolationEntry::key(&ip);
         let mut store = self.store.write();
-        
+
         if let Some(entry) = store.get_mut(&key) {
             if entry.is_expired() {
                 store.remove(&key);
@@ -244,7 +246,7 @@ impl ViolationTracker {
 
     async fn persist_to_disk(path: &PathBuf, entries: HashMap<String, ViolationEntry>) {
         let values: Vec<ViolationEntry> = entries.into_values().collect();
-        
+
         match serde_json::to_string_pretty(&values) {
             Ok(json) => {
                 if let Err(e) = std::fs::write(path, json) {
@@ -261,7 +263,7 @@ impl ViolationTracker {
         let store = self.store.read();
         let total = store.len();
         let expired = store.values().filter(|e| e.is_expired()).count();
-        
+
         ViolationStats {
             total,
             expired,
@@ -283,13 +285,8 @@ mod tests {
 
     #[test]
     fn test_violation_expiry() {
-        let entry = ViolationEntry::new(
-            "1.2.3.4".parse().unwrap(),
-            "test".to_string(),
-            1,
-            1,
-        );
-        
+        let entry = ViolationEntry::new("1.2.3.4".parse().unwrap(), "test".to_string(), 1, 1);
+
         assert!(!entry.is_expired());
     }
 }

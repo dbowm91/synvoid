@@ -20,7 +20,7 @@ path = "src/bin/server.rs"
 
 [features]
 default = ["socket-handoff", "post-quantum", "mesh", "dns"]
-dns = []
+dns = ["dep:hickory-proto", "dep:hickory-resolver", "dep:hickory-recursor", "dep:dns-parser", "dep:tokio-dstip", "dep:cryptoki", "dep:getrandom"]
 socket-handoff = []
 wireguard = ["dep:boringtun"]
 icmp-filter = []
@@ -58,8 +58,8 @@ hyper = { version = "1", features = ["http1", "http2", "server", "client"] }
 hyper-util = { version = "0.1", features = ["tokio", "server-auto", "server-graceful", "http1", "http2", "client", "client-legacy"] }
 hyper-rustls = { version = "0.27", features = ["http2"] }
 rustls-native-certs = "0.8"
-tower = { version = "0.5", features = ["util", "timeout"] }
-tower-http = { version = "0.6", features = ["fs", "cors", "trace"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["fs", "cors"] }
 axum = { version = "0.8", features = ["ws", "macros", "json"] }
 axum-extra = { version = "0.10", features = ["typed-header"] }
 http-body = "1"
@@ -72,15 +72,13 @@ postcard = { version = "1", features = ["alloc"] }
 # rkyv for zero-copy - uses renamed dependency to avoid lightningcss conflict
 # Use package = "rkyv" to rename it
 rkyv = { package = "rkyv", version = "0.8", features = ["std", "alloc"] }
-# Keep bincode for backwards compatibility
-bincode = "1"
+
 toml = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
 isbot = "0.1"
 regex = "1"
-once_cell = "1"
 parking_lot = "0.12"
 dashmap = "5"
 metrics = "0.22"
@@ -92,36 +90,31 @@ base64 = "0.22"
 sha2 = "0.10"
 hex = "0.4"
 futures = "0.3"
-futures-util = "0.3"
 sysinfo = "0.32"
 nix = { version = "0.29", features = ["signal", "process", "socket", "fs", "net", "uio"] }
 chrono = { version = "0.4", features = ["serde"] }
 notify = "6"
 aho-corasick = "1.1"
-url = "2.5"
 unicode-normalization = "0.1"
 libinjectionrs = "0.1"
 
 # DNS support
-hickory-proto = { version = "0.25", features = ["dnssec-ring", "text-parsing"] }
-hickory-resolver = { version = "0.25", features = ["system-config"] }
-hickory-recursor = { version = "0.25", features = ["dnssec-ring"] }
-dns-parser = "0.8"
+hickory-proto = { version = "0.25", features = ["dnssec-ring", "text-parsing"], optional = true }
+hickory-resolver = { version = "0.25", features = ["system-config"], optional = true }
+hickory-recursor = { version = "0.25", features = ["dnssec-ring"], optional = true }
+dns-parser = { version = "0.8", optional = true }
 thiserror = { version = "2", package = "thiserror" }
-getrandom = { version = "0.2", features = ["std"] }
-tokio-dstip = "0.1"
+getrandom = { version = "0.2", features = ["std"], optional = true }
+tokio-dstip = { version = "0.1", optional = true }
 
 clap = { version = "4", features = ["derive"] }
 infer = "0.16"
 yara-x = "1"
 tempfile = "3"
 uuid = { version = "1", features = ["v4", "serde"] }
-memmap2 = "0.9"
 pin-project-lite = "0.2"
 bcrypt = "0.15"
 dirs = "5"
-ab_glyph = "0.2"
-flare = "0.1"
 flate2 = "1"
 tar = "0.4"
 
@@ -144,7 +137,6 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 # TLS + Post-Quantum Cryptography
 tokio-rustls = "0.26"
 rustls = { version = "0.23", features = ["prefer-post-quantum", "aws-lc-rs"] }
-rustls-pemfile = "2"
 rustls-pki-types = "1"
 rustls-post-quantum = { version = "0.2", optional = true }
 x509-parser = "0.16"
@@ -156,7 +148,7 @@ aws-lc-rs = { version = "1", features = ["unstable"] }
 subtle = "2"
 
 # HSM / PKCS#11 support
-cryptoki = "0.12"
+cryptoki = { version = "0.12", optional = true }
 
 # HTTP/3 + QUIC
 quinn = { version = "0.11", features = ["runtime-tokio"] }
@@ -180,7 +172,6 @@ libloading = "0.8"
 
 # WASM support for plugins
 wasmtime = "36"
-wasmtime-wasi = "36"
 
 # WireGuard (optional - requires boringtun)
 boringtun = { version = "0.7", optional = true }

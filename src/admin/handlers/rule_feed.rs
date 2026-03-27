@@ -1,12 +1,8 @@
-use axum::{
-    extract::State,
-    http::StatusCode,
-    Json,
-};
+use super::super::state::AdminState;
+use super::common::{OptionalAuth, StatusResponse};
+use axum::{extract::State, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use super::super::state::AdminState;
-use super::common::{StatusResponse, OptionalAuth};
 
 #[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct RuleFeedStatusResponse {
@@ -50,8 +46,11 @@ pub async fn get_status(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<RuleFeedStatusResponse>, StatusCode> {
-
-    let rule_feed_manager = state.waf_tracking.rule_feed_manager.as_ref().ok_or(StatusCode::NOT_FOUND)?;
+    let rule_feed_manager = state
+        .waf_tracking
+        .rule_feed_manager
+        .as_ref()
+        .ok_or(StatusCode::NOT_FOUND)?;
 
     let status = RuleFeedStatusResponse {
         enabled: rule_feed_manager.inner.config.enabled,
@@ -83,14 +82,18 @@ pub async fn check_for_updates(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<RuleFeedCheckResponse>, StatusCode> {
-
-    let rule_feed_manager = state.waf_tracking.rule_feed_manager.as_ref().ok_or(StatusCode::NOT_FOUND)?;
+    let rule_feed_manager = state
+        .waf_tracking
+        .rule_feed_manager
+        .as_ref()
+        .ok_or(StatusCode::NOT_FOUND)?;
 
     let result = rule_feed_manager.check_for_updates().await;
 
     match result {
         Ok(Some(new_version)) => {
-            let changelog = rule_feed_manager.get_changelog()
+            let changelog = rule_feed_manager
+                .get_changelog()
                 .into_iter()
                 .map(|c| serde_json::to_value(c).unwrap_or(serde_json::Value::Null))
                 .collect();
@@ -129,8 +132,11 @@ pub async fn apply_pending(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<RuleFeedApplyResponse>, StatusCode> {
-
-    let rule_feed_manager = state.waf_tracking.rule_feed_manager.as_ref().ok_or(StatusCode::NOT_FOUND)?;
+    let rule_feed_manager = state
+        .waf_tracking
+        .rule_feed_manager
+        .as_ref()
+        .ok_or(StatusCode::NOT_FOUND)?;
 
     if !rule_feed_manager.has_pending_update() {
         return Ok(Json(RuleFeedApplyResponse {
@@ -173,8 +179,11 @@ pub async fn discard_pending(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<StatusResponse>, StatusCode> {
-
-    let rule_feed_manager = state.waf_tracking.rule_feed_manager.as_ref().ok_or(StatusCode::NOT_FOUND)?;
+    let rule_feed_manager = state
+        .waf_tracking
+        .rule_feed_manager
+        .as_ref()
+        .ok_or(StatusCode::NOT_FOUND)?;
 
     rule_feed_manager.discard_pending();
 

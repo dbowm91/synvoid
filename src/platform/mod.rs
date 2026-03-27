@@ -1,16 +1,16 @@
-pub mod socket;
+pub mod fs;
 pub mod ipc;
 pub mod process;
-pub mod fs;
 pub mod service;
+pub mod socket;
 
+pub use fs::{PlatformPaths, SecureDir};
+pub use ipc::{IpcListener, IpcStream, IpcTransport};
+pub use process::{ProcessControl, SignalHandler};
+pub use service::{ServiceConfig, ServiceControl, ServiceState};
 pub use socket::{
     OwnedTcpListener, OwnedTcpStream, SocketFDPassing, SocketHandle, SocketHandoffError,
 };
-pub use ipc::{IpcTransport, IpcListener, IpcStream};
-pub use process::{ProcessControl, SignalHandler};
-pub use fs::{SecureDir, PlatformPaths};
-pub use service::{ServiceConfig, ServiceControl, ServiceState};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Platform {
@@ -27,82 +27,115 @@ pub enum Platform {
 impl Platform {
     pub fn current() -> Self {
         #[cfg(all(target_os = "linux", target_env = "musl"))]
-        { Platform::LinuxMusl }
-        
+        {
+            Platform::LinuxMusl
+        }
+
         #[cfg(all(target_os = "linux", not(target_env = "musl")))]
-        { Platform::Linux }
-        
+        {
+            Platform::Linux
+        }
+
         #[cfg(target_os = "macos")]
-        { Platform::Macos }
-        
+        {
+            Platform::Macos
+        }
+
         #[cfg(target_os = "freebsd")]
-        { Platform::FreeBSD }
-        
+        {
+            Platform::FreeBSD
+        }
+
         #[cfg(target_os = "openbsd")]
-        { Platform::OpenBSD }
-        
+        {
+            Platform::OpenBSD
+        }
+
         #[cfg(target_os = "netbsd")]
-        { Platform::NetBSD }
-        
+        {
+            Platform::NetBSD
+        }
+
         #[cfg(target_os = "windows")]
-        { Platform::Windows }
-        
+        {
+            Platform::Windows
+        }
+
         #[cfg(not(any(
             all(target_os = "linux", target_env = "musl"),
             all(target_os = "linux", not(target_env = "musl")),
-            target_os = "macos", 
+            target_os = "macos",
             target_os = "freebsd",
             target_os = "openbsd",
             target_os = "netbsd",
             target_os = "windows"
         )))]
-        { Platform::Unknown }
+        {
+            Platform::Unknown
+        }
     }
-    
+
     pub fn is_unix(&self) -> bool {
-        matches!(self, Platform::Linux | Platform::LinuxMusl | Platform::Macos | Platform::FreeBSD | Platform::OpenBSD | Platform::NetBSD)
+        matches!(
+            self,
+            Platform::Linux
+                | Platform::LinuxMusl
+                | Platform::Macos
+                | Platform::FreeBSD
+                | Platform::OpenBSD
+                | Platform::NetBSD
+        )
     }
-    
+
     pub fn is_linux(&self) -> bool {
         matches!(self, Platform::Linux | Platform::LinuxMusl)
     }
-    
+
     pub fn is_musl(&self) -> bool {
         matches!(self, Platform::LinuxMusl)
     }
-    
+
     pub fn is_bsd(&self) -> bool {
-        matches!(self, Platform::FreeBSD | Platform::OpenBSD | Platform::NetBSD)
+        matches!(
+            self,
+            Platform::FreeBSD | Platform::OpenBSD | Platform::NetBSD
+        )
     }
-    
+
     pub fn supports_socket_fd_passing(&self) -> bool {
         self.is_unix()
     }
-    
+
     pub fn supports_reuse_port(&self) -> bool {
-        matches!(self, Platform::Linux | Platform::LinuxMusl | Platform::Macos | Platform::FreeBSD)
+        matches!(
+            self,
+            Platform::Linux | Platform::LinuxMusl | Platform::Macos | Platform::FreeBSD
+        )
     }
-    
+
     pub fn supports_signals(&self) -> bool {
         self.is_unix()
     }
-    
+
     pub fn supports_daemonize(&self) -> bool {
         self.is_unix()
     }
-    
+
     pub fn supports_ebpf(&self) -> bool {
         matches!(self, Platform::Linux)
     }
-    
+
     pub fn supports_nftables(&self) -> bool {
         matches!(self, Platform::Linux | Platform::LinuxMusl)
     }
-    
+
     pub fn supports_pf(&self) -> bool {
-        matches!(self, Platform::Macos | Platform::FreeBSD | Platform::OpenBSD | Platform::NetBSD)
+        matches!(
+            self,
+            Platform::Macos | Platform::FreeBSD | Platform::OpenBSD | Platform::NetBSD
+        )
     }
-    
+
     pub fn supports_tun(&self) -> bool {
         match self {
             Platform::Linux | Platform::LinuxMusl | Platform::Macos => true,
@@ -111,7 +144,7 @@ impl Platform {
             Platform::Unknown => false,
         }
     }
-    
+
     pub fn supports_wireguard_userspace(&self) -> bool {
         match self {
             Platform::Linux | Platform::LinuxMusl | Platform::Macos => true,
@@ -120,18 +153,18 @@ impl Platform {
             Platform::Unknown => false,
         }
     }
-    
+
     pub fn supports_wireguard_kernel(&self) -> bool {
         matches!(self, Platform::Linux | Platform::LinuxMusl)
     }
-    
+
     pub fn is_admin_required_for_tun(&self) -> bool {
         match self {
             Platform::Windows => true,
             _ => true,
         }
     }
-    
+
     pub fn libc_name(&self) -> &'static str {
         match self {
             Platform::Linux => "glibc",
@@ -163,13 +196,13 @@ pub use windows::wintun;
 pub enum PlatformError {
     #[error("Feature not supported on this platform: {0}")]
     NotSupported(String),
-    
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
-    
+
     #[error("Socket error: {0}")]
     Socket(String),
-    
+
     #[error("IPC error: {0}")]
     Ipc(String),
 }

@@ -1,10 +1,10 @@
+pub mod filter;
 pub mod listener;
 pub mod protocol;
-pub mod filter;
 
-pub use listener::{TcpListenerPool, TcpListenerConfig};
-pub use protocol::{ProtocolDetector, Protocol, ProtocolResult};
-pub use filter::{ProtocolFilter, FilterAction, FilterConfig};
+pub use filter::{FilterAction, FilterConfig, ProtocolFilter};
+pub use listener::{TcpListenerConfig, TcpListenerPool};
+pub use protocol::{Protocol, ProtocolDetector, ProtocolResult};
 
 use std::net::SocketAddr;
 use tokio::net::TcpStream;
@@ -52,10 +52,9 @@ impl TcpProxy {
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let detection_result = self.protocol_detector.detect(&mut upstream_stream).await?;
 
-        let filter_action = self.protocol_filter.check(
-            expected_protocol,
-            &detection_result.protocol,
-        );
+        let filter_action = self
+            .protocol_filter
+            .check(expected_protocol, &detection_result.protocol);
 
         match filter_action {
             FilterAction::Drop => {

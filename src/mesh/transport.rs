@@ -5,7 +5,6 @@ use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-
 #[cfg(feature = "dns")]
 use crate::dns::server::Zone as DnsZone;
 
@@ -26,7 +25,9 @@ use quinn::Connection;
 use crate::mesh::cert::MeshCertManager;
 use crate::mesh::config::{MeshConfig, MeshPeerConfig};
 use crate::mesh::kem::MlKem768;
-use crate::mesh::protocol::{MeshMessage, MeshPeerInfo, UpstreamInfo, RouteQueryResult, ProviderInfo, MESH_MESSAGE_VERSION};
+use crate::mesh::protocol::{
+    MeshMessage, MeshPeerInfo, ProviderInfo, RouteQueryResult, UpstreamInfo, MESH_MESSAGE_VERSION,
+};
 use crate::mesh::session::SessionManager;
 use crate::mesh::topology::{MeshTopology, PeerStatus};
 use crate::mesh::wireguard_mesh::WireGuardMeshRuntime;
@@ -35,9 +36,10 @@ use crate::waf::ratelimit::core::AtomicSlidingWindow;
 
 pub use crate::mesh::transports::MeshTransportManager;
 
-pub use crate::mesh::transport_core::{MeshTransportError, validate_system_time, get_time_validation_error_count, MIN_REASONABLE_TIMESTAMP, MAX_REASONABLE_TIMESTAMP};
-
-
+pub use crate::mesh::transport_core::{
+    get_time_validation_error_count, validate_system_time, MeshTransportError,
+    MAX_REASONABLE_TIMESTAMP, MIN_REASONABLE_TIMESTAMP,
+};
 
 pub(crate) const MAX_PENDING_CONNECTIONS: usize = 100;
 pub(crate) const CONNECTION_RATE_LIMIT_WINDOW_SECS: u64 = 60;
@@ -107,9 +109,12 @@ impl Clone for MeshTransport {
             record_store: self.record_store.clone(),
             routing_manager: self.routing_manager.clone(),
             threat_intel: self.threat_intel.clone(),
-            seen_messages: Arc::new(RwLock::new(lru_time_cache::LruCache::with_expiry_duration_and_capacity(
-                Duration::from_secs(300), 10000,
-            ))),
+            seen_messages: Arc::new(RwLock::new(
+                lru_time_cache::LruCache::with_expiry_duration_and_capacity(
+                    Duration::from_secs(300),
+                    10000,
+                ),
+            )),
             stake_manager: self.stake_manager.clone(),
             mlkem_session_manager: self.mlkem_session_manager.clone(),
             #[cfg(feature = "dns")]
@@ -134,7 +139,7 @@ impl MeshGlobalRateLimiter {
         }
     }
 
-    pub fn check(&self) -> GlobalRateLimitCheck {
+    pub(crate) fn check(&self) -> GlobalRateLimitCheck {
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -211,12 +216,13 @@ impl PendingQueryManager {
     }
 
     pub(crate) fn complete(&mut self, query_id: &str, result: RouteQueryResult) -> bool {
-        match self.pending.remove(query_id) { Some(sender) => {
-            self.collected_providers.remove(query_id);
-            sender.send(result).is_ok()
-        } _ => {
-            false
-        }}
+        match self.pending.remove(query_id) {
+            Some(sender) => {
+                self.collected_providers.remove(query_id);
+                sender.send(result).is_ok()
+            }
+            _ => false,
+        }
     }
 
     pub(crate) fn take(&mut self, query_id: &str) -> Option<oneshot::Sender<RouteQueryResult>> {
@@ -255,25 +261,29 @@ impl MeshTransport {
         #[cfg(feature = "dns")] dns_registry: Option<Arc<crate::dns::MeshDnsRegistry>>,
     ) -> Self {
         let is_genesis = config.is_genesis_node();
-        
+
         let auth_keys: HashMap<String, Vec<u8>> = HashMap::new();
-        
+
         let global_rate_limiter = Arc::new(MeshGlobalRateLimiter::new(
             config.routing.mesh_messages_per_sec,
             config.routing.route_queries_per_minute,
         ));
-        
+
         let (datagram_tx, _) = mpsc::channel(1024);
 
         let origin_ed25519_signer = config.origin_signing_key.as_ref().and_then(|key_cfg| {
-            key_cfg.private_key.map(|pk| {
-                Arc::new(crate::integrity::Ed25519Signer::new(pk))
-            })
+            key_cfg
+                .private_key
+                .map(|pk| Arc::new(crate::integrity::Ed25519Signer::new(pk)))
         });
 
-        let seen_messages = LruCache::with_expiry_duration_and_capacity(Duration::from_secs(300), 10000);
-        
-        let tier_key_store = if config.role.contains(crate::mesh::config::MeshNodeRole::GLOBAL) {
+        let seen_messages =
+            LruCache::with_expiry_duration_and_capacity(Duration::from_secs(300), 10000);
+
+        let tier_key_store = if config
+            .role
+            .contains(crate::mesh::config::MeshNodeRole::GLOBAL)
+        {
             Some(Arc::new(RwLock::new(crate::mesh::dht::TierKeyStore::new())))
         } else {
             None
@@ -281,7 +291,8 @@ impl MeshTransport {
 
         let mlkem_session_manager = if let Some(ref mlkem_config) = config.mlkem {
             if mlkem_config.enabled {
-                let session_config: crate::mesh::session::SessionConfig = mlkem_config.clone().into();
+                let session_config: crate::mesh::session::SessionConfig =
+                    mlkem_config.clone().into();
                 Some(Arc::new(SessionManager::<MlKem768>::new(session_config)))
             } else {
                 None
@@ -289,7 +300,7 @@ impl MeshTransport {
         } else {
             None
         };
-        
+
         Self {
             config,
             topology,
@@ -310,7 +321,9 @@ impl MeshTransport {
                 let mut org_mgr = crate::mesh::organization::OrganizationManager::new();
                 if is_genesis {
                     org_mgr.init_genesis_org();
-                    tracing::info!("Initialized genesis node - genesis and admin organizations created");
+                    tracing::info!(
+                        "Initialized genesis node - genesis and admin organizations created"
+                    );
                 }
                 Arc::new(RwLock::new(org_mgr))
             },
@@ -355,7 +368,10 @@ impl MeshTransport {
         self.routing_manager.clone()
     }
 
-    pub fn set_routing_manager(&mut self, manager: Arc<crate::mesh::dht::routing::DhtRoutingManager>) {
+    pub fn set_routing_manager(
+        &mut self,
+        manager: Arc<crate::mesh::dht::routing::DhtRoutingManager>,
+    ) {
         self.routing_manager = Some(manager);
     }
 
@@ -367,7 +383,9 @@ impl MeshTransport {
         self.topology.clone()
     }
 
-    pub fn get_threat_intel(&self) -> Option<Arc<crate::mesh::threat_intel::ThreatIntelligenceManager>> {
+    pub fn get_threat_intel(
+        &self,
+    ) -> Option<Arc<crate::mesh::threat_intel::ThreatIntelligenceManager>> {
         self.threat_intel.clone()
     }
 
@@ -383,7 +401,7 @@ impl MeshTransport {
         self.mlkem_session_manager = Some(manager);
     }
 
-    pub fn get_global_rate_limit_status(&self) -> GlobalRateLimitCheck {
+    pub(crate) fn get_global_rate_limit_status(&self) -> GlobalRateLimitCheck {
         self.global_rate_limiter.check()
     }
 
@@ -407,7 +425,10 @@ impl MeshTransport {
             let key = format!("edge_key:{}", edge_id);
             if let Some(record) = record_store.get_record(&key) {
                 if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&record.value) {
-                    return value.get("public_key").and_then(|v| v.as_str()).map(|s| s.to_string());
+                    return value
+                        .get("public_key")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
                 }
             }
         }
@@ -427,7 +448,7 @@ impl MeshTransport {
     pub fn check_global_rate_limit(&self) -> bool {
         let check = self.global_rate_limiter.check();
         let max_per_second = self.config.routing.mesh_messages_per_sec;
-        
+
         if check.current_per_second > max_per_second as u64 {
             tracing::warn!(
                 "Global mesh rate limit exceeded: {} msg/s (limit: {})",
@@ -436,7 +457,7 @@ impl MeshTransport {
             );
             return false;
         }
-        
+
         self.global_rate_limiter.record();
         true
     }
@@ -463,12 +484,15 @@ impl MeshTransport {
     pub fn clean_expired_messages(&self) {
         let mut cache = self.seen_messages.write();
         let now = Instant::now();
-        cache.iter()
+        cache
+            .iter()
             .filter(|(_, time)| now.duration_since(**time).as_secs() > 300)
             .map(|(k, _)| k.clone())
             .collect::<Vec<_>>()
             .into_iter()
-            .for_each(|k| { cache.remove(&k); });
+            .for_each(|k| {
+                cache.remove(&k);
+            });
     }
 
     pub fn set_runtime(&mut self, runtime: Arc<QuicRuntime>) {
@@ -540,13 +564,17 @@ impl MeshTransport {
         peer_id: &str,
         message: &MeshMessage,
     ) -> Result<(), MeshTransportError> {
-        let peer = self.peer_connections.get(peer_id)
+        let peer = self
+            .peer_connections
+            .get(peer_id)
             .ok_or_else(|| MeshTransportError::PeerNotFound(peer_id.to_string()))?;
 
-        let encoded = message.encode()
+        let encoded = message
+            .encode()
             .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
 
-        peer.connection.send_datagram(encoded.into())
+        peer.connection
+            .send_datagram(encoded.into())
             .map_err(|e| MeshTransportError::SendFailed(format!("Datagram send failed: {}", e)))?;
 
         tracing::debug!("Sent datagram to peer {}: {:?}", peer_id, message);
@@ -560,19 +588,23 @@ impl MeshTransport {
         config_version: u64,
     ) -> Result<(usize, usize), String> {
         let current_node_id = self.topology.node_id().to_string();
-        
+
         let is_origin = {
             let origins = self.topology.find_all_origins_for_site(site_id).await;
             origins.contains(&current_node_id)
         };
-        
+
         if !is_origin {
-            tracing::debug!("Node {} is not an origin for site {}, skipping broadcast", current_node_id, site_id);
+            tracing::debug!(
+                "Node {} is not an origin for site {}, skipping broadcast",
+                current_node_id,
+                site_id
+            );
             return Ok((0, 0));
         }
 
         let origins = self.topology.find_all_origins_for_site(site_id).await;
-        
+
         let mut success_count = 0;
         let mut fail_count = 0;
 
@@ -585,7 +617,13 @@ impl MeshTransport {
             let timestamp = MeshMessage::generate_timestamp();
 
             let (signature, signer_public_key) = if let Some(ref signer) = self.mesh_signer {
-                let msg = format!("{}:{}:{}:{}", site_id, config_version, config_json.len(), timestamp);
+                let msg = format!(
+                    "{}:{}:{}:{}",
+                    site_id,
+                    config_version,
+                    config_json.len(),
+                    timestamp
+                );
                 (signer.sign(&msg), Some(signer.get_public_key().into()))
             } else {
                 (Vec::new(), None)
@@ -604,11 +642,19 @@ impl MeshTransport {
 
             match self.send_datagram_to_peer(&origin_node_id, &message).await {
                 Ok(_) => {
-                    tracing::info!("Sent site config sync to origin {} for site {}", origin_node_id, site_id);
+                    tracing::info!(
+                        "Sent site config sync to origin {} for site {}",
+                        origin_node_id,
+                        site_id
+                    );
                     success_count += 1;
                 }
                 Err(e) => {
-                    tracing::warn!("Failed to send site config sync to origin {}: {}", origin_node_id, e);
+                    tracing::warn!(
+                        "Failed to send site config sync to origin {}: {}",
+                        origin_node_id,
+                        e
+                    );
                     fail_count += 1;
                 }
             }
@@ -617,65 +663,55 @@ impl MeshTransport {
         Ok((success_count, fail_count))
     }
 
-
     /// Send a route query using QUIC streams for reliable, ordered delivery
     /// This is faster than datagrams in lossy networks due to built-in retransmission
-
 
     pub async fn send_message_to_peer(
         &self,
         peer_id: &str,
         message: &MeshMessage,
     ) -> Result<(), MeshTransportError> {
-        let peer = self.peer_connections.get(peer_id)
+        let peer = self
+            .peer_connections
+            .get(peer_id)
             .ok_or_else(|| MeshTransportError::PeerNotFound(peer_id.to_string()))?;
 
-        let (mut send_stream, _) = peer.connection.open_bi().await
+        let (mut send_stream, _) = peer
+            .connection
+            .open_bi()
+            .await
             .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
 
-        let encoded = message.encode()
+        let encoded = message
+            .encode()
             .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
         let len = (encoded.len() as u32).to_be_bytes();
-        send_stream.write_all(&len).await
+        send_stream
+            .write_all(&len)
+            .await
             .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
-        send_stream.write_all(&encoded).await
+        send_stream
+            .write_all(&encoded)
+            .await
             .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
 
         tracing::debug!("Sent stream message to peer {}: {:?}", peer_id, message);
         Ok(())
     }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     pub fn get_key_exchange_endpoint(&self) -> Option<String> {
         if !self.config.global_node.key_exchange_enabled {
             return None;
         }
-        
+
         let port = self.config.global_node.key_exchange_port;
-        
+
         // Try to get the first non-loopback IP for the endpoint
         match crate::utils::get_first_non_loopback_ip() {
             Ok(ip) => Some(format!("https://{}:{}", ip, port)),
             Err(_) => {
                 // Fallback to bind address if we can't determine our IP
-                let bind_address = self.config.bind_address.as_deref()
-                    .unwrap_or("0.0.0.0");
+                let bind_address = self.config.bind_address.as_deref().unwrap_or("0.0.0.0");
                 Some(format!("https://{}:{}", bind_address, port))
             }
         }
@@ -700,17 +736,18 @@ impl MeshTransport {
             .as_secs();
 
         let key_exchange_endpoint = self.get_key_exchange_endpoint();
-        
+
         // Include endpoint in signable message
         let endpoint_str = key_exchange_endpoint.clone().unwrap_or_default();
-        let signable = format!("{}:{}:{}:{}:{}", 
-            self.config.node_id(), 
+        let signable = format!(
+            "{}:{}:{}:{}:{}",
+            self.config.node_id(),
             self.config.global_node_key.as_deref().unwrap_or(""),
-            crate::mesh::protocol::GlobalNodeAction::UpdateKeyExchange as u8, 
+            crate::mesh::protocol::GlobalNodeAction::UpdateKeyExchange as u8,
             timestamp,
             endpoint_str
         );
-        
+
         let signature = match genesis_key.sign(&signable) {
             Some(sig) => sig,
             None => {
@@ -736,48 +773,28 @@ impl MeshTransport {
         // Broadcast update
         let msg = crate::mesh::protocol::MeshMessage::GlobalNodeAnnounce {
             node_id: self.config.node_id().into(),
-            public_key: self.config.global_node_key.clone().unwrap_or_default().into(),
+            public_key: self
+                .config
+                .global_node_key
+                .clone()
+                .unwrap_or_default()
+                .into(),
             action: crate::mesh::protocol::GlobalNodeAction::UpdateKeyExchange,
             timestamp,
             signature,
             key_exchange_endpoint: key_exchange_endpoint.map(|s| s.into()),
         };
 
-        let _ = self.broadcast_to_random_peers(msg, 0.5, Some(crate::mesh::config::MeshNodeRole::Global)).await;
-        tracing::info!("Updated key exchange endpoint for global node {}", self.config.node_id());
+        let _ = self
+            .broadcast_to_random_peers(msg, 0.5, Some(crate::mesh::config::MeshNodeRole::Global))
+            .await;
+        tracing::info!(
+            "Updated key exchange endpoint for global node {}",
+            self.config.node_id()
+        );
     }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    pub(crate) async fn handle_ping(
-        &self,
-        from_peer: &str,
-        request_id: &str,
-    ) {
+    pub(crate) async fn handle_ping(&self, from_peer: &str, request_id: &str) {
         tracing::debug!("Received Ping from {}", from_peer);
 
         let response = crate::mesh::protocol::MeshMessage::Pong {
@@ -791,12 +808,7 @@ impl MeshTransport {
         }
     }
 
-    pub(crate) async fn handle_pong(
-        &self,
-        from_peer: &str,
-        _request_id: &str,
-        node_id: &str,
-    ) {
+    pub(crate) async fn handle_pong(&self, from_peer: &str, _request_id: &str, node_id: &str) {
         tracing::debug!("Received Pong from {}", from_peer);
 
         let Some(ref routing_manager) = self.routing_manager else {
@@ -807,58 +819,24 @@ impl MeshTransport {
     }
 
     #[cfg(feature = "dns")]
-
     #[cfg(feature = "dns")]
-
     #[cfg(feature = "dns")]
-
     #[cfg(feature = "dns")]
-
     #[cfg(feature = "dns")]
-
     #[cfg(feature = "dns")]
-
     #[cfg(feature = "dns")]
-
-
-
-
-
-
-
-
     #[cfg(feature = "dns")]
-
-
     #[cfg(feature = "dns")]
-
     #[cfg(feature = "dns")]
-
     #[cfg(feature = "dns")]
-
     #[cfg(feature = "dns")]
-
     #[cfg(feature = "dns")]
-
     #[cfg(feature = "dns")]
-
     #[cfg(feature = "dns")]
-
     #[cfg(feature = "dns")]
-
     #[cfg(feature = "dns")]
-
     #[cfg(feature = "dns")]
-
     #[cfg(feature = "dns")]
-
-
-
-
-
-
-
-
 
     pub async fn start(&self) -> Result<(), MeshTransportError> {
         {
@@ -887,8 +865,14 @@ impl MeshTransport {
                     tracing::debug!("Refreshing PoW nonce cache");
                     if let Some(ref pk_hex) = pow_config.signing_public_key() {
                         use base64::Engine;
-                        if let Ok(pk_bytes) = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(pk_hex) {
-                            if let Some(nonce) = crate::mesh::dht::routing::node_id::NodeId::find_pow_nonce(&pk_bytes) {
+                        if let Ok(pk_bytes) =
+                            base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(pk_hex)
+                        {
+                            if let Some(nonce) =
+                                crate::mesh::dht::routing::node_id::NodeId::find_pow_nonce(
+                                    &pk_bytes,
+                                )
+                            {
                                 pow_config.set_cached_pow_nonce(nonce);
                                 tracing::info!("Refreshed PoW nonce: {}", nonce);
                             } else {
@@ -927,12 +911,7 @@ impl MeshTransport {
         let shutdown_rx = shutdown_tx.subscribe();
 
         tokio::spawn(async move {
-            Self::mesh_maintenance_loop(
-                config,
-                topology,
-                peer_connections,
-                shutdown_rx,
-            ).await;
+            Self::mesh_maintenance_loop(config, topology, peer_connections, shutdown_rx).await;
         });
 
         let datagram_shutdown = shutdown_tx.subscribe();
@@ -957,7 +936,7 @@ impl MeshTransport {
 
         let connection_config = self.config.connection.clone();
         let transport_for_maintenance = Arc::new(self.clone_for_maintenance());
-        
+
         if connection_config.min_peer_connections > 0 {
             let maintenance_transport = transport_for_maintenance.clone();
             let maintenance_interval = Duration::from_secs(30);
@@ -969,14 +948,16 @@ impl MeshTransport {
                     maintenance_transport.perform_auto_slash().await;
                 }
             });
-            
+
             let health_transport = transport_for_maintenance.clone();
             let health_interval = Duration::from_secs(connection_config.health_check_interval_secs);
             tokio::spawn(async move {
                 let mut interval = tokio::time::interval(health_interval);
                 loop {
                     interval.tick().await;
-                    let peers: Vec<String> = health_transport.peer_connections.iter()
+                    let peers: Vec<String> = health_transport
+                        .peer_connections
+                        .iter()
                         .map(|e| e.value().node_id.clone())
                         .collect();
                     for peer_id in peers {
@@ -1023,29 +1004,28 @@ impl MeshTransport {
         Ok(())
     }
 
-
-
     pub async fn stop(&self) {
         if let Some(tx) = self.shutdown_tx.write().take() {
             let _ = tx.send(());
         }
-        
+
         for entry in self.peer_connections.iter() {
-            entry.value().connection.close(0u32.into(), b"Mesh shutdown");
+            entry
+                .value()
+                .connection
+                .close(0u32.into(), b"Mesh shutdown");
         }
         self.peer_connections.clear();
-        
+
         let mut running = self.running.write();
         *running = false;
-        
+
         tracing::info!("Mesh transport stopped");
     }
 
-
-
     pub(crate) async fn bootstrap_from_seeds(&self) -> Result<(), MeshTransportError> {
         let verified_seeds = self.config.get_verified_seeds();
-        
+
         if verified_seeds.is_empty() {
             tracing::warn!("No verified seeds available for network");
             return Err(MeshTransportError::NoSeedsAvailable);
@@ -1053,7 +1033,7 @@ impl MeshTransport {
 
         for seed in &verified_seeds {
             tracing::info!("Attempting to connect to verified seed: {}", seed.address);
-            
+
             let peer_config = MeshPeerConfig {
                 address: seed.address.clone(),
                 auth_token: seed.public_key.clone(),
@@ -1061,7 +1041,7 @@ impl MeshTransport {
             match self.connect_to_peer(&peer_config).await {
                 Ok(peer_info) => {
                     tracing::info!("Connected to seed node: {}", seed.address);
-                    
+
                     if let Err(e) = self.request_seed_list(&peer_info.node_id).await {
                         tracing::warn!("Failed to request seed list from {}: {}", seed.address, e);
                     }
@@ -1075,33 +1055,43 @@ impl MeshTransport {
         Err(MeshTransportError::NoSeedsAvailable)
     }
 
-
-
-
-
-
-    pub(crate) async fn connect_to_peer(&self, peer_config: &MeshPeerConfig) -> Result<MeshPeerConnection, MeshTransportError> {
+    pub(crate) async fn connect_to_peer(
+        &self,
+        peer_config: &MeshPeerConfig,
+    ) -> Result<MeshPeerConnection, MeshTransportError> {
         if !self.check_rate_limit() {
             return Err(MeshTransportError::RateLimited);
         }
 
-        let runtime = self.runtime.as_ref()
+        let runtime = self
+            .runtime
+            .as_ref()
             .ok_or(MeshTransportError::RuntimeNotSet)?;
 
-        let server_name = peer_config.address.split(':').next().unwrap_or(&peer_config.address);
-        
-        let quic_conn = runtime.connect_to_peer(&peer_config.address, server_name).await
+        let server_name = peer_config
+            .address
+            .split(':')
+            .next()
+            .unwrap_or(&peer_config.address);
+
+        let quic_conn = runtime
+            .connect_to_peer(&peer_config.address, server_name)
+            .await
             .map_err(|e| MeshTransportError::ConnectionFailed(e.to_string()))?;
 
-        let connection = quic_conn.connection.clone()
+        let connection = quic_conn
+            .connection
+            .clone()
             .ok_or_else(|| MeshTransportError::ConnectionFailed("No connection".to_string()))?;
 
-        let (mut send_stream, mut recv_stream) = connection.open_bi().await
+        let (mut send_stream, mut recv_stream) = connection
+            .open_bi()
+            .await
             .map_err(|e| MeshTransportError::ConnectionFailed(e.to_string()))?;
 
         let node_id = self.config.node_id();
         let local_upstreams = self.topology.get_local_upstreams().await;
-        
+
         let upstreams: HashMap<String, UpstreamInfo> = local_upstreams
             .into_iter()
             .map(|u| (u.upstream_id.clone(), u))
@@ -1113,28 +1103,40 @@ impl MeshTransport {
         let wireguard_port = self.get_wireguard_port().map(|p| p as u32);
 
         let is_edge = self.config.role == crate::mesh::config::MeshNodeRole::Edge;
-        
+
         let (pow_nonce, pow_public_key) = if is_edge {
             if let Some(ref pk_hex) = self.config.signing_public_key() {
                 if let Some(cached_nonce) = self.config.get_cached_pow_nonce() {
                     (Some(cached_nonce), Some(pk_hex.clone().into()))
                 } else {
                     use base64::Engine;
-                    if let Ok(pk_bytes) = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(pk_hex) {
-                        if let Some(nonce) = crate::mesh::dht::routing::node_id::NodeId::find_pow_nonce(&pk_bytes) {
+                    if let Ok(pk_bytes) =
+                        base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(pk_hex)
+                    {
+                        if let Some(nonce) =
+                            crate::mesh::dht::routing::node_id::NodeId::find_pow_nonce(&pk_bytes)
+                        {
                             tracing::debug!("Computed PoW nonce for edge node: {}", nonce);
                             self.config.set_cached_pow_nonce(nonce);
                             (Some(nonce), Some(pk_hex.clone().into()))
                         } else {
-                            tracing::error!("Failed to find PoW nonce for edge node - cannot connect");
-                            return Err(MeshTransportError::ConnectionFailed("Failed to compute PoW".to_string()));
+                            tracing::error!(
+                                "Failed to find PoW nonce for edge node - cannot connect"
+                            );
+                            return Err(MeshTransportError::ConnectionFailed(
+                                "Failed to compute PoW".to_string(),
+                            ));
                         }
                     } else {
-                        return Err(MeshTransportError::ConnectionFailed("Invalid public key format".to_string()));
+                        return Err(MeshTransportError::ConnectionFailed(
+                            "Invalid public key format".to_string(),
+                        ));
                     }
                 }
             } else {
-                return Err(MeshTransportError::ConnectionFailed("No signing key configured".to_string()));
+                return Err(MeshTransportError::ConnectionFailed(
+                    "No signing key configured".to_string(),
+                ));
             }
         } else {
             (None, None)
@@ -1165,31 +1167,41 @@ impl MeshTransport {
             pow_public_key,
         };
 
-        let encoded = hello.encode()
+        let encoded = hello
+            .encode()
             .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
         let len = (encoded.len() as u32).to_be_bytes();
-        send_stream.write_all(&len).await
+        send_stream
+            .write_all(&len)
+            .await
             .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
-        send_stream.write_all(&encoded).await
+        send_stream
+            .write_all(&encoded)
+            .await
             .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
-        
+
         let mut len_buf = [0u8; 4];
-        recv_stream.read_exact(&mut len_buf).await
+        recv_stream
+            .read_exact(&mut len_buf)
+            .await
             .map_err(|e| MeshTransportError::ReceiveFailed(e.to_string()))?;
         let len = u32::from_be_bytes(len_buf) as usize;
         let mut response_buf = vec![0u8; len];
-        recv_stream.read_exact(&mut response_buf).await
+        recv_stream
+            .read_exact(&mut response_buf)
+            .await
             .map_err(|e| MeshTransportError::ReceiveFailed(e.to_string()))?;
 
-        let response = MeshMessage::decode(&response_buf)
-            .ok_or_else(|| MeshTransportError::ReceiveFailed("Failed to decode response".to_string()))?;
+        let response = MeshMessage::decode(&response_buf).ok_or_else(|| {
+            MeshTransportError::ReceiveFailed("Failed to decode response".to_string())
+        })?;
 
         let (session_id, peer_info) = match response {
-            MeshMessage::HelloAck { 
-                version, 
-                node_id, 
-                role, 
-                session_id, 
+            MeshMessage::HelloAck {
+                version,
+                node_id,
+                role,
+                session_id,
                 upstreams,
                 auth_token: resp_token,
                 network_id: resp_network_id,
@@ -1203,13 +1215,24 @@ impl MeshTransport {
             } => {
                 if let Some(ref pk) = peer_public_key {
                     use base64::Engine;
-                    if let Ok(pk_bytes) = base64::engine::general_purpose::STANDARD.decode(pk.as_str()) {
-                        let expected_node_id = crate::mesh::dht::routing::node_id::NodeId::from_public_key(&pk_bytes);
-                        let claimed_node_id = crate::mesh::dht::routing::node_id::NodeId::from_node_id_string(node_id.as_str());
+                    if let Ok(pk_bytes) =
+                        base64::engine::general_purpose::STANDARD.decode(pk.as_str())
+                    {
+                        let expected_node_id =
+                            crate::mesh::dht::routing::node_id::NodeId::from_public_key(&pk_bytes);
+                        let claimed_node_id =
+                            crate::mesh::dht::routing::node_id::NodeId::from_node_id_string(
+                                node_id.as_str(),
+                            );
                         if expected_node_id != claimed_node_id {
-                            tracing::warn!("Node ID mismatch: peer claimed {} but their public key derives {}",
-                                node_id, expected_node_id);
-                            return Err(MeshTransportError::AuthFailed("Node ID does not match public key".to_string()));
+                            tracing::warn!(
+                                "Node ID mismatch: peer claimed {} but their public key derives {}",
+                                node_id,
+                                expected_node_id
+                            );
+                            return Err(MeshTransportError::AuthFailed(
+                                "Node ID does not match public key".to_string(),
+                            ));
                         }
                     }
                 } else {
@@ -1218,7 +1241,8 @@ impl MeshTransport {
 
                 let is_genesis_org_member = {
                     let org_mgr = self.org_manager.read();
-                    let genesis_org_id = org_mgr.get_genesis_org_id()
+                    let genesis_org_id = org_mgr
+                        .get_genesis_org_id()
                         .cloned()
                         .unwrap_or_else(|| self.config.node_identity.genesis_org_id());
                     org_mgr.is_member(&genesis_org_id, &node_id)
@@ -1231,27 +1255,33 @@ impl MeshTransport {
                         let min_stake = config.min_stake_for_routing;
                         let strict_mode = config.strict_mode;
                         let node_id_str = node_id.to_string();
-                        
+
                         if !stake_mgr.can_be_in_routing(&node_id_str) {
                             if strict_mode {
                                 tracing::warn!("Node {} rejected: insufficient stake for routing (strict mode, min: {})", node_id_str, min_stake);
-                                return Err(MeshTransportError::AuthFailed("Insufficient stake for mesh participation".to_string()));
+                                return Err(MeshTransportError::AuthFailed(
+                                    "Insufficient stake for mesh participation".to_string(),
+                                ));
                             }
-                            
+
                             tracing::info!("Auto-registering new node {} with base reputation for grace period (non-strict mode)", node_id_str);
-                            stake_mgr.register_node(
-                                node_id_str.clone(),
-                                50,
-                                role,
+                            stake_mgr.register_node(node_id_str.clone(), 50, role);
+
+                            tracing::info!(
+                                "Node {} registered with base reputation 50 (grace period active)",
+                                node_id_str
                             );
-                            
-                            tracing::info!("Node {} registered with base reputation 50 (grace period active)", node_id_str);
                         }
                     }
                 }
-                
-                tracing::debug!("Peer {} ports - quic: {:?}, wireguard: {:?}", node_id, peer_quic_port, peer_wireguard_port);
-                
+
+                tracing::debug!(
+                    "Peer {} ports - quic: {:?}, wireguard: {:?}",
+                    node_id,
+                    peer_quic_port,
+                    peer_wireguard_port
+                );
+
                 if version != MESH_MESSAGE_VERSION {
                     return Err(MeshTransportError::VersionMismatch {
                         expected: MESH_MESSAGE_VERSION,
@@ -1264,7 +1294,9 @@ impl MeshTransport {
                         Some(resp_t) if resp_t.as_str() == expected_token.as_str() => {}
                         _ => {
                             tracing::warn!("Authentication failed for node {}", node_id);
-                            return Err(MeshTransportError::AuthFailed("Invalid auth token".to_string()));
+                            return Err(MeshTransportError::AuthFailed(
+                                "Invalid auth token".to_string(),
+                            ));
                         }
                     }
                 }
@@ -1272,9 +1304,15 @@ impl MeshTransport {
                 if let Some(ref our_network) = self.config.network_id {
                     if let Some(ref peer_network) = resp_network_id {
                         if peer_network.as_str() != our_network.as_str() {
-                            tracing::warn!("Network ID mismatch: peer {} is on network {} but we are on {}",
-                                node_id, peer_network, our_network);
-                            return Err(MeshTransportError::AuthFailed("Network ID mismatch".to_string()));
+                            tracing::warn!(
+                                "Network ID mismatch: peer {} is on network {} but we are on {}",
+                                node_id,
+                                peer_network,
+                                our_network
+                            );
+                            return Err(MeshTransportError::AuthFailed(
+                                "Network ID mismatch".to_string(),
+                            ));
                         }
                     }
                 }
@@ -1283,18 +1321,28 @@ impl MeshTransport {
                     if let Some(ref expected_key) = self.config.global_node_key {
                         if let Some(ref peer_key) = resp_global_key {
                             if peer_key.as_str() != expected_key.as_str() {
-                                tracing::warn!("Global node key verification failed for {}", node_id);
-                                return Err(MeshTransportError::AuthFailed("Invalid global node key".to_string()));
+                                tracing::warn!(
+                                    "Global node key verification failed for {}",
+                                    node_id
+                                );
+                                return Err(MeshTransportError::AuthFailed(
+                                    "Invalid global node key".to_string(),
+                                ));
                             }
                         } else {
-                            tracing::warn!("Global node {} did not provide key verification", node_id);
-                            return Err(MeshTransportError::AuthFailed("Global node key required".to_string()));
+                            tracing::warn!(
+                                "Global node {} did not provide key verification",
+                                node_id
+                            );
+                            return Err(MeshTransportError::AuthFailed(
+                                "Global node key required".to_string(),
+                            ));
                         }
                     }
                 }
 
                 let upstreams: Vec<String> = upstreams.keys().cloned().collect();
-                
+
                 let peer_connection = MeshPeerConnection {
                     node_id: node_id.to_string(),
                     address: peer_config.address.clone(),
@@ -1307,33 +1355,40 @@ impl MeshTransport {
                     is_trusted: trusted_status,
                 };
 
-                self.topology.add_peer(
-                    MeshPeerInfo {
-                        node_id: node_id.to_string(),
-                        address: peer_config.address.clone(),
-                        role: role,
-                        capabilities: crate::mesh::protocol::MeshCapabilities {
-                            can_route: true,
-                            can_proxy: true,
-                            max_hops: self.config.routing.max_hops,
-                            supported_services: upstreams.clone(),
-                            preferred_transport: Some(crate::mesh::transports::MeshTransportType::Quic),
+                self.topology
+                    .add_peer(
+                        MeshPeerInfo {
+                            node_id: node_id.to_string(),
+                            address: peer_config.address.clone(),
+                            role: role,
+                            capabilities: crate::mesh::protocol::MeshCapabilities {
+                                can_route: true,
+                                can_proxy: true,
+                                max_hops: self.config.routing.max_hops,
+                                supported_services: upstreams.clone(),
+                                preferred_transport: Some(
+                                    crate::mesh::transports::MeshTransportType::Quic,
+                                ),
+                            },
+                            is_global: role.is_global(),
+                            latency_ms: None,
+                            upstreams: upstreams.clone(),
+                            is_trusted: trusted_status,
+                            quic_port: peer_quic_port,
+                            wireguard_port: peer_wireguard_port,
+                            advertised_port: peer_quic_port.or(peer_wireguard_port),
                         },
-                        is_global: role.is_global(),
-                        latency_ms: None,
-                        upstreams: upstreams.clone(),
-                        is_trusted: trusted_status,
-                        quic_port: peer_quic_port,
-                        wireguard_port: peer_wireguard_port,
-                        advertised_port: peer_quic_port.or(peer_wireguard_port),
-                    },
-                    PeerStatus::Healthy,
-                ).await;
+                        PeerStatus::Healthy,
+                    )
+                    .await;
 
                 (session_id, peer_connection)
             }
             MeshMessage::Error { code, message } => {
-                return Err(MeshTransportError::PeerError { code, message: message.to_string() });
+                return Err(MeshTransportError::PeerError {
+                    code,
+                    message: message.to_string(),
+                });
             }
             _ => {
                 return Err(MeshTransportError::UnexpectedMessage);
@@ -1344,11 +1399,13 @@ impl MeshTransport {
         let peer_address = peer_info.address.clone();
         let peer_role = peer_info.role;
         let peer_info_return = peer_info.clone();
-        self.peer_connections.insert(session_id.to_string(), peer_info);
+        self.peer_connections
+            .insert(session_id.to_string(), peer_info);
 
         if let Some(ref rm) = self.routing_manager {
             if rm.is_enabled() {
-                self.dht_on_peer_connected(&peer_node_id, &peer_address, peer_role).await;
+                self.dht_on_peer_connected(&peer_node_id, &peer_address, peer_role)
+                    .await;
             }
         }
 
@@ -1356,8 +1413,15 @@ impl MeshTransport {
         let transport = self.clone();
         let peer_node_id_for_preflight = peer_node_id.clone();
         tokio::spawn(async move {
-            if let Err(e) = transport.preflight_peer_routes(&peer_node_id_for_preflight).await {
-                tracing::debug!("Preflight routes from {}: {}", peer_node_id_for_preflight, e);
+            if let Err(e) = transport
+                .preflight_peer_routes(&peer_node_id_for_preflight)
+                .await
+            {
+                tracing::debug!(
+                    "Preflight routes from {}: {}",
+                    peer_node_id_for_preflight,
+                    e
+                );
             }
         });
 
@@ -1366,29 +1430,35 @@ impl MeshTransport {
         let topo = self.topology.clone();
         let peer_node_id_for_loop = peer_node_id.clone();
         tokio::spawn(async move {
-            transport.peer_message_loop(
-                session_id.to_string(),
-                peer_node_id_for_loop,
-                conn,
-                topo,
-            ).await;
+            transport
+                .peer_message_loop(session_id.to_string(), peer_node_id_for_loop, conn, topo)
+                .await;
         });
 
-        tracing::info!("Established mesh peer connection: {} ({})", peer_node_id, peer_address);
-        
+        tracing::info!(
+            "Established mesh peer connection: {} ({})",
+            peer_node_id,
+            peer_address
+        );
+
         Ok(peer_info_return)
     }
 
-
-
-
-    pub async fn send_route_query(&self, upstream_id: &str) -> Result<RouteQueryResult, MeshTransportError> {
+    pub async fn send_route_query(
+        &self,
+        upstream_id: &str,
+    ) -> Result<RouteQueryResult, MeshTransportError> {
         if let Some(cached) = self.topology.get_cached_route(upstream_id).await {
-            tracing::debug!("Using cached route for {}: {} ({} hops)", upstream_id, cached.0, cached.1);
-            
+            tracing::debug!(
+                "Using cached route for {}: {} ({} hops)",
+                upstream_id,
+                cached.0,
+                cached.1
+            );
+
             let scores = self.topology.peer_scores().read().await;
             let score = scores.get(&cached.0).map(|s| s.total_score).unwrap_or(0.5);
-            
+
             return Ok(RouteQueryResult {
                 query_id: String::new(),
                 upstream_id: upstream_id.to_string(),
@@ -1409,48 +1479,67 @@ impl MeshTransport {
         }
 
         if !self.topology.can_forward_service(upstream_id) {
-            return Err(MeshTransportError::ServiceNotAllowed(upstream_id.to_string()));
+            return Err(MeshTransportError::ServiceNotAllowed(
+                upstream_id.to_string(),
+            ));
         }
 
         let query_id = format!("{}-{}", self.config.node_id(), uuid::Uuid::new_v4());
         let collection_timeout = Duration::from_millis(self.config.routing.query_timeout_ms);
-        
+
         let (response_tx, response_rx) = tokio::sync::oneshot::channel();
-        
-        self.pending_queries.lock().await.register(query_id.clone(), response_tx);
+
+        self.pending_queries
+            .lock()
+            .await
+            .register(query_id.clone(), response_tx);
 
         let peer_query_count = self.config.routing.peer_query_count.min(3);
-        let known_peers = self.topology.get_best_peers_for_query(upstream_id, peer_query_count).await;
+        let known_peers = self
+            .topology
+            .get_best_peers_for_query(upstream_id, peer_query_count)
+            .await;
 
         if !known_peers.is_empty() {
-            tracing::debug!("Sending parallel stream route queries to {} peers for upstream {}", known_peers.len(), upstream_id);
-            
-            let queries: Vec<_> = known_peers.iter()
+            tracing::debug!(
+                "Sending parallel stream route queries to {} peers for upstream {}",
+                known_peers.len(),
+                upstream_id
+            );
+
+            let queries: Vec<_> = known_peers
+                .iter()
                 .map(|peer_id| {
                     let peer_id = peer_id.clone();
                     let query_id = query_id.clone();
                     let upstream_id = upstream_id.to_string();
                     let transport = self.clone();
                     async move {
-                        transport.send_route_query_stream(&peer_id, &query_id, &upstream_id).await
+                        transport
+                            .send_route_query_stream(&peer_id, &query_id, &upstream_id)
+                            .await
                     }
                 })
                 .collect();
-            
+
             join_all(queries).await;
 
             tokio::time::sleep(collection_timeout).await;
-            
+
             let providers = {
                 let mut pending = self.pending_queries.lock().await;
-                pending.collected_providers.remove(&query_id).unwrap_or_default()
+                pending
+                    .collected_providers
+                    .remove(&query_id)
+                    .unwrap_or_default()
             };
-            
+
             self.pending_queries.lock().await.pending.remove(&query_id);
 
             if !providers.is_empty() {
                 let scores = self.topology.peer_scores().read().await;
-                let mut providers_with_scores: Vec<ProviderInfo> = providers.into_iter()
+                let mut providers_with_scores: Vec<ProviderInfo> = providers
+                    .into_iter()
                     .map(|mut p| {
                         if p.score == 0.5 {
                             p.score = scores.get(&p.node_id).map(|s| s.total_score).unwrap_or(0.5);
@@ -1459,10 +1548,14 @@ impl MeshTransport {
                     })
                     .collect();
 
-                providers_with_scores.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+                providers_with_scores.sort_by(|a, b| {
+                    b.score
+                        .partial_cmp(&a.score)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                });
 
                 let best = providers_with_scores.first().cloned();
-                
+
                 return Ok(RouteQueryResult {
                     query_id,
                     upstream_id: upstream_id.to_string(),
@@ -1474,14 +1567,25 @@ impl MeshTransport {
 
         // Fallback to global node if local peers didn't have providers
         if let Some(global_id) = self.topology.get_closest_global_node().await {
-            tracing::debug!("Querying global node {} for upstream {}", global_id, upstream_id);
-            
+            tracing::debug!(
+                "Querying global node {} for upstream {}",
+                global_id,
+                upstream_id
+            );
+
             // Re-register for the global node query
             let (tx, rx) = tokio::sync::oneshot::channel();
-            self.pending_queries.lock().await.register(query_id.clone(), tx);
-            
+            self.pending_queries
+                .lock()
+                .await
+                .register(query_id.clone(), tx);
+
             // Use stream for reliable delivery to global node
-            if self.send_route_query_stream(&global_id, &query_id, upstream_id).await.is_ok() {
+            if self
+                .send_route_query_stream(&global_id, &query_id, upstream_id)
+                .await
+                .is_ok()
+            {
                 // Wait for response via oneshot or fallback to cache polling
                 let global_result = tokio::select! {
                     result = rx => {
@@ -1526,18 +1630,12 @@ impl MeshTransport {
             }
         }
 
-        Err(MeshTransportError::NoRouteToUpstream(upstream_id.to_string()))
+        Err(MeshTransportError::NoRouteToUpstream(
+            upstream_id.to_string(),
+        ))
     }
 
-
     /// Preflight: query a newly connected peer for their known routes to warm our cache
-
-
-
-
-
-
-
 
     /// Proactive cache warming: periodically query for popular routes from peers
     /// This keeps the route cache warm without waiting for actual requests
@@ -1551,22 +1649,32 @@ impl MeshTransport {
         action: crate::mesh::protocol::AnnounceAction,
     ) -> Result<(), MeshTransportError> {
         if !self.topology.can_forward_service(upstream_id) {
-            tracing::debug!("Not announcing upstream {} - service not allowed by policy", upstream_id);
+            tracing::debug!(
+                "Not announcing upstream {} - service not allowed by policy",
+                upstream_id
+            );
             return Ok(());
         }
 
         let full_upstream_id = self.config.make_mesh_upstream_id(upstream_id);
 
         match action {
-            crate::mesh::protocol::AnnounceAction::Add | crate::mesh::protocol::AnnounceAction::Update => {
-                self.topology.add_local_upstream(
-                    full_upstream_id,
-                    self.config.local_upstreams.get(upstream_id)
-                        .map(|u| u.upstream_url.clone())
-                        .unwrap_or_default(),
-                    self.config.local_upstreams.get(upstream_id)
-                        .and_then(|u| u.geo.clone()),
-                ).await;
+            crate::mesh::protocol::AnnounceAction::Add
+            | crate::mesh::protocol::AnnounceAction::Update => {
+                self.topology
+                    .add_local_upstream(
+                        full_upstream_id,
+                        self.config
+                            .local_upstreams
+                            .get(upstream_id)
+                            .map(|u| u.upstream_url.clone())
+                            .unwrap_or_default(),
+                        self.config
+                            .local_upstreams
+                            .get(upstream_id)
+                            .and_then(|u| u.geo.clone()),
+                    )
+                    .await;
             }
             crate::mesh::protocol::AnnounceAction::Remove => {
                 self.topology.remove_local_upstream(&full_upstream_id).await;
@@ -1576,7 +1684,11 @@ impl MeshTransport {
         for entry in self.peer_connections.iter() {
             let peer = entry.value();
             if peer.role.is_global() {
-                tracing::debug!("Would announce upstream {} to global node {}", upstream_id, peer.node_id);
+                tracing::debug!(
+                    "Would announce upstream {} to global node {}",
+                    upstream_id,
+                    peer.node_id
+                );
             }
         }
 
@@ -1596,13 +1708,16 @@ impl MeshTransport {
 
         // Validate: don't broadcast blocks with 0 or very small duration
         if blocked_duration_secs < 1 {
-            tracing::warn!("Refusing to broadcast block with zero or negative duration: {}", blocked_duration_secs);
+            tracing::warn!(
+                "Refusing to broadcast block with zero or negative duration: {}",
+                blocked_duration_secs
+            );
             return;
         }
 
         let blocked_until = Instant::now() + Duration::from_secs(blocked_duration_secs);
         let mesh_identifier = self.config.router_id();
-        
+
         let parts: Vec<&str> = upstream_id.split('.').collect();
         let (mesh_id, service_id) = if parts.len() >= 2 {
             (parts[0].to_string(), parts[1..].join("."))
@@ -1610,17 +1725,21 @@ impl MeshTransport {
             (mesh_identifier.to_string(), upstream_id.to_string())
         };
 
-        self.topology.block_upstream(
-            mesh_id.as_str(),
-            service_id.as_str(),
-            blocked_until,
-            reason,
-            self.config.node_id().as_str(),
-        ).await;
+        self.topology
+            .block_upstream(
+                mesh_id.as_str(),
+                service_id.as_str(),
+                blocked_until,
+                reason,
+                self.config.node_id().as_str(),
+            )
+            .await;
 
         // Send Unix timestamp for when block expires (not remaining duration)
         let block_until_unix = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
             + blocked_duration_secs;
 
         let block_message = MeshMessage::UpstreamBlocked {
@@ -1631,16 +1750,22 @@ impl MeshTransport {
             origin_node_id: self.config.node_id().into(),
         };
 
-        let (success_count, fail_count) = self.broadcast_to_random_peers(
-            block_message,
-            0.5,
-            Some(crate::mesh::config::MeshNodeRole::Global),
-        ).await;
+        let (success_count, fail_count) = self
+            .broadcast_to_random_peers(
+                block_message,
+                0.5,
+                Some(crate::mesh::config::MeshNodeRole::Global),
+            )
+            .await;
 
         tracing::info!(
-            upstream_id, reason, blocked_duration_secs,
+            upstream_id,
+            reason,
+            blocked_duration_secs,
             "Fanout broadcast upstream block: {} to {} global nodes ({} failed)",
-            upstream_id, success_count, fail_count
+            upstream_id,
+            success_count,
+            fail_count
         );
     }
 
@@ -1651,7 +1776,7 @@ impl MeshTransport {
         role_filter: Option<crate::mesh::config::MeshNodeRole>,
     ) -> (usize, usize) {
         let peer_count = self.topology.get_healthy_peer_count().await;
-        
+
         if peer_count == 0 {
             return (0, 0);
         }
@@ -1660,7 +1785,7 @@ impl MeshTransport {
         let target_count = fanout_count.max(1).min(peer_count);
 
         let mut peers = self.topology.get_random_peers(target_count, None).await;
-        
+
         if let Some(role) = role_filter {
             peers.retain(|p| p.role == role);
         }
@@ -1693,13 +1818,15 @@ impl MeshTransport {
         (success_count, fail_count)
     }
 
-
     pub fn connected_peer_count(&self) -> usize {
         self.peer_connections.len()
     }
 
     pub fn get_connected_peers(&self) -> Vec<String> {
-        self.peer_connections.iter().map(|e| e.value().node_id.clone()).collect()
+        self.peer_connections
+            .iter()
+            .map(|e| e.value().node_id.clone())
+            .collect()
     }
 
     pub async fn proxy_http_request<B>(
@@ -1715,10 +1842,15 @@ impl MeshTransport {
     {
         use http_body_util::BodyExt;
 
-        let peer = self.peer_connections.get(peer_id)
+        let peer = self
+            .peer_connections
+            .get(peer_id)
             .ok_or_else(|| MeshTransportError::PeerNotFound(peer_id.to_string()))?;
 
-        let (mut send_stream, mut recv_stream) = peer.connection.open_bi().await
+        let (mut send_stream, mut recv_stream) = peer
+            .connection
+            .open_bi()
+            .await
             .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
 
         let method = request.method().to_string();
@@ -1731,14 +1863,20 @@ impl MeshTransport {
         }
         header_str.push_str("\r\n");
 
-        send_stream.write_all(header_str.as_bytes()).await
+        send_stream
+            .write_all(header_str.as_bytes())
+            .await
             .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
 
-        let body = request.collect().await
+        let body = request
+            .collect()
+            .await
             .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?
             .to_bytes();
         if !body.is_empty() {
-            send_stream.write_all(&body).await
+            send_stream
+                .write_all(&body)
+                .await
                 .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
         }
 
@@ -1750,7 +1888,9 @@ impl MeshTransport {
             let mut line = String::new();
             loop {
                 let mut buf = [0u8; 1];
-                recv_stream.read_exact(&mut buf).await
+                recv_stream
+                    .read_exact(&mut buf)
+                    .await
                     .map_err(|e| MeshTransportError::ReceiveFailed(e.to_string()))?;
                 if buf[0] == b'\n' {
                     break;
@@ -1764,7 +1904,14 @@ impl MeshTransport {
                 break;
             }
             if line.to_lowercase().starts_with("content-length:") {
-                content_length = Some(line.split(':').nth(1).unwrap_or("").trim().parse().unwrap_or(0));
+                content_length = Some(
+                    line.split(':')
+                        .nth(1)
+                        .unwrap_or("")
+                        .trim()
+                        .parse()
+                        .unwrap_or(0),
+                );
             }
             if line.to_lowercase().contains("chunked") {
                 chunked = true;
@@ -1774,8 +1921,16 @@ impl MeshTransport {
         }
         response_headers.push_str("\r\n");
 
-        let status_line = response_headers.lines().next().unwrap_or("HTTP/1.1 500 Internal Server Error");
-        let status_code = status_line.split_whitespace().nth(1).unwrap_or("500").parse::<u16>().unwrap_or(500);
+        let status_line = response_headers
+            .lines()
+            .next()
+            .unwrap_or("HTTP/1.1 500 Internal Server Error");
+        let status_code = status_line
+            .split_whitespace()
+            .nth(1)
+            .unwrap_or("500")
+            .parse::<u16>()
+            .unwrap_or(500);
 
         let mut response_builder = hyper::Response::builder().status(status_code);
 
@@ -1791,7 +1946,9 @@ impl MeshTransport {
                 let mut size_line = String::new();
                 loop {
                     let mut buf = [0u8; 1];
-                    recv_stream.read_exact(&mut buf).await
+                    recv_stream
+                        .read_exact(&mut buf)
+                        .await
                         .map_err(|e| MeshTransportError::ReceiveFailed(e.to_string()))?;
                     if buf[0] == b'\n' {
                         break;
@@ -1805,17 +1962,23 @@ impl MeshTransport {
                     break;
                 }
                 let mut chunk = vec![0u8; size];
-                recv_stream.read_exact(&mut chunk).await
+                recv_stream
+                    .read_exact(&mut chunk)
+                    .await
                     .map_err(|e| MeshTransportError::ReceiveFailed(e.to_string()))?;
                 body.extend_from_slice(&chunk);
                 let mut crlf = [0u8; 2];
-                recv_stream.read_exact(&mut crlf).await
+                recv_stream
+                    .read_exact(&mut crlf)
+                    .await
                     .map_err(|e| MeshTransportError::ReceiveFailed(e.to_string()))?;
             }
             body
         } else if let Some(len) = content_length {
             let mut body = vec![0u8; len];
-            recv_stream.read_exact(&mut body).await
+            recv_stream
+                .read_exact(&mut body)
+                .await
                 .map_err(|e| MeshTransportError::ReceiveFailed(e.to_string()))?;
             body
         } else {
@@ -1834,7 +1997,8 @@ impl MeshTransport {
         let body = Bytes::from(body_bytes);
         let full_body = http_body_util::Full::new(body);
         let boxed_body: BoxBody<Bytes, Infallible> = full_body.boxed();
-        let response = response_builder.body(boxed_body)
+        let response = response_builder
+            .body(boxed_body)
             .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
 
         Ok(response)
@@ -1843,35 +2007,32 @@ impl MeshTransport {
     fn check_rate_limit(&self) -> bool {
         let now = Instant::now();
         let window = Duration::from_secs(CONNECTION_RATE_LIMIT_WINDOW_SECS);
-        
+
         let mut times = self.connection_times.write();
         times.retain(|t| now.duration_since(*t) < window);
-        
+
         if times.len() >= MAX_PENDING_CONNECTIONS {
-            tracing::warn!("Connection rate limit exceeded: {} connections in {}s", 
-                times.len(), CONNECTION_RATE_LIMIT_WINDOW_SECS);
+            tracing::warn!(
+                "Connection rate limit exceeded: {} connections in {}s",
+                times.len(),
+                CONNECTION_RATE_LIMIT_WINDOW_SECS
+            );
             return false;
         }
-        
+
         times.push(now);
         true
     }
-
-
-
-
-
-
-
-
-
 
     pub fn is_global_node(&self) -> bool {
         self.config.role.is_global()
     }
 
     pub fn get_node_mesh_id(&self) -> Option<String> {
-        self.config.origin_signing_key.as_ref().map(|k| k.mesh_id.clone())
+        self.config
+            .origin_signing_key
+            .as_ref()
+            .map(|k| k.mesh_id.clone())
     }
 
     pub fn get_node_id(&self) -> String {
@@ -1885,5 +2046,4 @@ impl MeshTransport {
     pub fn get_origin_signer(&self) -> Option<Arc<crate::integrity::Ed25519Signer>> {
         self.origin_ed25519_signer.clone()
     }
-
 }

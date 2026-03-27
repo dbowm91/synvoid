@@ -3,9 +3,13 @@ pub mod honeypot;
 mod mesh_pow;
 mod pow;
 
-pub use css::{AssetRequestResult, CssAssetAction, CssChallengeData, CssManager, CssVerificationResult};
+pub use css::{
+    AssetRequestResult, CssAssetAction, CssChallengeData, CssManager, CssVerificationResult,
+};
 pub use honeypot::{HoneypotEntry, HoneypotTracker, HONEYPOT_PREFIX};
-pub use mesh_pow::{MeshAuditResult, MeshPowConfig, MeshPowManager, MeshPowResult, MeshPowSolution};
+pub use mesh_pow::{
+    MeshAuditResult, MeshPowConfig, MeshPowManager, MeshPowResult, MeshPowSolution,
+};
 pub use pow::{PowChallenge, PowManager, PowResult};
 
 use crate::theme::{ChallengePageTemplate, ThemeConfig};
@@ -94,8 +98,7 @@ impl Default for ChallengeConfig {
     fn default() -> Self {
         Self {
             cookie_name: "waf_challenge".to_string(),
-            pow_enabled:
-                true,
+            pow_enabled: true,
             pow_difficulty: 12,
             pow_window_secs: 300,
             pow_timeout_secs: 60,
@@ -126,18 +129,21 @@ impl Default for ChallengeConfig {
 impl ChallengeManager {
     pub fn new(config: ChallengeConfig) -> Self {
         let theme = config.theme.clone();
-        
-        let css_available = config.css_enabled && !matches!(config.challenge_priority, ChallengePriority::PowOnly);
-        
+
+        let css_available =
+            config.css_enabled && !matches!(config.challenge_priority, ChallengePriority::PowOnly);
+
         let pow = if config.pow_enabled {
-            Some(PowManager::new(
-                config.pow_difficulty,
-                config.pow_window_secs,
-                config.pow_timeout_secs,
-                config.cookie_name.clone(),
+            Some(
+                PowManager::new(
+                    config.pow_difficulty,
+                    config.pow_window_secs,
+                    config.pow_timeout_secs,
+                    config.cookie_name.clone(),
+                )
+                .with_theme(theme.clone())
+                .with_css_fallback(css_available),
             )
-            .with_theme(theme.clone())
-            .with_css_fallback(css_available))
         } else {
             None
         };
@@ -152,27 +158,33 @@ impl ChallengeManager {
                 pow_difficulty: config.pow_difficulty,
                 session_timeout_secs: config.pow_window_secs,
             };
-            Some(MeshPowManager::new(
-                config.pow_difficulty,
-                config.pow_window_secs,
-                config.pow_timeout_secs,
-                config.cookie_name.clone(),
-                mesh_config,
-            ).with_theme(theme.clone()))
+            Some(
+                MeshPowManager::new(
+                    config.pow_difficulty,
+                    config.pow_window_secs,
+                    config.pow_timeout_secs,
+                    config.cookie_name.clone(),
+                    mesh_config,
+                )
+                .with_theme(theme.clone()),
+            )
         } else {
             None
         };
 
         let css = if config.css_enabled {
-            Some(CssManager::new(
-                config.cookie_name.clone(),
-                config.css_window_secs,
-                config.css_invalid_min,
-                config.css_invalid_max,
-                config.css_valid_count,
-                config.css_asset_path,
-                config.css_verification_window_secs,
-            ).with_theme(theme.clone()))
+            Some(
+                CssManager::new(
+                    config.cookie_name.clone(),
+                    config.css_window_secs,
+                    config.css_invalid_min,
+                    config.css_invalid_max,
+                    config.css_valid_count,
+                    config.css_asset_path,
+                    config.css_verification_window_secs,
+                )
+                .with_theme(theme.clone()),
+            )
         } else {
             None
         };
@@ -193,7 +205,8 @@ impl ChallengeManager {
             rate_limit_window_secs: config.challenge_rate_limit_window_secs,
             attempts: RwLock::new(HashMap::new()),
             max_attempts_entries: DEFAULT_MAX_ATTEMPTS_ENTRIES,
-            use_mesh_pow_when_available: config.mesh_pow_enabled && (config.mesh_pow_key_exchange_enabled || config.mesh_pow_auditing_enabled),
+            use_mesh_pow_when_available: config.mesh_pow_enabled
+                && (config.mesh_pow_key_exchange_enabled || config.mesh_pow_auditing_enabled),
         }
     }
 
@@ -205,7 +218,7 @@ impl ChallengeManager {
         if self.max_attempts == 0 {
             return false;
         }
-        
+
         let attempts = self.attempts.read();
         if let Some(attempt) = attempts.get(ip) {
             let now = current_timestamp();
@@ -220,10 +233,10 @@ impl ChallengeManager {
         if self.max_attempts == 0 {
             return;
         }
-        
+
         let mut attempts = self.attempts.write();
         let now = current_timestamp();
-        
+
         if attempts.len() >= self.max_attempts_entries {
             attempts.retain(|_, a| now < a.first_attempt + self.rate_limit_window_secs);
             if attempts.len() >= self.max_attempts_entries {
@@ -231,8 +244,9 @@ impl ChallengeManager {
                 return;
             }
         }
-        
-        attempts.entry(*ip)
+
+        attempts
+            .entry(*ip)
             .and_modify(|a| {
                 if now >= a.first_attempt + self.rate_limit_window_secs {
                     a.count = 1;
@@ -262,9 +276,9 @@ impl ChallengeManager {
         if self.is_rate_limited(ip) {
             return (self.generate_rate_limited_page(), None);
         }
-        
+
         self.record_attempt(ip);
-        
+
         let honeypot_html = if self.honeypot_enabled() {
             self.honeypot.generate_html(ip)
         } else {
@@ -417,11 +431,18 @@ impl ChallengeManager {
         // Deprecated - sessions now started in generate_css_challenge_and_start_session
     }
 
-    pub fn record_css_asset_request(&self, session_id: &str, asset_name: &str) -> (AssetRequestResult, CssAssetAction) {
+    pub fn record_css_asset_request(
+        &self,
+        session_id: &str,
+        asset_name: &str,
+    ) -> (AssetRequestResult, CssAssetAction) {
         if let Some(ref css) = self.css {
             css.record_asset_request(session_id, asset_name)
         } else {
-            (AssetRequestResult::NoSession, CssAssetAction::DropConnection)
+            (
+                AssetRequestResult::NoSession,
+                CssAssetAction::DropConnection,
+            )
         }
     }
 
@@ -484,19 +505,22 @@ impl ChallengeManager {
     }
 
     pub fn css_session_cookie_name(&self) -> String {
-        self.css.as_ref()
+        self.css
+            .as_ref()
             .map(|c| c.session_cookie_name().to_string())
             .unwrap_or_else(|| format!("{}_css_session", self.cookie_name))
     }
 
     pub fn css_verified_cookie_name(&self) -> String {
-        self.css.as_ref()
+        self.css
+            .as_ref()
             .map(|c| c.verified_cookie_name().to_string())
             .unwrap_or_else(|| format!("{}_css_verified", self.cookie_name))
     }
 
     pub fn css_window_secs(&self) -> u64 {
-        self.css.as_ref()
+        self.css
+            .as_ref()
             .map(|c| c.verification_window_secs() as u64)
             .unwrap_or(30)
     }
@@ -507,7 +531,7 @@ impl ChallengeManager {
 
     fn generate_no_challenge_page(&self, honeypot_html: &str) -> String {
         let content = r#"<p class="waf-message">Your request has been blocked.</p>"#;
-        
+
         ChallengePageTemplate::new(self.theme.clone())
             .title("Access Denied")
             .subtitle("")
@@ -518,8 +542,9 @@ impl ChallengeManager {
     }
 
     fn generate_nojs_fallback(&self) -> String {
-        let content = r#"<p class="waf-message">Please enable JavaScript to verify your browser.</p>"#;
-        
+        let content =
+            r#"<p class="waf-message">Please enable JavaScript to verify your browser.</p>"#;
+
         ChallengePageTemplate::new(self.theme.clone())
             .title("Verification Required")
             .subtitle("")
@@ -529,8 +554,9 @@ impl ChallengeManager {
     }
 
     fn generate_rate_limited_page(&self) -> String {
-        let content = r#"<p class="waf-message">Too many verification attempts. Please try again later.</p>"#;
-        
+        let content =
+            r#"<p class="waf-message">Too many verification attempts. Please try again later.</p>"#;
+
         ChallengePageTemplate::new(self.theme.clone())
             .title("Rate Limited")
             .subtitle("")

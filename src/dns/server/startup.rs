@@ -29,7 +29,10 @@ impl DnsServer {
         self
     }
 
-    pub fn with_mesh_transport(mut self, transport: Arc<crate::mesh::transport::MeshTransport>) -> Self {
+    pub fn with_mesh_transport(
+        mut self,
+        transport: Arc<crate::mesh::transport::MeshTransport>,
+    ) -> Self {
         self.mesh_transport = Some(transport);
         self
     }
@@ -46,10 +49,7 @@ impl DnsServer {
             } else {
                 tracing::info!("DNSSEC initialized successfully");
 
-                Self::start_key_rotation_task(
-                    self.dnssec.clone(),
-                    86400,
-                );
+                Self::start_key_rotation_task(self.dnssec.clone(), 86400);
             }
         }
 
@@ -94,7 +94,9 @@ impl DnsServer {
 
         let server = Arc::new(recursive_server);
         let server_clone = server.clone();
-        server_clone.start().await
+        server_clone
+            .start()
+            .await
             .map_err(|e| format!("Failed to start recursive DNS server: {}", e))?;
 
         self.recursive_server = Some(server);
@@ -105,10 +107,8 @@ impl DnsServer {
     async fn start_anycast_mode(&mut self) -> Result<(), String> {
         let platform = crate::dns::platform::create_platform();
 
-        let mut manager = crate::dns::anycast::AnycastSocketManager::new(
-            &self.config.anycast,
-            platform,
-        ).await?;
+        let mut manager =
+            crate::dns::anycast::AnycastSocketManager::new(&self.config.anycast, platform).await?;
 
         let node_id = if let Some(ref mesh_registry) = self.mesh_registry {
             mesh_registry.node_id().to_string()
@@ -137,7 +137,8 @@ impl DnsServer {
             mesh_registry.register_anycast_node(registration).await?;
         }
 
-        let (health_tx, mut health_rx) = tokio::sync::mpsc::channel::<crate::dns::anycast::AnycastHealthUpdate>(100);
+        let (health_tx, mut health_rx) =
+            tokio::sync::mpsc::channel::<crate::dns::anycast::AnycastHealthUpdate>(100);
         manager.set_health_sender(health_tx);
 
         let mesh_registry_for_health = self.mesh_registry.clone();
@@ -150,7 +151,10 @@ impl DnsServer {
                         anycast_ips: vec![update.ip.to_string()],
                         healthy: update.healthy,
                         latency_ms: update.latency_ms.map(|v| v as u32),
-                        load_percent: update.error_count.checked_div(update.query_count.max(1)).map(|v| v as u8),
+                        load_percent: update
+                            .error_count
+                            .checked_div(update.query_count.max(1))
+                            .map(|v| v as u8),
                         timestamp: std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
                             .unwrap_or_default()
@@ -167,10 +171,8 @@ impl DnsServer {
         }
 
         let zones_for_sync = self.zones.clone();
-        let mut zone_sync = crate::dns::anycast_sync::AnycastZoneSync::new(
-            node_id.clone(),
-            zones_for_sync,
-        );
+        let mut zone_sync =
+            crate::dns::anycast_sync::AnycastZoneSync::new(node_id.clone(), zones_for_sync);
 
         if let Some(ref transport) = self.mesh_transport {
             zone_sync = zone_sync.with_mesh_transport(transport.clone());
@@ -195,7 +197,9 @@ impl DnsServer {
     }
 
     async fn start_listeners_with_anycast(&mut self) -> Result<(), String> {
-        let anycast_manager = self.anycast_manager.as_ref()
+        let anycast_manager = self
+            .anycast_manager
+            .as_ref()
             .ok_or("Anycast manager not initialized")?;
 
         let bound_addresses = anycast_manager.get_bound_addresses();
@@ -867,7 +871,13 @@ impl DnsServer {
         if self.config.doq.enabled {
             let mut doq = DoqServer::new(self.config.doq.clone(), self.cert_resolver.clone());
             doq.set_dns_server(self.clone());
-            if let Err(e) = doq.start(std::net::SocketAddr::from(([0,0,0,0], self.config.doq.port)), self.clone()).await {
+            if let Err(e) = doq
+                .start(
+                    std::net::SocketAddr::from(([0, 0, 0, 0], self.config.doq.port)),
+                    self.clone(),
+                )
+                .await
+            {
                 tracing::warn!("Failed to start DoQ server: {}", e);
             } else {
                 tracing::info!("DoQ server started on port {}", self.config.doq.port);
@@ -912,7 +922,9 @@ impl DnsServer {
         }
     }
 
-    pub fn get_coalescer_metrics(&self) -> Option<crate::dns::query_coalesce::QueryCoalescerMetrics> {
+    pub fn get_coalescer_metrics(
+        &self,
+    ) -> Option<crate::dns::query_coalesce::QueryCoalescerMetrics> {
         self.query_coalescer.as_ref().map(|c| c.metrics())
     }
 }

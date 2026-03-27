@@ -1,12 +1,12 @@
 pub mod nginx_parser;
 
-use once_cell::sync::Lazy;
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::LazyLock;
 
-pub static MIME_REGISTRY: Lazy<RwLock<MimeRegistry>> =
-    Lazy::new(|| RwLock::new(MimeRegistry::with_defaults()));
+pub static MIME_REGISTRY: LazyLock<RwLock<MimeRegistry>> =
+    LazyLock::new(|| RwLock::new(MimeRegistry::with_defaults()));
 
 pub fn init_mimes_from_file<P: AsRef<Path>>(path: P) -> Result<(), MimeError> {
     let mut registry = MIME_REGISTRY.write();

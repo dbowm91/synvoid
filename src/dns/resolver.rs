@@ -4,7 +4,7 @@
 //!
 //! # Query Name Minimization (RFC 7816)
 //!
-//! Query Name Minimization is a privacy-enhancing technique that reduces the amount of 
+//! Query Name Minimization is a privacy-enhancing technique that reduces the amount of
 //! information leaked to upstream DNS resolvers. Instead of sending the full query name,
 //! the resolver sends only the minimal amount of information needed to resolve the query.
 //!
@@ -41,18 +41,20 @@
 //! - [RFC 7816: DNS Query Name Minimization to Improve Privacy](https://tools.ietf.org/html/rfc7816)
 //! - [Hickory DNS QNAME Minimization PR](https://github.com/hickory-dns/hickory-dns/pull/2919)
 
+use async_trait::async_trait;
 use std::net::IpAddr;
 use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Instant;
-use async_trait::async_trait;
 use tokio::time::{interval, Duration};
 
-use hickory_proto::rr::{RecordType, RData};
 use hickory_proto::dnssec::PublicKey;
+use hickory_proto::rr::{RData, RecordType};
 
-use crate::dns::trust_anchor::{TrustAnchorManager, TrustAnchorConfig, Rfc5011Event, TrustAnchorStatus};
+use crate::dns::trust_anchor::{
+    Rfc5011Event, TrustAnchorConfig, TrustAnchorManager, TrustAnchorStatus,
+};
 
 #[derive(Debug, Clone)]
 pub struct TxtRecord {
@@ -144,11 +146,17 @@ pub struct NoopResolver;
 #[async_trait]
 impl DnsResolver for NoopResolver {
     async fn lookup_txt(&self, _name: &str) -> ResolverResult<TxtRecord> {
-        Ok(TxtRecord { values: vec![], ttl: None })
+        Ok(TxtRecord {
+            values: vec![],
+            ttl: None,
+        })
     }
 
     async fn lookup_ns(&self, _name: &str) -> ResolverResult<NsRecord> {
-        Ok(NsRecord { nameservers: vec![], ttl: None })
+        Ok(NsRecord {
+            nameservers: vec![],
+            ttl: None,
+        })
     }
 
     async fn lookup_a(&self, _name: &str) -> ResolverResult<Vec<IpAddr>> {
@@ -156,7 +164,11 @@ impl DnsResolver for NoopResolver {
     }
 
     async fn lookup_ip_with_ttl(&self, _name: &str) -> ResolverResult<IpRecord> {
-        Ok(IpRecord { addrs: vec![], ttl: None, is_dnssec_validated: false })
+        Ok(IpRecord {
+            addrs: vec![],
+            ttl: None,
+            is_dnssec_validated: false,
+        })
     }
 
     async fn lookup_mx(&self, _name: &str) -> ResolverResult<Vec<MxRecord>> {
@@ -201,24 +213,22 @@ impl HickoryResolver {
         opts: Option<hickory_resolver::config::ResolverOpts>,
     ) -> Result<Self, ResolverError> {
         if upstream_ips.is_empty() {
-            return Err(ResolverError::InvalidDomain("No upstream DNS servers provided".to_string()));
+            return Err(ResolverError::InvalidDomain(
+                "No upstream DNS servers provided".to_string(),
+            ));
         }
 
         let config = hickory_resolver::config::ResolverConfig::from_parts(
             None,
             vec![],
-            hickory_resolver::config::NameServerConfigGroup::from_ips_clear(
-                upstream_ips,
-                53,
-                true,
-            ),
+            hickory_resolver::config::NameServerConfigGroup::from_ips_clear(upstream_ips, 53, true),
         );
 
         let mut builder = hickory_resolver::Resolver::builder_with_config(
             config,
             hickory_resolver::name_server::TokioConnectionProvider::default(),
         );
-        
+
         if let Some(options) = opts {
             builder = builder.with_options(options);
         }
@@ -229,25 +239,25 @@ impl HickoryResolver {
     }
 
     /// Create a resolver with QNAME minimization enabled (RFC 7816)
-    /// 
+    ///
     /// Note: QNAME minimization is a privacy-enhancing feature that requires
     /// a recent version of hickory-resolver (>= 0.25.2). This feature reduces
     /// privacy leakage to upstream resolvers by sending minimal query names
     /// during recursive resolution.
-    /// 
+    ///
     /// Note: QNAME minimization requires hickory-resolver with the feature enabled.
     /// The current implementation configures privacy-friendly options.
     pub fn with_qname_minimization(upstream_ips: &[IpAddr]) -> Result<Self, ResolverError> {
         let mut opts = hickory_resolver::config::ResolverOpts::default();
-        
+
         // Timeout configuration
         opts.timeout = std::time::Duration::from_secs(5);
         opts.attempts = 3;
-        
+
         // Privacy-friendly configuration
         // Note: QNAME minimization (RFC 7816) requires hickory-resolver >= 0.25.2
         // with proper support. Current version may not expose this option.
-        
+
         Self::with_upstream_servers_and_options(upstream_ips, Some(opts))
     }
 
@@ -262,7 +272,7 @@ impl HickoryResolver {
 
     pub fn with_google() -> Result<Self, ResolverError> {
         let config = hickory_resolver::config::ResolverConfig::google();
-        
+
         let resolver = hickory_resolver::Resolver::builder_with_config(
             config,
             hickory_resolver::name_server::TokioConnectionProvider::default(),
@@ -274,7 +284,7 @@ impl HickoryResolver {
 
     pub fn with_cloudflare() -> Result<Self, ResolverError> {
         let config = hickory_resolver::config::ResolverConfig::cloudflare();
-        
+
         let resolver = hickory_resolver::Resolver::builder_with_config(
             config,
             hickory_resolver::name_server::TokioConnectionProvider::default(),
@@ -302,16 +312,20 @@ impl DnsResolver for HickoryResolver {
             format!("{}.", name)
         };
 
-        let lookup = self.resolver
+        let lookup = self
+            .resolver
             .txt_lookup(&name)
             .await
             .map_err(|e| ResolverError::QueryFailed(format!("TXT lookup failed: {}", e)))?;
 
-        let values: Vec<String> = lookup.iter()
-            .map(|txt| txt.to_string())
-            .collect();
+        let values: Vec<String> = lookup.iter().map(|txt| txt.to_string()).collect();
 
-        let ttl = Some(lookup.valid_until().saturating_duration_since(Instant::now()).as_secs() as u32);
+        let ttl = Some(
+            lookup
+                .valid_until()
+                .saturating_duration_since(Instant::now())
+                .as_secs() as u32,
+        );
         Ok(TxtRecord { values, ttl })
     }
 
@@ -322,16 +336,20 @@ impl DnsResolver for HickoryResolver {
             format!("{}.", name)
         };
 
-        let lookup = self.resolver
+        let lookup = self
+            .resolver
             .ns_lookup(&name)
             .await
             .map_err(|e| ResolverError::QueryFailed(format!("NS lookup failed: {}", e)))?;
 
-        let nameservers: Vec<String> = lookup.iter()
-            .map(|ns| ns.to_string())
-            .collect();
+        let nameservers: Vec<String> = lookup.iter().map(|ns| ns.to_string()).collect();
 
-        let ttl = Some(lookup.valid_until().saturating_duration_since(Instant::now()).as_secs() as u32);
+        let ttl = Some(
+            lookup
+                .valid_until()
+                .saturating_duration_since(Instant::now())
+                .as_secs() as u32,
+        );
         Ok(NsRecord { nameservers, ttl })
     }
 
@@ -342,7 +360,8 @@ impl DnsResolver for HickoryResolver {
             format!("{}.", name)
         };
 
-        let lookup = self.resolver
+        let lookup = self
+            .resolver
             .lookup_ip(&name)
             .await
             .map_err(|e| ResolverError::QueryFailed(format!("A lookup failed: {}", e)))?;
@@ -357,13 +376,19 @@ impl DnsResolver for HickoryResolver {
             format!("{}.", name)
         };
 
-        let lookup = self.resolver
+        let lookup = self
+            .resolver
             .lookup_ip(&name)
             .await
             .map_err(|e| ResolverError::QueryFailed(format!("A lookup failed: {}", e)))?;
 
-        let ttl = Some(lookup.valid_until().saturating_duration_since(Instant::now()).as_secs() as u32);
-        
+        let ttl = Some(
+            lookup
+                .valid_until()
+                .saturating_duration_since(Instant::now())
+                .as_secs() as u32,
+        );
+
         // NOTE: DNSSEC validation status is not exposed by hickory-resolver's lookup API.
         // For proper DNSSEC validation, use HickoryRecursor which tracks validation status.
         // See HickoryResolver::lookup_ip_hickory_recursor() for DNSSEC-aware lookups.
@@ -383,7 +408,12 @@ impl DnsResolver for HickoryResolver {
 
         match self.resolver.lookup(&name, RecordType::MX).await {
             Ok(lookup) => {
-                let ttl = Some(lookup.valid_until().saturating_duration_since(Instant::now()).as_secs() as u32);
+                let ttl = Some(
+                    lookup
+                        .valid_until()
+                        .saturating_duration_since(Instant::now())
+                        .as_secs() as u32,
+                );
                 let records: Vec<MxRecord> = lookup
                     .iter()
                     .filter_map(|rdata| {
@@ -400,7 +430,10 @@ impl DnsResolver for HickoryResolver {
                     .collect();
                 Ok(records)
             }
-            Err(e) => Err(ResolverError::QueryFailed(format!("MX lookup failed: {}", e))),
+            Err(e) => Err(ResolverError::QueryFailed(format!(
+                "MX lookup failed: {}",
+                e
+            ))),
         }
     }
 
@@ -413,7 +446,12 @@ impl DnsResolver for HickoryResolver {
 
         match self.resolver.lookup(&name, RecordType::SOA).await {
             Ok(lookup) => {
-                let ttl = Some(lookup.valid_until().saturating_duration_since(Instant::now()).as_secs() as u32);
+                let ttl = Some(
+                    lookup
+                        .valid_until()
+                        .saturating_duration_since(Instant::now())
+                        .as_secs() as u32,
+                );
                 let soa = lookup.iter().next().and_then(|rdata| {
                     if let RData::SOA(soa_data) = rdata {
                         Some(SoaRecord {
@@ -445,7 +483,12 @@ impl DnsResolver for HickoryResolver {
 
         match self.resolver.lookup(&name, RecordType::PTR).await {
             Ok(lookup) => {
-                let ttl = Some(lookup.valid_until().saturating_duration_since(Instant::now()).as_secs() as u32);
+                let ttl = Some(
+                    lookup
+                        .valid_until()
+                        .saturating_duration_since(Instant::now())
+                        .as_secs() as u32,
+                );
                 let ptr = lookup.iter().next().and_then(|rdata| {
                     if let RData::PTR(ptr_data) = rdata {
                         Some(PtrRecord {
@@ -471,7 +514,12 @@ impl DnsResolver for HickoryResolver {
 
         match self.resolver.lookup(&name, RecordType::SRV).await {
             Ok(lookup) => {
-                let ttl = Some(lookup.valid_until().saturating_duration_since(Instant::now()).as_secs() as u32);
+                let ttl = Some(
+                    lookup
+                        .valid_until()
+                        .saturating_duration_since(Instant::now())
+                        .as_secs() as u32,
+                );
                 let records: Vec<SrvRecord> = lookup
                     .iter()
                     .filter_map(|rdata| {
@@ -490,7 +538,10 @@ impl DnsResolver for HickoryResolver {
                     .collect();
                 Ok(records)
             }
-            Err(e) => Err(ResolverError::QueryFailed(format!("SRV lookup failed: {}", e))),
+            Err(e) => Err(ResolverError::QueryFailed(format!(
+                "SRV lookup failed: {}",
+                e
+            ))),
         }
     }
 
@@ -503,7 +554,12 @@ impl DnsResolver for HickoryResolver {
 
         match self.resolver.lookup(&name, RecordType::CNAME).await {
             Ok(lookup) => {
-                let ttl = Some(lookup.valid_until().saturating_duration_since(Instant::now()).as_secs() as u32);
+                let ttl = Some(
+                    lookup
+                        .valid_until()
+                        .saturating_duration_since(Instant::now())
+                        .as_secs() as u32,
+                );
                 let cname = lookup.iter().next().and_then(|rdata| {
                     if let RData::CNAME(cname_data) = rdata {
                         Some(CNameRecord {
@@ -557,7 +613,11 @@ impl Clone for HickoryRecursor {
 }
 
 impl HickoryRecursor {
-    pub fn new(root_hints_path: &str, trust_anchor_path: &str, enable_dnssec: bool) -> Result<Self, ResolverError> {
+    pub fn new(
+        root_hints_path: &str,
+        trust_anchor_path: &str,
+        enable_dnssec: bool,
+    ) -> Result<Self, ResolverError> {
         Self::from_paths(
             Path::new(root_hints_path),
             Path::new(trust_anchor_path),
@@ -565,13 +625,21 @@ impl HickoryRecursor {
         )
     }
 
-    pub fn from_paths(root_hints_path: &Path, trust_anchor_path: &Path, enable_dnssec: bool) -> Result<Self, ResolverError> {
+    pub fn from_paths(
+        root_hints_path: &Path,
+        trust_anchor_path: &Path,
+        enable_dnssec: bool,
+    ) -> Result<Self, ResolverError> {
         let root_ips = Self::load_root_hints(root_hints_path)?;
 
-        let roots = hickory_resolver::config::NameServerConfigGroup::from_ips_clear(&root_ips, 53, true);
+        let roots =
+            hickory_resolver::config::NameServerConfigGroup::from_ips_clear(&root_ips, 53, true);
 
         let trust_anchor_manager: Option<Arc<TrustAnchorManager>> = if enable_dnssec {
-            let db_path = trust_anchor_path.with_extension("db").to_string_lossy().to_string();
+            let db_path = trust_anchor_path
+                .with_extension("db")
+                .to_string_lossy()
+                .to_string();
             let config = TrustAnchorConfig {
                 enabled: true,
                 db_path,
@@ -586,10 +654,20 @@ impl HickoryRecursor {
 
             let manager = TrustAnchorManager::new(config);
 
-            if let Err(e) = manager.load_initial_anchors_from_file(&trust_anchor_path.to_string_lossy()) {
-                tracing::warn!("Failed to load initial anchors from {}: {}", trust_anchor_path.display(), e);
+            if let Err(e) =
+                manager.load_initial_anchors_from_file(&trust_anchor_path.to_string_lossy())
+            {
+                tracing::warn!(
+                    "Failed to load initial anchors from {}: {}",
+                    trust_anchor_path.display(),
+                    e
+                );
             } else {
-                tracing::info!("Loaded {} initial trust anchors from {}", manager.get_status().total_anchors, trust_anchor_path.display());
+                tracing::info!(
+                    "Loaded {} initial trust anchors from {}",
+                    manager.get_status().total_anchors,
+                    trust_anchor_path.display()
+                );
             }
 
             Some(Arc::new(manager))
@@ -598,7 +676,8 @@ impl HickoryRecursor {
         };
 
         let dnssec_policy = if enable_dnssec {
-            let trust_anchors = Self::build_trust_anchors(trust_anchor_path, trust_anchor_manager.as_ref());
+            let trust_anchors =
+                Self::build_trust_anchors(trust_anchor_path, trust_anchor_manager.as_ref());
             hickory_recursor::DnssecPolicy::ValidateWithStaticKey {
                 trust_anchor: Some(Arc::new(trust_anchors)),
             }
@@ -614,30 +693,40 @@ impl HickoryRecursor {
         tracing::info!(
             "Created recursive resolver (DNSSEC: {}, RFC 5011: {})",
             if enable_dnssec { "enabled" } else { "disabled" },
-            if trust_anchor_manager.is_some() { "enabled" } else { "disabled" }
+            if trust_anchor_manager.is_some() {
+                "enabled"
+            } else {
+                "disabled"
+            }
         );
 
-        Ok(Self { 
-            recursor: Arc::new(recursor), 
-            enable_dnssec, 
+        Ok(Self {
+            recursor: Arc::new(recursor),
+            enable_dnssec,
             trust_anchor_manager,
             shutdown_tx: None,
             rfc5011_handle: None,
         })
     }
 
-    fn build_trust_anchors(path: &Path, manager: Option<&Arc<TrustAnchorManager>>) -> hickory_proto::dnssec::TrustAnchors {
+    fn build_trust_anchors(
+        path: &Path,
+        manager: Option<&Arc<TrustAnchorManager>>,
+    ) -> hickory_proto::dnssec::TrustAnchors {
         if let Some(manager) = manager {
             let trusted_anchors = manager.get_trusted_anchors();
             if !trusted_anchors.is_empty() {
                 let mut anchors = hickory_proto::dnssec::TrustAnchors::empty();
                 for anchor in trusted_anchors {
-                    use hickory_proto::dnssec::{PublicKeyBuf, Algorithm};
+                    use hickory_proto::dnssec::{Algorithm, PublicKeyBuf};
                     let algorithm = Algorithm::from_u8(anchor.algorithm);
                     let pkey = PublicKeyBuf::new(anchor.public_key, algorithm);
                     let _ = anchors.insert(&pkey);
                 }
-                tracing::info!("Built trust anchors from RFC 5011 manager ({} keys)", anchors.len());
+                tracing::info!(
+                    "Built trust anchors from RFC 5011 manager ({} keys)",
+                    anchors.len()
+                );
                 return anchors;
             }
         }
@@ -648,16 +737,26 @@ impl HickoryRecursor {
                 anchors
             }
             Err(e) => {
-                tracing::warn!("Failed to load trust anchors from {}, using defaults: {}", path.display(), e);
+                tracing::warn!(
+                    "Failed to load trust anchors from {}, using defaults: {}",
+                    path.display(),
+                    e
+                );
                 hickory_proto::dnssec::TrustAnchors::default()
             }
         }
     }
 
-    pub async fn start_rfc5011_updates(self: Arc<Self>) -> Result<tokio::task::JoinHandle<()>, ResolverError> {
+    pub async fn start_rfc5011_updates(
+        self: Arc<Self>,
+    ) -> Result<tokio::task::JoinHandle<()>, ResolverError> {
         let manager = match &self.trust_anchor_manager {
             Some(m) => m.clone(),
-            None => return Err(ResolverError::QueryFailed("No trust anchor manager configured".to_string())),
+            None => {
+                return Err(ResolverError::QueryFailed(
+                    "No trust anchor manager configured".to_string(),
+                ))
+            }
         };
 
         let (_shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(());
@@ -720,7 +819,9 @@ impl HickoryRecursor {
     }
 
     pub fn get_trust_anchor_status(&self) -> Option<TrustAnchorStatus> {
-        self.trust_anchor_manager.as_ref().map(|m: &Arc<TrustAnchorManager>| m.get_status())
+        self.trust_anchor_manager
+            .as_ref()
+            .map(|m: &Arc<TrustAnchorManager>| m.get_status())
     }
 
     fn load_root_hints(path: &Path) -> Result<Vec<IpAddr>, ResolverError> {
@@ -731,10 +832,10 @@ impl HickoryRecursor {
 
     fn parse_root_hints(content: &str) -> Result<Vec<IpAddr>, ResolverError> {
         let mut ips = Vec::new();
-        
+
         for line in content.lines() {
             let line = line.trim();
-            
+
             if line.is_empty() || line.starts_with(';') {
                 continue;
             }
@@ -743,7 +844,7 @@ impl HickoryRecursor {
             if parts.len() >= 4 {
                 let qtype = parts.get(2).unwrap_or(&"");
                 let qname = parts.first().unwrap_or(&"");
-                
+
                 // Parse both A and AAAA records for root servers
                 // Format: "servername. TTL IN A IPv4" or "servername. TTL IN AAAA IPv6"
                 if (qtype == &"A" || qtype == &"AAAA") && qname.ends_with(".root-servers.net.") {
@@ -783,7 +884,11 @@ impl HickoryRecursor {
         ]
     }
 
-    async fn recursive_lookup(&self, name: &str, record_type: RecordType) -> ResolverResult<IpRecord> {
+    async fn recursive_lookup(
+        &self,
+        name: &str,
+        record_type: RecordType,
+    ) -> ResolverResult<IpRecord> {
         let name = if name.ends_with('.') {
             name.to_string()
         } else {
@@ -795,12 +900,18 @@ impl HickoryRecursor {
 
         let query = hickory_proto::op::Query::query(query_name, record_type);
 
-        let lookup = self.recursor
+        let lookup = self
+            .recursor
             .resolve(query, Instant::now(), self.enable_dnssec)
             .await
             .map_err(|e| ResolverError::QueryFailed(format!("Recursive lookup failed: {}", e)))?;
 
-        let ttl = Some(lookup.valid_until().saturating_duration_since(Instant::now()).as_secs() as u32);
+        let ttl = Some(
+            lookup
+                .valid_until()
+                .saturating_duration_since(Instant::now())
+                .as_secs() as u32,
+        );
 
         let mut addrs = Vec::new();
         let mut is_dnssec_validated = false;
@@ -809,7 +920,9 @@ impl HickoryRecursor {
             if proven_record.proof().is_secure() {
                 is_dnssec_validated = true;
             }
-            if let Ok(record) = proven_record.require_as_ref(hickory_proto::dnssec::Proof::Secure | hickory_proto::dnssec::Proof::Insecure) {
+            if let Ok(record) = proven_record.require_as_ref(
+                hickory_proto::dnssec::Proof::Secure | hickory_proto::dnssec::Proof::Insecure,
+            ) {
                 match record.data() {
                     RData::A(a) => addrs.push(std::net::IpAddr::V4(a.0)),
                     RData::AAAA(aaaa) => addrs.push(std::net::IpAddr::V6(aaaa.0)),
@@ -828,10 +941,18 @@ impl HickoryRecursor {
             }
         }
 
-        Ok(IpRecord { addrs, ttl, is_dnssec_validated })
+        Ok(IpRecord {
+            addrs,
+            ttl,
+            is_dnssec_validated,
+        })
     }
 
-    async fn recursive_lookup_by_type(&self, name: &str, record_type: RecordType) -> ResolverResult<LookupResult> {
+    async fn recursive_lookup_by_type(
+        &self,
+        name: &str,
+        record_type: RecordType,
+    ) -> ResolverResult<LookupResult> {
         let name = if name.ends_with('.') {
             name.to_string()
         } else {
@@ -843,12 +964,18 @@ impl HickoryRecursor {
 
         let query = hickory_proto::op::Query::query(query_name, record_type);
 
-        let lookup = self.recursor
+        let lookup = self
+            .recursor
             .resolve(query, Instant::now(), self.enable_dnssec)
             .await
             .map_err(|e| ResolverError::QueryFailed(format!("Recursive lookup failed: {}", e)))?;
 
-        let ttl = Some(lookup.valid_until().saturating_duration_since(Instant::now()).as_secs() as u32);
+        let ttl = Some(
+            lookup
+                .valid_until()
+                .saturating_duration_since(Instant::now())
+                .as_secs() as u32,
+        );
         let mut is_dnssec_validated = false;
 
         let mut result = LookupResult {
@@ -861,7 +988,9 @@ impl HickoryRecursor {
             if proven_record.proof().is_secure() {
                 is_dnssec_validated = true;
             }
-            if let Ok(record) = proven_record.require_as_ref(hickory_proto::dnssec::Proof::Secure | hickory_proto::dnssec::Proof::Insecure) {
+            if let Ok(record) = proven_record.require_as_ref(
+                hickory_proto::dnssec::Proof::Secure | hickory_proto::dnssec::Proof::Insecure,
+            ) {
                 Self::add_record_to_result(record.data(), ttl, &mut result);
             }
         }
@@ -959,17 +1088,31 @@ impl HickoryRecursor {
 
         let query = hickory_proto::op::Query::query(query_name, RecordType::DNSKEY);
 
-        let lookup = self.recursor
+        let lookup = self
+            .recursor
             .resolve(query, Instant::now(), self.enable_dnssec)
             .await
             .map_err(|e| ResolverError::QueryFailed(format!("DNSKEY lookup failed: {}", e)))?;
 
-        let ttl = Some(lookup.valid_until().saturating_duration_since(Instant::now()).as_secs() as u32);
+        let ttl = Some(
+            lookup
+                .valid_until()
+                .saturating_duration_since(Instant::now())
+                .as_secs() as u32,
+        );
         let mut records = Vec::new();
 
         for proven_record in lookup.dnssec_record_iter() {
-            let Ok(record) = proven_record.require_as_ref(hickory_proto::dnssec::Proof::Secure | hickory_proto::dnssec::Proof::Insecure) else { continue };
-            let RData::DNSSEC(hickory_proto::dnssec::rdata::DNSSECRData::DNSKEY(dnskey)) = record.data() else { continue };
+            let Ok(record) = proven_record.require_as_ref(
+                hickory_proto::dnssec::Proof::Secure | hickory_proto::dnssec::Proof::Insecure,
+            ) else {
+                continue;
+            };
+            let RData::DNSSEC(hickory_proto::dnssec::rdata::DNSSECRData::DNSKEY(dnskey)) =
+                record.data()
+            else {
+                continue;
+            };
 
             let algorithm: Algorithm = dnskey.public_key().algorithm();
             let algorithm_u8: u8 = algorithm.into();
@@ -999,7 +1142,9 @@ impl HickoryRecursor {
 
         if records.is_empty() {
             for record in lookup.records() {
-                if let RData::DNSSEC(hickory_proto::dnssec::rdata::DNSSECRData::DNSKEY(dnskey)) = record.data() {
+                if let RData::DNSSEC(hickory_proto::dnssec::rdata::DNSSECRData::DNSKEY(dnskey)) =
+                    record.data()
+                {
                     let algorithm: Algorithm = dnskey.public_key().algorithm();
                     let algorithm_u8: u8 = algorithm.into();
                     let public_key_bytes = dnskey.public_key().public_bytes();
@@ -1033,17 +1178,30 @@ impl HickoryRecursor {
 
         let query = hickory_proto::op::Query::query(query_name, RecordType::CDS);
 
-        let lookup = self.recursor
+        let lookup = self
+            .recursor
             .resolve(query, Instant::now(), self.enable_dnssec)
             .await
             .map_err(|e| ResolverError::QueryFailed(format!("CDS lookup failed: {}", e)))?;
 
-        let ttl = Some(lookup.valid_until().saturating_duration_since(Instant::now()).as_secs() as u32);
+        let ttl = Some(
+            lookup
+                .valid_until()
+                .saturating_duration_since(Instant::now())
+                .as_secs() as u32,
+        );
         let mut records = Vec::new();
 
         for proven_record in lookup.dnssec_record_iter() {
-            let Ok(record) = proven_record.require_as_ref(hickory_proto::dnssec::Proof::Secure | hickory_proto::dnssec::Proof::Insecure) else { continue };
-            let RData::DNSSEC(hickory_proto::dnssec::rdata::DNSSECRData::CDS(cds)) = record.data() else { continue };
+            let Ok(record) = proven_record.require_as_ref(
+                hickory_proto::dnssec::Proof::Secure | hickory_proto::dnssec::Proof::Insecure,
+            ) else {
+                continue;
+            };
+            let RData::DNSSEC(hickory_proto::dnssec::rdata::DNSSECRData::CDS(cds)) = record.data()
+            else {
+                continue;
+            };
 
             let key_tag = cds.key_tag();
             let algorithm_opt = cds.algorithm();
@@ -1054,12 +1212,7 @@ impl HickoryRecursor {
                 let digest = cds.digest();
 
                 if let Some(manager) = &self.trust_anchor_manager {
-                    let _ = manager.trust_anchor_check(
-                        key_tag,
-                        algorithm_u8,
-                        digest_type,
-                        digest,
-                    );
+                    let _ = manager.trust_anchor_check(key_tag, algorithm_u8, digest_type, digest);
                 }
 
                 records.push(CdsRecord {
@@ -1076,7 +1229,10 @@ impl HickoryRecursor {
         Ok(records)
     }
 
-    pub async fn perform_rfc5011_trust_anchor_check(&self, zone: &str) -> ResolverResult<Rfc5011CheckResult> {
+    pub async fn perform_rfc5011_trust_anchor_check(
+        &self,
+        zone: &str,
+    ) -> ResolverResult<Rfc5011CheckResult> {
         let mut events = Vec::new();
         let mut new_keys_seen = 0;
         let mut keys_promoted = 0;
@@ -1101,7 +1257,9 @@ impl HickoryRecursor {
                 );
                 match &event {
                     crate::dns::trust_anchor::Rfc5011Event::NewKeySeen { .. } => new_keys_seen += 1,
-                    crate::dns::trust_anchor::Rfc5011Event::KeyPromoted { .. } => keys_promoted += 1,
+                    crate::dns::trust_anchor::Rfc5011Event::KeyPromoted { .. } => {
+                        keys_promoted += 1
+                    }
                     _ => {}
                 }
                 events.push(event);

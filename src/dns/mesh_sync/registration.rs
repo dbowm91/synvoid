@@ -11,14 +11,22 @@ impl MeshDnsRegistry {
                     certificate_fingerprint: registration.certificate_fingerprint.clone(),
                     role: DnsNodeRole::Origin,
                 };
-                tx.send(request).await.map_err(|e| format!("Failed to send registration: {}", e))?;
+                tx.send(request)
+                    .await
+                    .map_err(|e| format!("Failed to send registration: {}", e))?;
             }
         }
 
-        let authenticated = self.verify_registration(&registration.node_id, registration.certificate_fingerprint.as_deref());
+        let authenticated = self.verify_registration(
+            &registration.node_id,
+            registration.certificate_fingerprint.as_deref(),
+        );
 
         if !authenticated && self.config.require_mtls {
-            tracing::warn!("Unauthenticated origin registration rejected for node {}", registration.node_id);
+            tracing::warn!(
+                "Unauthenticated origin registration rejected for node {}",
+                registration.node_id
+            );
             return Err("Registration requires mTLS authentication".to_string());
         }
 
@@ -36,11 +44,14 @@ impl MeshDnsRegistry {
             edge_node_geo: registration.edge_node_geo.clone(),
         };
 
-        self.origin_nodes.write().insert(registration.node_id.clone(), origin);
+        self.origin_nodes
+            .write()
+            .insert(registration.node_id.clone(), origin);
 
         {
             let mut mapping = self.domain_to_origin_mapping.write();
-            mapping.entry(registration.domain.clone())
+            mapping
+                .entry(registration.domain.clone())
                 .or_default()
                 .push(registration.node_id.clone());
         }
@@ -56,12 +67,19 @@ impl MeshDnsRegistry {
                     ttl,
                 );
                 if stored {
-                    tracing::info!("Propagated domain registration to DHT: {}", registration.domain);
+                    tracing::info!(
+                        "Propagated domain registration to DHT: {}",
+                        registration.domain
+                    );
                 }
             }
         }
 
-        tracing::info!("Registered origin node {} for domain {}", registration.node_id, registration.domain);
+        tracing::info!(
+            "Registered origin node {} for domain {}",
+            registration.node_id,
+            registration.domain
+        );
         Ok(())
     }
 
@@ -75,14 +93,22 @@ impl MeshDnsRegistry {
                     certificate_fingerprint: registration.certificate_fingerprint.clone(),
                     role: DnsNodeRole::Edge,
                 };
-                tx.send(request).await.map_err(|e| format!("Failed to send registration: {}", e))?;
+                tx.send(request)
+                    .await
+                    .map_err(|e| format!("Failed to send registration: {}", e))?;
             }
         }
 
-        let authenticated = self.verify_registration(&registration.node_id, registration.certificate_fingerprint.as_deref());
+        let authenticated = self.verify_registration(
+            &registration.node_id,
+            registration.certificate_fingerprint.as_deref(),
+        );
 
         if !authenticated && self.config.require_mtls {
-            tracing::warn!("Unauthenticated edge registration rejected for node {}", registration.node_id);
+            tracing::warn!(
+                "Unauthenticated edge registration rejected for node {}",
+                registration.node_id
+            );
             return Err("Registration requires mTLS authentication".to_string());
         }
 
@@ -101,22 +127,37 @@ impl MeshDnsRegistry {
             domains_origin_mapping: HashMap::new(),
         };
 
-        self.edge_nodes.write().insert(registration.node_id.clone(), edge);
+        self.edge_nodes
+            .write()
+            .insert(registration.node_id.clone(), edge);
 
-        tracing::info!("Registered edge node {} for domain {}", registration.node_id, registration.domain);
+        tracing::info!(
+            "Registered edge node {} for domain {}",
+            registration.node_id,
+            registration.domain
+        );
         Ok(())
     }
 
-    pub async fn register_anycast_node(&self, registration: DnsAnycastNodeRegistration) -> Result<(), String> {
+    pub async fn register_anycast_node(
+        &self,
+        registration: DnsAnycastNodeRegistration,
+    ) -> Result<(), String> {
         if !self.is_global {
             tracing::debug!("Ignoring anycast registration on non-global node");
             return Ok(());
         }
 
-        let authenticated = self.verify_registration(&registration.node_id, registration.certificate_fingerprint.as_deref());
+        let authenticated = self.verify_registration(
+            &registration.node_id,
+            registration.certificate_fingerprint.as_deref(),
+        );
 
         if !authenticated && self.config.require_mtls {
-            tracing::warn!("Unauthenticated anycast registration rejected for node {}", registration.node_id);
+            tracing::warn!(
+                "Unauthenticated anycast registration rejected for node {}",
+                registration.node_id
+            );
             return Err("Registration requires mTLS authentication".to_string());
         }
 
@@ -133,11 +174,14 @@ impl MeshDnsRegistry {
             dns_zones: registration.dns_zones.clone(),
         };
 
-        self.anycast_nodes.write().insert(registration.node_id.clone(), anycast);
+        self.anycast_nodes
+            .write()
+            .insert(registration.node_id.clone(), anycast);
 
         for zone in &registration.dns_zones {
             let mut mapping = self.domain_to_anycast_mapping.write();
-            mapping.entry(zone.clone())
+            mapping
+                .entry(zone.clone())
                 .or_default()
                 .push(registration.node_id.clone());
         }
@@ -154,19 +198,30 @@ impl MeshDnsRegistry {
             tracing::debug!("Stored anycast node {} in DHT", registration.node_id);
         }
 
-        tracing::info!("Registered anycast node {} with IPs {:?}", registration.node_id, registration.anycast_ips);
+        tracing::info!(
+            "Registered anycast node {} with IPs {:?}",
+            registration.node_id,
+            registration.anycast_ips
+        );
         Ok(())
     }
 
-    pub fn handle_registration_request(&self, request: DnsRegistrationRequest) -> Result<(), String> {
+    pub fn handle_registration_request(
+        &self,
+        request: DnsRegistrationRequest,
+    ) -> Result<(), String> {
         if !self.is_global {
             return Ok(());
         }
 
-        let authenticated = self.verify_registration(&request.node_id, request.certificate_fingerprint.as_deref());
+        let authenticated =
+            self.verify_registration(&request.node_id, request.certificate_fingerprint.as_deref());
 
         if !authenticated && self.config.require_mtls {
-            tracing::warn!("Unauthenticated registration request rejected for node {}", request.node_id);
+            tracing::warn!(
+                "Unauthenticated registration request rejected for node {}",
+                request.node_id
+            );
             return Err("Registration request requires mTLS authentication".to_string());
         }
 
@@ -191,11 +246,17 @@ impl MeshDnsRegistry {
                     };
                     origins.insert(reg.node_id.clone(), origin);
 
-                    mapping.entry(reg.domain.clone())
+                    mapping
+                        .entry(reg.domain.clone())
                         .or_default()
                         .push(reg.node_id.clone());
 
-                    tracing::info!("Registered origin {} for domain {} (authenticated: {})", reg.node_id, reg.domain, authenticated);
+                    tracing::info!(
+                        "Registered origin {} for domain {} (authenticated: {})",
+                        reg.node_id,
+                        reg.domain,
+                        authenticated
+                    );
                 }
             }
             DnsNodeRole::Edge => {
@@ -218,7 +279,12 @@ impl MeshDnsRegistry {
                     };
                     edges.insert(reg.node_id.clone(), edge);
 
-                    tracing::info!("Registered edge {} for domain {} (authenticated: {})", reg.node_id, reg.domain, authenticated);
+                    tracing::info!(
+                        "Registered edge {} for domain {} (authenticated: {})",
+                        reg.node_id,
+                        reg.domain,
+                        authenticated
+                    );
                 }
             }
         }

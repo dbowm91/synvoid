@@ -5,62 +5,62 @@
     clippy::await_holding_lock,       // Phase 4.5: async mutex standardization
 )]
 
-pub mod error;
+pub mod admin;
+pub mod app_server;
+pub mod auth;
+pub mod block_store;
 pub mod buffer;
+pub mod captcha;
+pub mod cgi;
 pub mod challenge;
 pub mod common;
 pub mod config;
 pub mod drain;
+pub mod error;
+pub mod fastcgi;
+pub mod filter;
 pub mod geoip;
+pub mod honeypot_port;
+pub mod http;
+pub mod http3;
+pub mod http_client;
+pub mod integrity;
+pub mod listener;
+pub mod location_matcher;
+pub mod log_controller;
+pub mod logging;
+pub mod master;
+pub mod mesh;
 pub mod metrics;
+pub mod mime;
+pub mod overseer;
 pub mod platform;
+pub mod plugin;
+pub mod process;
+pub mod protocol;
 pub mod proxy;
 pub mod proxy_cache;
-pub mod waf;
 pub mod router;
-pub mod logging;
-pub mod utils;
+pub mod serder;
 pub mod serialization;
 pub mod serialization_rkyv;
-pub mod serder;
-pub mod zero_copy;
-pub mod block_store;
-pub mod tcp;
-pub mod udp;
-pub mod tarpit;
-pub mod http;
-pub mod upstream;
-pub mod supervisor;
 pub mod server;
-pub mod http_client;
-pub mod auth;
-pub mod admin;
-pub mod captcha;
-pub mod tls;
-pub mod http3;
-pub mod mime;
-pub mod upload;
-pub mod theme;
 pub mod static_files;
-pub mod master;
-pub mod process;
-pub mod worker;
-pub mod log_controller;
-pub mod protocol;
-pub mod tunnel;
-pub mod fastcgi;
-pub mod cgi;
-pub mod plugin;
-pub mod location_matcher;
-pub mod app_server;
-pub mod overseer;
 pub mod streaming;
-pub mod filter;
-pub mod listener;
+pub mod supervisor;
+pub mod tarpit;
+pub mod tcp;
+pub mod theme;
+pub mod tls;
+pub mod tunnel;
+pub mod udp;
+pub mod upload;
+pub mod upstream;
+pub mod utils;
 pub mod vpn_client;
-pub mod mesh;
-pub mod integrity;
-pub mod honeypot_port;
+pub mod waf;
+pub mod worker;
+pub mod zero_copy;
 
 #[cfg(feature = "icmp-filter")]
 pub mod icmp_filter;
@@ -69,9 +69,5 @@ pub mod icmp_filter;
 pub mod dns;
 
 pub use config::ConfigManager;
+pub use utils::{errors, urlencoding_decode, DrainFlag, OptionExt, ResultExt, RunningFlag};
 pub use waf::{WafCore, WafCoreConfig};
-pub use utils::{
-    urlencoding_decode, RunningFlag, DrainFlag,
-    ResultExt, OptionExt,
-    errors,
-};

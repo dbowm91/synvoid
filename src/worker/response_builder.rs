@@ -4,8 +4,8 @@ use std::time::{Instant, SystemTime};
 
 use tokio::task;
 
+use super::{CompressionTask, StaticWorkerState};
 use crate::static_files::minifier;
-use super::{StaticWorkerState, CompressionTask};
 
 pub(super) fn process_minify_request(
     state: &StaticWorkerState,
@@ -15,17 +15,25 @@ pub(super) fn process_minify_request(
     encoding: Option<String>,
 ) -> Result<crate::process::Message, String> {
     let cache = {
-        let caches = state.minifier_caches.read()
+        let caches = state
+            .minifier_caches
+            .read()
             .map_err(|_| "Cache lock poisoned".to_string())?;
-        caches.get(&site_id).cloned()
+        caches
+            .get(&site_id)
+            .cloned()
             .ok_or_else(|| format!("No cache for site: {}", site_id))?
     };
 
     let config = cache.config();
     let source_root = {
-        let config_manager = state.config_manager.read()
+        let config_manager = state
+            .config_manager
+            .read()
             .map_err(|_| "Config lock poisoned".to_string())?;
-        config_manager.sites.get(&site_id)
+        config_manager
+            .sites
+            .get(&site_id)
             .and_then(|s| s.r#static.locations.first())
             .map(|l| PathBuf::from(&l.root))
             .ok_or("No source root found".to_string())?
@@ -33,8 +41,8 @@ pub(super) fn process_minify_request(
 
     let source_path = source_root.join(path.trim_start_matches('/'));
 
-    let original_content = std::fs::read(&source_path)
-        .map_err(|e| format!("Failed to read file: {}", e))?;
+    let original_content =
+        std::fs::read(&source_path).map_err(|e| format!("Failed to read file: {}", e))?;
 
     let mtime = std::fs::metadata(&source_path)
         .and_then(|m| m.modified())
@@ -49,14 +57,16 @@ pub(super) fn process_minify_request(
     let minified_content = match cache.get(&key) {
         Some(entry) if entry.mtime >= mtime => entry.content.to_vec(),
         _ => {
-            let entry = cache.minify_and_cache(&site_id, &path, &original_content, mtime)
+            let entry = cache
+                .minify_and_cache(&site_id, &path, &original_content, mtime)
                 .map_err(|e| format!("Minification failed: {}", e))?;
             let _ = cache.write_to_disk(&site_id, &path, &entry.content, mtime);
             entry.content.to_vec()
         }
     };
 
-    let content_type = path.rsplit('.')
+    let content_type = path
+        .rsplit('.')
         .next()
         .and_then(|e| crate::mime::MIME_REGISTRY.read().get_mime_for_extension(e))
         .unwrap_or_else(|| "application/octet-stream".to_string());
@@ -75,9 +85,20 @@ pub(super) fn process_minify_request(
                 match cache.get(&enc_key) {
                     Some(entry) => entry.content.to_vec(),
                     _ => {
-                        let content = cache.generate_compressed(&site_id, &path, &minified_content, &minifier::Encoding::Gzip)
+                        let content = cache
+                            .generate_compressed(
+                                &site_id,
+                                &path,
+                                &minified_content,
+                                &minifier::Encoding::Gzip,
+                            )
                             .map_err(|e| format!("Gzip compression failed: {}", e))?;
-                        let _ = cache.write_compressed_to_disk(&site_id, &path, &content, &minifier::Encoding::Gzip);
+                        let _ = cache.write_compressed_to_disk(
+                            &site_id,
+                            &path,
+                            &content,
+                            &minifier::Encoding::Gzip,
+                        );
                         content.to_vec()
                     }
                 }
@@ -92,9 +113,20 @@ pub(super) fn process_minify_request(
                 match cache.get(&enc_key) {
                     Some(entry) => entry.content.to_vec(),
                     _ => {
-                        let content = cache.generate_compressed(&site_id, &path, &minified_content, &minifier::Encoding::Br)
+                        let content = cache
+                            .generate_compressed(
+                                &site_id,
+                                &path,
+                                &minified_content,
+                                &minifier::Encoding::Br,
+                            )
                             .map_err(|e| format!("Brotli compression failed: {}", e))?;
-                        let _ = cache.write_compressed_to_disk(&site_id, &path, &content, &minifier::Encoding::Br);
+                        let _ = cache.write_compressed_to_disk(
+                            &site_id,
+                            &path,
+                            &content,
+                            &minifier::Encoding::Br,
+                        );
                         content.to_vec()
                     }
                 }
@@ -143,9 +175,13 @@ pub(super) fn process_compressed_request(
     encoding: String,
 ) -> Result<crate::process::Message, String> {
     let cache = {
-        let caches = state.minifier_caches.read()
+        let caches = state
+            .minifier_caches
+            .read()
             .map_err(|_| "Cache lock poisoned".to_string())?;
-        caches.get(&site_id).cloned()
+        caches
+            .get(&site_id)
+            .cloned()
             .ok_or_else(|| format!("No cache for site: {}", site_id))?
     };
 
@@ -161,9 +197,11 @@ pub(super) fn process_compressed_request(
         encoding: enc,
     };
 
-    let content = cache.get(&enc_key)
+    let content = cache
+        .get(&enc_key)
         .ok_or("Compressed version not cached".to_string())?
-        .content.to_vec();
+        .content
+        .to_vec();
 
     Ok(crate::process::Message::GetCompressedResponse {
         request_id,
@@ -171,7 +209,10 @@ pub(super) fn process_compressed_request(
     })
 }
 
-pub(super) fn init_minifier_caches(state: &StaticWorkerState, _main_config: &crate::config::MainConfig) {
+pub(super) fn init_minifier_caches(
+    state: &StaticWorkerState,
+    _main_config: &crate::config::MainConfig,
+) {
     let config = match state.config_manager.read() {
         Ok(c) => c,
         Err(_) => return,
@@ -183,12 +224,14 @@ pub(super) fn init_minifier_caches(state: &StaticWorkerState, _main_config: &cra
     };
 
     for (site_id, site) in config.sites.iter() {
-        if !caches.contains_key(site_id)
-            && site.r#static.enable_minification.unwrap_or(true) {
-                let min_config = minifier::MinifierConfig::from_site_config(site_id, &site.r#static);
-                caches.insert(site_id.clone(), Arc::new(minifier::MinifierCache::new(min_config)));
-                tracing::info!("Initialized minifier cache for site: {}", site_id);
-            }
+        if !caches.contains_key(site_id) && site.r#static.enable_minification.unwrap_or(true) {
+            let min_config = minifier::MinifierConfig::from_site_config(site_id, &site.r#static);
+            caches.insert(
+                site_id.clone(),
+                Arc::new(minifier::MinifierCache::new(min_config)),
+            );
+            tracing::info!("Initialized minifier cache for site: {}", site_id);
+        }
     }
 }
 
@@ -200,7 +243,8 @@ pub(super) fn check_and_invalidate_cache(state: &StaticWorkerState, site_id: &st
                     let path = entry.path();
                     if let Ok(metadata) = entry.metadata() {
                         if metadata.is_file() {
-                            let relative = path.strip_prefix(root)
+                            let relative = path
+                                .strip_prefix(root)
                                 .map(|p| p.to_string_lossy().to_string())
                                 .unwrap_or_default();
                             let full_path = format!("/{}", relative);
@@ -245,7 +289,9 @@ pub(super) async fn handle_minify_request(
     let source_root_result: Result<Option<PathBuf>, String> = {
         let guard = state.config_manager.read();
         match guard {
-            Ok(ref cm) => Ok(cm.sites.get(&site_id)
+            Ok(ref cm) => Ok(cm
+                .sites
+                .get(&site_id)
                 .and_then(|s| s.r#static.locations.first().map(|l| PathBuf::from(&l.root)))),
             Err(_) => Err("Config lock poisoned".to_string()),
         }
@@ -314,7 +360,8 @@ pub(super) async fn handle_minify_request(
         }
     };
 
-    let content_type = path.rsplit('.')
+    let content_type = path
+        .rsplit('.')
         .next()
         .and_then(|e| crate::mime::MIME_REGISTRY.read().get_mime_for_extension(e))
         .unwrap_or_else(|| "application/octet-stream".to_string());
@@ -333,13 +380,23 @@ pub(super) async fn handle_minify_request(
                 match cache.get(&enc_key) {
                     Some(entry) => entry.content.to_vec(),
                     _ => {
-                        match cache.generate_compressed(&site_id, &path, &minified_content, &minifier::Encoding::Gzip) {
+                        match cache.generate_compressed(
+                            &site_id,
+                            &path,
+                            &minified_content,
+                            &minifier::Encoding::Gzip,
+                        ) {
                             Ok(content) => {
                                 let site_id_clone = site_id.clone();
                                 let path_clone = path.clone();
                                 let content_clone = content.clone();
                                 let write_result = task::block_in_place(|| {
-                                    cache.write_compressed_to_disk(&site_id_clone, &path_clone, &content_clone, &minifier::Encoding::Gzip)
+                                    cache.write_compressed_to_disk(
+                                        &site_id_clone,
+                                        &path_clone,
+                                        &content_clone,
+                                        &minifier::Encoding::Gzip,
+                                    )
                                 });
                                 if let Err(e) = write_result {
                                     tracing::warn!("Failed to write gzip file: {}", e);
@@ -347,7 +404,12 @@ pub(super) async fn handle_minify_request(
                                 content.to_vec()
                             }
                             Err(e) => {
-                                send_error(state, request_id, format!("Gzip compression failed: {}", e)).await;
+                                send_error(
+                                    state,
+                                    request_id,
+                                    format!("Gzip compression failed: {}", e),
+                                )
+                                .await;
                                 return;
                             }
                         }
@@ -364,13 +426,23 @@ pub(super) async fn handle_minify_request(
                 match cache.get(&enc_key) {
                     Some(entry) => entry.content.to_vec(),
                     _ => {
-                        match cache.generate_compressed(&site_id, &path, &minified_content, &minifier::Encoding::Br) {
+                        match cache.generate_compressed(
+                            &site_id,
+                            &path,
+                            &minified_content,
+                            &minifier::Encoding::Br,
+                        ) {
                             Ok(content) => {
                                 let site_id_clone = site_id.clone();
                                 let path_clone = path.clone();
                                 let content_clone = content.clone();
                                 let write_result = task::block_in_place(|| {
-                                    cache.write_compressed_to_disk(&site_id_clone, &path_clone, &content_clone, &minifier::Encoding::Br)
+                                    cache.write_compressed_to_disk(
+                                        &site_id_clone,
+                                        &path_clone,
+                                        &content_clone,
+                                        &minifier::Encoding::Br,
+                                    )
                                 });
                                 if let Err(e) = write_result {
                                     tracing::warn!("Failed to write brotli file: {}", e);
@@ -378,7 +450,12 @@ pub(super) async fn handle_minify_request(
                                 content.to_vec()
                             }
                             Err(e) => {
-                                send_error(state, request_id, format!("Brotli compression failed: {}", e)).await;
+                                send_error(
+                                    state,
+                                    request_id,
+                                    format!("Brotli compression failed: {}", e),
+                                )
+                                .await;
                                 return;
                             }
                         }
@@ -411,7 +488,8 @@ pub(super) async fn handle_minify_request(
     }
 
     let mut ipc = state.ipc.lock().await;
-    let _ = ipc.send(&crate::process::Message::MinifyResponse {
+    let _ = ipc
+        .send(&crate::process::Message::MinifyResponse {
             request_id,
             site_id,
             path,
@@ -419,15 +497,15 @@ pub(super) async fn handle_minify_request(
             content_type,
             encoding,
             queued_encodings,
-        }).await;
+        })
+        .await;
 }
 
 pub(super) async fn send_error(state: &StaticWorkerState, request_id: u64, error: String) {
     let mut ipc = state.ipc.lock().await;
-    let _ = ipc.send(&crate::process::Message::MinifyError {
-        request_id,
-        error,
-    }).await;
+    let _ = ipc
+        .send(&crate::process::Message::MinifyError { request_id, error })
+        .await;
 }
 
 pub(super) async fn handle_compressed_request(
@@ -473,16 +551,23 @@ pub(super) async fn handle_compressed_request(
     let content = match cache.get(&enc_key) {
         Some(entry) => entry.content.to_vec(),
         None => {
-            send_error(state, request_id, "Compressed version not cached".to_string()).await;
+            send_error(
+                state,
+                request_id,
+                "Compressed version not cached".to_string(),
+            )
+            .await;
             return;
         }
     };
 
     let mut ipc = state.ipc.lock().await;
-    let _ = ipc.send(&crate::process::Message::GetCompressedResponse {
-        request_id,
-        content,
-    }).await;
+    let _ = ipc
+        .send(&crate::process::Message::GetCompressedResponse {
+            request_id,
+            content,
+        })
+        .await;
 }
 
 pub(super) fn process_compression_queue(state: &StaticWorkerState) {
@@ -526,12 +611,22 @@ pub(super) fn process_compression_queue(state: &StaticWorkerState) {
                     let content_clone = content.clone();
                     let enc_clone = enc.clone();
                     let write_result = task::block_in_place(|| {
-                        cache.write_compressed_to_disk(&site_id_clone, &path_clone, &content_clone, &enc_clone)
+                        cache.write_compressed_to_disk(
+                            &site_id_clone,
+                            &path_clone,
+                            &content_clone,
+                            &enc_clone,
+                        )
                     });
                     if let Err(e) = write_result {
                         tracing::warn!("Failed to write {} file: {}", task.encoding, e);
                     } else {
-                        tracing::debug!("Generated {} for {}/{}", task.encoding, task.site_id, task.path);
+                        tracing::debug!(
+                            "Generated {} for {}/{}",
+                            task.encoding,
+                            task.site_id,
+                            task.path
+                        );
                     }
                 }
                 Err(e) => {

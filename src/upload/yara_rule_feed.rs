@@ -1,5 +1,5 @@
 use crate::config::YaraRuleFeedConfig;
-use crate::http_client::{HttpClient, get_with_timeout, create_simple_http_client};
+use crate::http_client::{create_simple_http_client, get_with_timeout, HttpClient};
 use ed25519_dalek::{Signature as Ed25519Signature, Verifier, VerifyingKey};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
@@ -107,7 +107,7 @@ impl YaraRuleFeedManager {
         }
 
         let self_clone = Arc::clone(self);
-        
+
         tokio::spawn(async move {
             loop {
                 let interval_hours = {
@@ -120,10 +120,8 @@ impl YaraRuleFeedManager {
                 };
 
                 self_clone.check_and_fetch().await;
-                
-                let interval = Duration::from_secs(
-                    interval_hours as u64 * 3600
-                );
+
+                let interval = Duration::from_secs(interval_hours as u64 * 3600);
                 tokio::time::sleep(interval).await;
             }
         });
@@ -131,27 +129,32 @@ impl YaraRuleFeedManager {
 
     pub async fn check_and_fetch(&self) {
         *self.last_check.write() = now_timestamp();
-        
+
         tracing::info!("Checking for YARA rule updates from {}", self.config.url);
-        
+
         match self.fetch_rules(&self.config.url).await {
             Ok(rules) => {
                 let current = self.current_version.read().clone();
                 let current_str = current.as_deref().unwrap_or("none");
-                
-                if !self.config.allow_downgrade && !Self::is_newer_version(&rules.version, current_str) {
-                    tracing::info!("YARA rule version {} is not newer than current {}", rules.version, current_str);
+
+                if !self.config.allow_downgrade
+                    && !Self::is_newer_version(&rules.version, current_str)
+                {
+                    tracing::info!(
+                        "YARA rule version {} is not newer than current {}",
+                        rules.version,
+                        current_str
+                    );
                     return;
                 }
 
                 tracing::info!("Fetched new YARA rules version {}", rules.version);
                 *self.downloaded_rules.write() = Some(rules.clone());
-                
-                if self.config.auto_apply
-                    && self.apply_rules().is_ok() {
-                        *self.current_version.write() = Some(rules.version.clone());
-                        *self.last_update.write() = now_timestamp();
-                    }
+
+                if self.config.auto_apply && self.apply_rules().is_ok() {
+                    *self.current_version.write() = Some(rules.version.clone());
+                    *self.last_update.write() = now_timestamp();
+                }
             }
             Err(e) => {
                 tracing::error!("Failed to fetch YARA rule feed: {}", e);
@@ -163,18 +166,14 @@ impl YaraRuleFeedManager {
         if current == "none" {
             return true;
         }
-        
-        let new_parts: Vec<u32> = new.split('.')
-            .filter_map(|s| s.parse().ok())
-            .collect();
-        let current_parts: Vec<u32> = current.split('.')
-            .filter_map(|s| s.parse().ok())
-            .collect();
-        
+
+        let new_parts: Vec<u32> = new.split('.').filter_map(|s| s.parse().ok()).collect();
+        let current_parts: Vec<u32> = current.split('.').filter_map(|s| s.parse().ok()).collect();
+
         for i in 0..new_parts.len().max(current_parts.len()) {
             let new_part = new_parts.get(i).unwrap_or(&0);
             let current_part = current_parts.get(i).unwrap_or(&0);
-            
+
             if new_part > current_part {
                 return true;
             } else if new_part < current_part {
@@ -196,12 +195,16 @@ impl YaraRuleFeedManager {
         let rules_size = response.body.len();
         let max_size = (self.config.max_rules_size_kb as usize) * 1024;
         if rules_size > max_size {
-            return Err(format!("Rules size {}KB exceeds limit {}KB", rules_size / 1024, self.config.max_rules_size_kb));
+            return Err(format!(
+                "Rules size {}KB exceeds limit {}KB",
+                rules_size / 1024,
+                self.config.max_rules_size_kb
+            ));
         }
 
         let body_str = String::from_utf8_lossy(&response.body);
-        let feed_response: YaraRuleFeedResponse = serde_json::from_str(&body_str)
-            .map_err(|e| format!("Failed to parse JSON: {}", e))?;
+        let feed_response: YaraRuleFeedResponse =
+            serde_json::from_str(&body_str).map_err(|e| format!("Failed to parse JSON: {}", e))?;
 
         let timestamp = Self::parse_timestamp(&feed_response.timestamp)
             .map_err(|e| format!("Invalid timestamp: {}", e))?;
@@ -210,7 +213,9 @@ impl YaraRuleFeedManager {
             let payload_for_sig = Self::create_payload_for_signature(&feed_response);
             self.verify_signature(&payload_for_sig, &feed_response.signature, public_key)?;
         } else if !feed_response.signature.is_empty() {
-            tracing::warn!("YARA rule signature present but no public key configured, skipping verification");
+            tracing::warn!(
+                "YARA rule signature present but no public key configured, skipping verification"
+            );
         }
 
         let parsed = ParsedYaraRules {
@@ -228,11 +233,11 @@ impl YaraRuleFeedManager {
         if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(ts) {
             return Ok(dt.timestamp() as u64);
         }
-        
+
         if let Ok(t) = ts.parse::<u64>() {
             return Ok(t);
         }
-        
+
         Err("Invalid timestamp format".to_string())
     }
 
@@ -242,19 +247,27 @@ impl YaraRuleFeedManager {
         serde_json::to_string(&sig_payload).unwrap_or_default()
     }
 
-    fn verify_signature(&self, payload: &str, signature_b64: &str, public_key: &VerifyingKey) -> Result<(), String> {
+    fn verify_signature(
+        &self,
+        payload: &str,
+        signature_b64: &str,
+        public_key: &VerifyingKey,
+    ) -> Result<(), String> {
         let signature_bytes = base64_decode(signature_b64)
             .map_err(|e| format!("Invalid signature encoding: {}", e))?;
 
         if signature_bytes.len() != 64 {
-            return Err(format!("Invalid signature length: {}", signature_bytes.len()));
+            return Err(format!(
+                "Invalid signature length: {}",
+                signature_bytes.len()
+            ));
         }
 
         let signature = Ed25519Signature::from_slice(&signature_bytes)
             .map_err(|e| format!("Invalid signature: {}", e))?;
 
         let payload_bytes = payload.as_bytes();
-        
+
         if public_key.verify(payload_bytes, &signature).is_err() {
             return Err("Signature verification failed".to_string());
         }
@@ -268,11 +281,15 @@ impl YaraRuleFeedManager {
 
         let version = rules.version.clone();
         let rules_content = rules.rules.clone();
-        
+
         *self.current_rules.write() = Some(rules_content);
-        
-        self.add_to_history(rules.version.clone(), rules.rules.clone(), YaraRuleSource::Feed);
-        
+
+        self.add_to_history(
+            rules.version.clone(),
+            rules.rules.clone(),
+            YaraRuleSource::Feed,
+        );
+
         tracing::info!("Applied YARA rule version {}", rules.version);
         Ok(version)
     }
@@ -313,7 +330,7 @@ impl YaraRuleFeedManager {
 
     pub fn rollback(&self, target_version: Option<String>) -> Result<String, String> {
         let history = self.history.read();
-        
+
         if history.is_empty() {
             return Err("No rule history available for rollback".to_string());
         }
@@ -330,15 +347,19 @@ impl YaraRuleFeedManager {
         };
 
         let target = history.get(target_idx).ok_or("Invalid history index")?;
-        
+
         let target_version_str = target.version.clone();
         let target_rules_str = target.rules.clone();
-        
+
         drop(history);
-        
-        self.add_to_history(target_version_str.clone(), target_rules_str, YaraRuleSource::Local);
+
+        self.add_to_history(
+            target_version_str.clone(),
+            target_rules_str,
+            YaraRuleSource::Local,
+        );
         *self.current_version.write() = Some(target_version_str.clone());
-        
+
         tracing::info!("Rolled back to YARA rule version {}", target_version_str);
         Ok(target_version_str)
     }
@@ -385,13 +406,13 @@ fn now_timestamp() -> u64 {
 
 fn base64_decode(input: &str) -> Result<Vec<u8>, String> {
     const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    
+
     let input = input.as_bytes();
     let mut output = Vec::with_capacity(input.len() * 3 / 4);
-    
+
     let mut buf = [0u8; 4];
     let mut buf_len = 0;
-    
+
     for &byte in input {
         if byte == b'=' {
             break;
@@ -399,13 +420,16 @@ fn base64_decode(input: &str) -> Result<Vec<u8>, String> {
         if byte == b'\n' || byte == b'\r' {
             continue;
         }
-        
-        let val = CHARS.iter().position(|&x| x == byte)
-            .ok_or_else(|| format!("Invalid base64 character: {}", byte as char))? as u8;
-        
+
+        let val = CHARS
+            .iter()
+            .position(|&x| x == byte)
+            .ok_or_else(|| format!("Invalid base64 character: {}", byte as char))?
+            as u8;
+
         buf[buf_len] = val;
         buf_len += 1;
-        
+
         if buf_len == 4 {
             output.push((buf[0] << 2) | (buf[1] >> 4));
             output.push((buf[1] << 4) | (buf[2] >> 2));
@@ -413,13 +437,13 @@ fn base64_decode(input: &str) -> Result<Vec<u8>, String> {
             buf_len = 0;
         }
     }
-    
+
     if buf_len > 0 {
         output.push((buf[0] << 2) | (buf[1] >> 4));
         if buf_len > 2 {
             output.push((buf[1] << 4) | (buf[2] >> 2));
         }
     }
-    
+
     Ok(output)
 }

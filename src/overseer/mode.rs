@@ -53,8 +53,6 @@ pub fn probe_reuseport_support() -> bool {
 
     drop(listener1);
 
-    
-
     TcpListener::bind(bound_addr).is_ok()
 }
 

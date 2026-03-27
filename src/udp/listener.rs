@@ -1,29 +1,31 @@
-use std::sync::Arc;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU32, AtomicI64, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU32, AtomicU64, Ordering};
+use std::sync::Arc;
 use tokio::net::{UdpSocket, UnixDatagram};
 use tokio::sync::broadcast;
 
-use parking_lot::RwLock as PLRwLock;
 use dashmap::DashMap;
-use metrics::{counter, histogram, gauge};
-use once_cell::sync::Lazy;
+use metrics::{counter, gauge, histogram};
+use parking_lot::RwLock as PLRwLock;
+use std::sync::LazyLock;
 
 #[cfg(unix)]
-use socket2::{Socket, Protocol, Type, Domain};
+use socket2::{Domain, Protocol, Socket, Type};
 
-use crate::udp::protocol::UdpProtocolDetector;
-use crate::udp::filter::{UdpProtocolFilter, UdpFilterAction, UdpFilterConfig};
-use crate::waf::FloodProtector;
-use crate::upstream::UpstreamAddress;
+use crate::buffer::BufferPool;
+use crate::metrics::bandwidth::{
+    get_global_bandwidth_tracker_or_log, BandwidthProtocol, EgressDirection,
+};
 use crate::tunnel;
 use crate::tunnel::quic::messages::TunnelMessage;
-use crate::tunnel::udp_manager::{UdpTunnelManager, UdpTunnelConfig};
-use crate::buffer::BufferPool;
-use crate::metrics::bandwidth::{get_global_bandwidth_tracker_or_log, BandwidthProtocol, EgressDirection};
+use crate::tunnel::udp_manager::{UdpTunnelConfig, UdpTunnelManager};
+use crate::udp::filter::{UdpFilterAction, UdpFilterConfig, UdpProtocolFilter};
+use crate::udp::protocol::UdpProtocolDetector;
+use crate::upstream::UpstreamAddress;
+use crate::waf::FloodProtector;
 
-static UDP_TUNNEL_MANAGER: Lazy<parking_lot::RwLock<Option<Arc<UdpTunnelManager>>>> = 
-    Lazy::new(|| parking_lot::RwLock::new(None));
+static UDP_TUNNEL_MANAGER: LazyLock<parking_lot::RwLock<Option<Arc<UdpTunnelManager>>>> =
+    LazyLock::new(|| parking_lot::RwLock::new(None));
 
 pub fn init_udp_tunnel_manager(config: UdpTunnelConfig) {
     let manager = Arc::new(UdpTunnelManager::new(config));
@@ -223,7 +225,7 @@ impl UdpListenerPool {
         worker_id: usize,
     ) {
         let bind_addr = format!("{}:{}", config.bind_address, config.port);
-        
+
         #[cfg(unix)]
         let socket = {
             let addr: SocketAddr = match bind_addr.parse() {
@@ -233,13 +235,13 @@ impl UdpListenerPool {
                     return;
                 }
             };
-            
+
             let domain = if addr.is_ipv6() {
                 Domain::IPV6
             } else {
                 Domain::IPV4
             };
-            
+
             let sock = match Socket::new(domain, Type::DGRAM, Some(Protocol::UDP)) {
                 Ok(s) => s,
                 Err(e) => {
@@ -247,34 +249,38 @@ impl UdpListenerPool {
                     return;
                 }
             };
-            
+
             sock.set_reuse_address(true).ok();
-            
+
             if socket_options.reuse_port {
                 #[cfg(target_os = "linux")]
                 sock.set_reuse_port(true).ok();
             }
-            
+
             sock.set_nonblocking(true).ok();
-            
+
             let _ = sock.set_recv_buffer_size(socket_options.recv_buffer_size);
             let _ = sock.set_send_buffer_size(socket_options.send_buffer_size);
-            
+
             if let Err(e) = sock.bind(&addr.into()) {
                 tracing::error!("Failed to bind UDP socket to {}: {}", bind_addr, e);
                 return;
             }
-            
+
             let std_socket: std::net::UdpSocket = sock.into();
             match UdpSocket::from_std(std_socket) {
                 Ok(s) => s,
                 Err(e) => {
-                    tracing::error!("Failed to convert to tokio UDP socket for {}: {}", bind_addr, e);
+                    tracing::error!(
+                        "Failed to convert to tokio UDP socket for {}: {}",
+                        bind_addr,
+                        e
+                    );
                     return;
                 }
             }
         };
-        
+
         #[cfg(not(unix))]
         let socket = match UdpSocket::bind(&bind_addr).await {
             Ok(s) => s,
@@ -287,35 +293,35 @@ impl UdpListenerPool {
         let upstream_addr = match UpstreamAddress::parse(&config.upstream_address) {
             Ok(addr) => addr,
             Err(e) => {
-                tracing::error!("Invalid upstream address {}: {}", config.upstream_address, e);
+                tracing::error!(
+                    "Invalid upstream address {}: {}",
+                    config.upstream_address,
+                    e
+                );
                 return;
             }
         };
 
         let _upstream_unix_socket: Option<UnixDatagram> = match &upstream_addr {
             UpstreamAddress::Tcp(_) => None,
-            UpstreamAddress::Unix(path) => {
-                match std::os::unix::net::UnixDatagram::bind(path) {
-                    Ok(s) => Some(UnixDatagram::from_std(s).ok()).flatten(),
-                    Err(e) => {
-                        tracing::error!("Failed to bind Unix socket {}: {}", path.display(), e);
-                        None
-                    }
+            UpstreamAddress::Unix(path) => match std::os::unix::net::UnixDatagram::bind(path) {
+                Ok(s) => Some(UnixDatagram::from_std(s).ok()).flatten(),
+                Err(e) => {
+                    tracing::error!("Failed to bind Unix socket {}: {}", path.display(), e);
+                    None
                 }
-            }
+            },
             UpstreamAddress::QuicTunnel { .. } => None,
         };
 
         let tcp_upstream_socket: Option<UdpSocket> = match upstream_addr {
-            UpstreamAddress::Tcp(_) => {
-                match UdpSocket::bind("0.0.0.0:0").await {
-                    Ok(s) => Some(s),
-                    Err(e) => {
-                        tracing::error!("Failed to bind upstream UDP socket: {}", e);
-                        None
-                    }
+            UpstreamAddress::Tcp(_) => match UdpSocket::bind("0.0.0.0:0").await {
+                Ok(s) => Some(s),
+                Err(e) => {
+                    tracing::error!("Failed to bind upstream UDP socket: {}", e);
+                    None
                 }
-            }
+            },
             UpstreamAddress::Unix(_) => None,
             UpstreamAddress::QuicTunnel { .. } => None,
         };
@@ -344,7 +350,7 @@ impl UdpListenerPool {
                             if let Some(ref bw) = bandwidth {
                                 bw.record_ingress(n as u64, BandwidthProtocol::Udp);
                             }
-                            
+
                             let start = std::time::Instant::now();
                             let client_ip = client_addr.ip();
                             let data = &pooled_buf.as_slice()[..n];
@@ -457,7 +463,7 @@ impl UdpListenerPool {
                                             match registry.get_runtime().await {
                                                 Some(runtime) => {
                                                     let identifier = format!("udp-port-{}", port);
-                                                    
+
                                                     match runtime.open_tunnel_stream_to_peer(peer, &identifier).await {
                                                         Ok((mut send_stream, _recv_stream)) => {
                                                             match TunnelMessage::write_data_chunk_zero_copy(
@@ -504,7 +510,7 @@ impl UdpListenerPool {
                                 Ok(_sent) => {
                                     counter!("maluwaf.udp.packets_forwarded").increment(1);
                                     gauge!("maluwaf.udp.packet_size").set(n as f64);
-                                    
+
                                     let upstream_str = match &upstream_addr {
                                         UpstreamAddress::Tcp(addr) => addr.to_string(),
                                         UpstreamAddress::Unix(path) => path.to_string_lossy().to_string(),
@@ -562,16 +568,16 @@ impl RateEntry {
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
-                    .as_secs() as i64
+                    .as_secs() as i64,
             ),
         }
     }
 }
 
 fn hash_ip(ip: &std::net::IpAddr) -> usize {
-    use std::hash::{Hash, Hasher};
     use std::collections::hash_map::DefaultHasher;
-    
+    use std::hash::{Hash, Hasher};
+
     let mut hasher = DefaultHasher::new();
     ip.hash(&mut hasher);
     (hasher.finish() as usize) % SHARD_COUNT
@@ -595,31 +601,34 @@ impl UdpRateLimiter {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs() as i64;
-        
+
         let window_secs: i64 = 1;
         let shard_idx = hash_ip(&ip);
         let shard = &self.shards[shard_idx];
 
-        match shard.get(&ip) { Some(entry) => {
-            let window_start = entry.window_start.load(Ordering::Relaxed);
-            
-            if now - window_start >= window_secs {
-                entry.window_start.store(now, Ordering::Relaxed);
-                entry.count.store(1, Ordering::Relaxed);
-                return true;
+        match shard.get(&ip) {
+            Some(entry) => {
+                let window_start = entry.window_start.load(Ordering::Relaxed);
+
+                if now - window_start >= window_secs {
+                    entry.window_start.store(now, Ordering::Relaxed);
+                    entry.count.store(1, Ordering::Relaxed);
+                    return true;
+                }
+
+                let current = entry.count.fetch_add(1, Ordering::Relaxed);
+                if current >= limit {
+                    entry.count.fetch_sub(1, Ordering::Relaxed);
+                    return false;
+                }
+                true
             }
-            
-            let current = entry.count.fetch_add(1, Ordering::Relaxed);
-            if current >= limit {
-                entry.count.fetch_sub(1, Ordering::Relaxed);
-                return false;
+            _ => {
+                shard.insert(ip, RateEntry::new());
+                self.total_tracked.fetch_add(1, Ordering::Relaxed);
+                true
             }
-            true
-        } _ => {
-            shard.insert(ip, RateEntry::new());
-            self.total_tracked.fetch_add(1, Ordering::Relaxed);
-            true
-        }}
+        }
     }
 
     fn cleanup_stale(&self, max_age_secs: i64) {
@@ -627,7 +636,7 @@ impl UdpRateLimiter {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs() as i64;
-        
+
         let mut total_removed = 0u64;
         for shard in &self.shards {
             let before = shard.len() as u64;
@@ -637,9 +646,10 @@ impl UdpRateLimiter {
             });
             total_removed += before - shard.len() as u64;
         }
-        
+
         if total_removed > 0 {
-            self.total_tracked.fetch_sub(total_removed, Ordering::Relaxed);
+            self.total_tracked
+                .fetch_sub(total_removed, Ordering::Relaxed);
         }
     }
 }

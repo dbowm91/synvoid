@@ -1,5 +1,5 @@
 use crate::config::RuleFeedConfig;
-use crate::http_client::{HttpClient, get_with_timeout, create_simple_http_client};
+use crate::http_client::{create_simple_http_client, get_with_timeout, HttpClient};
 use chrono::DateTime;
 use ed25519_dalek::{Signature as Ed25519Signature, Verifier, VerifyingKey};
 use parking_lot::RwLock;
@@ -7,10 +7,12 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use std::sync::LazyLock;
+
 const EMBEDDED_PUBLIC_KEY: &str = "DEFAULT_EMBEDDED_PUBLIC_KEY_PLACEHOLDER";
 
-static RULE_PATTERN_STORE: once_cell::sync::Lazy<RwLock<GlobalRulePatterns>> = 
-    once_cell::sync::Lazy::new(|| RwLock::new(GlobalRulePatterns::default()));
+static RULE_PATTERN_STORE: LazyLock<RwLock<GlobalRulePatterns>> =
+    LazyLock::new(|| RwLock::new(GlobalRulePatterns::default()));
 
 #[derive(Default, Clone)]
 pub struct GlobalRulePatterns {
@@ -149,14 +151,18 @@ pub fn get_custom_patterns_for_category(category: &str) -> Vec<String> {
     Vec::new()
 }
 
-pub fn get_merged_patterns(category: &str, default_patterns: &[&'static str], config_custom: &[String]) -> Vec<String> {
+pub fn get_merged_patterns(
+    category: &str,
+    default_patterns: &[&'static str],
+    config_custom: &[String],
+) -> Vec<String> {
     let mut result: Vec<String> = default_patterns.iter().map(|s| s.to_string()).collect();
-    
+
     result.extend(config_custom.iter().cloned());
-    
+
     let feed_patterns = get_custom_patterns_for_category(category);
     result.extend(feed_patterns.iter().cloned());
-    
+
     result
 }
 
@@ -258,13 +264,17 @@ pub struct RuleFeedManager {
     last_update: Arc<RwLock<u64>>,
     last_check: Arc<RwLock<u64>>,
     embedded_public_key: VerifyingKey,
-    pub(crate) on_apply_callback: Arc<RwLock<Option<Box<dyn Fn(String, Vec<crate::process::ipc::RulePatternData>) + Send + Sync>>>>,
+    pub(crate) on_apply_callback: Arc<
+        RwLock<
+            Option<Box<dyn Fn(String, Vec<crate::process::ipc::RulePatternData>) + Send + Sync>>,
+        >,
+    >,
 }
 
 impl RuleFeedManager {
     pub fn new(config: RuleFeedConfig) -> Arc<Self> {
         let embedded_public_key = Self::parse_embedded_key(EMBEDDED_PUBLIC_KEY);
-        
+
         Arc::new(Self {
             config,
             client: create_simple_http_client(Duration::from_secs(30)),
@@ -288,9 +298,9 @@ impl RuleFeedManager {
         // If a real base64-encoded 32-byte Ed25519 public key is provided, use it
         if let Ok(bytes) = base64_decode(key_str) {
             if bytes.len() == 32 {
-                if let Ok(key) = VerifyingKey::from_bytes(
-                    bytes[..32].try_into().expect("Invalid key length")
-                ) {
+                if let Ok(key) =
+                    VerifyingKey::from_bytes(bytes[..32].try_into().expect("Invalid key length"))
+                {
                     return key;
                 }
             }
@@ -317,14 +327,13 @@ impl RuleFeedManager {
         }
 
         let self_clone = Arc::clone(self);
-        
+
         tokio::spawn(async move {
             loop {
                 self_clone.check_and_fetch().await;
-                
-                let interval = Duration::from_secs(
-                    self_clone.config.update_interval_hours as u64 * 3600
-                );
+
+                let interval =
+                    Duration::from_secs(self_clone.config.update_interval_hours as u64 * 3600);
                 tokio::time::sleep(interval).await;
             }
         });
@@ -332,25 +341,29 @@ impl RuleFeedManager {
 
     pub async fn check_and_fetch(&self) {
         *self.last_check.write() = now_timestamp();
-        
+
         tracing::info!("Checking for rule updates from {}", self.config.url);
-        
+
         match self.fetch_rules(&self.config.url).await {
             Ok(rules) => {
                 let current = self.current_version.read().clone();
                 let current_str = current.as_deref().unwrap_or("none");
-                
-                if !self.config.allow_downgrade && !Self::is_newer_version(&rules.version, current_str) {
-                    tracing::info!("Rule version {} is not newer than current {}", rules.version, current_str);
+
+                if !self.config.allow_downgrade
+                    && !Self::is_newer_version(&rules.version, current_str)
+                {
+                    tracing::info!(
+                        "Rule version {} is not newer than current {}",
+                        rules.version,
+                        current_str
+                    );
                     return;
                 }
 
                 tracing::info!("Fetched new rules version {}", rules.version);
                 *self.downloaded_rules.write() = Some(rules.clone());
-                
-                if self.config.auto_apply
-                    && self.apply_rules().is_ok()
-                {
+
+                if self.config.auto_apply && self.apply_rules().is_ok() {
                     *self.current_version.write() = Some(rules.version);
                     *self.last_update.write() = now_timestamp();
                 }
@@ -365,18 +378,14 @@ impl RuleFeedManager {
         if current == "none" {
             return true;
         }
-        
-        let new_parts: Vec<u32> = new.split('.')
-            .filter_map(|s| s.parse().ok())
-            .collect();
-        let current_parts: Vec<u32> = current.split('.')
-            .filter_map(|s| s.parse().ok())
-            .collect();
-        
+
+        let new_parts: Vec<u32> = new.split('.').filter_map(|s| s.parse().ok()).collect();
+        let current_parts: Vec<u32> = current.split('.').filter_map(|s| s.parse().ok()).collect();
+
         for i in 0..new_parts.len().max(current_parts.len()) {
             let new_part = new_parts.get(i).unwrap_or(&0);
             let current_part = current_parts.get(i).unwrap_or(&0);
-            
+
             if new_part > current_part {
                 return true;
             } else if new_part < current_part {
@@ -396,14 +405,14 @@ impl RuleFeedManager {
         }
 
         let body_str = String::from_utf8_lossy(&response.body);
-        let feed_response: RuleFeedResponse = serde_json::from_str(&body_str)
-            .map_err(|e| format!("Failed to parse JSON: {}", e))?;
+        let feed_response: RuleFeedResponse =
+            serde_json::from_str(&body_str).map_err(|e| format!("Failed to parse JSON: {}", e))?;
 
         let timestamp = Self::parse_timestamp(&feed_response.timestamp)
             .map_err(|e| format!("Invalid timestamp: {}", e))?;
 
         let payload_for_sig = Self::create_payload_for_signature(&feed_response);
-        
+
         self.verify_signature(&payload_for_sig, &feed_response.signature)?;
 
         let parsed = ParsedRules {
@@ -420,11 +429,11 @@ impl RuleFeedManager {
         if let Ok(dt) = DateTime::parse_from_rfc3339(ts) {
             return Ok(dt.timestamp() as u64);
         }
-        
+
         if let Ok(t) = ts.parse::<u64>() {
             return Ok(t);
         }
-        
+
         Err("Invalid timestamp format".to_string())
     }
 
@@ -439,15 +448,22 @@ impl RuleFeedManager {
             .map_err(|e| format!("Invalid signature encoding: {}", e))?;
 
         if signature_bytes.len() != 64 {
-            return Err(format!("Invalid signature length: {}", signature_bytes.len()));
+            return Err(format!(
+                "Invalid signature length: {}",
+                signature_bytes.len()
+            ));
         }
 
         let signature = Ed25519Signature::from_slice(&signature_bytes)
             .map_err(|e| format!("Invalid signature: {}", e))?;
 
         let payload_bytes = payload.as_bytes();
-        
-        if self.embedded_public_key.verify(payload_bytes, &signature).is_err() {
+
+        if self
+            .embedded_public_key
+            .verify(payload_bytes, &signature)
+            .is_err()
+        {
             return Err("Signature verification failed".to_string());
         }
 
@@ -459,15 +475,15 @@ impl RuleFeedManager {
         let rules = rules.as_ref().ok_or("No rules downloaded")?;
 
         apply_rule_set_to_detection(&rules.rules);
-        
+
         tracing::info!("Applied rule version {}", rules.version);
-        
+
         // Call the broadcast callback if set
         if let Some(ref callback) = *self.on_apply_callback.read() {
             let patterns = convert_rules_to_ipc_patterns(&rules.rules);
             callback(rules.version.clone(), patterns);
         }
-        
+
         Ok(())
     }
 
@@ -501,13 +517,13 @@ fn now_timestamp() -> u64 {
 
 fn base64_decode(input: &str) -> Result<Vec<u8>, String> {
     const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    
+
     let input = input.as_bytes();
     let mut output = Vec::with_capacity(input.len() * 3 / 4);
-    
+
     let mut buf = [0u8; 4];
     let mut buf_len = 0;
-    
+
     for &byte in input {
         if byte == b'=' {
             break;
@@ -515,13 +531,16 @@ fn base64_decode(input: &str) -> Result<Vec<u8>, String> {
         if byte == b'\n' || byte == b'\r' {
             continue;
         }
-        
-        let val = CHARS.iter().position(|&x| x == byte)
-            .ok_or_else(|| format!("Invalid base64 character: {}", byte as char))? as u8;
-        
+
+        let val = CHARS
+            .iter()
+            .position(|&x| x == byte)
+            .ok_or_else(|| format!("Invalid base64 character: {}", byte as char))?
+            as u8;
+
         buf[buf_len] = val;
         buf_len += 1;
-        
+
         if buf_len == 4 {
             output.push((buf[0] << 2) | (buf[1] >> 4));
             output.push((buf[1] << 4) | (buf[2] >> 2));
@@ -529,23 +548,23 @@ fn base64_decode(input: &str) -> Result<Vec<u8>, String> {
             buf_len = 0;
         }
     }
-    
+
     if buf_len > 0 {
         output.push((buf[0] << 2) | (buf[1] >> 4));
         if buf_len > 2 {
             output.push((buf[1] << 4) | (buf[2] >> 2));
         }
     }
-    
+
     Ok(output)
 }
 
 fn apply_rule_set_to_detection(rules: &RuleSet) {
     let mut global_patterns = RULE_PATTERN_STORE.write();
     global_patterns.update_from_rule_set(rules);
-    
+
     tracing::debug!("Updated global pattern store");
-    
+
     if let Some(ref sqli) = rules.sqli {
         tracing::debug!("Applying SQLi rules: enabled={}", sqli.enabled);
     }
@@ -584,7 +603,7 @@ impl RuleFeedManagerForWaf {
 
 fn convert_rules_to_ipc_patterns(rules: &RuleSet) -> Vec<crate::process::ipc::RulePatternData> {
     let mut patterns = Vec::new();
-    
+
     macro_rules! push_if_present {
         ($field:ident, $category:expr) => {
             if let Some(ref rule) = rules.$field {
@@ -597,7 +616,7 @@ fn convert_rules_to_ipc_patterns(rules: &RuleSet) -> Vec<crate::process::ipc::Ru
             }
         };
     }
-    
+
     push_if_present!(sqli, "sqli");
     push_if_present!(xss, "xss");
     push_if_present!(path_traversal, "path_traversal");
@@ -610,7 +629,7 @@ fn convert_rules_to_ipc_patterns(rules: &RuleSet) -> Vec<crate::process::ipc::Ru
     push_if_present!(ldap_injection, "ldap_injection");
     push_if_present!(xpath_injection, "xpath_injection");
     push_if_present!(open_redirect, "open_redirect");
-    
+
     patterns
 }
 
@@ -656,7 +675,10 @@ impl RuleFeedManagerForWaf {
 
     pub fn get_changelog(&self) -> Vec<ChangelogEntry> {
         let rules = self.inner.downloaded_rules.read();
-        rules.as_ref().map(|r| r.changelog.clone()).unwrap_or_default()
+        rules
+            .as_ref()
+            .map(|r| r.changelog.clone())
+            .unwrap_or_default()
     }
 }
 
@@ -761,10 +783,7 @@ mod tests {
         assert_eq!(ipc_patterns.len(), 2);
 
         let sqli = ipc_patterns.iter().find(|p| p.category == "sqli").unwrap();
-        assert_eq!(
-            sqli.patterns,
-            vec!["' OR 1=1", "UNION SELECT"]
-        );
+        assert_eq!(sqli.patterns, vec!["' OR 1=1", "UNION SELECT"]);
 
         let xss = ipc_patterns.iter().find(|p| p.category == "xss").unwrap();
         assert_eq!(xss.patterns, vec!["<script>"]);
@@ -789,7 +808,10 @@ mod tests {
             ..RuleSet::default()
         };
         patterns.update_from_rule_set(&rules);
-        assert_eq!(patterns.sqli, Some(vec!["pat1".to_string(), "pat2".to_string()]));
+        assert_eq!(
+            patterns.sqli,
+            Some(vec!["pat1".to_string(), "pat2".to_string()])
+        );
         assert!(patterns.xss.is_none());
     }
 

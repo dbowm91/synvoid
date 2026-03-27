@@ -105,6 +105,7 @@ The following vulnerabilities exist in transitive dependencies and are documente
 |---------------|-------|-----|--------|-------|
 | KyberSlash | `pqc_kyber` | RUSTSEC-2023-0079 | No fix | Used by wasm-pow for PoW challenges |
 | ~~Denial of Service~~ | ~~`quinn-proto`~~ | ~~RUSTSEC-2026-0037~~ | **Patched** | Fixed via git patch to 0.11.14 |
+| ~~Shared linear mem unsoundness~~ | ~~`wasmtime`~~ | ~~RUSTSEC-2025-0118~~ | **Patched** | 36.0.6 >= 36.0.3 fix threshold |
 
 ### Medium Severity
 
@@ -116,11 +117,12 @@ The following vulnerabilities exist in transitive dependencies and are documente
 
 | Crate | Alternative | Status | Notes |
 |-------|-------------|--------|-------|
-| ~~`bincode`~~ | ~~`postcard`~~ | **Completed** | Replaced with postcard |
+| ~~`bincode`~~ | ~~`postcard`~~ | **Removed** | Dead dependency — postcard shim handles serialization |
 | `paste` | None | Acceptable | Transitive via utoipa |
 | `proc-macro-error` | None | Acceptable | Transitive via yew |
 | `atomic-polyfill` | None | Acceptable | Transitive via postcard/heapless |
-| ~~`rustls-pemfile`~~ | ~~`rustls-pki-types`~~ | **Completed** | TLS certificate parsing |
+| ~~`rustls-pemfile`~~ | ~~`rustls-pki-types`~~ | **Removed** | Migrated to rustls-pki-types PEM iterator |
+| `once_cell` | `std::sync::LazyLock` | **Removed** | Replaced with std library equivalent |
 
 ---
 
@@ -134,13 +136,10 @@ The following vulnerabilities exist in transitive dependencies and are documente
 - **TODO**: Remove patch when quinn 0.11.10+ is released on crates.io
 - **Tracking**: https://github.com/quinn-rs/quinn/releases
 
-### rustls-pemfile → rustls-pki-types
+### rustls-pemfile Removal
 - **Issue**: Unmaintained (RUSTSEC-2025-0134)
-- **Fix**: Migrated to `rustls-pki-types` for PEM parsing
-- **Files changed**: 
-  - `src/tls/cert_resolver.rs`
-  - `src/mesh/cert.rs`
-  - `src/tunnel/quic/tls.rs`
+- **Fix**: Replaced with `rustls_pki_types::CertificateDer::pem_slice_iter()`
+- **Status**: `rustls-pemfile` removed from Cargo.toml
 
 ### bincode → postcard Migration
 - **Issue**: bincode unmaintained (RUSTSEC-2025-0141)

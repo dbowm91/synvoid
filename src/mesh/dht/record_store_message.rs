@@ -1,7 +1,11 @@
 use super::*;
 
 impl RecordStoreManager {
-    fn get_sender_reputation(&self, from_node: &str, signer: Option<&Arc<crate::mesh::protocol::MeshMessageSigner>>) -> i64 {
+    fn get_sender_reputation(
+        &self,
+        from_node: &str,
+        signer: Option<&Arc<crate::mesh::protocol::MeshMessageSigner>>,
+    ) -> i64 {
         if signer.is_some() {
             return 75;
         }
@@ -28,7 +32,10 @@ impl RecordStoreManager {
 
         if let Some(ts) = timestamp {
             if !validate_message_timestamp(ts) {
-                tracing::warn!("DHT message rejected: timestamp {} outside acceptable window", ts);
+                tracing::warn!(
+                    "DHT message rejected: timestamp {} outside acceptable window",
+                    ts
+                );
                 return None;
             }
         }
@@ -90,7 +97,11 @@ impl RecordStoreManager {
                 timestamp: _,
                 source_node_id: _,
             } => {
-                tracing::debug!("Received DhtRecordQuery from {} for key: {}", from_node, key);
+                tracing::debug!(
+                    "Received DhtRecordQuery from {} for key: {}",
+                    from_node,
+                    key
+                );
                 self.handle_record_query(request_id, key, from_node)
             }
             MeshMessage::DhtRecordResponse {
@@ -186,7 +197,7 @@ impl RecordStoreManager {
                     records.len(),
                     hop_count
                 );
-                
+
                 if seen_node_ids.contains(&self.node_id) {
                     tracing::debug!("DhtRecordPush already seen, skipping");
                     return None;
@@ -200,11 +211,12 @@ impl RecordStoreManager {
                 self.compute_merkle_tree();
 
                 if *hop_count < 5 {
-                    let new_seen_ids: Vec<String> = seen_node_ids.iter()
+                    let new_seen_ids: Vec<String> = seen_node_ids
+                        .iter()
                         .chain(std::iter::once(&self.node_id))
                         .cloned()
                         .collect();
-                    
+
                     let ack = MeshMessage::DhtRecordPushAck {
                         request_id: format!("{}-ack", request_id).into(),
                         original_request_id: request_id.clone(),
@@ -213,7 +225,7 @@ impl RecordStoreManager {
                         missing_keys: Vec::new(),
                         timestamp: MeshMessage::generate_timestamp(),
                     };
-                    
+
                     Some(ack)
                 } else {
                     None
@@ -233,7 +245,7 @@ impl RecordStoreManager {
                     original_request_id,
                     accepted
                 );
-                
+
                 if *accepted {
                     self.record_propagation_ack(original_request_id);
                 }
@@ -246,13 +258,13 @@ impl RecordStoreManager {
     pub fn compute_merkle_tree(&self) {
         let records = self.records.read();
         let mut record_map = HashMap::new();
-        
+
         for (key, entry) in records.iter() {
             record_map.insert(key.clone(), entry.record.value.clone());
         }
-        
+
         let tree = MerkleTree::from_records(&record_map);
-        
+
         let mut merkle = self.merkle_tree.write();
         *merkle = Some(tree);
     }
@@ -262,7 +274,10 @@ impl RecordStoreManager {
         merkle.as_ref().and_then(|t| t.root_hash())
     }
 
-    pub fn generate_merkle_proof(&self, keys: &[String]) -> Option<crate::mesh::dht::merkle::MerkleProof> {
+    pub fn generate_merkle_proof(
+        &self,
+        keys: &[String],
+    ) -> Option<crate::mesh::dht::merkle::MerkleProof> {
         let merkle = self.merkle_tree.read();
         merkle.as_ref().and_then(|t| t.generate_proof(keys))
     }
@@ -286,9 +301,13 @@ impl RecordStoreManager {
         }
 
         let my_root_hash = self.get_merkle_root_hash();
-        
+
         if my_root_hash.as_deref() == Some(local_root_hash) {
-            tracing::debug!("DHT anti-entropy: {} has same root hash as {}", from_node, self.node_id);
+            tracing::debug!(
+                "DHT anti-entropy: {} has same root hash as {}",
+                from_node,
+                self.node_id
+            );
             return Some(MeshMessage::DhtAntiEntropyResponse {
                 request_id: request_id.into(),
                 root_hash: local_root_hash.to_vec(),
@@ -302,16 +321,20 @@ impl RecordStoreManager {
         }
 
         let records = self.get_records_for_keys(interested_keys);
-        
+
         let proof = self.generate_merkle_proof(interested_keys);
-        let proof_keys: Vec<String> = proof.as_ref().map(|p| p.queried_keys.clone()).unwrap_or_default();
-        let proof_hashes: Vec<Vec<u8>> = proof.as_ref().map(|p| {
-            p.proof_nodes.iter().map(|n| n.hash.clone()).collect()
-        }).unwrap_or_default();
+        let proof_keys: Vec<String> = proof
+            .as_ref()
+            .map(|p| p.queried_keys.clone())
+            .unwrap_or_default();
+        let proof_hashes: Vec<Vec<u8>> = proof
+            .as_ref()
+            .map(|p| p.proof_nodes.iter().map(|n| n.hash.clone()).collect())
+            .unwrap_or_default();
 
         let mut signature = Vec::new();
         let mut signer_public_key = String::new();
-        
+
         let mesh_signer = self.mesh_signer.read();
         if let Some(ref signer) = *mesh_signer {
             let timestamp = MeshMessage::generate_timestamp();
@@ -345,11 +368,7 @@ impl RecordStoreManager {
         })
     }
 
-    pub fn handle_anti_entropy_response(
-        &self,
-        response: &MeshMessage,
-        from_node: &str,
-    ) {
+    pub fn handle_anti_entropy_response(&self, response: &MeshMessage, from_node: &str) {
         if !self.config.enabled {
             return;
         }
@@ -363,7 +382,8 @@ impl RecordStoreManager {
             timestamp: _,
             signature: _,
             signer_public_key: _,
-        } = response else {
+        } = response
+        else {
             return;
         };
 
@@ -374,7 +394,7 @@ impl RecordStoreManager {
 
         let mut stored_count = 0;
         let reputation = self.get_sender_reputation(from_node, None);
-        
+
         for record in missing_records {
             if self.store_record(record.clone(), reputation) {
                 stored_count += 1;
@@ -382,7 +402,7 @@ impl RecordStoreManager {
         }
 
         self.compute_merkle_tree();
-        
+
         tracing::info!(
             "DHT anti-entropy: stored {} records from {}",
             stored_count,
@@ -419,7 +439,8 @@ impl RecordStoreManager {
                             tracing::debug!("Skipping anti-entropy: Kademlia routing is enabled");
                             continue;
                         }
-                        let _ = Self::run_anti_entropy_cycle(&record_store, replication_factor).await;
+                        let _ =
+                            Self::run_anti_entropy_cycle(&record_store, replication_factor).await;
                     }
                 }
             }
@@ -437,7 +458,7 @@ impl RecordStoreManager {
 
         let topology = transport.get_topology();
         let peers = topology.get_global_nodes_as_peer_info().await;
-        
+
         if peers.is_empty() {
             return;
         }
@@ -454,44 +475,55 @@ impl RecordStoreManager {
 
         let signer_public_key = {
             let mesh_signer = record_store.mesh_signer.read();
-            mesh_signer.as_ref().map(|s| s.get_public_key()).unwrap_or_default()
+            mesh_signer
+                .as_ref()
+                .map(|s| s.get_public_key())
+                .unwrap_or_default()
         };
 
         let transport_clone = transport.clone();
-        
-        let anti_entropy_futures: Vec<_> = selected_peers.iter().map(|peer| {
-            let request_id = MeshMessage::generate_nonce().to_string();
-            
-            let interested_keys: Vec<String> = {
-                let records = record_store.records.read();
-                let mut entries: Vec<_> = records.iter()
-                    .map(|(k, v)| (k.clone(), v.version))
-                    .collect();
-                entries.sort_by(|a, b| b.1.cmp(&a.1));
-                entries.into_iter()
-                    .take(100)
-                    .map(|(k, _)| k)
-                    .collect()
-            };
 
-            let request = MeshMessage::DhtAntiEntropyRequest {
-                request_id: request_id.into(),
-                node_id: node_id.clone().into(),
-                local_root_hash: my_root_hash.clone(),
-                interested_keys,
-                timestamp: MeshMessage::generate_timestamp(),
-                signer_public_key: signer_public_key.clone(),
-            };
+        let anti_entropy_futures: Vec<_> = selected_peers
+            .iter()
+            .map(|peer| {
+                let request_id = MeshMessage::generate_nonce().to_string();
 
-            let transport = transport_clone.clone();
-            async move {
-                if let Err(e) = transport.send_datagram_to_peer(&peer.node_id, &request).await {
-                    tracing::debug!("DHT anti-entropy request to {} failed: {}", peer.node_id, e);
-                } else {
-                    tracing::debug!("DHT anti-entropy request sent to {}", peer.node_id);
+                let interested_keys: Vec<String> = {
+                    let records = record_store.records.read();
+                    let mut entries: Vec<_> = records
+                        .iter()
+                        .map(|(k, v)| (k.clone(), v.version))
+                        .collect();
+                    entries.sort_by(|a, b| b.1.cmp(&a.1));
+                    entries.into_iter().take(100).map(|(k, _)| k).collect()
+                };
+
+                let request = MeshMessage::DhtAntiEntropyRequest {
+                    request_id: request_id.into(),
+                    node_id: node_id.clone().into(),
+                    local_root_hash: my_root_hash.clone(),
+                    interested_keys,
+                    timestamp: MeshMessage::generate_timestamp(),
+                    signer_public_key: signer_public_key.clone(),
+                };
+
+                let transport = transport_clone.clone();
+                async move {
+                    if let Err(e) = transport
+                        .send_datagram_to_peer(&peer.node_id, &request)
+                        .await
+                    {
+                        tracing::debug!(
+                            "DHT anti-entropy request to {} failed: {}",
+                            peer.node_id,
+                            e
+                        );
+                    } else {
+                        tracing::debug!("DHT anti-entropy request sent to {}", peer.node_id);
+                    }
                 }
-            }
-        }).collect();
+            })
+            .collect();
 
         futures::future::join_all(anti_entropy_futures).await;
     }

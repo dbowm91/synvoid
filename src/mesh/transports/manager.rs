@@ -13,8 +13,8 @@ use crate::mesh::config::MeshConfig;
 use crate::mesh::protocol::MeshMessage;
 use crate::mesh::topology::MeshTopology;
 use crate::mesh::transports::{
-    MeshTransportError, MeshTransportTrait, MeshTransportType, QuicMeshTransport,
-    TransportHint, WireGuardMeshTransport,
+    MeshTransportError, MeshTransportTrait, MeshTransportType, QuicMeshTransport, TransportHint,
+    WireGuardMeshTransport,
 };
 
 pub const DEFAULT_MAX_RETRIES: u32 = 5;
@@ -86,9 +86,12 @@ pub struct MeshTransportManager {
     record_store: Option<Arc<crate::mesh::dht::RecordStoreManager>>,
     routing_manager: Option<Arc<crate::mesh::dht::routing::DhtRoutingManager>>,
     // Config caches with metrics
-    image_protection_cache: Arc<RwLock<LruCache<String, (crate::mesh::config::MeshImageProtectionConfig, Instant)>>>,
-    compression_cache: Arc<RwLock<LruCache<String, (crate::mesh::config::MeshCompressionConfig, Instant)>>>,
-    minification_cache: Arc<RwLock<LruCache<String, (crate::mesh::config::MeshMinificationConfig, Instant)>>>,
+    image_protection_cache:
+        Arc<RwLock<LruCache<String, (crate::mesh::config::MeshImageProtectionConfig, Instant)>>>,
+    compression_cache:
+        Arc<RwLock<LruCache<String, (crate::mesh::config::MeshCompressionConfig, Instant)>>>,
+    minification_cache:
+        Arc<RwLock<LruCache<String, (crate::mesh::config::MeshMinificationConfig, Instant)>>>,
     // Inflight tracking for stampede prevention
     image_protection_inflight: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
     compression_inflight: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
@@ -104,23 +107,17 @@ pub struct MeshTransportManager {
 
 impl MeshTransportManager {
     pub fn new(
-        config: Arc<MeshConfig>, 
+        config: Arc<MeshConfig>,
         topology: Arc<MeshTopology>,
         record_store: Option<Arc<crate::mesh::dht::RecordStoreManager>>,
     ) -> Self {
-        let image_protection_cache = LruCache::with_expiry_duration_and_capacity(
-            Duration::from_secs(300),
-            1000,
-        );
-        let compression_cache = LruCache::with_expiry_duration_and_capacity(
-            Duration::from_secs(300),
-            1000,
-        );
-        let minification_cache = LruCache::with_expiry_duration_and_capacity(
-            Duration::from_secs(300),
-            1000,
-        );
-        
+        let image_protection_cache =
+            LruCache::with_expiry_duration_and_capacity(Duration::from_secs(300), 1000);
+        let compression_cache =
+            LruCache::with_expiry_duration_and_capacity(Duration::from_secs(300), 1000);
+        let minification_cache =
+            LruCache::with_expiry_duration_and_capacity(Duration::from_secs(300), 1000);
+
         Self {
             config,
             topology,
@@ -145,7 +142,10 @@ impl MeshTransportManager {
         }
     }
 
-    pub fn set_routing_manager(&mut self, manager: Arc<crate::mesh::dht::routing::DhtRoutingManager>) {
+    pub fn set_routing_manager(
+        &mut self,
+        manager: Arc<crate::mesh::dht::routing::DhtRoutingManager>,
+    ) {
         self.routing_manager = Some(manager);
     }
 
@@ -285,9 +285,7 @@ impl MeshTransportManager {
             fallback
         );
 
-        let fallback_result = self
-            .try_send_with_retry(peer_id, message, fallback)
-            .await;
+        let fallback_result = self.try_send_with_retry(peer_id, message, fallback).await;
 
         if fallback_result.is_ok() {
             self.record_fallback(peer_id);
@@ -333,10 +331,7 @@ impl MeshTransportManager {
     ) -> Result<(), MeshTransportError> {
         let mut retry_count = {
             let states = self.peer_states.read();
-            states
-                .get(peer_id)
-                .map(|s| s.fallback_count)
-                .unwrap_or(0)
+            states.get(peer_id).map(|s| s.fallback_count).unwrap_or(0)
         };
 
         let max_retries = DEFAULT_MAX_RETRIES;
@@ -359,7 +354,7 @@ impl MeshTransportManager {
 
             let backoff = RETRY_BACKOFF_BASE_MS * (2_u64.pow(retry_count.min(5)));
             let backoff_duration = Duration::from_millis(backoff.min(RETRY_BACKOFF_MAX_MS));
-            
+
             tracing::debug!(
                 "Retry attempt {}/{} for peer {} after {:?}",
                 retry_count + 1,
@@ -472,10 +467,7 @@ impl MeshTransportManager {
     ) -> Result<(), MeshTransportError> {
         let mut retry_count = {
             let states = self.peer_states.read();
-            states
-                .get(peer_id)
-                .map(|s| s.fallback_count)
-                .unwrap_or(0)
+            states.get(peer_id).map(|s| s.fallback_count).unwrap_or(0)
         };
 
         let max_retries = DEFAULT_MAX_RETRIES;
@@ -500,7 +492,7 @@ impl MeshTransportManager {
 
             let backoff = RETRY_BACKOFF_BASE_MS * (2_u64.pow(retry_count.min(5)));
             let backoff_duration = Duration::from_millis(backoff.min(RETRY_BACKOFF_MAX_MS));
-            
+
             tracing::debug!(
                 "Datagram retry attempt {}/{} for peer {} after {:?}",
                 retry_count + 1,
@@ -572,7 +564,7 @@ impl MeshTransportManager {
         fanout_factor: f64,
     ) -> Result<usize, MeshTransportError> {
         let peer_count = self.topology.get_healthy_peer_count().await;
-        
+
         if peer_count == 0 {
             return Ok(0);
         }
@@ -581,15 +573,17 @@ impl MeshTransportManager {
         let target_count = fanout_count.max(1).min(peer_count);
 
         let peers = self.topology.get_random_peers(target_count, None).await;
-        
+
         if peers.is_empty() {
             return Ok(0);
         }
 
         let mut sent_count = 0;
-        
+
         for peer in &peers {
-            let result = self.send_datagram(&peer.node_id, message, TransportHint::Default).await;
+            let result = self
+                .send_datagram(&peer.node_id, message, TransportHint::Default)
+                .await;
             match result {
                 Ok(_) => sent_count += 1,
                 Err(e) => {
@@ -654,10 +648,7 @@ impl MeshTransportManager {
 
     pub fn get_peer_fallback_count(&self, peer_id: &str) -> u32 {
         let states = self.peer_states.read();
-        states
-            .get(peer_id)
-            .map(|s| s.fallback_count)
-            .unwrap_or(0)
+        states.get(peer_id).map(|s| s.fallback_count).unwrap_or(0)
     }
 
     pub fn should_retry_preferred(&self, peer_id: &str) -> bool {
@@ -677,14 +668,13 @@ impl MeshTransportManager {
         if !self.config.global_node.key_exchange_enabled {
             return None;
         }
-        
+
         let port = self.config.global_node.key_exchange_port;
-        
+
         match crate::utils::get_first_non_loopback_ip() {
             Ok(ip) => Some(format!("https://{}:{}", ip, port)),
             Err(_) => {
-                let bind_address = self.config.bind_address.as_deref()
-                    .unwrap_or("0.0.0.0");
+                let bind_address = self.config.bind_address.as_deref().unwrap_or("0.0.0.0");
                 Some(format!("https://{}:{}", bind_address, port))
             }
         }
@@ -727,16 +717,17 @@ impl MeshTransportManager {
                 }
             }
         }
-        
+
         let endpoint_for_signing = key_exchange_endpoint.clone().unwrap_or_default();
-        let signable = format!("{}:{}:{}:{}:{}", 
-            node_id, 
+        let signable = format!(
+            "{}:{}:{}:{}:{}",
+            node_id,
             public_key,
-            crate::mesh::protocol::GlobalNodeAction::UpdateKeyExchange as u8, 
+            crate::mesh::protocol::GlobalNodeAction::UpdateKeyExchange as u8,
             timestamp,
             endpoint_for_signing
         );
-        
+
         let signature = match genesis_key.sign(&signable) {
             Some(sig) => sig,
             None => {
@@ -758,7 +749,7 @@ impl MeshTransportManager {
         // Use the manager's broadcast method
         use crate::mesh::transports::TransportHint;
         let _ = self.broadcast_datagram(&msg, TransportHint::Default).await;
-        
+
         tracing::info!("Broadcasted key exchange endpoint update for global node");
     }
 
@@ -768,37 +759,45 @@ impl MeshTransportManager {
             if let Some(record) = record_store.get_record(&key) {
                 match serde_json::from_slice::<serde_json::Value>(&record.value) {
                     Ok(value) => {
-                        let timestamp = value.get("timestamp")
-                            .and_then(|v| v.as_u64())
-                            .unwrap_or(0);
-                        
+                        let timestamp =
+                            value.get("timestamp").and_then(|v| v.as_u64()).unwrap_or(0);
+
                         let max_age_secs = DHT_TTL_KEY_EXCHANGE_ENDPOINT * 2;
                         let current_time = current_timestamp();
-                        
+
                         if current_time > timestamp + max_age_secs {
-                            tracing::warn!("Stale key exchange endpoint record for {} (age: {}s)", 
-                                node_id, 
-                                current_time - timestamp);
+                            tracing::warn!(
+                                "Stale key exchange endpoint record for {} (age: {}s)",
+                                node_id,
+                                current_time - timestamp
+                            );
                         } else {
-                            return value.get("endpoint")
+                            return value
+                                .get("endpoint")
                                 .and_then(|v| v.as_str())
                                 .map(|s| s.to_string());
                         }
                     }
                     Err(e) => {
-                        tracing::warn!("Failed to deserialize key exchange endpoint for {}: {}", node_id, e);
+                        tracing::warn!(
+                            "Failed to deserialize key exchange endpoint for {}: {}",
+                            node_id,
+                            e
+                        );
                     }
                 }
             }
         } else {
-            tracing::warn!("Cannot lookup key exchange endpoint from DHT: record store not available");
+            tracing::warn!(
+                "Cannot lookup key exchange endpoint from DHT: record store not available"
+            );
         }
-        
+
         if let Some(endpoint) = self.config.global_node.known_origin_keys.get(node_id) {
             tracing::debug!("Fallback: using known_origin_keys for node {}", node_id);
             return Some(endpoint.clone());
         }
-        
+
         None
     }
 
@@ -831,19 +830,21 @@ impl MeshTransportManager {
             if let Some(record) = record_store.get_record(&key) {
                 match serde_json::from_slice::<serde_json::Value>(&record.value) {
                     Ok(value) => {
-                        let timestamp = value.get("timestamp")
-                            .and_then(|v| v.as_u64())
-                            .unwrap_or(0);
-                        
+                        let timestamp =
+                            value.get("timestamp").and_then(|v| v.as_u64()).unwrap_or(0);
+
                         let max_age_secs = DHT_TTL_EDGE_KEY * 2;
                         let current_time = current_timestamp();
-                        
+
                         if current_time > timestamp + max_age_secs {
-                            tracing::warn!("Stale edge key record for {} (age: {}s)", 
-                                edge_id, 
-                                current_time - timestamp);
+                            tracing::warn!(
+                                "Stale edge key record for {} (age: {}s)",
+                                edge_id,
+                                current_time - timestamp
+                            );
                         } else {
-                            return value.get("public_key")
+                            return value
+                                .get("public_key")
                                 .and_then(|v| v.as_str())
                                 .map(|s| s.to_string());
                         }
@@ -856,12 +857,12 @@ impl MeshTransportManager {
         } else {
             tracing::warn!("Cannot lookup edge key from DHT: record store not available");
         }
-        
+
         if let Some(key) = self.config.global_node.known_edge_keys.get(edge_id) {
             tracing::debug!("Fallback: using known_edge_keys for edge {}", edge_id);
             return Some(key.clone());
         }
-        
+
         None
     }
 
@@ -871,38 +872,49 @@ impl MeshTransportManager {
             if let Some(record) = record_store.get_record(&key) {
                 match serde_json::from_slice::<serde_json::Value>(&record.value) {
                     Ok(value) => {
-                        let timestamp = value.get("timestamp")
-                            .and_then(|v| v.as_u64())
-                            .unwrap_or(0);
-                        
+                        let timestamp =
+                            value.get("timestamp").and_then(|v| v.as_u64()).unwrap_or(0);
+
                         let max_age_secs = DHT_TTL_GLOBAL_NODE_KEY * 2;
                         let current_time = current_timestamp();
-                        
+
                         if current_time > timestamp + max_age_secs {
-                            tracing::warn!("Stale global node key record for {} (age: {}s)", 
-                                node_id, 
-                                current_time - timestamp);
+                            tracing::warn!(
+                                "Stale global node key record for {} (age: {}s)",
+                                node_id,
+                                current_time - timestamp
+                            );
                         } else {
-                            return value.get("public_key")
+                            return value
+                                .get("public_key")
                                 .and_then(|v| v.as_str())
                                 .map(|s| s.to_string());
                         }
                     }
                     Err(e) => {
-                        tracing::warn!("Failed to deserialize global node key for {}: {}", node_id, e);
+                        tracing::warn!(
+                            "Failed to deserialize global node key for {}: {}",
+                            node_id,
+                            e
+                        );
                         return Some(String::from_utf8_lossy(&record.value).to_string());
                     }
                 }
             }
         } else {
-            tracing::warn!("Cannot lookup global node public key from DHT: record store not available");
+            tracing::warn!(
+                "Cannot lookup global node public key from DHT: record store not available"
+            );
         }
-        
+
         if let Some(key) = self.config.global_node.known_origin_keys.get(node_id) {
-            tracing::debug!("Fallback: using known_origin_keys for global node {}", node_id);
+            tracing::debug!(
+                "Fallback: using known_origin_keys for global node {}",
+                node_id
+            );
             return Some(key.clone());
         }
-        
+
         None
     }
 
@@ -915,19 +927,22 @@ impl MeshTransportManager {
             let mut cache = self.image_protection_cache.write();
             if let Some((config, cached_at)) = cache.get(upstream_id).cloned() {
                 if cached_at.elapsed() < Duration::from_secs(300) {
-                    self.image_protection_cache_hits.fetch_add(1, Ordering::Relaxed);
+                    self.image_protection_cache_hits
+                        .fetch_add(1, Ordering::Relaxed);
                     counter!("maluwaf.mesh.image_protection_cache_hits", "upstream" => upstream_id.to_string()).increment(1);
                     tracing::debug!("Image protection cache hit for upstream: {}", upstream_id);
                     return Some(config);
                 }
             }
-            self.image_protection_cache_misses.fetch_add(1, Ordering::Relaxed);
+            self.image_protection_cache_misses
+                .fetch_add(1, Ordering::Relaxed);
         }
 
         // Get or create per-key mutex for stampede protection
         let key_lock = {
             let mut inflight = self.image_protection_inflight.lock().await;
-            inflight.entry(upstream_id.to_string())
+            inflight
+                .entry(upstream_id.to_string())
                 .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
                 .clone()
         };
@@ -939,7 +954,8 @@ impl MeshTransportManager {
             let mut cache = self.image_protection_cache.write();
             if let Some((config, cached_at)) = cache.get(upstream_id).cloned() {
                 if cached_at.elapsed() < Duration::from_secs(300) {
-                    self.image_protection_cache_hits.fetch_add(1, Ordering::Relaxed);
+                    self.image_protection_cache_hits
+                        .fetch_add(1, Ordering::Relaxed);
                     return Some(config);
                 }
             }
@@ -953,7 +969,7 @@ impl MeshTransportManager {
         };
 
         let key = format!("upstream_image_protection:{}", upstream_id);
-        
+
         let record = match record_store.get_record(&key) {
             Some(r) => r,
             None => {
@@ -961,7 +977,7 @@ impl MeshTransportManager {
                 return None;
             }
         };
-        
+
         let value = match String::from_utf8(record.value.clone()) {
             Ok(v) => v,
             Err(e) => {
@@ -970,7 +986,7 @@ impl MeshTransportManager {
                 return None;
             }
         };
-        
+
         let parsed: serde_json::Value = match serde_json::from_str(&value) {
             Ok(v) => v,
             Err(e) => {
@@ -979,13 +995,21 @@ impl MeshTransportManager {
                 return None;
             }
         };
-        
+
         let config = crate::mesh::config::MeshImageProtectionConfig {
             enabled: parsed.get("enabled").and_then(|v| v.as_bool()),
-            min_size_bytes: parsed.get("min_size_bytes").and_then(|v| v.as_u64()).map(|v| v as usize),
-            whitelist_patterns: parsed.get("whitelist_patterns")
+            min_size_bytes: parsed
+                .get("min_size_bytes")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as usize),
+            whitelist_patterns: parsed
+                .get("whitelist_patterns")
                 .and_then(|v| v.as_array())
-                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect()),
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                }),
         };
 
         // Cache the result
@@ -995,9 +1019,13 @@ impl MeshTransportManager {
         }
 
         counter!("maluwaf.mesh.image_protection_dht_fetches", "status" => "success", "upstream" => upstream_id.to_string()).increment(1);
-        histogram!("maluwaf.mesh.image_protection_dht_fetch_latency").record(fetch_start.elapsed().as_secs_f64());
-        tracing::debug!("Fetched image protection from DHT for upstream: {}", upstream_id);
-        
+        histogram!("maluwaf.mesh.image_protection_dht_fetch_latency")
+            .record(fetch_start.elapsed().as_secs_f64());
+        tracing::debug!(
+            "Fetched image protection from DHT for upstream: {}",
+            upstream_id
+        );
+
         Some(config)
     }
 
@@ -1016,13 +1044,15 @@ impl MeshTransportManager {
                     return Some(config);
                 }
             }
-            self.compression_cache_misses.fetch_add(1, Ordering::Relaxed);
+            self.compression_cache_misses
+                .fetch_add(1, Ordering::Relaxed);
         }
 
         // Get or create per-key mutex
         let key_lock = {
             let mut inflight = self.compression_inflight.lock().await;
-            inflight.entry(upstream_id.to_string())
+            inflight
+                .entry(upstream_id.to_string())
                 .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
                 .clone()
         };
@@ -1048,7 +1078,7 @@ impl MeshTransportManager {
         };
 
         let key = format!("upstream_compression:{}", upstream_id);
-        
+
         let record = match record_store.get_record(&key) {
             Some(r) => r,
             None => {
@@ -1056,7 +1086,7 @@ impl MeshTransportManager {
                 return None;
             }
         };
-        
+
         let value = match String::from_utf8(record.value.clone()) {
             Ok(v) => v,
             Err(e) => {
@@ -1065,7 +1095,7 @@ impl MeshTransportManager {
                 return None;
             }
         };
-        
+
         let parsed: serde_json::Value = match serde_json::from_str(&value) {
             Ok(v) => v,
             Err(e) => {
@@ -1074,17 +1104,31 @@ impl MeshTransportManager {
                 return None;
             }
         };
-        
+
         let config = crate::mesh::config::MeshCompressionConfig {
             enabled: parsed.get("enabled").and_then(|v| v.as_bool()),
             gzip_on_the_fly: parsed.get("gzip_on_the_fly").and_then(|v| v.as_bool()),
-            gzip_level: parsed.get("gzip_level").and_then(|v| v.as_u64()).map(|v| v as u32),
-            gzip_min_size: parsed.get("gzip_min_size").and_then(|v| v.as_u64()).map(|v| v as usize),
-            gzip_types: parsed.get("gzip_types")
+            gzip_level: parsed
+                .get("gzip_level")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as u32),
+            gzip_min_size: parsed
+                .get("gzip_min_size")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as usize),
+            gzip_types: parsed
+                .get("gzip_types")
                 .and_then(|v| v.as_array())
-                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect()),
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                }),
             enable_brotli: parsed.get("enable_brotli").and_then(|v| v.as_bool()),
-            brotli_level: parsed.get("brotli_level").and_then(|v| v.as_u64()).map(|v| v as u32),
+            brotli_level: parsed
+                .get("brotli_level")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as u32),
         };
 
         // Cache the result
@@ -1094,9 +1138,10 @@ impl MeshTransportManager {
         }
 
         counter!("maluwaf.mesh.compression_dht_fetches", "status" => "success", "upstream" => upstream_id.to_string()).increment(1);
-        histogram!("maluwaf.mesh.compression_dht_fetch_latency").record(fetch_start.elapsed().as_secs_f64());
+        histogram!("maluwaf.mesh.compression_dht_fetch_latency")
+            .record(fetch_start.elapsed().as_secs_f64());
         tracing::debug!("Fetched compression from DHT for upstream: {}", upstream_id);
-        
+
         Some(config)
     }
 
@@ -1115,13 +1160,15 @@ impl MeshTransportManager {
                     return Some(config);
                 }
             }
-            self.minification_cache_misses.fetch_add(1, Ordering::Relaxed);
+            self.minification_cache_misses
+                .fetch_add(1, Ordering::Relaxed);
         }
 
         // Get or create per-key mutex
         let key_lock = {
             let mut inflight = self.minification_inflight.lock().await;
-            inflight.entry(upstream_id.to_string())
+            inflight
+                .entry(upstream_id.to_string())
                 .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
                 .clone()
         };
@@ -1147,7 +1194,7 @@ impl MeshTransportManager {
         };
 
         let key = format!("upstream_minification:{}", upstream_id);
-        
+
         let record = match record_store.get_record(&key) {
             Some(r) => r,
             None => {
@@ -1155,7 +1202,7 @@ impl MeshTransportManager {
                 return None;
             }
         };
-        
+
         let value = match String::from_utf8(record.value.clone()) {
             Ok(v) => v,
             Err(e) => {
@@ -1164,7 +1211,7 @@ impl MeshTransportManager {
                 return None;
             }
         };
-        
+
         let parsed: serde_json::Value = match serde_json::from_str(&value) {
             Ok(v) => v,
             Err(e) => {
@@ -1173,7 +1220,7 @@ impl MeshTransportManager {
                 return None;
             }
         };
-        
+
         let config = crate::mesh::config::MeshMinificationConfig {
             enabled: parsed.get("enabled").and_then(|v| v.as_bool()),
             enable_html: parsed.get("enable_html").and_then(|v| v.as_bool()),
@@ -1188,9 +1235,13 @@ impl MeshTransportManager {
         }
 
         counter!("maluwaf.mesh.minification_dht_fetches", "status" => "success", "upstream" => upstream_id.to_string()).increment(1);
-        histogram!("maluwaf.mesh.minification_dht_fetch_latency").record(fetch_start.elapsed().as_secs_f64());
-        tracing::debug!("Fetched minification from DHT for upstream: {}", upstream_id);
-        
+        histogram!("maluwaf.mesh.minification_dht_fetch_latency")
+            .record(fetch_start.elapsed().as_secs_f64());
+        tracing::debug!(
+            "Fetched minification from DHT for upstream: {}",
+            upstream_id
+        );
+
         Some(config)
     }
 

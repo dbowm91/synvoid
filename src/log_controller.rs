@@ -1,8 +1,8 @@
-use once_cell::sync::Lazy;
 use parking_lot::RwLock;
+use std::sync::LazyLock;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
-pub static LOG_LEVEL: Lazy<RwLock<String>> = Lazy::new(|| RwLock::new("info".to_string()));
+pub static LOG_LEVEL: LazyLock<RwLock<String>> = LazyLock::new(|| RwLock::new("info".to_string()));
 
 pub fn init_logging_with_dynamic_level(level: &str) {
     *LOG_LEVEL.write() = level.to_string();

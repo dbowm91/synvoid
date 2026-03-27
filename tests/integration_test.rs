@@ -702,18 +702,8 @@ mod block_store_tests {
         let temp_dir = TempDir::new().unwrap();
         let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
 
-        store.block_ip(
-            "10.0.0.1".parse().unwrap(),
-            "permanent",
-            0,
-            "global",
-        );
-        store.block_ip(
-            "10.0.0.2".parse().unwrap(),
-            "temp",
-            3600,
-            "global",
-        );
+        store.block_ip("10.0.0.1".parse().unwrap(), "permanent", 0, "global");
+        store.block_ip("10.0.0.2".parse().unwrap(), "temp", 3600, "global");
 
         let stats = store.get_stats();
 

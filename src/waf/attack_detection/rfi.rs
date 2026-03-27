@@ -1,15 +1,15 @@
 use aho_corasick::AhoCorasick;
-use once_cell::sync::Lazy;
 use regex::Regex;
 use std::sync::Arc;
+use std::sync::LazyLock;
 
 use crate::utils::url_decode_all;
 use crate::waf::attack_detection::config::{AttackDetectionResult, AttackType, InputLocation};
 use crate::waf::attack_detection::detector_common::{BasePatternDetector, PatternDetector};
 use crate::waf::attack_detection::patterns::DefaultPatterns;
 
-static IP_REGEX: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"https?://(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})").unwrap());
+static IP_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"https?://(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})").unwrap());
 
 pub struct RfiDetector {
     inner: BasePatternDetector,

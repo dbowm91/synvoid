@@ -22,7 +22,7 @@ impl RecordStoreManager {
 
         let mut signature = Vec::new();
         let mut signer_public_key = String::new();
-        
+
         let mesh_signer = self.mesh_signer.read();
         if let Some(ref signer) = *mesh_signer {
             let timestamp = MeshMessage::generate_timestamp();
@@ -59,12 +59,17 @@ impl RecordStoreManager {
         })
     }
 
-    pub fn create_snapshot_response(&self, request_id: &str, from_version: u64) -> Option<MeshMessage> {
+    pub fn create_snapshot_response(
+        &self,
+        request_id: &str,
+        from_version: u64,
+    ) -> Option<MeshMessage> {
         if !self.config.enabled || !self.is_global_node() {
             return None;
         }
 
-        let records: Vec<DhtRecord> = self.get_all_records()
+        let records: Vec<DhtRecord> = self
+            .get_all_records()
             .into_iter()
             .filter(|r| {
                 let dht_key = DhtKey::from_str(&r.key);
@@ -74,7 +79,7 @@ impl RecordStoreManager {
 
         let mut signature = Vec::new();
         let mut signer_public_key = String::new();
-        
+
         let mesh_signer = self.mesh_signer.read();
         if let Some(ref signer) = *mesh_signer {
             let timestamp = MeshMessage::generate_timestamp();
@@ -99,7 +104,12 @@ impl RecordStoreManager {
         })
     }
 
-    pub fn apply_snapshot(&self, records: Vec<DhtRecord>, version: u64, is_verified: bool) -> usize {
+    pub fn apply_snapshot(
+        &self,
+        records: Vec<DhtRecord>,
+        version: u64,
+        is_verified: bool,
+    ) -> usize {
         if !self.config.enabled || self.is_global_node() {
             return 0;
         }
@@ -114,10 +124,14 @@ impl RecordStoreManager {
 
         *self.last_snapshot_version.write() = version;
         self.record_successful_sync();
-        
+
         self.compute_merkle_tree();
 
-        tracing::info!("Applied DHT snapshot: {} records cached (version: {})", applied, version);
+        tracing::info!(
+            "Applied DHT snapshot: {} records cached (version: {})",
+            applied,
+            version
+        );
         applied
     }
 
@@ -139,7 +153,7 @@ impl RecordStoreManager {
 
         let signer_public_key = signer.map(|s| s.get_public_key());
         let mut applied = 0;
-        
+
         for record in records {
             let signed_record = crate::mesh::dht::signed::SignedDhtRecord {
                 key: record.key.clone(),
@@ -154,14 +168,25 @@ impl RecordStoreManager {
                 ttl_seconds: record.ttl_seconds,
                 signer_public_key: record.signer_public_key.clone(),
             };
-            
-            let verified = if signer_public_key.as_ref().map(|pk| !pk.is_empty()).unwrap_or(false) {
+
+            let verified = if signer_public_key
+                .as_ref()
+                .map(|pk| !pk.is_empty())
+                .unwrap_or(false)
+            {
                 if let Some(ref pk) = signer_public_key {
                     let pk_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
                         .decode(pk)
                         .unwrap_or_default();
-                    signer.as_ref()
-                        .map(|s| s.verify(signed_record.get_signable_content().as_str(), &signed_record.signature, &pk_bytes))
+                    signer
+                        .as_ref()
+                        .map(|s| {
+                            s.verify(
+                                signed_record.get_signable_content().as_str(),
+                                &signed_record.signature,
+                                &pk_bytes,
+                            )
+                        })
                         .unwrap_or(false)
                 } else {
                     false
@@ -169,7 +194,7 @@ impl RecordStoreManager {
             } else {
                 verifier.verify(&signed_record)
             };
-            
+
             if verified {
                 if self.store_record(record, 100) {
                     applied += 1;
@@ -182,10 +207,14 @@ impl RecordStoreManager {
 
         *self.last_snapshot_version.write() = version;
         self.record_successful_sync();
-        
+
         self.compute_merkle_tree();
 
-        tracing::info!("Verified and applied DHT snapshot: {} records (version: {})", applied, version);
+        tracing::info!(
+            "Verified and applied DHT snapshot: {} records (version: {})",
+            applied,
+            version
+        );
         applied
     }
 
@@ -210,11 +239,15 @@ impl RecordStoreManager {
 
         let current = *self.current_sync_interval.read();
         let max_interval = self.config.max_sync_interval_secs;
-        
+
         if current < max_interval {
             let new_interval = (current * 2).min(max_interval);
             *self.current_sync_interval.write() = new_interval;
-            tracing::info!("DHT sync interval increased to {}s (max: {}s)", new_interval, max_interval);
+            tracing::info!(
+                "DHT sync interval increased to {}s (max: {}s)",
+                new_interval,
+                max_interval
+            );
         }
     }
 
@@ -249,7 +282,7 @@ impl RecordStoreManager {
 
         let mut stored_count = 0;
         let mut skipped_count = 0;
-        
+
         for record in records {
             if !self.verify_origin_permission(&record, from_node) {
                 tracing::debug!(
@@ -280,7 +313,7 @@ impl RecordStoreManager {
 
     fn verify_origin_permission(&self, record: &DhtRecord, announcer: &str) -> bool {
         let dht_key = crate::mesh::dht::keys::DhtKey::from_str(&record.key);
-        
+
         if let Some(record_type) = dht_key.to_signed_record_type() {
             if !record_type.requires_origin_node() {
                 return true;
@@ -330,18 +363,14 @@ impl RecordStoreManager {
 
         let mut signature = Vec::new();
         let mut signer_public_key = String::new();
-        
+
         let mesh_signer = self.mesh_signer.read();
         if let Some(ref signer) = *mesh_signer {
             if let Some(ref rec) = record {
                 let timestamp = MeshMessage::generate_timestamp();
                 let content = format!(
                     "{},{},{},{},{}",
-                    request_id,
-                    key,
-                    rec.timestamp,
-                    self.node_id,
-                    timestamp
+                    request_id, key, rec.timestamp, self.node_id, timestamp
                 );
                 signature = signer.sign(&content);
                 signer_public_key = signer.get_public_key();
@@ -373,11 +402,7 @@ impl RecordStoreManager {
         self.create_sync_response(request_id, from_version)
     }
 
-    pub fn handle_sync_response(
-        &self,
-        records: Vec<DhtRecord>,
-        _from_node: &str,
-    ) {
+    pub fn handle_sync_response(&self, records: Vec<DhtRecord>, _from_node: &str) {
         if !self.config.enabled || !self.is_global_node() {
             return;
         }
@@ -403,7 +428,7 @@ impl RecordStoreManager {
 
         let signer_public_key = signer.map(|s| s.get_public_key());
         let mut verified_records = Vec::new();
-        
+
         for record in records {
             let signed_record = crate::mesh::dht::signed::SignedDhtRecord {
                 key: record.key.clone(),
@@ -418,14 +443,25 @@ impl RecordStoreManager {
                 ttl_seconds: record.ttl_seconds,
                 signer_public_key: record.signer_public_key.clone(),
             };
-            
-            let verified = if signer_public_key.as_ref().map(|pk| !pk.is_empty()).unwrap_or(false) {
+
+            let verified = if signer_public_key
+                .as_ref()
+                .map(|pk| !pk.is_empty())
+                .unwrap_or(false)
+            {
                 if let Some(ref pk) = signer_public_key {
                     let pk_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
                         .decode(pk)
                         .unwrap_or_default();
-                    signer.as_ref()
-                        .map(|s| s.verify(signed_record.get_signable_content().as_str(), &signed_record.signature, &pk_bytes))
+                    signer
+                        .as_ref()
+                        .map(|s| {
+                            s.verify(
+                                signed_record.get_signable_content().as_str(),
+                                &signed_record.signature,
+                                &pk_bytes,
+                            )
+                        })
                         .unwrap_or(false)
                 } else {
                     false
@@ -433,7 +469,7 @@ impl RecordStoreManager {
             } else {
                 verifier.verify(&signed_record)
             };
-            
+
             if verified {
                 verified_records.push(record);
             } else {
@@ -461,13 +497,17 @@ impl RecordStoreManager {
         };
 
         let signer_public_key = signer.map(|s| s.get_public_key());
-        
+
         let mut accepted_count = 0;
         let mut rejected_count = 0;
-        
+
         for record in records {
             if record.signature.is_empty() {
-                tracing::debug!("Rejecting record {} from {}: no signature", record.key, from_node);
+                tracing::debug!(
+                    "Rejecting record {} from {}: no signature",
+                    record.key,
+                    from_node
+                );
                 rejected_count += 1;
                 continue;
             }
@@ -485,14 +525,25 @@ impl RecordStoreManager {
                 ttl_seconds: record.ttl_seconds,
                 signer_public_key: record.signer_public_key.clone(),
             };
-            
-            let verified = if signer_public_key.as_ref().map(|pk| !pk.is_empty()).unwrap_or(false) {
+
+            let verified = if signer_public_key
+                .as_ref()
+                .map(|pk| !pk.is_empty())
+                .unwrap_or(false)
+            {
                 if let Some(ref pk) = signer_public_key {
                     let pk_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
                         .decode(pk)
                         .unwrap_or_default();
-                    signer.as_ref()
-                        .map(|s| s.verify(signed_record.get_signable_content().as_str(), &signed_record.signature, &pk_bytes))
+                    signer
+                        .as_ref()
+                        .map(|s| {
+                            s.verify(
+                                signed_record.get_signable_content().as_str(),
+                                &signed_record.signature,
+                                &pk_bytes,
+                            )
+                        })
                         .unwrap_or(false)
                 } else {
                     false
@@ -500,11 +551,15 @@ impl RecordStoreManager {
             } else {
                 verifier.verify(&signed_record)
             };
-            
+
             if !verified {
-                tracing::debug!("Rejecting record {} from {}: invalid signature", record.key, from_node);
+                tracing::debug!(
+                    "Rejecting record {} from {}: invalid signature",
+                    record.key,
+                    from_node
+                );
                 rejected_count += 1;
-                
+
                 if let Some(ref stake_mgr) = *self.stake_manager.read() {
                     stake_mgr.submit_global_slash_vote(
                         record.source_node_id.clone(),
@@ -513,17 +568,22 @@ impl RecordStoreManager {
                 }
                 continue;
             }
-            
+
             let record_key = record.key.clone();
-            
+
             if self.store_record(record, 100) {
                 tracing::debug!("Stored record {} from {} (verified)", record_key, from_node);
                 accepted_count += 1;
             }
         }
-        
+
         if rejected_count > 0 {
-            tracing::info!("Anti-entropy from {}: {} accepted, {} rejected", from_node, accepted_count, rejected_count);
+            tracing::info!(
+                "Anti-entropy from {}: {} accepted, {} rejected",
+                from_node,
+                accepted_count,
+                rejected_count
+            );
         }
 
         self.compute_merkle_tree();
@@ -554,13 +614,15 @@ impl RecordStoreManager {
         };
 
         let replication_factor = self.config.replication_factor;
-        
+
         // Use None for target_geo - we're announcing from our location,
         // so we'll get our regional hubs first via the hybrid lookup
         let target_geo = None;
-        
-        let peers = rm.find_closest_peers_hybrid(&self.node_id, target_geo, replication_factor).await;
-        
+
+        let peers = rm
+            .find_closest_peers_hybrid(&self.node_id, target_geo, replication_factor)
+            .await;
+
         if peers.is_empty() {
             tracing::debug!("No peers found for record announce");
             return;
@@ -574,7 +636,10 @@ impl RecordStoreManager {
                 continue;
             }
 
-            if let Err(e) = transport.send_datagram_to_peer(&peer.node_id_string, &message).await {
+            if let Err(e) = transport
+                .send_datagram_to_peer(&peer.node_id_string, &message)
+                .await
+            {
                 fail_count += 1;
                 tracing::debug!("Failed to announce to peer {}: {}", peer.node_id_string, e);
             } else {
@@ -582,7 +647,11 @@ impl RecordStoreManager {
             }
         }
 
-        tracing::debug!("Kademlia DHT record announce: {} sent, {} failed", success_count, fail_count);
+        tracing::debug!(
+            "Kademlia DHT record announce: {} sent, {} failed",
+            success_count,
+            fail_count
+        );
     }
 
     pub async fn query_record_iterative(&self, key: &str) -> Option<DhtRecord> {
@@ -606,7 +675,7 @@ impl RecordStoreManager {
         };
 
         let dht_key = crate::mesh::dht::keys::DhtKey::from_str(key);
-        
+
         if dht_key.is_privileged() && !rm.can_respond_to_privileged() {
             tracing::debug!("Query for privileged key {} requires global node", key);
             return None;
@@ -614,13 +683,13 @@ impl RecordStoreManager {
 
         let target_geo = None;
         let closest_peers = rm.find_closest_peers_hybrid(key, target_geo, 8).await;
-        
+
         if closest_peers.is_empty() {
             return None;
         }
 
         let mut queried_peers: Vec<String> = Vec::new();
-        
+
         for peer in closest_peers {
             if peer.node_id_string == self.node_id {
                 continue;
@@ -639,15 +708,27 @@ impl RecordStoreManager {
                 source_node_id: self.node_id.clone().into(),
             };
 
-            if transport.send_datagram_to_peer(&peer.node_id_string, &query).await.is_ok() {
-                tracing::debug!("Sent DHT record query for {} to peer {}", key, peer.node_id_string);
+            if transport
+                .send_datagram_to_peer(&peer.node_id_string, &query)
+                .await
+                .is_ok()
+            {
+                tracing::debug!(
+                    "Sent DHT record query for {} to peer {}",
+                    key,
+                    peer.node_id_string
+                );
             }
         }
 
         None
     }
 
-    pub async fn announce_record_to_closest(&self, record: &DhtRecord, replication_factor: usize) -> usize {
+    pub async fn announce_record_to_closest(
+        &self,
+        record: &DhtRecord,
+        replication_factor: usize,
+    ) -> usize {
         if !self.config.enabled || !self.is_global_node() {
             return 0;
         }
@@ -663,19 +744,24 @@ impl RecordStoreManager {
         };
 
         let target_geo = None;
-        let closest_peers = rm.find_closest_peers_hybrid(&record.key, target_geo, replication_factor).await;
-        
+        let closest_peers = rm
+            .find_closest_peers_hybrid(&record.key, target_geo, replication_factor)
+            .await;
+
         if closest_peers.is_empty() {
             return 0;
         }
 
         let request_id = format!("announce-{}-{}", record.key, uuid::Uuid::new_v4());
-        
+
         let signer_public_key = {
             let mesh_signer = self.mesh_signer.read();
-            mesh_signer.as_ref().map(|s| s.get_public_key()).unwrap_or_default()
+            mesh_signer
+                .as_ref()
+                .map(|s| s.get_public_key())
+                .unwrap_or_default()
         };
-        
+
         let announce = MeshMessage::DhtRecordAnnounce {
             request_id: request_id.into(),
             records: vec![record.clone()],
@@ -687,13 +773,17 @@ impl RecordStoreManager {
         };
 
         let mut success_count = 0;
-        
+
         for peer in closest_peers {
             if peer.node_id_string == self.node_id {
                 continue;
             }
 
-            if transport.send_datagram_to_peer(&peer.node_id_string, &announce).await.is_ok() {
+            if transport
+                .send_datagram_to_peer(&peer.node_id_string, &announce)
+                .await
+                .is_ok()
+            {
                 success_count += 1;
             }
         }
@@ -701,12 +791,22 @@ impl RecordStoreManager {
         let write_quorum = self.config.write_quorum as usize;
         if success_count >= write_quorum {
             counter!("maluwaf.dht.quorum.achieved", "type" => "write").increment(1);
-            tracing::debug!("DHT write quorum achieved for {}: {}/{} peers", record.key, success_count, write_quorum);
+            tracing::debug!(
+                "DHT write quorum achieved for {}: {}/{} peers",
+                record.key,
+                success_count,
+                write_quorum
+            );
         } else {
             counter!("maluwaf.dht.quorum.failed", "type" => "write").increment(1);
-            tracing::debug!("DHT write quorum NOT achieved for {}: {}/{} peers", record.key, success_count, write_quorum);
+            tracing::debug!(
+                "DHT write quorum NOT achieved for {}: {}/{} peers",
+                record.key,
+                success_count,
+                write_quorum
+            );
         }
-        
+
         tracing::debug!("Announced record {} to {} peers", record.key, success_count);
         success_count
     }
@@ -714,13 +814,16 @@ impl RecordStoreManager {
     pub fn init_propagation_state(&self, key: &str) {
         let mut states = self.propagation_states.write();
         if !states.contains_key(key) {
-            states.insert(key.to_string(), PropagationState {
-                key: key.to_string(),
-                ack_count: 0,
-                attempted_peers: Vec::new(),
-                completed: false,
-                last_update: Instant::now(),
-            });
+            states.insert(
+                key.to_string(),
+                PropagationState {
+                    key: key.to_string(),
+                    ack_count: 0,
+                    attempted_peers: Vec::new(),
+                    completed: false,
+                    last_update: Instant::now(),
+                },
+            );
         }
     }
 
@@ -739,10 +842,14 @@ impl RecordStoreManager {
         if let Some(state) = states.get_mut(key) {
             state.ack_count += 1;
             state.last_update = Instant::now();
-            
+
             if state.ack_count >= self.convergence_threshold {
                 state.completed = true;
-                tracing::debug!("DHT propagation converged for key {} after {} acks", key, state.ack_count);
+                tracing::debug!(
+                    "DHT propagation converged for key {} after {} acks",
+                    key,
+                    state.ack_count
+                );
                 return true;
             }
         }
@@ -762,9 +869,7 @@ impl RecordStoreManager {
     pub fn cleanup_stale_propagation_states(&self, max_age_secs: u64) {
         let mut states = self.propagation_states.write();
         let now = Instant::now();
-        states.retain(|_, state| {
-            now.duration_since(state.last_update).as_secs() < max_age_secs
-        });
+        states.retain(|_, state| now.duration_since(state.last_update).as_secs() < max_age_secs);
     }
 
     pub fn get_pending_propagations(&self) -> Vec<String> {

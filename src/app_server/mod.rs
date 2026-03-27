@@ -1,10 +1,10 @@
 pub mod granian;
 
-use std::path::PathBuf;
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::path::PathBuf;
 
-pub use granian::{GranianSupervisor, GranianConfig, GranianInterface};
+pub use granian::{GranianConfig, GranianInterface, GranianSupervisor};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AppServerConfig {

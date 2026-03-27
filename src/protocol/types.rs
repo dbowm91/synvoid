@@ -2,8 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum ProtocolType {
     Http,
     Https,
@@ -16,7 +15,6 @@ pub enum ProtocolType {
     #[default]
     Unknown,
 }
-
 
 impl ProtocolType {
     pub fn is_secure(&self) -> bool {
@@ -111,8 +109,7 @@ impl ProtocolMetrics {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum ProtocolFamily {
     #[default]
     Http,
@@ -121,4 +118,3 @@ pub enum ProtocolFamily {
     Tcp,
     Udp,
 }
-

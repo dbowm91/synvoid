@@ -1,16 +1,16 @@
+use super::super::state::AdminState;
+use crate::waf::threat_level::SqliteBackup;
+use crate::waf::ThreatHistorySample;
 use axum::{
-    extract::{State, Path, Query},
+    extract::{Path, Query, State},
     http::StatusCode,
     Json,
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
-use super::super::state::AdminState;
-use crate::waf::ThreatHistorySample;
-use crate::waf::threat_level::SqliteBackup;
 
-use super::common::{StatusResponse, OptionalAuth};
+use super::common::{OptionalAuth, StatusResponse};
 
 const DEFAULT_THREAT_LEVEL_DB_PATH: &str = "/var/lib/maluwaf/threat_level/history.db";
 const DEFAULT_THREAT_LEVEL_BACKUP_DIR: &str = "/var/lib/maluwaf/threat_level/backups";
@@ -90,8 +90,10 @@ pub async fn get_status(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<ThreatLevelStatusResponse>, StatusCode> {
-
-    let threat_level = state.threat_level_manager().ok_or(StatusCode::NOT_FOUND)?.clone();
+    let threat_level = state
+        .threat_level_manager()
+        .ok_or(StatusCode::NOT_FOUND)?
+        .clone();
 
     let (status, metrics) = tokio::task::spawn_blocking(move || {
         let status = threat_level.get_status();
@@ -138,17 +140,17 @@ pub async fn get_history(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<ThreatLevelHistoryResponse>, StatusCode> {
+    let threat_level = state
+        .threat_level_manager()
+        .ok_or(StatusCode::NOT_FOUND)?
+        .clone();
 
-    let threat_level = state.threat_level_manager().ok_or(StatusCode::NOT_FOUND)?.clone();
-
-    let history = tokio::task::spawn_blocking(move || {
-        threat_level.get_history()
-    })
-    .await
-    .map_err(|e| {
-        tracing::error!("Failed to get history (task join): {}", e);
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    let history = tokio::task::spawn_blocking(move || threat_level.get_history())
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to get history (task join): {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
 
     let map_sample = |s: ThreatHistorySample| HistorySample {
         timestamp: s.timestamp,
@@ -186,28 +188,31 @@ pub async fn get_baseline(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<BaselineStatsResponse>, StatusCode> {
+    let threat_level = state
+        .threat_level_manager()
+        .ok_or(StatusCode::NOT_FOUND)?
+        .clone();
 
-    let threat_level = state.threat_level_manager().ok_or(StatusCode::NOT_FOUND)?.clone();
-
-    let baselines = tokio::task::spawn_blocking(move || {
-        threat_level.get_baselines()
-    })
-    .await
-    .map_err(|e| {
-        tracing::error!("Failed to get baselines (task join): {}", e);
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    let baselines = tokio::task::spawn_blocking(move || threat_level.get_baselines())
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to get baselines (task join): {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
 
     Ok(Json(BaselineStatsResponse {
-        baselines: baselines.into_iter().map(|b| BaselineMetric {
-            metric_name: b.metric_name,
-            mean: b.mean,
-            std_dev: b.std_dev,
-            min_value: b.min_value,
-            max_value: b.max_value,
-            samples: b.samples,
-            computed_at: b.computed_at,
-        }).collect(),
+        baselines: baselines
+            .into_iter()
+            .map(|b| BaselineMetric {
+                metric_name: b.metric_name,
+                mean: b.mean,
+                std_dev: b.std_dev,
+                min_value: b.min_value,
+                max_value: b.max_value,
+                samples: b.samples,
+                computed_at: b.computed_at,
+            })
+            .collect(),
     }))
 }
 
@@ -228,12 +233,13 @@ pub async fn reset_baseline(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<StatusResponse>, StatusCode> {
-
     let threat_level = state.threat_level_manager().ok_or(StatusCode::NOT_FOUND)?;
 
     threat_level.reset_baseline();
 
-    Ok(Json(StatusResponse::ok("Baseline reset and learning restarted")))
+    Ok(Json(StatusResponse::ok(
+        "Baseline reset and learning restarted",
+    )))
 }
 
 #[utoipa::path(
@@ -253,7 +259,6 @@ pub async fn set_level(
     _auth: OptionalAuth,
     Path(level): Path<u8>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-
     let threat_level = state.threat_level_manager().ok_or(StatusCode::NOT_FOUND)?;
 
     let level = level.clamp(1, 5);
@@ -281,7 +286,6 @@ pub async fn set_auto(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<StatusResponse>, StatusCode> {
-
     let threat_level = state.threat_level_manager().ok_or(StatusCode::NOT_FOUND)?;
 
     threat_level.reset_to_auto();
@@ -323,7 +327,6 @@ pub async fn create_backup(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<BackupResponse>, StatusCode> {
-
     let _threat_level = state.threat_level_manager().ok_or(StatusCode::NOT_FOUND)?;
 
     let db_path = PathBuf::from(DEFAULT_THREAT_LEVEL_DB_PATH);
@@ -367,21 +370,21 @@ pub async fn list_backups(
     State(_state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<BackupsListResponse>, StatusCode> {
-
     let backup_dir = PathBuf::from("/var/lib/maluwaf/threat_level/backups");
 
-    let backups = tokio::task::spawn_blocking(move || {
-        SqliteBackup::list_backups(&backup_dir)
-    })
-    .await
-    .map_err(|e| {
-        tracing::error!("Failed to list backups (task join): {}", e);
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?
-    .unwrap_or_default();
+    let backups = tokio::task::spawn_blocking(move || SqliteBackup::list_backups(&backup_dir))
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to list backups (task join): {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?
+        .unwrap_or_default();
 
-    Ok(Json(BackupsListResponse { 
-        backups: backups.into_iter().map(|b| serde_json::to_value(b).unwrap_or(serde_json::Value::Null)).collect() 
+    Ok(Json(BackupsListResponse {
+        backups: backups
+            .into_iter()
+            .map(|b| serde_json::to_value(b).unwrap_or(serde_json::Value::Null))
+            .collect(),
     }))
 }
 
@@ -408,21 +411,18 @@ pub async fn delete_backup(
     Query(query): Query<DeleteBackupQuery>,
     _auth: OptionalAuth,
 ) -> Result<Json<StatusResponse>, StatusCode> {
-
     let path = query.path.clone();
 
-    tokio::task::spawn_blocking(move || {
-        SqliteBackup::delete_backup(&path)
-    })
-    .await
-    .map_err(|e| {
-        tracing::error!("Failed to delete backup (task join): {}", e);
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?
-    .map_err(|e| {
-        tracing::error!("Failed to delete backup: {}", e);
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    tokio::task::spawn_blocking(move || SqliteBackup::delete_backup(&path))
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to delete backup (task join): {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?
+        .map_err(|e| {
+            tracing::error!("Failed to delete backup: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
 
     Ok(Json(StatusResponse::ok("Backup deleted")))
 }
@@ -444,21 +444,21 @@ pub async fn prune_history(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<PruneResponse>, StatusCode> {
+    let threat_level = state
+        .threat_level_manager()
+        .ok_or(StatusCode::NOT_FOUND)?
+        .clone();
 
-    let threat_level = state.threat_level_manager().ok_or(StatusCode::NOT_FOUND)?.clone();
-
-    let deleted = tokio::task::spawn_blocking(move || {
-        threat_level.prune_history()
-    })
-    .await
-    .map_err(|e| {
-        tracing::error!("Failed to prune history (task join): {}", e);
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?
-    .map_err(|e| {
-        tracing::error!("Failed to prune history: {}", e);
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    let deleted = tokio::task::spawn_blocking(move || threat_level.prune_history())
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to prune history (task join): {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?
+        .map_err(|e| {
+            tracing::error!("Failed to prune history: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
 
     Ok(Json(PruneResponse {
         status: "ok".to_string(),
@@ -483,17 +483,17 @@ pub async fn get_history_stats(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    let threat_level = state
+        .threat_level_manager()
+        .ok_or(StatusCode::NOT_FOUND)?
+        .clone();
 
-    let threat_level = state.threat_level_manager().ok_or(StatusCode::NOT_FOUND)?.clone();
-
-    let sample_count = tokio::task::spawn_blocking(move || {
-        threat_level.get_history_sample_count()
-    })
-    .await
-    .map_err(|e| {
-        tracing::error!("Failed to get history stats (task join): {}", e);
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    let sample_count = tokio::task::spawn_blocking(move || threat_level.get_history_sample_count())
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to get history stats (task join): {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
 
     Ok(Json(serde_json::json!({
         "sample_count": sample_count,

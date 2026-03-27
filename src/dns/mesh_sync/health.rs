@@ -2,7 +2,10 @@ use super::*;
 use metrics::gauge;
 
 impl MeshDnsRegistry {
-    pub async fn update_anycast_health(&self, update: DnsAnycastHealthUpdate) -> Result<(), String> {
+    pub async fn update_anycast_health(
+        &self,
+        update: DnsAnycastHealthUpdate,
+    ) -> Result<(), String> {
         if !self.is_global {
             tracing::debug!("Ignoring anycast health update on non-global node");
             return Ok(());
@@ -24,7 +27,12 @@ impl MeshDnsRegistry {
                     gauge!("dns_anycast_node_load_percent").set(load as f64);
                 }
 
-                (node.geo.clone(), node.capacity, node.dns_zones.clone(), was_healthy)
+                (
+                    node.geo.clone(),
+                    node.capacity,
+                    node.dns_zones.clone(),
+                    was_healthy,
+                )
             } else {
                 return Ok(());
             }
@@ -57,11 +65,7 @@ impl MeshDnsRegistry {
 
     pub fn get_healthy_anycast_nodes(&self) -> Vec<RegisteredAnycastNode> {
         let nodes = self.anycast_nodes.read();
-        nodes
-            .values()
-            .filter(|n| n.healthy)
-            .cloned()
-            .collect()
+        nodes.values().filter(|n| n.healthy).cloned().collect()
     }
 
     pub fn get_healthy_anycast_for_zone(&self, zone: &str) -> Vec<RegisteredAnycastNode> {
@@ -90,7 +94,8 @@ impl MeshDnsRegistry {
                 .into_iter()
                 .filter_map(|value| {
                     let node_id = value.get("node_id")?.as_str()?;
-                    let anycast_ips: Vec<String> = value.get("anycast_ips")?
+                    let anycast_ips: Vec<String> = value
+                        .get("anycast_ips")?
                         .as_array()?
                         .iter()
                         .filter_map(|v| v.as_str().map(String::from))
@@ -98,7 +103,8 @@ impl MeshDnsRegistry {
                     let geo = value.get("geo").and_then(|v| v.as_str()).map(String::from);
                     let capacity = value.get("capacity")?.as_u64()? as u32;
                     let healthy = value.get("healthy")?.as_bool()?;
-                    let dns_zones: Vec<String> = value.get("dns_zones")?
+                    let dns_zones: Vec<String> = value
+                        .get("dns_zones")?
                         .as_array()?
                         .iter()
                         .filter_map(|v| v.as_str().map(String::from))
@@ -162,7 +168,11 @@ impl MeshDnsRegistry {
         Ok(())
     }
 
-    pub fn get_best_anycast_for_zone(&self, zone: &str, client_geo: Option<&str>) -> Option<RegisteredAnycastNode> {
+    pub fn get_best_anycast_for_zone(
+        &self,
+        zone: &str,
+        client_geo: Option<&str>,
+    ) -> Option<RegisteredAnycastNode> {
         let all_nodes = self.get_healthy_anycast_for_zone(zone);
 
         if all_nodes.is_empty() {
@@ -186,7 +196,11 @@ impl MeshDnsRegistry {
         scored_nodes.into_iter().next().map(|(node, _)| node)
     }
 
-    fn calculate_anycast_score(&self, node: &RegisteredAnycastNode, client_geo: Option<&str>) -> f64 {
+    fn calculate_anycast_score(
+        &self,
+        node: &RegisteredAnycastNode,
+        client_geo: Option<&str>,
+    ) -> f64 {
         let mut score = 100.0;
 
         if let Some(geo) = client_geo {
@@ -240,7 +254,9 @@ impl MeshDnsRegistry {
     pub async fn update_origin_health(&self, update: DnsHealthUpdate) -> Result<(), String> {
         if !self.is_global {
             if let Some(ref tx) = self.health_tx {
-                tx.send(update.clone()).await.map_err(|e| format!("Failed to send health update: {}", e))?;
+                tx.send(update.clone())
+                    .await
+                    .map_err(|e| format!("Failed to send health update: {}", e))?;
             }
         }
 
@@ -270,10 +286,16 @@ impl MeshDnsRegistry {
             }
 
             if edge.consecutive_failures >= self.config.failure_threshold_for_removal {
-                tracing::warn!("Edge node {} exceeded failure threshold, marking unhealthy", report.edge_node_id);
+                tracing::warn!(
+                    "Edge node {} exceeded failure threshold, marking unhealthy",
+                    report.edge_node_id
+                );
                 edge.healthy = false;
             } else if edge.consecutive_failures >= self.config.failure_threshold_for_demotion {
-                tracing::warn!("Edge node {} exceeded demotion threshold, reducing priority", report.edge_node_id);
+                tracing::warn!(
+                    "Edge node {} exceeded demotion threshold, reducing priority",
+                    report.edge_node_id
+                );
             }
         }
 
@@ -283,7 +305,9 @@ impl MeshDnsRegistry {
     pub async fn handle_node_shutdown(&self, shutdown: DnsNodeShutdown) -> Result<(), String> {
         if !self.is_global {
             if let Some(ref tx) = self.shutdown_tx {
-                tx.send(shutdown.clone()).await.map_err(|e| format!("Failed to send shutdown: {}", e))?;
+                tx.send(shutdown.clone())
+                    .await
+                    .map_err(|e| format!("Failed to send shutdown: {}", e))?;
             }
         }
 
@@ -294,8 +318,12 @@ impl MeshDnsRegistry {
             let effective_shutdown_at = shutdown.shutdown_at.saturating_sub(lead_time);
 
             if effective_shutdown_at > now {
-                tracing::info!("Node {} announcing graceful shutdown at {}, removing from DNS at {}",
-                    shutdown.node_id, shutdown.shutdown_at, effective_shutdown_at);
+                tracing::info!(
+                    "Node {} announcing graceful shutdown at {}, removing from DNS at {}",
+                    shutdown.node_id,
+                    shutdown.shutdown_at,
+                    effective_shutdown_at
+                );
             }
         }
 
@@ -303,7 +331,11 @@ impl MeshDnsRegistry {
             DnsNodeRole::Edge => {
                 let mut edges = self.edge_nodes.write();
                 for domain in &shutdown.domains {
-                    tracing::info!("Removing edge node {} from DNS for domain {} due to shutdown", shutdown.node_id, domain);
+                    tracing::info!(
+                        "Removing edge node {} from DNS for domain {} due to shutdown",
+                        shutdown.node_id,
+                        domain
+                    );
                 }
                 edges.remove(&shutdown.node_id);
             }
@@ -315,7 +347,11 @@ impl MeshDnsRegistry {
                     if let Some(origin_ids) = mapping.get_mut(domain) {
                         origin_ids.retain(|id| id != &shutdown.node_id);
                     }
-                    tracing::info!("Removing origin node {} from DNS for domain {} due to shutdown", shutdown.node_id, domain);
+                    tracing::info!(
+                        "Removing origin node {} from DNS for domain {} due to shutdown",
+                        shutdown.node_id,
+                        domain
+                    );
                 }
                 origins.remove(&shutdown.node_id);
             }
@@ -342,7 +378,11 @@ impl MeshDnsRegistry {
             }
         }
 
-        tracing::info!("Removed origin {} for domain {} from DNS registry", node_id, domain);
+        tracing::info!(
+            "Removed origin {} for domain {} from DNS registry",
+            node_id,
+            domain
+        );
         Ok(())
     }
 }

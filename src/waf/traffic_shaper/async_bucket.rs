@@ -10,7 +10,11 @@ pub struct AsyncTokenBucket {
 }
 
 impl AsyncTokenBucket {
-    pub fn new(capacity_bytes: u64, refill_rate_bytes_per_sec: u64, refill_interval_ms: u64) -> std::sync::Arc<Self> {
+    pub fn new(
+        capacity_bytes: u64,
+        refill_rate_bytes_per_sec: u64,
+        refill_interval_ms: u64,
+    ) -> std::sync::Arc<Self> {
         std::sync::Arc::new(Self {
             capacity: capacity_bytes,
             available: AtomicU64::new(capacity_bytes),
@@ -54,7 +58,8 @@ impl AsyncTokenBucket {
 
     pub fn set_rate(&self, refill_rate_bytes_per_sec: u64) {
         self.refill();
-        self.refill_rate.store(refill_rate_bytes_per_sec, Ordering::Release);
+        self.refill_rate
+            .store(refill_rate_bytes_per_sec, Ordering::Release);
     }
 
     pub fn capacity(&self) -> u64 {
@@ -70,13 +75,13 @@ impl AsyncTokenBucket {
                 .last_refill
                 .compare_exchange(last, now, Ordering::AcqRel, Ordering::Acquire)
                 .is_ok()
-            {
-                let elapsed_ms = now.saturating_sub(last);
-                let refill_rate = self.refill_rate.load(Ordering::Acquire);
-                let tokens_to_add = (elapsed_ms * refill_rate) / 1000;
-                let current = self.available.load(Ordering::Acquire);
-                let new = (current + tokens_to_add).min(self.capacity);
-                self.available.store(new, Ordering::Release);
-            }
+        {
+            let elapsed_ms = now.saturating_sub(last);
+            let refill_rate = self.refill_rate.load(Ordering::Acquire);
+            let tokens_to_add = (elapsed_ms * refill_rate) / 1000;
+            let current = self.available.load(Ordering::Acquire);
+            let new = (current + tokens_to_add).min(self.capacity);
+            self.available.store(new, Ordering::Release);
+        }
     }
 }

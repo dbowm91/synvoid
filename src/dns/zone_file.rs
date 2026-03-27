@@ -78,15 +78,16 @@ impl ZoneFileParser {
                 self.parse_record_line(line, &mut current_name, &mut current_ttl)?
             {
                 let key = (record.name.clone(), record.record_type);
-                records.entry(key).or_default().push(
-                    crate::dns::server::DnsZoneRecord {
+                records
+                    .entry(key)
+                    .or_default()
+                    .push(crate::dns::server::DnsZoneRecord {
                         name: record.name.clone(),
                         record_type: record.record_type,
                         value: record.value,
                         ttl: record.ttl,
                         priority: record.priority,
-                    },
-                );
+                    });
             }
         }
 

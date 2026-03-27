@@ -365,20 +365,25 @@ impl AdminState {
 
         let config = self.process.config.clone();
         let config_write_lock = self.metrics.config_write_lock.clone();
-        
+
         tokio::spawn(async move {
             while let Some((site_id, config_json)) = rx.recv().await {
                 tracing::info!("Received site config sync for site: {}", site_id);
 
                 let config_path = {
                     let cfg = config.read().await;
-                    cfg.sites_dir.join(format!("{}.toml", site_id.replace('.', "_")))
+                    cfg.sites_dir
+                        .join(format!("{}.toml", site_id.replace('.', "_")))
                 };
 
                 {
                     let _guard = config_write_lock.write().await;
                     if let Err(e) = tokio::fs::write(&config_path, &config_json).await {
-                        tracing::error!("Failed to write synced site config for {}: {}", site_id, e);
+                        tracing::error!(
+                            "Failed to write synced site config for {}: {}",
+                            site_id,
+                            e
+                        );
                         continue;
                     }
                 }

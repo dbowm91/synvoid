@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 #[cfg(target_os = "linux")]
-use nix::sys::socket::{recvmsg, MsgFlags, ControlMessageOwned};
-#[cfg(target_os = "linux")]
 use nix::cmsg_space;
+#[cfg(target_os = "linux")]
+use nix::sys::socket::{recvmsg, ControlMessageOwned, MsgFlags};
 
 use metrics::counter;
 use parking_lot::RwLock;
@@ -78,13 +78,14 @@ impl AnycastSocketManager {
     ) -> Result<Self, String> {
         let mut sockets = Vec::new();
         let mut tcp_listeners = Vec::new();
-        
+
         for addr_str in &config.bind_addresses {
-            let addr: IpAddr = addr_str.parse()
+            let addr: IpAddr = addr_str
+                .parse()
                 .map_err(|e| format!("Invalid bind address '{}': {}", addr_str, e))?;
-            
+
             let socket_addr = SocketAddr::new(addr, config.port);
-            
+
             let socket = UdpSocket::bind(socket_addr)
                 .await
                 .map_err(|e| format!("Failed to bind UDP to {}: {}", socket_addr, e))?;
@@ -107,7 +108,7 @@ impl AnycastSocketManager {
 
             tracing::info!("Anycast UDP socket bound to {}", socket_addr);
             sockets.push(bound_socket);
-            
+
             let tcp_listener = TcpListenerWithDst::bind(socket_addr)
                 .await
                 .map_err(|e| format!("Failed to bind TCP to {}: {}", socket_addr, e))?;
@@ -120,7 +121,7 @@ impl AnycastSocketManager {
                 connection_count: Arc::new(AtomicU64::new(0)),
                 error_count: Arc::new(AtomicU64::new(0)),
             };
-            
+
             tracing::info!("Anycast TCP listener bound to {}", socket_addr);
             tcp_listeners.push(Arc::new(bound_tcp));
         }
@@ -129,10 +130,7 @@ impl AnycastSocketManager {
             return Err("No sockets bound for anycast".to_string());
         }
 
-        let health_status: HashMap<IpAddr, bool> = sockets
-            .iter()
-            .map(|s| (s.ip, true))
-            .collect();
+        let health_status: HashMap<IpAddr, bool> = sockets.iter().map(|s| (s.ip, true)).collect();
 
         Ok(Self {
             sockets,
@@ -187,7 +185,7 @@ impl AnycastSocketManager {
                 }
             }
         }
-        
+
         counter!("dns_anycast_tcp_accept_errors_total").increment(1);
         Err("All TCP anycast listeners failed to accept".to_string())
     }
@@ -232,7 +230,8 @@ impl AnycastSocketManager {
                         socket.ip,
                         port,
                         &health_check_domain,
-                    ).await;
+                    )
+                    .await;
 
                     {
                         let mut status = health_status.write();
@@ -247,7 +246,7 @@ impl AnycastSocketManager {
                             error_count: socket.error_count.load(Ordering::Relaxed),
                             latency_ms: latency,
                         };
-                        
+
                         let _ = tx.send(update).await;
                     }
 
@@ -256,10 +255,7 @@ impl AnycastSocketManager {
                     }
                 }
 
-                tracing::debug!(
-                    "Anycast health check: {:?}",
-                    health_status.read().clone()
-                );
+                tracing::debug!("Anycast health check: {:?}", health_status.read().clone());
             }
         });
     }
@@ -271,46 +267,49 @@ impl AnycastSocketManager {
         health_check_domain: &str,
     ) -> (bool, Option<u64>) {
         let start = Instant::now();
-        
+
         let query_id = Self::rand_u16();
-        
+
         let query_packet = match Self::build_health_check_query(query_id, health_check_domain) {
             Some(packet) => packet,
             None => return (false, None),
         };
-        
+
         let dest_addr = SocketAddr::new(anycast_ip, port);
-        
+
         if let Err(e) = socket.send_to(&query_packet, dest_addr).await {
             tracing::debug!("Health check send failed for {}: {}", anycast_ip, e);
             return (false, None);
         }
-        
+
         let mut buf = [0u8; 512];
         let mut iterations = 0;
         let max_iterations = 50;
-        
+
         while iterations < max_iterations {
-            match tokio::time::timeout(Duration::from_millis(20), socket.recv_from(&mut buf)).await {
+            match tokio::time::timeout(Duration::from_millis(20), socket.recv_from(&mut buf)).await
+            {
                 Ok(Ok((len, src))) => {
-                    if (src.ip() == anycast_ip || src.ip() == IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)))
-                        && len >= 12 {
-                            let response_id = u16::from_be_bytes([buf[0], buf[1]]);
-                            if response_id == query_id {
-                                let flags = u16::from_be_bytes([buf[2], buf[3]]);
-                                let is_response = (flags & 0x8000) != 0;
-                                if is_response {
-                                    let latency = start.elapsed().as_millis() as u64;
-                                    tracing::debug!(
+                    if (src.ip() == anycast_ip
+                        || src.ip() == IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)))
+                        && len >= 12
+                    {
+                        let response_id = u16::from_be_bytes([buf[0], buf[1]]);
+                        if response_id == query_id {
+                            let flags = u16::from_be_bytes([buf[2], buf[3]]);
+                            let is_response = (flags & 0x8000) != 0;
+                            if is_response {
+                                let latency = start.elapsed().as_millis() as u64;
+                                tracing::debug!(
                                         "Health check received valid response for {}: id={}, latency={}ms",
                                         anycast_ip,
                                         response_id,
                                         latency
                                     );
-                                    return (true, Some(latency));
-                                }
+                                return (true, Some(latency));
                             }
                         }
+                    }
                 }
                 Ok(Err(_)) => {
                     break;
@@ -320,26 +319,29 @@ impl AnycastSocketManager {
                 }
             }
         }
-        
-        tracing::debug!("Health check timed out or invalid response for {}", anycast_ip);
+
+        tracing::debug!(
+            "Health check timed out or invalid response for {}",
+            anycast_ip
+        );
         (false, None)
     }
 
     pub fn build_health_check_query(query_id: u16, domain: &str) -> Option<Vec<u8>> {
         let mut packet = Vec::new();
-        
+
         packet.extend_from_slice(&query_id.to_be_bytes());
-        
+
         packet.extend_from_slice(&0x0100u16.to_be_bytes());
-        
+
         packet.extend_from_slice(&0x0001u16.to_be_bytes());
-        
+
         packet.extend_from_slice(&0x0000u16.to_be_bytes());
-        
+
         packet.extend_from_slice(&0x0000u16.to_be_bytes());
-        
+
         packet.extend_from_slice(&0x0000u16.to_be_bytes());
-        
+
         let labels: Vec<&str> = domain.trim_end_matches('.').split('.').collect();
         for label in &labels {
             if label.is_empty() || label.len() > 63 {
@@ -349,11 +351,11 @@ impl AnycastSocketManager {
             packet.extend_from_slice(label.as_bytes());
         }
         packet.push(0);
-        
+
         packet.extend_from_slice(&0x0001u16.to_be_bytes());
-        
+
         packet.extend_from_slice(&0x0001u16.to_be_bytes());
-        
+
         Some(packet)
     }
 
@@ -369,30 +371,32 @@ impl AnycastSocketManager {
     pub async fn recv_from(&self, buf: &mut [u8]) -> Result<(usize, SocketAddr, IpAddr), String> {
         let sockets = self.sockets.clone();
         let platform = self.platform.clone();
-        
+
         let num_sockets = sockets.len();
-        
+
         match num_sockets {
             0 => Err("No sockets available".to_string()),
             1 => Self::recv_from_single(&sockets[0], platform, buf).await,
             _ => {
                 let mut errors = Vec::new();
-                
+
                 for socket in &sockets {
                     let mut buf_4096 = [0u8; 4096];
                     match socket.socket.recv_from(&mut buf_4096).await {
                         Ok((len, src)) => {
                             let dest_ip = if platform.supports_pktinfo() {
                                 Self::get_destination_sync(&socket.socket, platform.clone())
-                                    .unwrap_or_else(|| Self::infer_destination_ip_from_src(&src, socket.ip))
+                                    .unwrap_or_else(|| {
+                                        Self::infer_destination_ip_from_src(&src, socket.ip)
+                                    })
                             } else {
                                 socket.ip
                             };
-                            
+
                             if len > buf.len() {
                                 return Err(format!("Packet too large: {} > {}", len, buf.len()));
                             }
-                            
+
                             buf[..len].copy_from_slice(&buf_4096[..len]);
                             socket.query_count.fetch_add(1, Ordering::Relaxed);
                             counter!("dns_anycast_queries_total").increment(1);
@@ -404,54 +408,58 @@ impl AnycastSocketManager {
                         }
                     }
                 }
-                
+
                 counter!("dns_anycast_errors_total").increment(1);
                 Err(format!("All anycast sockets failed: {}", errors.join("; ")))
             }
         }
     }
-    
+
     async fn recv_from_single(
         socket: &BoundSocket,
         platform: Arc<dyn AnycastSocketPlatform>,
         buf: &mut [u8],
     ) -> Result<(usize, SocketAddr, IpAddr), String> {
         let mut buf_4096 = [0u8; 4096];
-        let (len, src) = socket.socket.recv_from(&mut buf_4096).await
+        let (len, src) = socket
+            .socket
+            .recv_from(&mut buf_4096)
+            .await
             .map_err(|e| format!("{}: {}", socket.local_addr, e))?;
-        
+
         if len > buf.len() {
             return Err(format!("Packet too large: {} > {}", len, buf.len()));
         }
-        
+
         let dest_ip = if platform.supports_pktinfo() {
             Self::get_destination_sync(&socket.socket, platform)
                 .unwrap_or_else(|| Self::infer_destination_ip_from_src(&src, socket.ip))
         } else {
             socket.ip
         };
-        
+
         buf[..len].copy_from_slice(&buf_4096[..len]);
         socket.query_count.fetch_add(1, Ordering::Relaxed);
         counter!("dns_anycast_queries_total").increment(1);
-        
+
         Ok((len, src, dest_ip))
     }
 
     fn infer_destination_ip_from_src(src: &SocketAddr, fallback_ip: IpAddr) -> IpAddr {
         match (src, fallback_ip) {
-            (SocketAddr::V4(_src), IpAddr::V4(_)) => {
-                IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))
-            }
+            (SocketAddr::V4(_src), IpAddr::V4(_)) => IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
             (SocketAddr::V6(_src), IpAddr::V6(_)) => {
                 IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0))
             }
             _ => fallback_ip,
         }
     }
-    
+
     #[cfg(target_os = "linux")]
-    fn get_destination_sync(socket: &UdpSocket, _platform: Arc<dyn AnycastSocketPlatform>) -> Option<IpAddr> {
+    fn get_destination_sync(
+        socket: &UdpSocket,
+        _platform: Arc<dyn AnycastSocketPlatform>,
+    ) -> Option<IpAddr> {
         use nix::sys::socket::SockaddrIn;
 
         let fd = socket.as_raw_fd();
@@ -459,10 +467,11 @@ impl AnycastSocketManager {
         let mut iov = [std::io::IoSliceMut::new(&mut buf)];
         let mut cmsg_buffer = cmsg_space!([nix::libc::in_pktinfo; 2]);
 
-        let msg = match recvmsg::<SockaddrIn>(fd, &mut iov, Some(&mut cmsg_buffer), MsgFlags::MSG_PEEK) {
-            Ok(m) => m,
-            Err(_) => return None,
-        };
+        let msg =
+            match recvmsg::<SockaddrIn>(fd, &mut iov, Some(&mut cmsg_buffer), MsgFlags::MSG_PEEK) {
+                Ok(m) => m,
+                Err(_) => return None,
+            };
 
         for cmsg in msg.cmsgs().filter_map(|r| r.ok()) {
             match cmsg {
@@ -482,7 +491,10 @@ impl AnycastSocketManager {
     }
 
     #[cfg(not(target_os = "linux"))]
-    fn get_destination_sync(_socket: &UdpSocket, _platform: Arc<dyn AnycastSocketPlatform>) -> Option<IpAddr> {
+    fn get_destination_sync(
+        _socket: &UdpSocket,
+        _platform: Arc<dyn AnycastSocketPlatform>,
+    ) -> Option<IpAddr> {
         None
     }
 
@@ -493,7 +505,7 @@ impl AnycastSocketManager {
         orig_dest: IpAddr,
     ) -> Result<usize, String> {
         let socket = self.select_socket_for_destination(orig_dest)?;
-        
+
         socket
             .socket
             .send_to(data, dest)
@@ -557,18 +569,26 @@ impl AnycastSocketManager {
         }
     }
 
-    pub async fn connect_to_client(&self, client_addr: SocketAddr, bind_ip: IpAddr) -> Result<tokio::net::TcpStream, String> {
+    pub async fn connect_to_client(
+        &self,
+        client_addr: SocketAddr,
+        bind_ip: IpAddr,
+    ) -> Result<tokio::net::TcpStream, String> {
         let socket = tokio::net::TcpSocket::new_v4()
             .map_err(|e| format!("Failed to create TCP socket: {}", e))?;
-        
-        socket.set_reuseaddr(true)
+
+        socket
+            .set_reuseaddr(true)
             .map_err(|e| format!("Failed to set SO_REUSEADDR: {}", e))?;
-        
+
         let bind_addr = SocketAddr::new(bind_ip, 0);
-        socket.bind(bind_addr)
+        socket
+            .bind(bind_addr)
             .map_err(|e| format!("Failed to bind to {}: {}", bind_addr, e))?;
-        
-        socket.connect(client_addr).await
+
+        socket
+            .connect(client_addr)
+            .await
             .map_err(|e| format!("Failed to connect to {}: {}", client_addr, e))
     }
 }

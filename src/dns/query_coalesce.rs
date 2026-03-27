@@ -6,12 +6,18 @@ use metrics::Gauge;
 use parking_lot::RwLock;
 use tokio::sync::broadcast;
 
-static COALESCER_HITS: std::sync::LazyLock<Gauge> = std::sync::LazyLock::new(|| metrics::gauge!("dns_query_coalescer_hits_total"));
-static COALESCER_MISSES: std::sync::LazyLock<Gauge> = std::sync::LazyLock::new(|| metrics::gauge!("dns_query_coalescer_misses_total"));
-static COALESCER_EVICTIONS: std::sync::LazyLock<Gauge> = std::sync::LazyLock::new(|| metrics::gauge!("dns_query_coalescer_evictions_total"));
-static COALESCER_TIMEOUTS: std::sync::LazyLock<Gauge> = std::sync::LazyLock::new(|| metrics::gauge!("dns_query_coalescer_timeouts_total"));
-static COALESCER_LAGGED: std::sync::LazyLock<Gauge> = std::sync::LazyLock::new(|| metrics::gauge!("dns_query_coalescer_lagged_total"));
-static COALESCER_IN_FLIGHT: std::sync::LazyLock<Gauge> = std::sync::LazyLock::new(|| metrics::gauge!("dns_query_coalescer_in_flight"));
+static COALESCER_HITS: std::sync::LazyLock<Gauge> =
+    std::sync::LazyLock::new(|| metrics::gauge!("dns_query_coalescer_hits_total"));
+static COALESCER_MISSES: std::sync::LazyLock<Gauge> =
+    std::sync::LazyLock::new(|| metrics::gauge!("dns_query_coalescer_misses_total"));
+static COALESCER_EVICTIONS: std::sync::LazyLock<Gauge> =
+    std::sync::LazyLock::new(|| metrics::gauge!("dns_query_coalescer_evictions_total"));
+static COALESCER_TIMEOUTS: std::sync::LazyLock<Gauge> =
+    std::sync::LazyLock::new(|| metrics::gauge!("dns_query_coalescer_timeouts_total"));
+static COALESCER_LAGGED: std::sync::LazyLock<Gauge> =
+    std::sync::LazyLock::new(|| metrics::gauge!("dns_query_coalescer_lagged_total"));
+static COALESCER_IN_FLIGHT: std::sync::LazyLock<Gauge> =
+    std::sync::LazyLock::new(|| metrics::gauge!("dns_query_coalescer_in_flight"));
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct QueryKey {
@@ -25,7 +31,7 @@ impl QueryKey {
         // Parse query name directly from wire format (skip DNS header)
         let mut pos = 12; // DNS header is 12 bytes
         let mut name = String::new();
-        
+
         while pos < query.len() {
             let len = query[pos] as usize;
             if len == 0 {
@@ -45,20 +51,20 @@ impl QueryKey {
             name.push_str(&label);
             pos += 1 + len;
         }
-        
+
         if name.is_empty() {
             return None;
         }
-        
+
         // Get qtype from bytes after the name
         let qtype_pos = pos + 1; // Skip null byte
         if qtype_pos + 2 > query.len() {
             return None;
         }
         let qtype = u16::from_be_bytes([query[qtype_pos], query[qtype_pos + 1]]);
-        
+
         let client_str = client_ip.map(|ip| ip.to_string());
-        
+
         Some(Self {
             name,
             qtype,
@@ -81,7 +87,6 @@ pub struct QueryCoalescerMetrics {
     pub timeouts: usize,
     pub lagged: usize,
 }
-
 
 #[allow(dead_code)] // max_wait_time reserved for future timeout enforcement
 pub struct QueryCoalescer {
@@ -125,11 +130,11 @@ impl QueryCoalescer {
 
     pub fn get_or_wait(&self, key: QueryKey) -> Option<CoalesceResult> {
         let mut in_flight = self.in_flight.write();
-        
+
         if let Some(entry) = in_flight.get(&key) {
             let mut receiver = entry.sender.subscribe();
             drop(in_flight);
-            
+
             // Use try_recv for non-blocking receive
             match receiver.try_recv() {
                 Ok(response) => {
@@ -198,11 +203,11 @@ impl QueryCoalescer {
             let in_flight = self.in_flight.read();
             in_flight.get(&key).cloned()
         };
-        
+
         if let Some(entry) = entry {
             let _ = entry.sender.send(response);
         }
-        
+
         let mut in_flight = self.in_flight.write();
         in_flight.remove(&key);
         COALESCER_IN_FLIGHT.set(in_flight.len() as f64);
@@ -211,16 +216,16 @@ impl QueryCoalescer {
     pub fn cleanup_stale(&self) {
         let mut in_flight = self.in_flight.write();
         let now = Instant::now();
-        
+
         let prev_count = in_flight.len();
         in_flight.retain(|_key, entry| {
-            let is_stale = entry.sender.receiver_count() == 0 
+            let is_stale = entry.sender.receiver_count() == 0
                 || now.duration_since(entry.created_at) > self.entry_ttl;
-            
+
             if is_stale {
                 self.metrics.write().evictions += 1;
             }
-            
+
             !is_stale
         });
         let new_count = in_flight.len();
@@ -233,16 +238,16 @@ impl QueryCoalescer {
     pub fn cleanup_stale_aged(&self, max_age: Duration) {
         let mut in_flight = self.in_flight.write();
         let now = Instant::now();
-        
+
         let prev_count = in_flight.len();
         in_flight.retain(|key, entry| {
             let is_stale = now.duration_since(entry.created_at) > max_age;
-            
+
             if is_stale {
                 self.metrics.write().evictions += 1;
                 tracing::debug!("Removed stale coalescer entry: {:?}", key);
             }
-            
+
             !is_stale
         });
         let new_count = in_flight.len();
@@ -288,17 +293,11 @@ mod tests {
     #[test]
     fn test_query_key_from_query() {
         let query = vec![
-            0x12, 0x34, 
-            0x01, 0x00, 
-            0x00, 0x01, 
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x07, b'e', b'x', b'a', b'm', b'p', b'l', b'e',
-            0x03, b'c', b'o', b'm',
-            0x00,
-            0x00, 0x01,
-            0x00, 0x01,
+            0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x07, b'e',
+            b'x', b'a', b'm', b'p', b'l', b'e', 0x03, b'c', b'o', b'm', 0x00, 0x00, 0x01, 0x00,
+            0x01,
         ];
-        
+
         let key = QueryKey::from_query(&query, None).unwrap();
         assert_eq!(key.name, "example.com");
         assert_eq!(key.qtype, 1);
@@ -327,16 +326,16 @@ mod tests {
         };
 
         let response = Arc::new(vec![0x00, 0x01, 0x02, 0x03]);
-        
+
         // First, get_or_wait to establish a listener
         let _ = coalescer.get_or_wait(key.clone());
-        
+
         // Then broadcast - the listener should receive it
         coalescer.broadcast_response(key.clone(), response.clone());
-        
+
         // Now get_or_wait again - should receive the broadcast
         let result = coalescer.get_or_wait(key);
-        
+
         // The result should either be a Response (if timing worked out) or NewQuery (if not)
         // This test may be timing-dependent
         match result {
@@ -347,7 +346,7 @@ mod tests {
                 // NewQuery is also acceptable if the timing didn't work out
             }
             Some(CoalesceResult::Timeout) => {
-                // Timeout is also acceptable 
+                // Timeout is also acceptable
             }
             Some(CoalesceResult::Lagged) => {
                 // Lagged is also acceptable
@@ -361,7 +360,7 @@ mod tests {
     #[test]
     fn test_max_entries_eviction() {
         let coalescer = QueryCoalescer::with_config(500, 3, 30);
-        
+
         for i in 0..5 {
             let key = QueryKey {
                 name: format!("example{}.com", i),
@@ -370,7 +369,7 @@ mod tests {
             };
             coalescer.get_or_wait(key);
         }
-        
+
         assert_eq!(coalescer.in_flight_count(), 3);
         assert_eq!(coalescer.metrics().evictions, 2);
     }
@@ -378,23 +377,26 @@ mod tests {
     #[test]
     fn test_metrics() {
         let coalescer = QueryCoalescer::new();
-        
+
         let key = QueryKey {
             name: "example.com".to_string(),
             qtype: 1,
             client_ip: None,
         };
-        
+
         // First call creates a new entry - this is a miss
         coalescer.get_or_wait(key.clone());
-        
+
         // Second and third calls find existing entry - these time out (non-blocking)
         coalescer.get_or_wait(key.clone());
         coalescer.get_or_wait(key);
-        
+
         let metrics = coalescer.metrics();
         // First call is a miss, subsequent calls timeout because no response was broadcast
         assert_eq!(metrics.misses, 1, "Should have 1 miss for first call");
-        assert_eq!(metrics.timeouts, 2, "Should have 2 timeouts for subsequent calls");
+        assert_eq!(
+            metrics.timeouts, 2,
+            "Should have 2 timeouts for subsequent calls"
+        );
     }
 }

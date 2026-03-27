@@ -230,30 +230,30 @@ impl UdpFloodProtector {
                 .current_window
                 .compare_exchange(current, now_secs, Ordering::SeqCst, Ordering::Relaxed)
                 .is_ok()
-            {
-                for counter in self.per_ip_counters.iter() {
-                    counter.store(0, Ordering::Relaxed);
-                }
-                for counter in self.per_port_counters.iter() {
-                    counter.store(0, Ordering::Relaxed);
-                }
-                for counter in self.dns_counters.iter() {
-                    counter.store(0, Ordering::Relaxed);
-                }
-                for counter in self.ntp_counters.iter() {
-                    counter.store(0, Ordering::Relaxed);
-                }
-                for counter in self.snmp_counters.iter() {
-                    counter.store(0, Ordering::Relaxed);
-                }
-                for counter in self.ssdp_counters.iter() {
-                    counter.store(0, Ordering::Relaxed);
-                }
-                self.global_counter.store(0, Ordering::Relaxed);
-
-                let mut tracker = self.amplification_tracker.write();
-                tracker.retain(|_, entry| entry.last_seen.elapsed().as_secs() < 60);
+        {
+            for counter in self.per_ip_counters.iter() {
+                counter.store(0, Ordering::Relaxed);
             }
+            for counter in self.per_port_counters.iter() {
+                counter.store(0, Ordering::Relaxed);
+            }
+            for counter in self.dns_counters.iter() {
+                counter.store(0, Ordering::Relaxed);
+            }
+            for counter in self.ntp_counters.iter() {
+                counter.store(0, Ordering::Relaxed);
+            }
+            for counter in self.snmp_counters.iter() {
+                counter.store(0, Ordering::Relaxed);
+            }
+            for counter in self.ssdp_counters.iter() {
+                counter.store(0, Ordering::Relaxed);
+            }
+            self.global_counter.store(0, Ordering::Relaxed);
+
+            let mut tracker = self.amplification_tracker.write();
+            tracker.retain(|_, entry| entry.last_seen.elapsed().as_secs() < 60);
+        }
     }
 
     pub fn get_stats(&self) -> UdpFloodStats {

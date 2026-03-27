@@ -6,11 +6,11 @@ use dashmap::DashMap;
 use metrics::{counter, gauge};
 use tokio::sync::broadcast;
 
-use super::config::{WireGuardConfig, WireGuardPeerConfig, WgImplementation};
-use super::userspace::UserspaceWireGuard;
+use super::config::{WgImplementation, WireGuardConfig, WireGuardPeerConfig};
 use super::kernel::KernelWireGuard;
-use super::session::{WgSessionManager, WgConnectionStats};
-use crate::tunnel::{TunnelTransport, TunnelType, TunnelStats, PeerInfo};
+use super::session::{WgConnectionStats, WgSessionManager};
+use super::userspace::UserspaceWireGuard;
+use crate::tunnel::{PeerInfo, TunnelStats, TunnelTransport, TunnelType};
 
 pub enum WireGuardBackend {
     Kernel(KernelWireGuard),
@@ -34,7 +34,7 @@ impl WireGuardRuntime {
         let sessions = Arc::new(WgSessionManager::new());
         let stats = Arc::new(DashMap::new());
         let implementation = config.implementation;
-        
+
         tracing::info!(
             "WireGuard runtime created: implementation={:?}, interface={}",
             implementation,
@@ -56,13 +56,14 @@ impl WireGuardRuntime {
         WireGuardRuntimeBuilder::new(config)
     }
 
-    async fn select_backend(&self) -> Result<WireGuardBackend, Box<dyn std::error::Error + Send + Sync>> {
+    async fn select_backend(
+        &self,
+    ) -> Result<WireGuardBackend, Box<dyn std::error::Error + Send + Sync>> {
         match self.implementation {
             WgImplementation::Kernel => {
                 if super::kernel::is_kernel_wireguard_available().await {
                     tracing::info!("Using kernel WireGuard implementation");
-                    return KernelWireGuard::new(self.config.clone())
-                        .map(WireGuardBackend::Kernel);
+                    return KernelWireGuard::new(self.config.clone()).map(WireGuardBackend::Kernel);
                 }
                 Err("Kernel WireGuard requested but not available".into())
             }
@@ -77,22 +78,24 @@ impl WireGuardRuntime {
             WgImplementation::Auto => {
                 if super::kernel::is_kernel_wireguard_available().await {
                     tracing::info!("Auto-selected kernel WireGuard implementation");
-                    return KernelWireGuard::new(self.config.clone())
-                        .map(WireGuardBackend::Kernel);
+                    return KernelWireGuard::new(self.config.clone()).map(WireGuardBackend::Kernel);
                 }
-                
+
                 if super::userspace::is_userspace_available().await {
                     tracing::info!("Auto-selected userspace WireGuard implementation");
                     return UserspaceWireGuard::new(self.config.clone())
                         .map(WireGuardBackend::Userspace);
                 }
-                
+
                 Err("No WireGuard implementation available".into())
             }
         }
     }
 
-    pub fn add_peer(&self, peer_config: WireGuardPeerConfig) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn add_peer(
+        &self,
+        peer_config: WireGuardPeerConfig,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         match &self.backend {
             Some(WireGuardBackend::Kernel(k)) => k.add_peer(peer_config),
             Some(WireGuardBackend::Userspace(u)) => u.add_peer(peer_config),
@@ -102,14 +105,17 @@ impl WireGuardRuntime {
                     peer_config.allowed_ips.clone(),
                 )
                 .with_endpoint(peer_config.endpoint.clone().unwrap_or_default());
-                
+
                 self.sessions.add_session(peer_session);
                 Ok(())
             }
         }
     }
 
-    pub fn remove_peer(&self, public_key: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn remove_peer(
+        &self,
+        public_key: &str,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         match &self.backend {
             Some(WireGuardBackend::Kernel(k)) => k.remove_peer(public_key),
             Some(WireGuardBackend::Userspace(u)) => u.remove_peer(public_key),
@@ -130,7 +136,11 @@ impl WireGuardRuntime {
         self.implementation
     }
 
-    pub async fn send_datagram(&self, peer_public_key: &str, data: &[u8]) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn send_datagram(
+        &self,
+        peer_public_key: &str,
+        data: &[u8],
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         match &self.backend {
             Some(WireGuardBackend::Userspace(u)) => u.send_datagram(peer_public_key, data).await,
             Some(WireGuardBackend::Kernel(_)) => {
@@ -149,18 +159,18 @@ impl TunnelTransport for WireGuardRuntime {
 
     async fn start(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let mut backend = self.select_backend().await?;
-        
+
         match &mut backend {
             WireGuardBackend::Kernel(k) => k.start().await?,
             WireGuardBackend::Userspace(u) => u.start().await?,
         }
-        
+
         self.backend = Some(backend);
         self.running = true;
-        
+
         gauge!("maluwaf.tunnel.wireguard.running").set(1.0);
         counter!("maluwaf.tunnel.wireguard.started").increment(1);
-        
+
         tracing::info!("WireGuard runtime started");
         Ok(())
     }
@@ -172,10 +182,10 @@ impl TunnelTransport for WireGuardRuntime {
                 WireGuardBackend::Userspace(u) => u.stop().await,
             }
         }
-        
+
         self.running = false;
         gauge!("maluwaf.tunnel.wireguard.running").set(0.0);
-        
+
         tracing::info!("WireGuard runtime stopped");
     }
 
@@ -230,7 +240,10 @@ pub struct WireGuardRuntimeBuilder {
 impl WireGuardRuntimeBuilder {
     pub fn new(config: WireGuardConfig) -> Self {
         let implementation = config.implementation;
-        Self { config, implementation }
+        Self {
+            config,
+            implementation,
+        }
     }
 
     pub fn with_implementation(mut self, impl_type: WgImplementation) -> Self {
@@ -244,6 +257,8 @@ impl WireGuardRuntimeBuilder {
     }
 }
 
-pub async fn create_wireguard_runtime(config: WireGuardConfig) -> Result<WireGuardRuntime, Box<dyn std::error::Error + Send + Sync>> {
+pub async fn create_wireguard_runtime(
+    config: WireGuardConfig,
+) -> Result<WireGuardRuntime, Box<dyn std::error::Error + Send + Sync>> {
     WireGuardRuntime::new(config)
 }

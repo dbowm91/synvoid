@@ -53,7 +53,7 @@ impl ProbeRecord {
         let timestamp = event.timestamp;
         let user_agent = event.user_agent.clone();
         let endpoint = event.endpoint.clone();
-        
+
         if !self.unique_endpoints.contains(&endpoint) {
             self.unique_endpoints.push(endpoint);
         }
@@ -126,29 +126,32 @@ impl ProbeTracker {
         let store: HashMap<String, ProbeRecord> = if let Some(ref path) = persist_path {
             if path.exists() {
                 match std::fs::read_to_string(path) {
-                    Ok(content) => {
-                        match serde_json::from_str::<Vec<ProbeRecord>>(&content) {
-                            Ok(entries) => {
-                                let now = current_timestamp();
-                                let retention_secs = config.retention_days * 86400;
-                                let validated: HashMap<String, ProbeRecord> = entries
-                                    .into_iter()
-                                    .filter(|e| !e.is_expired(now, retention_secs))
-                                    .take(max_records)
-                                    .map(|e| {
-                                        let ip: IpAddr = e.ip.parse().unwrap_or_else(|_| "0.0.0.0".parse().expect("valid IPv4 literal"));
-                                        (ProbeRecord::key(&ip), e)
-                                    })
-                                    .collect();
-                                tracing::info!("Loaded {} valid probe records from disk", validated.len());
-                                validated
-                            }
-                            Err(e) => {
-                                tracing::warn!("Failed to parse probes.json: {}, starting fresh", e);
-                                HashMap::new()
-                            }
+                    Ok(content) => match serde_json::from_str::<Vec<ProbeRecord>>(&content) {
+                        Ok(entries) => {
+                            let now = current_timestamp();
+                            let retention_secs = config.retention_days * 86400;
+                            let validated: HashMap<String, ProbeRecord> = entries
+                                .into_iter()
+                                .filter(|e| !e.is_expired(now, retention_secs))
+                                .take(max_records)
+                                .map(|e| {
+                                    let ip: IpAddr = e.ip.parse().unwrap_or_else(|_| {
+                                        "0.0.0.0".parse().expect("valid IPv4 literal")
+                                    });
+                                    (ProbeRecord::key(&ip), e)
+                                })
+                                .collect();
+                            tracing::info!(
+                                "Loaded {} valid probe records from disk",
+                                validated.len()
+                            );
+                            validated
                         }
-                    }
+                        Err(e) => {
+                            tracing::warn!("Failed to parse probes.json: {}, starting fresh", e);
+                            HashMap::new()
+                        }
+                    },
                     Err(_) => HashMap::new(),
                 }
             } else {
@@ -160,13 +163,14 @@ impl ProbeTracker {
 
         let initial_count = store.len();
         let persist_tx = if persist_path.is_some() {
-            let (tx, mut rx): (mpsc::Sender<PersistRequest>, mpsc::Receiver<PersistRequest>) = mpsc::channel(100);
+            let (tx, mut rx): (mpsc::Sender<PersistRequest>, mpsc::Receiver<PersistRequest>) =
+                mpsc::channel(100);
             let path = persist_path.clone().expect("checked is_some above");
             let config_clone = config.clone();
-            
+
             tokio::spawn(async move {
                 let mut interval = time::interval(Duration::from_secs(60));
-                
+
                 loop {
                     tokio::select! {
                         _ = interval.tick() => {
@@ -178,7 +182,7 @@ impl ProbeTracker {
                     }
                 }
             });
-            
+
             Some(tx)
         } else {
             None
@@ -209,7 +213,9 @@ impl ProbeTracker {
         user_agent: Option<String>,
     ) -> ProbeResult {
         if !self.config.enabled {
-            return ProbeResult::Ignored { reason: "disabled".to_string() };
+            return ProbeResult::Ignored {
+                reason: "disabled".to_string(),
+            };
         }
 
         let now = current_timestamp();
@@ -224,29 +230,31 @@ impl ProbeTracker {
         let probing_detected;
         {
             let mut store = self.store.write();
-            
+
             let key = ProbeRecord::key(&ip);
             if let Some(record) = store.get_mut(&key) {
                 record.add_event(event);
-                
+
                 let recent_events: Vec<_> = record
                     .events
                     .iter()
                     .filter(|e| e.timestamp >= window_start)
                     .collect();
-                
+
                 let unique_recent: Vec<_> = recent_events
                     .iter()
                     .map(|e| &e.endpoint)
                     .collect::<std::collections::HashSet<_>>()
                     .into_iter()
                     .collect();
-                
+
                 probing_detected = unique_recent.len() >= self.config.max_endpoints_per_window;
             } else {
                 if *self.total_records.read() >= self.config.max_records {
                     tracing::warn!("Probe store at capacity, cannot add new probe record");
-                    return ProbeResult::Ignored { reason: "at_capacity".to_string() };
+                    return ProbeResult::Ignored {
+                        reason: "at_capacity".to_string(),
+                    };
                 }
 
                 let record = ProbeRecord::new(ip, event);
@@ -271,7 +279,7 @@ impl ProbeTracker {
     pub fn check_probing(&self, ip: IpAddr) -> bool {
         let now = current_timestamp();
         let window_start = now.saturating_sub(self.config.window_secs);
-        
+
         let store = self.store.read();
         if let Some(record) = store.get(&ProbeRecord::key(&ip)) {
             let unique_recent: std::collections::HashSet<_> = record
@@ -280,7 +288,7 @@ impl ProbeTracker {
                 .filter(|e| e.timestamp >= window_start)
                 .map(|e| &e.endpoint)
                 .collect();
-            
+
             unique_recent.len() >= self.config.max_endpoints_per_window
         } else {
             false
@@ -304,48 +312,42 @@ impl ProbeTracker {
     }
 
     pub fn get_record(&self, ip: &IpAddr) -> Option<ProbeRecord> {
-        self.store
-            .read()
-            .get(&ProbeRecord::key(ip))
-            .cloned()
+        self.store.read().get(&ProbeRecord::key(ip)).cloned()
     }
 
     pub fn list_records(&self, limit: usize, offset: usize) -> Vec<ProbeRecord> {
         let store = self.store.read();
         let mut records: Vec<_> = store.values().cloned().collect();
         records.sort_by(|a, b| b.last_seen.cmp(&a.last_seen));
-        
-        records
-            .into_iter()
-            .skip(offset)
-            .take(limit)
-            .collect()
+
+        records.into_iter().skip(offset).take(limit).collect()
     }
 
     pub fn get_stats(&self) -> ProbeStats {
         let store = self.store.read();
         let now = current_timestamp();
         let retention_secs = self.config.retention_days * 86400;
-        
+
         let active = store
             .values()
             .filter(|r| !r.is_expired(now, retention_secs))
             .count();
-        
+
         let total_events: u32 = store.values().map(|r| r.event_count).sum();
-        
-        let mut endpoint_counts: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+
+        let mut endpoint_counts: std::collections::HashMap<String, u32> =
+            std::collections::HashMap::new();
         for record in store.values() {
             for endpoint in &record.unique_endpoints {
                 *endpoint_counts.entry(endpoint.clone()).or_insert(0) += 1;
             }
         }
-        
+
         let mut top_endpoints_vec: Vec<_> = endpoint_counts
             .into_iter()
             .map(|(endpoint, count)| ProbeEndpointStats { endpoint, count })
             .collect();
-        
+
         top_endpoints_vec.sort_by(|a, b| b.count.cmp(&a.count));
         let top_endpoints: Vec<_> = top_endpoints_vec.into_iter().take(10).collect();
 
@@ -369,11 +371,11 @@ impl ProbeTracker {
     pub fn cleanup_expired(&self) {
         let now = current_timestamp();
         let retention_secs = self.config.retention_days * 86400;
-        
+
         let mut store = self.store.write();
         store.retain(|_, record| !record.is_expired(now, retention_secs));
         *self.total_records.write() = store.len();
-        
+
         drop(store);
         self.trigger_persist();
     }
@@ -392,11 +394,12 @@ impl ProbeTracker {
         }
     }
 
-    async fn persist_to_disk(path: &PathBuf, entries: HashMap<String, ProbeRecord>, max_records: usize) {
-        let entries_to_save: Vec<ProbeRecord> = entries
-            .into_values()
-            .take(max_records)
-            .collect();
+    async fn persist_to_disk(
+        path: &PathBuf,
+        entries: HashMap<String, ProbeRecord>,
+        max_records: usize,
+    ) {
+        let entries_to_save: Vec<ProbeRecord> = entries.into_values().take(max_records).collect();
 
         match serde_json::to_string_pretty(&entries_to_save) {
             Ok(json) => {
@@ -422,7 +425,9 @@ impl ProbeTracker {
 #[derive(Debug, Clone)]
 pub enum ProbeResult {
     Recorded,
-    Ignored { reason: String },
+    Ignored {
+        reason: String,
+    },
     ProbingDetected {
         unique_endpoints: Vec<String>,
         event_count: u32,
@@ -515,23 +520,25 @@ impl SuspiciousWordTracker {
 
                 {
                     let mut store = self.store.write();
-                    
+
                     let entry = store.entry(ip).or_default();
-                    
+
                     if entry.len() >= 10 {
                         entry.remove(0);
                     }
                     entry.push(record.clone());
 
                     if store.len() >= MAX_WORD_TRACKER_IPS {
-                        let mut keys_to_remove: Vec<IpAddr> = store.keys().cloned().take(1).collect();
+                        let mut keys_to_remove: Vec<IpAddr> =
+                            store.keys().cloned().take(1).collect();
                         for key in keys_to_remove {
                             store.remove(&key);
                         }
                     }
                 }
 
-                self.total_matches.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                self.total_matches
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
                 return Some(record);
             }
@@ -546,7 +553,8 @@ impl SuspiciousWordTracker {
 
     pub fn list_records(&self, limit: usize) -> Vec<(IpAddr, Vec<SuspiciousWordRecord>)> {
         let store = self.store.read();
-        store.iter()
+        store
+            .iter()
             .take(limit)
             .map(|(ip, records)| (*ip, records.clone()))
             .collect()
@@ -555,9 +563,12 @@ impl SuspiciousWordTracker {
     pub fn get_stats(&self) -> SuspiciousWordStats {
         let store = self.store.read();
         let total_ips = store.len();
-        let total_matches = self.total_matches.load(std::sync::atomic::Ordering::Relaxed);
+        let total_matches = self
+            .total_matches
+            .load(std::sync::atomic::Ordering::Relaxed);
 
-        let mut word_counts: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+        let mut word_counts: std::collections::HashMap<String, u32> =
+            std::collections::HashMap::new();
         for records in store.values() {
             for record in records {
                 *word_counts.entry(record.matched_word.clone()).or_insert(0) += 1;
@@ -627,18 +638,17 @@ impl UpstreamErrorTracker {
         &self.config
     }
 
-    pub fn record_error(
-        &self,
-        ip: IpAddr,
-        path: &str,
-        status_code: u16,
-    ) -> UpstreamErrorResult {
+    pub fn record_error(&self, ip: IpAddr, path: &str, status_code: u16) -> UpstreamErrorResult {
         if !self.config.enabled {
-            return UpstreamErrorResult::Ignored { reason: "disabled".to_string() };
+            return UpstreamErrorResult::Ignored {
+                reason: "disabled".to_string(),
+            };
         }
 
         if !self.config.error_codes.contains(&status_code) {
-            return UpstreamErrorResult::Ignored { reason: "status_not_tracked".to_string() };
+            return UpstreamErrorResult::Ignored {
+                reason: "status_not_tracked".to_string(),
+            };
         }
 
         let now = current_timestamp();
@@ -655,24 +665,22 @@ impl UpstreamErrorTracker {
         let error_count;
         {
             let mut store = self.store.write();
-            
+
             let entry = store.entry(ip).or_default();
             entry.retain(|r| r.timestamp >= window_start);
 
             if entry.len() >= 20 {
                 entry.remove(0);
             }
-            
+
             entry.push(record.clone());
             error_count = entry.len();
 
-            let unique_endpoints: std::collections::HashSet<_> = entry
-                .iter()
-                .map(|r| r.endpoint.clone())
-                .collect();
+            let unique_endpoints: std::collections::HashSet<_> =
+                entry.iter().map(|r| r.endpoint.clone()).collect();
 
             probing_detected = unique_endpoints.len() >= self.config.min_error_endpoints;
-            
+
             if store.len() >= MAX_WORD_TRACKER_IPS {
                 let mut keys_to_remove: Vec<IpAddr> = store.keys().cloned().take(1).collect();
                 for key in keys_to_remove {
@@ -681,14 +689,17 @@ impl UpstreamErrorTracker {
             }
         }
 
-        self.total_errors.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.total_errors
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
         if probing_detected {
             let unique_endpoints: Vec<String> = {
                 let store = self.store.read();
-                store.get(&ip)
+                store
+                    .get(&ip)
                     .map(|entries| {
-                        entries.iter()
+                        entries
+                            .iter()
                             .filter(|e| e.timestamp >= window_start)
                             .map(|e| e.endpoint.clone())
                             .collect::<std::collections::HashSet<_>>()
@@ -713,7 +724,8 @@ impl UpstreamErrorTracker {
 
     pub fn list_records(&self, limit: usize) -> Vec<(IpAddr, Vec<UpstreamErrorRecord>)> {
         let store = self.store.read();
-        store.iter()
+        store
+            .iter()
             .take(limit)
             .map(|(ip, records)| (*ip, records.clone()))
             .collect()
@@ -723,7 +735,8 @@ impl UpstreamErrorTracker {
         let store = self.store.read();
         let total_errors = self.total_errors.load(std::sync::atomic::Ordering::Relaxed);
 
-        let mut endpoint_counts: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+        let mut endpoint_counts: std::collections::HashMap<String, u32> =
+            std::collections::HashMap::new();
         for records in store.values() {
             for record in records {
                 *endpoint_counts.entry(record.endpoint.clone()).or_insert(0) += 1;
@@ -752,7 +765,9 @@ impl UpstreamErrorTracker {
 #[derive(Debug, Clone)]
 pub enum UpstreamErrorResult {
     Recorded,
-    Ignored { reason: String },
+    Ignored {
+        reason: String,
+    },
     ProbingDetected {
         unique_endpoints: Vec<String>,
         error_count: usize,
@@ -785,7 +800,7 @@ mod tests {
             timestamp: 1000,
             method: "GET".to_string(),
         };
-        
+
         let record = ProbeRecord::new(ip, event);
         assert_eq!(record.ip, "1.2.3.4");
         assert_eq!(record.event_count, 1);
@@ -801,18 +816,18 @@ mod tests {
             timestamp: 1000,
             method: "GET".to_string(),
         };
-        
+
         let mut record = ProbeRecord::new(ip, event1);
-        
+
         let event2 = ProbeEvent {
             endpoint: "/.git/config".to_string(),
             user_agent: Some("curl".to_string()),
             timestamp: 1001,
             method: "GET".to_string(),
         };
-        
+
         record.add_event(event2);
-        
+
         assert_eq!(record.event_count, 2);
         assert_eq!(record.unique_endpoints.len(), 2);
     }

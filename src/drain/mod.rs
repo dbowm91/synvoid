@@ -9,8 +9,7 @@ pub struct WorkerConnectionInfo {
     pub idle: u64,
 }
 
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct DrainStatus {
     pub drain_id: u64,
     pub is_draining: bool,
@@ -23,7 +22,6 @@ pub struct DrainStatus {
     pub drain_complete: bool,
     pub by_worker: HashMap<usize, WorkerConnectionInfo>,
 }
-
 
 impl DrainStatus {
     pub fn new() -> Self {

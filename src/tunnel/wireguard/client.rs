@@ -2,9 +2,11 @@ use metrics::{counter, gauge};
 use std::time::Duration;
 use tokio::sync::broadcast;
 
-use super::config::{WireGuardConfig, WireGuardPeerConfig, WireGuardClientConfig, generate_keypair};
+use super::config::{
+    generate_keypair, WireGuardClientConfig, WireGuardConfig, WireGuardPeerConfig,
+};
 use super::runtime::WireGuardRuntime;
-use crate::tunnel::{TunnelTransport, TunnelStats, PeerInfo};
+use crate::tunnel::{PeerInfo, TunnelStats, TunnelTransport};
 
 pub struct WireGuardClient {
     config: WireGuardClientConfig,
@@ -14,10 +16,12 @@ pub struct WireGuardClient {
 }
 
 impl WireGuardClient {
-    pub fn new(config: WireGuardClientConfig) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn new(
+        config: WireGuardClientConfig,
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let (shutdown_tx, _) = broadcast::channel(1);
         let local_addresses = config.local_addresses.clone();
-        
+
         tracing::info!(
             "WireGuard client initialized for endpoint: {:?}",
             config.base.peers.first().and_then(|p| p.endpoint.as_ref())
@@ -35,14 +39,17 @@ impl WireGuardClient {
         WireGuardClientBuilder::new()
     }
 
-    pub fn from_endpoint(endpoint: &str, peer_public_key: &str) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn from_endpoint(
+        endpoint: &str,
+        peer_public_key: &str,
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let (private_key, _public_key) = generate_keypair();
-        
-        let peer = WireGuardPeerConfig::new(peer_public_key, vec!["0.0.0.0/0"])
-            .with_endpoint(endpoint);
-        
+
+        let peer =
+            WireGuardPeerConfig::new(peer_public_key, vec!["0.0.0.0/0"]).with_endpoint(endpoint);
+
         let config = WireGuardClientConfig::new(&private_key, peer);
-        
+
         Self::new(config)
     }
 
@@ -56,15 +63,15 @@ impl WireGuardClient {
         if self.runtime.is_some() {
             return Err("Already connected".into());
         }
-        
+
         let mut runtime = WireGuardRuntime::new(self.config.base.clone())?;
         runtime.start().await?;
-        
+
         self.runtime = Some(runtime);
-        
+
         counter!("maluwaf.tunnel.wireguard.client.connected").increment(1);
         gauge!("maluwaf.tunnel.wireguard.client.status").set(1.0);
-        
+
         tracing::info!("WireGuard client connected");
         Ok(())
     }
@@ -73,10 +80,10 @@ impl WireGuardClient {
         if let Some(mut runtime) = self.runtime.take() {
             runtime.stop().await;
         }
-        
+
         counter!("maluwaf.tunnel.wireguard.client.disconnected").increment(1);
         gauge!("maluwaf.tunnel.wireguard.client.status").set(0.0);
-        
+
         tracing::info!("WireGuard client disconnected");
     }
 
@@ -85,7 +92,9 @@ impl WireGuardClient {
     }
 
     pub fn stats(&self) -> TunnelStats {
-        self.runtime.as_ref().map_or(TunnelStats::default(), |r| r.stats())
+        self.runtime
+            .as_ref()
+            .map_or(TunnelStats::default(), |r| r.stats())
     }
 
     pub fn peers(&self) -> Vec<PeerInfo> {
@@ -104,7 +113,9 @@ impl WireGuardClient {
         self.shutdown_tx.subscribe()
     }
 
-    pub async fn run_with_auto_reconnect(mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn run_with_auto_reconnect(
+        mut self,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if !self.config.base.auto_reconnect {
             self.connect().await?;
             return Ok(());
@@ -117,10 +128,10 @@ impl WireGuardClient {
             match self.connect().await {
                 Ok(_) => {
                     tracing::info!("WireGuard client connected");
-                    
+
                     if let Some(ref _runtime) = self.runtime {
                         let mut shutdown_inner = self.shutdown_tx.subscribe();
-                        
+
                         tokio::select! {
                             _ = tokio::time::sleep(Duration::from_secs(60)) => {
                                 tracing::trace!("WireGuard connection check");
@@ -132,12 +143,16 @@ impl WireGuardClient {
                             }
                         }
                     }
-                    
+
                     self.disconnect().await;
                     tracing::info!("Connection lost, attempting reconnect...");
                 }
                 Err(e) => {
-                    tracing::warn!("Connection failed: {}. Retrying in {:?}", e, reconnect_interval);
+                    tracing::warn!(
+                        "Connection failed: {}. Retrying in {:?}",
+                        e,
+                        reconnect_interval
+                    );
                 }
             }
 
@@ -212,13 +227,14 @@ impl WireGuardClientBuilder {
             priv_key
         });
 
-        let peer_public_key = self.peer_public_key
-            .ok_or("Peer public key is required")?;
-        let peer_endpoint = self.peer_endpoint
-            .ok_or("Peer endpoint is required")?;
+        let peer_public_key = self.peer_public_key.ok_or("Peer public key is required")?;
+        let peer_endpoint = self.peer_endpoint.ok_or("Peer endpoint is required")?;
 
-        let peer = WireGuardPeerConfig::new(&peer_public_key, self.allowed_ips.iter().map(|s| s.as_str()).collect())
-            .with_endpoint(&peer_endpoint);
+        let peer = WireGuardPeerConfig::new(
+            &peer_public_key,
+            self.allowed_ips.iter().map(|s| s.as_str()).collect(),
+        )
+        .with_endpoint(&peer_endpoint);
 
         let base_config = WireGuardConfig::new(&private_key)
             .with_peer(peer)

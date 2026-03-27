@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::{Instant, SystemTime};
 
 use bytes::Bytes;
@@ -638,7 +638,11 @@ impl MinifierCache {
         }
     }
 
-    pub fn scan_existing(&self, site_id: &str, _source_root: &Path) -> Result<usize, MinifierError> {
+    pub fn scan_existing(
+        &self,
+        site_id: &str,
+        _source_root: &Path,
+    ) -> Result<usize, MinifierError> {
         if !self.config.minified_dir.exists() {
             return Ok(0);
         }

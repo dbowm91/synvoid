@@ -2,11 +2,11 @@
 
 use std::sync::Arc;
 
+use crate::mesh::cert::MeshCertManager;
 use crate::mesh::config::MeshConfig;
 use crate::mesh::protocol::MeshMessage;
 use crate::mesh::topology::MeshTopology;
 use crate::mesh::transports::{MeshTransportError, MeshTransportTrait, MeshTransportType};
-use crate::mesh::cert::MeshCertManager;
 use parking_lot::RwLock;
 
 pub struct QuicMeshTransport {
@@ -25,10 +25,10 @@ impl QuicMeshTransport {
         #[cfg(feature = "dns")] dns_registry: Option<Arc<crate::dns::MeshDnsRegistry>>,
     ) -> Self {
         let cert_manager = Arc::new(RwLock::new(MeshCertManager::new(&config)));
-        
+
         #[cfg(feature = "verify-pq")]
         cert_manager.read().verify_post_quantum();
-        
+
         let inner = Arc::new(crate::mesh::transport::MeshTransport::new(
             config,
             topology,
@@ -41,7 +41,7 @@ impl QuicMeshTransport {
             #[cfg(feature = "dns")]
             dns_registry,
         ));
-        
+
         Self { inner }
     }
 
@@ -64,7 +64,9 @@ impl MeshTransportTrait for QuicMeshTransport {
     }
 
     fn get_peer_address(&self, peer_id: &str) -> Option<String> {
-        self.inner.peer_connections.get(peer_id)
+        self.inner
+            .peer_connections
+            .get(peer_id)
             .map(|p| p.address.clone())
     }
 
@@ -73,7 +75,8 @@ impl MeshTransportTrait for QuicMeshTransport {
         peer_id: &str,
         message: &MeshMessage,
     ) -> Result<(), MeshTransportError> {
-        self.inner.send_message_to_peer(peer_id, message)
+        self.inner
+            .send_message_to_peer(peer_id, message)
             .await
             .map_err(|e| MeshTransportError::SendFailed(e.to_string()))
     }
@@ -83,44 +86,50 @@ impl MeshTransportTrait for QuicMeshTransport {
         peer_id: &str,
         message: &MeshMessage,
     ) -> Result<(), MeshTransportError> {
-        self.inner.send_datagram_to_peer(peer_id, message)
+        self.inner
+            .send_datagram_to_peer(peer_id, message)
             .await
             .map_err(|e| MeshTransportError::SendFailed(e.to_string()))
     }
 
-    async fn broadcast_datagram(
-        &self,
-        message: &MeshMessage,
-    ) -> Result<(), MeshTransportError> {
-        let peers: Vec<String> = self.inner.peer_connections.iter()
+    async fn broadcast_datagram(&self, message: &MeshMessage) -> Result<(), MeshTransportError> {
+        let peers: Vec<String> = self
+            .inner
+            .peer_connections
+            .iter()
             .map(|e| e.key().clone())
             .collect();
-        
+
         if peers.is_empty() {
             return Ok(());
         }
 
         let message = message.clone();
         let inner = self.inner.clone();
-        
-        let send_futures: Vec<_> = peers.iter().map(|peer_id| {
-            let message = message.clone();
-            let inner = inner.clone();
-            async move {
-                let transport = Self { inner };
-                if let Err(e) = transport.send_datagram(peer_id, &message).await {
-                    tracing::warn!("Failed to send broadcast to {}: {}", peer_id, e);
+
+        let send_futures: Vec<_> = peers
+            .iter()
+            .map(|peer_id| {
+                let message = message.clone();
+                let inner = inner.clone();
+                async move {
+                    let transport = Self { inner };
+                    if let Err(e) = transport.send_datagram(peer_id, &message).await {
+                        tracing::warn!("Failed to send broadcast to {}: {}", peer_id, e);
+                    }
                 }
-            }
-        }).collect();
+            })
+            .collect();
 
         futures::future::join_all(send_futures).await;
-        
+
         Ok(())
     }
 
     fn get_connected_peers(&self) -> Vec<String> {
-        self.inner.peer_connections.iter()
+        self.inner
+            .peer_connections
+            .iter()
             .map(|e| e.key().clone())
             .collect()
     }

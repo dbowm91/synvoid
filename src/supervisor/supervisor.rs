@@ -1,14 +1,14 @@
+use metrics::{gauge, histogram};
+use parking_lot::RwLock as PLRwLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{broadcast, RwLock};
 use tokio::time::interval;
-use metrics::{gauge, histogram};
-use parking_lot::RwLock as PLRwLock;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::config::SupervisorConfig;
-use crate::supervisor::worker::{Worker, WorkerId, WorkerStatus};
 use crate::supervisor::autoscaler::AutoScaler;
+use crate::supervisor::worker::{Worker, WorkerId, WorkerStatus};
 use crate::RunningFlag;
 
 pub struct Supervisor {
@@ -89,7 +89,7 @@ impl Supervisor {
 
         self.start_health_monitor().await;
         self.start_auto_scaler().await;
-        
+
         tracing::info!("Supervisor started successfully");
     }
 
@@ -102,10 +102,10 @@ impl Supervisor {
 
     async fn spawn_worker(&self) -> Arc<Worker> {
         let id = self.allocate_worker_id();
-        
+
         let worker = Worker::new(id, self.config.clone());
         let worker_arc = Arc::new(worker);
-        
+
         {
             let mut workers = self.workers.write();
             workers.push(worker_arc.clone());
@@ -114,26 +114,29 @@ impl Supervisor {
         let event_tx = self.event_tx.clone();
         let _metrics = self.metrics.clone();
         let running = self.running.clone();
-        
+
         let worker_clone = worker_arc.clone();
         tokio::spawn(async move {
             tracing::info!("Worker {} starting", id.0);
-            
+
             *worker_clone.status.write() = WorkerStatus::Running;
-            
+
             while running.is_running() {
                 tokio::time::sleep(Duration::from_secs(1)).await;
             }
-            
+
             *worker_clone.status.write() = WorkerStatus::Stopped;
-            
-            let _ = event_tx.send(SupervisorEvent::WorkerFailed(id, "worker exited".to_string()));
+
+            let _ = event_tx.send(SupervisorEvent::WorkerFailed(
+                id,
+                "worker exited".to_string(),
+            ));
         });
 
         let _ = self.event_tx.send(SupervisorEvent::WorkerStarted(id));
-        
+
         tracing::info!("Worker {} spawned", id.0);
-        
+
         worker_arc
     }
 
@@ -142,28 +145,30 @@ impl Supervisor {
             return;
         }
 
-        let _ = self.event_tx.send(SupervisorEvent::WorkerFailed(worker_id, error.clone()));
+        let _ = self
+            .event_tx
+            .send(SupervisorEvent::WorkerFailed(worker_id, error.clone()));
         self.metrics.total_failures.fetch_add(1, Ordering::Relaxed);
 
         let (should_restart, can_restart) = {
             let mut state = self.restart_state.write().await;
-            
+
             let attempts = state.attempts.entry(worker_id).or_insert(0);
             *attempts += 1;
-            
+
             let current_attempts = *attempts;
             let cooldown_secs = self.config.restart_cooldown_secs;
             let max_attempts = self.config.max_restart_attempts;
-            
+
             let last_restart_time = state.last_restart.get(&worker_id).copied();
-            
+
             drop(state);
-            
+
             if current_attempts > max_attempts {
                 let cooldown_elapsed = last_restart_time
                     .map(|last| last.elapsed() > Duration::from_secs(cooldown_secs))
                     .unwrap_or(true);
-                    
+
                 if cooldown_elapsed {
                     tracing::warn!(
                         "Worker {} restart cooldown elapsed, resetting restart counter",
@@ -193,7 +198,7 @@ impl Supervisor {
         }
 
         let backoff_ms = 1000 * 2u64.saturating_pow((should_restart - 1).min(5));
-        
+
         tracing::warn!(
             "Worker {} failed, restarting in {}ms (attempt {}/{})",
             worker_id.0,
@@ -216,8 +221,10 @@ impl Supervisor {
         self.spawn_worker().await;
 
         self.metrics.total_restarts.fetch_add(1, Ordering::Relaxed);
-        
-        let _ = self.event_tx.send(SupervisorEvent::WorkerRestarted(worker_id, should_restart));
+
+        let _ = self
+            .event_tx
+            .send(SupervisorEvent::WorkerRestarted(worker_id, should_restart));
     }
 
     async fn start_health_monitor(&self) {
@@ -226,36 +233,43 @@ impl Supervisor {
         let metrics = self.metrics.clone();
         let config = self.config.clone();
         let running = self.running.clone();
-        
+
         tokio::spawn(async move {
             let mut timer = interval(Duration::from_secs(config.health_check_interval_secs));
-            
+
             loop {
                 timer.tick().await;
-                
+
                 if !running.is_running() {
                     break;
                 }
-                
+
                 let workers_guard = workers.read();
                 let total = workers_guard.len();
-                let running_count = workers_guard.iter()
+                let running_count = workers_guard
+                    .iter()
                     .filter(|w| w.status() == WorkerStatus::Running)
                     .count();
-                let stopped: Vec<_> = workers_guard.iter()
+                let stopped: Vec<_> = workers_guard
+                    .iter()
                     .filter(|w| w.status() == WorkerStatus::Stopped)
                     .map(|w| w.id)
                     .collect();
-                
+
                 drop(workers_guard);
 
                 for worker_id in stopped {
                     let event_tx = event_tx.clone();
                     tokio::spawn(async move {
-                        event_tx.send(SupervisorEvent::WorkerFailed(worker_id, "detected stopped".to_string())).ok();
+                        event_tx
+                            .send(SupervisorEvent::WorkerFailed(
+                                worker_id,
+                                "detected stopped".to_string(),
+                            ))
+                            .ok();
                     });
                 }
-                
+
                 gauge!("maluwaf.supervisor.workers_total").set(total as f64);
                 gauge!("maluwaf.supervisor.workers_running").set(running_count as f64);
                 gauge!("maluwaf.supervisor.workers_failed").set((total - running_count) as f64);
@@ -271,39 +285,41 @@ impl Supervisor {
         let config = self.config.clone();
         let running = self.running.clone();
         let metrics = self.metrics.clone();
-        
+
         tokio::spawn(async move {
             let mut timer = interval(Duration::from_secs(5));
             let mut last_scale = Instant::now();
-            
+
             loop {
                 timer.tick().await;
-                
+
                 if !running.is_running() {
                     break;
                 }
-                
+
                 if last_scale.elapsed() < Duration::from_secs(config.scale_up_cooldown_secs) {
                     continue;
                 }
 
                 let workers_guard = workers.read();
                 let current_count = workers_guard.len();
-                
+
                 let avg_load = if current_count > 0 {
-                    workers_guard.iter()
+                    workers_guard
+                        .iter()
                         .map(|w| w.metrics().current_load())
-                        .sum::<f64>() / current_count as f64
+                        .sum::<f64>()
+                        / current_count as f64
                 } else {
                     0.0
                 };
-                
+
                 drop(workers_guard);
 
                 if avg_load > config.scale_up_threshold && current_count < config.max_workers {
                     let new_count = (current_count + 1).min(config.max_workers);
                     let scale_up_by = new_count - current_count;
-                    
+
                     tracing::info!(
                         "Scaling up: load {:.2}% > threshold {:.0}%, adding {} worker(s)",
                         avg_load * 100.0,
@@ -314,11 +330,12 @@ impl Supervisor {
                     last_scale = Instant::now();
                     metrics.total_scale_ups.fetch_add(1, Ordering::Relaxed);
                     let _ = event_tx.send(SupervisorEvent::ScaleUp(scale_up_by));
-                } 
-                else if avg_load < config.scale_down_threshold && current_count > config.min_workers {
+                } else if avg_load < config.scale_down_threshold
+                    && current_count > config.min_workers
+                {
                     let new_count = (current_count - 1).max(config.min_workers);
                     let scale_down_by = current_count - new_count;
-                    
+
                     tracing::info!(
                         "Scaling down: load {:.2}% < threshold {:.0}%, removing {} worker(s)",
                         avg_load * 100.0,
@@ -337,28 +354,28 @@ impl Supervisor {
     pub async fn graceful_shutdown(&self) {
         tracing::info!("Initiating graceful shutdown");
         let _ = self.event_tx.send(SupervisorEvent::ShutdownInitiated);
-        
+
         self.running.stop();
 
         let timeout = Duration::from_secs(self.config.graceful_shutdown_timeout_secs);
         let start = Instant::now();
-        
+
         loop {
             let workers = self.workers.read();
             let all_stopped = workers.iter().all(|w| w.status() == WorkerStatus::Stopped);
             drop(workers);
-            
+
             if all_stopped || start.elapsed() > timeout {
                 break;
             }
-            
+
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
 
         if let Some(tx) = &self.shutdown_tx {
             let _ = tx.send(());
         }
-        
+
         tracing::info!("Supervisor shutdown complete");
         let _ = self.event_tx.send(SupervisorEvent::ShutdownComplete);
     }

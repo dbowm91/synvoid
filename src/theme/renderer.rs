@@ -459,7 +459,8 @@ body {{
 
 .waf-button:hover {
     box-shadow: 0 0 25px rgba(var(--waf-primary), 0.7);
-}"#.to_string()
+}"#
+        .to_string()
     }
 
     pub fn generate_spinner_svg(&self) -> String {

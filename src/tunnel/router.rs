@@ -2,11 +2,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use dashmap::DashMap;
-use tokio::sync::{broadcast, mpsc};
 use metrics::gauge;
+use tokio::sync::{broadcast, mpsc};
 
 use crate::config::TunnelConfig;
-use crate::tunnel::quic::{QuicRuntime, QuicTunnelServer, QuicTunnelClient, QUIC_TUNNEL_REGISTRY};
+use crate::tunnel::quic::{QuicRuntime, QuicTunnelClient, QuicTunnelServer, QUIC_TUNNEL_REGISTRY};
 
 pub struct TunnelRouter {
     config: TunnelConfig,
@@ -46,11 +46,17 @@ pub struct TunnelMapping {
 impl TunnelRouter {
     pub fn new(config: TunnelConfig) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let (shutdown_tx, _) = broadcast::channel(1);
-        
+
         let quic_runtime = if config.quic.enabled {
             let runtime = QuicRuntime::new(config.quic.clone())?
-                .with_timeouts(config.quic.max_idle_timeout_secs, config.quic.keepalive_interval_secs)
-                .with_stream_limits(config.quic.max_concurrent_streams, config.quic.max_stream_buffer_size);
+                .with_timeouts(
+                    config.quic.max_idle_timeout_secs,
+                    config.quic.keepalive_interval_secs,
+                )
+                .with_stream_limits(
+                    config.quic.max_concurrent_streams,
+                    config.quic.max_stream_buffer_size,
+                );
             Some(Arc::new(runtime))
         } else {
             None
@@ -69,7 +75,7 @@ impl TunnelRouter {
     pub async fn start(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if let Some(ref runtime) = self.quic_runtime {
             QUIC_TUNNEL_REGISTRY.set_runtime(runtime.clone()).await;
-            
+
             self.start_tunnel_services(runtime.clone()).await?;
 
             gauge!("maluwaf.tunnel.quic.enabled").set(1.0);
@@ -85,29 +91,27 @@ impl TunnelRouter {
         &mut self,
         runtime: Arc<QuicRuntime>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let (proxy_tx, mut proxy_rx) = mpsc::channel::<crate::tunnel::quic::TunnelProxyRequest>(100);
-        
-        let mut server = QuicTunnelServer::new(
-            self.config.quic.clone(),
-            runtime.clone(),
-            proxy_tx,
-        );
+        let (proxy_tx, mut proxy_rx) =
+            mpsc::channel::<crate::tunnel::quic::TunnelProxyRequest>(100);
+
+        let mut server = QuicTunnelServer::new(self.config.quic.clone(), runtime.clone(), proxy_tx);
         server.start().await?;
         self.quic_server = Some(server);
 
-        let mut client = QuicTunnelClient::new(
-            self.config.quic.clone(),
-            runtime.clone(),
-        );
+        let mut client = QuicTunnelClient::new(self.config.quic.clone(), runtime.clone());
         client.start().await?;
         self.quic_client = Some(client);
 
         let sessions = self.sessions.clone();
         tokio::spawn(async move {
             while let Some(req) = proxy_rx.recv().await {
-                tracing::debug!("Proxy request for session {}: {}:{}",
-                    req.session_id, req.identifier, req.port);
-                
+                tracing::debug!(
+                    "Proxy request for session {}: {}:{}",
+                    req.session_id,
+                    req.identifier,
+                    req.port
+                );
+
                 let session = TunnelRouteSession {
                     id: req.session_id.clone(),
                     peer_id: String::new(),
@@ -122,12 +126,14 @@ impl TunnelRouter {
                             protocol: "tcp".to_string(),
                             upstream_host: Some("127.0.0.1".to_string()),
                             upstream_port: Some(req.port),
-                        }
-                    )].into_iter().collect(),
+                        },
+                    )]
+                    .into_iter()
+                    .collect(),
                 };
-                
+
                 sessions.insert(req.session_id, session);
-                
+
                 let _ = req.response_tx.send(Ok(req.data)).await;
             }
         });
@@ -145,7 +151,10 @@ impl TunnelRouter {
         for session in self.sessions.iter() {
             if let Some(mapping) = session.mappings.get(identifier) {
                 return Some(TunnelBackend::Direct {
-                    host: mapping.upstream_host.clone().unwrap_or_else(|| "127.0.0.1".to_string()),
+                    host: mapping
+                        .upstream_host
+                        .clone()
+                        .unwrap_or_else(|| "127.0.0.1".to_string()),
                     port: mapping.upstream_port.unwrap_or(mapping.port),
                 });
             }
@@ -183,8 +192,14 @@ impl TunnelRouter {
 
 #[derive(Clone)]
 pub enum TunnelBackend {
-    Direct { host: String, port: u16 },
-    Tunnel { session_id: String, identifier: String },
+    Direct {
+        host: String,
+        port: u16,
+    },
+    Tunnel {
+        session_id: String,
+        identifier: String,
+    },
 }
 
 impl TunnelBackend {

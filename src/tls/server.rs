@@ -1,35 +1,37 @@
 #![allow(dead_code, unused_mut)]
 
+use bytes::Bytes;
+use http::Response;
+use http_body_util::{BodyExt, Full};
+use hyper::server::conn::http1 as http1_server;
+use hyper::server::conn::http2 as http2_server;
+use hyper_util::rt::TokioExecutor;
+use hyper_util::rt::TokioIo;
+use metrics::counter;
+use parking_lot::Mutex;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::sync::broadcast;
 use tokio_rustls::TlsAcceptor;
-use hyper_util::rt::TokioIo;
-use hyper_util::rt::TokioExecutor;
-use hyper::server::conn::http1 as http1_server;
-use hyper::server::conn::http2 as http2_server;
-use http::Response;
-use bytes::Bytes;
-use http_body_util::{BodyExt, Full};
-use metrics::counter;
-use parking_lot::Mutex;
 
-use crate::router::Router;
-use crate::RunningFlag;
-use crate::waf::{WafCore, FloodProtector, FloodDecision};
-use crate::config::MainConfig;
-use crate::config::HttpConfig;
-use crate::http_client::{create_upstream_client, send_request_with_timeout, UpstreamTlsConfig};
-use crate::proxy::{filter_response_headers, build_headers_to_filter, ProxyServer};
-use crate::proxy_cache::{ProxyCache, ProxyCacheSettings};
 use crate::challenge::HONEYPOT_PREFIX;
-use crate::http::headers::{inject_security_headers, generate_stealth_timestamp};
-use crate::metrics::bandwidth::{get_global_bandwidth_tracker_or_log, BandwidthProtocol, EgressDirection};
+use crate::config::HttpConfig;
+use crate::config::MainConfig;
+use crate::http::headers::{generate_stealth_timestamp, inject_security_headers};
+use crate::http_client::{create_upstream_client, send_request_with_timeout, UpstreamTlsConfig};
+use crate::metrics::bandwidth::{
+    get_global_bandwidth_tracker_or_log, BandwidthProtocol, EgressDirection,
+};
+use crate::proxy::{build_headers_to_filter, filter_response_headers, ProxyServer};
+use crate::proxy_cache::{ProxyCache, ProxyCacheSettings};
+use crate::router::Router;
+use crate::waf::{FloodDecision, FloodProtector, WafCore};
+use crate::RunningFlag;
 
-use super::config::InternalTlsConfig;
 use super::cert_resolver::CertResolver;
+use super::config::InternalTlsConfig;
 
 const ALPN_HTTP2: &[u8] = b"h2";
 
@@ -54,7 +56,9 @@ impl HttpsConnection {
         !self.drop_requested.is_running()
     }
 
-    fn take_stream(&self) -> Option<TokioIo<tokio_rustls::server::TlsStream<tokio::net::TcpStream>>> {
+    fn take_stream(
+        &self,
+    ) -> Option<TokioIo<tokio_rustls::server::TlsStream<tokio::net::TcpStream>>> {
         self.io.lock().take()
     }
 }
@@ -110,9 +114,7 @@ impl HttpsServer {
         self
     }
 
-    pub async fn serve(
-        mut self,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn serve(mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if !self.config.enabled {
             tracing::info!("HTTPS server disabled");
             return Ok(());
@@ -125,7 +127,11 @@ impl HttpsServer {
         tracing::info!(
             "HTTPS server listening on {} (TLS 1.3 {} PQC) (HTTP/1.1 + HTTP/2)",
             self.addr,
-            if self.config.prefer_post_quantum { "with" } else { "without" }
+            if self.config.prefer_post_quantum {
+                "with"
+            } else {
+                "without"
+            }
         );
 
         if let Some(watch_dir) = &self.config.watch_dir {
@@ -160,7 +166,7 @@ impl HttpsServer {
                             let http_config = http_config.clone();
                             let main_config = main_config.clone();
                             let flood_protector = flood_protector.clone();
-                            
+
                             tokio::spawn(async move {
                                 match acceptor.accept(stream).await {
                                     Ok(tls_stream) => {
@@ -170,9 +176,9 @@ impl HttpsServer {
                                             "TLS handshake completed for {}",
                                             client_addr
                                         );
-                                        
+
                                         let client_ip = client_addr.ip();
-                                        
+
                                         if let Some(ref fp) = flood_protector {
                                             match fp.check_tcp_connection(client_ip) {
                                                 FloodDecision::Blackholed => {
@@ -188,17 +194,17 @@ impl HttpsServer {
                                                 FloodDecision::Allowed => {}
                                             }
                                         }
-                                        
+
                                         let alpn_protocol = tls_stream.get_ref().1.alpn_protocol();
                                         let is_http2 = alpn_protocol.map(|p| p == ALPN_HTTP2).unwrap_or(false);
-                                        
+
                                         if is_http2 {
                                             tracing::debug!("Negotiated HTTP/2 for {}", client_addr);
                                             counter!("maluwaf.tls.alpn", "protocol" => "h2").increment(1);
-                                            
+
                                             let https_conn = Arc::new(HttpsConnection::new(tls_stream));
                                             let https_conn_clone = https_conn.clone();
-                                            
+
                                             let io = match https_conn.io.lock().take() {
                                                 Some(io) => io,
                                                 None => {
@@ -206,7 +212,7 @@ impl HttpsServer {
                                                     return;
                                                 }
                                             };
-                                            
+
                                             let conn = http2_server::Builder::new(TokioExecutor::new())
                                                 .max_header_list_size(max_headers as u32)
                                                 .serve_connection(io, hyper::service::service_fn({
@@ -225,7 +231,7 @@ impl HttpsServer {
                                                         }
                                                     }
                                                 }));
-                                            
+
                                             tokio::spawn(async move {
                                                 if let Err(e) = conn.await {
                                                     tracing::debug!("HTTP/2 connection error: {}", e);
@@ -238,10 +244,10 @@ impl HttpsServer {
                                             });
                                         } else {
                                             counter!("maluwaf.tls.alpn", "protocol" => "http1.1").increment(1);
-                                            
+
                                             let https_conn = Arc::new(HttpsConnection::new(tls_stream));
                                             let https_conn_clone = https_conn.clone();
-                                            
+
                                             let io = match https_conn.io.lock().take() {
                                                 Some(io) => io,
                                                 None => {
@@ -249,7 +255,7 @@ impl HttpsServer {
                                                     return;
                                                 }
                                             };
-                                            
+
                                             let conn = http1_server::Builder::new()
                                                 .keep_alive(true)
                                                 .serve_connection(io, hyper::service::service_fn({
@@ -269,7 +275,7 @@ impl HttpsServer {
                                                     }
                                                 }))
                                                 .with_upgrades();
-                                            
+
                                             tokio::spawn(async move {
                                                 if let Err(e) = conn.await {
                                                     tracing::debug!("HTTPS connection error: {}", e);
@@ -285,7 +291,7 @@ impl HttpsServer {
                                     Err(e) => {
                                         counter!("maluwaf.tls.handshakes").increment(1);
                                         counter!("maluwaf.tls.handshakes", "result" => "failed").increment(1);
-                                        
+
                                         let error_str = e.to_string().to_lowercase();
                                         if error_str.contains("version") || error_str.contains("protocol") {
                                             counter!("maluwaf.tls.handshakes", "reason" => "version_mismatch").increment(1);
@@ -300,7 +306,7 @@ impl HttpsServer {
                                         } else {
                                             counter!("maluwaf.tls.handshakes", "reason" => "other").increment(1);
                                         }
-                                        
+
                                         tracing::debug!(
                                             "TLS handshake failed for {}: {}",
                                             client_addr,
@@ -330,10 +336,14 @@ impl HttpsServer {
         http_config: HttpConfig,
         main_config: Arc<MainConfig>,
         http_conn: Arc<HttpsConnection>,
-        proxy_servers: Arc<tokio::sync::RwLock<std::collections::HashMap<String, Arc<ProxyServer>>>>,
+        proxy_servers: Arc<
+            tokio::sync::RwLock<std::collections::HashMap<String, Arc<ProxyServer>>>,
+        >,
     ) -> Result<Response<Full<Bytes>>, hyper::Error> {
         let client_ip = client_addr.ip();
-        let path = req.uri().path_and_query()
+        let path = req
+            .uri()
+            .path_and_query()
             .map(|pq| pq.path())
             .unwrap_or("/");
 
@@ -344,20 +354,30 @@ impl HttpsServer {
         if waf.is_over_bandwidth_limit() {
             tracing::warn!("Monthly bandwidth limit exceeded - returning 503");
             counter!("maluwaf.bandwidth.limit_exceeded").increment(1);
-            return Ok(Self::build_response(503, "Monthly Bandwidth Limit Exceeded".to_string(), "text/plain"));
+            return Ok(Self::build_response(
+                503,
+                "Monthly Bandwidth Limit Exceeded".to_string(),
+                "text/plain",
+            ));
         }
 
         let (parts, body) = req.into_parts();
         let method = parts.method.clone();
-        let path = parts.uri.path_and_query()
+        let path = parts
+            .uri
+            .path_and_query()
             .map(|pq| pq.to_string())
             .unwrap_or_else(|| "/".to_string());
-        let host = parts.headers.get("host")
+        let host = parts
+            .headers
+            .get("host")
             .and_then(|v| v.to_str().ok())
             .unwrap_or("")
             .to_string();
 
-        let user_agent = parts.headers.get("user-agent")
+        let user_agent = parts
+            .headers
+            .get("user-agent")
             .and_then(|v| v.to_str().ok())
             .map(|s| s.to_string());
 
@@ -379,7 +399,11 @@ impl HttpsServer {
         if path.starts_with(HONEYPOT_PREFIX) {
             counter!("maluwaf.honeypot.hit").increment(1);
             tracing::info!("HTTPS honeypot accessed: {} by {}", path, client_ip);
-            return Ok(Self::build_response(408, "Request timeout".to_string(), "text/plain"));
+            return Ok(Self::build_response(
+                408,
+                "Request timeout".to_string(),
+                "text/plain",
+            ));
         }
 
         if path.starts_with("/_waf_css_challenge") {
@@ -388,11 +412,15 @@ impl HttpsServer {
         }
 
         if path.starts_with("/_waf_assets") {
-            return Ok(Self::build_response(404, "Not Found".to_string(), "text/plain"));
+            return Ok(Self::build_response(
+                404,
+                "Not Found".to_string(),
+                "text/plain",
+            ));
         }
 
         let query_string = parts.uri.query();
-        
+
         let max_body_size = http_config.max_request_size;
         let body_bytes = match body.collect().await {
             Ok(collected) => collected.to_bytes(),
@@ -401,7 +429,7 @@ impl HttpsServer {
                 Bytes::new()
             }
         };
-        
+
         let body_slice: Option<&[u8]> = if body_bytes.is_empty() {
             None
         } else if body_bytes.len() > max_body_size {
@@ -420,24 +448,34 @@ impl HttpsServer {
             crate::router::RouteResult::Found(target) => target,
             crate::router::RouteResult::NotFound(msg) => {
                 tracing::debug!("Route not found: {} for host: {}", msg, host);
-                return Ok(Self::build_response(404, "Not Found".to_string(), "text/plain"));
+                return Ok(Self::build_response(
+                    404,
+                    "Not Found".to_string(),
+                    "text/plain",
+                ));
             }
             crate::router::RouteResult::Error(msg) => {
                 tracing::error!("Router error: {}", msg);
-                return Ok(Self::build_response(500, "Internal Server Error".to_string(), "text/plain"));
+                return Ok(Self::build_response(
+                    500,
+                    "Internal Server Error".to_string(),
+                    "text/plain",
+                ));
             }
         };
 
         let method_str = method.to_string();
-        let waf_decision = waf.check_request_full(
-            client_ip,
-            method_str.as_str(),
-            &path,
-            query_string,
-            &parts.headers,
-            body_slice,
-            user_agent.as_deref(),
-        ).await;
+        let waf_decision = waf
+            .check_request_full(
+                client_ip,
+                method_str.as_str(),
+                &path,
+                query_string,
+                &parts.headers,
+                body_slice,
+                user_agent.as_deref(),
+            )
+            .await;
 
         let site_id = target.site_id.clone();
 
@@ -458,9 +496,20 @@ impl HttpsServer {
                 }
             }
             crate::proxy::WafDecision::Block(status, message) => {
-                let site_theme = target.site_config.error_pages.theme.as_ref()
-                    .map(|theme_config| theme_config.to_theme_config(waf.error_page_manager.theme()));
-                let body = waf.error_page_manager.render_page_with_theme(status, Some(&message), site_theme.as_ref());
+                let site_theme =
+                    target
+                        .site_config
+                        .error_pages
+                        .theme
+                        .as_ref()
+                        .map(|theme_config| {
+                            theme_config.to_theme_config(waf.error_page_manager.theme())
+                        });
+                let body = waf.error_page_manager.render_page_with_theme(
+                    status,
+                    Some(&message),
+                    site_theme.as_ref(),
+                );
                 let body_len = body.len() as u64;
                 if let Some(ref bw) = bandwidth {
                     bw.record_egress(body_len, BandwidthProtocol::Https, EgressDirection::Blocked);
@@ -471,19 +520,40 @@ impl HttpsServer {
             crate::proxy::WafDecision::Challenge(html) => {
                 let body_len = html.len() as u64;
                 if let Some(ref bw) = bandwidth {
-                    bw.record_egress(body_len, BandwidthProtocol::Https, EgressDirection::Challenged);
+                    bw.record_egress(
+                        body_len,
+                        BandwidthProtocol::Https,
+                        EgressDirection::Challenged,
+                    );
                     bw.record_site_egress(&site_id, body_len);
                 }
                 Ok(Self::build_response(200, html, "text/html"))
             }
-            crate::proxy::WafDecision::ChallengeWithCookie { html, session_cookie_name, session_cookie_value, session_cookie_max_age } => {
+            crate::proxy::WafDecision::ChallengeWithCookie {
+                html,
+                session_cookie_name,
+                session_cookie_value,
+                session_cookie_max_age,
+            } => {
                 let body_len = html.len() as u64;
                 if let Some(ref bw) = bandwidth {
-                    bw.record_egress(body_len, BandwidthProtocol::Https, EgressDirection::Challenged);
+                    bw.record_egress(
+                        body_len,
+                        BandwidthProtocol::Https,
+                        EgressDirection::Challenged,
+                    );
                     bw.record_site_egress(&site_id, body_len);
                 }
-                let cookie = format!("{}={}; path=/; max-age={}; Secure; SameSite=Strict", session_cookie_name, session_cookie_value, session_cookie_max_age);
-                Ok(Self::build_response_with_cookie(200, html, "text/html", &cookie))
+                let cookie = format!(
+                    "{}={}; path=/; max-age={}; Secure; SameSite=Strict",
+                    session_cookie_name, session_cookie_value, session_cookie_max_age
+                );
+                Ok(Self::build_response_with_cookie(
+                    200,
+                    html,
+                    "text/html",
+                    &cookie,
+                ))
             }
             crate::proxy::WafDecision::Tarpit(tar_path) => {
                 let html = waf.generate_tarpit_response(&tar_path);
@@ -496,14 +566,17 @@ impl HttpsServer {
             }
             crate::proxy::WafDecision::Pass => {
                 let cache_config = target.site_config.proxy.cache.as_ref();
-                let use_cache = cache_config.map(|c| c.enable.unwrap_or(false)).unwrap_or(false);
-                
+                let use_cache = cache_config
+                    .map(|c| c.enable.unwrap_or(false))
+                    .unwrap_or(false);
+
                 if use_cache {
                     if let Some(cache_cfg) = cache_config {
                         let site_id = target.site_id.to_string();
                         let proxy_servers_lock = proxy_servers.read().await;
-                        
-                        let proxy_server = if let Some(existing) = proxy_servers_lock.get(&site_id) {
+
+                        let proxy_server = if let Some(existing) = proxy_servers_lock.get(&site_id)
+                        {
                             Some(existing.clone())
                         } else {
                             drop(proxy_servers_lock);
@@ -526,7 +599,11 @@ impl HttpsServer {
                             );
 
                             let cache = Arc::new(ProxyCache::new(settings));
-                            let tls_config = target.site_config.proxy.upstream.as_ref()
+                            let tls_config = target
+                                .site_config
+                                .proxy
+                                .upstream
+                                .as_ref()
                                 .and_then(|u| u.tls.as_ref())
                                 .and_then(crate::http_client::UpstreamTlsConfig::from_site_config);
                             let ps = ProxyServer::new_with_tls(
@@ -536,7 +613,8 @@ impl HttpsServer {
                                 waf.upstream_error_tracker.clone(),
                                 site_id.clone(),
                                 tls_config.as_ref(),
-                            ).with_cache(cache);
+                            )
+                            .with_cache(cache);
 
                             let ps = Arc::new(ps);
                             let mut proxy_servers_lock = proxy_servers.write().await;
@@ -545,65 +623,118 @@ impl HttpsServer {
                         };
 
                         if let Some(proxy_server) = proxy_server {
-                            match proxy_server.handle_request_with_cache(
-                                method.clone(),
-                                &path,
-                                &host,
-                                &parts.headers,
-                                "https",
-                                None,
-                            ).await {
+                            match proxy_server
+                                .handle_request_with_cache(
+                                    method.clone(),
+                                    &path,
+                                    &host,
+                                    &parts.headers,
+                                    "https",
+                                    None,
+                                )
+                                .await
+                            {
                                 Ok(resp) => {
                                     let (parts, body) = resp.into_parts();
                                     let status = parts.status.as_u16();
-                                    
+
                                     let headers_to_filter = build_headers_to_filter(
                                         &main_config.security.more_clear_headers,
-                                        &target.site_config.security.more_clear_headers.iter()
-                                            .chain(target.site_config.security_headers.more_clear_headers.iter())
+                                        &target
+                                            .site_config
+                                            .security
+                                            .more_clear_headers
+                                            .iter()
+                                            .chain(
+                                                target
+                                                    .site_config
+                                                    .security_headers
+                                                    .more_clear_headers
+                                                    .iter(),
+                                            )
                                             .cloned()
                                             .collect::<Vec<_>>(),
                                     );
-                                    let filtered_headers = filter_response_headers(&parts.headers, &headers_to_filter);
-                                    
+                                    let filtered_headers =
+                                        filter_response_headers(&parts.headers, &headers_to_filter);
+
                                     let mut builder = Response::builder().status(status);
                                     for (key, value) in filtered_headers {
                                         builder = builder.header(&key, &value);
                                     }
-                                    
-                                    if target.site_config.security_headers.enabled.unwrap_or(false) || main_config.security.global_security_headers {
-                                        builder = inject_security_headers(builder, &target.site_config.security_headers);
+
+                                    if target.site_config.security_headers.enabled.unwrap_or(false)
+                                        || main_config.security.global_security_headers
+                                    {
+                                        builder = inject_security_headers(
+                                            builder,
+                                            &target.site_config.security_headers,
+                                        );
                                     }
-                                    
-                                    if target.site_config.security_headers.date_header.unwrap_or(true) {
-                                        let jitter = target.site_config.security_headers.date_jitter_seconds.unwrap_or(5);
-                                        builder = builder.header("Date", generate_stealth_timestamp(jitter));
+
+                                    if target
+                                        .site_config
+                                        .security_headers
+                                        .date_header
+                                        .unwrap_or(true)
+                                    {
+                                        let jitter = target
+                                            .site_config
+                                            .security_headers
+                                            .date_jitter_seconds
+                                            .unwrap_or(5);
+                                        builder = builder
+                                            .header("Date", generate_stealth_timestamp(jitter));
                                     }
-                                    
-                                    return Ok(builder
-                                        .body(Full::new(body))
-                                        .unwrap_or_else(|_| Self::build_response(500, "Internal Server Error".to_string(), "text/plain")));
+
+                                    return Ok(builder.body(Full::new(body)).unwrap_or_else(
+                                        |_| {
+                                            Self::build_response(
+                                                500,
+                                                "Internal Server Error".to_string(),
+                                                "text/plain",
+                                            )
+                                        },
+                                    ));
                                 }
                                 Err(e) => {
                                     tracing::error!("Proxy server error: {}", e);
-                                    return Ok(Self::build_response(502, "Bad Gateway".to_string(), "text/plain"));
+                                    return Ok(Self::build_response(
+                                        502,
+                                        "Bad Gateway".to_string(),
+                                        "text/plain",
+                                    ));
                                 }
                             }
                         }
                     }
                 }
-                
+
                 let target_url = format!("{}{}", target.upstream, path);
-                
+
                 let headers_to_filter = build_headers_to_filter(
                     &main_config.security.more_clear_headers,
-                    &target.site_config.security.more_clear_headers.iter()
-                        .chain(target.site_config.security_headers.more_clear_headers.iter())
+                    &target
+                        .site_config
+                        .security
+                        .more_clear_headers
+                        .iter()
+                        .chain(
+                            target
+                                .site_config
+                                .security_headers
+                                .more_clear_headers
+                                .iter(),
+                        )
                         .cloned()
                         .collect::<Vec<_>>(),
                 );
-                
-                let tls_config = target.site_config.proxy.upstream.as_ref()
+
+                let tls_config = target
+                    .site_config
+                    .proxy
+                    .upstream
+                    .as_ref()
                     .and_then(|u| u.tls.as_ref())
                     .and_then(|t| UpstreamTlsConfig::from_site_config(t))
                     .unwrap_or_default();
@@ -614,51 +745,83 @@ impl HttpsServer {
                     std::time::Duration::from_secs(30),
                     &tls_config,
                 );
-                
-                let resp = send_request_with_timeout(&client, method, &target_url, Some(std::time::Duration::from_secs(30))).await;
-                
+
+                let resp = send_request_with_timeout(
+                    &client,
+                    method,
+                    &target_url,
+                    Some(std::time::Duration::from_secs(30)),
+                )
+                .await;
+
                 match resp {
                     Ok(resp) => {
                         let status = resp.status_code();
                         let headers = filter_response_headers(&resp.headers, &headers_to_filter);
                         let body = resp.body;
                         let body_len = body.len() as u64;
-                        
+
                         if let Some(ref bw) = bandwidth {
                             bw.record_proxied(request_body_size, body_len, &target.upstream);
                             bw.record_site_proxied(&site_id, request_body_size, body_len);
-                            bw.record_egress(body_len, BandwidthProtocol::Https, EgressDirection::Proxied);
+                            bw.record_egress(
+                                body_len,
+                                BandwidthProtocol::Https,
+                                EgressDirection::Proxied,
+                            );
                             bw.record_site_egress(&site_id, body_len);
                         }
-                        
+
                         let mut builder = Response::builder().status(status);
                         for (key, value) in headers {
                             builder = builder.header(&key, &value);
                         }
-                        
-                        if target.site_config.security_headers.enabled.unwrap_or(false) || main_config.security.global_security_headers {
-                            builder = inject_security_headers(builder, &target.site_config.security_headers);
+
+                        if target.site_config.security_headers.enabled.unwrap_or(false)
+                            || main_config.security.global_security_headers
+                        {
+                            builder = inject_security_headers(
+                                builder,
+                                &target.site_config.security_headers,
+                            );
                         }
-                        
-                        if target.site_config.security_headers.date_header.unwrap_or(true) {
-                            let jitter = target.site_config.security_headers.date_jitter_seconds.unwrap_or(5);
+
+                        if target
+                            .site_config
+                            .security_headers
+                            .date_header
+                            .unwrap_or(true)
+                        {
+                            let jitter = target
+                                .site_config
+                                .security_headers
+                                .date_jitter_seconds
+                                .unwrap_or(5);
                             builder = builder.header("Date", generate_stealth_timestamp(jitter));
                         }
-                        
+
                         if let Some(ref token) = target.site_config.security_headers.server_token {
                             builder = builder.header("Server", token.as_str());
                         }
-                        
-                        Ok(builder
-.body(Full::new(body))
-                            .unwrap_or_else(|_| Self::build_response(500, "Internal Server Error".to_string(), "text/plain")))
+
+                        Ok(builder.body(Full::new(body)).unwrap_or_else(|_| {
+                            Self::build_response(
+                                500,
+                                "Internal Server Error".to_string(),
+                                "text/plain",
+                            )
+                        }))
                     }
                     Err(e) => {
                         tracing::error!("Upstream error: {}", e);
                         let error_body = "Bad Gateway".to_string();
                         let error_len = error_body.len() as u64;
                         if let Some(ref bw) = bandwidth {
-                            bw.record_egress(error_len, BandwidthProtocol::Https, EgressDirection::Error);
+                            bw.record_egress(
+                                error_len,
+                                BandwidthProtocol::Https,
+                                EgressDirection::Error,
+                            );
                             bw.record_site_egress(&site_id, error_len);
                         }
                         Ok(Self::build_response(502, error_body, "text/plain"))
@@ -674,7 +837,8 @@ impl HttpsServer {
     ) -> Result<Response<Full<Bytes>>, hyper::Error> {
         let body = serde_json::json!({
             "status": "healthy",
-        }).to_string();
+        })
+        .to_string();
 
         let mut builder = Response::builder()
             .status(200)
@@ -691,10 +855,12 @@ impl HttpsServer {
 
         Ok(builder
             .body(Full::new(Bytes::from(body)))
-            .unwrap_or_else(|_| Response::builder()
-                .status(500)
-                .body(Full::new(Bytes::from("Internal Server Error")))
-                .expect("building static 500 response should never fail")))
+            .unwrap_or_else(|_| {
+                Response::builder()
+                    .status(500)
+                    .body(Full::new(Bytes::from("Internal Server Error")))
+                    .expect("building static 500 response should never fail")
+            }))
     }
 
     fn build_response(status: u16, body: String, content_type: &str) -> Response<Full<Bytes>> {
@@ -704,13 +870,20 @@ impl HttpsServer {
             .header("Content-Length", body.len())
             .header("Date", generate_stealth_timestamp(5))
             .body(Full::new(Bytes::from(body)))
-            .unwrap_or_else(|_| Response::builder()
-                .status(500)
-                .body(Full::new(Bytes::from("Internal Server Error")))
-                .expect("building static 500 response should never fail"))
+            .unwrap_or_else(|_| {
+                Response::builder()
+                    .status(500)
+                    .body(Full::new(Bytes::from("Internal Server Error")))
+                    .expect("building static 500 response should never fail")
+            })
     }
 
-    fn build_response_with_cookie(status: u16, body: String, content_type: &str, cookie: &str) -> Response<Full<Bytes>> {
+    fn build_response_with_cookie(
+        status: u16,
+        body: String,
+        content_type: &str,
+        cookie: &str,
+    ) -> Response<Full<Bytes>> {
         let mut builder = Response::builder()
             .status(status)
             .header("Content-Type", content_type)
@@ -720,10 +893,12 @@ impl HttpsServer {
 
         builder
             .body(Full::new(Bytes::from(body)))
-            .unwrap_or_else(|_| Response::builder()
-                .status(500)
-                .body(Full::new(Bytes::from("Internal Server Error")))
-                .expect("building static 500 response should never fail"))
+            .unwrap_or_else(|_| {
+                Response::builder()
+                    .status(500)
+                    .body(Full::new(Bytes::from("Internal Server Error")))
+                    .expect("building static 500 response should never fail")
+            })
     }
 }
 

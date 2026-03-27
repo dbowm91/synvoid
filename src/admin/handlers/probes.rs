@@ -1,3 +1,4 @@
+use super::super::state::AdminState;
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
@@ -6,9 +7,10 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 use std::sync::Arc;
-use super::super::state::AdminState;
 
-use super::common::{PaginationQuery, PaginatedResponse, PAGINATION_LIMITS_DEFAULT, OptionalAuth, parse_ip};
+use super::common::{
+    parse_ip, OptionalAuth, PaginatedResponse, PaginationQuery, PAGINATION_LIMITS_DEFAULT,
+};
 
 const MAX_PROBE_EVENTS_ALL: usize = 10000;
 const MAX_RECENT_ENDPOINTS_LIST: usize = 5;
@@ -113,7 +115,6 @@ pub async fn list_probes(
     _auth: OptionalAuth,
     Query(query): Query<PaginationQuery>,
 ) -> Result<Json<PaginatedResponse<ProbeResponse>>, StatusCode> {
-
     let tracker = match state.probe_tracker() {
         Some(t) => t,
         None => return empty_probe_response(),
@@ -123,7 +124,7 @@ pub async fn list_probes(
 
     let all_records = tracker.list_records(MAX_PROBE_EVENTS_ALL, 0);
     let total = all_records.len();
-    
+
     let probes: Vec<ProbeResponse> = all_records
         .iter()
         .skip(offset)
@@ -175,7 +176,6 @@ pub async fn get_probe(
     _auth: OptionalAuth,
     Path(ip): Path<String>,
 ) -> Result<Json<ProbeResponse>, StatusCode> {
-
     let tracker = match state.probe_tracker() {
         Some(t) => t,
         None => return Err(StatusCode::NOT_FOUND),
@@ -225,7 +225,6 @@ pub async fn get_probe_stats(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<ProbeStatsResponse>, StatusCode> {
-
     let tracker = match state.probe_tracker() {
         Some(t) => t,
         None => return empty_probe_stats_response(),
@@ -266,7 +265,6 @@ pub async fn delete_probe(
     _auth: OptionalAuth,
     Path(ip): Path<String>,
 ) -> Result<StatusCode, StatusCode> {
-
     let tracker = state.probe_tracker().ok_or(StatusCode::NOT_FOUND)?;
 
     let ip_addr: IpAddr = parse_ip(&ip)?;
@@ -319,9 +317,8 @@ pub async fn block_probes(
     _auth: OptionalAuth,
     Json(req): Json<BlockProbesRequest>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-
     let _ban_duration = parse_duration(&req.duration);
-    
+
     let mut blocked = Vec::new();
     let mut failed = Vec::new();
 
@@ -337,7 +334,7 @@ pub async fn block_probes(
         "block_probes called but is not yet implemented ({} IPs to block)",
         blocked.len()
     );
-    
+
     Err(StatusCode::NOT_IMPLEMENTED)
 }
 
@@ -386,7 +383,6 @@ pub async fn list_suspicious_words(
     _auth: OptionalAuth,
     Query(query): Query<PaginationQuery>,
 ) -> Result<Json<SuspiciousWordListResponse>, StatusCode> {
-
     let tracker = match state.suspicious_word_tracker() {
         Some(t) => t,
         None => return empty_suspicious_word_list_response(),
@@ -399,13 +395,15 @@ pub async fn list_suspicious_words(
     let response_records: Vec<SuspiciousWordRecordResponse> = records
         .into_iter()
         .flat_map(|(ip, records)| {
-            records.into_iter().map(move |r| SuspiciousWordRecordResponse {
-                ip: ip.to_string(),
-                matched_word: r.matched_word,
-                endpoint: r.endpoint,
-                user_agent: r.user_agent,
-                timestamp: r.timestamp,
-            })
+            records
+                .into_iter()
+                .map(move |r| SuspiciousWordRecordResponse {
+                    ip: ip.to_string(),
+                    matched_word: r.matched_word,
+                    endpoint: r.endpoint,
+                    user_agent: r.user_agent,
+                    timestamp: r.timestamp,
+                })
         })
         .take(limit)
         .collect();
@@ -432,7 +430,6 @@ pub async fn get_suspicious_word_stats(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<SuspiciousWordStatsResponse>, StatusCode> {
-
     let tracker = match state.suspicious_word_tracker() {
         Some(t) => t,
         None => return empty_suspicious_word_stats_response(),
@@ -443,10 +440,14 @@ pub async fn get_suspicious_word_stats(
     Ok(Json(SuspiciousWordStatsResponse {
         total_ips: stats.total_ips,
         total_matches: stats.total_matches,
-        top_words: stats.top_words.into_iter().map(|w| SuspiciousWordCountResponse {
-            word: w.word,
-            count: w.count,
-        }).collect(),
+        top_words: stats
+            .top_words
+            .into_iter()
+            .map(|w| SuspiciousWordCountResponse {
+                word: w.word,
+                count: w.count,
+            })
+            .collect(),
     }))
 }
 
@@ -468,8 +469,9 @@ pub async fn delete_suspicious_word(
     _auth: OptionalAuth,
     Path(ip): Path<String>,
 ) -> Result<StatusCode, StatusCode> {
-
-    let tracker = state.suspicious_word_tracker().ok_or(StatusCode::NOT_FOUND)?;
+    let tracker = state
+        .suspicious_word_tracker()
+        .ok_or(StatusCode::NOT_FOUND)?;
 
     let ip_addr: IpAddr = parse_ip(&ip)?;
 
@@ -524,7 +526,6 @@ pub async fn list_upstream_errors(
     _auth: OptionalAuth,
     Query(query): Query<PaginationQuery>,
 ) -> Result<Json<UpstreamErrorListResponse>, StatusCode> {
-
     let tracker = match state.upstream_error_tracker() {
         Some(t) => t,
         None => return empty_upstream_error_list_response(),
@@ -537,12 +538,14 @@ pub async fn list_upstream_errors(
     let response_records: Vec<UpstreamErrorRecordResponse> = records
         .into_iter()
         .flat_map(|(ip, records)| {
-            records.into_iter().map(move |r| UpstreamErrorRecordResponse {
-                ip: ip.to_string(),
-                endpoint: r.endpoint,
-                status_code: r.status_code,
-                timestamp: r.timestamp,
-            })
+            records
+                .into_iter()
+                .map(move |r| UpstreamErrorRecordResponse {
+                    ip: ip.to_string(),
+                    endpoint: r.endpoint,
+                    status_code: r.status_code,
+                    timestamp: r.timestamp,
+                })
         })
         .take(limit)
         .collect();
@@ -569,7 +572,6 @@ pub async fn get_upstream_error_stats(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<UpstreamErrorStatsResponse>, StatusCode> {
-
     let tracker = match state.upstream_error_tracker() {
         Some(t) => t,
         None => return empty_upstream_error_stats_response(),
@@ -580,10 +582,14 @@ pub async fn get_upstream_error_stats(
     Ok(Json(UpstreamErrorStatsResponse {
         total_ips: stats.total_ips,
         total_errors: stats.total_errors,
-        top_endpoints: stats.top_endpoints.into_iter().map(|e| UpstreamErrorEndpointCountResponse {
-            endpoint: e.endpoint,
-            count: e.count,
-        }).collect(),
+        top_endpoints: stats
+            .top_endpoints
+            .into_iter()
+            .map(|e| UpstreamErrorEndpointCountResponse {
+                endpoint: e.endpoint,
+                count: e.count,
+            })
+            .collect(),
     }))
 }
 
@@ -605,8 +611,9 @@ pub async fn delete_upstream_error(
     _auth: OptionalAuth,
     Path(ip): Path<String>,
 ) -> Result<StatusCode, StatusCode> {
-
-    let tracker = state.upstream_error_tracker().ok_or(StatusCode::NOT_FOUND)?;
+    let tracker = state
+        .upstream_error_tracker()
+        .ok_or(StatusCode::NOT_FOUND)?;
 
     let ip_addr: IpAddr = parse_ip(&ip)?;
 

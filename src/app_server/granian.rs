@@ -1,19 +1,18 @@
-use std::path::PathBuf;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::process::Command;
 use tokio::sync::{broadcast, RwLock};
 use tokio::time::interval;
-use tokio::process::Command;
-use tokio::io::{AsyncBufReadExt, BufReader};
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 use crate::app_server::AppServerConfig;
 use crate::RunningFlag;
 
-#[derive(Clone, Debug, Copy, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Clone, Debug, Copy, PartialEq, Eq, Default)]
 pub enum GranianInterface {
     #[default]
     Asgi,
@@ -21,7 +20,6 @@ pub enum GranianInterface {
     Rsgi,
     Wsgi,
 }
-
 
 impl std::fmt::Display for GranianInterface {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -120,12 +118,11 @@ impl GranianConfig {
     pub fn with_site_info(mut self, site_id: &str, worker_id: usize) -> Self {
         self.site_id = site_id.to_string();
         self.worker_id = worker_id;
-        
+
         if self.socket_path.is_none() {
-            self.socket_path = Some(std::env::temp_dir().join(format!(
-                "maluwaf-{}-app-{}.sock",
-                site_id, worker_id
-            )));
+            self.socket_path = Some(
+                std::env::temp_dir().join(format!("maluwaf-{}-app-{}.sock", site_id, worker_id)),
+            );
         }
 
         if self.auto_detect_venv {
@@ -157,7 +154,10 @@ impl GranianConfig {
         if let Ok(var) = std::env::var("VIRTUAL_ENV") {
             let venv_path = PathBuf::from(var).join("bin").join("python");
             if venv_path.exists() {
-                tracing::info!("Auto-detected virtual environment from VIRTUAL_ENV: {}", venv_path.display());
+                tracing::info!(
+                    "Auto-detected virtual environment from VIRTUAL_ENV: {}",
+                    venv_path.display()
+                );
                 return Some(venv_path);
             }
         }
@@ -201,7 +201,7 @@ pub struct GranianSupervisor {
 impl GranianSupervisor {
     pub fn new(config: GranianConfig) -> Self {
         let (shutdown_tx, _) = broadcast::channel(1);
-        
+
         Self {
             config: Arc::new(config),
             child: Arc::new(RwLock::new(None)),
@@ -254,7 +254,10 @@ impl GranianSupervisor {
 
         tracing::warn!(
             "Could not auto-detect app. Tried: {:?}. Please specify app_path explicitly.",
-            candidates.iter().map(|(p, f)| format!("{} ({})", p, f)).collect::<Vec<_>>()
+            candidates
+                .iter()
+                .map(|(p, f)| format!("{} ({})", p, f))
+                .collect::<Vec<_>>()
         );
         config.app_path.clone()
     }
@@ -282,7 +285,7 @@ impl GranianSupervisor {
         }
 
         self.running.set(true);
-        
+
         if let Err(e) = self.spawn_process().await {
             self.running.set(false);
             return Err(e);
@@ -298,8 +301,10 @@ impl GranianSupervisor {
         let _max_restarts = self.config.max_restarts;
 
         tokio::spawn(async move {
-            let mut health_interval = interval(Duration::from_secs(health_check_config.health_check_interval_secs));
-            
+            let mut health_interval = interval(Duration::from_secs(
+                health_check_config.health_check_interval_secs,
+            ));
+
             loop {
                 tokio::select! {
                     _ = health_interval.tick() => {
@@ -322,7 +327,7 @@ impl GranianSupervisor {
                         } else {
                             consecutive_successes.store(0, Ordering::SeqCst);
                             let failures = consecutive_failures.fetch_add(1, Ordering::SeqCst) + 1;
-                            
+
                             if failures >= 3 && healthy.is_running() {
                                 healthy.set(false);
                                 tracing::warn!(
@@ -384,7 +389,8 @@ impl GranianSupervisor {
             return Err(format!(
                 "Failed to install Granian:\n{}\n\
                 \nPlease install manually: {} -m pip install granian",
-                stderr, python_binary.display()
+                stderr,
+                python_binary.display()
             ));
         }
 
@@ -393,9 +399,12 @@ impl GranianSupervisor {
     }
 
     pub async fn spawn_process(&self) -> Result<(), String> {
-        let python_binary = self.config.python_path.clone()
+        let python_binary = self
+            .config
+            .python_path
+            .clone()
             .unwrap_or_else(|| PathBuf::from("python3"));
-        
+
         if !python_binary.exists() {
             return Err(format!(
                 "Python binary not found at: {}. Please check the python_path configuration.\n\
@@ -412,7 +421,7 @@ impl GranianSupervisor {
         let mut cmd = self.build_command();
 
         let socket_path = self.config.resolve_socket_path();
-        
+
         if socket_path.exists() {
             if let Err(e) = std::fs::remove_file(&socket_path) {
                 tracing::warn!("Failed to remove existing socket: {}", e);
@@ -423,17 +432,21 @@ impl GranianSupervisor {
             .spawn()
             .map_err(|e| format!("Failed to spawn granian: {}", e))?;
 
-        let pid = child.id().ok_or_else(|| "Failed to get PID from spawned process".to_string())?;
+        let pid = child
+            .id()
+            .ok_or_else(|| "Failed to get PID from spawned process".to_string())?;
         self.pid.store(pid, Ordering::SeqCst);
-        
+
         tracing::info!(
             "Started granian for site {} worker {} with PID {}",
-            self.config.site_id, self.config.worker_id, pid
+            self.config.site_id,
+            self.config.worker_id,
+            pid
         );
 
         let site_id = self.config.site_id.clone();
         let worker_id = self.config.worker_id;
-        
+
         let stdout = child.stdout.take();
         if let Some(stdout) = stdout {
             let site_id_out = site_id.clone();
@@ -442,13 +455,20 @@ impl GranianSupervisor {
                 let mut reader = BufReader::new(stdout);
                 let mut line = String::new();
                 while let Ok(n) = reader.read_line(&mut line).await {
-                    if n == 0 { break; }
-                    tracing::debug!("[granian {} worker {} stdout] {}", site_id_out, worker_id_out, line.trim());
+                    if n == 0 {
+                        break;
+                    }
+                    tracing::debug!(
+                        "[granian {} worker {} stdout] {}",
+                        site_id_out,
+                        worker_id_out,
+                        line.trim()
+                    );
                     line.clear();
                 }
             });
         }
-        
+
         let stderr = child.stderr.take();
         if let Some(stderr) = stderr {
             let site_id_err = site_id.clone();
@@ -457,8 +477,15 @@ impl GranianSupervisor {
                 let mut reader = BufReader::new(stderr);
                 let mut line = String::new();
                 while let Ok(n) = reader.read_line(&mut line).await {
-                    if n == 0 { break; }
-                    tracing::warn!("[granian {} worker {} stderr] {}", site_id_err, worker_id_err, line.trim());
+                    if n == 0 {
+                        break;
+                    }
+                    tracing::warn!(
+                        "[granian {} worker {} stderr] {}",
+                        site_id_err,
+                        worker_id_err,
+                        line.trim()
+                    );
                     line.clear();
                 }
             });
@@ -467,7 +494,7 @@ impl GranianSupervisor {
         if let Some(ref socket) = self.config.socket_path {
             let mut attempts = 0;
             let max_attempts = 50;
-            
+
             while !socket.exists() && attempts < max_attempts {
                 tokio::time::sleep(Duration::from_millis(100)).await;
                 attempts += 1;
@@ -482,11 +509,13 @@ impl GranianSupervisor {
 
         *self.child.write().await = Some(child);
         self.healthy.set(true);
-        
+
         let restart_count = self.restart_count.fetch_add(1, Ordering::SeqCst) + 1;
         tracing::info!(
             "Granian restart count for site {} worker {}: {}",
-            self.config.site_id, self.config.worker_id, restart_count
+            self.config.site_id,
+            self.config.worker_id,
+            restart_count
         );
 
         Ok(())
@@ -494,14 +523,14 @@ impl GranianSupervisor {
 
     fn build_command(&self) -> Command {
         let python_binary = self.config.resolve_python_path();
-        
+
         let mut cmd = Command::new(&python_binary);
-        
-        cmd.arg("-m")
-           .arg("granian");
+
+        cmd.arg("-m").arg("granian");
 
         let app_path = self.resolve_app_path();
-        cmd.arg("--interface").arg(self.config.interface.to_string());
+        cmd.arg("--interface")
+            .arg(self.config.interface.to_string());
         cmd.arg(&app_path);
 
         if let Some(ref socket) = self.config.socket_path {
@@ -514,7 +543,8 @@ impl GranianSupervisor {
         }
 
         cmd.arg("--workers").arg(self.config.workers.to_string());
-        cmd.arg("--blocking-threads").arg(self.config.blocking_threads.to_string());
+        cmd.arg("--blocking-threads")
+            .arg(self.config.blocking_threads.to_string());
 
         if let Some(ref working_dir) = self.config.working_directory {
             cmd.current_dir(working_dir);
@@ -529,7 +559,7 @@ impl GranianSupervisor {
         }
 
         cmd.kill_on_drop(true);
-        
+
         use std::process::Stdio;
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
@@ -579,7 +609,9 @@ impl GranianSupervisor {
             http::Method::HEAD,
             &url,
             Some(timeout),
-        ).await {
+        )
+        .await
+        {
             Ok(resp) => {
                 let status = resp.status_code();
                 (200..400).contains(&status)
@@ -587,7 +619,9 @@ impl GranianSupervisor {
             Err(e) => {
                 tracing::warn!(
                     "Granian health check failed for site {} worker {}: {}",
-                    config.site_id, config.worker_id, e
+                    config.site_id,
+                    config.worker_id,
+                    e
                 );
                 false
             }
@@ -609,14 +643,16 @@ impl GranianSupervisor {
 
         tracing::info!(
             "Restarting granian for site {} worker {} (attempt {}/{})",
-            self.config.site_id, self.config.worker_id,
-            current_restarts + 1, self.config.max_restarts
+            self.config.site_id,
+            self.config.worker_id,
+            current_restarts + 1,
+            self.config.max_restarts
         );
 
         self.stop().await;
-        
+
         tokio::time::sleep(Duration::from_secs(1)).await;
-        
+
         self.start().await
     }
 
@@ -628,20 +664,23 @@ impl GranianSupervisor {
         if let Some(ref mut child) = child_guard.take() {
             tracing::info!(
                 "Stopping granian for site {} worker {} (PID: {:?})",
-                self.config.site_id, self.config.worker_id, child.id()
+                self.config.site_id,
+                self.config.worker_id,
+                child.id()
             );
 
             #[cfg(unix)]
             {
                 let pid = child.id().unwrap_or(0);
-                
+
                 let kill_output = tokio::task::spawn_blocking(move || {
                     std::process::Command::new("kill")
                         .arg("-TERM")
                         .arg(pid.to_string())
                         .output()
-                }).await;
-                
+                })
+                .await;
+
                 match kill_output {
                     Ok(Ok(output)) => {
                         if !output.status.success() {
@@ -659,7 +698,7 @@ impl GranianSupervisor {
                         tracing::warn!("Failed to spawn blocking task for kill: {}", e);
                     }
                 }
-                
+
                 let start = Instant::now();
                 let graceful_timeout = Duration::from_secs(5);
                 while start.elapsed() < graceful_timeout {
@@ -683,7 +722,7 @@ impl GranianSupervisor {
                     }
                 }
             }
-            
+
             #[cfg(not(unix))]
             {
                 if let Err(e) = child.kill().await {
@@ -707,7 +746,8 @@ impl GranianSupervisor {
 
         tracing::info!(
             "Stopped granian for site {} worker {}",
-            self.config.site_id, self.config.worker_id
+            self.config.site_id,
+            self.config.worker_id
         );
     }
 
@@ -737,7 +777,7 @@ impl Drop for GranianSupervisor {
     fn drop(&mut self) {
         self.running.set(false);
         let _ = self.shutdown_tx.send(());
-        
+
         let socket_path = self.config.resolve_socket_path();
         if socket_path.exists() {
             if let Err(e) = std::fs::remove_file(&socket_path) {

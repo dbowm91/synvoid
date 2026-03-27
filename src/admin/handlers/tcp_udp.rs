@@ -1,3 +1,5 @@
+use super::super::state::AdminState;
+use super::common::OptionalAuth;
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -5,8 +7,6 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use super::super::state::AdminState;
-use super::common::{OptionalAuth};
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct TcpUdpListener {
@@ -39,7 +39,6 @@ pub async fn list_listeners(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<ListListenersResponse>, StatusCode> {
-
     let config = state.process.config.read().await;
     let mut listeners = Vec::new();
 
@@ -93,12 +92,12 @@ pub async fn create_listener(
     _auth: OptionalAuth,
     Json(req): Json<CreateListenerRequest>,
 ) -> Result<Json<CreateListenerResponse>, StatusCode> {
-
     tracing::warn!(
         "create_listener called for {}/{} but is not yet implemented",
-        req.site_id, req.protocol
+        req.site_id,
+        req.protocol
     );
-    
+
     Err(StatusCode::NOT_IMPLEMENTED)
 }
 
@@ -123,12 +122,11 @@ pub async fn delete_listener(
     _auth: OptionalAuth,
     Path(listener_id): Path<String>,
 ) -> Result<StatusCode, StatusCode> {
-
     tracing::warn!(
         "delete_listener called for {} but is not yet implemented",
         listener_id
     );
-    
+
     Err(StatusCode::NOT_IMPLEMENTED)
 }
 
@@ -155,7 +153,6 @@ pub async fn list_protocols(
     State(_state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<Vec<ProtocolInfo>>, StatusCode> {
-
     let protocols = vec![
         ProtocolInfo {
             name: "http".to_string(),

@@ -9,16 +9,16 @@
 //! - Expiration-based cleanup
 //! - Graceful shutdown with data flush
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use crate::config::DenyListLimitsConfig;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
-use crate::config::DenyListLimitsConfig;
 
 const DEFAULT_MAX_ENTRIES: usize = 500_000;
 
@@ -106,36 +106,44 @@ impl BlockStore {
         let store: HashMap<String, BlockEntry> = if let Some(ref path) = persist_path {
             if path.exists() {
                 match std::fs::read_to_string(path) {
-                    Ok(content) => {
-                        match serde_json::from_str::<Vec<BlockEntry>>(&content) {
-                            Ok(entries) => {
-                                let mut validated = HashMap::new();
-                                let mut parse_errors = 0;
-                                for e in entries {
-                                    match e.ip.parse::<IpAddr>() {
-                                        Ok(ip) => {
-                                            if !e.is_expired() {
-                                                validated.insert(BlockEntry::key(&e.site_scope, &ip), e);
-                                            }
-                                        }
-                                        Err(_) => {
-                                            parse_errors += 1;
-                                            tracing::warn!("Skipping block entry with invalid IP: {}", e.ip);
+                    Ok(content) => match serde_json::from_str::<Vec<BlockEntry>>(&content) {
+                        Ok(entries) => {
+                            let mut validated = HashMap::new();
+                            let mut parse_errors = 0;
+                            for e in entries {
+                                match e.ip.parse::<IpAddr>() {
+                                    Ok(ip) => {
+                                        if !e.is_expired() {
+                                            validated
+                                                .insert(BlockEntry::key(&e.site_scope, &ip), e);
                                         }
                                     }
+                                    Err(_) => {
+                                        parse_errors += 1;
+                                        tracing::warn!(
+                                            "Skipping block entry with invalid IP: {}",
+                                            e.ip
+                                        );
+                                    }
                                 }
-                                if parse_errors > 0 {
-                                    tracing::warn!("Skipped {} block entries with invalid IPs", parse_errors);
-                                }
-                                tracing::info!("Loaded {} valid block entries from disk", validated.len());
-                                validated
                             }
-                            Err(e) => {
-                                tracing::warn!("Failed to parse blocks.json: {}, starting fresh", e);
-                                HashMap::new()
+                            if parse_errors > 0 {
+                                tracing::warn!(
+                                    "Skipped {} block entries with invalid IPs",
+                                    parse_errors
+                                );
                             }
+                            tracing::info!(
+                                "Loaded {} valid block entries from disk",
+                                validated.len()
+                            );
+                            validated
                         }
-                    }
+                        Err(e) => {
+                            tracing::warn!("Failed to parse blocks.json: {}, starting fresh", e);
+                            HashMap::new()
+                        }
+                    },
                     Err(e) => {
                         tracing::warn!("Failed to read blocks.json: {}, starting fresh", e);
                         HashMap::new()
@@ -149,41 +157,46 @@ impl BlockStore {
         };
 
         let initial_count = store.len();
-        let (persist_tx, shutdown_tx) = if config.persist_interval_secs > 0 && persist_path.is_some() {
-            let (tx, mut rx): (mpsc::Sender<PersistRequest>, mpsc::Receiver<PersistRequest>) = mpsc::channel(100);
-            let (shutdown_tx, mut shutdown_rx): (mpsc::Sender<()>, mpsc::Receiver<()>) = mpsc::channel(1);
-            let path = persist_path.clone().unwrap();
-            let max_entries_clone = max_entries;
-            
-            let _ = tokio::spawn(async move {
-                let mut interval = tokio::time::interval(std::time::Duration::from_secs(config.persist_interval_secs));
-                let mut pending: Option<HashMap<String, BlockEntry>> = None;
-                
-                loop {
-                    tokio::select! {
-                        _ = interval.tick() => {
-                            if let Some(entries) = pending.take() {
-                                Self::persist_to_disk(&path, entries, max_entries_clone).await;
+        let (persist_tx, shutdown_tx) =
+            if config.persist_interval_secs > 0 && persist_path.is_some() {
+                let (tx, mut rx): (mpsc::Sender<PersistRequest>, mpsc::Receiver<PersistRequest>) =
+                    mpsc::channel(100);
+                let (shutdown_tx, mut shutdown_rx): (mpsc::Sender<()>, mpsc::Receiver<()>) =
+                    mpsc::channel(1);
+                let path = persist_path.clone().unwrap();
+                let max_entries_clone = max_entries;
+
+                let _ = tokio::spawn(async move {
+                    let mut interval = tokio::time::interval(std::time::Duration::from_secs(
+                        config.persist_interval_secs,
+                    ));
+                    let mut pending: Option<HashMap<String, BlockEntry>> = None;
+
+                    loop {
+                        tokio::select! {
+                            _ = interval.tick() => {
+                                if let Some(entries) = pending.take() {
+                                    Self::persist_to_disk(&path, entries, max_entries_clone).await;
+                                }
                             }
-                        }
-                        Some(req) = rx.recv() => {
-                            pending = Some(req.entries);
-                        }
-                        _ = shutdown_rx.recv() => {
-                            if let Some(entries) = pending.take() {
-                                Self::persist_to_disk(&path, entries, max_entries_clone).await;
+                            Some(req) = rx.recv() => {
+                                pending = Some(req.entries);
                             }
-                            tracing::info!("Block store persistence task shutting down");
-                            break;
+                            _ = shutdown_rx.recv() => {
+                                if let Some(entries) = pending.take() {
+                                    Self::persist_to_disk(&path, entries, max_entries_clone).await;
+                                }
+                                tracing::info!("Block store persistence task shutting down");
+                                break;
+                            }
                         }
                     }
-                }
-            });
-            
-            (Some(tx), Some(shutdown_tx))
-        } else {
-            (None, None)
-        };
+                });
+
+                (Some(tx), Some(shutdown_tx))
+            } else {
+                (None, None)
+            };
 
         Self {
             store: Arc::new(RwLock::new(store)),
@@ -203,7 +216,11 @@ impl BlockStore {
         }
     }
 
-    pub(crate) async fn persist_to_disk(path: &PathBuf, entries: HashMap<String, BlockEntry>, max_entries: usize) {
+    pub(crate) async fn persist_to_disk(
+        path: &PathBuf,
+        entries: HashMap<String, BlockEntry>,
+        max_entries: usize,
+    ) {
         let entries_to_save: Vec<BlockEntry> = entries
             .values()
             .filter(|e| !e.is_expired())
@@ -375,7 +392,7 @@ impl BlockStore {
         }
 
         let key = BlockEntry::key(site_scope, ip);
-        
+
         // First try with read lock for quick path
         {
             let store = self.store.read();
@@ -385,10 +402,10 @@ impl BlockStore {
                 }
             }
         }
-        
+
         // Need write lock for modification/cleanup
         let mut store = self.store.write();
-        
+
         if let Some(entry) = store.get_mut(&key) {
             if !entry.is_expired() {
                 entry.update_access();
@@ -401,7 +418,7 @@ impl BlockStore {
 
         if site_scope != "global" {
             let global_key = BlockEntry::key("global", ip);
-            
+
             // Quick read check for global
             {
                 let store = self.store.read();
@@ -411,7 +428,7 @@ impl BlockStore {
                     }
                 }
             }
-            
+
             if let Some(entry) = store.get_mut(&global_key) {
                 if !entry.is_expired() {
                     entry.update_access();
@@ -465,9 +482,9 @@ impl BlockStore {
     pub fn get_stats(&self) -> BlockStoreStats {
         let total = self.total_entries.load(Ordering::Relaxed);
         let max = self.config.max_entries;
-        
+
         let mut permanent_count = 0;
-        
+
         {
             let store = self.store.read();
             for entry in store.values() {
@@ -482,7 +499,11 @@ impl BlockStore {
             max_entries: max,
             permanent_count,
             expired_count: 0,
-            utilization_percent: if max > 0 { (total as f64 / max as f64) * 100.0 } else { 0.0 },
+            utilization_percent: if max > 0 {
+                (total as f64 / max as f64) * 100.0
+            } else {
+                0.0
+            },
         }
     }
 
@@ -491,34 +512,43 @@ impl BlockStore {
         store.values().cloned().collect()
     }
 
-    pub fn add_block(&self, ip: &str, reason: &str, ban_expire_seconds: u64, site_scope: &str) -> bool {
+    pub fn add_block(
+        &self,
+        ip: &str,
+        reason: &str,
+        ban_expire_seconds: u64,
+        site_scope: &str,
+    ) -> bool {
         if !self.enabled {
             return false;
         }
-        
+
         if let Ok(ip_addr) = ip.parse::<IpAddr>() {
             let key = BlockEntry::key(site_scope, &ip_addr);
-            
+
             let mut store = self.store.write();
-            
+
             if store.len() >= self.config.max_entries {
-                tracing::warn!("BlockStore max entries reached, cannot add new block for {}", ip);
+                tracing::warn!(
+                    "BlockStore max entries reached, cannot add new block for {}",
+                    ip
+                );
                 return false;
             }
-            
+
             let entry = BlockEntry::new(
                 ip_addr,
                 reason.to_string(),
                 ban_expire_seconds,
                 site_scope.to_string(),
             );
-            
+
             store.insert(key, entry);
             self.total_entries.fetch_add(1, Ordering::Relaxed);
-            
+
             return true;
         }
-        
+
         false
     }
 }

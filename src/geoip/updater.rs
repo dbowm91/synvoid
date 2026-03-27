@@ -59,14 +59,18 @@ impl DatabaseEdition {
 
     pub fn build_url(edition_id: &str, source: &DownloadSource) -> Option<String> {
         match source {
-            DownloadSource::MaxMind { .. } => {
-                Some(format!("{}/{}/download?suffix=tar.gz", MAXMIND_DOWNLOAD_BASE, edition_id))
-            }
+            DownloadSource::MaxMind { .. } => Some(format!(
+                "{}/{}/download?suffix=tar.gz",
+                MAXMIND_DOWNLOAD_BASE, edition_id
+            )),
             DownloadSource::PresignedUrl(base_url) => {
                 if base_url.contains("suffix=") {
                     Some(base_url.clone())
                 } else {
-                    Some(format!("{}/download?suffix=tar.gz", base_url.trim_end_matches('/')))
+                    Some(format!(
+                        "{}/download?suffix=tar.gz",
+                        base_url.trim_end_matches('/')
+                    ))
                 }
             }
         }
@@ -184,7 +188,10 @@ impl GeoIpUpdater {
         self.database_path.join(format!("{}.mmdb", edition_id))
     }
 
-    pub async fn check_for_update(&self, edition: &DatabaseEdition) -> Result<Option<i64>, GeoIpUpdaterError> {
+    pub async fn check_for_update(
+        &self,
+        edition: &DatabaseEdition,
+    ) -> Result<Option<i64>, GeoIpUpdaterError> {
         let source = self.source.as_ref().ok_or(GeoIpUpdaterError::NoSource)?;
         let client = crate::http_client::create_http_client();
         let timeout = Duration::from_secs(self.download_timeout_secs);
@@ -194,8 +201,14 @@ impl GeoIpUpdater {
                 account_id,
                 license_key,
             } => {
-                head_with_auth(&client, &edition.download_url, account_id, license_key, timeout)
-                    .await
+                head_with_auth(
+                    &client,
+                    &edition.download_url,
+                    account_id,
+                    license_key,
+                    timeout,
+                )
+                .await
             }
             DownloadSource::PresignedUrl(_) => {
                 get_with_timeout(&client, &edition.download_url, timeout).await
@@ -247,7 +260,10 @@ impl GeoIpUpdater {
         Ok(())
     }
 
-    pub async fn download_database(&self, edition: &DatabaseEdition) -> Result<DownloadResult, GeoIpUpdaterError> {
+    pub async fn download_database(
+        &self,
+        edition: &DatabaseEdition,
+    ) -> Result<DownloadResult, GeoIpUpdaterError> {
         let source = self.source.as_ref().ok_or(GeoIpUpdaterError::NoSource)?;
         let client = crate::http_client::create_http_client();
         let timeout = Duration::from_secs(self.download_timeout_secs);
@@ -257,8 +273,14 @@ impl GeoIpUpdater {
                 account_id,
                 license_key,
             } => {
-                get_with_auth(&client, &edition.download_url, account_id, license_key, timeout)
-                    .await
+                get_with_auth(
+                    &client,
+                    &edition.download_url,
+                    account_id,
+                    license_key,
+                    timeout,
+                )
+                .await
             }
             DownloadSource::PresignedUrl(_) => {
                 get_with_timeout(&client, &edition.download_url, timeout).await
@@ -297,14 +319,15 @@ impl GeoIpUpdater {
             let mut decoder = GzDecoder::new(&data[..]);
             let mut decompressed = Vec::new();
             use std::io::Read;
-            decoder
-                .read_to_end(&mut decompressed)
-                .map_err(|e| GeoIpUpdaterError::InvalidDatabase(format!("Gzip decompression failed: {}", e)))?;
+            decoder.read_to_end(&mut decompressed).map_err(|e| {
+                GeoIpUpdaterError::InvalidDatabase(format!("Gzip decompression failed: {}", e))
+            })?;
             data = decompressed;
         }
 
-        let tar_data = extract_first_file_from_tar(&data)
-            .map_err(|e| GeoIpUpdaterError::InvalidDatabase(format!("Tar extraction failed: {}", e)))?;
+        let tar_data = extract_first_file_from_tar(&data).map_err(|e| {
+            GeoIpUpdaterError::InvalidDatabase(format!("Tar extraction failed: {}", e))
+        })?;
 
         Ok(DownloadResult {
             edition_id: edition.edition_id.clone(),
@@ -326,7 +349,10 @@ impl GeoIpUpdater {
             match self.download_database(edition).await {
                 Ok(result) => return Ok(result),
                 Err(e) if attempts >= self.max_retries => {
-                    return Err(GeoIpUpdaterError::MaxRetriesExceeded(attempts, e.to_string()));
+                    return Err(GeoIpUpdaterError::MaxRetriesExceeded(
+                        attempts,
+                        e.to_string(),
+                    ));
                 }
                 Err(e) => {
                     let delay = base_delay * 2_u64.saturating_pow(attempts - 1);
@@ -340,7 +366,10 @@ impl GeoIpUpdater {
         }
     }
 
-    pub async fn get_local_last_modified(&self, edition_id: &str) -> Result<Option<i64>, GeoIpUpdaterError> {
+    pub async fn get_local_last_modified(
+        &self,
+        edition_id: &str,
+    ) -> Result<Option<i64>, GeoIpUpdaterError> {
         let path = self.edition_path(edition_id);
         if !path.exists() {
             return Ok(None);
@@ -367,14 +396,20 @@ impl GeoIpUpdater {
         let mut has_failure = false;
 
         for edition in &self.editions {
-            debug!("Checking for updates to GeoIP database: {}", edition.edition_id);
+            debug!(
+                "Checking for updates to GeoIP database: {}",
+                edition.edition_id
+            );
 
             let needs_update = match self.check_for_update(edition).await {
                 Ok(Some(remote_date)) => {
                     let local_date = match self.get_local_last_modified(&edition.edition_id).await {
                         Ok(date) => date,
                         Err(e) => {
-                            warn!("Failed to get local modification time for {}: {}", edition.edition_id, e);
+                            warn!(
+                                "Failed to get local modification time for {}: {}",
+                                edition.edition_id, e
+                            );
                             Some(0)
                         }
                     };
@@ -383,7 +418,10 @@ impl GeoIpUpdater {
                 }
                 Ok(None) => true,
                 Err(e) => {
-                    warn!("Failed to check for updates to {}: {}", edition.edition_id, e);
+                    warn!(
+                        "Failed to check for updates to {}: {}",
+                        edition.edition_id, e
+                    );
                     true
                 }
             };
@@ -401,8 +439,14 @@ impl GeoIpUpdater {
                         continue;
                     }
 
-                    if let Err(e) = self.write_database_atomic(&result.data, &edition.edition_id).await {
-                        warn!("Failed to write GeoIP {} to disk: {}", edition.edition_id, e);
+                    if let Err(e) = self
+                        .write_database_atomic(&result.data, &edition.edition_id)
+                        .await
+                    {
+                        warn!(
+                            "Failed to write GeoIP {} to disk: {}",
+                            edition.edition_id, e
+                        );
                         has_failure = true;
                         continue;
                     }
@@ -439,7 +483,11 @@ impl GeoIpUpdater {
         Ok(updated_editions)
     }
 
-    async fn write_database_atomic(&self, data: &[u8], edition_id: &str) -> Result<(), GeoIpUpdaterError> {
+    async fn write_database_atomic(
+        &self,
+        data: &[u8],
+        edition_id: &str,
+    ) -> Result<(), GeoIpUpdaterError> {
         tokio::fs::create_dir_all(&self.database_path).await?;
 
         let temp_path = self.database_path.join(format!("{}.tmp", edition_id));

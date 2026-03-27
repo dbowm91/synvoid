@@ -7,8 +7,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use crate::process::{
-    get_secure_socket_path, raw_fd_to_tcp_listener,
-    IpcStream, Message, SocketFDError, SocketFDPassing, SocketHolder,
+    get_secure_socket_path, raw_fd_to_tcp_listener, IpcStream, Message, SocketFDError,
+    SocketFDPassing, SocketHolder,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -112,8 +112,7 @@ impl SocketHandoffServer {
             .get_socket_info()
             .iter()
             .map(|info| {
-                let fd_dup = nix::unistd::dup(info.fd)
-                    .map_err(io::Error::other)?;
+                let fd_dup = nix::unistd::dup(info.fd).map_err(io::Error::other)?;
                 // SAFETY: fd_dup is a valid file descriptor from dup(), we transfer ownership
                 Ok(unsafe { raw_fd_to_tcp_listener(fd_dup) })
             })
@@ -165,11 +164,7 @@ impl SocketHandoffServer {
             }
             Message::SocketHandoffReady { ports } => {
                 if ports != self.ports {
-                    tracing::warn!(
-                        "Port mismatch: expected {:?}, got {:?}",
-                        self.ports,
-                        ports
-                    );
+                    tracing::warn!("Port mismatch: expected {:?}, got {:?}", self.ports, ports);
                 }
             }
             _ => {
@@ -209,7 +204,7 @@ impl SocketHandoffServer {
 impl SocketHandoffServer {
     pub fn new(ports: Vec<u16>) -> Result<Self, SocketHandoffError> {
         tracing::info!("Creating socket handoff server for Windows (port-swap mode)");
-        
+
         let mut socket_holder = SocketHolder::new();
         for port in &ports {
             socket_holder
@@ -241,20 +236,19 @@ impl SocketHandoffServer {
     pub async fn wait_for_handoff_request(&self) -> Result<Option<IpcStream>, SocketHandoffError> {
         #[cfg(windows)]
         {
-            use crate::process::ipc_windows::{create_named_pipe_server, accept_pipe_connection};
-            
+            use crate::process::ipc_windows::{accept_pipe_connection, create_named_pipe_server};
+
             let pipe_name = get_windows_handoff_pipe_name();
-            let handle = create_named_pipe_server(&pipe_name)
-                .map_err(SocketHandoffError::SocketCreate)?;
-            
-            accept_pipe_connection(&handle)
-                .map_err(SocketHandoffError::SocketCreate)?;
-            
+            let handle =
+                create_named_pipe_server(&pipe_name).map_err(SocketHandoffError::SocketCreate)?;
+
+            accept_pipe_connection(&handle).map_err(SocketHandoffError::SocketCreate)?;
+
             let file = handle;
             let ipc = IpcStream::new(file);
             Ok(Some(ipc))
         }
-        
+
         #[cfg(not(windows))]
         {
             Err(SocketHandoffError::NotSupported(
@@ -275,8 +269,7 @@ impl SocketHandoffServer {
                 .ok_or(SocketHandoffError::Timeout)?;
 
             match msg {
-                Message::SocketHandoffRequest { .. } | 
-                Message::SocketHandoffReady { .. } => {}
+                Message::SocketHandoffRequest { .. } | Message::SocketHandoffReady { .. } => {}
                 _ => {
                     return Err(SocketHandoffError::IpcError(format!(
                         "Unexpected message: {:?}",
@@ -291,16 +284,17 @@ impl SocketHandoffServer {
             .map_err(|e| SocketHandoffError::IpcError(e.to_string()))?;
 
             let target_pid = std::process::id();
-            
+
             for info in self.socket_holder.get_socket_info() {
                 if let Ok(protocol_info) = crate::platform::windows_impl::duplicate_socket_for_child(
                     info.fd as std::os::windows::io::RawSocket,
-                    target_pid
+                    target_pid,
                 ) {
                     ipc.send(&Message::WindowsSocketInfo {
                         protocol_info: protocol_info.into_boxed_slice().into_vec(),
                         port: info.port,
-                    }).map_err(|e| SocketHandoffError::IpcError(e.to_string()))?;
+                    })
+                    .map_err(|e| SocketHandoffError::IpcError(e.to_string()))?;
                 }
             }
 
@@ -310,11 +304,14 @@ impl SocketHandoffServer {
             })
             .map_err(|e| SocketHandoffError::IpcError(e.to_string()))?;
 
-            tracing::info!("Sent {} socket protocol infos to new master", self.socket_holder.len());
+            tracing::info!(
+                "Sent {} socket protocol infos to new master",
+                self.socket_holder.len()
+            );
 
             Ok(self.ports.clone())
         }
-        
+
         #[cfg(not(windows))]
         {
             let _ = ipc;
@@ -439,12 +436,12 @@ impl SocketHandoffClient {
         #[cfg(windows)]
         {
             use crate::process::ipc_windows::connect_to_named_pipe;
-            
+
             let pipe_name = get_windows_handoff_pipe_name();
-            
+
             let start = std::time::Instant::now();
             let timeout = Duration::from_secs(HANDOFF_TIMEOUT_SECS);
-            
+
             let file = loop {
                 match connect_to_named_pipe(&pipe_name, 10) {
                     Ok(f) => break f,
@@ -458,19 +455,19 @@ impl SocketHandoffClient {
                     Err(e) => return Err(SocketHandoffError::SocketConnect(e)),
                 }
             };
-            
+
             let mut ipc = IpcStream::new(file);
-            
+
             ipc.send(&Message::SocketHandoffRequest {
                 socket_path: pipe_name.clone(),
             })
             .map_err(|e| SocketHandoffError::IpcError(e.to_string()))?;
-            
+
             let msg = ipc
                 .recv(HANDOFF_TIMEOUT_SECS * 1000)
                 .map_err(|e| SocketHandoffError::IpcError(e.to_string()))?
                 .ok_or(SocketHandoffError::Timeout)?;
-            
+
             let ports = match msg {
                 Message::SocketHandoffReady { ports } => ports,
                 _ => {
@@ -480,22 +477,33 @@ impl SocketHandoffClient {
                     )))
                 }
             };
-            
+
             tracing::info!("Old master ready to send sockets for ports {:?}", ports);
-            
+
             let mut holder = SocketHolder::new();
-            
+
             loop {
                 let msg = ipc
                     .recv(HANDOFF_TIMEOUT_SECS * 1000)
                     .map_err(|e| SocketHandoffError::IpcError(e.to_string()))?
                     .ok_or(SocketHandoffError::Timeout)?;
-                
+
                 match msg {
-                    Message::WindowsSocketInfo { protocol_info, port } => {
-                        if let Ok(handle) = crate::platform::windows_impl::create_socket_from_duplicate(&protocol_info) {
+                    Message::WindowsSocketInfo {
+                        protocol_info,
+                        port,
+                    } => {
+                        if let Ok(handle) =
+                            crate::platform::windows_impl::create_socket_from_duplicate(
+                                &protocol_info,
+                            )
+                        {
                             let socket = handle.socket();
-                            holder.add_existing_fd(socket as i32, port, crate::process::SocketType::Tcp);
+                            holder.add_existing_fd(
+                                socket as i32,
+                                port,
+                                crate::process::SocketType::Tcp,
+                            );
                             tracing::debug!("Received Windows socket info for port {}", port);
                         }
                     }
@@ -503,19 +511,24 @@ impl SocketHandoffClient {
                         if success {
                             tracing::info!("Received {} Windows sockets from old master", fd_count);
                         } else {
-                            return Err(SocketHandoffError::RecvFailed(SocketFDError::NoFdsReceived));
+                            return Err(SocketHandoffError::RecvFailed(
+                                SocketFDError::NoFdsReceived,
+                            ));
                         }
                         break;
                     }
                     _ => {
-                        tracing::warn!("Unexpected message during Windows socket handoff: {:?}", msg);
+                        tracing::warn!(
+                            "Unexpected message during Windows socket handoff: {:?}",
+                            msg
+                        );
                     }
                 }
             }
-            
+
             Ok(holder)
         }
-        
+
         #[cfg(not(windows))]
         {
             let _ = expected_ports;
@@ -559,7 +572,9 @@ impl DualMasterHandoff {
     }
 
     pub fn get_listening_sockets(&self) -> Option<Vec<std::net::TcpListener>> {
-        self.server.as_ref().and_then(|s| s.get_tcp_listeners().ok())
+        self.server
+            .as_ref()
+            .and_then(|s| s.get_tcp_listeners().ok())
     }
 
     pub async fn wait_for_new_master(&mut self) -> Result<(), SocketHandoffError> {

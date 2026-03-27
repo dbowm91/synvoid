@@ -19,8 +19,7 @@ impl crate::filter::FilterAction for FilterAction {
     }
 }
 
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct FilterConfig {
     pub enabled: bool,
     pub strict_mode: bool,
@@ -28,7 +27,6 @@ pub struct FilterConfig {
     pub protocol_denylist: Vec<String>,
     pub block_unknown_ports: bool,
 }
-
 
 impl FilterConfig {
     pub fn new() -> Self {

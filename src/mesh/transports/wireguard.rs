@@ -7,14 +7,16 @@ use std::time::Instant;
 use bytes::Bytes;
 use dashmap::DashMap;
 use parking_lot::RwLock as ParkingRwLock;
-use socket2::{Socket, Domain, Protocol, Type};
+use socket2::{Domain, Protocol, Socket, Type};
 use tokio::net::UdpSocket;
 use tokio::sync::{broadcast, mpsc, RwLock};
 
 use crate::mesh::config::{MeshConfig, MeshNodeRole, MeshWireGuardConfig, MeshWireGuardPeer};
 use crate::mesh::protocol::{MeshMessage, MESH_MESSAGE_VERSION};
 use crate::mesh::topology::{MeshTopology, PeerStatus};
-use crate::mesh::transports::{DatagramPacket, MeshTransportError, MeshTransportTrait, MeshTransportType};
+use crate::mesh::transports::{
+    DatagramPacket, MeshTransportError, MeshTransportTrait, MeshTransportType,
+};
 use crate::mesh::wireguard_mesh::WireGuardMeshRuntime;
 
 const MESH_HEADER_SIZE: usize = 4;
@@ -59,7 +61,7 @@ impl WireGuardMeshTransport {
         topology: Arc<MeshTopology>,
     ) -> Self {
         let (datagram_tx, _) = mpsc::channel(4096);
-        
+
         Self {
             config: config.clone(),
             wireguard_config: Arc::new(wireguard_config),
@@ -80,7 +82,10 @@ impl WireGuardMeshTransport {
             return Ok(());
         }
 
-        let private_key = self.wireguard_config.private_key.clone()
+        let private_key = self
+            .wireguard_config
+            .private_key
+            .clone()
             .ok_or("WireGuard private key is required for mesh transport")?;
 
         tracing::info!(
@@ -94,8 +99,12 @@ impl WireGuardMeshTransport {
             *addrs = self.wireguard_config.addresses.clone();
         }
 
-        let bind_addr = format!("{}:{}", 
-            self.wireguard_config.addresses.first().unwrap_or(&"0.0.0.0".to_string()),
+        let bind_addr = format!(
+            "{}:{}",
+            self.wireguard_config
+                .addresses
+                .first()
+                .unwrap_or(&"0.0.0.0".to_string()),
             self.wireguard_config.listen_port
         );
 
@@ -118,7 +127,7 @@ impl WireGuardMeshTransport {
         } else {
             tokio::net::UdpSocket::bind(&bind_addr).await?
         };
-        
+
         {
             let mut s = self.socket.write().await;
             *s = Some(Arc::new(socket));
@@ -132,7 +141,7 @@ impl WireGuardMeshTransport {
             perf_config.rx_buffer_size,
             perf_config.tx_buffer_size
         );
-        
+
         Ok(())
     }
 
@@ -160,7 +169,7 @@ impl WireGuardMeshTransport {
         let config = self.config.clone();
         let socket = self.socket.clone();
         let shutdown_tx_clone = shutdown_tx.clone();
-        
+
         tokio::spawn(async move {
             let shutdown_rx = shutdown_tx_clone.subscribe();
             Self::receive_loop(config, topology, peer_states, socket, shutdown_rx).await;
@@ -178,7 +187,7 @@ impl WireGuardMeshTransport {
         mut shutdown_rx: broadcast::Receiver<()>,
     ) {
         let mut buf = [0u8; 65535];
-        
+
         loop {
             tokio::select! {
                 _ = shutdown_rx.recv() => {
@@ -222,12 +231,33 @@ impl WireGuardMeshTransport {
         tracing::debug!("Received mesh message from {}: {:?}", addr, msg);
 
         match msg {
-            MeshMessage::Hello { version, node_id, role, capabilities, upstreams, auth_token: _, network_id: _, global_node_key: _, timestamp: _, nonce: _, is_trusted: _, quic_port, wireguard_port, public_key: _, pow_nonce: _, pow_public_key: _ } => {
-                tracing::info!("Received Hello from {} at {} (quic_port: {:?}, wg_port: {:?}", node_id, addr, quic_port, wireguard_port);
-                
-                let wireguard_ip = format!("10.100.0.{}", 
-                    peer_states.len() + 2
+            MeshMessage::Hello {
+                version,
+                node_id,
+                role,
+                capabilities,
+                upstreams,
+                auth_token: _,
+                network_id: _,
+                global_node_key: _,
+                timestamp: _,
+                nonce: _,
+                is_trusted: _,
+                quic_port,
+                wireguard_port,
+                public_key: _,
+                pow_nonce: _,
+                pow_public_key: _,
+            } => {
+                tracing::info!(
+                    "Received Hello from {} at {} (quic_port: {:?}, wg_port: {:?}",
+                    node_id,
+                    addr,
+                    quic_port,
+                    wireguard_port
                 );
+
+                let wireguard_ip = format!("10.100.0.{}", peer_states.len() + 2);
 
                 let state = WireGuardPeerState {
                     peer_id: node_id.to_string(),
@@ -243,22 +273,24 @@ impl WireGuardMeshTransport {
 
                 peer_states.insert(node_id.to_string(), state);
 
-                topology.add_peer(
-                    crate::mesh::protocol::MeshPeerInfo {
-                        node_id: node_id.to_string(),
-                        address: wireguard_ip,
-                        role,
-                        capabilities,
-                        is_global: role.is_global(),
-                        latency_ms: None,
-                        upstreams: upstreams.keys().cloned().collect(),
-                        is_trusted: role.is_global(),
-                        quic_port,
-                        wireguard_port,
-                        advertised_port: quic_port.or(wireguard_port),
-                    },
-                    PeerStatus::Healthy,
-                ).await;
+                topology
+                    .add_peer(
+                        crate::mesh::protocol::MeshPeerInfo {
+                            node_id: node_id.to_string(),
+                            address: wireguard_ip,
+                            role,
+                            capabilities,
+                            is_global: role.is_global(),
+                            latency_ms: None,
+                            upstreams: upstreams.keys().cloned().collect(),
+                            is_trusted: role.is_global(),
+                            quic_port,
+                            wireguard_port,
+                            advertised_port: quic_port.or(wireguard_port),
+                        },
+                        PeerStatus::Healthy,
+                    )
+                    .await;
 
                 let response = MeshMessage::HelloAck {
                     version: MESH_MESSAGE_VERSION,
@@ -282,8 +314,25 @@ impl WireGuardMeshTransport {
                     socket.send_to(&encoded, addr).await?;
                 }
             }
-            MeshMessage::RouteQuery { query_id, upstream_id, max_hops, initiator, sequence: _, timestamp: _, nonce: _ } => {
-                Self::handle_route_query(topology, peer_states, addr, query_id.to_string(), upstream_id.to_string(), max_hops, initiator.to_string()).await;
+            MeshMessage::RouteQuery {
+                query_id,
+                upstream_id,
+                max_hops,
+                initiator,
+                sequence: _,
+                timestamp: _,
+                nonce: _,
+            } => {
+                Self::handle_route_query(
+                    topology,
+                    peer_states,
+                    addr,
+                    query_id.to_string(),
+                    upstream_id.to_string(),
+                    max_hops,
+                    initiator.to_string(),
+                )
+                .await;
             }
             MeshMessage::KeepAlive => {
                 let addr_str = addr.to_string();
@@ -319,7 +368,7 @@ impl WireGuardMeshTransport {
     ) {
         let provider = topology.get_cached_route(&upstream_id).await;
         let mesh_name = topology.config().mesh_name().map(|s| s.into());
-        
+
         let response = if let Some((provider_node_id, hops)) = provider {
             let local = topology.get_upstream_info(&upstream_id).await;
             MeshMessage::RouteResponse {
@@ -356,10 +405,14 @@ impl WireGuardMeshTransport {
         peer_config: &MeshWireGuardPeer,
     ) -> Result<(), MeshTransportError> {
         let peer_id = peer_config.public_key.clone();
-        let endpoint = peer_config.endpoint.clone()
+        let endpoint = peer_config
+            .endpoint
+            .clone()
             .ok_or_else(|| MeshTransportError::ConnectionFailed("No endpoint".to_string()))?;
-        
-        let wireguard_ip = peer_config.allowed_ips.first()
+
+        let wireguard_ip = peer_config
+            .allowed_ips
+            .first()
             .map(|ip| ip.trim_end_matches("/24").to_string())
             .unwrap_or_else(|| "10.100.0.2".to_string());
 
@@ -377,52 +430,63 @@ impl WireGuardMeshTransport {
 
         self.peer_states.insert(peer_id.clone(), state);
 
-        self.topology.add_peer(
-            crate::mesh::protocol::MeshPeerInfo {
-                node_id: peer_id.clone(),
-                address: wireguard_ip,
-                role: MeshNodeRole::Edge,
-                capabilities: crate::mesh::protocol::MeshCapabilities {
-                    can_route: true,
-                    can_proxy: true,
-                    max_hops: self.config.routing.max_hops,
-                    supported_services: Vec::new(),
-                    preferred_transport: Some(crate::mesh::transports::MeshTransportType::WireGuard),
+        self.topology
+            .add_peer(
+                crate::mesh::protocol::MeshPeerInfo {
+                    node_id: peer_id.clone(),
+                    address: wireguard_ip,
+                    role: MeshNodeRole::Edge,
+                    capabilities: crate::mesh::protocol::MeshCapabilities {
+                        can_route: true,
+                        can_proxy: true,
+                        max_hops: self.config.routing.max_hops,
+                        supported_services: Vec::new(),
+                        preferred_transport: Some(
+                            crate::mesh::transports::MeshTransportType::WireGuard,
+                        ),
+                    },
+                    is_global: false,
+                    latency_ms: None,
+                    upstreams: Vec::new(),
+                    is_trusted: false,
+                    quic_port: None,
+                    wireguard_port: None,
+                    advertised_port: None,
                 },
-                is_global: false,
-                latency_ms: None,
-                upstreams: Vec::new(),
-                is_trusted: false,
-                quic_port: None,
-                wireguard_port: None,
-                advertised_port: None,
-            },
-            PeerStatus::Healthy,
-        ).await;
+                PeerStatus::Healthy,
+            )
+            .await;
 
-        tracing::info!("Connected to WireGuard mesh peer: {} at {}", peer_id, endpoint);
-        
+        tracing::info!(
+            "Connected to WireGuard mesh peer: {} at {}",
+            peer_id,
+            endpoint
+        );
+
         Ok(())
     }
 
-    async fn send_to_peer(
-        &self,
-        peer_id: &str,
-        data: &[u8],
-    ) -> Result<(), MeshTransportError> {
-        let peer = self.peer_states.get(peer_id)
+    async fn send_to_peer(&self, peer_id: &str, data: &[u8]) -> Result<(), MeshTransportError> {
+        let peer = self
+            .peer_states
+            .get(peer_id)
             .ok_or_else(|| MeshTransportError::PeerNotConnected(peer_id.to_string()))?;
 
-        let addr: SocketAddr = peer.address.parse()
+        let addr: SocketAddr = peer
+            .address
+            .parse()
             .map_err(|e| MeshTransportError::SendFailed(format!("Invalid peer address: {}", e)))?;
 
         let socket_guard = self.socket.read().await;
-        let socket = socket_guard.as_ref()
+        let socket = socket_guard
+            .as_ref()
             .ok_or(MeshTransportError::NotAvailable)?;
 
-        socket.send_to(data, addr).await
+        socket
+            .send_to(data, addr)
+            .await
             .map_err(|e| MeshTransportError::SendFailed(e.to_string()))?;
-        
+
         Ok(())
     }
 }
@@ -437,7 +501,8 @@ impl MeshTransportTrait for WireGuardMeshTransport {
     }
 
     fn get_peer_address(&self, peer_id: &str) -> Option<String> {
-        self.peer_states.get(peer_id)
+        self.peer_states
+            .get(peer_id)
             .map(|p| p.wireguard_ip.clone())
     }
 
@@ -446,9 +511,10 @@ impl MeshTransportTrait for WireGuardMeshTransport {
         peer_id: &str,
         message: &MeshMessage,
     ) -> Result<(), MeshTransportError> {
-        let encoded = message.encode()
+        let encoded = message
+            .encode()
             .map_err(|e| MeshTransportError::SendFailed(e.to_string()))?;
-        
+
         let mut packet = Vec::with_capacity(MESH_HEADER_SIZE + encoded.len());
         let len = (encoded.len() as u32).to_be_bytes();
         packet.extend_from_slice(&len);
@@ -462,17 +528,16 @@ impl MeshTransportTrait for WireGuardMeshTransport {
         peer_id: &str,
         message: &MeshMessage,
     ) -> Result<(), MeshTransportError> {
-        let encoded = message.encode()
+        let encoded = message
+            .encode()
             .map_err(|e| MeshTransportError::SendFailed(e.to_string()))?;
 
         self.send_to_peer(peer_id, &encoded).await
     }
 
-    async fn broadcast_datagram(
-        &self,
-        message: &MeshMessage,
-    ) -> Result<(), MeshTransportError> {
-        let encoded = message.encode()
+    async fn broadcast_datagram(&self, message: &MeshMessage) -> Result<(), MeshTransportError> {
+        let encoded = message
+            .encode()
             .map_err(|e| MeshTransportError::SendFailed(e.to_string()))?;
 
         for entry in self.peer_states.iter() {
@@ -481,14 +546,12 @@ impl MeshTransportTrait for WireGuardMeshTransport {
                 tracing::warn!("Failed to send broadcast to {}: {}", peer_id, e);
             }
         }
-        
+
         Ok(())
     }
 
     fn get_connected_peers(&self) -> Vec<String> {
-        self.peer_states.iter()
-            .map(|e| e.key().clone())
-            .collect()
+        self.peer_states.iter().map(|e| e.key().clone()).collect()
     }
 
     fn local_addresses(&self) -> Vec<String> {

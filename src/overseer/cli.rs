@@ -59,31 +59,30 @@ pub enum UpgradeCommand {
 
 pub async fn run_overseer_command(args: OverseerArgs) -> Result<(), Box<dyn std::error::Error>> {
     match args.command {
-        UpgradeCommand::Stage { binary, config, checksum } => {
-            handle_stage(binary, config, checksum).await
-        }
-        UpgradeCommand::Status => {
-            handle_status().await
-        }
-        UpgradeCommand::Apply { ports, timeout, drain_timeout, mode } => {
-            handle_apply(ports, timeout, drain_timeout, mode).await
-        }
-        UpgradeCommand::Rollback => {
-            handle_rollback().await
-        }
-        UpgradeCommand::Cancel => {
-            handle_cancel().await
-        }
-        UpgradeCommand::Recover { rollback } => {
-            handle_recover(rollback).await
-        }
-        UpgradeCommand::Versions { count } => {
-            handle_versions(count).await
-        }
+        UpgradeCommand::Stage {
+            binary,
+            config,
+            checksum,
+        } => handle_stage(binary, config, checksum).await,
+        UpgradeCommand::Status => handle_status().await,
+        UpgradeCommand::Apply {
+            ports,
+            timeout,
+            drain_timeout,
+            mode,
+        } => handle_apply(ports, timeout, drain_timeout, mode).await,
+        UpgradeCommand::Rollback => handle_rollback().await,
+        UpgradeCommand::Cancel => handle_cancel().await,
+        UpgradeCommand::Recover { rollback } => handle_recover(rollback).await,
+        UpgradeCommand::Versions { count } => handle_versions(count).await,
     }
 }
 
-async fn handle_stage(binary: PathBuf, config: Option<PathBuf>, checksum: Option<String>) -> Result<(), Box<dyn std::error::Error>> {
+async fn handle_stage(
+    binary: PathBuf,
+    config: Option<PathBuf>,
+    checksum: Option<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let persistence = Persistence::new(None);
     let _lock = persistence.acquire_lock()?;
 
@@ -97,7 +96,7 @@ async fn handle_stage(binary: PathBuf, config: Option<PathBuf>, checksum: Option
     println!("  Version: {}", state.staged_version.as_ref().unwrap());
     println!("  Mode: {}", state.upgrade_mode.as_ref().unwrap().name());
     println!("  State: {}", state.state);
-    
+
     if state.staged_binary_checksum.is_some() {
         println!("  Checksum: verified");
     }
@@ -127,7 +126,14 @@ async fn handle_status() -> Result<(), Box<dyn std::error::Error>> {
 
     let mode = detect_upgrade_mode();
     println!("  Upgrade Mode: {} (detected)", mode.name());
-    println!("  SO_REUSEPORT: {}", if mode == UpgradeMode::ReusePort { "supported" } else { "not available" });
+    println!(
+        "  SO_REUSEPORT: {}",
+        if mode == UpgradeMode::ReusePort {
+            "supported"
+        } else {
+            "not available"
+        }
+    );
 
     print_state(&state);
 
@@ -136,8 +142,17 @@ async fn handle_status() -> Result<(), Box<dyn std::error::Error>> {
 
 fn print_state(state: &OverseerState) {
     println!("  State: {}", state.state);
-    println!("  Current Version: {}", state.current_version.as_ref().unwrap_or(&"none".to_string()));
-    println!("  Staged Version: {}", state.staged_version.as_ref().unwrap_or(&"none".to_string()));
+    println!(
+        "  Current Version: {}",
+        state
+            .current_version
+            .as_ref()
+            .unwrap_or(&"none".to_string())
+    );
+    println!(
+        "  Staged Version: {}",
+        state.staged_version.as_ref().unwrap_or(&"none".to_string())
+    );
 
     if let Some(ref error) = state.last_error {
         println!("  Last Error: {}", error);
@@ -156,7 +171,10 @@ fn print_state(state: &OverseerState) {
     }
 
     if state.previous_version.is_some() {
-        println!("  Previous Version: {}", state.previous_version.as_ref().unwrap());
+        println!(
+            "  Previous Version: {}",
+            state.previous_version.as_ref().unwrap()
+        );
     }
 }
 
@@ -189,13 +207,19 @@ async fn handle_apply(
         println!("  Mode: {}", mode_str);
     }
 
-    match orchestrator.apply(ports.clone(), timeout, drain_timeout).await {
+    match orchestrator
+        .apply(ports.clone(), timeout, drain_timeout)
+        .await
+    {
         Ok(result) => {
             println!();
             println!("✓ Upgrade completed successfully");
             println!("  Version: {}", result.version);
             println!("  Mode: {}", result.mode.name());
-            println!("  Success rate: {:.1}%", result.metrics.success_rate * 100.0);
+            println!(
+                "  Success rate: {:.1}%",
+                result.metrics.success_rate * 100.0
+            );
             println!("  Old ports: {:?}", result.old_ports);
             println!("  New ports: {:?}", result.new_ports);
             Ok(())
@@ -255,7 +279,7 @@ async fn handle_recover(rollback: bool) -> Result<(), Box<dyn std::error::Error>
     let _lock = persistence.acquire_lock()?;
 
     let state = persistence.load()?;
-    
+
     println!("Overseer Recovery");
     println!("================");
     println!("  Current State: {}", state.state);
@@ -269,10 +293,10 @@ async fn handle_recover(rollback: bool) -> Result<(), Box<dyn std::error::Error>
 
     if rollback {
         println!("  Attempting automatic rollback...");
-        
+
         let rollback_mgr = RollbackManager::new(None);
         let orchestrator = Orchestrator::new(None, None, None);
-        
+
         match rollback_mgr.perform_rollback(&orchestrator).await {
             Ok(()) => {
                 println!("✓ Rollback completed successfully");
@@ -303,7 +327,11 @@ async fn handle_versions(count: usize) -> Result<(), Box<dyn std::error::Error>>
         println!("  No previous versions found");
     } else {
         for version in versions {
-            println!("  {} - {}", version.version, format_timestamp(version.created_at));
+            println!(
+                "  {} - {}",
+                version.version,
+                format_timestamp(version.created_at)
+            );
         }
     }
 

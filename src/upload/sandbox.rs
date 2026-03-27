@@ -132,8 +132,11 @@ impl QuarantineEntry {
             "timestamp": self.timestamp.to_rfc3339(),
         });
 
-        fs::write(&self.metadata_path, serde_json::to_string_pretty(&metadata).unwrap())
-            .await
+        fs::write(
+            &self.metadata_path,
+            serde_json::to_string_pretty(&metadata).unwrap(),
+        )
+        .await
     }
 }
 
@@ -168,8 +171,7 @@ impl Sandbox {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&quarantine_subdir, std::fs::Permissions::from_mode(0o700))
-                .await?;
+            fs::set_permissions(&quarantine_subdir, std::fs::Permissions::from_mode(0o700)).await?;
         }
 
         let file_path = quarantine_subdir.join("file");
@@ -210,10 +212,9 @@ impl Sandbox {
                 if let Ok(metadata) = entry.metadata().await {
                     if let Ok(modified) = metadata.modified() {
                         let modified: chrono::DateTime<chrono::Utc> = modified.into();
-                        if modified < cutoff
-                            && fs::remove_dir_all(&path).await.is_ok() {
-                                removed_count += 1;
-                            }
+                        if modified < cutoff && fs::remove_dir_all(&path).await.is_ok() {
+                            removed_count += 1;
+                        }
                     }
                 }
             }
@@ -226,9 +227,17 @@ impl Sandbox {
 #[derive(Debug, Clone)]
 pub enum SandboxError {
     IoError(String),
-    SizeExceeded { max: u64, actual: u64 },
-    TypeNotAllowed { detected: String, allowed: Vec<String> },
-    MalwareDetected { matches: Vec<String> },
+    SizeExceeded {
+        max: u64,
+        actual: u64,
+    },
+    TypeNotAllowed {
+        detected: String,
+        allowed: Vec<String>,
+    },
+    MalwareDetected {
+        matches: Vec<String>,
+    },
     WriteError(String),
 }
 
@@ -240,7 +249,11 @@ impl std::fmt::Display for SandboxError {
                 write!(f, "Upload size {} exceeds maximum {}", actual, max)
             }
             SandboxError::TypeNotAllowed { detected, allowed } => {
-                write!(f, "MIME type '{}' not allowed. Allowed types: {:?}", detected, allowed)
+                write!(
+                    f,
+                    "MIME type '{}' not allowed. Allowed types: {:?}",
+                    detected, allowed
+                )
             }
             SandboxError::MalwareDetected { matches } => {
                 write!(f, "Malware detected: {:?}", matches)

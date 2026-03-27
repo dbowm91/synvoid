@@ -6,7 +6,7 @@ use tokio::sync::Mutex as TokioMutex;
 use crate::metrics::WorkerMetrics;
 use crate::process::ipc_transport::IpcStream as AsyncIpcStream;
 use crate::process::WorkerId;
-use crate::{RunningFlag, DrainFlag};
+use crate::{DrainFlag, RunningFlag};
 
 #[derive(Clone)]
 pub(super) struct WorkerState {
@@ -19,7 +19,10 @@ pub(super) struct WorkerState {
 }
 
 pub(super) fn create_waf(main_config: &crate::config::MainConfig) -> Arc<crate::waf::WafCore> {
-    let data_dir = main_config.persistence.data_dir.as_ref()
+    let data_dir = main_config
+        .persistence
+        .data_dir
+        .as_ref()
         .map(std::path::PathBuf::from);
 
     let waf = crate::waf::WafCore::new(crate::waf::WafCoreConfig {
@@ -47,7 +50,10 @@ pub(super) fn create_waf(main_config: &crate::config::MainConfig) -> Arc<crate::
             css_valid_count: main_config.defaults.css_challenge.valid_count,
             css_asset_path: main_config.defaults.css_challenge.asset_path.clone(),
             css_window_secs: main_config.defaults.css_challenge.challenge_window_secs,
-            css_verification_window_secs: main_config.defaults.css_challenge.verification_window_secs,
+            css_verification_window_secs: main_config
+                .defaults
+                .css_challenge
+                .verification_window_secs,
             challenge_priority: crate::challenge::ChallengePriority::PowThenCss,
             challenge_max_attempts: 3,
             challenge_rate_limit_window_secs: 60,
@@ -105,10 +111,13 @@ pub(super) fn create_waf(main_config: &crate::config::MainConfig) -> Arc<crate::
 }
 
 #[allow(dead_code)]
-pub(super) async fn send_compressed_error(state: &super::StaticWorkerState, request_id: u64, error: String) {
+pub(super) async fn send_compressed_error(
+    state: &super::StaticWorkerState,
+    request_id: u64,
+    error: String,
+) {
     let mut ipc = state.ipc.lock().await;
-    let _ = ipc.send(&crate::process::Message::MinifyError {
-        request_id,
-        error,
-    }).await;
+    let _ = ipc
+        .send(&crate::process::Message::MinifyError { request_id, error })
+        .await;
 }

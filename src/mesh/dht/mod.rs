@@ -1,34 +1,39 @@
 pub mod keys;
-pub mod signed;
-pub mod record_store;
-pub mod store;
 pub mod merkle;
-pub mod routing;
 pub mod network_policy;
+pub mod record_store;
+pub mod routing;
+pub mod signed;
 pub mod stake;
+pub mod store;
 
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use parking_lot::RwLock;
+use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 
 pub use keys::*;
+pub use merkle::{MerkleNode, MerkleProof, MerkleProofNode, MerkleTree, ProofPosition};
+pub use network_policy::{
+    BlockedNode, GlobalNodeBlocklist, NetworkPolicy, MAX_REPUTATION_THRESHOLD,
+    MIN_REPUTATION_THRESHOLD,
+};
+pub use record_store::{DhtRecordEntry, RecordStoreConfig, RecordStoreManager, RecordStoreStats};
+pub use signed::{
+    validate_message_timestamp, RecordSigner, SignedDhtRecord, SignedRecordType, TtlManager,
+    DHT_MESSAGE_TIMESTAMP_WINDOW_SECS,
+};
+pub use stake::{NodeStake, SlashEvent, SlashReason, StakeConfig, StakeLevel, StakeManager};
 pub use store::*;
-pub use signed::{SignedDhtRecord, SignedRecordType, RecordSigner, TtlManager, validate_message_timestamp, DHT_MESSAGE_TIMESTAMP_WINDOW_SECS};
-pub use record_store::{RecordStoreManager, RecordStoreConfig, RecordStoreStats, DhtRecordEntry};
-pub use merkle::{MerkleTree, MerkleProof, MerkleNode, MerkleProofNode, ProofPosition};
-pub use network_policy::{NetworkPolicy, BlockedNode, GlobalNodeBlocklist, MAX_REPUTATION_THRESHOLD, MIN_REPUTATION_THRESHOLD};
-pub use stake::{StakeConfig, StakeManager, NodeStake, StakeLevel, SlashReason, SlashEvent};
 
 pub use routing::{
-    NodeId, PeerContact, GeoInfo, RoutingTable,
-    KBucket, K_SIZE, LookupQuery, DhtQuery, QueryResponse, ALPHA,
-    PersistedRoutingTable, PersistedBucket, PersistedContact,
-    REPLICATION_K, BUCKET_REFRESH_INTERVAL, PING_TIMEOUT,
+    DhtQuery, GeoInfo, KBucket, LookupQuery, NodeId, PeerContact, PersistedBucket,
+    PersistedContact, PersistedRoutingTable, QueryResponse, RoutingTable, ALPHA,
+    BUCKET_REFRESH_INTERVAL, K_SIZE, PING_TIMEOUT, REPLICATION_K,
 };
 
 pub const DEFAULT_RATE_LIMIT_MAX_REQUESTS: u32 = 100;
@@ -53,15 +58,15 @@ impl DhtRateLimiter {
     pub fn is_allowed(&self, peer_id: &str) -> bool {
         let now = Instant::now();
         let mut peer_requests = self.peer_requests.write();
-        
+
         let requests = peer_requests.entry(peer_id.to_string()).or_default();
-        
+
         requests.retain(|t| now.duration_since(*t).as_secs() < self.window_secs);
-        
+
         if requests.len() >= self.max_requests as usize {
             return false;
         }
-        
+
         requests.push(now);
         true
     }
@@ -69,18 +74,21 @@ impl DhtRateLimiter {
     pub fn cleanup(&self) {
         let now = Instant::now();
         let mut peer_requests = self.peer_requests.write();
-        
+
         for requests in peer_requests.values_mut() {
             requests.retain(|t| now.duration_since(*t).as_secs() < self.window_secs);
         }
-        
+
         peer_requests.retain(|_, v| !v.is_empty());
     }
 }
 
 impl Default for DhtRateLimiter {
     fn default() -> Self {
-        Self::new(DEFAULT_RATE_LIMIT_MAX_REQUESTS, DEFAULT_RATE_LIMIT_WINDOW_SECS)
+        Self::new(
+            DEFAULT_RATE_LIMIT_MAX_REQUESTS,
+            DEFAULT_RATE_LIMIT_WINDOW_SECS,
+        )
     }
 }
 
@@ -111,15 +119,25 @@ pub enum DhtError {
     InvalidKey(String),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
-#[derive(Default)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    Archive,
+    RkyvSerialize,
+    RkyvDeserialize,
+    Default,
+)]
 pub enum DhtConsistencyLevel {
     Low,
     #[default]
     Medium,
     High,
 }
-
 
 // Note: DhtConfig has complex dependencies - add rkyv derives to individual fields as needed
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -398,15 +416,10 @@ impl DhtAccessControl {
             allowed_keys_for_edge = allowed.clone();
         }
 
-        let global_signature_required_keys = vec![
-            "verified_upstream:".to_string(),
-            "tier_claim:".to_string(),
-        ];
+        let global_signature_required_keys =
+            vec!["verified_upstream:".to_string(), "tier_claim:".to_string()];
 
-        let self_only_keys = vec![
-            "node_health:".to_string(),
-            "node_load:".to_string(),
-        ];
+        let self_only_keys = vec!["node_health:".to_string(), "node_load:".to_string()];
 
         Self {
             require_global_for_privileged: true,

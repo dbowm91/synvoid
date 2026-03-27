@@ -3,9 +3,11 @@ use ipnetwork::IpNetwork;
 use metrics::{counter, gauge};
 use tokio::sync::broadcast;
 
-use super::config::{WireGuardConfig, WireGuardPeerConfig, WireGuardServerConfig, generate_keypair, WgImplementation};
+use super::config::{
+    generate_keypair, WgImplementation, WireGuardConfig, WireGuardPeerConfig, WireGuardServerConfig,
+};
 use super::runtime::WireGuardRuntime;
-use crate::tunnel::{TunnelTransport, TunnelStats, PeerInfo};
+use crate::tunnel::{PeerInfo, TunnelStats, TunnelTransport};
 
 pub struct WireGuardServer {
     config: WireGuardServerConfig,
@@ -16,13 +18,16 @@ pub struct WireGuardServer {
 }
 
 impl WireGuardServer {
-    pub fn new(config: WireGuardServerConfig) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn new(
+        config: WireGuardServerConfig,
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let (shutdown_tx, _) = broadcast::channel(1);
         let peers = DashMap::new();
-        
-        let address_pool = config.address_pool.as_ref().map(|pool| {
-            AddressPool::new(pool).unwrap_or_else(|_| AddressPool::default_pool())
-        });
+
+        let address_pool = config
+            .address_pool
+            .as_ref()
+            .map(|pool| AddressPool::new(pool).unwrap_or_else(|_| AddressPool::default_pool()));
 
         for peer in &config.base.peers {
             peers.insert(peer.public_key.clone(), peer.clone());
@@ -60,13 +65,16 @@ impl WireGuardServer {
 
         let mut runtime = WireGuardRuntime::new(self.config.base.clone())?;
         runtime.start().await?;
-        
+
         self.runtime = Some(runtime);
 
         counter!("maluwaf.tunnel.wireguard.server.started").increment(1);
         gauge!("maluwaf.tunnel.wireguard.server.running").set(1.0);
 
-        tracing::info!("WireGuard server started on port {}", self.config.base.listen_port);
+        tracing::info!(
+            "WireGuard server started on port {}",
+            self.config.base.listen_port
+        );
         Ok(())
     }
 
@@ -85,7 +93,10 @@ impl WireGuardServer {
         self.runtime.as_ref().is_some_and(|r| r.is_running())
     }
 
-    pub fn add_peer(&self, peer: WireGuardPeerConfig) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn add_peer(
+        &self,
+        peer: WireGuardPeerConfig,
+    ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
         if self.peers.len() >= self.config.max_peers {
             return Err("Maximum number of peers reached".into());
         }
@@ -104,7 +115,10 @@ impl WireGuardServer {
         Ok(public_key)
     }
 
-    pub fn remove_peer(&self, public_key: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn remove_peer(
+        &self,
+        public_key: &str,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if self.peers.remove(public_key).is_some() {
             if let Some(ref runtime) = self.runtime {
                 runtime.remove_peer(public_key)?;
@@ -131,7 +145,9 @@ impl WireGuardServer {
     }
 
     pub fn stats(&self) -> TunnelStats {
-        self.runtime.as_ref().map_or(TunnelStats::default(), |r| r.stats())
+        self.runtime
+            .as_ref()
+            .map_or(TunnelStats::default(), |r| r.stats())
     }
 
     pub fn peers_info(&self) -> Vec<PeerInfo> {
@@ -156,17 +172,20 @@ impl WireGuardServer {
         self.shutdown_tx.subscribe()
     }
 
-    pub fn generate_peer_config(&self, name: &str) -> Result<GeneratedPeerConfig, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn generate_peer_config(
+        &self,
+        name: &str,
+    ) -> Result<GeneratedPeerConfig, Box<dyn std::error::Error + Send + Sync>> {
         let (private_key, public_key) = generate_keypair();
-        
-        let server_public_key = self.public_key()
-            .ok_or("Failed to get server public key")?;
-        
-        let address = self.allocate_address()
+
+        let server_public_key = self.public_key().ok_or("Failed to get server public key")?;
+
+        let address = self
+            .allocate_address()
             .ok_or("No addresses available in pool")?;
-        
+
         let allowed_ips = vec!["0.0.0.0/0"];
-        
+
         let peer_config = WireGuardPeerConfig::new(&public_key, allowed_ips.clone());
         self.add_peer(peer_config)?;
 
@@ -176,10 +195,7 @@ impl WireGuardServer {
             public_key,
             address,
             dns: self.config.base.dns.clone(),
-            server_endpoint: format!("{}:{}", 
-                "YOUR_SERVER_IP",
-                self.config.base.listen_port
-            ),
+            server_endpoint: format!("{}:{}", "YOUR_SERVER_IP", self.config.base.listen_port),
             server_public_key,
             allowed_ips: allowed_ips.into_iter().map(|s| s.to_string()).collect(),
         })
@@ -314,9 +330,8 @@ struct AddressPool {
 
 impl AddressPool {
     fn new(cidr: &str) -> Result<Self, String> {
-        let network: IpNetwork = cidr.parse()
-            .map_err(|e| format!("Invalid CIDR: {}", e))?;
-        
+        let network: IpNetwork = cidr.parse().map_err(|e| format!("Invalid CIDR: {}", e))?;
+
         Ok(Self {
             network,
             allocated: DashMap::new(),
@@ -329,15 +344,15 @@ impl AddressPool {
     }
 
     fn allocate(&self) -> Option<String> {
-        use std::sync::atomic::Ordering;
         use std::net::IpAddr;
+        use std::sync::atomic::Ordering;
 
         let max_attempts = 100;
         let mut attempts = 0;
 
         while attempts < max_attempts {
             let index = self.next_index.fetch_add(1, Ordering::Relaxed);
-            
+
             let addr = match self.network {
                 IpNetwork::V4(n) => {
                     let mut octets = n.network().octets();
@@ -350,7 +365,7 @@ impl AddressPool {
             };
 
             let addr_str = addr.to_string();
-            
+
             if !self.allocated.contains_key(&addr_str) {
                 self.allocated.insert(addr_str.clone(), ());
                 return Some(addr_str);

@@ -12,7 +12,6 @@ pub enum IntegrityMode {
     Enforced,
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IntegrityConfig {
     #[serde(default)]

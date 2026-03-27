@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use serde::{de::DeserializeOwned, Serialize};
-use tokio::io::{AsyncRead, AsyncWrite, AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 #[cfg(unix)]
 use tokio::net::{UnixListener, UnixStream};
@@ -12,8 +12,8 @@ use tokio::net::{UnixListener, UnixStream};
 use tokio::net::windows::named_pipe::{NamedPipeClient, NamedPipeServer};
 
 use super::ipc_framing::{
-    read_message, read_message_with_timeout, write_message, DEFAULT_BUFFER_SIZE,
-    endpoint_to_socket_path,
+    endpoint_to_socket_path, read_message, read_message_with_timeout, write_message,
+    DEFAULT_BUFFER_SIZE,
 };
 use super::ipc_signed::IpcSigner;
 
@@ -134,15 +134,17 @@ impl IpcListener {
 
     #[cfg(windows)]
     pub async fn accept(&self) -> io::Result<IpcStream> {
-        let server = self.server.as_ref().ok_or_else(|| {
-            io::Error::new(io::ErrorKind::InvalidInput, "server not initialized")
-        })?;
+        let server = self
+            .server
+            .as_ref()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "server not initialized"))?;
 
         server.connect().await?;
 
-        let connected_server = self.server.take().ok_or_else(|| {
-            io::Error::new(io::ErrorKind::Other, "failed to take server")
-        })?;
+        let connected_server = self
+            .server
+            .take()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "failed to take server"))?;
 
         let new_server = create_named_pipe_server(&self.pipe_name)?;
         self.server.replace(new_server);
@@ -186,7 +188,11 @@ impl IpcStream {
     }
 
     #[cfg(unix)]
-    pub fn from_unix_stream_with_signer_optional(stream: UnixStream, signer: Option<Arc<IpcSigner>>, enforce_signing: bool) -> Self {
+    pub fn from_unix_stream_with_signer_optional(
+        stream: UnixStream,
+        signer: Option<Arc<IpcSigner>>,
+        enforce_signing: bool,
+    ) -> Self {
         if enforce_signing && signer.is_none() {
             tracing::warn!("IPC signing enforced but no signer provided - connection may fail");
         }
@@ -219,7 +225,11 @@ impl IpcStream {
     }
 
     #[cfg(windows)]
-    pub fn from_named_pipe_with_signer_optional(pipe: NamedPipeServer, signer: Option<Arc<IpcSigner>>, enforce_signing: bool) -> Self {
+    pub fn from_named_pipe_with_signer_optional(
+        pipe: NamedPipeServer,
+        signer: Option<Arc<IpcSigner>>,
+        enforce_signing: bool,
+    ) -> Self {
         if enforce_signing && signer.is_none() {
             tracing::warn!("IPC signing enforced but no signer provided - connection may fail");
         }
@@ -238,7 +248,10 @@ impl IpcStream {
     }
 
     #[cfg(unix)]
-    pub async fn connect_with_signer(endpoint: &IpcEndpoint, signer: Arc<IpcSigner>) -> io::Result<Self> {
+    pub async fn connect_with_signer(
+        endpoint: &IpcEndpoint,
+        signer: Arc<IpcSigner>,
+    ) -> io::Result<Self> {
         let stream = UnixStream::connect(endpoint.socket_path()).await?;
         Ok(Self::from_unix_stream_with_signer(stream, signer))
     }
@@ -271,7 +284,10 @@ impl IpcStream {
     }
 
     #[cfg(windows)]
-    pub async fn connect_with_signer(endpoint: &IpcEndpoint, signer: Arc<IpcSigner>) -> io::Result<Self> {
+    pub async fn connect_with_signer(
+        endpoint: &IpcEndpoint,
+        signer: Arc<IpcSigner>,
+    ) -> io::Result<Self> {
         use std::time::Duration;
 
         let pipe_name = endpoint.pipe_name();
@@ -306,7 +322,9 @@ impl IpcStream {
             Ok(())
         } else {
             if self.enforce_signing {
-                tracing::error!("IPC signing is enforced but no signer available - rejecting message");
+                tracing::error!(
+                    "IPC signing is enforced but no signer available - rejecting message"
+                );
                 return Err(io::Error::other(
                     "IPC signing enforced but no signer configured",
                 ));
@@ -322,30 +340,37 @@ impl IpcStream {
     pub async fn recv<T: DeserializeOwned>(&mut self) -> io::Result<Option<T>> {
         if let Some(ref signer) = self.signer {
             use super::ipc_signed::SignedIpcMessage;
-            
+
             let mut len_buf = [0u8; 4];
             match self.inner.read_exact(&mut len_buf).await {
                 Ok(_) => {}
                 Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
                 Err(e) => return Err(e),
             }
-            
+
             let len = u32::from_be_bytes(len_buf) as usize;
             if len > super::ipc_framing::MAX_MESSAGE_SIZE {
-                return Err(io::Error::new(io::ErrorKind::InvalidData, "message too large"));
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "message too large",
+                ));
             }
-            
+
             let mut data = vec![0u8; len];
-            self.inner.read_exact(&mut data).await
+            self.inner
+                .read_exact(&mut data)
+                .await
                 .map_err(io::Error::other)?;
-            
+
             match SignedIpcMessage::deserialize_signed(&data, signer) {
                 Ok(msg) => Ok(Some(msg)),
                 Err(e) => Err(e),
             }
         } else {
             if self.enforce_signing {
-                tracing::error!("IPC signing is enforced but no signer available - rejecting connection");
+                tracing::error!(
+                    "IPC signing is enforced but no signer available - rejecting connection"
+                );
                 return Err(io::Error::other(
                     "IPC signing enforced but no signer configured",
                 ));
@@ -364,19 +389,18 @@ impl IpcStream {
     ) -> io::Result<Option<T>> {
         if let Some(ref _signer) = self.signer {
             use tokio::time::{timeout, Duration};
-            
-            let result = timeout(
-                Duration::from_millis(timeout_ms),
-                self.recv::<T>()
-            ).await;
-            
+
+            let result = timeout(Duration::from_millis(timeout_ms), self.recv::<T>()).await;
+
             match result {
                 Ok(r) => r,
                 Err(_) => Ok(None),
             }
         } else {
             if self.enforce_signing {
-                tracing::error!("IPC signing is enforced but no signer available - rejecting connection");
+                tracing::error!(
+                    "IPC signing is enforced but no signer available - rejecting connection"
+                );
                 return Err(io::Error::other(
                     "IPC signing enforced but no signer configured",
                 ));
@@ -461,7 +485,10 @@ pub async fn connect_to_endpoint(name: &str) -> io::Result<IpcStream> {
     endpoint.connect().await
 }
 
-pub async fn connect_to_endpoint_signed(name: &str, signer: Arc<IpcSigner>) -> io::Result<IpcStream> {
+pub async fn connect_to_endpoint_signed(
+    name: &str,
+    signer: Arc<IpcSigner>,
+) -> io::Result<IpcStream> {
     let endpoint = IpcEndpoint::new(name);
     endpoint.connect_with_signer(signer).await
 }
@@ -479,7 +506,9 @@ pub async fn connect_to_static_worker_async() -> io::Result<IpcStream> {
 }
 
 pub async fn connect_to_static_worker_signed(signer: Arc<IpcSigner>) -> io::Result<IpcStream> {
-    IpcEndpoint::static_worker().connect_with_signer(signer).await
+    IpcEndpoint::static_worker()
+        .connect_with_signer(signer)
+        .await
 }
 
 pub async fn connect_to_commands_async() -> io::Result<IpcStream> {

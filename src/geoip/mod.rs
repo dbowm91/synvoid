@@ -141,7 +141,12 @@ impl GeoIpManager {
         let stale_threshold_days = self.config.stale_threshold_days;
         let interval_secs = self.config.update_interval_hours as u64 * 3600;
         let alert_manager = self.alert_manager.clone();
-        let editions: Vec<String> = self.updater.editions().iter().map(|e| e.edition_id.clone()).collect();
+        let editions: Vec<String> = self
+            .updater
+            .editions()
+            .iter()
+            .map(|e| e.edition_id.clone())
+            .collect();
 
         tokio::spawn(async move {
             let mut interval = interval(Duration::from_secs(interval_secs));
@@ -192,7 +197,8 @@ impl GeoIpManager {
                         if days_since_update >= stale_threshold_days as u64 {
                             tracing::warn!(
                                 "GeoIP database is {} days old (threshold: {} days)",
-                                days_since_update, stale_threshold_days
+                                days_since_update,
+                                stale_threshold_days
                             );
 
                             if let Some(ref am) = alert_manager {
@@ -205,7 +211,10 @@ impl GeoIpManager {
                                             .send_geoip_stale_notification(&edition_clone, days)
                                             .await
                                         {
-                                            tracing::debug!("Failed to send GeoIP stale notification: {}", e);
+                                            tracing::debug!(
+                                                "Failed to send GeoIP stale notification: {}",
+                                                e
+                                            );
                                         }
                                     });
                                 }
@@ -256,12 +265,13 @@ impl GeoIpManager {
         let reader = lookup.reader.as_ref()?;
         let result = reader.lookup(ip).ok()?;
 
-        let code: Option<String> = result.decode_path(&[
-            maxminddb::PathElement::Key("continent"),
-            maxminddb::PathElement::Key("code"),
-        ])
-        .ok()
-        .flatten();
+        let code: Option<String> = result
+            .decode_path(&[
+                maxminddb::PathElement::Key("continent"),
+                maxminddb::PathElement::Key("code"),
+            ])
+            .ok()
+            .flatten();
 
         code
     }

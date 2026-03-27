@@ -3,35 +3,45 @@
 //! Manages upgrade coordination, health monitoring, rollback,
 //! socket handoff, and drain lifecycle for worker processes.
 
-pub mod mode;
-pub mod state;
-pub mod health;
-pub mod upgrade;
-pub mod rollback;
-pub mod cli;
 pub mod checksum;
-pub mod process;
-pub mod spawn;
-pub mod ipc_client;
+pub mod cli;
 pub mod connection_tracker;
-pub mod drain_manager;
-pub mod socket_handoff;
-pub mod preflight;
 pub mod constants;
+pub mod drain_manager;
+pub mod health;
+pub mod ipc_client;
+pub mod mode;
+pub mod preflight;
+pub mod process;
+pub mod rollback;
+pub mod socket_handoff;
+pub mod spawn;
+pub mod state;
+pub mod upgrade;
 
-pub use mode::{UpgradeMode, detect_upgrade_mode, probe_reuseport_support};
-pub use state::{UpgradeState, OverseerState, Persistence};
-pub use health::{HealthChecker, HealthStatus, EnhancedHealthConfig, EnhancedHealthResult, BaselineComparison, ShadowTrafficResult, retry_with_timeout, wait_for_condition};
-pub use upgrade::{Orchestrator, AutoRollbackConfig};
-pub use rollback::RollbackManager;
-pub use cli::{OverseerArgs, run_overseer_command, UpgradeCommand};
-pub use process::{OverseerProcess, run_overseer_process};
 pub use crate::config::OverseerConfig;
-pub use spawn::{SpawnConfig, ProcessMode, build_spawn_command, spawn_process, spawn_and_log, cleanup_failed_spawns};
-pub use ipc_client::{IpcClient, connect_and_expect, send_and_receive, send_message, map_ipc_error};
-pub use connection_tracker::{ConnectionTracker, WorkerConnections};
-pub use drain_manager::{DrainManager, DrainProtocol};
-pub use socket_handoff::{SocketHandoffServer, SocketHandoffClient, DualMasterHandoff, SocketHandoffError};
-pub use preflight::{PreflightValidator, PreflightConfig, PreflightResult, PreflightError};
-pub use constants::{timeouts, restart, upgrade as upgrade_config, drain};
 pub use crate::drain::{DrainStatus, WorkerConnectionInfo, WorkerDrainState};
+pub use cli::{run_overseer_command, OverseerArgs, UpgradeCommand};
+pub use connection_tracker::{ConnectionTracker, WorkerConnections};
+pub use constants::{drain, restart, timeouts, upgrade as upgrade_config};
+pub use drain_manager::{DrainManager, DrainProtocol};
+pub use health::{
+    retry_with_timeout, wait_for_condition, BaselineComparison, EnhancedHealthConfig,
+    EnhancedHealthResult, HealthChecker, HealthStatus, ShadowTrafficResult,
+};
+pub use ipc_client::{
+    connect_and_expect, map_ipc_error, send_and_receive, send_message, IpcClient,
+};
+pub use mode::{detect_upgrade_mode, probe_reuseport_support, UpgradeMode};
+pub use preflight::{PreflightConfig, PreflightError, PreflightResult, PreflightValidator};
+pub use process::{run_overseer_process, OverseerProcess};
+pub use rollback::RollbackManager;
+pub use socket_handoff::{
+    DualMasterHandoff, SocketHandoffClient, SocketHandoffError, SocketHandoffServer,
+};
+pub use spawn::{
+    build_spawn_command, cleanup_failed_spawns, spawn_and_log, spawn_process, ProcessMode,
+    SpawnConfig,
+};
+pub use state::{OverseerState, Persistence, UpgradeState};
+pub use upgrade::{AutoRollbackConfig, Orchestrator};

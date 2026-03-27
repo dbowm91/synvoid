@@ -164,7 +164,10 @@ impl RecordStoreManager {
 
     pub fn enable_rate_limiting(&self, max_requests: u32, window_secs: u64) {
         let mut limiter = self.rate_limiter.write();
-        *limiter = Some(crate::mesh::dht::DhtRateLimiter::new(max_requests, window_secs));
+        *limiter = Some(crate::mesh::dht::DhtRateLimiter::new(
+            max_requests,
+            window_secs,
+        ));
     }
 
     pub fn is_rate_limited(&self, peer_id: &str) -> bool {
@@ -304,9 +307,9 @@ impl RecordStoreManager {
 
 #[path = "record_store_crud.rs"]
 mod record_store_crud;
-#[path = "record_store_sync.rs"]
-mod record_store_sync;
-#[path = "record_store_message.rs"]
-mod record_store_message;
 #[path = "record_store_dns.rs"]
 mod record_store_dns;
+#[path = "record_store_message.rs"]
+mod record_store_message;
+#[path = "record_store_sync.rs"]
+mod record_store_sync;

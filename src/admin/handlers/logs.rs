@@ -1,3 +1,4 @@
+use super::super::state::AdminState;
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
@@ -5,7 +6,6 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use super::super::state::AdminState;
 
 use super::common::{ErrorPage, OptionalAuth};
 
@@ -61,7 +61,6 @@ pub async fn get_logs(
     _auth: OptionalAuth,
     Query(_query): Query<LogsQuery>,
 ) -> Result<Json<LogsResponse>, StatusCode> {
-
     Ok(Json(LogsResponse {
         entries: vec![],
         total: 0,
@@ -93,7 +92,6 @@ pub async fn list_error_pages(
     State(_state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<Vec<ErrorPageResponse>>, StatusCode> {
-
     let error_pages: Vec<ErrorPageResponse> = ErrorPage::list()
         .into_iter()
         .map(|ep| ErrorPageResponse {
@@ -128,7 +126,6 @@ pub async fn get_error_page(
     _auth: OptionalAuth,
     Path(code): Path<u16>,
 ) -> Result<Json<ErrorPageResponse>, StatusCode> {
-
     let error_page = ErrorPage::from_code(code).ok_or(StatusCode::NOT_FOUND)?;
 
     Ok(Json(ErrorPageResponse {
@@ -171,13 +168,13 @@ pub async fn update_error_page(
     Path(code): Path<u16>,
     Json(payload): Json<UpdateErrorPageRequest>,
 ) -> Result<Json<ErrorPageResponse>, StatusCode> {
-
     let _error_page = ErrorPage::from_code(code).ok_or(StatusCode::NOT_FOUND)?;
 
     tracing::warn!(
         "update_error_page called for {} but is not yet implemented (title={:?})",
-        code, payload.title
+        code,
+        payload.title
     );
-    
+
     Err(StatusCode::NOT_IMPLEMENTED)
 }

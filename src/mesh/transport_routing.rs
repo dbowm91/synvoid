@@ -1,13 +1,12 @@
-use crate::mesh::transport::*;
 use super::*;
+use crate::mesh::transport::*;
 use std::time::{Duration, Instant};
 
-use rand::Rng;
 use quinn::SendStream;
+use rand::Rng;
 
-use crate::mesh::protocol::{MeshMessage, RouteQueryResult, ProviderInfo};
+use crate::mesh::protocol::{MeshMessage, ProviderInfo, RouteQueryResult};
 use crate::mesh::topology::MeshTopology;
-
 
 impl MeshTransport {
     pub(crate) async fn send_route_query_datagram(
@@ -38,7 +37,9 @@ impl MeshTransport {
         query_id: &str,
         upstream_id: &str,
     ) -> Result<(), MeshTransportError> {
-        let peer = self.peer_connections.get(peer_id)
+        let peer = self
+            .peer_connections
+            .get(peer_id)
             .ok_or_else(|| MeshTransportError::PeerNotFound(peer_id.to_string()))?;
 
         let sequence = self.config.routing.query_sequence.next();
@@ -54,15 +55,23 @@ impl MeshTransport {
             nonce,
         };
 
-        let (mut send_stream, _) = peer.connection.open_bi().await
+        let (mut send_stream, _) = peer
+            .connection
+            .open_bi()
+            .await
             .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
 
-        let encoded = query.encode()
+        let encoded = query
+            .encode()
             .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
         let len = (encoded.len() as u32).to_be_bytes();
-        send_stream.write_all(&len).await
+        send_stream
+            .write_all(&len)
+            .await
             .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
-        send_stream.write_all(&encoded).await
+        send_stream
+            .write_all(&encoded)
+            .await
             .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
 
         tracing::debug!("Sent stream route query to peer {}: {}", peer_id, query_id);
@@ -79,20 +88,33 @@ impl MeshTransport {
     ) {
         const MAX_INITIAL_HOPS: u8 = 10;
 
-        tracing::debug!("Received route query datagram: {} -> {} from {}", query_id, upstream_id, from_peer);
+        tracing::debug!(
+            "Received route query datagram: {} -> {} from {}",
+            query_id,
+            upstream_id,
+            from_peer
+        );
 
         if max_hops > MAX_INITIAL_HOPS {
-            tracing::warn!("RouteQuery rejected: max_hops {} exceeds limit {} (possible attack from {})", 
-                max_hops, MAX_INITIAL_HOPS, from_peer);
+            tracing::warn!(
+                "RouteQuery rejected: max_hops {} exceeds limit {} (possible attack from {})",
+                max_hops,
+                MAX_INITIAL_HOPS,
+                from_peer
+            );
             return;
         }
 
         if initiator != from_peer {
             let initiator_exists = self.topology.get_peer(initiator).await.is_some();
             let initiator_in_connections = self.peer_connections.contains_key(initiator);
-            
+
             if !initiator_exists && !initiator_in_connections {
-                tracing::warn!("RouteQuery rejected: initiator {} not known (from {})", initiator, from_peer);
+                tracing::warn!(
+                    "RouteQuery rejected: initiator {} not known (from {})",
+                    initiator,
+                    from_peer
+                );
                 return;
             }
         }
@@ -174,8 +196,10 @@ impl MeshTransport {
 
         if max_hops > 0 {
             const ROUTE_QUERY_FANOUT: usize = 3;
-            
-            let peers_to_query: Vec<_> = self.peer_connections.iter()
+
+            let peers_to_query: Vec<_> = self
+                .peer_connections
+                .iter()
                 .filter(|e| e.key() != from_peer && e.key() != initiator)
                 .take(ROUTE_QUERY_FANOUT)
                 .map(|e| e.key().clone())
@@ -228,9 +252,21 @@ impl MeshTransport {
         org_id: Option<crate::mesh::protocol::ArcStr>,
         mesh_name: Option<crate::mesh::protocol::ArcStr>,
     ) {
-        tracing::debug!("Received route response: {} -> {} ({} hops)", upstream_id, provider_node_id, hops);
+        tracing::debug!(
+            "Received route response: {} -> {} ({} hops)",
+            upstream_id,
+            provider_node_id,
+            hops
+        );
 
-        self.topology.cache_route(upstream_id, provider_node_id.to_string(), hops as u8, Duration::from_secs(ttl_secs as u64)).await;
+        self.topology
+            .cache_route(
+                upstream_id,
+                provider_node_id.to_string(),
+                hops as u8,
+                Duration::from_secs(ttl_secs as u64),
+            )
+            .await;
 
         let provider_info = ProviderInfo {
             node_id: provider_node_id.to_string(),
@@ -252,7 +288,10 @@ impl MeshTransport {
     pub(crate) async fn complete_pending_query(&self, query_id: &str, upstream_id: &str) {
         let (providers, sender) = {
             let mut pending = self.pending_queries.lock().await;
-            let providers = pending.collected_providers.remove(query_id).unwrap_or_default();
+            let providers = pending
+                .collected_providers
+                .remove(query_id)
+                .unwrap_or_default();
             let sender = pending.pending.remove(query_id);
             (providers, sender)
         };
@@ -277,7 +316,11 @@ impl MeshTransport {
     }
 
     pub(crate) async fn handle_route_not_found(&self, query_id: &str, upstream_id: &str) {
-        tracing::debug!("Route not found for {} from query {}", upstream_id, query_id);
+        tracing::debug!(
+            "Route not found for {} from query {}",
+            upstream_id,
+            query_id
+        );
 
         if let Some(sender) = self.pending_queries.lock().await.take(query_id) {
             let _ = sender.send(RouteQueryResult {
@@ -322,17 +365,26 @@ impl MeshTransport {
                     org_id: None,
                     mesh_name: self.config.mesh_name().map(|s| s.into()),
                 };
-                
-                let encoded = response.encode()
+
+                let encoded = response
+                    .encode()
                     .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
                 let len = (encoded.len() as u32).to_be_bytes();
-                send_stream.write_all(&len).await
+                send_stream
+                    .write_all(&len)
+                    .await
                     .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
-                send_stream.write_all(&encoded).await
+                send_stream
+                    .write_all(&encoded)
+                    .await
                     .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
-                
-                tracing::debug!("Responded to route query for {}: {} (hops: {})", 
-                    upstream_id_for_log, topology.node_id(), if upstream_info.is_local { 0 } else { 1 });
+
+                tracing::debug!(
+                    "Responded to route query for {}: {} (hops: {})",
+                    upstream_id_for_log,
+                    topology.node_id(),
+                    if upstream_info.is_local { 0 } else { 1 }
+                );
                 return Ok(());
             }
         }
@@ -360,13 +412,18 @@ impl MeshTransport {
                     org_id: None,
                     mesh_name: self.config.mesh_name().map(|s| s.into()),
                 };
-                
-                let encoded = response.encode()
+
+                let encoded = response
+                    .encode()
                     .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
                 let len = (encoded.len() as u32).to_be_bytes();
-                send_stream.write_all(&len).await
+                send_stream
+                    .write_all(&len)
+                    .await
                     .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
-                send_stream.write_all(&encoded).await
+                send_stream
+                    .write_all(&encoded)
+                    .await
                     .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
                 return Ok(());
             }
@@ -376,13 +433,18 @@ impl MeshTransport {
             query_id: query_id.into(),
             upstream_id: upstream_id.into(),
         };
-        
-        let encoded = not_found.encode()
+
+        let encoded = not_found
+            .encode()
             .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
         let len = (encoded.len() as u32).to_be_bytes();
-        send_stream.write_all(&len).await
+        send_stream
+            .write_all(&len)
+            .await
             .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
-        send_stream.write_all(&encoded).await
+        send_stream
+            .write_all(&encoded)
+            .await
             .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
 
         Ok(())
@@ -413,39 +475,61 @@ impl MeshTransport {
                 discovered_at: Instant::now(),
             });
         }
-        
+
         None
     }
 
-    pub(crate) async fn preflight_peer_routes(&self, peer_id: &str) -> Result<(), MeshTransportError> {
+    pub(crate) async fn preflight_peer_routes(
+        &self,
+        peer_id: &str,
+    ) -> Result<(), MeshTransportError> {
         // Get frequently used upstreams from topology to request from new peer
         let upstreams_to_query = self.topology.get_frequently_used_upstreams(5).await;
-        
+
         if upstreams_to_query.is_empty() {
             return Ok(());
         }
 
-        tracing::debug!("Preflight querying {} routes from peer {}", upstreams_to_query.len(), peer_id);
+        tracing::debug!(
+            "Preflight querying {} routes from peer {}",
+            upstreams_to_query.len(),
+            peer_id
+        );
 
         for upstream_id in upstreams_to_query {
-            let query_id = format!("preflight-{}-{}", self.config.node_id(), uuid::Uuid::new_v4());
-            
+            let query_id = format!(
+                "preflight-{}-{}",
+                self.config.node_id(),
+                uuid::Uuid::new_v4()
+            );
+
             // Create a one-shot channel to receive the response
             let (tx, rx) = tokio::sync::oneshot::channel();
-            self.pending_queries.lock().await.register(query_id.clone(), tx);
-            
-            if self.send_route_query_datagram(peer_id, &query_id, &upstream_id).await.is_ok() {
+            self.pending_queries
+                .lock()
+                .await
+                .register(query_id.clone(), tx);
+
+            if self
+                .send_route_query_datagram(peer_id, &query_id, &upstream_id)
+                .await
+                .is_ok()
+            {
                 // Wait briefly for response (non-blocking)
                 if let Ok(result) = tokio::time::timeout(Duration::from_millis(100), rx).await {
                     if let Ok(route_result) = result {
                         // Cache the route (already cached by handle_route_response)
                         if let Some(best) = route_result.best_provider() {
-                            tracing::debug!("Preflight cached route for {} -> {}", upstream_id, best.node_id);
+                            tracing::debug!(
+                                "Preflight cached route for {} -> {}",
+                                upstream_id,
+                                best.node_id
+                            );
                         }
                     }
                 }
             }
-            
+
             self.pending_queries.lock().await.take(&query_id);
         }
 
@@ -458,7 +542,10 @@ impl MeshTransport {
         query_id: &str,
         upstream_id: &str,
     ) -> Result<(), MeshTransportError> {
-        let (mut send_stream, _) = peer.connection.open_bi().await
+        let (mut send_stream, _) = peer
+            .connection
+            .open_bi()
+            .await
             .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
 
         let sequence = self.config.routing.query_sequence.next();
@@ -474,12 +561,17 @@ impl MeshTransport {
             nonce,
         };
 
-        let encoded = query.encode()
+        let encoded = query
+            .encode()
             .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
         let len = (encoded.len() as u32).to_be_bytes();
-        send_stream.write_all(&len).await
+        send_stream
+            .write_all(&len)
+            .await
             .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
-        send_stream.write_all(&encoded).await
+        send_stream
+            .write_all(&encoded)
+            .await
             .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
 
         Ok(())
@@ -492,16 +584,18 @@ impl MeshTransport {
 
         // Get the top popular upstreams that aren't already cached
         let popular_upstreams = self.topology.get_frequently_used_upstreams(10).await;
-        
+
         if popular_upstreams.is_empty() {
             return;
         }
 
         // Get peers we can query
-        let peers: Vec<String> = self.peer_connections.iter()
+        let peers: Vec<String> = self
+            .peer_connections
+            .iter()
             .map(|e| e.key().clone())
             .collect();
-        
+
         if peers.is_empty() {
             return;
         }
@@ -524,15 +618,25 @@ impl MeshTransport {
 
             let query_id = format!("warm-{}-{}", self.config.node_id(), uuid::Uuid::new_v4());
             let (tx, _rx) = tokio::sync::oneshot::channel();
-            self.pending_queries.lock().await.register(query_id.clone(), tx);
+            self.pending_queries
+                .lock()
+                .await
+                .register(query_id.clone(), tx);
 
-            if self.send_route_query_stream(peer_id, &query_id, &upstream_id).await.is_ok() {
-                tracing::debug!("Proactive cache warming: queried {} from {}", upstream_id, peer_id);
+            if self
+                .send_route_query_stream(peer_id, &query_id, &upstream_id)
+                .await
+                .is_ok()
+            {
+                tracing::debug!(
+                    "Proactive cache warming: queried {} from {}",
+                    upstream_id,
+                    peer_id
+                );
             }
 
             // Don't wait for response - let it populate cache in background
             self.pending_queries.lock().await.take(&query_id);
         }
     }
-
 }

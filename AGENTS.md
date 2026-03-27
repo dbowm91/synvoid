@@ -22,6 +22,9 @@ cargo test
 
 # Run with specific feature
 cargo test --features dns
+
+# Verify tests compile WITHOUT running them (important: cargo check does NOT compile test code)
+cargo test --lib --no-run
 ```
 
 ### Test Categories
@@ -37,6 +40,8 @@ cargo test --features dns
 ### Common Issues
 
 **Test Timeouts**: Full test suite can take 3+ minutes. Use targeted tests during development.
+
+**`cargo check` vs test compilation**: `cargo check` does NOT compile `#[cfg(test)]` code. Always run `cargo test --lib --no-run` to verify test code compiles. Visibility errors in cross-module test access (e.g., sibling modules calling private methods) will only surface during test compilation.
 
 ## Codebase Structure
 
@@ -113,6 +118,8 @@ cargo clippy -- -D warnings
 cargo check
 ```
 
+**`cargo fmt` prerequisites**: `src/platform/windows.rs` must exist (even as a stub) or `cargo fmt` will fail with "failed to resolve mod `windows`". The file exists as a stub gated by `#[cfg(windows)]`.
+
 ## Feature Flags
 
 Key features that affect testing:
@@ -129,7 +136,7 @@ Key features that affect testing:
 use maluwaf::process::Message;
 
 // Serialize/deserialize
-let msg = Message::WorkerStarted { ... };
+let msg = Message::WorkerStarted { id: 1, pid: 12345, .. };
 let json = serde_json::to_string(&msg).unwrap();
 let decoded: Message = serde_json::from_str(&json).unwrap();
 ```
@@ -152,35 +159,6 @@ use maluwaf::overseer::process::OverseerConfig;
 let config = OverseerConfig::default();
 assert!(config.auto_restart);
 ```
-
-## File Naming Conventions
-
-- Source files: `snake_case.rs`
-- Test files: `snake_case_test.rs` or in `tests/` directory
-- Modules: `mod.rs` for module aggregation
-
-## DNSSEC and RFC 5011
-
-### Trust Anchor Configuration
-
-The `TrustAnchorConfig` struct now supports separate timeout configuration for RFC 5011 state transitions:
-
-| Field | Default | Purpose |
-|-------|---------|---------|
-| `pending_observation_days` | 30 | Time a new key spends in Pending state before becoming Valid (RFC 5011 Section 3.2) |
-| `revocation_grace_days` | 30 | Time a revoked key spends before being Removed (RFC 5011 Section 4) |
-| `extended_removal_days` | 60 | Time a removed key spends before being Purged from storage |
-| `trust_anchor_retention_days` | 7 | Time a Valid key can be absent before being marked Missing |
-
-### RFC 5011 State Machine
-
-Keys transition through these states:
-1. **Seen** - Key observed in DNSKEY RRset but not validated
-2. **Pending** - Key validated via CDS/CDNSKEY digest, awaiting observation period
-3. **Valid** - Key is trusted for DNSSEC validation
-4. **Revoked** - Key has REVOKE bit set
-5. **Removed** - Revoked key waiting for extended confirmation
-6. **Missing** - Valid key not seen for retention period
 
 ### Testing Trust Anchor State Transitions
 
@@ -209,12 +187,34 @@ assert!(matches!(event, Rfc5011Event::KeyPending { .. }));
 let events = manager.process_rfc5011_updates();
 ```
 
-## Remediation Plan Status
+## File Naming Conventions
 
-- **Phases 1-7:** Completed. See `plan.md` for details and completion notes.
-- **Waves 1-5:** Completed. See `deferred.md` completion notes.
-- **Deferred indefinitely:** ~7 items blocked on upstream changes or design decisions (see `deferred.md` Phase 17).
-- **Key insight:** All wave phases run in parallel on different subsystems. All 5 waves completed in ~22 days total.
+- Source files: `snake_case.rs`
+- Test files: `snake_case_test.rs` or in `tests/` directory
+- Modules: `mod.rs` for module aggregation
+
+## DNSSEC and RFC 5011
+
+### Trust Anchor Configuration
+
+The `TrustAnchorConfig` struct supports separate timeout configuration for RFC 5011 state transitions:
+
+| Field | Default | Purpose |
+|-------|---------|---------|
+| `pending_observation_days` | 30 | Time a new key spends in Pending state before becoming Valid (RFC 5011 Section 3.2) |
+| `revocation_grace_days` | 30 | Time a revoked key spends before being Removed (RFC 5011 Section 4) |
+| `extended_removal_days` | 60 | Time a removed key spends before being Purged from storage |
+| `trust_anchor_retention_days` | 7 | Time a Valid key can be absent before being marked Missing |
+
+### RFC 5011 State Machine
+
+Keys transition through these states:
+1. **Seen** - Key observed in DNSKEY RRset but not validated
+2. **Pending** - Key validated via CDS/CDNSKEY digest, awaiting observation period
+3. **Valid** - Key is trusted for DNSSEC validation
+4. **Revoked** - Key has REVOKE bit set
+5. **Removed** - Revoked key waiting for extended confirmation
+6. **Missing** - Valid key not seen for retention period
 
 ## Important Notes
 
@@ -222,39 +222,154 @@ let events = manager.process_rfc5011_updates();
 2. **Test isolation** - Use temp dirs for socket tests
 3. **Async tests** - Use `#[tokio::test]` for async code
 4. **Platform-specific tests** - Use `#[cfg(unix)]` or `#[cfg(windows)]`
-5. **Remediation plan** - See `plan.md` for the full list of known issues and fix priorities (7 phases, 108 items)
+5. **Key tag calculation** - Use `crate::dns::dnssec::calculate_key_tag` for RFC 4034 compliant key tags
 
-## Phase 1 Completion Notes (2026-03-25)
+## Known Code Quality Context
 
-Phase 1 fixed all 12 critical correctness bugs. Key learnings for future agents:
+### Clippy and Dead Code Suppressions
 
-### Body Forwarding Chain
+Crate-level suppressions in `src/lib.rs`:
+- `elided_lifetimes_in_paths` — compiler style preference
+- `mismatched_lifetime_syntaxes` — compiler style preference
 
-The request body forwarding (1.1) required changes across the full proxy chain:
+`#[allow(dead_code)]` annotations: **137 across 75 files** (verified via grep). Notable per-module breakdown:
+- `src/worker/mod.rs` — 4 items (MinifierCache, get_content_type, get_compressed_content, ListenerType)
+- `src/waf/ratelimit.rs` — 2 items
+- `src/dns/cache.rs` — 2 items (skip_name, detect_dnssec_signed)
+- `src/dns/dnssec.rs` — 3 items (extract_rsa_modulus, len_of_der_length, decode_der_length)
+- `src/mesh/` — ~29 items (90+ dead code warnings per clippy)
+- `src/dns/server/` — ~10 items
 
-```
-handle_request → forward_request → forward_with_pool → send_single_request
-                                                        ↓
-                                              send_request_with_body_and_timeout (http_client)
-```
+`cargo clippy` produces ~93 warnings (pre-existing categories, incremental quality issues).
 
-Callers of `handle_request_with_cache` (in `src/tls/server.rs` and `src/http/handler.rs`) currently pass `None` for body. When the HTTP request handling layer is updated to extract and pass the request body, these callers should be updated. The `_body` from `req.into_parts()` at `src/http/server.rs:416` is where the body is available.
+### Build Configuration
 
-### Pre-existing Test Failures
+`Cargo.toml` uses relaxed version pins (e.g., `"0.11"`).
 
-`test_ssrf_no_block` (`src/waf/attack_detection/ssrf.rs:301`) was already failing on master before Phase 1. The Aho-Corasick pattern `"192.168."` matches even when `block_private_ips=false`. This is tracked as Phase 1 Follow-up item 1.F4.
+### Dependency Cleanup (Phase 1 Complete)
 
-### CSS Challenge Behavior Change
+The following dead dependencies were removed in Phase 1:
+- `bincode` — never imported; `serialize_bincode`/`deserialize_bincode` shims use `postcard` internally
+- `wasmtime-wasi` — unused (only `wasmtime` core needed)
+- `ab_glyph`, `flare`, `memmap2` — zero imports anywhere
+- `url` — transitive via axum; no direct imports
+- `futures-util` — re-exported by `futures` crate
+- `once_cell` — replaced with `std::sync::LazyLock` across 13 files
+- `rustls-pemfile` — replaced with `rustls_pki_types::pem::PemObject`
 
-Phase 1.2 removed the `path == "/"` guard from CSS challenges. Previously only root path got challenged; now ALL paths (except `/_waf_css_challenge` and `/_waf_assets`) are challenged. This may break API consumers that don't handle cookies. See Phase 1 Follow-up item 1.F3.
+Feature flags trimmed: `tower` removed `"timeout"`, `tower-http` removed `"trace"`.
 
-### Key Tag RFC Compliance
+**DNS dependencies are now optional** behind the `dns` feature: `hickory-proto`, `hickory-resolver`, `hickory-recursor`, `dns-parser`, `tokio-dstip`, `cryptoki`, `getrandom`.
 
-Both `dnssec.rs:calculate_key_tag` and `trust_anchor.rs:calculate_dnskey_key_tag` now use the RFC 4034 Appendix B algorithm on full DNSKEY RDATA (flags + protocol + algorithm + public_key). The old `dnssec.rs` version computed the tag on raw public_key only, which is incorrect per RFC. These should be consolidated into a shared utility (Phase 1 Follow-up item 1.F5).
+**Note**: `nix` features `"net"` and `"uio"` are REQUIRED despite initial assessment they were unused. `platform/unix.rs` needs `"net"` for `SockaddrIn`/`SockaddrIn6` and `"uio"` for `ControlMessage`/`sendmsg`/`recvmsg`.
 
-### `fetch_update` for Atomic Checked Operations
+**Note**: `once_cell` and `bincode` still appear in `Cargo.lock` as transitive dependencies (via tracing-core, gloo-worker, etc.). This is expected.
 
-When preventing integer underflow on atomic counters, use `fetch_update` with `checked_sub` instead of `fetch_sub`:
+### Error Handling Status
+
+`src/error.rs` defines `WafError`, `WafResult`, and `WafErrorExt` — **all are completely dead code**. Zero production usage outside `error.rs` itself. Every other module uses `anyhow`, `Box<dyn Error>` (16 call sites), or custom error types.
+
+### Duplicate Timestamp Utility
+
+7 duplicate `current_timestamp()` definitions exist:
+- `src/waf/probe_tracker.rs:446`
+- `src/process/ipc.rs:1311`
+- `src/mesh/dht/stake.rs:533`
+- `src/overseer/state.rs:148`
+- `src/mesh/transports/manager.rs:32`
+- `src/captcha/mod.rs:185`
+- `src/utils.rs:414` (canonical)
+
+Use the `utils.rs` version and remove the rest.
+
+### 7 Duplicate `default_true()` Functions
+
+Consolidate into 1 canonical version in `src/config/defaults.rs`. Found in site.rs, security.rs, proxy.rs, logging.rs, and others.
+
+## Known Bugs (Quick Reference)
+
+### Critical Correctness
+
+| Bug | Location | Impact |
+|-----|----------|--------|
+| BCRYPT_COST = 4 | `src/admin/auth.rs:9` | Trivially brute-forceable auth tokens |
+| Auth timing attack | `src/auth/mod.rs:370-432` | Username enumeration: wrong-password for existing user returns ~200ms faster than non-existent user |
+| IPC lock contention | `src/worker/mod.rs` (3 competing tasks) | Deadlock risk under load |
+| PluginManager discards router | `src/plugin/mod.rs:110` | Loaded Axum plugin router thrown away |
+
+### Security
+
+| Bug | Location | Impact |
+|-----|----------|--------|
+| TLS skip_verify | `src/http_client/mod.rs:201-211` | No verification of upstream certificates |
+| Plaintext bcrypt fallback | `src/admin/auth.rs:15-36` | If bcrypt fails, token stored as plaintext |
+| IPC key fallback to env var | `src/process/manager.rs:446-458` | Key visible in /proc if temp file creation fails |
+| CORS wildcard not enforced at site level | `src/http/headers.rs` | Only admin API rejects `allow_origin: "*"` |
+| Token in validation error | `src/config/admin.rs:105-109` | Generated token appears in error messages |
+
+### DNS / RFC Compliance
+
+| Bug | Location | Impact |
+|-----|----------|--------|
+| NSEC3 salt application | `dnssec.rs:1324` | Salt applied incorrectly per RFC 5155 §5 |
+| NSEC3 base32 padding | `dnssec.rs:1432` | Includes padding chars that should be stripped |
+| NSEC3 owner name missing hash-length byte | `dnssec.rs:1404` | Violates RFC 5155 §3.2 |
+| DNSKEY publishes KSK only | `dnssec_impl.rs:35` | Missing ZSK in DNSKEY RRset |
+| CDS uses wrong type | `dnssec_impl.rs:74` | Type 43 (DS) instead of 59 (CDS) |
+| SRV canonical_rdata incomplete | `dnssec.rs:1520` | Missing weight/port/target fields |
+| ARCOUNT off by one | `response.rs:30` | OPT record appends incorrectly |
+| MX record trailing null | `response.rs:135` | Missing null byte after exchange name |
+| Forwarder no DNSSEC validation | `HickoryResolver` | Forwarder mode doesn't validate; AD bit not propagated |
+
+### DHT
+
+| Bug | Location | Impact |
+|-----|----------|--------|
+| Unbounded PoW nonce loop | `node_id.rs:138` | Can hang on startup if no valid nonce found |
+| Duplicate peers in lookup | `query.rs:50` | Same peer queried multiple times |
+| PoW not persisted | `table.rs:539` | Contact restored without verifying PoW |
+| XOR distance uses first byte only | `geo_distance.rs:117` | Poor ranking granularity for IPv6 |
+
+### Dead Code (Removed)
+
+`src/http/handler.rs` (1,661 lines) and `src/http/range.rs` (194 lines) were deleted in Phase 1 — they were never in the module tree and had compile errors.
+
+### Plugin ABI Mismatch
+
+`examples/dynamic-plugin-example/src/lib.rs:23` exports `rustwaf_abi_version` but `src/plugin/axum_loader.rs:110` looks for `maluwaf_abi_version`. Loading the example plugin will fail with `SymbolNotFound`.
+
+## Performance Hot Paths
+
+Agents modifying these areas should be aware of performance characteristics:
+
+| Area | Concern | Location |
+|------|---------|----------|
+| WAF detection | Runs ~20+ checks per request, lock acquisition per request | `src/waf/mod.rs:660-700` |
+| Cache lookups | O(n) `VecDeque::position/remove` per operation; write lock on LRU update | `src/proxy_cache/store.rs:241` |
+| Input normalization | Allocates `String` per request via various transformations | `src/waf/attack_detection/normalizer.rs:20` |
+| Rate limiting | `retain` is O(n) per call, 6 sequential calls | `src/waf/ratelimit.rs:122-142` |
+| HTTP path sanitization | Allocates `Vec` on every request | `src/proxy.rs:101` |
+| Response header filtering | Allocates `Vec` on every proxied response | `src/proxy.rs:147-159` |
+| SSRF detection | Calls `.to_lowercase()` 4+ times on same input | `src/waf/attack_detection/ssrf.rs` |
+
+## Module Size Guide
+
+| Module | Lines | Status |
+|--------|-------|--------|
+| `src/mesh/protocol_proto_encode.rs` | ~1,989 | Proto conversion (generated pattern, acceptable) |
+| `src/dns/dnssec.rs` | ~2,152 | Above 1,500 but below threshold |
+| `src/mesh/transport.rs` | ~1,897 | Split into submodules |
+| `src/mesh/config.rs` | ~1,450 | Split into submodules |
+| `src/mesh/protocol.rs` | ~1,196 | Split into submodules |
+| `src/dns/server/mod.rs` | ~763 | Split into submodules |
+| `src/worker/mod.rs` | ~786 | Split into submodules |
+| `src/admin/state.rs` | ~561 | Split into submodules |
+
+## Key Implementation Details
+
+### Atomic Counter Safety
+
+When decrementing atomic counters, use `fetch_update` with `checked_sub` to prevent underflow:
 
 ```rust
 // BEFORE (wraps on underflow)
@@ -265,9 +380,35 @@ let _ = self.current_connections
     .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_sub(1));
 ```
 
+### TLS Client Architecture
+
+Three-tier HTTP client hierarchy:
+
+| Function | TLS | Use Case |
+|----------|-----|----------|
+| `create_http_client()` | `https_or_http()`, native roots + webpki fallback | Internal: honeypot, alerting |
+| `create_http_client_with_config()` | `https_only()`, native roots + webpki fallback | Default: proxy, TLS server |
+| `create_upstream_client()` | Configurable via `UpstreamTlsConfig` | Per-site upstream with `skip_verify`/`allow_plaintext` |
+
+### ACME Stub
+
+`src/tls/acme.rs` is a stub returning `AcmeError::UseExternalClient`. Config fields exist but no actual ACME protocol implementation. See Phase 7 in `plans/fullplan.md`.
+
+### TLS Passthrough
+
+The `tls_passthrough` field in `src/tunnel/quic/messages.rs` and `src/config/tunnel.rs` is dead code — logged and ignored. See Phase 7.3 in `plans/fullplan.md`.
+
+### Cert Distribution (Planned)
+
+The mesh layer will support origin→edge TLS certificate distribution via 3 new messages (`SiteTlsCertSync`, `SiteTlsCertRequest`, `SiteTlsCertResponse`) in `src/mesh/protocol.rs`. Private keys are encrypted with AES-256-GCM using a per-site key derived via HKDF from the mesh session key. See Phase 7.2 in `plans/fullplan.md`.
+
+### IPC Session Key
+
+The IPC session key is passed via a temp file (`MALUWAF_IPC_KEY_FILE`) instead of an env var. The temp file uses `0600` permissions (Unix only) and is deleted by the worker after reading. Falls back to `MALUWAF_IPC_KEY` env var if file write fails.
+
 ### Auth Store Merge Pattern
 
-When multiple pending stores need persisting, merge them rather than saving only the last one. The pattern used in `src/auth/mod.rs:168-179`:
+When multiple pending stores need persisting, merge them rather than saving only the last one:
 
 ```rust
 fn merge_stores(stores: &[AuthStore]) -> AuthStore {
@@ -279,550 +420,26 @@ fn merge_stores(stores: &[AuthStore]) -> AuthStore {
 }
 ```
 
-Note: this may produce duplicate login_log entries. See Phase 1 Follow-up item 1.F1.
+### Global Nodes as Trust Anchors
 
-## Phase 2 Completion Notes (2026-03-25)
+Global nodes are the single source of truth and Certificate Authority (CA) for the entire network. This is a fundamental security design decision:
 
-Phase 2 addressed all 14 security and TLS hardening items. Key learnings for future agents:
+- **Global nodes are NOT elected** — they are explicitly configured and bootstrapped
+- Global nodes function analogously to Tor's directory authorities (but with opposite purpose: exposing services rather than providing anonymity)
+- All node certificates are signed by global nodes — they serve as the root CA
+- Global nodes maintain complete network topology and act as directory servers
 
-### TLS Client Architecture
+Any system that claims to "elect" or "vote" for global nodes violates this security model.
 
-The HTTP client was refactored from a single `create_http_client_with_config()` to three tiers:
+### Module Split Pattern
 
-| Function | TLS | Use Case |
-|----------|-----|----------|
-| `create_http_client()` | `https_or_http()`, native roots + webpki fallback | Internal: honeypot, alerting, worker pool |
-| `create_http_client_with_config()` | `https_only()`, native roots + webpki fallback | Default: proxy, TLS server |
-| `create_upstream_client()` | Configurable via `UpstreamTlsConfig` | Per-site upstream with `skip_verify`/`allow_plaintext` |
-
-The `build_tls_config()` function centralizes TLS configuration. It loads native root certs via `rustls_native_certs`, falls back to webpki roots if none found, and supports `skip_verify` via a `NoVerifier` struct implementing `rustls::client::danger::ServerCertVerifier`.
-
-**Deferred (2.F1):** `create_upstream_client()` is not yet wired into callers. The proxy, health check, and TLS server should migrate to use it with per-site `UpstreamTlsConfig`.
-
-### Clippy Auto-Fix Side Effects
-
-`cargo clippy --fix --allow-dirty --allow-staged` auto-fixed 544 warnings. Some changes were structural (e.g., collapsing nested `if` statements). Always review auto-fix diffs carefully — one change in `src/waf/rule_feed.rs:336-340` re-indented code in a semantically-correct but confusing way (manually cleaned up).
-
-### IPC Key File-Based Transfer
-
-The IPC session key is now passed via a temp file (`MALUWAF_IPC_KEY_FILE`) instead of an env var. The temp file uses `0600` permissions (Unix only) and is deleted by the worker after reading. Falls back to `MALUWAF_IPC_KEY` env var if file write fails.
-
-The hex-parsing code for reading the key from the file is duplicated from the env var path. Consider extracting a `parse_hex_key(key_hex: &str) -> Option<[u8; 32]>` helper (Phase 3 follow-up).
-
-### IPC Message Validation
-
-The `Message::validate()` function was expanded from 7 validated variants to 30+. Helper functions `check_str`, `check_opt_str`, `check_str_vec` reduce boilerplate. A catch-all `_ => Ok(())` still exists for future variants — new variants with string fields should add explicit validation arms.
-
-### 501 for Stub Endpoints
-
-Six admin endpoints that returned success without doing anything now return `501 NOT_IMPLEMENTED` with `tracing::warn!` logs. This is a breaking API change — clients calling these endpoints will receive HTTP 501 instead of 200.
-
-## Phase 3 Completion Notes (2026-03-25)
-
-> **Completed.** See section above for details.
-
-## Phase 4 Completion Notes (2026-03-25)
-
-Phase 4 addressed performance and reliability items. Key changes and learnings:
-
-### Cache Store Refactoring (`src/proxy_cache/store.rs`)
-
-**`VecDeque::retain` replaced with `position/remove`:** All 7 `retain` calls were replaced with `VecDeque::position()` + `remove()`. While both are O(n), `position/remove` avoids allocating a closure on every call and short-circuits on the first match. A helper function `move_to_back()` was added for the common pattern of "remove from current position + push to back".
-
-**`get_hit_status` already used read lock:** The plan suggested switching from write lock to read lock, but `get_hit_status` was already using `self.state.read()`. The `get` method still requires a write lock because it updates access order.
-
-**`get_or_fetch` made async and functional:** The method was changed from sync (returning `Option<ProxyCacheEntry>` and never calling `_fetch`) to `async` (calling `fetch().await` on cache miss, storing the result, then returning it). Has no callers currently but is now correct as a public API.
-
-**Cache-Control parsing enhanced (`src/proxy.rs`):** Both `get_cache_max_age` and `get_cache_max_age_static` now parse `s-maxage` (takes precedence for shared/proxy caches), `no-cache`, and quoted values. Previously only `max-age=` was parsed.
-
-**Binary corruption deferred (4.1.4):** `build_cached_response` uses `String::from_utf8_lossy` which corrupts binary content (images, compressed data). Fix requires changing `Response<String>` to `Response<Bytes>` throughout the proxy pipeline — deferred to Phase 6 refactoring.
-
-### Normalizer (`src/waf/attack_detection/normalizer.rs`)
-
-**Removed `original` field:** `NormalizedInput.original` was always a clone of the input but never read by any code. Removing it eliminates one `String` allocation per WAF-checked request. The `original` field was removed from the struct and the `normalize` method no longer clones.
-
-### Process Management (`src/process/manager.rs`)
-
-**Unified worker restart limit:** `handle_unified_worker_restart` now checks `restart_count < max_restart_attempts` before restarting, matching the behavior of regular workers. The `UnifiedServerWorkerProcess` struct already had `restart_count` and `last_restart_at` fields — they just weren't being checked.
-
-**Dummy IPC panic removed (`src/worker/mod.rs`):** The reload handler used `futures::executor::block_on` + `unwrap_or_else(|_| panic!(...))` to create a dummy IPC connection inside an async context. Replaced with a proper `await` and `continue` on failure, removing both the `block_on` (which can deadlock the Tokio runtime) and the unconditional panic.
-
-### Connection Tracker (`src/overseer/connection_tracker.rs`)
-
-**Switched to `parking_lot::Mutex`:** `std::sync::Mutex` was used for `drain_start_time`. Replaced with `parking_lot::Mutex` which doesn't return a `Result` from `lock()` (no poisoning), eliminating 4x `.unwrap()` calls. `parking_lot` was already a dependency.
-
-### Overseer Lock File (`src/process/pidfile.rs`)
-
-**`flock` as primary mechanism:** The `OverseerLockFile` previously used a check-then-write pattern (check if lock exists → check if process is alive → write lock file) which has a TOCTOU race. Now uses `flock(FlockArg::LockExclusiveNonblock)` on the lock file before writing the PID, making the acquire operation atomic. The `lock_file` field was changed from `Option<()>` to `Option<File>` to hold the file descriptor for the flock lifetime.
-
-### Socket Handoff (`src/overseer/socket_handoff.rs`)
-
-**FD count assertion:** Added an explicit check that `fds.len() == ports.len()` after receiving file descriptors. Previously, a mismatch would silently zip fewer FDs with ports, leading to port→FD mapping errors.
-
-### Drain IPC Retry (`src/overseer/drain_manager.rs`)
-
-**Retry with exponential backoff:** `drain_worker_with_confirmation` previously failed immediately if `poll_drain_status` returned an error. Now retries up to 3 times with exponential backoff (100ms, 200ms, 400ms) for transient IPC errors, only failing if all retries are exhausted.
-
-### DNS Cache (`src/dns/cache.rs`)
-
-**TTL-based fingerprint eviction:** Cache fingerprints (used for poisoning detection) were bounded only by count (`max_fingerprints_per_name`). Now also evict entries older than 1 hour via `Instant` timestamps stored alongside each fingerprint.
-
-### Items Deferred to Later Phases
-
-| Item | Reason | Target Phase |
-|------|--------|-------------|
-| Binary body in cache (4.1.4) | Needs `Response<String>` → `Response<Bytes>` refactor | 6 |
-| Async mutex standardization (4.5) | `_sync` variants are used from sync callers, `blocking_read` is correct for those contexts | 6 |
-| Arc\<Firewall\> shared queries (4.6.2) | DNS server is large; needs modular split first | 6 |
-| Batch zone index rebuild (4.6.3) | DNS server refactoring dependency | 6 |
-| WAF `to_uppercase` allocation (4.2.2) | Requires pre-lowercased constant comparison | 6 |
-| InputLocation::Header allocation (4.2.3) | Requires `Cow<str>` or lifetime refactoring | 6 |
-| stdout/stderr pipe blocking (4.3.3) | Platform-specific, needs careful testing | 5 |
-| Stale IPC drain filter (4.3.2) | Need to identify where stale messages are received | 5 |
-
-### Pre-existing Items Already Implemented
-
-Two items were already implemented before Phase 4:
-
-- **4.3.10 Zone history:** `increment_serial_with_limit(50)` already caps history to 50 entries
-- **4.6.1 Rate limiter cleanup:** `cleanup_if_needed` already throttles to every 60 seconds via `CLEANUP_INTERVAL_SECS`
-
-## Phase 5 Completion Notes (2026-03-25)
-
-Phase 5 addressed DNS RFC compliance and process management items. Key changes and learnings:
-
-### Key Tag RFC Compliance (5.2)
-
-Both `dnssec.rs::calculate_key_tag` and `trust_anchor.rs::calculate_dnskey_key_tag` were consolidated. The `trust_anchor.rs` version used `(sum & 0xFFFF)` which is incorrect per RFC 4034 Appendix B — the correct formula is `(sum + (sum >> 16)) & 0xFFFF`. The `dnssec.rs` version (now public) has the correct implementation. All callers in `trust_anchor.rs` (16 call sites) and `resolver.rs` now use `crate::dns::dnssec::calculate_key_tag`.
-
-**Key learning:** When unifying duplicate implementations, always verify which one is RFC-compliant. The two implementations looked identical but differed in the final masking step.
-
-### generate_key Unification (5.8)
-
-`generate_key` and `generate_standby_key` shared ~80% of their code. Extracted a private `generate_key_internal(algorithm, key_type, rsa_key_size, validity_days, is_standby)` method. The public methods are thin wrappers. The `key_id` match uses a tuple `(key_type, is_standby)` for clean dispatch.
-
-### QueryContext Struct (5.9)
-
-`handle_tcp_query` had 23 parameters. A `QueryContext<'a>` struct was introduced to bundle the Arc-wrapped DNS service references. The function signature changed from 23 params to 2 (`stream`, `ctx: QueryContext`).
-
-**Call sites:** Two call sites (anycast TCP listener at ~line 1838, regular TCP listener at ~line 2258) now construct a `QueryContext` before calling `handle_tcp_query`. The `_zone_index` parameter was dropped since it was already unused (prefixed with `_`).
-
-**Note:** `handle_query_with_cache` (16 params) and `handle_query` (10 params) were NOT refactored to use QueryContext since their parameter sets differ. This is deferred to Phase 6.
-
-### NXDOMAIN Question Section (5.3)
-
-The `build_simple_nxdomain_response` function already included the question section (QDCOUNT=1, copies QNAME + QTYPE + QCLASS from query). The test `test_nxdomain_response_basic` was asserting the OLD behavior (QDCOUNT=0, response length 12). Updated the test to assert QDCOUNT=1, verify QTYPE/QCLASS are present.
-
-### Stale IPC During Drain (4.3.2)
-
-Attempted to add `drain_id` filtering to `drain_worker_async`. The drain request already includes a unique `drain_id` (millisecond timestamp), but the response messages (`UnifiedServerWorkerDrained`, `StaticWorkerDrained`) don't include `drain_id`. Filtering requires adding `drain_id` to response message variants — deferred to Phase 6 as an IPC message format change.
-
-### stdout/stderr Pipe Blocking (4.3.3)
-
-Changed `Stdio::piped()` to `Stdio::inherit()` in `build_worker_command`. The piped stdout/stderr were never read by the parent, so if the child wrote enough output, it would block. `Stdio::inherit()` routes child output to the parent's stdout/stderr directly.
-
-### DNS Query Parsing (5.10)
-
-Replaced the inline `extract_query_name` method (manual wire format parsing with `String::from_utf8_lossy`) with a call to `wire::parse_query_name(query, 12)`. The `parse_query_name` function does stricter UTF-8 validation and handles edge cases better. Only one other inline parsing site exists (`tsig.rs:293`) which walks through multiple records and can't use `parse_query_name`.
-
-### Items Deferred to Phase 6
-
-| Item | Reason |
-|------|--------|
-| 5.11 mesh_sync.rs split | 1,975 lines; too complex and risky for Phase 5 |
-| ~~4.3.2 drain_id in response messages~~ | ✅ Fixed in Phase 6 — `drain_id` added to `UnifiedServerWorkerDrained` and `StaticWorkerDrained` |
-| handle_query_with_cache / handle_query QueryContext | 18 call sites across 4 files; too risky for Phase 6 |
-
-## Phase 6 Completion Notes (2026-03-25)
-
-Phase 6 addressed subsystem refactoring items. 12 of 40+ items completed; remaining deferred to Phase 7+. Verification: `cargo check` ✅ `cargo check --features dns` ✅ `cargo test --test integration_test` ✅ (99/99 passed). `cargo clippy` produces 154 warnings (up from 152; all are pre-existing categories).
-
-### WAF Code Duplication (6.3.3-6.3.6)
-
-**`reload_attack_detector` macro (6.3.3):** The 10x repeated `get_custom_patterns_for_category` + `extend` pattern was collapsed into a local `macro_rules! merge_patterns` macro. Each invocation is now 1 line instead of 3. The macro works because both `DetectorConfig` and `SsrfConfig` have a `custom_patterns: Vec<String>` field.
-
-**Rule feed match consolidation (6.3.4):** `update_patterns_for_category`, `get_custom_patterns_for_category`, and `has_custom_patterns` each had 12-variant match arms matching the same category strings. Each was refactored to use a local `macro_rules!` macro that reduces each arm to 1 line. Note: these could alternatively use a `HashMap<String, Option<Vec<String>>>` but the macro approach preserves the current `RwLock<GlobalRulePatterns>` structure.
-
-**`convert_rules_to_ipc_patterns` macro (6.3.5):** 100 lines of repeated `if let Some(ref x) = rules.x { if let Some(ref p) = x.patterns { ... } }` collapsed into a `push_if_present!` macro. Each invocation is 1 line instead of 7.
-
-**Status text extraction (6.3.6):** Three duplicated 15-variant `match status_code` blocks in `endpoints.rs` consolidated into a single `fn status_text(code: u16) -> &'static str` method. One inconsistency fixed: `minimal_page` used `"Error"` as default while others used `"An Error Occurred"` — now all use `"An Error Occurred"`.
-
-### Admin Subsystem (6.2.3, 6.2.6, 6.2.7, 6.2.8, 6.2.10)
-
-**XSS in legacy HTML (6.2.3):** Added `escape_html()` function to `src/admin/legacy.rs`. All user-controlled fields (`username`, `sites`, `ip_address`, `reason`, `session id`) are now HTML-escaped before interpolation into the admin dashboard HTML. This prevents stored XSS if a user registers with a username containing `<script>` tags.
-
-**CSRF token cleanup (6.2.6):** `cleanup_expired_csrf_tokens()` existed but was never called. Added a call in the 60-second `alert_ticker` in `src/admin/metrics.rs:44`. Expired tokens are now cleaned up every 60 seconds.
-
-**VecDeque for metrics/logs (6.2.7/6.2.8):** `metrics_history` and `request_logs` changed from `Vec` to `VecDeque`. `Vec::remove(0)` (O(n) shift) replaced with `VecDeque::pop_front()` (O(1)). The `get_metrics_history` method's `history[start..].to_vec()` was changed to `history.iter().skip(start).cloned().collect()` since `VecDeque` doesn't support `Index<RangeFrom<usize>>`.
-
-**get_client_ip consolidation (6.2.10):** `common.rs::get_client_ip` now checks for the `ClientIp` extension (set by middleware) first, falling back to header extraction. This avoids redundant header parsing when the middleware has already run.
-
-### Mesh Subsystem (6.1.12, 6.1.13)
-
-**PEM loading extraction (6.1.12):** `build_server_config` and `build_client_config` in `src/mesh/cert.rs` had identical 21-line blocks for loading cert chain and private key from PEM files. Extracted into `fn load_cert_chain_and_key(cert_path, key_path) -> Result<(Vec<CertificateDer>, PrivateKeyDer), MeshCertError>`.
-
-**Pre-compiled regex (6.1.13):** `MeshAttackDetector::detect_attack` compiled regex patterns on every call via `regex::Regex::new(&pattern.pattern)`. Added `compiled_regex: Option<Arc<regex::Regex>>` field to `SuspiciousPattern` and a `SuspiciousPattern::new()` constructor that pre-compiles regexes. `detect_attack` now uses the pre-compiled regex when available. Regex compilation is expensive (microseconds to milliseconds per pattern) so this is significant for hot paths.
-
-### IPC Drain ID (5.F2 / 4.3.2)
-
-**`drain_id` in response messages:** Added `drain_id: u64` field to `UnifiedServerWorkerDrained` and `StaticWorkerDrained` IPC message variants. The `drain_worker_async` function's `drain_response_fn` closure now takes `(msg, expected_drain_id)` and filters responses by matching drain_id. This prevents stale drain responses from a previous drain operation from being accepted. The worker captures `drain_id` before clearing it to 0.
-
-### Performance Fix (4.2.2)
-
-**`to_uppercase` allocation elimination:** `EndpointBlocker::check` allocated a `String` via `method.to_uppercase()` on every request. Replaced with `guard.block_methods.iter().any(|m| m.eq_ignore_ascii_case(method))` which avoids the allocation entirely. Since HTTP methods are a fixed small set, the linear scan is faster than allocation + hash lookup.
-
-### Items Deferred to Later Phases
-
-| Item | Phase | Reason |
-|------|-------|--------|
-| 6.1.1 transport.rs split (6,448 lines) | 7+ | God object; needs careful incremental extraction of handler modules |
-| 6.1.2 Duplicate MeshTransportError | 7+ | Requires transport.rs split first |
-| 6.1.3 blocking_read in async | N/A | `_sync` variants are correct for sync callers (see Phase 4.5 notes) |
-| 6.1.4 duration_since unwrap | 7+ | ~80+ occurrences across mesh; mechanical but widespread |
-| 6.1.5 expect in crypto paths | 7+ | Needs Result return type changes |
-| 6.1.6 mesh dead_code allows | 7+ | 27 suppressions; need per-item audit |
-| 6.1.7-6.1.14 mesh config/message/lock | 7+ | Large structural changes |
-| 6.2.1 block_on in admin | 7+ | Needs async refactor of router creation |
-| 6.2.2 theme/honeypot auth | 7+ | Needs auth middleware integration |
-| 6.2.4-6.2.5 rate limiter/auth consolidation | 7+ | Structural refactor |
-| 6.2.8-6.2.13 admin state/config | 7+ | AdminState god object split |
-| 6.3.2 check_request_full split | 7+ | ~400 lines; extract rate limit, bot, honeypot, challenge checks |
-| 6.4 IPC dedup | 7+ | Platform-specific IPC code |
-| 6.5 Large module splits | 7+ | All modules >1,000 lines |
-| 5.F3 handle_query_with_cache QueryContext | 7+ | 18 call sites across 4 files |
-| 4.1.4 Binary body in cache | 7+ | Needs Response<String> → Response<Bytes> throughout proxy pipeline |
-| 4.6.2 Arc<Firewall> shared | 7+ | Needs DnsFirewall interior mutability change |
-| 4.6.3 Batch zone index rebuild | 7+ | Needs zone load batching |
-| mesh_sync.rs split (1,975 lines) | 7+ | Complex with verification loop state |
-
-## Known Code Quality Context
-
-### Clippy and Dead Code Suppressions
-
-Phase 2.1 removed `#![allow(clippy::all)]` from `src/lib.rs`. Phase 3.4 removed `#![allow(dead_code)]` from both `src/lib.rs` and `src/worker/mod.rs`. Current crate-level suppressions (see `src/lib.rs:1-7`):
-
-- `elided_lifetimes_in_paths` — compiler style preference
-- `mismatched_lifetime_syntaxes` — compiler style preference
-- `clippy::too_many_arguments` — deferred to Phase 6 (builder/config struct refactoring)
-- `clippy::await_holding_lock` — deferred to Phase 4.5 (async mutex standardization)
-
-Remaining per-item `#[allow(dead_code)]` on specific functions/types:
-- `src/worker/mod.rs` — 5 items (MinifierCache, get_content_type, get_compressed_content, ListenerType, send_compressed_error)
-- `src/waf/ratelimit.rs` — 2 items (IpRateLimitState::new, RingBuffer::with_capacity)
-- `src/dns/cache.rs` — 2 items (skip_name, detect_dnssec_signed)
-- `src/dns/dnssec.rs` — 3 items (extract_rsa_modulus, len_of_der_length, decode_der_length)
-- `src/mesh/` — 29 items (all audited and annotated in Wave 5)
-- `src/dns/server.rs` — ~10 items (item-level)
-
-`cargo clippy` currently produces ~93 warnings (down from 154; all are pre-existing categories). These are incremental quality issues that don't affect correctness.
-
-### Build Configuration
-
-Phase 2.2 moved `target-dir = "target/fuzz"` from `.cargo/config.toml` to `fuzz/.cargo/config.toml`. Normal builds now use the default `target/` directory.
-
-`Cargo.toml` uses relaxed version pins (e.g., `"0.11"`). Only 2 pre-1.0 h3 ecosystem pins remain (`h3 = "0.0.8"`, `h3-quinn = "0.0.10"`).
-
-## Known Bugs (Quick Reference)
-
-Agents working on these areas should be aware of these issues. See `plan.md` for full details and fixes.
-
-> **Phase 1 bugs (1.1-1.12) are FIXED.** The "Critical Correctness" table below lists
-> only the remaining known bugs from later phases. See `plan.md` Phase 1 Follow-ups for
-> minor items discovered during Phase 1 review (auth log dedup, SSRF test, CSS exemptions).
-
-### Critical Correctness (Remaining)
-
-| Bug | Location | Impact |
-|-----|----------|--------|
-| *(none - all Phase 4 bugs fixed)* | | |
-
-### Security
-
-| Bug | Location | Impact |
-|-----|----------|--------|
-| *(none — all security items addressed)* | | |
-
-### DNS / RFC Compliance
-
-| Bug | Location | Impact |
-|-----|----------|--------|
-| *(none - all Phase 5 items addressed)* | | |
-
-### Dead Code (Not Compiled)
-
-`src/http/handler.rs` (1,657 lines) and `src/http/range.rs` (194 lines) exist but are NOT in the module tree (`src/http/mod.rs` does not declare them). They contain a compile error (`site_request_key` undefined at `handler.rs:433`) and synchronous filesystem I/O in async functions. Do not reference these files — they are effectively dead.
-
-## Performance Hot Paths
-
-Agents modifying these areas should be aware of performance characteristics:
-
-| Area | Concern | Location |
-|------|---------|----------|
-| WAF detection | Runs ~20+ checks per request, lock acquisition per request | `src/waf/mod.rs:667-1056` |
-| Cache lookups | O(n) `VecDeque::position/remove` per operation; write lock on LRU update | `src/proxy_cache/store.rs:225,241` |
-| Input normalization | Allocates `String` per request via NFKC normalization | `src/waf/attack_detection/normalizer.rs:349` |
-| Rate limiting | `retain` is O(n) per call, 6 sequential calls | `src/waf/ratelimit.rs:122-142` |
-| HTTP path sanitization | Allocates `String` on every request | `src/proxy.rs:94` |
-| Response header filtering | Allocates `Vec` on every proxied response | `src/proxy.rs:151-158` |
-
-## Code Duplication Patterns
-
-These patterns repeat and should be consolidated (see `plan.md` Phase 6.3):
-
-- ~~`reload_attack_detector` repeats the same block 10 times~~ ✅ Fixed in Phase 6 — now uses `merge_patterns!` macro
-- ~~`get_custom_patterns_for_category`, `update_patterns_for_category`, `has_custom_patterns` have identical match arms~~ ✅ Fixed in Phase 6 — each uses local `macro_rules!` macro
-- ~~`convert_rules_to_ipc_patterns` is 100 lines of repetitive matching~~ ✅ Fixed in Phase 6 — now uses `push_if_present!` macro
-- ~~Error page status text mapping repeated 3 times~~ ✅ Fixed in Phase 6 — consolidated into `status_text()` helper
-- PEM cert+key loading duplicated in `src/mesh/cert.rs` — ✅ Fixed in Phase 6 — extracted `load_cert_chain_and_key()`
-
-## Module Size Guide
-
-Large modules that need splitting (see `plan.md` Phase 6.5):
-
-| Module | Lines | Status |
-|--------|-------|--------|
-| `src/mesh/protocol_proto_encode.rs` | 1,989 | Proto conversion (generated pattern, acceptable) |
-| `src/dns/dnssec.rs` | 2,152 | Above 1,500 but below threshold |
-| `src/mesh/transport.rs` | 1,897 | Split done (Wave 3) |
-| `src/mesh/config.rs` | 1,450 | Split done (Wave 4) |
-| `src/mesh/protocol.rs` | 1,196 | Split done (Wave 4) |
-| `src/dns/server/mod.rs` | 763 | Split done (Wave 3) |
-| `src/worker/mod.rs` | 786 | Split done (Wave 3) |
-| `src/admin/state.rs` | 561 | Split done (Wave 4) |
-
-## Phase 7 Completion Notes (2026-03-25)
-
-Phase 7 addressed testing and build hygiene. 5 of 8 items completed; 3 deferred.
-
-### Test File Split
-
-`tests/integration_test.rs` was split from 2,012 lines into 3 files:
-
-| File | Lines | Tests | Feature Gate |
-|------|-------|-------|-------------|
-| `tests/integration_test.rs` | 760 | 40 | none |
-| `tests/ipc_test.rs` | 197 | 7 | `#[cfg(unix)]` |
-| `tests/dns_config_test.rs` | 1,054 | 52 | `#![cfg(feature = "dns")]` |
-| `tests/dns_integration_test.rs` | 814 | 45 | `#![cfg(feature = "dns")]` |
-
-Total test count: 112 (up from 99 before Phase 7).
-
-**Key learning:** When extracting tests from a `#[cfg(unix)]` module, verify whether the tests actually need Unix-specific APIs. The DNS config tests were inside `socket_tests` (unix-gated) but only used standard library and DNS types — they run fine on all platforms. Extracting them to a `#![cfg(feature = "dns")]` file is more correct than `#[cfg(unix)]`.
-
-### Vacuous Assertion Fixes
-
-6 vacuous assertions were fixed. Common patterns to watch for:
-- `A || !B` where A and B are unrelated conditions — always true if A is true
-- `is_ok() || is_err()` — always true for any `Result`
-- `is_some() || is_none()` — always true for any `Option`
-- `assert!(true)` — never fails, provides no validation
-
-### Property-Based Testing
-
-13 proptest cases added across `tests/property_tests.rs` (DNS, feature-gated) and `tests/property_tests_common.rs` (common). Proptest was already in `[dev-dependencies]` but only used in 2 source files (`src/auth/mod.rs`, `src/block_store.rs`). The new tests cover:
-- DNS wire format roundtrips (encode_name → parse_query_name)
-- URL encoding decode/encode identity
-- Normalizer idempotency (normalize(normalize(x)) == normalize(x))
-
-### Dependency Hygiene
-
-Removed 3 duplicate entries from `[dev-dependencies]`: `aes-gcm`, `ahash`, `async-trait`. These were already in `[dependencies]` and redundant in `[dev-dependencies]` (Cargo makes all `[dependencies]` available for tests).
-
-**Important:** `verify-pq` feature is NOT dead — it's used in `src/mesh/cert.rs:74,180` and `src/mesh/transports/quic.rs:29`. The original plan incorrectly listed it as a dead feature.
-
-## Waves 1-4 Completion Notes (2026-03-26)
-
-All waves from `deferred.md` have been executed. Waves 1-4 complete; Wave 5 complete (see below).
-
-### Wave 1 (7 parallel agents): Phases 8, 9, 10, 11, 12, 13, 16
-
-120 files changed, 2,665 additions, 14,674 deletions across the session.
-
-**Key changes:**
-
-**Phase 8 — Quick Wins:**
-- CSS path exemptions made configurable via `css_exempt_paths: Vec<String>` on `WafConfig`
-- SSRF test fix: private IP patterns removed from `DefaultPatterns::ssrf()` (runtime `contains_private_ip_or_localhost` handles them)
-- `create_upstream_client` wiring: `ProxyServer::from_config()` and `new()` were dead code (zero callers). Both active code paths (`tls/server.rs`, `http/handler.rs`) already used `new_with_tls` with per-site `UpstreamTlsConfig`
-- 48 new tests added (endpoints.rs, rule_feed.rs, config/mod.rs)
-
-**Phase 9 — Binary Body in Cache:**
-- `HttpResponse.body` changed from `String` to `Bytes` through entire proxy chain
-- Eliminates binary content corruption (images, compressed data) in proxy cache
-- `InputLocation::Header`/`Cookie` changed from `String` to `Arc<str>` (22 call sites)
-- `DnsFirewall` in recursive resolver changed to `Arc<RwLock<>>` (avoids clone per query)
-
-**Phase 11 — DNS Refactoring:**
-- `mesh_sync.rs` (1,975 lines) → `mesh_sync/mod.rs` + 6 submodules (registry, registration, health, query, dht, verification)
-- `handle_query`/`handle_query_with_cache` reduced to 3-5 params via `QueryContext` struct
-
-**Phase 12 — Admin Auth Overhaul:**
-- Auth middleware made single source of truth — removed 94 per-handler `require_auth` calls
-- Fixed per-IP rate limiting bypass: old `common::require_auth` hardcoded `None` for client_ip
-- Config write TOCTOU fixed: `config_write_lock` now held across both file write AND in-memory update
-- bcrypt plaintext fallback uses `__plaintext__:` marker prefix (detectable by `verify_admin_token`)
-- `/health` endpoint excluded from auth middleware
-
-### Wave 2 (1 agent): Phase 14 — IPC Deduplication
-
-**Key changes:**
-
-- Merged `handle_minify_client_connection` (Unix, ~70 lines) and `_windows` variant (Windows, ~91 lines) into single cross-platform function using `IpcStream`
-- Fixed Windows bug: `state.running.load(std::io::Ordering::SeqCst)` → `state.running.is_running()` (`std::io::Ordering` doesn't exist)
-- Windows now handles `PoisonImageRequest` (was Unix-only feature gap)
-- `WindowsIpcListener::accept()` added — consolidates `CreateNamedPipeW` + `ConnectNamedPipe` + `GetLastError(ERROR_PIPE_CONNECTED)` + `CloseHandle` + `from_raw_handle` pattern from 4 call sites into 1
-- Worker accept loop: Windows reduced from 80+ lines of unsafe FFI to 15 lines
-- `main.rs`: `windows_ipc_accept_loop` and `windows_command_pipe_listener` each reduced from ~70 lines to ~15 lines
-- Added rustdoc documenting sync vs async `IpcStream` API divergence
-
-### Wave 3 (3 parallel agents): Phase 15 — Module Splits
-
-| Module | Before | After (core) | Submodules |
-|--------|--------|-------------|------------|
-| `mesh/transport.rs` | 6,406 | 1,897 | 8 files (routing, dht, org, dns, global, connection, peer, rate_limit) |
-| `dns/server.rs` | 4,366 | 763 (mod.rs) | 6 files (query, startup, response, dnssec_impl, zone, rate_limit) |
-| `worker/mod.rs` | ~1,439 | 786 (mod.rs) | 3 new files (connection, image_poisoning, response_builder) |
-
-**Key decisions:**
-- Struct definitions stay in parent file; submodules add `impl StructName { ... }` blocks
-- Submodules use `use super::*` or `use crate::module::*` for imports
-- Fields made `pub(crate)` where accessed from sibling modules (not `pub`)
-- Module declarations go in parent module file, not in the struct's file
-
-### Review Fixes (post-wave)
-
-6 issues found during review and fixed:
-
-1. `theme.rs::get_theme_presets` — added `_auth: OptionalAuth` for consistency
-2. Removed dead `require_auth` function from `auth.rs` (was old per-handler auth)
-3. Removed dead `constant_time_compare` from `auth.rs` + its test in `ipc_test.rs`
-4. Removed dead `Authenticated` extension marker from `middleware.rs`
-5. `tls/server.rs:647` — simplified `Bytes::from(body)` to `body` (no-op conversion)
-6. `transport.rs` — changed 2 fields from `pub` to `pub(crate)`
-
-### Critical Lessons for Future Waves
-
-**sed for bulk handler changes:** When removing per-handler auth checks from 94 handlers, `sed` with a 3-line pattern worked well:
-```bash
-sed -i '/if !require_auth/,/^    }$/d' handler_file.rs
-```
-But it also matches similar-looking blocks. Always verify with `grep` after. The sed also renamed variables in functions you didn't intend to change (e.g., `require_auth_async`'s `auth` param).
-
-**Module split pattern:** The proven approach for splitting large `impl` blocks:
-1. Struct stays in `mod.rs` with its `new()` constructor
+When splitting large modules:
+1. Struct definitions stay in parent file; submodules add `impl StructName { ... }` blocks
 2. Each submodule is a sibling file (`foo_bar.rs`), NOT a subdirectory
-3. Each submodule starts with `use super::*` and adds `impl StructName { ... }`
+3. Submodules use `use super::*` or `use crate::module::*` for imports
 4. Fields accessed from submodules must be `pub(crate)`, not private
-5. Module declarations go in the module root (`mod.rs` or parent file)
+5. Module declarations go in parent module file, not in the struct's file
 
-**Windows IPC code:** Can't test on this platform (macOS). Always:
-- Keep platform-specific code in `#[cfg(windows)]` blocks
-- Use the existing `IpcStream` abstraction rather than manual framing
-- The sync `IpcStream` wraps `std::fs::File` on Windows and works cross-platform
+## Remediation Plans
 
-**Auth middleware pattern:** When making middleware the single source of truth:
-- Remove per-handler auth checks entirely
-- Keep `_auth: OptionalAuth` parameter (axum needs to extract the header even if unused)
-- The middleware must handle rate limiting with the correct client IP
-- `/health` and similar probe endpoints need explicit middleware bypass
-
-**bcrypt fallback:** `bcrypt::hash()` can fail. Don't return the raw token as the "hash" (auth becomes plaintext comparison silently). Use a marker prefix like `__plaintext__:` so `verify_admin_token` can detect the fallback mode.
-
-### Wave 4 Completion Notes (2026-03-26)
-
-All 5 phases completed. 76 files changed, 496 insertions, 7,329 deletions.
-
-**Phase 18 — AdminState Split:**
-- 22 fields → 6 sub-structs (`MetricsState`, `WafTrackingState`, `SecurityState`, `MeshState`, `HoneypotState`, `ProcessState`)
-- All 132 consumer access paths updated across 12 handler files
-- `with_*` builder methods updated to use sub-struct paths
-
-**Phase 19 — Mesh God Object Splits:**
-- `protocol.rs` 5,263→1,196 lines (4 new submodules: `protocol_types.rs`, `protocol_message.rs`, `protocol_proto_decode.rs`, `protocol_proto_encode.rs`)
-- `config.rs` 2,217→1,450 lines (4 new submodules: `config_mesh.rs`, `config_identity.rs`, `config_defaults.rs`, `config_conversion.rs`)
-- `record_store.rs` was already split (312 lines, 4 submodules from prior waves)
-- `dht/record_store_crud.rs` — 2 methods changed to `pub(crate)` after clippy auto-fix broke visibility
-
-**Phase 20 — Clippy Warnings:**
-- Reduced from 307→88 warnings (71% reduction)
-- `cargo fix` auto-resolved 168+ warnings (unused imports, variables, patterns)
-- Side effect: `can_cache_on_edge` and `store_record_global` in `record_store_crud.rs` were made private — fixed manually with `pub(crate)`
-
-**Phase 21 — Dead Fields:**
-- Reduced from 36→0 warnings (resolved by Phase 20's `cargo fix`)
-
-**Phase 22 — Documentation:**
-- Rustdoc added to 8 modules: `mesh/mod.rs` (NOT done — see Wave 5), `admin/mod.rs`, `auth/mod.rs`, `proxy.rs`, `tls/mod.rs`, `supervisor/mod.rs`, `master/mod.rs`, `router.rs`
-- Fuzz target docs added to 3 files
-- All 59 `unsafe` blocks already had `// SAFETY:` comments
-
-**Key lessons:**
-- **Clippy auto-fix can break visibility.** `cargo fix` changed method visibility from `fn` to private in submodules. Always verify cross-module method access after auto-fixes.
-- **AdminState sub-struct naming.** The agent used `state.metrics.*` (not `state.metrics_state.*`). This matches the plan's intent but the sub-struct field name (`metrics`) collides conceptually with the inner `metrics` field of `MetricsState`. Access pattern is `state.metrics.metrics` which reads oddly but compiles.
-- **Config write TOCTOU partially present.** `config_write_lock` is held for disk writes but `update_overseer_config` and `update_supervisor_config` update in-memory state BEFORE acquiring the lock. See Wave 5 Phase 25 for fix.
-
-### Wave 5 Plan (deferred.md)
-
-Wave 5 covers remaining actionable items from the Phase 1-7 + Wave 1-4 audit:
-- Phase 23: Missing tests for `rule_feed.rs`, `endpoints.rs`, `config/mod.rs`
-- Phase 24: Wire `create_upstream_client` into `tls/server.rs` and `http/server.rs`
-- Phase 25: Fix config write TOCTOU in `admin/handlers/config.rs`
-- Phase 26: Replace 6 `.expect()` in PQ crypto test code
-- Phase 27: Audit 29 `#[allow(dead_code)]` in mesh files
-- Phase 28: Add `//!` rustdoc to `src/mesh/mod.rs`
-
-All 6 phases are independent. Wall-clock: ~2 days.
-
-## Updated Module Size Guide
-
-| Module | Lines | Status |
-|--------|-------|--------|
-| `src/mesh/protocol_proto_encode.rs` | 1,989 | Proto conversion (generated pattern, acceptable) |
-| `src/dns/dnssec.rs` | 2,152 | Above 1,500 but below threshold |
-| `src/mesh/transport.rs` | 1,897 | Split done (Wave 3) |
-| `src/mesh/config.rs` | 1,450 | Split done (Wave 4) |
-| `src/mesh/protocol.rs` | 1,196 | Split done (Wave 4) |
-| `src/dns/server/mod.rs` | 763 | Split done (Wave 3) |
-| `src/worker/mod.rs` | 786 | Split done (Wave 3) |
-| `src/admin/state.rs` | 561 | Split done (Wave 4) |
-
-## Updated Known Bugs
-
-| Bug | Location | Status |
-|-----|----------|--------|
-| TLS: `skip_verify` not wired (TLS/HTTP server paths) | `src/tls/server.rs:606`, `src/http/server.rs:121` | ✅ Fixed (Wave 5 Phase 24) |
-| Config write TOCTOU | `src/admin/handlers/config.rs:1266,1482` | ✅ Fixed (Wave 5 Phase 25) |
-| Binary body in cache | `src/proxy.rs` | ✅ Fixed (Wave 1 Phase 9.1) |
-| Admin per-IP rate limiting bypass | `src/admin/handlers/common.rs` | ✅ Fixed (Wave 1 Phase 12) |
-| Windows `std::io::Ordering` bug | `src/worker/mod.rs` | ✅ Fixed (Wave 2) |
-| Windows missing PoisonImageRequest | `src/worker/mod.rs` | ✅ Fixed (Wave 2) |
-
-## Wave 5 Completion Notes (2026-03-26)
-
-All 6 phases completed. 8 files changed.
-
-### Phase 24: Upstream Client Wiring
-
-`create_upstream_client` wired into both TLS (`src/tls/server.rs`) and HTTP (`src/http/server.rs`) server request handlers. Per-site TLS config (skip_verify, ca_cert, server_name) is now respected for all code paths.
-
-**Key learning:** TLS config path is `site_config.proxy.upstream.tls`, not `site_config.proxy.tls`.
-
-### Phase 25: Config Write TOCTOU Fix
-
-Fixed TOCTOU in 3 handlers: `update_overseer_config`, `update_supervisor_config`, `update_process_manager_config`. `config_write_lock` is now acquired before in-memory update, covering both in-memory and disk operations atomically.
-
-### Phase 26: PQ Crypto `.expect()` Removal
-
-6 `.expect()` calls replaced with `?` in `passover_key_exchange.rs` and `kem/ml_kem.rs`. Test functions now return `Result`.
-
-### Phase 27: Dead Code Allows Audit
-
-29 `#[allow(dead_code)]` audited. 5 truly dead structs identified (`NetworkAccessControl`, `MeshSecurityChallengeManager`, `SecureConfigManager`, `MeshTransportStack`, `AuditLogger`). All items documented with comments. Missing comment added to `wireguard_port` field.
-
-### Phase 28: mesh/mod.rs Rustdoc
-
-Module-level doc comment added.
-
-### Pre-existing Test Compilation Errors
-
-`cargo test --lib` fails due to 14 pre-existing compilation errors in `src/mesh/config.rs` tests (private methods being called). These are NOT related to Wave 5 changes. `cargo check`, `cargo check --features dns`, and `cargo test --test integration_test` all pass.
+See `plans/fullplan.md` for the consolidated 33-plan master plan (12 phases) with parallel execution guidance.

@@ -2,9 +2,9 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
 
+use metrics::{counter, gauge, histogram};
 use parking_lot::RwLock;
 use tokio::sync::oneshot;
-use metrics::{counter, gauge, histogram};
 
 use crate::config::dns::DnsDoqConfig;
 use crate::dns::server::DnsServer;
@@ -55,19 +55,21 @@ impl DoqServer {
         let mut server_crypto = (*tls_config).clone();
         server_crypto.alpn_protocols = vec![b"doq".to_vec()];
 
-        let quic_server_config = quinn::crypto::rustls::QuicServerConfig::try_from(server_crypto)
-            .map_err(|e| format!("Failed to create QUIC server config: {}", e))?;
+        let quic_server_config =
+            quinn::crypto::rustls::QuicServerConfig::try_from(server_crypto)
+                .map_err(|e| format!("Failed to create QUIC server config: {}", e))?;
 
         let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(quic_server_config));
 
-        let transport_config = Arc::get_mut(&mut server_config.transport)
-            .expect("Failed to get transport config");
+        let transport_config =
+            Arc::get_mut(&mut server_config.transport).expect("Failed to get transport config");
 
         transport_config.max_concurrent_uni_streams(self.config.max_concurrent_streams.into());
         transport_config.max_concurrent_bidi_streams(self.config.max_concurrent_streams.into());
 
-        let idle_timeout = quinn::IdleTimeout::try_from(Duration::from_secs(self.config.idle_timeout_secs))
-            .map_err(|e| format!("Failed to create idle timeout: {}", e))?;
+        let idle_timeout =
+            quinn::IdleTimeout::try_from(Duration::from_secs(self.config.idle_timeout_secs))
+                .map_err(|e| format!("Failed to create idle timeout: {}", e))?;
         transport_config.max_idle_timeout(Some(idle_timeout));
 
         let endpoint = quinn::Endpoint::server(server_config, bind_addr)
@@ -89,13 +91,15 @@ impl DoqServer {
     }
 
     fn create_tls_config(&self) -> Result<Arc<rustls::ServerConfig>, String> {
-        let resolver = self.cert_resolver
+        let resolver = self
+            .cert_resolver
             .as_ref()
             .ok_or_else(|| "No TLS certificate resolver available".to_string())?;
-        
-        let config = resolver.build_server_config()
+
+        let config = resolver
+            .build_server_config()
             .map_err(|e| format!("Failed to build TLS config: {}", e))?;
-        
+
         Ok(config)
     }
 
@@ -154,7 +158,11 @@ impl DoqServer {
         tracing::debug!("DoQ connection from {}", remote_addr);
 
         if let Err(e) = Self::validate_source_address(client_ip) {
-            tracing::warn!("DoQ source address validation failed for {}: {}", client_ip, e);
+            tracing::warn!(
+                "DoQ source address validation failed for {}: {}",
+                client_ip,
+                e
+            );
             counter!("maluwaf.doq.connection.rejected").increment(1);
             return Err(format!("Source address validation failed: {}", e));
         }
@@ -167,7 +175,8 @@ impl DoqServer {
                 Ok((send, recv)) => {
                     let dns_server = dns_server.clone();
                     tokio::spawn(async move {
-                        if let Err(e) = Self::handle_stream(send, recv, dns_server, client_ip).await {
+                        if let Err(e) = Self::handle_stream(send, recv, dns_server, client_ip).await
+                        {
                             tracing::debug!("DoQ stream error: {}", e);
                         }
                     });
@@ -272,7 +281,13 @@ impl DoqServer {
                 crate::dns::server::RecordType::NULL,
                 Some(client_ip),
             );
-            crate::dns::server::DnsServer::handle_query_with_cache(&ctx, query, c, cache_key, Some(client_ip))
+            crate::dns::server::DnsServer::handle_query_with_cache(
+                &ctx,
+                query,
+                c,
+                cache_key,
+                Some(client_ip),
+            )
         } else {
             crate::dns::server::DnsServer::handle_query(&ctx, query, Some(client_ip))
         }
@@ -390,10 +405,7 @@ mod tests {
         let mut query = Vec::new();
 
         query.extend_from_slice(&[
-            0x00, 0x01,
-            0x01, 0x00,
-            0x00, 0x01, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00,
+            0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         ]);
 
         for label in b"example" {
@@ -401,10 +413,7 @@ mod tests {
         }
         query.push(0);
 
-        query.extend_from_slice(&[
-            0x00, 0x01,
-            0x00, 0x01,
-        ]);
+        query.extend_from_slice(&[0x00, 0x01, 0x00, 0x01]);
 
         query
     }

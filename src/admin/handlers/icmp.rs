@@ -1,13 +1,9 @@
-use axum::{
-    extract::State,
-    http::StatusCode,
-    Json,
-};
+use super::super::state::AdminState;
+use axum::{extract::State, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use super::super::state::AdminState;
 
-use super::common::{OptionalAuth};
+use super::common::OptionalAuth;
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct IcmpStatusResponse {
@@ -72,7 +68,6 @@ pub async fn get_status(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<IcmpStatusResponse>, StatusCode> {
-
     #[cfg(feature = "icmp-filter")]
     {
         let Some(icmp_filter) = state.icmp_filter() else {
@@ -153,7 +148,6 @@ pub async fn get_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<IcmpConfigResponse>, StatusCode> {
-
     let config = state.process.config.read().await;
 
     #[cfg(feature = "icmp-filter")]
@@ -189,18 +183,18 @@ pub async fn update_config(
     _auth: OptionalAuth,
     Json(req): Json<UpdateIcmpConfigRequest>,
 ) -> Result<Json<IcmpEnableResponse>, StatusCode> {
-
     #[cfg(feature = "icmp-filter")]
     {
-        let new_config: crate::icmp_filter::IcmpFilterConfig = match serde_json::from_value(req.config) {
-            Ok(c) => c,
-            Err(e) => {
-                return Ok(Json(IcmpEnableResponse {
-                    success: false,
-                    message: format!("Invalid config: {}", e),
-                }));
-            }
-        };
+        let new_config: crate::icmp_filter::IcmpFilterConfig =
+            match serde_json::from_value(req.config) {
+                Ok(c) => c,
+                Err(e) => {
+                    return Ok(Json(IcmpEnableResponse {
+                        success: false,
+                        message: format!("Invalid config: {}", e),
+                    }));
+                }
+            };
 
         if let Err(e) = new_config.validate() {
             return Ok(Json(IcmpEnableResponse {
@@ -266,7 +260,6 @@ pub async fn enable(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<IcmpEnableResponse>, StatusCode> {
-
     #[cfg(feature = "icmp-filter")]
     {
         let Some(icmp_filter) = state.icmp_filter() else {
@@ -325,7 +318,6 @@ pub async fn disable(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<IcmpEnableResponse>, StatusCode> {
-
     #[cfg(feature = "icmp-filter")]
     {
         let Some(icmp_filter) = state.icmp_filter() else {
@@ -383,7 +375,6 @@ pub async fn list_backends(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<IcmpBackendsResponse>, StatusCode> {
-
     #[cfg(feature = "icmp-filter")]
     {
         let backends = crate::icmp_filter::available_backends();

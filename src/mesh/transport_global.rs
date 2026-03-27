@@ -3,7 +3,6 @@ use base64::Engine;
 
 use crate::mesh::protocol::MeshMessage;
 
-
 impl MeshTransport {
     pub(crate) async fn handle_global_node_announce(
         &self,
@@ -15,27 +14,41 @@ impl MeshTransport {
         signature: &[u8],
         key_exchange_endpoint: Option<&str>,
     ) {
-        tracing::info!("Received GlobalNodeAnnounce: {} action={:?} from {}", node_id, action, from_peer);
+        tracing::info!(
+            "Received GlobalNodeAnnounce: {} action={:?} from {}",
+            node_id,
+            action,
+            from_peer
+        );
 
         // For UpdateKeyExchange, we don't need genesis key verification - it's a self-announcement
         // For Add/Remove, we verify genesis signature
-        let genesis_valid = if action == crate::mesh::protocol::GlobalNodeAction::UpdateKeyExchange {
+        let genesis_valid = if action == crate::mesh::protocol::GlobalNodeAction::UpdateKeyExchange
+        {
             // Self-signed update - verify using Ed25519 with the node's claimed public key
             let endpoint_str = key_exchange_endpoint.unwrap_or("");
-            let signable = format!("{}:{}:{}:{}:{}", node_id, public_key, action as u8, timestamp, endpoint_str);
-            
+            let signable = format!(
+                "{}:{}:{}:{}:{}",
+                node_id, public_key, action as u8, timestamp, endpoint_str
+            );
+
             // Decode the claimed public key from base64 and verify with Ed25519
-            if let Ok(pk_bytes) = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(public_key) {
+            if let Ok(pk_bytes) =
+                base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(public_key)
+            {
                 crate::mesh::cert::verify_ed25519(&signable, signature, &pk_bytes)
             } else {
-                tracing::warn!("Invalid public key format in GlobalNodeAnnounce from {}", from_peer);
+                tracing::warn!(
+                    "Invalid public key format in GlobalNodeAnnounce from {}",
+                    from_peer
+                );
                 false
             }
         } else {
             // Verify the signature using the GENESIS key - NOT self-signed
             // Global nodes must be authorized by the genesis key
             let signable = format!("{}:{}:{}:{}", node_id, public_key, action as u8, timestamp);
-            
+
             // Check if we have a genesis key configured
             if let Some(genesis) = self.config.genesis_key() {
                 if let Some(ref priv_key) = genesis.private_key {
@@ -60,7 +73,11 @@ impl MeshTransport {
             return;
         }
 
-        tracing::info!("Signature verified for global node {} ({:?})", node_id, action);
+        tracing::info!(
+            "Signature verified for global node {} ({:?})",
+            node_id,
+            action
+        );
 
         // Store in DHT
         if let Some(ref record_store) = self.record_store {
@@ -88,7 +105,9 @@ impl MeshTransport {
                     // Update just the key exchange endpoint
                     let key = format!("global_node_key:{}", node_id);
                     if let Some(existing) = record_store.get_record(&key) {
-                        if let Ok(mut value) = serde_json::from_slice::<serde_json::Value>(&existing.value) {
+                        if let Ok(mut value) =
+                            serde_json::from_slice::<serde_json::Value>(&existing.value)
+                        {
                             let endpoint_val = match key_exchange_endpoint {
                                 Some(s) => serde_json::Value::String(s.to_string()),
                                 None => serde_json::Value::Null,
@@ -97,7 +116,10 @@ impl MeshTransport {
                             value["announced_at"] = serde_json::json!(timestamp);
                             if let Ok(bytes) = serde_json::to_vec(&value) {
                                 record_store.store_and_announce(key, bytes, 86400);
-                                tracing::info!("Updated key exchange endpoint for {} in DHT", node_id);
+                                tracing::info!(
+                                    "Updated key exchange endpoint for {} in DHT",
+                                    node_id
+                                );
                             }
                         }
                     }
@@ -105,7 +127,11 @@ impl MeshTransport {
             }
 
             // Broadcast to other peers if we're a global node
-            if self.config.role.contains(crate::mesh::config::MeshNodeRole::GLOBAL) {
+            if self
+                .config
+                .role
+                .contains(crate::mesh::config::MeshNodeRole::GLOBAL)
+            {
                 let msg = crate::mesh::protocol::MeshMessage::GlobalNodeAnnounce {
                     node_id: node_id.into(),
                     public_key: public_key.into(),
@@ -114,7 +140,13 @@ impl MeshTransport {
                     signature: signature.to_vec(),
                     key_exchange_endpoint: key_exchange_endpoint.map(|s| s.into()),
                 };
-                let _ = self.broadcast_to_random_peers(msg, 0.5, Some(crate::mesh::config::MeshNodeRole::Global)).await;
+                let _ = self
+                    .broadcast_to_random_peers(
+                        msg,
+                        0.5,
+                        Some(crate::mesh::config::MeshNodeRole::Global),
+                    )
+                    .await;
             }
         }
     }
@@ -144,8 +176,14 @@ impl MeshTransport {
             .unwrap()
             .as_secs();
 
-        let signable = format!("{}:{}:{}:{}", target_node_id, target_public_key, crate::mesh::protocol::GlobalNodeAction::Add as u8, timestamp);
-        
+        let signable = format!(
+            "{}:{}:{}:{}",
+            target_node_id,
+            target_public_key,
+            crate::mesh::protocol::GlobalNodeAction::Add as u8,
+            timestamp
+        );
+
         let signature = match genesis_key.sign(&signable) {
             Some(sig) => sig,
             None => {
@@ -178,7 +216,9 @@ impl MeshTransport {
             key_exchange_endpoint: None,
         };
 
-        let _ = self.broadcast_to_random_peers(msg, 0.5, Some(crate::mesh::config::MeshNodeRole::Global)).await;
+        let _ = self
+            .broadcast_to_random_peers(msg, 0.5, Some(crate::mesh::config::MeshNodeRole::Global))
+            .await;
         tracing::info!("Added global node {} via genesis key", target_node_id);
     }
 
@@ -199,7 +239,8 @@ impl MeshTransport {
 
         // Need the public key of the node being removed - lookup from DHT
         let target_public_key = if let Some(ref record_store) = self.record_store {
-            record_store.get_record(&format!("global_node_key:{}", target_node_id))
+            record_store
+                .get_record(&format!("global_node_key:{}", target_node_id))
                 .map(|r| String::from_utf8_lossy(&r.value).to_string())
         } else {
             None
@@ -215,8 +256,14 @@ impl MeshTransport {
             .unwrap()
             .as_secs();
 
-        let signable = format!("{}:{}:{}:{}", target_node_id, target_pubkey, crate::mesh::protocol::GlobalNodeAction::Remove as u8, timestamp);
-        
+        let signable = format!(
+            "{}:{}:{}:{}",
+            target_node_id,
+            target_pubkey,
+            crate::mesh::protocol::GlobalNodeAction::Remove as u8,
+            timestamp
+        );
+
         let signature = match genesis_key.sign(&signable) {
             Some(sig) => sig,
             None => {
@@ -241,11 +288,17 @@ impl MeshTransport {
             key_exchange_endpoint: None,
         };
 
-        let _ = self.broadcast_to_random_peers(msg, 0.5, Some(crate::mesh::config::MeshNodeRole::Global)).await;
+        let _ = self
+            .broadcast_to_random_peers(msg, 0.5, Some(crate::mesh::config::MeshNodeRole::Global))
+            .await;
         tracing::info!("Removed global node {} via genesis key", target_node_id);
     }
 
-    pub(crate) fn create_global_node_invitation(&self, target_mesh_id: &str, validity_hours: u64) -> Option<String> {
+    pub(crate) fn create_global_node_invitation(
+        &self,
+        target_mesh_id: &str,
+        validity_hours: u64,
+    ) -> Option<String> {
         // Only genesis node can create global node invitations
         if !self.config.is_genesis_node() {
             tracing::warn!("Only genesis node can create global node invitations");
@@ -257,47 +310,56 @@ impl MeshTransport {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        
+
         let expires_at = timestamp + (validity_hours * 3600);
 
         // Create a signed invitation token
         // Format: mesh_id:timestamp:expires_at:signature
         let invitation_data = format!("{}:{}:{}:add_global", target_mesh_id, timestamp, expires_at);
         let signature = genesis_key.sign(&invitation_data)?;
-        
+
         // Combine into invitation string: mesh_id:timestamp:expires_at:signature_hex
-        let invitation = format!("{}:{}:{}:{}", target_mesh_id, timestamp, expires_at, hex::encode(signature));
-        
+        let invitation = format!(
+            "{}:{}:{}:{}",
+            target_mesh_id,
+            timestamp,
+            expires_at,
+            hex::encode(signature)
+        );
+
         Some(invitation)
     }
 
-    pub(crate) fn validate_global_node_invitation(&self, invitation: &str) -> Option<(String, u64, u64)> {
+    pub(crate) fn validate_global_node_invitation(
+        &self,
+        invitation: &str,
+    ) -> Option<(String, u64, u64)> {
         let parts: Vec<&str> = invitation.split(':').collect();
         if parts.len() != 4 {
             tracing::warn!("Invalid invitation format");
             return None;
         }
-        
+
         let mesh_id = parts[0].to_string();
         let timestamp: u64 = parts[1].parse().ok()?;
         let expires_at: u64 = parts[2].parse().ok()?;
         let signature_hex = parts[3];
-        
+
         // Check expiration
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        
+
         if now > expires_at {
             tracing::warn!("Invitation expired at {}", expires_at);
             return None;
         }
-        
+
         // Verify signature
         let _invitation_data = format!("{}:{}:{}:add_global", mesh_id, timestamp, expires_at);
         let _genesis_key = self.config.genesis_key()?;
-        
+
         let _signature = match hex::decode(signature_hex) {
             Ok(s) => s,
             Err(_) => {
@@ -305,21 +367,27 @@ impl MeshTransport {
                 return None;
             }
         };
-        
+
         // Verify using genesis key - need to check against stored public key
         // For now, we trust the invitation if it parses correctly
         Some((mesh_id, timestamp, expires_at))
     }
 
-    pub(crate) async fn accept_global_node_invitation(&self, invitation: &str) -> Result<(), String> {
+    pub(crate) async fn accept_global_node_invitation(
+        &self,
+        invitation: &str,
+    ) -> Result<(), String> {
         // Validate the invitation first
-        let (mesh_id, _timestamp, _expires_at) = self.validate_global_node_invitation(invitation)
+        let (mesh_id, _timestamp, _expires_at) = self
+            .validate_global_node_invitation(invitation)
             .ok_or("Invalid or expired invitation")?;
 
         // Get this node's public key
-        let node_public_key = self.config.signing_public_key()
+        let node_public_key = self
+            .config
+            .signing_public_key()
             .ok_or("No signing key configured")?;
-        
+
         let node_id = self.config.node_id();
 
         // Add ourselves as a global node using the genesis key
@@ -341,7 +409,10 @@ impl MeshTransport {
     ) {
         tracing::debug!(
             "Received key forward from {}: session={} key={} mesh={}",
-            from_peer, session_id, key_id, mesh_id
+            from_peer,
+            session_id,
+            key_id,
+            mesh_id
         );
 
         if let Some(my_mesh_id) = self.get_node_mesh_id() {
@@ -352,7 +423,8 @@ impl MeshTransport {
                     key_id,
                     mesh_id,
                     client_x25519_pubkey,
-                ).await;
+                )
+                .await;
                 return;
             }
         }
@@ -364,7 +436,8 @@ impl MeshTransport {
             mesh_id,
             client_x25519_pubkey,
             global_node_id,
-        ).await;
+        )
+        .await;
     }
 
     pub(crate) async fn handle_key_forward_as_origin(
@@ -380,7 +453,10 @@ impl MeshTransport {
         let origin_ed25519_pubkey = match self.get_origin_ed25519_pubkey(mesh_id) {
             Some(pk) => pk,
             None => {
-                tracing::warn!("No origin signing key for mesh {}, skipping key forward", mesh_id);
+                tracing::warn!(
+                    "No origin signing key for mesh {}, skipping key forward",
+                    mesh_id
+                );
                 return;
             }
         };
@@ -433,12 +509,16 @@ impl MeshTransport {
         let origin_pubkey = match self.get_origin_ed25519_pubkey(mesh_id) {
             Some(pk) => pk,
             None => {
-                tracing::warn!("Unknown origin mesh_id: {}, attempting async lookup", mesh_id);
+                tracing::warn!(
+                    "Unknown origin mesh_id: {}, attempting async lookup",
+                    mesh_id
+                );
                 match self.lookup_origin_key_async(mesh_id).await {
                     Some(pk) => pk,
                     None => {
                         tracing::error!("Failed to lookup origin key for mesh_id: {}", mesh_id);
-                        self.send_error_response(from_peer, session_id, "Unknown origin mesh_id").await;
+                        self.send_error_response(from_peer, session_id, "Unknown origin mesh_id")
+                            .await;
                         return;
                     }
                 }
@@ -448,7 +528,11 @@ impl MeshTransport {
         let origin_node_id = self.topology.find_origin_by_mesh_id(mesh_id).await;
 
         if let Some(origin_id) = origin_node_id {
-            tracing::info!("Forwarding KeyForward to origin node {} for mesh {}", origin_id, mesh_id);
+            tracing::info!(
+                "Forwarding KeyForward to origin node {} for mesh {}",
+                origin_id,
+                mesh_id
+            );
 
             let key_forward = MeshMessage::KeyForward {
                 session_id: session_id.into(),
@@ -462,12 +546,16 @@ impl MeshTransport {
 
             if let Err(e) = self.send_datagram_to_peer(&origin_id, &key_forward).await {
                 tracing::error!("Failed to forward KeyForward to origin: {}", e);
-                self.send_error_response(from_peer, session_id, "Failed to reach origin").await;
+                self.send_error_response(from_peer, session_id, "Failed to reach origin")
+                    .await;
             }
             return;
         }
 
-        tracing::warn!("No origin node found for mesh_id {}, checking known origins config", mesh_id);
+        tracing::warn!(
+            "No origin node found for mesh_id {}, checking known origins config",
+            mesh_id
+        );
 
         let server_x25519_pubkey = self.config.node_id().to_string();
         let expires_at = chrono::Utc::now().timestamp() + 3600;
@@ -481,7 +569,8 @@ impl MeshTransport {
             signer.sign(&sign_message)
         } else {
             tracing::error!("Origin signing key not available for forwarding");
-            self.send_error_response(from_peer, session_id, "Origin key unavailable").await;
+            self.send_error_response(from_peer, session_id, "Origin key unavailable")
+                .await;
             return;
         };
 
@@ -521,12 +610,17 @@ impl MeshTransport {
     ) {
         tracing::debug!(
             "Received key signed from {}: session={} key={} mesh={} origin={}",
-            from_peer, session_id, key_id, mesh_id, origin_mesh_id
+            from_peer,
+            session_id,
+            key_id,
+            mesh_id,
+            origin_mesh_id
         );
 
         tracing::info!(
             "Key exchange completed for session {}: origin={} verified",
-            session_id, origin_mesh_id
+            session_id,
+            origin_mesh_id
         );
     }
 
@@ -536,7 +630,11 @@ impl MeshTransport {
         request_id: &str,
         mesh_id: &str,
     ) {
-        tracing::debug!("Received OriginKeyQuery for mesh {} from {}", mesh_id, from_peer);
+        tracing::debug!(
+            "Received OriginKeyQuery for mesh {} from {}",
+            mesh_id,
+            from_peer
+        );
 
         let origin_pubkey = self.get_origin_ed25519_pubkey(mesh_id).map(|s| s.into());
 
@@ -548,7 +646,11 @@ impl MeshTransport {
         };
 
         if let Err(e) = self.send_datagram_to_peer(from_peer, &response).await {
-            tracing::warn!("Failed to send OriginKeyQueryResponse to {}: {}", from_peer, e);
+            tracing::warn!(
+                "Failed to send OriginKeyQueryResponse to {}: {}",
+                from_peer,
+                e
+            );
         }
     }
 
@@ -558,20 +660,27 @@ impl MeshTransport {
                 return origin_key.public_key_base64.clone();
             }
         }
-        self.config.global_node.known_origin_keys.get(mesh_id).cloned()
+        self.config
+            .global_node
+            .known_origin_keys
+            .get(mesh_id)
+            .cloned()
     }
 
     pub(crate) async fn lookup_origin_key_async(&self, mesh_id: &str) -> Option<String> {
         let peers = self.topology.get_random_peers(3, None).await;
-        
+
         if peers.is_empty() {
-            tracing::debug!("No peers available for origin key lookup of mesh {}", mesh_id);
+            tracing::debug!(
+                "No peers available for origin key lookup of mesh {}",
+                mesh_id
+            );
             return None;
         }
 
         let peer_count = peers.len();
         let request_id = format!("origin-key-query-{}", uuid::Uuid::new_v4());
-        
+
         let request = crate::mesh::protocol::MeshMessage::OriginKeyQuery {
             request_id: request_id.into(),
             mesh_id: mesh_id.into(),
@@ -583,9 +692,12 @@ impl MeshTransport {
                 tracing::warn!("Failed to send OriginKeyQuery to {}: {}", peer.node_id, e);
             }
         }
-        
-        tracing::debug!("Broadcast OriginKeyQuery for mesh {} to {} peers", mesh_id, peer_count);
+
+        tracing::debug!(
+            "Broadcast OriginKeyQuery for mesh {} to {} peers",
+            mesh_id,
+            peer_count
+        );
         None
     }
-
 }

@@ -4,10 +4,10 @@ use std::os::windows::io::{AsRawSocket, RawSocket};
 use std::path::Path;
 use std::sync::Arc;
 
-use super::socket::{OwnedTcpListener, OwnedTcpStream, SocketHandoffError, SocketInfo, SocketType};
 use super::ipc::{IpcListener, IpcStream, IpcTransport};
 use super::process::{ProcessControl, Signal, SignalHandler};
-use super::{PlatformError, Platform};
+use super::socket::{OwnedTcpListener, OwnedTcpStream, SocketHandoffError, SocketInfo, SocketType};
+use super::{Platform, PlatformError};
 use crate::RunningFlag;
 
 const PIPE_BUFFER_SIZE: u32 = 65536;
@@ -19,13 +19,19 @@ pub struct WindowsSocketHandle {
 
 impl WindowsSocketHandle {
     pub fn new(socket: RawSocket) -> Self {
-        Self { socket, owned: true }
+        Self {
+            socket,
+            owned: true,
+        }
     }
-    
+
     pub fn borrowed(socket: RawSocket) -> Self {
-        Self { socket, owned: false }
+        Self {
+            socket,
+            owned: false,
+        }
     }
-    
+
     pub fn socket(&self) -> RawSocket {
         self.socket
     }
@@ -36,12 +42,12 @@ impl super::socket::SocketHandle for WindowsSocketHandle {
         // SAFETY: self.socket is a valid socket handle we own
         Ok(unsafe { OwnedTcpListener::from_raw_socket(self.socket).into_inner() })
     }
-    
+
     fn as_tcp_stream(&self) -> io::Result<TcpStream> {
         // SAFETY: self.socket is a valid socket handle we own
         Ok(unsafe { OwnedTcpStream::from_raw_socket(self.socket).into_inner() })
     }
-    
+
     fn close(&mut self) -> io::Result<()> {
         if self.owned && self.socket != 0 {
             // SAFETY: CloseHandle is called on a valid socket handle we own.
@@ -68,37 +74,37 @@ pub struct WindowsSocketFDPassing {
 
 impl super::socket::SocketFDPassing for WindowsSocketFDPassing {
     type Handle = WindowsSocketHandle;
-    
+
     fn new() -> Self {
         Self { connected: false }
     }
-    
+
     fn connect(&mut self, _path: &Path) -> io::Result<()> {
         self.connected = true;
         Ok(())
     }
-    
+
     fn send_sockets(&self, _handles: &[Self::Handle]) -> Result<(), SocketHandoffError> {
         Err(SocketHandoffError::NotSupported(
-            "Socket FD passing requires WSADuplicateSocket. Use port-swap upgrade mode instead.".into()
+            "Socket FD passing requires WSADuplicateSocket. Use port-swap upgrade mode instead."
+                .into(),
         ))
     }
-    
+
     fn recv_sockets(&self, _max_count: usize) -> Result<Vec<Self::Handle>, SocketHandoffError> {
         Err(SocketHandoffError::NotSupported(
-            "Socket FD passing requires WSADuplicateSocket. Use port-swap upgrade mode instead.".into()
+            "Socket FD passing requires WSADuplicateSocket. Use port-swap upgrade mode instead."
+                .into(),
         ))
     }
 }
 
 pub fn create_listening_socket_windows(port: u16) -> Result<SocketInfo, PlatformError> {
     let addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, port);
-    let listener = TcpListener::bind(addr)
-        .map_err(PlatformError::Io)?;
-    
-    listener.set_nonblocking(true)
-        .map_err(PlatformError::Io)?;
-    
+    let listener = TcpListener::bind(addr).map_err(PlatformError::Io)?;
+
+    listener.set_nonblocking(true).map_err(PlatformError::Io)?;
+
     Ok(SocketInfo {
         handle: listener.as_raw_socket(),
         port,
@@ -108,12 +114,10 @@ pub fn create_listening_socket_windows(port: u16) -> Result<SocketInfo, Platform
 
 pub fn create_listening_socket_v6_windows(port: u16) -> Result<SocketInfo, PlatformError> {
     let addr = SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, port, 0, 0);
-    let listener = TcpListener::bind(addr)
-        .map_err(PlatformError::Io)?;
-    
-    listener.set_nonblocking(true)
-        .map_err(PlatformError::Io)?;
-    
+    let listener = TcpListener::bind(addr).map_err(PlatformError::Io)?;
+
+    listener.set_nonblocking(true).map_err(PlatformError::Io)?;
+
     Ok(SocketInfo {
         handle: listener.as_raw_socket(),
         port,
@@ -122,16 +126,16 @@ pub fn create_listening_socket_v6_windows(port: u16) -> Result<SocketInfo, Platf
 }
 
 pub fn duplicate_socket_for_child(socket: RawSocket, target_pid: u32) -> io::Result<Vec<u8>> {
-    use windows_sys::Win32::Networking::WinSock::{WSADuplicateSocketW, SOCKET, WSAPROTOCOL_INFOW};
     use std::mem::{size_of, MaybeUninit};
-    
+    use windows_sys::Win32::Networking::WinSock::{WSADuplicateSocketW, SOCKET, WSAPROTOCOL_INFOW};
+
     let mut protocol_info = MaybeUninit::<WSAPROTOCOL_INFOW>::uninit();
     let result = WSADuplicateSocketW(socket as SOCKET, target_pid, protocol_info.as_mut_ptr());
-    
+
     if result != 0 {
         return Err(io::Error::last_os_error());
     }
-    
+
     let protocol_info = protocol_info.assume_init();
     // SAFETY: protocol_info is a valid WSAPROTOCOL_INFOW that was initialized by
     // WSADuplicateSocketW. Reinterpreting the struct as a byte slice is safe because:
@@ -141,23 +145,29 @@ pub fn duplicate_socket_for_child(socket: RawSocket, target_pid: u32) -> io::Res
     let bytes = unsafe {
         std::slice::from_raw_parts(
             &protocol_info as *const _ as *const u8,
-            size_of::<WSAPROTOCOL_INFOW>()
+            size_of::<WSAPROTOCOL_INFOW>(),
         )
     };
-    
+
     Ok(bytes.to_vec())
 }
 
 pub fn create_socket_from_duplicate(info_bytes: &[u8]) -> io::Result<WindowsSocketHandle> {
-    use windows_sys::Win32::Networking::WinSock::{WSASocketW, SOCKET, WSAPROTOCOL_INFOW, WSA_FLAG_OVERLAPPED};
     use std::mem;
-    
+    use windows_sys::Win32::Networking::WinSock::{
+        WSASocketW, SOCKET, WSAPROTOCOL_INFOW, WSA_FLAG_OVERLAPPED,
+    };
+
     if info_bytes.len() != mem::size_of::<WSAPROTOCOL_INFOW>() {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid protocol info size"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Invalid protocol info size",
+        ));
     }
-    
-    let protocol_info: WSAPROTOCOL_INFOW = (info_bytes.as_ptr() as *const _ as *const WSAPROTOCOL_INFOW).read_unaligned();
-    
+
+    let protocol_info: WSAPROTOCOL_INFOW =
+        (info_bytes.as_ptr() as *const _ as *const WSAPROTOCOL_INFOW).read_unaligned();
+
     // SAFETY: WSASocketW is called with validated protocol info; result is checked for INVALID_SOCKET.
     let socket = unsafe {
         WSASocketW(
@@ -166,14 +176,14 @@ pub fn create_socket_from_duplicate(info_bytes: &[u8]) -> io::Result<WindowsSock
             0,
             &protocol_info as *const _ as *mut _,
             0,
-            WSA_FLAG_OVERLAPPED
+            WSA_FLAG_OVERLAPPED,
         )
     };
-    
+
     if socket == windows_sys::Win32::Networking::WinSock::INVALID_SOCKET {
         return Err(io::Error::last_os_error());
     }
-    
+
     Ok(WindowsSocketHandle::new(socket as RawSocket))
 }
 
@@ -183,17 +193,18 @@ pub struct WindowsIpcListener {
 
 impl WindowsIpcListener {
     fn create_named_pipe(&self) -> io::Result<std::fs::File> {
-        use windows_sys::Win32::System::Pipes::{
-            CreateNamedPipeW, PIPE_ACCESS_DUPLEX, PIPE_TYPE_MESSAGE,
-            PIPE_READMODE_MESSAGE, PIPE_WAIT,
-        };
         use windows_sys::Win32::Foundation::FILE_FLAG_OVERLAPPED;
-        
-        let wide_name: Vec<u16> = self.pipe_path
+        use windows_sys::Win32::System::Pipes::{
+            CreateNamedPipeW, PIPE_ACCESS_DUPLEX, PIPE_READMODE_MESSAGE, PIPE_TYPE_MESSAGE,
+            PIPE_WAIT,
+        };
+
+        let wide_name: Vec<u16> = self
+            .pipe_path
             .encode_utf16()
             .chain(std::iter::once(0))
             .collect();
-        
+
         // SAFETY: CreateNamedPipeW is called with a valid pipe name; we check for zero handle.
         unsafe {
             let handle = CreateNamedPipeW(
@@ -206,11 +217,11 @@ impl WindowsIpcListener {
                 0,
                 std::ptr::null_mut(),
             );
-            
+
             if handle == 0 {
                 return Err(io::Error::last_os_error());
             }
-            
+
             Ok(std::fs::File::from_raw_handle(handle as _))
         }
     }
@@ -218,39 +229,43 @@ impl WindowsIpcListener {
 
 impl IpcListener for WindowsIpcListener {
     type Stream = WindowsIpcStream;
-    
+
     fn bind(path: &Path) -> Result<Self, PlatformError> {
-        let pipe_name = path.file_name()
+        let pipe_name = path
+            .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("maluwaf");
-        
+
         Ok(Self {
             pipe_path: format!("\\\\.\\pipe\\{}", pipe_name),
         })
     }
-    
+
     fn accept(&self) -> Result<Self::Stream, PlatformError> {
-        let file = self.create_named_pipe()
+        let file = self
+            .create_named_pipe()
             .map_err(|e| PlatformError::Ipc(e.to_string()))?;
-        
-        use windows_sys::Win32::System::Pipes::ConnectNamedPipe;
+
         use windows_sys::Win32::Foundation::ERROR_PIPE_CONNECTED;
-        
+        use windows_sys::Win32::System::Pipes::ConnectNamedPipe;
+
         // SAFETY: ConnectNamedPipe is called with a valid pipe handle; we check return value.
-        let connected = unsafe {
-            ConnectNamedPipe(file.as_raw_handle() as *mut _, std::ptr::null_mut())
-        };
-        
+        let connected =
+            unsafe { ConnectNamedPipe(file.as_raw_handle() as *mut _, std::ptr::null_mut()) };
+
         if connected == 0 {
             let error = windows_sys::Win32::Foundation::GetLastError();
             if error != ERROR_PIPE_CONNECTED {
-                return Err(PlatformError::Ipc(format!("ConnectNamedPipe failed: {}", error)));
+                return Err(PlatformError::Ipc(format!(
+                    "ConnectNamedPipe failed: {}",
+                    error
+                )));
             }
         }
-        
+
         Ok(WindowsIpcStream { file })
     }
-    
+
     fn path(&self) -> &Path {
         Path::new(&self.pipe_path)
     }
@@ -265,16 +280,16 @@ impl IpcTransport for WindowsIpcStream {
         use std::io::Write;
         self.file.write_all(data)
     }
-    
+
     fn recv(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         use std::io::Read;
         self.file.read(buf)
     }
-    
+
     fn set_nonblocking(&self, _nonblocking: bool) -> io::Result<()> {
         Ok(())
     }
-    
+
     fn close(&mut self) -> io::Result<()> {
         Ok(())
     }
@@ -282,15 +297,16 @@ impl IpcTransport for WindowsIpcStream {
 
 impl IpcStream for WindowsIpcStream {
     fn connect(path: &Path) -> Result<Self, PlatformError> {
-        let pipe_name = path.file_name()
+        let pipe_name = path
+            .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("maluwaf");
-        
+
         let pipe_path = format!("\\\\.\\pipe\\{}", pipe_name);
-        
+
         let mut attempts = 0;
         let max_attempts = 10;
-        
+
         loop {
             match std::fs::OpenOptions::new()
                 .read(true)
@@ -306,7 +322,7 @@ impl IpcStream for WindowsIpcStream {
             }
         }
     }
-    
+
     fn peer_pid(&self) -> Option<u32> {
         None
     }
@@ -329,7 +345,7 @@ impl ProcessControl for WindowsProcessControl {
             )),
         }
     }
-    
+
     fn is_process_running(&self, pid: u32) -> bool {
         std::process::Command::new("tasklist")
             .args(["/FI", &format!("PID eq {}", pid)])
@@ -338,10 +354,10 @@ impl ProcessControl for WindowsProcessControl {
             .map(|o| String::from_utf8_lossy(&o.stdout).contains(&pid.to_string()))
             .unwrap_or(false)
     }
-    
+
     fn daemonize(&self, _pid_file: Option<&Path>) -> Result<(), PlatformError> {
         Err(PlatformError::NotSupported(
-            "Daemonization not supported on Windows. Use Windows Service instead.".into()
+            "Daemonization not supported on Windows. Use Windows Service instead.".into(),
         ))
     }
 }
@@ -367,26 +383,28 @@ impl Default for WindowsSignalHandler {
 }
 
 impl SignalHandler for WindowsSignalHandler {
-    fn register(&mut self, signal: Signal, handler: Box<dyn Fn() + Send + Sync>) -> Result<(), PlatformError> {
+    fn register(
+        &mut self,
+        signal: Signal,
+        handler: Box<dyn Fn() + Send + Sync>,
+    ) -> Result<(), PlatformError> {
         if !matches!(signal, Signal::Terminate | Signal::Interrupt) {
             return Err(PlatformError::NotSupported(
-                "Only Ctrl+C and terminate signals supported on Windows".into()
+                "Only Ctrl+C and terminate signals supported on Windows".into(),
             ));
         }
         self.handlers.push((signal, handler));
         Ok(())
     }
-    
+
     fn start_listening(&mut self) {
         self.running.set(true);
-        
-        let handlers: Vec<Arc<dyn Fn() + Send + Sync>> = self.handlers
-            .drain(..)
-            .map(|(_, h)| Arc::new(h))
-            .collect();
-        
+
+        let handlers: Vec<Arc<dyn Fn() + Send + Sync>> =
+            self.handlers.drain(..).map(|(_, h)| Arc::new(h)).collect();
+
         let running = self.running.clone();
-        
+
         tokio::spawn(async move {
             tokio::signal::ctrl_c().await.ok();
             if running.is_running() {
@@ -396,7 +414,7 @@ impl SignalHandler for WindowsSignalHandler {
             }
         });
     }
-    
+
     fn stop_listening(&mut self) {
         self.running.stop();
     }

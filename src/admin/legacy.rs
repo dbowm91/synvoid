@@ -1,4 +1,4 @@
-use crate::auth::{AuthManager, SessionInfo, UserInfo, LoginLog};
+use crate::auth::{AuthManager, LoginLog, SessionInfo, UserInfo};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -24,13 +24,23 @@ impl AdminManager {
         self.auth_manager.list_users().await
     }
 
-    pub async fn create_user(&self, username: String, password: String, role: String, sites: Vec<String>) -> Result<UserInfo, String> {
+    pub async fn create_user(
+        &self,
+        username: String,
+        password: String,
+        role: String,
+        sites: Vec<String>,
+    ) -> Result<UserInfo, String> {
         let role = match role.to_lowercase().as_str() {
             "admin" => crate::auth::UserRole::Admin,
             _ => crate::auth::UserRole::User,
         };
 
-        match self.auth_manager.create_user(username, password, role, sites).await {
+        match self
+            .auth_manager
+            .create_user(username, password, role, sites)
+            .await
+        {
             Ok(user) => Ok(UserInfo {
                 id: user.id,
                 username: user.username,
@@ -46,12 +56,16 @@ impl AdminManager {
     }
 
     pub async fn delete_user(&self, user_id: &str) -> Result<(), String> {
-        self.auth_manager.delete_user(user_id).await
+        self.auth_manager
+            .delete_user(user_id)
+            .await
             .map_err(|e| e.to_string())
     }
 
     pub async fn update_user_sites(&self, user_id: &str, sites: Vec<String>) -> Result<(), String> {
-        self.auth_manager.update_user_sites(user_id, sites).await
+        self.auth_manager
+            .update_user_sites(user_id, sites)
+            .await
             .map_err(|e| e.to_string())
     }
 
@@ -120,7 +134,7 @@ pub fn generate_dashboard_html(
                 String::new()
             }
         }).unwrap_or_default();
-        
+
         format!(r#"
             <tr>
                 <td>{}</td>
@@ -153,15 +167,18 @@ pub fn generate_dashboard_html(
         "#, escape_html(&s.username), escape_html(&s.expires_at.format("%Y-%m-%d %H:%M").to_string()), escape_html(s.id.split('-').next().unwrap_or(&s.id)), escape_html(&s.id))
     }).collect::<Vec<_>>().join("\n");
 
-    let logs_html = logs.iter().map(|l| {
-        let status = if l.success {
-            "<span class=\"badge badge-success\">Success</span>"
-        } else {
-            "<span class=\"badge badge-danger\">Failed</span>"
-        };
-        let reason = escape_html(l.reason.as_deref().unwrap_or("-"));
-        
-        format!(r#"
+    let logs_html = logs
+        .iter()
+        .map(|l| {
+            let status = if l.success {
+                "<span class=\"badge badge-success\">Success</span>"
+            } else {
+                "<span class=\"badge badge-danger\">Failed</span>"
+            };
+            let reason = escape_html(l.reason.as_deref().unwrap_or("-"));
+
+            format!(
+                r#"
             <tr>
                 <td>{}</td>
                 <td>{}</td>
@@ -169,10 +186,19 @@ pub fn generate_dashboard_html(
                 <td>{}</td>
                 <td>{}</td>
             </tr>
-        "#, escape_html(&l.timestamp.format("%Y-%m-%d %H:%M").to_string()), escape_html(&l.username), status, escape_html(l.ip_address.as_deref().unwrap_or("-")), reason)
-    }).collect::<Vec<_>>().join("\n");
+        "#,
+                escape_html(&l.timestamp.format("%Y-%m-%d %H:%M").to_string()),
+                escape_html(&l.username),
+                status,
+                escape_html(l.ip_address.as_deref().unwrap_or("-")),
+                reason
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
 
-    format!(r#"<!DOCTYPE html>
+    format!(
+        r#"<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -215,7 +241,7 @@ pub fn generate_dashboard_html(
 <body>
     <div class="container">
         <h1>RustWAF Admin Dashboard</h1>
-        
+
         <div class="stats">
             <div class="stat-card">
                 <h3>Total Users</h3>
@@ -339,11 +365,12 @@ pub fn generate_dashboard_html(
 }
 
 pub fn generate_login_page(error: Option<&str>) -> String {
-    let error_html = error.map(|e| {
-        format!(r#"<div class="alert alert-error">{}</div>"#, escape_html(e))
-    }).unwrap_or_default();
+    let error_html = error
+        .map(|e| format!(r#"<div class="alert alert-error">{}</div>"#, escape_html(e)))
+        .unwrap_or_default();
 
-    format!(r#"<!DOCTYPE html>
+    format!(
+        r#"<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -380,6 +407,7 @@ pub fn generate_login_page(error: Option<&str>) -> String {
         </form>
     </div>
 </body>
-</html>"#, error_html
+</html>"#,
+        error_html
     )
 }

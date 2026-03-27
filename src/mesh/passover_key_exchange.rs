@@ -51,27 +51,26 @@
 //! The edge node may optionally provide a token that proves the request came through
 //! a legitimate edge node. This is verified by the global node using the edge's public key.
 
-use std::sync::Arc;
-use std::time::Duration;
+use crate::mesh::config::MeshConfig;
 use axum::{
     extract::State,
-    Json,
     routing::{get, post},
-    Router,
+    Json, Router,
 };
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use lru_time_cache::LruCache;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::RwLock;
 use tonic::{Request, Response, Status};
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use ed25519_dalek::{SigningKey, Signer, Verifier, VerifyingKey, Signature};
+use tower_http::cors::{Any, CorsLayer};
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
-use lru_time_cache::LruCache;
-use tower_http::cors::{CorsLayer, Any};
-use crate::mesh::config::MeshConfig;
 
 use crate::mesh::protocol::proto::{
-    key_exchange_service_server::KeyExchangeService as GrpcKeyExchangeService,
-    KeyConfirm, KeyConfirmResponse, KeyOfferOrigin, KeyRequestOrigin,
+    key_exchange_service_server::KeyExchangeService as GrpcKeyExchangeService, KeyConfirm,
+    KeyConfirmResponse, KeyOfferOrigin, KeyRequestOrigin,
 };
 
 /// Error returned when the global node fails to proxy to origin
@@ -86,7 +85,9 @@ pub struct KeyExchangeHttpState {
     pub config: Arc<MeshConfig>,
     pub edge_token_cache: Arc<RwLock<LruCache<String, ()>>>,
     pub transport: Option<Arc<crate::mesh::transports::MeshTransportManager>>,
-    pending_key_requests: Arc<RwLock<std::collections::HashMap<String, tokio::sync::oneshot::Sender<KeySignedResponse>>>>,
+    pending_key_requests: Arc<
+        RwLock<std::collections::HashMap<String, tokio::sync::oneshot::Sender<KeySignedResponse>>>,
+    >,
     pending_ml_kem_secrets: Arc<RwLock<std::collections::HashMap<String, Vec<u8>>>>,
     established_sessions: Arc<RwLock<std::collections::HashMap<String, EstablishedSession>>>,
 }
@@ -134,7 +135,10 @@ impl KeyExchangeHttpState {
         }
     }
 
-    pub fn with_transport(mut self, transport: Option<Arc<crate::mesh::transports::MeshTransportManager>>) -> Self {
+    pub fn with_transport(
+        mut self,
+        transport: Option<Arc<crate::mesh::transports::MeshTransportManager>>,
+    ) -> Self {
         self.transport = transport;
         self
     }
@@ -170,7 +174,9 @@ impl KeyExchangeHttpState {
         client_x25519_pubkey: &str,
         nonce: &str,
     ) -> Result<KeySignedResponse, String> {
-        let transport_manager = self.transport.as_ref()
+        let transport_manager = self
+            .transport
+            .as_ref()
             .ok_or("Mesh transport not available - cannot proxy to origin")?;
 
         let origin_node_id = transport_manager.find_origin_by_mesh_id(mesh_id).await
@@ -179,25 +185,30 @@ impl KeyExchangeHttpState {
                 format!("Origin not found for mesh_id: {}. Ensure the global node is connected to the origin mesh.", mesh_id)
             })?;
 
-        let quic_transport = transport_manager.get_quic_transport()
+        let quic_transport = transport_manager
+            .get_quic_transport()
             .ok_or("QUIC transport not available - cannot proxy to origin")?;
-        
+
         let mesh_transport = quic_transport.get_inner();
 
         let session_id = URL_SAFE_NO_PAD.encode(rand::random::<[u8; 24]>());
         let key_id = URL_SAFE_NO_PAD.encode(rand::random::<[u8; 16]>());
-        
+
         let (tx, rx) = tokio::sync::oneshot::channel::<KeySignedResponse>();
-        
+
         {
             let mut pending = self.pending_key_requests.write().await;
             pending.insert(session_id.clone(), tx);
         }
 
-        tracing::info!("Proxying key request to origin {} for mesh {}", origin_node_id, mesh_id);
+        tracing::info!(
+            "Proxying key request to origin {} for mesh {}",
+            origin_node_id,
+            mesh_id
+        );
 
         let global_node_id = self.config.node_id();
-        
+
         let key_forward = crate::mesh::protocol::MeshMessage::KeyForward {
             session_id: session_id.clone().into(),
             key_id: key_id.clone().into(),
@@ -208,7 +219,9 @@ impl KeyExchangeHttpState {
             timestamp: chrono::Utc::now().timestamp() as u64,
         };
 
-        mesh_transport.send_datagram_to_peer(&origin_node_id, &key_forward).await
+        mesh_transport
+            .send_datagram_to_peer(&origin_node_id, &key_forward)
+            .await
             .map_err(|e| format!("Failed to send key request to origin: {}", e))?;
 
         let timeout = Duration::from_secs(10);
@@ -236,7 +249,7 @@ impl KeyExchangeHttpState {
             let mut pending = self.pending_key_requests.write().await;
             pending.remove(session_id)
         };
-        
+
         if let Some(tx) = tx {
             let _ = tx.send(response);
         }
@@ -339,10 +352,17 @@ impl GrpcKeyExchangeService for KeyExchangeService {
             &client_x25519_pubkey[..client_x25519_pubkey.len().min(16)]
         );
 
-        let origin_ed25519_pubkey = self.config.origin_signing_key.as_ref()
+        let origin_ed25519_pubkey = self
+            .config
+            .origin_signing_key
+            .as_ref()
             .and_then(|k| k.public_key_base64.clone())
             .or_else(|| {
-                self.config.global_node.known_origin_keys.get(&mesh_id).cloned()
+                self.config
+                    .global_node
+                    .known_origin_keys
+                    .get(&mesh_id)
+                    .cloned()
             })
             .ok_or_else(|| {
                 tracing::error!("Unknown origin mesh_id: {}", mesh_id);
@@ -353,9 +373,7 @@ impl GrpcKeyExchangeService for KeyExchangeService {
 
         let sign_message = format!(
             "pending|{}|{}|{}",
-            mesh_id,
-            client_x25519_pubkey,
-            expires_at
+            mesh_id, client_x25519_pubkey, expires_at
         );
 
         let pending_signature = if let Some(ref signer_config) = self.config.origin_signing_key {
@@ -434,10 +452,16 @@ pub async fn key_request_origin_http(
     Json(req): Json<KeyRequestOriginHttp>,
 ) -> Result<Json<KeyOfferOriginHttp>, (axum::http::StatusCode, String)> {
     if req.mesh_id.is_empty() {
-        return Err((axum::http::StatusCode::BAD_REQUEST, "mesh_id is required".to_string()));
+        return Err((
+            axum::http::StatusCode::BAD_REQUEST,
+            "mesh_id is required".to_string(),
+        ));
     }
     if req.client_x25519_pubkey.is_empty() {
-        return Err((axum::http::StatusCode::BAD_REQUEST, "client_x25519_pubkey is required".to_string()));
+        return Err((
+            axum::http::StatusCode::BAD_REQUEST,
+            "client_x25519_pubkey is required".to_string(),
+        ));
     }
 
     let client_ip = req.client_ip.as_deref().unwrap_or("");
@@ -445,10 +469,16 @@ pub async fn key_request_origin_http(
     if let (Some(edge_id), Some(edge_token)) = (&req.edge_id, &req.edge_token) {
         if let Err(e) = verify_edge_token(&state, edge_id, edge_token, client_ip).await {
             tracing::warn!("Edge token verification failed: {}", e);
-            return Err((axum::http::StatusCode::UNAUTHORIZED, format!("Edge token verification failed: {}", e)));
+            return Err((
+                axum::http::StatusCode::UNAUTHORIZED,
+                format!("Edge token verification failed: {}", e),
+            ));
         }
     } else if state.config.global_node.key_exchange_require_edge_auth {
-        return Err((axum::http::StatusCode::UNAUTHORIZED, "Edge token required".to_string()));
+        return Err((
+            axum::http::StatusCode::UNAUTHORIZED,
+            "Edge token required".to_string(),
+        ));
     }
 
     tracing::info!(
@@ -458,18 +488,21 @@ pub async fn key_request_origin_http(
         req.client_ml_kem_pubkey.is_some()
     );
 
-    let origin_response = state.proxy_key_request_to_origin(
-        &req.mesh_id,
-        &req.client_x25519_pubkey,
-        &req.nonce,
-    ).await;
+    let origin_response = state
+        .proxy_key_request_to_origin(&req.mesh_id, &req.client_x25519_pubkey, &req.nonce)
+        .await;
 
     let origin_resp = match origin_response {
         Ok(resp) => resp,
         Err(e) => {
             tracing::error!("Failed to proxy key request to origin: {}", e);
-            return Err((axum::http::StatusCode::BAD_GATEWAY, 
-                format!("Origin unavailable: {}. The global node cannot proxy to the origin.", e)));
+            return Err((
+                axum::http::StatusCode::BAD_GATEWAY,
+                format!(
+                    "Origin unavailable: {}. The global node cannot proxy to the origin.",
+                    e
+                ),
+            ));
         }
     };
 
@@ -492,7 +525,10 @@ pub async fn key_request_origin_http(
                     tracing::info!("ML-KEM encapsulation successful for mesh {}", req.mesh_id);
                 }
                 Err(e) => {
-                    tracing::warn!("ML-KEM encapsulation failed: {}, falling back to X25519 only", e);
+                    tracing::warn!(
+                        "ML-KEM encapsulation failed: {}, falling back to X25519 only",
+                        e
+                    );
                     server_ml_kem_pubkey = None;
                     ml_kem_ciphertext = None;
                 }
@@ -504,7 +540,9 @@ pub async fn key_request_origin_http(
 
     // Store ML-KEM secret for later use in key_confirm
     if let Some(secret) = ml_kem_secret {
-        state.store_ml_kem_secret(&origin_resp.session_id, secret).await;
+        state
+            .store_ml_kem_secret(&origin_resp.session_id, secret)
+            .await;
     }
 
     let key_offer = KeyOfferOriginHttp {
@@ -523,28 +561,37 @@ pub async fn key_request_origin_http(
         ml_kem_ciphertext,
     };
 
-    tracing::info!("Successfully proxied key exchange response from origin for mesh {}", req.mesh_id);
-    
+    tracing::info!(
+        "Successfully proxied key exchange response from origin for mesh {}",
+        req.mesh_id
+    );
+
     Ok(Json(key_offer))
 }
 
 /// Perform ML-KEM-768 encapsulation using the client's public key.
-/// 
+///
 /// In ML-KEM, the client sends their public key, and the server uses it to
 /// encapsulate a shared secret. The ciphertext is sent back to the client who
 /// can decapsulate it using their secret key.
-/// 
+///
 /// Returns (ciphertext, shared_secret)
-fn perform_ml_kem_encapsulation(client_ml_kem_pubkey_b64: &str) -> Result<(String, Vec<u8>), String> {
-    use pqc::MlKem768;
+fn perform_ml_kem_encapsulation(
+    client_ml_kem_pubkey_b64: &str,
+) -> Result<(String, Vec<u8>), String> {
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+    use pqc::MlKem768;
 
-    let client_pk_bytes = URL_SAFE_NO_PAD.decode(client_ml_kem_pubkey_b64)
+    let client_pk_bytes = URL_SAFE_NO_PAD
+        .decode(client_ml_kem_pubkey_b64)
         .map_err(|e| format!("Invalid base64 ML-KEM pubkey: {}", e))?;
 
     if client_pk_bytes.len() != MlKem768::PUBLIC_KEY_SIZE {
-        return Err(format!("Invalid ML-KEM pubkey size: expected {}, got {}",
-            MlKem768::PUBLIC_KEY_SIZE, client_pk_bytes.len()));
+        return Err(format!(
+            "Invalid ML-KEM pubkey size: expected {}, got {}",
+            MlKem768::PUBLIC_KEY_SIZE,
+            client_pk_bytes.len()
+        ));
     }
 
     let client_pk = pqc::PublicKey::from_bytes(&client_pk_bytes)
@@ -561,8 +608,8 @@ fn perform_ml_kem_encapsulation(client_ml_kem_pubkey_b64: &str) -> Result<(Strin
 /// This provides post-quantum security: even if a quantum attacker breaks one algorithm,
 /// they still need to break the other to recover the session key.
 fn combine_secrets(secret1: &[u8], secret2: &[u8]) -> Vec<u8> {
-    use sha2::{Sha256, Digest};
-    
+    use sha2::{Digest, Sha256};
+
     let mut hasher = Sha256::new();
     hasher.update(secret1);
     hasher.update(b"hybrid-v1");
@@ -575,14 +622,24 @@ pub async fn key_confirm_http(
     Json(req): Json<KeyConfirmHttp>,
 ) -> Result<Json<KeyConfirmResponseHttp>, (axum::http::StatusCode, String)> {
     if req.session_id.is_empty() {
-        return Err((axum::http::StatusCode::BAD_REQUEST, "session_id is required".to_string()));
+        return Err((
+            axum::http::StatusCode::BAD_REQUEST,
+            "session_id is required".to_string(),
+        ));
     }
     if req.client_x25519_pubkey.is_empty() {
-        return Err((axum::http::StatusCode::BAD_REQUEST, "client_x25519_pubkey is required".to_string()));
+        return Err((
+            axum::http::StatusCode::BAD_REQUEST,
+            "client_x25519_pubkey is required".to_string(),
+        ));
     }
 
-    let client_ed25519_pubkey = req.client_ed25519_pubkey.clone()
-        .ok_or_else(|| (axum::http::StatusCode::BAD_REQUEST, "client_ed25519_pubkey is required".to_string()))?;
+    let client_ed25519_pubkey = req.client_ed25519_pubkey.clone().ok_or_else(|| {
+        (
+            axum::http::StatusCode::BAD_REQUEST,
+            "client_ed25519_pubkey is required".to_string(),
+        )
+    })?;
 
     tracing::info!(
         "HTTP key confirm: session_id={}, client_pk={}, client_ed25519_pk={}",
@@ -594,29 +651,49 @@ pub async fn key_confirm_http(
     // Derive the shared secret using X25519
     // Use the global node's long-term X25519 key from config
     let server_static_secret = {
-        let secret_bytes = state.config.global_node.x25519_private_key
-            .ok_or_else(|| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, "Global node X25519 key not configured".to_string()))?;
+        let secret_bytes = state.config.global_node.x25519_private_key.ok_or_else(|| {
+            (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "Global node X25519 key not configured".to_string(),
+            )
+        })?;
         StaticSecret::from(secret_bytes)
     };
     let server_x25519_pubkey = {
-        
-        state.config.global_node.x25519_public_key_base64
+        state
+            .config
+            .global_node
+            .x25519_public_key_base64
             .clone()
-            .ok_or_else(|| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, "Global node X25519 public key not derived".to_string()))?
+            .ok_or_else(|| {
+                (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "Global node X25519 public key not derived".to_string(),
+                )
+            })?
     };
-    
+
     // Decode client's X25519 public key
-    let client_pk_bytes = URL_SAFE_NO_PAD.decode(&req.client_x25519_pubkey)
-        .map_err(|_| (axum::http::StatusCode::BAD_REQUEST, "Invalid client public key encoding".to_string()))?;
-    
+    let client_pk_bytes = URL_SAFE_NO_PAD
+        .decode(&req.client_x25519_pubkey)
+        .map_err(|_| {
+            (
+                axum::http::StatusCode::BAD_REQUEST,
+                "Invalid client public key encoding".to_string(),
+            )
+        })?;
+
     if client_pk_bytes.len() != 32 {
-        return Err((axum::http::StatusCode::BAD_REQUEST, "Invalid client public key length".to_string()));
+        return Err((
+            axum::http::StatusCode::BAD_REQUEST,
+            "Invalid client public key length".to_string(),
+        ));
     }
-    
+
     let mut client_pk_array = [0u8; 32];
     client_pk_array.copy_from_slice(&client_pk_bytes);
     let client_x25519_pk = X25519PublicKey::from(client_pk_array);
-    
+
     // Derive shared secret
     let shared_secret = server_static_secret.diffie_hellman(&client_x25519_pk);
     let mut shared_secret_bytes = shared_secret.as_bytes().to_vec();
@@ -626,24 +703,36 @@ pub async fn key_confirm_http(
         // Combine X25519 and ML-KEM secrets using HKDF-like construction
         let hybrid = combine_secrets(&shared_secret_bytes, &ml_kem_secret);
         shared_secret_bytes = hybrid;
-        tracing::info!("Using hybrid X25519+ML-KEM session key for session {}", req.session_id);
-        
+        tracing::info!(
+            "Using hybrid X25519+ML-KEM session key for session {}",
+            req.session_id
+        );
+
         // Clean up the stored secret
         state.remove_ml_kem_secret(&req.session_id).await;
     } else if let Some(ref _ct) = req.ml_kem_ciphertext {
-        tracing::debug!("ML-KEM ciphertext present but no stored secret found for session {}", req.session_id);
+        tracing::debug!(
+            "ML-KEM ciphertext present but no stored secret found for session {}",
+            req.session_id
+        );
     }
 
     // Get the origin's Ed25519 public key for session storage
-    let origin_ed25519_pubkey = state.config.origin_signing_key.as_ref()
+    let origin_ed25519_pubkey = state
+        .config
+        .origin_signing_key
+        .as_ref()
         .and_then(|k| k.public_key_base64.clone())
         .unwrap_or_default();
 
     // Store the established session
-    let mesh_id = state.config.origin_signing_key.as_ref()
+    let mesh_id = state
+        .config
+        .origin_signing_key
+        .as_ref()
         .map(|k| k.mesh_id.clone())
         .unwrap_or_default();
-    
+
     let session = EstablishedSession {
         session_id: req.session_id.clone(),
         mesh_id,
@@ -656,7 +745,7 @@ pub async fn key_confirm_http(
         ml_kem_ciphertext: req.ml_kem_ciphertext.clone(),
         established_at: chrono::Utc::now().timestamp(),
     };
-    
+
     state.establish_session(session).await;
 
     // Return the GLOBAL node's Ed25519 public key (not origin's)
@@ -703,8 +792,8 @@ pub async fn verify_edge_token(
         .decode(payload_b64)
         .map_err(|_| "Invalid token payload encoding")?;
 
-    let payload: EdgeTokenPayload = serde_json::from_slice(&payload_bytes)
-        .map_err(|_| "Invalid token payload format")?;
+    let payload: EdgeTokenPayload =
+        serde_json::from_slice(&payload_bytes).map_err(|_| "Invalid token payload format")?;
 
     // Verify client IP matches
     if payload.client_ip != client_ip {
@@ -745,30 +834,34 @@ pub async fn verify_edge_token(
     };
 
     // Verify the signature
-    let message = format!("{}:{}:{}:{}", payload.client_ip, payload.timestamp, payload.expires_at, payload.nonce);
-    
+    let message = format!(
+        "{}:{}:{}:{}",
+        payload.client_ip, payload.timestamp, payload.expires_at, payload.nonce
+    );
+
     // Decode edge public key
-    let edge_key_bytes = URL_SAFE_NO_PAD.decode(&edge_public_key)
+    let edge_key_bytes = URL_SAFE_NO_PAD
+        .decode(&edge_public_key)
         .map_err(|_| "Invalid edge public key encoding")?;
     if edge_key_bytes.len() != 32 {
         return Err("Invalid edge public key length".to_string());
     }
     let mut key_array = [0u8; 32];
     key_array.copy_from_slice(&edge_key_bytes);
-    
-    let verifier = VerifyingKey::from_bytes(&key_array)
-        .map_err(|_| "Invalid edge public key")?;
 
-    let signature_bytes = URL_SAFE_NO_PAD.decode(signature_b64)
+    let verifier = VerifyingKey::from_bytes(&key_array).map_err(|_| "Invalid edge public key")?;
+
+    let signature_bytes = URL_SAFE_NO_PAD
+        .decode(signature_b64)
         .map_err(|_| "Invalid signature encoding")?;
-    
+
     if signature_bytes.len() != 64 {
         return Err("Invalid signature length".to_string());
     }
 
     let mut sig_array = [0u8; 64];
     sig_array.copy_from_slice(&signature_bytes);
-    
+
     let signature = Signature::from_bytes(&sig_array);
 
     verifier
@@ -783,11 +876,11 @@ pub async fn verify_edge_token(
 
 pub fn create_key_exchange_router(config: Arc<MeshConfig>) -> Router {
     let state = KeyExchangeHttpState::new(config.clone());
-    
+
     let global_node_config = &config.global_node;
-    
+
     let cors = build_cors_layer(global_node_config);
-    
+
     Router::new()
         .route("/key-request-origin", post(key_request_origin_http))
         .route("/key-confirm", post(key_confirm_http))
@@ -800,12 +893,13 @@ pub fn create_key_exchange_router(config: Arc<MeshConfig>) -> Router {
 
 fn build_cors_layer(global_node_config: &crate::mesh::config::GlobalNodeConfig) -> CorsLayer {
     let mut cors = CorsLayer::new();
-    
+
     if let Some(ref origin) = global_node_config.cors_allow_origin {
         if origin == "*" || origin.is_empty() {
             cors = cors.allow_origin(Any);
         } else {
-            let origins: Vec<http::HeaderValue> = origin.split(',')
+            let origins: Vec<http::HeaderValue> = origin
+                .split(',')
                 .filter_map(|o| o.trim().parse().ok())
                 .collect();
             if origins.is_empty() {
@@ -817,14 +911,13 @@ fn build_cors_layer(global_node_config: &crate::mesh::config::GlobalNodeConfig) 
     } else {
         cors = cors.allow_origin(Any);
     }
-    
+
     if let Some(ref methods) = global_node_config.cors_allow_methods {
         if methods.is_empty() {
             cors = cors.allow_methods(Any);
         } else {
-            let http_methods: Vec<http::Method> = methods.iter()
-                .filter_map(|m| m.parse().ok())
-                .collect();
+            let http_methods: Vec<http::Method> =
+                methods.iter().filter_map(|m| m.parse().ok()).collect();
             if http_methods.is_empty() {
                 cors = cors.allow_methods(Any);
             } else {
@@ -834,14 +927,13 @@ fn build_cors_layer(global_node_config: &crate::mesh::config::GlobalNodeConfig) 
     } else {
         cors = cors.allow_methods(Any);
     }
-    
+
     if let Some(ref headers) = global_node_config.cors_allow_headers {
         if headers.is_empty() {
             cors = cors.allow_headers(Any);
         } else {
-            let http_headers: Vec<http::HeaderName> = headers.iter()
-                .filter_map(|h| h.parse().ok())
-                .collect();
+            let http_headers: Vec<http::HeaderName> =
+                headers.iter().filter_map(|h| h.parse().ok()).collect();
             if http_headers.is_empty() {
                 cors = cors.allow_headers(Any);
             } else {
@@ -851,7 +943,7 @@ fn build_cors_layer(global_node_config: &crate::mesh::config::GlobalNodeConfig) 
     } else {
         cors = cors.allow_headers(Any);
     }
-    
+
     cors
 }
 
@@ -865,19 +957,23 @@ pub async fn run_key_exchange_server(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let addr: std::net::SocketAddr = format!("0.0.0.0:{}", port).parse()?;
     let router = create_key_exchange_router(config.clone());
-    
+
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    
+
     let scheme = if config.tls.cert_path.is_some() && config.tls.key_path.is_some() {
         "https"
     } else {
         "http"
     };
-    
-    tracing::info!("Key exchange server starting on {}://{} (TLS not yet implemented - use https proxy)", scheme, addr);
-    
+
+    tracing::info!(
+        "Key exchange server starting on {}://{} (TLS not yet implemented - use https proxy)",
+        scheme,
+        addr
+    );
+
     axum::serve(listener, router).await?;
-    
+
     Ok(())
 }
 
@@ -886,8 +982,8 @@ mod tests {
     use super::*;
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
     use ed25519_dalek::{SigningKey, Verifier};
+    use serde::{Deserialize, Serialize};
     use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
-    use serde::{Serialize, Deserialize};
 
     #[derive(Serialize, Deserialize)]
     struct TestKeySignedResponse {
@@ -915,7 +1011,7 @@ mod tests {
             expires_at: 1234567890,
             nonce: "test-nonce".to_string(),
         };
-        
+
         let serialized = serde_json::to_string(&response).unwrap();
         assert!(serialized.contains("test-session"));
     }
@@ -934,7 +1030,7 @@ mod tests {
             ml_kem_ciphertext: None,
             established_at: 1234567890,
         };
-        
+
         assert_eq!(session.session_id, "session-123");
         assert_eq!(session.mesh_id, "mesh-456");
     }
@@ -943,7 +1039,7 @@ mod tests {
     async fn test_key_exchange_http_state_session_management() {
         let config = Arc::new(MeshConfig::default());
         let state = KeyExchangeHttpState::new(config);
-        
+
         let session = EstablishedSession {
             session_id: "test-session".to_string(),
             mesh_id: "test-mesh".to_string(),
@@ -956,9 +1052,9 @@ mod tests {
             ml_kem_ciphertext: None,
             established_at: chrono::Utc::now().timestamp(),
         };
-        
+
         state.establish_session(session.clone()).await;
-        
+
         let retrieved = state.get_session(&session.session_id).await;
         assert!(retrieved.is_some());
         assert_eq!(retrieved.unwrap().session_id, "test-session");
@@ -970,16 +1066,16 @@ mod tests {
         let client_secret_bytes: [u8; 32] = rand::random();
         let client_secret = StaticSecret::from(client_secret_bytes);
         let client_public = X25519PublicKey::from(&client_secret);
-        
-        // Server generates key pair  
+
+        // Server generates key pair
         let server_secret_bytes: [u8; 32] = rand::random();
         let server_secret = StaticSecret::from(server_secret_bytes);
         let server_public = X25519PublicKey::from(&server_secret);
-        
+
         // Both derive same shared secret
         let client_shared = client_secret.diffie_hellman(&server_public);
         let server_shared = server_secret.diffie_hellman(&client_public);
-        
+
         assert_eq!(client_shared.as_bytes(), server_shared.as_bytes());
     }
 
@@ -1011,7 +1107,7 @@ mod tests {
     #[test]
     fn test_ml_kem_key_sizes() {
         use pqc::MlKem768;
-        
+
         assert_eq!(MlKem768::PUBLIC_KEY_SIZE, 1184);
         assert_eq!(MlKem768::SECRET_KEY_SIZE, 2400);
         assert_eq!(MlKem768::CIPHERTEXT_SIZE, 1088);
@@ -1021,7 +1117,7 @@ mod tests {
     #[test]
     fn test_ml_dsa_key_sizes() {
         use pqc::MlDsa44;
-        
+
         assert_eq!(MlDsa44::PUBLIC_KEY_SIZE, 1312);
         assert_eq!(MlDsa44::SECRET_KEY_SIZE, 2560);
         assert_eq!(MlDsa44::SIGNATURE_SIZE, 2420);
@@ -1031,12 +1127,12 @@ mod tests {
     fn test_hybrid_secret_combination() {
         let x25519_secret = vec![0u8; 32];
         let ml_kem_secret = vec![1u8; 32];
-        
+
         let combined = combine_secrets(&x25519_secret, &ml_kem_secret);
-        
+
         // Should be 32 bytes (SHA256 output)
         assert_eq!(combined.len(), 32);
-        
+
         // Different inputs should produce different outputs
         let combined2 = combine_secrets(&vec![2u8; 32], &vec![3u8; 32]);
         assert_ne!(combined, combined2);
@@ -1048,23 +1144,25 @@ mod tests {
         let secret_bytes: [u8; 32] = rand::random();
         let signing_key = SigningKey::from_bytes(&secret_bytes);
         let verifying_key = signing_key.verifying_key();
-        
+
         // Sign a message
         let message = "test message for signing";
         let signature = signing_key.sign(message.as_bytes());
-        
+
         // Verify signature
         assert!(verifying_key.verify(message.as_bytes(), &signature).is_ok());
-        
+
         // Verify wrong message fails
-        assert!(verifying_key.verify("wrong message".as_bytes(), &signature).is_err());
+        assert!(verifying_key
+            .verify("wrong message".as_bytes(), &signature)
+            .is_err());
     }
 
     #[tokio::test]
     async fn test_key_request_validation() {
         let config = Arc::new(MeshConfig::default());
         let state = KeyExchangeHttpState::new(config);
-        
+
         // The validation happens in the handler, but we can test the state
         assert!(state.get_session("nonexistent").await.is_none());
     }
@@ -1079,10 +1177,10 @@ mod tests {
             client_ml_kem_pubkey: None,
             ml_kem_ciphertext: None,
         };
-        
+
         let serialized = serde_json::to_string(&req).unwrap();
         assert!(serialized.contains("session-123"));
-        
+
         let deserialized: KeyConfirmHttp = serde_json::from_str(&serialized).unwrap();
         assert_eq!(deserialized.session_id, "session-123");
     }
@@ -1090,27 +1188,27 @@ mod tests {
     #[test]
     fn test_global_node_config_key_loading() {
         use crate::mesh::config::GlobalNodeConfig;
-        
+
         // Generate test keys
         let x25519_secret: [u8; 32] = rand::random();
         let x25519_secret_b64 = URL_SAFE_NO_PAD.encode(x25519_secret);
-        
+
         let ed25519_secret: [u8; 32] = rand::random();
         let ed25519_secret_b64 = URL_SAFE_NO_PAD.encode(ed25519_secret);
-        
+
         let mut config = GlobalNodeConfig {
             x25519_private_key_base64: Some(x25519_secret_b64),
             ed25519_private_key_base64: Some(ed25519_secret_b64),
             ..Default::default()
         };
-        
+
         // Load keys
         config.load_keys().unwrap();
-        
+
         // Verify public keys were derived
         assert!(config.x25519_public_key_base64.is_some());
         assert!(config.ed25519_public_key_base64.is_some());
-        
+
         // Verify private keys are stored
         assert!(config.x25519_private_key.is_some());
         assert!(config.ed25519_private_key.is_some());
@@ -1119,33 +1217,39 @@ mod tests {
     #[test]
     fn test_full_key_exchange_signing_flow() {
         // Simulate the full flow: client signs, server verifies
-        
+
         // Generate client keys
         let client_secret: [u8; 32] = rand::random();
         let client_signing_key = SigningKey::from_bytes(&client_secret);
         let client_verifying_key = client_signing_key.verifying_key();
-        
+
         // Generate server keys
         let server_secret: [u8; 32] = rand::random();
         let server_signing_key = SigningKey::from_bytes(&server_secret);
         let server_verifying_key = server_signing_key.verifying_key();
-        
+
         // Client signs a request
         let message = "GET|/index.html|host:example.com";
         let client_signature = client_signing_key.sign(message.as_bytes());
-        
+
         // Server verifies client signature
-        assert!(server_verifying_key.verify(message.as_bytes(), &client_signature).is_ok());
-        
+        assert!(server_verifying_key
+            .verify(message.as_bytes(), &client_signature)
+            .is_ok());
+
         // Server signs response
         let response_message = "200|host:example.com|content-length:123";
         let server_signature = server_signing_key.sign(response_message.as_bytes());
-        
+
         // Client verifies server signature
-        assert!(client_verifying_key.verify(response_message.as_bytes(), &server_signature).is_ok());
-        
+        assert!(client_verifying_key
+            .verify(response_message.as_bytes(), &server_signature)
+            .is_ok());
+
         // Wrong message should fail
-        assert!(!client_verifying_key.verify("wrong message".as_bytes(), &server_signature).is_ok());
+        assert!(!client_verifying_key
+            .verify("wrong message".as_bytes(), &server_signature)
+            .is_ok());
     }
 
     #[tokio::test]
@@ -1162,19 +1266,25 @@ mod tests {
             ml_kem_ciphertext: None,
             established_at: chrono::Utc::now().timestamp(),
         };
-        
+
         let config = Arc::new(MeshConfig::default());
         let state = KeyExchangeHttpState::new(config);
-        
+
         state.establish_session(session.clone()).await;
-        
+
         let retrieved = state.get_session(&session.session_id).await;
         assert!(retrieved.is_some());
-        
+
         let retrieved = retrieved.unwrap();
         assert_eq!(retrieved.client_x25519_pubkey, session.client_x25519_pubkey);
-        assert_eq!(retrieved.client_ed25519_pubkey, session.client_ed25519_pubkey);
+        assert_eq!(
+            retrieved.client_ed25519_pubkey,
+            session.client_ed25519_pubkey
+        );
         assert_eq!(retrieved.server_x25519_pubkey, session.server_x25519_pubkey);
-        assert_eq!(retrieved.origin_ed25519_pubkey, session.origin_ed25519_pubkey);
+        assert_eq!(
+            retrieved.origin_ed25519_pubkey,
+            session.origin_ed25519_pubkey
+        );
     }
 }

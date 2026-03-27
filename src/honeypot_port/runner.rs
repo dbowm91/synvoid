@@ -1,16 +1,16 @@
+use parking_lot::RwLock;
+use rand::Rng;
 use std::sync::Arc;
 use std::time::Duration;
-use rand::Rng;
 use tokio::sync::broadcast;
 use tokio::time;
-use parking_lot::RwLock;
 
 use crate::honeypot_port::config::PortHoneypotConfig;
-use crate::honeypot_port::storage::HoneypotStorage;
 use crate::honeypot_port::listener::PortHoneypotListener;
+use crate::honeypot_port::storage::HoneypotStorage;
 use crate::honeypot_port::threat_intel::HoneypotIntelExtractor;
-use crate::mesh::threat_intel::ThreatIntelligenceManager;
 use crate::mesh::protocol::ThreatType;
+use crate::mesh::threat_intel::ThreatIntelligenceManager;
 
 pub struct PortHoneypotRunner {
     config: Arc<PortHoneypotConfig>,
@@ -23,15 +23,12 @@ pub struct PortHoneypotRunner {
 impl PortHoneypotRunner {
     pub fn new(config: PortHoneypotConfig) -> Result<Arc<Self>, Box<dyn std::error::Error>> {
         let storage = Arc::new(HoneypotStorage::new(&config.storage)?);
-        
+
         let config = Arc::new(config);
-        let listener = PortHoneypotListener::new(
-            (*config).clone(),
-            (*storage).clone(),
-        );
-        
+        let listener = PortHoneypotListener::new((*config).clone(), (*storage).clone());
+
         let (shutdown_tx, _) = broadcast::channel(1);
-        
+
         Ok(Arc::new(Self {
             config,
             storage,
@@ -40,23 +37,23 @@ impl PortHoneypotRunner {
             shutdown_tx,
         }))
     }
-    
+
     pub fn storage(&self) -> &Arc<HoneypotStorage> {
         &self.storage
     }
-    
+
     pub fn listener(&self) -> &Arc<PortHoneypotListener> {
         &self.listener
     }
-    
+
     pub fn current_port(&self) -> u16 {
         self.listener.current_port()
     }
-    
+
     pub fn is_running(&self) -> bool {
         *self.running.read()
     }
-    
+
     pub async fn run(self: &Arc<Self>) {
         {
             let mut running = self.running.write();
@@ -66,15 +63,15 @@ impl PortHoneypotRunner {
             }
             *running = true;
         }
-        
+
         let _shutdown_rx = self.shutdown_tx.subscribe();
-        
+
         let storage = self.storage.clone();
         tokio::spawn(async move {
             storage.prune_old_records().ok();
             storage.enforce_max_records().ok();
         });
-        
+
         let prune_storage = self.storage.clone();
         tokio::spawn(async move {
             let mut interval = time::interval(Duration::from_secs(3600));
@@ -88,20 +85,20 @@ impl PortHoneypotRunner {
                 }
             }
         });
-        
+
         loop {
             let port = self.select_random_port();
-            
+
             tracing::info!("Starting port honeypot on port {}", port);
-            
+
             let listener = self.listener.clone();
-            
+
             let rotation_interval = self.rotation_interval();
             tracing::debug!("Next rotation in {} seconds", rotation_interval.as_secs());
-            
+
             let mut shutdown_rx2 = self.shutdown_tx.subscribe();
             let listener_for_shutdown = self.listener.clone();
-            
+
             let shutdown_received = tokio::select! {
                 _ = async {
                     listener.start_on_port(port).await
@@ -120,26 +117,26 @@ impl PortHoneypotRunner {
                     true
                 }
             };
-            
+
             if shutdown_received {
                 break;
             }
-            
+
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
-        
+
         {
             let mut running = self.running.write();
             *running = false;
         }
     }
-    
+
     pub fn stop(&self) {
         let _ = self.shutdown_tx.send(());
         let mut running = self.running.write();
         *running = false;
     }
-    
+
     pub fn start_mesh_threat_publishing(
         self: &Arc<Self>,
         threat_intel: Arc<ThreatIntelligenceManager>,
@@ -147,22 +144,22 @@ impl PortHoneypotRunner {
     ) {
         let storage = self.storage.clone();
         let threat_intel = threat_intel.clone();
-        
+
         tokio::spawn(async move {
             let mut interval = time::interval(Duration::from_secs(publish_interval_secs));
             let mut last_timestamp: i64 = 0;
-            
+
             loop {
                 interval.tick().await;
-                
+
                 if let Ok(records) = storage.get_records_since(last_timestamp, 100) {
                     if records.is_empty() {
                         continue;
                     }
-                    
+
                     for record in &records {
                         let indicators = HoneypotIntelExtractor::extract_indicators(record);
-                        
+
                         for indicator in indicators {
                             let threat_type = match indicator.indicator_type {
                                 crate::honeypot_port::threat_intel::IndicatorType::SourceIp => ThreatType::SuspiciousActivity,
@@ -170,14 +167,22 @@ impl PortHoneypotRunner {
                                 crate::honeypot_port::threat_intel::IndicatorType::AttackVector => ThreatType::SuspiciousActivity,
                                 crate::honeypot_port::threat_intel::IndicatorType::Payload => ThreatType::SuspiciousActivity,
                             };
-                            
+
                             let severity = match indicator.severity {
-                                crate::honeypot_port::threat_intel::SeverityLevel::Critical => crate::mesh::protocol::ThreatSeverity::Critical,
-                                crate::honeypot_port::threat_intel::SeverityLevel::High => crate::mesh::protocol::ThreatSeverity::High,
-                                crate::honeypot_port::threat_intel::SeverityLevel::Medium => crate::mesh::protocol::ThreatSeverity::Medium,
-                                crate::honeypot_port::threat_intel::SeverityLevel::Low => crate::mesh::protocol::ThreatSeverity::Low,
+                                crate::honeypot_port::threat_intel::SeverityLevel::Critical => {
+                                    crate::mesh::protocol::ThreatSeverity::Critical
+                                }
+                                crate::honeypot_port::threat_intel::SeverityLevel::High => {
+                                    crate::mesh::protocol::ThreatSeverity::High
+                                }
+                                crate::honeypot_port::threat_intel::SeverityLevel::Medium => {
+                                    crate::mesh::protocol::ThreatSeverity::Medium
+                                }
+                                crate::honeypot_port::threat_intel::SeverityLevel::Low => {
+                                    crate::mesh::protocol::ThreatSeverity::Low
+                                }
                             };
-                            
+
                             if let Ok(ip) = indicator.value.parse() {
                                 threat_intel.announce_honeypot_indicator(
                                     ip,
@@ -189,22 +194,22 @@ impl PortHoneypotRunner {
                                 );
                             }
                         }
-                        
+
                         last_timestamp = record.timestamp.max(last_timestamp);
                     }
-                    
+
                     tracing::debug!("Published {} honeypot indicators to mesh", records.len());
                 }
             }
         });
     }
-    
+
     fn select_random_port(&self) -> u16 {
         let mut rng = rand::rng();
         let range = self.config.max_port - self.config.min_port;
         self.config.min_port + rng.random_range(0..=range)
     }
-    
+
     fn rotation_interval(&self) -> Duration {
         let mut rng = rand::rng();
         let range = self.config.max_rotation_interval_secs - self.config.min_rotation_interval_secs;
@@ -242,36 +247,36 @@ impl RateLimitedPortHoneypot {
             enabled: Arc::new(RwLock::new(true)),
         }
     }
-    
+
     pub fn is_enabled(&self) -> bool {
         *self.enabled.read()
     }
-    
+
     pub fn set_enabled(&self, enabled: bool) {
         *self.enabled.write() = enabled;
     }
-    
+
     pub fn disable(&self) {
         self.set_enabled(false);
     }
-    
+
     pub fn enable(&self) {
         self.set_enabled(true);
     }
-    
+
     pub fn storage(&self) -> &Arc<HoneypotStorage> {
         self.runner.storage()
     }
-    
+
     pub fn listener(&self) -> &Arc<PortHoneypotListener> {
         self.runner.listener()
     }
-    
+
     pub async fn should_accept_connection(&self, ip: &str) -> bool {
         if !self.is_enabled() {
             return false;
         }
-        
+
         if let Some(ref limiter) = self.rate_limiter {
             let result = limiter.check_rate_limit(ip).await;
             if !result.allowed {
@@ -279,10 +284,10 @@ impl RateLimitedPortHoneypot {
                 return false;
             }
         }
-        
+
         true
     }
-    
+
     pub fn current_port(&self) -> u16 {
         self.runner.current_port()
     }

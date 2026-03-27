@@ -7,22 +7,19 @@ use async_trait::async_trait;
 
 use dashmap::DashMap;
 use metrics::{counter, gauge};
-use tokio::sync::{broadcast, RwLock};
 use tokio::process::Command;
+use tokio::sync::{broadcast, RwLock};
 
 #[cfg(target_os = "linux")]
-use wireguard_control::{
-    DeviceUpdate, InterfaceName, AllowedIp, PeerConfigBuilder,
-    Backend,
-};
+use wireguard_control::{AllowedIp, Backend, DeviceUpdate, InterfaceName, PeerConfigBuilder};
 
 use super::config::{WireGuardConfig, WireGuardPeerConfig};
-use super::session::{WgSessionManager, WgPeerSession, WgConnectionStats};
-use super::tun::{TunInterface, is_tun_available};
+use super::session::{WgConnectionStats, WgPeerSession, WgSessionManager};
+use super::stats::{WgInterfaceStats, WgStatsCollector};
+use super::tun::{is_tun_available, TunInterface};
 #[cfg(target_os = "linux")]
 use super::tun::{TunReader, TunWriter};
-use super::stats::{WgStatsCollector, WgInterfaceStats};
-use crate::tunnel::{TunnelTransport, TunnelType, TunnelStats, PeerInfo};
+use crate::tunnel::{PeerInfo, TunnelStats, TunnelTransport, TunnelType};
 
 pub struct KernelWireGuard {
     config: WireGuardConfig,
@@ -43,7 +40,7 @@ impl KernelWireGuard {
         let stats = Arc::new(DashMap::new());
         let stats_collector = Arc::new(RwLock::new(None));
         let interface_name = config.interface_name.clone();
-        
+
         tracing::info!(
             "Kernel WireGuard initialized: interface={}, port={}",
             interface_name,
@@ -66,24 +63,29 @@ impl KernelWireGuard {
     #[cfg(target_os = "linux")]
     async fn setup_interface(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let iface = InterfaceName::from(&self.interface_name);
-        
-        let private_key = base64::engine::general_purpose::STANDARD.decode(&self.config.private_key)
+
+        let private_key = base64::engine::general_purpose::STANDARD
+            .decode(&self.config.private_key)
             .map_err(|e| format!("Failed to decode private key: {}", e))?;
-        
-        let key_array: [u8; 32] = private_key.try_into()
+
+        let key_array: [u8; 32] = private_key
+            .try_into()
             .map_err(|_| "Invalid private key length")?;
-        
+
         let mut update = DeviceUpdate::new(iface);
         update.set_private_key(key_array.into());
         update.set_listen_port(self.config.listen_port);
-        
+
         if let Some(fwmark) = self.config.fwmark {
             update.set_fwmark(Some(fwmark));
         }
 
         match update.apply(&Backend::Kernel) {
             Ok(_) => {
-                tracing::debug!("Created/configured WireGuard interface: {}", self.interface_name);
+                tracing::debug!(
+                    "Created/configured WireGuard interface: {}",
+                    self.interface_name
+                );
                 self.interface_created = true;
             }
             Err(WgError::InterfaceExists) => {
@@ -96,7 +98,14 @@ impl KernelWireGuard {
         }
 
         let output = Command::new("ip")
-            .args(&["link", "set", "dev", &self.interface_name, "mtu", &self.config.mtu.to_string()])
+            .args(&[
+                "link",
+                "set",
+                "dev",
+                &self.interface_name,
+                "mtu",
+                &self.config.mtu.to_string(),
+            ])
             .output()
             .await
             .map_err(|e| format!("Failed to set MTU: {}", e))?;
@@ -110,13 +119,16 @@ impl KernelWireGuard {
         Err("Kernel WireGuard is only available on Linux".into())
     }
 
-    async fn configure_interface_address(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn configure_interface_address(
+        &self,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let iface = &self.interface_name;
-        
+
         let address = if !self.config.peers.is_empty() {
             let peer = &self.config.peers[0];
             if let Some(endpoint) = &peer.endpoint {
-                let _endpoint_port = endpoint.parse::<SocketAddr>()
+                let _endpoint_port = endpoint
+                    .parse::<SocketAddr>()
                     .map(|a| a.port())
                     .unwrap_or(51820);
                 "10.0.0.2/24".to_string()
@@ -154,42 +166,47 @@ impl KernelWireGuard {
 
     async fn bring_interface_up(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let iface = &self.interface_name;
-        
+
         Command::new("ip")
             .args(["link", "set", "dev", iface, "up"])
             .output()
             .await
             .map_err(|e| format!("Failed to bring interface up: {}", e))?;
-        
+
         tracing::info!("Interface {} is up", iface);
         Ok(())
     }
 
     #[cfg(target_os = "linux")]
-    async fn add_peer_kernel(&self, peer: &WireGuardPeerConfig) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let public_key = base64::engine::general_purpose::STANDARD.decode(&peer.public_key)
+    async fn add_peer_kernel(
+        &self,
+        peer: &WireGuardPeerConfig,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let public_key = base64::engine::general_purpose::STANDARD
+            .decode(&peer.public_key)
             .map_err(|e| format!("Failed to decode peer public key: {}", e))?;
-        
-        let public_key_array: [u8; 32] = public_key.try_into()
+
+        let public_key_array: [u8; 32] = public_key
+            .try_into()
             .map_err(|_| "Invalid peer public key length")?;
 
         let mut peer_config = PeerConfigBuilder::new(public_key_array.into());
 
         if let Some(endpoint) = &peer.endpoint {
-            let addr: SocketAddr = endpoint.parse()
+            let addr: SocketAddr = endpoint
+                .parse()
                 .map_err(|e| format!("Invalid endpoint: {}", e))?;
             peer_config.set_endpoint(addr);
         }
 
         if !peer.allowed_ips.is_empty() {
-            let allowed_ips: Result<Vec<AllowedIp>, _> = peer.allowed_ips.iter()
+            let allowed_ips: Result<Vec<AllowedIp>, _> = peer
+                .allowed_ips
+                .iter()
                 .map(|ip_str| {
-                    let (ip, prefix) = ip_str.split_once('/')
-                        .ok_or("Invalid allowed IP format")?;
-                    let ip: IpAddr = ip.parse()
-                        .map_err(|_| "Invalid IP address")?;
-                    let prefix: u8 = prefix.parse()
-                        .map_err(|_| "Invalid prefix length")?;
+                    let (ip, prefix) = ip_str.split_once('/').ok_or("Invalid allowed IP format")?;
+                    let ip: IpAddr = ip.parse().map_err(|_| "Invalid IP address")?;
+                    let prefix: u8 = prefix.parse().map_err(|_| "Invalid prefix length")?;
                     Ok(AllowedIp::new(ip, prefix))
                 })
                 .collect();
@@ -203,40 +220,57 @@ impl KernelWireGuard {
         let iface = InterfaceName::from(&self.interface_name);
         let mut update = DeviceUpdate::new(iface);
         update.add_peer(peer_config.build());
-        
-        update.apply(&Backend::Kernel)
+
+        update
+            .apply(&Backend::Kernel)
             .map_err(|e| format!("Failed to add peer: {}", e))?;
-        
+
         tracing::debug!("Added peer {} via netlink", peer.public_key);
         Ok(())
     }
 
     #[cfg(not(target_os = "linux"))]
-    async fn add_peer_kernel(&self, peer: &WireGuardPeerConfig) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn add_peer_kernel(
+        &self,
+        peer: &WireGuardPeerConfig,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         Err("Kernel WireGuard peer addition is only available on Linux".into())
     }
 
     #[cfg(target_os = "linux")]
-    async fn remove_peer_kernel(&self, public_key: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let public_key = base64::engine::general_purpose::STANDARD.decode(public_key)
+    async fn remove_peer_kernel(
+        &self,
+        public_key: &str,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let public_key = base64::engine::general_purpose::STANDARD
+            .decode(public_key)
             .map_err(|e| format!("Failed to decode peer public key: {}", e))?;
-        
-        let public_key_array: [u8; 32] = public_key.try_into()
+
+        let public_key_array: [u8; 32] = public_key
+            .try_into()
             .map_err(|_| "Invalid peer public key length")?;
 
         let iface = InterfaceName::from(&self.interface_name);
         let mut update = DeviceUpdate::new(iface);
-        update.add_peer(PeerConfigBuilder::new(public_key_array.into()).remove().build());
-        
-        update.apply(&Backend::Kernel)
+        update.add_peer(
+            PeerConfigBuilder::new(public_key_array.into())
+                .remove()
+                .build(),
+        );
+
+        update
+            .apply(&Backend::Kernel)
             .map_err(|e| format!("Failed to remove peer: {}", e))?;
-        
+
         tracing::debug!("Removed peer via netlink");
         Ok(())
     }
 
     #[cfg(not(target_os = "linux"))]
-    async fn remove_peer_kernel(&self, _public_key: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn remove_peer_kernel(
+        &self,
+        _public_key: &str,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         Err("Kernel WireGuard peer removal is only available on Linux".into())
     }
 
@@ -251,7 +285,10 @@ impl KernelWireGuard {
                         tracing::info!("WireGuard interface {} removed", self.interface_name);
                     }
                     Err(WgError::InterfaceNotFound) => {
-                        tracing::debug!("WireGuard interface {} already removed", self.interface_name);
+                        tracing::debug!(
+                            "WireGuard interface {} already removed",
+                            self.interface_name
+                        );
                     }
                     Err(e) => {
                         tracing::warn!("Failed to remove interface: {}", e);
@@ -263,18 +300,24 @@ impl KernelWireGuard {
         Ok(())
     }
 
-    pub fn add_peer(&self, peer_config: WireGuardPeerConfig) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn add_peer(
+        &self,
+        peer_config: WireGuardPeerConfig,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let peer_session = WgPeerSession::new(
             peer_config.public_key.clone(),
             peer_config.allowed_ips.clone(),
         )
         .with_endpoint(peer_config.endpoint.clone().unwrap_or_default());
-        
+
         self.sessions.add_session(peer_session);
         Ok(())
     }
 
-    pub fn remove_peer(&self, public_key: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn remove_peer(
+        &self,
+        public_key: &str,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if let Some(session) = self.sessions.get_session_by_public_key(public_key) {
             self.sessions.remove_session(&session.id);
         }
@@ -286,11 +329,11 @@ impl KernelWireGuard {
         let collector = self.stats_collector.clone();
         let interface = self.interface_name.clone();
         let shutdown_rx = self.shutdown_tx.subscribe();
-        
+
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(5));
             let mut shutdown_rx = shutdown_rx;
-            
+
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
@@ -333,7 +376,7 @@ impl TunnelTransport for KernelWireGuard {
 
     async fn start(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.setup_interface().await?;
-        
+
         for peer_config in &self.config.peers {
             match self.add_peer_kernel(peer_config).await {
                 Ok(_) => {
@@ -342,7 +385,7 @@ impl TunnelTransport for KernelWireGuard {
                         peer_config.allowed_ips.clone(),
                     )
                     .with_endpoint(peer_config.endpoint.clone().unwrap_or_default());
-                    
+
                     self.sessions.add_session(peer_session);
                     counter!("maluwaf.tunnel.wireguard.peers.added").increment(1);
                 }
@@ -351,37 +394,40 @@ impl TunnelTransport for KernelWireGuard {
                 }
             }
         }
-        
+
         self.configure_interface_address().await?;
         self.bring_interface_up().await?;
-        
+
         #[cfg(target_os = "linux")]
         {
             let mut guard = self.stats_collector.write().await;
             *guard = Some(WgStatsCollector::new(&self.interface_name));
         }
-        
+
         #[cfg(target_os = "linux")]
         self.start_stats_collector().await;
-        
+
         self.running = true;
         gauge!("maluwaf.tunnel.wireguard.running").set(1.0);
-        
+
         counter!("maluwaf.tunnel.wireguard.started").increment(1);
-        tracing::info!("Kernel WireGuard started with {} peers", self.config.peers.len());
+        tracing::info!(
+            "Kernel WireGuard started with {} peers",
+            self.config.peers.len()
+        );
         Ok(())
     }
 
     async fn stop(&mut self) {
         let _ = self.teardown_interface().await;
-        
+
         self.running = false;
         gauge!("maluwaf.tunnel.wireguard.running").set(0.0);
-        
+
         for session in self.sessions.list_sessions() {
             self.sessions.remove_session(&session.id);
         }
-        
+
         tracing::info!("Kernel WireGuard stopped");
     }
 
@@ -392,12 +438,12 @@ impl TunnelTransport for KernelWireGuard {
     fn stats(&self) -> TunnelStats {
         let mut total_tx = 0u64;
         let mut total_rx = 0u64;
-        
+
         for session in self.sessions.list_sessions() {
             total_tx += session.tx_bytes;
             total_rx += session.rx_bytes;
         }
-        
+
         TunnelStats {
             bytes_sent: total_tx,
             bytes_received: total_rx,
@@ -443,7 +489,7 @@ pub async fn is_kernel_wireguard_available() -> bool {
     if !is_tun_available() {
         return false;
     }
-    
+
     #[cfg(target_os = "linux")]
     {
         match wireguard_control::get_interfaces() {
@@ -451,7 +497,7 @@ pub async fn is_kernel_wireguard_available() -> bool {
             Err(_) => true,
         }
     }
-    
+
     #[cfg(not(target_os = "linux"))]
     {
         false
@@ -465,7 +511,7 @@ pub async fn get_wireguard_stats(interface: &str) -> Result<WgInterfaceStats, St
             .await
             .map_err(|e| e.to_string())
     }
-    
+
     #[cfg(not(target_os = "linux"))]
     {
         let _ = interface;

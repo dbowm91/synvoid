@@ -229,27 +229,25 @@ where
     R: AsyncRead + Unpin + std::marker::Unpin,
     T: DeserializeOwned,
 {
-    use tokio::time::{timeout, Duration};
     use rand::Rng;
-    
-    let result = timeout(
-        Duration::from_millis(timeout_ms),
-        async {
-            let mut sleep_duration = 1u64;
-            let max_sleep = 50u64;
-            loop {
-                match read_message(reader, buffer).await {
-                    Ok(Some(msg)) => return Ok(Some(msg)),
-                    Ok(None) => {
-                        let jitter = rand::rng().random_range(0..sleep_duration / 2 + 1);
-                        tokio::time::sleep(Duration::from_millis(sleep_duration + jitter)).await;
-                        sleep_duration = (sleep_duration * 2).min(max_sleep);
-                    }
-                    Err(e) => return Err(e),
+    use tokio::time::{timeout, Duration};
+
+    let result = timeout(Duration::from_millis(timeout_ms), async {
+        let mut sleep_duration = 1u64;
+        let max_sleep = 50u64;
+        loop {
+            match read_message(reader, buffer).await {
+                Ok(Some(msg)) => return Ok(Some(msg)),
+                Ok(None) => {
+                    let jitter = rand::rng().random_range(0..sleep_duration / 2 + 1);
+                    tokio::time::sleep(Duration::from_millis(sleep_duration + jitter)).await;
+                    sleep_duration = (sleep_duration * 2).min(max_sleep);
                 }
+                Err(e) => return Err(e),
             }
         }
-    ).await;
+    })
+    .await;
 
     match result {
         Ok(r) => r,

@@ -59,7 +59,12 @@ impl<C: DnsServerConfig> SecureDnsServerBase<C> {
         handle_connection: F,
     ) -> Result<(), String>
     where
-        F: Fn(tokio::net::TcpStream, SocketAddr, Arc<RwLock<Option<DnsServer>>>, Arc<TlsAcceptor>) -> Fut
+        F: Fn(
+                tokio::net::TcpStream,
+                SocketAddr,
+                Arc<RwLock<Option<DnsServer>>>,
+                Arc<TlsAcceptor>,
+            ) -> Fut
             + Send
             + Sync
             + Clone
@@ -85,7 +90,15 @@ impl<C: DnsServerConfig> SecureDnsServerBase<C> {
         self.shutdown_tx = Some(tx);
 
         tokio::spawn(async move {
-            Self::accept_loop(listener, dns_server, config, acceptor, rx, handle_connection).await;
+            Self::accept_loop(
+                listener,
+                dns_server,
+                config,
+                acceptor,
+                rx,
+                handle_connection,
+            )
+            .await;
         });
 
         Ok(())
@@ -99,7 +112,12 @@ impl<C: DnsServerConfig> SecureDnsServerBase<C> {
         shutdown_rx: oneshot::Receiver<()>,
         handle_connection: F,
     ) where
-        F: Fn(tokio::net::TcpStream, SocketAddr, Arc<RwLock<Option<DnsServer>>>, Arc<TlsAcceptor>) -> Fut
+        F: Fn(
+                tokio::net::TcpStream,
+                SocketAddr,
+                Arc<RwLock<Option<DnsServer>>>,
+                Arc<TlsAcceptor>,
+            ) -> Fut
             + Send
             + Sync
             + Clone

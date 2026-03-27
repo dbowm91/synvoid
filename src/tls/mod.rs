@@ -5,11 +5,11 @@
 //! implementation. Re-exports [`ServerTlsConfig`], [`CertResolver`], and
 //! [`HttpsServer`] for convenience.
 
-pub mod config;
-pub mod cert_resolver;
 pub mod acme;
+pub mod cert_resolver;
+pub mod config;
 pub mod server;
 
-pub use config::InternalTlsConfig as ServerTlsConfig;
 pub use cert_resolver::CertResolver;
+pub use config::InternalTlsConfig as ServerTlsConfig;
 pub use server::HttpsServer;

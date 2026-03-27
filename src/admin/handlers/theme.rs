@@ -1,14 +1,10 @@
-use axum::{
-    extract::State,
-    http::StatusCode,
-    Json,
-};
+use axum::{extract::State, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::super::state::AdminState;
-use super::common::{OptionalAuth};
-use crate::theme::{ThemeDefaults, ThemePreset, ThemeRenderer, ThemeConfig};
+use super::common::OptionalAuth;
+use crate::theme::{ThemeConfig, ThemeDefaults, ThemePreset, ThemeRenderer};
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ThemeResponse {
@@ -135,7 +131,6 @@ pub async fn get_theme(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<ThemeResponse>, StatusCode> {
-
     let config = state.process.config.read().await;
     let theme = &config.main.defaults.theme;
     Ok(Json(build_theme_response(theme)))
@@ -155,12 +150,12 @@ pub async fn update_theme(
     _auth: OptionalAuth,
     Json(req): Json<UpdateThemeRequest>,
 ) -> Result<Json<ThemeResponse>, StatusCode> {
-
     let mut config = state.process.config.write().await;
-    
+
     if let Some(preset) = req.preset {
         config.main.defaults.theme.preset = preset;
-        config.main.defaults.theme.colors = ThemePreset::from(config.main.defaults.theme.preset.as_str()).colors();
+        config.main.defaults.theme.colors =
+            ThemePreset::from(config.main.defaults.theme.preset.as_str()).colors();
     }
     if let Some(mode) = req.mode {
         config.main.defaults.theme.mode = mode;
@@ -176,11 +171,10 @@ pub async fn update_theme(
     let config_dir = config.config_dir.clone();
     drop(config);
 
-    let toml_content = toml::to_string_pretty(&main_config)
-        .map_err(|e| {
-            tracing::error!("Failed to serialize config: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+    let toml_content = toml::to_string_pretty(&main_config).map_err(|e| {
+        tracing::error!("Failed to serialize config: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     let main_config_path = config_dir.join("main.toml");
 
@@ -210,7 +204,6 @@ pub async fn get_theme_css(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<String, StatusCode> {
-
     let config = state.process.config.read().await;
     let theme_config: ThemeConfig = config.main.defaults.theme.clone().into();
     let renderer = ThemeRenderer::new(theme_config);

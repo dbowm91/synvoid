@@ -105,9 +105,12 @@ impl AlertManager {
         *self.config.write().await = config;
     }
 
-    pub async fn check_and_notify(&self, metrics: &super::state::AggregatedMetrics) -> Vec<AlertEvent> {
+    pub async fn check_and_notify(
+        &self,
+        metrics: &super::state::AggregatedMetrics,
+    ) -> Vec<AlertEvent> {
         let config = self.config.read().await;
-        
+
         if !config.enabled {
             return Vec::new();
         }
@@ -142,9 +145,7 @@ impl AlertManager {
                         false
                     }
                 }
-                "worker_status" => {
-                    false
-                }
+                "worker_status" => false,
                 _ => false,
             };
 
@@ -155,7 +156,10 @@ impl AlertManager {
                     metric: rule.metric.clone(),
                     value: 0.0,
                     threshold: rule.threshold,
-                    message: format!("Alert triggered: {} - threshold: {}", rule.name, rule.threshold),
+                    message: format!(
+                        "Alert triggered: {} - threshold: {}",
+                        rule.name, rule.threshold
+                    ),
                 };
 
                 events.push(event.clone());
@@ -194,7 +198,7 @@ impl AlertManager {
 
 async fn send_webhook_internal(urls: &[String], event: &AlertEvent) -> Result<(), String> {
     let client = crate::http_client::create_http_client();
-    
+
     let payload = serde_json::json!({
         "timestamp": event.timestamp,
         "rule": event.rule_name,
@@ -218,18 +222,28 @@ async fn send_webhook_internal(urls: &[String], event: &AlertEvent) -> Result<()
 }
 
 async fn send_email_internal(
-    config: (Vec<String>, Option<String>, Option<u16>, Option<String>, Option<String>),
+    config: (
+        Vec<String>,
+        Option<String>,
+        Option<u16>,
+        Option<String>,
+        Option<String>,
+    ),
     event: &AlertEvent,
 ) -> Result<(), String> {
     let (recipients, smtp_host, smtp_port, username, password) = config;
-    
+
     let _smtp_host = smtp_host.ok_or("SMTP host not configured")?;
     let _smtp_port = smtp_port.unwrap_or(587);
     let _username = username.ok_or("SMTP username not configured")?;
     let _password = password.ok_or("SMTP password not configured")?;
 
-    tracing::info!("Sending email alert to {} recipients about: {}", recipients.len(), event.rule_name);
-    
+    tracing::info!(
+        "Sending email alert to {} recipients about: {}",
+        recipients.len(),
+        event.rule_name
+    );
+
     Ok(())
 }
 

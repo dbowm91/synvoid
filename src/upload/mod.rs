@@ -1,14 +1,18 @@
 pub mod config;
-pub mod sandbox;
-pub mod yara_scanner;
-pub mod yara_rule_feed;
 pub mod malware_scanner;
+pub mod sandbox;
+pub mod yara_rule_feed;
+pub mod yara_scanner;
 
-pub use config::{AllowedTypesConfig, AllowedTypesMode, EffectiveUploadConfig, PathUploadConfig, UploadConfig};
-pub use sandbox::{QuarantineEntry, Sandbox, SandboxConfig, SandboxError, SandboxHandle};
-pub use yara_scanner::{YaraError, YaraMatch, YaraScanner, YaraRulesSource, NO_EXCLUDED_CATEGORIES};
-pub use yara_rule_feed::{YaraRuleFeedManager, ParsedYaraRules, YaraRuleSource};
+pub use config::{
+    AllowedTypesConfig, AllowedTypesMode, EffectiveUploadConfig, PathUploadConfig, UploadConfig,
+};
 pub use malware_scanner::MalwareMatch;
+pub use sandbox::{QuarantineEntry, Sandbox, SandboxConfig, SandboxError, SandboxHandle};
+pub use yara_rule_feed::{ParsedYaraRules, YaraRuleFeedManager, YaraRuleSource};
+pub use yara_scanner::{
+    YaraError, YaraMatch, YaraRulesSource, YaraScanner, NO_EXCLUDED_CATEGORIES,
+};
 
 use std::sync::Arc;
 use thiserror::Error;
@@ -22,7 +26,10 @@ pub enum UploadValidationError {
     SizeExceeded { max: u64, actual: u64 },
 
     #[error("MIME type '{detected}' is not allowed")]
-    TypeNotAllowed { detected: String, allowed: Vec<String> },
+    TypeNotAllowed {
+        detected: String,
+        allowed: Vec<String>,
+    },
 
     #[error("Malware detected: {matches:?}")]
     MalwareDetected { matches: Vec<String> },
@@ -81,7 +88,8 @@ impl UploadValidator {
             let source = YaraRulesSource::from_config(
                 config.yara_rules_dir.clone().map(std::path::PathBuf::from),
                 true,
-            ).unwrap_or(YaraRulesSource::Bundled);
+            )
+            .unwrap_or(YaraRulesSource::Bundled);
             let scanner = YaraScanner::new(source)?;
             Some(Arc::new(scanner))
         } else {
@@ -127,7 +135,11 @@ impl UploadValidator {
         self.sandbox.config.ensure_dirs_exist().await
     }
 
-    pub fn validate_bytes(&self, data: &[u8], request_path: &str) -> Result<ValidationResult, UploadValidationError> {
+    pub fn validate_bytes(
+        &self,
+        data: &[u8],
+        request_path: &str,
+    ) -> Result<ValidationResult, UploadValidationError> {
         let effective_config = self.config.effective_config_for_path(request_path);
 
         if data.len() as u64 > effective_config.max_size_bytes {
@@ -157,7 +169,8 @@ impl UploadValidator {
         let (scanned, yara_matches) = if effective_config.scan_with_yara {
             if let Some(scanner) = &self.yara_scanner {
                 let matches = scanner.scan_bytes(data, NO_EXCLUDED_CATEGORIES)?;
-                let matched_names: Vec<String> = matches.iter().map(|m| m.rule_name.clone()).collect();
+                let matched_names: Vec<String> =
+                    matches.iter().map(|m| m.rule_name.clone()).collect();
                 (true, matched_names)
             } else {
                 (false, Vec::new())
@@ -237,7 +250,8 @@ impl UploadValidator {
         let (scanned, yara_matches) = if effective_config.scan_with_yara {
             if let Some(scanner) = &self.yara_scanner {
                 let matches = scanner.scan_bytes(data, NO_EXCLUDED_CATEGORIES)?;
-                let matched_names: Vec<String> = matches.iter().map(|m| m.rule_name.clone()).collect();
+                let matched_names: Vec<String> =
+                    matches.iter().map(|m| m.rule_name.clone()).collect();
                 (true, matched_names)
             } else {
                 (false, Vec::new())
@@ -336,8 +350,10 @@ impl UploadValidator {
 
         let (scanned, yara_matches) = if effective_config.scan_with_yara {
             if let Some(scanner) = &self.yara_scanner {
-                let matches = scanner.scan_file_with_exclusions(sandbox_handle.path(), NO_EXCLUDED_CATEGORIES)?;
-                let matched_names: Vec<String> = matches.iter().map(|m| m.rule_name.clone()).collect();
+                let matches = scanner
+                    .scan_file_with_exclusions(sandbox_handle.path(), NO_EXCLUDED_CATEGORIES)?;
+                let matched_names: Vec<String> =
+                    matches.iter().map(|m| m.rule_name.clone()).collect();
                 (true, matched_names)
             } else {
                 (false, Vec::new())
@@ -387,7 +403,11 @@ pub fn parse_content_length(content_length: Option<&str>) -> Option<u64> {
     content_length.and_then(|s| s.parse::<u64>().ok())
 }
 
-pub fn should_validate_upload(content_type: Option<&str>, content_length: Option<&str>, config: &UploadConfig) -> bool {
+pub fn should_validate_upload(
+    content_type: Option<&str>,
+    content_length: Option<&str>,
+    config: &UploadConfig,
+) -> bool {
     if !config.enabled {
         return false;
     }
@@ -416,7 +436,9 @@ mod tests {
     #[test]
     fn test_is_upload_content_type() {
         assert!(is_upload_content_type("multipart/form-data"));
-        assert!(is_upload_content_type("multipart/form-data; boundary=----WebKitFormBoundary"));
+        assert!(is_upload_content_type(
+            "multipart/form-data; boundary=----WebKitFormBoundary"
+        ));
         assert!(!is_upload_content_type("application/json"));
         assert!(!is_upload_content_type("text/plain"));
     }

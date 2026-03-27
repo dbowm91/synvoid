@@ -2,14 +2,16 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use parking_lot::RwLock;
-use tokio::net::TcpStream;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpStream;
 use tokio_rustls::TlsAcceptor;
 
 use crate::config::dns::DnsDotConfig;
-use crate::dns::server::{DnsServer, RecordType};
 use crate::dns::cache::CacheKey;
-use crate::dns::secure_server::{SecureDnsServerBase, DnsServerConfig, TLS_HANDSHAKE_TIMEOUT_SECS, MAX_QUERY_SIZE};
+use crate::dns::secure_server::{
+    DnsServerConfig, SecureDnsServerBase, MAX_QUERY_SIZE, TLS_HANDSHAKE_TIMEOUT_SECS,
+};
+use crate::dns::server::{DnsServer, RecordType};
 use crate::tls::cert_resolver::CertResolver;
 
 pub const DOT_MAX_QUERY_SIZE: usize = MAX_QUERY_SIZE;
@@ -47,12 +49,7 @@ impl DotServer {
         let bind_address = self.base.config.bind_address.clone();
         let port = self.base.config.port;
         self.base
-            .start_server(
-                &bind_address,
-                port,
-                "DoT server",
-                Self::handle_connection,
-            )
+            .start_server(&bind_address, port, "DoT server", Self::handle_connection)
             .await
     }
 
@@ -93,7 +90,9 @@ impl DotServer {
             }
 
             let mut query_buf = vec![0u8; length];
-            tls_stream.read_exact(&mut query_buf).await
+            tls_stream
+                .read_exact(&mut query_buf)
+                .await
                 .map_err(|e| format!("Failed to read query: {}", e))?;
 
             let (zones, zone_trie, cache, ecs_config) = {
@@ -146,14 +145,20 @@ impl DotServer {
             match response {
                 Some(resp) => {
                     let response_len = resp.len() as u16;
-                    tls_stream.write_all(&response_len.to_be_bytes()).await
+                    tls_stream
+                        .write_all(&response_len.to_be_bytes())
+                        .await
                         .map_err(|e| format!("Failed to send response length: {}", e))?;
-                    tls_stream.write_all(&resp).await
+                    tls_stream
+                        .write_all(&resp)
+                        .await
                         .map_err(|e| format!("Failed to send response: {}", e))?;
                 }
                 None => {
                     let empty_response: Vec<u8> = vec![0; 2];
-                    tls_stream.write_all(&empty_response).await
+                    tls_stream
+                        .write_all(&empty_response)
+                        .await
                         .map_err(|e| format!("Failed to send empty response: {}", e))?;
                 }
             }

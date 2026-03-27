@@ -1,5 +1,5 @@
-use tokio::io::{AsyncRead, AsyncWrite, AsyncReadExt, AsyncWriteExt};
 use crate::buffer::BufferPool;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 pub type ProxyResult = Result<(), ProxyError>;
 
@@ -60,7 +60,14 @@ where
     R2: AsyncRead + Unpin + Send,
     W2: AsyncWrite + Unpin + Send,
 {
-    copy_bidirectional_with_config(client_read, client_write, upstream_read, upstream_write, ProxyConfig::default()).await
+    copy_bidirectional_with_config(
+        client_read,
+        client_write,
+        upstream_read,
+        upstream_write,
+        ProxyConfig::default(),
+    )
+    .await
 }
 
 pub async fn copy_bidirectional_with_config<R1, W1, R2, W2>(
@@ -86,12 +93,14 @@ where
         let mut write_pending: usize = 0;
         let mut total: u64 = 0;
         let mut last_flush_at: u64 = 0;
-        
+
         loop {
             match client_read.read(buf.as_mut_slice()).await {
                 Ok(0) => {
                     if write_pending > 0 {
-                        upstream_write.write_all(&write_buf.as_slice()[..write_pending]).await
+                        upstream_write
+                            .write_all(&write_buf.as_slice()[..write_pending])
+                            .await
                             .map_err(|e| ProxyError::WriteError(e.to_string()))?;
                         let _ = upstream_write.flush().await;
                     }
@@ -99,14 +108,18 @@ where
                 }
                 Ok(n) => {
                     total += n as u64;
-                    
+
                     if n < write_threshold && write_pending + n <= buffer_size {
                         write_buf.as_mut_slice()[write_pending..write_pending + n]
                             .copy_from_slice(&buf.as_slice()[..n]);
                         write_pending += n;
-                        
-                        if write_pending >= flush_interval || total - last_flush_at >= flush_interval as u64 {
-                            upstream_write.write_all(&write_buf.as_slice()[..write_pending]).await
+
+                        if write_pending >= flush_interval
+                            || total - last_flush_at >= flush_interval as u64
+                        {
+                            upstream_write
+                                .write_all(&write_buf.as_slice()[..write_pending])
+                                .await
                                 .map_err(|e| ProxyError::WriteError(e.to_string()))?;
                             let _ = upstream_write.flush().await;
                             write_pending = 0;
@@ -114,14 +127,18 @@ where
                         }
                     } else {
                         if write_pending > 0 {
-                            upstream_write.write_all(&write_buf.as_slice()[..write_pending]).await
+                            upstream_write
+                                .write_all(&write_buf.as_slice()[..write_pending])
+                                .await
                                 .map_err(|e| ProxyError::WriteError(e.to_string()))?;
                             write_pending = 0;
                         }
-                        
-                        upstream_write.write_all(&buf.as_slice()[..n]).await
+
+                        upstream_write
+                            .write_all(&buf.as_slice()[..n])
+                            .await
                             .map_err(|e| ProxyError::WriteError(e.to_string()))?;
-                        
+
                         if total - last_flush_at >= flush_interval as u64 {
                             let _ = upstream_write.flush().await;
                             last_flush_at = total;
@@ -142,12 +159,14 @@ where
         let mut write_pending: usize = 0;
         let mut total: u64 = 0;
         let mut last_flush_at: u64 = 0;
-        
+
         loop {
             match upstream_read.read(buf.as_mut_slice()).await {
                 Ok(0) => {
                     if write_pending > 0 {
-                        client_write.write_all(&write_buf.as_slice()[..write_pending]).await
+                        client_write
+                            .write_all(&write_buf.as_slice()[..write_pending])
+                            .await
                             .map_err(|e| ProxyError::WriteError(e.to_string()))?;
                         let _ = client_write.flush().await;
                     }
@@ -155,14 +174,18 @@ where
                 }
                 Ok(n) => {
                     total += n as u64;
-                    
+
                     if n < write_threshold && write_pending + n <= buffer_size {
                         write_buf.as_mut_slice()[write_pending..write_pending + n]
                             .copy_from_slice(&buf.as_slice()[..n]);
                         write_pending += n;
-                        
-                        if write_pending >= flush_interval || total - last_flush_at >= flush_interval as u64 {
-                            client_write.write_all(&write_buf.as_slice()[..write_pending]).await
+
+                        if write_pending >= flush_interval
+                            || total - last_flush_at >= flush_interval as u64
+                        {
+                            client_write
+                                .write_all(&write_buf.as_slice()[..write_pending])
+                                .await
                                 .map_err(|e| ProxyError::WriteError(e.to_string()))?;
                             let _ = client_write.flush().await;
                             write_pending = 0;
@@ -170,14 +193,18 @@ where
                         }
                     } else {
                         if write_pending > 0 {
-                            client_write.write_all(&write_buf.as_slice()[..write_pending]).await
+                            client_write
+                                .write_all(&write_buf.as_slice()[..write_pending])
+                                .await
                                 .map_err(|e| ProxyError::WriteError(e.to_string()))?;
                             write_pending = 0;
                         }
-                        
-                        client_write.write_all(&buf.as_slice()[..n]).await
+
+                        client_write
+                            .write_all(&buf.as_slice()[..n])
+                            .await
                             .map_err(|e| ProxyError::WriteError(e.to_string()))?;
-                        
+
                         if total - last_flush_at >= flush_interval as u64 {
                             let _ = client_write.flush().await;
                             last_flush_at = total;
@@ -193,10 +220,10 @@ where
     };
 
     let result = tokio::try_join!(client_to_upstream, upstream_to_client);
-    
+
     let _ = client_write.flush().await;
     let _ = upstream_write.flush().await;
-    
+
     match result {
         Ok((_, _)) => Ok(()),
         Err(e) => Err(e),
@@ -214,7 +241,7 @@ where
     let (client_bytes, upstream_bytes) = tokio::io::copy_bidirectional(client, upstream)
         .await
         .map_err(|e| ProxyError::Other(e.to_string()))?;
-    
+
     Ok((client_bytes, upstream_bytes))
 }
 
@@ -238,7 +265,14 @@ where
         copy_bidirectional_native(&mut client_combined, &mut upstream_combined).await?;
         Ok(())
     } else {
-        copy_bidirectional_with_config(client_read, client_write, upstream_read, upstream_write, config).await
+        copy_bidirectional_with_config(
+            client_read,
+            client_write,
+            upstream_read,
+            upstream_write,
+            config,
+        )
+        .await
     }
 }
 
@@ -261,7 +295,9 @@ where
             match client_read.read(buf.as_mut_slice()).await {
                 Ok(0) => break Ok(()),
                 Ok(n) => {
-                    upstream_write.write_all(&buf.as_slice()[..n]).await
+                    upstream_write
+                        .write_all(&buf.as_slice()[..n])
+                        .await
                         .map_err(|e| ProxyError::WriteError(e.to_string()))?;
                 }
                 Err(e) => break Err(ProxyError::ReadError(e.to_string())),
@@ -275,7 +311,9 @@ where
             match upstream_read.read(buf.as_mut_slice()).await {
                 Ok(0) => break Ok(()),
                 Ok(n) => {
-                    client_write.write_all(&buf.as_slice()[..n]).await
+                    client_write
+                        .write_all(&buf.as_slice()[..n])
+                        .await
                         .map_err(|e| ProxyError::WriteError(e.to_string()))?;
                 }
                 Err(e) => break Err(ProxyError::ReadError(e.to_string())),
@@ -284,7 +322,7 @@ where
     };
 
     let result = tokio::try_join!(client_to_upstream, upstream_to_client);
-    
+
     match result {
         Ok((_, _)) => Ok(()),
         Err(e) => Err(e),
@@ -343,7 +381,7 @@ mod tests {
 
         let test_data = vec![0xABu8; 16 * 1024];
         client_b.write_all(&test_data).await.unwrap();
-        
+
         let mut buf = vec![0u8; 16 * 1024];
         let mut total_read = 0;
         while total_read < 16 * 1024 {

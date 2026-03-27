@@ -13,22 +13,20 @@ pub use bandwidth::{
     EgressDirection,
 };
 
+use std::sync::LazyLock;
+
 const LATENCY_SAMPLE_SIZE: usize = 1000;
 
-static ATTACK_TYPE_COUNTER: once_cell::sync::Lazy<Mutex<HashMap<String, AtomicU64>>> =
-    once_cell::sync::Lazy::new(|| Mutex::new(HashMap::new()));
+static ATTACK_TYPE_COUNTER: LazyLock<Mutex<HashMap<String, AtomicU64>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
-static PROXY_CACHE_HITS: once_cell::sync::Lazy<AtomicU64> =
-    once_cell::sync::Lazy::new(|| AtomicU64::new(0));
+static PROXY_CACHE_HITS: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 
-static PROXY_CACHE_MISSES: once_cell::sync::Lazy<AtomicU64> =
-    once_cell::sync::Lazy::new(|| AtomicU64::new(0));
+static PROXY_CACHE_MISSES: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 
-static STATIC_CACHE_HITS: once_cell::sync::Lazy<AtomicU64> =
-    once_cell::sync::Lazy::new(|| AtomicU64::new(0));
+static STATIC_CACHE_HITS: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 
-static STATIC_CACHE_MISSES: once_cell::sync::Lazy<AtomicU64> =
-    once_cell::sync::Lazy::new(|| AtomicU64::new(0));
+static STATIC_CACHE_MISSES: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 
 #[derive(Debug, Clone)]
 pub struct CacheMetrics {
@@ -571,9 +569,7 @@ impl WorkerMetrics {
 
     pub fn record_site_request_start(&self, site_id: &str) -> u64 {
         let mut sites = self.per_site.lock();
-        let site = sites
-            .entry(site_id.to_string())
-            .or_default();
+        let site = sites.entry(site_id.to_string()).or_default();
         site.record_request_start()
     }
 

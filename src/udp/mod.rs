@@ -1,10 +1,10 @@
+pub mod filter;
 pub mod listener;
 pub mod protocol;
-pub mod filter;
 
-pub use listener::{UdpListenerPool, UdpListenerConfig};
-pub use protocol::{UdpProtocolDetector, UdpProtocol, UdpProtocolResult};
-pub use filter::{UdpProtocolFilter, UdpFilterAction, UdpFilterConfig};
+pub use filter::{UdpFilterAction, UdpFilterConfig, UdpProtocolFilter};
+pub use listener::{UdpListenerConfig, UdpListenerPool};
+pub use protocol::{UdpProtocol, UdpProtocolDetector, UdpProtocolResult};
 
 pub use crate::listener::ConnectionContext;
 
@@ -41,12 +41,9 @@ impl UdpProxy {
         }
     }
 
-    pub fn check_packet(
-        &self,
-        data: &[u8],
-        expected_protocol: &str,
-    ) -> UdpFilterAction {
+    pub fn check_packet(&self, data: &[u8], expected_protocol: &str) -> UdpFilterAction {
         let detection_result = self.protocol_detector.detect_from_bytes(data);
-        self.protocol_filter.check(expected_protocol, &detection_result.protocol)
+        self.protocol_filter
+            .check(expected_protocol, &detection_result.protocol)
     }
 }

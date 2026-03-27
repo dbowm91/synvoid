@@ -37,7 +37,7 @@ impl TunnelUpstreamResolver {
         }
 
         let sessions = self.manager.list_sessions().await;
-        
+
         for session in sessions {
             if let Some(port) = session.get_local_port(identifier) {
                 return Some(TunnelUpstreamTarget {
@@ -74,7 +74,10 @@ impl TunnelUpstreamPool {
             .map(|(k, v)| (k, v.to_string()))
             .collect();
         Self {
-            resolver: Arc::new(RwLock::new(TunnelUpstreamResolver::new(manager, string_mappings))),
+            resolver: Arc::new(RwLock::new(TunnelUpstreamResolver::new(
+                manager,
+                string_mappings,
+            ))),
         }
     }
 
@@ -115,7 +118,6 @@ impl TunnelBackend {
     }
 
     pub fn to_backend(&self) -> Backend {
-        Backend::new(format!("tcp:127.0.0.1:{}", self.port))
-            .with_protocol(BackendProtocol::Tcp)
+        Backend::new(format!("tcp:127.0.0.1:{}", self.port)).with_protocol(BackendProtocol::Tcp)
     }
 }

@@ -5,15 +5,15 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
+use metrics::{counter, gauge};
+use quinn::Connection;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio::sync::broadcast;
-use metrics::{counter, gauge};
-use quinn::Connection;
 
-use crate::tunnel::quic::messages::{TunnelMessage, DatagramMessage, DatagramCapabilities};
-use crate::tunnel::quic::framing::{read_message_default, write_message};
 use crate::buffer::BufferPool;
+use crate::tunnel::quic::framing::{read_message_default, write_message};
+use crate::tunnel::quic::messages::{DatagramCapabilities, DatagramMessage, TunnelMessage};
 
 const MAX_UDP_CLIENTS: usize = 10000;
 const UDP_CLIENT_TTL_SECS: u64 = 300;
@@ -72,25 +72,27 @@ impl UdpClientTracker {
             counter!("maluwaf.vpn.client.udp.client_map_full").increment(1);
             return false;
         }
-        
+
         self.timestamps.insert(addr, Instant::now());
         true
     }
 
     fn lookup_by_source(&self, source_addr: &str) -> Option<SocketAddr> {
-        source_addr.parse::<SocketAddr>().ok().filter(|addr| {
-            self.timestamps.contains_key(addr)
-        })
+        source_addr
+            .parse::<SocketAddr>()
+            .ok()
+            .filter(|addr| self.timestamps.contains_key(addr))
     }
 
     fn cleanup_expired(&self) {
         let now = Instant::now();
         let ttl = Duration::from_secs(UDP_CLIENT_TTL_SECS);
-        
+
         let mut cleaned = 0;
         let max_clean = self.max_cleanup_per_batch;
-        
-        let keys_to_remove: Vec<SocketAddr> = self.timestamps
+
+        let keys_to_remove: Vec<SocketAddr> = self
+            .timestamps
             .iter()
             .filter(|e| {
                 if cleaned >= max_clean {
@@ -104,11 +106,11 @@ impl UdpClientTracker {
             })
             .map(|e| *e.key())
             .collect();
-        
+
         for addr in keys_to_remove {
             self.timestamps.remove(&addr);
         }
-        
+
         let remaining = self.timestamps.len();
         gauge!("maluwaf.vpn.client.udp.active_clients").set(remaining as f64);
     }
@@ -125,7 +127,7 @@ impl LocalListener {
         datagram_caps: DatagramCapabilities,
     ) -> Self {
         let (shutdown_tx, _) = broadcast::channel(1);
-        
+
         Self {
             mapping,
             connection,
@@ -147,16 +149,16 @@ impl LocalListener {
 
     async fn find_available_port(&self) -> u16 {
         use tokio::net::TcpListener;
-        
+
         let base_port = self.mapping.local_addr.port();
         let host = self.mapping.local_addr.ip();
-        
+
         for port in base_port..=base_port.saturating_add(100) {
             if TcpListener::bind((host, port)).await.is_ok() {
                 return port;
             }
         }
-        
+
         base_port
     }
 
@@ -169,23 +171,27 @@ impl LocalListener {
                     "Port {} is already in use. Try using port {} instead.",
                     self.mapping.local_addr.port(),
                     suggested_port
-                ).into());
+                )
+                .into());
             }
             Err(e) => return Err(e.into()),
         };
         let local_addr = listener.local_addr()?;
-        
-        tracing::info!("TCP listener started on {} -> remote:{}", 
-            local_addr, self.mapping.remote_port);
-        
+
+        tracing::info!(
+            "TCP listener started on {} -> remote:{}",
+            local_addr,
+            self.mapping.remote_port
+        );
+
         let shutdown_rx = self.shutdown_tx.subscribe();
         let connection = self.connection.clone();
         let mapping = self.mapping.clone();
-        
+
         tokio::spawn(async move {
             Self::tcp_accept_loop(listener, connection, mapping, shutdown_rx).await;
         });
-        
+
         Ok(())
     }
 
@@ -202,9 +208,9 @@ impl LocalListener {
                         Ok((tcp_stream, client_addr)) => {
                             let conn = connection.clone();
                             let map = mapping.clone();
-                            
+
                             counter!("maluwaf.vpn.client.tcp.connections").increment(1);
-                            
+
                             tokio::spawn(async move {
                                 if let Err(e) = Self::handle_tcp_connection(tcp_stream, conn, map).await {
                                     tracing::debug!("TCP connection error from {}: {}", client_addr, e);
@@ -229,7 +235,9 @@ impl LocalListener {
         connection: Connection,
         mapping: LocalPortMapping,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let (mut send_stream, mut recv_stream) = connection.open_bi().await
+        let (mut send_stream, mut recv_stream) = connection
+            .open_bi()
+            .await
             .map_err(|e| format!("Failed to open stream: {}", e))?;
 
         let stream_open = TunnelMessage::StreamOpen {
@@ -241,11 +249,15 @@ impl LocalListener {
         write_message(&mut send_stream, &stream_open).await?;
 
         let response = read_message_default(&mut recv_stream).await?;
-        
+
         match response {
-            TunnelMessage::StreamOpenAck { success, message, .. } => {
+            TunnelMessage::StreamOpenAck {
+                success, message, ..
+            } => {
                 if !success {
-                    return Err(format!("Stream open failed: {}", message.unwrap_or_default()).into());
+                    return Err(
+                        format!("Stream open failed: {}", message.unwrap_or_default()).into(),
+                    );
                 }
             }
             _ => return Err("Unexpected response to StreamOpen".into()),
@@ -266,7 +278,8 @@ impl LocalListener {
                             data: Vec::new(),
                             fin: true,
                         };
-                        let data = fin_msg.encode()
+                        let data = fin_msg
+                            .encode()
                             .map_err(|e| format!("Encode error: {}", e))?;
                         let len = (data.len() as u32).to_be_bytes();
                         send_stream.write_all(&len).await?;
@@ -280,7 +293,8 @@ impl LocalListener {
                             data: pooled.as_slice()[..n].to_vec(),
                             fin: false,
                         };
-                        let data = data_msg.encode()
+                        let data = data_msg
+                            .encode()
                             .map_err(|e| format!("Encode error: {}", e))?;
                         let len = (data.len() as u32).to_be_bytes();
                         send_stream.write_all(&len).await?;
@@ -306,7 +320,7 @@ impl LocalListener {
                     Err(quinn::ReadExactError::FinishedEarly(_)) => break Ok(()),
                     Err(e) => break Err(e.into()),
                 }
-                
+
                 let len = u32::from_be_bytes(len_buf) as usize;
                 if len > max_msg_size {
                     break Err(format!("Message too large: {} > {}", len, max_msg_size).into());
@@ -317,10 +331,10 @@ impl LocalListener {
                     data_pooled.resize(len);
                 }
                 recv_stream.read_exact(data_pooled.as_mut_slice()).await?;
-                
+
                 let msg = TunnelMessage::decode(data_pooled.as_slice())
                     .ok_or_else(|| "Failed to decode message".to_string())?;
-                
+
                 match msg {
                     TunnelMessage::DataChunk { data, fin, .. } => {
                         if !data.is_empty() {
@@ -337,13 +351,13 @@ impl LocalListener {
         };
 
         counter!("maluwaf.vpn.client.tcp.streams").increment(1);
-        
+
         let result = tokio::try_join!(tcp_to_quic, quic_to_tcp);
-        
+
         let _ = send_stream.finish();
-        
+
         counter!("maluwaf.vpn.client.tcp.streams_closed").increment(1);
-        
+
         result.map(|_| ())
     }
 
@@ -354,11 +368,17 @@ impl LocalListener {
 
         let socket = UdpSocket::bind(self.mapping.local_addr).await?;
         let local_addr = socket.local_addr()?;
-        
-        tracing::info!("UDP listener started on {} -> remote:{}", 
-            local_addr, self.mapping.remote_port);
 
-        let (mut send_stream, mut recv_stream) = self.connection.open_bi().await
+        tracing::info!(
+            "UDP listener started on {} -> remote:{}",
+            local_addr,
+            self.mapping.remote_port
+        );
+
+        let (mut send_stream, mut recv_stream) = self
+            .connection
+            .open_bi()
+            .await
             .map_err(|e| format!("Failed to open stream: {}", e))?;
 
         let open_msg = TunnelMessage::UdpTunnelOpen {
@@ -368,11 +388,15 @@ impl LocalListener {
         write_message(&mut send_stream, &open_msg).await?;
 
         let response = read_message_default(&mut recv_stream).await?;
-        
+
         match response {
-            TunnelMessage::UdpTunnelOpenAck { success, message, .. } => {
+            TunnelMessage::UdpTunnelOpenAck {
+                success, message, ..
+            } => {
                 if !success {
-                    return Err(format!("UDP tunnel open failed: {}", message.unwrap_or_default()).into());
+                    return Err(
+                        format!("UDP tunnel open failed: {}", message.unwrap_or_default()).into(),
+                    );
                 }
             }
             _ => return Err("Unexpected response to UdpTunnelOpen".into()),
@@ -383,14 +407,14 @@ impl LocalListener {
         let identifier = self.mapping.identifier.clone();
         let max_size = self.datagram_caps.max_size;
         let shutdown_rx = self.shutdown_tx.subscribe();
-        
+
         let tracker = Arc::new(UdpClientTracker::new());
-        
+
         let socket_recv = socket.clone();
         let identifier_recv = identifier.clone();
         let conn_send = connection.clone();
         let tracker_recv = tracker.clone();
-        
+
         tokio::spawn(async move {
             Self::udp_recv_loop(
                 socket_recv,
@@ -399,24 +423,33 @@ impl LocalListener {
                 max_size,
                 tracker_recv,
                 shutdown_rx,
-            ).await;
+            )
+            .await;
         });
 
         let socket_send = socket.clone();
         let identifier_send = identifier.clone();
         let shutdown_rx_send = self.shutdown_tx.subscribe();
         let tracker_send = tracker.clone();
-        
+
         tokio::spawn(async move {
-            Self::udp_send_loop(socket_send, connection, identifier_send, tracker_send, shutdown_rx_send).await;
+            Self::udp_send_loop(
+                socket_send,
+                connection,
+                identifier_send,
+                tracker_send,
+                shutdown_rx_send,
+            )
+            .await;
         });
 
         let tracker_cleanup = tracker.clone();
         let shutdown_rx_cleanup = self.shutdown_tx.subscribe();
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(UDP_CLEANUP_INTERVAL_SECS));
+            let mut interval =
+                tokio::time::interval(Duration::from_secs(UDP_CLEANUP_INTERVAL_SECS));
             let mut shutdown = shutdown_rx_cleanup;
-            
+
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
@@ -430,7 +463,7 @@ impl LocalListener {
         });
 
         counter!("maluwaf.vpn.client.udp.tunnels").increment(1);
-        
+
         Ok(())
     }
 
@@ -445,14 +478,14 @@ impl LocalListener {
         let mut sequence_counter: u64 = 0;
         let recv_buffer_size = max_size.max(1200);
         let mut recv_pooled = BufferPool::acquire(recv_buffer_size);
-        
+
         loop {
             tokio::select! {
                 recv_result = socket.recv_from(recv_pooled.as_mut_slice()) => {
                     match recv_result {
                         Ok((len, client_addr)) => {
                             let data = &recv_pooled.as_mut_slice()[..len];
-                            
+
                             if !tracker.register(client_addr) {
                                 tracing::warn!(
                                     "UDP client map full, dropping packet from {}",
@@ -461,7 +494,7 @@ impl LocalListener {
                                 counter!("maluwaf.vpn.client.udp.client_dropped").increment(1);
                                 continue;
                             }
-                            
+
                             let msg = DatagramMessage::new(
                                 identifier.clone(),
                                 sequence_counter,
@@ -469,9 +502,9 @@ impl LocalListener {
                                 0,
                                 client_addr.to_string(),
                             );
-                            
+
                             sequence_counter = sequence_counter.wrapping_add(1);
-                            
+
                             if let Ok(encoded) = msg.encode() {
                                 if encoded.len() <= max_size {
                                     match connection.send_datagram(encoded.into()) { Err(e) => {
@@ -511,9 +544,9 @@ impl LocalListener {
                                 if msg.identifier != identifier {
                                     continue;
                                 }
-                                
+
                                 let target_client = tracker.lookup_by_source(&msg.source_addr);
-                                
+
                                 if let Some(client_addr) = target_client {
                                     if let Err(e) = socket.send_to(&msg.data, client_addr).await {
                                         tracing::debug!("Failed to send UDP to client {}: {}", client_addr, e);

@@ -1,4 +1,4 @@
-use crate::http_client::{HttpClient, get_with_timeout, create_simple_http_client};
+use crate::http_client::{create_simple_http_client, get_with_timeout, HttpClient};
 use std::future::Future;
 use std::time::{Duration, Instant};
 
@@ -90,7 +90,7 @@ where
     E: std::fmt::Debug + Default,
 {
     let mut last_error: Option<E> = None;
-    
+
     for attempt in 1..=retries {
         match operation().await {
             Ok(result) => {
@@ -234,7 +234,7 @@ impl HealthChecker {
                     let ready = json["ready"].as_bool().unwrap_or(status.is_success());
                     let is_draining = json["reason"].as_str() == Some("draining");
                     let active_connections = json["active_connections"].as_u64().unwrap_or(0);
-                    
+
                     return WorkerReadinessStatus {
                         port,
                         ready,
@@ -242,7 +242,7 @@ impl HealthChecker {
                         active_connections,
                     };
                 }
-                
+
                 WorkerReadinessStatus {
                     port,
                     ready: status.is_success(),
@@ -272,15 +272,19 @@ impl HealthChecker {
                     if let Some(status_str) = json["status"].as_str() {
                         if status_str == "draining" {
                             let active = json["active_connections"].as_u64().unwrap_or(0);
-                            return HealthStatus::Draining { active_connections: active };
+                            return HealthStatus::Draining {
+                                active_connections: active,
+                            };
                         }
                     }
                 }
-                
+
                 if status.is_success() {
                     HealthStatus::Healthy
                 } else if status.as_u16() == 503 {
-                    HealthStatus::Draining { active_connections: 0 }
+                    HealthStatus::Draining {
+                        active_connections: 0,
+                    }
                 } else {
                     HealthStatus::Unhealthy {
                         status: status.as_u16(),
@@ -303,7 +307,11 @@ impl HealthChecker {
         results
     }
 
-    pub async fn check_all_workers_readiness(&self, ports: &[u16], host: &str) -> Vec<WorkerReadinessStatus> {
+    pub async fn check_all_workers_readiness(
+        &self,
+        ports: &[u16],
+        host: &str,
+    ) -> Vec<WorkerReadinessStatus> {
         let mut results = Vec::new();
 
         for &port in ports {
@@ -349,7 +357,11 @@ impl HealthChecker {
                 let host = host.clone();
                 async move { this.check_workers(ports, &host).await }
             },
-            |results| results.iter().all(|(_, s)| matches!(s, HealthStatus::Healthy)),
+            |results| {
+                results
+                    .iter()
+                    .all(|(_, s)| matches!(s, HealthStatus::Healthy))
+            },
             |failures| format!("{}/{} unhealthy", failures.len(), ports.len()),
         )
         .await
@@ -375,7 +387,11 @@ impl HealthChecker {
             let all_ready = results.iter().all(|r| r.ready && !r.is_draining);
 
             if all_ready {
-                tracing::info!("All {} workers ready after {} attempts", ports.len(), attempt);
+                tracing::info!(
+                    "All {} workers ready after {} attempts",
+                    ports.len(),
+                    attempt
+                );
                 return Ok(results);
             }
 
@@ -396,13 +412,13 @@ impl HealthChecker {
 
         let results = self.check_all_workers_readiness(ports, host).await;
         let failures: Vec<_> = results.iter().filter(|r| !r.ready).cloned().collect();
-        
+
         tracing::warn!(
             "Readiness validation failed: {}/{} workers not ready",
             failures.len(),
             ports.len()
         );
-        
+
         Err(failures)
     }
 
@@ -467,12 +483,18 @@ impl HealthChecker {
 
         for _ in 0..config.sample_requests {
             let start = Instant::now();
-            
-            match get_with_timeout(&self.client, &url, Duration::from_millis(config.latency_threshold_ms * 2)).await {
+
+            match get_with_timeout(
+                &self.client,
+                &url,
+                Duration::from_millis(config.latency_threshold_ms * 2),
+            )
+            .await
+            {
                 Ok(response) => {
                     let latency = start.elapsed().as_millis() as u64;
                     latencies.push(latency);
-                    
+
                     if response.status.is_success() {
                         success_count += 1;
                     } else {
@@ -484,7 +506,7 @@ impl HealthChecker {
                     latencies.push(config.latency_threshold_ms * 2);
                 }
             }
-            
+
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
 
@@ -497,9 +519,12 @@ impl HealthChecker {
             0
         };
         let p95_index = ((latencies.len() as f64) * 0.95).floor() as usize;
-        let p95_latency_ms = latencies.get(p95_index.saturating_sub(1)).copied().unwrap_or(0);
+        let p95_latency_ms = latencies
+            .get(p95_index.saturating_sub(1))
+            .copied()
+            .unwrap_or(0);
 
-        let healthy = error_rate <= config.error_rate_threshold 
+        let healthy = error_rate <= config.error_rate_threshold
             && avg_latency_ms <= config.latency_threshold_ms;
 
         EnhancedHealthResult {
@@ -521,13 +546,16 @@ impl HealthChecker {
         baseline_port: u16,
         config: &EnhancedHealthConfig,
     ) -> EnhancedHealthResult {
-        let baseline_result = self.enhanced_health_check(host, baseline_port, config).await;
+        let baseline_result = self
+            .enhanced_health_check(host, baseline_port, config)
+            .await;
         let mut new_result = self.enhanced_health_check(host, new_port, config).await;
 
         if baseline_result.healthy {
             let latency_diff = if baseline_result.avg_latency_ms > 0 {
-                ((new_result.avg_latency_ms as f64 - baseline_result.avg_latency_ms as f64) 
-                    / baseline_result.avg_latency_ms as f64) * 100.0
+                ((new_result.avg_latency_ms as f64 - baseline_result.avg_latency_ms as f64)
+                    / baseline_result.avg_latency_ms as f64)
+                    * 100.0
             } else {
                 0.0
             };
@@ -565,7 +593,7 @@ impl HealthChecker {
     ) -> Result<Vec<EnhancedHealthResult>, Vec<EnhancedHealthResult>> {
         for attempt in 1..=retries {
             let mut results = Vec::new();
-            
+
             for &port in ports {
                 let result = self.enhanced_health_check(host, port, config).await;
                 results.push(result);
@@ -597,11 +625,14 @@ impl HealthChecker {
         }
 
         let results: Vec<_> = futures::future::join_all(
-            ports.iter().map(|&port| self.enhanced_health_check(host, port, config))
-        ).await;
+            ports
+                .iter()
+                .map(|&port| self.enhanced_health_check(host, port, config)),
+        )
+        .await;
 
         let failures: Vec<_> = results.into_iter().filter(|r| !r.healthy).collect();
-        
+
         Err(failures)
     }
 
@@ -612,8 +643,11 @@ impl HealthChecker {
         new_port: u16,
         config: &EnhancedHealthConfig,
     ) -> ShadowTrafficResult {
-        let path = config.shadow_traffic_path.as_deref().unwrap_or("/__internal__/health");
-        
+        let path = config
+            .shadow_traffic_path
+            .as_deref()
+            .unwrap_or("/__internal__/health");
+
         let mut old_latencies = Vec::new();
         let mut new_latencies = Vec::new();
         let mut old_successes: usize = 0;
@@ -663,8 +697,7 @@ impl HealthChecker {
             0.0
         };
 
-        let healthy = new_successes >= old_successes.saturating_sub(1)
-            && latency_diff < 100.0;
+        let healthy = new_successes >= old_successes.saturating_sub(1) && latency_diff < 100.0;
 
         ShadowTrafficResult {
             port: new_port,
@@ -680,7 +713,7 @@ impl HealthChecker {
 
     async fn make_shadow_request(&self, url: &str, timeout_ms: u64) -> (Option<u64>, bool) {
         let start = Instant::now();
-        
+
         match get_with_timeout(&self.client, url, Duration::from_millis(timeout_ms)).await {
             Ok(response) => {
                 let latency = start.elapsed().as_millis() as u64;
@@ -704,12 +737,16 @@ impl HealthChecker {
         let mut results = Vec::new();
 
         for (old_port, new_port) in old_ports.iter().zip(new_ports.iter()) {
-            let result = self.enhanced_health_check_with_baseline(host, *new_port, *old_port, config).await;
-            
+            let result = self
+                .enhanced_health_check_with_baseline(host, *new_port, *old_port, config)
+                .await;
+
             if !result.healthy {
                 return Err(format!(
                     "Port {} failed health check: error_rate={:.1}%, avg_latency={}ms",
-                    new_port, result.error_rate * 100.0, result.avg_latency_ms
+                    new_port,
+                    result.error_rate * 100.0,
+                    result.avg_latency_ms
                 ));
             }
 
@@ -812,14 +849,27 @@ impl HealthCheckBuilder {
             .await
     }
 
-    pub async fn validate_with_readiness(&self, ports: &[u16]) -> Result<Vec<WorkerReadinessStatus>, Vec<WorkerReadinessStatus>> {
+    pub async fn validate_with_readiness(
+        &self,
+        ports: &[u16],
+    ) -> Result<Vec<WorkerReadinessStatus>, Vec<WorkerReadinessStatus>> {
         let checker = self.build();
         checker
-            .validate_readiness(ports, &self.host, self.retries, self.interval_secs, self.warmup_secs)
+            .validate_readiness(
+                ports,
+                &self.host,
+                self.retries,
+                self.interval_secs,
+                self.warmup_secs,
+            )
             .await
     }
 
-    pub async fn enhanced_validate(&self, ports: &[u16], config: &EnhancedHealthConfig) -> Result<Vec<EnhancedHealthResult>, Vec<EnhancedHealthResult>> {
+    pub async fn enhanced_validate(
+        &self,
+        ports: &[u16],
+        config: &EnhancedHealthConfig,
+    ) -> Result<Vec<EnhancedHealthResult>, Vec<EnhancedHealthResult>> {
         let checker = self.build();
         checker
             .validate_enhanced(ports, &self.host, config, self.retries, self.interval_secs)

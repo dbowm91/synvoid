@@ -602,12 +602,7 @@ mod dns_config_tests {
         let manager = TrustAnchorManager::new(config);
 
         let public_key = vec![0x01, 0x02, 0x03, 0x04];
-        let key_tag = maluwaf::dns::dnssec::calculate_key_tag(
-            257,
-            3,
-            8,
-            &public_key,
-        );
+        let key_tag = maluwaf::dns::dnssec::calculate_key_tag(257, 3, 8, &public_key);
 
         let event1 = manager.observe_dnskey_at_root(key_tag, 8, &public_key, false);
         assert!(matches!(event1, Rfc5011Event::NewKeySeen { key_tag: kt } if kt == key_tag));
@@ -644,12 +639,7 @@ mod dns_config_tests {
         let manager = TrustAnchorManager::new(config);
 
         let public_key = vec![0x01, 0x02, 0x03, 0x04];
-        let key_tag = maluwaf::dns::dnssec::calculate_key_tag(
-            257,
-            3,
-            8,
-            &public_key,
-        );
+        let key_tag = maluwaf::dns::dnssec::calculate_key_tag(257, 3, 8, &public_key);
 
         manager.observe_dnskey_at_root(key_tag, 8, &public_key, false);
 

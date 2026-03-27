@@ -1,5 +1,6 @@
 pub mod broadcaster;
 
+use super::state::AdminState;
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
@@ -9,13 +10,14 @@ use axum::{
 };
 use futures::{SinkExt, StreamExt};
 use std::sync::Arc;
-use super::state::AdminState;
 
 pub async fn ws_metrics_handler(
     ws: WebSocketUpgrade,
     State(state): State<Arc<AdminState>>,
 ) -> Response {
-    ws.on_upgrade(move |socket| handle_metrics_socket(socket, state.metrics.metrics_broadcaster.clone()))
+    ws.on_upgrade(move |socket| {
+        handle_metrics_socket(socket, state.metrics.metrics_broadcaster.clone())
+    })
 }
 
 pub async fn ws_logs_handler(

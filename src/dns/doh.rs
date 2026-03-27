@@ -1,20 +1,22 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use bytes::Bytes;
 use http::StatusCode;
+use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;
 use hyper::server::conn::http2;
 use hyper::service::service_fn;
 use hyper_util::rt::TokioIo;
 use parking_lot::RwLock;
 use tokio_rustls::TlsAcceptor;
-use bytes::Bytes;
-use http_body_util::{BodyExt, Full};
 
 use crate::config::dns::DnsDohConfig;
-use crate::dns::server::{DnsServer, RecordType};
 use crate::dns::cache::CacheKey;
-use crate::dns::secure_server::{SecureDnsServerBase, DnsServerConfig, TLS_HANDSHAKE_TIMEOUT_SECS, MAX_QUERY_SIZE};
+use crate::dns::secure_server::{
+    DnsServerConfig, SecureDnsServerBase, MAX_QUERY_SIZE, TLS_HANDSHAKE_TIMEOUT_SECS,
+};
+use crate::dns::server::{DnsServer, RecordType};
 use crate::tls::cert_resolver::CertResolver;
 
 pub const DOH_MAX_QUERY_SIZE: usize = MAX_QUERY_SIZE;
@@ -52,12 +54,7 @@ impl DohServer {
         let bind_address = self.base.config.bind_address.clone();
         let port = self.base.config.port;
         self.base
-            .start_server(
-                &bind_address,
-                port,
-                "DoH server",
-                Self::handle_connection,
-            )
+            .start_server(&bind_address, port, "DoH server", Self::handle_connection)
             .await
     }
 
@@ -80,17 +77,18 @@ impl DohServer {
         let dns_server_clone = dns_server.clone();
 
         let builder = http2::Builder::new(hyper_util::rt::TokioExecutor::new());
-        
-        builder.serve_connection(
-            io,
-            service_fn(move |req| {
-                let dns_server = dns_server_clone.clone();
-                let client_ip = client_addr.ip();
-                async move {
-                    Self::handle_request(req, dns_server, client_ip).await
-                }
-            }),
-        ).await.map_err(|e| format!("DoH HTTP/2 error: {}", e))?;
+
+        builder
+            .serve_connection(
+                io,
+                service_fn(move |req| {
+                    let dns_server = dns_server_clone.clone();
+                    let client_ip = client_addr.ip();
+                    async move { Self::handle_request(req, dns_server, client_ip).await }
+                }),
+            )
+            .await
+            .map_err(|e| format!("DoH HTTP/2 error: {}", e))?;
 
         Ok(())
     }
@@ -136,10 +134,10 @@ impl DohServer {
                     match Self::base64url_decode(dns_param) {
                         Ok(data) => data,
                         Err(_) => {
-                        return Ok(hyper::Response::builder()
-                            .status(StatusCode::BAD_REQUEST)
-                            .body(Full::new(Bytes::from("Invalid base64url encoding")))
-                            .unwrap());
+                            return Ok(hyper::Response::builder()
+                                .status(StatusCode::BAD_REQUEST)
+                                .body(Full::new(Bytes::from("Invalid base64url encoding")))
+                                .unwrap());
                         }
                     }
                 } else {
@@ -231,12 +229,10 @@ impl DohServer {
                         .unwrap())
                 }
             }
-            None => {
-                Ok(hyper::Response::builder()
-                    .status(500)
-                    .body(Full::new(Bytes::new()))
-                    .unwrap())
-            }
+            None => Ok(hyper::Response::builder()
+                .status(500)
+                .body(Full::new(Bytes::new()))
+                .unwrap()),
         }
     }
 

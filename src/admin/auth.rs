@@ -1,6 +1,6 @@
-use std::sync::Arc;
 use parking_lot::RwLock;
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 const MAX_AUTH_ATTEMPTS: usize = 5;
@@ -60,16 +60,19 @@ impl AuthRateLimiter {
 
     pub fn record_failure(&self, identifier: &str) {
         let mut attempts = self.attempts.write();
-        let entry = attempts.entry(identifier.to_string()).or_insert((Vec::new(), false));
+        let entry = attempts
+            .entry(identifier.to_string())
+            .or_insert((Vec::new(), false));
         entry.0.push(Instant::now());
-        
-        let recent: Vec<_> = entry.0
+
+        let recent: Vec<_> = entry
+            .0
             .iter()
             .filter(|t| t.elapsed() < AUTH_WINDOW_DURATION)
             .cloned()
             .collect();
         entry.0 = recent;
-        
+
         if entry.0.len() >= MAX_AUTH_ATTEMPTS {
             entry.1 = true;
             let attempts = Arc::clone(&self.attempts);
@@ -109,7 +112,5 @@ impl Default for AuthRateLimiter {
     }
 }
 
-pub static AUTH_RATE_LIMITER: std::sync::LazyLock<AuthRateLimiter> = 
+pub static AUTH_RATE_LIMITER: std::sync::LazyLock<AuthRateLimiter> =
     std::sync::LazyLock::new(AuthRateLimiter::new);
-
-

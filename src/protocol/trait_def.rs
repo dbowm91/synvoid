@@ -31,8 +31,7 @@ pub trait ProtocolHandler: Send + Sync {
     fn set_upstream_pool(&mut self, pool: Arc<UpstreamPool>);
 }
 
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub enum WafAction {
     #[default]
     Allow,
@@ -42,7 +41,6 @@ pub enum WafAction {
     TarPit,
     LogOnly,
 }
-
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProtocolError {

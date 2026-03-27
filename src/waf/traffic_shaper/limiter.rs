@@ -1,9 +1,9 @@
+use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use parking_lot::RwLock;
 use tokio::sync::mpsc;
 use tokio::time::timeout;
 
@@ -35,7 +35,11 @@ impl ConnectionLimiter {
         })
     }
 
-    pub async fn try_acquire(&self, site_id: &str, client_ip: IpAddr) -> Result<ConnectionToken, ConnectionLimitError> {
+    pub async fn try_acquire(
+        &self,
+        site_id: &str,
+        client_ip: IpAddr,
+    ) -> Result<ConnectionToken, ConnectionLimitError> {
         let config = &self.config;
 
         let total = self.total_connections.load(Ordering::Acquire);
@@ -136,7 +140,10 @@ impl ConnectionLimiter {
             if prev == 1 {
                 ips.remove(&token.client_ip);
                 let mut burst_tokens = self.ip_burst_tokens.write();
-                burst_tokens.insert(token.client_ip, AtomicU32::new(self.config.connection_burst));
+                burst_tokens.insert(
+                    token.client_ip,
+                    AtomicU32::new(self.config.connection_burst),
+                );
             }
         }
     }
@@ -147,9 +154,7 @@ impl ConnectionLimiter {
 
     pub fn active_connections_for_ip(&self, ip: IpAddr) -> u32 {
         let ips = self.ip_connections.read();
-        ips.get(&ip)
-            .map(|c| c.load(Ordering::Acquire))
-            .unwrap_or(0)
+        ips.get(&ip).map(|c| c.load(Ordering::Acquire)).unwrap_or(0)
     }
 
     pub fn config(&self) -> &ConnectionLimitsConfig {
@@ -226,7 +231,10 @@ impl SiteConnectionLimiter {
         }
     }
 
-    pub async fn try_acquire(&self, client_ip: IpAddr) -> Result<ConnectionToken, ConnectionLimitError> {
+    pub async fn try_acquire(
+        &self,
+        client_ip: IpAddr,
+    ) -> Result<ConnectionToken, ConnectionLimitError> {
         self.limiter.try_acquire(&self.site_id, client_ip).await
     }
 
@@ -234,7 +242,9 @@ impl SiteConnectionLimiter {
         &self,
         client_ip: IpAddr,
     ) -> Result<ConnectionToken, ConnectionLimitError> {
-        self.limiter.acquire_with_queue(&self.site_id, client_ip).await
+        self.limiter
+            .acquire_with_queue(&self.site_id, client_ip)
+            .await
     }
 
     pub fn release(&self, token: ConnectionToken) {

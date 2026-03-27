@@ -16,8 +16,8 @@ pub mod anycast_sync;
 pub mod cache;
 pub mod compression;
 pub mod config;
-pub mod crypto_rng;
 pub mod cookie;
+pub mod crypto_rng;
 pub mod dns64;
 pub mod dnssec;
 pub mod doh;
@@ -31,8 +31,10 @@ pub mod mesh_dnssec;
 pub mod mesh_sync;
 pub mod messages;
 pub mod metrics;
+pub mod notify;
 pub mod platform;
 pub mod qname;
+pub mod query_coalesce;
 pub mod query_validator;
 pub mod recursive;
 pub mod recursive_cache;
@@ -42,57 +44,91 @@ pub mod secure_server;
 pub mod server;
 pub mod store;
 pub mod transfer;
+pub mod trust_anchor;
 pub mod tsig;
 pub mod update;
-pub mod notify;
 pub mod wire;
 pub mod zone_file;
-pub mod query_coalesce;
-pub mod trust_anchor;
 pub mod zone_trie;
 
 pub use wire::{
-    build_error_response, build_question, build_response_header,
-    get_message_id, get_message_flags, parse_dns_message, parse_query_name,
-    MessageFlags, RCODE_NOERROR, RCODE_FORMERR, RCODE_SERVFAIL, RCODE_NXDOMAIN, RCODE_NOTIMP, RCODE_REFUSED,
-    OPCODE_QUERY, OPCODE_IQUERY, OPCODE_STATUS, OPCODE_NOTIFY, OPCODE_UPDATE,
-    UPDATE_RCODE_NOERROR, UPDATE_RCODE_FORMERR, UPDATE_RCODE_SERVFAIL,
-    UPDATE_RCODE_NXDOMAIN, UPDATE_RCODE_NOTIMP, UPDATE_RCODE_REFUSED,
-    UPDATE_RCODE_YXDOMAIN, UPDATE_RCODE_YXRRSET, UPDATE_RCODE_NXRRSET,
-    UPDATE_RCODE_NOTAUTH, UPDATE_RCODE_NOTZONE,
+    build_error_response, build_question, build_response_header, get_message_flags, get_message_id,
+    parse_dns_message, parse_query_name, MessageFlags, OPCODE_IQUERY, OPCODE_NOTIFY, OPCODE_QUERY,
+    OPCODE_STATUS, OPCODE_UPDATE, RCODE_FORMERR, RCODE_NOERROR, RCODE_NOTIMP, RCODE_NXDOMAIN,
+    RCODE_REFUSED, RCODE_SERVFAIL, UPDATE_RCODE_FORMERR, UPDATE_RCODE_NOERROR,
+    UPDATE_RCODE_NOTAUTH, UPDATE_RCODE_NOTIMP, UPDATE_RCODE_NOTZONE, UPDATE_RCODE_NXDOMAIN,
+    UPDATE_RCODE_NXRRSET, UPDATE_RCODE_REFUSED, UPDATE_RCODE_SERVFAIL, UPDATE_RCODE_YXDOMAIN,
+    UPDATE_RCODE_YXRRSET,
 };
 
-pub use dns64::{Dns64Config, Dns64Translator};
-pub use dnssec::{DnsSecKeyManager, KeyRotationConfig, KeyRotationResult, KeyInfo, DnsSecKeyStatus, Algorithm, KeyType, ZoneSigningKey};
-pub use cache::{CacheKey, CacheStats, CachedResponse, DnsCache, SecureDnsCache, CachePoisoningError};
-pub use recursive::{RecursiveDnsServer, RecursiveDnsError, RecursiveDnsResult};
-pub use recursive_cache::{RecursiveDnsCache, RecursiveCacheKey, RecursiveCacheStats, CacheEntry, PositiveCacheEntry, NegativeCacheEntry, CachedRecord, RecursiveRecordType};
-pub use cookie::{DnsCookieServer, build_cookie_option};
+pub use crate::config::dns::{
+    RecursiveCacheConfig, RecursiveDnsConfig, RecursiveUpstreamProvider, RecursiveUpstreamServer,
+};
+pub use anycast::{AnycastHealthUpdate, AnycastPacketInfo, AnycastSocketManager};
+pub use anycast_sync::{
+    AnycastZoneSync, SerialComparison, SerializedRecord, SerializedZoneData, ZoneSyncDecision,
+    ZoneSyncMetadata, ZoneSyncReason,
+};
+pub use cache::{
+    CacheKey, CachePoisoningError, CacheStats, CachedResponse, DnsCache, SecureDnsCache,
+};
 pub use config::DnsSettings;
-pub use crate::config::dns::{RecursiveDnsConfig, RecursiveCacheConfig, RecursiveUpstreamServer, RecursiveUpstreamProvider};
-pub use firewall::{DnsFirewall, DnsFirewallDecision, DnsFirewallRule, DnsFirewallRuleType, DnsFirewallStats, DnsFirewallAction};
+pub use cookie::{build_cookie_option, DnsCookieServer};
+pub use dns64::{Dns64Config, Dns64Translator};
+pub use dnssec::{
+    Algorithm, DnsSecKeyManager, DnsSecKeyStatus, KeyInfo, KeyRotationConfig, KeyRotationResult,
+    KeyType, ZoneSigningKey,
+};
+pub use doh::DohServer;
+pub use doq::DoqServer;
+pub use dot::DotServer;
+pub use firewall::{
+    DnsFirewall, DnsFirewallAction, DnsFirewallDecision, DnsFirewallRule, DnsFirewallRuleType,
+    DnsFirewallStats,
+};
+pub use hsm::{HsmBackend, HsmError, HsmManager, HsmSigner, Pkcs11Hsm, SoftHsm};
 pub use limits::{ConnectionLimitError, ConnectionLimits, ConnectionStats};
-pub use hsm::{HsmManager, HsmSigner, HsmError, HsmBackend, Pkcs11Hsm, SoftHsm};
-pub use mesh_sync::{MeshDnsRegistry, MeshDnsRegistryConfig, MeshNodeCertificate, RegisteredEdgeNode, RegisteredOriginNode, RegisteredAnycastNode, VerificationMetricsSummary};
-pub use messages::{DnsHealthUpdate, DnsRegistration, DnsRegistrationRequest, DnsZoneSync, DnsNodeRole, DnsNodeShutdown, DnsEdgeHealthReport, DomainVerificationRequest, DomainVerificationResponse, DomainVerificationType, DomainVerificationStatus, DnsRegistrationWithVerificationRequest, DnsRegistrationWithVerificationResponse, DomainVerificationStatusUpdate, DnsAnycastHealthUpdate, DnsAnycastNodeRegistration};
-pub use metrics::{DnsMetrics, DnsMetricsSummary, DnsSecurityEvent, DnsSecurityEventSeverity, DnsSecurityEventType, DnsSecurityLogger};
+pub use mesh_sync::{
+    MeshDnsRegistry, MeshDnsRegistryConfig, MeshNodeCertificate, RegisteredAnycastNode,
+    RegisteredEdgeNode, RegisteredOriginNode, VerificationMetricsSummary,
+};
+pub use messages::{
+    DnsAnycastHealthUpdate, DnsAnycastNodeRegistration, DnsEdgeHealthReport, DnsHealthUpdate,
+    DnsNodeRole, DnsNodeShutdown, DnsRegistration, DnsRegistrationRequest,
+    DnsRegistrationWithVerificationRequest, DnsRegistrationWithVerificationResponse, DnsZoneSync,
+    DomainVerificationRequest, DomainVerificationResponse, DomainVerificationStatus,
+    DomainVerificationStatusUpdate, DomainVerificationType,
+};
+pub use metrics::{
+    DnsMetrics, DnsMetricsSummary, DnsSecurityEvent, DnsSecurityEventSeverity,
+    DnsSecurityEventType, DnsSecurityLogger,
+};
+pub use notify::{build_notify_response, NotifyConfig, NotifyHandler};
+pub use platform::{create_platform, AnycastSocketPlatform};
 pub use qname::{QnameMinimizer, RebindingChecker};
+pub use query_coalesce::{CoalesceResult, QueryCoalescer, QueryKey};
 pub use query_validator::{DnsQueryClass, DnsQueryType, DnsQueryValidator};
-pub use resolver::{DnsResolver, HickoryResolver, HickoryRecursor, NoopResolver, TxtRecord, NsRecord, ResolverError, ResolverResult, DnsKeyRecord, CdsRecord, Rfc5011CheckResult};
-pub use trust_anchor::{TrustAnchorManager, TrustAnchorConfig, TrustAnchorStatus, TrustAnchorState, Rfc5011Event};
+pub use recursive::{RecursiveDnsError, RecursiveDnsResult, RecursiveDnsServer};
+pub use recursive_cache::{
+    CacheEntry, CachedRecord, NegativeCacheEntry, PositiveCacheEntry, RecursiveCacheKey,
+    RecursiveCacheStats, RecursiveDnsCache, RecursiveRecordType,
+};
+pub use resolver::{
+    CdsRecord, DnsKeyRecord, DnsResolver, HickoryRecursor, HickoryResolver, NoopResolver, NsRecord,
+    ResolverError, ResolverResult, Rfc5011CheckResult, TxtRecord,
+};
 pub use rpz::{RpzAction, RpzManager, RpzPolicy, RpzZone};
+pub use secure_server::{
+    DnsServerConfig, SecureDnsServerBase, MAX_QUERY_SIZE, TLS_HANDSHAKE_TIMEOUT_SECS,
+};
 pub use server::{DnsRateLimiter, DnsServer, DnsZoneRecord, DsRecordExport, RecordType, Zone};
 pub use store::ZoneStore;
-pub use transfer::{AXFR_QUERY_TYPE, IXFR_QUERY_TYPE, ZoneTransfer};
-pub use tsig::{TsigVerifier, TsigKey, TsigError, TsigParseResult, parse_tsig_from_query};
-pub use update::{DynamicUpdateHandler, DynamicUpdate};
-pub use notify::{NotifyHandler, NotifyConfig, build_notify_response};
-pub use doh::DohServer;
-pub use dot::DotServer;
-pub use doq::DoqServer;
-pub use secure_server::{SecureDnsServerBase, DnsServerConfig, TLS_HANDSHAKE_TIMEOUT_SECS, MAX_QUERY_SIZE};
-pub use zone_file::{ZoneFileParser, parse_zone_file, parse_zone_content, ZoneParseError, ParsedRecord};
-pub use query_coalesce::{QueryCoalescer, QueryKey, CoalesceResult};
-pub use anycast::{AnycastSocketManager, AnycastPacketInfo, AnycastHealthUpdate};
-    pub use anycast_sync::{AnycastZoneSync, ZoneSyncMetadata, SerializedZoneData, SerializedRecord, ZoneSyncReason, SerialComparison, ZoneSyncDecision};
-pub use platform::{AnycastSocketPlatform, create_platform};
+pub use transfer::{ZoneTransfer, AXFR_QUERY_TYPE, IXFR_QUERY_TYPE};
+pub use trust_anchor::{
+    Rfc5011Event, TrustAnchorConfig, TrustAnchorManager, TrustAnchorState, TrustAnchorStatus,
+};
+pub use tsig::{parse_tsig_from_query, TsigError, TsigKey, TsigParseResult, TsigVerifier};
+pub use update::{DynamicUpdate, DynamicUpdateHandler};
+pub use zone_file::{
+    parse_zone_content, parse_zone_file, ParsedRecord, ZoneFileParser, ZoneParseError,
+};

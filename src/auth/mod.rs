@@ -54,7 +54,6 @@ pub enum UserRole {
     User,
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
     pub id: String,
@@ -67,14 +66,12 @@ pub struct Session {
     pub csrf_token: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AuthStore {
     pub users: HashMap<String, User>,
     pub sessions: HashMap<String, Session>,
     pub login_logs: Vec<LoginLog>,
 }
-
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoginLog {
@@ -109,18 +106,18 @@ impl AuthManager {
     ) -> Self {
         let store = Self::load_store(&data_dir);
         let store_clone = store.clone();
-        
+
         let (write_tx, mut write_rx) = mpsc::channel::<(AuthStore, Option<mpsc::Sender<()>>)>(100);
-        
+
         let data_dir_clone = data_dir.clone();
         let flush_flag = DrainFlag::new();
         let flush_flag_clone = flush_flag.clone();
-        
+
         let _handle = tokio::spawn(async move {
             let mut interval = tokio::time::interval(TokioDuration::from_secs(5));
             let mut pending_stores: Vec<AuthStore> = Vec::new();
             let mut flush_completion_tx: Option<mpsc::Sender<()>> = None;
-            
+
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
@@ -148,7 +145,7 @@ impl AuthManager {
                 }
             }
         });
-        
+
         Self {
             data_dir,
             store: Arc::new(RwLock::new(store_clone)),
@@ -185,7 +182,7 @@ impl AuthManager {
     fn load_store(data_dir: &std::path::Path) -> AuthStore {
         let auth_dir = data_dir.join("auth");
         let store_path = auth_dir.join("store.json");
-        
+
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -193,29 +190,28 @@ impl AuthManager {
                 let _ = std::fs::set_permissions(&auth_dir, std::fs::Permissions::from_mode(0o700));
             }
         }
-        
+
         if store_path.exists() {
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
-                let _ = std::fs::set_permissions(&store_path, std::fs::Permissions::from_mode(0o600));
+                let _ =
+                    std::fs::set_permissions(&store_path, std::fs::Permissions::from_mode(0o600));
             }
-            
+
             match fs::read_to_string(&store_path) {
-                Ok(content) => {
-                    match serde_json::from_str(&content) {
-                        Ok(store) => return store,
-                        Err(e) => {
-                            tracing::warn!("Failed to parse auth store: {}, creating new", e);
-                        }
+                Ok(content) => match serde_json::from_str(&content) {
+                    Ok(store) => return store,
+                    Err(e) => {
+                        tracing::warn!("Failed to parse auth store: {}, creating new", e);
                     }
-                }
+                },
                 Err(e) => {
                     tracing::warn!("Failed to read auth store: {}, creating new", e);
                 }
             }
         }
-        
+
         AuthStore::default()
     }
 
@@ -227,22 +223,24 @@ impl AuthManager {
     async fn write_store_to_disk(data_dir: &std::path::Path, store: &AuthStore) {
         let auth_dir = data_dir.join("auth");
         let store_path = auth_dir.join("store.json");
-        
+
         if let Some(parent) = store_path.parent() {
             if let Err(e) = tokio_fs::create_dir_all(parent).await {
                 tracing::error!("Failed to create auth directory: {}", e);
                 return;
             }
         }
-        
+
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            if let Err(e) = tokio_fs::set_permissions(&auth_dir, std::fs::Permissions::from_mode(0o700)).await {
+            if let Err(e) =
+                tokio_fs::set_permissions(&auth_dir, std::fs::Permissions::from_mode(0o700)).await
+            {
                 tracing::warn!("Failed to set auth directory permissions: {}", e);
             }
         }
-        
+
         match serde_json::to_string_pretty(store) {
             Ok(content) => {
                 if let Err(e) = tokio_fs::write(&store_path, content).await {
@@ -251,7 +249,12 @@ impl AuthManager {
                     #[cfg(unix)]
                     {
                         use std::os::unix::fs::PermissionsExt;
-                        if let Err(e) = tokio_fs::set_permissions(&store_path, std::fs::Permissions::from_mode(0o600)).await {
+                        if let Err(e) = tokio_fs::set_permissions(
+                            &store_path,
+                            std::fs::Permissions::from_mode(0o600),
+                        )
+                        .await
+                        {
                             tracing::warn!("Failed to set store file permissions: {}", e);
                         }
                     }
@@ -268,10 +271,10 @@ impl AuthManager {
         let store = self.store.read().await;
         let store_clone = store.clone();
         drop(store);
-        
+
         self.flush_requested.start_drain();
         let _ = self.write_tx.send((store_clone, Some(tx))).await;
-        
+
         let _ = rx.recv().await;
     }
 
@@ -285,13 +288,12 @@ impl AuthManager {
         if password.len() < self.min_password_length {
             return Err(AuthError::PasswordTooShort(self.min_password_length));
         }
-        
+
         if username.is_empty() {
             return Err(AuthError::InvalidUsername);
         }
 
-        let password_hash = hash(&password, DEFAULT_COST)
-            .map_err(|_| AuthError::HashingError)?;
+        let password_hash = hash(&password, DEFAULT_COST).map_err(|_| AuthError::HashingError)?;
 
         let mut store = self.store.write().await;
 
@@ -319,16 +321,18 @@ impl AuthManager {
 
     pub async fn delete_user(&self, user_id: &str) -> Result<(), AuthError> {
         let mut store = self.store.write().await;
-        
-        let username_to_remove = store.users.iter()
+
+        let username_to_remove = store
+            .users
+            .iter()
             .find(|(_, u)| u.id == user_id)
             .map(|(k, _)| k.clone());
-        
+
         if let Some(username) = username_to_remove {
             store.users.remove(&username);
-            
+
             store.sessions.retain(|_, s| s.user_id != user_id);
-            
+
             self.save_store(&store).await;
             Ok(())
         } else {
@@ -336,11 +340,15 @@ impl AuthManager {
         }
     }
 
-    pub async fn update_user_sites(&self, user_id: &str, sites: Vec<String>) -> Result<(), AuthError> {
+    pub async fn update_user_sites(
+        &self,
+        user_id: &str,
+        sites: Vec<String>,
+    ) -> Result<(), AuthError> {
         let mut store = self.store.write().await;
-        
+
         let user_id_to_find = user_id.to_string();
-        
+
         if let Some(user) = store.users.values_mut().find(|u| u.id == user_id_to_find) {
             user.sites = sites;
             self.save_store(&store).await;
@@ -352,8 +360,10 @@ impl AuthManager {
 
     pub async fn list_users(&self) -> Vec<UserInfo> {
         let store = self.store.read().await;
-        
-        store.users.values()
+
+        store
+            .users
+            .values()
             .map(|u| UserInfo {
                 id: u.id.clone(),
                 username: u.username.clone(),
@@ -375,9 +385,9 @@ impl AuthManager {
         user_agent: Option<&str>,
     ) -> Result<Session, AuthError> {
         let username_key = username.to_lowercase();
-        
+
         let mut store = self.store.write().await;
-        
+
         let user = match store.users.get_mut(&username_key) {
             Some(user) => user,
             None => {
@@ -386,7 +396,7 @@ impl AuthManager {
                 return Err(AuthError::InvalidCredentials);
             }
         };
-        
+
         if let Some(locked_until) = user.locked_until {
             if locked_until > Utc::now() {
                 drop(store);
@@ -397,27 +407,27 @@ impl AuthManager {
                 user.failed_attempts = 0;
             }
         }
-        
+
         let stored_hash = user.password_hash.clone();
         let user_id = user.id.clone();
-        
-        let password_valid = verify(password, &stored_hash)
-            .unwrap_or(false);
-        
+
+        let password_valid = verify(password, &stored_hash).unwrap_or(false);
+
         let ip_str = ip_address.map(|s| s.to_string());
         let ua_str = user_agent.map(|s| s.to_string());
-        
+
         if !password_valid {
             user.failed_attempts += 1;
-            
+
             let lock_user = user.failed_attempts >= self.max_failed_attempts;
             let reason = if lock_user {
-                user.locked_until = Some(Utc::now() + chrono::Duration::seconds(self.lockout_duration_secs as i64));
+                user.locked_until =
+                    Some(Utc::now() + chrono::Duration::seconds(self.lockout_duration_secs as i64));
                 Some("Too many failed attempts".to_string())
             } else {
                 None
             };
-            
+
             store.login_logs.push(LoginLog {
                 id: Uuid::new_v4().to_string(),
                 username: username.to_string(),
@@ -428,14 +438,14 @@ impl AuthManager {
                 reason,
             });
             self.save_store(&store).await;
-            
+
             return Err(AuthError::InvalidCredentials);
         }
-        
+
         user.last_login = Some(Utc::now());
         user.failed_attempts = 0;
         user.locked_until = None;
-        
+
         let session = Session {
             id: Uuid::new_v4().to_string(),
             user_id,
@@ -446,9 +456,9 @@ impl AuthManager {
             user_agent: ua_str.clone(),
             csrf_token: Some(Uuid::new_v4().to_string()),
         };
-        
+
         store.sessions.insert(session.id.clone(), session.clone());
-        
+
         store.login_logs.push(LoginLog {
             id: Uuid::new_v4().to_string(),
             username: username.to_string(),
@@ -458,15 +468,15 @@ impl AuthManager {
             timestamp: Utc::now(),
             reason: None,
         });
-        
+
         self.save_store(&store).await;
-        
+
         Ok(session)
     }
 
     pub async fn validate_session(&self, session_id: &str) -> Option<SessionInfo> {
         let mut store = self.store.write().await;
-        
+
         let session_data = store.sessions.get(session_id).and_then(|s| {
             if s.expires_at > Utc::now() {
                 Some(SessionData {
@@ -486,15 +496,17 @@ impl AuthManager {
             let now = Utc::now();
             let remaining = data.expires_at.signed_duration_since(now);
             let total_duration = data.expires_at.signed_duration_since(data.created_at);
-            let elapsed_ratio = 1.0 - (remaining.num_seconds() as f64 / total_duration.num_seconds() as f64);
-            
+            let elapsed_ratio =
+                1.0 - (remaining.num_seconds() as f64 / total_duration.num_seconds() as f64);
+
             if elapsed_ratio > self.session_refresh_threshold {
                 let new_session_id = Uuid::new_v4().to_string();
-                let expires_at = Utc::now() + chrono::Duration::seconds(self.session_duration_secs as i64);
+                let expires_at =
+                    Utc::now() + chrono::Duration::seconds(self.session_duration_secs as i64);
                 let new_csrf_token = Uuid::new_v4().to_string();
-                
+
                 store.sessions.remove(session_id);
-                
+
                 let new_session = Session {
                     id: new_session_id.clone(),
                     user_id: data.user_id.clone(),
@@ -505,11 +517,11 @@ impl AuthManager {
                     user_agent: data.user_agent.clone(),
                     csrf_token: Some(new_csrf_token),
                 };
-                
+
                 store.sessions.insert(new_session_id.clone(), new_session);
-                
+
                 self.save_store(&store).await;
-                
+
                 return Some(SessionInfo {
                     id: new_session_id,
                     user_id: data.user_id,
@@ -517,7 +529,7 @@ impl AuthManager {
                     expires_at,
                 });
             }
-            
+
             return Some(SessionInfo {
                 id: session_id.to_string(),
                 user_id: data.user_id,
@@ -528,13 +540,17 @@ impl AuthManager {
             store.sessions.remove(session_id);
             self.save_store(&store).await;
         }
-        
+
         None
     }
 
-    pub async fn validate_session_with_ip(&self, session_id: &str, client_ip: &str) -> Option<SessionInfo> {
+    pub async fn validate_session_with_ip(
+        &self,
+        session_id: &str,
+        client_ip: &str,
+    ) -> Option<SessionInfo> {
         let mut store = self.store.write().await;
-        
+
         let session_data = store.sessions.get(session_id).and_then(|s| {
             if s.expires_at > Utc::now() {
                 Some(SessionData {
@@ -562,15 +578,17 @@ impl AuthManager {
             let now = Utc::now();
             let remaining = data.expires_at.signed_duration_since(now);
             let total_duration = data.expires_at.signed_duration_since(data.created_at);
-            let elapsed_ratio = 1.0 - (remaining.num_seconds() as f64 / total_duration.num_seconds() as f64);
-            
+            let elapsed_ratio =
+                1.0 - (remaining.num_seconds() as f64 / total_duration.num_seconds() as f64);
+
             if elapsed_ratio > self.session_refresh_threshold {
                 let new_session_id = Uuid::new_v4().to_string();
-                let expires_at = Utc::now() + chrono::Duration::seconds(self.session_duration_secs as i64);
+                let expires_at =
+                    Utc::now() + chrono::Duration::seconds(self.session_duration_secs as i64);
                 let new_csrf_token = Uuid::new_v4().to_string();
-                
+
                 store.sessions.remove(session_id);
-                
+
                 let new_session = Session {
                     id: new_session_id.clone(),
                     user_id: data.user_id.clone(),
@@ -581,11 +599,11 @@ impl AuthManager {
                     user_agent: data.user_agent.clone(),
                     csrf_token: Some(new_csrf_token),
                 };
-                
+
                 store.sessions.insert(new_session_id.clone(), new_session);
-                
+
                 self.save_store(&store).await;
-                
+
                 return Some(SessionInfo {
                     id: new_session_id,
                     user_id: data.user_id,
@@ -593,7 +611,7 @@ impl AuthManager {
                     expires_at,
                 });
             }
-            
+
             return Some(SessionInfo {
                 id: session_id.to_string(),
                 user_id: data.user_id,
@@ -604,7 +622,7 @@ impl AuthManager {
             store.sessions.remove(session_id);
             self.save_store(&store).await;
         }
-        
+
         None
     }
 
@@ -616,18 +634,16 @@ impl AuthManager {
 
     pub async fn get_login_logs(&self, limit: usize) -> Vec<LoginLog> {
         let store = self.store.read().await;
-        store.login_logs.iter()
-            .rev()
-            .take(limit)
-            .cloned()
-            .collect()
+        store.login_logs.iter().rev().take(limit).cloned().collect()
     }
 
     pub async fn get_active_sessions(&self) -> Vec<SessionInfo> {
         let store = self.store.read().await;
-        
+
         let now = Utc::now();
-        store.sessions.values()
+        store
+            .sessions
+            .values()
             .filter(|s| s.expires_at > now)
             .map(|s| SessionInfo {
                 id: s.id.clone(),
@@ -640,9 +656,9 @@ impl AuthManager {
 
     pub async fn cleanup_expired_sessions(&self) {
         let mut store = self.store.write().await;
-        
+
         store.sessions.retain(|_, s| s.expires_at > Utc::now());
-        
+
         for user in store.users.values_mut() {
             if let Some(locked_until) = user.locked_until {
                 if locked_until < Utc::now() {
@@ -651,7 +667,7 @@ impl AuthManager {
                 }
             }
         }
-        
+
         self.save_store(&store).await;
     }
 
@@ -665,19 +681,22 @@ impl AuthManager {
 
     pub async fn validate_csrf_token(&self, session_id: &str, csrf_token: &str) -> bool {
         let store = self.store.read().await;
-        
+
         if let Some(session) = store.sessions.get(session_id) {
             if session.expires_at > Utc::now() {
                 return session.csrf_token.as_deref() == Some(csrf_token);
             }
         }
-        
+
         false
     }
 
     pub async fn get_csrf_token(&self, session_id: &str) -> Option<String> {
         let store = self.store.read().await;
-        store.sessions.get(session_id).and_then(|s| s.csrf_token.clone())
+        store
+            .sessions
+            .get(session_id)
+            .and_then(|s| s.csrf_token.clone())
     }
 }
 

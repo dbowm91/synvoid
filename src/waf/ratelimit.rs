@@ -1,21 +1,24 @@
 pub mod core;
 pub mod sliding;
 
+use metrics::{counter, gauge};
+use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Semaphore;
 use tokio::time::interval;
-use parking_lot::RwLock;
-use metrics::{counter, gauge};
 
-use crate::config::defaults::{IpRateLimitConfig, GlobalRateLimitConfig};
+use crate::config::defaults::{GlobalRateLimitConfig, IpRateLimitConfig};
 use crate::config::RateLimitMemoryConfig;
-pub use core::{GlobalRateLimiter, GlobalRateLimitConfig as CoreGlobalConfig, SlottedIpRateLimiter, IpRateLimitConfig as CoreIpConfig, RateLimitDecision};
+pub use core::{
+    GlobalRateLimitConfig as CoreGlobalConfig, GlobalRateLimiter,
+    IpRateLimitConfig as CoreIpConfig, RateLimitDecision, SlottedIpRateLimiter,
+};
 pub use sliding::{
-    SlidingWindowConfig, SlidingWindowLimiter, SlidingDecision,
-    MultiWindowSlidingLimiter, SlidingGlobalDecision, GlobalSlidingStats,
+    GlobalSlidingStats, MultiWindowSlidingLimiter, SlidingDecision, SlidingGlobalDecision,
+    SlidingWindowConfig, SlidingWindowLimiter,
 };
 
 const DEFAULT_SHARDS: usize = 256;
@@ -68,7 +71,7 @@ impl IpRateLimitState {
             && self.per_hour.is_empty()
             && self.per_day.is_empty()
     }
-    
+
     fn touch(&mut self) {
         self.last_access = Some(Instant::now());
     }
@@ -126,9 +129,9 @@ impl<T: Copy> RingBuffer<T> {
         if self.len == 0 {
             return;
         }
-        
+
         let mut write_idx = 0;
-        
+
         for i in 0..self.len {
             let read_idx = (self.head + i) % self.capacity;
             if f(&self.data[read_idx]) {
@@ -139,7 +142,7 @@ impl<T: Copy> RingBuffer<T> {
                 write_idx += 1;
             }
         }
-        
+
         self.len = write_idx;
     }
 }
@@ -224,17 +227,29 @@ impl RateLimiterManager {
                     let now = Instant::now();
 
                     let mut total = 0usize;
-                    
+
                     for shard in &cleanup_state.shards {
                         let mut requests = shard.ip_requests.write();
                         requests.retain(|_ip, state| {
-                            state.per_second.retain(|t| now.duration_since(*t) < Duration::from_secs(1));
-                            state.per_minute.retain(|t| now.duration_since(*t) < Duration::from_secs(60));
-                            state.per_5min.retain(|t| now.duration_since(*t) < Duration::from_secs(300));
-                            state.per_10min.retain(|t| now.duration_since(*t) < Duration::from_secs(600));
-                            state.per_hour.retain(|t| now.duration_since(*t) < Duration::from_secs(3600));
-                            state.per_day.retain(|t| now.duration_since(*t) < Duration::from_secs(86400));
-                            
+                            state
+                                .per_second
+                                .retain(|t| now.duration_since(*t) < Duration::from_secs(1));
+                            state
+                                .per_minute
+                                .retain(|t| now.duration_since(*t) < Duration::from_secs(60));
+                            state
+                                .per_5min
+                                .retain(|t| now.duration_since(*t) < Duration::from_secs(300));
+                            state
+                                .per_10min
+                                .retain(|t| now.duration_since(*t) < Duration::from_secs(600));
+                            state
+                                .per_hour
+                                .retain(|t| now.duration_since(*t) < Duration::from_secs(3600));
+                            state
+                                .per_day
+                                .retain(|t| now.duration_since(*t) < Duration::from_secs(86400));
+
                             if state.is_empty() {
                                 false
                             } else {
@@ -257,8 +272,9 @@ impl RateLimiterManager {
                         let stats = cleanup_state.global_limiter.get_stats();
                         gauge!("maluwaf.ratelimit.global_per_second").set(stats.per_second as f64);
                         gauge!("maluwaf.ratelimit.global_per_minute").set(stats.per_minute as f64);
-                        gauge!("maluwaf.ratelimit.blackhole_active").set(if stats.blackhole_active { 1.0 } else { 0.0 });
-                        
+                        gauge!("maluwaf.ratelimit.blackhole_active")
+                            .set(if stats.blackhole_active { 1.0 } else { 0.0 });
+
                         if stats.blackhole_active {
                             tracing::warn!(
                                 "Blackhole mode active - sample rate: 1/{}, consecutive low samples: {}",
@@ -271,7 +287,7 @@ impl RateLimiterManager {
                     *cleanup_state.total_entries.write() = total;
 
                     tracing::debug!(
-                        "Rate limit cleanup: {} IPs tracked (max: {})", 
+                        "Rate limit cleanup: {} IPs tracked (max: {})",
                         total,
                         max_entries,
                     );
@@ -281,10 +297,10 @@ impl RateLimiterManager {
 
         RateLimiterManager { state }
     }
-    
+
     fn evict_lru_entries(state: &Arc<RateLimiterState>, count: usize) {
         let mut all_entries: Vec<(IpAddr, Instant)> = Vec::new();
-        
+
         for shard in &state.shards {
             let requests = shard.ip_requests.read();
             for (ip, ip_state) in requests.iter() {
@@ -293,14 +309,11 @@ impl RateLimiterManager {
                 }
             }
         }
-        
+
         all_entries.sort_by_key(|(_, time)| *time);
-        
-        let to_evict: Vec<IpAddr> = all_entries.iter()
-            .take(count)
-            .map(|(ip, _)| *ip)
-            .collect();
-        
+
+        let to_evict: Vec<IpAddr> = all_entries.iter().take(count).map(|(ip, _)| *ip).collect();
+
         let evicted = to_evict.len();
         for ip in to_evict {
             for shard in &state.shards {
@@ -309,7 +322,7 @@ impl RateLimiterManager {
                 }
             }
         }
-        
+
         if evicted > 0 {
             tracing::info!("Evicted {} LRU entries from rate limiter", evicted);
         }
@@ -360,7 +373,7 @@ impl RateLimiterManager {
 
     pub async fn check_rate_limit(&self, ip: IpAddr) -> RateLimitResult {
         let decision = self.state.slotted_ip_limiter.check_and_increment(ip);
-        
+
         match decision {
             RateLimitDecision::Allowed => RateLimitResult::Allowed,
             RateLimitDecision::Limited { limit_type } => {
@@ -387,7 +400,7 @@ impl RateLimiterManager {
             }
             RateLimitDecision::Allowed => {}
         }
-        
+
         let slotted_decision = self.state.slotted_ip_limiter.check_and_increment(ip);
         if slotted_decision != RateLimitDecision::Allowed {
             match slotted_decision {
@@ -405,55 +418,67 @@ impl RateLimiterManager {
 
         let shard = self.get_shard(ip);
         let mut requests = shard.ip_requests.write();
-        
+
         let ip_state = requests.entry(ip).or_default();
-        
-        ip_state.per_second.retain(|t| now.duration_since(*t) < Duration::from_secs(1));
-        ip_state.per_minute.retain(|t| now.duration_since(*t) < Duration::from_secs(60));
-        ip_state.per_5min.retain(|t| now.duration_since(*t) < Duration::from_secs(300));
-        ip_state.per_10min.retain(|t| now.duration_since(*t) < Duration::from_secs(600));
-        ip_state.per_hour.retain(|t| now.duration_since(*t) < Duration::from_secs(3600));
-        ip_state.per_day.retain(|t| now.duration_since(*t) < Duration::from_secs(86400));
-        
+
+        ip_state
+            .per_second
+            .retain(|t| now.duration_since(*t) < Duration::from_secs(1));
+        ip_state
+            .per_minute
+            .retain(|t| now.duration_since(*t) < Duration::from_secs(60));
+        ip_state
+            .per_5min
+            .retain(|t| now.duration_since(*t) < Duration::from_secs(300));
+        ip_state
+            .per_10min
+            .retain(|t| now.duration_since(*t) < Duration::from_secs(600));
+        ip_state
+            .per_hour
+            .retain(|t| now.duration_since(*t) < Duration::from_secs(3600));
+        ip_state
+            .per_day
+            .retain(|t| now.duration_since(*t) < Duration::from_secs(86400));
+
         let cfg = &self.state.config.ip;
-        
+
         if ip_state.per_second.len() >= cfg.per_second as usize {
-            return RateLimitResult::Limited { 
+            return RateLimitResult::Limited {
                 limit_type: "ip_per_second".to_string(),
                 retry_after_millis: 1000,
             };
         }
         if ip_state.per_minute.len() >= cfg.per_minute as usize {
-            return RateLimitResult::Limited { 
+            return RateLimitResult::Limited {
                 limit_type: "ip_per_minute".to_string(),
                 retry_after_millis: 60000,
             };
         }
         if ip_state.per_5min.len() >= cfg.per_5min as usize {
-            return RateLimitResult::Limited { 
+            return RateLimitResult::Limited {
                 limit_type: "ip_per_5min".to_string(),
                 retry_after_millis: 300000,
             };
         }
         if ip_state.per_10min.len() >= cfg.per_10min as usize {
-            return RateLimitResult::Limited { 
+            return RateLimitResult::Limited {
                 limit_type: "ip_per_10min".to_string(),
                 retry_after_millis: 600000,
             };
         }
         if ip_state.per_hour.len() >= cfg.per_hour as usize {
-            return RateLimitResult::Limited { 
+            return RateLimitResult::Limited {
                 limit_type: "ip_per_hour".to_string(),
                 retry_after_millis: 3600000,
             };
         }
         if ip_state.per_day.len() >= cfg.per_day as usize {
-            return RateLimitResult::Limited { 
+            return RateLimitResult::Limited {
                 limit_type: "ip_per_day".to_string(),
                 retry_after_millis: 86400000,
             };
         }
-        
+
         ip_state.per_second.push(now);
         ip_state.per_minute.push(now);
         ip_state.per_5min.push(now);
@@ -463,7 +488,7 @@ impl RateLimiterManager {
 
         let total = *self.state.total_entries.read();
         let max_entries = self.state.memory_config.max_ip_entries;
-        
+
         if total > max_entries {
             tracing::warn!(
                 "Rate limiter exceeded max entries ({} > {}), consider increasing limit",
@@ -515,6 +540,9 @@ pub struct GlobalConnectionPermit {
 #[derive(Debug, Clone)]
 pub enum RateLimitResult {
     Allowed,
-    Limited { limit_type: String, retry_after_millis: u64 },
+    Limited {
+        limit_type: String,
+        retry_after_millis: u64,
+    },
     Blackholed,
 }

@@ -718,8 +718,7 @@ impl Message {
             | Message::DrainRequest { .. }
             | Message::DrainStatusRequest { .. }
             | Message::DrainStatusResponse { .. }
-            | Message::DrainComplete { .. }
-            | Message::OverseerCommitUpgradeAck { .. } => Ok(()),
+            | Message::DrainComplete { .. } => Ok(()),
 
             // Variants with string fields that need validation
             Message::WorkerError { error, .. } => {

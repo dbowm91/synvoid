@@ -5,8 +5,8 @@ use std::time::Duration;
 use futures::FutureExt;
 use metrics::counter;
 use parking_lot::RwLock;
-use serde::{Deserialize, Serialize};
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
+use serde::{Deserialize, Serialize};
 
 use crate::dns::server::{DnsZoneRecord, RecordType, Zone, ZoneHistory};
 use crate::mesh::transport::MeshTransport;
@@ -100,10 +100,7 @@ pub enum ZoneSyncReason {
 }
 
 impl AnycastZoneSync {
-    pub fn new(
-        node_id: String,
-        local_zones: Arc<RwLock<HashMap<String, Zone>>>,
-    ) -> Self {
+    pub fn new(node_id: String, local_zones: Arc<RwLock<HashMap<String, Zone>>>) -> Self {
         Self {
             mesh_transport: None,
             local_zones,
@@ -128,7 +125,11 @@ impl AnycastZoneSync {
         self
     }
 
-    pub async fn trigger_sync(&self, zone_origin: &str, reason: ZoneSyncReason) -> Result<(), String> {
+    pub async fn trigger_sync(
+        &self,
+        zone_origin: &str,
+        reason: ZoneSyncReason,
+    ) -> Result<(), String> {
         let mesh_transport = match &self.mesh_transport {
             Some(t) => t,
             None => return Err("Mesh transport not configured".to_string()),
@@ -142,8 +143,12 @@ impl AnycastZoneSync {
             }
         };
 
-        tracing::info!("Triggering immediate zone sync for {} (serial: {}, reason: {:?})", 
-            zone_origin, serial, reason);
+        tracing::info!(
+            "Triggering immediate zone sync for {} (serial: {}, reason: {:?})",
+            zone_origin,
+            serial,
+            reason
+        );
 
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -158,11 +163,9 @@ impl AnycastZoneSync {
             timestamp,
         };
 
-        let _ = mesh_transport.broadcast_to_random_peers(
-            msg,
-            0.5,
-            Some(crate::mesh::config::MeshNodeRole::Global),
-        ).await;
+        let _ = mesh_transport
+            .broadcast_to_random_peers(msg, 0.5, Some(crate::mesh::config::MeshNodeRole::Global))
+            .await;
 
         Ok(())
     }
@@ -180,7 +183,9 @@ impl AnycastZoneSync {
                 interval.tick().await;
 
                 if let Some(ref transport) = mesh_transport {
-                    if let Err(e) = Self::broadcast_zone_availability(transport, &local_zones, &node_id).await {
+                    if let Err(e) =
+                        Self::broadcast_zone_availability(transport, &local_zones, &node_id).await
+                    {
                         tracing::warn!("Zone broadcast failed: {}", e);
                     }
                 }
@@ -202,7 +207,12 @@ impl AnycastZoneSync {
             }
         };
 
-        tracing::debug!("Immediately broadcasting zone {} (serial: {}) from node {}", zone_origin, serial, node_id);
+        tracing::debug!(
+            "Immediately broadcasting zone {} (serial: {}) from node {}",
+            zone_origin,
+            serial,
+            node_id
+        );
 
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -217,11 +227,9 @@ impl AnycastZoneSync {
             timestamp,
         };
 
-        let _ = transport.broadcast_to_random_peers(
-            msg,
-            0.8,
-            Some(crate::mesh::config::MeshNodeRole::Global),
-        ).await;
+        let _ = transport
+            .broadcast_to_random_peers(msg, 0.8, Some(crate::mesh::config::MeshNodeRole::Global))
+            .await;
 
         Ok(())
     }
@@ -240,7 +248,11 @@ impl AnycastZoneSync {
             return Ok(());
         }
 
-        tracing::debug!("Broadcasting zone availability for {:?} from node {}", zones, node_id);
+        tracing::debug!(
+            "Broadcasting zone availability for {:?} from node {}",
+            zones,
+            node_id
+        );
 
         for zone_origin in zones {
             let (serial, _record_count) = {
@@ -265,11 +277,13 @@ impl AnycastZoneSync {
                 timestamp,
             };
 
-            let _ = transport.broadcast_to_random_peers(
-                msg,
-                0.3,
-                Some(crate::mesh::config::MeshNodeRole::Global),
-            ).await;
+            let _ = transport
+                .broadcast_to_random_peers(
+                    msg,
+                    0.3,
+                    Some(crate::mesh::config::MeshNodeRole::Global),
+                )
+                .await;
         }
 
         Ok(())
@@ -283,13 +297,16 @@ impl AnycastZoneSync {
             .records
             .iter()
             .flat_map(|((name, record_type), records)| {
-                records.iter().map(|r| SerializedRecord {
-                    name: name.clone(),
-                    record_type: record_type.to_string(),
-                    ttl: r.ttl,
-                    value: r.value.clone(),
-                    priority: r.priority,
-                }).collect::<Vec<_>>()
+                records
+                    .iter()
+                    .map(|r| SerializedRecord {
+                        name: name.clone(),
+                        record_type: record_type.to_string(),
+                        ttl: r.ttl,
+                        value: r.value.clone(),
+                        priority: r.priority,
+                    })
+                    .collect::<Vec<_>>()
             })
             .collect();
 
@@ -301,13 +318,16 @@ impl AnycastZoneSync {
                     .records
                     .iter()
                     .flat_map(|((name, record_type), records)| {
-                        records.iter().map(|r| SerializedRecord {
-                            name: name.clone(),
-                            record_type: record_type.to_string(),
-                            ttl: r.ttl,
-                            value: r.value.clone(),
-                            priority: r.priority,
-                        }).collect::<Vec<_>>()
+                        records
+                            .iter()
+                            .map(|r| SerializedRecord {
+                                name: name.clone(),
+                                record_type: record_type.to_string(),
+                                ttl: r.ttl,
+                                value: r.value.clone(),
+                                priority: r.priority,
+                            })
+                            .collect::<Vec<_>>()
                     })
                     .collect();
 
@@ -328,15 +348,18 @@ impl AnycastZoneSync {
     }
 
     pub fn serialize_zone_to_json(&self, zone_origin: &str) -> Option<String> {
-        self.serialize_zone(zone_origin).and_then(|data| {
-            serde_json::to_string(&data).ok()
-        })
+        self.serialize_zone(zone_origin)
+            .and_then(|data| serde_json::to_string(&data).ok())
     }
 
-    pub fn serialize_ixfr_diff(&self, zone_origin: &str, previous_serial: u32) -> Option<SerializedIxfrData> {
+    pub fn serialize_ixfr_diff(
+        &self,
+        zone_origin: &str,
+        previous_serial: u32,
+    ) -> Option<SerializedIxfrData> {
         let zones = self.local_zones.read();
         let zone = zones.get(zone_origin)?;
-        
+
         if zone.serial <= previous_serial {
             return None;
         }
@@ -434,12 +457,20 @@ impl AnycastZoneSync {
         })
     }
 
-    pub fn serialize_ixfr_diff_to_json(&self, zone_origin: &str, previous_serial: u32) -> Option<String> {
+    pub fn serialize_ixfr_diff_to_json(
+        &self,
+        zone_origin: &str,
+        previous_serial: u32,
+    ) -> Option<String> {
         self.serialize_ixfr_diff(zone_origin, previous_serial)
             .and_then(|data| serde_json::to_string(&data).ok())
     }
 
-    pub fn get_zone_version(&self, zone_origin: &str, serial: u32) -> Option<SerializedZoneVersion> {
+    pub fn get_zone_version(
+        &self,
+        zone_origin: &str,
+        serial: u32,
+    ) -> Option<SerializedZoneVersion> {
         let zones = self.local_zones.read();
         let zone = zones.get(zone_origin)?;
 
@@ -448,13 +479,16 @@ impl AnycastZoneSync {
                 .records
                 .iter()
                 .flat_map(|((name, record_type), records)| {
-                    records.iter().map(|r| SerializedRecord {
-                        name: name.clone(),
-                        record_type: record_type.to_string(),
-                        ttl: r.ttl,
-                        value: r.value.clone(),
-                        priority: r.priority,
-                    }).collect::<Vec<_>>()
+                    records
+                        .iter()
+                        .map(|r| SerializedRecord {
+                            name: name.clone(),
+                            record_type: record_type.to_string(),
+                            ttl: r.ttl,
+                            value: r.value.clone(),
+                            priority: r.priority,
+                        })
+                        .collect::<Vec<_>>()
                 })
                 .collect();
 
@@ -468,29 +502,30 @@ impl AnycastZoneSync {
             });
         }
 
-        zone.history.iter()
-            .find(|h| h.serial == serial)
-            .map(|h| {
-                let records: Vec<SerializedRecord> = h
-                    .records
-                    .iter()
-                    .flat_map(|((name, record_type), records)| {
-                        records.iter().map(|r| SerializedRecord {
+        zone.history.iter().find(|h| h.serial == serial).map(|h| {
+            let records: Vec<SerializedRecord> = h
+                .records
+                .iter()
+                .flat_map(|((name, record_type), records)| {
+                    records
+                        .iter()
+                        .map(|r| SerializedRecord {
                             name: name.clone(),
                             record_type: record_type.to_string(),
                             ttl: r.ttl,
                             value: r.value.clone(),
                             priority: r.priority,
-                        }).collect::<Vec<_>>()
-                    })
-                    .collect();
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect();
 
-                SerializedZoneVersion {
-                    serial: h.serial,
-                    records,
-                    timestamp: h.timestamp,
-                }
-            })
+            SerializedZoneVersion {
+                serial: h.serial,
+                records,
+                timestamp: h.timestamp,
+            }
+        })
     }
 
     pub fn deserialize_zone(&self, json_data: &str) -> Result<Zone, String> {
@@ -519,7 +554,9 @@ impl AnycastZoneSync {
                 _ => continue,
             };
 
-            let entry = records.entry((record.name.clone(), record_type)).or_default();
+            let entry = records
+                .entry((record.name.clone(), record_type))
+                .or_default();
             entry.push(DnsZoneRecord {
                 name: record.name,
                 record_type,
@@ -529,42 +566,49 @@ impl AnycastZoneSync {
             });
         }
 
-        let history: Vec<ZoneHistory> = data.history.iter().map(|hv| {
-            let mut hrecords: HashMap<(String, RecordType), Vec<DnsZoneRecord>> = HashMap::new();
-            for record in &hv.records {
-                let record_type = match record.record_type.to_uppercase().as_str() {
-                    "A" => RecordType::A,
-                    "AAAA" => RecordType::AAAA,
-                    "CNAME" => RecordType::CNAME,
-                    "MX" => RecordType::MX,
-                    "TXT" => RecordType::TXT,
-                    "NS" => RecordType::NS,
-                    "SOA" => RecordType::SOA,
-                    "PTR" => RecordType::PTR,
-                    "SRV" => RecordType::SRV,
-                    "DNSKEY" => RecordType::DNSKEY,
-                    "RRSIG" => RecordType::RRSIG,
-                    "NSEC" => RecordType::NSEC,
-                    "NSEC3" => RecordType::NSEC3,
-                    "DS" => RecordType::DS,
-                    "CAA" => RecordType::CAA,
-                    _ => continue,
-                };
-                let entry = hrecords.entry((record.name.clone(), record_type)).or_default();
-                entry.push(DnsZoneRecord {
-                    name: record.name.clone(),
-                    record_type,
-                    ttl: record.ttl,
-                    value: record.value.clone(),
-                    priority: record.priority,
-                });
-            }
-            ZoneHistory {
-                serial: hv.serial,
-                records: hrecords,
-                timestamp: hv.timestamp,
-            }
-        }).collect();
+        let history: Vec<ZoneHistory> = data
+            .history
+            .iter()
+            .map(|hv| {
+                let mut hrecords: HashMap<(String, RecordType), Vec<DnsZoneRecord>> =
+                    HashMap::new();
+                for record in &hv.records {
+                    let record_type = match record.record_type.to_uppercase().as_str() {
+                        "A" => RecordType::A,
+                        "AAAA" => RecordType::AAAA,
+                        "CNAME" => RecordType::CNAME,
+                        "MX" => RecordType::MX,
+                        "TXT" => RecordType::TXT,
+                        "NS" => RecordType::NS,
+                        "SOA" => RecordType::SOA,
+                        "PTR" => RecordType::PTR,
+                        "SRV" => RecordType::SRV,
+                        "DNSKEY" => RecordType::DNSKEY,
+                        "RRSIG" => RecordType::RRSIG,
+                        "NSEC" => RecordType::NSEC,
+                        "NSEC3" => RecordType::NSEC3,
+                        "DS" => RecordType::DS,
+                        "CAA" => RecordType::CAA,
+                        _ => continue,
+                    };
+                    let entry = hrecords
+                        .entry((record.name.clone(), record_type))
+                        .or_default();
+                    entry.push(DnsZoneRecord {
+                        name: record.name.clone(),
+                        record_type,
+                        ttl: record.ttl,
+                        value: record.value.clone(),
+                        priority: record.priority,
+                    });
+                }
+                ZoneHistory {
+                    serial: hv.serial,
+                    records: hrecords,
+                    timestamp: hv.timestamp,
+                }
+            })
+            .collect();
 
         Ok(Zone {
             origin: data.origin,
@@ -580,31 +624,31 @@ impl AnycastZoneSync {
         })
     }
 
-    pub fn should_accept_zone_update(
-        local_serial: u32,
-        remote_serial: u32,
-    ) -> ZoneSyncDecision {
+    pub fn should_accept_zone_update(local_serial: u32, remote_serial: u32) -> ZoneSyncDecision {
         let serial_cmp = Self::compare_serials(local_serial, remote_serial);
-        
+
         match serial_cmp {
             SerialComparison::RemoteIsNewer => {
                 tracing::debug!(
                     "Remote zone is newer (local={}, remote={}), accepting",
-                    local_serial, remote_serial
+                    local_serial,
+                    remote_serial
                 );
                 ZoneSyncDecision::Accept
             }
             SerialComparison::LocalIsNewer => {
                 tracing::debug!(
                     "Local zone is newer (local={}, remote={}), rejecting",
-                    local_serial, remote_serial
+                    local_serial,
+                    remote_serial
                 );
                 ZoneSyncDecision::Reject
             }
             SerialComparison::Equal | SerialComparison::WrapAround => {
                 tracing::debug!(
                     "Serial comparison: local={}, remote={}, rejecting",
-                    local_serial, remote_serial
+                    local_serial,
+                    remote_serial
                 );
                 ZoneSyncDecision::Reject
             }
@@ -614,7 +658,7 @@ impl AnycastZoneSync {
     pub fn compare_serials(local: u32, remote: u32) -> SerialComparison {
         const HALF_U32: u32 = u32::MAX / 2;
         let diff = remote.wrapping_sub(local);
-        
+
         if diff == 0 {
             SerialComparison::Equal
         } else if diff <= HALF_U32 {
@@ -626,17 +670,21 @@ impl AnycastZoneSync {
         }
     }
 
-    pub fn apply_remote_zone(&self, remote_zone: Zone, source_node_id: &str) -> Result<bool, String> {
+    pub fn apply_remote_zone(
+        &self,
+        remote_zone: Zone,
+        source_node_id: &str,
+    ) -> Result<bool, String> {
         let zone_origin = remote_zone.origin.clone();
         let remote_serial = remote_zone.serial;
-        
+
         let should_accept = {
             let zones = self.local_zones.read();
             if let Some(local_zone) = zones.get(&zone_origin) {
                 let local_serial = local_zone.serial;
-                
+
                 let decision = Self::compare_and_decide(local_serial, remote_serial);
-                
+
                 match decision {
                     ZoneSyncDecision::Accept => {
                         counter!("dns_zone_sync_accepted_total").increment(1);
@@ -652,7 +700,7 @@ impl AnycastZoneSync {
                 true
             }
         };
-        
+
         if should_accept {
             let mut zones = self.local_zones.write();
             zones.insert(zone_origin.clone(), remote_zone);
@@ -675,7 +723,11 @@ impl AnycastZoneSync {
         }
     }
 
-    pub fn apply_remote_zone_from_json(&self, json_data: &str, source_node_id: &str) -> Result<bool, String> {
+    pub fn apply_remote_zone_from_json(
+        &self,
+        json_data: &str,
+        source_node_id: &str,
+    ) -> Result<bool, String> {
         let remote_zone = self.deserialize_zone(json_data)?;
         self.apply_remote_zone(remote_zone, source_node_id)
     }
@@ -707,7 +759,12 @@ impl AnycastZoneSync {
 
         tracing::info!("Requesting zone {} from mesh peers", zone_origin);
 
-        let request_id = format!("{}-{}-{}", zone_origin, self.node_id, chrono::Utc::now().timestamp());
+        let request_id = format!(
+            "{}-{}-{}",
+            zone_origin,
+            self.node_id,
+            chrono::Utc::now().timestamp()
+        );
         let current_serial = self.get_zone_serial(zone_origin).unwrap_or(0);
 
         let message = crate::mesh::protocol::MeshMessage::ZoneSyncRequest {
@@ -718,7 +775,13 @@ impl AnycastZoneSync {
             timestamp: crate::mesh::protocol::MeshMessage::generate_timestamp(),
         };
 
-        let (_sent, failed) = transport.broadcast_to_random_peers(message, 0.3, Some(crate::mesh::config::MeshNodeRole::Global)).await;
+        let (_sent, failed) = transport
+            .broadcast_to_random_peers(
+                message,
+                0.3,
+                Some(crate::mesh::config::MeshNodeRole::Global),
+            )
+            .await;
         if failed > 0 {
             tracing::warn!("Failed to send zone sync request to {} peers", failed);
         }
@@ -758,12 +821,18 @@ impl AnycastZoneSync {
             timestamp: crate::mesh::protocol::MeshMessage::generate_timestamp(),
         };
 
-        let _ = transport.send_datagram_to_peer(target_node_id, &message).await;
+        let _ = transport
+            .send_datagram_to_peer(target_node_id, &message)
+            .await;
 
         Ok(None)
     }
 
-    pub fn get_ixfr_data_for_peer(&self, zone_origin: &str, requesting_serial: u32) -> Option<SerializedIxfrData> {
+    pub fn get_ixfr_data_for_peer(
+        &self,
+        zone_origin: &str,
+        requesting_serial: u32,
+    ) -> Option<SerializedIxfrData> {
         let current_serial = self.get_zone_serial(zone_origin)?;
 
         if current_serial == requesting_serial {
@@ -793,7 +862,10 @@ impl AnycastZoneSync {
             return true;
         }
 
-        if self.serialize_ixfr_diff(zone_origin, requesting_serial).is_none() {
+        if self
+            .serialize_ixfr_diff(zone_origin, requesting_serial)
+            .is_none()
+        {
             return true;
         }
 
@@ -812,7 +884,7 @@ impl AnycastZoneSync {
 
     pub fn update_local_zone(&self, zone: Zone) -> Result<(), String> {
         let origin = zone.origin.clone();
-        
+
         {
             let mut zones = self.local_zones.write();
             zones.insert(origin.clone(), zone);
@@ -823,7 +895,7 @@ impl AnycastZoneSync {
         if let Some(ref notify_handler) = self.notify_handler {
             notify_handler.trigger_zone_change(&origin);
         }
-        
+
         Ok(())
     }
 
@@ -837,11 +909,31 @@ impl AnycastZoneSync {
         zones.len()
     }
 
-    pub fn create_zone_sync_handler(&self) -> impl Fn(String, String, u32, String) -> futures::future::BoxFuture<'static, (String, String, u32, bool)> + Send + Sync + 'static {
-        move |_zone_origin: String, _requesting_node_id: String, _serial: u32, _peer_id: String| -> futures::future::BoxFuture<'static, (String, String, u32, bool)> {
+    pub fn create_zone_sync_handler(
+        &self,
+    ) -> impl Fn(
+        String,
+        String,
+        u32,
+        String,
+    ) -> futures::future::BoxFuture<'static, (String, String, u32, bool)>
+           + Send
+           + Sync
+           + 'static {
+        move |_zone_origin: String,
+              _requesting_node_id: String,
+              _serial: u32,
+              _peer_id: String|
+              -> futures::future::BoxFuture<'static, (String, String, u32, bool)> {
             async move {
-                ("{\"error\": \"Zone sync handler needs full integration\"}".to_string(), "".to_string(), 0, false)
-            }.boxed()
+                (
+                    "{\"error\": \"Zone sync handler needs full integration\"}".to_string(),
+                    "".to_string(),
+                    0,
+                    false,
+                )
+            }
+            .boxed()
         }
     }
 }

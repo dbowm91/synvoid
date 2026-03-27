@@ -1,8 +1,8 @@
-use once_cell::sync::Lazy;
 use rand::Rng;
 use std::collections::HashMap;
+use std::sync::LazyLock;
 
-static CORPORA: Lazy<Vec<&'static str>> = Lazy::new(|| {
+static CORPORA: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
     vec![
         "The quick brown fox jumps over the lazy dog. This is a sample text for generating realistic content that appears natural and readable.",
         "In the world of technology, innovations are constantly emerging. Companies and developers work tirelessly to create new solutions that improve our daily lives.",

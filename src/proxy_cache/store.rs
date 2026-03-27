@@ -42,7 +42,14 @@ pub struct ProxyCacheEntry {
 }
 
 impl ProxyCacheEntry {
-    pub fn new(content: Bytes, status: u16, headers: HeaderMap, max_age: Option<Duration>, swr: Option<Duration>, sie: Option<Duration>) -> Self {
+    pub fn new(
+        content: Bytes,
+        status: u16,
+        headers: HeaderMap,
+        max_age: Option<Duration>,
+        swr: Option<Duration>,
+        sie: Option<Duration>,
+    ) -> Self {
         let now = Instant::now();
         let expires_at = max_age.map(|age| now + age);
         let stale_while_revalidate = swr.and_then(|d| expires_at.map(|e| e + d));
@@ -203,7 +210,7 @@ impl ProxyCache {
 
     pub fn start_background_cleanup(&self, interval_secs: u64) {
         let cache = Arc::new(self.clone());
-        
+
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(interval_secs));
             loop {
@@ -319,7 +326,10 @@ impl ProxyCache {
 
         let (content, status, headers, max_age) = fetch().await?;
 
-        if self.insert(key.clone(), content, status.as_u16(), headers, max_age).is_ok() {
+        if self
+            .insert(key.clone(), content, status.as_u16(), headers, max_age)
+            .is_ok()
+        {
             self.get(key)
         } else {
             None
@@ -362,7 +372,7 @@ impl ProxyCache {
             let disk_path_clone = self.disk_path.clone();
             let key_clone = key.clone();
             let content_clone = content.clone();
-            
+
             tokio::spawn(async move {
                 let filename = Self::key_to_filename(&key_clone);
                 let path = disk_path_clone.join(&filename);
@@ -371,12 +381,12 @@ impl ProxyCache {
                 }
                 let _ = tokio::fs::write(&path, content_clone).await;
             });
-            
+
             disk_path = Some(self.disk_path.join(Self::key_to_filename(&key)));
         }
 
         let checksum = CacheEntryInner::compute_checksum(&content);
-        
+
         let entry_inner = CacheEntryInner {
             entry,
             size,
@@ -427,7 +437,8 @@ impl ProxyCache {
     pub fn invalidate_by_pattern(&self, pattern: &str) -> usize {
         let mut state = self.state.write();
 
-        let to_remove: Vec<CacheKey> = state.entries
+        let to_remove: Vec<CacheKey> = state
+            .entries
             .keys()
             .filter(|k| k.uri.contains(pattern))
             .cloned()
@@ -453,7 +464,12 @@ impl ProxyCache {
     pub fn invalidate_by_host(&self, host: &str) -> usize {
         let mut state = self.state.write();
 
-        let to_remove: Vec<CacheKey> = state.entries.keys().filter(|k| k.host == host).cloned().collect();
+        let to_remove: Vec<CacheKey> = state
+            .entries
+            .keys()
+            .filter(|k| k.host == host)
+            .cloned()
+            .collect();
 
         for key in &to_remove {
             if let Some(entry) = state.entries.remove(key) {
@@ -520,7 +536,7 @@ impl ProxyCache {
         let path_clone = path.clone();
 
         let _disk_path = self.disk_path.clone();
-        
+
         tokio::spawn(async move {
             if let Some(parent) = parent {
                 let _ = tokio::fs::create_dir_all(&parent).await;
@@ -542,7 +558,7 @@ impl ProxyCache {
 
     fn evict_if_needed(&self) {
         let mut state = self.state.write();
-        
+
         while state.current_memory_size > self.settings.max_memory_size {
             let lru_key = match state.access_order.pop_front() {
                 Some(k) => k,
@@ -583,7 +599,8 @@ impl ProxyCache {
         let now = Instant::now();
         let inactive = self.settings.inactive;
 
-        let to_remove: Vec<CacheKey> = state.entries
+        let to_remove: Vec<CacheKey> = state
+            .entries
             .iter()
             .filter(|(_, v)| {
                 let age = now.duration_since(v.entry.created_at);

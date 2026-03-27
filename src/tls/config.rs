@@ -16,8 +16,7 @@ pub struct InternalTlsConfig {
     pub client_auth: InternalClientAuthConfig,
 }
 
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct InternalAcmeConfig {
     pub enabled: bool,
     pub email: Option<String>,
@@ -50,7 +49,6 @@ impl Default for InternalTlsConfig {
         }
     }
 }
-
 
 impl From<crate::config::TlsConfig> for InternalTlsConfig {
     fn from(config: crate::config::TlsConfig) -> Self {

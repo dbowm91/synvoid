@@ -85,11 +85,11 @@ impl YaraRulesManager {
             mesh_sender: Arc::new(RwLock::new(None)),
             data_dir,
         };
-        
+
         if manager.node_role.is_global() || manager.node_role.contains(MeshNodeRole::Global) {
             let _ = manager.load_submissions_from_disk();
         }
-        
+
         manager
     }
 
@@ -110,7 +110,9 @@ impl YaraRulesManager {
         self.feed_manager.is_some()
     }
 
-    pub fn get_feed_manager(&self) -> Option<Arc<crate::upload::yara_rule_feed::YaraRuleFeedManager>> {
+    pub fn get_feed_manager(
+        &self,
+    ) -> Option<Arc<crate::upload::yara_rule_feed::YaraRuleFeedManager>> {
         self.feed_manager.clone()
     }
 
@@ -127,10 +129,15 @@ impl YaraRulesManager {
         Err("No feed manager or no applied rules".to_string())
     }
 
-    pub fn apply_rules(&self, rules: String, version: String, source: YaraRuleSource) -> Result<String, String> {
+    pub fn apply_rules(
+        &self,
+        rules: String,
+        version: String,
+        source: YaraRuleSource,
+    ) -> Result<String, String> {
         *self.local_rules.write() = Some(rules.clone());
         *self.current_version.write() = Some(version.clone());
-        
+
         if let Some(ref fm) = self.feed_manager {
             let source_str = match source {
                 YaraRuleSource::Local => "Local",
@@ -140,12 +147,16 @@ impl YaraRulesManager {
             };
             fm.add_to_history_inline(version.clone(), rules, source_str.to_string());
         }
-        
+
         tracing::info!("Applied YARA rules version {} from {:?}", version, source);
         Ok(version)
     }
 
-    pub fn submit_rule_for_approval(&self, rules: String, description: String) -> Result<String, String> {
+    pub fn submit_rule_for_approval(
+        &self,
+        rules: String,
+        description: String,
+    ) -> Result<String, String> {
         if !self.config.allow_edge_submissions {
             return Err("Edge submissions are disabled".to_string());
         }
@@ -178,14 +189,16 @@ impl YaraRulesManager {
         };
 
         let submission_clone = submission.clone();
-        self.submissions.write().insert(submission_id.clone(), submission);
-        
+        self.submissions
+            .write()
+            .insert(submission_id.clone(), submission);
+
         if let Err(e) = self.save_submission_to_disk(&submission_clone) {
             tracing::warn!("Failed to save submission to disk: {}", e);
         }
-        
+
         self.broadcast_submission(&submission_clone)?;
-        
+
         tracing::info!("Submitted YARA rules for approval: {}", submission_id_clone);
         Ok(submission_id_clone)
     }
@@ -193,8 +206,12 @@ impl YaraRulesManager {
     fn broadcast_submission(&self, submission: &YaraRuleSubmission) -> Result<(), String> {
         let sender = self.mesh_sender.read();
         if let Some(ref sender) = *sender {
-            let signer_public_key = self.signer.as_ref().map(|s| s.get_public_key()).unwrap_or_default();
-            
+            let signer_public_key = self
+                .signer
+                .as_ref()
+                .map(|s| s.get_public_key())
+                .unwrap_or_default();
+
             let message = MeshMessage::YaraRuleSubmission {
                 request_id: submission.submission_id.clone().into(),
                 submission_id: submission.submission_id.clone().into(),
@@ -205,7 +222,7 @@ impl YaraRulesManager {
                 description: submission.description.clone(),
                 signer_public_key,
             };
-            
+
             let sender_clone = sender.clone();
             tokio::spawn(async move {
                 let _ = sender_clone.send(message).await;
@@ -214,13 +231,18 @@ impl YaraRulesManager {
         Ok(())
     }
 
-    pub fn approve_submission(&self, submission_id: &str, review_notes: Option<String>) -> Result<String, String> {
+    pub fn approve_submission(
+        &self,
+        submission_id: &str,
+        review_notes: Option<String>,
+    ) -> Result<String, String> {
         if !self.node_role.is_global() && !self.node_role.contains(MeshNodeRole::Global) {
             return Err("Only global nodes can approve submissions".to_string());
         }
 
         let mut submissions = self.submissions.write();
-        let submission = submissions.get_mut(submission_id)
+        let submission = submissions
+            .get_mut(submission_id)
             .ok_or("Submission not found")?;
 
         if submission.status != YaraRuleSubmissionStatus::Pending {
@@ -243,20 +265,25 @@ impl YaraRulesManager {
         self.apply_rules(rules, version.clone(), YaraRuleSource::MeshEdgeApproved)?;
 
         let _ = self.delete_submission_from_disk(submission_id);
-        
+
         self.broadcast_approved_rules(&version)?;
 
         tracing::info!("Approved YARA rule submission: {}", version);
         Ok(version)
     }
 
-    pub fn reject_submission(&self, submission_id: &str, review_notes: String) -> Result<(), String> {
+    pub fn reject_submission(
+        &self,
+        submission_id: &str,
+        review_notes: String,
+    ) -> Result<(), String> {
         if !self.node_role.is_global() && !self.node_role.contains(MeshNodeRole::Global) {
             return Err("Only global nodes can reject submissions".to_string());
         }
 
         let mut submissions = self.submissions.write();
-        let submission = submissions.get_mut(submission_id)
+        let submission = submissions
+            .get_mut(submission_id)
             .ok_or("Submission not found")?;
 
         if submission.status != YaraRuleSubmissionStatus::Pending {
@@ -271,13 +298,14 @@ impl YaraRulesManager {
         submission.review_notes = Some(review_notes);
 
         let _ = self.delete_submission_from_disk(submission_id);
-        
+
         tracing::info!("Rejected YARA rule submission: {}", submission_id);
         Ok(())
     }
 
     pub fn get_pending_submissions(&self) -> Vec<YaraRuleSubmission> {
-        self.submissions.read()
+        self.submissions
+            .read()
             .values()
             .filter(|s| s.status == YaraRuleSubmissionStatus::Pending)
             .cloned()
@@ -291,11 +319,14 @@ impl YaraRulesManager {
     fn broadcast_approved_rules(&self, version: &str) -> Result<(), String> {
         let sender = self.mesh_sender.read();
         if let Some(ref sender) = *sender {
-            let rules = self.local_rules.read().clone()
-                .ok_or("No local rules")?;
-            
-            let signer_public_key = self.signer.as_ref().map(|s| s.get_public_key()).unwrap_or_default();
-            
+            let rules = self.local_rules.read().clone().ok_or("No local rules")?;
+
+            let signer_public_key = self
+                .signer
+                .as_ref()
+                .map(|s| s.get_public_key())
+                .unwrap_or_default();
+
             let message = MeshMessage::YaraRuleAnnounce {
                 request_id: uuid::Uuid::new_v4().to_string().into(),
                 version: version.into(),
@@ -306,7 +337,7 @@ impl YaraRulesManager {
                 signature: Vec::new(),
                 signer_public_key,
             };
-            
+
             let sender_clone = sender.clone();
             tokio::spawn(async move {
                 let _ = sender_clone.send(message).await;
@@ -338,16 +369,15 @@ impl YaraRulesManager {
         };
 
         let path = dir.join(format!("{}.json", submission.submission_id));
-        
+
         let json = serde_json::to_string_pretty(submission)
             .map_err(|e| format!("Failed to serialize submission: {}", e))?;
-        
+
         std::fs::create_dir_all(&dir)
             .map_err(|e| format!("Failed to create submissions dir: {}", e))?;
-        
-        std::fs::write(&path, json)
-            .map_err(|e| format!("Failed to write submission: {}", e))?;
-        
+
+        std::fs::write(&path, json).map_err(|e| format!("Failed to write submission: {}", e))?;
+
         tracing::debug!("Saved submission {} to disk", submission.submission_id);
         Ok(())
     }
@@ -369,19 +399,19 @@ impl YaraRulesManager {
             let path = entry.path();
             if path.extension().and_then(|s| s.to_str()) == Some("json") {
                 match std::fs::read_to_string(&path) {
-                    Ok(content) => {
-                        match serde_json::from_str::<YaraRuleSubmission>(&content) {
-                            Ok(submission) => {
-                                if submission.status == YaraRuleSubmissionStatus::Pending {
-                                    self.submissions.write().insert(submission.submission_id.clone(), submission);
-                                    loaded += 1;
-                                }
-                            }
-                            Err(e) => {
-                                tracing::warn!("Failed to parse submission {:?}: {}", path, e);
+                    Ok(content) => match serde_json::from_str::<YaraRuleSubmission>(&content) {
+                        Ok(submission) => {
+                            if submission.status == YaraRuleSubmissionStatus::Pending {
+                                self.submissions
+                                    .write()
+                                    .insert(submission.submission_id.clone(), submission);
+                                loaded += 1;
                             }
                         }
-                    }
+                        Err(e) => {
+                            tracing::warn!("Failed to parse submission {:?}: {}", path, e);
+                        }
+                    },
                     Err(e) => {
                         tracing::warn!("Failed to read submission {:?}: {}", path, e);
                     }
@@ -392,7 +422,7 @@ impl YaraRulesManager {
         if loaded > 0 {
             tracing::info!("Loaded {} pending YARA rule submissions from disk", loaded);
         }
-        
+
         Ok(())
     }
 
@@ -402,13 +432,13 @@ impl YaraRulesManager {
         };
 
         let path = dir.join(format!("{}.json", submission_id));
-        
+
         if path.exists() {
             std::fs::remove_file(&path)
                 .map_err(|e| format!("Failed to delete submission: {}", e))?;
             tracing::debug!("Deleted submission {} from disk", submission_id);
         }
-        
+
         Ok(())
     }
 
@@ -424,7 +454,12 @@ impl YaraRulesManager {
         })
     }
 
-    pub fn handle_incoming_rules(&self, version: String, rules: String, _from_node: &str) -> Result<String, String> {
+    pub fn handle_incoming_rules(
+        &self,
+        version: String,
+        rules: String,
+        _from_node: &str,
+    ) -> Result<String, String> {
         if rules.len() > (self.config.max_rules_size_kb as usize) * 1024 {
             return Err("Rules size exceeds limit".to_string());
         }
@@ -444,18 +479,14 @@ impl YaraRulesManager {
         if new == current {
             return false;
         }
-        
-        let new_parts: Vec<u32> = new.split('.')
-            .filter_map(|s| s.parse().ok())
-            .collect();
-        let current_parts: Vec<u32> = current.split('.')
-            .filter_map(|s| s.parse().ok())
-            .collect();
-        
+
+        let new_parts: Vec<u32> = new.split('.').filter_map(|s| s.parse().ok()).collect();
+        let current_parts: Vec<u32> = current.split('.').filter_map(|s| s.parse().ok()).collect();
+
         for i in 0..new_parts.len().max(current_parts.len()) {
             let new_part = new_parts.get(i).unwrap_or(&0);
             let current_part = current_parts.get(i).unwrap_or(&0);
-            
+
             if new_part > current_part {
                 return true;
             } else if new_part < current_part {
@@ -481,9 +512,15 @@ impl YaraRulesManager {
                 signature: _,
                 signer_public_key: _,
             } => {
-                tracing::info!("Received YARA rule announce from {}: version {}", from_node, version);
-                
-                if let Err(e) = self.handle_incoming_rules(version.clone(), rules.clone(), from_node) {
+                tracing::info!(
+                    "Received YARA rule announce from {}: version {}",
+                    from_node,
+                    version
+                );
+
+                if let Err(e) =
+                    self.handle_incoming_rules(version.clone(), rules.clone(), from_node)
+                {
                     tracing::warn!("Failed to apply incoming YARA rules: {}", e);
                 }
 
@@ -500,11 +537,19 @@ impl YaraRulesManager {
                 node_id: _,
                 version,
             } => {
-                tracing::debug!("Received YARA rule sync request from {} (current: {:?})", from_node, version);
-                
+                tracing::debug!(
+                    "Received YARA rule sync request from {} (current: {:?})",
+                    from_node,
+                    version
+                );
+
                 if let Some(rules) = self.local_rules.read().clone() {
                     let ver = self.current_version.read().clone();
-                    let signer_public_key = self.signer.as_ref().map(|s| s.get_public_key()).unwrap_or_default();
+                    let signer_public_key = self
+                        .signer
+                        .as_ref()
+                        .map(|s| s.get_public_key())
+                        .unwrap_or_default();
                     Some(MeshMessage::YaraRuleSyncResponse {
                         request_id: request_id.clone(),
                         version: ver.unwrap_or_default(),
@@ -527,12 +572,18 @@ impl YaraRulesManager {
                 signature: _,
                 ..
             } => {
-                tracing::info!("Received YARA rule sync response from {}: version {}", from_node, version);
-                
-                if let Err(e) = self.handle_incoming_rules(version.clone(), rules.clone(), from_node) {
+                tracing::info!(
+                    "Received YARA rule sync response from {}: version {}",
+                    from_node,
+                    version
+                );
+
+                if let Err(e) =
+                    self.handle_incoming_rules(version.clone(), rules.clone(), from_node)
+                {
                     tracing::warn!("Failed to apply synced YARA rules: {}", e);
                 }
-                
+
                 None
             }
             MeshMessage::YaraRuleSubmission {
@@ -545,8 +596,12 @@ impl YaraRulesManager {
                 description,
                 signer_public_key: _,
             } => {
-                tracing::info!("Received YARA rule submission from {}: {}", from_node, submission_id);
-                
+                tracing::info!(
+                    "Received YARA rule submission from {}: {}",
+                    from_node,
+                    submission_id
+                );
+
                 if self.node_role.is_global() || self.node_role.contains(MeshNodeRole::Global) {
                     let submission = YaraRuleSubmission {
                         submission_id: submission_id.to_string(),
@@ -560,16 +615,21 @@ impl YaraRulesManager {
                         review_notes: None,
                         signature: signature.clone(),
                     };
-                    
+
                     let submission_id_str = submission.submission_id.clone();
-                    self.submissions.write().insert(submission_id_str.clone(), submission.clone());
-                    
+                    self.submissions
+                        .write()
+                        .insert(submission_id_str.clone(), submission.clone());
+
                     if let Err(e) = self.save_submission_to_disk(&submission) {
                         tracing::warn!("Failed to save submission to disk: {}", e);
                     }
-                    
-                    tracing::info!("Stored YARA rule submission {} for review", submission_id_str);
-                    
+
+                    tracing::info!(
+                        "Stored YARA rule submission {} for review",
+                        submission_id_str
+                    );
+
                     Some(MeshMessage::YaraRuleSubmissionResponse {
                         original_request_id: request_id.clone(),
                         submission_id: submission_id.clone(),
@@ -588,7 +648,12 @@ impl YaraRulesManager {
                 reason,
                 timestamp: _,
             } => {
-                tracing::debug!("YARA rule ack from {}: accepted={}, reason={}", from_node, accepted, reason);
+                tracing::debug!(
+                    "YARA rule ack from {}: accepted={}, reason={}",
+                    from_node,
+                    accepted,
+                    reason
+                );
                 None
             }
             MeshMessage::YaraRuleSubmissionResponse {
@@ -597,9 +662,7 @@ impl YaraRulesManager {
                 node_id: _,
                 status: _,
                 timestamp: _,
-            } => {
-                None
-            }
+            } => None,
             _ => None,
         }
     }
@@ -609,7 +672,9 @@ impl YaraRulesManager {
             node_id: self.node_id.clone(),
             node_role: self.node_role,
             current_version: self.current_version.read().clone(),
-            pending_submissions: self.submissions.read()
+            pending_submissions: self
+                .submissions
+                .read()
                 .values()
                 .filter(|s| s.status == YaraRuleSubmissionStatus::Pending)
                 .count(),

@@ -394,9 +394,7 @@ impl StakeManager {
         let target_id = vote.target_node_id.clone();
         let mut votes = self.global_slash_votes.write();
 
-        let entry = votes
-            .entry(vote.target_node_id.clone())
-            .or_default();
+        let entry = votes.entry(vote.target_node_id.clone()).or_default();
 
         if !entry.iter().any(|v| v.voter_node_id == vote.voter_node_id) {
             entry.push(vote);

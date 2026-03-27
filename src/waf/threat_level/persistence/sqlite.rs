@@ -35,19 +35,12 @@ impl SqlitePersistence {
             PathBuf::from("/var/lib/maluwaf/threat_level/history.db")
         };
 
-        let conn = Connection::open(&db_path).map_err(|e| {
-            std::io::Error::other(
-                format!("Failed to open database: {}", e),
-            )
-        })?;
+        let conn = Connection::open(&db_path)
+            .map_err(|e| std::io::Error::other(format!("Failed to open database: {}", e)))?;
         conn.execute_batch(
             "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA cache_size=1000;",
         )
-        .map_err(|e| {
-            std::io::Error::other(
-                format!("Failed to set PRAGMA: {}", e),
-            )
-        })?;
+        .map_err(|e| std::io::Error::other(format!("Failed to set PRAGMA: {}", e)))?;
 
         conn.execute(
             "CREATE TABLE IF NOT EXISTS threat_history (
@@ -65,22 +58,14 @@ impl SqlitePersistence {
             )",
             [],
         )
-        .map_err(|e| {
-            std::io::Error::other(
-                format!("Failed to create table: {}", e),
-            )
-        })?;
+        .map_err(|e| std::io::Error::other(format!("Failed to create table: {}", e)))?;
 
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_threat_history_site_time 
              ON threat_history(site_id, timestamp)",
             [],
         )
-        .map_err(|e| {
-            std::io::Error::other(
-                format!("Failed to create index: {}", e),
-            )
-        })?;
+        .map_err(|e| std::io::Error::other(format!("Failed to create index: {}", e)))?;
 
         conn.execute(
             "CREATE TABLE IF NOT EXISTS sites (
@@ -90,11 +75,7 @@ impl SqlitePersistence {
             )",
             [],
         )
-        .map_err(|e| {
-            std::io::Error::other(
-                format!("Failed to create sites table: {}", e),
-            )
-        })?;
+        .map_err(|e| std::io::Error::other(format!("Failed to create sites table: {}", e)))?;
 
         if let Some(sid) = site_id {
             let now = SystemTime::now()
@@ -161,11 +142,7 @@ impl SqlitePersistence {
             ),
             [],
         )
-        .map_err(|e| {
-            std::io::Error::other(
-                format!("Failed to create table: {}", e),
-            )
-        })?;
+        .map_err(|e| std::io::Error::other(format!("Failed to create table: {}", e)))?;
 
         conn.execute(
             &format!(
@@ -174,11 +151,7 @@ impl SqlitePersistence {
             ),
             params![json, now],
         )
-        .map_err(|e| {
-            std::io::Error::other(
-                format!("Failed to insert baseline: {}", e),
-            )
-        })?;
+        .map_err(|e| std::io::Error::other(format!("Failed to insert baseline: {}", e)))?;
 
         tracing::info!("Saved baseline to SQLite with {} metrics", baselines.len());
         Ok(())
@@ -196,11 +169,7 @@ impl SqlitePersistence {
         let result: Option<String> = conn
             .query_row(query, [], |row| row.get(0))
             .optional()
-            .map_err(|e| {
-                std::io::Error::other(
-                    format!("Failed to query baseline: {}", e),
-                )
-            })?;
+            .map_err(|e| std::io::Error::other(format!("Failed to query baseline: {}", e)))?;
 
         if let Some(json) = result {
             let persisted: PersistedBaseline = serde_json::from_str(&json).map_err(|e| {
@@ -259,17 +228,10 @@ impl SqliteHistory {
             PathBuf::from("/var/lib/maluwaf/threat_level/history.db")
         };
 
-        let conn = Connection::open(&db_path).map_err(|e| {
-            std::io::Error::other(
-                format!("Failed to open database: {}", e),
-            )
-        })?;
+        let conn = Connection::open(&db_path)
+            .map_err(|e| std::io::Error::other(format!("Failed to open database: {}", e)))?;
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")
-            .map_err(|e| {
-                std::io::Error::other(
-                    format!("Failed to set PRAGMA: {}", e),
-                )
-            })?;
+            .map_err(|e| std::io::Error::other(format!("Failed to set PRAGMA: {}", e)))?;
 
         conn.execute(
             "CREATE TABLE IF NOT EXISTS threat_history (
@@ -287,22 +249,14 @@ impl SqliteHistory {
             )",
             [],
         )
-        .map_err(|e| {
-            std::io::Error::other(
-                format!("Failed to create table: {}", e),
-            )
-        })?;
+        .map_err(|e| std::io::Error::other(format!("Failed to create table: {}", e)))?;
 
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_threat_history_site_time 
              ON threat_history(site_id, timestamp)",
             [],
         )
-        .map_err(|e| {
-            std::io::Error::other(
-                format!("Failed to create index: {}", e),
-            )
-        })?;
+        .map_err(|e| std::io::Error::other(format!("Failed to create index: {}", e)))?;
 
         let flush_interval = Duration::from_secs(flush_interval_secs as u64);
 
@@ -633,15 +587,10 @@ impl SqliteHistory {
                 "DELETE FROM threat_history WHERE timestamp < ?1 AND site_id = ?2",
                 params![cutoff, self.site_id],
             )
-            .map_err(|e| {
-                std::io::Error::other(format!("Failed to prune: {}", e))
-            })?;
+            .map_err(|e| std::io::Error::other(format!("Failed to prune: {}", e)))?;
 
-        conn.execute("VACUUM", []).map_err(|e| {
-            std::io::Error::other(
-                format!("Failed to VACUUM: {}", e),
-            )
-        })?;
+        conn.execute("VACUUM", [])
+            .map_err(|e| std::io::Error::other(format!("Failed to VACUUM: {}", e)))?;
 
         tracing::info!(
             "Pruned {} old history samples for site {}",
@@ -709,9 +658,7 @@ impl SqliteBackup {
         std::fs::copy(db_path, &backup_path)?;
 
         let conn = Connection::open(&backup_path).map_err(|e| {
-            std::io::Error::other(
-                format!("Failed to open backup for counting: {}", e),
-            )
+            std::io::Error::other(format!("Failed to open backup for counting: {}", e))
         })?;
 
         let metadata = std::fs::metadata(&backup_path)?;

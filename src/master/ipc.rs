@@ -6,12 +6,12 @@ use crate::process::{ErrorCode, ErrorSeverity, Message, ProcessManager, WorkerId
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
-    use tokio::sync::Mutex;
-    use crate::process::ipc_transport::IpcEndpoint;
     use crate::process::ipc_rate_limit::IpcRateLimiter;
+    use crate::process::ipc_transport::IpcEndpoint;
     use crate::process::manager::ProcessManager;
     use crate::process::WorkerMetricsPayload;
+    use std::sync::Arc;
+    use tokio::sync::Mutex;
 
     struct MockIpcStream {
         messages: Vec<Message>,
@@ -53,9 +53,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_worker_ready_message() {
-        let message = Message::WorkerReady {
-            id: WorkerId(2),
-        };
+        let message = Message::WorkerReady { id: WorkerId(2) };
 
         match message {
             Message::WorkerReady { id } => {
@@ -96,7 +94,11 @@ mod tests {
         };
 
         match message {
-            Message::WorkerHeartbeat { id, timestamp, metrics } => {
+            Message::WorkerHeartbeat {
+                id,
+                timestamp,
+                metrics,
+            } => {
                 assert_eq!(id.as_usize(), 3);
                 assert_eq!(timestamp, 1234567890);
                 assert_eq!(metrics.total_requests, 100);
@@ -116,7 +118,12 @@ mod tests {
         };
 
         match message {
-            Message::WorkerError { id, error, severity, error_code } => {
+            Message::WorkerError {
+                id,
+                error,
+                severity,
+                error_code,
+            } => {
                 assert_eq!(id.as_usize(), 4);
                 assert_eq!(error, "Test error");
                 assert_eq!(severity, ErrorSeverity::Warning);
@@ -128,9 +135,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_worker_shutdown_complete_message() {
-        let message = Message::WorkerShutdownComplete {
-            id: WorkerId(5),
-        };
+        let message = Message::WorkerShutdownComplete { id: WorkerId(5) };
 
         match message {
             Message::WorkerShutdownComplete { id } => {
@@ -155,9 +160,7 @@ mod tests {
             _ => panic!("Expected StaticWorkerStarted message"),
         }
 
-        let ready = Message::StaticWorkerReady {
-            worker_id: 10,
-        };
+        let ready = Message::StaticWorkerReady { worker_id: 10 };
 
         match ready {
             Message::StaticWorkerReady { worker_id } => {
@@ -175,7 +178,10 @@ mod tests {
         };
 
         match &request {
-            Message::BlocklistRequest { worker_id, from_version } => {
+            Message::BlocklistRequest {
+                worker_id,
+                from_version,
+            } => {
                 assert_eq!(*worker_id, 1);
                 assert_eq!(*from_version, 0);
             }
@@ -189,7 +195,11 @@ mod tests {
         };
 
         match response {
-            Message::BlocklistResponse { worker_id, blocks, version } => {
+            Message::BlocklistResponse {
+                worker_id,
+                blocks,
+                version,
+            } => {
                 assert_eq!(worker_id, 1);
                 assert!(blocks.is_empty());
                 assert_eq!(version, 1);
@@ -201,9 +211,18 @@ mod tests {
     #[tokio::test]
     async fn test_error_code_variants() {
         assert_eq!(ErrorCode::Unknown.to_string(), "unknown");
-        assert_eq!(ErrorCode::AuthenticationFailed.to_string(), "authentication_failed");
-        assert_eq!(ErrorCode::ConfigLoadFailed.to_string(), "config_load_failed");
-        assert_eq!(ErrorCode::SocketBindFailed.to_string(), "socket_bind_failed");
+        assert_eq!(
+            ErrorCode::AuthenticationFailed.to_string(),
+            "authentication_failed"
+        );
+        assert_eq!(
+            ErrorCode::ConfigLoadFailed.to_string(),
+            "config_load_failed"
+        );
+        assert_eq!(
+            ErrorCode::SocketBindFailed.to_string(),
+            "socket_bind_failed"
+        );
     }
 
     #[tokio::test]
@@ -217,35 +236,40 @@ mod tests {
     async fn test_worker_id_as_usize() {
         let id1 = WorkerId(1);
         let id2 = WorkerId(2);
-        
+
         assert_eq!(id1.as_usize(), 1);
         assert_eq!(id2.as_usize(), 2);
         assert_ne!(id1.as_usize(), id2.as_usize());
     }
 }
 
-pub async fn handle_worker_connection(mut ipc: AsyncIpcStream, process_manager: Arc<ProcessManager>) {
+pub async fn handle_worker_connection(
+    mut ipc: AsyncIpcStream,
+    process_manager: Arc<ProcessManager>,
+) {
     let enforce_signing = process_manager.get_ipc_enforce_signing();
     let session_key = process_manager.get_ipc_session_key();
-    
+
     if enforce_signing {
         if session_key.is_none() {
             tracing::error!("IPC signing is enforced but no session key configured - rejecting worker connection");
-            let _ = ipc.send(&Message::WorkerError {
-                id: WorkerId(0),
-                error: "IPC signing enforced but master has no session key".to_string(),
-                severity: ErrorSeverity::Critical,
-                error_code: ErrorCode::AuthenticationFailed,
-            }).await;
+            let _ = ipc
+                .send(&Message::WorkerError {
+                    id: WorkerId(0),
+                    error: "IPC signing enforced but master has no session key".to_string(),
+                    severity: ErrorSeverity::Critical,
+                    error_code: ErrorCode::AuthenticationFailed,
+                })
+                .await;
             return;
         }
-        
+
         static VERIFIED_WITH_ASYNC: std::sync::OnceLock<()> = std::sync::OnceLock::new();
         VERIFIED_WITH_ASYNC.get_or_init(|| {
             tracing::debug!("IPC signing verified with async transport");
         });
     }
-    
+
     let rate_limiter = process_manager.get_ipc_rate_limiter();
     loop {
         match ipc.recv_with_timeout::<Message>(5000).await {
@@ -272,39 +296,62 @@ pub async fn handle_worker_connection(mut ipc: AsyncIpcStream, process_manager: 
                 }
 
                 let _needs_response = matches!(message, Message::BlocklistRequest { .. });
-                let blocklist_response = if let Message::BlocklistRequest { worker_id, from_version: _ } = &message {
+                let blocklist_response = if let Message::BlocklistRequest {
+                    worker_id,
+                    from_version: _,
+                } = &message
+                {
                     tracing::debug!("Blocklist request from worker {}", worker_id);
-                    process_manager.handle_blocklist_request(*worker_id).map(|blocks| {
-                        Message::BlocklistResponse {
+                    process_manager
+                        .handle_blocklist_request(*worker_id)
+                        .map(|blocks| Message::BlocklistResponse {
                             worker_id: *worker_id,
                             blocks,
                             version: 0,
-                        }
-                    })
+                        })
                 } else {
                     None
                 };
 
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     match message {
-                        Message::WorkerStarted { id, pid, port, timestamp: _ } => {
-                            tracing::debug!("Worker {} connected (PID: {}, port: {})", id, pid, port);
+                        Message::WorkerStarted {
+                            id,
+                            pid,
+                            port,
+                            timestamp: _,
+                        } => {
+                            tracing::debug!(
+                                "Worker {} connected (PID: {}, port: {})",
+                                id,
+                                pid,
+                                port
+                            );
                         }
                         Message::WorkerReady { id } => {
                             process_manager.handle_worker_ready(id);
                         }
-                        Message::WorkerHeartbeat { id, timestamp: _, metrics } => {
+                        Message::WorkerHeartbeat {
+                            id,
+                            timestamp: _,
+                            metrics,
+                        } => {
                             process_manager.handle_heartbeat(id, metrics);
                         }
                         Message::WorkerRequestLog { id, log } => {
                             process_manager.handle_request_log(id, log);
                         }
-                        Message::WorkerError { id, error, severity, error_code } => {
+                        Message::WorkerError {
+                            id,
+                            error,
+                            severity,
+                            error_code,
+                        } => {
                             process_manager.handle_worker_error(id, error, severity, error_code);
                         }
                         Message::WorkerShutdownComplete { id } => {
                             process_manager.mark_worker_stopped(id);
-                            return Err(()); 
+                            return Err(());
                         }
                         Message::StaticWorkerStarted { worker_id, pid } => {
                             tracing::debug!("Static worker {} connected (PID: {})", worker_id, pid);
@@ -312,8 +359,17 @@ pub async fn handle_worker_connection(mut ipc: AsyncIpcStream, process_manager: 
                         Message::StaticWorkerReady { worker_id } => {
                             process_manager.handle_static_worker_ready(worker_id);
                         }
-                        Message::StaticWorkerHeartbeat { worker_id, timestamp: _, static_cache_hits, static_cache_misses } => {
-                            process_manager.handle_static_worker_heartbeat(worker_id, static_cache_hits, static_cache_misses);
+                        Message::StaticWorkerHeartbeat {
+                            worker_id,
+                            timestamp: _,
+                            static_cache_hits,
+                            static_cache_misses,
+                        } => {
+                            process_manager.handle_static_worker_heartbeat(
+                                worker_id,
+                                static_cache_hits,
+                                static_cache_misses,
+                            );
                         }
                         Message::StaticWorkerRequestLog { worker_id: _, log } => {
                             process_manager.handle_request_log(WorkerId(0), log);
@@ -322,7 +378,15 @@ pub async fn handle_worker_connection(mut ipc: AsyncIpcStream, process_manager: 
                             tracing::info!("Static worker {} shutdown complete", worker_id);
                             return Err(());
                         }
-                        Message::MinifyResponse { request_id, site_id, path, content, content_type: _, encoding: _, queued_encodings } => {
+                        Message::MinifyResponse {
+                            request_id,
+                            site_id,
+                            path,
+                            content,
+                            content_type: _,
+                            encoding: _,
+                            queued_encodings,
+                        } => {
                             tracing::debug!(
                                 "Minify response for request {}: site={}, path={}, size={}, queued={:?}",
                                 request_id, site_id, path, content.len(), queued_encodings
@@ -331,8 +395,15 @@ pub async fn handle_worker_connection(mut ipc: AsyncIpcStream, process_manager: 
                         Message::MinifyError { request_id, error } => {
                             tracing::warn!("Minify error for request {}: {}", request_id, error);
                         }
-                        Message::GetCompressedResponse { request_id, content } => {
-                            tracing::debug!("Compressed response for request {}: size={}", request_id, content.len());
+                        Message::GetCompressedResponse {
+                            request_id,
+                            content,
+                        } => {
+                            tracing::debug!(
+                                "Compressed response for request {}: size={}",
+                                request_id,
+                                content.len()
+                            );
                         }
                         Message::BlocklistUpdate { blocks, version: _ } => {
                             tracing::debug!("Blocklist update with {} entries", blocks.len());
@@ -347,7 +418,7 @@ pub async fn handle_worker_connection(mut ipc: AsyncIpcStream, process_manager: 
                 if let Some(response) = blocklist_response {
                     let _ = ipc.send(&response).await;
                 }
-                
+
                 match result {
                     Ok(Ok(())) => {}
                     Ok(Err(())) => break,

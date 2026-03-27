@@ -11,7 +11,7 @@ use tokio::time::interval;
 
 use crate::mesh::config::MeshWireGuardConfig;
 use crate::tunnel::wireguard::{
-    WireGuardConfig, WireGuardPeerConfig, WireGuardRuntime, WgImplementation,
+    WgImplementation, WireGuardConfig, WireGuardPeerConfig, WireGuardRuntime,
 };
 
 #[derive(Debug, Clone)]
@@ -40,9 +40,9 @@ impl WireGuardMeshRuntime {
         config: MeshWireGuardConfig,
     ) -> Result<Arc<Self>, Box<dyn std::error::Error + Send + Sync>> {
         let interface_name = config.interface.clone();
-        
+
         let wg_config = Self::convert_config(&config)?;
-        
+
         let runtime = WireGuardRuntime::new(wg_config)?;
 
         let runtime_arc = Arc::new(Self {
@@ -74,21 +74,28 @@ impl WireGuardMeshRuntime {
         }
 
         self.initialize_wireguard().await?;
-        
+
         let config = self.config.clone();
         let peers = self.peers.clone();
         let shutdown_rx = shutdown_tx.subscribe();
-        
+
         tokio::spawn(async move {
             Self::peer_maintenance_loop(config, peers, shutdown_rx).await;
         });
 
-        tracing::info!("WireGuard mesh runtime started on interface {}", self.interface_name);
+        tracing::info!(
+            "WireGuard mesh runtime started on interface {}",
+            self.interface_name
+        );
         Ok(())
     }
 
-    fn convert_config(config: &MeshWireGuardConfig) -> Result<WireGuardConfig, Box<dyn std::error::Error + Send + Sync>> {
-        let private_key = config.private_key.clone()
+    fn convert_config(
+        config: &MeshWireGuardConfig,
+    ) -> Result<WireGuardConfig, Box<dyn std::error::Error + Send + Sync>> {
+        let private_key = config
+            .private_key
+            .clone()
             .ok_or("WireGuard private key is required for mesh")?;
 
         let mut wg_config = WireGuardConfig::default();
@@ -103,8 +110,12 @@ impl WireGuardMeshRuntime {
         wg_config.implementation = WgImplementation::Auto;
 
         for peer_config in &config.peers {
-            let endpoint = peer_config.endpoint.clone()
-                .ok_or_else(|| format!("WireGuard peer {} requires endpoint", peer_config.public_key))?;
+            let endpoint = peer_config.endpoint.clone().ok_or_else(|| {
+                format!(
+                    "WireGuard peer {} requires endpoint",
+                    peer_config.public_key
+                )
+            })?;
 
             let allowed_ips: Vec<&str> = if peer_config.allowed_ips.is_empty() {
                 vec!["0.0.0.0/0"]
@@ -115,7 +126,7 @@ impl WireGuardMeshRuntime {
             let mut peer = WireGuardPeerConfig::new(&peer_config.public_key, allowed_ips);
             peer.endpoint = Some(endpoint);
             peer.persistent_keepalive = peer_config.persistent_keepalive.unwrap_or(25);
-            
+
             wg_config.peers.push(peer);
         }
 
@@ -125,8 +136,9 @@ impl WireGuardMeshRuntime {
     async fn initialize_wireguard(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         for peer_config in &self.config.peers {
             if let Some(endpoint_str) = &peer_config.endpoint {
-                let endpoint: SocketAddr = endpoint_str.parse()
-                    .map_err(|e| format!("Invalid WireGuard peer endpoint {}: {}", endpoint_str, e))?;
+                let endpoint: SocketAddr = endpoint_str.parse().map_err(|e| {
+                    format!("Invalid WireGuard peer endpoint {}: {}", endpoint_str, e)
+                })?;
 
                 let allowed_ips = if peer_config.allowed_ips.is_empty() {
                     vec!["0.0.0.0/0".to_string()]
@@ -142,7 +154,7 @@ impl WireGuardMeshRuntime {
                     connected: false,
                     last_handshake: None,
                 };
-                
+
                 self.peers.insert(peer.public_key.clone(), peer);
             }
         }
@@ -173,7 +185,7 @@ impl WireGuardMeshRuntime {
                 _ = check_interval.tick() => {
                     for entry in peers.iter() {
                         let peer = entry.value();
-                        tracing::trace!("WireGuard peer {} status: connected={}", 
+                        tracing::trace!("WireGuard peer {} status: connected={}",
                             peer.public_key, peer.connected);
                     }
                 }
@@ -217,9 +229,7 @@ impl WireGuardMeshRuntime {
     }
 
     pub fn get_peer_endpoint(&self, public_key: &str) -> Option<SocketAddr> {
-        self.peers
-            .get(public_key)
-            .map(|p| p.endpoint)
+        self.peers.get(public_key).map(|p| p.endpoint)
     }
 
     pub fn update_peer_status(&self, public_key: &str, connected: bool) {

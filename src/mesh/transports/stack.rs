@@ -44,10 +44,7 @@ struct WireGuardTransportWrapper {
 }
 
 impl MeshTransportStack {
-    pub fn new(
-        config: Arc<MeshConfig>,
-        topology: Arc<MeshTopology>,
-    ) -> Self {
+    pub fn new(config: Arc<MeshConfig>, topology: Arc<MeshTopology>) -> Self {
         Self {
             config: config.clone(),
             quic_transport: None,
@@ -61,14 +58,23 @@ impl MeshTransportStack {
         self.quic_transport = Some(Arc::new(QuicTransportWrapper { inner: transport }));
     }
 
-    pub fn set_wireguard_transport(&mut self, transport: Arc<crate::mesh::transports::wireguard::WireGuardMeshTransport>) {
+    pub fn set_wireguard_transport(
+        &mut self,
+        transport: Arc<crate::mesh::transports::wireguard::WireGuardMeshTransport>,
+    ) {
         self.wireguard_transport = Some(Arc::new(WireGuardTransportWrapper { inner: transport }));
     }
 
     pub fn get_peer_transport(&self, peer_id: &str) -> Option<MeshTransportType> {
         let transports = self.active_transports.read();
-        transports.get(&TransportPeerId::Quic(peer_id.to_string())).copied()
-            .or_else(|| transports.get(&TransportPeerId::WireGuard(peer_id.to_string())).copied())
+        transports
+            .get(&TransportPeerId::Quic(peer_id.to_string()))
+            .copied()
+            .or_else(|| {
+                transports
+                    .get(&TransportPeerId::WireGuard(peer_id.to_string()))
+                    .copied()
+            })
     }
 
     pub fn register_peer(&self, peer_id: String, transport_type: MeshTransportType) {
@@ -80,8 +86,12 @@ impl MeshTransportStack {
     }
 
     pub fn unregister_peer(&self, peer_id: &str) {
-        self.active_transports.write().remove(&TransportPeerId::Quic(peer_id.to_string()));
-        self.active_transports.write().remove(&TransportPeerId::WireGuard(peer_id.to_string()));
+        self.active_transports
+            .write()
+            .remove(&TransportPeerId::Quic(peer_id.to_string()));
+        self.active_transports
+            .write()
+            .remove(&TransportPeerId::WireGuard(peer_id.to_string()));
     }
 
     pub async fn send_to_peer(
@@ -95,7 +105,10 @@ impl MeshTransportStack {
         match transport_type {
             Some(MeshTransportType::Quic) => {
                 if let Some(ref quic) = self.quic_transport {
-                    return quic.inner.send_message_to_peer(peer_id, message).await
+                    return quic
+                        .inner
+                        .send_message_to_peer(peer_id, message)
+                        .await
                         .map_err(|e| MeshTransportError::SendFailed(e.to_string()));
                 }
             }
@@ -109,7 +122,10 @@ impl MeshTransportStack {
 
         if let Some(ref quic) = self.quic_transport {
             if quic.inner.peer_connections.contains_key(peer_id) {
-                return quic.inner.send_message_to_peer(peer_id, message).await
+                return quic
+                    .inner
+                    .send_message_to_peer(peer_id, message)
+                    .await
                     .map_err(|e| MeshTransportError::SendFailed(e.to_string()));
             }
         }
@@ -130,7 +146,10 @@ impl MeshTransportStack {
     ) -> Result<(), MeshTransportError> {
         if let Some(ref quic) = self.quic_transport {
             if quic.inner.peer_connections.contains_key(peer_id) {
-                return quic.inner.send_datagram_to_peer(peer_id, message).await
+                return quic
+                    .inner
+                    .send_datagram_to_peer(peer_id, message)
+                    .await
                     .map_err(|e| MeshTransportError::SendFailed(e.to_string()));
             }
         }
@@ -144,14 +163,20 @@ impl MeshTransportStack {
         Err(MeshTransportError::PeerNotConnected(peer_id.to_string()))
     }
 
-    pub async fn broadcast_datagram(&self, message: &MeshMessage) -> Result<(), MeshTransportError> {
+    pub async fn broadcast_datagram(
+        &self,
+        message: &MeshMessage,
+    ) -> Result<(), MeshTransportError> {
         let mut errors = Vec::new();
 
         if let Some(ref quic) = self.quic_transport {
-            let peers: Vec<String> = quic.inner.peer_connections.iter()
+            let peers: Vec<String> = quic
+                .inner
+                .peer_connections
+                .iter()
                 .map(|e| e.key().clone())
                 .collect();
-            
+
             for peer_id in peers {
                 if let Err(e) = quic.inner.send_datagram_to_peer(&peer_id, message).await {
                     errors.push(format!("QUIC->{}: {}", peer_id, e));
@@ -161,7 +186,7 @@ impl MeshTransportStack {
 
         if let Some(ref wg) = self.wireguard_transport {
             let peers = wg.inner.get_connected_peers();
-            
+
             for peer_id in peers {
                 if let Err(e) = wg.inner.send_datagram(&peer_id, message).await {
                     errors.push(format!("WG->{}: {}", peer_id, e));

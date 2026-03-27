@@ -81,14 +81,14 @@ impl TokenBucket {
                 .last_refill
                 .compare_exchange(last, now, Ordering::AcqRel, Ordering::Acquire)
                 .is_ok()
-            {
-                let elapsed_ms = now - last;
-                let refill_rate = self.refill_rate.load(Ordering::Acquire);
-                let tokens_to_add = (elapsed_ms * refill_rate) / 1000;
-                let current = self.available.load(Ordering::Acquire);
-                let new = (current + tokens_to_add).min(self.capacity);
-                self.available.store(new, Ordering::Release);
-            }
+        {
+            let elapsed_ms = now - last;
+            let refill_rate = self.refill_rate.load(Ordering::Acquire);
+            let tokens_to_add = (elapsed_ms * refill_rate) / 1000;
+            let current = self.available.load(Ordering::Acquire);
+            let new = (current + tokens_to_add).min(self.capacity);
+            self.available.store(new, Ordering::Release);
+        }
     }
 }
 

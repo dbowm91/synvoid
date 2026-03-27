@@ -1,3 +1,7 @@
+use super::super::state::{AdminState, AggregatedMetrics};
+use super::common::OptionalAuth;
+use crate::metrics::{get_proxy_cache_hits, get_proxy_cache_misses};
+use crate::process::RequestLogPayload;
 use axum::{
     extract::{Query, State},
     http::StatusCode,
@@ -5,10 +9,6 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use super::super::state::{AdminState, AggregatedMetrics};
-use super::common::{OptionalAuth};
-use crate::metrics::{get_proxy_cache_hits, get_proxy_cache_misses};
-use crate::process::RequestLogPayload;
 
 #[derive(Debug, Serialize, Deserialize, Clone, utoipa::ToSchema)]
 pub struct SystemStats {
@@ -74,14 +74,13 @@ pub async fn get_summary(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<SystemStats>, StatusCode> {
-
     let config = state.process.config.read().await;
     let sites_count = config.sites.len();
     drop(config);
 
     let metrics = state.get_metrics();
     let resources = state.get_system_resources();
-    
+
     let stats = SystemStats {
         uptime_secs: state.uptime(),
         total_requests: metrics.total_requests,
@@ -125,44 +124,49 @@ pub async fn get_sites_stats(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<Vec<SiteStats>>, StatusCode> {
-
     let config = state.process.config.read().await;
     let site_metrics = state.get_site_metrics();
     let _global_metrics = state.get_metrics();
     let uptime = state.uptime();
-    
-    let site_stats: Vec<SiteStats> = config.sites.iter().map(|(id, site)| {
-        let site_metric = site_metrics.get(id);
-        
-        let site_uptime = uptime.max(1);
-        let site_rps = if let Some(sm) = site_metric {
-            sm.total_requests as f64 / site_uptime as f64
-        } else {
-            0.0
-        };
-        
-        SiteStats {
-            site_id: id.clone(),
-            domains: site.site.domains.clone(),
-            requests_per_second: site_rps,
-            active_connections: site_metric.map(|m| m.current_concurrent as u32).unwrap_or(0),
-            blocked_requests: site_metric.map(|m| m.blocked).unwrap_or(0),
-            challenged_requests: site_metric.map(|m| m.challenged).unwrap_or(0),
-            proxied_requests: site_metric.map(|m| m.proxied).unwrap_or(0),
-            errors: site_metric.map(|m| m.errors).unwrap_or(0),
-            avg_response_time_ms: site_metric.map(|m| m.avg_latency_ms).unwrap_or(0.0),
-            p50_latency_ms: site_metric.map(|m| m.p50_latency_ms).unwrap_or(0.0),
-            p95_latency_ms: site_metric.map(|m| m.p95_latency_ms).unwrap_or(0.0),
-            p99_latency_ms: site_metric.map(|m| m.p99_latency_ms).unwrap_or(0.0),
-            upstream_healthy: site_metric.map(|m| m.upstream_healthy).unwrap_or(true),
-            bytes_received: site_metric.map(|m| m.bytes_received).unwrap_or(0),
-            bytes_sent: site_metric.map(|m| m.bytes_sent).unwrap_or(0),
-            proxied_bytes_sent: site_metric.map(|m| m.proxied_bytes_sent).unwrap_or(0),
-            proxied_bytes_received: site_metric.map(|m| m.proxied_bytes_received).unwrap_or(0),
-            mesh_bytes_sent: site_metric.map(|m| m.mesh_bytes_sent).unwrap_or(0),
-            mesh_bytes_received: site_metric.map(|m| m.mesh_bytes_received).unwrap_or(0),
-        }
-    }).collect();
+
+    let site_stats: Vec<SiteStats> = config
+        .sites
+        .iter()
+        .map(|(id, site)| {
+            let site_metric = site_metrics.get(id);
+
+            let site_uptime = uptime.max(1);
+            let site_rps = if let Some(sm) = site_metric {
+                sm.total_requests as f64 / site_uptime as f64
+            } else {
+                0.0
+            };
+
+            SiteStats {
+                site_id: id.clone(),
+                domains: site.site.domains.clone(),
+                requests_per_second: site_rps,
+                active_connections: site_metric
+                    .map(|m| m.current_concurrent as u32)
+                    .unwrap_or(0),
+                blocked_requests: site_metric.map(|m| m.blocked).unwrap_or(0),
+                challenged_requests: site_metric.map(|m| m.challenged).unwrap_or(0),
+                proxied_requests: site_metric.map(|m| m.proxied).unwrap_or(0),
+                errors: site_metric.map(|m| m.errors).unwrap_or(0),
+                avg_response_time_ms: site_metric.map(|m| m.avg_latency_ms).unwrap_or(0.0),
+                p50_latency_ms: site_metric.map(|m| m.p50_latency_ms).unwrap_or(0.0),
+                p95_latency_ms: site_metric.map(|m| m.p95_latency_ms).unwrap_or(0.0),
+                p99_latency_ms: site_metric.map(|m| m.p99_latency_ms).unwrap_or(0.0),
+                upstream_healthy: site_metric.map(|m| m.upstream_healthy).unwrap_or(true),
+                bytes_received: site_metric.map(|m| m.bytes_received).unwrap_or(0),
+                bytes_sent: site_metric.map(|m| m.bytes_sent).unwrap_or(0),
+                proxied_bytes_sent: site_metric.map(|m| m.proxied_bytes_sent).unwrap_or(0),
+                proxied_bytes_received: site_metric.map(|m| m.proxied_bytes_received).unwrap_or(0),
+                mesh_bytes_sent: site_metric.map(|m| m.mesh_bytes_sent).unwrap_or(0),
+                mesh_bytes_received: site_metric.map(|m| m.mesh_bytes_received).unwrap_or(0),
+            }
+        })
+        .collect();
 
     Ok(Json(site_stats))
 }
@@ -192,7 +196,6 @@ pub async fn get_metrics_history(
     _auth: OptionalAuth,
     axum::extract::Query(params): axum::extract::Query<MetricsHistoryParams>,
 ) -> Result<Json<Vec<AggregatedMetrics>>, StatusCode> {
-
     let seconds = params.seconds.unwrap_or(300);
     let history = state.get_metrics_history(seconds);
 
@@ -221,7 +224,6 @@ pub async fn get_attack_stats(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<AttackStats>, StatusCode> {
-
     let metrics = state.get_metrics();
 
     let stats = AttackStats {
@@ -258,7 +260,6 @@ pub async fn get_cache_stats(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<CacheStats>, StatusCode> {
-
     let proxy_hits = get_proxy_cache_hits();
     let proxy_misses = get_proxy_cache_misses();
     let proxy_total = proxy_hits + proxy_misses;
@@ -268,11 +269,12 @@ pub async fn get_cache_stats(
         0.0
     };
 
-    let (static_cache_hits, static_cache_misses) = if let Some(ref pm) = state.process.process_manager {
-        pm.get_static_worker_cache_stats()
-    } else {
-        (0, 0)
-    };
+    let (static_cache_hits, static_cache_misses) =
+        if let Some(ref pm) = state.process.process_manager {
+            pm.get_static_worker_cache_stats()
+        } else {
+            (0, 0)
+        };
     let static_total = static_cache_hits + static_cache_misses;
     let static_cache_hit_rate = if static_total > 0 {
         (static_cache_hits as f64 / static_total as f64) * 100.0
@@ -310,12 +312,10 @@ pub async fn get_bandwidth(
     State(_state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<BandwidthPayload>, StatusCode> {
-
-    let tracker = get_global_bandwidth_tracker()
-        .map_err(|e| {
-            tracing::error!("{}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+    let tracker = get_global_bandwidth_tracker().map_err(|e| {
+        tracing::error!("{}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
     let payload = tracker.to_payload();
 
     Ok(Json(payload))
@@ -378,7 +378,6 @@ pub async fn get_request_logs(
     _auth: OptionalAuth,
     Query(query): Query<RequestLogsQuery>,
 ) -> Result<Json<RequestLogsResponse>, StatusCode> {
-
     let limit = query.limit.unwrap_or(100).min(1000);
     let offset = query.offset.unwrap_or(0);
 
@@ -422,7 +421,7 @@ pub async fn get_request_logs(
 
     let total = filtered.len();
     let has_more = offset + limit < total;
-    
+
     let entries: Vec<RequestLogResponse> = filtered
         .into_iter()
         .skip(offset)

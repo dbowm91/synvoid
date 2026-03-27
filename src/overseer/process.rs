@@ -3,16 +3,16 @@ use std::process::Child;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use super::drain_manager::DrainManager;
+use super::socket_handoff::DualMasterHandoff;
+use super::spawn::{spawn_and_log, ProcessMode, SpawnConfig};
 use super::state::{OverseerState, Persistence, UpgradeState};
 use super::upgrade::{Orchestrator, UpgradeError};
-use super::socket_handoff::DualMasterHandoff;
-use super::drain_manager::DrainManager;
-use super::spawn::{SpawnConfig, ProcessMode, spawn_and_log};
 pub use crate::config::OverseerConfig;
 use crate::process::{
-    get_secure_socket_path, IpcStream, Message,
-    get_master_socket_path, get_versioned_master_socket_path,
-    next_master_generation, set_master_generation, cleanup_old_master_sockets,
+    cleanup_old_master_sockets, get_master_socket_path, get_secure_socket_path,
+    get_versioned_master_socket_path, next_master_generation, set_master_generation, IpcStream,
+    Message,
 };
 use crate::utils::errors;
 use crate::RunningFlag;
@@ -39,9 +39,12 @@ impl OverseerProcess {
     pub fn new(config: OverseerConfig) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let persistence = Persistence::new(None);
         let orchestrator = Orchestrator::new(None, None, None);
-        
-        let config_path = config.config_path.clone().unwrap_or_else(|| PathBuf::from("config"));
-        
+
+        let config_path = config
+            .config_path
+            .clone()
+            .unwrap_or_else(|| PathBuf::from("config"));
+
         Ok(Self {
             master_child: None,
             upgraded_master_child: None,
@@ -61,20 +64,19 @@ impl OverseerProcess {
     }
 
     pub fn spawn_master(&mut self) -> Result<u32, Box<dyn std::error::Error + Send + Sync>> {
-        let config = SpawnConfig::for_current_binary(
-            self.config_path.clone(),
-            ProcessMode::Master,
-        );
-        
+        let config = SpawnConfig::for_current_binary(self.config_path.clone(), ProcessMode::Master);
+
         let child = spawn_and_log(&config, "master")?;
         let pid = child.id();
-        
+
         self.master_child = Some(child);
         self.stable_since = Some(Instant::now());
         Ok(pid)
     }
 
-    pub fn check_master_health(&mut self) -> Result<MasterHealth, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn check_master_health(
+        &mut self,
+    ) -> Result<MasterHealth, Box<dyn std::error::Error + Send + Sync>> {
         let process_alive = if let Some(ref mut child) = self.master_child {
             match child.try_wait() {
                 Ok(None) => true,
@@ -100,7 +102,7 @@ impl OverseerProcess {
         }
 
         let ipc_health = self.check_master_ipc_health();
-        
+
         Ok(MasterHealth {
             process_alive: true,
             ipc_responsive: ipc_health.is_responsive,
@@ -118,7 +120,7 @@ impl OverseerProcess {
         } else {
             get_master_socket_path()
         };
-        
+
         match IpcStream::connect_unix(&socket_path) {
             Ok(mut stream) => {
                 let health_msg = Message::MasterHealthCheck {
@@ -127,7 +129,7 @@ impl OverseerProcess {
                         .map(|d| d.as_secs())
                         .unwrap_or(0),
                 };
-                
+
                 if stream.send(&health_msg).is_err() {
                     return IpcHealthResult {
                         is_responsive: false,
@@ -136,12 +138,10 @@ impl OverseerProcess {
                 }
 
                 match stream.recv(5000) {
-                    Ok(Some(Message::HealthCheckAck { .. })) => {
-                        IpcHealthResult {
-                            is_responsive: true,
-                            workers_healthy: true,
-                        }
-                    }
+                    Ok(Some(Message::HealthCheckAck { .. })) => IpcHealthResult {
+                        is_responsive: true,
+                        workers_healthy: true,
+                    },
                     Ok(None) => IpcHealthResult {
                         is_responsive: false,
                         workers_healthy: false,
@@ -165,68 +165,79 @@ impl OverseerProcess {
 
     pub fn reload_config(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let config_file = self.config_path.join("main.toml");
-        
+
         if !config_file.exists() {
             tracing::warn!("Config file not found: {:?}", config_file);
             return Ok(());
         }
 
         let content = std::fs::read_to_string(&config_file)?;
-        
-        let main_config: crate::config::MainConfig = toml::from_str(&content)
-            .map_err(|e| format!("Failed to parse config: {}", e))?;
+
+        let main_config: crate::config::MainConfig =
+            toml::from_str(&content).map_err(|e| format!("Failed to parse config: {}", e))?;
 
         let new_overseer_config = main_config.overseer;
-        
+
         tracing::info!("Reloading overseer config from {:?}", config_file);
-        
-        if self.config.health_check_interval_secs != new_overseer_config.health_check_interval_secs {
-            tracing::info!("health_check_interval changed from {} to {}",
-                self.config.health_check_interval_secs, new_overseer_config.health_check_interval_secs);
+
+        if self.config.health_check_interval_secs != new_overseer_config.health_check_interval_secs
+        {
+            tracing::info!(
+                "health_check_interval changed from {} to {}",
+                self.config.health_check_interval_secs,
+                new_overseer_config.health_check_interval_secs
+            );
         }
-        
+
         self.config.auto_restart = new_overseer_config.auto_restart;
         self.config.restart_delay_secs = new_overseer_config.restart_delay_secs;
         self.config.max_restart_attempts = new_overseer_config.max_restart_attempts;
         self.config.health_check_interval_secs = new_overseer_config.health_check_interval_secs;
         self.config.stable_uptime_secs = new_overseer_config.stable_uptime_secs;
-        self.config.upgrade_validation_timeout_secs = new_overseer_config.upgrade_validation_timeout_secs;
+        self.config.upgrade_validation_timeout_secs =
+            new_overseer_config.upgrade_validation_timeout_secs;
         self.config.upgrade_drain_timeout_secs = new_overseer_config.upgrade_drain_timeout_secs;
         self.config.upgrade_health_check_retries = new_overseer_config.upgrade_health_check_retries;
-        self.config.upgrade_health_check_interval_secs = new_overseer_config.upgrade_health_check_interval_secs;
+        self.config.upgrade_health_check_interval_secs =
+            new_overseer_config.upgrade_health_check_interval_secs;
         self.config.ipc_read_timeout_ms = new_overseer_config.ipc_read_timeout_ms;
         self.config.ipc_write_timeout_ms = new_overseer_config.ipc_write_timeout_ms;
         self.config.master_startup_timeout_secs = new_overseer_config.master_startup_timeout_secs;
-        
+
         tracing::info!("Overseer config reloaded successfully");
         Ok(())
     }
 
-    pub fn check_reload_signal(&mut self) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn check_reload_signal(
+        &mut self,
+    ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
         let signal_file = std::env::current_dir()
             .map_err(|e| format!("Failed to get current dir: {}", e))?
             .join(".overseer_reload");
-        
+
         if signal_file.exists() {
             if let Err(e) = std::fs::remove_file(&signal_file) {
                 tracing::warn!("Failed to remove reload signal file: {}", e);
             }
             tracing::info!("Detected reload signal file at {:?}", signal_file);
-            
+
             if let Err(e) = self.reload_config() {
                 tracing::error!("Failed to reload config: {}", e);
                 return Ok(true);
             }
             return Ok(true);
         }
-        
+
         Ok(false)
     }
 
-    pub fn stop_master(&mut self, graceful: bool) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn stop_master(
+        &mut self,
+        graceful: bool,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if let Some(ref mut child) = self.master_child {
             let pid = child.id();
-            
+
             if graceful {
                 #[cfg(unix)]
                 {
@@ -235,7 +246,7 @@ impl OverseerProcess {
                         nix::sys::signal::Signal::SIGTERM,
                     );
                 }
-                
+
                 let start = Instant::now();
                 while start.elapsed() < Duration::from_secs(30) {
                     match child.try_wait() {
@@ -251,7 +262,7 @@ impl OverseerProcess {
                     }
                 }
             }
-            
+
             let _ = child.kill();
             let _ = child.wait();
             self.master_child = None;
@@ -261,9 +272,12 @@ impl OverseerProcess {
 
     pub async fn run(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let state = self.persistence.load().unwrap_or_default();
-        
+
         if state.needs_recovery() {
-            tracing::warn!("Overseer detected incomplete upgrade state ({}), attempting automatic recovery", state.state);
+            tracing::warn!(
+                "Overseer detected incomplete upgrade state ({}), attempting automatic recovery",
+                state.state
+            );
             if let Err(e) = self.attempt_recovery().await {
                 tracing::error!("Automatic recovery failed: {}", e);
             }
@@ -279,7 +293,7 @@ impl OverseerProcess {
             }
 
             let health = self.check_master_health()?;
-            
+
             if !health.process_alive {
                 if self.config.auto_restart {
                     self.handle_master_restart().await?;
@@ -296,7 +310,9 @@ impl OverseerProcess {
         Ok(())
     }
 
-    async fn handle_master_restart(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn handle_master_restart(
+        &mut self,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if self.restart_count >= self.config.max_restart_attempts {
             tracing::error!(
                 "Master process exceeded max restart attempts ({})",
@@ -306,13 +322,17 @@ impl OverseerProcess {
             return Err(format!(
                 "Master exceeded max restart attempts ({})",
                 self.config.max_restart_attempts
-            ).into());
+            )
+            .into());
         }
 
         if let Some(stable_since) = self.stable_since {
             if stable_since.elapsed() >= Duration::from_secs(self.config.stable_uptime_secs) {
                 self.restart_count = 0;
-                tracing::info!("Master was stable for {}s, resetting restart count", self.config.stable_uptime_secs);
+                tracing::info!(
+                    "Master was stable for {}s, resetting restart count",
+                    self.config.stable_uptime_secs
+                );
             }
         }
 
@@ -332,49 +352,49 @@ impl OverseerProcess {
 
         self.restart_count += 1;
         self.last_restart_at = Some(Instant::now());
-        
+
         self.spawn_master()?;
-        
+
         Ok(())
     }
 
     fn calculate_restart_delay(&self) -> u64 {
         let base_delay = self.config.restart_delay_secs;
         let backoff_multiplier = 2_u64.pow(self.restart_count.min(6));
-        std::cmp::min(
-            base_delay * backoff_multiplier,
-            300
-        )
+        std::cmp::min(base_delay * backoff_multiplier, 300)
     }
 
     async fn attempt_recovery(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let state = self.persistence.load().unwrap_or_default();
-        
+
         if let Some(ref new_pid) = state.new_master_pid {
             let check = std::process::Command::new("kill")
                 .arg("-0")
                 .arg(new_pid.to_string())
                 .output();
-            
+
             let new_master_alive = check.map(|o| o.status.success()).unwrap_or(false);
-            
+
             if new_master_alive {
-                tracing::info!("New master (PID {}) is still running, cleaning up old master", new_pid);
-                
+                tracing::info!(
+                    "New master (PID {}) is still running, cleaning up old master",
+                    new_pid
+                );
+
                 if let Some(ref old_pid) = state.old_master_pid {
                     let _ = nix::sys::signal::kill(
                         nix::unistd::Pid::from_raw(*old_pid as i32),
                         nix::sys::signal::Signal::SIGTERM,
                     );
-                    
+
                     tokio::time::sleep(Duration::from_secs(2)).await;
-                    
+
                     let _ = nix::sys::signal::kill(
                         nix::unistd::Pid::from_raw(*old_pid as i32),
                         nix::sys::signal::Signal::SIGKILL,
                     );
                 }
-                
+
                 {
                     let mut orchestrator_state = self.orchestrator.state.write().await;
                     orchestrator_state.state = UpgradeState::Committed;
@@ -385,26 +405,29 @@ impl OverseerProcess {
                     }
                     self.persistence.save(&orchestrator_state)?;
                 }
-                
+
                 tracing::info!("Recovery complete: promoted new master to primary");
                 return Ok(());
             }
         }
-        
+
         if let Some(ref old_pid) = state.old_master_pid {
             let check = std::process::Command::new("kill")
                 .arg("-0")
                 .arg(old_pid.to_string())
                 .output();
-            
+
             if check.map(|o| o.status.success()).unwrap_or(false) {
-                tracing::info!("Old master (PID {}) is still running, attempting to restore", old_pid);
-                
+                tracing::info!(
+                    "Old master (PID {}) is still running, attempting to restore",
+                    old_pid
+                );
+
                 if let Ok(mut stream) = IpcStream::connect_unix(&get_master_socket_path()) {
                     let _ = stream.send(&Message::RestoreFromDrain);
                     let _ = stream.recv(5000);
                 }
-                
+
                 {
                     let mut orchestrator_state = self.orchestrator.state.write().await;
                     orchestrator_state.state = UpgradeState::Idle;
@@ -412,15 +435,16 @@ impl OverseerProcess {
                     orchestrator_state.new_master_pid = None;
                     orchestrator_state.staged_binary_path = None;
                     orchestrator_state.staged_version = None;
-                    orchestrator_state.last_error = Some("Recovered from incomplete upgrade".to_string());
+                    orchestrator_state.last_error =
+                        Some("Recovered from incomplete upgrade".to_string());
                     self.persistence.save(&orchestrator_state)?;
                 }
-                
+
                 tracing::info!("Recovery complete: restored old master to operation");
                 return Ok(());
             }
         }
-        
+
         tracing::warn!("No surviving master process found during recovery, will start fresh");
         {
             let mut orchestrator_state = self.orchestrator.state.write().await;
@@ -429,10 +453,11 @@ impl OverseerProcess {
             orchestrator_state.new_master_pid = None;
             orchestrator_state.staged_binary_path = None;
             orchestrator_state.staged_version = None;
-            orchestrator_state.last_error = Some("Recovery: no surviving master, starting fresh".to_string());
+            orchestrator_state.last_error =
+                Some("Recovery: no surviving master, starting fresh".to_string());
             self.persistence.save(&orchestrator_state)?;
         }
-        
+
         Ok(())
     }
 
@@ -441,12 +466,14 @@ impl OverseerProcess {
     }
 
     pub async fn stage_upgrade(
-        &self, 
-        binary_path: PathBuf, 
+        &self,
+        binary_path: PathBuf,
         config_path: Option<PathBuf>,
         checksum: Option<String>,
     ) -> Result<(), UpgradeError> {
-        self.orchestrator.stage(binary_path, config_path, checksum).await
+        self.orchestrator
+            .stage(binary_path, config_path, checksum)
+            .await
     }
 
     pub async fn apply_upgrade(
@@ -455,23 +482,31 @@ impl OverseerProcess {
         drain_timeout_secs: u64,
     ) -> Result<(), UpgradeError> {
         let state = self.orchestrator.get_state().await;
-        
+
         let binary_path = state
             .staged_binary_path
             .ok_or(UpgradeError::NoStagedUpgrade)?;
-        
-        let version = state.staged_version.unwrap_or_else(|| "unknown".to_string());
+
+        let version = state
+            .staged_version
+            .unwrap_or_else(|| "unknown".to_string());
         let config_path = state.staged_config_path.clone();
 
         tracing::info!("Preparing upgrade to version {} via IPC", version);
-        
-        if let Err(e) = self.send_upgrade_prepare(&binary_path, config_path.as_deref(), &version).await {
+
+        if let Err(e) = self
+            .send_upgrade_prepare(&binary_path, config_path.as_deref(), &version)
+            .await
+        {
             tracing::error!("Failed to prepare upgrade via IPC: {}", e);
-            return Err(UpgradeError::SpawnFailed(format!("IPC prepare failed: {}", e)));
+            return Err(UpgradeError::SpawnFailed(format!(
+                "IPC prepare failed: {}",
+                e
+            )));
         }
 
         tracing::info!("Master acknowledged upgrade preparation, draining workers");
-        
+
         let drain_result = self.send_drain_workers(drain_timeout_secs).await;
         tracing::info!("Workers drained: {:?}", drain_result);
 
@@ -480,7 +515,7 @@ impl OverseerProcess {
             .map_err(|e| UpgradeError::SpawnFailed(e.to_string()))?;
 
         tracing::info!("Spawning new master with upgraded binary");
-        
+
         if let Err(e) = self.spawn_upgraded_master(&binary_path).await {
             tracing::error!("Failed to spawn upgraded master: {}", e);
             return Err(UpgradeError::SpawnFailed(e.to_string()));
@@ -488,16 +523,23 @@ impl OverseerProcess {
 
         tokio::time::sleep(Duration::from_secs(5)).await;
 
-        let health = self.check_master_health()
-            .map_err(|e| UpgradeError::ValidationFailed(vec![(0, super::health::HealthStatus::Error(e.to_string()))]))?;
-        
+        let health = self.check_master_health().map_err(|e| {
+            UpgradeError::ValidationFailed(vec![(
+                0,
+                super::health::HealthStatus::Error(e.to_string()),
+            )])
+        })?;
+
         if !health.is_healthy() {
             tracing::error!("Upgraded master failed health check");
-            return Err(UpgradeError::ValidationFailed(vec![(0, super::health::HealthStatus::Error("Health check failed".to_string()))]));
+            return Err(UpgradeError::ValidationFailed(vec![(
+                0,
+                super::health::HealthStatus::Error("Health check failed".to_string()),
+            )]));
         }
 
         tracing::info!("Upgrade to version {} completed successfully", version);
-        
+
         Ok(())
     }
 
@@ -508,9 +550,9 @@ impl OverseerProcess {
         version: &str,
     ) -> Result<(), String> {
         let socket_path = get_secure_socket_path("master.sock");
-        
-        let mut stream = IpcStream::connect_unix(&socket_path)
-            .map_err(|e| errors::ipc::connect_failed(&e))?;
+
+        let mut stream =
+            IpcStream::connect_unix(&socket_path).map_err(|e| errors::ipc::connect_failed(&e))?;
 
         let msg = Message::OverseerUpgradePrepare {
             binary_path: binary_path.to_string(),
@@ -518,7 +560,8 @@ impl OverseerProcess {
             version: version.to_string(),
         };
 
-        stream.send(&msg)
+        stream
+            .send(&msg)
             .map_err(|e| format!("Failed to send upgrade prepare: {}", e))?;
 
         match stream.recv(10000) {
@@ -537,19 +580,21 @@ impl OverseerProcess {
 
     async fn send_drain_workers(&self, timeout_secs: u64) -> Result<(usize, u64), String> {
         let socket_path = get_secure_socket_path("master.sock");
-        
-        let mut stream = IpcStream::connect_unix(&socket_path)
-            .map_err(|e| errors::ipc::connect_failed(&e))?;
+
+        let mut stream =
+            IpcStream::connect_unix(&socket_path).map_err(|e| errors::ipc::connect_failed(&e))?;
 
         let msg = Message::OverseerDrainWorkers { timeout_secs };
 
-        stream.send(&msg)
+        stream
+            .send(&msg)
             .map_err(|e| format!("Failed to send drain workers: {}", e))?;
 
         match stream.recv((timeout_secs + 10) * 1000) {
-            Ok(Some(Message::OverseerDrainWorkersAck { drained_count, remaining_connections })) => {
-                Ok((drained_count, remaining_connections))
-            }
+            Ok(Some(Message::OverseerDrainWorkersAck {
+                drained_count,
+                remaining_connections,
+            })) => Ok((drained_count, remaining_connections)),
             Ok(Some(other)) => Err(format!("Unexpected response: {:?}", other)),
             Ok(None) => Err("Timeout waiting for drain ack".to_string()),
             Err(e) => Err(format!("IPC error: {}", e)),
@@ -567,22 +612,21 @@ impl OverseerProcess {
             false,
             Vec::new(),
         )?;
-        
+
         let child = spawn_and_log(&config, "upgraded master")?;
-        
+
         self.master_child = Some(child);
         self.stable_since = Some(Instant::now());
         self.restart_count = 0;
-        
+
         Ok(())
     }
 
     fn get_staged_checksum(&self) -> Option<String> {
-        match self.orchestrator.state.try_read() { Ok(state) => {
-            state.staged_binary_checksum.clone()
-        } _ => {
-            None
-        }}
+        match self.orchestrator.state.try_read() {
+            Ok(state) => state.staged_binary_checksum.clone(),
+            _ => None,
+        }
     }
 
     fn build_spawn_config(
@@ -597,11 +641,11 @@ impl OverseerProcess {
         socket_ports: Vec<u16>,
     ) -> Result<SpawnConfig, std::io::Error> {
         let binary = PathBuf::from(binary_path);
-        
+
         if !binary.exists() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
-                format!("Binary not found: {}", binary_path)
+                format!("Binary not found: {}", binary_path),
             ));
         }
 
@@ -616,10 +660,16 @@ impl OverseerProcess {
                         );
                         return Err(std::io::Error::new(
                             std::io::ErrorKind::InvalidData,
-                            format!("Binary checksum mismatch: expected {}, got {}", expected_checksum, actual_checksum)
+                            format!(
+                                "Binary checksum mismatch: expected {}, got {}",
+                                expected_checksum, actual_checksum
+                            ),
                         ));
                     }
-                    tracing::info!("Binary checksum verified at spawn time: {}", actual_checksum);
+                    tracing::info!(
+                        "Binary checksum verified at spawn time: {}",
+                        actual_checksum
+                    );
                 }
                 Err(e) => {
                     tracing::warn!("Failed to compute binary checksum at spawn time: {}", e);
@@ -643,21 +693,24 @@ impl OverseerProcess {
 
     pub async fn get_master_status(&self) -> Option<MasterStatusInfo> {
         let socket_path = get_secure_socket_path("master.sock");
-        
+
         let mut stream = IpcStream::connect_unix(&socket_path).ok()?;
-        
+
         let msg = Message::OverseerGetStatus;
         stream.send(&msg).ok()?;
 
         match stream.recv(5000) {
-            Ok(Some(Message::OverseerStatusResponse { master_pid, workers, uptime_secs, version })) => {
-                Some(MasterStatusInfo {
-                    master_pid,
-                    workers,
-                    uptime_secs,
-                    version,
-                })
-            }
+            Ok(Some(Message::OverseerStatusResponse {
+                master_pid,
+                workers,
+                uptime_secs,
+                version,
+            })) => Some(MasterStatusInfo {
+                master_pid,
+                workers,
+                uptime_secs,
+                version,
+            }),
             _ => None,
         }
     }
@@ -668,18 +721,20 @@ impl OverseerProcess {
         drain_timeout_secs: u64,
     ) -> Result<(), UpgradeError> {
         let state = self.orchestrator.get_state().await;
-        
+
         let binary_path = state
             .staged_binary_path
             .ok_or(UpgradeError::NoStagedUpgrade)?;
-        
-        let version = state.staged_version.unwrap_or_else(|| "unknown".to_string());
+
+        let version = state
+            .staged_version
+            .unwrap_or_else(|| "unknown".to_string());
         let config_path = state.staged_config_path.clone();
 
         tracing::info!("Starting dual-master upgrade to version {}", version);
 
         let old_master_pid = self.master_child.as_ref().map(|c| c.id());
-        
+
         self.spawn_upgraded_master_dual(&binary_path, config_path.as_deref())
             .await
             .map_err(|e| UpgradeError::SpawnFailed(e.to_string()))?;
@@ -690,19 +745,24 @@ impl OverseerProcess {
             state.old_master_pid = old_master_pid;
             state.new_master_pid = self.upgraded_master_child.as_ref().map(|c| c.id());
             state.dual_master_start_time = Some(OverseerState::current_timestamp());
-            self.persistence.save(&state).map_err(UpgradeError::IoError)?;
+            self.persistence
+                .save(&state)
+                .map_err(UpgradeError::IoError)?;
         }
 
         tracing::info!("New master spawned, validating health");
 
         let validation_start = Instant::now();
         let validation_timeout = Duration::from_secs(10);
-        
+
         loop {
             if let Some(ref mut child) = self.upgraded_master_child {
                 match child.try_wait() {
                     Ok(Some(status)) => {
-                        tracing::error!("New master exited during validation with status: {}", status);
+                        tracing::error!(
+                            "New master exited during validation with status: {}",
+                            status
+                        );
                         return self.abort_dual_master_upgrade().await;
                     }
                     Ok(None) => {}
@@ -712,16 +772,16 @@ impl OverseerProcess {
                     }
                 }
             }
-            
+
             if validation_start.elapsed() >= validation_timeout {
                 break;
             }
-            
+
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
 
         let new_master_healthy = self.validate_upgraded_master_health().await;
-        
+
         if !new_master_healthy {
             tracing::error!("New master failed health check, aborting upgrade");
             return self.abort_dual_master_upgrade().await;
@@ -730,7 +790,9 @@ impl OverseerProcess {
         {
             let mut state = self.orchestrator.state.write().await;
             state.state = UpgradeState::Validating;
-            self.persistence.save(&state).map_err(UpgradeError::IoError)?;
+            self.persistence
+                .save(&state)
+                .map_err(UpgradeError::IoError)?;
         }
 
         tracing::info!("New master validated, draining old master");
@@ -745,7 +807,9 @@ impl OverseerProcess {
             state.old_master_pid = None;
             state.staged_binary_path = None;
             state.staged_version = None;
-            self.persistence.save(&state).map_err(UpgradeError::IoError)?;
+            self.persistence
+                .save(&state)
+                .map_err(UpgradeError::IoError)?;
         }
 
         self.master_child = self.upgraded_master_child.take();
@@ -759,14 +823,17 @@ impl OverseerProcess {
             let _ = std::fs::remove_file(get_master_socket_path());
             let _ = std::fs::rename(
                 get_versioned_master_socket_path(r#gen),
-                get_master_socket_path()
+                get_master_socket_path(),
             );
             tracing::info!("Promoted socket generation {} to primary", r#gen);
         }
         self.upgrade_generation = None;
 
-        tracing::info!("Dual-master upgrade to version {} completed successfully", version);
-        
+        tracing::info!(
+            "Dual-master upgrade to version {} completed successfully",
+            version
+        );
+
         Ok(())
     }
 
@@ -781,7 +848,9 @@ impl OverseerProcess {
 
         let config = self.build_spawn_config(
             binary_path,
-            config_path.map(PathBuf::from).unwrap_or_else(|| self.config_path.clone()),
+            config_path
+                .map(PathBuf::from)
+                .unwrap_or_else(|| self.config_path.clone()),
             true,
             true,
             Some(generation),
@@ -789,12 +858,18 @@ impl OverseerProcess {
             false,
             Vec::new(),
         )?;
-        
-        let child = spawn_and_log(&config, &format!("upgraded master (dual mode) using socket gen {}", generation))?;
-        
+
+        let child = spawn_and_log(
+            &config,
+            &format!(
+                "upgraded master (dual mode) using socket gen {}",
+                generation
+            ),
+        )?;
+
         self.upgraded_master_child = Some(child);
         self.dual_master_mode = true;
-        
+
         Ok(())
     }
 
@@ -805,12 +880,14 @@ impl OverseerProcess {
         drain_timeout_secs: u64,
     ) -> Result<(), UpgradeError> {
         let state = self.orchestrator.get_state().await;
-        
+
         let binary_path = state
             .staged_binary_path
             .ok_or(UpgradeError::NoStagedUpgrade)?;
-        
-        let version = state.staged_version.unwrap_or_else(|| "unknown".to_string());
+
+        let version = state
+            .staged_version
+            .unwrap_or_else(|| "unknown".to_string());
         let config_path = state.staged_config_path.clone();
 
         tracing::info!(
@@ -822,7 +899,9 @@ impl OverseerProcess {
         {
             let mut state = self.orchestrator.state.write().await;
             state.state = UpgradeState::Spawning;
-            self.persistence.save(&state).map_err(UpgradeError::IoError)?;
+            self.persistence
+                .save(&state)
+                .map_err(UpgradeError::IoError)?;
         }
 
         let mut handoff = DualMasterHandoff::new(ports.clone());
@@ -845,7 +924,9 @@ impl OverseerProcess {
             state.old_master_pid = old_master_pid;
             state.new_master_pid = self.upgraded_master_child.as_ref().map(|c| c.id());
             state.dual_master_start_time = Some(OverseerState::current_timestamp());
-            self.persistence.save(&state).map_err(UpgradeError::IoError)?;
+            self.persistence
+                .save(&state)
+                .map_err(UpgradeError::IoError)?;
         }
 
         tracing::info!("New master spawned with socket handoff, validating health");
@@ -865,7 +946,9 @@ impl OverseerProcess {
         {
             let mut state = self.orchestrator.state.write().await;
             state.state = UpgradeState::Validating;
-            self.persistence.save(&state).map_err(UpgradeError::IoError)?;
+            self.persistence
+                .save(&state)
+                .map_err(UpgradeError::IoError)?;
         }
 
         tracing::info!("New master validated, draining old master with confirmation");
@@ -886,7 +969,9 @@ impl OverseerProcess {
             state.old_master_pid = None;
             state.staged_binary_path = None;
             state.staged_version = None;
-            self.persistence.save(&state).map_err(UpgradeError::IoError)?;
+            self.persistence
+                .save(&state)
+                .map_err(UpgradeError::IoError)?;
         }
 
         self.master_child = self.upgraded_master_child.take();
@@ -910,7 +995,9 @@ impl OverseerProcess {
     ) -> Result<(), std::io::Error> {
         let config = self.build_spawn_config(
             binary_path,
-            config_path.map(PathBuf::from).unwrap_or_else(|| self.config_path.clone()),
+            config_path
+                .map(PathBuf::from)
+                .unwrap_or_else(|| self.config_path.clone()),
             true,
             false,
             None,
@@ -918,7 +1005,7 @@ impl OverseerProcess {
             true,
             ports.to_vec(),
         )?;
-        
+
         let child = spawn_and_log(&config, "upgraded master (socket handoff mode)")?;
 
         self.upgraded_master_child = Some(child);
@@ -934,7 +1021,9 @@ impl OverseerProcess {
         {
             let mut state = self.orchestrator.state.write().await;
             state.state = UpgradeState::DrainingOldMaster;
-            self.persistence.save(&state).map_err(UpgradeError::IoError)?;
+            self.persistence
+                .save(&state)
+                .map_err(UpgradeError::IoError)?;
         }
 
         let old_pid = self.master_child.as_ref().map(|c| c.id());
@@ -945,7 +1034,10 @@ impl OverseerProcess {
                 pid
             );
 
-            match self.send_master_drain_mode_with_confirmation(pid, drain_timeout_secs).await {
+            match self
+                .send_master_drain_mode_with_confirmation(pid, drain_timeout_secs)
+                .await
+            {
                 Ok(drained) => {
                     if !drained {
                         tracing::warn!(
@@ -954,10 +1046,7 @@ impl OverseerProcess {
                     }
                 }
                 Err(e) => {
-                    tracing::warn!(
-                        "Failed to send drain mode via IPC: {}, using signal",
-                        e
-                    );
+                    tracing::warn!("Failed to send drain mode via IPC: {}, using signal", e);
 
                     #[cfg(unix)]
                     {
@@ -1006,8 +1095,8 @@ impl OverseerProcess {
     ) -> Result<bool, String> {
         let socket_path = get_secure_socket_path("master.sock");
 
-        let mut stream = IpcStream::connect_unix(&socket_path)
-            .map_err(|e| errors::ipc::connect_failed(&e))?;
+        let mut stream =
+            IpcStream::connect_unix(&socket_path).map_err(|e| errors::ipc::connect_failed(&e))?;
 
         let drain_id = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -1054,33 +1143,42 @@ impl OverseerProcess {
                         if let Some(ref mut child) = self.master_child {
                             match child.try_wait() {
                                 Ok(Some(status)) => {
-                                    tracing::warn!("Master exited during drain with status: {}", status);
+                                    tracing::warn!(
+                                        "Master exited during drain with status: {}",
+                                        status
+                                    );
                                     return Ok(true);
                                 }
                                 Ok(None) => {}
                                 Err(_) => {}
                             }
                         }
-                        
+
                         let status_request = Message::DrainStatusRequest { drain_id };
-                        
+
                         if stream.send(&status_request).is_err() {
-                            tracing::warn!("Failed to send drain status request, connection may be closed");
-                            
+                            tracing::warn!(
+                                "Failed to send drain status request, connection may be closed"
+                            );
+
                             tokio::time::sleep(Duration::from_millis(500)).await;
-                            
+
                             let reconnect_result = IpcStream::connect_unix(&socket_path);
                             if reconnect_result.is_ok() {
-                                tracing::info!("Successfully reconnected to master for drain status polling");
+                                tracing::info!(
+                                    "Successfully reconnected to master for drain status polling"
+                                );
                                 continue;
                             }
-                            
+
                             if last_known_connections == 0 {
                                 tracing::info!("Master connection lost but last known connections were 0, considering drain complete");
                                 return Ok(true);
                             }
-                            
-                            return Err("Lost connection to master during drain polling".to_string());
+
+                            return Err(
+                                "Lost connection to master during drain polling".to_string()
+                            );
                         }
 
                         match stream.recv(2000) {
@@ -1092,7 +1190,7 @@ impl OverseerProcess {
                             })) => {
                                 if resp_id == drain_id {
                                     last_known_connections = active_connections;
-                                    
+
                                     if drain_complete || active_connections == 0 {
                                         tracing::info!(
                                             "Master drain complete after {}ms",
@@ -1107,7 +1205,10 @@ impl OverseerProcess {
                                 }
                             }
                             Ok(Some(other)) => {
-                                tracing::debug!("Unexpected response during drain polling: {:?}", other);
+                                tracing::debug!(
+                                    "Unexpected response during drain polling: {:?}",
+                                    other
+                                );
                             }
                             Ok(None) => {
                                 tracing::debug!("No response during drain polling");
@@ -1120,7 +1221,10 @@ impl OverseerProcess {
                         tokio::time::sleep(Duration::from_millis(200)).await;
                     }
 
-                    tracing::warn!("Drain polling timeout, {} connections may remain", last_known_connections);
+                    tracing::warn!(
+                        "Drain polling timeout, {} connections may remain",
+                        last_known_connections
+                    );
                     return Ok(false);
                 }
                 Err("Master rejected drain mode".to_string())
@@ -1156,22 +1260,29 @@ impl OverseerProcess {
                     }
                 }
             }
-            
+
             if let Ok(mut stream) = IpcStream::connect_unix(&socket_path) {
                 let health_msg = Message::MasterHealthCheck {
                     timestamp: OverseerState::current_timestamp(),
                 };
-                
+
                 if stream.send(&health_msg).is_ok() {
                     if let Ok(Some(Message::HealthCheckAck { .. })) = stream.recv(5000) {
-                        tracing::info!("Upgraded master health check passed on attempt {}", attempt);
+                        tracing::info!(
+                            "Upgraded master health check passed on attempt {}",
+                            attempt
+                        );
                         return true;
                     }
                 }
             }
 
             if attempt < retries {
-                tracing::warn!("Upgraded master health check attempt {} failed, retrying in {}s...", attempt, interval_secs);
+                tracing::warn!(
+                    "Upgraded master health check attempt {} failed, retrying in {}s...",
+                    attempt,
+                    interval_secs
+                );
                 tokio::time::sleep(Duration::from_secs(interval_secs)).await;
             }
         }
@@ -1179,11 +1290,16 @@ impl OverseerProcess {
         false
     }
 
-    async fn drain_and_stop_old_master(&mut self, drain_timeout_secs: u64) -> Result<(), UpgradeError> {
+    async fn drain_and_stop_old_master(
+        &mut self,
+        drain_timeout_secs: u64,
+    ) -> Result<(), UpgradeError> {
         {
             let mut state = self.orchestrator.state.write().await;
             state.state = UpgradeState::DrainingOldMaster;
-            self.persistence.save(&state).map_err(UpgradeError::IoError)?;
+            self.persistence
+                .save(&state)
+                .map_err(UpgradeError::IoError)?;
         }
 
         let old_pid = self.master_child.as_ref().map(|c| c.id());
@@ -1193,7 +1309,7 @@ impl OverseerProcess {
 
             if let Err(e) = self.send_master_drain_mode(pid, drain_timeout_secs).await {
                 tracing::warn!("Failed to send drain mode via IPC: {}, using signal", e);
-                
+
                 #[cfg(unix)]
                 {
                     let _ = nix::sys::signal::kill(
@@ -1224,7 +1340,7 @@ impl OverseerProcess {
             }
 
             tracing::warn!("Old master did not exit gracefully within timeout, force stopping");
-            
+
             let _ = old_master.kill();
             let _ = old_master.wait();
             self.master_child = None;
@@ -1235,22 +1351,29 @@ impl OverseerProcess {
 
     async fn send_master_drain_mode(&self, _pid: u32, timeout_secs: u64) -> Result<(), String> {
         let socket_path = get_secure_socket_path("master.sock");
-        
-        let mut stream = IpcStream::connect_unix(&socket_path)
-            .map_err(|e| errors::ipc::connect_failed(&e))?;
+
+        let mut stream =
+            IpcStream::connect_unix(&socket_path).map_err(|e| errors::ipc::connect_failed(&e))?;
 
         let msg = Message::MasterDrainMode {
             graceful_timeout_secs: timeout_secs,
             stop_accepting: true,
         };
 
-        stream.send(&msg)
+        stream
+            .send(&msg)
             .map_err(|e| format!("Failed to send drain mode: {}", e))?;
 
         match stream.recv((timeout_secs + 10) * 1000) {
-            Ok(Some(Message::MasterDrainModeAck { accepted, active_connections })) => {
+            Ok(Some(Message::MasterDrainModeAck {
+                accepted,
+                active_connections,
+            })) => {
                 if accepted {
-                    tracing::info!("Master accepted drain mode, {} active connections", active_connections);
+                    tracing::info!(
+                        "Master accepted drain mode, {} active connections",
+                        active_connections
+                    );
                     Ok(())
                 } else {
                     Err("Master rejected drain mode".to_string())
@@ -1268,7 +1391,7 @@ impl OverseerProcess {
         if let Some(ref mut child) = self.upgraded_master_child {
             let pid = child.id();
             tracing::info!("Killing upgraded master (PID {})", pid);
-            
+
             #[cfg(unix)]
             {
                 let _ = nix::sys::signal::kill(
@@ -1276,11 +1399,11 @@ impl OverseerProcess {
                     nix::sys::signal::Signal::SIGTERM,
                 );
             }
-            
+
             let _ = child.kill();
             let _ = child.wait();
         }
-        
+
         self.upgraded_master_child = None;
         self.dual_master_mode = false;
 
@@ -1294,13 +1417,14 @@ impl OverseerProcess {
 
         if let Some(ref mut _old_master) = self.master_child {
             tracing::info!("Restoring old master to full operation");
-            
+
             match IpcStream::connect_unix(&get_master_socket_path()) {
                 Ok(mut stream) => {
                     let _ = stream.send(&Message::RestoreFromDrain);
                     let _ = stream.recv(5000);
                 }
-                Err(_) => {
+                Err(_) =>
+                {
                     #[cfg(unix)]
                     if let Some(pid) = self.master_child.as_ref().map(|c| c.id()) {
                         use nix::sys::signal::Signal;
@@ -1318,7 +1442,9 @@ impl OverseerProcess {
             state.state = UpgradeState::Failed;
             state.last_error = Some("New master failed validation".to_string());
             state.new_master_pid = None;
-            self.persistence.save(&state).map_err(UpgradeError::IoError)?;
+            self.persistence
+                .save(&state)
+                .map_err(UpgradeError::IoError)?;
         }
 
         Err(UpgradeError::ValidationFailed(vec![]))
@@ -1337,7 +1463,9 @@ impl OverseerProcess {
     }
 }
 
-pub fn run_overseer_process(config: OverseerConfig) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub fn run_overseer_process(
+    config: OverseerConfig,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
@@ -1348,11 +1476,12 @@ pub fn run_overseer_process(config: OverseerConfig) -> Result<(), Box<dyn std::e
     {
         let running = overseer.running.clone();
         tokio::spawn(async move {
-            let mut sigterm = match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
-                Ok(s) => s,
-                Err(_) => return,
-            };
-            
+            let mut sigterm =
+                match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+                    Ok(s) => s,
+                    Err(_) => return,
+                };
+
             sigterm.recv().await;
             tracing::info!("Overseer received SIGTERM");
             running.stop();
@@ -1360,11 +1489,12 @@ pub fn run_overseer_process(config: OverseerConfig) -> Result<(), Box<dyn std::e
 
         let running = overseer.running.clone();
         tokio::spawn(async move {
-            let mut sigint = match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt()) {
-                Ok(s) => s,
-                Err(_) => return,
-            };
-            
+            let mut sigint =
+                match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt()) {
+                    Ok(s) => s,
+                    Err(_) => return,
+                };
+
             sigint.recv().await;
             tracing::info!("Overseer received SIGINT");
             running.stop();
@@ -1410,7 +1540,7 @@ mod tests {
     #[test]
     fn test_overseer_config_default() {
         let config = OverseerConfig::default();
-        
+
         assert_eq!(config.config_path, None);
         assert!(config.auto_restart);
         assert_eq!(config.restart_delay_secs, 5);
@@ -1443,7 +1573,7 @@ mod tests {
             ipc_write_timeout_ms: 10000,
             master_startup_timeout_secs: 60,
         };
-        
+
         assert_eq!(config.config_path, Some(PathBuf::from("/custom/config")));
         assert!(!config.auto_restart);
         assert_eq!(config.restart_delay_secs, 10);
@@ -1457,7 +1587,7 @@ mod tests {
             ipc_responsive: true,
             workers_healthy: true,
         };
-        
+
         assert!(health.is_healthy());
     }
 
@@ -1468,7 +1598,7 @@ mod tests {
             ipc_responsive: true,
             workers_healthy: true,
         };
-        
+
         assert!(!health.is_healthy());
     }
 
@@ -1479,7 +1609,7 @@ mod tests {
             ipc_responsive: false,
             workers_healthy: true,
         };
-        
+
         assert!(!health.is_healthy());
     }
 
@@ -1490,7 +1620,7 @@ mod tests {
             ipc_responsive: false,
             workers_healthy: false,
         };
-        
+
         assert!(!health.is_healthy());
     }
 
@@ -1500,17 +1630,17 @@ mod tests {
             config_path: Some(PathBuf::from("")),
             ..Default::default()
         };
-        
+
         assert_eq!(config.config_path, Some(PathBuf::from("")));
     }
 
     #[test]
     fn test_overseer_config_timeout_bounds() {
         let mut config = OverseerConfig::default();
-        
+
         config.ipc_read_timeout_ms = 0;
         assert_eq!(config.ipc_read_timeout_ms, 0);
-        
+
         config.ipc_write_timeout_ms = u64::MAX;
         assert_eq!(config.ipc_write_timeout_ms, u64::MAX);
     }

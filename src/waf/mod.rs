@@ -13,57 +13,58 @@
 //! let decision = waf.check_request(client_ip, "GET", "/").await;
 //! ```
 
-pub mod ratelimit;
+pub mod attack_detection;
 pub mod bot;
 pub mod endpoints;
-pub mod attack_detection;
 pub mod flood;
-pub mod threat_level;
-pub mod violation_tracker;
 pub mod ip_feed;
-pub mod rule_feed;
 pub mod probe_tracker;
+pub mod ratelimit;
 pub mod request_sanitization;
+pub mod rule_feed;
+pub mod threat_level;
 pub mod traffic_shaper;
+pub mod violation_tracker;
 
-pub use ratelimit::{RateLimiterManager, RateLimitResult, RateLimitConfigStore};
-pub use bot::{BotDetector, BotDetectionResult};
-pub use endpoints::{EndpointBlockerManager, EndpointCheckResult, SensitiveEndpointManager, ErrorPageManager};
-pub use attack_detection::{AttackDetector, AttackDetectionConfig, AttackDetectionResult, AttackType};
-pub use flood::{FloodProtector, FloodConfig, FloodDecision};
-pub use threat_level::{
-    ThreatLevelManager, ThreatLevel, 
-    ThreatMetrics, ThreatScore, ThreatStatus,
-    BaselineStats, LearningStats,
-    ThreatHistory, ThreatHistoryAll, ThreatHistorySample,
+pub use attack_detection::{
+    AttackDetectionConfig, AttackDetectionResult, AttackDetector, AttackType,
 };
-pub use violation_tracker::{ViolationTracker, ViolationStats};
-pub use ip_feed::{IpFeedManager, IpFeedEntry, MultiFeedManager};
-pub use rule_feed::{
-    RuleFeedManager, RuleFeedManagerForWaf, RuleFeedResponse, RuleSet, ParsedRules,
-    GlobalRulePatterns, get_global_patterns, get_custom_patterns_for_category, 
-    get_merged_patterns, has_custom_patterns,
+pub use bot::{BotDetectionResult, BotDetector};
+pub use endpoints::{
+    EndpointBlockerManager, EndpointCheckResult, ErrorPageManager, SensitiveEndpointManager,
 };
+pub use flood::{FloodConfig, FloodDecision, FloodProtector};
+pub use ip_feed::{IpFeedEntry, IpFeedManager, MultiFeedManager};
 pub use probe_tracker::{
-    ProbeTracker, ProbeRecord, ProbeEvent, ProbeStats, ProbeConfig, ProbeResult,
-    SuspiciousWordTracker, SuspiciousWordRecord, SuspiciousWordStats,
-    UpstreamErrorTracker, UpstreamErrorRecord, UpstreamErrorStats, UpstreamErrorResult,
+    ProbeConfig, ProbeEvent, ProbeRecord, ProbeResult, ProbeStats, ProbeTracker,
+    SuspiciousWordRecord, SuspiciousWordStats, SuspiciousWordTracker, UpstreamErrorRecord,
+    UpstreamErrorResult, UpstreamErrorStats, UpstreamErrorTracker,
 };
+pub use ratelimit::{RateLimitConfigStore, RateLimitResult, RateLimiterManager};
 pub use request_sanitization::{RequestSanitizer, SanitizedRequest};
-pub use traffic_shaper::{
-    GlobalTrafficShaper, SiteTrafficShaper, SiteTrafficLimits,
-    ConnectionLimiter, ConnectionToken, ConnectionLimitError,
-    AsyncTokenBucket, BandwidthLimitExceeded, BandwidthDirection,
+pub use rule_feed::{
+    get_custom_patterns_for_category, get_global_patterns, get_merged_patterns,
+    has_custom_patterns, GlobalRulePatterns, ParsedRules, RuleFeedManager, RuleFeedManagerForWaf,
+    RuleFeedResponse, RuleSet,
 };
+pub use threat_level::{
+    BaselineStats, LearningStats, ThreatHistory, ThreatHistoryAll, ThreatHistorySample,
+    ThreatLevel, ThreatLevelManager, ThreatMetrics, ThreatScore, ThreatStatus,
+};
+pub use traffic_shaper::{
+    AsyncTokenBucket, BandwidthDirection, BandwidthLimitExceeded, ConnectionLimitError,
+    ConnectionLimiter, ConnectionToken, GlobalTrafficShaper, SiteTrafficLimits, SiteTrafficShaper,
+};
+pub use violation_tracker::{ViolationStats, ViolationTracker};
 
 use crate::auth::AuthManager;
 use crate::block_store::BlockStore;
 use crate::challenge::{ChallengeConfig, ChallengeManager, ChallengeResult};
-use crate::proxy::WafDecision;
 use crate::config::RateLimitMemoryConfig;
-use crate::theme::ThemeConfig;
 use crate::mesh::threat_intel::ThreatIntelligenceManager;
 use crate::mesh::yara_rules::YaraRulesManager;
+use crate::proxy::WafDecision;
+use crate::theme::ThemeConfig;
 
 use parking_lot::RwLock;
 use std::net::IpAddr;
@@ -93,8 +94,8 @@ pub fn set_yara_rules(yr: Option<Arc<YaraRulesManager>>) {
 pub fn get_yara_rules() -> Option<Arc<YaraRulesManager>> {
     YARA_RULES.with(|y| y.read().clone())
 }
-use std::collections::HashSet;
 use rand::Rng;
+use std::collections::HashSet;
 
 /// Core WAF (Web Application Firewall) engine.
 ///
@@ -150,8 +151,7 @@ pub struct WafCore {
     honeypot_ban_duration_secs: u64,
 }
 
-#[derive(Clone)]
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct TestModeConfig {
     pub enabled: bool,
     pub ratelimit_off: bool,
@@ -160,7 +160,6 @@ pub struct TestModeConfig {
     pub challenge_off: bool,
     pub flood_off: bool,
 }
-
 
 impl TestModeConfig {
     pub fn all_off() -> Self {
@@ -193,11 +192,21 @@ impl TestModeConfig {
 
     pub fn disabled_count(&self) -> usize {
         let mut count = 0;
-        if self.ratelimit_off { count += 1; }
-        if self.attack_off { count += 1; }
-        if self.bot_off { count += 1; }
-        if self.challenge_off { count += 1; }
-        if self.flood_off { count += 1; }
+        if self.ratelimit_off {
+            count += 1;
+        }
+        if self.attack_off {
+            count += 1;
+        }
+        if self.bot_off {
+            count += 1;
+        }
+        if self.challenge_off {
+            count += 1;
+        }
+        if self.flood_off {
+            count += 1;
+        }
         count
     }
 }
@@ -292,11 +301,11 @@ impl WafCore {
             rate_config.cleanup_interval_secs,
             memory_config,
         );
-        
-        let threat_level = threat_level_config.as_ref().map(|config| {
-            ThreatLevelManager::new(config.clone(), data_dir.clone(), None)
-        });
-        
+
+        let threat_level = threat_level_config
+            .as_ref()
+            .map(|config| ThreatLevelManager::new(config.clone(), data_dir.clone(), None));
+
         let violation_tracker = threat_level_config.as_ref().and_then(|config| {
             if config.escalation.enabled {
                 Some(ViolationTracker::new(
@@ -309,7 +318,7 @@ impl WafCore {
                 None
             }
         });
-        
+
         let ip_feed = ip_feed_config.and_then(|config| {
             if config.enabled {
                 let manager = IpFeedManager::new(config);
@@ -319,7 +328,7 @@ impl WafCore {
                 None
             }
         });
-        
+
         let probe_tracker = probe_config.and_then(|config| {
             if config.enabled {
                 let probe_config = ProbeConfig {
@@ -337,7 +346,7 @@ impl WafCore {
                 None
             }
         });
-        
+
         let suspicious_word_tracker = suspicious_words_config.and_then(|config| {
             if config.enabled {
                 Some(SuspiciousWordTracker::new(config))
@@ -345,7 +354,7 @@ impl WafCore {
                 None
             }
         });
-        
+
         let upstream_error_tracker = upstream_errors_config.and_then(|config| {
             if config.enabled {
                 Some(UpstreamErrorTracker::new(config))
@@ -353,7 +362,7 @@ impl WafCore {
                 None
             }
         });
-        
+
         let bot_detector = BotDetector::new(
             bot_config.known_bots_allow,
             bot_config.ai_crawlers_block,
@@ -367,13 +376,17 @@ impl WafCore {
             endpoint_config.block_response_code,
             endpoint_config.block_page_html.clone(),
         );
-        
+
         // Log warnings for invalid regex patterns
         let invalid_patterns = endpoint_blocker.get_invalid_patterns();
         for pattern in invalid_patterns {
-            tracing::warn!("Invalid or unsafe regex pattern in blocked paths: '{}'", pattern);
+            tracing::warn!(
+                "Invalid or unsafe regex pattern in blocked paths: '{}'",
+                pattern
+            );
         }
-        let sensitive_endpoint_manager = SensitiveEndpointManager::from_file(&bot_config.honeypot_endpoints_file);
+        let sensitive_endpoint_manager =
+            SensitiveEndpointManager::from_file(&bot_config.honeypot_endpoints_file);
         let error_page_manager = ErrorPageManager::with_theme_and_mode(
             &bot_config.error_pages_directory,
             bot_config.error_pages_custom_directory,
@@ -408,12 +421,19 @@ impl WafCore {
             mesh_global_node_url: bot_config.mesh_global_node_url.clone(),
             mesh_audit_urls: bot_config.mesh_audit_urls.clone(),
         });
-        
-        let attack_detector = RwLock::new(attack_detection_config.as_ref().map(|config| Arc::new(AttackDetector::new(config.clone()))));
-        
+
+        let attack_detector = RwLock::new(
+            attack_detection_config
+                .as_ref()
+                .map(|config| Arc::new(AttackDetector::new(config.clone()))),
+        );
+
         let (traffic_shaper, connection_limiter) = if let Some(config) = traffic_shaping_config {
             if config.enabled {
-                let shaper = Arc::new(GlobalTrafficShaper::new(config.global.clone(), config.bandwidth.clone()));
+                let shaper = Arc::new(GlobalTrafficShaper::new(
+                    config.global.clone(),
+                    config.bandwidth.clone(),
+                ));
                 let conn_limiter = ConnectionLimiter::new(config.connection_limits.clone());
                 (Some(shaper), Some(conn_limiter))
             } else {
@@ -428,8 +448,8 @@ impl WafCore {
             .filter_map(|ip_str| ip_str.parse().ok())
             .collect();
 
-        let honeypot_ban_duration_secs = Self::parse_duration(&bot_config.honeypot_ban_duration)
-            .unwrap_or(24 * 60 * 60);
+        let honeypot_ban_duration_secs =
+            Self::parse_duration(&bot_config.honeypot_ban_duration).unwrap_or(24 * 60 * 60);
 
         WafCore {
             rate_limiter,
@@ -472,11 +492,13 @@ impl WafCore {
     }
 
     pub fn reload_attack_detector(&self) -> Result<(), String> {
-        let config = self.attack_detection_config.as_ref()
+        let config = self
+            .attack_detection_config
+            .as_ref()
             .ok_or("No attack detection config")?;
-        
+
         let mut new_config = config.clone();
-        
+
         // Merge custom patterns from config with global rule feed patterns
         // Note: sqli and xss use libinjection and don't support custom_patterns
         macro_rules! merge_patterns {
@@ -487,7 +509,7 @@ impl WafCore {
                 }
             };
         }
-        
+
         merge_patterns!("path_traversal", path_traversal);
         merge_patterns!("rfi", rfi);
         merge_patterns!("ssrf", ssrf);
@@ -498,26 +520,28 @@ impl WafCore {
         merge_patterns!("ldap_injection", ldap_injection);
         merge_patterns!("xpath_injection", xpath_injection);
         merge_patterns!("open_redirect", open_redirect);
-        
+
         *self.attack_detector.write() = Some(Arc::new(AttackDetector::new(new_config)));
-        
+
         Ok(())
     }
 
     fn parse_duration(s: &str) -> Option<u64> {
         let s = s.trim();
-        let value: u64 = s.chars()
+        let value: u64 = s
+            .chars()
             .take_while(|c| c.is_ascii_digit())
             .collect::<String>()
             .parse()
             .ok()?;
-        
-        let unit = s.chars()
+
+        let unit = s
+            .chars()
             .skip_while(|c| c.is_ascii_digit())
             .collect::<String>()
             .trim()
             .to_lowercase();
-        
+
         Some(match unit.as_str() {
             "s" | "sec" | "seconds" => value,
             "m" | "min" | "minutes" => value * 60,
@@ -541,7 +565,12 @@ impl WafCore {
     /// Returns `WafDecision::Drop` if the connection should be silently dropped,
     /// `WafDecision::Pass` if it should proceed, or `WafDecision::ChallengeWithCookie`
     /// if a challenge should be presented.
-    pub fn check_early(&self, client_ip: std::net::IpAddr, path: &str, cookies: Option<&str>) -> WafDecision {
+    pub fn check_early(
+        &self,
+        client_ip: std::net::IpAddr,
+        path: &str,
+        cookies: Option<&str>,
+    ) -> WafDecision {
         if let Some(ref store) = self.block_store {
             if store.is_blocked(&client_ip, "global").is_some() {
                 tracing::debug!("Early check: IP {} is blocked", client_ip);
@@ -550,48 +579,54 @@ impl WafCore {
         }
 
         if self.config.enable_css_honeypot
-            && !self.config.css_exempt_paths.iter().any(|p| path.starts_with(p)) {
-                if self.test_mode.enabled && self.test_mode.challenge_off {
+            && !self
+                .config
+                .css_exempt_paths
+                .iter()
+                .any(|p| path.starts_with(p))
+        {
+            if self.test_mode.enabled && self.test_mode.challenge_off {
+                return WafDecision::Pass;
+            }
+
+            let css_cookie = cookies.and_then(|c| {
+                let cookie_name = self.challenge_manager.css_session_cookie_name();
+                c.split(';')
+                    .find(|cookie| cookie.trim().starts_with(&format!("{}=", cookie_name)))
+                    .map(|cookie| cookie.trim()[cookie_name.len() + 1..].to_string())
+            });
+
+            let verified_cookie = cookies.and_then(|c| {
+                let verified_name = self.challenge_manager.css_verified_cookie_name();
+                c.split(';')
+                    .find(|cookie| cookie.trim().starts_with(&format!("{}=", verified_name)))
+                    .map(|_| "verified")
+            });
+
+            let cookie_value = verified_cookie.or(css_cookie.as_deref());
+            let challenge_result = self.challenge_manager.check_cookie(cookie_value);
+
+            match challenge_result {
+                ChallengeResult::NotSet | ChallengeResult::Failed => {
+                    let (html, session_id) =
+                        self.challenge_manager.generate_challenge_page(&client_ip);
+                    if let Some(sid) = session_id {
+                        let session_cookie_name = self.challenge_manager.css_session_cookie_name();
+                        let window_secs = self.challenge_manager.css_window_secs();
+                        return WafDecision::ChallengeWithCookie {
+                            html,
+                            session_cookie_name,
+                            session_cookie_value: sid,
+                            session_cookie_max_age: window_secs,
+                        };
+                    }
+                }
+                ChallengeResult::Passed => {}
+                ChallengeResult::RateLimited => {
                     return WafDecision::Pass;
                 }
-
-                let css_cookie = cookies.and_then(|c| {
-                    let cookie_name = self.challenge_manager.css_session_cookie_name();
-                    c.split(';')
-                        .find(|cookie| cookie.trim().starts_with(&format!("{}=", cookie_name)))
-                        .map(|cookie| cookie.trim()[cookie_name.len() + 1..].to_string())
-                });
-
-                let verified_cookie = cookies.and_then(|c| {
-                    let verified_name = self.challenge_manager.css_verified_cookie_name();
-                    c.split(';')
-                        .find(|cookie| cookie.trim().starts_with(&format!("{}=", verified_name)))
-                        .map(|_| "verified")
-                });
-
-                let cookie_value = verified_cookie.or(css_cookie.as_deref());
-                let challenge_result = self.challenge_manager.check_cookie(cookie_value);
-
-                match challenge_result {
-                    ChallengeResult::NotSet | ChallengeResult::Failed => {
-                        let (html, session_id) = self.challenge_manager.generate_challenge_page(&client_ip);
-                        if let Some(sid) = session_id {
-                            let session_cookie_name = self.challenge_manager.css_session_cookie_name();
-                            let window_secs = self.challenge_manager.css_window_secs();
-                            return WafDecision::ChallengeWithCookie {
-                                html,
-                                session_cookie_name,
-                                session_cookie_value: sid,
-                                session_cookie_max_age: window_secs,
-                            };
-                        }
-                    }
-                    ChallengeResult::Passed => {}
-                    ChallengeResult::RateLimited => {
-                        return WafDecision::Pass;
-                    }
-                }
             }
+        }
 
         WafDecision::Pass
     }
@@ -624,9 +659,10 @@ impl WafCore {
             &http::HeaderMap::new(),
             None,
             user_agent,
-        ).await
+        )
+        .await
     }
-    
+
     /// Check a request with full inspection.
     ///
     /// This method runs all WAF checks including:
@@ -696,7 +732,9 @@ impl WafCore {
             return decision;
         }
 
-        if let Some(decision) = self.check_attack_patterns(client_ip, method, path, query_string, headers, body) {
+        if let Some(decision) =
+            self.check_attack_patterns(client_ip, method, path, query_string, headers, body)
+        {
             return decision;
         }
 
@@ -723,7 +761,10 @@ impl WafCore {
                     }
                     crate::metrics::record_attack_type("RateLimit");
 
-                    return Some(WafDecision::Block(429, format!("Global rate limit exceeded ({})", limit_type)));
+                    return Some(WafDecision::Block(
+                        429,
+                        format!("Global rate limit exceeded ({})", limit_type),
+                    ));
                 }
                 RateLimitResult::Allowed => {}
             }
@@ -734,28 +775,50 @@ impl WafCore {
             if !is_whitelisted {
                 match self.rate_limiter.check_rate_limit(client_ip).await {
                     RateLimitResult::Limited { limit_type, .. } => {
-                        tracing::debug!("Rate limited: {} for {} ({})", limit_type, client_ip, path);
+                        tracing::debug!(
+                            "Rate limited: {} for {} ({})",
+                            limit_type,
+                            client_ip,
+                            path
+                        );
 
                         if let Some(ref tl) = self.threat_level {
                             tl.record_rate_limit_hit();
                         }
                         crate::metrics::record_attack_type("RateLimit");
 
-                        let threat_level = self.threat_level.as_ref().map(|tl| tl.get_level().as_u8()).unwrap_or(1);
+                        let threat_level = self
+                            .threat_level
+                            .as_ref()
+                            .map(|tl| tl.get_level().as_u8())
+                            .unwrap_or(1);
 
                         if let Some(ref tracker) = self.violation_tracker {
-                            let violation_count = tracker.record_violation(client_ip, "rate_limit", threat_level);
+                            let violation_count =
+                                tracker.record_violation(client_ip, "rate_limit", threat_level);
 
-                            if violation_count >= self.threat_level.as_ref()
-                                .map(|tl| tl.get_legacy_config().escalation.violations_before_block)
-                                .unwrap_or(3)
+                            if violation_count
+                                >= self
+                                    .threat_level
+                                    .as_ref()
+                                    .map(|tl| {
+                                        tl.get_legacy_config().escalation.violations_before_block
+                                    })
+                                    .unwrap_or(3)
                             {
-                                let ban_duration = self.threat_level.as_ref()
+                                let ban_duration = self
+                                    .threat_level
+                                    .as_ref()
                                     .map(|tl| tl.get_base_ban_duration(violation_count))
                                     .unwrap_or(3600);
 
                                 if let Some(ref store) = self.block_store {
-                                    store.block_ip(client_ip, "rate_limit_violation", ban_duration, "global");
+                                    store.block_ip(
+                                        client_ip,
+                                        "rate_limit_violation",
+                                        ban_duration,
+                                        "global",
+                                    );
                                 }
                                 if let Some(ref threat_intel) = get_threat_intel() {
                                     threat_intel.announce_local_block(
@@ -769,7 +832,10 @@ impl WafCore {
                                     tracker.clear_violations(client_ip);
                                 }
 
-                                return Some(WafDecision::Block(429, "Too many rate limit violations - IP blocked".to_string()));
+                                return Some(WafDecision::Block(
+                                    429,
+                                    "Too many rate limit violations - IP blocked".to_string(),
+                                ));
                             }
                         }
 
@@ -807,8 +873,11 @@ impl WafCore {
     }
 
     fn check_endpoint_block(&self, path: &str, method: &str) -> Option<WafDecision> {
-        if let EndpointCheckResult::Blocked { response_code, html, .. } =
-            self.endpoint_blocker.check(path, method)
+        if let EndpointCheckResult::Blocked {
+            response_code,
+            html,
+            ..
+        } = self.endpoint_blocker.check(path, method)
         {
             let html = html.unwrap_or_else(|| "Forbidden".to_string());
             return Some(WafDecision::Block(response_code, html));
@@ -824,7 +893,9 @@ impl WafCore {
         user_agent: Option<&str>,
     ) {
         if let Some(ref word_tracker) = self.suspicious_word_tracker {
-            if let Some(record) = word_tracker.check_and_record(client_ip, path, query_string, user_agent) {
+            if let Some(record) =
+                word_tracker.check_and_record(client_ip, path, query_string, user_agent)
+            {
                 tracing::debug!(
                     ip = %client_ip,
                     word = %record.matched_word,
@@ -843,7 +914,11 @@ impl WafCore {
         user_agent: Option<&str>,
     ) -> Option<WafDecision> {
         if let Some(matched) = self.sensitive_endpoint_manager.check(path) {
-            tracing::info!("Honeypot endpoint accessed: {} - matched: {}", path, matched);
+            tracing::info!(
+                "Honeypot endpoint accessed: {} - matched: {}",
+                path,
+                matched
+            );
 
             if let Some(ref tracker) = self.probe_tracker {
                 let result = tracker.record_event(
@@ -853,7 +928,11 @@ impl WafCore {
                     user_agent.map(String::from),
                 );
 
-                if let ProbeResult::ProbingDetected { unique_endpoints, event_count } = result {
+                if let ProbeResult::ProbingDetected {
+                    unique_endpoints,
+                    event_count,
+                } = result
+                {
                     tracing::warn!(
                         ip = %client_ip,
                         endpoints = ?unique_endpoints,
@@ -863,7 +942,11 @@ impl WafCore {
 
                     let config = tracker.get_config();
                     if config.auto_ban_elevated_threat {
-                        let threat_level = self.threat_level.as_ref().map(|tl| tl.get_level().as_u8()).unwrap_or(1);
+                        let threat_level = self
+                            .threat_level
+                            .as_ref()
+                            .map(|tl| tl.get_level().as_u8())
+                            .unwrap_or(1);
                         if threat_level >= config.elevated_threat_threshold {
                             let ban_duration = config.elevated_ban_duration;
                             tracing::warn!(
@@ -889,7 +972,12 @@ impl WafCore {
             }
 
             if let Some(ref store) = self.block_store {
-                store.block_ip(client_ip, "honeypot", self.honeypot_ban_duration_secs, "global");
+                store.block_ip(
+                    client_ip,
+                    "honeypot",
+                    self.honeypot_ban_duration_secs,
+                    "global",
+                );
             }
             if let Some(ref threat_intel) = self.threat_intel {
                 threat_intel.announce_local_block(
@@ -913,7 +1001,11 @@ impl WafCore {
                     user_agent.map(String::from),
                 );
 
-                if let ProbeResult::ProbingDetected { unique_endpoints, event_count } = result {
+                if let ProbeResult::ProbingDetected {
+                    unique_endpoints,
+                    event_count,
+                } = result
+                {
                     tracing::warn!(
                         ip = %client_ip,
                         endpoints = ?unique_endpoints,
@@ -923,7 +1015,11 @@ impl WafCore {
 
                     let config = tracker.get_config();
                     if config.auto_ban_elevated_threat {
-                        let threat_level = self.threat_level.as_ref().map(|tl| tl.get_level().as_u8()).unwrap_or(1);
+                        let threat_level = self
+                            .threat_level
+                            .as_ref()
+                            .map(|tl| tl.get_level().as_u8())
+                            .unwrap_or(1);
                         if threat_level >= config.elevated_threat_threshold {
                             let ban_duration = config.elevated_ban_duration;
                             tracing::warn!(
@@ -949,7 +1045,12 @@ impl WafCore {
             }
 
             if let Some(ref store) = self.block_store {
-                store.block_ip(client_ip, "honeypot", self.honeypot_ban_duration_secs, "global");
+                store.block_ip(
+                    client_ip,
+                    "honeypot",
+                    self.honeypot_ban_duration_secs,
+                    "global",
+                );
             }
             if let Some(ref threat_intel) = self.threat_intel {
                 threat_intel.announce_local_block(
@@ -1018,18 +1119,15 @@ impl WafCore {
                 return None;
             }
 
-            if let Some(result) = attack_detector.check_request(
-                &method_enum,
-                path,
-                query_string,
-                headers,
-                body,
-            ) {
+            if let Some(result) =
+                attack_detector.check_request(&method_enum, path, query_string, headers, body)
+            {
                 metrics::counter!(
                     "maluwaf.attack_detected",
                     "type" => result.attack_type.to_string(),
                     "location" => result.input_location.to_string(),
-                ).increment(1);
+                )
+                .increment(1);
 
                 crate::metrics::record_attack_type(&result.attack_type.to_string());
 
@@ -1041,18 +1139,30 @@ impl WafCore {
                     "Attack detected - stalling connection"
                 );
 
-                let threat_level = self.threat_level.as_ref().map(|tl| tl.get_level().as_u8()).unwrap_or(1);
+                let threat_level = self
+                    .threat_level
+                    .as_ref()
+                    .map(|tl| tl.get_level().as_u8())
+                    .unwrap_or(1);
 
                 if threat_level >= 3 {
                     if let Some(ref tracker) = self.violation_tracker {
-                        let violation_count = tracker.record_violation(client_ip, &result.attack_type.to_string(), threat_level);
+                        let violation_count = tracker.record_violation(
+                            client_ip,
+                            &result.attack_type.to_string(),
+                            threat_level,
+                        );
 
-                        let block_threshold = self.threat_level.as_ref()
+                        let block_threshold = self
+                            .threat_level
+                            .as_ref()
                             .map(|tl| tl.get_legacy_config().escalation.violations_before_block)
                             .unwrap_or(3);
 
                         if violation_count >= block_threshold {
-                            let ban_duration = self.threat_level.as_ref()
+                            let ban_duration = self
+                                .threat_level
+                                .as_ref()
                                 .map(|tl| tl.get_base_ban_duration(violation_count))
                                 .unwrap_or(3600);
 
@@ -1075,7 +1185,10 @@ impl WafCore {
                                 tl.record_blocked();
                             }
 
-                            return Some(WafDecision::Block(403, "Attack detected - IP blocked".to_string()));
+                            return Some(WafDecision::Block(
+                                403,
+                                "Attack detected - IP blocked".to_string(),
+                            ));
                         }
                     }
                 }
@@ -1092,7 +1205,11 @@ impl WafCore {
 
     fn check_challenge(&self, client_ip: IpAddr, path: &str) -> Option<WafDecision> {
         if (self.config.enable_pow_challenge || self.config.enable_css_honeypot)
-            && !self.config.css_exempt_paths.iter().any(|p| path.starts_with(p))
+            && !self
+                .config
+                .css_exempt_paths
+                .iter()
+                .any(|p| path.starts_with(p))
         {
             if self.test_mode.enabled && self.test_mode.challenge_off {
                 return None;
@@ -1101,7 +1218,8 @@ impl WafCore {
             let challenge_result = self.challenge_manager.check_cookie(None);
             match challenge_result {
                 ChallengeResult::NotSet | ChallengeResult::Failed => {
-                    let (html, session_id) = self.challenge_manager.generate_challenge_page(&client_ip);
+                    let (html, session_id) =
+                        self.challenge_manager.generate_challenge_page(&client_ip);
                     if let Some(sid) = session_id {
                         let session_cookie_name = self.challenge_manager.css_session_cookie_name();
                         let window_secs = self.challenge_manager.css_window_secs();
@@ -1128,7 +1246,7 @@ impl WafCore {
             let mut rng = rand::rng();
             let max_depth = 10;
             let links_per_page = 50;
-            
+
             generator.generate_html_page(
                 rng.random_range(0..max_depth),
                 max_depth,

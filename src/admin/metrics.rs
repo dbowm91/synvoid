@@ -25,7 +25,7 @@ pub async fn start_metrics_publisher(
     let mut last_total_requests: u64 = 0;
     let mut last_total_blocked: u64 = 0;
     let mut last_update = Instant::now();
-    
+
     let mut sys = System::new_all();
     let mut last_sys_refresh = Instant::now();
     let mut latest_metrics: Option<AggregatedMetrics> = None;
@@ -57,7 +57,7 @@ pub async fn start_metrics_publisher(
                 }
 
                 let worker_metrics = process_manager.get_worker_metrics();
-                
+
                 let mut total_requests: u64 = 0;
                 let mut total_blocked: u64 = 0;
                 let mut total_challenged: u64 = 0;
@@ -104,7 +104,7 @@ pub async fn start_metrics_publisher(
                         all_latency_samples.push(metrics.p99_latency_ms);
                     }
                 }
-                
+
                 let (static_cache_hits, static_cache_misses) = process_manager.get_static_worker_cache_stats();
                 _total_static_cache_hits += static_cache_hits;
                 _total_static_cache_misses += static_cache_misses;
@@ -114,7 +114,7 @@ pub async fn start_metrics_publisher(
 
                 let requests_delta = total_requests.saturating_sub(last_total_requests);
                 let blocked_delta = total_blocked.saturating_sub(last_total_blocked);
-                
+
                 let requests_per_second = if elapsed > 0.0 { requests_delta as f64 / elapsed } else { 0.0 };
                 let blocked_per_second = if elapsed > 0.0 { blocked_delta as f64 / elapsed } else { 0.0 };
 
@@ -220,7 +220,7 @@ pub async fn start_metrics_publisher(
                         entry.current_concurrent += site_payload.current_concurrent;
                         entry.peak_concurrent = entry.peak_concurrent.max(site_payload.peak_concurrent);
                         entry.upstream_healthy = entry.upstream_healthy && site_payload.upstream_healthy;
-                        
+
                         if site_payload.total_requests > 0 {
                             let prev_weighted = entry.avg_latency_ms * (entry.total_requests - site_payload.total_requests) as f64;
                             entry.avg_latency_ms = if entry.total_requests > 0 {

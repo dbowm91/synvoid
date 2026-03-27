@@ -297,10 +297,9 @@ impl UdpProtocolDetector {
 
         if data.len() > 2 && data[2] == 0x02 && data[3] == 0x01 {
             let version = data[4];
-            if version <= 2
-                && data.len() > 5 && data[5] == 0x04 {
-                    return true;
-                }
+            if version <= 2 && data.len() > 5 && data[5] == 0x04 {
+                return true;
+            }
         }
 
         false
@@ -461,9 +460,9 @@ impl UdpProtocolDetector {
                 || first_line.contains("ST:")
                 || first_line.contains("NT:")
                 || first_line.contains("LOCATION:"))
-            {
-                return true;
-            }
+        {
+            return true;
+        }
 
         false
     }
@@ -526,16 +525,14 @@ impl UdpProtocolDetector {
             return false;
         }
 
-        if (data[0] == 0x38 || data[0] == 0x40)
-            && data.len() >= 14 {
-                let opcode = data[0] >> 3;
-                let _key_id = data[0] & 0x07;
+        if (data[0] == 0x38 || data[0] == 0x40) && data.len() >= 14 {
+            let opcode = data[0] >> 3;
+            let _key_id = data[0] & 0x07;
 
-                if (1..=10).contains(&opcode)
-                    && (data[1] == 0x00 || data[1] == 0x01) {
-                        return true;
-                    }
+            if (1..=10).contains(&opcode) && (data[1] == 0x00 || data[1] == 0x01) {
+                return true;
             }
+        }
 
         false
     }

@@ -1,13 +1,9 @@
-use axum::{
-    extract::State,
-    http::StatusCode,
-    Json,
-};
+use crate::admin::alerting::{AlertConfig, AlertEvent};
+use crate::admin::handlers::common::OptionalAuth;
+use crate::admin::state::AdminState;
+use axum::{extract::State, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use crate::admin::alerting::{AlertConfig, AlertEvent};
-use crate::admin::state::AdminState;
-use crate::admin::handlers::common::{OptionalAuth};
 
 #[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct AlertConfigResponse {
@@ -31,8 +27,11 @@ pub async fn get_alert_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<AlertConfigResponse>, StatusCode> {
-
-    let alert_manager = state.process.alert_manager.as_ref().ok_or(StatusCode::NOT_FOUND)?;
+    let alert_manager = state
+        .process
+        .alert_manager
+        .as_ref()
+        .ok_or(StatusCode::NOT_FOUND)?;
     let config = alert_manager.get_config().await;
     let json = serde_json::to_value(&config).unwrap_or(serde_json::Value::Null);
 
@@ -62,10 +61,14 @@ pub async fn update_alert_config(
     _auth: OptionalAuth,
     Json(req): Json<UpdateAlertConfigRequest>,
 ) -> Result<Json<AlertConfigResponse>, StatusCode> {
+    let alert_manager = state
+        .process
+        .alert_manager
+        .as_ref()
+        .ok_or(StatusCode::NOT_FOUND)?;
 
-    let alert_manager = state.process.alert_manager.as_ref().ok_or(StatusCode::NOT_FOUND)?;
-    
-    let config: AlertConfig = serde_json::from_value(req.config.clone()).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let config: AlertConfig =
+        serde_json::from_value(req.config.clone()).map_err(|_| StatusCode::BAD_REQUEST)?;
     alert_manager.update_config(config).await;
 
     Ok(Json(AlertConfigResponse { config: req.config }))
@@ -94,8 +97,11 @@ pub async fn test_webhook(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<TestAlertResponse>, StatusCode> {
-
-    let alert_manager = state.process.alert_manager.as_ref().ok_or(StatusCode::NOT_FOUND)?;
+    let alert_manager = state
+        .process
+        .alert_manager
+        .as_ref()
+        .ok_or(StatusCode::NOT_FOUND)?;
     let config = alert_manager.get_config().await;
 
     if !config.webhook_enabled || config.webhook_urls.is_empty() {
@@ -114,7 +120,9 @@ pub async fn test_webhook(
         message: "This is a test alert from MaluWAF".to_string(),
     };
 
-    alert_manager.send_webhook(&config.webhook_urls, &test_event).await
+    alert_manager
+        .send_webhook(&config.webhook_urls, &test_event)
+        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     Ok(Json(TestAlertResponse {

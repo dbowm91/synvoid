@@ -1,14 +1,14 @@
+use super::super::state::AdminState;
+use super::common::{OptionalAuth, PaginationQuery};
+use crate::mesh::client_audit::{AuditReportResponse, ClientAuditReport};
 use axum::{
-    extract::{Query, State, Path},
+    extract::{Path, Query, State},
     http::StatusCode,
     Json,
 };
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 use std::sync::Arc;
-use super::super::state::AdminState;
-use super::common::{OptionalAuth, PaginationQuery};
-use crate::mesh::client_audit::{ClientAuditReport, AuditReportResponse};
 
 #[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct AuditReportRequest {
@@ -205,18 +205,17 @@ pub async fn list_mesh_nodes(
     Query(query): Query<PaginationQuery>,
     _auth: OptionalAuth,
 ) -> Result<Json<MeshNodeListResponse>, StatusCode> {
-
     let (limit, offset) = query.with_defaults(100, 500);
     let mut all_nodes = Vec::new();
     let mut global_count = 0;
     let mut connected_count = 0;
 
     let topology_opt = state.mesh.mesh_transport.as_ref().map(|t| t.get_topology());
-    
+
     if let Some(topology) = topology_opt {
         let peers = topology.get_all_peers().await;
         let now = std::time::Instant::now();
-        
+
         for peer in peers {
             let is_connected = peer.status == crate::mesh::topology::PeerStatus::Healthy;
             let role_str = role_to_string(peer.role);
@@ -253,23 +252,18 @@ pub async fn list_mesh_nodes(
     let total = all_nodes.len();
     let edge_count = total.saturating_sub(global_count);
 
-    all_nodes.sort_by(|a, b| {
-        match query.search.as_deref() {
-            Some(s) if !s.is_empty() => {
-                if a.node_id.contains(s) || a.address.contains(s) {
-                    std::cmp::Ordering::Equal
-                } else {
-                    b.node_id.cmp(&a.node_id)
-                }
+    all_nodes.sort_by(|a, b| match query.search.as_deref() {
+        Some(s) if !s.is_empty() => {
+            if a.node_id.contains(s) || a.address.contains(s) {
+                std::cmp::Ordering::Equal
+            } else {
+                b.node_id.cmp(&a.node_id)
             }
-            _ => a.last_seen_secs_ago.cmp(&b.last_seen_secs_ago)
         }
+        _ => a.last_seen_secs_ago.cmp(&b.last_seen_secs_ago),
     });
 
-    let nodes: Vec<MeshNodeInfo> = all_nodes.into_iter()
-        .skip(offset)
-        .take(limit)
-        .collect();
+    let nodes: Vec<MeshNodeInfo> = all_nodes.into_iter().skip(offset).take(limit).collect();
 
     Ok(Json(MeshNodeListResponse {
         nodes,
@@ -298,9 +292,8 @@ pub async fn get_mesh_node(
     Path(node_id): Path<String>,
     _auth: OptionalAuth,
 ) -> Result<Json<MeshNodeInfo>, StatusCode> {
-
     let topology_opt = state.mesh.mesh_transport.as_ref().map(|t| t.get_topology());
-    
+
     if let Some(topology) = topology_opt {
         if let Some(peer) = topology.get_peer(&node_id).await {
             let is_connected = peer.status == crate::mesh::topology::PeerStatus::Healthy;
@@ -352,7 +345,6 @@ pub async fn ban_ip(
     _auth: OptionalAuth,
     Json(payload): Json<BanIpRequest>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-
     let ip: IpAddr = payload.ip.parse().map_err(|_| StatusCode::BAD_REQUEST)?;
     let reason = if payload.reason.is_empty() {
         "manual_admin_ban".to_string()
@@ -365,16 +357,16 @@ pub async fn ban_ip(
     if let Some(transport) = &state.mesh.mesh_transport {
         if let Some(threat_intel) = transport.get_threat_intel() {
             let block_store = threat_intel.get_block_store();
-            
+
             if block_store.block_ip(ip, &reason, duration, &site_scope) {
-                tracing::info!("Admin banned IP {} for {} seconds (reason: {})", ip, duration, reason);
-                
-                threat_intel.announce_local_block(
+                tracing::info!(
+                    "Admin banned IP {} for {} seconds (reason: {})",
                     ip,
-                    reason.clone(),
                     duration,
-                    site_scope.clone(),
+                    reason
                 );
+
+                threat_intel.announce_local_block(ip, reason.clone(), duration, site_scope.clone());
 
                 return Ok(Json(serde_json::json!({
                     "success": true,
@@ -413,7 +405,6 @@ pub async fn ban_mesh_id(
     _auth: OptionalAuth,
     Json(payload): Json<BanMeshIdRequest>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-
     let mesh_id = payload.mesh_id;
     let reason = if payload.reason.is_empty() {
         "manual_admin_ban".to_string()
@@ -425,7 +416,7 @@ pub async fn ban_mesh_id(
     if let Some(transport) = &state.mesh.mesh_transport {
         if let Some(threat_intel) = transport.get_threat_intel() {
             let block_store = threat_intel.get_block_store();
-            
+
             let blocked = block_store.block_ip(
                 IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0)),
                 &format!("mesh_id_ban:{}:{}", mesh_id, reason),
@@ -434,7 +425,12 @@ pub async fn ban_mesh_id(
             );
 
             if blocked || duration == 0 {
-                tracing::info!("Admin banned mesh_id {} for {} seconds (reason: {})", mesh_id, duration, reason);
+                tracing::info!(
+                    "Admin banned mesh_id {} for {} seconds (reason: {})",
+                    mesh_id,
+                    duration,
+                    reason
+                );
 
                 return Ok(Json(serde_json::json!({
                     "success": true,
@@ -447,7 +443,7 @@ pub async fn ban_mesh_id(
                     }
                 })));
             }
-            
+
             return Err(StatusCode::SERVICE_UNAVAILABLE);
         }
     }
@@ -473,7 +469,6 @@ pub async fn unban(
     Query(params): Query<UnbanRequest>,
     _auth: OptionalAuth,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-
     let identifier = params.identifier;
     let ban_type = params.ban_type;
 
@@ -527,7 +522,6 @@ pub async fn list_bans(
     Query(query): Query<PaginationQuery>,
     _auth: OptionalAuth,
 ) -> Result<Json<BanListResponse>, StatusCode> {
-
     let (limit, offset) = query.with_defaults(100, 500);
     let mut bans = Vec::new();
 
@@ -564,13 +558,10 @@ pub async fn list_bans(
     }
 
     let total = bans.len();
-    
+
     bans.sort_by(|a, b| b.blocked_at.cmp(&a.blocked_at));
 
-    let bans: Vec<BanRecord> = bans.into_iter()
-        .skip(offset)
-        .take(limit)
-        .collect();
+    let bans: Vec<BanRecord> = bans.into_iter().skip(offset).take(limit).collect();
 
     Ok(Json(BanListResponse { bans, total }))
 }
@@ -591,7 +582,6 @@ pub async fn get_mesh_status(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<MeshAdminStatusResponse>, StatusCode> {
-
     let mut is_global_node = false;
     let mut node_id = None;
     let mut connected_peers = 0;
@@ -605,7 +595,7 @@ pub async fn get_mesh_status(
 
         let topology = transport.get_topology();
         let peers = topology.get_all_peers().await;
-        
+
         for peer in peers {
             if peer.role.is_global() {
                 global_nodes += 1;
@@ -652,15 +642,20 @@ pub async fn submit_audit_report(
         audit_results: crate::mesh::client_audit::AuditResults {
             success: req.audit_results.success,
             passed: req.audit_results.passed,
-            results: req.audit_results.results.into_iter().map(|r| crate::mesh::client_audit::NodeProbeResult {
-                node_url: r.node_url,
-                upstream_ip: r.upstream_ip,
-                routed_to_allowed_ip: r.routed_to_allowed_ip,
-                node_id: r.node_id,
-                success: r.success,
-                error: r.error,
-                latency_ms: r.latency_ms,
-            }).collect(),
+            results: req
+                .audit_results
+                .results
+                .into_iter()
+                .map(|r| crate::mesh::client_audit::NodeProbeResult {
+                    node_url: r.node_url,
+                    upstream_ip: r.upstream_ip,
+                    routed_to_allowed_ip: r.routed_to_allowed_ip,
+                    node_id: r.node_id,
+                    success: r.success,
+                    error: r.error,
+                    latency_ms: r.latency_ms,
+                })
+                .collect(),
             summary: crate::mesh::client_audit::AuditSummary {
                 total: req.audit_results.summary.total,
                 passed: req.audit_results.summary.passed,
@@ -669,7 +664,7 @@ pub async fn submit_audit_report(
             },
         },
     };
-    
+
     if let Some(ref manager) = state.mesh.client_audit_manager {
         let response = manager.process_audit_report(report).await;
         Ok(Json(AuditReportResponseDto::from(response)))
@@ -729,7 +724,7 @@ pub async fn report_signature_failure(
 
     if let Some(ref _manager) = state.mesh.client_audit_manager {
         let session_id = report.session_id.clone();
-        
+
         if let Some(ref sid) = session_id {
             tracing::info!("Recording signature failure for session: {}", sid);
         }

@@ -248,19 +248,22 @@ impl AsyncMinifierClient {
 
     async fn get_connection(&self) -> Result<AsyncIpcStream, MinifierClientError> {
         let mut guard = self.connection.lock().await;
-        
+
         if guard.is_none() {
-            let socket_name = self.socket_path
+            let socket_name = self
+                .socket_path
                 .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or("static-worker");
-            
+
             let endpoint = IpcEndpoint::new(socket_name);
-            let stream = endpoint.connect().await
+            let stream = endpoint
+                .connect()
+                .await
                 .map_err(|e| MinifierClientError::ConnectionFailed(e.to_string()))?;
             *guard = Some(stream);
         }
-        
+
         Ok(guard.take().unwrap())
     }
 
@@ -286,7 +289,8 @@ impl AsyncMinifierClient {
             encoding: encoding.map(|s| s.to_string()),
         };
 
-        ipc.send(&request).await
+        ipc.send(&request)
+            .await
             .map_err(|e| MinifierClientError::SendFailed(e.to_string()))?;
 
         let start = std::time::Instant::now();
@@ -354,7 +358,8 @@ impl AsyncMinifierClient {
             encoding: encoding.to_string(),
         };
 
-        ipc.send(&request).await
+        ipc.send(&request)
+            .await
             .map_err(|e| MinifierClientError::SendFailed(e.to_string()))?;
 
         let start = std::time::Instant::now();
@@ -396,11 +401,12 @@ impl AsyncMinifierClient {
     }
 
     pub async fn is_available(&self) -> bool {
-        let socket_name = self.socket_path
+        let socket_name = self
+            .socket_path
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("static-worker");
-        
+
         let endpoint = IpcEndpoint::new(socket_name);
         if let Ok(mut ipc) = endpoint.connect().await {
             return ipc.recv_with_timeout::<Message>(100).await.is_ok();
@@ -459,14 +465,17 @@ impl PoisonImageClient {
         body: Vec<u8>,
         last_modified: Option<String>,
     ) -> Result<Vec<u8>, PoisonImageClientError> {
-        let socket_name = self.socket_path
+        let socket_name = self
+            .socket_path
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("static-worker");
-        
+
         let endpoint = IpcEndpoint::new(socket_name);
-        
-        let mut ipc = endpoint.connect().await
+
+        let mut ipc = endpoint
+            .connect()
+            .await
             .map_err(|e| PoisonImageClientError::ConnectionFailed(e.to_string()))?;
 
         let request_id = POISON_REQUEST_ID.fetch_add(1, Ordering::Relaxed);
@@ -478,7 +487,8 @@ impl PoisonImageClient {
             last_modified,
         };
 
-        ipc.send(&request).await
+        ipc.send(&request)
+            .await
             .map_err(|e| PoisonImageClientError::SendFailed(e.to_string()))?;
 
         let start = std::time::Instant::now();
@@ -516,14 +526,18 @@ impl PoisonImageClient {
     }
 
     pub async fn is_available(&self) -> bool {
-        let socket_name = self.socket_path
+        let socket_name = self
+            .socket_path
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("static-worker");
-        
+
         let endpoint = IpcEndpoint::new(socket_name);
         if let Ok(mut ipc) = endpoint.connect().await {
-            return ipc.recv_with_timeout::<crate::process::Message>(100).await.is_ok();
+            return ipc
+                .recv_with_timeout::<crate::process::Message>(100)
+                .await
+                .is_ok();
         }
         false
     }

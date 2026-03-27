@@ -1,9 +1,9 @@
 use isbot::Bots;
-use once_cell::sync::Lazy;
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::sync::LazyLock;
 
-static DEFAULT_BOTS: Lazy<Bots> = Lazy::new(Bots::default);
+static DEFAULT_BOTS: LazyLock<Bots> = LazyLock::new(Bots::default);
 
 pub struct BotDetector {
     known_bots_allow: Arc<HashSet<String>>,

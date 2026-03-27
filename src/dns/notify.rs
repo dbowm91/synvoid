@@ -7,13 +7,11 @@ use std::sync::Arc;
 use super::server::Zone;
 use super::wire;
 
-#[derive(Clone, Debug)]
-#[derive(Default)]
+#[derive(Clone, Debug, Default)]
 pub struct NotifyConfig {
     pub enabled: bool,
     pub also_notify: Vec<String>,
 }
-
 
 impl From<&crate::config::dns::NotifyConfig> for NotifyConfig {
     fn from(config: &crate::config::dns::NotifyConfig) -> Self {

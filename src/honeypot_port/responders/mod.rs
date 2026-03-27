@@ -1,13 +1,19 @@
+pub mod ai;
 pub mod r#static;
 pub mod vulnerable;
-pub mod ai;
 
+pub use crate::honeypot_port::responses::AiResponder;
+pub use ai::{
+    default_ssh_system_prompt, http_system_prompt, mysql_system_prompt, postgresql_system_prompt,
+    rdp_system_prompt, redis_system_prompt, smb_system_prompt, smtp_system_prompt,
+    vnc_system_prompt, AiProvider, AnthropicResponder, OllamaResponder, OpenAIResponder,
+};
 pub use r#static::StaticResponder;
 pub use vulnerable::VulnerableAppResponder;
-pub use ai::{OllamaResponder, OpenAIResponder, AnthropicResponder, default_ssh_system_prompt, http_system_prompt, mysql_system_prompt, redis_system_prompt, postgresql_system_prompt, smb_system_prompt, rdp_system_prompt, vnc_system_prompt, smtp_system_prompt, AiProvider};
-pub use crate::honeypot_port::responses::AiResponder;
 
-use crate::honeypot_port::responses::{HoneypotContext, HoneypotResponder, HoneypotResponse, ResponseType};
+use crate::honeypot_port::responses::{
+    HoneypotContext, HoneypotResponder, HoneypotResponse, ResponseType,
+};
 use async_trait::async_trait;
 
 pub struct AiHoneypotResponder {
@@ -189,9 +195,7 @@ impl HoneypotResponder for AiHoneypotResponder {
                 false,
                 true,
             ),
-            Err(e) => HoneypotResponse::static_response(
-                format!("Error: {}", e).into_bytes(),
-            ),
+            Err(e) => HoneypotResponse::static_response(format!("Error: {}", e).into_bytes()),
         }
     }
 

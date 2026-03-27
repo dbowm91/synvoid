@@ -1,0 +1,1154 @@
+# MaluWAF Comprehensive Master Plan
+
+**Date**: 2026-03-27
+**Sources**: 33 individual plans consolidated into one logical execution path
+**Constraint**: Overseer/master/worker architecture preserved throughout. All changes must pass `cargo check`, `cargo test`, `cargo clippy -- -D warnings`, `cargo fmt --check`.
+
+---
+
+## Plan Groupings Reference
+
+| Group | Source Plans | Theme |
+|-------|-------------|-------|
+| **General** | `plan.md`, `plan2.md`, `plan3.md` | Codebase-wide correctness, dead code, code org |
+| **DHT** | `plan_dht.md`, `plan_dht2.md`, `plan_dht3.md` | Kademlia routing, geo-aware routing, transport, test coverage |
+| **DNS** | `plan_dns.md`, `plan_dns2.md`, `plan_dns3.md` | DNSSEC signing/validation, wire format bugs, recursive resolver |
+| **Maintenance** | `plan_maintain.md`, `plan_maintain2.md`, `plan_maintain3.md` | Dead dependencies, feature gating, once_cell modernization |
+| **Readability** | `plan_readability.md`, `plan_readability2.md`, `plan_readability3.md` | Code dedup, module splits, derive cleanup, shared utilities |
+| **UI** | `plan_ui.md` (exists at repo root, outside `plans/`), `plan_ui2.md`–`plan_ui6.md` | Admin panel: settings load/save, missing pages, config endpoints |
+| **Security** | `plan_sec.md`, `plan_sec2.md`, `plan_security_scalability.md`, `plan_security_scalability1.md`, `plan_security_scalability2.md` | Dependency audit, bcrypt, TLS, auth timing, input DoS, image poisoning |
+| **TLS** | `plan_tls.md` | ACME client, cert distribution, TLS passthrough |
+| **Testing** | `plan_test.md`, `plan_test2.md`, `plan_test3.md` | Broken test fixes, behavioral architecture tests |
+| **Features** | `plan_bots.md`, `plan_asn.md`, `plan_plugins.md` | AI bot blocking, ASN scraper detection, plugin system |
+
+---
+
+## Parallel Execution Guide
+
+Many phases are independent of each other and can run concurrently with separate agents.
+
+### Dependency Graph
+
+```
+Phase 1 (Foundation) ──────────────────── gates everything
+  ├── Phase 2 (Security) ──────────────── can run in parallel with 3,5,6,7,11
+  ├── Phase 3 (Correctness) ───────────── can run in parallel with 2,5,6,7,11
+  │     ├── Phase 8 (DNS) ─────────────── depends on 3
+  │     └── Phase 9 (DHT) ─────────────── depends on 3
+  ├── Phase 4 (Testing) ───────────────── depends on 3
+  ├── Phase 5 (Performance) ───────────── can run in parallel with 2,3,6,7,11
+  ├── Phase 6 (Code Quality) ──────────── can run in parallel with 2,3,5,7,11
+  ├── Phase 7 (TLS) ───────────────────── can run in parallel with 2,3,5,6,11
+  │     ├── Part 1: ACME ──────────────── independent
+  │     ├── Part 3: Passthrough ───────── independent
+  │     └── Part 2: Cert Distribution ─── depends on Part 1
+  ├── Phase 10 (Features) ─────────────── depends on 1,5
+  ├── Phase 11 (Admin UI) ─────────────── can run in parallel with 2,3,5,6,7
+  └── Phase 12 (Docs) ─────────────────── depends on all
+```
+
+### Recommended Parallel Agent Groups
+
+| Wave | Concurrent Phases | Rationale |
+|------|------------------|-----------|
+| **1** | Phase 1 only | Must complete first; gates everything |
+| **2** | Phase 2 + Phase 3 + Phase 5 + Phase 6 + Phase 7 + Phase 11 | No cross-dependencies; different source files |
+| **3** | Phase 4 + Phase 8 + Phase 9 | Phase 4 tests verify Phase 3 fixes; Phases 8/9 build on Phase 3 |
+| **4** | Phase 10 + Phase 12 | Features depend on performance; docs depend on all |
+
+### Within-Phase Parallelization
+
+| Phase | Parallelizable Agents | Notes |
+|-------|----------------------|-------|
+| 1 | 3 agents: (1.1–1.3 compile) / (1.5–1.7 dead code, security) / (1.4 feature-gate deps) | 1.1 must finish before verification |
+| 2 | 3 agents: (2.1–2.3 auth/TLS/IPC) / (2.7–2.9 input DoS/plugins/XSS) / (2.4–2.6 headers/creds/token) | All are independent files |
+| 3 | 3 agents: (3.1–3.3 IPC/timestamps) / (3.5–3.6 DNS wire) / (3.7 DHT) | Different subsystems |
+| 5 | 3 agents: (5.1 cache LRU) / (5.2–5.3 rate limiter) / (5.4–5.7 blocking I/O + atomics) | Independent modules |
+| 6 | 2 agents: (6.1–6.3 dedup) / (6.5–6.7 modules/imports/errors) | Different files |
+| 7 | 2 agents: (7.1 ACME + 7.3 Passthrough) / (7.2 Cert Distribution, after 7.1) | Part 2 depends on Part 1 |
+| 11 | 3 agents: (11.1–11.2 settings/restart) / (11.3 backend endpoints) / (11.4–11.6 frontend pages) | Backend and frontend are independent |
+
+---
+
+## Phase 1: Foundation — Compilation, Dead Code, Dependencies
+
+*Goal: Clean build, no dead deps, no compilation errors, tests passing.*
+**Status: COMPLETE** — Executed 2026-03-27. All tasks verified via `cargo check`, `cargo test --test integration_test`, `cargo fmt --check`.
+
+### 1.1 Fix Broken Library Compilation (14 errors)
+
+**Source**: `plan_test.md`, `plan_test2.md`, `plan_test3.md`
+
+~~Change visibility of 3 methods in `src/mesh/config_identity.rs` from private to `pub(crate)`:~~
+- ~~Line 251: `fn derive_encryption_key` → `pub(crate) fn`~~
+- ~~Line 259: `fn encrypt_key` → `pub(crate) fn`~~
+- ~~Line 289: `fn decrypt_key` → `pub(crate) fn`~~
+
+**✅ DONE**: Visibility changed. 14 test compilation errors resolved.
+**Note**: `cargo check` does NOT catch these errors — only `cargo test --lib --no-run` does, because the callers are in `#[cfg(test)]` modules.
+
+**Verify**: `cargo test --lib --no-run` ✅
+
+### 1.2 Remove Dead Dependencies (8+ crates)
+
+**Source**: `plan_maintain.md`, `plan_maintain2.md`, `plan_maintain3.md`
+
+~~Remove from `Cargo.toml`:~~
+| Crate | Reason | Status |
+|-------|--------|--------|
+| `bincode` | Unused — postcard shim handles serialization | **✅ Removed** |
+| `wasmtime-wasi` | Only `wasmtime` core is used | **✅ Removed** |
+| `ab_glyph` | No imports anywhere | **✅ Removed** |
+| `flare` | No imports anywhere | **✅ Removed** |
+| `memmap2` | No imports anywhere | **✅ Removed** |
+| `url` | No direct imports; transitive via axum | **✅ Removed** |
+| `futures-util` | Re-exported by `futures` crate | **✅ Removed** |
+
+~~Trim unused feature flags:~~
+- `tower`: remove `"timeout"` feature (zero uses of `tower::timeout`) — **✅ Done**
+- `tower-http`: remove `"trace"` feature (zero uses) — **✅ Done**
+- `nix`: ~~remove `"net"` and `"uio"` features (zero uses)~~ — **❌ Kept** (actually required by `platform/unix.rs` for `SockaddrIn`/`ControlMessage`/`sendmsg`/`recvmsg`)
+
+**Verify**: `cargo check` ✅
+
+### 1.3 Modernize `once_cell` → `std::sync::LazyLock`
+
+**Source**: `plan_maintain3.md`
+
+~~Replace `once_cell::sync::Lazy` with `std::sync::LazyLock` across 13 source files:~~
+- ~~10 files with `use once_cell::sync::Lazy` → `use std::sync::LazyLock`~~
+- ~~3 files with inline `once_cell::sync::Lazy::new` → add import, replace~~
+- ~~Delete `once_cell = "1"` from Cargo.toml~~
+
+**✅ DONE**: All 13 files migrated. `once_cell` removed from direct dependencies (still transitive via tracing-core, etc.).
+**Verify**: `cargo check` ✅
+
+### 1.4 Feature-Gate DNS Dependencies
+
+**Source**: `plan_maintain3.md`
+
+~~Make 7 DNS-exclusive crates optional~~ (`hickory-proto`, `hickory-resolver`, `hickory-recursor`, `dns-parser`, `tokio-dstip`, `cryptoki`, `getrandom`), added to the `dns` feature.
+
+**✅ DONE**: All 7 crates are now `optional = true` with `dns = ["dep:...", ...]` feature flag. `pub mod dns;` was already gated with `#[cfg(feature = "dns")]`.
+**Caveat**: `--no-default-features --features mesh` will NOT compile because mesh transport files reference `crate::dns` types unconditionally. This is a pre-existing broader feature-gating issue (Phase 6+ scope).
+
+### 1.5 Delete Dead Code Files + Audit 137 Annotations
+
+**Source**: `plan.md`, `plan_readability2.md`, `plan2.md`
+
+~~- Delete `src/http/handler.rs` (1,661 lines)~~ — **✅ Deleted**
+~~- Delete `src/http/range.rs` (194 lines)~~ — **✅ Deleted**
+
+~~Audit 137 `#[allow(dead_code)]` annotations across 75 files.~~ **Deferred to Phase 6** — requires deciding which items are truly needed vs removable. Categories identified but bulk removal is a Phase 6 task.
+
+### 1.6 SECURITY.md Corrections
+
+**Source**: `plan_sec.md`, `plan_sec2.md`
+
+~~- Fix `bincode` status: mark as "Removed from Cargo.toml" not "Migrated to postcard"~~ — **✅ Done**
+~~- Fix `rustls-pemfile` status: mark as "Removed"~~ — **✅ Done**
+~~- Add `once_cell` → `LazyLock` entry~~ — **✅ Done**
+~~- Add `wasmtime` RUSTSEC-2025-0118 documentation (already patched)~~ — **✅ Done**
+- Add missing `unicode-segmentation` yanked entry — **⚠️ Not done** (no yanked version confirmed in lockfile; `unicode-segmentation` 1.13.1 is a transitive dep)
+
+### 1.7 Complete `rustls-pemfile` → `rustls-pki-types` Migration
+
+**Source**: `plan_sec.md`, `plan_sec2.md`
+
+~~Replace `rustls_pemfile::certs()` in `src/http_client/mod.rs:175-186` with `rustls_pki_types::CertificateDer::pem_slice_iter()`. Remove `rustls-pemfile` from Cargo.toml.~~
+
+**✅ DONE**: Replaced with `CertificateDer::pem_slice_iter()` using `use rustls_pki_types::pem::PemObject` trait import. `rustls-pemfile` removed from Cargo.toml and Cargo.lock.
+
+### 1.8 Fix Clippy Warnings
+
+**Source**: `plan2.md` §6.2
+
+~~- Fix formatting issues in `src/mesh/transport.rs`~~ — **✅ Partial** (`pub`→`pub(crate)` for `GlobalRateLimitCheck` methods)
+~~- Fix redundant field names~~ — **Deferred to Phase 6**
+~~- Remove dead code (`src/process/ipc.rs:926` — unreachable pattern)~~ — **✅ Done** (removed `OverseerCommitUpgradeAck` from catch-all arm at line 722)
+~~- Address unused methods~~ — **Deferred to Phase 6** (93 pre-existing warnings remain)
+
+**Verify**: `cargo check` ✅ (0 errors; 93 warnings remain, all pre-existing dead code)
+
+---
+
+## Phase 2: Critical Security Fixes
+
+*Goal: Eliminate known vulnerabilities and security anti-patterns.*
+
+### 2.1 Bcrypt Cost Factor + Remove Plaintext Fallback
+
+**Sources**: `plan3.md`, `plan_security_scalability.md`
+
+- Change `BCRYPT_COST` from 4 to 12 in `src/admin/auth.rs`
+- Remove `__plaintext__:token` fallback — return error instead
+- Add migration logic: detect existing plaintext hashes, re-hash with bcrypt on first verify
+- Add `admin.bcrypt_cost` config option (default 12, min 10, max 15)
+
+### 2.2 Fix Authentication Timing Attack
+
+**Source**: `plan_security_scalability1.md` P0-2
+
+**Location**: `src/auth/mod.rs:370-432` (`verify_login`)
+
+**Issue**: When user exists but password is wrong, the code does NOT call `verify_dummy_password()` before returning. When user doesn't exist, it DOES call `verify_dummy_password()`. This ~200ms timing difference allows username enumeration.
+
+**Fix**: Always call `verify_dummy_password(password).await` before returning `AuthError::InvalidCredentials`, regardless of whether the user exists.
+
+### 2.3 TLS `skip_verify` Hardening
+
+**Source**: `plan_security_scalability.md`, `plan2.md` §2.4
+
+- Add startup warning when any site has `skip_verify: true`
+- Add `skip_verify_reason` required field
+- Log every request over skip-verify connections at WARN level
+
+### 2.4 IPC Key Fallback Hardening
+
+**Source**: `plan_security_scalability.md`, `plan2.md` §2.3
+
+- Make temp-file fallback fail-hard by default
+- Add `--allow-insecure-ipc-key` CLI flag for env-var fallback
+
+### 2.5 Extend CORS Wildcard Rejection to Site Config
+
+**Source**: `plan2.md` §2.2
+
+Admin API rejects `allow_origin: "*"` in release builds, but site-level CORS in `src/http/headers.rs` doesn't enforce this. Add wildcard rejection check to site-level CORS configuration.
+
+### 2.6 Enable Global Security Headers by Default
+
+**Source**: `plan_security_scalability.md`
+
+- Change `global_security_headers` default from `false` to `true`
+
+### 2.7 Remove Token from Validation Error
+
+**Source**: `plan_security_scalability.md`
+
+- Don't return generated token in error messages in `src/config/admin.rs`
+- Log token separately at INFO level on startup
+
+### 2.8 Credential Env Var Override for Loki/Elasticsearch
+
+**Source**: `plan_security_scalability.md`
+
+- Add `MALU_LOKI_PASSWORD`, `MALU_ES_PASSWORD` etc. env var overrides for log exporter credentials
+
+### 2.9 Input Normalizer DoS Protection
+
+**Source**: `plan_security_scalability2.md`
+
+- Add `MAX_OUTPUT_RATIO = 100` in `src/waf/attack_detection/normalizer.rs`
+- Break decode loop if output exceeds 100x input size
+
+### 2.10 Plugin Permission Enforcement
+
+**Source**: `plan_security_scalability2.md`
+
+- Change `src/plugin/axum_loader.rs` from warning to rejection for insecure permissions
+
+### 2.11 Deprecate `X-XSS-Protection: 1; mode=block`
+
+**Source**: `plan_security_scalability.md`
+
+- Change default to `"0"` in `src/config/site.rs`
+
+### 2.12 Mesh Network Message Handler Audit
+
+**Source**: `plan_security_scalability1.md` P0-4
+
+Audit `src/mesh/transport_*.rs` (15+ handler files) for input validation. Prioritized:
+
+| File | Handler Count | Risk |
+|------|---------------|------|
+| `transport_peer.rs` | 20+ | High |
+| `transport_dns.rs` | 15+ | High |
+| `transport_org.rs` | 10+ | Medium |
+| `transport_global.rs` | 10+ | Medium |
+
+Actions: review each handler for unsanitized input, add max message size limits, remove unused dead code.
+
+---
+
+## Phase 3: Critical Correctness Bugs
+
+*Goal: Fix correctness issues that cause crashes, data corruption, or protocol violations.*
+
+### 3.1 Fix IPC Lock Contention
+
+**Source**: `plan.md`
+
+- Remove crate-wide `#[allow(clippy::await_holding_lock)]` suppression from `src/lib.rs:5`
+- Audit 3 competing worker tasks in `src/worker/mod.rs`
+- Replace with channel-based design or add per-site justification comments
+
+### 3.2 Replace `std::process::exit()` with Graceful Shutdown
+
+**Source**: `plan.md`
+
+- Replace 3 `exit()` calls in `src/worker/mod.rs` and `src/worker/unified_server.rs`
+- Exit code semantics: exit 100 = resize (handled by master), exit 1 = error
+- Use return codes / watch channels instead of direct `exit()`
+
+### 3.3 Replace `duration_since(UNIX_EPOCH).unwrap()` with Safe Helper
+
+**Sources**: `plan.md`, `plan_readability3.md`
+
+- Move `safe_unix_timestamp()` from `src/mesh/mod.rs:50-55` to `src/utils.rs`
+- Add `safe_unix_duration()` variant for call sites needing `Duration`
+- Replace 44–111 occurrences across 50 files with safe helper
+- Consolidate 7 duplicate `current_timestamp()` definitions (verified: `src/waf/probe_tracker.rs:446`, `src/process/ipc.rs:1311`, `src/mesh/dht/stake.rs:533`, `src/overseer/state.rs:148`, `src/mesh/transports/manager.rs:32`, `src/captcha/mod.rs:185`, `src/utils.rs:414`) → 1 in `utils.rs`
+
+### 3.4 Fix Panics in IPC and Hot Paths
+
+**Sources**: `plan3.md`, `plan2.md` §1.3, `plan_security_scalability1.md` P0-1
+
+- Fix 23+ locations using `panic!()` or `.unwrap()` in production code paths
+- Priority: `src/master/ipc.rs` (9 panics), `src/dns/trust_anchor.rs` (5), `src/tunnel/quic/messages.rs` (3)
+- Fix `get_block_store()` panic risk (`src/server/mod.rs:360` uses `.expect()` — change to return `Result`)
+- Replace in critical paths: `src/proxy.rs` (15+), `src/tls/server.rs` (10+), `src/waf/mod.rs` (8+), `src/mesh/proxy.rs` (20+)
+- Replace with proper error propagation using `WafResult` pattern
+
+### 3.5 DNS Wire Format Correctness (12 bugs)
+
+**Source**: `plan_dns3.md`
+
+| Task | File | Bug |
+|------|------|-----|
+| 1.1 | `dnssec.rs:1324` | NSEC3 hash loop applies salt incorrectly per RFC 5155 §5 |
+| 1.2 | `dnssec.rs:1432` | NSEC3 base32hex includes padding (should be stripped) |
+| 1.3 | `dnssec.rs:1404` | NSEC3 owner name missing hash-length byte per RFC 5155 §3.2 |
+| 1.4 | `dnssec_impl.rs:35` | DNSKEY RRset only publishes KSK, missing ZSK |
+| 1.5 | `dnssec_impl.rs:74` | CDS records use type 43 (DS) instead of 59 (CDS) |
+| 1.6 | `query.rs:807` | NXDOMAIN hardcodes NSEC3 type, breaks NSEC |
+| 1.7 | `query.rs:749` | `handle_query()` returns `None` instead of NXDOMAIN/NODATA |
+| 1.8 | `dnssec.rs:1520` | SRV `canonical_rdata` encodes only priority, missing weight/port/target |
+| 1.9 | `response.rs:30` | ARCOUNT off by one when OPT record appended |
+| 1.10 | `response.rs:135` | MX record missing trailing null byte after exchange name |
+| 1.11 | `dnssec.rs:213` | CDNSKEY flags set incorrect CD bit |
+| 1.12 | `query.rs:376` | TTL extraction doesn't handle DNS name compression pointers |
+
+### 3.6 Recursive Resolver Bugs
+
+**Source**: `plan_dns3.md`
+
+| Task | File | Bug |
+|------|------|-----|
+| 2.1 | `recursive_cache.rs:229` | Negative cache returns `None` on hit (triggers re-query) |
+| 2.2 | `recursive.rs:151` | UDP buffer hardcoded to 512 bytes (EDNS0 clients need 4096+) |
+| 2.3 | `recursive.rs:475` | Upstream failure returns empty vec instead of SERVFAIL |
+| 2.4 | `resolver.rs:663` | RFC 5011 shutdown channel immediately dropped |
+
+### 3.7 DHT Fixes
+
+**Sources**: `plan_dht.md`, `plan_dht2.md`, `plan_dht3.md`
+
+- **Unbounded PoW nonce loop** (`node_id.rs:138`): Add 10M iteration limit
+- **Duplicate peers in lookup** (`query.rs:50`): Add HashSet dedup in `next_peers_to_query()`
+- **PoW not persisted** (`table.rs:539`): Add `pow_nonce` and `public_key` to `PersistedContact`, verify on restore
+- **XOR distance scoring granularity** (`geo_distance.rs:117`): Use bit-prefix (leading zero bits) instead of first byte only
+
+### 3.8 DNSSEC Validation Inconsistency
+
+**Sources**: `plan_dns.md`, `plan_dns2.md`
+
+- Forwarder mode (`HickoryResolver`) does NOT perform DNSSEC validation
+- Either: add validation to forwarder, or document limitation clearly
+- Propagate AD bit from upstream response to `is_dnssec_validated` flag
+
+### 3.9 DNS Cache Security
+
+**Source**: `plan_dns3.md`
+
+- `cache.rs:155`: Require minimum 2 agreeing fingerprints before accepting cached response (prevents poisoning during initial queries)
+- `trust_anchor.rs:319`: Wrap DELETE + INSERT in SQLite transaction
+
+---
+
+## Phase 4: Testing Infrastructure
+
+*Goal: All tests compile and pass. Add behavioral tests for architecture core.*
+
+### 4.1 Fix 4 Failing DNS Integration Tests
+
+**Sources**: `plan_test2.md`, `plan_test3.md`
+
+| Test | Fix |
+|------|-----|
+| `test_connection_limits_defaults` | Call `disable_graceful_degradation()` before asserting `!is_degraded()` |
+| `test_anycast_serial_wrap_around` | Change expectation from `WrapAround` to `RemoteIsNewer`; rename test |
+| `test_dns_query_validator_limits` | Debug and fix validator rejection of valid query |
+| `test_dns_zone_get_previous_version` | Change assertion from `is_none()` to `is_some()` |
+
+### 4.2 Add Behavioral Architecture Tests (~20 tests)
+
+**Source**: `plan_test3.md`
+
+| Module | Tests to Add | Count |
+|--------|-------------|-------|
+| `src/worker/drain_state.rs` | Drain completion, concurrent drains, timeout, duplicate IDs, reset | 6 |
+| `src/process/manager.rs` | Backoff with real delays, worker ID sequence, config validation, port check, graceful shutdown | 5 |
+| `src/master/ipc.rs` | WorkerReady dispatch, shutdown breaks loop, heartbeat metrics, blocklist roundtrip | 4 |
+| `src/overseer/process.rs` | Restart backoff exponential, config restart limits, upgrade mode detection | 3 |
+| `src/worker/traits.rs` | Send+Sync bounds test, lifecycle ordering | 2 |
+
+### 4.3 DNS Test Coverage
+
+**Sources**: `plan_dns.md`, `plan_dns2.md`, `plan_dns3.md`
+
+- Add NSEC3 RFC 5155 test vectors (Appendix A)
+- Add end-to-end authoritative server test (`tests/dns_server_test.rs`)
+- Add recursive resolver integration tests (`tests/dns_recursive_test.rs`)
+- Add DNSSEC signing verification tests
+
+### 4.4 DHT Test Coverage
+
+**Source**: `plan_dht2.md`, `plan_dht3.md`
+
+- Add integration tests for DHT bootstrap, iterative FindNode, write quorum
+- Add protocol encode/decode roundtrip tests (3,211 lines of encode/decode, zero coverage)
+- Add record store unit tests (CRUD, sync, message handling)
+- Add regional hub routing tests
+
+### 4.5 End-to-End Process Lifecycle Test
+
+**Source**: `plan.md` §5.1
+
+Create `tests/e2e_process_test.rs`: spawn overseer → verify master starts → verify worker starts → send SIGTERM → verify graceful shutdown using temporary Unix sockets.
+
+### 4.6 Fix IPC Test Duplication
+
+**Source**: `plan.md` §5.2
+
+Refactor `tests/ipc_test.rs` to use `IpcStream` instead of manually reimplementing wire protocol framing. Keep one raw-socket regression test.
+
+### 4.7 Improve Existing Test Quality
+
+**Source**: `plan2.md` §5.3
+
+- Increase assertions in sparse tests
+- Add negative test cases (malformed inputs, edge cases)
+- Add edge case coverage (empty strings, max lengths, boundary values)
+
+---
+
+## Phase 5: Performance & Scalability
+
+*Goal: Fix hot-path bottlenecks identified in codebase review.*
+
+### 5.1 Proxy Cache LRU: VecDeque → LinkedHashMap
+
+**Sources**: `plan3.md`, `plan_security_scalability.md`, `plan_security_scalability2.md`, `plan_security_scalability1.md` P1-2
+
+Replace O(n) `VecDeque::position()` + `remove()` in `src/proxy_cache/store.rs` with `LinkedHashMap` (already in Cargo.toml). O(1) move-to-back and evict.
+
+### 5.2 Rate Limiter Cleanup Optimization
+
+**Sources**: `plan3.md`, `plan_security_scalability2.md`, `plan2.md` §3.2
+
+- Move cleanup to per-shard lazy check (time-based, skip if cleaned recently)
+- Eliminate global O(n) retain across all shards
+- Consider combining 6 sequential retain passes into single pass
+- Benchmark current cleanup duration with realistic data first
+
+### 5.3 Rate Limiter LRU Eviction Optimization
+
+**Source**: `plan2.md` §3.5
+
+`src/waf/ratelimit.rs` collects ALL entries into Vec before sorting for eviction. Use partial sort (top-k) instead of full sort. Consider per-shard eviction instead of global.
+
+### 5.4 Rate Limiter Memory Footprint
+
+**Source**: `plan_security_scalability.md`
+
+- Reduce `max_ip_entries` from 1,000,000 to 100,000
+- Consolidate 6 `RingBuffer<Instant>` into single time-bucketed structure
+- Target: <4KB per IP entry
+
+### 5.5 Remove Blocking I/O from Async Paths
+
+**Source**: `plan_security_scalability.md`
+
+| File | Issue |
+|------|-------|
+| `proxy_cache/store.rs` | `std::fs::read()` in `get()` while holding write lock |
+| `worker/response_builder.rs` | `std::fs::read()` in async context |
+| `waf/violation_tracker.rs` | Persistence reads/writes |
+| `waf/probe_tracker.rs` | Persistence read |
+
+Use `tokio::task::spawn_blocking()` or `tokio::fs`.
+
+### 5.6 Standardize Atomic Counter Decrement Pattern
+
+**Source**: `plan_security_scalability.md`
+
+Replace all `fetch_sub(1, ...)` with `fetch_update(|v| v.checked_sub(1))` across 43 locations to prevent underflow wrapping.
+
+### 5.7 WAF Whitelist O(n) → O(1)
+
+**Source**: `plan_security_scalability.md`
+
+Change `Vec<IpAddr>` to `HashSet<IpAddr>` for IP whitelist lookups.
+
+### 5.8 Cache Lowercase Results in Attack Detection
+
+**Source**: `plan2.md` §3.1
+
+SSRF detector (`src/waf/attack_detection/ssrf.rs`) calls `.to_lowercase()` 4+ times on same input. Refactor to compute lowercase once per detector pass. Apply same pattern to other detectors. Cache normalized input in detector common.
+
+### 5.9 Reduce Per-Request Allocations
+
+**Source**: `plan2.md` §3.4
+
+- Cache base headers filter set (`src/proxy.rs:77-99`)
+- Reuse HashMap for HTTP/TLS requests (`src/tls/server.rs:213,256`)
+- Cache normalized inputs across detector checks
+- Review and optimize `build_headers_to_filter`
+
+### 5.10 DNS Performance
+
+**Source**: `plan_dns3.md`
+
+- Cache RRSIG signatures per (name, type) pair with TTL-matched eviction
+- Move rate limiter cleanup to timer task instead of inline per-request
+- Fix sharded cache allocation on hit (store `Arc<Vec<u8>>` not `Vec<u8>`)
+- Add secondary index for ANY queries (O(1) name lookup)
+
+### 5.11 Per-Worker Metrics
+
+**Source**: `plan_security_scalability1.md` P1-5
+
+Add `WorkerMetrics` struct with per-worker Prometheus labels (worker_id, requests_processed, requests_blocked, avg_latency_ms, active_connections, memory_usage_bytes).
+
+### 5.12 Graceful Degradation for Global Rate Limiter
+
+**Source**: `plan_security_scalability1.md` P1-6
+
+Add circuit breaker pattern to `GlobalRateLimiter`. Fallback to per-IP limiting if global fails. Add health check endpoint.
+
+---
+
+## Phase 6: Code Quality & Readability
+
+*Goal: Reduce duplication, improve module organization, clean up patterns.*
+
+### 6.1 WAF Deduplication (~200 LOC savings)
+
+**Source**: `plan_readability.md`
+
+- Extract `block_ip_with_threat_intel()` helper (7 instances → 1)
+- Extract `handle_probe_event()` (2×55-line blocks → 1)
+- Extract `maybe_escalate_and_block()` (2 violation tracking blocks → 1)
+- Simplify `TestModeConfig::disabled_count()` to 1-liner
+
+### 6.2 DNS Deduplication (~80 LOC)
+
+**Source**: `plan_readability.md`, `plan_readability3.md`
+
+- Extract `build_dnskey_rdata()` helper (4 instances)
+- Extract `build_type_bitmap()` helper (NSEC + NSEC3)
+- Extract `ensure_trailing_dot()` helper (9 instances in resolver.rs)
+- Extract generic `lookup_records()` helper (5 similar methods)
+- Consolidate duplicate `TokenBucket` implementations (`dns/rate_limiter.rs` + `dns/server/rate_limit.rs` → `src/rate_limit/`)
+
+### 6.3 Config Deduplication (~170 LOC)
+
+**Source**: `plan_readability.md`, `plan_readability3.md`
+
+- Consolidate 7 `default_true()` functions into 1 canonical version in `src/config/defaults.rs`
+- Unify `SiteConfigValidationError` into `ConfigValidationError`
+- Remove duplicate `parse_size_string` from `site.rs`
+- Consolidate `TrustAnchorConfig` (defined in 2 places → 1)
+
+### 6.4 HTTP Response Builder Consolidation
+
+**Source**: `plan_readability3.md`, `plan.md` §3.2
+
+- Create `ResponseBuilder` in `src/http/response_builder.rs` (5+ similar functions → 1)
+- Consolidate `status_reason_phrase()` mapping (2 duplicate match blocks)
+- Consolidate 8+ identical static 500 response constructions (`src/proxy.rs:397,412,485,954`, `src/tls/server.rs:697,710,726`)
+
+### 6.5 Module Splits
+
+**Source**: `plan_readability2.md`, `plan2.md` §6.4
+
+| File | Lines | Action |
+|------|-------|--------|
+| `dns/dnssec.rs` | 2,152 | Split into signing, validation, keys, algorithms, nsec submodules |
+| `config/site.rs` | 1,831 | Split into upstream, security, proxy, validation submodules |
+| `mesh/transport.rs` | 1,889 | Already split into extension files; document architecture |
+
+### 6.6 Reduce Wildcard Imports
+
+**Source**: `plan.md`
+
+Replace ~10 production `use ...::*` in mesh transport files and `src/plugin/wasm_runtime.rs:7` (`use wasmtime::*`) with explicit imports.
+
+### 6.7 Error Unification
+
+**Source**: `plan.md`, `plan_readability2.md`
+
+- Adopt `WafError` across the codebase (verified: `WafError`, `WafResult`, `WafErrorExt` are **completely dead code** — zero production usage outside `src/error.rs`)
+- Replace `Result<_, String>` and `Box<dyn Error>` (16 call sites, not 206) with `WafResult`
+- Add missing variants for DNS, mesh, proxy errors
+- Remove `From<String>` and `From<&str>` blanket impls that lose type information
+- Decision gate: adopt `WafError` (Option A) or remove dead `error.rs` (Option B)
+
+### 6.8 Split Large Functions
+
+**Source**: `plan.md` §4.1
+
+20+ functions >200 lines in the codebase. Priority split targets:
+1. `src/proxy.rs` — `handle_request` (>500 lines) — extract header processing, response filtering
+2. `src/tls/server.rs` — TLS handshake handler (~400 lines) — extract certificate verification
+3. `src/waf/mod.rs` — `check_request_full` (~300 lines) — already uses helper functions, but extract remaining blocks
+4. `src/mesh/transport.rs` — connection handler (~300 lines)
+5. `src/dns/dnssec.rs` — signing function (~250 lines)
+
+### 6.9 Replace `eprintln` with Tracing
+
+**Source**: `plan2.md` §4.2
+
+- Replace `src/main.rs:632` `eprintln!` with `tracing::warn!`
+- Audit for other direct stderr/stdout usage
+
+### 6.10 Log Silent Send Failures
+
+**Source**: `plan2.md` §4.1
+
+- `src/supervisor/supervisor.rs:145` and `src/process/manager.rs:950,961` silently drop `WorkerFailed` events
+- Add logging when send fails
+- Add metrics for dropped events
+
+---
+
+## Phase 7: TLS — ACME, Cert Distribution, Passthrough
+
+*Goal: Replace ACME stub with real protocol, enable cert distribution from origin to edge, add TLS passthrough mode.*
+
+**Source**: `plan_tls.md`
+
+### 7.1 Built-in ACME Client
+
+Rewrite `src/tls/acme.rs` (~400 lines, currently a stub returning `AcmeError::UseExternalClient`) with `AcmeManager`:
+
+```rust
+pub struct AcmeManager {
+    config: InternalAcmeConfig,
+    cert_resolver: Arc<CertResolver>,
+    account: Arc<RwLock<Option<AcmeAccount>>>,
+    http_challenges: Arc<DashMap<String, String>>,  // token -> key_authorization
+}
+```
+
+Key methods:
+- `init()` — Load/create ACME account from `cache_dir` via `instant-acme`
+- `request_certificate(domain, challenge_type)` — Full ACME order flow: create order → get challenges → validate → finalize → download cert chain → write to `cert_path`/`key_path` (file watcher hot-reloads via `CertResolver`)
+- `handle_http_challenge(path: &str) -> Option<String>` — Returns key authorization for `/.well-known/acme-challenge/{token}` paths
+- `renew_expiring()` — Check all managed certs via `x509-parser`; re-run ACME for certs expiring within 30 days
+- `spawn_renewal_task()` — Tokio task calling `renew_expiring()` every 24h (replaces stub that only reloads from disk)
+
+**Challenge support**: HTTP-01 (default, intercepts `/.well-known/acme-challenge/{token}` before router), DNS-01 (feature-gated `dns`, creates `_acme-challenge.{domain}` TXT record via DNS server API).
+
+**New files**:
+- `src/tls/acme_dns.rs` (~150 lines, feature-gated `dns`) — DNS-01 challenge integration
+- `src/tls/sni_peek.rs` (~100 lines) — Lightweight ClientHello SNI parser for passthrough (used by Part 3)
+
+**Modified files**:
+- `Cargo.toml` — Add `instant-acme = "0.7"`
+- `src/tls/mod.rs` — Declare `acme_dns`, `sni_peek` modules
+- `src/config/tls.rs` — Add `challenge_type: AcmeChallengeType` to `AcmeConfig`
+- `src/http/server.rs` — HTTP-01 challenge interception before router dispatch
+
+### 7.2 TLS Cert Distribution (Origin → Edge)
+
+Origin nodes that obtain certs via ACME distribute them to edges over mesh transport.
+
+**New file**: `src/mesh/cert_dist.rs` (~250 lines)
+
+```rust
+pub struct CertDistributor {
+    mesh_transport: Arc<MeshTransport>,
+    cert_resolver: Arc<CertResolver>,
+    topology: Arc<MeshTopology>,
+}
+```
+
+Key functions:
+- `encrypt_cert_key(private_key_pem, site_id, mesh_session_key) -> (ciphertext, nonce)` — AES-256-GCM with HKDF-derived per-site key
+- `decrypt_cert_key(ciphertext, nonce, site_id, mesh_session_key) -> String`
+- `distribute_cert_to_peers(site_id, cert_chain_pem, private_key_pem)` — Broadcast `SiteTlsCertSync` to all mesh peers after ACME obtains/renews
+- `handle_cert_sync(message)` — Edge receives, verifies Ed25519 signature, decrypts key, loads into `CertResolver`
+- `request_cert_from_origin(site_id)` — Edge startup pull-based request
+
+**Edge discovery**: No `find_all_edges_for_site` exists in topology. Distribution uses:
+1. **Pull-based** (edge startup): Edge sends `SiteTlsCertRequest` to upstream origins
+2. **Push-based** (cert renewal): Origin broadcasts `SiteTlsCertSync` to all mesh peers
+
+**Key derivation**: `site_cert_key = HKDF-SHA256(mesh_session_key, SHA-256(site_id + network_id), "maluwaf-tls-cert-dist", 32)`
+
+**New mesh messages** (added to `src/mesh/protocol.rs`):
+- `SiteTlsCertSync` — Origin pushes cert to all peers
+- `SiteTlsCertRequest` — Edge requests cert on startup
+- `SiteTlsCertResponse` — Origin responds with cert
+
+**Modified files**:
+- `src/mesh/protocol.rs` — Add 3 message variants (~30 lines)
+- `src/mesh/transport.rs` — `broadcast_cert_to_peers()` via `broadcast_to_random_peers` (~80 lines)
+- `src/mesh/transport_peer.rs` — Cert sync/request/response handlers (~120 lines)
+- `src/tls/cert_resolver.rs` — `load_cert_from_pem()` for in-memory cert loading without touching files (~40 lines)
+- `src/mesh/mod.rs` — Declare `cert_dist` module
+
+**Dependency**: Part 2 depends on Part 1 (needs real certs to distribute).
+
+### 7.3 TLS Passthrough Mode
+
+Site-level config to forward raw TLS bytes from client to origin without decryption. WAF applies layer 3/4 only (IP rate limiting, connection limits).
+
+**How it works**: Edge reads first TLS record, extracts SNI via `sni_peek.rs` (created in Part 1), routes to site based on SNI hostname, then proxies raw TCP to origin. The original ClientHello bytes are preserved and forwarded.
+
+**Layer 3/4 protections**: Applied at TCP accept time, BEFORE TLS handshake (fixes existing bug where `flood_protector.check_tcp_connection()` is called AFTER handshake at `src/tls/server.rs:176`).
+
+```rust
+match flood_protector.check_tcp_connection(client_ip) {
+    FloodDecision::Blackholed | FloodDecision::RateLimited => {
+        drop(stream);
+        continue;
+    }
+    FloodDecision::Allowed => {}
+}
+if site_config.tls_passthrough {
+    proxy_raw_tcp(stream, origin_addr).await;
+    return;
+}
+```
+
+**Modified files**:
+- `src/config/site.rs` — Add `tls_passthrough: Option<bool>` to `SiteProxyConfig` (~5 lines)
+- `src/tls/server.rs` — Passthrough mode: SNI peek + raw TCP proxy (~150 lines)
+- `src/tls/sni_peek.rs` — Created in Part 1, used here
+
+**Dependency**: Part 3 and Part 1 can run in parallel.
+
+### 7.4 Config Example
+
+```toml
+[tls.acme]
+enabled = true
+email = "admin@example.com"
+domains = ["example.com", "*.example.com"]
+staging = false
+cache_dir = "/var/lib/maluwaf/acme"
+challenge_type = "http-01"   # or "dns-01"
+
+[sites.example.tls]
+tls_passthrough = false
+```
+
+### 7.5 Internal Ordering
+
+```
+Phase 7a: ACME client (src/tls/acme.rs rewrite)     ─┐
+Phase 7c: TLS passthrough (server.rs + sni_peek.rs)  ─┤─ parallel
+Phase 7b: Cert distribution (cert_dist.rs + messages) ─┘─ after 7a
+```
+
+### 7.6 Testing
+
+- ACME: Unit test with Let's Encrypt staging, HTTP-01 challenge flow, DNS-01 TXT record lifecycle
+- Cert distribution: encrypt/decrypt round-trip, `SiteTlsCertSync` serialization, origin→edge push flow, invalid signature rejection
+- Passthrough: `extract_sni()` with valid/invalid data, raw TCP proxy with SNI routing, flood protection before handshake, non-passthrough sites still use normal TLS
+
+### 7.7 Risks
+
+| Risk | Mitigation |
+|------|-----------|
+| ACME rate limits (50 certs/domain/week) | Staging for dev, aggressive caching |
+| Private key exposure in memory | `zeroize` on key material after loading |
+| Passthrough bypasses layer 7 inspection | Explicit opt-in, metrics track mode |
+| SNI extraction failures | Fallback to default site, error logging |
+| Cert distribution race (old cert in use) | `CertResolver` RwLock atomic swap — new connections get new cert, existing continue with old |
+
+---
+
+## Phase 8: DNS Improvements
+
+*Goal: Full DNSSEC signing, RSA support, protocol compliance.*
+
+### 8.1 Wire DNSSEC Signing into Authoritative Query Path
+
+**Source**: `plan_dns.md`
+
+- Call `sign_record()` from `handle_query()` for answer records
+- Append RRSIG records to answer section
+- Implement NSEC/NSEC3 for NXDOMAIN/NODATA responses
+- Set AD flag on signed responses
+
+### 8.2 RSA Key Generation
+
+**Source**: `plan_dns.md`, `plan_dns2.md`
+
+- Add RSA support using `rsa` crate (2048-bit and 4096-bit)
+- Support RSA algorithms in DNSSEC key generation
+
+### 8.3 QNAME Minimization
+
+**Source**: `plan_dns.md`, `plan_dns2.md`
+
+- Check hickory-resolver for QNAME minimization support
+- Enable if available, document if not
+
+### 8.4 TCP Amplification Fix
+
+**Source**: `plan_dns.md`
+
+- Implement chunked reading with max chunk size validation
+- Parse DNS header for QDCOUNT, reject oversized requests
+
+### 8.5 TSIG Enforcement for Zone Transfers
+
+**Source**: `plan_dns.md`, `plan_dns2.md`
+
+- Require TSIG signature for AXFR requests
+- Add per-zone ACL configuration
+
+### 8.6 DNS64 Integration
+
+**Source**: `plan_dns.md`
+
+- Wire `Dns64Translator` into recursive resolver
+- Synthesize AAAA from A records when enabled
+
+### 8.7 Cache Performance
+
+**Source**: `plan_dns2.md`
+
+- Add secondary index for invalidation by qname (replace linear scan)
+
+### 8.8 Replace `dns-parser` with `hickory-proto`
+
+**Source**: `plan_sec.md`
+
+- Replace 8-year-old `dns-parser` crate with actively maintained `hickory-proto`
+- ~70 references in `src/dns/recursive.rs`
+
+### 8.9 DNSSEC Validation in Forwarder Mode
+
+**Source**: `plan_dns.md`, `plan_dns3.md`
+
+- `dnssec.rs:1703`: verify NSEC iteration count (RFC 5155 §8.2: NSEC3 iterations limited for security)
+- `dnssec.rs:1404`: verify NSEC3 hash-length byte is always present (RFC 5155 §3.2.1)
+- `dnssec.rs:1545`: verify DNSKEY RRSIG expiration timing uses RFC 4034-compliant algorithm
+
+---
+
+## Phase 9: DHT & Mesh Improvements
+
+*Goal: Fix routing correctness, add test coverage, clean up transport architecture.*
+
+### 9.1 Geo-Aware Routing Fixes
+
+**Source**: `plan_dht3.md`
+
+- Pass actual `target_geo` to hybrid lookup (3 call sites currently pass `None`)
+- Fix regional hub local region detection (replace HashMap iteration hack)
+- Use `_target` NodeId in hub selection for XOR proximity filtering
+- Remove dead `find_closest_peers_geo()` and `find_closest_peers_geo_weighted()` methods
+
+### 9.2 Document Transport Architecture
+
+**Source**: `plan_dht3.md`
+
+- Document: `MeshTransport` is the implementation layer, `MeshTransportManager` is selection/caching
+- Make `timestamp_window_secs` configurable in `DhtConfig`
+
+### 9.3 DHT Record Store Lock Consolidation
+
+**Source**: `plan_security_scalability.md`
+
+- Group 20+ individual `RwLock` fields into inner structs (RecordStoreState, RoutingState, MetricsState)
+
+---
+
+## Phase 10: Feature Work — Bots, ASN, Plugins
+
+### 10.1 AI Bot Blocking Enhancement
+
+**Source**: `plan_bots.md`
+
+- Expand default AI crawler patterns (add Perplexity, Apple, Amazon, Meta, xAI, Mistral, Cohere, AI21)
+- Add per-site `block_ai_crawlers` override support
+- Add DHT integration for global node to push bot list updates to mesh
+- Add new bot detection logging (alert-only for unknown AI patterns)
+
+### 10.2 ASN-Based Distributed Scraper Detection
+
+**Source**: `plan_asn.md`
+
+- New `src/waf/asn_tracker.rs` module (~350 lines)
+- Reuse existing `GeoIpManager::get_asn_info()`, `AtomicSlidingWindow`, `DashMap`
+- Dual threshold: volume + distribution (unique IPs per ASN)
+- Escalating bans via `ViolationTracker`
+- Mesh propagation via new `ThreatType::AsnBlock`
+- Global node ASN whitelist via `NetworkPolicy`
+- No new dependencies
+
+### 10.3 Plugin System Completion
+
+**Source**: `plan_plugins.md`
+
+- **Fix critical bug**: `PluginManager` discards loaded router (`src/plugin/mod.rs:110`)
+- **Fix ABI symbol**: `rustwaf_abi_version` → `maluwaf_abi_version` in example plugin (verified: loader at `src/plugin/axum_loader.rs:110` looks for `maluwaf_abi_version`, example exports `rustwaf_abi_version`)
+- **Create `PluginAppManager`**: Lifecycle management for Axum and WASM plugins
+- **WASM filters**: Implement actual filtering (currently stub returning `Pass`)
+- **WASM serverless**: WASI-HTTP integration for WASM origin servers
+- **Hot reload**: File watching with notify crate
+- **Router integration**: Wire AxumDynamic into proxy pipeline (currently falls through)
+
+### 10.4 Image Poisoning (cloakrs Integration)
+
+**Source**: `plan_security_scalability2.md`
+
+- Implement `src/worker/image_poisoning.rs` (currently 16-line stub)
+- Integration with cloakrs for AI/ML training data protection
+- Per-site config in `SiteImagePoisonConfig`
+- Fail-open design: errors return original body
+
+---
+
+## Phase 11: Admin Panel Completion
+
+*Goal: All config sections accessible via UI, settings page functional.*
+
+### 11.1 Fix Settings Page (Critical)
+
+**Source**: `plan_ui5.md`
+
+- Replace all hardcoded values in `admin-ui/src/pages/settings.rs` with API-driven data
+- On mount: fetch `GET /api/config/main` + `GET /api/config/schema`
+- Save button: `PUT /api/config/main`
+- Reset button: re-fetch from API
+- Add Export/Import/Reload toolbar (blob download, file picker, reload-from-disk)
+- Add config path helper functions: `get_nested_value()`, `set_nested_value()`, `flatten_schema()` for nested JSON reconstruction
+
+### 11.2 Fix Worker Restart
+
+**Source**: `plan_ui5.md`, `plan_ui6.md`
+
+- Fix URL: `/system/worker/{id}/restart` → `/system/workers/{id}/restart`
+- Implement `restart_worker` in `src/admin/handlers/system.rs` (send SIGTERM, let reap_zombies auto-restart)
+- Add `restart_worker_by_id()` to `src/process/manager.rs`
+- Add `RestartWorkerRequest`/`RestartWorkerResponse` IPC messages
+
+### 11.3 Add Missing Backend Config Endpoints
+
+**Sources**: `plan_ui2.md`, `plan_ui3.md`, `plan_ui4.md`, `plan_ui6.md`
+
+Add GET/PUT handlers for:
+| Config | Endpoint | Handler File |
+|--------|----------|-------------|
+| TLS | `/config/tls` | `tls.rs` |
+| HTTP | `/config/http` | `http_config.rs` |
+| Security | `/config/security` | `security_config.rs` |
+| Tunnel | `/config/tunnel` | tunnel config handler |
+| DNS | `/config/dns` (feature-gated) | DNS config handler |
+| Plugins | `/config/plugins` | `plugin_config.rs` |
+| Rate Limits | `/config/rate-limits` | `rate_limit_config.rs` |
+| Bot Detection | `/config/bot-detection` | `bot_config.rs` |
+| Traffic Shaping | `/config/traffic-shaping` | `traffic_config.rs` |
+| Logging | `/config/logging` | logging config handler |
+| Mesh | `/config/mesh` | mesh config handler |
+| Validate | `POST /config/validate` | validation handler |
+
+Pattern: follow existing `/config/overseer` handler in `src/admin/handlers/config.rs`.
+
+### 11.4 Add New Frontend Pages
+
+**Sources**: `plan_ui3.md`, `plan_ui4.md`, `plan_ui5.md`
+
+| Page | Description |
+|------|-------------|
+| `honeypot.rs` | Honeypot status/control (existing API) |
+| `rule_feed.rs` | Rule feed status/actions (existing API) |
+| `tls_settings.rs` | TLS configuration |
+| `feeds.rs` | IP/Rule feeds management |
+| Upstreams rewrite | Replace mock data with real API calls |
+| `dns.rs` | DNS overview (feature-gated) |
+| `dns_zones.rs` | Zone management |
+| `dns_config.rs` | DNS configuration |
+| `dns_dnssec.rs` | DNSSEC status/keys |
+| `tunnel.rs` | Tunnel overview |
+| `tunnel_vpn.rs` | VPN peer management |
+| `tunnel_config.rs` | Tunnel configuration |
+
+### 11.5 Add Stub Endpoint Implementations
+
+**Source**: `plan_ui3.md`
+
+Implement real handlers for currently-stubbed endpoints:
+| Endpoint | Purpose |
+|----------|---------|
+| `POST /upstreams/{site_id}/check` | Upstream health check trigger |
+| `POST /tcp-udp/listeners` | Create TCP/UDP listener |
+| `DELETE /tcp-udp/listeners/{id}` | Remove TCP/UDP listener |
+| `PUT /error-pages/{code}` | Update custom error page |
+| `POST /probes/block` | Block probing IP |
+
+### 11.6 Settings Tab Expansion
+
+**Source**: `plan_ui5.md`
+
+Add 7 new tabs with hardcoded Input/Toggle (Process Management pattern):
+- Blocked Paths, Auth Defaults, TLS, IP Feeds, Log Exporters, Traffic Shaping, Rate Limits (missing fields)
+
+### 11.7 Sidebar Reorganization
+
+**Source**: `plan_ui5.md`
+
+```
+Overview: Dashboard, WAF Logs, Request Logs
+Security: Probing Activity, Honeypot, Rule Feed
+Management: Workers, Upstreams, Sites, TCP/UDP, Tier Keys
+Configuration: Settings, Process Management, Alerts
+```
+
+Feature-gate items based on `GET /api/system/info.features`.
+
+### 11.8 Dynamic Schema Rendering
+
+**Sources**: `plan_ui2.md`, `plan_ui4.md`, `plan_ui5.md`
+
+- Create `DynamicField` component (~150 LOC) rendering forms from `/config/schema` with string/integer/boolean/array/select widgets
+- Replace 950-line hardcoded schema with serde-based dynamic generation: `serde_json::to_value(&MainConfig::default())`
+- Add `POST /api/config/validate` endpoint for pre-save validation
+- Add "Restart Required" indicator on fields needing restart
+- Add config diff view (added/removed/changed highlighting)
+
+### 11.9 Config Versioning & Audit
+
+**Source**: `plan_ui6.md`
+
+- Config versioning system with compressed JSON snapshots (zstd, 50-version retention)
+- Validation framework (5 types: schema, semantic, file, network, dependency)
+- Audit logging (JSONL, daily rotation, 90-day retention)
+- New `src/admin/config/` module (6 files: versioning.rs, snapshot.rs, validation.rs, diff.rs, audit.rs, audit_types.rs)
+
+### 11.10 Legacy Admin Code Cleanup
+
+**Source**: `plan_ui6.md`
+
+- Remove `src/admin/legacy.rs` (385 lines of dead code)
+
+### 11.11 API Service Additions
+
+**Source**: `plan_ui5.md`
+
+Add ~15 new methods to `admin-ui/src/api.rs`: `get_config_schema`, `get_config_export`, `import_config`, `get_log_level`, `set_log_level`, `get_honeypot_status`, `control_honeypot`, `get_rule_feed_status`, `update_rule_feed`, `validate_config`, `get_dns_status`, `get_dns_zones`, `get_tunnel_status`, `get_plugin_status`.
+
+---
+
+## Phase 12: Documentation & Polish
+
+### 12.1 Public API Documentation
+
+**Source**: `plan.md`, `plan2.md` §6.1
+
+- Add doc comments to `WafError`, `BufferPool`, `BufferPoolConfig`, `Message` enum, `WorkerId`
+- Add crate-level documentation to `src/lib.rs`
+- Prioritize: `src/http_client/mod.rs`, `src/admin/handlers/`, `src/mesh/passover_key_exchange.rs`
+- 585 public functions lack doc comments (from plan2.md)
+
+### 12.2 IPC Message Organization
+
+**Source**: `plan.md`
+
+- Group 40+ IPC `Message` variants into inner enums by concern (Lifecycle, ThreatIntel, Cache, Command, Dns)
+
+### 12.3 Add `cargo-deny` to CI
+
+**Source**: `plan_sec.md`, `plan_sec2.md`
+
+- Create `deny.toml` with advisory, license, duplicate dependency checks
+
+### 12.4 Dependency Upgrades (Deferred)
+
+**Source**: `plan_sec.md`
+
+| Crate | Action | Risk |
+|-------|--------|------|
+| `wasmtime` 36→43 | Major upgrade, eliminates ~80 duplicate crates | High |
+| `boringtun` → `defguard_boringtun` | Community fork, actively maintained | Low |
+| `lightningcss` alpha bump | Stay current | Low |
+
+### 12.5 Verify DNS Feature Tests
+
+**Source**: `plan2.md` §1.2
+
+Run `cargo test --features dns` to verify test status. Fix any failures in DNS-specific integration tests.
+
+---
+
+## Execution Order Summary
+
+| Phase | Focus | Depends On | Risk | Parallelizable With |
+|-------|-------|-----------|------|-------------------|
+| **1** | Foundation (compilation, deps, dead code) | None | Low | — |
+| **2** | Critical security (bcrypt, auth timing, TLS, IPC, DoS) | 1 | Medium | 3,5,6,7,11 |
+| **3** | Correctness bugs (IPC, DNS wire, DHT, timestamps) | 1 | Medium-High | 2,5,6,7,11 |
+| **4** | Testing (fix failures, behavioral tests, e2e lifecycle) | 1,3 | Low | 8,9 |
+| **5** | Performance (LRU, rate limiter, blocking I/O, atomics) | 1 | Medium | 2,3,6,7,11 |
+| **6** | Code quality (dedup, modules, splits, errors) | 1 | Low | 2,3,5,7,11 |
+| **7** | TLS (ACME, cert distribution, passthrough) | 1 | Medium | 2,3,5,6,11 |
+| **8** | DNS improvements (DNSSEC signing, RSA, QNAME) | 3 | Medium | 4,9 |
+| **9** | DHT improvements (geo routing, lock consolidation) | 3 | Medium | 4,8 |
+| **10** | Features (bots, ASN, plugins, image poisoning) | 1,5 | Medium-High | — |
+| **11** | Admin panel (settings, 18 endpoints, 12+ pages) | 1 | Medium | 2,3,5,6,7 |
+| **12** | Documentation & polish | All | Low | — |
+
+### Wave Completion Log
+
+| Wave | Date | Phases | Status | Notes |
+|------|------|--------|--------|-------|
+| 1 | 2026-03-27 | Phase 1 | **✅ Complete** | 9 dead deps removed, once_cell migrated, DNS deps gated, 2 dead files deleted, rustls-pemfile removed, 14 test compilation errors fixed. `nix` net/uio features kept (required). 93 pre-existing clippy warnings deferred to Phase 6.
+
+---
+
+## Verification Protocol
+
+After every phase:
+```bash
+cargo check
+cargo test --test integration_test
+cargo clippy -- -D warnings
+cargo fmt --check
+```
+
+After major changes:
+```bash
+cargo test                         # Full suite
+cargo test --features dns          # DNS feature
+cargo test --no-default-features   # Minimal features
+```
+
+---
+
+## Estimated Scope
+
+| Phase | LOC Changed | Effort | Files | Status |
+|-------|-------------|--------|-------|--------|
+| 1 | ~50 | ~2 hours | ~20 | **✅ Complete** |
+| 2 | ~400 | 1-2 days | 12 | Pending |
+| 3 | ~700 | 2-3 days | 35 | Pending |
+| 4 | ~500 | 1 day | 10 | Pending |
+| 5 | ~400 | 1-2 days | 10 | Pending |
+| 6 | ~600 | 2-3 days | 28 | Pending |
+| 7 | ~900 | 1-2 weeks | 12 | Pending |
+| 8 | ~400 | 1-2 weeks | 10 | Pending |
+| 9 | ~200 | 3-5 days | 8 | Pending |
+| 10 | ~1500 | 2-3 weeks | 20 | Pending |
+| 11 | ~2500 | 2-3 weeks | 30 | Pending |
+| 12 | ~100 | 1 day | 5 | Pending |
+| **Total** | **~8,350** | **~10-13 weeks** | **~190** | |
+
+With parallel agents (Wave 2: 6 concurrent phases), estimated wall-clock time drops to **~6-8 weeks**.

@@ -527,8 +527,8 @@ pub fn create_signature_registry() -> SignatureRegistry {
     SignatureRegistry::new()
 }
 
-pub static SIGNATURE_REGISTRY: once_cell::sync::Lazy<Arc<SignatureRegistry>> =
-    once_cell::sync::Lazy::new(|| Arc::new(SignatureRegistry::new()));
+pub static SIGNATURE_REGISTRY: std::sync::LazyLock<Arc<SignatureRegistry>> =
+    std::sync::LazyLock::new(|| Arc::new(SignatureRegistry::new()));
 
 pub fn global_signature_registry() -> &'static Arc<SignatureRegistry> {
     &SIGNATURE_REGISTRY

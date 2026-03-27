@@ -1,8 +1,8 @@
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use super::config::InternalAcmeConfig;
 use super::cert_resolver::CertResolver;
+use super::config::InternalAcmeConfig;
 
 pub struct AcmeClient {
     config: InternalAcmeConfig,

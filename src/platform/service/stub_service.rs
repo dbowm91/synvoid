@@ -9,14 +9,12 @@ pub const SERVICE_DISPLAY_NAME: &str = "MaluWAF Web Application Firewall";
 pub const SERVICE_DESCRIPTION: &str =
     "High-performance Web Application Firewall with advanced attack detection and bot mitigation";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ServiceState {
     #[default]
     Stopped,
     Running,
 }
-
 
 #[derive(Debug, Clone)]
 pub struct ServiceConfig {

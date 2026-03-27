@@ -1,7 +1,6 @@
-
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::sync::{broadcast, RwLock, Mutex};
+use tokio::sync::{broadcast, Mutex, RwLock};
 
 use crate::config::ConfigManager;
 use crate::config::{Http3Config, TunnelConfig};
@@ -12,14 +11,14 @@ use crate::udp::listener::{UdpListenerPool, UdpListenerPoolConfig};
 
 #[cfg(feature = "dns")]
 use crate::dns::DnsServer;
-use crate::waf::{WafCore, FloodProtector, RateLimitConfigStore, AttackDetectionConfig};
+use crate::metrics::WorkerMetrics;
+use crate::process::ipc::WorkerId;
 use crate::tls::cert_resolver::CertResolver;
 use crate::tls::config::InternalTlsConfig;
 use crate::tunnel::{TunnelManager, TunnelRouter};
 use crate::utils::parse_host_port;
+use crate::waf::{AttackDetectionConfig, FloodProtector, RateLimitConfigStore, WafCore};
 use crate::worker::drain_state::WorkerDrainState;
-use crate::metrics::WorkerMetrics;
-use crate::process::ipc::WorkerId;
 
 #[derive(Clone)]
 struct ServerSharedState {
@@ -61,7 +60,7 @@ pub struct UnifiedServer {
     metrics: Option<Arc<WorkerMetrics>>,
     ipc: Option<Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>>,
     worker_id: Option<WorkerId>,
-    
+
     // DNS Server
     #[cfg(feature = "dns")]
     _dns_config: Option<crate::config::dns::DnsConfig>,
@@ -75,29 +74,57 @@ pub struct UnifiedServer {
 
 impl UnifiedServer {
     pub async fn new(
-        config: Arc<RwLock<ConfigManager>>, 
+        config: Arc<RwLock<ConfigManager>>,
         mesh_transport: Option<Arc<crate::mesh::transport::MeshTransportManager>>,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        let (http_addr, http_addr_v6, https_addr, https_addr_v6, http3_addr, http3_addr_v6, tcp_pool, flood_protector, udp_pool, waf, tls_config, http3_config, cert_resolver, tunnel_manager, tunnel_config, tunnel_router) = {
+        let (
+            http_addr,
+            http_addr_v6,
+            https_addr,
+            https_addr_v6,
+            http3_addr,
+            http3_addr_v6,
+            tcp_pool,
+            flood_protector,
+            udp_pool,
+            waf,
+            tls_config,
+            http3_config,
+            cert_resolver,
+            tunnel_manager,
+            tunnel_config,
+            tunnel_router,
+        ) = {
             let cfg = config.read().await;
             let main_config = &cfg.main;
-            
-            let http_addr: SocketAddr = parse_host_port(&main_config.server.host, main_config.server.port)
-                .map_err(|e| format!("Invalid HTTP host: {}", e))?;
 
-            let http_addr_v6 = main_config.server.host_v6.as_ref().map(|h| {
-                parse_host_port(h, main_config.server.port)
-                    .map_err(|e| format!("Invalid HTTP host_v6: {}", e))
-            }).transpose()?;
+            let http_addr: SocketAddr =
+                parse_host_port(&main_config.server.host, main_config.server.port)
+                    .map_err(|e| format!("Invalid HTTP host: {}", e))?;
+
+            let http_addr_v6 = main_config
+                .server
+                .host_v6
+                .as_ref()
+                .map(|h| {
+                    parse_host_port(h, main_config.server.port)
+                        .map_err(|e| format!("Invalid HTTP host_v6: {}", e))
+                })
+                .transpose()?;
 
             let tls_config = InternalTlsConfig::from(main_config.tls.clone());
             let (https_addr, https_addr_v6) = if tls_config.enabled {
                 let https = parse_host_port(&main_config.server.host, tls_config.port)
                     .map_err(|e| format!("Invalid HTTPS host: {}", e))?;
-                let https_v6 = main_config.server.host_v6.as_ref().map(|h| {
-                    parse_host_port(h, tls_config.port)
-                        .map_err(|e| format!("Invalid HTTPS host_v6: {}", e))
-                }).transpose()?;
+                let https_v6 = main_config
+                    .server
+                    .host_v6
+                    .as_ref()
+                    .map(|h| {
+                        parse_host_port(h, tls_config.port)
+                            .map_err(|e| format!("Invalid HTTPS host_v6: {}", e))
+                    })
+                    .transpose()?;
                 (Some(https), https_v6)
             } else {
                 (None, None)
@@ -107,10 +134,14 @@ impl UnifiedServer {
             let (http3_addr, http3_addr_v6) = if http3_config.enabled {
                 let h3 = parse_host_port(&main_config.server.host, http3_config.port)
                     .map_err(|e| format!("Invalid HTTP/3 host: {}", e))?;
-                let h3_v6 = http3_config.host_v6.as_ref().map(|h| {
-                    parse_host_port(h, http3_config.port)
-                        .map_err(|e| format!("Invalid HTTP/3 host_v6: {}", e))
-                }).transpose()?;
+                let h3_v6 = http3_config
+                    .host_v6
+                    .as_ref()
+                    .map(|h| {
+                        parse_host_port(h, http3_config.port)
+                            .map_err(|e| format!("Invalid HTTP/3 host_v6: {}", e))
+                    })
+                    .transpose()?;
                 (Some(h3), h3_v6)
             } else {
                 (None, None)
@@ -133,25 +164,48 @@ impl UnifiedServer {
                         continue;
                     }
                     for (port_name, port_config) in &site_config.udp.ports {
-                        if let (Some(port), Some(upstream)) = (port_config.port, &port_config.upstream) {
+                        if let (Some(port), Some(upstream)) =
+                            (port_config.port, &port_config.upstream)
+                        {
                             let listener_config = crate::udp::listener::UdpListenerConfig {
                                 port,
                                 bind_address: main_config.server.host.clone(),
                                 bind_address_v6: main_config.server.host_v6.clone(),
-                                expected_protocol: port_config.expected_protocol.clone().unwrap_or_else(|| port_name.clone()),
+                                expected_protocol: port_config
+                                    .expected_protocol
+                                    .clone()
+                                    .unwrap_or_else(|| port_name.clone()),
                                 upstream_address: upstream.clone(),
                                 upstream_address_v6: None,
-                                filter_enabled: site_config.udp.filter.as_ref().map(|f| f.enabled.unwrap_or(true)).unwrap_or(true),
+                                filter_enabled: site_config
+                                    .udp
+                                    .filter
+                                    .as_ref()
+                                    .map(|f| f.enabled.unwrap_or(true))
+                                    .unwrap_or(true),
                                 strict_mode: true,
                                 max_packet_size: 4096,
                                 rate_limit_per_ip: main_config.udp.rate_per_ip,
                                 socket_options: Default::default(),
                             };
-                            match pool.add_listener(listener_config).await { Err(e) => {
-                                tracing::warn!("Failed to add UDP listener for site {} port {}: {}", site_id, port, e);
-                            } _ => {
-                                tracing::info!("Added UDP listener for site {} on port {} ({})", site_id, port, port_name);
-                            }}
+                            match pool.add_listener(listener_config).await {
+                                Err(e) => {
+                                    tracing::warn!(
+                                        "Failed to add UDP listener for site {} port {}: {}",
+                                        site_id,
+                                        port,
+                                        e
+                                    );
+                                }
+                                _ => {
+                                    tracing::info!(
+                                        "Added UDP listener for site {} on port {} ({})",
+                                        site_id,
+                                        port,
+                                        port_name
+                                    );
+                                }
+                            }
                         }
                     }
                 }
@@ -162,28 +216,32 @@ impl UnifiedServer {
 
             let cert_resolver = if tls_config.enabled {
                 let resolver = Arc::new(CertResolver::new(tls_config.clone()));
-                match resolver.load_certificates() { Err(e) => {
-                    tracing::warn!("Failed to load TLS certificates: {}. TLS will not be available.", e);
-                    None
-                } _ => {
-                    Some(resolver)
-                }}
+                match resolver.load_certificates() {
+                    Err(e) => {
+                        tracing::warn!(
+                            "Failed to load TLS certificates: {}. TLS will not be available.",
+                            e
+                        );
+                        None
+                    }
+                    _ => Some(resolver),
+                }
             } else {
                 None
             };
-            
+
             let tunnel_config = if main_config.tunnel.enabled {
                 Some(main_config.tunnel.clone())
             } else {
                 None
             };
-            
+
             let tunnel_manager = if main_config.tunnel.enabled {
                 Some(Arc::new(TunnelManager::new(tunnel_config.clone().unwrap())))
             } else {
                 None
             };
-            
+
             let tunnel_router = if main_config.tunnel.quic.enabled {
                 match TunnelRouter::new(tunnel_config.clone().unwrap()) {
                     Ok(router) => Some(Arc::new(Mutex::new(router))),
@@ -195,8 +253,25 @@ impl UnifiedServer {
             } else {
                 None
             };
-            
-            (http_addr, http_addr_v6, https_addr, https_addr_v6, http3_addr, http3_addr_v6, tcp_pool, flood_protector, udp_pool, waf, tls_config, http3_config, cert_resolver, tunnel_manager, tunnel_config, tunnel_router)
+
+            (
+                http_addr,
+                http_addr_v6,
+                https_addr,
+                https_addr_v6,
+                http3_addr,
+                http3_addr_v6,
+                tcp_pool,
+                flood_protector,
+                udp_pool,
+                waf,
+                tls_config,
+                http3_config,
+                cert_resolver,
+                tunnel_manager,
+                tunnel_config,
+                tunnel_router,
+            )
         };
 
         // DNS Server Configuration
@@ -204,42 +279,45 @@ impl UnifiedServer {
         let (dns_config, dns_server, dns_addr, dns_addr_v6) = {
             let cfg = config.read().await;
             let dns_cfg = cfg.main.dns.clone();
-            
+
             if !dns_cfg.enabled {
                 (None, None, None, None)
             } else {
                 let bind_addr: SocketAddr = format!("{}:{}", dns_cfg.bind_address, dns_cfg.port)
                     .parse()
                     .unwrap_or_else(|_| SocketAddr::from(([0, 0, 0, 0], 53)));
-                
+
                 let dns_addr_v6 = if dns_cfg.bind_address != "0.0.0.0" {
                     // Try to parse as IPv6 if not 0.0.0.0
-                    format!("[::]:{}", dns_cfg.port)
-                        .parse()
-                        .ok()
+                    format!("[::]:{}", dns_cfg.port).parse().ok()
                 } else {
                     None
                 };
 
                 // Create DNS server with config and shared TLS certificates
                 let mut dns_server = DnsServer::new(dns_cfg.clone(), cert_resolver.clone());
-                
+
                 // Wire up ZoneTransfer configuration if transfers are allowed
-                if !dns_cfg.settings.allow_transfer.is_empty() || dns_cfg.settings.allow_wildcard_transfer {
+                if !dns_cfg.settings.allow_transfer.is_empty()
+                    || dns_cfg.settings.allow_wildcard_transfer
+                {
                     use crate::dns::tsig::TsigVerifier;
-                    
+
                     let tsig_verifier = if !dns_cfg.dnssec.tsig_keys.is_empty() {
                         match TsigVerifier::new(dns_cfg.dnssec.tsig_keys.clone()) {
                             Ok(v) => Some(Arc::new(v)),
                             Err(e) => {
-                                tracing::warn!("Failed to initialize TSIG for zone transfers: {}", e);
+                                tracing::warn!(
+                                    "Failed to initialize TSIG for zone transfers: {}",
+                                    e
+                                );
                                 None
                             }
                         }
                     } else {
                         None
                     };
-                    
+
                     dns_server = dns_server.with_zone_transfer_config(
                         dns_cfg.settings.allow_transfer.clone(),
                         dns_cfg.settings.allow_wildcard_transfer,
@@ -248,19 +326,28 @@ impl UnifiedServer {
                         dns_cfg.settings.ixfr_fallback_to_axfr,
                         tsig_verifier,
                     );
-                    
-                    tracing::info!("Zone transfer configured: IXFR={}, AXFR fallback={}", 
+
+                    tracing::info!(
+                        "Zone transfer configured: IXFR={}, AXFR fallback={}",
                         dns_cfg.settings.ixfr_enabled,
-                        dns_cfg.settings.ixfr_fallback_to_axfr);
+                        dns_cfg.settings.ixfr_fallback_to_axfr
+                    );
                 }
-                
+
                 let dns_server = Arc::new(dns_server);
-                
-                tracing::info!("DNS server configured on {} (IPv4{})", 
+
+                tracing::info!(
+                    "DNS server configured on {} (IPv4{})",
                     bind_addr,
-                    if dns_addr_v6.is_some() { " + IPv6" } else { "" });
-                
-                (Some(dns_cfg), Some(dns_server), Some(bind_addr), dns_addr_v6)
+                    if dns_addr_v6.is_some() { " + IPv6" } else { "" }
+                );
+
+                (
+                    Some(dns_cfg),
+                    Some(dns_server),
+                    Some(bind_addr),
+                    dns_addr_v6,
+                )
             }
         };
 
@@ -322,7 +409,11 @@ impl UnifiedServer {
         self
     }
 
-    pub fn with_ipc(mut self, ipc: Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>, worker_id: WorkerId) -> Self {
+    pub fn with_ipc(
+        mut self,
+        ipc: Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>,
+        worker_id: WorkerId,
+    ) -> Self {
         self.ipc = Some(ipc);
         self.worker_id = Some(worker_id);
         self
@@ -343,7 +434,7 @@ impl UnifiedServer {
     pub fn get_stop_accepting_sender(&self) -> tokio::sync::broadcast::Sender<()> {
         self.stop_accepting_tx.clone()
     }
-    
+
     pub fn get_probe_tracker(&self) -> Option<Arc<crate::waf::ProbeTracker>> {
         self.waf.probe_tracker.clone()
     }
@@ -357,7 +448,10 @@ impl UnifiedServer {
     }
 
     pub fn get_block_store(&self) -> Arc<crate::block_store::BlockStore> {
-        self.waf.block_store.clone().expect("BlockStore not initialized in WAF")
+        self.waf
+            .block_store
+            .clone()
+            .expect("BlockStore not initialized in WAF")
     }
 
     pub fn get_waf(&self) -> Arc<crate::waf::WafCore> {
@@ -377,8 +471,12 @@ impl UnifiedServer {
     }
 
     fn create_waf(main_config: &crate::config::MainConfig) -> WafCore {
-        let data_dir = main_config.persistence.data_dir.as_ref().map(std::path::PathBuf::from);
-        
+        let data_dir = main_config
+            .persistence
+            .data_dir
+            .as_ref()
+            .map(std::path::PathBuf::from);
+
         WafCore::new(crate::waf::WafCoreConfig {
             rate_config: RateLimitConfigStore {
                 ip: main_config.defaults.ratelimit.ip.clone(),
@@ -404,10 +502,18 @@ impl UnifiedServer {
                 css_valid_count: main_config.defaults.css_challenge.valid_count,
                 css_asset_path: main_config.defaults.css_challenge.asset_path.clone(),
                 css_window_secs: main_config.defaults.css_challenge.challenge_window_secs,
-                css_verification_window_secs: main_config.defaults.css_challenge.verification_window_secs,
-                challenge_priority: parse_challenge_priority(&main_config.defaults.challenge.priority),
+                css_verification_window_secs: main_config
+                    .defaults
+                    .css_challenge
+                    .verification_window_secs,
+                challenge_priority: parse_challenge_priority(
+                    &main_config.defaults.challenge.priority,
+                ),
                 challenge_max_attempts: main_config.defaults.bot.challenge_max_attempts,
-                challenge_rate_limit_window_secs: main_config.defaults.bot.challenge_rate_limit_window_secs,
+                challenge_rate_limit_window_secs: main_config
+                    .defaults
+                    .bot
+                    .challenge_rate_limit_window_secs,
                 honeypot_endpoints_file: main_config.defaults.honeypot.endpoints_file.clone(),
                 honeypot_enabled: true,
                 honeypot_paths_per_ip: main_config.defaults.honeypot.paths_per_ip,
@@ -459,11 +565,15 @@ impl UnifiedServer {
         })
     }
 
-    fn create_tcp_pool(main_config: &crate::config::MainConfig, waf: Arc<WafCore>) -> Result<(TcpListenerPool, Arc<FloodProtector>), Box<dyn std::error::Error + Send + Sync>> {
-        use crate::tcp::listener::TcpSocketOptions;
+    fn create_tcp_pool(
+        main_config: &crate::config::MainConfig,
+        waf: Arc<WafCore>,
+    ) -> Result<(TcpListenerPool, Arc<FloodProtector>), Box<dyn std::error::Error + Send + Sync>>
+    {
         use crate::tcp::listener::TcpListenerPoolConfig;
-        use crate::waf::flood::{FloodProtector, FloodConfig};
-        
+        use crate::tcp::listener::TcpSocketOptions;
+        use crate::waf::flood::{FloodConfig, FloodProtector};
+
         let socket_options = TcpSocketOptions {
             nodelay: main_config.tcp.socket.nodelay,
             send_buffer_size: main_config.tcp.socket.send_buffer_size,
@@ -474,7 +584,7 @@ impl UnifiedServer {
             keepalive_interval_secs: Some(10),
             keepalive_retries: Some(3),
         };
-        
+
         let pool_config = TcpListenerPoolConfig {
             worker_pool_size: main_config.tcp.worker_pool_size,
             connection_timeout_secs: 5,
@@ -502,16 +612,19 @@ impl UnifiedServer {
         Ok((pool, flood_protector))
     }
 
-    fn create_udp_pool(main_config: &crate::config::MainConfig, _waf: Arc<WafCore>) -> Result<UdpListenerPool, Box<dyn std::error::Error + Send + Sync>> {
+    fn create_udp_pool(
+        main_config: &crate::config::MainConfig,
+        _waf: Arc<WafCore>,
+    ) -> Result<UdpListenerPool, Box<dyn std::error::Error + Send + Sync>> {
         use crate::udp::listener::UdpSocketOptions;
-        use crate::waf::flood::{FloodProtector, FloodConfig};
-        
+        use crate::waf::flood::{FloodConfig, FloodProtector};
+
         let socket_options = UdpSocketOptions {
             reuse_port: true,
             recv_buffer_size: main_config.udp.socket.recv_buffer_size,
             send_buffer_size: main_config.udp.socket.send_buffer_size,
         };
-        
+
         let pool_config = UdpListenerPoolConfig {
             worker_pool_size: main_config.udp.worker_pool_size,
             buffer_size: 8192,
@@ -543,17 +656,17 @@ impl UnifiedServer {
         let tls_config = self.tls_config.clone();
         let http3_config = self.http3_config.clone();
         let cert_resolver = self.cert_resolver.clone();
-        
+
         let _tls_config_for_v6 = tls_config.clone();
         let _http3_config_for_v6 = http3_config.clone();
-        
+
         if let Some(ref tunnel_router) = self.tunnel_router {
             if let Some(ref tunnel_config) = self.tunnel_config {
                 if tunnel_config.quic.enabled {
                     tracing::info!("Starting QUIC tunnel router for server-WAF mode");
                     let mut router = tunnel_router.lock().await;
                     router.start().await?;
-                    
+
                     tracing::info!(
                         "QUIC tunnel server listening on {}:{}",
                         tunnel_config.quic.bind_address,
@@ -562,9 +675,9 @@ impl UnifiedServer {
                 }
             }
         }
-        
+
         let threat_level = waf.threat_level.clone();
-        
+
         if let Some(ref tl) = threat_level {
             let config = tl.get_legacy_config();
             if config.auto_scale {
@@ -585,7 +698,7 @@ impl UnifiedServer {
             Router::new(&main_config, sites)
         };
         let router = Arc::new(router);
-        
+
         let shared_state = Arc::new(ServerSharedState {
             config: config.clone(),
             router: router.clone(),
@@ -597,13 +710,13 @@ impl UnifiedServer {
             ipc: self.ipc.clone(),
             worker_id: self.worker_id,
         });
-        
+
         let http_jh = {
             let shutdown_rx = self.shutdown_tx.subscribe();
             let state = shared_state.clone();
-            tokio::spawn(async move {
-                Self::run_http_server_inner(state, http_addr, shutdown_rx).await
-            })
+            tokio::spawn(
+                async move { Self::run_http_server_inner(state, http_addr, shutdown_rx).await },
+            )
         };
 
         let http_v6_jh = if let Some(addr_v6) = self.http_addr_v6 {
@@ -627,28 +740,47 @@ impl UnifiedServer {
             let http_config = main_config.http.clone();
             let tls_cfg = tls_config.clone();
             Some(tokio::spawn(async move {
-                Self::run_https_server_inner(state, addr, resolver, tls_cfg, http_config, main_config, shutdown_rx).await
+                Self::run_https_server_inner(
+                    state,
+                    addr,
+                    resolver,
+                    tls_cfg,
+                    http_config,
+                    main_config,
+                    shutdown_rx,
+                )
+                .await
             }))
         } else {
             None
         };
 
-        let https_v6_jh = if let (Some(addr_v6), Some(resolver)) = (self.https_addr_v6, cert_resolver.clone()) {
-            let shutdown_rx = self.shutdown_tx.subscribe();
-            let state = shared_state.clone();
-            let main_config = {
-                let cfg = self.config.read().await;
-                cfg.main.clone()
+        let https_v6_jh =
+            if let (Some(addr_v6), Some(resolver)) = (self.https_addr_v6, cert_resolver.clone()) {
+                let shutdown_rx = self.shutdown_tx.subscribe();
+                let state = shared_state.clone();
+                let main_config = {
+                    let cfg = self.config.read().await;
+                    cfg.main.clone()
+                };
+                let http_config = main_config.http.clone();
+                let tls_cfg = tls_config.clone();
+                Some(tokio::spawn(async move {
+                    tracing::info!("Starting HTTPS server on IPv6 {}", addr_v6);
+                    Self::run_https_server_inner(
+                        state,
+                        addr_v6,
+                        resolver,
+                        tls_cfg,
+                        http_config,
+                        main_config,
+                        shutdown_rx,
+                    )
+                    .await
+                }))
+            } else {
+                None
             };
-            let http_config = main_config.http.clone();
-            let tls_cfg = tls_config.clone();
-            Some(tokio::spawn(async move {
-                tracing::info!("Starting HTTPS server on IPv6 {}", addr_v6);
-                Self::run_https_server_inner(state, addr_v6, resolver, tls_cfg, http_config, main_config, shutdown_rx).await
-            }))
-        } else {
-            None
-        };
 
         let http3_jh = if let (Some(addr), Some(resolver)) = (http3_addr, cert_resolver.clone()) {
             let shutdown_rx = self.shutdown_tx.subscribe();
@@ -661,7 +793,9 @@ impl UnifiedServer {
             None
         };
 
-        let http3_v6_jh = if let (Some(addr_v6), Some(resolver)) = (self.http3_addr_v6, cert_resolver.clone()) {
+        let http3_v6_jh = if let (Some(addr_v6), Some(resolver)) =
+            (self.http3_addr_v6, cert_resolver.clone())
+        {
             let shutdown_rx = self.shutdown_tx.subscribe();
             let state = shared_state.clone();
             let h3_cfg = http3_config.clone();
@@ -672,7 +806,7 @@ impl UnifiedServer {
         } else {
             None
         };
-        
+
         let tcp_jh = match &self.tcp_pool {
             Some(pool) => {
                 let pool = pool.clone();
@@ -706,7 +840,7 @@ impl UnifiedServer {
                         }
                     }))
                 }
-                None => None
+                None => None,
             }
         };
 
@@ -781,15 +915,25 @@ impl UnifiedServer {
             let mesh_config = cfg.main.tunnel.mesh.clone();
 
             let alt_svc = if http3_config.enabled {
-                Some(format!("h3=\":{}\"; ma={}", http3_config.port, http3_config.alt_svc_max_age))
+                Some(format!(
+                    "h3=\":{}\"; ma={}",
+                    http3_config.port, http3_config.alt_svc_max_age
+                ))
             } else {
                 None
             };
             (http_config, alt_svc, main_config, mesh_config)
         };
 
-        let mut server = HttpServer::new(http_addr, (*state.router).clone(), state.waf.clone(), http_config, shutdown_rx, main_config);
-        
+        let mut server = HttpServer::new(
+            http_addr,
+            (*state.router).clone(),
+            state.waf.clone(),
+            http_config,
+            shutdown_rx,
+            main_config,
+        );
+
         if let Some(alt_svc) = alt_svc {
             server = server.with_alt_svc(alt_svc);
         }
@@ -817,7 +961,7 @@ impl UnifiedServer {
         if let (Some(ipc), Some(worker_id)) = (state.ipc.clone(), state.worker_id) {
             server = server.with_ipc(ipc, worker_id);
         }
-        
+
         server.serve().await
     }
 
@@ -831,7 +975,7 @@ impl UnifiedServer {
         shutdown_rx: broadcast::Receiver<()>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         use crate::tls::HttpsServer;
-        
+
         let mut server = HttpsServer::new(
             https_addr,
             tls_config,
@@ -842,11 +986,11 @@ impl UnifiedServer {
             main_config,
             shutdown_rx,
         );
-        
+
         if let Some(fp) = state.flood_protector.clone() {
             server = server.with_flood_protector(fp);
         }
-        
+
         server.serve().await
     }
 
@@ -858,29 +1002,35 @@ impl UnifiedServer {
         shutdown_rx: broadcast::Receiver<()>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         use crate::http3::Http3Server;
-        
-        let mut server = Http3Server::new(http3_addr, http3_config, (*state.router).clone(), state.waf.clone(), shutdown_rx);
-        
+
+        let mut server = Http3Server::new(
+            http3_addr,
+            http3_config,
+            (*state.router).clone(),
+            state.waf.clone(),
+            shutdown_rx,
+        );
+
         if let Some(fp) = state.flood_protector.clone() {
             server = server.with_flood_protector(fp);
         }
-        
+
         let tls_config = cert_resolver.build_server_config()?;
         server.serve(tls_config).await
     }
 
     pub async fn shutdown(&self) {
         tracing::info!("Shutting down unified server");
-        
+
         let _ = self.shutdown_tx.send(());
-        
+
         tracing::info!("Unified server shutdown complete");
     }
 
     pub async fn reload_config(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let mut cfg = self.config.write().await;
         cfg.reload_all();
-        
+
         tracing::info!("Configuration reloaded");
         Ok(())
     }

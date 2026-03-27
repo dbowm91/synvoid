@@ -4,48 +4,48 @@
 //! encrypted transport (QUIC, WireGuard), multi-tenant organization
 //! management, and distributed DNS with DNSSEC support.
 
-pub mod config;
-pub mod protocol;
-pub mod topology;
-pub mod proxy;
-pub mod cert;
+pub mod audit;
+pub mod audit_session;
 pub mod backend;
+pub mod cert;
+pub mod cli;
+pub mod client_audit;
+pub mod config;
+pub mod dht;
+pub mod kem;
+pub mod ml_kem_key_exchange;
+pub mod network_security;
+pub mod organization;
+pub mod passover_key_exchange;
+pub mod protocol;
+pub mod proxy;
+pub mod reputation;
+pub mod security;
+pub mod security_challenge;
+pub mod session;
+pub mod threat_intel;
+pub mod topology;
 pub mod transport;
 #[cfg(feature = "mesh")]
-pub mod transport_routing;
+pub mod transport_connection;
+pub mod transport_core;
 #[cfg(feature = "mesh")]
 pub mod transport_dht;
-#[cfg(feature = "mesh")]
-pub mod transport_org;
 #[cfg(feature = "mesh")]
 pub mod transport_dns;
 #[cfg(feature = "mesh")]
 pub mod transport_global;
 #[cfg(feature = "mesh")]
+pub mod transport_org;
+#[cfg(feature = "mesh")]
 pub mod transport_peer;
 #[cfg(feature = "mesh")]
-pub mod transport_connection;
-#[cfg(feature = "mesh")]
 pub mod transport_rate_limit;
-pub mod transport_core;
-pub mod security;
-pub mod audit;
-pub mod security_challenge;
-pub mod network_security;
-pub mod wireguard_mesh;
+#[cfg(feature = "mesh")]
+pub mod transport_routing;
 pub mod transports;
-pub mod cli;
-pub mod reputation;
-pub mod threat_intel;
-pub mod organization;
-pub mod dht;
-pub mod passover_key_exchange;
-pub mod client_audit;
-pub mod audit_session;
+pub mod wireguard_mesh;
 pub mod yara_rules;
-pub mod kem;
-pub mod session;
-pub mod ml_kem_key_exchange;
 
 pub fn safe_unix_timestamp() -> u64 {
     std::time::SystemTime::now()
@@ -54,78 +54,72 @@ pub fn safe_unix_timestamp() -> u64 {
         .as_secs()
 }
 
-pub use config::{MeshConfig, MeshNodeRole, MeshWireGuardConfig, MeshWireGuardPeer, MeshTransportPreference, NodeIdentityConfig, MeshMlKemConfig};
-pub use protocol::MeshMessage;
-pub use topology::{MeshTopology, PeerState, NetworkPartitionState};
-pub use proxy::MeshProxy;
-pub use cert::MeshCertManager;
-pub use backend::{MeshBackend, MeshBackendPool, create_mesh_backend_from_config, initialize_mesh_transports};
-pub use passover_key_exchange::KeyExchangeService;
-pub use transport::{MeshTransport, MeshPeerConnection};
-pub use transport_core::MeshTransportError as MeshTransportErrorV1;
-pub use transport_core::{
-    MeshTransportError, validate_system_time, get_time_validation_error_count,
-    MIN_REASONABLE_TIMESTAMP, MAX_REASONABLE_TIMESTAMP,
-};
-pub use transports::{
-    MeshTransportTrait, MeshTransportType, MeshPeerConnectionTrait,
-    DatagramPacket, MeshDatagramHandler,
-    QuicMeshTransport,
-    WireGuardMeshTransport,
-    MeshTransportManager,
-};
-pub use security::{
-    SecureConfigManager, SecureConfigError, SecureConfigValue, EncryptedConfig,
-    SecurityEventLogger, SecurityEvent, SecurityEventType, SecuritySeverity, ConfigSecurityIssue,
-};
 pub use audit::{
-    AuditLogger, AuditEvent, AuditEventType, AuditSource, AuditTarget, AuditResult, AuditSeverity,
+    AuditEvent, AuditEventType, AuditLogger, AuditResult, AuditSeverity, AuditSource, AuditTarget,
 };
-pub use client_audit::{
-    ClientAuditManager, ClientAuditReport, AuditResults, NodeProbeResult, AuditSummary,
-    AuditReportResponse, handle_audit_report,
+pub use audit_session::{AuditSession, AuditSessionManager, SessionValidationResult};
+pub use backend::{
+    create_mesh_backend_from_config, initialize_mesh_transports, MeshBackend, MeshBackendPool,
 };
-pub use audit_session::{
-    AuditSessionManager, AuditSession, SessionValidationResult,
-};
-pub use security_challenge::{
-    MeshSecurityChallengeManager, MeshSecurityChallenge, ChallengeType,
-    MeshAttackDetector, SuspiciousPattern, PatternType, AttackSeverity, AttackEvent,
-};
-pub use network_security::{
-    NetworkAccessControl, NetworkAccessRule, AccessAction, TrafficDirection, Protocol, AccessDecision,
-    ConnectionState, MeshDataEncryption,
-};
-pub use reputation::{
-    ReputationManager, ReputationConfig, PeerReputation, PeerReputationStats,
-    ThreatAcceptanceDecision, ReputationEventType,
-};
-pub use threat_intel::{
-    ThreatIntelligenceManager, ThreatIntelligenceConfig, ThreatIntelligenceStats,
-    ThreatIndicatorEntry,
-};
-pub use organization::{
-    Organization, OrganizationManager, TierKey, TierClaim,
-    TierKeyAnnounce, TierKeyRevoke, TierKeyQuery, TierKeyQueryResponse,
-    UnspentTierKeyAnnounce,
-    OrgKey, MemberCertificate,
-    sanitize_org_name, sanitize_mesh_name, sanitize_org_name_with_config, sanitize_mesh_name_with_config,
-    is_org_name_allowed, is_mesh_name_allowed,
-    NameValidationError,
-    GENESIS_ORG_ID, ADMIN_ORG_ID,
-};
+pub use cert::MeshCertManager;
 pub use cli::{MeshArgs, MeshCommand};
-pub use dht::{
-    DhtConfig, DhtError, DhtKey, DhtAccessControl,
-    NodeInfo,
-    RecordStoreManager, RecordStoreConfig, RecordStoreStats, DhtRecordEntry,
-    TierKeyStore, TierKeyStoreEntry,
-    MerkleTree, MerkleProof, MerkleNode, MerkleProofNode, ProofPosition,
+pub use client_audit::{
+    handle_audit_report, AuditReportResponse, AuditResults, AuditSummary, ClientAuditManager,
+    ClientAuditReport, NodeProbeResult,
 };
-pub use yara_rules::{
-    YaraRulesManager, YaraRuleSubmission, YaraRuleSubmissionStatus,
-    YaraRuleVersionInfo, YaraRuleSource, YaraRulesStats,
+pub use config::{
+    MeshConfig, MeshMlKemConfig, MeshNodeRole, MeshTransportPreference, MeshWireGuardConfig,
+    MeshWireGuardPeer, NodeIdentityConfig,
+};
+pub use dht::{
+    DhtAccessControl, DhtConfig, DhtError, DhtKey, DhtRecordEntry, MerkleNode, MerkleProof,
+    MerkleProofNode, MerkleTree, NodeInfo, ProofPosition, RecordStoreConfig, RecordStoreManager,
+    RecordStoreStats, TierKeyStore, TierKeyStoreEntry,
 };
 pub use kem::{KemSession, MlKem768, MlKem768PublicKey, MlKem768SecretKey, MlKem768SharedSecret};
-pub use session::{Session, SessionConfig, SessionError, SessionManager};
 pub use ml_kem_key_exchange::MlKemKeyExchangeService;
+pub use network_security::{
+    AccessAction, AccessDecision, ConnectionState, MeshDataEncryption, NetworkAccessControl,
+    NetworkAccessRule, Protocol, TrafficDirection,
+};
+pub use organization::{
+    is_mesh_name_allowed, is_org_name_allowed, sanitize_mesh_name, sanitize_mesh_name_with_config,
+    sanitize_org_name, sanitize_org_name_with_config, MemberCertificate, NameValidationError,
+    OrgKey, Organization, OrganizationManager, TierClaim, TierKey, TierKeyAnnounce, TierKeyQuery,
+    TierKeyQueryResponse, TierKeyRevoke, UnspentTierKeyAnnounce, ADMIN_ORG_ID, GENESIS_ORG_ID,
+};
+pub use passover_key_exchange::KeyExchangeService;
+pub use protocol::MeshMessage;
+pub use proxy::MeshProxy;
+pub use reputation::{
+    PeerReputation, PeerReputationStats, ReputationConfig, ReputationEventType, ReputationManager,
+    ThreatAcceptanceDecision,
+};
+pub use security::{
+    ConfigSecurityIssue, EncryptedConfig, SecureConfigError, SecureConfigManager,
+    SecureConfigValue, SecurityEvent, SecurityEventLogger, SecurityEventType, SecuritySeverity,
+};
+pub use security_challenge::{
+    AttackEvent, AttackSeverity, ChallengeType, MeshAttackDetector, MeshSecurityChallenge,
+    MeshSecurityChallengeManager, PatternType, SuspiciousPattern,
+};
+pub use session::{Session, SessionConfig, SessionError, SessionManager};
+pub use threat_intel::{
+    ThreatIndicatorEntry, ThreatIntelligenceConfig, ThreatIntelligenceManager,
+    ThreatIntelligenceStats,
+};
+pub use topology::{MeshTopology, NetworkPartitionState, PeerState};
+pub use transport::{MeshPeerConnection, MeshTransport};
+pub use transport_core::MeshTransportError as MeshTransportErrorV1;
+pub use transport_core::{
+    get_time_validation_error_count, validate_system_time, MeshTransportError,
+    MAX_REASONABLE_TIMESTAMP, MIN_REASONABLE_TIMESTAMP,
+};
+pub use transports::{
+    DatagramPacket, MeshDatagramHandler, MeshPeerConnectionTrait, MeshTransportManager,
+    MeshTransportTrait, MeshTransportType, QuicMeshTransport, WireGuardMeshTransport,
+};
+pub use yara_rules::{
+    YaraRuleSource, YaraRuleSubmission, YaraRuleSubmissionStatus, YaraRuleVersionInfo,
+    YaraRulesManager, YaraRulesStats,
+};

@@ -150,12 +150,12 @@ impl SynFloodProtector {
                 .current_window
                 .compare_exchange(current, now_secs, Ordering::SeqCst, Ordering::Relaxed)
                 .is_ok()
-            {
-                for counter in self.per_ip_counters.iter() {
-                    counter.store(0, Ordering::Relaxed);
-                }
-                self.global_counter.store(0, Ordering::Relaxed);
+        {
+            for counter in self.per_ip_counters.iter() {
+                counter.store(0, Ordering::Relaxed);
             }
+            self.global_counter.store(0, Ordering::Relaxed);
+        }
     }
 
     fn maybe_cleanup(&self) {
@@ -167,9 +167,9 @@ impl SynFloodProtector {
                 .last_cleanup
                 .compare_exchange(last, now_secs, Ordering::SeqCst, Ordering::Relaxed)
                 .is_ok()
-            {
-                self.cleanup_stale_half_opens();
-            }
+        {
+            self.cleanup_stale_half_opens();
+        }
     }
 
     fn cleanup_stale_half_opens(&self) {

@@ -1,18 +1,9 @@
-use std::{
-    collections::HashMap,
-    sync::Arc,
-    time::Instant,
-};
+use axum::{body::Body, extract::Request, http::StatusCode, response::Response};
 use parking_lot::RwLock;
-use axum::{
-    body::Body,
-    extract::Request,
-    http::StatusCode,
-    response::Response,
-};
-use tower::{Layer, Service, util::ServiceExt};
 use std::future::Future;
 use std::pin::Pin;
+use std::{collections::HashMap, sync::Arc, time::Instant};
+use tower::{util::ServiceExt, Layer, Service};
 
 const CLEANUP_INTERVAL_SECS: u64 = 60;
 
@@ -106,9 +97,7 @@ impl AdminRateLimiter {
 
         if now.duration_since(last).as_secs() >= CLEANUP_INTERVAL_SECS {
             let mut per_ip = self.inner.per_ip.write();
-            per_ip.retain(|_, entry| {
-                now.duration_since(entry.minute_window_start).as_secs() < 120
-            });
+            per_ip.retain(|_, entry| now.duration_since(entry.minute_window_start).as_secs() < 120);
             *self.inner.last_cleanup.write() = now;
         }
     }
@@ -197,16 +186,17 @@ where
         }
 
         let mut inner = self.inner.clone();
-        Box::pin(async move {
-            inner.ready().await?.call(request).await
-        })
+        Box::pin(async move { inner.ready().await?.call(request).await })
     }
 }
 
 fn extract_client_ip(request: &Request) -> String {
-    if let Some(remote_addr) = request.extensions().get::<axum::extract::ConnectInfo<std::net::SocketAddr>>() {
+    if let Some(remote_addr) = request
+        .extensions()
+        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+    {
         return remote_addr.ip().to_string();
     }
-    
+
     "127.0.0.1".to_string()
 }

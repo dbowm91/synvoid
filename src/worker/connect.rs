@@ -14,24 +14,16 @@ mod tests {
     #[test]
     fn test_connect_to_master_with_retry_invalid_path() {
         let socket_path = PathBuf::from("/nonexistent/path/socket.sock");
-        let result = connect_to_master_with_retry(
-            &socket_path,
-            1,
-            Duration::from_millis(10),
-            "test_worker",
-        );
+        let result =
+            connect_to_master_with_retry(&socket_path, 1, Duration::from_millis(10), "test_worker");
         assert!(result.is_err());
     }
 
     #[test]
     fn test_connect_retry_returns_error_after_max_attempts() {
         let socket_path = PathBuf::from("/tmp/nonexistent_master.sock");
-        let result = connect_to_master_with_retry(
-            &socket_path,
-            3,
-            Duration::from_millis(10),
-            "test_worker",
-        );
+        let result =
+            connect_to_master_with_retry(&socket_path, 3, Duration::from_millis(10), "test_worker");
         assert!(result.is_err());
     }
 
@@ -55,19 +47,17 @@ mod tests {
             1,
             Duration::from_millis(10),
             "test_worker_async",
-        ).await;
+        )
+        .await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn test_async_retry_exhaustion_message() {
         let socket_path = PathBuf::from("/tmp/nonexistent_async.sock");
-        let result = connect_to_master_async(
-            &socket_path,
-            2,
-            Duration::from_millis(10),
-            "async_worker",
-        ).await;
+        let result =
+            connect_to_master_async(&socket_path, 2, Duration::from_millis(10), "async_worker")
+                .await;
         assert!(result.is_err());
     }
 
@@ -82,8 +72,11 @@ mod tests {
             "timing_test_worker",
         );
         let elapsed = start.elapsed();
-        assert!(elapsed >= Duration::from_millis(100), 
-            "Expected at least 100ms for 3 retries with 50ms delay, got {:?}", elapsed);
+        assert!(
+            elapsed >= Duration::from_millis(100),
+            "Expected at least 100ms for 3 retries with 50ms delay, got {:?}",
+            elapsed
+        );
     }
 
     #[test]
@@ -97,21 +90,30 @@ mod tests {
             "single_attempt_worker",
         );
         let elapsed = start.elapsed();
-        assert!(elapsed < Duration::from_millis(50),
-            "Should not delay on single attempt, got {:?}", elapsed);
+        assert!(
+            elapsed < Duration::from_millis(50),
+            "Should not delay on single attempt, got {:?}",
+            elapsed
+        );
     }
 
     #[test]
     fn test_pathbuf_file_name_extraction() {
         let path = PathBuf::from("/var/run/master.sock");
-        let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("master");
+        let file_name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("master");
         assert_eq!(file_name, "master.sock");
     }
 
     #[test]
     fn test_empty_path_handling() {
         let path = PathBuf::from("");
-        let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("master");
+        let file_name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("master");
         assert_eq!(file_name, "master");
     }
 }

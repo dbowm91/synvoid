@@ -1,8 +1,6 @@
 use crate::mesh::transport::*;
 
-
 use crate::mesh::protocol::MeshMessage;
-
 
 impl MeshTransport {
     pub(crate) async fn handle_org_registration_request(
@@ -13,7 +11,11 @@ impl MeshTransport {
         requesting_node_id: &str,
         requesting_node_pubkey: &str,
     ) {
-        tracing::info!("Received org registration request: {} from node {}", org_name, requesting_node_id);
+        tracing::info!(
+            "Received org registration request: {} from node {}",
+            org_name,
+            requesting_node_id
+        );
 
         if self.config.role != crate::mesh::config::MeshNodeRole::Global {
             tracing::warn!("Received org registration request on non-global node");
@@ -21,31 +23,40 @@ impl MeshTransport {
         }
 
         let org_config = self.config.org_config();
-        let validated_name = match crate::mesh::sanitize_org_name_with_config(org_name, &org_config.bad_names) {
-            Ok(name) => name,
-            Err(e) => {
-                tracing::warn!("Org registration rejected: invalid name '{}': {}", org_name, e);
-                self.send_org_registration_response(
-                    from_peer,
-                    request_id,
-                    "",
-                    org_name,
-                    false,
-                    format!("Invalid org name: {}", e),
-                    None,
-                ).await;
-                return;
-            }
-        };
+        let validated_name =
+            match crate::mesh::sanitize_org_name_with_config(org_name, &org_config.bad_names) {
+                Ok(name) => name,
+                Err(e) => {
+                    tracing::warn!(
+                        "Org registration rejected: invalid name '{}': {}",
+                        org_name,
+                        e
+                    );
+                    self.send_org_registration_response(
+                        from_peer,
+                        request_id,
+                        "",
+                        org_name,
+                        false,
+                        format!("Invalid org name: {}", e),
+                        None,
+                    )
+                    .await;
+                    return;
+                }
+            };
 
         // Check for name uniqueness
         let name_exists = {
             let org_mgr = self.org_manager.read();
             org_mgr.org_name_exists(&validated_name)
         };
-        
+
         if name_exists {
-            tracing::warn!("Org registration rejected: name '{}' already exists", validated_name);
+            tracing::warn!(
+                "Org registration rejected: name '{}' already exists",
+                validated_name
+            );
             self.send_org_registration_response(
                 from_peer,
                 request_id,
@@ -54,19 +65,24 @@ impl MeshTransport {
                 false,
                 "Organization name already exists".to_string(),
                 None,
-            ).await;
+            )
+            .await;
             return;
         }
 
         if org_config.auto_approve {
-            tracing::info!("Auto-approving organization registration: {}", validated_name);
+            tracing::info!(
+                "Auto-approving organization registration: {}",
+                validated_name
+            );
             self.auto_approve_organization(
                 request_id,
                 &validated_name,
                 requesting_node_id,
                 requesting_node_pubkey,
                 from_peer,
-            ).await;
+            )
+            .await;
             return;
         }
 
@@ -80,7 +96,11 @@ impl MeshTransport {
         let mut org_mgr = self.org_manager.write();
         org_mgr.add_pending_request(pending);
 
-        tracing::warn!("Organization registration pending approval: {} - {}", validated_name, request_id);
+        tracing::warn!(
+            "Organization registration pending approval: {} - {}",
+            validated_name,
+            request_id
+        );
     }
 
     pub(crate) async fn auto_approve_organization(
@@ -92,9 +112,10 @@ impl MeshTransport {
         from_peer: &str,
     ) {
         let org_id = uuid::Uuid::new_v4().to_string();
-        
-        let org_key = crate::mesh::organization::OrgKey::generate(Some(requesting_node_id.to_string()));
-        
+
+        let org_key =
+            crate::mesh::organization::OrgKey::generate(Some(requesting_node_id.to_string()));
+
         let mut org = crate::mesh::organization::Organization::new(
             Some(org_id.clone()),
             Some(org_name.to_string()),
@@ -104,18 +125,18 @@ impl MeshTransport {
 
         let org_config = self.config.org_config();
         let mut initial_tier_key = None;
-        
+
         if org_config.default_tier_on_approve > 0 {
             use rand::RngCore;
             let mut key_bytes = vec![0u8; 32];
             rand::rng().fill_bytes(&mut key_bytes);
-            
+
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_secs();
             let valid_until = now + (365 * 24 * 60 * 60);
-            
+
             let tier_key = crate::mesh::organization::TierKey::new(
                 org_config.default_tier_on_approve,
                 key_bytes,
@@ -174,7 +195,8 @@ impl MeshTransport {
             true,
             "Auto-approved".to_string(),
             initial_tier_key.as_ref(),
-        ).await;
+        )
+        .await;
 
         tracing::info!("Auto-approved organization: {} ({})", org_name, org_id);
     }
@@ -194,11 +216,7 @@ impl MeshTransport {
             .unwrap()
             .as_secs();
 
-        let signature = if approved {
-            Vec::new()
-        } else {
-            Vec::new()
-        };
+        let signature = if approved { Vec::new() } else { Vec::new() };
 
         let response = crate::mesh::protocol::MeshMessage::OrgRegistrationResponse {
             request_id: request_id.into(),
@@ -212,7 +230,11 @@ impl MeshTransport {
         };
 
         if let Err(e) = self.send_message_to_peer(to_peer, &response).await {
-            tracing::warn!("Failed to send org registration response to {}: {}", to_peer, e);
+            tracing::warn!(
+                "Failed to send org registration response to {}: {}",
+                to_peer,
+                e
+            );
         }
     }
 
@@ -249,7 +271,11 @@ impl MeshTransport {
                 let tier_key_json = serde_json::to_vec(tier_key).unwrap_or_default();
                 let tier_key_dht = format!("tier_key:{}:{}", org_id, tier_key.tier);
                 if record_store.store_and_announce(tier_key_dht, tier_key_json, 86400 * 30) {
-                    tracing::info!("Stored initial tier key in DHT: {}/{}", org_id, tier_key.tier);
+                    tracing::info!(
+                        "Stored initial tier key in DHT: {}/{}",
+                        org_id,
+                        tier_key.tier
+                    );
                 }
             }
         }
@@ -260,7 +286,11 @@ impl MeshTransport {
         org_id: &str,
         tier_key: &crate::mesh::organization::TierKey,
     ) {
-        tracing::debug!("Received TierKeyAnnounce for org {} tier {}", org_id, tier_key.tier);
+        tracing::debug!(
+            "Received TierKeyAnnounce for org {} tier {}",
+            org_id,
+            tier_key.tier
+        );
 
         if let Some(ref record_store) = self.record_store {
             let tier_key_json = serde_json::to_vec(tier_key).unwrap_or_default();
@@ -270,16 +300,16 @@ impl MeshTransport {
             if record_store.store_and_announce(key, tier_key_json, ttl) {
                 tracing::info!("Stored tier key in DHT: {}/{}", org_id, tier_key.tier);
             } else {
-                tracing::warn!("Failed to store tier key in DHT: {}/{}", org_id, tier_key.tier);
+                tracing::warn!(
+                    "Failed to store tier key in DHT: {}/{}",
+                    org_id,
+                    tier_key.tier
+                );
             }
         }
     }
 
-    pub(crate) async fn handle_tier_key_revoke(
-        &self,
-        org_id: &str,
-        key_id: &str,
-    ) {
+    pub(crate) async fn handle_tier_key_revoke(&self, org_id: &str, key_id: &str) {
         tracing::info!("Received TierKeyRevoke for org {} key {}", org_id, key_id);
 
         let should_broadcast = {
@@ -289,7 +319,11 @@ impl MeshTransport {
             if result {
                 tracing::info!("Unbound tier key {} from org {}", key_id, org_id);
             }
-            result && self.config.role.contains(crate::mesh::config::MeshNodeRole::GLOBAL)
+            result
+                && self
+                    .config
+                    .role
+                    .contains(crate::mesh::config::MeshNodeRole::GLOBAL)
         };
 
         if should_broadcast {
@@ -308,7 +342,11 @@ impl MeshTransport {
         org_id: &str,
         tier_keys: &[crate::mesh::organization::TierKey],
     ) {
-        tracing::debug!("Received UnspentTierKeyAnnounce for org {} with {} keys", org_id, tier_keys.len());
+        tracing::debug!(
+            "Received UnspentTierKeyAnnounce for org {} with {} keys",
+            org_id,
+            tier_keys.len()
+        );
 
         if self.config.role != crate::mesh::config::MeshNodeRole::Global {
             tracing::debug!("Ignoring UnspentTierKeyAnnounce on non-global node");
@@ -318,9 +356,11 @@ impl MeshTransport {
         let unspent_key_ids: Vec<String> = {
             let org_manager = self.get_org_manager();
             let org_mgr = org_manager.read();
-            tier_keys.iter()
+            tier_keys
+                .iter()
                 .filter_map(|key| {
-                    org_mgr.get_organization(org_id)
+                    org_mgr
+                        .get_organization(org_id)
                         .and_then(|org| org.tier_keys.iter().find(|k| k.key_id == key.key_id))
                         .filter(|tier_key| tier_key.is_unspent)
                         .map(|_| key.key_id.clone())
@@ -356,7 +396,13 @@ impl MeshTransport {
             timestamp,
         };
 
-        let _result = self.broadcast_to_random_peers(message, 0.3, Some(crate::mesh::config::MeshNodeRole::Global)).await;
+        let _result = self
+            .broadcast_to_random_peers(
+                message,
+                0.3,
+                Some(crate::mesh::config::MeshNodeRole::Global),
+            )
+            .await;
         tracing::info!("Broadcast unspent tier keys for org {}", org_id);
         Ok(())
     }
@@ -370,8 +416,12 @@ impl MeshTransport {
         _org_id: Option<&str>,
         requesting_node_id: &str,
     ) {
-        tracing::info!("Received upstream registration request: {} from node {} for upstream {}", 
-            request_id, requesting_node_id, upstream_id);
+        tracing::info!(
+            "Received upstream registration request: {} from node {} for upstream {}",
+            request_id,
+            requesting_node_id,
+            upstream_id
+        );
 
         if self.config.role != crate::mesh::config::MeshNodeRole::Global {
             tracing::warn!("Received upstream registration request on non-global node");
@@ -392,7 +442,11 @@ impl MeshTransport {
             tracing::warn!("Failed to send upstream registration response: {}", e);
         }
 
-        tracing::info!("Approved upstream registration: {} from node {}", upstream_id, requesting_node_id);
+        tracing::info!(
+            "Approved upstream registration: {} from node {}",
+            upstream_id,
+            requesting_node_id
+        );
     }
 
     pub(crate) async fn handle_upstream_registration_response(
@@ -440,8 +494,12 @@ impl MeshTransport {
         invitation_token: &str,
         expires_at: u64,
     ) {
-        tracing::info!("Received org invitation request: {} -> {} for org {}", 
-            inviter_node_id, invited_node_id, org_id);
+        tracing::info!(
+            "Received org invitation request: {} -> {} for org {}",
+            inviter_node_id,
+            invited_node_id,
+            org_id
+        );
 
         let invitation = crate::mesh::organization::OrgInvitation::new(
             request_id.to_string(),
@@ -456,8 +514,11 @@ impl MeshTransport {
         let mut org_mgr = self.org_manager.write();
         org_mgr.add_invitation(invitation);
 
-        tracing::warn!("Organization invitation stored for node {} (expires at {})", 
-            invited_node_id, expires_at);
+        tracing::warn!(
+            "Organization invitation stored for node {} (expires at {})",
+            invited_node_id,
+            expires_at
+        );
     }
 
     pub(crate) async fn handle_org_invitation_accept(
@@ -469,11 +530,15 @@ impl MeshTransport {
         invitation_token: &str,
         proof_of_key: &str,
     ) {
-        tracing::info!("Received org invitation accept: {} for org {}", invited_node_id, org_id);
+        tracing::info!(
+            "Received org invitation accept: {} for org {}",
+            invited_node_id,
+            org_id
+        );
 
         let org_mgr = self.org_manager.read();
         let invitation = org_mgr.get_invitation(invited_node_id);
-        
+
         if let Some(inv) = invitation {
             if let Some(ref pubkey_hex) = inv.invited_node_pubkey {
                 if let Ok(pubkey_bytes) = hex::decode(pubkey_hex) {
@@ -488,14 +553,20 @@ impl MeshTransport {
                     if is_valid {
                         tracing::info!("Invitation proof verified for node {}", invited_node_id);
                     } else {
-                        tracing::warn!("Invitation proof verification failed for node {}", invited_node_id);
+                        tracing::warn!(
+                            "Invitation proof verification failed for node {}",
+                            invited_node_id
+                        );
                     }
                     return;
                 }
             }
         }
-        
-        tracing::warn!("Invitation not found or missing pubkey for node {}", invited_node_id);
+
+        tracing::warn!(
+            "Invitation not found or missing pubkey for node {}",
+            invited_node_id
+        );
     }
 
     pub(crate) async fn handle_org_member_announce(
@@ -505,8 +576,11 @@ impl MeshTransport {
         announced_by: &str,
         _joined_at: u64,
     ) {
-        tracing::info!("Received org member announce: {} joined org {} (announced by {})", 
-            member_node_id, org_id, announced_by);
+        tracing::info!(
+            "Received org member announce: {} joined org {} (announced by {})",
+            member_node_id,
+            org_id,
+            announced_by
+        );
     }
-
 }

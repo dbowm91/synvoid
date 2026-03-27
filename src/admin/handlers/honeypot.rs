@@ -1,12 +1,8 @@
-use axum::{
-    extract::State,
-    http::StatusCode,
-    Json,
-};
+use super::super::state::AdminState;
+use super::common::OptionalAuth;
+use axum::{extract::State, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use super::super::state::AdminState;
-use super::common::{OptionalAuth};
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct HoneypotStatusResponse {
@@ -35,18 +31,26 @@ pub async fn get_honeypot_status(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<HoneypotStatusResponse>, StatusCode> {
+    let (enabled, paused, pause_reason, active_ports) =
+        if let Some(ref hp_controller) = state.honeypot.port_honeypot_controller {
+            let status = hp_controller.get_status();
+            (
+                status.enabled,
+                status.paused,
+                status.pause_reason,
+                status.active_ports,
+            )
+        } else {
+            (false, false, None, vec![])
+        };
 
-    let (enabled, paused, pause_reason, active_ports) = if let Some(ref hp_controller) = state.honeypot.port_honeypot_controller {
-        let status = hp_controller.get_status();
-        (status.enabled, status.paused, status.pause_reason, status.active_ports)
-    } else {
-        (false, false, None, vec![])
-    };
-    
-    let total_connections = state.honeypot.port_honeypot_runner.as_ref()
+    let total_connections = state
+        .honeypot
+        .port_honeypot_runner
+        .as_ref()
         .map(|r| r.storage().get_connection_count().unwrap_or(0) as u64)
         .unwrap_or(0);
-    
+
     Ok(Json(HoneypotStatusResponse {
         enabled,
         paused,
@@ -61,10 +65,12 @@ pub async fn control_honeypot(
     _auth: OptionalAuth,
     Json(req): Json<HoneypotControlRequest>,
 ) -> Result<Json<HoneypotControlResponse>, StatusCode> {
-
-    let hp_controller = state.honeypot.port_honeypot_controller.as_ref()
+    let hp_controller = state
+        .honeypot
+        .port_honeypot_controller
+        .as_ref()
         .ok_or(StatusCode::NOT_FOUND)?;
-    
+
     let command = match req.command.as_str() {
         "enable" => crate::honeypot_port::HoneypotControlCommand::Enable,
         "disable" => crate::honeypot_port::HoneypotControlCommand::Disable,
@@ -73,21 +79,27 @@ pub async fn control_honeypot(
             duration_secs: req.duration_secs,
         },
         "resume" => crate::honeypot_port::HoneypotControlCommand::Resume,
-        _ => return Ok(Json(HoneypotControlResponse {
-            success: false,
-            message: format!("Unknown command: {}", req.command),
-            status: None,
-        })),
+        _ => {
+            return Ok(Json(HoneypotControlResponse {
+                success: false,
+                message: format!("Unknown command: {}", req.command),
+                status: None,
+            }))
+        }
     };
-    
-    hp_controller.handle_control_command(command)
+
+    hp_controller
+        .handle_control_command(command)
         .map_err(|_e| StatusCode::BAD_REQUEST)?;
-    
+
     let status = hp_controller.get_status();
-    let total_connections = state.honeypot.port_honeypot_runner.as_ref()
+    let total_connections = state
+        .honeypot
+        .port_honeypot_runner
+        .as_ref()
         .map(|r| r.storage().get_connection_count().unwrap_or(0) as u64)
         .unwrap_or(0);
-    
+
     Ok(Json(HoneypotControlResponse {
         success: true,
         message: format!("Command {} executed successfully", req.command),

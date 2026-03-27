@@ -1,20 +1,20 @@
-use std::collections::HashMap;
-use std::fs::File;
-use std::io::BufReader;
-use std::path::{PathBuf, Path};
-use std::sync::Arc;
+use metrics::counter;
+use notify::Watcher;
 use parking_lot::RwLock;
+use rustls::crypto::aws_lc_rs::default_provider;
 use rustls::pki_types::CertificateDer;
 use rustls::pki_types::PrivateKeyDer;
+use rustls::version::{TLS12, TLS13};
 use rustls::RootCertStore;
 use rustls::ServerConfig;
 use rustls::SupportedProtocolVersion;
-use rustls::version::{TLS13, TLS12};
-use rustls::crypto::aws_lc_rs::default_provider;
 use rustls_pki_types::pem::{self, PemObject};
+use std::collections::HashMap;
+use std::fs::File;
+use std::io::BufReader;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tokio::sync::broadcast;
-use notify::Watcher;
-use metrics::counter;
 
 use super::config::InternalTlsConfig;
 
@@ -66,12 +66,14 @@ impl CertResolver {
         }
 
         let key = load_private_key(key_path)?;
-        
+
         // Validate minimum key strength for security
         self.validate_key_strength(&key)?;
 
         let provider = default_provider();
-        let signing_key = provider.key_provider.load_private_key(key.clone_key())
+        let signing_key = provider
+            .key_provider
+            .load_private_key(key.clone_key())
             .map_err(|e| format!("Failed to load private key: {}", e))?;
 
         let ocsp_response = if self.config.ocsp_stapling_enabled {
@@ -82,7 +84,10 @@ impl CertResolver {
                         Some(resp)
                     }
                     Err(e) => {
-                        tracing::warn!("Failed to load OCSP response: {}, OCSP stapling disabled", e);
+                        tracing::warn!(
+                            "Failed to load OCSP response: {}, OCSP stapling disabled",
+                            e
+                        );
                         None
                     }
                 }
@@ -114,42 +119,57 @@ impl CertResolver {
         Ok(())
     }
 
-    fn validate_certified_key(&self, certified_key: &rustls::sign::CertifiedKey) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    fn validate_certified_key(
+        &self,
+        certified_key: &rustls::sign::CertifiedKey,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if certified_key.cert.is_empty() {
             return Err("Certificate chain is empty".into());
         }
-        
+
         let cert_der = &certified_key.cert[0];
         let (_, cert) = x509_parser::parse_x509_certificate(cert_der)
             .map_err(|e| format!("Failed to parse certificate: {:?}", e))?;
-        
+
         let now = std::time::SystemTime::now();
-        let not_before = std::time::SystemTime::from(cert.tbs_certificate.validity.not_before.to_datetime());
-        let not_after = std::time::SystemTime::from(cert.tbs_certificate.validity.not_after.to_datetime());
-        
+        let not_before =
+            std::time::SystemTime::from(cert.tbs_certificate.validity.not_before.to_datetime());
+        let not_after =
+            std::time::SystemTime::from(cert.tbs_certificate.validity.not_after.to_datetime());
+
         if now < not_before {
-            return Err(format!("Certificate is not yet valid (valid from: {:?})", not_before).into());
+            return Err(format!(
+                "Certificate is not yet valid (valid from: {:?})",
+                not_before
+            )
+            .into());
         }
-        
+
         if now > not_after {
             return Err(format!("Certificate has expired (expired at: {:?})", not_after).into());
         }
-        
+
         tracing::debug!(
             "Certificate validated: subject={:?}, valid_until={:?}",
             cert.tbs_certificate.subject,
             not_after
         );
-        
+
         Ok(())
     }
 
-    fn validate_key_strength(&self, _key: &PrivateKeyDer<'_>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    fn validate_key_strength(
+        &self,
+        _key: &PrivateKeyDer<'_>,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         tracing::debug!("Private key loaded and validated");
         Ok(())
     }
 
-    fn load_certs_from_dir(&self, dir: &PathBuf) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    fn load_certs_from_dir(
+        &self,
+        dir: &PathBuf,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if !dir.exists() {
             return Ok(());
         }
@@ -157,7 +177,7 @@ impl CertResolver {
         for entry in std::fs::read_dir(dir)? {
             let entry = entry?;
             let path = entry.path();
-            
+
             if path.extension().map(|e| e == "pem").unwrap_or(false) {
                 if let Some(stem) = path.file_stem() {
                     if let Some(domain) = stem.to_str() {
@@ -166,9 +186,14 @@ impl CertResolver {
                             if key_path.exists() {
                                 if let Ok(key) = load_private_key(&key_path) {
                                     let provider = default_provider();
-                                    if let Ok(signing_key) = provider.key_provider.load_private_key(key) {
-                                        let certified_key = rustls::sign::CertifiedKey::new(certs, signing_key);
-                                        self.certs.write().insert(domain.to_string(), Arc::new(certified_key));
+                                    if let Ok(signing_key) =
+                                        provider.key_provider.load_private_key(key)
+                                    {
+                                        let certified_key =
+                                            rustls::sign::CertifiedKey::new(certs, signing_key);
+                                        self.certs
+                                            .write()
+                                            .insert(domain.to_string(), Arc::new(certified_key));
                                         tracing::info!("Loaded certificate for domain: {}", domain);
                                     }
                                 }
@@ -182,7 +207,9 @@ impl CertResolver {
         Ok(())
     }
 
-    pub fn build_server_config(&self) -> Result<Arc<ServerConfig>, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn build_server_config(
+        &self,
+    ) -> Result<Arc<ServerConfig>, Box<dyn std::error::Error + Send + Sync>> {
         let provider = default_provider();
 
         let versions: &[&SupportedProtocolVersion] = if self.config.tls_1_3_only {
@@ -210,7 +237,7 @@ impl CertResolver {
                 if !ca_certs.is_empty() {
                     // For proper mTLS, use the CA certs to verify clients
                     let verifier = rustls::server::WebPkiClientVerifier::builder(
-                        std::sync::Arc::new(ca_certs)
+                        std::sync::Arc::new(ca_certs),
                     )
                     .build()
                     .map_err(|e| format!("Failed to build client cert verifier: {}", e))?;
@@ -243,28 +270,33 @@ impl CertResolver {
 }
 
 impl rustls::server::ResolvesServerCert for CertResolver {
-    fn resolve(&self, client_hello: rustls::server::ClientHello<'_>) -> Option<Arc<rustls::sign::CertifiedKey>> {
+    fn resolve(
+        &self,
+        client_hello: rustls::server::ClientHello<'_>,
+    ) -> Option<Arc<rustls::sign::CertifiedKey>> {
         if let Some(sni) = client_hello.server_name() {
             if let Some(cert) = self.certs.read().get(sni) {
                 return Some(cert.clone());
             }
         }
-        
+
         self.default_cert.read().as_ref().cloned()
     }
 }
 
-fn load_certs(path: &PathBuf) -> Result<Vec<CertificateDer<'static>>, Box<dyn std::error::Error + Send + Sync>> {
+fn load_certs(
+    path: &PathBuf,
+) -> Result<Vec<CertificateDer<'static>>, Box<dyn std::error::Error + Send + Sync>> {
     let file = File::open(path)?;
     let mut reader = BufReader::new(file);
-    
+
     let mut certs = Vec::new();
     while let Ok(Some((kind, der))) = pem::from_buf(&mut reader) {
         if kind == pem::SectionKind::Certificate {
             certs.push(CertificateDer::from(der));
         }
     }
-    
+
     if certs.is_empty() {
         return Err("No certificates found in file".into());
     }
@@ -272,7 +304,9 @@ fn load_certs(path: &PathBuf) -> Result<Vec<CertificateDer<'static>>, Box<dyn st
     Ok(certs)
 }
 
-fn load_private_key(path: &PathBuf) -> Result<PrivateKeyDer<'static>, Box<dyn std::error::Error + Send + Sync>> {
+fn load_private_key(
+    path: &PathBuf,
+) -> Result<PrivateKeyDer<'static>, Box<dyn std::error::Error + Send + Sync>> {
     let file = File::open(path)?;
     let mut reader = BufReader::new(file);
 
@@ -298,21 +332,23 @@ fn load_private_key(path: &PathBuf) -> Result<PrivateKeyDer<'static>, Box<dyn st
 fn load_ca_certs(path: &Path) -> Result<RootCertStore, Box<dyn std::error::Error + Send + Sync>> {
     let file = File::open(path)?;
     let mut reader = BufReader::new(file);
-    
+
     let mut certs = Vec::new();
     while let Ok(Some((kind, der))) = pem::from_buf(&mut reader) {
         if kind == pem::SectionKind::Certificate {
             certs.push(CertificateDer::from(der));
         }
     }
-    
+
     if certs.is_empty() {
         return Err("No CA certificates found in file".into());
     }
 
     let mut store = RootCertStore::empty();
     for cert in certs {
-        store.add(cert).map_err(|e| format!("Failed to add CA certificate: {}", e))?;
+        store
+            .add(cert)
+            .map_err(|e| format!("Failed to add CA certificate: {}", e))?;
     }
 
     Ok(store)
@@ -320,37 +356,45 @@ fn load_ca_certs(path: &Path) -> Result<RootCertStore, Box<dyn std::error::Error
 
 fn load_ocsp_response(path: &Path) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
     const MAX_OCSP_SIZE: usize = 256 * 1024; // 256KB max
-    
+
     let ocsp_data = std::fs::read(path)?;
-    
+
     if ocsp_data.is_empty() {
         return Err("OCSP response file is empty".into());
     }
-    
+
     if ocsp_data.len() > MAX_OCSP_SIZE {
-        return Err(format!("OCSP response exceeds maximum size of {} bytes", MAX_OCSP_SIZE).into());
+        return Err(format!(
+            "OCSP response exceeds maximum size of {} bytes",
+            MAX_OCSP_SIZE
+        )
+        .into());
     }
-    
+
     tracing::debug!("Loaded OCSP response: {} bytes", ocsp_data.len());
-    
+
     Ok(ocsp_data)
 }
 
-pub fn watch_for_cert_changes(resolver: Arc<CertResolver>, watch_dir: PathBuf) -> tokio::task::JoinHandle<()> {
+pub fn watch_for_cert_changes(
+    resolver: Arc<CertResolver>,
+    watch_dir: PathBuf,
+) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let (tx, mut rx) = tokio::sync::mpsc::channel::<()>(16);
-        
-        let mut watcher = match notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
-            if res.is_ok() {
-                let _ = tx.blocking_send(());
-            }
-        }) {
-            Ok(w) => w,
-            Err(e) => {
-                tracing::error!("Failed to create file watcher: {}", e);
-                return;
-            }
-        };
+
+        let mut watcher =
+            match notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
+                if res.is_ok() {
+                    let _ = tx.blocking_send(());
+                }
+            }) {
+                Ok(w) => w,
+                Err(e) => {
+                    tracing::error!("Failed to create file watcher: {}", e);
+                    return;
+                }
+            };
 
         if let Err(e) = watcher.watch(watch_dir.as_path(), notify::RecursiveMode::Recursive) {
             tracing::error!("Failed to watch certificate directory: {}", e);

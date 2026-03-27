@@ -4,17 +4,17 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use dashmap::DashMap;
+use metrics::{counter, gauge};
+use quinn::{Connection, Endpoint, IdleTimeout, RecvStream, SendStream, TransportConfig, VarInt};
 use tokio::sync::{broadcast, mpsc, Mutex};
-use metrics::{gauge, counter};
-use quinn::{Endpoint, Connection, RecvStream, SendStream, TransportConfig, VarInt, IdleTimeout};
 
-use crate::config::TunnelQuicConfig;
+use super::health::{HealthCheckConfig, QuicHealthMonitor};
+use super::messages::{DatagramCapabilities, DatagramMessage};
+use super::registry::{TunnelSessionInfo, QUIC_TUNNEL_REGISTRY};
 use super::tls::QuicTlsConfig;
-use super::registry::{QUIC_TUNNEL_REGISTRY, TunnelSessionInfo};
-use super::messages::{DatagramMessage, DatagramCapabilities};
-use super::ConnectionQuality;
-use super::health::{QuicHealthMonitor, HealthCheckConfig};
 use super::validation::{validate_max_message_size, DEFAULT_MESSAGE_SIZE};
+use super::ConnectionQuality;
+use crate::config::TunnelQuicConfig;
 
 const MAX_RETRIES: u32 = 3;
 const RETRY_DELAY_MS: u64 = 1000;
@@ -62,11 +62,11 @@ impl QuicRuntime {
     pub fn new(config: TunnelQuicConfig) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let (shutdown_tx, _) = broadcast::channel(1);
         let mut tls_config = QuicTlsConfig::from_config(&config);
-        
+
         tls_config.ensure_certs()?;
 
-        let max_message_size = validate_max_message_size(config.max_message_size)
-            .unwrap_or(DEFAULT_MESSAGE_SIZE);
+        let max_message_size =
+            validate_max_message_size(config.max_message_size).unwrap_or(DEFAULT_MESSAGE_SIZE);
         let datagram_enabled = true;
 
         tracing::info!(
@@ -132,29 +132,29 @@ impl QuicRuntime {
 
     fn build_transport_config(&self) -> Arc<TransportConfig> {
         let mut transport = TransportConfig::default();
-        
-        let max_streams = VarInt::try_from(self.config.max_concurrent_streams)
-            .unwrap_or(VarInt::from(100u32));
-        
+
+        let max_streams =
+            VarInt::try_from(self.config.max_concurrent_streams).unwrap_or(VarInt::from(100u32));
+
         if self.config.high_throughput_mode {
             transport
                 .max_concurrent_bidi_streams(max_streams)
                 .max_concurrent_uni_streams(max_streams);
-            
-            let stream_window = VarInt::try_from(self.config.stream_receive_window)
-                .unwrap_or(VarInt::MAX);
-            let conn_window = VarInt::try_from(self.config.connection_receive_window)
-                .unwrap_or(VarInt::MAX);
-            
+
+            let stream_window =
+                VarInt::try_from(self.config.stream_receive_window).unwrap_or(VarInt::MAX);
+            let conn_window =
+                VarInt::try_from(self.config.connection_receive_window).unwrap_or(VarInt::MAX);
+
             transport
                 .stream_receive_window(stream_window)
                 .datagram_receive_buffer_size(Some(self.config.udp_max_datagram_size * 1024))
                 .receive_window(conn_window);
-            
+
             // NOTE: congestion_control and initial_congestion_window cannot be configured via
             // Quinn's public API (as of quinn 0.11). Quinn defaults to BBR which is suitable
             // for high-throughput scenarios. Tracking: https://github.com/quinn-rs/quinn/issues
-            
+
             tracing::info!(
                 "QUIC high-throughput mode enabled: streams={}, stream_window={}MB, conn_window={}MB, cc={}",
                 self.config.max_concurrent_streams,
@@ -165,13 +165,13 @@ impl QuicRuntime {
         } else {
             transport.max_concurrent_bidi_streams(max_streams);
         }
-        
+
         let idle_timeout_varint = VarInt::try_from(self.max_idle_timeout.as_millis() as u64)
             .unwrap_or_else(|_| VarInt::from(300_000u32));
         let idle_timeout = IdleTimeout::try_from(idle_timeout_varint)
             .unwrap_or_else(|_| IdleTimeout::from(VarInt::from(300_000u32)));
         transport.max_idle_timeout(Some(idle_timeout));
-        
+
         Arc::new(transport)
     }
 
@@ -179,7 +179,7 @@ impl QuicRuntime {
         &self,
     ) -> Result<mpsc::Receiver<IncomingConnection>, Box<dyn std::error::Error + Send + Sync>> {
         let (tx, rx) = mpsc::channel(32);
-        
+
         if !self.config.server.enabled {
             tracing::info!("QUIC tunnel server disabled");
             return Ok(rx);
@@ -189,9 +189,11 @@ impl QuicRuntime {
             .parse()
             .map_err(|e| format!("Invalid bind address: {}", e))?;
 
-        let mut server_config = self.tls_config.build_server_config()
+        let mut server_config = self
+            .tls_config
+            .build_server_config()
             .map_err(|e| format!("Failed to build server config: {}", e))?;
-        
+
         let transport_config = self.build_transport_config();
         server_config.transport = transport_config;
 
@@ -212,15 +214,27 @@ impl QuicRuntime {
         let shutdown_rx = self.shutdown_tx.subscribe();
         let max_message_size = self.max_message_size;
         let health_monitor = self.health_monitor.clone();
-        
+
         let peer_config = if self.config.client.enabled {
-            Some(Arc::new(std::sync::RwLock::new(self.config.client.peers.clone())))
+            Some(Arc::new(std::sync::RwLock::new(
+                self.config.client.peers.clone(),
+            )))
         } else {
             None
         };
 
         tokio::spawn(async move {
-            Self::accept_loop(endpoint, tx, sessions, connections, shutdown_rx, max_message_size, peer_config, health_monitor).await;
+            Self::accept_loop(
+                endpoint,
+                tx,
+                sessions,
+                connections,
+                shutdown_rx,
+                max_message_size,
+                peer_config,
+                health_monitor,
+            )
+            .await;
         });
 
         Ok(rx)
@@ -233,7 +247,9 @@ impl QuicRuntime {
         _connections: Arc<DashMap<String, Connection>>,
         mut shutdown_rx: broadcast::Receiver<()>,
         _max_message_size: usize,
-        _peer_config: Option<Arc<std::sync::RwLock<HashMap<String, crate::config::TunnelQuicPeerConfig>>>>,
+        _peer_config: Option<
+            Arc<std::sync::RwLock<HashMap<String, crate::config::TunnelQuicPeerConfig>>>,
+        >,
         health_monitor: Option<Arc<QuicHealthMonitor>>,
     ) {
         loop {
@@ -242,14 +258,14 @@ impl QuicRuntime {
                     match incoming {
                         Some(incoming_conn) => {
                             let remote_addr = incoming_conn.remote_address();
-                            
+
                             match incoming_conn.await {
                                 Ok(connection) => {
                                     let incoming = IncomingConnection {
                                         remote_addr,
                                         connection: connection.clone(),
                                     };
-                                    
+
                                     if tx.send(incoming).await.is_err() {
                                         tracing::debug!("QUIC connection receiver dropped");
                                         break;
@@ -258,7 +274,7 @@ impl QuicRuntime {
                                     if let Some(ref monitor) = health_monitor {
                                         let conn_id = connection.stable_id().to_string();
                                         monitor.register_connection(conn_id.clone(), None);
-                                        
+
                                         let monitor_clone = monitor.clone();
                                         tokio::spawn(async move {
                                             let _stats = connection.stats();
@@ -269,7 +285,7 @@ impl QuicRuntime {
                                             );
                                         });
                                     }
-                                    
+
                                     counter!("maluwaf.tunnel.quic.server.connections").increment(1);
                                 }
                                 Err(e) => {
@@ -303,35 +319,32 @@ impl QuicRuntime {
                 ep.clone()
             } else {
                 let transport_config = self.build_transport_config();
-                let client_config = self.tls_config.build_client_config_with_transport(
-                    Some(server_name),
-                    Some(transport_config)
-                )
+                let client_config = self
+                    .tls_config
+                    .build_client_config_with_transport(Some(server_name), Some(transport_config))
                     .map_err(|e| format!("Failed to build client config: {}", e))?;
-                
+
                 let bind_addr: SocketAddr = "0.0.0.0:0".parse()?;
                 let mut ep = Endpoint::client(bind_addr)
                     .map_err(|e| format!("Failed to create client endpoint: {}", e))?;
-                
+
                 ep.set_default_client_config(client_config);
-                
+
                 let _ = endpoint_guard.insert(ep.clone());
                 ep
             }
         };
 
         let connect_timeout = self.connect_timeout;
-        
-        let connecting = endpoint.connect(addr, server_name)
+
+        let connecting = endpoint
+            .connect(addr, server_name)
             .map_err(|e| format!("Failed to initiate connection: {}", e))?;
-        
-        let connection = tokio::time::timeout(
-            connect_timeout,
-            connecting
-        )
-        .await
-        .map_err(|_| format!("Connection timed out after {:?}", connect_timeout))?
-        .map_err(|e| format!("Connection failed: {}", e))?;
+
+        let connection = tokio::time::timeout(connect_timeout, connecting)
+            .await
+            .map_err(|_| format!("Connection timed out after {:?}", connect_timeout))?
+            .map_err(|e| format!("Connection failed: {}", e))?;
 
         let conn_id = connection.stable_id().to_string();
         let session_id = uuid::Uuid::new_v4().to_string();
@@ -358,8 +371,12 @@ impl QuicRuntime {
         }
 
         counter!("maluwaf.tunnel.quic.client.connections").increment(1);
-        tracing::info!("QUIC client connected to {} (session: {}, datagrams: {})", 
-            addr, session_id, datagram_caps.supported);
+        tracing::info!(
+            "QUIC client connected to {} (session: {}, datagrams: {})",
+            addr,
+            session_id,
+            datagram_caps.supported
+        );
 
         Ok(quic_conn)
     }
@@ -374,23 +391,30 @@ impl QuicRuntime {
         peer_addr: &str,
         server_name: &str,
     ) -> Result<QuicConnection, Box<dyn std::error::Error + Send + Sync>> {
-        let addr: SocketAddr = peer_addr.parse()
+        let addr: SocketAddr = peer_addr
+            .parse()
             .map_err(|e| format!("Invalid peer address: {}", e))?;
 
         let mut last_error = None;
-        
+
         for attempt in 0..MAX_RETRIES {
             match self.connect(addr, server_name).await {
                 Ok(conn) => {
                     if let Some(ref monitor) = self.health_monitor {
-                        monitor.record_health_check_success(&conn.session_id, Duration::from_millis(0));
+                        monitor.record_health_check_success(
+                            &conn.session_id,
+                            Duration::from_millis(0),
+                        );
                     }
                     return Ok(conn);
                 }
                 Err(e) => {
                     last_error = Some(e);
                     if attempt < MAX_RETRIES - 1 {
-                        tracing::warn!("QUIC connection attempt {} failed, retrying...", attempt + 1);
+                        tracing::warn!(
+                            "QUIC connection attempt {} failed, retrying...",
+                            attempt + 1
+                        );
                         tokio::time::sleep(Duration::from_millis(RETRY_DELAY_MS)).await;
                     }
                 }
@@ -403,7 +427,11 @@ impl QuicRuntime {
     pub fn bind_address(&self) -> SocketAddr {
         format!("{}:{}", self.config.bind_address, self.config.port)
             .parse()
-            .unwrap_or_else(|_| "0.0.0.0:51821".parse().expect("valid socket address literal"))
+            .unwrap_or_else(|_| {
+                "0.0.0.0:51821"
+                    .parse()
+                    .expect("valid socket address literal")
+            })
     }
 
     pub async fn local_addr(&self) -> Option<SocketAddr> {
@@ -478,30 +506,40 @@ impl QuicRuntime {
     pub async fn add_session(&self, connection: QuicConnection) {
         let session_id = connection.session_id.clone();
         self.sessions.insert(session_id.clone(), connection.clone());
-        
-        QUIC_TUNNEL_REGISTRY.register(TunnelSessionInfo {
-            session_id: connection.session_id.clone(),
-            client_id: connection.client_id.clone(),
-            peer_id: connection.peer_id.clone(),
-            remote_addr: connection.remote_addr.to_string(),
-            mappings: connection.mappings.clone(),
-        }).await;
-        
+
+        QUIC_TUNNEL_REGISTRY
+            .register(TunnelSessionInfo {
+                session_id: connection.session_id.clone(),
+                client_id: connection.client_id.clone(),
+                peer_id: connection.peer_id.clone(),
+                remote_addr: connection.remote_addr.to_string(),
+                mappings: connection.mappings.clone(),
+            })
+            .await;
+
         gauge!("maluwaf.tunnel.quic.sessions").set(self.sessions.len() as f64);
-        tracing::debug!("QUIC session added: {} (total: {})", session_id, self.sessions.len());
+        tracing::debug!(
+            "QUIC session added: {} (total: {})",
+            session_id,
+            self.sessions.len()
+        );
     }
 
     pub async fn remove_session(&self, session_id: &str) {
         self.sessions.remove(session_id);
-        
+
         QUIC_TUNNEL_REGISTRY.unregister(session_id).await;
 
         if let Some(ref monitor) = self.health_monitor {
             monitor.unregister_connection(session_id);
         }
-        
+
         gauge!("maluwaf.tunnel.quic.sessions").set(self.sessions.len() as f64);
-        tracing::debug!("QUIC session removed: {} (remaining: {})", session_id, self.sessions.len());
+        tracing::debug!(
+            "QUIC session removed: {} (remaining: {})",
+            session_id,
+            self.sessions.len()
+        );
     }
 
     pub fn get_session(&self, session_id: &str) -> Option<QuicConnection> {
@@ -509,11 +547,17 @@ impl QuicRuntime {
     }
 
     pub fn get_session_by_client_id(&self, client_id: &str) -> Option<QuicConnection> {
-        self.sessions.iter().find(|s| s.client_id == client_id).map(|s| s.clone())
+        self.sessions
+            .iter()
+            .find(|s| s.client_id == client_id)
+            .map(|s| s.clone())
     }
 
     pub fn get_session_by_peer(&self, peer_id: &str) -> Option<QuicConnection> {
-        self.sessions.iter().find(|s| s.peer_id.as_deref() == Some(peer_id)).map(|s| s.clone())
+        self.sessions
+            .iter()
+            .find(|s| s.peer_id.as_deref() == Some(peer_id))
+            .map(|s| s.clone())
     }
 
     pub fn list_sessions(&self) -> Vec<QuicConnection> {
@@ -536,7 +580,7 @@ impl QuicRuntime {
 
     pub fn is_ip_whitelisted(&self, ip: &SocketAddr) -> bool {
         let ip_str = ip.ip().to_string();
-        
+
         if self.config.whitelist.is_empty() {
             return true;
         }
@@ -555,13 +599,19 @@ impl QuicRuntime {
         session_id: &str,
         _identifier: &str,
     ) -> Result<(SendStream, RecvStream), Box<dyn std::error::Error + Send + Sync>> {
-        let session = self.sessions.get(session_id)
+        let session = self
+            .sessions
+            .get(session_id)
             .ok_or_else(|| format!("Session not found: {}", session_id))?;
-        
-        let connection = session.connection.as_ref()
+
+        let connection = session
+            .connection
+            .as_ref()
             .ok_or_else(|| "No active connection for session".to_string())?;
 
-        let (send, recv) = connection.open_bi().await
+        let (send, recv) = connection
+            .open_bi()
+            .await
             .map_err(|e| format!("Failed to open bidirectional stream: {}", e))?;
 
         counter!("maluwaf.tunnel.quic.streams.opened").increment(1);
@@ -573,14 +623,18 @@ impl QuicRuntime {
         peer_id: &str,
         identifier: &str,
     ) -> Result<(SendStream, RecvStream), Box<dyn std::error::Error + Send + Sync>> {
-        let session = self.get_session_by_peer(peer_id)
+        let session = self
+            .get_session_by_peer(peer_id)
             .ok_or_else(|| format!("No session found for peer: {}", peer_id))?;
 
-        self.open_tunnel_stream(&session.session_id, identifier).await
+        self.open_tunnel_stream(&session.session_id, identifier)
+            .await
     }
 
     pub fn get_connection(&self, session_id: &str) -> Option<Connection> {
-        self.sessions.get(session_id).and_then(|s| s.connection.clone())
+        self.sessions
+            .get(session_id)
+            .and_then(|s| s.connection.clone())
     }
 
     pub async fn close_session(&self, session_id: &str) {
@@ -597,10 +651,14 @@ impl QuicRuntime {
         session_id: &str,
         data: Vec<u8>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let session = self.sessions.get(session_id)
+        let session = self
+            .sessions
+            .get(session_id)
             .ok_or_else(|| format!("Session not found: {}", session_id))?;
-        
-        let connection = session.connection.as_ref()
+
+        let connection = session
+            .connection
+            .as_ref()
             .ok_or_else(|| "No active connection for session".to_string())?;
 
         if !session.datagram_capabilities.supported {
@@ -612,14 +670,16 @@ impl QuicRuntime {
                 "Datagram too large: {} > {}",
                 data.len(),
                 session.datagram_capabilities.max_size
-            ).into());
+            )
+            .into());
         }
 
-        connection.send_datagram(data.clone().into())
+        connection
+            .send_datagram(data.clone().into())
             .map_err(|e| format!("Failed to send datagram: {}", e))?;
 
         counter!("maluwaf.tunnel.quic.datagrams.sent").increment(1);
-        
+
         if let Some(ref monitor) = self.health_monitor {
             monitor.record_packet_stats(session_id, 1, 0);
         }
@@ -632,30 +692,32 @@ impl QuicRuntime {
         session_id: &str,
         timeout: Duration,
     ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
-        let session = self.sessions.get(session_id)
+        let session = self
+            .sessions
+            .get(session_id)
             .ok_or_else(|| format!("Session not found: {}", session_id))?;
-        
-        let connection = session.connection.as_ref()
+
+        let connection = session
+            .connection
+            .as_ref()
             .ok_or_else(|| "No active connection for session".to_string())?;
 
         if !session.datagram_capabilities.supported {
             return Err("Datagrams not supported for this connection".into());
         }
 
-        let result = tokio::time::timeout(
-            timeout,
-            async {
-                loop {
-                    match connection.read_datagram().await {
-                        Ok(data) => return Ok(data.to_vec()),
-                        Err(e) => {
-                            tracing::trace!("Datagram read error: {}", e);
-                            tokio::time::sleep(Duration::from_millis(10)).await;
-                        }
+        let result = tokio::time::timeout(timeout, async {
+            loop {
+                match connection.read_datagram().await {
+                    Ok(data) => return Ok(data.to_vec()),
+                    Err(e) => {
+                        tracing::trace!("Datagram read error: {}", e);
+                        tokio::time::sleep(Duration::from_millis(10)).await;
                     }
                 }
             }
-        ).await;
+        })
+        .await;
 
         match result {
             Ok(data) => {
@@ -671,17 +733,25 @@ impl QuicRuntime {
         session_id: &str,
         msg: DatagramMessage,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let encoded = msg.encode()
+        let encoded = msg
+            .encode()
             .map_err(|e| format!("Failed to encode datagram message: {}", e))?;
         self.send_datagram(session_id, encoded)
     }
 
     pub fn get_connection_quality(&self, session_id: &str) -> Option<ConnectionQuality> {
-        self.health_monitor.as_ref()?.get_connection_quality(session_id)
+        self.health_monitor
+            .as_ref()?
+            .get_connection_quality(session_id)
     }
 
-    pub fn get_connection_health(&self, session_id: &str) -> Option<super::health::ConnectionHealth> {
-        self.health_monitor.as_ref()?.get_connection_health(session_id)
+    pub fn get_connection_health(
+        &self,
+        session_id: &str,
+    ) -> Option<super::health::ConnectionHealth> {
+        self.health_monitor
+            .as_ref()?
+            .get_connection_health(session_id)
     }
 }
 
@@ -690,11 +760,16 @@ impl QuicConnection {
         self.connection.as_ref()
     }
 
-    pub async fn open_stream(&self) -> Result<(SendStream, RecvStream), Box<dyn std::error::Error + Send + Sync>> {
-        let conn = self.connection.as_ref()
+    pub async fn open_stream(
+        &self,
+    ) -> Result<(SendStream, RecvStream), Box<dyn std::error::Error + Send + Sync>> {
+        let conn = self
+            .connection
+            .as_ref()
             .ok_or_else(|| "No active connection".to_string())?;
-        
-        conn.open_bi().await
+
+        conn.open_bi()
+            .await
             .map_err(|e| format!("Failed to open stream: {}", e).into())
     }
 
@@ -706,8 +781,13 @@ impl QuicConnection {
         self.datagram_capabilities.max_size
     }
 
-    pub fn send_datagram(&self, data: Vec<u8>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let conn = self.connection.as_ref()
+    pub fn send_datagram(
+        &self,
+        data: Vec<u8>,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let conn = self
+            .connection
+            .as_ref()
             .ok_or_else(|| "No active connection".to_string())?;
 
         if !self.datagram_capabilities.supported {
@@ -719,7 +799,8 @@ impl QuicConnection {
                 "Datagram too large: {} > {}",
                 data.len(),
                 self.datagram_capabilities.max_size
-            ).into());
+            )
+            .into());
         }
 
         conn.send_datagram(data.into())

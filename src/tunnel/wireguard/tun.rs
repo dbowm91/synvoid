@@ -88,7 +88,7 @@ impl TunPacket {
         if self.data.len() < 4 {
             return None;
         }
-        
+
         let version = (self.data[0] >> 4) & 0x0F;
         match version {
             4 => Some(TunProtocol::IPv4),
@@ -101,16 +101,11 @@ impl TunPacket {
         if self.data.len() < 20 {
             return None;
         }
-        
+
         let version = (self.data[0] >> 4) & 0x0F;
         match version {
             4 => {
-                let octets = [
-                    self.data[12],
-                    self.data[13],
-                    self.data[14],
-                    self.data[15],
-                ];
+                let octets = [self.data[12], self.data[13], self.data[14], self.data[15]];
                 Some(IpAddr::V4(Ipv4Addr::from(octets)))
             }
             6 if self.data.len() >= 40 => {
@@ -126,16 +121,11 @@ impl TunPacket {
         if self.data.len() < 20 {
             return None;
         }
-        
+
         let version = (self.data[0] >> 4) & 0x0F;
         match version {
             4 => {
-                let octets = [
-                    self.data[16],
-                    self.data[17],
-                    self.data[18],
-                    self.data[19],
-                ];
+                let octets = [self.data[16], self.data[17], self.data[18], self.data[19]];
                 Some(IpAddr::V4(Ipv4Addr::from(octets)))
             }
             6 if self.data.len() >= 40 => {
@@ -239,7 +229,10 @@ mod platform {
 }
 
 #[cfg(target_os = "linux")]
-pub use platform::{AsyncTunDevice, LinuxTunDevice, set_interface_up, set_interface_address, set_interface_mtu, add_route, delete_route, delete_interface};
+pub use platform::{
+    add_route, delete_interface, delete_route, set_interface_address, set_interface_mtu,
+    set_interface_up, AsyncTunDevice, LinuxTunDevice,
+};
 
 #[cfg(target_os = "linux")]
 pub use {TunReader, TunWriter};
@@ -300,9 +293,8 @@ mod bsd_platform {
             req.name[..copy_len].copy_from_slice(&name_bytes[..copy_len]);
 
             // SAFETY: ioctl is called with a valid fd and request; we check result.
-            let result = unsafe {
-                libc::ioctl(fd, TUNSETIFF as _, &mut req as *mut _ as *mut libc::c_void)
-            };
+            let result =
+                unsafe { libc::ioctl(fd, TUNSETIFF as _, &mut req as *mut _ as *mut libc::c_void) };
 
             if result < 0 {
                 // SAFETY: close is called on a valid fd when ioctl fails.
@@ -353,9 +345,8 @@ mod bsd_platform {
             let fd = self.fd;
             tokio::task::spawn_blocking(move || {
                 // SAFETY: read is called with a valid fd and buffer; we check result.
-                let result = unsafe {
-                    libc::read(fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len())
-                };
+                let result =
+                    unsafe { libc::read(fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
                 if result < 0 {
                     Err(io::Error::last_os_error())
                 } else {
@@ -371,9 +362,8 @@ mod bsd_platform {
             let data = data.to_vec();
             tokio::task::spawn_blocking(move || {
                 // SAFETY: write is called with a valid fd and data pointer; we check result.
-                let result = unsafe {
-                    libc::write(fd, data.as_ptr() as *const libc::c_void, data.len())
-                };
+                let result =
+                    unsafe { libc::write(fd, data.as_ptr() as *const libc::c_void, data.len()) };
                 if result < 0 {
                     Err(io::Error::last_os_error())
                 } else {
@@ -397,7 +387,10 @@ mod bsd_platform {
         if !output.status.success() {
             return Err(io::Error::new(
                 io::ErrorKind::Other,
-                format!("ifconfig up failed: {}", String::from_utf8_lossy(&output.stderr)),
+                format!(
+                    "ifconfig up failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ),
             ));
         }
         Ok(())
@@ -416,7 +409,10 @@ mod bsd_platform {
         if !output.status.success() {
             return Err(io::Error::new(
                 io::ErrorKind::Other,
-                format!("ifconfig address failed: {}", String::from_utf8_lossy(&output.stderr)),
+                format!(
+                    "ifconfig address failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ),
             ));
         }
         Ok(())
@@ -430,7 +426,10 @@ mod bsd_platform {
         if !output.status.success() {
             return Err(io::Error::new(
                 io::ErrorKind::Other,
-                format!("ifconfig mtu failed: {}", String::from_utf8_lossy(&output.stderr)),
+                format!(
+                    "ifconfig mtu failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ),
             ));
         }
         Ok(())
@@ -444,7 +443,10 @@ mod bsd_platform {
         if !output.status.success() {
             return Err(io::Error::new(
                 io::ErrorKind::Other,
-                format!("route add failed: {}", String::from_utf8_lossy(&output.stderr)),
+                format!(
+                    "route add failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ),
             ));
         }
         Ok(())
@@ -463,22 +465,30 @@ mod bsd_platform {
 }
 
 #[cfg(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"))]
-pub use bsd_platform::{AsyncTunDevice, BsdTunDevice, set_interface_up, set_interface_address, set_interface_mtu, add_route, delete_route, delete_interface};
+pub use bsd_platform::{
+    add_route, delete_interface, delete_route, set_interface_address, set_interface_mtu,
+    set_interface_up, AsyncTunDevice, BsdTunDevice,
+};
 
 #[cfg(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"))]
 pub use {TunReader, TunWriter};
 
-#[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd")))]
+#[cfg(not(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "openbsd",
+    target_os = "netbsd"
+)))]
 pub struct AsyncTunDevice;
 
 impl TunInterface {
     #[cfg(target_os = "linux")]
     pub fn create(config: TunConfig) -> Result<(Self, AsyncTunDevice), io::Error> {
         let (shutdown_tx, _) = broadcast::channel(1);
-        
+
         let device = LinuxTunDevice::create(&config.name)?;
         let async_device = device.into_async()?;
-        
+
         let interface = Self {
             name: config.name.clone(),
             config,
@@ -486,17 +496,17 @@ impl TunInterface {
         };
 
         tracing::info!("Created TUN interface: {}", interface.name);
-        
+
         Ok((interface, async_device))
     }
 
     #[cfg(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"))]
     pub fn create(config: TunConfig) -> Result<(Self, AsyncTunDevice), io::Error> {
         let (shutdown_tx, _) = broadcast::channel(1);
-        
+
         let device = BsdTunDevice::create(&config.name)?;
         let async_device = device.into_async()?;
-        
+
         let interface = Self {
             name: config.name.clone(),
             config,
@@ -504,11 +514,16 @@ impl TunInterface {
         };
 
         tracing::info!("Created BSD TUN interface: {}", interface.name);
-        
+
         Ok((interface, async_device))
     }
 
-    #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd")))]
+    #[cfg(not(any(
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "netbsd"
+    )))]
     pub fn create(_config: TunConfig) -> Result<(Self, ()), io::Error> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
@@ -524,12 +539,22 @@ impl TunInterface {
         &self.config
     }
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"))]
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "netbsd"
+    ))]
     pub fn add_route(&self, destination: &str) -> io::Result<()> {
         add_route(&self.name, destination)
     }
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"))]
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "netbsd"
+    ))]
     pub fn delete_route(&self, destination: &str) -> io::Result<()> {
         delete_route(destination)
     }
@@ -543,7 +568,12 @@ impl TunInterface {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"))]
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "openbsd",
+    target_os = "netbsd"
+))]
 impl Drop for TunInterface {
     fn drop(&mut self) {
         delete_interface(&self.name);
@@ -551,21 +581,34 @@ impl Drop for TunInterface {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"))]
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "openbsd",
+    target_os = "netbsd"
+))]
 pub struct TunReader {
     device: Arc<AsyncTunDevice>,
     shutdown_rx: broadcast::Receiver<()>,
 }
 
-#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"))]
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "openbsd",
+    target_os = "netbsd"
+))]
 impl TunReader {
     pub fn new(device: Arc<AsyncTunDevice>, shutdown_rx: broadcast::Receiver<()>) -> Self {
-        Self { device, shutdown_rx }
+        Self {
+            device,
+            shutdown_rx,
+        }
     }
 
     pub async fn read_packet(&mut self) -> io::Result<Option<TunPacket>> {
         let mut buf = vec![0u8; TUN_MTU];
-        
+
         tokio::select! {
             result = self.device.read_packet(&mut buf) => {
                 match result {
@@ -590,16 +633,29 @@ impl TunReader {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"))]
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "openbsd",
+    target_os = "netbsd"
+))]
 pub struct TunWriter {
     device: Arc<AsyncTunDevice>,
     shutdown_rx: broadcast::Receiver<()>,
 }
 
-#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"))]
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "openbsd",
+    target_os = "netbsd"
+))]
 impl TunWriter {
     pub fn new(device: Arc<AsyncTunDevice>, shutdown_rx: broadcast::Receiver<()>) -> Self {
-        Self { device, shutdown_rx }
+        Self {
+            device,
+            shutdown_rx,
+        }
     }
 
     pub async fn write_packet(&mut self, packet: &TunPacket) -> io::Result<()> {
@@ -619,13 +675,18 @@ pub fn is_tun_available() -> bool {
     {
         std::path::Path::new("/dev/net/tun").exists()
     }
-    
+
     #[cfg(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"))]
     {
         std::path::Path::new("/dev/tun").exists()
     }
-    
-    #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd")))]
+
+    #[cfg(not(any(
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "netbsd"
+    )))]
     {
         false
     }
@@ -642,7 +703,7 @@ mod tests {
             IpAddr::V4(Ipv4Addr::new(10, 0, 1, 1)),
             IpAddr::V4(Ipv4Addr::new(255, 255, 255, 0)),
         );
-        
+
         assert_eq!(config.name, "custom_wg0");
         assert_eq!(config.mtu, 1420);
         assert!(config.up);
@@ -651,7 +712,7 @@ mod tests {
     #[test]
     fn test_tun_config_default() {
         let config = TunConfig::default();
-        
+
         assert_eq!(config.name, "wg0");
         assert_eq!(config.mtu, 1420);
         assert!(config.up);
@@ -665,7 +726,7 @@ mod tests {
             IpAddr::V4(Ipv4Addr::new(255, 255, 255, 0)),
         )
         .with_mtu(1280);
-        
+
         assert_eq!(config.name, "custom_wg0");
         assert_eq!(config.mtu, 1280);
     }
@@ -674,7 +735,7 @@ mod tests {
     fn test_tun_packet_new() {
         let data = vec![1, 2, 3, 4, 5];
         let packet = TunPacket::new(data.clone());
-        
+
         assert_eq!(packet.len(), 5);
         assert!(!packet.is_empty());
         assert_eq!(packet.data(), &data);
@@ -685,18 +746,18 @@ mod tests {
         let data = vec![1, 2, 3, 4, 5];
         let packet = TunPacket::new(data.clone());
         let vec = packet.into_vec();
-        
+
         assert_eq!(vec, data);
     }
 
     #[test]
     fn test_tun_packet_protocol_ipv4() {
         let ipv4_data = vec![
-            0x45, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x45, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00,
         ];
         let packet = TunPacket::new(ipv4_data);
-        
+
         assert_eq!(packet.protocol(), Some(TunProtocol::IPv4));
     }
 
@@ -704,9 +765,9 @@ mod tests {
     fn test_tun_packet_protocol_ipv6() {
         let mut ipv6_data = vec![0u8; 40];
         ipv6_data[0] = 0x60;
-        
+
         let packet = TunPacket::new(ipv6_data);
-        
+
         assert_eq!(packet.protocol(), Some(TunProtocol::IPv6));
     }
 
@@ -714,7 +775,7 @@ mod tests {
     fn test_tun_packet_protocol_invalid() {
         let invalid_data = vec![0x12, 0x34, 0x56, 0x78];
         let packet = TunPacket::new(invalid_data);
-        
+
         assert_eq!(packet.protocol(), None);
     }
 
@@ -724,10 +785,10 @@ mod tests {
         data.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]);
         data.extend_from_slice(&[192, 168, 1, 100]);
         data.extend_from_slice(&[10, 0, 0, 1]);
-        
+
         let packet = TunPacket::new(data);
         let src = packet.src_addr().unwrap();
-        
+
         assert_eq!(src, IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)));
     }
 
@@ -737,17 +798,17 @@ mod tests {
         data.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]);
         data.extend_from_slice(&[192, 168, 1, 100]);
         data.extend_from_slice(&[10, 0, 0, 1]);
-        
+
         let packet = TunPacket::new(data);
         let dst = packet.dst_addr().unwrap();
-        
+
         assert_eq!(dst, IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)));
     }
 
     #[test]
     fn test_tun_packet_empty() {
         let packet = TunPacket::new(vec![]);
-        
+
         assert!(packet.is_empty());
         assert_eq!(packet.len(), 0);
         assert_eq!(packet.protocol(), None);
@@ -765,14 +826,19 @@ mod tests {
     #[test]
     fn test_is_tun_available() {
         let available = is_tun_available();
-        
+
         #[cfg(target_os = "linux")]
         assert_eq!(available, std::path::Path::new("/dev/net/tun").exists());
-        
+
         #[cfg(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"))]
         assert_eq!(available, std::path::Path::new("/dev/tun").exists());
-        
-        #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd")))]
+
+        #[cfg(not(any(
+            target_os = "linux",
+            target_os = "freebsd",
+            target_os = "openbsd",
+            target_os = "netbsd"
+        )))]
         assert!(!available);
     }
 }

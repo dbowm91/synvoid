@@ -5,11 +5,11 @@ use std::time::Duration;
 use http_body_util::combinators::BoxBody;
 use parking_lot::RwLock;
 
+use crate::mesh::cert::MeshCertManager;
 use crate::mesh::config::MeshConfig;
 use crate::mesh::dht::{DhtAccessControl, RecordStoreConfig, RecordStoreManager};
 use crate::mesh::proxy::{MeshProxy, MeshProxyError};
 use crate::mesh::topology::MeshTopology;
-use crate::mesh::cert::MeshCertManager;
 use crate::mesh::transports::{MeshTransportManager, QuicMeshTransport, WireGuardMeshTransport};
 
 pub fn create_record_store(
@@ -23,9 +23,9 @@ pub fn create_record_store(
 
     let node_id = config.node_id().to_string();
     let role = config.role;
-    
+
     let dht_config = config.dht.as_ref().unwrap();
-    
+
     let store_config = RecordStoreConfig {
         enabled: dht_config.enabled,
         sync_interval_secs: 300,
@@ -44,11 +44,11 @@ pub fn create_record_store(
         fanout_factor: dht_config.fanout_factor,
         convergence_threshold: dht_config.convergence_threshold,
     };
-    
+
     let access_control = DhtAccessControl::new(config);
-    
+
     let signer = None;
-    
+
     let rs = Arc::new(RecordStoreManager::new(
         store_config,
         node_id,
@@ -56,25 +56,25 @@ pub fn create_record_store(
         signer,
         access_control,
     ));
-    
+
     if let Some(rm) = routing_manager {
         rs.set_routing_manager(rm);
     }
-    
+
     rs.start_background_tasks();
-    
+
     if config.role.is_global() {
         if let Some(pubkey) = config.signing_public_key() {
             rs.publish_global_node_public_key(&pubkey);
         }
     }
-    
+
     tracing::info!(
         "DHT RecordStore initialized: enabled=true, role={:?}, edge_cache={}",
         config.role,
         dht_config.edge_cache_enabled
     );
-    
+
     Some(rs)
 }
 
@@ -90,11 +90,7 @@ pub struct MeshBackend {
 }
 
 impl MeshBackend {
-    pub fn new(
-        upstream_id: String,
-        proxy: Arc<MeshProxy>,
-        topology: Arc<MeshTopology>,
-    ) -> Self {
+    pub fn new(upstream_id: String, proxy: Arc<MeshProxy>, topology: Arc<MeshTopology>) -> Self {
         Self {
             upstream_id,
             proxy,
@@ -111,23 +107,42 @@ impl MeshBackend {
     }
 
     pub fn is_healthy(&self) -> bool {
-        self.health_status.load(std::sync::atomic::Ordering::Relaxed)
+        self.health_status
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     pub fn record_success(&self) {
-        self.consecutive_failures.store(0, std::sync::atomic::Ordering::Relaxed);
-        let successes = self.consecutive_successes.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-        if successes >= 3 && !self.health_status.load(std::sync::atomic::Ordering::Relaxed) {
-            self.health_status.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.consecutive_failures
+            .store(0, std::sync::atomic::Ordering::Relaxed);
+        let successes = self
+            .consecutive_successes
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            + 1;
+        if successes >= 3
+            && !self
+                .health_status
+                .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            self.health_status
+                .store(true, std::sync::atomic::Ordering::Relaxed);
             tracing::info!("MeshBackend {} marked as healthy", self.upstream_id);
         }
     }
 
     pub fn record_failure(&self) {
-        self.consecutive_successes.store(0, std::sync::atomic::Ordering::Relaxed);
-        let failures = self.consecutive_failures.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-        if failures >= 3 && self.health_status.load(std::sync::atomic::Ordering::Relaxed) {
-            self.health_status.store(false, std::sync::atomic::Ordering::Relaxed);
+        self.consecutive_successes
+            .store(0, std::sync::atomic::Ordering::Relaxed);
+        let failures = self
+            .consecutive_failures
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            + 1;
+        if failures >= 3
+            && self
+                .health_status
+                .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            self.health_status
+                .store(false, std::sync::atomic::Ordering::Relaxed);
             tracing::warn!(
                 "MeshBackend {} marked as unhealthy after {} failures",
                 self.upstream_id,
@@ -195,7 +210,7 @@ impl MeshBackendPool {
         }
 
         let backends = self.backends.read();
-        
+
         let available: Vec<Arc<MeshBackend>> = backends
             .iter()
             .filter(|b| b.is_healthy())
@@ -207,13 +222,13 @@ impl MeshBackendPool {
         }
 
         let mut best: Option<(Arc<MeshBackend>, f64)> = None;
-        
+
         for backend in &available {
             let upstream_id = backend.upstream_id();
             if let Some(peer_id) = self.topology.get_best_peer_for_upstream(upstream_id).await {
                 let scores = self.topology.peer_scores().read().await;
                 let score = scores.get(&peer_id).map(|s| s.total_score).unwrap_or(0.5);
-                
+
                 match &best {
                     None => {
                         best = Some((backend.clone(), score));
@@ -227,7 +242,7 @@ impl MeshBackendPool {
                 best = Some((backend.clone(), 0.5));
             }
         }
-        
+
         best.map(|(b, _)| b)
     }
 
@@ -237,7 +252,10 @@ impl MeshBackendPool {
 
     pub fn get_backend(&self, upstream_id: &str) -> Option<Arc<MeshBackend>> {
         let backends = self.backends.read();
-        backends.iter().find(|b| b.upstream_id() == upstream_id).cloned()
+        backends
+            .iter()
+            .find(|b| b.upstream_id() == upstream_id)
+            .cloned()
     }
 
     pub fn get_all_backends(&self) -> Vec<Arc<MeshBackend>> {
@@ -281,7 +299,11 @@ pub fn create_mesh_backend_from_config(
         )
     });
 
-    let proxy = Arc::new(MeshProxy::new(config.clone(), topology.clone(), cache_settings));
+    let proxy = Arc::new(MeshProxy::new(
+        config.clone(),
+        topology.clone(),
+        cache_settings,
+    ));
     let backend_pool = Arc::new(MeshBackendPool::new(proxy.clone(), topology.clone()));
 
     let transport_manager = Arc::new(MeshTransportManager::new(
@@ -307,34 +329,43 @@ pub async fn initialize_mesh_transports(
 
     match config.transport_preference {
         crate::mesh::config::MeshTransportPreference::WireGuard => {
-            
             if config.wireguard.enabled {
                 tracing::info!("Initializing WireGuard mesh transport...");
-                
+
                 let wg_transport = WireGuardMeshTransport::new(
                     config.clone(),
                     config.wireguard.clone(),
                     topology.clone(),
                 );
-                
-                match wg_transport.initialize().await { Err(e) => {
-                    tracing::warn!("WireGuard transport initialization failed: {}", e);
-                    tracing::info!("Falling back to QUIC transport");
-                } _ => {
-                    if let Err(e) = wg_transport.start().await {
-                        tracing::warn!("WireGuard transport start failed: {}", e);
-                    } else {
-                        transport_manager.set_wireguard_transport(wg_transport);
-                        tracing::info!("WireGuard mesh transport started successfully");
+
+                match wg_transport.initialize().await {
+                    Err(e) => {
+                        tracing::warn!("WireGuard transport initialization failed: {}", e);
+                        tracing::info!("Falling back to QUIC transport");
                     }
-                }}
+                    _ => {
+                        if let Err(e) = wg_transport.start().await {
+                            tracing::warn!("WireGuard transport start failed: {}", e);
+                        } else {
+                            transport_manager.set_wireguard_transport(wg_transport);
+                            tracing::info!("WireGuard mesh transport started successfully");
+                        }
+                    }
+                }
             }
         }
         crate::mesh::config::MeshTransportPreference::Quic => {}
     }
 
-    let routing_manager = if config.dht.as_ref().map(|d| d.routing_enabled).unwrap_or(false) {
-        let manager = Arc::new(crate::mesh::dht::routing::DhtRoutingManager::new(config.clone()));
+    let routing_manager = if config
+        .dht
+        .as_ref()
+        .map(|d| d.routing_enabled)
+        .unwrap_or(false)
+    {
+        let manager = Arc::new(crate::mesh::dht::routing::DhtRoutingManager::new(
+            config.clone(),
+        ));
         let manager_clone = manager.clone();
         manager.start_background_tasks();
         tokio::spawn(async move {
@@ -368,21 +399,28 @@ pub async fn initialize_mesh_transports(
     }
 
     if let Some(ref _rm) = routing_manager {
-        tracing::info!("DHT Routing initialized: enabled=true, is_global={}", config.role.is_global());
+        tracing::info!(
+            "DHT Routing initialized: enabled=true, is_global={}",
+            config.role.is_global()
+        );
     }
 
     tracing::info!(
         "DHT RecordStore initialized: enabled={}, role={:?}, edge_cache={}",
-        record_store.as_ref().map(|r| r.is_enabled()).unwrap_or(false),
+        record_store
+            .as_ref()
+            .map(|r| r.is_enabled())
+            .unwrap_or(false),
         config.role,
-        config.dht.as_ref().map(|d| d.edge_cache_enabled).unwrap_or(false)
+        config
+            .dht
+            .as_ref()
+            .map(|d| d.edge_cache_enabled)
+            .unwrap_or(false)
     );
 
-    let mut transport_manager = MeshTransportManager::new(
-        config.clone(),
-        topology.clone(),
-        record_store.clone(),
-    );
+    let mut transport_manager =
+        MeshTransportManager::new(config.clone(), topology.clone(), record_store.clone());
 
     if let Some(rm) = routing_manager.clone() {
         transport_manager.set_routing_manager(rm);
@@ -399,9 +437,9 @@ pub async fn initialize_mesh_transports(
         #[cfg(feature = "dns")]
         dns_registry,
     );
-    
+
     quic_transport.get_inner().initialize_component_transports();
-    
+
     transport_manager.set_quic_transport(quic_transport);
 
     tracing::info!(

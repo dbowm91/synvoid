@@ -1,21 +1,28 @@
 pub mod quic;
+pub mod router;
+pub mod tun;
+pub mod udp_manager;
 pub mod upstream;
 pub mod wireguard;
-pub mod router;
-pub mod udp_manager;
-pub mod tun;
 
-pub use quic::{QuicRuntime, QuicConnection, QUIC_TUNNEL_REGISTRY, QuicTunnelRegistry, TunnelSessionInfo};
+pub use quic::{
+    QuicConnection, QuicRuntime, QuicTunnelRegistry, TunnelSessionInfo, QUIC_TUNNEL_REGISTRY,
+};
+pub use router::{TunnelBackend, TunnelMapping, TunnelRouteSession, TunnelRouter};
+pub use tun::{
+    is_tun_available, AsyncTunDevice, TunConfig, TunInterface, TunPacket, TunProtocol, TunReader,
+    TunWriter,
+};
+pub use udp_manager::{
+    ActiveUdpTunnel, PendingRequest, UdpResponse, UdpTunnelConfig, UdpTunnelManager,
+};
 pub use upstream::TunnelUpstreamResolver;
 pub use wireguard::{
-    WireGuardServer, WireGuardServerWrapper, WireGuardRuntime, WireGuardClient,
-    WireGuardConfig, WireGuardPeerConfig, WireGuardClientConfig, WireGuardServerConfig,
-    WgImplementation, WgSessionInfo, WG_TUNNEL_REGISTRY,
-    generate_keypair, is_wireguard_available, detect_available_implementation,
+    detect_available_implementation, generate_keypair, is_wireguard_available, WgImplementation,
+    WgSessionInfo, WireGuardClient, WireGuardClientConfig, WireGuardConfig, WireGuardPeerConfig,
+    WireGuardRuntime, WireGuardServer, WireGuardServerConfig, WireGuardServerWrapper,
+    WG_TUNNEL_REGISTRY,
 };
-pub use router::{TunnelRouter, TunnelBackend, TunnelRouteSession, TunnelMapping};
-pub use udp_manager::{UdpTunnelManager, UdpTunnelConfig, ActiveUdpTunnel, UdpResponse, PendingRequest};
-pub use tun::{TunConfig, TunPacket, TunProtocol, TunInterface, AsyncTunDevice, TunReader, TunWriter, is_tun_available};
 
 use std::collections::HashMap;
 
@@ -31,8 +38,7 @@ pub enum TunnelType {
     WireGuard,
 }
 
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct TunnelStats {
     pub bytes_sent: u64,
     pub bytes_received: u64,
@@ -41,7 +47,6 @@ pub struct TunnelStats {
     pub latency_ms: Option<u64>,
     pub connected_at: Option<std::time::Instant>,
 }
-
 
 #[derive(Debug, Clone)]
 pub struct PeerInfo {
@@ -56,21 +61,21 @@ pub struct PeerInfo {
 #[async_trait]
 pub trait TunnelTransport: Send + Sync {
     fn tunnel_type(&self) -> TunnelType;
-    
+
     async fn start(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
-    
+
     async fn stop(&mut self);
-    
+
     fn is_running(&self) -> bool;
-    
+
     fn stats(&self) -> TunnelStats;
-    
+
     fn local_address(&self) -> Option<std::net::SocketAddr>;
-    
+
     fn peer_count(&self) -> usize;
-    
+
     fn peers(&self) -> Vec<PeerInfo>;
-    
+
     fn shutdown(&self);
 }
 
@@ -100,7 +105,7 @@ pub struct TunnelSession {
 impl TunnelManager {
     pub fn new(config: TunnelConfig) -> Self {
         let (shutdown_tx, _) = broadcast::channel(1);
-        
+
         Self {
             config,
             sessions: Arc::new(RwLock::new(HashMap::new())),
@@ -127,7 +132,9 @@ impl TunnelManager {
 
     pub async fn resolve_tunnel_endpoint(&self, tunnel_id: &str) -> Option<String> {
         let sessions = self.sessions.read().await;
-        sessions.get(tunnel_id).map(|s| format!("tunnel://{}", s.id))
+        sessions
+            .get(tunnel_id)
+            .map(|s| format!("tunnel://{}", s.id))
     }
 
     pub async fn list_sessions(&self) -> Vec<TunnelSession> {

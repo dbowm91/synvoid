@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use ed25519_dalek::{SigningKey, Signer};
+use ed25519_dalek::{Signer, SigningKey};
 use parking_lot::RwLock;
 use tonic::{Request, Response, Status};
 use uuid::Uuid;
@@ -30,10 +30,7 @@ pub struct MlKemKeyExchangeService {
 }
 
 impl MlKemKeyExchangeService {
-    pub fn new(
-        config: Arc<MeshConfig>,
-        session_manager: Arc<SessionManager<MlKem768>>,
-    ) -> Self {
+    pub fn new(config: Arc<MeshConfig>, session_manager: Arc<SessionManager<MlKem768>>) -> Self {
         Self {
             config,
             session_manager,
@@ -54,9 +51,10 @@ impl MlKemKeyExchangeService {
     }
 
     pub fn get_public_key_base64(&self) -> Option<String> {
-        self.node_public_key.read().as_ref().map(|pk| {
-            URL_SAFE_NO_PAD.encode(pk.as_ref())
-        })
+        self.node_public_key
+            .read()
+            .as_ref()
+            .map(|pk| URL_SAFE_NO_PAD.encode(pk.as_ref()))
     }
 }
 
@@ -99,7 +97,10 @@ impl GrpcMlKemKeyExchangeService for MlKemKeyExchangeService {
 
         let client_pk = MlKem768PublicKey(client_mlkem_pubkey_bytes);
 
-        let server_pk = self.node_public_key.read().clone()
+        let server_pk = self
+            .node_public_key
+            .read()
+            .clone()
             .ok_or_else(|| Status::unavailable("Server ML-KEM key not initialized"))?;
 
         let (ciphertext, _shared_secret) = MlKem768::encapsulate(&client_pk)
@@ -110,9 +111,11 @@ impl GrpcMlKemKeyExchangeService for MlKemKeyExchangeService {
 
         let expires_at = chrono::Utc::now().timestamp() + 3600;
 
-        let origin_mesh_id = self.config.mesh_name.clone()
-            .unwrap_or_default();
-        let origin_ed25519_pubkey = self.config.origin_signing_key.as_ref()
+        let origin_mesh_id = self.config.mesh_name.clone().unwrap_or_default();
+        let origin_ed25519_pubkey = self
+            .config
+            .origin_signing_key
+            .as_ref()
             .and_then(|k| k.public_key_base64.clone())
             .unwrap_or_default();
 
@@ -137,10 +140,10 @@ impl GrpcMlKemKeyExchangeService for MlKemKeyExchangeService {
             String::new()
         };
 
-        if let Err(e) = self.session_manager.establish(
-            &format!("peer_{}", key_id),
-            client_pk,
-        ) {
+        if let Err(e) = self
+            .session_manager
+            .establish(&format!("peer_{}", key_id), client_pk)
+        {
             tracing::warn!("Failed to establish session: {}", e);
         }
 
@@ -173,10 +176,7 @@ impl GrpcMlKemKeyExchangeService for MlKemKeyExchangeService {
             return Err(Status::invalid_argument("session_id is required"));
         }
 
-        tracing::debug!(
-            "ML-KEM key confirm: session_id={}",
-            session_id
-        );
+        tracing::debug!("ML-KEM key confirm: session_id={}", session_id);
 
         if self.session_manager.get(&session_id).is_some() {
             Ok(Response::new(MlKemKeyConfirmResponse {

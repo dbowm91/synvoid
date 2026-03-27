@@ -3,9 +3,9 @@ use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
 use metrics::{counter, gauge, histogram};
+use quinn::Connection;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc};
-use quinn::Connection;
 
 use crate::tunnel::quic::messages::DatagramCapabilities;
 
@@ -105,7 +105,7 @@ impl ConnectionHealth {
         if self.recent_rtts.len() > 10 {
             self.recent_rtts.remove(0);
         }
-        
+
         let total: Duration = self.recent_rtts.iter().sum();
         self.avg_rtt_ms = total.as_secs_f64() * 1000.0 / self.recent_rtts.len() as f64;
     }
@@ -153,10 +153,7 @@ impl ConnectionHealth {
             _ => ConnectionQuality::Poor,
         };
 
-        self.quality = std::cmp::max(
-            std::cmp::max(rtt_quality, loss_quality),
-            failure_quality,
-        );
+        self.quality = std::cmp::max(std::cmp::max(rtt_quality, loss_quality), failure_quality);
     }
 }
 
@@ -217,7 +214,7 @@ impl QuicHealthMonitor {
     pub fn new(config: HealthCheckConfig) -> (Self, mpsc::Receiver<HealthEvent>) {
         let (shutdown_tx, _) = broadcast::channel(1);
         let (health_event_tx, health_event_rx) = mpsc::channel(100);
-        
+
         (
             Self {
                 config,
@@ -232,12 +229,14 @@ impl QuicHealthMonitor {
     pub fn register_connection(&self, session_id: String, peer_id: Option<String>) {
         let health = ConnectionHealth::new(session_id.clone(), peer_id.clone());
         self.connections.insert(session_id, health);
-        gauge!("maluwaf.tunnel.quic.health.monitored_connections").set(self.connections.len() as f64);
+        gauge!("maluwaf.tunnel.quic.health.monitored_connections")
+            .set(self.connections.len() as f64);
     }
 
     pub fn unregister_connection(&self, session_id: &str) {
         self.connections.remove(session_id);
-        gauge!("maluwaf.tunnel.quic.health.monitored_connections").set(self.connections.len() as f64);
+        gauge!("maluwaf.tunnel.quic.health.monitored_connections")
+            .set(self.connections.len() as f64);
     }
 
     pub fn set_datagram_capabilities(&self, session_id: &str, caps: DatagramCapabilities) {
@@ -249,7 +248,7 @@ impl QuicHealthMonitor {
     pub fn record_health_check_success(&self, session_id: &str, rtt: Duration) {
         if let Some(mut health) = self.connections.get_mut(session_id) {
             let old_quality = health.quality;
-            
+
             health.consecutive_failures = 0;
             health.consecutive_successes += 1;
             health.last_check = Instant::now();
@@ -260,13 +259,17 @@ impl QuicHealthMonitor {
             histogram!("maluwaf.tunnel.quic.health.rtt").record(rtt.as_secs_f64() * 1000.0);
 
             if health.consecutive_successes == self.config.recovery_threshold
-                && (old_quality == ConnectionQuality::Failed || old_quality == ConnectionQuality::Poor) {
-                    let _ = self.health_event_tx.try_send(HealthEvent::ConnectionRecovered {
+                && (old_quality == ConnectionQuality::Failed
+                    || old_quality == ConnectionQuality::Poor)
+            {
+                let _ = self
+                    .health_event_tx
+                    .try_send(HealthEvent::ConnectionRecovered {
                         session_id: session_id.to_string(),
                         peer_id: health.peer_id.clone(),
                     });
-                    counter!("maluwaf.tunnel.quic.health.recovered").increment(1);
-                }
+                counter!("maluwaf.tunnel.quic.health.recovered").increment(1);
+            }
 
             if old_quality != health.quality {
                 let _ = self.health_event_tx.try_send(HealthEvent::QualityChanged {
@@ -282,7 +285,7 @@ impl QuicHealthMonitor {
     pub fn record_health_check_failure(&self, session_id: &str, reason: &str) {
         if let Some(mut health) = self.connections.get_mut(session_id) {
             let old_quality = health.quality;
-            
+
             health.consecutive_successes = 0;
             health.consecutive_failures += 1;
             health.last_check = Instant::now();
@@ -292,11 +295,13 @@ impl QuicHealthMonitor {
             counter!("maluwaf.tunnel.quic.health.failures").increment(1);
 
             if health.consecutive_failures >= self.config.failure_threshold {
-                let _ = self.health_event_tx.try_send(HealthEvent::ConnectionFailed {
-                    session_id: session_id.to_string(),
-                    peer_id: health.peer_id.clone(),
-                    reason: reason.to_string(),
-                });
+                let _ = self
+                    .health_event_tx
+                    .try_send(HealthEvent::ConnectionFailed {
+                        session_id: session_id.to_string(),
+                        peer_id: health.peer_id.clone(),
+                        reason: reason.to_string(),
+                    });
             }
 
             if old_quality != health.quality {
@@ -313,18 +318,21 @@ impl QuicHealthMonitor {
     pub fn record_packet_stats(&self, session_id: &str, sent: u64, lost: u64) {
         if let Some(mut health) = self.connections.get_mut(session_id) {
             let was_loss_rate = health.loss_rate;
-            
+
             health.packets_sent += sent;
             health.packets_lost += lost;
             health.update_loss_rate();
             health.update_quality(&self.config);
 
-            if health.loss_rate > self.config.loss_rate_warning_threshold 
-                && was_loss_rate <= self.config.loss_rate_warning_threshold {
-                let _ = self.health_event_tx.try_send(HealthEvent::PacketLossWarning {
-                    session_id: session_id.to_string(),
-                    loss_rate: health.loss_rate,
-                });
+            if health.loss_rate > self.config.loss_rate_warning_threshold
+                && was_loss_rate <= self.config.loss_rate_warning_threshold
+            {
+                let _ = self
+                    .health_event_tx
+                    .try_send(HealthEvent::PacketLossWarning {
+                        session_id: session_id.to_string(),
+                        loss_rate: health.loss_rate,
+                    });
             }
 
             if health.avg_rtt_ms > self.config.rtt_warning_threshold_ms as f64 {
@@ -368,7 +376,7 @@ impl QuicHealthMonitor {
                             .filter_map(|entry| {
                                 let session_id = entry.key().clone();
                                 let connection = entry.value().clone();
-                                
+
                                 if let Some(health) = health_connections.get(&session_id) {
                                     if health.quality.is_usable() {
                                         return Some((session_id, connection));
@@ -377,21 +385,21 @@ impl QuicHealthMonitor {
                                 None
                             })
                             .collect();
-                        
+
                         for (session_id, connection) in connections_snapshot {
                             let health_connections_clone = health_connections.clone();
                             let event_tx_clone = event_tx.clone();
                             let config_clone = config.clone();
                             let semaphore_clone = semaphore.clone();
-                            
+
                             let permit = match semaphore_clone.clone().acquire_owned().await {
                                 Ok(p) => p,
                                 Err(_) => continue,
                             };
-                            
+
                             tokio::spawn(async move {
                                 let start = Instant::now();
-                                
+
                                 tokio::select! {
                                     _ = connection.closed() => {
                                         if let Some(mut health) = health_connections_clone.get_mut(&session_id) {

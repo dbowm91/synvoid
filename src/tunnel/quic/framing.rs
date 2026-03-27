@@ -1,5 +1,4 @@
-
-use quinn::{SendStream, RecvStream};
+use quinn::{RecvStream, SendStream};
 
 use super::messages::TunnelMessage;
 use crate::buffer::BufferPool;

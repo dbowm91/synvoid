@@ -1,3 +1,5 @@
+use super::super::state::AdminState;
+use super::common::{config_path, OptionalAuth};
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -5,8 +7,6 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use super::super::state::AdminState;
-use super::common::{OptionalAuth, config_path};
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct SiteInfo {
@@ -38,17 +38,18 @@ pub async fn list_sites(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<Vec<SiteInfo>>, StatusCode> {
-
     let config = state.process.config.read().await;
-    
-    let sites: Vec<SiteInfo> = config.sites.iter().map(|(id, site)| {
-        SiteInfo {
+
+    let sites: Vec<SiteInfo> = config
+        .sites
+        .iter()
+        .map(|(id, site)| SiteInfo {
             id: id.clone(),
             domains: site.site.domains.clone(),
             default_upstream: site.site.upstream.default.clone(),
             routes: site.site.upstream.routes.clone(),
-        }
-    }).collect();
+        })
+        .collect();
 
     Ok(Json(sites))
 }
@@ -71,9 +72,8 @@ pub async fn get_site(
     _auth: OptionalAuth,
     Path(site_id): Path<String>,
 ) -> Result<Json<SiteDetail>, StatusCode> {
-
     let config = state.process.config.read().await;
-    
+
     match config.sites.get(&site_id) {
         Some(site) => {
             let json = serde_json::to_value(&site.site).unwrap_or(serde_json::Value::Null);
@@ -110,15 +110,16 @@ pub async fn create_site(
     _auth: OptionalAuth,
     Json(req): Json<CreateSiteRequest>,
 ) -> Result<Json<SiteDetail>, StatusCode> {
-
     if req.domains.is_empty() {
         return Err(StatusCode::BAD_REQUEST);
     }
 
-    let site_id = req.domains.first()
+    let site_id = req
+        .domains
+        .first()
         .cloned()
         .ok_or(StatusCode::BAD_REQUEST)?;
-    
+
     let site_config = crate::config::site::SiteConfig {
         site: crate::config::site::SiteInfo {
             domains: req.domains,
@@ -136,10 +137,10 @@ pub async fn create_site(
         let cfg = state.process.config.read().await;
         config_path(&cfg.sites_dir, &site_id)
     };
-    
-    let toml_content = toml::to_string_pretty(&site_config)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    
+
+    let toml_content =
+        toml::to_string_pretty(&site_config).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
     let toml_content_for_broadcast = toml_content.clone();
 
     // Hold write lock across both file write and in-memory update to prevent TOCTOU
@@ -152,11 +153,10 @@ pub async fn create_site(
         })?;
 
     let mut config = state.process.config.write().await;
-    config.load_site(config_path.clone())
-        .map_err(|e| {
-            tracing::error!("Failed to load new site: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+    config.load_site(config_path.clone()).map_err(|e| {
+        tracing::error!("Failed to load new site: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     let site_id_for_broadcast = site_id.clone();
     drop(config);
@@ -168,14 +168,30 @@ pub async fn create_site(
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        
+
         tokio::spawn(async move {
-            match mesh_transport_clone.broadcast_site_config_to_origins(&site_id_for_broadcast, &toml_content_for_broadcast, version).await {
+            match mesh_transport_clone
+                .broadcast_site_config_to_origins(
+                    &site_id_for_broadcast,
+                    &toml_content_for_broadcast,
+                    version,
+                )
+                .await
+            {
                 Ok((success, fail)) => {
-                    tracing::info!("Broadcast new site config for {}: {} success, {} failed", site_id_for_broadcast, success, fail);
+                    tracing::info!(
+                        "Broadcast new site config for {}: {} success, {} failed",
+                        site_id_for_broadcast,
+                        success,
+                        fail
+                    );
                 }
                 Err(e) => {
-                    tracing::warn!("Failed to broadcast new site config for {}: {}", site_id_for_broadcast, e);
+                    tracing::warn!(
+                        "Failed to broadcast new site config for {}: {}",
+                        site_id_for_broadcast,
+                        e
+                    );
                 }
             }
         });
@@ -205,7 +221,6 @@ pub async fn delete_site(
     _auth: OptionalAuth,
     Path(site_id): Path<String>,
 ) -> Result<StatusCode, StatusCode> {
-
     let config_path = {
         let cfg = state.process.config.read().await;
         config_path(&cfg.sites_dir, &site_id)
@@ -213,12 +228,10 @@ pub async fn delete_site(
 
     // Hold write lock across both file removal and in-memory update to prevent TOCTOU
     let _guard = state.metrics.config_write_lock.write().await;
-    tokio::fs::remove_file(&config_path)
-        .await
-        .map_err(|e| {
-            tracing::error!("Failed to delete site config file: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+    tokio::fs::remove_file(&config_path).await.map_err(|e| {
+        tracing::error!("Failed to delete site config file: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     let mut config = state.process.config.write().await;
     config.sites.remove(&site_id);
@@ -250,9 +263,8 @@ pub async fn update_site(
     Path(site_id): Path<String>,
     Json(req): Json<UpdateSiteRequest>,
 ) -> Result<Json<SiteDetail>, StatusCode> {
-
-    let config: crate::config::site::SiteConfig = serde_json::from_value(req.config.clone())
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    let config: crate::config::site::SiteConfig =
+        serde_json::from_value(req.config.clone()).map_err(|_| StatusCode::BAD_REQUEST)?;
 
     if config.site.domains.is_empty() {
         return Err(StatusCode::BAD_REQUEST);
@@ -268,12 +280,11 @@ pub async fn update_site(
         config_path(&cfg.sites_dir, &site_id)
     };
 
-    let toml_content = toml::to_string_pretty(&config)
-        .map_err(|e| {
-            tracing::error!("Failed to serialize config: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
-    
+    let toml_content = toml::to_string_pretty(&config).map_err(|e| {
+        tracing::error!("Failed to serialize config: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
     let toml_content_for_broadcast = toml_content.clone();
 
     // Hold write lock across both file write and in-memory update to prevent TOCTOU
@@ -298,14 +309,30 @@ pub async fn update_site(
 
     if let Some(ref mesh_transport) = state.mesh.mesh_transport {
         let mesh_transport_clone = mesh_transport.clone();
-        
+
         tokio::spawn(async move {
-            match mesh_transport_clone.broadcast_site_config_to_origins(&site_id_for_broadcast, &toml_content_for_broadcast, version).await {
+            match mesh_transport_clone
+                .broadcast_site_config_to_origins(
+                    &site_id_for_broadcast,
+                    &toml_content_for_broadcast,
+                    version,
+                )
+                .await
+            {
                 Ok((success, fail)) => {
-                    tracing::info!("Broadcast site config for {}: {} success, {} failed", site_id_for_broadcast, success, fail);
+                    tracing::info!(
+                        "Broadcast site config for {}: {} success, {} failed",
+                        site_id_for_broadcast,
+                        success,
+                        fail
+                    );
                 }
                 Err(e) => {
-                    tracing::warn!("Failed to broadcast site config for {}: {}", site_id_for_broadcast, e);
+                    tracing::warn!(
+                        "Failed to broadcast site config for {}: {}",
+                        site_id_for_broadcast,
+                        e
+                    );
                 }
             }
         });
@@ -353,14 +380,12 @@ pub async fn get_site_theme(
     _auth: OptionalAuth,
     Path(site_id): Path<String>,
 ) -> Result<Json<SiteThemeResponse>, StatusCode> {
-
     let config = state.process.config.read().await;
-    
-    let site = config.sites.get(&site_id)
-        .ok_or(StatusCode::NOT_FOUND)?;
-    
+
+    let site = config.sites.get(&site_id).ok_or(StatusCode::NOT_FOUND)?;
+
     let theme = &site.error_pages.theme;
-    
+
     Ok(Json(SiteThemeResponse {
         site_id: site_id.clone(),
         preset: theme.as_ref().and_then(|t| t.preset.clone()),
@@ -388,12 +413,13 @@ pub async fn update_site_theme(
     Path(site_id): Path<String>,
     Json(req): Json<UpdateSiteThemeRequest>,
 ) -> Result<Json<SiteThemeResponse>, StatusCode> {
-
     // Hold write lock across both in-memory update and file write to prevent TOCTOU
     let _guard = state.metrics.config_write_lock.write().await;
     let mut config = state.process.config.write().await;
 
-    let site = config.sites.get_mut(&site_id)
+    let site = config
+        .sites
+        .get_mut(&site_id)
         .ok_or(StatusCode::NOT_FOUND)?;
 
     if req.preset.is_some() || req.mode.is_some() || req.allow_only.is_some() {
@@ -420,11 +446,10 @@ pub async fn update_site_theme(
         let cfg = state.process.config.read().await;
         config_path(&cfg.sites_dir, &site_id)
     };
-    let toml_content = toml::to_string_pretty(&site_config)
-        .map_err(|e| {
-            tracing::error!("Failed to serialize site config: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+    let toml_content = toml::to_string_pretty(&site_config).map_err(|e| {
+        tracing::error!("Failed to serialize site config: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     tokio::fs::write(&config_path, toml_content)
         .await

@@ -1,7 +1,7 @@
-pub mod pool;
-pub mod health;
 pub mod address;
+pub mod health;
+pub mod pool;
 
-pub use pool::{UpstreamPool, Backend, LoadBalanceAlgorithm, UpstreamMetrics, BackendProtocol};
-pub use health::{HealthChecker, HealthCheckConfig, HealthCheckMethod};
-pub use address::{UpstreamAddress, UpstreamError, SocketErrorTracker, QuicTunnelStream};
+pub use address::{QuicTunnelStream, SocketErrorTracker, UpstreamAddress, UpstreamError};
+pub use health::{HealthCheckConfig, HealthCheckMethod, HealthChecker};
+pub use pool::{Backend, BackendProtocol, LoadBalanceAlgorithm, UpstreamMetrics, UpstreamPool};

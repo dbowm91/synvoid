@@ -248,7 +248,7 @@ impl NodeIdentityConfig {
         Ok(())
     }
 
-    fn derive_encryption_key(passphrase: &str) -> [u8; 32] {
+    pub(crate) fn derive_encryption_key(passphrase: &str) -> [u8; 32] {
         use pbkdf2::pbkdf2_hmac_array;
         use sha2::Sha256;
 
@@ -256,7 +256,11 @@ impl NodeIdentityConfig {
         pbkdf2_hmac_array::<Sha256, 32>(passphrase.as_bytes(), SALT, 100_000)
     }
 
-    fn encrypt_key(&self, plaintext: &[u8], passphrase: Option<&str>) -> Result<Vec<u8>, String> {
+    pub(crate) fn encrypt_key(
+        &self,
+        plaintext: &[u8],
+        passphrase: Option<&str>,
+    ) -> Result<Vec<u8>, String> {
         match passphrase {
             Some(pass) if !pass.is_empty() => {
                 use aes_gcm::{
@@ -286,7 +290,11 @@ impl NodeIdentityConfig {
         }
     }
 
-    fn decrypt_key(&self, ciphertext: &[u8], passphrase: Option<&str>) -> Result<Vec<u8>, String> {
+    pub(crate) fn decrypt_key(
+        &self,
+        ciphertext: &[u8],
+        passphrase: Option<&str>,
+    ) -> Result<Vec<u8>, String> {
         match passphrase {
             Some(pass) if !pass.is_empty() => {
                 use aes_gcm::{

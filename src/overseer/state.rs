@@ -5,8 +5,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use super::mode::UpgradeMode;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum UpgradeState {
     #[default]
     Idle,
@@ -21,7 +20,6 @@ pub enum UpgradeState {
     DualMasterActive,
     DrainingOldMaster,
 }
-
 
 impl std::fmt::Display for UpgradeState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

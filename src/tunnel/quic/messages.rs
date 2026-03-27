@@ -170,7 +170,7 @@ impl TunnelMessage {
         fin: bool,
     ) -> std::io::Result<()> {
         use tokio::io::AsyncWriteExt;
-        
+
         let header = DataChunkHeader {
             identifier: identifier.to_string(),
             sequence,
@@ -178,7 +178,7 @@ impl TunnelMessage {
             fin,
         };
         let header_bytes = crate::serialization::serialize(&header)?;
-        
+
         let msg_type: u8 = 100;
         let total_len = 1 + header_bytes.len() + data.len();
         writer.write_all(&(total_len as u32).to_be_bytes()).await?;
@@ -289,7 +289,9 @@ impl DatagramMessage {
     }
 
     pub fn is_first_fragment(&self) -> bool {
-        self.fragment_info.as_ref().is_some_and(|f| f.fragment_index == 0)
+        self.fragment_info
+            .as_ref()
+            .is_some_and(|f| f.fragment_index == 0)
     }
 
     pub fn estimated_header_size() -> usize {
@@ -297,13 +299,11 @@ impl DatagramMessage {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct DatagramCapabilities {
     pub supported: bool,
     pub max_size: usize,
 }
-
 
 impl DatagramCapabilities {
     pub fn new(supported: bool, max_size: usize) -> Self {
@@ -396,7 +396,7 @@ mod tests {
             fragment_total: 3,
             is_last: false,
         };
-        
+
         let msg = DatagramMessage::new(
             "udp-53".to_string(),
             1,
@@ -408,10 +408,10 @@ mod tests {
 
         assert!(msg.is_fragmented());
         assert!(msg.is_first_fragment());
-        
+
         let encoded = msg.encode().unwrap();
         let decoded = DatagramMessage::decode(&encoded).unwrap();
-        
+
         assert!(decoded.is_fragmented());
         let frag = decoded.fragment_info.unwrap();
         assert_eq!(frag.fragment_id, 12345);

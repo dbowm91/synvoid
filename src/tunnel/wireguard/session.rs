@@ -3,10 +3,10 @@ use std::time::Instant;
 
 use dashmap::DashMap;
 use metrics::{counter, gauge};
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 use tokio::sync::broadcast;
 
-pub static WG_TUNNEL_REGISTRY: Lazy<WgTunnelRegistry> = Lazy::new(WgTunnelRegistry::new);
+pub static WG_TUNNEL_REGISTRY: LazyLock<WgTunnelRegistry> = LazyLock::new(WgTunnelRegistry::new);
 
 #[derive(Debug, Clone)]
 pub struct WgSessionInfo {
@@ -255,8 +255,7 @@ impl Default for WgSessionManager {
     }
 }
 
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct WgConnectionStats {
     pub total_tx_bytes: u64,
     pub total_rx_bytes: u64,
@@ -266,7 +265,6 @@ pub struct WgConnectionStats {
     pub rekey_count: u64,
     pub errors: u64,
 }
-
 
 impl WgConnectionStats {
     pub fn add_tx(&mut self, bytes: u64, packets: u64) {

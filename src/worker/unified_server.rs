@@ -3,25 +3,25 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use tokio::sync::{RwLock, Mutex as TokioMutex};
+use tokio::sync::{Mutex as TokioMutex, RwLock};
 
-use crate::common::setup_panic_handler;
 use super::connect::connect_to_master_async;
 use super::drain_state::WorkerDrainState;
 use super::metrics::WorkerMetrics;
-use crate::app_server::{GranianSupervisor, GranianConfig};
+use crate::app_server::{GranianConfig, GranianSupervisor};
+use crate::common::setup_panic_handler;
 use crate::config::ConfigManager;
 use crate::mesh::backend::create_record_store;
 use crate::mesh::config::ThreatIntelligenceConfig;
-use crate::mesh::transports::MeshTransportManager;
-use crate::mesh::topology::MeshTopology;
 use crate::mesh::threat_intel::ThreatIntelligenceManager;
+use crate::mesh::topology::MeshTopology;
+use crate::mesh::transports::MeshTransportManager;
 use crate::mesh::yara_rules::YaraRulesManager;
 use crate::platform::fs::PlatformPaths;
 use crate::process::ipc_transport::IpcStream as AsyncIpcStream;
-use crate::process::{Message, WorkerId, current_timestamp};
+use crate::process::{current_timestamp, Message, WorkerId};
 use crate::server::UnifiedServer;
-use crate::{RunningFlag, DrainFlag};
+use crate::{DrainFlag, RunningFlag};
 
 #[derive(Clone)]
 pub struct UnifiedServerWorkerArgs {
@@ -36,7 +36,10 @@ pub struct UnifiedServerWorkerArgs {
 
 pub fn setup_unified_server_panic_handler() {
     let paths = PlatformPaths::new();
-    let panic_path = paths.unified_worker_socket_path(0).to_string_lossy().replace(".sock", "-panic.log");
+    let panic_path = paths
+        .unified_worker_socket_path(0)
+        .to_string_lossy()
+        .replace(".sock", "-panic.log");
     setup_panic_handler("UNIFIED SERVER WORKER", Some(&panic_path));
 }
 
@@ -44,13 +47,21 @@ async fn setup_worker_ipc(
     master_socket: &std::path::Path,
     worker_id: &WorkerId,
 ) -> Result<Arc<TokioMutex<AsyncIpcStream>>, Box<dyn std::error::Error + Send + Sync>> {
-    let mut stream = connect_to_master_async(master_socket, 5, std::time::Duration::from_secs(2), "Unified server worker").await?;
-    
-    stream.send(&Message::UnifiedServerWorkerStarted {
-        id: *worker_id,
-        pid: std::process::id(),
-        timestamp: current_timestamp(),
-    }).await?;
+    let mut stream = connect_to_master_async(
+        master_socket,
+        5,
+        std::time::Duration::from_secs(2),
+        "Unified server worker",
+    )
+    .await?;
+
+    stream
+        .send(&Message::UnifiedServerWorkerStarted {
+            id: *worker_id,
+            pid: std::process::id(),
+            timestamp: current_timestamp(),
+        })
+        .await?;
 
     Ok(Arc::new(TokioMutex::new(stream)))
 }
@@ -58,11 +69,11 @@ async fn setup_worker_ipc(
 async fn setup_config(config_path: &std::path::Path) -> Arc<RwLock<ConfigManager>> {
     let mut config_manager = ConfigManager::new(config_path.to_path_buf());
     let main_config_path = config_path.join("main.toml");
-    
+
     if let Err(e) = config_manager.load_main(&main_config_path) {
         tracing::warn!("Failed to load main config: {}, using defaults", e);
     }
-    
+
     config_manager.discover_sites();
 
     Arc::new(RwLock::new(config_manager))
@@ -86,8 +97,6 @@ async fn extract_bandwidth_config(
     )
 }
 
-
-
 #[derive(Clone)]
 struct UnifiedServerWorkerState {
     worker_id: WorkerId,
@@ -105,7 +114,9 @@ struct UnifiedServerWorkerState {
     unified_server: Arc<crate::server::UnifiedServer>,
 }
 
-pub async fn run_unified_server_worker(args: UnifiedServerWorkerArgs) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub async fn run_unified_server_worker(
+    args: UnifiedServerWorkerArgs,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let worker_id = WorkerId(args.worker_id);
 
     if let Some(ref level) = args.log_level {
@@ -122,18 +133,29 @@ pub async fn run_unified_server_worker(args: UnifiedServerWorkerArgs) -> Result<
     let ipc = setup_worker_ipc(&args.master_socket, &worker_id).await?;
 
     let shared_config = setup_config(&args.config_path).await;
-    
-    let (bandwidth_data_dir, bandwidth_retention_days, bandwidth_mesh_excluded, bandwidth_reset_config) = 
-        extract_bandwidth_config(&shared_config).await;
-    
+
+    let (
+        bandwidth_data_dir,
+        bandwidth_retention_days,
+        bandwidth_mesh_excluded,
+        bandwidth_reset_config,
+    ) = extract_bandwidth_config(&shared_config).await;
+
     // Initialize global bandwidth tracker with config values
-    crate::metrics::bandwidth::init_global_bandwidth_tracker(bandwidth_retention_days, bandwidth_mesh_excluded);
-    
+    crate::metrics::bandwidth::init_global_bandwidth_tracker(
+        bandwidth_retention_days,
+        bandwidth_mesh_excluded,
+    );
+
     // Configure persistence and reset settings
-    crate::metrics::bandwidth::configure_global_bandwidth_tracker(bandwidth_data_dir.as_deref(), bandwidth_reset_config);
-    
+    crate::metrics::bandwidth::configure_global_bandwidth_tracker(
+        bandwidth_data_dir.as_deref(),
+        bandwidth_reset_config,
+    );
+
     let drain_state = Arc::new(WorkerDrainState::new());
-    let metrics = WorkerMetrics::shared_with_bandwidth(bandwidth_retention_days, bandwidth_mesh_excluded);
+    let metrics =
+        WorkerMetrics::shared_with_bandwidth(bandwidth_retention_days, bandwidth_mesh_excluded);
     let ipc_for_server = ipc.clone();
     let worker_id_for_server = worker_id;
     let unified_server = UnifiedServer::new(shared_config.clone(), None)
@@ -141,50 +163,68 @@ pub async fn run_unified_server_worker(args: UnifiedServerWorkerArgs) -> Result<
         .with_drain_state(drain_state.clone())
         .with_metrics(metrics.clone())
         .with_ipc(ipc_for_server, worker_id_for_server);
-    
+
     // Wrap in Arc immediately for easier sharing
     let unified_server: Arc<UnifiedServer> = Arc::new(unified_server);
 
     // ============================================================================================
     // Mesh and Threat Intelligence Initialization
-    // 
+    //
     // The UnifiedServer Worker handles all mesh connections (WAF-WAF, WAF-User VPN, WAF-Server VPN).
     // This ensures:
     // - Direct proxying without IPC overhead for mesh traffic
     // - Process isolation: mesh-related vulnerabilities don't affect Master
     // - Single mesh identity per WAF deployment (shared across Workers via Master config)
     // ============================================================================================
-    
+
     let mesh_config = {
         let config = shared_config.read().await;
         config.main.tunnel.mesh.clone()
     };
 
-    let (_mesh_transport_manager, _threat_intel_manager, _mesh_signer) = if let Some(ref mesh_config) = mesh_config {
+    let (_mesh_transport_manager, _threat_intel_manager, _mesh_signer) = if let Some(
+        ref mesh_config,
+    ) = mesh_config
+    {
         if !mesh_config.enabled {
             tracing::info!("Mesh is disabled in configuration");
             let dummy_threat = Arc::new(ThreatIntelligenceManager::new(
                 crate::mesh::threat_intel::ThreatIntelligenceConfig::default().to_internal(),
-                Arc::new(crate::block_store::BlockStore::new(true, None, crate::config::DenyListLimitsConfig::default())),
+                Arc::new(crate::block_store::BlockStore::new(
+                    true,
+                    None,
+                    crate::config::DenyListLimitsConfig::default(),
+                )),
                 "dummy".to_string(),
                 crate::mesh::config::MeshNodeRole::Edge,
                 None,
             ));
-            (None::<Arc<MeshTransportManager>>, Some(dummy_threat), None::<Arc<crate::mesh::protocol::MeshMessageSigner>>)
+            (
+                None::<Arc<MeshTransportManager>>,
+                Some(dummy_threat),
+                None::<Arc<crate::mesh::protocol::MeshMessageSigner>>,
+            )
         } else {
             tracing::info!("Initializing mesh transport in UnifiedServer Worker...");
-            
+
             let node_id = mesh_config.node_id();
-            
+
             // Create mesh config as Arc
             let mesh_config_arc = Arc::new(mesh_config.clone());
-            
+
             // Create mesh topology first
             let topology = Arc::new(MeshTopology::new(mesh_config_arc.clone()));
-            
+
             // Create DHT routing manager if enabled
-            let routing_manager = if mesh_config.dht.as_ref().map(|d| d.routing_enabled).unwrap_or(false) {
-                let manager = Arc::new(crate::mesh::dht::routing::DhtRoutingManager::new(mesh_config_arc.clone()));
+            let routing_manager = if mesh_config
+                .dht
+                .as_ref()
+                .map(|d| d.routing_enabled)
+                .unwrap_or(false)
+            {
+                let manager = Arc::new(crate::mesh::dht::routing::DhtRoutingManager::new(
+                    mesh_config_arc.clone(),
+                ));
                 let manager_clone = manager.clone();
                 manager.start_background_tasks();
                 tokio::spawn(async move {
@@ -194,17 +234,17 @@ pub async fn run_unified_server_worker(args: UnifiedServerWorkerArgs) -> Result<
             } else {
                 None
             };
-            
+
             // Create DHT record store if DHT is enabled
             let record_store = create_record_store(mesh_config, routing_manager);
-            
+
             // Create mesh transport manager with config, topology, and record_store
             let transport_manager = Arc::new(MeshTransportManager::new(
                 mesh_config_arc.clone(),
                 topology.clone(),
                 record_store.clone(),
             ));
-        
+
             // Create signer for threat messages (HMAC)
             // Use global_node_key if available, otherwise generate from node_id
             let signer_key = if let Some(ref key) = mesh_config.global_node_key {
@@ -220,16 +260,17 @@ pub async fn run_unified_server_worker(args: UnifiedServerWorkerArgs) -> Result<
                 let ikm = node_id.as_bytes();
                 let hk = Hkdf::<Sha256>::new(None, ikm);
                 let mut okm = [0u8; 32];
-                hk.expand(b"maluwaf-mesh-signer", &mut okm).expect("HKDF expand failed");
+                hk.expand(b"maluwaf-mesh-signer", &mut okm)
+                    .expect("HKDF expand failed");
                 okm
             };
 
             // Create ThreatIntelligenceManager for this worker
             // Get BlockStore from UnifiedServer if available
             let block_store = unified_server.get_block_store();
-            
+
             let mesh_threat_intel = mesh_config.threat_intel.clone();
-            
+
             let threat_config = ThreatIntelligenceConfig {
                 enabled: mesh_threat_intel.enabled,
                 push_enabled: mesh_threat_intel.push_enabled,
@@ -242,13 +283,13 @@ pub async fn run_unified_server_worker(args: UnifiedServerWorkerArgs) -> Result<
                 reputation_config: mesh_threat_intel.reputation_config.clone(),
                 fanout_factor: mesh_threat_intel.fanout_factor,
             };
-            
+
             // Create signer for threat intel
             let signer_for_threat = crate::mesh::protocol::MeshMessageSigner::new(signer_key);
-            
+
             // Create signer for returning (we need to create another one since we can't clone)
             let signer_key_clone = signer_key;
-            
+
             let threat_intel = Arc::new(ThreatIntelligenceManager::from_external_config(
                 threat_config.clone(),
                 block_store.clone(),
@@ -256,7 +297,7 @@ pub async fn run_unified_server_worker(args: UnifiedServerWorkerArgs) -> Result<
                 mesh_config.role,
                 Some(Arc::new(signer_for_threat)),
             ));
-            
+
             // Initialize mesh transports (WireGuard/QUIC)
             // This connects to other WAF nodes in the mesh
             // Pass threat_intel so transport can update global nodes in threat intel
@@ -268,19 +309,21 @@ pub async fn run_unified_server_worker(args: UnifiedServerWorkerArgs) -> Result<
                 let dns_registry: Option<Arc<crate::dns::MeshDnsRegistry>> = {
                     let config = shared_config.read().await;
                     let dns_cfg = config.main.dns.clone();
-                    
+
                     if !dns_cfg.enabled {
                         None
                     } else if mesh_config.role != crate::mesh::config::MeshNodeRole::Global {
                         // Edge nodes do NOT get a resolver - they cannot perform verification
                         // Only global nodes (which are trusted) perform DNS verification
                         tracing::debug!("Edge node - DNS resolver not created (verification only on global nodes)");
-                        
+
                         // Create minimal registry for edge nodes (no resolver)
                         let mut registry_config = crate::dns::MeshDnsRegistryConfig::default();
-                        registry_config.verification_timeout_secs = dns_cfg.mesh.verification_timeout_secs;
-                        registry_config.verification_retry_interval_secs = dns_cfg.mesh.verification_retry_interval_secs;
-                        
+                        registry_config.verification_timeout_secs =
+                            dns_cfg.mesh.verification_timeout_secs;
+                        registry_config.verification_retry_interval_secs =
+                            dns_cfg.mesh.verification_retry_interval_secs;
+
                         let registry = crate::dns::MeshDnsRegistry::with_config(
                             mesh_config.node_id(),
                             false, // not global
@@ -289,38 +332,45 @@ pub async fn run_unified_server_worker(args: UnifiedServerWorkerArgs) -> Result<
                         Some(Arc::new(registry))
                     } else {
                         // Global node - create resolver for verification
-                        let upstream_servers: Vec<std::net::IpAddr> = dns_cfg.mesh.upstream_dns_servers
+                        let upstream_servers: Vec<std::net::IpAddr> = dns_cfg
+                            .mesh
+                            .upstream_dns_servers
                             .iter()
                             .filter_map(|s| s.parse().ok())
                             .collect();
-                        
+
                         if upstream_servers.is_empty() {
                             tracing::warn!("No valid upstream DNS servers configured, DNS verification will not work");
                             None
                         } else {
                             // Create resolver with configured upstream servers
-                            match crate::dns::HickoryResolver::with_upstream_servers(&upstream_servers) {
+                            match crate::dns::HickoryResolver::with_upstream_servers(
+                                &upstream_servers,
+                            ) {
                                 Ok(resolver) => {
                                     tracing::info!("Global node DNS resolver initialized with upstream servers: {:?}", upstream_servers);
-                                    
+
                                     // Create mesh DNS registry with resolver - only global nodes verify
-                                    let mut registry_config = crate::dns::MeshDnsRegistryConfig::default();
-                                    registry_config.verification_timeout_secs = dns_cfg.mesh.verification_timeout_secs;
-                                    registry_config.verification_retry_interval_secs = dns_cfg.mesh.verification_retry_interval_secs;
-                                    
+                                    let mut registry_config =
+                                        crate::dns::MeshDnsRegistryConfig::default();
+                                    registry_config.verification_timeout_secs =
+                                        dns_cfg.mesh.verification_timeout_secs;
+                                    registry_config.verification_retry_interval_secs =
+                                        dns_cfg.mesh.verification_retry_interval_secs;
+
                                     let registry = crate::dns::MeshDnsRegistry::with_config(
                                         mesh_config.node_id(),
                                         true, // is global - performs verification
                                         registry_config,
                                     )
                                     .with_dns_resolver(resolver);
-                                    
+
                                     // Start the verification loop for global nodes
                                     let registry_clone = registry.clone();
                                     tokio::spawn(async move {
                                         registry_clone.start_verification_loop().await;
                                     });
-                                    
+
                                     Some(Arc::new(registry))
                                 }
                                 Err(e) => {
@@ -331,27 +381,42 @@ pub async fn run_unified_server_worker(args: UnifiedServerWorkerArgs) -> Result<
                         }
                     }
                 };
-                
-                if let Err(e) = crate::mesh::backend::initialize_mesh_transports(mesh_config, transport_manager.clone(), Some(threat_intel.clone()), Some(Arc::new(signer_for_mesh)), dns_registry).await {
+
+                if let Err(e) = crate::mesh::backend::initialize_mesh_transports(
+                    mesh_config,
+                    transport_manager.clone(),
+                    Some(threat_intel.clone()),
+                    Some(Arc::new(signer_for_mesh)),
+                    dns_registry,
+                )
+                .await
+                {
                     tracing::warn!("Mesh transport initialization failed: {}", e);
                 }
             }
             #[cfg(not(feature = "dns"))]
             {
-                if let Err(e) = crate::mesh::backend::initialize_mesh_transports(&mesh_config, transport_manager.clone(), Some(threat_intel.clone()), Some(Arc::new(signer_for_mesh))).await {
+                if let Err(e) = crate::mesh::backend::initialize_mesh_transports(
+                    &mesh_config,
+                    transport_manager.clone(),
+                    Some(threat_intel.clone()),
+                    Some(Arc::new(signer_for_mesh)),
+                )
+                .await
+                {
                     tracing::warn!("Mesh transport initialization failed: {}", e);
                 }
             }
-            
+
             // Announce key exchange endpoint if global node with key exchange enabled
-            if mesh_config.role == crate::mesh::config::MeshNodeRole::Global 
-                && mesh_config.global_node.key_exchange_enabled 
-                && mesh_config.origin_signing_key.is_some() 
+            if mesh_config.role == crate::mesh::config::MeshNodeRole::Global
+                && mesh_config.global_node.key_exchange_enabled
+                && mesh_config.origin_signing_key.is_some()
             {
                 // Update key exchange endpoint announcement
                 transport_manager.update_key_exchange_endpoint().await;
             }
-            
+
             // Announce edge node key if edge with key exchange auth enabled
             if mesh_config.role == crate::mesh::config::MeshNodeRole::Edge
                 && mesh_config.global_node.key_exchange_enabled
@@ -361,37 +426,44 @@ pub async fn run_unified_server_worker(args: UnifiedServerWorkerArgs) -> Result<
                 // Announce edge's public key to DHT for global nodes to verify tokens
                 transport_manager.announce_edge_key(
                     &mesh_config.node_id(),
-                    mesh_config.global_node_key.as_ref().expect("guarded by is_some check above"),
+                    mesh_config
+                        .global_node_key
+                        .as_ref()
+                        .expect("guarded by is_some check above"),
                 );
             }
-            
+
             // Start background tasks for threat intel (periodic sync, cleanup)
             threat_intel.start_background_tasks();
-            
+
             // Set threat_intel in thread-local so it can be accessed by blocking code
             crate::waf::set_threat_intel(Some(threat_intel.clone()));
-            
+
             // Initialize YARA rules manager
             {
                 let main_config = {
                     let config = shared_config.read().await;
                     config.main.clone()
                 };
-                
+
                 if mesh_config.yara_rules.enabled || main_config.yara_feed.enabled {
-                    let feed_mgr: Option<Arc<crate::upload::yara_rule_feed::YaraRuleFeedManager>> = if main_config.yara_feed.enabled {
-                        Some(crate::upload::YaraRuleFeedManager::new(
-                            main_config.yara_feed.clone()
-                        ))
-                    } else {
-                        None
-                    };
-                    
+                    let feed_mgr: Option<Arc<crate::upload::yara_rule_feed::YaraRuleFeedManager>> =
+                        if main_config.yara_feed.enabled {
+                            Some(crate::upload::YaraRuleFeedManager::new(
+                                main_config.yara_feed.clone(),
+                            ))
+                        } else {
+                            None
+                        };
+
                     // Use config_dir as data directory for YARA submissions
                     let yara_data_dir = args.config_path.parent().map(|p| p.to_path_buf());
-                    
-                    let signer_for_yara: Option<Arc<crate::mesh::protocol::MeshMessageSigner>> = Some(Arc::new(crate::mesh::protocol::MeshMessageSigner::new(signer_key)));
-                    
+
+                    let signer_for_yara: Option<Arc<crate::mesh::protocol::MeshMessageSigner>> =
+                        Some(Arc::new(crate::mesh::protocol::MeshMessageSigner::new(
+                            signer_key,
+                        )));
+
                     let yara_rules = Arc::new(YaraRulesManager::new(
                         mesh_config.yara_rules.clone(),
                         node_id.clone(),
@@ -400,81 +472,108 @@ pub async fn run_unified_server_worker(args: UnifiedServerWorkerArgs) -> Result<
                         feed_mgr,
                         yara_data_dir,
                     ));
-                    
+
                     // Get elevated threat level for feed polling interval
-                    let is_elevated: Arc<parking_lot::RwLock<bool>> = Arc::new(parking_lot::RwLock::new(false));
-                    
+                    let is_elevated: Arc<parking_lot::RwLock<bool>> =
+                        Arc::new(parking_lot::RwLock::new(false));
+
                     // Start background fetching for feed if enabled
                     if yara_rules.has_feed_manager() {
-                        let fm = yara_rules.get_feed_manager().expect("guarded by has_feed_manager check");
+                        let fm = yara_rules
+                            .get_feed_manager()
+                            .expect("guarded by has_feed_manager check");
                         let elevated_clone = is_elevated.clone();
                         fm.start_background_fetching(elevated_clone);
-                        
+
                         // Try to apply rules from feed on startup
                         if let Err(e) = yara_rules.apply_rules_from_feed() {
                             tracing::debug!("No feed rules to apply on startup: {}", e);
                         }
                     }
-                    
+
                     // Set in thread-local
                     crate::waf::set_yara_rules(Some(yara_rules.clone()));
-                    
+
                     tracing::info!("YARA rules manager initialized");
                 }
             }
-            
+
             tracing::info!("Mesh and threat intelligence initialized in UnifiedServer Worker");
-            
+
             // Key exchange endpoints are served by the main HTTP/HTTPS server
             // For global nodes with key exchange enabled
             let is_global = mesh_config_arc.role == crate::mesh::config::MeshNodeRole::Global;
-            if is_global && mesh_config_arc.global_node.key_exchange_enabled && mesh_config_arc.origin_signing_key.is_some() {
+            if is_global
+                && mesh_config_arc.global_node.key_exchange_enabled
+                && mesh_config_arc.origin_signing_key.is_some()
+            {
                 tracing::info!("Key exchange endpoints enabled on global node at /key-request-origin, /key-confirm, /health");
             } else if is_global && !mesh_config_arc.global_node.key_exchange_enabled {
-                tracing::info!("Key exchange server disabled on global node (key_exchange_enabled=false)");
+                tracing::info!(
+                    "Key exchange server disabled on global node (key_exchange_enabled=false)"
+                );
             }
-            
+
             // Note: threat_intel is set on WafCore after creation in unified_server initialization
             // The proxy/handler code accesses threat_intel through self.waf.threat_intel
-            
-            (Some(transport_manager), Some(threat_intel), Some(Arc::new(crate::mesh::protocol::MeshMessageSigner::new(signer_key_clone))))
+
+            (
+                Some(transport_manager),
+                Some(threat_intel),
+                Some(Arc::new(crate::mesh::protocol::MeshMessageSigner::new(
+                    signer_key_clone,
+                ))),
+            )
         }
     } else {
         let dummy_threat = Arc::new(ThreatIntelligenceManager::new(
             crate::mesh::threat_intel::ThreatIntelligenceConfig::default().to_internal(),
-            Arc::new(crate::block_store::BlockStore::new(true, None, crate::config::DenyListLimitsConfig::default())),
+            Arc::new(crate::block_store::BlockStore::new(
+                true,
+                None,
+                crate::config::DenyListLimitsConfig::default(),
+            )),
             "dummy".to_string(),
             crate::mesh::config::MeshNodeRole::Edge,
             None,
         ));
-        (None::<Arc<MeshTransportManager>>, Some(dummy_threat), None::<Arc<crate::mesh::protocol::MeshMessageSigner>>)
+        (
+            None::<Arc<MeshTransportManager>>,
+            Some(dummy_threat),
+            None::<Arc<crate::mesh::protocol::MeshMessageSigner>>,
+        )
     };
-    
+
     // Register this worker with Master for threat intelligence coordination
     // The Master orchestrates what intelligence is shared globally
     {
         let mut ipc_guard = ipc.lock().await;
-        ipc_guard.send(&Message::UnifiedServerWorkerReady {
-            id: worker_id,
-        }).await?;
+        ipc_guard
+            .send(&Message::UnifiedServerWorkerReady { id: worker_id })
+            .await?;
     }
-    
+
     // Request blocklist from Master on startup
     let block_store = unified_server.get_block_store();
     {
         let mut ipc_guard = ipc.lock().await;
-        ipc_guard.send(&Message::BlocklistRequest {
-            worker_id: worker_id.as_usize(),
-            from_version: 0,
-        }).await?;
-        
+        ipc_guard
+            .send(&Message::BlocklistRequest {
+                worker_id: worker_id.as_usize(),
+                from_version: 0,
+            })
+            .await?;
+
         // Wait for response with timeout
         let timeout = Duration::from_secs(5);
         let start = Instant::now();
         while start.elapsed() < timeout {
             match ipc_guard.recv_with_timeout::<Message>(100).await {
                 Ok(Some(Message::BlocklistResponse { blocks, .. })) => {
-                    tracing::info!("Received blocklist from Master with {} entries", blocks.len());
+                    tracing::info!(
+                        "Received blocklist from Master with {} entries",
+                        blocks.len()
+                    );
                     for block in blocks {
                         if let Ok(ip) = block.ip.parse() {
                             let _ = block_store.block_ip(
@@ -498,7 +597,7 @@ pub async fn run_unified_server_worker(args: UnifiedServerWorkerArgs) -> Result<
             }
         }
     }
-    
+
     let metrics = WorkerMetrics::shared();
     let running = RunningFlag::new();
     let app_servers = Arc::new(RwLock::new(HashMap::new()));
@@ -508,7 +607,7 @@ pub async fn run_unified_server_worker(args: UnifiedServerWorkerArgs) -> Result<
     let config_for_app = shared_config.clone();
     tokio::spawn(async move {
         let config = config_for_app.read().await;
-        
+
         for (site_id, site_config) in config.sites.iter() {
             let app_config = site_config.app_server_config();
             if !app_config.is_valid() {
@@ -531,7 +630,10 @@ pub async fn run_unified_server_worker(args: UnifiedServerWorkerArgs) -> Result<
                 continue;
             }
 
-            app_servers_init.write().await.insert(site_id.clone(), supervisor);
+            app_servers_init
+                .write()
+                .await
+                .insert(site_id.clone(), supervisor);
         }
     });
 
@@ -540,7 +642,7 @@ pub async fn run_unified_server_worker(args: UnifiedServerWorkerArgs) -> Result<
     let draining = DrainFlag::new();
     let drain_id = Arc::new(std::sync::atomic::AtomicU64::new(0));
     let stopped_accepting = DrainFlag::new();
-    
+
     // Get stop_accepting_sender - unified_server is already Arc
     let stop_accepting_sender = unified_server.get_stop_accepting_sender();
     let stop_accepting_tx = Arc::new(TokioMutex::new(Some(stop_accepting_sender)));
@@ -563,9 +665,9 @@ pub async fn run_unified_server_worker(args: UnifiedServerWorkerArgs) -> Result<
 
     {
         let mut ipc_guard = ipc.lock().await;
-        ipc_guard.send(&Message::UnifiedServerWorkerReady {
-            id: worker_id,
-        }).await?;
+        ipc_guard
+            .send(&Message::UnifiedServerWorkerReady { id: worker_id })
+            .await?;
     }
 
     tracing::info!("Unified Server Worker {} ready", worker_id);
@@ -573,10 +675,10 @@ pub async fn run_unified_server_worker(args: UnifiedServerWorkerArgs) -> Result<
     let heartbeat_state = state.clone();
     let heartbeat_handle = tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(5));
-        
+
         loop {
             interval.tick().await;
-            
+
             if !heartbeat_state.running.is_running() {
                 break;
             }
@@ -585,28 +687,32 @@ pub async fn run_unified_server_worker(args: UnifiedServerWorkerArgs) -> Result<
             let payload = heartbeat_state.metrics.to_payload(uptime);
 
             let mut ipc = heartbeat_state.ipc.lock().await;
-            let _ = ipc.send(&Message::UnifiedServerWorkerHeartbeat {
-                id: heartbeat_state.worker_id,
-                timestamp: current_timestamp(),
-                metrics: payload,
-            }).await;
+            let _ = ipc
+                .send(&Message::UnifiedServerWorkerHeartbeat {
+                    id: heartbeat_state.worker_id,
+                    timestamp: current_timestamp(),
+                    metrics: payload,
+                })
+                .await;
 
             let app_servers = heartbeat_state.app_servers.read().await;
             for (site_id, supervisor) in app_servers.iter() {
                 let mut ipc = heartbeat_state.ipc.lock().await;
-                let _ = ipc.send(&Message::AppServerHealth {
-                    id: heartbeat_state.worker_id,
-                    site_id: site_id.clone(),
-                    healthy: supervisor.is_healthy(),
-                    timestamp: current_timestamp(),
-                }).await;
+                let _ = ipc
+                    .send(&Message::AppServerHealth {
+                        id: heartbeat_state.worker_id,
+                        site_id: site_id.clone(),
+                        healthy: supervisor.is_healthy(),
+                        timestamp: current_timestamp(),
+                    })
+                    .await;
             }
         }
     });
 
     let _bandwidth_persist_handle = tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(60));
-        
+
         loop {
             interval.tick().await;
             crate::metrics::bandwidth::persist_global_bandwidth_tracker();
@@ -636,15 +742,21 @@ pub async fn run_unified_server_worker(args: UnifiedServerWorkerArgs) -> Result<
             };
 
             match message {
-                Some(Message::MasterShutdown { graceful, timeout_secs }) => {
+                Some(Message::MasterShutdown {
+                    graceful,
+                    timeout_secs,
+                }) => {
                     tracing::info!(
                         "Unified Server Worker {} received shutdown signal (graceful: {}, timeout: {}s)",
                         ipc_state.worker_id,
                         graceful,
                         timeout_secs
                     );
-                    
-                    tracing::info!("Stopping app servers for unified server worker {}", ipc_state.worker_id);
+
+                    tracing::info!(
+                        "Stopping app servers for unified server worker {}",
+                        ipc_state.worker_id
+                    );
                     let app_servers = ipc_state.app_servers.read().await;
                     for (site_id, supervisor) in app_servers.iter() {
                         tracing::info!("Stopping granian for site {}", site_id);
@@ -653,35 +765,53 @@ pub async fn run_unified_server_worker(args: UnifiedServerWorkerArgs) -> Result<
                     drop(app_servers);
 
                     ipc_state.running.stop();
-                    
+
                     tracing::info!("Persisting bandwidth data on shutdown...");
                     crate::metrics::bandwidth::persist_global_bandwidth_tracker();
-                    
+
                     let mut ipc = ipc_state.ipc.lock().await;
-                    let _ = ipc.send(&Message::UnifiedServerWorkerShutdownComplete {
-                        id: ipc_state.worker_id,
-                    }).await;
+                    let _ = ipc
+                        .send(&Message::UnifiedServerWorkerShutdownComplete {
+                            id: ipc_state.worker_id,
+                        })
+                        .await;
                     break;
                 }
                 Some(Message::MasterConfigReload { config_path }) => {
-                    tracing::info!("Unified Server Worker {} received config reload: {}", ipc_state.worker_id, config_path);
+                    tracing::info!(
+                        "Unified Server Worker {} received config reload: {}",
+                        ipc_state.worker_id,
+                        config_path
+                    );
                 }
                 Some(Message::MasterHealthCheck { timestamp }) => {
                     let mut ipc = ipc_state.ipc.lock().await;
                     let _ = ipc.send(&Message::HealthCheckAck { timestamp }).await;
                 }
                 Some(Message::BlocklistUpdate { blocks, version: _ }) => {
-                    tracing::debug!("Received blocklist update with {} entries from Master", blocks.len());
+                    tracing::debug!(
+                        "Received blocklist update with {} entries from Master",
+                        blocks.len()
+                    );
                     let block_store = ipc_state.unified_server.get_block_store();
                     for block in blocks {
                         if let Ok(ip) = block.ip.parse() {
-                            let _ = block_store.block_ip(ip, &block.reason, block.ban_expire_seconds, &block.site_scope);
+                            let _ = block_store.block_ip(
+                                ip,
+                                &block.reason,
+                                block.ban_expire_seconds,
+                                &block.site_scope,
+                            );
                         }
                     }
                 }
                 Some(Message::RulePatternsUpdate { version, patterns }) => {
-                    tracing::info!("Received rule patterns update v{} from Master ({} categories)", version, patterns.len());
-                    
+                    tracing::info!(
+                        "Received rule patterns update v{} from Master ({} categories)",
+                        version,
+                        patterns.len()
+                    );
+
                     // Update the global pattern store
                     for pattern_data in patterns {
                         crate::waf::rule_feed::update_patterns_for_category(
@@ -689,15 +819,23 @@ pub async fn run_unified_server_worker(args: UnifiedServerWorkerArgs) -> Result<
                             pattern_data.patterns,
                         );
                     }
-                    
+
                     // Reload attack detector with new patterns
                     if let Err(e) = ipc_state.unified_server.reload_attack_detector() {
-                        tracing::error!("Failed to reload attack detector with new patterns: {}", e);
+                        tracing::error!(
+                            "Failed to reload attack detector with new patterns: {}",
+                            e
+                        );
                     } else {
-                        tracing::info!("Successfully reloaded attack detector with new rule patterns");
+                        tracing::info!(
+                            "Successfully reloaded attack detector with new rule patterns"
+                        );
                     }
                 }
-                Some(Message::UnifiedServerWorkerDrain { timeout_secs, drain_id: request_drain_id }) => {
+                Some(Message::UnifiedServerWorkerDrain {
+                    timeout_secs,
+                    drain_id: request_drain_id,
+                }) => {
                     tracing::info!(
                         "Unified Server Worker {} received drain signal (timeout: {}s, drain_id: {})",
                         ipc_state.worker_id,
@@ -706,7 +844,8 @@ pub async fn run_unified_server_worker(args: UnifiedServerWorkerArgs) -> Result<
                     );
 
                     if ipc_state.draining.is_draining() {
-                        let current_drain_id = ipc_state.drain_id.load(std::sync::atomic::Ordering::SeqCst);
+                        let current_drain_id =
+                            ipc_state.drain_id.load(std::sync::atomic::Ordering::SeqCst);
                         if current_drain_id > 0 && current_drain_id != request_drain_id {
                             tracing::warn!(
                                 "Already draining with id {}, ignoring request for id {}",
@@ -717,7 +856,9 @@ pub async fn run_unified_server_worker(args: UnifiedServerWorkerArgs) -> Result<
                         }
                     }
 
-                    ipc_state.drain_id.store(request_drain_id, std::sync::atomic::Ordering::SeqCst);
+                    ipc_state
+                        .drain_id
+                        .store(request_drain_id, std::sync::atomic::Ordering::SeqCst);
                     ipc_state.draining.start_drain();
 
                     ipc_state.drain_state.start_drain(request_drain_id);
@@ -737,10 +878,14 @@ pub async fn run_unified_server_worker(args: UnifiedServerWorkerArgs) -> Result<
                         &ipc_state.drain_state,
                         timeout_secs,
                         &ipc_state.worker_id,
-                        "drain request"
-                    ).await;
+                        "drain request",
+                    )
+                    .await;
 
-                    tracing::info!("Unified Server Worker {} stopping Granian supervisors", ipc_state.worker_id);
+                    tracing::info!(
+                        "Unified Server Worker {} stopping Granian supervisors",
+                        ipc_state.worker_id
+                    );
                     let app_servers = ipc_state.app_servers.read().await;
                     for (site_id, supervisor) in app_servers.iter() {
                         tracing::info!("Stopping granian for site {}", site_id);
@@ -749,7 +894,8 @@ pub async fn run_unified_server_worker(args: UnifiedServerWorkerArgs) -> Result<
                     drop(app_servers);
 
                     let remaining = ipc_state.drain_state.get_active_connections();
-                    let current_drain_id = ipc_state.drain_id.load(std::sync::atomic::Ordering::SeqCst);
+                    let current_drain_id =
+                        ipc_state.drain_id.load(std::sync::atomic::Ordering::SeqCst);
                     tracing::info!(
                         "Unified Server Worker {} drain complete, {} remaining connections",
                         ipc_state.worker_id,
@@ -757,15 +903,19 @@ pub async fn run_unified_server_worker(args: UnifiedServerWorkerArgs) -> Result<
                     );
 
                     ipc_state.draining.end_drain();
-                    ipc_state.drain_id.store(0, std::sync::atomic::Ordering::SeqCst);
+                    ipc_state
+                        .drain_id
+                        .store(0, std::sync::atomic::Ordering::SeqCst);
                     ipc_state.stopped_accepting.end_drain();
 
                     let mut ipc = ipc_state.ipc.lock().await;
-                    let _ = ipc.send(&Message::UnifiedServerWorkerDrained {
-                        id: ipc_state.worker_id,
-                        remaining_connections: remaining,
-                        drain_id: current_drain_id,
-                    }).await;
+                    let _ = ipc
+                        .send(&Message::UnifiedServerWorkerDrained {
+                            id: ipc_state.worker_id,
+                            remaining_connections: remaining,
+                            drain_id: current_drain_id,
+                        })
+                        .await;
                 }
                 Some(Message::UnifiedServerWorkerResize { worker_threads }) => {
                     tracing::info!(
@@ -791,8 +941,9 @@ pub async fn run_unified_server_worker(args: UnifiedServerWorkerArgs) -> Result<
                         &ipc_state.drain_state,
                         30,
                         &ipc_state.worker_id,
-                        "resize request"
-                    ).await;
+                        "resize request",
+                    )
+                    .await;
 
                     tracing::info!(
                         "Unified Server Worker {} exiting for threadpool resize to {} threads",
@@ -803,10 +954,12 @@ pub async fn run_unified_server_worker(args: UnifiedServerWorkerArgs) -> Result<
                     ipc_state.running.stop();
 
                     let mut ipc = ipc_state.ipc.lock().await;
-                    let _ = ipc.send(&Message::UnifiedServerWorkerResizeAck {
-                        id: ipc_state.worker_id,
-                        worker_threads,
-                    }).await;
+                    let _ = ipc
+                        .send(&Message::UnifiedServerWorkerResizeAck {
+                            id: ipc_state.worker_id,
+                            worker_threads,
+                        })
+                        .await;
 
                     std::process::exit(100);
                 }
@@ -824,7 +977,7 @@ pub async fn run_unified_server_worker(args: UnifiedServerWorkerArgs) -> Result<
     });
 
     let master_dead_flag = state.master_dead.clone();
-    
+
     tokio::select! {
         _ = heartbeat_handle => {}
         _ = ipc_handle => {}
@@ -834,7 +987,10 @@ pub async fn run_unified_server_worker(args: UnifiedServerWorkerArgs) -> Result<
     running.stop();
 
     if !master_dead_flag.is_running() {
-        tracing::error!("Unified Server Worker {} exiting because master died", worker_id);
+        tracing::error!(
+            "Unified Server Worker {} exiting because master died",
+            worker_id
+        );
         std::process::exit(1);
     }
 
@@ -895,7 +1051,7 @@ mod tests {
     async fn test_wait_for_drain_immediate() {
         let drain_state = WorkerDrainState::new();
         assert_eq!(drain_state.get_active_connections(), 0);
-        
+
         let worker_id = WorkerId(1);
         let remaining = wait_for_drain(&drain_state, 10, &worker_id, "test").await;
         assert_eq!(remaining, 0);
@@ -910,7 +1066,7 @@ mod tests {
         drain_state.increment_active();
         drain_state.increment_active();
         assert_eq!(drain_state.get_active_connections(), 5);
-        
+
         let worker_id = WorkerId(1);
         let remaining = wait_for_drain(&drain_state, 1, &worker_id, "test").await;
         assert_eq!(remaining, 5);
@@ -927,9 +1083,9 @@ mod tests {
             reuse_port: false,
             worker_threads: 8,
         };
-        
+
         let cloned = args.clone();
-        
+
         assert_eq!(cloned.worker_id, args.worker_id);
         assert_eq!(cloned.config_path, args.config_path);
         assert_eq!(cloned.master_socket, args.master_socket);
@@ -950,7 +1106,7 @@ mod tests {
             reuse_port: true,
             worker_threads: 2,
         };
-        
+
         assert!(args.log_level.is_some());
         assert_eq!(args.log_level.unwrap(), "trace");
     }
@@ -966,7 +1122,7 @@ mod tests {
             reuse_port: true,
             worker_threads: 1,
         };
-        
+
         let multi_thread = UnifiedServerWorkerArgs {
             worker_id: 2,
             config_path: PathBuf::from("config"),
@@ -976,7 +1132,7 @@ mod tests {
             reuse_port: true,
             worker_threads: 16,
         };
-        
+
         assert_eq!(single_thread.worker_threads, 1);
         assert_eq!(multi_thread.worker_threads, 16);
     }

@@ -3,44 +3,44 @@
 //! Provides TLS-configurable HTTP/1.1 and HTTP/2 clients using hyper,
 //! with support for connection pooling, timeouts, and per-site TLS settings.
 
-use std::time::Duration;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use bytes::Bytes;
-use http::{Request, Response, Method, Uri, header};
+use http::{header, Method, Request, Response, Uri};
 use http_body_util::BodyExt;
 use http_body_util::Full;
 use hyper::body::Incoming;
-use hyper_util::client::legacy::{Client, connect::HttpConnector};
-use hyper_util::rt::TokioExecutor;
 use hyper_rustls::HttpsConnector;
+use hyper_util::client::legacy::{connect::HttpConnector, Client};
+use hyper_util::rt::TokioExecutor;
 use hyperlocal::{UnixConnector, Uri as HyperlocalUri};
-use serde::{Serialize, de::DeserializeOwned};
+use serde::{de::DeserializeOwned, Serialize};
 
 pub type HttpClient = Client<HttpsConnector<HttpConnector>, Full<Bytes>>;
 pub type UnixHttpClient = Client<UnixConnector, Full<Bytes>>;
 
 pub fn is_unix_socket_url(url: &str) -> Option<PathBuf> {
     let trimmed = url.trim();
-    
+
     if trimmed.starts_with("http+unix://") || trimmed.starts_with("http+unix:") {
         let path = trimmed
             .trim_start_matches("http+unix://")
             .trim_start_matches("http+unix:");
         return Some(PathBuf::from(path));
     }
-    
+
     if trimmed.starts_with("unix://") || trimmed.starts_with("unix:") {
         let path = trimmed
             .trim_start_matches("unix://")
             .trim_start_matches("unix:");
         return Some(PathBuf::from(path));
     }
-    
+
     if trimmed.starts_with('/') || trimmed.starts_with("./") {
         return Some(PathBuf::from(trimmed));
     }
-    
+
     None
 }
 
@@ -102,11 +102,7 @@ impl UpstreamTlsConfig {
 }
 
 pub fn create_http_client() -> HttpClient {
-    create_http_client_with_config(
-        Duration::from_secs(5),
-        100,
-        Duration::from_secs(30),
-    )
+    create_http_client_with_config(Duration::from_secs(5), 100, Duration::from_secs(30))
 }
 
 pub fn create_http_client_with_config(
@@ -147,13 +143,10 @@ pub fn create_upstream_client(
     http_connector.set_nodelay(true);
     http_connector.set_keepalive(Some(Duration::from_secs(60)));
 
-    let rustls_config = build_tls_config(
-        tls_config.ca_cert_path.as_deref(),
-        tls_config.skip_verify,
-    );
+    let rustls_config =
+        build_tls_config(tls_config.ca_cert_path.as_deref(), tls_config.skip_verify);
 
-    let builder = hyper_rustls::HttpsConnectorBuilder::new()
-        .with_tls_config(rustls_config);
+    let builder = hyper_rustls::HttpsConnectorBuilder::new().with_tls_config(rustls_config);
 
     let builder = if tls_config.allow_plaintext {
         builder.https_or_http()
@@ -161,9 +154,7 @@ pub fn create_upstream_client(
         builder.https_only()
     };
 
-    let https_connector = builder
-        .enable_http2()
-        .wrap_connector(http_connector);
+    let https_connector = builder.enable_http2().wrap_connector(http_connector);
 
     Client::builder(TokioExecutor::new())
         .pool_max_idle_per_host(pool_max_idle_per_host)
@@ -174,10 +165,11 @@ pub fn create_upstream_client(
 
 fn load_ca_certs_from_path(
     path: &str,
-) -> Result<Vec<rustls_pki_types::CertificateDer<'static>>, Box<dyn std::error::Error + Send + Sync>> {
-    let file = std::fs::File::open(path)?;
-    let mut reader = std::io::BufReader::new(file);
-    let certs: Vec<_> = rustls_pemfile::certs(&mut reader)
+) -> Result<Vec<rustls_pki_types::CertificateDer<'static>>, Box<dyn std::error::Error + Send + Sync>>
+{
+    use rustls_pki_types::pem::PemObject;
+    let pem_data = std::fs::read(path)?;
+    let certs: Vec<_> = rustls_pki_types::CertificateDer::pem_slice_iter(&pem_data)
         .collect::<Result<Vec<_>, _>>()?;
     if certs.is_empty() {
         return Err(format!("No certificates found in {}", path).into());
@@ -185,10 +177,7 @@ fn load_ca_certs_from_path(
     Ok(certs)
 }
 
-fn build_tls_config(
-    ca_cert_path: Option<&str>,
-    skip_verify: bool,
-) -> rustls::ClientConfig {
+fn build_tls_config(ca_cert_path: Option<&str>, skip_verify: bool) -> rustls::ClientConfig {
     use rustls::crypto::aws_lc_rs;
     use std::sync::Arc;
 
@@ -218,9 +207,7 @@ fn build_tls_config(
         let _ = root_store.add(cert);
     }
     if root_store.is_empty() {
-        tracing::warn!(
-            "No native root certificates available, falling back to webpki roots"
-        );
+        tracing::warn!("No native root certificates available, falling back to webpki roots");
         root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
     }
     if !native_certs.errors.is_empty() {
@@ -238,15 +225,13 @@ fn build_tls_config(
                 for cert in certs {
                     let _ = root_store.add(cert);
                 }
-                tracing::info!(
-                    "Loaded {} custom CA certificate(s) from {}",
-                    added, ca_path
-                );
+                tracing::info!("Loaded {} custom CA certificate(s) from {}", added, ca_path);
             }
             Err(e) => {
                 tracing::warn!(
                     "Failed to load custom CA certificates from {}: {}",
-                    ca_path, e
+                    ca_path,
+                    e
                 );
             }
         }
@@ -336,19 +321,19 @@ pub async fn send_unix_request_with_body(
     timeout: Option<Duration>,
 ) -> Result<HttpResponse, Box<dyn std::error::Error + Send + Sync>> {
     let uri = HyperlocalUri::new(socket_path, path);
-    
+
     let full_body = if let Some(b) = body {
         let _len = b.len();
         http_body_util::Full::new(b)
     } else {
         http_body_util::Full::new(Bytes::new())
     };
-    
+
     let req = Request::builder()
         .method(method.clone())
         .uri(uri)
         .body(full_body)?;
-    
+
     let response = if let Some(t) = timeout {
         match tokio::time::timeout(t, client.request(req)).await {
             Ok(Ok(resp)) => resp,
@@ -358,7 +343,7 @@ pub async fn send_unix_request_with_body(
     } else {
         client.request(req).await?
     };
-    
+
     Ok(HttpResponse::from_hyper(response).await)
 }
 
@@ -388,10 +373,7 @@ pub async fn send_request_with_body_and_timeout(
 ) -> Result<HttpResponse, Box<dyn std::error::Error + Send + Sync>> {
     let uri: Uri = url.parse()?;
     let body = Full::new(body.unwrap_or_default());
-    let req = Request::builder()
-        .method(method)
-        .uri(uri)
-        .body(body)?;
+    let req = Request::builder().method(method).uri(uri).body(body)?;
 
     let response = if let Some(t) = timeout {
         match tokio::time::timeout(t, client.request(req)).await {
@@ -423,18 +405,24 @@ impl HttpResponse {
             .map(|collected| collected.to_bytes())
             .unwrap_or_default();
 
-        Self { status, headers, body }
+        Self {
+            status,
+            headers,
+            body,
+        }
     }
-    
+
     pub fn status_code(&self) -> u16 {
         self.status.as_u16()
     }
-    
+
     pub fn header(&self, name: &str) -> Option<&str> {
         self.headers.get(name).and_then(|v| v.to_str().ok())
     }
-    
-    pub fn headers_iter(&self) -> impl Iterator<Item = (&http::header::HeaderName, &http::HeaderValue)> {
+
+    pub fn headers_iter(
+        &self,
+    ) -> impl Iterator<Item = (&http::header::HeaderName, &http::HeaderValue)> {
         self.headers.iter()
     }
 }
@@ -450,15 +438,14 @@ pub async fn send_request_via_quic_tunnel(
     body: Option<bytes::Bytes>,
     timeout: Option<Duration>,
 ) -> Result<HttpResponse, Box<dyn std::error::Error + Send + Sync>> {
-    use crate::tunnel::QUIC_TUNNEL_REGISTRY;
-    use crate::tunnel::quic::messages::TunnelMessage;
     use crate::tunnel::quic::framing::{read_message, write_message};
+    use crate::tunnel::quic::messages::TunnelMessage;
+    use crate::tunnel::QUIC_TUNNEL_REGISTRY;
 
-    
     let trimmed = url
         .trim_start_matches("quictunnel://")
         .trim_start_matches("quictunnel:");
-    
+
     let (peer, port_str) = if let Some(colon_pos) = trimmed.rfind(':') {
         let peer = &trimmed[..colon_pos];
         let path_start = trimmed[colon_pos + 1..].find('/');
@@ -472,18 +459,23 @@ pub async fn send_request_via_quic_tunnel(
     } else {
         return Err("Invalid quictunnel URL format: expected quictunnel://peer:port".into());
     };
-    
-    let port: u16 = port_str.parse()
+
+    let port: u16 = port_str
+        .parse()
         .map_err(|_| format!("Invalid port in quictunnel URL: {}", port_str))?;
-    
-    let runtime = QUIC_TUNNEL_REGISTRY.get_runtime().await
+
+    let runtime = QUIC_TUNNEL_REGISTRY
+        .get_runtime()
+        .await
         .ok_or_else(|| "QUIC tunnel runtime not available".to_string())?;
-    
+
     let identifier = format!("http-port-{}", port);
-    
-    let (mut send_stream, mut recv_stream) = runtime.open_tunnel_stream_to_peer(peer, &identifier).await
+
+    let (mut send_stream, mut recv_stream) = runtime
+        .open_tunnel_stream_to_peer(peer, &identifier)
+        .await
         .map_err(|e| format!("Failed to open QUIC tunnel stream: {}", e))?;
-    
+
     let stream_open = TunnelMessage::StreamOpen {
         identifier: identifier.clone(),
         port,
@@ -491,24 +483,24 @@ pub async fn send_request_via_quic_tunnel(
         tls_passthrough: false,
     };
     write_message(&mut send_stream, &stream_open).await?;
-    
+
     let response = read_message(&mut recv_stream, 65536).await?;
     match response {
-        TunnelMessage::StreamOpenAck { success, message, .. } => {
+        TunnelMessage::StreamOpenAck {
+            success, message, ..
+        } => {
             if !success {
                 return Err(format!("Stream open failed: {}", message.unwrap_or_default()).into());
             }
         }
         _ => return Err("Unexpected response to StreamOpen".into()),
     }
-    
+
     let mut http_request = format!(
         "{} {} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n",
-        method,
-        "/",
-        peer
+        method, "/", peer
     );
-    
+
     if let Some(h) = headers {
         for (name, value) in h.iter() {
             if name != http::header::HOST && name != http::header::CONNECTION {
@@ -516,22 +508,23 @@ pub async fn send_request_via_quic_tunnel(
             }
         }
     }
-    
+
     if let Some(ref b) = body {
         http_request.push_str(&format!("Content-Length: {}\r\n", b.len()));
     }
-    
+
     http_request.push_str("\r\n");
-    
+
     send_stream.write_all(http_request.as_bytes()).await?;
-    
+
     if let Some(b) = body {
         send_stream.write_all(&b).await?;
     }
-    
-    send_stream.finish()
+
+    send_stream
+        .finish()
         .map_err(|e| format!("Failed to finish send stream: {}", e))?;
-    
+
     let result = if let Some(t) = timeout {
         match tokio::time::timeout(t, async {
             let mut response_data = Vec::new();
@@ -545,7 +538,9 @@ pub async fn send_request_via_quic_tunnel(
                 }
             }
             Ok::<_, Box<dyn std::error::Error + Send + Sync>>(response_data)
-        }).await {
+        })
+        .await
+        {
             Ok(Ok(data)) => data,
             Ok(Err(e)) => return Err(e),
             Err(_) => return Err("Request timed out".into()),
@@ -563,19 +558,19 @@ pub async fn send_request_via_quic_tunnel(
         }
         response_data
     };
-    
+
     let response_str = String::from_utf8_lossy(&result);
     let mut header_lines = response_str.split("\r\n");
-    
-    let status_line = header_lines.next()
-        .ok_or("No status line in response")?;
-    
+
+    let status_line = header_lines.next().ok_or("No status line in response")?;
+
     let status_parts: Vec<&str> = status_line.splitn(3, ' ').collect();
-    let status_code: u16 = status_parts.get(1)
+    let status_code: u16 = status_parts
+        .get(1)
         .ok_or("No status code in response")?
         .parse()
         .map_err(|_| "Invalid status code")?;
-    
+
     let mut response_headers = http::HeaderMap::new();
     loop {
         match header_lines.next() {
@@ -594,14 +589,16 @@ pub async fn send_request_via_quic_tunnel(
             None => break,
         }
     }
-    
-    let body_start = response_str.find("\r\n\r\n")
+
+    let body_start = response_str
+        .find("\r\n\r\n")
         .map(|pos| pos + 4)
         .unwrap_or(0);
     let response_body = Bytes::from(result[body_start..].to_vec());
 
     Ok(HttpResponse {
-        status: http::StatusCode::from_u16(status_code).unwrap_or(http::StatusCode::INTERNAL_SERVER_ERROR),
+        status: http::StatusCode::from_u16(status_code)
+            .unwrap_or(http::StatusCode::INTERNAL_SERVER_ERROR),
         headers: response_headers,
         body: response_body,
     })
@@ -613,7 +610,11 @@ pub async fn get(client: &HttpClient, url: &str) -> Result<HttpResponse, String>
         .map_err(|e| e.to_string())
 }
 
-pub async fn get_with_timeout(client: &HttpClient, url: &str, timeout: Duration) -> Result<HttpResponse, String> {
+pub async fn get_with_timeout(
+    client: &HttpClient,
+    url: &str,
+    timeout: Duration,
+) -> Result<HttpResponse, String> {
     send_request_with_timeout(client, Method::GET, url, Some(timeout))
         .await
         .map_err(|e| e.to_string())
@@ -625,8 +626,10 @@ pub async fn post_json<T: Serialize>(
     body: &T,
 ) -> Result<HttpResponse, String> {
     let json = serde_json::to_string(body).map_err(|e| e.to_string())?;
-    
-    let uri: Uri = url.parse().map_err(|e: http::uri::InvalidUri| e.to_string())?;
+
+    let uri: Uri = url
+        .parse()
+        .map_err(|e: http::uri::InvalidUri| e.to_string())?;
     let req = Request::builder()
         .method(Method::POST)
         .uri(uri)
@@ -634,9 +637,8 @@ pub async fn post_json<T: Serialize>(
         .body(Full::new(Bytes::from(json)))
         .map_err(|e| e.to_string())?;
 
-    let response = client.request(req).await
-        .map_err(|e| e.to_string())?;
-    
+    let response = client.request(req).await.map_err(|e| e.to_string())?;
+
     Ok(HttpResponse::from_hyper(response).await)
 }
 
@@ -647,8 +649,10 @@ pub async fn post_json_with_timeout<T: Serialize>(
     timeout: Duration,
 ) -> Result<HttpResponse, String> {
     let json = serde_json::to_string(body).map_err(|e| e.to_string())?;
-    
-    let uri: Uri = url.parse().map_err(|e: http::uri::InvalidUri| e.to_string())?;
+
+    let uri: Uri = url
+        .parse()
+        .map_err(|e: http::uri::InvalidUri| e.to_string())?;
     let req = Request::builder()
         .method(Method::POST)
         .uri(uri)
@@ -661,7 +665,7 @@ pub async fn post_json_with_timeout<T: Serialize>(
         Ok(Err(e)) => return Err(e.to_string()),
         Err(_) => return Err("request timed out".to_string()),
     };
-    
+
     Ok(HttpResponse::from_hyper(response).await)
 }
 
@@ -671,8 +675,7 @@ pub async fn post_json_response<T: Serialize, R: DeserializeOwned>(
     body: &T,
 ) -> Result<R, String> {
     let response = post_json(client, url, body).await?;
-    let s = String::from_utf8(response.body.to_vec())
-        .map_err(|e| e.to_string())?;
+    let s = String::from_utf8(response.body.to_vec()).map_err(|e| e.to_string())?;
     serde_json::from_str(&s).map_err(|e| e.to_string())
 }
 
@@ -683,17 +686,12 @@ pub async fn post_json_response_with_timeout<T: Serialize, R: DeserializeOwned>(
     timeout: Duration,
 ) -> Result<R, String> {
     let response = post_json_with_timeout(client, url, body, timeout).await?;
-    let s = String::from_utf8(response.body.to_vec())
-        .map_err(|e| e.to_string())?;
+    let s = String::from_utf8(response.body.to_vec()).map_err(|e| e.to_string())?;
     serde_json::from_str(&s).map_err(|e| e.to_string())
 }
 
 pub fn create_simple_http_client(timeout: Duration) -> HttpClient {
-    create_http_client_with_config(
-        Duration::from_secs(5),
-        100,
-        timeout,
-    )
+    create_http_client_with_config(Duration::from_secs(5), 100, timeout)
 }
 
 pub async fn get_with_auth(
@@ -703,12 +701,15 @@ pub async fn get_with_auth(
     password: &str,
     timeout: Duration,
 ) -> Result<HttpResponse, String> {
-    use http::header::AUTHORIZATION;
     use base64::Engine;
+    use http::header::AUTHORIZATION;
 
-    let credentials = base64::engine::general_purpose::STANDARD.encode(format!("{}:{}", username, password));
+    let credentials =
+        base64::engine::general_purpose::STANDARD.encode(format!("{}:{}", username, password));
 
-    let uri: Uri = url.parse().map_err(|e: http::uri::InvalidUri| e.to_string())?;
+    let uri: Uri = url
+        .parse()
+        .map_err(|e: http::uri::InvalidUri| e.to_string())?;
     let req = Request::builder()
         .method(Method::GET)
         .uri(uri)
@@ -732,12 +733,15 @@ pub async fn head_with_auth(
     password: &str,
     timeout: Duration,
 ) -> Result<HttpResponse, String> {
-    use http::header::AUTHORIZATION;
     use base64::Engine;
+    use http::header::AUTHORIZATION;
 
-    let credentials = base64::engine::general_purpose::STANDARD.encode(format!("{}:{}", username, password));
+    let credentials =
+        base64::engine::general_purpose::STANDARD.encode(format!("{}:{}", username, password));
 
-    let uri: Uri = url.parse().map_err(|e: http::uri::InvalidUri| e.to_string())?;
+    let uri: Uri = url
+        .parse()
+        .map_err(|e: http::uri::InvalidUri| e.to_string())?;
     let req = Request::builder()
         .method(Method::HEAD)
         .uri(uri)

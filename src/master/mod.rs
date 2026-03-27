@@ -12,7 +12,7 @@ pub mod ipc;
 pub mod windows;
 
 #[cfg(windows)]
-pub use windows::{windows_ipc_accept_loop, windows_command_pipe_listener};
+pub use windows::{windows_command_pipe_listener, windows_ipc_accept_loop};
 
 pub use commands::{
     handle_configtest, handle_generatenewtoken, handle_generatetoken, handle_rehash, handle_status,

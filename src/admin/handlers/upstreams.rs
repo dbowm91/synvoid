@@ -1,3 +1,5 @@
+use super::super::state::AdminState;
+use super::common::OptionalAuth;
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -5,8 +7,6 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use super::super::state::AdminState;
-use super::common::{OptionalAuth};
 
 const DEFAULT_MAX_CONNECTIONS: usize = 100;
 const DEFAULT_WEIGHT: u32 = 1;
@@ -57,16 +57,17 @@ pub async fn list_upstreams(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<Vec<SiteUpstreams>>, StatusCode> {
-
     let config = state.process.config.read().await;
-    
-    let upstreams: Vec<SiteUpstreams> = config.sites.iter().map(|(id, site)| {
-        SiteUpstreams {
+
+    let upstreams: Vec<SiteUpstreams> = config
+        .sites
+        .iter()
+        .map(|(id, site)| SiteUpstreams {
             site_id: id.clone(),
             default_upstream: site.site.upstream.default.clone(),
             backends: vec![create_upstream_status(&site.site.upstream.default)],
-        }
-    }).collect();
+        })
+        .collect();
 
     Ok(Json(upstreams))
 }
@@ -92,17 +93,14 @@ pub async fn get_site_upstreams(
     _auth: OptionalAuth,
     Path(site_id): Path<String>,
 ) -> Result<Json<SiteUpstreams>, StatusCode> {
-
     let config = state.process.config.read().await;
-    
+
     match config.sites.get(&site_id) {
-        Some(site) => {
-            Ok(Json(SiteUpstreams {
-                site_id: site_id.clone(),
-                default_upstream: site.site.upstream.default.clone(),
-                backends: vec![create_upstream_status(&site.site.upstream.default)],
-            }))
-        }
+        Some(site) => Ok(Json(SiteUpstreams {
+            site_id: site_id.clone(),
+            default_upstream: site.site.upstream.default.clone(),
+            backends: vec![create_upstream_status(&site.site.upstream.default)],
+        })),
         None => Err(StatusCode::NOT_FOUND),
     }
 }
@@ -141,8 +139,7 @@ pub async fn trigger_health_check(
     Path(_site_id): Path<String>,
     Json(_req): Json<TriggerHealthCheckRequest>,
 ) -> Result<Json<HealthCheckResponse>, StatusCode> {
-
     tracing::warn!("trigger_health_check endpoint called but is not yet implemented");
-    
+
     Err(StatusCode::NOT_IMPLEMENTED)
 }

@@ -1,9 +1,9 @@
+use axum::http::StatusCode;
 use axum::{
     extract::Request,
     middleware::Next,
     response::{IntoResponse, Response},
 };
-use axum::http::StatusCode;
 
 #[derive(Clone, Debug)]
 pub struct ClientIp(pub String);

@@ -1,5 +1,5 @@
 use crate::config::IpFeedConfig;
-use crate::http_client::{HttpClient, get_with_timeout, create_simple_http_client};
+use crate::http_client::{create_simple_http_client, get_with_timeout, HttpClient};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -80,12 +80,13 @@ impl IpFeedManager {
 
     pub fn start_background_fetching(self: &Arc<Self>) {
         let self_clone = Arc::clone(self);
-        
+
         tokio::spawn(async move {
             loop {
                 self_clone.fetch_and_update().await;
-                
-                let interval = Duration::from_secs(self_clone.config.update_interval_hours as u64 * 3600);
+
+                let interval =
+                    Duration::from_secs(self_clone.config.update_interval_hours as u64 * 3600);
                 time::sleep(interval).await;
             }
         });
@@ -93,14 +94,14 @@ impl IpFeedManager {
 
     pub async fn fetch_and_update(&self) {
         tracing::info!("Fetching IP feed from {}", self.config.url);
-        
+
         match self.fetch_feed(&self.config.url).await {
             Ok((networks, ips)) => {
                 let trimmed_networks: Vec<BlockedNetwork> = networks
                     .into_iter()
                     .take(self.config.max_permanent_blocks / 256)
                     .collect();
-                
+
                 let trimmed_ips: HashSet<IpAddr> = ips
                     .into_iter()
                     .take(self.config.max_permanent_blocks)
@@ -108,18 +109,22 @@ impl IpFeedManager {
 
                 let network_count = trimmed_networks.len();
                 let ip_count = trimmed_ips.len();
-                
+
                 *self.blocked_networks.write() = trimmed_networks;
                 *self.blocked_ips.write() = trimmed_ips;
-                
+
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map(|d| d.as_secs())
                     .unwrap_or(0);
                 *self.last_update.write() = now;
 
-                tracing::info!("IP feed updated: {} networks, {} IPs blocked (max: {})", 
-                    network_count, ip_count, self.config.max_permanent_blocks);
+                tracing::info!(
+                    "IP feed updated: {} networks, {} IPs blocked (max: {})",
+                    network_count,
+                    ip_count,
+                    self.config.max_permanent_blocks
+                );
             }
             Err(e) => {
                 tracing::error!("Failed to fetch IP feed: {}", e);
@@ -146,7 +151,7 @@ impl IpFeedManager {
 
         for line in content.lines() {
             let line = line.trim();
-            
+
             if line.is_empty() || line.starts_with('#') {
                 continue;
             }
@@ -174,10 +179,10 @@ impl IpFeedManager {
         if parts.len() != 2 {
             return None;
         }
-        
+
         let ip_str = parts[0];
         let prefix: u8 = parts[1].parse().ok()?;
-        
+
         if let Ok(ipv4) = ip_str.parse::<Ipv4Addr>() {
             if prefix <= 32 {
                 return Some(BlockedNetwork::Ipv4(ipv4, prefix));
@@ -198,7 +203,7 @@ impl IpFeedManager {
                 return true;
             }
         }
-        
+
         let ips = self.blocked_ips.read();
         ips.contains(ip)
     }
@@ -280,13 +285,13 @@ mod tests {
     #[test]
     fn test_blocked_network_ipv4_contains() {
         use std::net::{IpAddr, Ipv4Addr};
-        
+
         fn test_contains(network: &super::BlockedNetwork, ip: IpAddr, expected: bool) {
             assert_eq!(network.contains(&ip), expected);
         }
-        
+
         let network = super::BlockedNetwork::Ipv4(Ipv4Addr::new(192, 168, 1, 0), 24);
-        
+
         test_contains(&network, IpAddr::V4(Ipv4Addr::new(192, 168, 1, 0)), true);
         test_contains(&network, IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)), true);
         test_contains(&network, IpAddr::V4(Ipv4Addr::new(192, 168, 1, 255)), true);
@@ -296,9 +301,10 @@ mod tests {
     #[test]
     fn test_blocked_network_ipv6_contains() {
         use std::net::{IpAddr, Ipv6Addr};
-        
-        let network = super::BlockedNetwork::Ipv6(Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0), 32);
-        
+
+        let network =
+            super::BlockedNetwork::Ipv6(Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0), 32);
+
         assert!(network.contains(&IpAddr::V6(Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0))));
         assert!(network.contains(&IpAddr::V6(Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 1))));
         assert!(!network.contains(&IpAddr::V6(Ipv6Addr::new(0x2001, 0x0db9, 0, 0, 0, 0, 0, 0))));

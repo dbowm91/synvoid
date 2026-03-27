@@ -9,21 +9,21 @@ use bytes::Bytes;
 use http_body::Body as HttpBody;
 use http_body_util::combinators::BoxBody;
 use http_body_util::BodyExt;
-use hyper::{Request, Response};
 use hyper::body::Incoming;
+use hyper::{Request, Response};
 use lru_time_cache::LruCache;
+use parking_lot::Mutex as PLMutex;
 use parking_lot::RwLock;
 use rand::Rng;
 use tokio::sync::{Mutex, RwLock as TokioRwLock};
-use parking_lot::Mutex as PLMutex;
 
 use crate::mesh::config::{MeshConfig, MeshMinificationConfig};
 use crate::mesh::organization::OrganizationManager;
 use crate::mesh::protocol::{ProviderInfo, UpstreamProtocol, WafPolicy};
 use crate::mesh::topology::MeshTopology;
 use crate::mesh::transport::MeshTransport;
-use crate::proxy_cache::{ProxyCache, ProxyCacheSettings, CacheKeyBuilder};
 use crate::metrics::bandwidth::get_global_bandwidth_tracker_or_log;
+use crate::proxy_cache::{CacheKeyBuilder, ProxyCache, ProxyCacheSettings};
 
 /// Default TTL for cached routing policies (1 hour)
 const DEFAULT_POLICY_CACHE_TTL_SECS: u64 = 3600;
@@ -52,7 +52,8 @@ pub struct MeshProxy {
     config: Arc<MeshConfig>,
     topology: Arc<MeshTopology>,
     transport: Arc<RwLock<Option<Arc<MeshTransport>>>>,
-    transport_manager: Arc<RwLock<Option<Arc<crate::mesh::transports::manager::MeshTransportManager>>>>,
+    transport_manager:
+        Arc<RwLock<Option<Arc<crate::mesh::transports::manager::MeshTransportManager>>>>,
     active_connections: Arc<RwLock<HashMap<String, MeshConnection>>>,
     policy_cache: Arc<Mutex<LruCache<String, CachedPolicy>>>,
     failed_providers: Arc<Mutex<LruCache<String, Instant>>>,
@@ -105,7 +106,7 @@ impl ProviderStats {
         }
         self.successful_requests as f64 / self.total_requests as f64
     }
-    
+
     fn is_healthy(&self) -> bool {
         if let Some(cooldown) = self.cooldown_until {
             if Instant::now() < cooldown {
@@ -114,36 +115,36 @@ impl ProviderStats {
         }
         self.success_rate() >= MIN_SUCCESS_RATE
     }
-    
+
     fn record_success(&mut self) {
         self.total_requests += 1;
         self.successful_requests += 1;
         self.consecutive_failures = 0;
         self.last_success = Some(Instant::now());
     }
-    
+
     fn record_failure(&mut self) {
         self.consecutive_failures += 1;
         self.last_failure = Some(Instant::now());
-        
+
         let backoff_secs = std::cmp::min(
             FAILED_PROVIDER_COOLDOWN_SECS * 2u64.saturating_pow(self.consecutive_failures.min(6)),
             MAX_EXPONENTIAL_BACKOFF_SECS,
         );
         self.cooldown_until = Some(Instant::now() + Duration::from_secs(backoff_secs));
     }
-    
+
     fn decay(&mut self) {
         let now = Instant::now();
         let window = Duration::from_secs(HEALTH_METRICS_WINDOW_SECS);
-        
+
         if let Some(last_success) = self.last_success {
             if now.duration_since(last_success) > window {
                 self.successful_requests = self.successful_requests.saturating_sub(1);
                 self.total_requests = self.total_requests.saturating_sub(1);
             }
         }
-        
+
         if let Some(last_failure) = self.last_failure {
             if now.duration_since(last_failure) > window {
                 self.consecutive_failures = self.consecutive_failures.saturating_sub(1);
@@ -228,7 +229,10 @@ impl MeshProxy {
         *t = Some(transport);
     }
 
-    pub fn set_transport_manager(&self, manager: Arc<crate::mesh::transports::manager::MeshTransportManager>) {
+    pub fn set_transport_manager(
+        &self,
+        manager: Arc<crate::mesh::transports::manager::MeshTransportManager>,
+    ) {
         let mut m = self.transport_manager.write();
         *m = Some(manager);
     }
@@ -247,7 +251,14 @@ impl MeshProxy {
         valid_until: u64,
     ) -> Option<crate::mesh::TierKey> {
         let mut mgr = self.org_manager.write().await;
-        mgr.issue_tier_key(org_id, tier, key, valid_from, valid_until, "self".to_string())
+        mgr.issue_tier_key(
+            org_id,
+            tier,
+            key,
+            valid_from,
+            valid_until,
+            "self".to_string(),
+        )
     }
 
     pub async fn validate_tier_claim(&self, claim: &crate::mesh::TierClaim) -> bool {
@@ -266,7 +277,9 @@ impl MeshProxy {
         blocked_duration_secs: u64,
     ) {
         if let Some(transport) = self.transport.read().as_ref() {
-            transport.broadcast_upstream_block(upstream_id, reason, blocked_duration_secs).await;
+            transport
+                .broadcast_upstream_block(upstream_id, reason, blocked_duration_secs)
+                .await;
         }
     }
 
@@ -275,87 +288,103 @@ impl MeshProxy {
         req: &Request<Incoming>,
     ) -> Result<(String, CachedPolicy), MeshProxyError> {
         let upstream_id = self.extract_upstream_id(req)?;
-        
+
         if let Some(cached) = self.get_cached_policy(&upstream_id) {
             let is_expired = cached.expires_at < Instant::now();
             let stale_ttl = Duration::from_secs(STALE_CACHE_TTL_SECS);
             let is_stale = cached.expires_at < Instant::now() - stale_ttl;
-            
-            let peer_healthy = if let Some(peer) = self.topology.get_peer(&cached.provider_node_id).await {
-                peer.is_healthy()
-            } else {
-                false
-            };
-            
+
+            let peer_healthy =
+                if let Some(peer) = self.topology.get_peer(&cached.provider_node_id).await {
+                    peer.is_healthy()
+                } else {
+                    false
+                };
+
             if peer_healthy && !is_stale {
                 tracing::debug!("Using cached policy for {}", upstream_id);
                 return Ok((upstream_id, cached));
             }
-            
+
             if peer_healthy && is_stale && !self.is_provider_failed(&cached.provider_node_id) {
-                tracing::debug!("Returning stale cached policy for {}, will revalidate in background", upstream_id);
+                tracing::debug!(
+                    "Returning stale cached policy for {}, will revalidate in background",
+                    upstream_id
+                );
                 self.mark_stale_cache_for_refresh(&upstream_id);
                 return Ok((upstream_id, cached));
             }
-            
+
             if self.is_provider_failed(&cached.provider_node_id) {
-                tracing::debug!("Cached provider {} is in cooldown for {}", cached.provider_node_id, upstream_id);
+                tracing::debug!(
+                    "Cached provider {} is in cooldown for {}",
+                    cached.provider_node_id,
+                    upstream_id
+                );
             }
         }
 
         let provider_info = {
             let transport = self.transport.read();
             match transport.as_ref() {
-                Some(t) => {
-                    match t.send_route_query(&upstream_id).await {
-                        Ok(result) => {
-                            let providers = self.filter_failed_providers(&result.providers);
-                            
-                            let tier_filtered = self.filter_by_tier_threshold(&providers);
-                            
-                            if tier_filtered.is_empty() && !providers.is_empty() {
-                                tracing::warn!(
+                Some(t) => match t.send_route_query(&upstream_id).await {
+                    Ok(result) => {
+                        let providers = self.filter_failed_providers(&result.providers);
+
+                        let tier_filtered = self.filter_by_tier_threshold(&providers);
+
+                        if tier_filtered.is_empty() && !providers.is_empty() {
+                            tracing::warn!(
                                     "All providers for {} filtered by tier threshold {}, returning alternatives for redirect",
                                     upstream_id,
                                     self.min_tier_threshold()
                                 );
-                                let alternatives: Vec<_> = providers.iter()
-                                    .map(|p| crate::mesh::protocol::AlternativeProvider {
-                                        node_id: p.node_id.clone(),
-                                        priority_tier: p.priority_tier,
-                                    })
-                                    .collect();
-                                
-                                return Err(MeshProxyError::TierThresholdNotMet {
-                                    upstream_id: upstream_id.to_string(),
-                                    alternatives,
-                                });
-                            }
-                            
-                            if providers.is_empty() {
-                                if let Some(cached) = self.get_cached_policy(&upstream_id) {
-                                    if !self.is_provider_failed(&cached.provider_node_id) {
-                                        tracing::warn!("All providers failed for {}, using stale cache", upstream_id);
-                                        return Ok((upstream_id, cached));
-                                    }
-                                }
-                                return Err(MeshProxyError::NoRouteToUpstream(upstream_id.to_string()));
-                            }
-                            tier_filtered.into_iter().next().ok_or_else(|| {
-                                MeshProxyError::NoRouteToUpstream(upstream_id.to_string())
-                            })?
+                            let alternatives: Vec<_> = providers
+                                .iter()
+                                .map(|p| crate::mesh::protocol::AlternativeProvider {
+                                    node_id: p.node_id.clone(),
+                                    priority_tier: p.priority_tier,
+                                })
+                                .collect();
+
+                            return Err(MeshProxyError::TierThresholdNotMet {
+                                upstream_id: upstream_id.to_string(),
+                                alternatives,
+                            });
                         }
-                        Err(e) => {
+
+                        if providers.is_empty() {
                             if let Some(cached) = self.get_cached_policy(&upstream_id) {
-                                tracing::warn!("Route query failed for {}, using stale cache: {}", upstream_id, e);
-                                return Ok((upstream_id, cached));
+                                if !self.is_provider_failed(&cached.provider_node_id) {
+                                    tracing::warn!(
+                                        "All providers failed for {}, using stale cache",
+                                        upstream_id
+                                    );
+                                    return Ok((upstream_id, cached));
+                                }
                             }
-                            return Err(MeshProxyError::ConnectionFailed(e.to_string()));
+                            return Err(MeshProxyError::NoRouteToUpstream(upstream_id.to_string()));
                         }
+                        tier_filtered.into_iter().next().ok_or_else(|| {
+                            MeshProxyError::NoRouteToUpstream(upstream_id.to_string())
+                        })?
                     }
-                }
+                    Err(e) => {
+                        if let Some(cached) = self.get_cached_policy(&upstream_id) {
+                            tracing::warn!(
+                                "Route query failed for {}, using stale cache: {}",
+                                upstream_id,
+                                e
+                            );
+                            return Ok((upstream_id, cached));
+                        }
+                        return Err(MeshProxyError::ConnectionFailed(e.to_string()));
+                    }
+                },
                 None => {
-                    return Err(MeshProxyError::ConnectionFailed("Transport not initialized".to_string()));
+                    return Err(MeshProxyError::ConnectionFailed(
+                        "Transport not initialized".to_string(),
+                    ));
                 }
             }
         };
@@ -376,12 +405,15 @@ impl MeshProxy {
 
     fn extract_upstream_id(&self, req: &Request<Incoming>) -> Result<String, MeshProxyError> {
         let uri = req.uri();
-        let host = uri.host()
+        let host = uri
+            .host()
             .or_else(|| req.headers().get("host").and_then(|h| h.to_str().ok()))
             .ok_or_else(|| MeshProxyError::UpstreamNotFound("No host found".to_string()))?;
 
         let path = uri.path();
-        let first_segment = path.split('/').find(|s| !s.is_empty())
+        let first_segment = path
+            .split('/')
+            .find(|s| !s.is_empty())
             .map(|s| s.to_string());
 
         let upstream_id = match first_segment {
@@ -394,7 +426,7 @@ impl MeshProxy {
 
     fn detect_protocol(req: &Request<Incoming>) -> UpstreamProtocol {
         let uri = req.uri();
-        
+
         if let Some(upgrade) = req.headers().get("upgrade") {
             if let Ok(upgrade_str) = upgrade.to_str() {
                 if upgrade_str.eq_ignore_ascii_case("websocket") {
@@ -483,7 +515,7 @@ impl MeshProxy {
         if min_tier == 0 {
             return providers.to_vec();
         }
-        
+
         providers
             .iter()
             .filter(|p| p.priority_tier >= min_tier)
@@ -512,16 +544,18 @@ impl MeshProxy {
 
     fn record_provider_success(&self, provider_node_id: &str) {
         self.clear_provider_failure(provider_node_id);
-        
+
         if let Ok(mut stats) = self.provider_stats.try_lock() {
-            let stats = stats.entry(provider_node_id.to_string()).or_insert_with(|| ProviderStats {
-                total_requests: 0,
-                successful_requests: 0,
-                consecutive_failures: 0,
-                last_failure: None,
-                last_success: None,
-                cooldown_until: None,
-            });
+            let stats = stats
+                .entry(provider_node_id.to_string())
+                .or_insert_with(|| ProviderStats {
+                    total_requests: 0,
+                    successful_requests: 0,
+                    consecutive_failures: 0,
+                    last_failure: None,
+                    last_success: None,
+                    cooldown_until: None,
+                });
             stats.record_success();
         }
     }
@@ -529,14 +563,16 @@ impl MeshProxy {
     fn record_provider_failure(&self, provider_node_id: &str) -> u32 {
         let mut failure_count = 0u32;
         if let Ok(mut stats) = self.provider_stats.try_lock() {
-            let stats = stats.entry(provider_node_id.to_string()).or_insert_with(|| ProviderStats {
-                total_requests: 0,
-                successful_requests: 0,
-                consecutive_failures: 0,
-                last_failure: None,
-                last_success: None,
-                cooldown_until: None,
-            });
+            let stats = stats
+                .entry(provider_node_id.to_string())
+                .or_insert_with(|| ProviderStats {
+                    total_requests: 0,
+                    successful_requests: 0,
+                    consecutive_failures: 0,
+                    last_failure: None,
+                    last_success: None,
+                    cooldown_until: None,
+                });
             stats.record_failure();
             failure_count = stats.consecutive_failures;
         }
@@ -554,11 +590,14 @@ impl MeshProxy {
                     if in_flight.get(upstream_id).is_some() {
                         false
                     } else {
-                        in_flight.insert(upstream_id.to_string(), InFlightQuery {
-                            provider: None,
-                            completed: false,
-                            failed: false,
-                        });
+                        in_flight.insert(
+                            upstream_id.to_string(),
+                            InFlightQuery {
+                                provider: None,
+                                completed: false,
+                                failed: false,
+                            },
+                        );
                         true
                     }
                 }
@@ -592,8 +631,9 @@ impl MeshProxy {
 
     async fn execute_route_query(&self, upstream_id: &str) -> Result<ProviderInfo, MeshProxyError> {
         let transport = self.transport.read();
-        let transport = transport.as_ref()
-            .ok_or_else(|| MeshProxyError::ConnectionFailed("Transport not initialized".to_string()))?;
+        let transport = transport.as_ref().ok_or_else(|| {
+            MeshProxyError::ConnectionFailed("Transport not initialized".to_string())
+        })?;
 
         match transport.send_route_query(upstream_id).await {
             Ok(result) => {
@@ -615,54 +655,61 @@ impl MeshProxy {
         loop {
             if self.topology.is_upstream_blocked(upstream_id).await {
                 tracing::warn!("Upstream {} is blocked due to ratelimit", upstream_id);
-                
+
                 if let Some(blocked_until) = self.topology.get_blocked_until(upstream_id).await {
-                    let remaining_secs = blocked_until.saturating_duration_since(Instant::now()).as_secs();
-                    
+                    let remaining_secs = blocked_until
+                        .saturating_duration_since(Instant::now())
+                        .as_secs();
+
                     if remaining_secs < 5 {
                         let wait_time = rand::rng().random_range(0..=5);
-                        tracing::debug!("Blocking period < 5s, waiting {}s before retry", wait_time);
+                        tracing::debug!(
+                            "Blocking period < 5s, waiting {}s before retry",
+                            wait_time
+                        );
                         tokio::time::sleep(Duration::from_secs(wait_time)).await;
-                        
+
                         if !self.topology.is_upstream_blocked(upstream_id).await {
                             continue;
                         }
                     }
                 }
-                
+
                 return Err(MeshProxyError::UpstreamBlocked(upstream_id.to_string()));
             }
 
             let cached = self.get_cached_policy(upstream_id);
             let cached_for_check = cached.clone();
-            
+
             let provider_info = if let Some(ref cached) = cached {
                 if let Some(peer) = self.topology.get_peer(&cached.provider_node_id).await {
-                if peer.is_healthy() {
-                    Some(crate::mesh::protocol::ProviderInfo {
-                        node_id: cached.provider_node_id.clone(),
-                        upstream_url: cached.upstream_url.clone(),
-                        waf_policy: cached.waf_policy.clone(),
-                        hops: 0,
-                        ttl: Duration::from_secs(300),
-                        score: 1.0,
-                        priority_tier: cached.priority_tier,
-                        tier_claim: None,
-                        org_id: None,
-                        mesh_name: None,
-                    })
+                    if peer.is_healthy() {
+                        Some(crate::mesh::protocol::ProviderInfo {
+                            node_id: cached.provider_node_id.clone(),
+                            upstream_url: cached.upstream_url.clone(),
+                            waf_policy: cached.waf_policy.clone(),
+                            hops: 0,
+                            ttl: Duration::from_secs(300),
+                            score: 1.0,
+                            priority_tier: cached.priority_tier,
+                            tier_claim: None,
+                            org_id: None,
+                            mesh_name: None,
+                        })
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 }
             } else {
                 None
-            }
-        } else {
-            None
-        };
+            };
 
             if let Some(pi) = provider_info {
-                return self.proxy_to_peer_with_fallback(upstream_id, vec![pi], req).await;
+                return self
+                    .proxy_to_peer_with_fallback(upstream_id, vec![pi], req)
+                    .await;
             }
 
             if let Some(ref c) = cached_for_check {
@@ -676,8 +723,19 @@ impl MeshProxy {
                 Ok(p) => p,
                 Err(e) => {
                     if let Some(cached) = self.get_cached_policy(upstream_id) {
-                        tracing::warn!("Route query failed for {}, using stale cache: {}", upstream_id, e);
-                        return self.proxy_to_peer(&cached.provider_node_id, upstream_id, cached.upstream_url.clone(), req).await;
+                        tracing::warn!(
+                            "Route query failed for {}, using stale cache: {}",
+                            upstream_id,
+                            e
+                        );
+                        return self
+                            .proxy_to_peer(
+                                &cached.provider_node_id,
+                                upstream_id,
+                                cached.upstream_url.clone(),
+                                req,
+                            )
+                            .await;
                     }
                     return Err(e);
                 }
@@ -693,7 +751,9 @@ impl MeshProxy {
             };
             self.cache_policy(upstream_id, cached);
 
-            return self.proxy_to_peer_with_fallback(upstream_id, vec![provider], req).await;
+            return self
+                .proxy_to_peer_with_fallback(upstream_id, vec![provider], req)
+                .await;
         }
     }
 
@@ -717,7 +777,10 @@ impl MeshProxy {
             Ok(collected) => collected.to_bytes(),
             Err(e) => {
                 tracing::warn!("Failed to collect request body for retry: {}", e);
-                return Err(MeshProxyError::SendFailed(format!("Failed to collect request body: {}", e)));
+                return Err(MeshProxyError::SendFailed(format!(
+                    "Failed to collect request body: {}",
+                    e
+                )));
             }
         };
 
@@ -731,14 +794,15 @@ impl MeshProxy {
 
             tracing::debug!(
                 "Trying provider {} for {} (attempt {}/{})",
-                provider.node_id, upstream_id, idx + 1, providers.len()
+                provider.node_id,
+                upstream_id,
+                idx + 1,
+                providers.len()
             );
 
             // Build request with original method/URI/headers, preserving client's path
             let request_body = http_body_util::Full::new(body_bytes.clone());
-            let mut retry_req = Request::builder()
-                .method(method.clone())
-                .uri(uri.clone());
+            let mut retry_req = Request::builder().method(method.clone()).uri(uri.clone());
             for (name, value) in headers.iter() {
                 retry_req = retry_req.header(name.as_str(), value.to_str().unwrap_or(""));
             }
@@ -746,10 +810,18 @@ impl MeshProxy {
                 .body(request_body)
                 .map_err(|e| MeshProxyError::SendFailed(e.to_string()))?;
 
-            match self.proxy_to_peer(&provider.node_id, upstream_id, provider.upstream_url.clone(), retry_req).await {
+            match self
+                .proxy_to_peer(
+                    &provider.node_id,
+                    upstream_id,
+                    provider.upstream_url.clone(),
+                    retry_req,
+                )
+                .await
+            {
                 Ok(resp) => {
                     self.record_provider_success(&provider.node_id);
-                    
+
                     if let Some(cached) = self.get_cached_policy(upstream_id) {
                         if cached.provider_node_id != provider.node_id {
                             let updated = CachedPolicy {
@@ -758,55 +830,67 @@ impl MeshProxy {
                                 waf_policy: provider.waf_policy.clone(),
                                 protocol: UpstreamProtocol::Http,
                                 priority_tier: provider.priority_tier,
-                                expires_at: Instant::now() + Duration::from_secs(DEFAULT_POLICY_CACHE_TTL_SECS),
+                                expires_at: Instant::now()
+                                    + Duration::from_secs(DEFAULT_POLICY_CACHE_TTL_SECS),
                             };
                             self.cache_policy(upstream_id, updated);
                         }
                     }
-                    
-                    let request_size = body_bytes.len() + format!("{} {} HTTP/1.1\r\n", method, uri).len();
+
+                    let request_size =
+                        body_bytes.len() + format!("{} {} HTTP/1.1\r\n", method, uri).len();
                     let response_size = resp.body().size_hint().exact().unwrap_or(0);
-                    
+
                     if let Some(bandwidth) = get_global_bandwidth_tracker_or_log() {
                         bandwidth.record_site_mesh_egress(upstream_id, request_size as u64);
                         bandwidth.record_site_mesh_ingress(upstream_id, response_size);
                     }
-                    
+
                     tracing::info!(
                         "Successfully proxied to {} via provider {} (tried {}/{})",
-                        upstream_id, provider.node_id, idx + 1, providers.len()
+                        upstream_id,
+                        provider.node_id,
+                        idx + 1,
+                        providers.len()
                     );
                     return Ok(resp);
                 }
                 Err(e) => {
                     let failure_count = self.record_provider_failure(&provider.node_id);
-                    
+
                     if failure_count >= BLOCK_BROADCAST_FAILURE_THRESHOLD
-                        && !self.topology.is_upstream_blocked(upstream_id).await {
-                            tracing::warn!(
-                                upstream_id, failure_count,
-                                "Upstream {} has {} consecutive failures - broadcasting block to mesh",
-                                upstream_id, failure_count
-                            );
-                            self.block_and_broadcast_upstream(
-                                upstream_id,
-                                "provider_consecutive_failures",
-                                BLOCK_DURATION_SECS,
-                            ).await;
-                        }
-                    
+                        && !self.topology.is_upstream_blocked(upstream_id).await
+                    {
+                        tracing::warn!(
+                            upstream_id,
+                            failure_count,
+                            "Upstream {} has {} consecutive failures - broadcasting block to mesh",
+                            upstream_id,
+                            failure_count
+                        );
+                        self.block_and_broadcast_upstream(
+                            upstream_id,
+                            "provider_consecutive_failures",
+                            BLOCK_DURATION_SECS,
+                        )
+                        .await;
+                    }
+
                     tracing::warn!(
                         "Provider {} failed for {} (attempt {}/{}): {}",
-                        provider.node_id, upstream_id, idx + 1, providers.len(), e
+                        provider.node_id,
+                        upstream_id,
+                        idx + 1,
+                        providers.len(),
+                        e
                     );
                     last_error = Some(e);
                 }
             }
         }
 
-        Err(last_error.unwrap_or_else(|| {
-            MeshProxyError::NoRouteToUpstream(upstream_id.to_string())
-        }))
+        Err(last_error
+            .unwrap_or_else(|| MeshProxyError::NoRouteToUpstream(upstream_id.to_string())))
     }
 
     fn mark_stale_cache_for_refresh(&self, upstream_id: &str) {
@@ -835,15 +919,33 @@ impl MeshProxy {
             Ok(p) => p,
             Err(e) => {
                 if let Some(cached) = self.get_cached_policy(upstream_id) {
-                    tracing::warn!("Route query failed for {}, using stale cache: {}", upstream_id, e);
-                    let response = self.proxy_to_peer(&cached.provider_node_id, upstream_id, cached.upstream_url.clone(), req).await;
+                    tracing::warn!(
+                        "Route query failed for {}, using stale cache: {}",
+                        upstream_id,
+                        e
+                    );
+                    let response = self
+                        .proxy_to_peer(
+                            &cached.provider_node_id,
+                            upstream_id,
+                            cached.upstream_url.clone(),
+                            req,
+                        )
+                        .await;
                     return response.map(|r| (r, cached.waf_policy));
                 }
                 return Err(e);
             }
         };
 
-        let response = self.proxy_to_peer(&provider_info.node_id, upstream_id, provider_info.upstream_url.clone(), req).await;
+        let response = self
+            .proxy_to_peer(
+                &provider_info.node_id,
+                upstream_id,
+                provider_info.upstream_url.clone(),
+                req,
+            )
+            .await;
 
         match response {
             Ok(resp) => {
@@ -852,7 +954,12 @@ impl MeshProxy {
             }
             Err(e) => {
                 let _failure_count = self.record_provider_failure(&provider_info.node_id);
-                tracing::warn!("Provider {} failed for {}: {}", provider_info.node_id, upstream_id, e);
+                tracing::warn!(
+                    "Provider {} failed for {}: {}",
+                    provider_info.node_id,
+                    upstream_id,
+                    e
+                );
                 Err(e)
             }
         }
@@ -931,10 +1038,13 @@ impl MeshProxy {
         );
 
         let transport = self.transport.read();
-        let transport = transport.as_ref()
-            .ok_or_else(|| MeshProxyError::ConnectionFailed("Transport not initialized".to_string()))?;
+        let transport = transport.as_ref().ok_or_else(|| {
+            MeshProxyError::ConnectionFailed("Transport not initialized".to_string())
+        })?;
 
-        let response = transport.proxy_http_request(peer_node_id, &target_url, req).await
+        let response = transport
+            .proxy_http_request(peer_node_id, &target_url, req)
+            .await
             .map_err(|e| MeshProxyError::ConnectionFailed(e.to_string()))?;
 
         {
@@ -982,33 +1092,37 @@ impl MeshProxy {
             let mut cache = self.transform_cache.lock();
             if let Some(entry) = cache.get(&cache_key) {
                 tracing::debug!("Transform cache hit for {}", cache_key);
-                let mut new_response = Response::builder()
-                    .status(200);
-                
+                let mut new_response = Response::builder().status(200);
+
                 if let Some(ref enc) = entry.content_encoding {
                     new_response = new_response.header("Content-Encoding", enc.as_str());
                 }
                 if let Some(ref ct) = entry.content_type {
                     new_response = new_response.header("Content-Type", ct.as_str());
                 }
-                
+
                 let body = http_body_util::Full::new(entry.body.clone()).boxed();
                 return new_response.body(body).unwrap();
             }
         }
 
-        let content_type = response.headers()
+        let content_type = response
+            .headers()
             .get("content-type")
             .and_then(|v| v.to_str().ok())
             .map(|s| s.to_string())
             .unwrap_or_default();
 
-        let last_modified = response.headers()
+        let last_modified = response
+            .headers()
             .get("last-modified")
             .and_then(|v| v.to_str().ok())
             .map(|s| s.to_string());
 
-        let body = std::mem::replace(response.body_mut(), http_body_util::Full::new(Bytes::new()).boxed());
+        let body = std::mem::replace(
+            response.body_mut(),
+            http_body_util::Full::new(Bytes::new()).boxed(),
+        );
 
         let body = match body.collect().await {
             Ok(collected) => collected.to_bytes(),
@@ -1031,7 +1145,9 @@ impl MeshProxy {
             if config.enabled.unwrap_or(false) && content_type.starts_with("image/") {
                 let min_size = config.min_size_bytes.unwrap_or(102400) as u64;
                 if transformed.len() as u64 >= min_size {
-                    let whitelisted = config.whitelist_patterns.as_ref()
+                    let whitelisted = config
+                        .whitelist_patterns
+                        .as_ref()
                         .map(|patterns| {
                             patterns.iter().any(|p| {
                                 regex::Regex::new(p)
@@ -1042,7 +1158,9 @@ impl MeshProxy {
                         .unwrap_or(false);
 
                     if !whitelisted {
-                        transformed = self.apply_image_poisoning(transformed, upstream_id, last_modified.clone()).await;
+                        transformed = self
+                            .apply_image_poisoning(transformed, upstream_id, last_modified.clone())
+                            .await;
                     }
                 }
             }
@@ -1050,22 +1168,31 @@ impl MeshProxy {
 
         if let Some(ref comp_config) = compression {
             if comp_config.enabled.unwrap_or(false) {
-                let accept_encoding = response.headers()
+                let accept_encoding = response
+                    .headers()
                     .get("accept-encoding")
                     .and_then(|v| v.to_str().ok())
                     .unwrap_or("");
-                
+
                 if accept_encoding.contains("br") {
-                    if let Ok(compressed) = self.minifier_generator.compress_brotli(&transformed, comp_config.brotli_level.unwrap_or(6)) {
+                    if let Ok(compressed) = self
+                        .minifier_generator
+                        .compress_brotli(&transformed, comp_config.brotli_level.unwrap_or(6))
+                    {
                         transformed = Bytes::from(compressed);
-                        response.headers_mut()
+                        response
+                            .headers_mut()
                             .insert("Content-Encoding", "br".parse().unwrap());
                     }
                 } else if accept_encoding.contains("gzip") {
                     let gzip_level = comp_config.gzip_level.unwrap_or(6);
-                    if let Ok(compressed) = self.minifier_generator.compress_gzip(&transformed, gzip_level) {
+                    if let Ok(compressed) = self
+                        .minifier_generator
+                        .compress_gzip(&transformed, gzip_level)
+                    {
                         transformed = Bytes::from(compressed);
-                        response.headers_mut()
+                        response
+                            .headers_mut()
                             .insert("Content-Encoding", "gzip".parse().unwrap());
                     }
                 }
@@ -1077,24 +1204,29 @@ impl MeshProxy {
 
         *response.body_mut() = new_body;
 
-        let content_type_header = response.headers()
+        let content_type_header = response
+            .headers()
             .get("content-type")
             .and_then(|v| v.to_str().ok())
             .map(|s| s.to_string());
 
-        let cached_content_encoding = response.headers()
+        let cached_content_encoding = response
+            .headers()
             .get("content-encoding")
             .and_then(|v| v.to_str().ok())
             .map(|s| s.to_string());
 
         {
             let mut cache = self.transform_cache.lock();
-            cache.insert(cache_key, TransformCacheEntry {
-                body: transformed,
-                content_encoding: cached_content_encoding,
-                content_type: content_type_header,
-                created_at: Instant::now(),
-            });
+            cache.insert(
+                cache_key,
+                TransformCacheEntry {
+                    body: transformed,
+                    content_encoding: cached_content_encoding,
+                    content_type: content_type_header,
+                    created_at: Instant::now(),
+                },
+            );
         }
 
         response
@@ -1107,7 +1239,7 @@ impl MeshProxy {
         config: &MeshMinificationConfig,
     ) -> Bytes {
         let ct = content_type.to_lowercase();
-        
+
         if ct.contains("text/html") || ct.contains("text/css") || ct.contains("javascript") {
             if ct.contains("text/html") {
                 if let Ok(text) = String::from_utf8(body.to_vec()) {
@@ -1154,7 +1286,10 @@ impl MeshProxy {
 
         let client = crate::static_files::client::PoisonImageClient::new(socket_path);
 
-        match client.poison_image(site_id, body.to_vec(), last_modified).await {
+        match client
+            .poison_image(site_id, body.to_vec(), last_modified)
+            .await
+        {
             Ok(poisoned) => Bytes::from(poisoned),
             Err(e) => {
                 tracing::debug!("Image poisoning failed: {}", e);
@@ -1191,17 +1326,18 @@ impl MeshProxy {
         action: crate::mesh::protocol::AnnounceAction,
     ) -> Result<(), MeshProxyError> {
         if !self.topology.can_forward_service(upstream_id) {
-            tracing::debug!("Not announcing upstream {} - service not allowed by policy", upstream_id);
+            tracing::debug!(
+                "Not announcing upstream {} - service not allowed by policy",
+                upstream_id
+            );
             return Ok(());
         }
 
         match action {
             crate::mesh::protocol::AnnounceAction::Add => {
-                self.topology.add_local_upstream(
-                    upstream_id.to_string(),
-                    String::new(),
-                    None,
-                ).await;
+                self.topology
+                    .add_local_upstream(upstream_id.to_string(), String::new(), None)
+                    .await;
             }
             crate::mesh::protocol::AnnounceAction::Remove => {
                 self.topology.remove_local_upstream(upstream_id).await;

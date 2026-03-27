@@ -5,7 +5,10 @@ pub mod limiter;
 
 pub use async_bucket::AsyncTokenBucket;
 pub use bucket::TokenBucket;
-pub use global::{GlobalTrafficShaper, SiteTrafficShaper, SiteTrafficLimits, BandwidthLimitExceeded, BandwidthDirection};
+pub use global::{
+    BandwidthDirection, BandwidthLimitExceeded, GlobalTrafficShaper, SiteTrafficLimits,
+    SiteTrafficShaper,
+};
 pub use limiter::{
     ConnectionLimitError, ConnectionLimiter, ConnectionToken, SiteConnectionLimiter,
 };

@@ -407,9 +407,7 @@ impl BandwidthTracker {
             .fetch_add(bytes_sent, Ordering::Relaxed);
 
         let mut upstreams = self.per_upstream.write();
-        let upstream = upstreams
-            .entry(upstream_id.to_string())
-            .or_default();
+        let upstream = upstreams.entry(upstream_id.to_string()).or_default();
         upstream.bytes_sent.fetch_add(bytes_sent, Ordering::Relaxed);
         upstream
             .bytes_received
@@ -425,25 +423,19 @@ impl BandwidthTracker {
 
     pub fn record_site_ingress(&self, site_id: &str, bytes: u64) {
         let mut sites = self.per_site.write();
-        let site = sites
-            .entry(site_id.to_string())
-            .or_default();
+        let site = sites.entry(site_id.to_string()).or_default();
         site.bytes_received.fetch_add(bytes, Ordering::Relaxed);
     }
 
     pub fn record_site_egress(&self, site_id: &str, bytes: u64) {
         let mut sites = self.per_site.write();
-        let site = sites
-            .entry(site_id.to_string())
-            .or_default();
+        let site = sites.entry(site_id.to_string()).or_default();
         site.bytes_sent.fetch_add(bytes, Ordering::Relaxed);
     }
 
     pub fn record_site_proxied(&self, site_id: &str, bytes_sent: u64, bytes_received: u64) {
         let mut sites = self.per_site.write();
-        let site = sites
-            .entry(site_id.to_string())
-            .or_default();
+        let site = sites.entry(site_id.to_string()).or_default();
         site.proxied_bytes_sent
             .fetch_add(bytes_sent, Ordering::Relaxed);
         site.proxied_bytes_received
@@ -452,18 +444,14 @@ impl BandwidthTracker {
 
     pub fn record_site_mesh_egress(&self, site_id: &str, bytes: u64) {
         let mut sites = self.per_site.write();
-        let site = sites
-            .entry(site_id.to_string())
-            .or_default();
+        let site = sites.entry(site_id.to_string()).or_default();
         site.mesh_bytes_sent.fetch_add(bytes, Ordering::Relaxed);
         self.mesh_bytes_sent.fetch_add(bytes, Ordering::Relaxed);
     }
 
     pub fn record_site_mesh_ingress(&self, site_id: &str, bytes: u64) {
         let mut sites = self.per_site.write();
-        let site = sites
-            .entry(site_id.to_string())
-            .or_default();
+        let site = sites.entry(site_id.to_string()).or_default();
         site.mesh_bytes_received.fetch_add(bytes, Ordering::Relaxed);
         self.mesh_bytes_received.fetch_add(bytes, Ordering::Relaxed);
     }

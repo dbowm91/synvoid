@@ -1,12 +1,8 @@
-use axum::{
-    extract::State,
-    http::StatusCode,
-    Json,
-};
-use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 use super::super::state::AdminState;
 use crate::log_controller;
+use axum::{extract::State, http::StatusCode, Json};
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 use super::common::{OptionalAuth, StatusResponse};
 
@@ -31,9 +27,8 @@ pub async fn get_main_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<MainConfigResponse>, StatusCode> {
-
     let config = state.process.config.read().await;
-    
+
     Ok(Json(MainConfigResponse {
         config: config.main.clone(),
     }))
@@ -71,7 +66,6 @@ pub async fn get_config_schema(
     State(_state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<Vec<ConfigFieldSchema>>, StatusCode> {
-
     let mut schema = Vec::new();
 
     schema.push(ConfigFieldSchema {
@@ -121,7 +115,14 @@ pub async fn get_config_schema(
         default: Some(serde_json::json!("auto")),
         description: "Number of Tokio runtime threads".to_string(),
         impact: Some("auto matches CPU cores".to_string()),
-        options: Some(vec!["auto".to_string(), "1".to_string(), "2".to_string(), "4".to_string(), "8".to_string(), "16".to_string()]),
+        options: Some(vec![
+            "auto".to_string(),
+            "1".to_string(),
+            "2".to_string(),
+            "4".to_string(),
+            "8".to_string(),
+            "16".to_string(),
+        ]),
     });
 
     schema.push(ConfigFieldSchema {
@@ -301,7 +302,11 @@ pub async fn get_config_schema(
         default: Some(serde_json::json!("return_404")),
         description: "What to do when no site matches".to_string(),
         impact: None,
-        options: Some(vec!["return_404".to_string(), "return_500".to_string(), "serve_static".to_string()]),
+        options: Some(vec![
+            "return_404".to_string(),
+            "return_500".to_string(),
+            "serve_static".to_string(),
+        ]),
     });
 
     schema.push(ConfigFieldSchema {
@@ -321,7 +326,13 @@ pub async fn get_config_schema(
         default: Some(serde_json::json!("info")),
         description: "Minimum log level to record".to_string(),
         impact: None,
-        options: Some(vec!["trace".to_string(), "debug".to_string(), "info".to_string(), "warn".to_string(), "error".to_string()]),
+        options: Some(vec![
+            "trace".to_string(),
+            "debug".to_string(),
+            "info".to_string(),
+            "warn".to_string(),
+            "error".to_string(),
+        ]),
     });
 
     schema.push(ConfigFieldSchema {
@@ -401,7 +412,11 @@ pub async fn get_config_schema(
         default: Some(serde_json::json!("shared")),
         description: "Rate limiting strategy".to_string(),
         impact: None,
-        options: Some(vec!["shared".to_string(), "per_site".to_string(), "per_ip".to_string()]),
+        options: Some(vec![
+            "shared".to_string(),
+            "per_site".to_string(),
+            "per_ip".to_string(),
+        ]),
     });
 
     schema.push(ConfigFieldSchema {
@@ -410,7 +425,10 @@ pub async fn get_config_schema(
         field_type: "integer".to_string(),
         default: Some(serde_json::json!(10)),
         description: "Maximum requests allowed per IP per second".to_string(),
-        impact: Some("Lower values provide stronger protection but may block legitimate burst traffic".to_string()),
+        impact: Some(
+            "Lower values provide stronger protection but may block legitimate burst traffic"
+                .to_string(),
+        ),
         options: None,
     });
 
@@ -621,7 +639,12 @@ pub async fn get_config_schema(
         default: Some(serde_json::json!("pow_then_css")),
         description: "Order of challenge methods".to_string(),
         impact: None,
-        options: Some(vec!["pow_then_css".to_string(), "css_then_pow".to_string(), "pow_only".to_string(), "css_only".to_string()]),
+        options: Some(vec![
+            "pow_then_css".to_string(),
+            "css_then_pow".to_string(),
+            "pow_only".to_string(),
+            "css_only".to_string(),
+        ]),
     });
 
     schema.push(ConfigFieldSchema {
@@ -629,8 +652,11 @@ pub async fn get_config_schema(
         label: "Error Pages Mode".to_string(),
         field_type: "enum".to_string(),
         default: Some(serde_json::json!("default")),
-        description: "Choose between minimal unstyled error pages or custom HTML templates".to_string(),
-        impact: Some("default mode provides stealthy minimal pages with no server info".to_string()),
+        description: "Choose between minimal unstyled error pages or custom HTML templates"
+            .to_string(),
+        impact: Some(
+            "default mode provides stealthy minimal pages with no server info".to_string(),
+        ),
         options: Some(vec!["default".to_string(), "custom".to_string()]),
     });
 
@@ -651,7 +677,11 @@ pub async fn get_config_schema(
         default: Some(serde_json::json!("shared")),
         description: "Worker pool sharing strategy".to_string(),
         impact: None,
-        options: Some(vec!["shared".to_string(), "dedicated".to_string(), "per_site".to_string()]),
+        options: Some(vec![
+            "shared".to_string(),
+            "dedicated".to_string(),
+            "per_site".to_string(),
+        ]),
     });
 
     schema.push(ConfigFieldSchema {
@@ -721,7 +751,13 @@ pub async fn get_config_schema(
         default: Some(serde_json::json!(1)),
         description: "Starting threat level (1-5)".to_string(),
         impact: Some("Higher = more aggressive rate limiting".to_string()),
-        options: Some(vec!["1".to_string(), "2".to_string(), "3".to_string(), "4".to_string(), "5".to_string()]),
+        options: Some(vec![
+            "1".to_string(),
+            "2".to_string(),
+            "3".to_string(),
+            "4".to_string(),
+            "5".to_string(),
+        ]),
     });
 
     schema.push(ConfigFieldSchema {
@@ -808,7 +844,9 @@ pub async fn get_config_schema(
         path: "ip_feeds.url".to_string(),
         label: "IP Feed URL".to_string(),
         field_type: "string".to_string(),
-        default: Some(serde_json::json!("https://raw.githubusercontent.com/bitwire-it/ipblocklist/main/inbound.txt")),
+        default: Some(serde_json::json!(
+            "https://raw.githubusercontent.com/bitwire-it/ipblocklist/main/inbound.txt"
+        )),
         description: "URL of IP blocklist feed".to_string(),
         impact: None,
         options: None,
@@ -952,12 +990,10 @@ pub async fn update_main_config(
     _auth: OptionalAuth,
     Json(req): Json<UpdateMainConfigRequest>,
 ) -> Result<Json<StatusResponse>, StatusCode> {
-
-    let toml_content = toml::to_string_pretty(&req.config)
-        .map_err(|e| {
-            tracing::error!("Failed to serialize config: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+    let toml_content = toml::to_string_pretty(&req.config).map_err(|e| {
+        tracing::error!("Failed to serialize config: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     let main_config_path = {
         let cfg = state.process.config.read().await;
@@ -974,7 +1010,9 @@ pub async fn update_main_config(
             })?;
     }
 
-    Ok(Json(StatusResponse::success("Configuration updated. Reload required.")))
+    Ok(Json(StatusResponse::success(
+        "Configuration updated. Reload required.",
+    )))
 }
 
 #[utoipa::path(
@@ -993,17 +1031,16 @@ pub async fn reload_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<StatusResponse>, StatusCode> {
-
     let mut config = state.process.config.write().await;
     let results = config.reload_all();
-    
+
     let loaded = results.iter().filter(|r| r.1.is_ok()).count();
     let failed = results.iter().filter(|r| r.1.is_err()).count();
 
     let mimes_config = &config.main.mimes;
     let mut mimes_reloaded = false;
     let mut mimes_error = None;
-    
+
     if mimes_config.enabled {
         if let Some(ref mimes_file) = mimes_config.file {
             match crate::mime::reload_mimes_from_file(mimes_file) {
@@ -1018,9 +1055,15 @@ pub async fn reload_config(
     }
 
     let message = if mimes_reloaded {
-        format!("Loaded {} configs, {} failed, mimes reloaded", loaded, failed)
+        format!(
+            "Loaded {} configs, {} failed, mimes reloaded",
+            loaded, failed
+        )
     } else if let Some(err) = mimes_error {
-        format!("Loaded {} configs, {} failed, mimes reload failed: {}", loaded, failed, err)
+        format!(
+            "Loaded {} configs, {} failed, mimes reload failed: {}",
+            loaded, failed, err
+        )
     } else {
         format!("Loaded {} configs, {} failed", loaded, failed)
     };
@@ -1055,7 +1098,6 @@ pub async fn set_log_level(
     _auth: OptionalAuth,
     Json(req): Json<SetLogLevelRequest>,
 ) -> Result<Json<StatusResponse>, StatusCode> {
-
     match log_controller::set_log_level(&req.level) {
         Ok(level) => Ok(Json(StatusResponse {
             status: "success".to_string(),
@@ -1084,7 +1126,6 @@ pub async fn get_log_level(
     State(_state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<StatusResponse>, StatusCode> {
-
     let level = log_controller::get_log_level();
     Ok(Json(StatusResponse {
         status: "success".to_string(),
@@ -1108,13 +1149,11 @@ pub async fn export_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<String, StatusCode> {
-
     let config = state.process.config.read().await;
-    let toml_content = toml::to_string_pretty(&config.main)
-        .map_err(|e| {
-            tracing::error!("Failed to serialize config: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+    let toml_content = toml::to_string_pretty(&config.main).map_err(|e| {
+        tracing::error!("Failed to serialize config: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     Ok(toml_content)
 }
@@ -1144,18 +1183,15 @@ pub async fn import_config(
     _auth: OptionalAuth,
     Json(req): Json<ImportConfigRequest>,
 ) -> Result<Json<StatusResponse>, StatusCode> {
+    let parsed: crate::config::main::MainConfig = toml::from_str(&req.config).map_err(|e| {
+        tracing::error!("Failed to parse config TOML: {}", e);
+        StatusCode::BAD_REQUEST
+    })?;
 
-    let parsed: crate::config::main::MainConfig = toml::from_str(&req.config)
-        .map_err(|e| {
-            tracing::error!("Failed to parse config TOML: {}", e);
-            StatusCode::BAD_REQUEST
-        })?;
-
-    let toml_content = toml::to_string_pretty(&parsed)
-        .map_err(|e| {
-            tracing::error!("Failed to serialize config: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+    let toml_content = toml::to_string_pretty(&parsed).map_err(|e| {
+        tracing::error!("Failed to serialize config: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     let main_config_path = {
         let cfg = state.process.config.read().await;
@@ -1172,7 +1208,9 @@ pub async fn import_config(
             })?;
     }
 
-    Ok(Json(StatusResponse::success("Configuration imported. Reload required.")))
+    Ok(Json(StatusResponse::success(
+        "Configuration imported. Reload required.",
+    )))
 }
 
 use crate::utils::check_regex_complexity;
@@ -1207,9 +1245,8 @@ pub async fn check_regex(
     _auth: OptionalAuth,
     Json(req): Json<CheckRegexRequest>,
 ) -> Result<Json<RegexCheckResult>, StatusCode> {
-
     let result = check_regex_complexity(&req.pattern);
-    
+
     Ok(Json(RegexCheckResult {
         pattern: req.pattern,
         safe: result.safe,
@@ -1243,7 +1280,6 @@ pub async fn get_overseer_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<OverseerConfigResponse>, StatusCode> {
-
     let config = state.process.config.read().await;
     Ok(Json(OverseerConfigResponse {
         config: config.main.overseer.clone(),
@@ -1268,7 +1304,6 @@ pub async fn update_overseer_config(
     _auth: OptionalAuth,
     Json(req): Json<UpdateOverseerConfigRequest>,
 ) -> Result<Json<StatusResponse>, StatusCode> {
-
     let _guard = state.metrics.config_write_lock.write().await;
 
     {
@@ -1288,19 +1323,18 @@ pub async fn update_overseer_config(
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
-    let mut main_config: crate::config::MainConfig = toml::from_str(&toml_content)
-        .map_err(|e| {
+    let mut main_config: crate::config::MainConfig =
+        toml::from_str(&toml_content).map_err(|e| {
             tracing::error!("Failed to parse main config: {}", e);
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
     main_config.overseer = req.config;
 
-    let toml_content = toml::to_string_pretty(&main_config)
-        .map_err(|e| {
-            tracing::error!("Failed to serialize config: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+    let toml_content = toml::to_string_pretty(&main_config).map_err(|e| {
+        tracing::error!("Failed to serialize config: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     tokio::fs::write(&main_config_path, toml_content)
         .await
@@ -1324,7 +1358,9 @@ pub async fn update_overseer_config(
 
     tracing::info!("Overseer config updated - reload signal sent");
 
-    Ok(Json(StatusResponse::success("Overseer config updated and reload signal sent.")))
+    Ok(Json(StatusResponse::success(
+        "Overseer config updated and reload signal sent.",
+    )))
 }
 
 #[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
@@ -1353,7 +1389,6 @@ pub async fn get_process_manager_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<ProcessManagerConfigResponse>, StatusCode> {
-
     if let Some(ref pm) = state.process.process_manager {
         Ok(Json(ProcessManagerConfigResponse {
             config: pm.get_config(),
@@ -1384,7 +1419,6 @@ pub async fn update_process_manager_config(
     _auth: OptionalAuth,
     Json(req): Json<UpdateProcessManagerConfigRequest>,
 ) -> Result<Json<StatusResponse>, StatusCode> {
-
     let needs_restart = if let Some(ref pm) = state.process.process_manager {
         match pm.update_config(req.config.clone()) {
             Ok(restart_needed) => {
@@ -1406,11 +1440,10 @@ pub async fn update_process_manager_config(
         let mut config = state.process.config.write().await;
         config.main.process_manager = req.config;
         let path = config.config_dir.join("main.toml");
-        let content = toml::to_string_pretty(&config.main)
-            .map_err(|e| {
-                tracing::error!("Failed to serialize config: {}", e);
-                StatusCode::INTERNAL_SERVER_ERROR
-            })?;
+        let content = toml::to_string_pretty(&config.main).map_err(|e| {
+            tracing::error!("Failed to serialize config: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
         (path, content)
     };
 
@@ -1422,9 +1455,13 @@ pub async fn update_process_manager_config(
         })?;
 
     if needs_restart {
-        Ok(Json(StatusResponse::success("Process manager config updated. Restart required for changes to take effect.")))
+        Ok(Json(StatusResponse::success(
+            "Process manager config updated. Restart required for changes to take effect.",
+        )))
     } else {
-        Ok(Json(StatusResponse::success("Process manager config updated and applied dynamically.")))
+        Ok(Json(StatusResponse::success(
+            "Process manager config updated and applied dynamically.",
+        )))
     }
 }
 
@@ -1454,7 +1491,6 @@ pub async fn get_supervisor_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<SupervisorConfigResponse>, StatusCode> {
-
     let config = state.process.config.read().await;
     Ok(Json(SupervisorConfigResponse {
         config: config.main.supervisor.clone(),
@@ -1479,7 +1515,6 @@ pub async fn update_supervisor_config(
     _auth: OptionalAuth,
     Json(req): Json<UpdateSupervisorConfigRequest>,
 ) -> Result<Json<StatusResponse>, StatusCode> {
-
     let _guard = state.metrics.config_write_lock.write().await;
 
     {
@@ -1499,19 +1534,18 @@ pub async fn update_supervisor_config(
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
-    let mut main_config: crate::config::MainConfig = toml::from_str(&toml_content)
-        .map_err(|e| {
+    let mut main_config: crate::config::MainConfig =
+        toml::from_str(&toml_content).map_err(|e| {
             tracing::error!("Failed to parse main config: {}", e);
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
     main_config.supervisor = req.config;
 
-    let toml_content = toml::to_string_pretty(&main_config)
-        .map_err(|e| {
-            tracing::error!("Failed to serialize config: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+    let toml_content = toml::to_string_pretty(&main_config).map_err(|e| {
+        tracing::error!("Failed to serialize config: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     tokio::fs::write(&main_config_path, toml_content)
         .await
@@ -1539,5 +1573,7 @@ pub async fn update_supervisor_config(
 
     tracing::info!("Supervisor config updated - reload signal sent to workers");
 
-    Ok(Json(StatusResponse::success("Supervisor config updated and reload signal sent to workers.")))
+    Ok(Json(StatusResponse::success(
+        "Supervisor config updated and reload signal sent to workers.",
+    )))
 }

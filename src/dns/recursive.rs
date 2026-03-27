@@ -19,17 +19,12 @@ use crate::dns::firewall::DnsFirewall;
 use crate::dns::metrics::DnsMetrics;
 use parking_lot::RwLock;
 
-use super::recursive_cache::{
-    CachedRecord, RecursiveCacheKey, RecursiveDnsCache,
-};
-use super::resolver::{
-    MxRecord, SrvRecord,
-};
+use super::recursive_cache::{CachedRecord, RecursiveCacheKey, RecursiveDnsCache};
+use super::resolver::{MxRecord, SrvRecord};
 use super::wire::{
-    build_error_response, build_response_header,
-    get_message_id, parse_dns_message, RCODE_NXDOMAIN,
+    build_error_response, build_response_header, get_message_id, parse_dns_message, RCODE_NXDOMAIN,
 };
-use super::{DnsResolver, HickoryResolver, HickoryRecursor, server::DnsRateLimiter};
+use super::{server::DnsRateLimiter, DnsResolver, HickoryRecursor, HickoryResolver};
 
 #[derive(Debug, thiserror::Error)]
 pub enum RecursiveDnsError {
@@ -70,10 +65,7 @@ impl RecursiveDnsServer {
         metrics: Option<Arc<DnsMetrics>>,
     ) -> RecursiveDnsResult<Self> {
         let resolver = Self::create_resolver(&config)?;
-        let cache = RecursiveDnsCache::new(
-            config.cache.capacity,
-            &config.cache,
-        );
+        let cache = RecursiveDnsCache::new(config.cache.capacity, &config.cache);
         let query_semaphore = Arc::new(Semaphore::new(config.max_concurrent_queries));
 
         Ok(Self {
@@ -96,28 +88,35 @@ impl RecursiveDnsServer {
                     config.root_hints_path,
                     config.trust_anchor_path
                 );
-                Arc::new(HickoryRecursor::new(
-                    &config.root_hints_path,
-                    &config.trust_anchor_path,
-                    config.dnssec_validation,
-                ).map_err(|e| RecursiveDnsError::UpstreamFailed(e.to_string()))?)
+                Arc::new(
+                    HickoryRecursor::new(
+                        &config.root_hints_path,
+                        &config.trust_anchor_path,
+                        config.dnssec_validation,
+                    )
+                    .map_err(|e| RecursiveDnsError::UpstreamFailed(e.to_string()))?,
+                )
             }
-            crate::config::dns::RecursiveUpstreamProvider::Google => {
-                Arc::new(HickoryResolver::with_google()
-                    .map_err(|e| RecursiveDnsError::UpstreamFailed(e.to_string()))?)
-            }
-            crate::config::dns::RecursiveUpstreamProvider::Cloudflare => {
-                Arc::new(HickoryResolver::with_cloudflare()
-                    .map_err(|e| RecursiveDnsError::UpstreamFailed(e.to_string()))?)
-            }
+            crate::config::dns::RecursiveUpstreamProvider::Google => Arc::new(
+                HickoryResolver::with_google()
+                    .map_err(|e| RecursiveDnsError::UpstreamFailed(e.to_string()))?,
+            ),
+            crate::config::dns::RecursiveUpstreamProvider::Cloudflare => Arc::new(
+                HickoryResolver::with_cloudflare()
+                    .map_err(|e| RecursiveDnsError::UpstreamFailed(e.to_string()))?,
+            ),
             crate::config::dns::RecursiveUpstreamProvider::System | _ => {
                 let upstream_ips = config.upstream_ips();
                 if upstream_ips.is_empty() {
-                    Arc::new(HickoryResolver::from_system_config()
-                        .map_err(|e| RecursiveDnsError::UpstreamFailed(e.to_string()))?)
+                    Arc::new(
+                        HickoryResolver::from_system_config()
+                            .map_err(|e| RecursiveDnsError::UpstreamFailed(e.to_string()))?,
+                    )
                 } else {
-                    Arc::new(HickoryResolver::with_upstream_servers(&upstream_ips)
-                        .map_err(|e| RecursiveDnsError::UpstreamFailed(e.to_string()))?)
+                    Arc::new(
+                        HickoryResolver::with_upstream_servers(&upstream_ips)
+                            .map_err(|e| RecursiveDnsError::UpstreamFailed(e.to_string()))?,
+                    )
                 }
             }
         };
@@ -136,7 +135,9 @@ impl RecursiveDnsServer {
 
         let socket = UdpSocket::bind(format!("{}:{}", self.config.bind_address, self.config.port))
             .await
-            .map_err(|e| RecursiveDnsError::UpstreamFailed(format!("Failed to bind socket: {}", e)))?;
+            .map_err(|e| {
+                RecursiveDnsError::UpstreamFailed(format!("Failed to bind socket: {}", e))
+            })?;
 
         info!(
             "Starting recursive DNS server on {}:{}",
@@ -146,7 +147,7 @@ impl RecursiveDnsServer {
         let server = self.clone();
         let socket = Arc::new(socket);
         let socket_clone = socket.clone();
-        
+
         tokio::spawn(async move {
             let mut buf = vec![0u8; 512];
             let mut running = server.running.read().await;
@@ -195,14 +196,11 @@ impl RecursiveDnsServer {
     }
 
     async fn start_tcp_listener(&self, addr: &str) -> RecursiveDnsResult<()> {
-        let listener = TcpListener::bind(addr)
-            .await
-            .map_err(|e| RecursiveDnsError::UpstreamFailed(format!("Failed to bind TCP socket: {}", e)))?;
+        let listener = TcpListener::bind(addr).await.map_err(|e| {
+            RecursiveDnsError::UpstreamFailed(format!("Failed to bind TCP socket: {}", e))
+        })?;
 
-        info!(
-            "Starting recursive DNS TCP server on {}",
-            addr
-        );
+        info!("Starting recursive DNS TCP server on {}", addr);
 
         loop {
             let running = *self.running.read().await;
@@ -234,22 +232,29 @@ impl RecursiveDnsServer {
         mut stream: TcpStream,
         client_addr: SocketAddr,
     ) -> RecursiveDnsResult<()> {
-        let _permit = self.query_semaphore.acquire().await
+        let _permit = self
+            .query_semaphore
+            .acquire()
+            .await
             .map_err(|_| RecursiveDnsError::RateLimited)?;
 
         let mut length_buf = [0u8; 2];
-        stream.read_exact(&mut length_buf).await
-            .map_err(|e| RecursiveDnsError::UpstreamFailed(format!("Failed to read TCP length: {}", e)))?;
-        
+        stream.read_exact(&mut length_buf).await.map_err(|e| {
+            RecursiveDnsError::UpstreamFailed(format!("Failed to read TCP length: {}", e))
+        })?;
+
         let len = u16::from_be_bytes(length_buf) as usize;
-        
+
         if len > 65535 {
-            return Err(RecursiveDnsError::UpstreamFailed("TCP message too large".to_string()));
+            return Err(RecursiveDnsError::UpstreamFailed(
+                "TCP message too large".to_string(),
+            ));
         }
 
         let mut query = vec![0u8; len];
-        stream.read_exact(&mut query).await
-            .map_err(|e| RecursiveDnsError::UpstreamFailed(format!("Failed to read TCP query: {}", e)))?;
+        stream.read_exact(&mut query).await.map_err(|e| {
+            RecursiveDnsError::UpstreamFailed(format!("Failed to read TCP query: {}", e))
+        })?;
 
         if let Some(metrics) = &self.metrics {
             metrics.record_query_received();
@@ -277,7 +282,7 @@ impl RecursiveDnsServer {
         }
 
         let message_id = get_message_id(&query).unwrap_or(0);
-        
+
         let questions = match parse_dns_message(&query) {
             Ok(p) => p.questions,
             Err(_) => return Err(RecursiveDnsError::InvalidQuery),
@@ -291,14 +296,17 @@ impl RecursiveDnsServer {
         let qname_str = question.qname.to_string();
         let qname_bytes = qname_str.as_bytes().to_vec();
 
-        let (response, _) = self.resolve_upstream(&qname_bytes, question.qtype, message_id).await?;
+        let (response, _) = self
+            .resolve_upstream(&qname_bytes, question.qtype, message_id)
+            .await?;
 
         let len = response.len() as u16;
         let mut len_bytes = len.to_be_bytes().to_vec();
         len_bytes.extend_from_slice(&response);
-        
-        stream.write_all(&len_bytes).await
-            .map_err(|e| RecursiveDnsError::UpstreamFailed(format!("Failed to send TCP response: {}", e)))?;
+
+        stream.write_all(&len_bytes).await.map_err(|e| {
+            RecursiveDnsError::UpstreamFailed(format!("Failed to send TCP response: {}", e))
+        })?;
 
         if let Some(metrics) = &self.metrics {
             metrics.record_response_sent("NOERROR");
@@ -326,7 +334,10 @@ impl RecursiveDnsServer {
         client_addr: SocketAddr,
         socket: Arc<UdpSocket>,
     ) -> RecursiveDnsResult<()> {
-        let _permit = self.query_semaphore.acquire().await
+        let _permit = self
+            .query_semaphore
+            .acquire()
+            .await
             .map_err(|_| RecursiveDnsError::RateLimited)?;
 
         let query = match parse_dns_message(&packet) {
@@ -412,7 +423,7 @@ impl RecursiveDnsServer {
                     metrics.record_cache_hit();
                 }
             }
-            
+
             let response = self.build_cached_response(
                 &qname_bytes,
                 question.qtype,
@@ -423,7 +434,9 @@ impl RecursiveDnsServer {
             return Ok(response);
         }
 
-        let (response, _is_dnssec_validated) = self.resolve_upstream(&qname_bytes, question.qtype, message_id).await?;
+        let (response, _is_dnssec_validated) = self
+            .resolve_upstream(&qname_bytes, question.qtype, message_id)
+            .await?;
 
         if let Some(metrics) = &self.metrics {
             metrics.record_cache_miss();
@@ -447,7 +460,8 @@ impl RecursiveDnsServer {
                     Ok(ip_record) => {
                         is_dnssec_validated = ip_record.is_dnssec_validated;
                         let ttl = ip_record.ttl.unwrap_or(300);
-                        ip_record.addrs
+                        ip_record
+                            .addrs
                             .into_iter()
                             .filter_map(|ip| {
                                 let record_type: u16 = match ip {
@@ -475,142 +489,128 @@ impl RecursiveDnsServer {
                     Err(_) => Vec::new(),
                 }
             }
-            dns_parser::QueryType::TXT => {
-                match self.resolver.lookup_txt(&domain).await {
-                    Ok(txt) => txt
-                        .values
-                        .into_iter()
-                        .map(|v| CachedRecord {
-                            name: qname.to_vec(),
-                            record_type: 16,
-                            ttl: txt.ttl.unwrap_or(300),
-                            data: v.into_bytes(),
-                        })
-                        .collect(),
-                    Err(_) => Vec::new(),
-                }
-            }
-            dns_parser::QueryType::NS => {
-                match self.resolver.lookup_ns(&domain).await {
-                    Ok(ns) => ns
-                        .nameservers
-                        .into_iter()
-                        .map(|ns_name| CachedRecord {
-                            name: qname.to_vec(),
-                            record_type: 2,
-                            ttl: ns.ttl.unwrap_or(300),
-                            data: ns_name.into_bytes(),
-                        })
-                        .collect(),
-                    Err(_) => Vec::new(),
-                }
-            }
-            dns_parser::QueryType::MX => {
-                match self.resolver.lookup_mx(&domain).await {
-                    Ok(mx_records) => mx_records
-                        .into_iter()
-                        .map(|mx: MxRecord| {
-                            let mut data = Vec::new();
-                            data.extend_from_slice(&mx.preference.to_be_bytes());
-                            data.extend_from_slice(mx.exchange.as_bytes());
-                            CachedRecord {
-                                name: qname.to_vec(),
-                                record_type: 15,
-                                ttl: mx.ttl.unwrap_or(300),
-                                data,
-                            }
-                        })
-                        .collect(),
-                    Err(_) => Vec::new(),
-                }
-            }
-            dns_parser::QueryType::CNAME => {
-                match self.resolver.lookup_cname(&domain).await {
-                    Ok(Some(cname_record)) => {
-                        let mut cname_bytes = cname_record.cname.into_bytes();
-                        if !cname_bytes.is_empty() && cname_bytes.last() != Some(&b'.') {
-                            cname_bytes.push(b'.');
-                        }
-                        vec![CachedRecord {
-                            name: qname.to_vec(),
-                            record_type: 5,
-                            ttl: cname_record.ttl.unwrap_or(300),
-                            data: cname_bytes,
-                        }]
-                    }
-                    Ok(None) => Vec::new(),
-                    Err(_) => Vec::new(),
-                }
-            }
-            dns_parser::QueryType::SOA => {
-                match self.resolver.lookup_soa(&domain).await {
-                    Ok(Some(soa)) => {
-                        let ttl = soa.ttl.unwrap_or(300);
+            dns_parser::QueryType::TXT => match self.resolver.lookup_txt(&domain).await {
+                Ok(txt) => txt
+                    .values
+                    .into_iter()
+                    .map(|v| CachedRecord {
+                        name: qname.to_vec(),
+                        record_type: 16,
+                        ttl: txt.ttl.unwrap_or(300),
+                        data: v.into_bytes(),
+                    })
+                    .collect(),
+                Err(_) => Vec::new(),
+            },
+            dns_parser::QueryType::NS => match self.resolver.lookup_ns(&domain).await {
+                Ok(ns) => ns
+                    .nameservers
+                    .into_iter()
+                    .map(|ns_name| CachedRecord {
+                        name: qname.to_vec(),
+                        record_type: 2,
+                        ttl: ns.ttl.unwrap_or(300),
+                        data: ns_name.into_bytes(),
+                    })
+                    .collect(),
+                Err(_) => Vec::new(),
+            },
+            dns_parser::QueryType::MX => match self.resolver.lookup_mx(&domain).await {
+                Ok(mx_records) => mx_records
+                    .into_iter()
+                    .map(|mx: MxRecord| {
                         let mut data = Vec::new();
-                        data.extend_from_slice(soa.mname.as_bytes());
-                        data.push(0);
-                        data.extend_from_slice(soa.rname.as_bytes());
-                        data.push(0);
-                        data.extend_from_slice(&soa.serial.to_be_bytes());
-                        data.extend_from_slice(&soa.refresh.to_be_bytes());
-                        data.extend_from_slice(&soa.retry.to_be_bytes());
-                        data.extend_from_slice(&soa.expire.to_be_bytes());
-                        data.extend_from_slice(&soa.minimum.to_be_bytes());
-                        vec![CachedRecord {
+                        data.extend_from_slice(&mx.preference.to_be_bytes());
+                        data.extend_from_slice(mx.exchange.as_bytes());
+                        CachedRecord {
                             name: qname.to_vec(),
-                            record_type: 6,
-                            ttl,
+                            record_type: 15,
+                            ttl: mx.ttl.unwrap_or(300),
                             data,
-                        }]
-                    }
-                    Ok(None) => Vec::new(),
-                    Err(_) => Vec::new(),
-                }
-            }
-            dns_parser::QueryType::PTR => {
-                match self.resolver.lookup_ptr(&domain).await {
-                    Ok(Some(ptr)) => {
-                        let ttl = ptr.ttl.unwrap_or(300);
-                        let mut data = ptr.domain.into_bytes();
-                        if !data.is_empty() && data.last() != Some(&b'.') {
-                            data.push(b'.');
                         }
-                        vec![CachedRecord {
-                            name: qname.to_vec(),
-                            record_type: 12,
-                            ttl,
-                            data,
-                        }]
+                    })
+                    .collect(),
+                Err(_) => Vec::new(),
+            },
+            dns_parser::QueryType::CNAME => match self.resolver.lookup_cname(&domain).await {
+                Ok(Some(cname_record)) => {
+                    let mut cname_bytes = cname_record.cname.into_bytes();
+                    if !cname_bytes.is_empty() && cname_bytes.last() != Some(&b'.') {
+                        cname_bytes.push(b'.');
                     }
-                    Ok(None) => Vec::new(),
-                    Err(_) => Vec::new(),
+                    vec![CachedRecord {
+                        name: qname.to_vec(),
+                        record_type: 5,
+                        ttl: cname_record.ttl.unwrap_or(300),
+                        data: cname_bytes,
+                    }]
                 }
-            }
-            dns_parser::QueryType::SRV => {
-                match self.resolver.lookup_srv(&domain).await {
-                    Ok(srv_records) => srv_records
-                        .into_iter()
-                        .map(|srv: SrvRecord| {
-                            let mut data = Vec::new();
-                            data.extend_from_slice(&srv.priority.to_be_bytes());
-                            data.extend_from_slice(&srv.weight.to_be_bytes());
-                            data.extend_from_slice(&srv.port.to_be_bytes());
-                            let mut target = srv.target.into_bytes();
-                            if !target.is_empty() && target.last() != Some(&b'.') {
-                                target.push(b'.');
-                            }
-                            data.extend_from_slice(&target);
-                            CachedRecord {
-                                name: qname.to_vec(),
-                                record_type: 33,
-                                ttl: srv.ttl.unwrap_or(300),
-                                data,
-                            }
-                        })
-                        .collect(),
-                    Err(_) => Vec::new(),
+                Ok(None) => Vec::new(),
+                Err(_) => Vec::new(),
+            },
+            dns_parser::QueryType::SOA => match self.resolver.lookup_soa(&domain).await {
+                Ok(Some(soa)) => {
+                    let ttl = soa.ttl.unwrap_or(300);
+                    let mut data = Vec::new();
+                    data.extend_from_slice(soa.mname.as_bytes());
+                    data.push(0);
+                    data.extend_from_slice(soa.rname.as_bytes());
+                    data.push(0);
+                    data.extend_from_slice(&soa.serial.to_be_bytes());
+                    data.extend_from_slice(&soa.refresh.to_be_bytes());
+                    data.extend_from_slice(&soa.retry.to_be_bytes());
+                    data.extend_from_slice(&soa.expire.to_be_bytes());
+                    data.extend_from_slice(&soa.minimum.to_be_bytes());
+                    vec![CachedRecord {
+                        name: qname.to_vec(),
+                        record_type: 6,
+                        ttl,
+                        data,
+                    }]
                 }
-            }
+                Ok(None) => Vec::new(),
+                Err(_) => Vec::new(),
+            },
+            dns_parser::QueryType::PTR => match self.resolver.lookup_ptr(&domain).await {
+                Ok(Some(ptr)) => {
+                    let ttl = ptr.ttl.unwrap_or(300);
+                    let mut data = ptr.domain.into_bytes();
+                    if !data.is_empty() && data.last() != Some(&b'.') {
+                        data.push(b'.');
+                    }
+                    vec![CachedRecord {
+                        name: qname.to_vec(),
+                        record_type: 12,
+                        ttl,
+                        data,
+                    }]
+                }
+                Ok(None) => Vec::new(),
+                Err(_) => Vec::new(),
+            },
+            dns_parser::QueryType::SRV => match self.resolver.lookup_srv(&domain).await {
+                Ok(srv_records) => srv_records
+                    .into_iter()
+                    .map(|srv: SrvRecord| {
+                        let mut data = Vec::new();
+                        data.extend_from_slice(&srv.priority.to_be_bytes());
+                        data.extend_from_slice(&srv.weight.to_be_bytes());
+                        data.extend_from_slice(&srv.port.to_be_bytes());
+                        let mut target = srv.target.into_bytes();
+                        if !target.is_empty() && target.last() != Some(&b'.') {
+                            target.push(b'.');
+                        }
+                        data.extend_from_slice(&target);
+                        CachedRecord {
+                            name: qname.to_vec(),
+                            record_type: 33,
+                            ttl: srv.ttl.unwrap_or(300),
+                            data,
+                        }
+                    })
+                    .collect(),
+                Err(_) => Vec::new(),
+            },
             _ => Vec::new(),
         };
 
@@ -630,24 +630,28 @@ impl RecursiveDnsServer {
 
         if records.is_empty() {
             let cache_key = RecursiveCacheKey::new(qname, qtype_u16, None);
-            self.cache.insert_negative(cache_key, true, self.config.cache.negative_ttl_secs as u32);
+            self.cache
+                .insert_negative(cache_key, true, self.config.cache.negative_ttl_secs as u32);
 
             let mut full_query = Vec::new();
             full_query.extend_from_slice(qname);
             full_query.push(0);
             full_query.extend_from_slice(&qtype_u16.to_be_bytes());
             full_query.extend_from_slice(&1u16.to_be_bytes());
-            
-            let response = build_error_response(&full_query, RCODE_NXDOMAIN)
-                .unwrap_or_default();
+
+            let response = build_error_response(&full_query, RCODE_NXDOMAIN).unwrap_or_default();
             return Ok((response, is_dnssec_validated));
         }
 
         let cache_key = RecursiveCacheKey::new(qname, qtype_u16, None);
         let min_ttl = records.iter().map(|r| r.ttl).min().unwrap_or(300);
-        self.cache.insert_positive(cache_key, records.clone(), min_ttl, is_dnssec_validated);
+        self.cache
+            .insert_positive(cache_key, records.clone(), min_ttl, is_dnssec_validated);
 
-        Ok((self.build_cached_response(qname, qtype, records, message_id, is_dnssec_validated), is_dnssec_validated))
+        Ok((
+            self.build_cached_response(qname, qtype, records, message_id, is_dnssec_validated),
+            is_dnssec_validated,
+        ))
     }
 
     fn build_cached_response(
@@ -689,16 +693,16 @@ impl RecursiveDnsServer {
         let header_size = 12;
         let question_size = question_section.len();
         let answer_size = answer_sections.iter().map(|s| s.len()).sum::<usize>();
-        
+
         let total_size = header_size + question_size + answer_size;
 
         if total_size > 512 {
             let max_answer_size = 512 - header_size - question_size;
-            
+
             let mut final_response = Vec::new();
             let mut added_size = 0;
             let mut truncated_ancount = 0u16;
-            
+
             for answer in &answer_sections {
                 if added_size + answer.len() <= max_answer_size {
                     final_response.extend_from_slice(answer);
@@ -708,7 +712,7 @@ impl RecursiveDnsServer {
                     break;
                 }
             }
-            
+
             let flags = crate::dns::wire::MessageFlags {
                 is_response: true,
                 opcode: 0,
@@ -720,19 +724,12 @@ impl RecursiveDnsServer {
                 response_code: 0,
             };
 
-            let header = build_response_header(
-                message_id,
-                flags,
-                qdcount,
-                truncated_ancount,
-                0,
-                0,
-            );
-            
+            let header = build_response_header(message_id, flags, qdcount, truncated_ancount, 0, 0);
+
             let mut full_response = header;
             full_response.extend_from_slice(&question_section);
             full_response.extend_from_slice(&final_response);
-            
+
             response = full_response;
         } else {
             let flags = crate::dns::wire::MessageFlags {
@@ -746,21 +743,14 @@ impl RecursiveDnsServer {
                 response_code: 0,
             };
 
-            let header = build_response_header(
-                message_id,
-                flags,
-                qdcount,
-                ancount,
-                0,
-                0,
-            );
-            
+            let header = build_response_header(message_id, flags, qdcount, ancount, 0, 0);
+
             let mut final_response = header;
             final_response.extend_from_slice(&question_section);
             for answer in answer_sections {
                 final_response.extend_from_slice(&answer);
             }
-            
+
             response = final_response;
         }
 
@@ -769,7 +759,7 @@ impl RecursiveDnsServer {
 
     fn build_question_section(&self, qname: &[u8], qtype: u16) -> Vec<u8> {
         let mut section = Vec::new();
-        
+
         if qname.is_empty() || qname == b"." {
             section.push(0);
         } else {
@@ -778,16 +768,16 @@ impl RecursiveDnsServer {
                 section.push(0);
             }
         }
-        
+
         section.extend_from_slice(&qtype.to_be_bytes());
         section.extend_from_slice(&1u16.to_be_bytes());
-        
+
         section
     }
 
     fn build_answer_record(&self, record: &CachedRecord) -> Vec<u8> {
         let mut section = Vec::new();
-        
+
         if record.name.is_empty() || record.name == b"." {
             section.push(0);
         } else {
@@ -796,13 +786,13 @@ impl RecursiveDnsServer {
                 section.push(0);
             }
         }
-        
+
         section.extend_from_slice(&record.record_type.to_be_bytes());
         section.extend_from_slice(&1u16.to_be_bytes());
         section.extend_from_slice(&record.ttl.to_be_bytes());
         section.extend_from_slice(&(record.data.len() as u16).to_be_bytes());
         section.extend_from_slice(&record.data);
-        
+
         section
     }
 
@@ -871,12 +861,17 @@ mod tests {
     #[test]
     fn test_positive_cache_insert_and_get() {
         let cache = create_test_cache();
-        
+
         let key = RecursiveCacheKey::new(b"example.com", 1, None);
-        let records = vec![create_test_record(b"example.com", 1, 300, vec![93, 184, 216, 34])];
-        
+        let records = vec![create_test_record(
+            b"example.com",
+            1,
+            300,
+            vec![93, 184, 216, 34],
+        )];
+
         cache.insert_positive(key.clone(), records.clone(), 300, false);
-        
+
         let result = cache.get(&key);
         assert!(result.is_some());
         let (retrieved, stale, validated) = result.unwrap();
@@ -888,10 +883,10 @@ mod tests {
     #[test]
     fn test_negative_cache() {
         let cache = create_test_cache();
-        
+
         let key = RecursiveCacheKey::new(b"nonexistent.com", 1, None);
         cache.insert_negative(key.clone(), true, 300);
-        
+
         let result = cache.get(&key);
         assert!(result.is_none());
     }
@@ -899,12 +894,12 @@ mod tests {
     #[test]
     fn test_cache_stats() {
         let cache = create_test_cache();
-        
+
         let key = RecursiveCacheKey::new(b"example.com", 1, None);
         let records = vec![create_test_record(b"example.com", 1, 300, vec![1, 2, 3, 4])];
-        
+
         cache.insert_positive(key.clone(), records, 300, false);
-        
+
         let stats = cache.stats();
         assert_eq!(stats.insertions, 1);
     }
@@ -912,20 +907,20 @@ mod tests {
     #[test]
     fn test_cache_invalidation() {
         let cache = create_test_cache();
-        
+
         let key1 = RecursiveCacheKey::new(b"example.com", 1, None);
         let key2 = RecursiveCacheKey::new(b"test.com", 1, None);
         let records1 = vec![create_test_record(b"example.com", 1, 300, vec![1, 1, 1, 1])];
         let records2 = vec![create_test_record(b"test.com", 1, 300, vec![2, 2, 2, 2])];
-        
+
         cache.insert_positive(key1.clone(), records1, 300, false);
         cache.insert_positive(key2.clone(), records2, 300, false);
-        
+
         assert!(cache.get(&key1).is_some());
         assert!(cache.get(&key2).is_some());
-        
+
         cache.invalidate(b"example.com");
-        
+
         assert!(cache.get(&key1).is_none());
         assert!(cache.get(&key2).is_some());
     }
@@ -933,20 +928,20 @@ mod tests {
     #[test]
     fn test_cache_invalidation_all() {
         let cache = create_test_cache();
-        
+
         let key1 = RecursiveCacheKey::new(b"example.com", 1, None);
         let key2 = RecursiveCacheKey::new(b"test.com", 1, None);
         let records1 = vec![create_test_record(b"example.com", 1, 300, vec![1, 1, 1, 1])];
         let records2 = vec![create_test_record(b"test.com", 1, 300, vec![2, 2, 2, 2])];
-        
+
         cache.insert_positive(key1.clone(), records1, 300, false);
         cache.insert_positive(key2.clone(), records2, 300, false);
-        
+
         cache.invalidate_all();
-        
+
         assert!(cache.get(&key1).is_none());
         assert!(cache.get(&key2).is_none());
-        
+
         let stats = cache.stats();
         assert!(stats.invalidations >= 1);
     }
@@ -963,7 +958,7 @@ mod tests {
         assert_eq!(u16::from(RecursiveRecordType::Srv), 33);
         assert_eq!(u16::from(RecursiveRecordType::CName), 5);
         assert_eq!(u16::from(RecursiveRecordType::Any), 255);
-        
+
         assert_eq!(RecursiveRecordType::from(1), RecursiveRecordType::A);
         assert_eq!(RecursiveRecordType::from(28), RecursiveRecordType::Aaaa);
         assert_eq!(RecursiveRecordType::from(15), RecursiveRecordType::Mx);
@@ -972,7 +967,7 @@ mod tests {
     #[test]
     fn test_cached_record_creation() {
         let record = create_test_record(b"test.example.com", 1, 3600, vec![8, 8, 8, 8]);
-        
+
         assert_eq!(record.name, b"test.example.com");
         assert_eq!(record.record_type, 1);
         assert_eq!(record.ttl, 3600);
@@ -982,15 +977,15 @@ mod tests {
     #[test]
     fn test_cache_len_operations() {
         let cache = create_test_cache();
-        
+
         assert!(cache.is_empty());
         assert_eq!(cache.len(), 0);
-        
+
         let key = RecursiveCacheKey::new(b"example.com", 1, None);
         let records = vec![create_test_record(b"example.com", 1, 300, vec![1, 2, 3, 4])];
-        
+
         cache.insert_positive(key.clone(), records, 300, false);
-        
+
         assert!(!cache.is_empty());
         assert_eq!(cache.len(), 1);
         assert_eq!(cache.positive_len(), 1);
@@ -1000,14 +995,14 @@ mod tests {
     #[test]
     fn test_cache_positive_negative_separation() {
         let cache = create_test_cache();
-        
+
         let key1 = RecursiveCacheKey::new(b"exists.com", 1, None);
         let key2 = RecursiveCacheKey::new(b"notfound.com", 1, None);
         cache.insert_negative(key2.clone(), true, 300);
-        
+
         let records = vec![create_test_record(b"exists.com", 1, 300, vec![1, 1, 1, 1])];
         cache.insert_positive(key1.clone(), records, 300, false);
-        
+
         assert_eq!(cache.positive_len(), 1);
         assert_eq!(cache.negative_len(), 1);
         assert_eq!(cache.len(), 2);
@@ -1029,9 +1024,9 @@ mod tests {
     #[test]
     fn test_build_question_section() {
         let server = create_mock_server();
-        
+
         let section = server.build_question_section(b"example.com", 1);
-        
+
         assert!(!section.is_empty());
         assert!(section.ends_with(&[0, 1]));
         assert!(section.len() >= 6);
@@ -1040,19 +1035,19 @@ mod tests {
     #[test]
     fn test_build_question_section_root() {
         let server = create_mock_server();
-        
+
         let section = server.build_question_section(b".", 1);
-        
+
         assert_eq!(section, vec![0, 0, 1, 0, 1]);
     }
 
     #[test]
     fn test_build_answer_record() {
         let server = create_mock_server();
-        
+
         let record = create_test_record(b"example.com", 1, 300, vec![93, 184, 216, 34]);
         let section = server.build_answer_record(&record);
-        
+
         assert!(section.len() > 20);
         let section_slice = &section[section.len() - 6..];
         let rdlen = u16::from_be_bytes([section_slice[0], section_slice[1]]);
@@ -1062,20 +1057,25 @@ mod tests {
     #[test]
     fn test_cache_invalidation_by_name() {
         let cache = create_test_cache();
-        
+
         let key_a = RecursiveCacheKey::new(b"example.com", 1, None);
         let key_aaaa = RecursiveCacheKey::new(b"example.com", 28, None);
-        
+
         let records_a = vec![create_test_record(b"example.com", 1, 300, vec![1, 1, 1, 1])];
-        let records_aaaa = vec![create_test_record(b"example.com", 28, 300, vec![1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1])];
-        
+        let records_aaaa = vec![create_test_record(
+            b"example.com",
+            28,
+            300,
+            vec![1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+        )];
+
         cache.insert_positive(key_a.clone(), records_a, 300, false);
         cache.insert_positive(key_aaaa.clone(), records_aaaa, 300, false);
-        
+
         assert_eq!(cache.len(), 2);
-        
+
         cache.invalidate(b"example.com");
-        
+
         assert!(cache.get(&key_a).is_none());
         assert!(cache.get(&key_aaaa).is_none());
         assert!(cache.is_empty());
@@ -1084,15 +1084,25 @@ mod tests {
     #[test]
     fn test_multiple_qnames_invalidation() {
         let cache = create_test_cache();
-        
+
         let key1 = RecursiveCacheKey::new(b"example.com", 1, None);
         let key2 = RecursiveCacheKey::new(b"test.com", 1, None);
-        
-        cache.insert_positive(key1.clone(), vec![create_test_record(b"example.com", 1, 300, vec![1, 1, 1, 1])], 300, false);
-        cache.insert_positive(key2.clone(), vec![create_test_record(b"test.com", 1, 300, vec![2, 2, 2, 2])], 300, false);
-        
+
+        cache.insert_positive(
+            key1.clone(),
+            vec![create_test_record(b"example.com", 1, 300, vec![1, 1, 1, 1])],
+            300,
+            false,
+        );
+        cache.insert_positive(
+            key2.clone(),
+            vec![create_test_record(b"test.com", 1, 300, vec![2, 2, 2, 2])],
+            300,
+            false,
+        );
+
         cache.invalidate(b"example.com");
-        
+
         assert!(cache.get(&key1).is_none());
         assert!(cache.get(&key2).is_some());
         assert_eq!(cache.len(), 1);
@@ -1103,7 +1113,7 @@ mod tests {
         let key_a = RecursiveCacheKey::new(b"example.com", 1, None);
         let key_aaaa = RecursiveCacheKey::new(b"example.com", 28, None);
         let key_mx = RecursiveCacheKey::new(b"example.com", 15, None);
-        
+
         assert_ne!(key_a, key_aaaa);
         assert_ne!(key_a, key_mx);
         assert_ne!(key_aaaa, key_mx);
@@ -1111,9 +1121,9 @@ mod tests {
 
     fn create_mock_server() -> RecursiveDnsServer {
         use std::net::IpAddr;
-        
+
         let upstream_ip: IpAddr = "8.8.8.8".parse().unwrap();
-        
+
         RecursiveDnsServer {
             config: RecursiveDnsConfig {
                 enabled: true,

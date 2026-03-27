@@ -82,7 +82,7 @@ impl TunPacket {
         if self.data.len() < 4 {
             return None;
         }
-        
+
         let version = (self.data[0] >> 4) & 0x0F;
         match version {
             4 => Some(TunProtocol::IPv4),
@@ -95,16 +95,11 @@ impl TunPacket {
         if self.data.len() < 20 {
             return None;
         }
-        
+
         let version = (self.data[0] >> 4) & 0x0F;
         match version {
             4 => {
-                let octets = [
-                    self.data[12],
-                    self.data[13],
-                    self.data[14],
-                    self.data[15],
-                ];
+                let octets = [self.data[12], self.data[13], self.data[14], self.data[15]];
                 Some(IpAddr::V4(Ipv4Addr::from(octets)))
             }
             6 if self.data.len() >= 40 => {
@@ -120,16 +115,11 @@ impl TunPacket {
         if self.data.len() < 20 {
             return None;
         }
-        
+
         let version = (self.data[0] >> 4) & 0x0F;
         match version {
             4 => {
-                let octets = [
-                    self.data[16],
-                    self.data[17],
-                    self.data[18],
-                    self.data[19],
-                ];
+                let octets = [self.data[16], self.data[17], self.data[18], self.data[19]];
                 Some(IpAddr::V4(Ipv4Addr::from(octets)))
             }
             6 if self.data.len() >= 40 => {
@@ -169,9 +159,9 @@ pub mod platform {
     impl AsyncTunDevice {
         pub fn create(config: TunConfig) -> Result<Self, io::Error> {
             let mut builder = DeviceBuilder::new();
-            
+
             builder.name(&config.name);
-            
+
             match config.address {
                 IpAddr::V4(addr) => {
                     let prefix_len = Self::netmask_to_prefix_len(config.netmask);
@@ -182,27 +172,27 @@ pub mod platform {
                     builder.ipv6(addr, prefix_len, None);
                 }
             }
-            
+
             builder.mtu(config.mtu);
-            
+
             if config.up {
                 builder.up(true);
             }
 
             let device = builder.build_sync()?;
-            
+
             let name = device.name().to_string();
-            
+
             tracing::info!("Created TUN interface: {} (mtu: {})", name, config.mtu);
-            
+
             Ok(Self { device, name })
         }
 
         pub async fn create_async(config: TunConfig) -> Result<Self, io::Error> {
             let mut builder = DeviceBuilder::new();
-            
+
             builder.name(&config.name);
-            
+
             match config.address {
                 IpAddr::V4(addr) => {
                     let prefix_len = Self::netmask_to_prefix_len(config.netmask);
@@ -213,19 +203,23 @@ pub mod platform {
                     builder.ipv6(addr, prefix_len, None);
                 }
             }
-            
+
             builder.mtu(config.mtu);
-            
+
             if config.up {
                 builder.up(true);
             }
 
             let device = builder.build_async().await?;
-            
+
             let name = device.name().to_string();
-            
-            tracing::info!("Created async TUN interface: {} (mtu: {})", name, config.mtu);
-            
+
+            tracing::info!(
+                "Created async TUN interface: {} (mtu: {})",
+                name,
+                config.mtu
+            );
+
             Ok(Self { device, name })
         }
 
@@ -233,11 +227,13 @@ pub mod platform {
             match netmask {
                 IpAddr::V4(ipv4) => {
                     let bits = ipv4.octets();
-                    bits.iter().fold(0u8, |acc, &octet| acc + octet.count_ones() as u8)
+                    bits.iter()
+                        .fold(0u8, |acc, &octet| acc + octet.count_ones() as u8)
                 }
                 IpAddr::V6(ipv6) => {
                     let bits = ipv6.segments();
-                    bits.iter().fold(0u8, |acc, &seg| acc + seg.count_ones() as u8)
+                    bits.iter()
+                        .fold(0u8, |acc, &seg| acc + seg.count_ones() as u8)
                 }
             }
         }
@@ -302,10 +298,10 @@ pub mod platform {
     impl TunInterface {
         pub fn create(config: TunConfig) -> Result<(Self, AsyncTunDevice), io::Error> {
             let (shutdown_tx, _) = broadcast::channel(1);
-            
+
             let device = AsyncTunDevice::create(config.clone())?;
             let name = device.name().to_string();
-            
+
             let interface = Self {
                 name: name.clone(),
                 config,
@@ -313,7 +309,7 @@ pub mod platform {
             };
 
             tracing::info!("Created TUN interface: {}", name);
-            
+
             Ok((interface, device))
         }
 
@@ -335,7 +331,10 @@ pub mod platform {
                 if !output.status.success() {
                     return Err(io::Error::new(
                         io::ErrorKind::Other,
-                        format!("ip route add failed: {}", String::from_utf8_lossy(&output.stderr)),
+                        format!(
+                            "ip route add failed: {}",
+                            String::from_utf8_lossy(&output.stderr)
+                        ),
                     ));
                 }
                 Ok(())
@@ -350,7 +349,10 @@ pub mod platform {
                 if !output.status.success() {
                     return Err(io::Error::new(
                         io::ErrorKind::Other,
-                        format!("route add failed: {}", String::from_utf8_lossy(&output.stderr)),
+                        format!(
+                            "route add failed: {}",
+                            String::from_utf8_lossy(&output.stderr)
+                        ),
                     ));
                 }
                 Ok(())
@@ -365,7 +367,10 @@ pub mod platform {
                 if !output.status.success() {
                     return Err(io::Error::new(
                         io::ErrorKind::Other,
-                        format!("route add failed: {}", String::from_utf8_lossy(&output.stderr)),
+                        format!(
+                            "route add failed: {}",
+                            String::from_utf8_lossy(&output.stderr)
+                        ),
                     ));
                 }
                 Ok(())
@@ -387,7 +392,10 @@ pub mod platform {
                     .output()?;
 
                 if !output.status.success() {
-                    tracing::warn!("ip route del failed: {}", String::from_utf8_lossy(&output.stderr));
+                    tracing::warn!(
+                        "ip route del failed: {}",
+                        String::from_utf8_lossy(&output.stderr)
+                    );
                 }
                 Ok(())
             }
@@ -421,12 +429,15 @@ pub mod platform {
 
     impl TunReader {
         pub fn new(device: Arc<AsyncTunDevice>, shutdown_rx: broadcast::Receiver<()>) -> Self {
-            Self { device, shutdown_rx }
+            Self {
+                device,
+                shutdown_rx,
+            }
         }
 
         pub async fn read_packet(&mut self) -> io::Result<Option<TunPacket>> {
             let mut buf = vec![0u8; TUN_MTU];
-            
+
             tokio::select! {
                 result = self.device.reader().read_packet(&mut buf) => {
                     match result {
@@ -453,7 +464,10 @@ pub mod platform {
 
     impl TunWriter {
         pub fn new(device: Arc<AsyncTunDevice>, shutdown_rx: broadcast::Receiver<()>) -> Self {
-            Self { device, shutdown_rx }
+            Self {
+                device,
+                shutdown_rx,
+            }
         }
 
         pub async fn write_packet(&mut self, packet: &TunPacket) -> io::Result<()> {
@@ -474,22 +488,22 @@ pub mod platform {
             std::path::Path::new("/dev/net/tun").exists()
                 || std::path::Path::new("/dev/tun").exists()
         }
-        
+
         #[cfg(target_os = "macos")]
         {
             true
         }
-        
+
         #[cfg(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"))]
         {
             std::path::Path::new("/dev/tun").exists()
         }
-        
+
         #[cfg(target_os = "windows")]
         {
             true
         }
-        
+
         #[cfg(not(any(
             target_os = "linux",
             target_os = "macos",
@@ -608,7 +622,7 @@ pub mod platform {
     }
 }
 
-pub use platform::{AsyncTunDevice, TunInterface, TunReader, TunWriter, is_tun_available};
+pub use platform::{is_tun_available, AsyncTunDevice, TunInterface, TunReader, TunWriter};
 
 #[cfg(test)]
 mod tests {
@@ -621,7 +635,7 @@ mod tests {
             IpAddr::V4(Ipv4Addr::new(10, 0, 1, 1)),
             IpAddr::V4(Ipv4Addr::new(255, 255, 255, 0)),
         );
-        
+
         assert_eq!(config.name, "custom_wg0");
         assert_eq!(config.mtu, 1420);
         assert!(config.up);
@@ -630,7 +644,7 @@ mod tests {
     #[test]
     fn test_tun_config_default() {
         let config = TunConfig::default();
-        
+
         assert_eq!(config.name, "wg0");
         assert_eq!(config.mtu, 1420);
         assert!(config.up);
@@ -644,7 +658,7 @@ mod tests {
             IpAddr::V4(Ipv4Addr::new(255, 255, 255, 0)),
         )
         .with_mtu(1280);
-        
+
         assert_eq!(config.name, "custom_wg0");
         assert_eq!(config.mtu, 1280);
     }
@@ -653,7 +667,7 @@ mod tests {
     fn test_tun_packet_new() {
         let data = vec![1, 2, 3, 4, 5];
         let packet = TunPacket::new(data.clone());
-        
+
         assert_eq!(packet.len(), 5);
         assert!(!packet.is_empty());
         assert_eq!(packet.data(), &data);
@@ -664,18 +678,18 @@ mod tests {
         let data = vec![1, 2, 3, 4, 5];
         let packet = TunPacket::new(data.clone());
         let vec = packet.into_vec();
-        
+
         assert_eq!(vec, data);
     }
 
     #[test]
     fn test_tun_packet_protocol_ipv4() {
         let ipv4_data = vec![
-            0x45, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x45, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00,
         ];
         let packet = TunPacket::new(ipv4_data);
-        
+
         assert_eq!(packet.protocol(), Some(TunProtocol::IPv4));
     }
 
@@ -683,9 +697,9 @@ mod tests {
     fn test_tun_packet_protocol_ipv6() {
         let mut ipv6_data = vec![0u8; 40];
         ipv6_data[0] = 0x60;
-        
+
         let packet = TunPacket::new(ipv6_data);
-        
+
         assert_eq!(packet.protocol(), Some(TunProtocol::IPv6));
     }
 
@@ -695,10 +709,10 @@ mod tests {
         data.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]);
         data.extend_from_slice(&[192, 168, 1, 100]);
         data.extend_from_slice(&[10, 0, 0, 1]);
-        
+
         let packet = TunPacket::new(data);
         let src = packet.src_addr().unwrap();
-        
+
         assert_eq!(src, IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)));
     }
 
@@ -708,10 +722,10 @@ mod tests {
         data.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]);
         data.extend_from_slice(&[192, 168, 1, 100]);
         data.extend_from_slice(&[10, 0, 0, 1]);
-        
+
         let packet = TunPacket::new(data);
         let dst = packet.dst_addr().unwrap();
-        
+
         assert_eq!(dst, IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)));
     }
 }

@@ -1,5 +1,5 @@
-use crate::mesh::transport::*;
 use super::*;
+use crate::mesh::transport::*;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -7,10 +7,9 @@ use dashmap::DashMap;
 use parking_lot::RwLock;
 use tokio::sync::broadcast;
 
+use crate::mesh::config::{MeshConfig, MeshPeerConfig};
 use crate::mesh::protocol::MeshMessage;
-use crate::mesh::topology::{{MeshTopology, PeerStatus}};
-use crate::mesh::config::{{MeshConfig, MeshPeerConfig}};
-
+use crate::mesh::topology::{MeshTopology, PeerStatus};
 
 impl MeshTransport {
     pub(crate) fn clone_for_maintenance(&self) -> MeshTransport {
@@ -38,9 +37,12 @@ impl MeshTransport {
             record_store: self.record_store.clone(),
             routing_manager: self.routing_manager.clone(),
             threat_intel: self.threat_intel.clone(),
-            seen_messages: Arc::new(RwLock::new(lru_time_cache::LruCache::with_expiry_duration_and_capacity(
-                Duration::from_secs(300), 10000,
-            ))),
+            seen_messages: Arc::new(RwLock::new(
+                lru_time_cache::LruCache::with_expiry_duration_and_capacity(
+                    Duration::from_secs(300),
+                    10000,
+                ),
+            )),
             stake_manager: self.stake_manager.clone(),
             mlkem_session_manager: self.mlkem_session_manager.clone(),
             #[cfg(feature = "dns")]
@@ -83,9 +85,11 @@ impl MeshTransport {
     ) {
         let announce_interval_secs = config.connection.announce_interval_secs;
         let keepalive_interval_secs = config.connection.keepalive_interval_secs;
-        
-        let mut announce_interval = tokio::time::interval(Duration::from_secs(announce_interval_secs));
-        let mut keepalive_interval = tokio::time::interval(Duration::from_secs(keepalive_interval_secs));
+
+        let mut announce_interval =
+            tokio::time::interval(Duration::from_secs(announce_interval_secs));
+        let mut keepalive_interval =
+            tokio::time::interval(Duration::from_secs(keepalive_interval_secs));
         let mut cleanup_interval = tokio::time::interval(Duration::from_secs(60));
 
         loop {
@@ -117,7 +121,7 @@ impl MeshTransport {
         routing_manager: Arc<crate::mesh::dht::routing::DhtRoutingManager>,
     ) -> Result<(), MeshTransportError> {
         let seeds = routing_manager.get_seeds_from_config();
-        
+
         if seeds.is_empty() {
             tracing::debug!("No seed nodes configured for DHT bootstrap");
             return Ok(());
@@ -127,23 +131,25 @@ impl MeshTransport {
 
         for seed in &seeds {
             let is_connected = self.peer_connections.contains_key(&seed.node_id);
-            
+
             if is_connected {
-                routing_manager.add_peer(
-                    seed.node_id.clone(),
-                    seed.address.clone(),
-                    seed.port,
-                    crate::mesh::config::MeshNodeRole::Global,
-                    None,
-                    true,
-                    seed.geo.clone(),
-                    None,
-                    None,
-                ).await;
+                routing_manager
+                    .add_peer(
+                        seed.node_id.clone(),
+                        seed.address.clone(),
+                        seed.port,
+                        crate::mesh::config::MeshNodeRole::Global,
+                        None,
+                        true,
+                        seed.geo.clone(),
+                        None,
+                        None,
+                    )
+                    .await;
 
                 let local_id = *routing_manager.local_node_id_hash();
                 let request_id = format!("dht-bootstrap-{}", uuid::Uuid::new_v4());
-                
+
                 let find_node = MeshMessage::FindNode {
                     request_id: request_id.into(),
                     target_node_id: local_id.as_bytes().to_vec(),
@@ -155,18 +161,28 @@ impl MeshTransport {
                 };
 
                 if let Err(e) = self.send_datagram_to_peer(&seed.node_id, &find_node).await {
-                    tracing::warn!("Failed to send FindNode to DHT seed {}: {}", seed.node_id, e);
+                    tracing::warn!(
+                        "Failed to send FindNode to DHT seed {}: {}",
+                        seed.node_id,
+                        e
+                    );
                 } else {
                     tracing::debug!("Sent DHT FindNode to seed {}", seed.node_id);
                 }
             } else {
-                tracing::debug!("Seed {} not connected yet, will bootstrap when connected", seed.node_id);
+                tracing::debug!(
+                    "Seed {} not connected yet, will bootstrap when connected",
+                    seed.node_id
+                );
             }
         }
 
         let peer_count = routing_manager.total_peers().await;
-        tracing::info!("DHT bootstrap complete: {} peers in routing table", peer_count);
-        
+        tracing::info!(
+            "DHT bootstrap complete: {} peers in routing table",
+            peer_count
+        );
+
         Ok(())
     }
 
@@ -188,11 +204,12 @@ impl MeshTransport {
                     None,
                     None,
                     None,
-                ).await;
+                )
+                .await;
 
                 let _local_id = *rm.local_node_id_hash();
                 let request_id = format!("dht-ping-{}", uuid::Uuid::new_v4());
-                
+
                 let ping = MeshMessage::Ping {
                     request_id: request_id.into(),
                     node_id: rm.local_node_id().into(),
@@ -209,7 +226,10 @@ impl MeshTransport {
         }
     }
 
-    pub(crate) async fn request_seed_list(&self, global_node_id: &str) -> Result<(), MeshTransportError> {
+    pub(crate) async fn request_seed_list(
+        &self,
+        global_node_id: &str,
+    ) -> Result<(), MeshTransportError> {
         let request = MeshMessage::SeedListRequest {
             node_id: self.config.node_id().into(),
             request_full_mesh: true,
@@ -226,17 +246,21 @@ impl MeshTransport {
         edge_nodes: Vec<crate::mesh::protocol::MeshPeerInfo>,
         genesis_org_id: Option<crate::mesh::protocol::ArcStr>,
     ) {
-        tracing::info!("Received seed list: {} global, {} edge nodes", global_nodes.len(), edge_nodes.len());
-        
+        tracing::info!(
+            "Received seed list: {} global, {} edge nodes",
+            global_nodes.len(),
+            edge_nodes.len()
+        );
+
         if let Some(ref org_id) = genesis_org_id {
             tracing::info!("Received genesis_org_id from seed: {}", org_id);
             let mut org_mgr = self.org_manager.write();
             org_mgr.set_genesis_org_id(org_id.to_string());
             tracing::info!("Set genesis_org_id to: {}", org_id);
         }
-        
+
         self.topology.add_seeded_nodes(global_nodes.clone()).await;
-        
+
         let edge_count = edge_nodes.len();
         for node in edge_nodes {
             if self.topology.get_peer(&node.node_id).await.is_none() {
@@ -245,15 +269,36 @@ impl MeshTransport {
         }
 
         let global_count = global_nodes.len();
-        tracing::info!("Seeded topology with {} global nodes and {} edge nodes", global_count, edge_count);
+        tracing::info!(
+            "Seeded topology with {} global nodes and {} edge nodes",
+            global_count,
+            edge_count
+        );
 
         if let Some(ref record_store) = self.record_store {
-            if !self.topology.is_global() && self.config.dht.as_ref().map(|d| d.warm_up_on_connect).unwrap_or(true) {
+            if !self.topology.is_global()
+                && self
+                    .config
+                    .dht
+                    .as_ref()
+                    .map(|d| d.warm_up_on_connect)
+                    .unwrap_or(true)
+            {
                 if let Some(request) = record_store.create_snapshot_request() {
                     if let Some(first_global) = global_nodes.first() {
-                        tracing::info!("Requesting DHT cache warm-up from global node: {}", first_global.node_id);
-                        if let Err(e) = self.send_datagram_to_peer(&first_global.node_id, &request).await {
-                            tracing::warn!("Failed to request DHT snapshot from {}: {}", first_global.node_id, e);
+                        tracing::info!(
+                            "Requesting DHT cache warm-up from global node: {}",
+                            first_global.node_id
+                        );
+                        if let Err(e) = self
+                            .send_datagram_to_peer(&first_global.node_id, &request)
+                            .await
+                        {
+                            tracing::warn!(
+                                "Failed to request DHT snapshot from {}: {}",
+                                first_global.node_id,
+                                e
+                            );
                         }
                     }
                 }
@@ -280,7 +325,7 @@ impl MeshTransport {
         peer_connections: &DashMap<String, MeshPeerConnection>,
     ) {
         let _owners = topology.get_upstream_owners().await;
-        
+
         for entry in peer_connections.iter() {
             let peer = entry.value();
             if !peer.role.is_global() {
@@ -294,21 +339,22 @@ impl MeshTransport {
             let peer = entry.value();
             let result = async {
                 let (mut send_stream, mut recv_stream) = peer.connection.open_bi().await?;
-                
+
                 let msg = MeshMessage::KeepAlive;
                 let encoded = msg.encode()?;
                 let len = (encoded.len() as u32).to_be_bytes();
                 send_stream.write_all(&len).await?;
                 send_stream.write_all(&encoded).await?;
-                
+
                 let mut len_buf = [0u8; 4];
                 recv_stream.read_exact(&mut len_buf).await?;
                 let len = u32::from_be_bytes(len_buf) as usize;
                 let mut response_buf = vec![0u8; len];
                 recv_stream.read_exact(&mut response_buf).await?;
-                
+
                 Ok::<_, MeshTransportError>(())
-            }.await;
+            }
+            .await;
 
             match result {
                 Ok(_) => {
@@ -328,7 +374,8 @@ impl MeshTransport {
         let stale_threshold = Duration::from_secs(120);
         let now = Instant::now();
 
-        let stale: Vec<String> = peer_connections.iter()
+        let stale: Vec<String> = peer_connections
+            .iter()
             .filter(|e| now.duration_since(e.value().last_seen) > stale_threshold)
             .map(|e| e.key().clone())
             .collect();
@@ -337,12 +384,16 @@ impl MeshTransport {
             if let Some(peer) = peer_connections.get(&session_id) {
                 tracing::warn!("Removing stale peer connection: {}", peer.node_id);
                 topology.record_connection_failure(&peer.node_id).await;
-                topology.update_peer_status(&peer.node_id, PeerStatus::Disconnected).await;
+                topology
+                    .update_peer_status(&peer.node_id, PeerStatus::Disconnected)
+                    .await;
             }
             peer_connections.remove(&session_id);
         }
 
-        topology.cleanup_expired_queries(Duration::from_secs(10)).await;
+        topology
+            .cleanup_expired_queries(Duration::from_secs(10))
+            .await;
         topology.cleanup_expired_cache().await;
     }
 
@@ -358,16 +409,20 @@ impl MeshTransport {
 
         let min_connections = self.config.connection.min_peer_connections;
         let max_connections = self.config.connection.max_peer_connections;
-        
+
         let current_count = self.peer_connections.len();
-        
+
         if current_count >= min_connections {
-            tracing::debug!("Connection pool sufficient: {}/{}", current_count, min_connections);
+            tracing::debug!(
+                "Connection pool sufficient: {}/{}",
+                current_count,
+                min_connections
+            );
             return;
         }
 
         let targets = self.topology.get_prioritized_connection_targets().await;
-        
+
         for (node_id, priority) in targets {
             if self.peer_connections.len() >= max_connections {
                 break;
@@ -377,9 +432,16 @@ impl MeshTransport {
                 continue;
             }
 
-            tracing::info!("Attempting to connect to prioritized peer: {} ( {:?})", node_id, priority);
+            tracing::info!(
+                "Attempting to connect to prioritized peer: {} ( {:?})",
+                node_id,
+                priority
+            );
 
-            let address = self.topology.get_peer(&node_id).await
+            let address = self
+                .topology
+                .get_peer(&node_id)
+                .await
                 .map(|p| p.address.clone())
                 .unwrap_or_else(|| node_id.clone());
 
@@ -408,7 +470,9 @@ impl MeshTransport {
             return;
         }
 
-        let connected_peers: std::collections::HashSet<_> = self.peer_connections.iter()
+        let connected_peers: std::collections::HashSet<_> = self
+            .peer_connections
+            .iter()
             .map(|entry| entry.key().clone())
             .collect();
 
@@ -416,12 +480,13 @@ impl MeshTransport {
             let failures = self.auth_failures.read();
             let now = Instant::now();
             let threshold = Duration::from_secs(3600);
-            
-            failures.iter()
+
+            failures
+                .iter()
                 .filter(|(node_id, times)| {
-                    connected_peers.contains(*node_id) &&
-                    {
-                        let recent: Vec<_> = times.iter()
+                    connected_peers.contains(*node_id) && {
+                        let recent: Vec<_> = times
+                            .iter()
                             .filter(|t| now.duration_since(**t) < threshold)
                             .collect();
                         recent.len() >= 5
@@ -432,7 +497,10 @@ impl MeshTransport {
         };
 
         for node_id in auth_failures {
-            tracing::warn!("Auto-slasher: Node {} detected with repeated auth failures", node_id);
+            tracing::warn!(
+                "Auto-slasher: Node {} detected with repeated auth failures",
+                node_id
+            );
             stake_mgr.slash_node(
                 &node_id,
                 crate::mesh::dht::stake::SlashReason::RepeatedMisbehavior,
@@ -443,14 +511,18 @@ impl MeshTransport {
         if let Some(ref threat_intel) = self.threat_intel {
             let rep_mgr = threat_intel.get_reputation_manager();
             let peer_ids = rep_mgr.get_all_peer_ids();
-            
+
             for node_id in peer_ids {
                 if !connected_peers.contains(&node_id) {
                     continue;
                 }
                 if let Some(rep) = rep_mgr.get_peer_reputation(&node_id) {
                     if rep.false_positive_reports > 10 {
-                        tracing::warn!("Auto-slasher: Node {} has {} false positive reports", node_id, rep.false_positive_reports);
+                        tracing::warn!(
+                            "Auto-slasher: Node {} has {} false positive reports",
+                            node_id,
+                            rep.false_positive_reports
+                        );
                         stake_mgr.slash_node(
                             &node_id,
                             crate::mesh::dht::stake::SlashReason::RepeatedMisbehavior,
@@ -463,7 +535,8 @@ impl MeshTransport {
     }
 
     pub(crate) fn is_connected_to(&self, node_id: &str) -> bool {
-        self.peer_connections.iter().any(|e| e.value().node_id == node_id)
+        self.peer_connections
+            .iter()
+            .any(|e| e.value().node_id == node_id)
     }
-
 }

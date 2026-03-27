@@ -214,11 +214,12 @@ impl ProtocolDetector {
 
     pub async fn detect_peek(&self, stream: &TcpStream) -> io::Result<ProtocolResult> {
         let mut buffer = [0u8; 64];
-        
+
         let n = tokio::time::timeout(
             std::time::Duration::from_millis(self.peek_timeout_ms),
-            stream.peek(&mut buffer)
-        ).await??;
+            stream.peek(&mut buffer),
+        )
+        .await??;
 
         if n == 0 {
             return Ok(ProtocolResult {
@@ -290,10 +291,15 @@ impl ProtocolDetector {
         let first_line = extract_first_line(data);
         let upper_line = first_line.to_uppercase();
 
-        if first_line.starts_with("GET") || first_line.starts_with("POST") 
-            || first_line.starts_with("HEAD") || first_line.starts_with("PUT") 
-            || first_line.starts_with("DELETE") || first_line.starts_with("OPTIONS") 
-            || first_line.starts_with("PATCH") || first_line.starts_with("CONNECT") {
+        if first_line.starts_with("GET")
+            || first_line.starts_with("POST")
+            || first_line.starts_with("HEAD")
+            || first_line.starts_with("PUT")
+            || first_line.starts_with("DELETE")
+            || first_line.starts_with("OPTIONS")
+            || first_line.starts_with("PATCH")
+            || first_line.starts_with("CONNECT")
+        {
             let data_upper = String::from_utf8_lossy(data).to_uppercase();
             if data_upper.contains("UPGRADE: WEBSOCKET") || data_upper.contains("SEC-WEBSOCKET") {
                 return Protocol::WebSocket;
@@ -307,30 +313,50 @@ impl ProtocolDetector {
             return Protocol::Http;
         }
 
-        if first_line.starts_with("HELO") || first_line.starts_with("EHLO") 
-            || first_line.starts_with("MAIL FROM") || first_line.starts_with("RCPT TO") 
-            || first_line.starts_with("QUIT") || first_line.starts_with("DATA")
-            || first_line.starts_with("RSET") || first_line.starts_with("NOOP") {
+        if first_line.starts_with("HELO")
+            || first_line.starts_with("EHLO")
+            || first_line.starts_with("MAIL FROM")
+            || first_line.starts_with("RCPT TO")
+            || first_line.starts_with("QUIT")
+            || first_line.starts_with("DATA")
+            || first_line.starts_with("RSET")
+            || first_line.starts_with("NOOP")
+        {
             return Protocol::Smtp;
         }
 
         if first_line.starts_with("OPTIONS ") && upper_line.contains("RTSP/") {
             return Protocol::Rtsp;
         }
-        if first_line.starts_with("DESCRIBE ") || first_line.starts_with("SETUP ") 
-            || first_line.starts_with("PLAY ") || first_line.starts_with("PAUSE ")
-            || first_line.starts_with("TEARDOWN ") || first_line.starts_with("RTSP/") {
+        if first_line.starts_with("DESCRIBE ")
+            || first_line.starts_with("SETUP ")
+            || first_line.starts_with("PLAY ")
+            || first_line.starts_with("PAUSE ")
+            || first_line.starts_with("TEARDOWN ")
+            || first_line.starts_with("RTSP/")
+        {
             return Protocol::Rtsp;
         }
 
-        if first_line.starts_with("A") && first_line.chars().nth(4).map(|c| c.is_ascii_digit()).unwrap_or(false) {
+        if first_line.starts_with("A")
+            && first_line
+                .chars()
+                .nth(4)
+                .map(|c| c.is_ascii_digit())
+                .unwrap_or(false)
+        {
             return Protocol::Imap;
         }
 
-        if first_line.starts_with("USER") || first_line.starts_with("PASS") 
-            || first_line.starts_with("LIST") || first_line.starts_with("RETR") 
-            || first_line.starts_with("QUIT") || first_line.starts_with("CWD")
-            || first_line.starts_with("PWD") || first_line.starts_with("TYPE") {
+        if first_line.starts_with("USER")
+            || first_line.starts_with("PASS")
+            || first_line.starts_with("LIST")
+            || first_line.starts_with("RETR")
+            || first_line.starts_with("QUIT")
+            || first_line.starts_with("CWD")
+            || first_line.starts_with("PWD")
+            || first_line.starts_with("TYPE")
+        {
             return Protocol::Ftp;
         }
 
@@ -339,13 +365,19 @@ impl ProtocolDetector {
         }
 
         if data.len() >= 2
-            && (data.starts_with(&[0xff, 0xfb]) || data.starts_with(&[0xff, 0xfe])
-                || data.starts_with(&[0xff, 0xfd]) || data.starts_with(&[0xff, 0xfc])) {
-                return Protocol::Telnet;
-            }
+            && (data.starts_with(&[0xff, 0xfb])
+                || data.starts_with(&[0xff, 0xfe])
+                || data.starts_with(&[0xff, 0xfd])
+                || data.starts_with(&[0xff, 0xfc]))
+        {
+            return Protocol::Telnet;
+        }
 
-        if first_line.starts_with("NICK ") || first_line.starts_with("USER ")
-            || first_line.starts_with("JOIN ") || first_line.starts_with("PRIVMSG ") {
+        if first_line.starts_with("NICK ")
+            || first_line.starts_with("USER ")
+            || first_line.starts_with("JOIN ")
+            || first_line.starts_with("PRIVMSG ")
+        {
             return Protocol::Irc;
         }
 
@@ -367,22 +399,28 @@ impl ProtocolDetector {
             return Protocol::Prometheus;
         }
 
-        if data.starts_with(b"\x00\x14") || (data.len() >= 4 && u32::from_be_bytes([data[0], data[1], data[2], data[3]]) == 10) {
+        if data.starts_with(b"\x00\x14")
+            || (data.len() >= 4 && u32::from_be_bytes([data[0], data[1], data[2], data[3]]) == 10)
+        {
             if self.looks_like_mariadb(data) {
                 return Protocol::MariaDb;
             }
             return Protocol::Mysql;
         }
 
-        if data.starts_with(b"\x00\x00\x00\x08") || (data.len() >= 8 && &data[..8] == b"\x00\x00\x00\x08pgsrc\x00\x00") {
+        if data.starts_with(b"\x00\x00\x00\x08")
+            || (data.len() >= 8 && &data[..8] == b"\x00\x00\x00\x08pgsrc\x00\x00")
+        {
             return Protocol::Postgres;
         }
 
-        if (first_line.starts_with("*") || first_line.starts_with("$") 
+        if (first_line.starts_with("*")
+            || first_line.starts_with("$")
             || first_line.starts_with(":"))
-            && self.looks_like_redis(data) {
-                return Protocol::Redis;
-            }
+            && self.looks_like_redis(data)
+        {
+            return Protocol::Redis;
+        }
 
         if first_line.starts_with("+OK") || first_line.starts_with("-ERR") {
             if self.looks_like_redis(data) {
@@ -391,25 +429,32 @@ impl ProtocolDetector {
             return Protocol::Pop3;
         }
 
-        if first_line.starts_with("get ") || first_line.starts_with("set ") 
-            || first_line.starts_with("delete ") || first_line.starts_with("stats")
-            || first_line.starts_with("incr ") || first_line.starts_with("decr ")
-            || first_line.starts_with("add ") || first_line.starts_with("gets ") {
+        if first_line.starts_with("get ")
+            || first_line.starts_with("set ")
+            || first_line.starts_with("delete ")
+            || first_line.starts_with("stats")
+            || first_line.starts_with("incr ")
+            || first_line.starts_with("decr ")
+            || first_line.starts_with("add ")
+            || first_line.starts_with("gets ")
+        {
             return Protocol::Memcached;
         }
 
-        if data.len() >= 24 && data[0] == 0x80 && (data[1] == 0x80 || data[1] == 0x00)
-            && self.looks_like_memcached_binary(data) {
-                return Protocol::MemcachedBinary;
-            }
+        if data.len() >= 24
+            && data[0] == 0x80
+            && (data[1] == 0x80 || data[1] == 0x00)
+            && self.looks_like_memcached_binary(data)
+        {
+            return Protocol::MemcachedBinary;
+        }
 
-        if data[0] == 0x30 && data.len() >= 6
-            && self.looks_like_ldap(data) {
-                if data.len() >= 9 && data[9] == 0x02 {
-                    return Protocol::Ldaps;
-                }
-                return Protocol::Ldap;
+        if data[0] == 0x30 && data.len() >= 6 && self.looks_like_ldap(data) {
+            if data.len() >= 9 && data[9] == 0x02 {
+                return Protocol::Ldaps;
             }
+            return Protocol::Ldap;
+        }
 
         if data.len() >= 18 && data[0] == 0x03 && data[1] == 0x00 {
             return Protocol::Rdp;
@@ -419,8 +464,10 @@ impl ProtocolDetector {
             return Protocol::Vnc;
         }
 
-        if data.starts_with(b"<?xml") || data.starts_with(b"<stream:stream") 
-            || first_line.starts_with("<stream") {
+        if data.starts_with(b"<?xml")
+            || data.starts_with(b"<stream:stream")
+            || first_line.starts_with("<stream")
+        {
             return Protocol::Xmpp;
         }
 
@@ -438,8 +485,11 @@ impl ProtocolDetector {
             }
         }
 
-        if first_line.starts_with("CONNECT") || first_line.starts_with("SEND")
-            || first_line.starts_with("SUBSCRIBE") || first_line.starts_with("UNSUBLBE") {
+        if first_line.starts_with("CONNECT")
+            || first_line.starts_with("SEND")
+            || first_line.starts_with("SUBSCRIBE")
+            || first_line.starts_with("UNSUBLBE")
+        {
             return Protocol::Stomp;
         }
 
@@ -483,24 +533,31 @@ impl ProtocolDetector {
             }
         }
 
-        if (first_line.starts_with("INVITE ") || first_line.starts_with("ACK ")
-            || first_line.starts_with("BYE ") || first_line.starts_with("CANCEL ")
-            || first_line.starts_with("OPTIONS ") || first_line.starts_with("REGISTER "))
-            && upper_line.contains("SIP/") {
-                return Protocol::Sip;
-            }
+        if (first_line.starts_with("INVITE ")
+            || first_line.starts_with("ACK ")
+            || first_line.starts_with("BYE ")
+            || first_line.starts_with("CANCEL ")
+            || first_line.starts_with("OPTIONS ")
+            || first_line.starts_with("REGISTER "))
+            && upper_line.contains("SIP/")
+        {
+            return Protocol::Sip;
+        }
 
-        if (first_line.starts_with("GET /") || first_line.starts_with("POST /")
-            || first_line.starts_with("PUT /") || first_line.starts_with("DELETE /"))
-            && upper_line.contains("HTTP/") {
-                let data_upper = String::from_utf8_lossy(data).to_uppercase();
-                if data_upper.contains("ELASTICSEARCH") || data_upper.contains("X-ELASTICSEARCH") {
-                    return Protocol::Elasticsearch;
-                }
-                if data_upper.contains("SOLR") || data_upper.contains("X-SOLR") {
-                    return Protocol::Solr;
-                }
+        if (first_line.starts_with("GET /")
+            || first_line.starts_with("POST /")
+            || first_line.starts_with("PUT /")
+            || first_line.starts_with("DELETE /"))
+            && upper_line.contains("HTTP/")
+        {
+            let data_upper = String::from_utf8_lossy(data).to_uppercase();
+            if data_upper.contains("ELASTICSEARCH") || data_upper.contains("X-ELASTICSEARCH") {
+                return Protocol::Elasticsearch;
             }
+            if data_upper.contains("SOLR") || data_upper.contains("X-SOLR") {
+                return Protocol::Solr;
+            }
+        }
 
         let lower_data = String::from_utf8_lossy(data).to_lowercase();
         if lower_data.contains("minecraft") || lower_data.contains("yggdrasil") {
@@ -522,16 +579,15 @@ impl ProtocolDetector {
         let first_byte = data[0];
         let is_long_header = (first_byte & 0x80) != 0;
 
-        if is_long_header
-            && data.len() >= 5 {
-                let version = u32::from_be_bytes([data[1], data[2], data[3], data[4]]);
-                if version == 0 || (version & 0xFF000000) == 0xFF000000 {
-                    return true;
-                }
-                if version == 1 || version == 2 {
-                    return true;
-                }
+        if is_long_header && data.len() >= 5 {
+            let version = u32::from_be_bytes([data[1], data[2], data[3], data[4]]);
+            if version == 0 || (version & 0xFF000000) == 0xFF000000 {
+                return true;
             }
+            if version == 1 || version == 2 {
+                return true;
+            }
+        }
 
         false
     }
@@ -542,22 +598,19 @@ impl ProtocolDetector {
         }
         let first_char = data[0] as char;
         let line = extract_first_line(data);
-        
-        if first_char == '*'
-            && line.len() > 1
-                && line[1..].parse::<u32>().is_ok() {
-                    return true;
-                }
-        if first_char == '$'
-            && line.len() > 1
-                && line[1..].parse::<i32>().is_ok() {
-                    return true;
-                }
+
+        if first_char == '*' && line.len() > 1 && line[1..].parse::<u32>().is_ok() {
+            return true;
+        }
+        if first_char == '$' && line.len() > 1 && line[1..].parse::<i32>().is_ok() {
+            return true;
+        }
         if first_char == ':'
             && line.len() > 1
-                && line[1..].chars().all(|c| c.is_ascii_digit() || c == '-') {
-                    return true;
-                }
+            && line[1..].chars().all(|c| c.is_ascii_digit() || c == '-')
+        {
+            return true;
+        }
         false
     }
 
@@ -566,15 +619,14 @@ impl ProtocolDetector {
             return false;
         }
         let msg_len = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
-        if msg_len > 0 && msg_len < 48000000 && data.len() >= msg_len
-            && data.len() >= 12 {
-                let _request_id = u32::from_le_bytes([data[4], data[5], data[6], data[7]]);
-                let _response_to = u32::from_le_bytes([data[8], data[9], data[10], data[11]]);
-                let opcode = u32::from_le_bytes([data[12], data[13], data[14], data[15]]);
-                if (1..=2010).contains(&opcode) {
-                    return true;
-                }
+        if msg_len > 0 && msg_len < 48000000 && data.len() >= msg_len && data.len() >= 12 {
+            let _request_id = u32::from_le_bytes([data[4], data[5], data[6], data[7]]);
+            let _response_to = u32::from_le_bytes([data[8], data[9], data[10], data[11]]);
+            let opcode = u32::from_le_bytes([data[12], data[13], data[14], data[15]]);
+            if (1..=2010).contains(&opcode) {
+                return true;
             }
+        }
         false
     }
 
@@ -597,14 +649,13 @@ impl ProtocolDetector {
     }
 
     fn looks_like_kafka(&self, data: &[u8], api_key: u16) -> bool {
-        if api_key <= 64
-            && data.len() >= 6 {
-                let api_version = u16::from_be_bytes([data[6], data[7]]);
-                if api_version <= 20 {
-                    let correlation_id = u32::from_be_bytes([data[8], data[9], data[10], data[11]]);
-                    return correlation_id > 0 || api_key == 18;
-                }
+        if api_key <= 64 && data.len() >= 6 {
+            let api_version = u16::from_be_bytes([data[6], data[7]]);
+            if api_version <= 20 {
+                let correlation_id = u32::from_be_bytes([data[8], data[9], data[10], data[11]]);
+                return correlation_id > 0 || api_key == 18;
             }
+        }
         false
     }
 
@@ -621,7 +672,7 @@ impl ProtocolDetector {
 
         if data.len() >= 5 + length && length > 2 {
             let payload = &data[5..5 + length];
-            
+
             let compression = data[0] & 0x01;
             if compression == 0 && payload.len() >= 3 {
                 if payload[0] == 0x00 || payload[0] == 0x01 {
@@ -634,7 +685,7 @@ impl ProtocolDetector {
                         }
                     }
                 }
-                
+
                 if payload[0] == 0x0a && payload.len() > 2 {
                     let field_length = payload[1] as usize;
                     if payload.len() >= 2 + field_length && field_length > 0 {
@@ -696,7 +747,8 @@ impl ProtocolDetector {
                     return true;
                 }
                 if data[payload_start] == 0xFE && data.len() >= payload_start + 4 {
-                    let auth_plugin_len = u16::from_be_bytes([data[data.len() - 2], data[data.len() - 1]]);
+                    let auth_plugin_len =
+                        u16::from_be_bytes([data[data.len() - 2], data[data.len() - 1]]);
                     if auth_plugin_len > 0 && auth_plugin_len < 256 {
                         return true;
                     }
@@ -713,7 +765,23 @@ impl ProtocolDetector {
         }
 
         let version = data[0];
-        if version != 0x01 && version != 0x02 && version != 0x03 && version != 0x04 && version != 0x05 && version != 0x06 && version != 0x07 && version != 0x08 && version != 0x81 && version != 0x82 && version != 0x83 && version != 0x84 && version != 0x85 && version != 0x86 && version != 0x87 && version != 0x88 {
+        if version != 0x01
+            && version != 0x02
+            && version != 0x03
+            && version != 0x04
+            && version != 0x05
+            && version != 0x06
+            && version != 0x07
+            && version != 0x08
+            && version != 0x81
+            && version != 0x82
+            && version != 0x83
+            && version != 0x84
+            && version != 0x85
+            && version != 0x86
+            && version != 0x87
+            && version != 0x88
+        {
             return false;
         }
 
@@ -737,10 +805,9 @@ impl ProtocolDetector {
         }
 
         let version = data[0];
-        if (!(1..=5).contains(&version))
-            && (!(0x81..=0x85).contains(&version)) {
-                return false;
-            }
+        if (!(1..=5).contains(&version)) && (!(0x81..=0x85).contains(&version)) {
+            return false;
+        }
 
         let flags = data[1];
         if flags > 0x07 {
@@ -748,10 +815,23 @@ impl ProtocolDetector {
         }
 
         let opcode = data[3];
-        if opcode == 0x01 || opcode == 0x03 || opcode == 0x05 || opcode == 0x06 
-            || opcode == 0x07 || opcode == 0x08 || opcode == 0x09 || opcode == 0x0A 
-            || opcode == 0x0B || opcode == 0x0C || opcode == 0x0D || opcode == 0x0E 
-            || opcode == 0x0F || opcode == 0x10 || opcode == 0x11 || opcode == 0x40 {
+        if opcode == 0x01
+            || opcode == 0x03
+            || opcode == 0x05
+            || opcode == 0x06
+            || opcode == 0x07
+            || opcode == 0x08
+            || opcode == 0x09
+            || opcode == 0x0A
+            || opcode == 0x0B
+            || opcode == 0x0C
+            || opcode == 0x0D
+            || opcode == 0x0E
+            || opcode == 0x0F
+            || opcode == 0x10
+            || opcode == 0x11
+            || opcode == 0x40
+        {
             return true;
         }
 
@@ -766,44 +846,80 @@ mod tests {
     #[test]
     fn test_smtp_detection() {
         let detector = ProtocolDetector::new();
-        assert_eq!(detector.detect_from_bytes(b"EHLO example.com\r\n"), Protocol::Smtp);
-        assert_eq!(detector.detect_from_bytes(b"MAIL FROM:<test@example.com>\r\n"), Protocol::Smtp);
+        assert_eq!(
+            detector.detect_from_bytes(b"EHLO example.com\r\n"),
+            Protocol::Smtp
+        );
+        assert_eq!(
+            detector.detect_from_bytes(b"MAIL FROM:<test@example.com>\r\n"),
+            Protocol::Smtp
+        );
     }
 
     #[test]
     fn test_http_detection() {
         let detector = ProtocolDetector::new();
-        assert_eq!(detector.detect_from_bytes(b"GET / HTTP/1.1\r\n"), Protocol::Http);
-        assert_eq!(detector.detect_from_bytes(b"POST /api HTTP/1.1\r\n"), Protocol::Http);
+        assert_eq!(
+            detector.detect_from_bytes(b"GET / HTTP/1.1\r\n"),
+            Protocol::Http
+        );
+        assert_eq!(
+            detector.detect_from_bytes(b"POST /api HTTP/1.1\r\n"),
+            Protocol::Http
+        );
     }
 
     #[test]
     fn test_imap_detection() {
         let detector = ProtocolDetector::new();
-        assert_eq!(detector.detect_from_bytes(b"A0001 LOGIN user pass\r\n"), Protocol::Imap);
-        assert_eq!(detector.detect_from_bytes(b"A0002 SELECT INBOX\r\n"), Protocol::Imap);
+        assert_eq!(
+            detector.detect_from_bytes(b"A0001 LOGIN user pass\r\n"),
+            Protocol::Imap
+        );
+        assert_eq!(
+            detector.detect_from_bytes(b"A0002 SELECT INBOX\r\n"),
+            Protocol::Imap
+        );
     }
 
     #[test]
     fn test_redis_detection() {
         let detector = ProtocolDetector::new();
-        assert_eq!(detector.detect_from_bytes(b"*1\r\n$4\r\nPING\r\n"), Protocol::Redis);
-        assert_eq!(detector.detect_from_bytes(b"*2\r\n$3\r\nGET\r\n$3\r\nkey\r\n"), Protocol::Redis);
-        assert_eq!(detector.detect_from_bytes(b"$5\r\nhello\r\n"), Protocol::Redis);
+        assert_eq!(
+            detector.detect_from_bytes(b"*1\r\n$4\r\nPING\r\n"),
+            Protocol::Redis
+        );
+        assert_eq!(
+            detector.detect_from_bytes(b"*2\r\n$3\r\nGET\r\n$3\r\nkey\r\n"),
+            Protocol::Redis
+        );
+        assert_eq!(
+            detector.detect_from_bytes(b"$5\r\nhello\r\n"),
+            Protocol::Redis
+        );
         assert_eq!(detector.detect_from_bytes(b":1000\r\n"), Protocol::Redis);
     }
 
     #[test]
     fn test_memcached_detection() {
         let detector = ProtocolDetector::new();
-        assert_eq!(detector.detect_from_bytes(b"get mykey\r\n"), Protocol::Memcached);
-        assert_eq!(detector.detect_from_bytes(b"set mykey 0 3600 5\r\nhello\r\n"), Protocol::Memcached);
+        assert_eq!(
+            detector.detect_from_bytes(b"get mykey\r\n"),
+            Protocol::Memcached
+        );
+        assert_eq!(
+            detector.detect_from_bytes(b"set mykey 0 3600 5\r\nhello\r\n"),
+            Protocol::Memcached
+        );
     }
 
     #[test]
     fn test_ssh_detection() {
         let detector = ProtocolDetector::new();
-        assert_eq!(detector.detect_from_bytes(b"SSH-2.0-OpenSSH_8.2p1\r\n"), Protocol::Ssh);
+        assert_eq!(
+            detector.detect_from_bytes(b"SSH-2.0-OpenSSH_8.2p1\r\n"),
+            Protocol::Ssh
+        );
     }
 
     #[test]
@@ -815,14 +931,23 @@ mod tests {
     #[test]
     fn test_amqp_detection() {
         let detector = ProtocolDetector::new();
-        assert_eq!(detector.detect_from_bytes(b"AMQP\x00\x00\x09\x01"), Protocol::Amqp);
+        assert_eq!(
+            detector.detect_from_bytes(b"AMQP\x00\x00\x09\x01"),
+            Protocol::Amqp
+        );
     }
 
     #[test]
     fn test_rtsp_detection() {
         let detector = ProtocolDetector::new();
-        assert_eq!(detector.detect_from_bytes(b"OPTIONS rtsp://example.com RTSP/1.0\r\n"), Protocol::Rtsp);
-        assert_eq!(detector.detect_from_bytes(b"DESCRIBE rtsp://example.com RTSP/1.0\r\n"), Protocol::Rtsp);
+        assert_eq!(
+            detector.detect_from_bytes(b"OPTIONS rtsp://example.com RTSP/1.0\r\n"),
+            Protocol::Rtsp
+        );
+        assert_eq!(
+            detector.detect_from_bytes(b"DESCRIBE rtsp://example.com RTSP/1.0\r\n"),
+            Protocol::Rtsp
+        );
     }
 
     #[test]
@@ -835,24 +960,37 @@ mod tests {
     #[test]
     fn test_xmpp_detection() {
         let detector = ProtocolDetector::new();
-        assert_eq!(detector.detect_from_bytes(b"<?xml version='1.0'?><stream:stream>"), Protocol::Xmpp);
-        assert_eq!(detector.detect_from_bytes(b"<stream:stream to='example.com'>"), Protocol::Xmpp);
+        assert_eq!(
+            detector.detect_from_bytes(b"<?xml version='1.0'?><stream:stream>"),
+            Protocol::Xmpp
+        );
+        assert_eq!(
+            detector.detect_from_bytes(b"<stream:stream to='example.com'>"),
+            Protocol::Xmpp
+        );
     }
 
     #[test]
     fn test_http2_detection() {
         let detector = ProtocolDetector::new();
-        assert_eq!(detector.detect_from_bytes(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"), Protocol::Http2);
+        assert_eq!(
+            detector.detect_from_bytes(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"),
+            Protocol::Http2
+        );
     }
 
     #[test]
     fn test_grpc_detection() {
         let detector = ProtocolDetector::new();
-        
+
         let h2_preface = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
         assert_eq!(detector.detect_from_bytes(h2_preface), Protocol::Http2);
-        
-        let h2_preface_with_settings = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n\x00\x00\x00\x04\x00\x00\x00\x00\x00";
-        assert_eq!(detector.detect_from_bytes(h2_preface_with_settings), Protocol::Http2);
+
+        let h2_preface_with_settings =
+            b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n\x00\x00\x00\x04\x00\x00\x00\x00\x00";
+        assert_eq!(
+            detector.detect_from_bytes(h2_preface_with_settings),
+            Protocol::Http2
+        );
     }
 }

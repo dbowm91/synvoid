@@ -55,7 +55,10 @@ impl DnsServer {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         use tokio::time::{timeout, Duration};
 
-        let client_ip = stream.peer_addr().map(|a| a.ip()).unwrap_or_else(|_| IpAddr::from([0,0,0,0]));
+        let client_ip = stream
+            .peer_addr()
+            .map(|a| a.ip())
+            .unwrap_or_else(|_| IpAddr::from([0, 0, 0, 0]));
 
         let idle_timeout = ctx.max_idle_time.unwrap_or(Duration::from_secs(30));
 
@@ -101,7 +104,10 @@ impl DnsServer {
                         tracing::debug!("Failed to send error response: {}", e);
                     }
                 }
-                tracing::debug!("Invalid DNS TCP query from {}: validation failed", client_ip);
+                tracing::debug!(
+                    "Invalid DNS TCP query from {}: validation failed",
+                    client_ip
+                );
                 return Err("Invalid query".to_string());
             }
         }
@@ -128,37 +134,50 @@ impl DnsServer {
             }
         }
 
-        let cache_key = CacheKey::new(
-            String::new(),
-            RecordType::NULL,
-            Some(client_ip),
-        );
+        let cache_key = CacheKey::new(String::new(), RecordType::NULL, Some(client_ip));
 
         let response = if let Some(coalescer) = ctx.query_coalescer {
-            let query_key = crate::dns::query_coalesce::QueryKey::from_query(&query, Some(client_ip));
+            let query_key =
+                crate::dns::query_coalesce::QueryKey::from_query(&query, Some(client_ip));
 
             if let Some(key) = query_key {
                 match coalescer.get_or_wait(key.clone()) {
-                    Some(crate::dns::query_coalesce::CoalesceResult::Response(resp)) => {
-                        Some(resp)
-                    }
+                    Some(crate::dns::query_coalesce::CoalesceResult::Response(resp)) => Some(resp),
                     Some(crate::dns::query_coalesce::CoalesceResult::NewQuery(_)) => {
                         if let Some(c) = ctx.cache {
-                            Self::handle_query_with_cache(&ctx, &query, c, cache_key, Some(client_ip))
+                            Self::handle_query_with_cache(
+                                &ctx,
+                                &query,
+                                c,
+                                cache_key,
+                                Some(client_ip),
+                            )
                         } else {
                             Self::handle_query(&ctx, &query, Some(client_ip))
                         }
                     }
                     None => {
                         if let Some(c) = ctx.cache {
-                            Self::handle_query_with_cache(&ctx, &query, c, cache_key, Some(client_ip))
+                            Self::handle_query_with_cache(
+                                &ctx,
+                                &query,
+                                c,
+                                cache_key,
+                                Some(client_ip),
+                            )
                         } else {
                             Self::handle_query(&ctx, &query, Some(client_ip))
                         }
                     }
                     _ => {
                         if let Some(c) = ctx.cache {
-                            Self::handle_query_with_cache(&ctx, &query, c, cache_key, Some(client_ip))
+                            Self::handle_query_with_cache(
+                                &ctx,
+                                &query,
+                                c,
+                                cache_key,
+                                Some(client_ip),
+                            )
                         } else {
                             Self::handle_query(&ctx, &query, Some(client_ip))
                         }
@@ -181,7 +200,9 @@ impl DnsServer {
                 // Detect zone transfer by checking query type at offset 20
                 let query_qtype = if query.len() >= 22 {
                     u16::from_be_bytes([query[20], query[21]])
-                } else { 0 };
+                } else {
+                    0
+                };
 
                 if query_qtype == crate::dns::transfer::AXFR_QUERY_TYPE {
                     let qname = Self::extract_query_name(&query);
@@ -207,7 +228,8 @@ impl DnsServer {
                     let qname = Self::extract_query_name(&query);
                     let serial = Self::extract_ixfr_serial(&query);
                     let tsig = crate::dns::tsig::parse_tsig_from_query(&query, 22);
-                    match zt.handle_ixfr_request_messages(&qname, client_ip, serial, tsig.as_ref()) {
+                    match zt.handle_ixfr_request_messages(&qname, client_ip, serial, tsig.as_ref())
+                    {
                         Ok(messages) => {
                             for msg in messages {
                                 let len = msg.len() as u16;
@@ -243,7 +265,10 @@ impl DnsServer {
             let len = resp.len() as u16;
             let mut response_buf = len.to_be_bytes().to_vec();
             response_buf.extend_from_slice(&resp);
-            stream.write_all(&response_buf).await.map_err(|e| e.to_string())?;
+            stream
+                .write_all(&response_buf)
+                .await
+                .map_err(|e| e.to_string())?;
         }
 
         Ok(())
@@ -389,13 +414,26 @@ impl DnsServer {
         }
 
         let record_type = u16::from_be_bytes([response[pos], response[pos + 1]]);
-        if record_type != 1 && record_type != 28 && record_type != 5 && record_type != 15 && record_type != 16 && record_type != 2 && record_type != 6 && record_type != 33 {
+        if record_type != 1
+            && record_type != 28
+            && record_type != 5
+            && record_type != 15
+            && record_type != 16
+            && record_type != 2
+            && record_type != 6
+            && record_type != 33
+        {
             return 0;
         }
         pos += 2;
         pos += 2;
 
-        u32::from_be_bytes([response[pos], response[pos + 1], response[pos + 2], response[pos + 3]])
+        u32::from_be_bytes([
+            response[pos],
+            response[pos + 1],
+            response[pos + 2],
+            response[pos + 3],
+        ])
     }
 
     pub(super) fn extract_ixfr_serial(query: &[u8]) -> Option<u32> {
@@ -433,7 +471,12 @@ impl DnsServer {
         }
 
         if pos + 4 <= query.len() {
-            Some(u32::from_be_bytes([query[pos], query[pos + 1], query[pos + 2], query[pos + 3]]))
+            Some(u32::from_be_bytes([
+                query[pos],
+                query[pos + 1],
+                query[pos + 2],
+                query[pos + 3],
+            ]))
         } else {
             None
         }
@@ -459,11 +502,8 @@ impl DnsServer {
             None
         };
 
-        let best_edge = mesh_registry.get_best_edge_for_client(
-            domain,
-            Some(client_ip),
-            client_geo.as_deref(),
-        );
+        let best_edge =
+            mesh_registry.get_best_edge_for_client(domain, Some(client_ip), client_geo.as_deref());
 
         best_edge.map(|edge| {
             let record_type = match qtype {
@@ -584,12 +624,10 @@ impl DnsServer {
         let best_match = trie_guard.find_zone(&qname_lower);
 
         let (origin_str, zone) = match best_match {
-            Some(origin) => {
-                match zones_guard.get(&origin) {
-                    Some(zone) => (origin.clone(), zone),
-                    None => return None,
-                }
-            }
+            Some(origin) => match zones_guard.get(&origin) {
+                Some(zone) => (origin.clone(), zone),
+                None => return None,
+            },
             None => return None,
         };
 
@@ -598,19 +636,28 @@ impl DnsServer {
 
         // Reuse qname_lower instead of calling to_lowercase again
         let qname_lower_trimmed = qname_lower.trim_end_matches('.').to_string();
-        let lookup_name = if qname_lower_trimmed == origin_lower_for_strip || qname.is_empty() || qname == "@" {
-            "@".to_string()
-        } else {
-            let suffix = format!(".{}", origin_lower_for_strip);
-            match qname_lower_trimmed.strip_suffix(&suffix) {
-                Some(s) => s.to_string(),
-                None => qname_lower_trimmed.clone(),
-            }
-        };
+        let lookup_name =
+            if qname_lower_trimmed == origin_lower_for_strip || qname.is_empty() || qname == "@" {
+                "@".to_string()
+            } else {
+                let suffix = format!(".{}", origin_lower_for_strip);
+                match qname_lower_trimmed.strip_suffix(&suffix) {
+                    Some(s) => s.to_string(),
+                    None => qname_lower_trimmed.clone(),
+                }
+            };
 
         let key = (lookup_name.clone(), record_type);
         if let Some(records) = zone.records.get(&key) {
-            return Some(Self::build_response(&qname, qtype, records, dnssec_ok, edns_options.as_ref(), zone.zsk_key.as_ref(), &origin_canonical));
+            return Some(Self::build_response(
+                &qname,
+                qtype,
+                records,
+                dnssec_ok,
+                edns_options.as_ref(),
+                zone.zsk_key.as_ref(),
+                &origin_canonical,
+            ));
         }
 
         if record_type == RecordTypeExt::UNKNOWN || record_type == RecordType::A {
@@ -624,7 +671,15 @@ impl DnsServer {
                         return None;
                     }
                 }
-                return Some(Self::build_response(&qname, qtype, cname_records, dnssec_ok, edns_options.as_ref(), zone.zsk_key.as_ref(), &origin_canonical));
+                return Some(Self::build_response(
+                    &qname,
+                    qtype,
+                    cname_records,
+                    dnssec_ok,
+                    edns_options.as_ref(),
+                    zone.zsk_key.as_ref(),
+                    &origin_canonical,
+                ));
             }
         }
 
@@ -634,7 +689,9 @@ impl DnsServer {
             let lookup_name_for_qtype = lookup_name.clone();
 
             for ((name, _rt), records) in &zone.records {
-                if name == &lookup_name_for_qtype || (name == "@" && lookup_name_for_qtype.is_empty()) {
+                if name == &lookup_name_for_qtype
+                    || (name == "@" && lookup_name_for_qtype.is_empty())
+                {
                     for record in records {
                         if record.record_type == RecordType::CNAME {
                             if !seen_cname {
@@ -657,53 +714,107 @@ impl DnsServer {
             }
 
             if !all_records.is_empty() {
-                return Some(Self::build_response(&qname, qtype, &all_records, dnssec_ok, edns_options.as_ref(), zone.zsk_key.as_ref(), &origin_canonical));
+                return Some(Self::build_response(
+                    &qname,
+                    qtype,
+                    &all_records,
+                    dnssec_ok,
+                    edns_options.as_ref(),
+                    zone.zsk_key.as_ref(),
+                    &origin_canonical,
+                ));
             }
 
             if record_type == RecordType::DNSKEY && qname_lower_trimmed == origin_lower_for_strip {
-                    let dnskey_records = Self::build_dnskey_records(zone);
-                    return Some(Self::build_response(&qname, qtype, &dnskey_records, dnssec_ok, edns_options.as_ref(), zone.ksk_key.as_ref(), &origin_canonical));
-                }
+                let dnskey_records = Self::build_dnskey_records(zone);
+                return Some(Self::build_response(
+                    &qname,
+                    qtype,
+                    &dnskey_records,
+                    dnssec_ok,
+                    edns_options.as_ref(),
+                    zone.ksk_key.as_ref(),
+                    &origin_canonical,
+                ));
+            }
 
-                if qtype == 59 && qname_lower_trimmed == origin_lower_for_strip {
-                    if let Some(ksk) = &zone.ksk_key {
-                        let cds_records = Self::build_cds_records(ksk);
-                        return Some(Self::build_response(&qname, qtype, &cds_records, dnssec_ok, edns_options.as_ref(), zone.ksk_key.as_ref(), &origin_canonical));
-                    }
+            if qtype == 59 && qname_lower_trimmed == origin_lower_for_strip {
+                if let Some(ksk) = &zone.ksk_key {
+                    let cds_records = Self::build_cds_records(ksk);
+                    return Some(Self::build_response(
+                        &qname,
+                        qtype,
+                        &cds_records,
+                        dnssec_ok,
+                        edns_options.as_ref(),
+                        zone.ksk_key.as_ref(),
+                        &origin_canonical,
+                    ));
                 }
+            }
 
-                if qtype == 60 && qname_lower_trimmed == origin_lower_for_strip {
-                    let cdnskey_records = Self::build_cdnskey_records(zone);
-                    return Some(Self::build_response(&qname, qtype, &cdnskey_records, dnssec_ok, edns_options.as_ref(), zone.ksk_key.as_ref(), &origin_canonical));
-                }
+            if qtype == 60 && qname_lower_trimmed == origin_lower_for_strip {
+                let cdnskey_records = Self::build_cdnskey_records(zone);
+                return Some(Self::build_response(
+                    &qname,
+                    qtype,
+                    &cdnskey_records,
+                    dnssec_ok,
+                    edns_options.as_ref(),
+                    zone.ksk_key.as_ref(),
+                    &origin_canonical,
+                ));
+            }
 
-                if record_type == RecordType::DS && qname_lower_trimmed == origin_lower_for_strip {
-                    if let Some(ksk) = &zone.ksk_key {
-                        let ds_records = Self::build_ds_records(ksk);
-                        return Some(Self::build_response(&qname, qtype, &ds_records, dnssec_ok, edns_options.as_ref(), zone.ksk_key.as_ref(), &origin_canonical));
-                    }
+            if record_type == RecordType::DS && qname_lower_trimmed == origin_lower_for_strip {
+                if let Some(ksk) = &zone.ksk_key {
+                    let ds_records = Self::build_ds_records(ksk);
+                    return Some(Self::build_response(
+                        &qname,
+                        qtype,
+                        &ds_records,
+                        dnssec_ok,
+                        edns_options.as_ref(),
+                        zone.ksk_key.as_ref(),
+                        &origin_canonical,
+                    ));
                 }
+            }
 
-                if record_type == RecordType::NSEC3PARAM && qname_lower_trimmed == origin_lower_for_strip {
-                    if let Some(nsec3param_record) = Self::build_nsec3param_record(zone) {
-                        return Some(Self::build_response(&qname, qtype, &[nsec3param_record], dnssec_ok, edns_options.as_ref(), zone.zsk_key.as_ref(), &origin_canonical));
-                    }
+            if record_type == RecordType::NSEC3PARAM
+                && qname_lower_trimmed == origin_lower_for_strip
+            {
+                if let Some(nsec3param_record) = Self::build_nsec3param_record(zone) {
+                    return Some(Self::build_response(
+                        &qname,
+                        qtype,
+                        &[nsec3param_record],
+                        dnssec_ok,
+                        edns_options.as_ref(),
+                        zone.zsk_key.as_ref(),
+                        &origin_canonical,
+                    ));
                 }
+            }
         }
 
         drop(zones_guard);
 
         if let (Some(registry), Some(ip)) = (ctx.mesh_registry, client_ip) {
-            if let Some(mesh_records) = Self::resolve_from_mesh(
-                registry,
-                &qname,
-                ip,
-                ctx.geoip_lookup,
-                qtype,
-            ) {
+            if let Some(mesh_records) =
+                Self::resolve_from_mesh(registry, &qname, ip, ctx.geoip_lookup, qtype)
+            {
                 if !mesh_records.is_empty() {
                     tracing::debug!("Resolved {} from mesh network", qname);
-                    return Some(Self::build_response(&qname, qtype, &mesh_records, dnssec_ok, edns_options.as_ref(), None, &qname));
+                    return Some(Self::build_response(
+                        &qname,
+                        qtype,
+                        &mesh_records,
+                        dnssec_ok,
+                        edns_options.as_ref(),
+                        None,
+                        &qname,
+                    ));
                 }
             }
         }
@@ -729,7 +840,8 @@ impl DnsServer {
                                 ));
                             }
                         } else if zone.nsec3_enabled {
-                            let nsec3_records = Self::build_nsec3_records(zone, &qname, record_type);
+                            let nsec3_records =
+                                Self::build_nsec3_records(zone, &qname, record_type);
                             if !nsec3_records.is_empty() {
                                 let zsk = zone.zsk_key.as_ref();
                                 return Some(Self::build_nxdomain_response(
@@ -838,7 +950,8 @@ impl DnsServer {
         }
 
         if let Some(edns) = edns_options {
-            let opt_record = crate::dns::edns::EdnsOptions::build_opt_record(edns.udp_payload_size, dnssec_ok);
+            let opt_record =
+                crate::dns::edns::EdnsOptions::build_opt_record(edns.udp_payload_size, dnssec_ok);
             response.extend_from_slice(&[0]);
             response.extend_from_slice(&41u16.to_be_bytes());
             response.extend_from_slice(&(opt_record.len() as u16).to_be_bytes());

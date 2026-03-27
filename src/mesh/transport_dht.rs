@@ -1,6 +1,5 @@
 use crate::mesh::transport::*;
 
-
 impl MeshTransport {
     pub(crate) async fn handle_dht_snapshot_request(
         &self,
@@ -9,12 +8,21 @@ impl MeshTransport {
         _node_id: &str,
         from_version: u64,
     ) {
-        tracing::debug!("Received DHT snapshot request from {} (from_version: {})", from_peer, from_version);
+        tracing::debug!(
+            "Received DHT snapshot request from {} (from_version: {})",
+            from_peer,
+            from_version
+        );
 
         if let Some(ref record_store) = self.record_store {
-            if let Some(response) = record_store.create_snapshot_response(request_id, from_version) {
+            if let Some(response) = record_store.create_snapshot_response(request_id, from_version)
+            {
                 if let Err(e) = self.send_datagram_to_peer(from_peer, &response).await {
-                    tracing::warn!("Failed to send DHT snapshot response to {}: {}", from_peer, e);
+                    tracing::warn!(
+                        "Failed to send DHT snapshot response to {}: {}",
+                        from_peer,
+                        e
+                    );
                 } else {
                     tracing::debug!("Sent DHT snapshot response to {}", from_peer);
                 }
@@ -31,13 +39,21 @@ impl MeshTransport {
         records: Vec<crate::mesh::protocol::DhtRecord>,
         version: u64,
     ) {
-        tracing::debug!("Received DHT snapshot response from {} ({} records, version: {})", 
-            from_peer, records.len(), version);
+        tracing::debug!(
+            "Received DHT snapshot response from {} ({} records, version: {})",
+            from_peer,
+            records.len(),
+            version
+        );
 
         if let Some(ref record_store) = self.record_store {
             let signer = self.mesh_signer.as_ref();
             let applied = record_store.verify_and_apply_snapshot(records, version, signer);
-            tracing::info!("Applied {} records from DHT snapshot (version: {})", applied, version);
+            tracing::info!(
+                "Applied {} records from DHT snapshot (version: {})",
+                applied,
+                version
+            );
         }
     }
 
@@ -47,8 +63,11 @@ impl MeshTransport {
         source_node_id: &str,
         records: Vec<crate::mesh::protocol::DhtRecord>,
     ) {
-        tracing::debug!("Received DHT record announce from {} ({} records)", 
-            from_peer, records.len());
+        tracing::debug!(
+            "Received DHT record announce from {} ({} records)",
+            from_peer,
+            records.len()
+        );
 
         let min_reputation = self.get_effective_write_threshold(from_peer).await;
 
@@ -56,24 +75,26 @@ impl MeshTransport {
             if let Some(rep) = self.topology.get_peer_audit_reputation(from_peer).await {
                 let rep_score = (rep * 100.0) as i64;
                 if rep_score < min_reputation {
-                    tracing::debug!("Rejecting DHT record announce from {}: reputation {} below threshold {}",
-                        from_peer, rep_score, min_reputation);
+                    tracing::debug!(
+                        "Rejecting DHT record announce from {}: reputation {} below threshold {}",
+                        from_peer,
+                        rep_score,
+                        min_reputation
+                    );
                     return;
                 }
             } else {
-                tracing::debug!("Rejecting DHT record announce from {}: unknown peer (no reputation)", from_peer);
+                tracing::debug!(
+                    "Rejecting DHT record announce from {}: unknown peer (no reputation)",
+                    from_peer
+                );
                 return;
             }
         }
 
         if let Some(ref record_store) = self.record_store {
             let signer = self.mesh_signer.as_ref();
-            record_store.handle_record_announce(
-                records,
-                source_node_id,
-                50,
-                signer,
-            );
+            record_store.handle_record_announce(records, source_node_id, 50, signer);
         }
     }
 
@@ -84,8 +105,12 @@ impl MeshTransport {
         node_id: &str,
         from_version: u64,
     ) {
-        tracing::debug!("Received DHT sync request from {} (node: {}, from_version: {})", 
-            from_peer, node_id, from_version);
+        tracing::debug!(
+            "Received DHT sync request from {} (node: {}, from_version: {})",
+            from_peer,
+            node_id,
+            from_version
+        );
 
         if let Some(ref record_store) = self.record_store {
             if let Some(response) = record_store.create_sync_response(request_id, from_version) {
@@ -101,8 +126,11 @@ impl MeshTransport {
         from_peer: &str,
         records: Vec<crate::mesh::protocol::DhtRecord>,
     ) {
-        tracing::debug!("Received DHT sync response from {} ({} records)", 
-            from_peer, records.len());
+        tracing::debug!(
+            "Received DHT sync response from {} ({} records)",
+            from_peer,
+            records.len()
+        );
 
         if let Some(ref record_store) = self.record_store {
             let signer = self.mesh_signer.as_ref();
@@ -119,8 +147,11 @@ impl MeshTransport {
         interested_keys: &[String],
         _timestamp: u64,
     ) {
-        tracing::debug!("Received DHT anti-entropy request from {} ({} interested keys)", 
-            from_peer, interested_keys.len());
+        tracing::debug!(
+            "Received DHT anti-entropy request from {} ({} interested keys)",
+            from_peer,
+            interested_keys.len()
+        );
 
         if let Some(ref record_store) = self.record_store {
             if let Some(response) = record_store.handle_anti_entropy_request(
@@ -130,46 +161,70 @@ impl MeshTransport {
                 from_peer,
             ) {
                 if let Err(e) = self.send_datagram_to_peer(from_peer, &response).await {
-                    tracing::warn!("Failed to send DHT anti-entropy response to {}: {}", from_peer, e);
+                    tracing::warn!(
+                        "Failed to send DHT anti-entropy response to {}: {}",
+                        from_peer,
+                        e
+                    );
                 }
             }
         }
     }
 
     pub(crate) async fn get_effective_read_threshold(&self, _peer_id: &str) -> i64 {
-        if let Some(override_val) = self.config.dht.as_ref().and_then(|d| d.manual_threshold_override) {
+        if let Some(override_val) = self
+            .config
+            .dht
+            .as_ref()
+            .and_then(|d| d.manual_threshold_override)
+        {
             return override_val;
         }
 
         if let Some(ref record_store) = self.record_store {
             if let Some(policy) = record_store.get_network_policy() {
-                let max = self.config.dht.as_ref()
+                let max = self
+                    .config
+                    .dht
+                    .as_ref()
                     .map(|d| d.max_reputation_threshold)
                     .unwrap_or(80);
                 return policy.min_reputation_for_read.clamp(0, max);
             }
         }
 
-        self.config.dht.as_ref()
+        self.config
+            .dht
+            .as_ref()
             .map(|d| d.min_reputation_for_dht_read)
             .unwrap_or(10)
     }
 
     pub(crate) async fn get_effective_write_threshold(&self, _peer_id: &str) -> i64 {
-        if let Some(override_val) = self.config.dht.as_ref().and_then(|d| d.manual_threshold_override) {
+        if let Some(override_val) = self
+            .config
+            .dht
+            .as_ref()
+            .and_then(|d| d.manual_threshold_override)
+        {
             return override_val;
         }
 
         if let Some(ref record_store) = self.record_store {
             if let Some(policy) = record_store.get_network_policy() {
-                let max = self.config.dht.as_ref()
+                let max = self
+                    .config
+                    .dht
+                    .as_ref()
                     .map(|d| d.max_reputation_threshold)
                     .unwrap_or(80);
                 return policy.min_reputation_for_write.clamp(0, max);
             }
         }
 
-        self.config.dht.as_ref()
+        self.config
+            .dht
+            .as_ref()
             .map(|d| d.min_reputation_for_dht_write)
             .unwrap_or(30)
     }
@@ -181,8 +236,11 @@ impl MeshTransport {
         _timestamp: u64,
         signature: &[u8],
     ) {
-        tracing::debug!("Received DHT anti-entropy response from {} ({} missing records)", 
-            from_peer, missing_records.len());
+        tracing::debug!(
+            "Received DHT anti-entropy response from {} ({} missing records)",
+            from_peer,
+            missing_records.len()
+        );
 
         if missing_records.is_empty() {
             return;
@@ -206,7 +264,11 @@ impl MeshTransport {
         target_node_id: Vec<u8>,
         _requester_node_id: &str,
     ) {
-        tracing::debug!("Received FindNode from {} for target of length {}", from_peer, target_node_id.len());
+        tracing::debug!(
+            "Received FindNode from {} for target of length {}",
+            from_peer,
+            target_node_id.len()
+        );
 
         let min_reputation = self.get_effective_read_threshold(from_peer).await;
 
@@ -214,12 +276,19 @@ impl MeshTransport {
             if let Some(rep) = self.topology.get_peer_audit_reputation(from_peer).await {
                 let rep_score = (rep * 100.0) as i64;
                 if rep_score < min_reputation {
-                    tracing::debug!("Rejecting FindNode from {}: reputation {} below threshold {}",
-                        from_peer, rep_score, min_reputation);
+                    tracing::debug!(
+                        "Rejecting FindNode from {}: reputation {} below threshold {}",
+                        from_peer,
+                        rep_score,
+                        min_reputation
+                    );
                     return;
                 }
             } else {
-                tracing::debug!("Rejecting FindNode from {}: unknown peer (no reputation)", from_peer);
+                tracing::debug!(
+                    "Rejecting FindNode from {}: unknown peer (no reputation)",
+                    from_peer
+                );
                 return;
             }
         }
@@ -237,7 +306,9 @@ impl MeshTransport {
             }
         };
 
-        let closest_peers = routing_manager.find_closest_to_node_id(&target_id, 20).await;
+        let closest_peers = routing_manager
+            .find_closest_to_node_id(&target_id, 20)
+            .await;
 
         let response = crate::mesh::protocol::MeshMessage::FindNodeResponse {
             request_id: request_id.into(),
@@ -256,7 +327,11 @@ impl MeshTransport {
         from_peer: &str,
         peers: Vec<crate::mesh::dht::routing::PeerContact>,
     ) {
-        tracing::debug!("Received FindNodeResponse from {} with {} peers", from_peer, peers.len());
+        tracing::debug!(
+            "Received FindNodeResponse from {} with {} peers",
+            from_peer,
+            peers.len()
+        );
 
         let Some(ref routing_manager) = self.routing_manager else {
             return;
@@ -267,17 +342,23 @@ impl MeshTransport {
                 continue;
             }
 
-            routing_manager.add_peer(
-                peer.node_id_string.clone(),
-                peer.address,
-                peer.port,
-                if peer.is_global { crate::mesh::config::MeshNodeRole::Global } else { crate::mesh::config::MeshNodeRole::Edge },
-                peer.latency_ms,
-                peer.is_trusted,
-                peer.geo,
-                peer.pow_nonce,
-                peer.public_key,
-            ).await;
+            routing_manager
+                .add_peer(
+                    peer.node_id_string.clone(),
+                    peer.address,
+                    peer.port,
+                    if peer.is_global {
+                        crate::mesh::config::MeshNodeRole::Global
+                    } else {
+                        crate::mesh::config::MeshNodeRole::Edge
+                    },
+                    peer.latency_ms,
+                    peer.is_trusted,
+                    peer.geo,
+                    peer.pow_nonce,
+                    peer.public_key,
+                )
+                .await;
         }
     }
 
@@ -292,7 +373,9 @@ impl MeshTransport {
             }
 
             // Get connected global nodes
-            let global_nodes: Vec<String> = self.peer_connections.iter()
+            let global_nodes: Vec<String> = self
+                .peer_connections
+                .iter()
                 .filter(|e| e.value().role.is_global())
                 .map(|e| e.key().clone())
                 .collect();
@@ -305,12 +388,11 @@ impl MeshTransport {
             if let Some(request) = record_store.create_snapshot_request() {
                 let peer_id = &global_nodes[0];
                 tracing::info!("DHT cache stale, requesting resync from {}", peer_id);
-                
+
                 if let Err(e) = self.send_datagram_to_peer(peer_id, &request).await {
                     tracing::warn!("Failed to request DHT resync from {}: {}", peer_id, e);
                 }
             }
         }
     }
-
 }

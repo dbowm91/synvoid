@@ -1,11 +1,11 @@
+use super::super::state::AdminState;
 use axum::{
-    extract::{State, Path},
+    extract::{Path, State},
     http::StatusCode,
     Json,
 };
 use serde::Serialize;
 use std::sync::Arc;
-use super::super::state::AdminState;
 
 use super::common::{OptionalAuth, StatusResponse};
 
@@ -58,7 +58,6 @@ pub async fn get_master_status(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<MasterStatusResponse>, StatusCode> {
-
     let metrics = state.get_metrics();
 
     Ok(Json(MasterStatusResponse {
@@ -97,12 +96,11 @@ pub async fn get_system_info(
     State(_state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<SystemInfoResponse>, StatusCode> {
-
     let mut features = Vec::new();
-    
+
     #[cfg(feature = "icmp-filter")]
     features.push("ICMP Filter".to_string());
-    
+
     features.push("TLS".to_string());
     features.push("HTTP/3".to_string());
     features.push("WebSocket".to_string());
@@ -147,8 +145,11 @@ pub async fn get_workers(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<Vec<WorkerStatusResponse>>, StatusCode> {
-
-    let pm = state.process.process_manager.as_ref().ok_or(StatusCode::NOT_FOUND)?;
+    let pm = state
+        .process
+        .process_manager
+        .as_ref()
+        .ok_or(StatusCode::NOT_FOUND)?;
     let worker_metrics = pm.get_worker_metrics();
 
     let workers: Vec<WorkerStatusResponse> = worker_metrics
@@ -159,7 +160,7 @@ pub async fn get_workers(
             } else {
                 "stopped"
             };
-            
+
             WorkerStatusResponse {
                 id: format!("{:?}", id),
                 worker_type: "Unified Server".to_string(),
@@ -199,11 +200,17 @@ pub async fn restart_worker(
     Path(worker_id): Path<String>,
     _auth: OptionalAuth,
 ) -> Result<Json<StatusResponse>, StatusCode> {
+    let _pm = state
+        .process
+        .process_manager
+        .as_ref()
+        .ok_or(StatusCode::NOT_FOUND)?;
 
-    let _pm = state.process.process_manager.as_ref().ok_or(StatusCode::NOT_FOUND)?;
-    
-    tracing::warn!("restart_worker endpoint called for {} but is not yet implemented", worker_id);
-    
+    tracing::warn!(
+        "restart_worker endpoint called for {} but is not yet implemented",
+        worker_id
+    );
+
     Err(StatusCode::NOT_IMPLEMENTED)
 }
 
@@ -244,19 +251,18 @@ pub async fn get_worker_count(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<WorkerCountResponse>, StatusCode> {
+    let pm = state
+        .process
+        .process_manager
+        .as_ref()
+        .ok_or(StatusCode::NOT_FOUND)?;
 
-    let pm = state.process.process_manager.as_ref().ok_or(StatusCode::NOT_FOUND)?;
-    
     let current = pm.get_running_worker_count();
     let config = state.process.config.read().await;
     let min = config.main.process_manager.min_workers;
     let max = config.main.process_manager.max_workers;
 
-    Ok(Json(WorkerCountResponse {
-        current,
-        min,
-        max,
-    }))
+    Ok(Json(WorkerCountResponse { current, min, max }))
 }
 
 #[utoipa::path(
@@ -278,16 +284,19 @@ pub async fn scale_workers(
     _auth: OptionalAuth,
     Json(req): Json<ScaleWorkersRequest>,
 ) -> Result<Json<ScaleWorkersResponse>, StatusCode> {
+    let pm = state
+        .process
+        .process_manager
+        .as_ref()
+        .ok_or(StatusCode::NOT_FOUND)?;
 
-    let pm = state.process.process_manager.as_ref().ok_or(StatusCode::NOT_FOUND)?;
-    
     let current = pm.get_running_worker_count();
     let config = state.process.config.read().await;
     let min_workers = config.main.process_manager.min_workers;
     let max_workers = config.main.process_manager.max_workers;
-    
+
     let target = req.target_count.max(min_workers).min(max_workers);
-    
+
     if target == current {
         return Ok(Json(ScaleWorkersResponse {
             success: true,
@@ -296,7 +305,7 @@ pub async fn scale_workers(
             target_count: target,
         }));
     }
-    
+
     let diff = if target > current {
         let to_spawn = target - current;
         tracing::info!("Scaling up workers: spawning {} new workers", to_spawn);
@@ -306,12 +315,15 @@ pub async fn scale_workers(
         format!("Spawned {} new workers", to_spawn)
     } else {
         let to_stop = current - target;
-        tracing::info!("Scaling down workers: stopping {} workers (will drain gracefully)", to_stop);
+        tracing::info!(
+            "Scaling down workers: stopping {} workers (will drain gracefully)",
+            to_stop
+        );
         format!("Stopping {} workers (graceful drain)", to_stop)
     };
 
     let new_current = pm.get_running_worker_count();
-    
+
     Ok(Json(ScaleWorkersResponse {
         success: true,
         message: diff,
@@ -348,9 +360,12 @@ pub async fn get_overseer(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<OverseerStatusResponse>, StatusCode> {
+    let pm = state
+        .process
+        .process_manager
+        .as_ref()
+        .ok_or(StatusCode::NOT_FOUND)?;
 
-    let pm = state.process.process_manager.as_ref().ok_or(StatusCode::NOT_FOUND)?;
-    
     let running = pm.is_running();
     let master_pid = pm.get_master_pid();
     let _worker_count = pm.get_running_worker_count();
@@ -359,7 +374,11 @@ pub async fn get_overseer(
         running,
         pid: None,
         master_pid,
-        master_status: if running { "Running".to_string() } else { "Stopped".to_string() },
+        master_status: if running {
+            "Running".to_string()
+        } else {
+            "Stopped".to_string()
+        },
         uptime_secs: state.uptime(),
         upgrade_mode: "None".to_string(),
         drain_status: "Idle".to_string(),

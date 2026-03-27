@@ -376,7 +376,10 @@ fn main() {
 
     if args.restart {
         if let Err(e) = handle_stop() {
-            eprintln!("Warning: Restart may fail - could not stop existing instance: {}", e);
+            eprintln!(
+                "Warning: Restart may fail - could not stop existing instance: {}",
+                e
+            );
         }
         std::thread::sleep(std::time::Duration::from_secs(1));
     }
@@ -956,7 +959,11 @@ async fn run_master(
                         )));
                     }
                 } else {
-                    tracing::error!("IPC key file {} has wrong length: expected 64 hex chars, got {}", key_file, key_hex.len());
+                    tracing::error!(
+                        "IPC key file {} has wrong length: expected 64 hex chars, got {}",
+                        key_file,
+                        key_hex.len()
+                    );
                     return Err(Box::new(std::io::Error::new(
                         std::io::ErrorKind::InvalidInput,
                         "Invalid IPC session key length in file",

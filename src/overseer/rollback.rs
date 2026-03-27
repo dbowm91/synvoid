@@ -51,10 +51,15 @@ impl RollbackManager {
             return Err(RollbackError::CannotRollback(state.state.to_string()));
         }
 
-        tracing::info!("Performing rollback to version: {:?}", state.previous_version);
+        tracing::info!(
+            "Performing rollback to version: {:?}",
+            state.previous_version
+        );
 
         // Get previous binary path
-        let prev_binary_path = state.previous_binary_path.as_ref()
+        let prev_binary_path = state
+            .previous_binary_path
+            .as_ref()
             .ok_or(RollbackError::NoVersion)?;
 
         // Verify previous binary checksum if available
@@ -63,10 +68,9 @@ impl RollbackManager {
             if !path.exists() {
                 return Err(RollbackError::BinaryNotFound(path));
             }
-            
-            let actual_checksum = compute_sha256(&path)
-                .map_err(RollbackError::IoError)?;
-            
+
+            let actual_checksum = compute_sha256(&path).map_err(RollbackError::IoError)?;
+
             if &actual_checksum != expected_checksum {
                 return Err(RollbackError::ChecksumMismatch);
             }
@@ -74,17 +78,21 @@ impl RollbackManager {
         }
 
         // Get ports to rollback from
-        let ports = state.worker_ports.clone()
+        let ports = state
+            .worker_ports
+            .clone()
             .ok_or(RollbackError::NoWorkerPorts)?;
 
         // Spawn previous version workers
         let prev_path = PathBuf::from(prev_binary_path);
-        let new_ports = orchestrator.spawn_workers_for_rollback(
-            &prev_path.to_string_lossy(),
-            state.staged_config_path.as_ref(),
-            &ports,
-            state.upgrade_mode.as_ref(),
-        ).await?;
+        let new_ports = orchestrator
+            .spawn_workers_for_rollback(
+                &prev_path.to_string_lossy(),
+                state.staged_config_path.as_ref(),
+                &ports,
+                state.upgrade_mode.as_ref(),
+            )
+            .await?;
 
         // Validate rollback
         let validation_result = orchestrator.validate_rollback(&new_ports).await;
@@ -95,7 +103,7 @@ impl RollbackManager {
                     "Rollback validation passed (success rate: {:.1}%)",
                     metrics.success_rate * 100.0
                 );
-                
+
                 // Update state to reflect rollback
                 let mut new_state = state.clone();
                 new_state.state = UpgradeState::Committed;
@@ -105,16 +113,15 @@ impl RollbackManager {
                 new_state.staged_binary_path = None;
                 new_state.staged_version = None;
                 new_state.staged_config_path = None;
-                
-                self.persistence.save(&new_state)
+
+                self.persistence
+                    .save(&new_state)
                     .map_err(RollbackError::IoError)?;
 
                 tracing::info!("Rollback completed successfully");
                 Ok(())
             }
-            Err(failures) => {
-                Err(RollbackError::ValidationFailed(failures))
-            }
+            Err(failures) => Err(RollbackError::ValidationFailed(failures)),
         }
     }
 
@@ -123,7 +130,7 @@ impl RollbackManager {
 
         if !state.needs_recovery() {
             return Err(RollbackError::CannotRollback(
-                "System is not in recovery state".to_string()
+                "System is not in recovery state".to_string(),
             ));
         }
 
@@ -142,8 +149,9 @@ impl RollbackManager {
         let mut new_state = state.clone();
         new_state.state = UpgradeState::Idle;
         new_state.last_error = Some("Recovered from incomplete upgrade".to_string());
-        
-        self.persistence.save(&new_state)
+
+        self.persistence
+            .save(&new_state)
             .map_err(RollbackError::IoError)?;
 
         tracing::info!("Recovery completed");
@@ -151,7 +159,11 @@ impl RollbackManager {
     }
 
     pub async fn get_previous_versions(&self, keep_count: usize) -> Vec<VersionInfo> {
-        let data_dir = self.persistence.state_file.parent().map(|p| p.to_path_buf());
+        let data_dir = self
+            .persistence
+            .state_file
+            .parent()
+            .map(|p| p.to_path_buf());
         let bin_dir = data_dir.map(|d| d.join("bin"));
 
         let mut versions = Vec::new();
@@ -161,9 +173,7 @@ impl RollbackManager {
                 for entry in entries.flatten() {
                     let path = entry.path();
                     if path.is_file() {
-                        let filename = path.file_name()
-                            .and_then(|n| n.to_str())
-                            .unwrap_or("");
+                        let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
                         if filename.starts_with("maluwaf-") {
                             let version = filename.trim_start_matches("maluwaf-").to_string();

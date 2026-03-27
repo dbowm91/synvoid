@@ -13,8 +13,10 @@ use http_body_util::Full;
 use metrics::{counter, histogram};
 
 use crate::config::site::SiteStaticConfig;
+use crate::mesh::config::{
+    MeshCompressionConfig, MeshImageProtectionConfig, MeshMinificationConfig,
+};
 use crate::mime::MIME_REGISTRY;
-use crate::mesh::config::{MeshCompressionConfig, MeshImageProtectionConfig, MeshMinificationConfig};
 use minifier::MinifierCache;
 
 #[derive(Clone)]
@@ -123,7 +125,7 @@ impl StaticFileHandler {
         let config_clone = config.clone();
 
         if !enabled {
-        let minified_cache_dir = config.minified_dir.as_ref().map(|_d| {
+            let minified_cache_dir = config.minified_dir.as_ref().map(|_d| {
                 let global_cache_dir = std::env::var("RUSTWAF_CACHE_DIR")
                     .map(PathBuf::from)
                     .unwrap_or_else(|_| PathBuf::from("/var/cache/maluwaf"));
@@ -281,7 +283,9 @@ impl StaticFileHandler {
         })?;
 
         if metadata.is_dir() {
-            return self.serve_directory(path, location, &resolved, accept_encoding).await;
+            return self
+                .serve_directory(path, location, &resolved, accept_encoding)
+                .await;
         }
 
         if metadata.len() > self.max_file_size {
@@ -301,7 +305,8 @@ impl StaticFileHandler {
             if_none_match,
             if_modified_since,
             range_header,
-        ).await
+        )
+        .await
     }
 
     async fn resolve_path(
@@ -558,7 +563,8 @@ impl StaticFileHandler {
                     headers.push(("Vary".to_string(), "Accept-Encoding".to_string()));
                     histogram!("maluwaf.static.served_gzip_otf").record(1.0);
                     counter!("maluwaf.static.compression_served", "encoding" => "gzip_otf", "site" => self.site_id.clone()).increment(1);
-                    histogram!("maluwaf.static.compression_ratio", "encoding" => "gzip").record(body.len() as f64 / compressed.len() as f64);
+                    histogram!("maluwaf.static.compression_ratio", "encoding" => "gzip")
+                        .record(body.len() as f64 / compressed.len() as f64);
                     return Ok(StaticResponse {
                         status: StatusCode::OK,
                         headers,
@@ -598,16 +604,18 @@ impl StaticFileHandler {
                 let index_metadata = tokio::fs::metadata(&index_path)
                     .await
                     .map_err(|_| StaticError::NotFound("index not found".to_string()))?;
-                return self.serve_file(
-                    &index_path,
-                    index_metadata,
-                    url_path,
-                    location,
-                    accept_encoding,
-                    None,
-                    None,
-                    None,
-                ).await;
+                return self
+                    .serve_file(
+                        &index_path,
+                        index_metadata,
+                        url_path,
+                        location,
+                        accept_encoding,
+                        None,
+                        None,
+                        None,
+                    )
+                    .await;
             }
         }
 
@@ -625,16 +633,18 @@ impl StaticFileHandler {
                     .await
                     .map_err(|_| StaticError::NotFound("try file not found".to_string()))?;
                 if tf_metadata.is_file() {
-                    return self.serve_file(
-                        &tf_path,
-                        tf_metadata,
-                        url_path,
-                        location,
-                        accept_encoding,
-                        None,
-                        None,
-                        None,
-                    ).await;
+                    return self
+                        .serve_file(
+                            &tf_path,
+                            tf_metadata,
+                            url_path,
+                            location,
+                            accept_encoding,
+                            None,
+                            None,
+                            None,
+                        )
+                        .await;
                 }
             }
         }

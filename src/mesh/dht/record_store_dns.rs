@@ -71,12 +71,26 @@ impl RecordStoreManager {
 
         for (key, entry) in records.iter() {
             if key.starts_with("dns_domain_reg:") {
-                if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&entry.record.value) {
-                    let domain = value.get("domain").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                    let origin_id = value.get("origin_node_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                    let ips: Vec<String> = value.get("ip_addresses")
+                if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&entry.record.value)
+                {
+                    let domain = value
+                        .get("domain")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let origin_id = value
+                        .get("origin_node_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let ips: Vec<String> = value
+                        .get("ip_addresses")
                         .and_then(|v| v.as_array())
-                        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|v| v.as_str().map(String::from))
+                                .collect()
+                        })
                         .unwrap_or_default();
                     registrations.push((domain, origin_id, ips));
                 }
@@ -173,12 +187,18 @@ impl RecordStoreManager {
 
         for (key, entry) in records.iter() {
             if key.starts_with("anycast_node:") {
-                if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&entry.record.value) {
-                    let zones: Vec<String> = value.get("dns_zones")
+                if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&entry.record.value)
+                {
+                    let zones: Vec<String> = value
+                        .get("dns_zones")
                         .and_then(|v| v.as_array())
-                        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|v| v.as_str().map(String::from))
+                                .collect()
+                        })
                         .unwrap_or_default();
-                    
+
                     if zones.contains(&zone.to_string()) {
                         nodes.push(value.clone());
                     }
@@ -200,7 +220,8 @@ impl RecordStoreManager {
 
         for (key, entry) in records.iter() {
             if key.starts_with("anycast_node:") {
-                if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&entry.record.value) {
+                if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&entry.record.value)
+                {
                     nodes.push(value.clone());
                 }
             }

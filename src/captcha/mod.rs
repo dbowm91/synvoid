@@ -2,8 +2,8 @@ use crate::theme::{CaptchaPageTemplate, ThemeConfig};
 use rand::Rng;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::sync::RwLock;
 
 const CAPTCHA_CHARS: &str = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
@@ -52,28 +52,31 @@ impl CaptchaManager {
     pub async fn generate_challenge(&self) -> (String, String) {
         let answer = self.generate_random_text(6);
         let challenge_id = self.generate_random_id();
-        
+
         let mut store = self.challenges.write().await;
-        store.challenges.insert(challenge_id.clone(), CaptchaChallenge {
-            answer: answer.clone(),
-            created_at: current_timestamp(),
-        });
-        
+        store.challenges.insert(
+            challenge_id.clone(),
+            CaptchaChallenge {
+                answer: answer.clone(),
+                created_at: current_timestamp(),
+            },
+        );
+
         let svg = self.render_captcha_svg(&answer);
-        
+
         (challenge_id, svg)
     }
 
     pub async fn verify(&self, challenge_id: &str, answer: &str) -> CaptchaResult {
         let mut store = self.challenges.write().await;
-        
+
         if let Some(challenge) = store.challenges.remove(challenge_id) {
             let now = current_timestamp();
-            
+
             if now > challenge.created_at + self.verification_window_secs as u64 {
                 return CaptchaResult::Expired;
             }
-            
+
             if challenge.answer.to_uppercase() == answer.to_uppercase() {
                 CaptchaResult::Passed
             } else {
@@ -87,10 +90,10 @@ impl CaptchaManager {
     pub async fn cleanup_expired(&self) {
         let now = current_timestamp();
         let mut store = self.challenges.write().await;
-        
-        store.challenges.retain(|_, c| {
-            now < c.created_at + self.verification_window_secs as u64 + 60
-        });
+
+        store
+            .challenges
+            .retain(|_, c| now < c.created_at + self.verification_window_secs as u64 + 60);
     }
 
     fn generate_random_text(&self, length: usize) -> String {
@@ -116,7 +119,7 @@ impl CaptchaManager {
 
     fn render_captcha_svg(&self, text: &str) -> String {
         let mut rng = rand::rng();
-        
+
         let lines: String = (0..8)
             .map(|_| {
                 let x1 = rng.random_range(0..200);
@@ -131,13 +134,15 @@ impl CaptchaManager {
                 )
             })
             .collect();
-        
+
         let dots: String = (0..100)
             .map(|_| {
                 let x = rng.random_range(0..200);
                 let y = rng.random_range(0..80);
-                format!(r#"<circle cx="{}" cy="{}" r="1" fill="rgb({},{},{})"/>"#,
-                    x, y,
+                format!(
+                    r#"<circle cx="{}" cy="{}" r="1" fill="rgb({},{},{})"/>"#,
+                    x,
+                    y,
                     rng.random_range(150..220),
                     rng.random_range(150..220),
                     rng.random_range(150..220)
@@ -153,24 +158,27 @@ impl CaptchaManager {
                 let font_size = rng.random_range(28..36);
                 let font_family = ["monospace", "Arial", "Courier New", "Verdana"];
                 let ff = font_family[rng.random_range(0..font_family.len())];
-                let color = format!("rgb({},{},{})", 
+                let color = format!("rgb({},{},{})",
                     rng.random_range(0..80),
                     rng.random_range(0..80),
                     rng.random_range(0..80)
                 );
-                
+
                 format!(r#"<text x="{}" y="{}" font-family="{}" font-size="{}" fill="{}" transform="rotate({}, {}, {})">{}</text>"#,
                     x, y, ff, font_size, color, rotation, x, y, c
                 )
             })
             .collect();
 
-        format!(r#"<svg xmlns="http://www.w3.org/2000/svg" width="200" height="80" viewBox="0 0 200 80">
+        format!(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="200" height="80" viewBox="0 0 200 80">
             <rect width="100%" height="100%" fill="white"/>
             {}
             {}
             {}
-        </svg>"#, lines, dots, chars)
+        </svg>"#,
+            lines, dots, chars
+        )
     }
 }
 

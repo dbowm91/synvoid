@@ -10,7 +10,7 @@ use crate::config::site::CgiConfig;
 fn sanitize_cgi_path(path: &str) -> String {
     let mut result = String::new();
     let mut skip_slash = false;
-    
+
     for component in path.split('/') {
         if component.is_empty() || component == "." {
             continue;
@@ -24,7 +24,7 @@ fn sanitize_cgi_path(path: &str) -> String {
         result.push_str(component);
         skip_slash = false;
     }
-    
+
     if result.is_empty() {
         "/".to_string()
     } else {
@@ -32,12 +32,7 @@ fn sanitize_cgi_path(path: &str) -> String {
     }
 }
 
-const FORBIDDEN_RESPONSE_HEADERS: &[&str] = &[
-    "server",
-    "x-powered-by",
-    "connection",
-    "keep-alive",
-];
+const FORBIDDEN_RESPONSE_HEADERS: &[&str] = &["server", "x-powered-by", "connection", "keep-alive"];
 
 pub struct CgiHandler {
     root: PathBuf,
@@ -49,19 +44,26 @@ pub struct CgiHandler {
 
 impl CgiHandler {
     pub fn new(config: &CgiConfig) -> Result<Self, String> {
-        let root = config.root
+        let root = config
+            .root
             .as_ref()
             .map(PathBuf::from)
             .ok_or("CGI root directory is required")?;
 
         if !root.exists() || !root.is_dir() {
-            return Err(format!("CGI root does not exist or is not a directory: {:?}", root));
+            return Err(format!(
+                "CGI root does not exist or is not a directory: {:?}",
+                root
+            ));
         }
 
-        let index = config.index.clone().unwrap_or_else(|| "index.cgi".to_string());
+        let index = config
+            .index
+            .clone()
+            .unwrap_or_else(|| "index.cgi".to_string());
         let pass_variables = config.pass_variables.unwrap_or(true);
         let timeout = config.timeout.unwrap_or(30);
-        
+
         let allowed_extensions = vec![
             "cgi".to_string(),
             "pl".to_string(),
@@ -91,17 +93,18 @@ impl CgiHandler {
         client_ip: Option<std::net::IpAddr>,
     ) -> Result<CgiResponse, CgiError> {
         let path = uri.path();
-        
+
         let script_path = self.resolve_script(path)?;
 
         let env = self.build_env(method, uri, headers, client_ip);
 
-        self.spawn_script(&script_path, method, headers, body, env).await
+        self.spawn_script(&script_path, method, headers, body, env)
+            .await
     }
 
     fn resolve_script(&self, path: &str) -> Result<PathBuf, CgiError> {
         let path = path.trim_start_matches('/');
-        
+
         if path.is_empty() || path.ends_with('/') {
             let index_path = self.root.join(path).join(&self.index);
             if index_path.exists() && index_path.is_file() {
@@ -110,7 +113,7 @@ impl CgiHandler {
         }
 
         let full_path = self.root.join(path);
-        
+
         let canonical = std::fs::canonicalize(&full_path)
             .or_else(|_| {
                 std::fs::metadata(&full_path).map(|m| {
@@ -126,7 +129,11 @@ impl CgiHandler {
             .map_err(|_| CgiError::NotFound(format!("Path not found: {}", path)))?;
 
         if !canonical.starts_with(&self.root) {
-            tracing::warn!("CGI path traversal attempt: {} -> {}", path, canonical.display());
+            tracing::warn!(
+                "CGI path traversal attempt: {} -> {}",
+                path,
+                canonical.display()
+            );
             return Err(CgiError::Forbidden("Path traversal denied".to_string()));
         }
 
@@ -140,26 +147,28 @@ impl CgiHandler {
 
         self.validate_script_path(&canonical)
     }
-    
+
     fn validate_script_path(&self, path: &PathBuf) -> Result<PathBuf, CgiError> {
         if !path.exists() {
             return Err(CgiError::NotFound(format!("Script not found: {:?}", path)));
         }
-        
+
         if !path.is_file() {
             return Err(CgiError::Forbidden("Not a file".to_string()));
         }
-        
+
         if let Some(ext) = path.extension() {
             let ext_str = ext.to_string_lossy().to_lowercase();
             if !self.allowed_extensions.contains(&ext_str) {
                 tracing::warn!("CGI script with disallowed extension: {:?}", path);
-                return Err(CgiError::Forbidden("Script extension not allowed".to_string()));
+                return Err(CgiError::Forbidden(
+                    "Script extension not allowed".to_string(),
+                ));
             }
         } else {
             return Err(CgiError::Forbidden("Script has no extension".to_string()));
         }
-        
+
         use std::os::unix::fs::PermissionsExt;
         let metadata = std::fs::metadata(path).map_err(|e| {
             tracing::warn!("Failed to get CGI script metadata: {}", e);
@@ -169,29 +178,38 @@ impl CgiHandler {
         if mode & 0o111 == 0 {
             return Err(CgiError::Forbidden("Script not executable".to_string()));
         }
-        
+
         Ok(path.clone())
     }
 
-    fn build_env(&self, method: &Method, uri: &Uri, headers: &HeaderMap, client_ip: Option<std::net::IpAddr>) -> HashMap<String, String> {
+    fn build_env(
+        &self,
+        method: &Method,
+        uri: &Uri,
+        headers: &HeaderMap,
+        client_ip: Option<std::net::IpAddr>,
+    ) -> HashMap<String, String> {
         let mut env = HashMap::new();
 
         env.insert("REQUEST_METHOD".to_string(), method.as_str().to_string());
-        
+
         let path = uri.path();
         env.insert("SCRIPT_NAME".to_string(), path.to_string());
-        
+
         let safe_path = sanitize_cgi_path(path);
         let script_filename = self.root.join(safe_path.trim_start_matches('/'));
-        env.insert("SCRIPT_FILENAME".to_string(), script_filename.to_string_lossy().to_string());
-        
+        env.insert(
+            "SCRIPT_FILENAME".to_string(),
+            script_filename.to_string_lossy().to_string(),
+        );
+
         let request_uri = if let Some(query) = uri.query() {
             format!("{}?{}", path, query)
         } else {
             path.to_string()
         };
         env.insert("REQUEST_URI".to_string(), request_uri);
-        
+
         if let Some(query) = uri.query() {
             env.insert("QUERY_STRING".to_string(), query.to_string());
         } else {
@@ -282,12 +300,13 @@ impl CgiHandler {
         env: HashMap<String, String>,
     ) -> Result<CgiResponse, CgiError> {
         let timeout = self.timeout;
-        
+
         let result = tokio::time::timeout(
             std::time::Duration::from_secs(timeout),
-            self.execute_script(script_path, method, headers, body, env)
-        ).await;
-        
+            self.execute_script(script_path, method, headers, body, env),
+        )
+        .await;
+
         match result {
             Ok(Ok(response)) => Ok(response),
             Ok(Err(e)) => Err(e),
@@ -297,7 +316,7 @@ impl CgiHandler {
             }
         }
     }
-    
+
     async fn execute_script(
         &self,
         script_path: &PathBuf,
@@ -307,7 +326,7 @@ impl CgiHandler {
         env: HashMap<String, String>,
     ) -> Result<CgiResponse, CgiError> {
         let mut cmd = Command::new(script_path);
-        
+
         cmd.env_clear();
         for (key, value) in env {
             cmd.env(key, value);
@@ -322,16 +341,16 @@ impl CgiHandler {
 
         let output = tokio::task::spawn_blocking(move || {
             let child = cmd.spawn()?;
-            
+
             let mut child = child;
-            
+
             if !body.is_empty() {
                 if let Some(mut stdin) = child.stdin.take() {
                     use std::io::Write;
                     let _ = stdin.write_all(&body);
                 }
             }
-            
+
             child.wait_with_output()
         })
         .await
@@ -376,7 +395,11 @@ impl CgiHandler {
 
     fn find_header_body_separator(data: &[u8]) -> Option<usize> {
         for i in 0..data.len().saturating_sub(3) {
-            if data[i] == b'\r' && data[i + 1] == b'\n' && data[i + 2] == b'\r' && data[i + 3] == b'\n' {
+            if data[i] == b'\r'
+                && data[i + 1] == b'\n'
+                && data[i + 2] == b'\r'
+                && data[i + 3] == b'\n'
+            {
                 return Some(i);
             }
         }
@@ -436,7 +459,7 @@ impl CgiResponse {
             if FORBIDDEN_RESPONSE_HEADERS.contains(&name_lower.as_str()) {
                 continue;
             }
-            
+
             if let (Ok(name), Ok(value)) = (
                 HeaderName::from_bytes(name.as_bytes()),
                 HeaderValue::from_str(&value),

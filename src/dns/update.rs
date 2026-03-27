@@ -328,7 +328,13 @@ impl DynamicUpdateHandler {
             let zone_origin_for_sync = zone_origin.clone();
             let sync_clone = sync.clone();
             tokio::spawn(async move {
-                if let Err(e) = sync_clone.trigger_sync(&zone_origin_for_sync, super::anycast_sync::ZoneSyncReason::DynamicUpdate).await {
+                if let Err(e) = sync_clone
+                    .trigger_sync(
+                        &zone_origin_for_sync,
+                        super::anycast_sync::ZoneSyncReason::DynamicUpdate,
+                    )
+                    .await
+                {
                     tracing::warn!("Failed to trigger zone sync after dynamic update: {}", e);
                 }
             });

@@ -1,16 +1,13 @@
-use std::collections::{HashMap, BTreeMap};
+use std::collections::{BTreeMap, HashMap};
 use std::net::{IpAddr, SocketAddr};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
-
 
 use parking_lot::RwLock;
 use tokio::net::UdpSocket;
 use tokio::sync::oneshot;
 
-use crate::config::dns::{DnsConfig, DnsRateLimitMode, DnsZoneEntry};
-use crate::tls::cert_resolver::CertResolver;
 use super::cache::{CacheKey, DnsCache};
 use super::compression::DnsMessageCompressor;
 use super::dnssec::DnsSecKeyManager;
@@ -18,22 +15,24 @@ use super::dnssec::{compute_dnskey, Algorithm};
 use super::doh::DohServer;
 use super::doq::DoqServer;
 use super::dot::DotServer;
-use super::store::ZoneStore;
+use super::edns::{parse_edns_options, EdnsOptions};
 use super::mesh_sync::MeshDnsRegistry;
 use super::query_validator::DnsQueryValidator;
-use super::edns::{parse_edns_options, EdnsOptions};
+use super::store::ZoneStore;
 use super::wire;
+use crate::config::dns::{DnsConfig, DnsRateLimitMode, DnsZoneEntry};
+use crate::tls::cert_resolver::CertResolver;
 
 pub use hickory_proto::rr::RecordType;
 
 pub use self::rate_limit::DnsRateLimiter;
 
-mod rate_limit;
-mod zone;
 mod dnssec_impl;
 mod query;
+mod rate_limit;
 mod response;
 mod startup;
+mod zone;
 
 pub trait RecordTypeExt {
     fn to_u16(&self) -> u16;
@@ -97,8 +96,15 @@ impl crate::config::dns::QnamePrivacyConfig {
                 let zone = zone_origin.trim_end_matches('.');
                 if qname.to_lowercase().ends_with(&format!(".{}", zone)) {
                     let suffix = format!(".{}", zone);
-                    qname.strip_suffix(&suffix)
-                        .map(|s| if s.is_empty() { "*".to_string() } else { s.to_string() + &suffix })
+                    qname
+                        .strip_suffix(&suffix)
+                        .map(|s| {
+                            if s.is_empty() {
+                                "*".to_string()
+                            } else {
+                                s.to_string() + &suffix
+                            }
+                        })
                         .unwrap_or_else(|| qname.to_string())
                 } else {
                     "[external]".to_string()
@@ -342,7 +348,10 @@ mod nxdomain_tests {
         let query = build_query(0x1234, "example.com");
         let response = DnsServer::build_simple_nxdomain_response(&query).unwrap();
 
-        assert!(response.len() > 12, "Response should include question section");
+        assert!(
+            response.len() > 12,
+            "Response should include question section"
+        );
 
         let id = u16::from_be_bytes([response[0], response[1]]);
         assert_eq!(id, 0x1234);
@@ -365,9 +374,11 @@ mod nxdomain_tests {
         let arcount = u16::from_be_bytes([response[10], response[11]]);
         assert_eq!(arcount, 0, "ARCOUNT should be 0");
 
-        let qtype = u16::from_be_bytes([response[response.len()-4], response[response.len()-3]]);
+        let qtype =
+            u16::from_be_bytes([response[response.len() - 4], response[response.len() - 3]]);
         assert_eq!(qtype, 1, "QTYPE should be A (1)");
-        let qclass = u16::from_be_bytes([response[response.len()-2], response[response.len()-1]]);
+        let qclass =
+            u16::from_be_bytes([response[response.len() - 2], response[response.len() - 1]]);
         assert_eq!(qclass, 1, "QCLASS should be IN (1)");
     }
 
@@ -535,9 +546,9 @@ impl Clone for DnsServer {
             notify_handler: self.notify_handler.clone(),
             hsm_manager: None, // Cannot clone HSM - requires re-initialization
             query_coalescer: self.query_coalescer.clone(),
-            anycast_manager: None, // Cannot clone - requires re-initialization
-            mesh_transport: None, // Cannot clone - requires re-initialization
-            zone_sync: None, // Cannot clone - requires re-initialization
+            anycast_manager: None,  // Cannot clone - requires re-initialization
+            mesh_transport: None,   // Cannot clone - requires re-initialization
+            zone_sync: None,        // Cannot clone - requires re-initialization
             recursive_server: None, // Cannot clone - requires re-initialization
         }
     }
@@ -550,19 +561,28 @@ mod btree_tests {
     #[test]
     fn test_reverse_domain_simple() {
         assert_eq!(DnsServer::reverse_domain("example.com"), "com.example");
-        assert_eq!(DnsServer::reverse_domain("www.example.com"), "com.example.www");
+        assert_eq!(
+            DnsServer::reverse_domain("www.example.com"),
+            "com.example.www"
+        );
     }
 
     #[test]
     fn test_reverse_domain_with_trailing_dot() {
         assert_eq!(DnsServer::reverse_domain("example.com."), "com.example");
-        assert_eq!(DnsServer::reverse_domain("www.example.com."), "com.example.www");
+        assert_eq!(
+            DnsServer::reverse_domain("www.example.com."),
+            "com.example.www"
+        );
     }
 
     #[test]
     fn test_reverse_domain_case_insensitive() {
         assert_eq!(DnsServer::reverse_domain("EXAMPLE.COM"), "com.example");
-        assert_eq!(DnsServer::reverse_domain("WwW.Example.Com"), "com.example.www");
+        assert_eq!(
+            DnsServer::reverse_domain("WwW.Example.Com"),
+            "com.example.www"
+        );
     }
 
     #[test]
@@ -575,12 +595,10 @@ impl DnsServer {
     pub fn new(config: DnsConfig, cert_resolver: Option<Arc<CertResolver>>) -> Self {
         let rate_limiter = match config.ratelimit.mode {
             DnsRateLimitMode::Shared => None,
-            DnsRateLimitMode::Dedicated => {
-                Some(Arc::new(DnsRateLimiter::new(
-                    config.ratelimit.per_second,
-                    config.ratelimit.per_second * 2,
-                )))
-            }
+            DnsRateLimitMode::Dedicated => Some(Arc::new(DnsRateLimiter::new(
+                config.ratelimit.per_second,
+                config.ratelimit.per_second * 2,
+            ))),
         };
 
         let cache = if config.settings.cache_enabled {
@@ -604,11 +622,17 @@ impl DnsServer {
 
             if !key_path.exists() {
                 if let Err(e) = std::fs::create_dir_all(&key_path) {
-                    tracing::error!("Failed to create DNSSEC key directory {}: {}", key_path.display(), e);
+                    tracing::error!(
+                        "Failed to create DNSSEC key directory {}: {}",
+                        key_path.display(),
+                        e
+                    );
                 } else {
                     let rsa_key_size = 2048;
                     let validity_days = 30;
-                    if let Err(e) = manager.generate_key(algorithm, key_type, rsa_key_size, validity_days) {
+                    if let Err(e) =
+                        manager.generate_key(algorithm, key_type, rsa_key_size, validity_days)
+                    {
                         tracing::error!("Failed to generate DNSSEC key: {}", e);
                     }
                 }
@@ -630,11 +654,13 @@ impl DnsServer {
         };
 
         let query_coalescer = if config.settings.query_coalescing.enabled {
-            Some(Arc::new(super::query_coalesce::QueryCoalescer::with_config(
-                config.settings.query_coalescing.max_wait_ms,
-                config.settings.query_coalescing.max_entries,
-                config.settings.query_coalescing.entry_ttl_secs,
-            )))
+            Some(Arc::new(
+                super::query_coalesce::QueryCoalescer::with_config(
+                    config.settings.query_coalescing.max_wait_ms,
+                    config.settings.query_coalescing.max_entries,
+                    config.settings.query_coalescing.entry_ttl_secs,
+                ),
+            ))
         } else {
             None
         };
@@ -724,7 +750,8 @@ impl DnsServer {
             config.limits.max_tcp_query_time_secs,
         ));
 
-        let ecs_filter_config = super::edns::EcsFilterConfig::from_settings(&config.settings.ecs_filtering);
+        let ecs_filter_config =
+            super::edns::EcsFilterConfig::from_settings(&config.settings.ecs_filtering);
 
         Self {
             config: Arc::new(config),
