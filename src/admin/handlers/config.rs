@@ -1269,6 +1269,8 @@ pub async fn update_overseer_config(
     Json(req): Json<UpdateOverseerConfigRequest>,
 ) -> Result<Json<StatusResponse>, StatusCode> {
 
+    let _guard = state.metrics.config_write_lock.write().await;
+
     {
         let mut config = state.process.config.write().await;
         config.main.overseer = req.config.clone();
@@ -1278,8 +1280,6 @@ pub async fn update_overseer_config(
         let cfg = state.process.config.read().await;
         cfg.config_dir.join("main.toml")
     };
-
-    let _guard = state.metrics.config_write_lock.write().await;
 
     let toml_content = tokio::fs::read_to_string(&main_config_path)
         .await
@@ -1400,31 +1400,26 @@ pub async fn update_process_manager_config(
         true
     };
 
-    let toml_content = {
-        let _guard = state.metrics.config_write_lock.write().await;
+    let _guard = state.metrics.config_write_lock.write().await;
+
+    let (main_config_path, toml_content) = {
         let mut config = state.process.config.write().await;
         config.main.process_manager = req.config;
-        toml::to_string_pretty(&config.main)
+        let path = config.config_dir.join("main.toml");
+        let content = toml::to_string_pretty(&config.main)
             .map_err(|e| {
                 tracing::error!("Failed to serialize config: {}", e);
                 StatusCode::INTERNAL_SERVER_ERROR
-            })?
-    };
-
-    let main_config_path = {
-        let cfg = state.process.config.read().await;
-        cfg.config_dir.join("main.toml")
-    };
-
-    {
-        let _guard = state.metrics.config_write_lock.write().await;
-        tokio::fs::write(&main_config_path, toml_content)
-            .await
-            .map_err(|e| {
-                tracing::error!("Failed to write main config: {}", e);
-                StatusCode::INTERNAL_SERVER_ERROR
             })?;
-    }
+        (path, content)
+    };
+
+    tokio::fs::write(&main_config_path, toml_content)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to write main config: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
 
     if needs_restart {
         Ok(Json(StatusResponse::success("Process manager config updated. Restart required for changes to take effect.")))
@@ -1485,6 +1480,8 @@ pub async fn update_supervisor_config(
     Json(req): Json<UpdateSupervisorConfigRequest>,
 ) -> Result<Json<StatusResponse>, StatusCode> {
 
+    let _guard = state.metrics.config_write_lock.write().await;
+
     {
         let mut config = state.process.config.write().await;
         config.main.supervisor = req.config.clone();
@@ -1494,8 +1491,6 @@ pub async fn update_supervisor_config(
         let cfg = state.process.config.read().await;
         cfg.config_dir.join("main.toml")
     };
-
-    let _guard = state.metrics.config_write_lock.write().await;
 
     let toml_content = tokio::fs::read_to_string(&main_config_path)
         .await

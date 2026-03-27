@@ -902,4 +902,61 @@ mod tests {
         // Original signature should NOT be in payload
         assert!(!payload.contains("somesig"));
     }
+
+    #[test]
+    fn test_multi_category_pattern_merge() {
+        // This tests the same merge logic used by reload_attack_detector
+        clear_global_patterns();
+
+        // Simulate patterns from rule feed for multiple categories
+        update_patterns_for_category("path_traversal", vec!["../custom_traversal".to_string()]);
+        update_patterns_for_category("rfi", vec!["evil_include".to_string()]);
+        update_patterns_for_category("cmd_injection", vec!["; custom_cmd".to_string()]);
+        // ssti and xxe have no feed patterns
+        assert!(has_custom_patterns("path_traversal"));
+        assert!(has_custom_patterns("rfi"));
+        assert!(has_custom_patterns("cmd_injection"));
+        assert!(!has_custom_patterns("ssti"));
+        assert!(!has_custom_patterns("xxe"));
+
+        // Simulate the merge that reload_attack_detector does
+        let categories = [
+            ("path_traversal", vec!["config_traversal".to_string()]),
+            ("rfi", vec!["config_rfi".to_string()]),
+            ("cmd_injection", vec![]),
+            ("ssti", vec!["config_ssti".to_string()]),
+            ("xxe", vec![]),
+        ];
+
+        for (category, config_patterns) in &categories {
+            let feed_patterns = get_custom_patterns_for_category(category);
+            let mut merged = config_patterns.clone();
+            merged.extend(feed_patterns);
+
+            match *category {
+                "path_traversal" => {
+                    assert!(merged.contains(&"config_traversal".to_string()));
+                    assert!(merged.contains(&"../custom_traversal".to_string()));
+                }
+                "rfi" => {
+                    assert!(merged.contains(&"config_rfi".to_string()));
+                    assert!(merged.contains(&"evil_include".to_string()));
+                }
+                "cmd_injection" => {
+                    assert!(merged.contains(&"; custom_cmd".to_string()));
+                    assert_eq!(merged.len(), 1); // config was empty, only feed
+                }
+                "ssti" => {
+                    assert!(merged.contains(&"config_ssti".to_string()));
+                    assert_eq!(merged.len(), 1); // no feed patterns
+                }
+                "xxe" => {
+                    assert!(merged.is_empty()); // neither config nor feed
+                }
+                _ => {}
+            }
+        }
+
+        clear_global_patterns();
+    }
 }

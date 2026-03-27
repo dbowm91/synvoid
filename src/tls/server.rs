@@ -21,7 +21,7 @@ use crate::RunningFlag;
 use crate::waf::{WafCore, FloodProtector, FloodDecision};
 use crate::config::MainConfig;
 use crate::config::HttpConfig;
-use crate::http_client::{create_http_client_with_config, send_request_with_timeout};
+use crate::http_client::{create_upstream_client, send_request_with_timeout, UpstreamTlsConfig};
 use crate::proxy::{filter_response_headers, build_headers_to_filter, ProxyServer};
 use crate::proxy_cache::{ProxyCache, ProxyCacheSettings};
 use crate::challenge::HONEYPOT_PREFIX;
@@ -603,10 +603,16 @@ impl HttpsServer {
                         .collect::<Vec<_>>(),
                 );
                 
-                let client = create_http_client_with_config(
+                let tls_config = target.site_config.proxy.upstream.as_ref()
+                    .and_then(|u| u.tls.as_ref())
+                    .and_then(|t| UpstreamTlsConfig::from_site_config(t))
+                    .unwrap_or_default();
+
+                let client = create_upstream_client(
                     std::time::Duration::from_secs(5),
                     100,
                     std::time::Duration::from_secs(30),
+                    &tls_config,
                 );
                 
                 let resp = send_request_with_timeout(&client, method, &target_url, Some(std::time::Duration::from_secs(30))).await;

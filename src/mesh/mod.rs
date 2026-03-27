@@ -1,3 +1,9 @@
+//! Mesh networking subsystem for MaluWAF.
+//!
+//! Provides peer-to-peer connectivity, DHT-based service discovery,
+//! encrypted transport (QUIC, WireGuard), multi-tenant organization
+//! management, and distributed DNS with DNSSEC support.
+
 pub mod config;
 pub mod protocol;
 pub mod topology;

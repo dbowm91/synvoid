@@ -212,10 +212,9 @@ let events = manager.process_rfc5011_updates();
 ## Remediation Plan Status
 
 - **Phases 1-7:** Completed. See `plan.md` for details and completion notes.
-- **Waves 1-4:** Completed. See `deferred.md` completion notes.
-- **Wave 5:** Planned — 6 remaining actionable items in `deferred.md` (Phases 23-28).
+- **Waves 1-5:** Completed. See `deferred.md` completion notes.
 - **Deferred indefinitely:** ~7 items blocked on upstream changes or design decisions (see `deferred.md` Phase 17).
-- **Key insight:** All wave phases run in parallel on different subsystems. Wave 5 wall-clock is ~2 days.
+- **Key insight:** All wave phases run in parallel on different subsystems. All 5 waves completed in ~22 days total.
 
 ## Important Notes
 
@@ -512,16 +511,16 @@ Remaining per-item `#[allow(dead_code)]` on specific functions/types:
 - `src/waf/ratelimit.rs` — 2 items (IpRateLimitState::new, RingBuffer::with_capacity)
 - `src/dns/cache.rs` — 2 items (skip_name, detect_dnssec_signed)
 - `src/dns/dnssec.rs` — 3 items (extract_rsa_modulus, len_of_der_length, decode_der_length)
-- `src/mesh/` — ~13 items (item-level, gated on feature/platform)
+- `src/mesh/` — 29 items (all audited and annotated in Wave 5)
 - `src/dns/server.rs` — ~10 items (item-level)
 
-`cargo clippy` currently produces ~154 warnings (up from 152 after Phase 6 additions; all are pre-existing categories). These are incremental quality issues that don't affect correctness.
+`cargo clippy` currently produces ~93 warnings (down from 154; all are pre-existing categories). These are incremental quality issues that don't affect correctness.
 
 ### Build Configuration
 
 Phase 2.2 moved `target-dir = "target/fuzz"` from `.cargo/config.toml` to `fuzz/.cargo/config.toml`. Normal builds now use the default `target/` directory.
 
-`Cargo.toml` still uses many exact patch version pins (e.g., `"0.11.11"` instead of `"0.11"`). This prevents automatic security updates.
+`Cargo.toml` uses relaxed version pins (e.g., `"0.11"`). Only 2 pre-1.0 h3 ecosystem pins remain (`h3 = "0.0.8"`, `h3-quinn = "0.0.10"`).
 
 ## Known Bugs (Quick Reference)
 
@@ -541,7 +540,7 @@ Agents working on these areas should be aware of these issues. See `plan.md` for
 
 | Bug | Location | Impact |
 |-----|----------|--------|
-| TLS: `skip_verify` not wired | `src/http_client/mod.rs:66` | Field defined but `create_upstream_client()` not yet called by proxy (Phase 2.F1) |
+| *(none — all security items addressed)* | | |
 
 ### DNS / RFC Compliance
 
@@ -580,13 +579,16 @@ These patterns repeat and should be consolidated (see `plan.md` Phase 6.3):
 
 Large modules that need splitting (see `plan.md` Phase 6.5):
 
-| Module | Lines | Notes |
-|--------|-------|-------|
-| `src/mesh/transport.rs` | 6,448 | God object — split by message handler category |
-| `src/dns/server.rs` | 4,500+ | Extract query handler, zone manager, rate limiter |
-| `src/dns/mesh_sync.rs` | 1,975 | Split into registry, verification, health |
-| `src/worker/mod.rs` | 1,566 | Extract connection handling, drain state |
-| `tests/integration_test.rs` | 760 | IPC and DNS tests extracted to separate files |
+| Module | Lines | Status |
+|--------|-------|--------|
+| `src/mesh/protocol_proto_encode.rs` | 1,989 | Proto conversion (generated pattern, acceptable) |
+| `src/dns/dnssec.rs` | 2,152 | Above 1,500 but below threshold |
+| `src/mesh/transport.rs` | 1,897 | Split done (Wave 3) |
+| `src/mesh/config.rs` | 1,450 | Split done (Wave 4) |
+| `src/mesh/protocol.rs` | 1,196 | Split done (Wave 4) |
+| `src/dns/server/mod.rs` | 763 | Split done (Wave 3) |
+| `src/worker/mod.rs` | 786 | Split done (Wave 3) |
+| `src/admin/state.rs` | 561 | Split done (Wave 4) |
 
 ## Phase 7 Completion Notes (2026-03-25)
 
@@ -630,7 +632,7 @@ Removed 3 duplicate entries from `[dev-dependencies]`: `aes-gcm`, `ahash`, `asyn
 
 ## Waves 1-4 Completion Notes (2026-03-26)
 
-All waves from `deferred.md` have been executed. Waves 1-3 complete; Wave 4 planned but not yet executed.
+All waves from `deferred.md` have been executed. Waves 1-4 complete; Wave 5 complete (see below).
 
 ### Wave 1 (7 parallel agents): Phases 8, 9, 10, 11, 12, 13, 16
 
@@ -757,7 +759,7 @@ All 5 phases completed. 76 files changed, 496 insertions, 7,329 deletions.
 **Key lessons:**
 - **Clippy auto-fix can break visibility.** `cargo fix` changed method visibility from `fn` to private in submodules. Always verify cross-module method access after auto-fixes.
 - **AdminState sub-struct naming.** The agent used `state.metrics.*` (not `state.metrics_state.*`). This matches the plan's intent but the sub-struct field name (`metrics`) collides conceptually with the inner `metrics` field of `MetricsState`. Access pattern is `state.metrics.metrics` which reads oddly but compiles.
-- **Config write TOCTOU still partially present.** `config_write_lock` is held for disk writes but `update_overseer_config` and `update_supervisor_config` update in-memory state BEFORE acquiring the lock. See Wave 5 Phase 25.
+- **Config write TOCTOU partially present.** `config_write_lock` is held for disk writes but `update_overseer_config` and `update_supervisor_config` update in-memory state BEFORE acquiring the lock. See Wave 5 Phase 25 for fix.
 
 ### Wave 5 Plan (deferred.md)
 
@@ -788,9 +790,39 @@ All 6 phases are independent. Wall-clock: ~2 days.
 
 | Bug | Location | Status |
 |-----|----------|--------|
-| TLS: `skip_verify` not wired (TLS/HTTP server paths) | `src/tls/server.rs:606`, `src/http/server.rs:121` | ⚠️ Partial — `proxy.rs` wired but TLS/HTTP servers still use `create_http_client_with_config` (Wave 5 Phase 24) |
-| Config write TOCTOU | `src/admin/handlers/config.rs:1266,1482` | ⚠️ Partial — `config_write_lock` exists but in-memory updates happen before lock in 2 handlers (Wave 5 Phase 25) |
+| TLS: `skip_verify` not wired (TLS/HTTP server paths) | `src/tls/server.rs:606`, `src/http/server.rs:121` | ✅ Fixed (Wave 5 Phase 24) |
+| Config write TOCTOU | `src/admin/handlers/config.rs:1266,1482` | ✅ Fixed (Wave 5 Phase 25) |
 | Binary body in cache | `src/proxy.rs` | ✅ Fixed (Wave 1 Phase 9.1) |
 | Admin per-IP rate limiting bypass | `src/admin/handlers/common.rs` | ✅ Fixed (Wave 1 Phase 12) |
 | Windows `std::io::Ordering` bug | `src/worker/mod.rs` | ✅ Fixed (Wave 2) |
 | Windows missing PoisonImageRequest | `src/worker/mod.rs` | ✅ Fixed (Wave 2) |
+
+## Wave 5 Completion Notes (2026-03-26)
+
+All 6 phases completed. 8 files changed.
+
+### Phase 24: Upstream Client Wiring
+
+`create_upstream_client` wired into both TLS (`src/tls/server.rs`) and HTTP (`src/http/server.rs`) server request handlers. Per-site TLS config (skip_verify, ca_cert, server_name) is now respected for all code paths.
+
+**Key learning:** TLS config path is `site_config.proxy.upstream.tls`, not `site_config.proxy.tls`.
+
+### Phase 25: Config Write TOCTOU Fix
+
+Fixed TOCTOU in 3 handlers: `update_overseer_config`, `update_supervisor_config`, `update_process_manager_config`. `config_write_lock` is now acquired before in-memory update, covering both in-memory and disk operations atomically.
+
+### Phase 26: PQ Crypto `.expect()` Removal
+
+6 `.expect()` calls replaced with `?` in `passover_key_exchange.rs` and `kem/ml_kem.rs`. Test functions now return `Result`.
+
+### Phase 27: Dead Code Allows Audit
+
+29 `#[allow(dead_code)]` audited. 5 truly dead structs identified (`NetworkAccessControl`, `MeshSecurityChallengeManager`, `SecureConfigManager`, `MeshTransportStack`, `AuditLogger`). All items documented with comments. Missing comment added to `wireguard_port` field.
+
+### Phase 28: mesh/mod.rs Rustdoc
+
+Module-level doc comment added.
+
+### Pre-existing Test Compilation Errors
+
+`cargo test --lib` fails due to 14 pre-existing compilation errors in `src/mesh/config.rs` tests (private methods being called). These are NOT related to Wave 5 changes. `cargo check`, `cargo check --features dns`, and `cargo test --test integration_test` all pass.

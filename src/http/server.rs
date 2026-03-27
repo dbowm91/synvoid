@@ -16,7 +16,7 @@ use tokio_tungstenite::tungstenite::Message as WsMessage;
 
 use crate::router::Router;
 use crate::waf::{WafCore, FloodProtector, FloodDecision};
-use crate::http_client::{create_http_client_with_config, send_request_with_timeout, HttpClient};
+use crate::http_client::{create_http_client_with_config, create_upstream_client, send_request_with_timeout, HttpClient, UpstreamTlsConfig};
 use crate::config::MainConfig;
 use crate::RunningFlag;
 use crate::config::HttpConfig;
@@ -759,7 +759,22 @@ impl HttpServer {
                         .cloned()
                         .collect::<Vec<_>>(),
                 );
-                
+
+                let site_tls_config = target.site_config.proxy.upstream.as_ref()
+                    .and_then(|u| u.tls.as_ref())
+                    .and_then(|t| UpstreamTlsConfig::from_site_config(t));
+                let site_client = if let Some(ref tls) = site_tls_config {
+                    Some(create_upstream_client(
+                        std::time::Duration::from_secs(5),
+                        100,
+                        std::time::Duration::from_secs(30),
+                        tls,
+                    ))
+                } else {
+                    None
+                };
+                let forwarding_client = site_client.as_ref().unwrap_or(&client);
+
                 let resp = if crate::http_client::is_quictunnel_url(&target.upstream) {
                     crate::http_client::send_request_via_quic_tunnel(
                         method,
@@ -769,7 +784,7 @@ impl HttpServer {
                         Some(std::time::Duration::from_secs(30)),
                     ).await
                 } else {
-                    send_request_with_timeout(&client, method, &target_url, Some(std::time::Duration::from_secs(30))).await
+                    send_request_with_timeout(forwarding_client, method, &target_url, Some(std::time::Duration::from_secs(30))).await
                 };
                 
                 match resp {

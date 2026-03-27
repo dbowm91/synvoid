@@ -48,7 +48,7 @@ struct WireGuardPeerState {
     pub last_seen: Instant,
     #[allow(dead_code)] // Reserved for multi-protocol support
     pub quic_port: Option<u16>,
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Reserved for WireGuard port tracking
     pub wireguard_port: Option<u16>,
 }
 

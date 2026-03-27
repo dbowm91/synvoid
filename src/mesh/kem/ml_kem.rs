@@ -132,19 +132,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_mlkem_session() {
-        let (pk, sk) = MlKem768::generate_keypair().expect("Key generation failed");
+    fn test_mlkem_session() -> Result<(), Box<dyn std::error::Error>> {
+        let (pk, sk) = MlKem768::generate_keypair()?;
 
         assert_eq!(pk.as_ref().len(), MlKem768::PUBLIC_KEY_SIZE);
         assert_eq!(sk.as_ref().len(), MlKem768::SECRET_KEY_SIZE);
 
-        let (ct, ss_send) = MlKem768::encapsulate(&pk).expect("Encapsulation failed");
+        let (ct, ss_send) = MlKem768::encapsulate(&pk)?;
 
         assert_eq!(ct.len(), MlKem768::CIPHERTEXT_SIZE);
         assert_eq!(ss_send.as_ref().len(), MlKem768::SHARED_SECRET_SIZE);
 
-        let ss_recv = MlKem768::decapsulate(&ct, &sk).expect("Decapsulation failed");
+        let ss_recv = MlKem768::decapsulate(&ct, &sk)?;
 
         assert_eq!(ss_send.as_ref(), ss_recv.as_ref());
+        Ok(())
     }
 }

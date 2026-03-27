@@ -984,30 +984,28 @@ mod tests {
     }
 
     #[test]
-    fn test_ml_kem_encapsulation() {
+    fn test_ml_kem_encapsulation() -> Result<(), Box<dyn std::error::Error>> {
         use pqc::MlKem768;
 
         // Generate a client keypair
-        let (client_pk, _client_sk) = MlKem768::generate_keypair()
-            .expect("Failed to generate ML-KEM keypair");
+        let (client_pk, _client_sk) = MlKem768::generate_keypair()?;
 
         // Client sends their public key to server
         let client_pk_b64 = client_pk.to_base64();
 
         // Server encapsulates using client's public key
-        let (ciphertext, shared_secret) = perform_ml_kem_encapsulation(&client_pk_b64)
-            .expect("ML-KEM encapsulation failed");
+        let (ciphertext, shared_secret) = perform_ml_kem_encapsulation(&client_pk_b64)?;
 
         // Verify ciphertext is valid base64 and correct size
         use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-        let ct_bytes = URL_SAFE_NO_PAD.decode(&ciphertext)
-            .expect("Invalid base64 ciphertext");
+        let ct_bytes = URL_SAFE_NO_PAD.decode(&ciphertext)?;
         assert_eq!(ct_bytes.len(), MlKem768::CIPHERTEXT_SIZE);
-        
+
         // Verify shared secret is correct size
         assert_eq!(shared_secret.len(), MlKem768::SHARED_SECRET_SIZE);
 
         tracing::debug!("ML-KEM encapsulation test passed");
+        Ok(())
     }
 
     #[test]
