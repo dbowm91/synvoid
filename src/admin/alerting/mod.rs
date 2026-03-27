@@ -237,6 +237,64 @@ impl AlertManager {
     pub async fn send_webhook(&self, urls: &[String], event: &AlertEvent) -> Result<(), String> {
         send_webhook_internal(urls, event).await
     }
+
+    pub async fn send_geoip_stale_notification(
+        &self,
+        edition_id: &str,
+        days_since_update: u64,
+    ) -> Result<(), String> {
+        let config = self.config.read().await;
+
+        if !config.enabled {
+            return Ok(());
+        }
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+
+        let event = AlertEvent {
+            timestamp: now,
+            rule_name: "GeoIP Database Stale".to_string(),
+            metric: "geoip_stale".to_string(),
+            value: days_since_update as f64,
+            threshold: 7.0,
+            message: format!(
+                "GeoIP database '{}' has not been updated in {} days. \
+                 Consider renewing your MaxMind subscription or checking network connectivity.",
+                edition_id, days_since_update
+            ),
+        };
+
+        if config.webhook_enabled && !config.webhook_urls.is_empty() {
+            let webhook_urls = config.webhook_urls.clone();
+            let event_clone = event.clone();
+            tokio::spawn(async move {
+                if let Err(e) = send_webhook_internal(&webhook_urls, &event_clone).await {
+                    tracing::warn!("Failed to send GeoIP stale webhook: {}", e);
+                }
+            });
+        }
+
+        if config.email_enabled && !config.email_recipients.is_empty() {
+            let email_config = (
+                config.email_recipients.clone(),
+                config.email_smtp_host.clone(),
+                config.email_smtp_port,
+                config.email_username.clone(),
+                config.email_password.clone(),
+            );
+            let event_clone = event.clone();
+            tokio::spawn(async move {
+                if let Err(e) = send_email_internal(email_config, &event_clone).await {
+                    tracing::warn!("Failed to send GeoIP stale email: {}", e);
+                }
+            });
+        }
+
+        Ok(())
+    }
 }
 
 impl Default for AlertManager {

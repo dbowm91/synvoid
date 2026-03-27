@@ -123,6 +123,7 @@ dirs = "5"
 ab_glyph = "0.2"
 flare = "0.1"
 flate2 = "1"
+tar = "0.4"
 
 # Post-Quantum Cryptography
 pqc = { path = "pqc", features = ["async"] }

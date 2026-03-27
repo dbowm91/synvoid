@@ -695,3 +695,61 @@ pub fn create_simple_http_client(timeout: Duration) -> HttpClient {
         timeout,
     )
 }
+
+pub async fn get_with_auth(
+    client: &HttpClient,
+    url: &str,
+    username: &str,
+    password: &str,
+    timeout: Duration,
+) -> Result<HttpResponse, String> {
+    use http::header::AUTHORIZATION;
+    use base64::Engine;
+
+    let credentials = base64::engine::general_purpose::STANDARD.encode(format!("{}:{}", username, password));
+
+    let uri: Uri = url.parse().map_err(|e: http::uri::InvalidUri| e.to_string())?;
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri(uri)
+        .header(AUTHORIZATION, format!("Basic {}", credentials))
+        .body(Full::new(Bytes::new()))
+        .map_err(|e| e.to_string())?;
+
+    let response = match tokio::time::timeout(timeout, client.request(req)).await {
+        Ok(Ok(response)) => response,
+        Ok(Err(e)) => return Err(e.to_string()),
+        Err(_) => return Err("request timed out".to_string()),
+    };
+
+    Ok(HttpResponse::from_hyper(response).await)
+}
+
+pub async fn head_with_auth(
+    client: &HttpClient,
+    url: &str,
+    username: &str,
+    password: &str,
+    timeout: Duration,
+) -> Result<HttpResponse, String> {
+    use http::header::AUTHORIZATION;
+    use base64::Engine;
+
+    let credentials = base64::engine::general_purpose::STANDARD.encode(format!("{}:{}", username, password));
+
+    let uri: Uri = url.parse().map_err(|e: http::uri::InvalidUri| e.to_string())?;
+    let req = Request::builder()
+        .method(Method::HEAD)
+        .uri(uri)
+        .header(AUTHORIZATION, format!("Basic {}", credentials))
+        .body(Full::new(Bytes::new()))
+        .map_err(|e| e.to_string())?;
+
+    let response = match tokio::time::timeout(timeout, client.request(req)).await {
+        Ok(Ok(response)) => response,
+        Ok(Err(e)) => return Err(e.to_string()),
+        Err(_) => return Err("request timed out".to_string()),
+    };
+
+    Ok(HttpResponse::from_hyper(response).await)
+}

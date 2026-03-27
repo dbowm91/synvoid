@@ -31,6 +31,21 @@ pub struct GeoIpConfig {
 
     #[serde(default = "default_update_interval")]
     pub update_interval_hours: u32,
+
+    #[serde(default = "default_edition_ids")]
+    pub edition_ids: Vec<String>,
+
+    #[serde(default = "default_download_timeout")]
+    pub download_timeout_secs: u64,
+
+    #[serde(default = "default_max_retries")]
+    pub max_retries: u32,
+
+    #[serde(default = "default_stale_threshold_days")]
+    pub stale_threshold_days: u32,
+
+    #[serde(default = "default_backoff_base_secs")]
+    pub backoff_base_secs: u64,
 }
 
 fn default_log_blocked() -> bool {
@@ -39,6 +54,26 @@ fn default_log_blocked() -> bool {
 
 fn default_update_interval() -> u32 {
     168
+}
+
+fn default_edition_ids() -> Vec<String> {
+    vec!["GeoLite2-City".to_string(), "GeoLite2-ASN".to_string()]
+}
+
+fn default_download_timeout() -> u64 {
+    300
+}
+
+fn default_max_retries() -> u32 {
+    3
+}
+
+fn default_stale_threshold_days() -> u32 {
+    7
+}
+
+fn default_backoff_base_secs() -> u64 {
+    60
 }
 
 impl Default for GeoIpConfig {
@@ -54,6 +89,11 @@ impl Default for GeoIpConfig {
             account_id: None,
             license_key: None,
             update_interval_hours: 168,
+            edition_ids: default_edition_ids(),
+            download_timeout_secs: default_download_timeout(),
+            max_retries: default_max_retries(),
+            stale_threshold_days: default_stale_threshold_days(),
+            backoff_base_secs: default_backoff_base_secs(),
         }
     }
 }

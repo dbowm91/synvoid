@@ -213,6 +213,14 @@ impl GeoIpLookup {
             _ => None,
         }
     }
+
+    pub fn reload_from_slice(&mut self, data: Vec<u8>) -> Result<(), String> {
+        let reader = Reader::from_source(data)
+            .map_err(|e| format!("Failed to parse GeoIP database: {}", e))?;
+
+        self.reader = Some(reader);
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
