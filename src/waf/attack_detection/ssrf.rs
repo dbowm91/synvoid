@@ -10,7 +10,7 @@ use crate::waf::attack_detection::patterns::DefaultPatterns;
 pub struct SsrfDetector {
     inner: BasePatternDetector,
     block_private_ips: bool,
-    allowed_domains: Vec<String>,
+    allowed_domains_lower: Vec<String>,
 }
 
 impl SsrfDetector {
@@ -31,7 +31,10 @@ impl SsrfDetector {
         Self {
             inner,
             block_private_ips,
-            allowed_domains,
+            allowed_domains_lower: allowed_domains
+                .into_iter()
+                .map(|d| d.to_lowercase())
+                .collect(),
         }
     }
 
@@ -152,14 +155,12 @@ impl SsrfDetector {
         is_ipv4 || is_ipv6
     }
 
-    fn contains_private_ip_or_localhost(input: &str) -> bool {
-        let input_lower = input.to_lowercase();
-
+    fn contains_private_ip_or_localhost(input_lower: &str) -> bool {
         if input_lower.contains("localhost") || input_lower.contains(".local") {
             return true;
         }
 
-        for ip in Self::extract_ips_from_url(&input_lower) {
+        for ip in Self::extract_ips_from_url(input_lower) {
             let normalized = Self::normalize_ip_for_parse(&ip);
             if Self::is_private_ip(&normalized) {
                 return true;
@@ -190,18 +191,13 @@ impl SsrfDetector {
         s.to_string()
     }
 
-    fn is_allowed_domain(&self, input: &str) -> bool {
-        if self.allowed_domains.is_empty() {
+    fn is_allowed_domain(&self, input_lower: &str) -> bool {
+        if self.allowed_domains_lower.is_empty() {
             return false;
         }
-        let input_lower = input.to_lowercase();
-        for domain in &self.allowed_domains {
-            let domain_lower = domain.to_lowercase();
-            if input_lower.contains(&domain_lower) {
-                return true;
-            }
-        }
-        false
+        self.allowed_domains_lower
+            .iter()
+            .any(|domain| input_lower.contains(domain.as_str()))
     }
 
     fn detect_with_url_decode(

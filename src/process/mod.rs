@@ -25,15 +25,15 @@ pub use ipc_signed::{generate_session_key, IpcSigner, SignedIpcMessage};
 #[cfg(windows)]
 pub mod ipc_windows;
 
+pub use crate::utils::current_timestamp;
 pub use command::{CommandClient, CommandError, CommandResponse};
 #[cfg(windows)]
 pub use ipc::WindowsIpcListener;
 pub use ipc::{
-    connect_to_master, current_timestamp, get_ipc_path, BoxError, BoxResult, CommandMethod,
-    ErrorCode, ErrorSeverity, IpcStream, IpcValidationError, MasterCommand, MasterStatus, Message,
-    RequestLogPayload, SiteMetricsPayload, StatusStats, ThreatIndicatorData, ThreatIndicatorType,
-    ThreatSeverityLevel, ThreatSummary, WorkerId, WorkerMetricsPayload, WorkerStatus,
-    WorkerStatusInfo,
+    connect_to_master, get_ipc_path, BoxError, BoxResult, CommandMethod, ErrorCode, ErrorSeverity,
+    IpcStream, IpcValidationError, MasterCommand, MasterStatus, Message, RequestLogPayload,
+    SiteMetricsPayload, StatusStats, ThreatIndicatorData, ThreatIndicatorType, ThreatSeverityLevel,
+    ThreatSummary, WorkerId, WorkerMetricsPayload, WorkerStatus, WorkerStatusInfo,
 };
 pub use ipc_framing::{
     read_exact_message_sync, read_message_sync, write_message_sync, MAX_MESSAGE_SIZE,

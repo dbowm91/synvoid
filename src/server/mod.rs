@@ -447,11 +447,8 @@ impl UnifiedServer {
         self.waf.upstream_error_tracker.clone()
     }
 
-    pub fn get_block_store(&self) -> Arc<crate::block_store::BlockStore> {
-        self.waf
-            .block_store
-            .clone()
-            .expect("BlockStore not initialized in WAF")
+    pub fn get_block_store(&self) -> Option<Arc<crate::block_store::BlockStore>> {
+        self.waf.block_store.clone()
     }
 
     pub fn get_waf(&self) -> Arc<crate::waf::WafCore> {

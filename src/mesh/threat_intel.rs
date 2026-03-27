@@ -847,6 +847,8 @@ pub struct ThreatIntelligenceStats {
 }
 
 impl ThreatIntelligenceManager {
+    // Mesh sender lock held briefly across channel send await; low contention.
+    #[allow(clippy::await_holding_lock)]
     pub async fn broadcast_pending_threats(&self) {
         if !self.config.enabled || !self.config.push_enabled {
             return;

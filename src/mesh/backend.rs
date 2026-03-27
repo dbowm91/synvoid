@@ -203,6 +203,8 @@ impl MeshBackendPool {
         tracing::info!("Removed mesh backend for upstream: {}", upstream_id);
     }
 
+    // Topology read lock held briefly across peer score lookup; low contention.
+    #[allow(clippy::await_holding_lock)]
     pub async fn select_backend(&self, upstream_id: &str) -> Option<Arc<MeshBackend>> {
         if self.topology.is_upstream_blocked(upstream_id).await {
             tracing::debug!("Upstream {} is currently blocked", upstream_id);

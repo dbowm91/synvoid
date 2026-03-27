@@ -200,18 +200,21 @@ pub async fn restart_worker(
     Path(worker_id): Path<String>,
     _auth: OptionalAuth,
 ) -> Result<Json<StatusResponse>, StatusCode> {
-    let _pm = state
+    let pm = state
         .process
         .process_manager
         .as_ref()
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    tracing::warn!(
-        "restart_worker endpoint called for {} but is not yet implemented",
-        worker_id
-    );
+    pm.restart_worker_by_id(&worker_id).map_err(|e| {
+        tracing::error!("Failed to restart worker {}: {}", worker_id, e);
+        StatusCode::NOT_FOUND
+    })?;
 
-    Err(StatusCode::NOT_IMPLEMENTED)
+    Ok(Json(StatusResponse::success(format!(
+        "Restart signal sent to worker {}",
+        worker_id
+    ))))
 }
 
 #[derive(Debug, serde::Deserialize, utoipa::ToSchema)]

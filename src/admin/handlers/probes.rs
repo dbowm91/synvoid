@@ -313,29 +313,45 @@ fn parse_duration(duration: &str) -> u64 {
     )
 )]
 pub async fn block_probes(
-    State(_state): State<Arc<AdminState>>,
+    State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<BlockProbesRequest>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let _ban_duration = parse_duration(&req.duration);
+    let ban_duration_secs = parse_duration(&req.duration);
 
     let mut blocked = Vec::new();
     let mut failed = Vec::new();
 
-    for ip_str in req.ips {
-        if ip_str.parse::<IpAddr>().is_ok() {
-            blocked.push(ip_str);
-        } else {
-            failed.push(ip_str);
+    for ip_str in &req.ips {
+        match ip_str.parse::<IpAddr>() {
+            Ok(_) => blocked.push(ip_str.clone()),
+            Err(_) => failed.push(ip_str.clone()),
         }
     }
 
-    tracing::warn!(
-        "block_probes called but is not yet implemented ({} IPs to block)",
-        blocked.len()
-    );
+    if let Some(ref pm) = state.process.process_manager {
+        for ip in &blocked {
+            tracing::info!(
+                "Blocking probing IP {} for {} seconds",
+                ip,
+                ban_duration_secs
+            );
+            pm.handle_blocklist_update(vec![crate::process::ipc::BlockEntryData {
+                ip: ip.clone(),
+                reason: "Blocked via probe admin API".to_string(),
+                blocked_at: chrono::Utc::now().timestamp() as u64,
+                ban_expire_seconds: ban_duration_secs,
+                site_scope: String::new(),
+            }]);
+        }
+        pm.trigger_blocklist_persist();
+    }
 
-    Err(StatusCode::NOT_IMPLEMENTED)
+    Ok(Json(serde_json::json!({
+        "blocked": blocked,
+        "failed": failed,
+        "message": format!("Blocked {} IPs, {} failed", blocked.len(), failed.len())
+    })))
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]

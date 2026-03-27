@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use super::mode::UpgradeMode;
 
@@ -144,10 +144,7 @@ impl OverseerState {
     }
 
     pub fn current_timestamp() -> u64 {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0)
+        crate::utils::current_timestamp()
     }
 
     pub fn enter_state(&mut self, new_state: UpgradeState) {

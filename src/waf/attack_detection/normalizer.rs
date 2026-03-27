@@ -1,5 +1,7 @@
 use unicode_normalization::UnicodeNormalization;
 
+const MAX_OUTPUT_RATIO: usize = 100;
+
 pub struct InputNormalizer {
     max_decode_passes: usize,
 }
@@ -20,6 +22,7 @@ impl InputNormalizer {
     pub fn normalize(&self, input: &str) -> NormalizedInput {
         let mut buffer = String::with_capacity(input.len());
         let mut passes = 0;
+        let max_output = input.len().saturating_mul(MAX_OUTPUT_RATIO);
 
         buffer.push_str(input);
 
@@ -27,6 +30,9 @@ impl InputNormalizer {
             let prev_len = buffer.len();
             let decoded = self.decode_single_pass_inplace(&mut buffer);
             if decoded == prev_len {
+                break;
+            }
+            if decoded > max_output {
                 break;
             }
             passes += 1;

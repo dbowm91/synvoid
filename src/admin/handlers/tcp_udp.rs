@@ -88,17 +88,40 @@ pub struct CreateListenerResponse {
     )
 )]
 pub async fn create_listener(
-    State(_state): State<Arc<AdminState>>,
+    State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<CreateListenerRequest>,
 ) -> Result<Json<CreateListenerResponse>, StatusCode> {
-    tracing::warn!(
-        "create_listener called for {}/{} but is not yet implemented",
+    let mut config = state.process.config.write().await;
+    let site_config = config
+        .sites
+        .get_mut(&req.site_id)
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let listener_id = format!("{}-{}", req.site_id, req.protocol);
+
+    tracing::info!(
+        "Creating TCP/UDP listener {} on port {} for site {} -> upstream {}",
+        listener_id,
+        req.port,
         req.site_id,
-        req.protocol
+        req.upstream
     );
 
-    Err(StatusCode::NOT_IMPLEMENTED)
+    if !site_config.tcp.enabled.unwrap_or(false) {
+        site_config.tcp.enabled = Some(true);
+    }
+
+    Ok(Json(CreateListenerResponse {
+        listener: TcpUdpListener {
+            id: listener_id,
+            port: req.port,
+            protocol: req.protocol,
+            upstream: req.upstream,
+            enabled: true,
+            active_connections: 0,
+        },
+    }))
 }
 
 #[utoipa::path(
@@ -118,16 +141,27 @@ pub async fn create_listener(
     )
 )]
 pub async fn delete_listener(
-    State(_state): State<Arc<AdminState>>,
+    State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Path(listener_id): Path<String>,
 ) -> Result<StatusCode, StatusCode> {
-    tracing::warn!(
-        "delete_listener called for {} but is not yet implemented",
-        listener_id
-    );
+    let mut config = state.process.config.write().await;
 
-    Err(StatusCode::NOT_IMPLEMENTED)
+    let parts: Vec<&str> = listener_id.splitn(2, '-').collect();
+    if parts.len() != 2 {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let site_id = parts[0];
+    let protocol_name = parts[1];
+
+    let site_config = config.sites.get_mut(site_id).ok_or(StatusCode::NOT_FOUND)?;
+
+    if site_config.tcp.ports.remove(protocol_name).is_some() {
+        tracing::info!("Deleted TCP/UDP listener {}", listener_id);
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(StatusCode::NOT_FOUND)
+    }
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]

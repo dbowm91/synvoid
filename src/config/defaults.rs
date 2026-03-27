@@ -342,7 +342,7 @@ impl BotDefaults {
 fn default_block_ai() -> bool {
     true
 }
-fn default_true() -> bool {
+pub fn default_true() -> bool {
     true
 }
 fn default_challenge_rate_limit_max_attempts() -> u32 {

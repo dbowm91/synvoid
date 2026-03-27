@@ -23,6 +23,14 @@ pub struct InternalAcmeConfig {
     pub cache_dir: Option<PathBuf>,
     pub staging: bool,
     pub domains: Vec<String>,
+    pub challenge_type: InternalAcmeChallengeType,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum InternalAcmeChallengeType {
+    #[default]
+    Http01,
+    Dns01,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -86,6 +94,10 @@ impl From<crate::config::AcmeConfig> for InternalAcmeConfig {
             cache_dir: config.cache_dir.map(PathBuf::from),
             staging: config.staging,
             domains: config.domains,
+            challenge_type: match config.challenge_type {
+                crate::config::AcmeChallengeType::Http01 => InternalAcmeChallengeType::Http01,
+                crate::config::AcmeChallengeType::Dns01 => InternalAcmeChallengeType::Dns01,
+            },
         }
     }
 }

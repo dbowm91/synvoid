@@ -140,6 +140,7 @@ rustls = { version = "0.23", features = ["prefer-post-quantum", "aws-lc-rs"] }
 rustls-pki-types = "1"
 rustls-post-quantum = { version = "0.2", optional = true }
 x509-parser = "0.16"
+instant-acme = { version = "0.8", features = ["aws-lc-rs", "rcgen"] }
 
 # Post-Quantum Cryptography (aws-lc-rs with unstable for ML-DSA)
 aws-lc-rs = { version = "1", features = ["unstable"] }

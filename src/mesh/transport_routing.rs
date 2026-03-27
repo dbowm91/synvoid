@@ -1,5 +1,4 @@
-use super::*;
-use crate::mesh::transport::*;
+use crate::mesh::transport::{MeshPeerConnection, MeshTransport, MeshTransportError};
 use std::time::{Duration, Instant};
 
 use quinn::SendStream;

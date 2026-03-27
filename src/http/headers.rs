@@ -70,7 +70,22 @@ pub fn inject_cors_headers(
     let mut builder = builder;
 
     if let Some(ref origin) = config.allow_origin {
-        builder = builder.header("Access-Control-Allow-Origin", origin);
+        if origin == "*" {
+            if cfg!(debug_assertions) {
+                tracing::warn!(
+                    "Site CORS allow_origin='*' is insecure — only allowed in debug builds. \
+                     Specify exact origins."
+                );
+                builder = builder.header("Access-Control-Allow-Origin", origin);
+            } else {
+                tracing::error!(
+                    "Site CORS allow_origin='*' is rejected in release builds for security. \
+                     Specify exact origins."
+                );
+            }
+        } else {
+            builder = builder.header("Access-Control-Allow-Origin", origin);
+        }
     }
 
     if let Some(ref methods) = config.allow_methods {

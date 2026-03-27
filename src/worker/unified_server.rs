@@ -267,7 +267,10 @@ pub async fn run_unified_server_worker(
 
             // Create ThreatIntelligenceManager for this worker
             // Get BlockStore from UnifiedServer if available
-            let block_store = unified_server.get_block_store();
+            let Some(block_store) = unified_server.get_block_store() else {
+                tracing::warn!("BlockStore not initialized, skipping threat intelligence setup");
+                return Ok(());
+            };
 
             let mesh_threat_intel = mesh_config.threat_intel.clone();
 
@@ -554,7 +557,10 @@ pub async fn run_unified_server_worker(
     }
 
     // Request blocklist from Master on startup
-    let block_store = unified_server.get_block_store();
+    let Some(block_store) = unified_server.get_block_store() else {
+        tracing::warn!("BlockStore not initialized, skipping blocklist request");
+        return Ok(());
+    };
     {
         let mut ipc_guard = ipc.lock().await;
         ipc_guard
@@ -672,6 +678,9 @@ pub async fn run_unified_server_worker(
 
     tracing::info!("Unified Server Worker {} ready", worker_id);
 
+    let worker_exit_code: Arc<std::sync::atomic::AtomicI32> =
+        Arc::new(std::sync::atomic::AtomicI32::new(0));
+
     let heartbeat_state = state.clone();
     let heartbeat_handle = tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(5));
@@ -720,6 +729,7 @@ pub async fn run_unified_server_worker(
     });
 
     let ipc_state = state.clone();
+    let ipc_exit_code = worker_exit_code.clone();
     let ipc_handle = tokio::spawn(async move {
         loop {
             if !ipc_state.running.is_running() {
@@ -793,15 +803,16 @@ pub async fn run_unified_server_worker(
                         "Received blocklist update with {} entries from Master",
                         blocks.len()
                     );
-                    let block_store = ipc_state.unified_server.get_block_store();
-                    for block in blocks {
-                        if let Ok(ip) = block.ip.parse() {
-                            let _ = block_store.block_ip(
-                                ip,
-                                &block.reason,
-                                block.ban_expire_seconds,
-                                &block.site_scope,
-                            );
+                    if let Some(block_store) = ipc_state.unified_server.get_block_store() {
+                        for block in blocks {
+                            if let Ok(ip) = block.ip.parse() {
+                                let _ = block_store.block_ip(
+                                    ip,
+                                    &block.reason,
+                                    block.ban_expire_seconds,
+                                    &block.site_scope,
+                                );
+                            }
                         }
                     }
                 }
@@ -961,7 +972,8 @@ pub async fn run_unified_server_worker(
                         })
                         .await;
 
-                    std::process::exit(100);
+                    ipc_exit_code.store(100, std::sync::atomic::Ordering::Relaxed);
+                    break;
                 }
                 Some(_) | None => {}
             }
@@ -991,7 +1003,12 @@ pub async fn run_unified_server_worker(
             "Unified Server Worker {} exiting because master died",
             worker_id
         );
-        std::process::exit(1);
+        worker_exit_code.store(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    let exit_code = worker_exit_code.load(std::sync::atomic::Ordering::Relaxed);
+    if exit_code != 0 {
+        std::process::exit(exit_code);
     }
 
     tracing::info!("Unified Server Worker {} shutting down", worker_id);

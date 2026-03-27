@@ -1,4 +1,4 @@
-use crate::mesh::transport::*;
+use crate::mesh::transport::MeshTransport;
 
 use crate::mesh::protocol::MeshMessage;
 

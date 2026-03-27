@@ -160,12 +160,33 @@ impl HttpsServer {
                 result = listener.accept() => {
                     match result {
                         Ok((stream, client_addr)) => {
+                            let client_ip = client_addr.ip();
+
+                            // L3/L4 flood protection BEFORE TLS handshake (fixes bug
+                            // where check was done after handshake)
+                            if let Some(ref fp) = flood_protector {
+                                match fp.check_tcp_connection(client_ip) {
+                                    FloodDecision::Blackholed => {
+                                        counter!("maluwaf.tls.flood_blackhole").increment(1);
+                                        tracing::debug!("TLS connection blackholed for {}", client_ip);
+                                        drop(stream);
+                                        continue;
+                                    }
+                                    FloodDecision::RateLimited => {
+                                        counter!("maluwaf.tls.flood_limited").increment(1);
+                                        tracing::debug!("TLS connection rate limited for {}", client_ip);
+                                        drop(stream);
+                                        continue;
+                                    }
+                                    FloodDecision::Allowed => {}
+                                }
+                            }
+
                             let acceptor = acceptor.clone();
                             let router = router.clone();
                             let waf = waf.clone();
                             let http_config = http_config.clone();
                             let main_config = main_config.clone();
-                            let flood_protector = flood_protector.clone();
 
                             tokio::spawn(async move {
                                 match acceptor.accept(stream).await {
@@ -176,24 +197,6 @@ impl HttpsServer {
                                             "TLS handshake completed for {}",
                                             client_addr
                                         );
-
-                                        let client_ip = client_addr.ip();
-
-                                        if let Some(ref fp) = flood_protector {
-                                            match fp.check_tcp_connection(client_ip) {
-                                                FloodDecision::Blackholed => {
-                                                    counter!("maluwaf.tls.flood_blackhole").increment(1);
-                                                    tracing::debug!("TLS connection blackholed for {}", client_ip);
-                                                    return;
-                                                }
-                                                FloodDecision::RateLimited => {
-                                                    counter!("maluwaf.tls.flood_limited").increment(1);
-                                                    tracing::debug!("TLS connection rate limited for {}", client_ip);
-                                                    return;
-                                                }
-                                                FloodDecision::Allowed => {}
-                                            }
-                                        }
 
                                         let alpn_protocol = tls_stream.get_ref().1.alpn_protocol();
                                         let is_http2 = alpn_protocol.map(|p| p == ALPN_HTTP2).unwrap_or(false);
@@ -908,4 +911,60 @@ pub fn create_tls_acceptor(
 ) -> Result<TlsAcceptor, Box<dyn std::error::Error + Send + Sync>> {
     let server_config = cert_resolver.build_server_config()?;
     Ok(TlsAcceptor::from(server_config))
+}
+
+/// Proxy raw TCP between a client and upstream, used for TLS passthrough mode.
+/// The initial client_hello_bytes are forwarded first, then bidirectional copy.
+pub async fn proxy_raw_tcp(
+    mut client_stream: tokio::net::TcpStream,
+    upstream_addr: std::net::SocketAddr,
+    client_hello_bytes: Vec<u8>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let mut upstream = tokio::net::TcpStream::connect(upstream_addr).await?;
+    counter!("maluwaf.tls.passthrough.connection").increment(1);
+
+    // Forward the already-read ClientHello to upstream
+    upstream.write_all(&client_hello_bytes).await?;
+
+    let (mut client_read, mut client_write) = client_stream.split();
+    let (mut upstream_read, mut upstream_write) = upstream.split();
+
+    // Bidirectional copy
+    let client_to_upstream = async {
+        let mut buf = vec![0u8; 8192];
+        loop {
+            let n = match client_read.read(&mut buf).await {
+                Ok(0) => return Ok::<_, std::io::Error>(()),
+                Ok(n) => n,
+                Err(e) => return Err(e),
+            };
+            upstream_write.write_all(&buf[..n]).await?;
+        }
+    };
+
+    let upstream_to_client = async {
+        let mut buf = vec![0u8; 8192];
+        loop {
+            let n = match upstream_read.read(&mut buf).await {
+                Ok(0) => return Ok::<_, std::io::Error>(()),
+                Ok(n) => n,
+                Err(e) => return Err(e),
+            };
+            client_write.write_all(&buf[..n]).await?;
+        }
+    };
+
+    match tokio::try_join!(client_to_upstream, upstream_to_client) {
+        Ok(_) => {
+            tracing::debug!("TLS passthrough connection completed");
+        }
+        Err(e) => {
+            tracing::debug!("TLS passthrough connection error: {}", e);
+        }
+    }
+
+    counter!("maluwaf.tls.passthrough.completed").increment(1);
+    Ok(())
 }

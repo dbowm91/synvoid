@@ -216,8 +216,15 @@ pub async fn run_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Erro
 
             tokio::time::sleep(Duration::from_millis(100)).await;
 
-            let mut ipc = ipc_state.ipc.lock().await;
-            match ipc.recv_with_timeout::<Message>(100).await {
+            // Receive message with lock held, then drop lock before sending responses.
+            // Holding the lock across both recv and send would deadlock if another
+            // task (e.g. heartbeat) also needs the lock.
+            let msg = {
+                let mut ipc = ipc_state.ipc.lock().await;
+                ipc.recv_with_timeout::<Message>(100).await
+            };
+
+            match msg {
                 Ok(Some(Message::MasterShutdown {
                     graceful,
                     timeout_secs,
@@ -277,6 +284,9 @@ pub async fn run_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Erro
     let server_state = state.clone();
     let worker_id_for_log = worker_id;
     let port = args.port;
+    let worker_exit_code: Arc<std::sync::atomic::AtomicI32> =
+        Arc::new(std::sync::atomic::AtomicI32::new(0));
+    let server_exit_code = worker_exit_code.clone();
     let server_handle = tokio::spawn(async move {
         let addr: std::net::SocketAddr = format!("127.0.0.1:{}", port)
             .parse()
@@ -307,6 +317,7 @@ pub async fn run_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Erro
                         "Worker {} finished draining, exiting for threadpool resize",
                         worker_id_for_log
                     );
+                    server_exit_code.store(100, std::sync::atomic::Ordering::Relaxed);
                     break;
                 }
                 tracing::debug!(
@@ -357,11 +368,6 @@ pub async fn run_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Erro
         }
 
         tracing::info!("Worker {} HTTP server stopped", worker_id_for_log);
-
-        if server_state.draining.is_draining() {
-            tracing::info!("Worker {} exiting for threadpool resize", worker_id_for_log);
-            std::process::exit(100);
-        }
     });
 
     tokio::select! {
@@ -371,6 +377,11 @@ pub async fn run_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Erro
     }
 
     state.running.stop();
+
+    let exit_code = worker_exit_code.load(std::sync::atomic::Ordering::Relaxed);
+    if exit_code != 0 {
+        std::process::exit(exit_code);
+    }
 
     tracing::info!("Worker {} shutting down", worker_id);
     Ok(())

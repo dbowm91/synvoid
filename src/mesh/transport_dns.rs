@@ -1,4 +1,4 @@
-use crate::mesh::transport::*;
+use crate::mesh::transport::MeshTransport;
 use flate2::read::ZlibDecoder as ReadZlibDecoder;
 use flate2::write::ZlibEncoder;
 use flate2::Compression;

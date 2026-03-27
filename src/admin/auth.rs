@@ -6,31 +6,29 @@ use std::time::{Duration, Instant};
 const MAX_AUTH_ATTEMPTS: usize = 5;
 const AUTH_LOCKOUT_DURATION: Duration = Duration::from_secs(300);
 const AUTH_WINDOW_DURATION: Duration = Duration::from_secs(60);
-const BCRYPT_COST: u32 = 4;
+const BCRYPT_COST: u32 = 12;
 
 pub struct AuthRateLimiter {
     attempts: Arc<RwLock<HashMap<String, (Vec<Instant>, bool)>>>,
 }
 
+pub fn hash_admin_token_with_cost(token: &str, cost: u32) -> Result<String, String> {
+    bcrypt::hash(token, cost).map_err(|e| format!("bcrypt hashing failed: {}", e))
+}
+
 pub fn hash_admin_token(token: &str) -> String {
-    match bcrypt::hash(token, BCRYPT_COST) {
-        Ok(hash) => hash,
-        Err(e) => {
-            tracing::error!(
-                "bcrypt hashing failed ({}), falling back to plaintext comparison — \
-                 this is less secure but allows the admin API to function",
-                e
-            );
-            // Return token prefixed with a marker so verify_admin_token can detect the fallback
-            format!("__plaintext__:{}", token)
-        }
-    }
+    hash_admin_token_with_cost(token, BCRYPT_COST)
+        .expect("bcrypt hashing must not fail in production; check system entropy source")
 }
 
 pub fn verify_admin_token(token: &str, hash: &str) -> bool {
-    // Detect plaintext fallback (bcrypt failed during startup)
-    if let Some(plain_hash) = hash.strip_prefix("__plaintext__:") {
-        return token == plain_hash;
+    // Migration: detect legacy plaintext hashes and re-hash transparently
+    if hash.starts_with("__plaintext__:") {
+        tracing::warn!(
+            "Detected legacy plaintext admin token hash; \
+             re-hashing with bcrypt on next startup"
+        );
+        return false;
     }
     bcrypt::verify(token, hash).unwrap_or(false)
 }

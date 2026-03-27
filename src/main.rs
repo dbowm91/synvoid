@@ -295,12 +295,10 @@ fn print_test_mode_warning(test_flags: &[String]) {
         disabled.join(", ")
     };
 
-    eprintln!();
-    eprintln!("WARNING: TEST MODE ENABLED");
-    eprintln!("  Protections DISABLED: {}", disabled_str);
-    eprintln!("  This mode is intended for throughput/capacity testing only.");
-    eprintln!("  DO NOT use in production.");
-    eprintln!();
+    tracing::warn!("TEST MODE ENABLED - Protections DISABLED: {}", disabled_str);
+    tracing::warn!(
+        "This mode is intended for throughput/capacity testing only. DO NOT use in production."
+    );
 }
 
 fn main() {
@@ -548,7 +546,7 @@ fn main() {
         let mut config_manager = ConfigManager::new(config_dir.clone());
 
         if let Err(e) = config_manager.load_main(&main_config_path) {
-            eprintln!("Failed to load main.toml: {}, using defaults", e);
+            tracing::warn!("Failed to load main.toml: {}, using defaults", e);
         }
 
         let main_config = config_manager.main.clone();
@@ -596,14 +594,10 @@ fn main() {
             }
             Ok(Err(e)) => {
                 tracing::error!("RustWAF master process error: {}", e);
-                eprintln!("Error: {}", e);
-                eprintln!("Master process exiting due to error");
                 std::process::exit(1);
             }
             Err(panic_info) => {
                 tracing::error!("RustWAF master process panicked: {:?}", panic_info);
-                eprintln!("Master process panic: {:?}", panic_info);
-                eprintln!("Master process exiting due to panic");
                 std::process::exit(1);
             }
         }
@@ -632,7 +626,7 @@ fn main() {
         let mut config_manager = ConfigManager::new(config_dir.clone());
 
         if let Err(e) = config_manager.load_main(&main_config_path) {
-            eprintln!("Failed to load main.toml: {}, using defaults", e);
+            tracing::warn!("Failed to load main.toml: {}, using defaults", e);
         }
 
         let main_config = config_manager.main.clone();
@@ -680,14 +674,16 @@ fn main() {
                 match result {
                     Ok(_) => {}
                     Err(e) => {
-                        eprintln!("Failed to daemonize: {}", e);
+                        tracing::error!("Failed to daemonize: {}", e);
                         std::process::exit(1);
                     }
                 }
             }
             #[cfg(not(unix))]
             {
-                eprintln!("Warning: Daemonization is not supported on this platform, running in foreground");
+                tracing::warn!(
+                    "Daemonization is not supported on this platform, running in foreground"
+                );
             }
         }
 
@@ -732,15 +728,10 @@ fn main() {
             }
             Ok(Err(e)) => {
                 tracing::error!("RustWAF overseer process error: {}", e);
-                eprintln!("Error: {}", e);
-
-                eprintln!("Overseer process exiting due to error");
                 std::process::exit(1);
             }
             Err(panic_info) => {
                 tracing::error!("RustWAF overseer process panicked: {:?}", panic_info);
-                eprintln!("Overseer process panic: {:?}", panic_info);
-                eprintln!("Overseer process exiting due to panic");
                 std::process::exit(1);
             }
         }

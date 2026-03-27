@@ -1,4 +1,4 @@
-use crate::mesh::transport::*;
+use crate::mesh::transport::{MeshTransport, PEER_RATE_LIMIT_WINDOW_SECS};
 use std::time::{Duration, Instant};
 
 impl MeshTransport {

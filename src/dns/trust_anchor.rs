@@ -5,7 +5,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 /// RFC 5011 Trust Anchor States
 ///
@@ -86,10 +85,7 @@ pub struct TrustAnchor {
 
 impl TrustAnchor {
     pub fn new(key_id: String, key_tag: u16, algorithm: u8, public_key: Vec<u8>) -> Self {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = crate::utils::safe_unix_timestamp();
 
         Self {
             key_id,
@@ -108,10 +104,7 @@ impl TrustAnchor {
     }
 
     pub fn from_initial(key_id: String, key_tag: u16, algorithm: u8, public_key: Vec<u8>) -> Self {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = crate::utils::safe_unix_timestamp();
 
         Self {
             key_id,
@@ -130,20 +123,14 @@ impl TrustAnchor {
     }
 
     pub fn is_expired(&self, max_age_days: u64) -> bool {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = crate::utils::safe_unix_timestamp();
 
         let max_age_secs = max_age_days * 86400;
         now.saturating_sub(self.last_seen) > max_age_secs
     }
 
     pub fn refresh(&mut self) {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = crate::utils::safe_unix_timestamp();
         self.last_seen = now;
     }
 
@@ -438,10 +425,7 @@ impl TrustAnchorManager {
         }
 
         let mut anchors = self.anchors.write();
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = crate::utils::safe_unix_timestamp();
 
         let key_id = TrustAnchor::generate_key_id(key_tag, algorithm);
 
@@ -511,10 +495,7 @@ impl TrustAnchorManager {
         digest: &[u8],
     ) -> Rfc5011Event {
         let mut anchors = self.anchors.write();
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = crate::utils::safe_unix_timestamp();
 
         let key_id = TrustAnchor::generate_key_id(key_tag, algorithm);
 
@@ -605,10 +586,7 @@ impl TrustAnchorManager {
 
     pub fn process_rfc5011_updates(&self) -> Vec<Rfc5011Event> {
         let mut events = Vec::new();
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = crate::utils::safe_unix_timestamp();
 
         let mut anchors = self.anchors.write();
         let mut keys_to_remove = Vec::new();
@@ -710,10 +688,7 @@ impl TrustAnchorManager {
             .map_err(|e| format!("Failed to read anchor file: {}", e))?;
 
         let mut count = 0;
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = crate::utils::safe_unix_timestamp();
 
         let mut anchors = self.anchors.write();
 
@@ -804,10 +779,7 @@ impl TrustAnchorManager {
     }
 
     pub fn needs_refresh(&self) -> bool {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = crate::utils::safe_unix_timestamp();
 
         let last = *self.last_refresh.read();
 
@@ -815,10 +787,7 @@ impl TrustAnchorManager {
     }
 
     pub fn mark_refreshed(&self) {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = crate::utils::safe_unix_timestamp();
 
         *self.last_refresh.write() = now;
     }
@@ -830,12 +799,7 @@ impl TrustAnchorManager {
         for key_tag in revoked_key_tags {
             if let Some(anchor) = anchors.values_mut().find(|a| a.key_tag == *key_tag) {
                 anchor.state = TrustAnchorState::Revoked;
-                anchor.revoked_at = Some(
-                    SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs(),
-                );
+                anchor.revoked_at = Some(crate::utils::safe_unix_timestamp());
                 tracing::info!(
                     "RFC 5011: Key {} marked as revoked via check_for_revoked_keys",
                     key_tag

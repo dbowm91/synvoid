@@ -30,10 +30,7 @@ pub const DHT_KEY_PREFIX_EDGE_KEY: &str = "edge_key:";
 pub const DHT_KEY_PREFIX_GLOBAL_NODE_KEY: &str = "global_node_key:";
 
 fn current_timestamp() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+    crate::utils::current_timestamp()
 }
 
 #[derive(Debug, Clone)]
@@ -259,6 +256,8 @@ impl MeshTransportManager {
         self.preferred_transport()
     }
 
+    // Transport selection holds read lock across send await; low contention.
+    #[allow(clippy::await_holding_lock)]
     pub async fn send_message(
         &self,
         peer_id: &str,
@@ -294,6 +293,8 @@ impl MeshTransportManager {
         fallback_result
     }
 
+    // Transport read lock held across send await; low contention.
+    #[allow(clippy::await_holding_lock)]
     async fn try_send_primary(
         &self,
         peer_id: &str,
@@ -391,6 +392,8 @@ impl MeshTransportManager {
         }
     }
 
+    // Transport selection holds read lock across send await; low contention.
+    #[allow(clippy::await_holding_lock)]
     pub async fn send_datagram(
         &self,
         peer_id: &str,
@@ -430,6 +433,8 @@ impl MeshTransportManager {
         fallback_result
     }
 
+    // Transport read lock held across datagram send await; low contention.
+    #[allow(clippy::await_holding_lock)]
     async fn try_send_datagram_primary(
         &self,
         peer_id: &str,
@@ -515,6 +520,8 @@ impl MeshTransportManager {
         Err(MeshTransportError::PeerNotConnected(peer_id.to_string()))
     }
 
+    // Transport selection holds read lock across broadcast await; low contention.
+    #[allow(clippy::await_holding_lock)]
     pub async fn broadcast_datagram(
         &self,
         message: &MeshMessage,

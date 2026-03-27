@@ -439,6 +439,8 @@ impl AuthManager {
             });
             self.save_store(&store).await;
 
+            drop(store);
+            verify_dummy_password(password).await;
             return Err(AuthError::InvalidCredentials);
         }
 

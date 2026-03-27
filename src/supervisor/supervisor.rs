@@ -127,13 +127,24 @@ impl Supervisor {
 
             *worker_clone.status.write() = WorkerStatus::Stopped;
 
-            let _ = event_tx.send(SupervisorEvent::WorkerFailed(
-                id,
-                "worker exited".to_string(),
-            ));
+            if event_tx
+                .send(SupervisorEvent::WorkerFailed(
+                    id,
+                    "worker exited".to_string(),
+                ))
+                .is_err()
+            {
+                tracing::warn!("Failed to send WorkerFailed event for worker {}", id.0);
+            }
         });
 
-        let _ = self.event_tx.send(SupervisorEvent::WorkerStarted(id));
+        if let Err(e) = self.event_tx.send(SupervisorEvent::WorkerStarted(id)) {
+            tracing::warn!(
+                "Failed to send WorkerStarted event for worker {}: {}",
+                id.0,
+                e
+            );
+        }
 
         tracing::info!("Worker {} spawned", id.0);
 
@@ -145,9 +156,16 @@ impl Supervisor {
             return;
         }
 
-        let _ = self
+        if self
             .event_tx
-            .send(SupervisorEvent::WorkerFailed(worker_id, error.clone()));
+            .send(SupervisorEvent::WorkerFailed(worker_id, error.clone()))
+            .is_err()
+        {
+            tracing::warn!(
+                "Failed to send WorkerFailed event for worker {}",
+                worker_id.0
+            );
+        }
         self.metrics.total_failures.fetch_add(1, Ordering::Relaxed);
 
         let (should_restart, can_restart) = {
@@ -329,7 +347,9 @@ impl Supervisor {
 
                     last_scale = Instant::now();
                     metrics.total_scale_ups.fetch_add(1, Ordering::Relaxed);
-                    let _ = event_tx.send(SupervisorEvent::ScaleUp(scale_up_by));
+                    if let Err(e) = event_tx.send(SupervisorEvent::ScaleUp(scale_up_by)) {
+                        tracing::warn!("Failed to send ScaleUp event: {}", e);
+                    }
                 } else if avg_load < config.scale_down_threshold
                     && current_count > config.min_workers
                 {
@@ -345,15 +365,22 @@ impl Supervisor {
 
                     last_scale = Instant::now();
                     metrics.total_scale_downs.fetch_add(1, Ordering::Relaxed);
-                    let _ = event_tx.send(SupervisorEvent::ScaleDown(scale_down_by));
+                    if let Err(e) = event_tx.send(SupervisorEvent::ScaleDown(scale_down_by)) {
+                        tracing::warn!("Failed to send ScaleDown event: {}", e);
+                    }
                 }
             }
         });
     }
 
+    // Workers read lock is explicitly dropped before the sleep await; clippy
+    // detects the outer loop scope. Safe because lock is held only briefly.
+    #[allow(clippy::await_holding_lock)]
     pub async fn graceful_shutdown(&self) {
         tracing::info!("Initiating graceful shutdown");
-        let _ = self.event_tx.send(SupervisorEvent::ShutdownInitiated);
+        if let Err(e) = self.event_tx.send(SupervisorEvent::ShutdownInitiated) {
+            tracing::warn!("Failed to send ShutdownInitiated event: {}", e);
+        }
 
         self.running.stop();
 
@@ -377,7 +404,9 @@ impl Supervisor {
         }
 
         tracing::info!("Supervisor shutdown complete");
-        let _ = self.event_tx.send(SupervisorEvent::ShutdownComplete);
+        if let Err(e) = self.event_tx.send(SupervisorEvent::ShutdownComplete) {
+            tracing::warn!("Failed to send ShutdownComplete event: {}", e);
+        }
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<SupervisorEvent> {

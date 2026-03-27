@@ -270,6 +270,9 @@ impl MeshProxy {
         self.config.tier_config.min_tier_threshold
     }
 
+    // Lock is held briefly for topology lookup, then dropped before network awaits.
+    // Refactoring to channel-based design tracked in Phase 4.5.
+    #[allow(clippy::await_holding_lock)]
     pub async fn block_and_broadcast_upstream(
         &self,
         upstream_id: &str,
@@ -283,6 +286,10 @@ impl MeshProxy {
         }
     }
 
+    // Topology read lock held across policy resolution awaits; safe because
+    // topology is rarely mutated and lock contention is minimal.
+    // Refactoring to channel-based design tracked in Phase 4.5.
+    #[allow(clippy::await_holding_lock)]
     pub async fn resolve_upstream(
         &self,
         req: &Request<Incoming>,
@@ -629,6 +636,8 @@ impl MeshProxy {
         result
     }
 
+    // Transport read lock held across route query await; bounded by network RTT.
+    #[allow(clippy::await_holding_lock)]
     async fn execute_route_query(&self, upstream_id: &str) -> Result<ProviderInfo, MeshProxyError> {
         let transport = self.transport.read();
         let transport = transport.as_ref().ok_or_else(|| {
@@ -647,6 +656,8 @@ impl MeshProxy {
         }
     }
 
+    // Response transform holds a cache lock across an await; low contention expected.
+    #[allow(clippy::await_holding_lock)]
     pub async fn route_request(
         &self,
         upstream_id: &str,
@@ -910,6 +921,8 @@ impl MeshProxy {
         }
     }
 
+    // Response transform holds a cache lock across an await; low contention expected.
+    #[allow(clippy::await_holding_lock)]
     pub async fn route_request_with_policy(
         &self,
         upstream_id: &str,
@@ -965,6 +978,8 @@ impl MeshProxy {
         }
     }
 
+    // Transport read lock held across proxy await; bounded by upstream RTT.
+    #[allow(clippy::await_holding_lock)]
     async fn proxy_to_peer<B>(
         &self,
         peer_node_id: &str,
@@ -1057,6 +1072,8 @@ impl MeshProxy {
         Ok(response)
     }
 
+    // Transport manager read lock held across response transform; low contention.
+    #[allow(clippy::await_holding_lock)]
     async fn transform_response(
         &self,
         mut response: Response<BoxBody<Bytes, Infallible>>,

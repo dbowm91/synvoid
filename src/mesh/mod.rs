@@ -47,12 +47,7 @@ pub mod transports;
 pub mod wireguard_mesh;
 pub mod yara_rules;
 
-pub fn safe_unix_timestamp() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
-}
+pub use crate::utils::{safe_unix_duration, safe_unix_timestamp};
 
 pub use audit::{
     AuditEvent, AuditEventType, AuditLogger, AuditResult, AuditSeverity, AuditSource, AuditTarget,

@@ -103,16 +103,13 @@ impl OpenRedirectDetector {
         }
     }
 
-    fn is_redirect_param(&self, input: &str) -> bool {
-        let input_lower = input.to_lowercase();
+    fn is_redirect_param(&self, input_lower: &str) -> bool {
         self.redirect_param_patterns
             .iter()
             .any(|param| input_lower.contains(param))
     }
 
-    fn is_external_redirect(&self, input: &str) -> bool {
-        let input_lower = input.to_lowercase();
-
+    fn is_external_redirect(&self, input_lower: &str) -> bool {
         if input_lower.contains("javascript:")
             || input_lower.contains("vbscript:")
             || input_lower.contains("data:")
@@ -149,11 +146,11 @@ impl OpenRedirectDetector {
     ) -> Option<AttackDetectionResult> {
         let input_lower = input.to_lowercase();
 
-        if !self.is_external_redirect(input) {
+        if !self.is_external_redirect(&input_lower) {
             return None;
         }
 
-        let is_redirect_param = self.is_redirect_param(input);
+        let is_redirect_param = self.is_redirect_param(&input_lower);
         let matched_pattern = self.inner.patterns_ref().find(&input_lower);
 
         if is_redirect_param {
@@ -224,9 +221,10 @@ impl PatternDetector for OpenRedirectDetector {
         for header_name in redirect_headers {
             if let Some(header_value) = headers.get(header_name) {
                 if let Ok(value) = header_value.to_str() {
-                    if self.is_external_redirect(value) {
-                        if let Some(mat) = self.inner.patterns_ref().find(value) {
-                            let matched = value[mat.start()..mat.end()].to_string();
+                    let value_lower = value.to_lowercase();
+                    if self.is_external_redirect(&value_lower) {
+                        if let Some(mat) = self.inner.patterns_ref().find(&value_lower) {
+                            let matched = value_lower[mat.start()..mat.end()].to_string();
                             tracing::warn!(
                                 attack_type = "open_redirect",
                                 matched_pattern = %matched,

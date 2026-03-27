@@ -529,7 +529,7 @@ impl StakeManager {
 }
 
 fn current_timestamp() -> u64 {
-    crate::mesh::safe_unix_timestamp()
+    crate::utils::current_timestamp()
 }
 
 #[cfg(test)]

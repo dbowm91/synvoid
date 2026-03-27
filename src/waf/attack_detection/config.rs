@@ -1,8 +1,6 @@
 use serde::Deserialize;
 
-fn default_true() -> bool {
-    true
-}
+use crate::config::defaults::default_true;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct DetectorConfig {

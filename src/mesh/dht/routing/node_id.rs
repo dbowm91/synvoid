@@ -136,7 +136,8 @@ impl NodeId {
     }
 
     pub fn find_pow_nonce(public_key: &[u8]) -> Option<u64> {
-        for nonce in 0..u64::MAX {
+        const MAX_ITERATIONS: u64 = 10_000_000;
+        for nonce in 0..MAX_ITERATIONS {
             let hash = {
                 let mut hasher = Sha256::new();
                 hasher.update(NODE_ID_POW_PREFIX);

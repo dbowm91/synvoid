@@ -405,17 +405,23 @@ pub fn url_decode_all(input: &str) -> String {
 }
 
 pub fn now_ms() -> u64 {
+    safe_unix_duration().as_millis() as u64
+}
+
+/// Returns a `Duration` since UNIX_EPOCH, defaulting to zero on error.
+pub fn safe_unix_duration() -> std::time::Duration {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
-        .as_millis() as u64
+}
+
+/// Returns seconds since UNIX_EPOCH, defaulting to 0 on error (e.g. clock skew).
+pub fn safe_unix_timestamp() -> u64 {
+    safe_unix_duration().as_secs()
 }
 
 pub fn current_timestamp() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
+    safe_unix_timestamp()
 }
 
 use std::net::{IpAddr, SocketAddr};

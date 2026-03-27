@@ -4,7 +4,7 @@ use std::sync::Arc;
 use bytes::Bytes;
 use http::{Request, Response};
 use parking_lot::RwLock;
-use wasmtime::*;
+use wasmtime::{Config, Engine, Module, OptLevel};
 
 use crate::plugin::{WasmFilterResult, WasmPluginError};
 

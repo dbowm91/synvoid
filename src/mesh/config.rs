@@ -813,9 +813,7 @@ fn default_key_exchange_port() -> u16 {
     50052
 }
 
-fn default_true() -> bool {
-    true
-}
+use crate::config::defaults::default_true;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct GenesisKeyConfig {

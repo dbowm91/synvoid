@@ -1037,7 +1037,9 @@ impl ProcessManager {
         };
 
         if let Some(evt) = event {
-            let _ = self.event_tx.try_send(evt);
+            if let Err(e) = self.event_tx.try_send(evt) {
+                tracing::warn!("Failed to send process event: {}", e);
+            }
         }
     }
 
@@ -1048,7 +1050,13 @@ impl ProcessManager {
                 *worker.status_mut() = WorkerStatus::Ready;
             }
         }
-        let _ = self.event_tx.try_send(ProcessEvent::WorkerReady(worker_id));
+        if let Err(e) = self.event_tx.try_send(ProcessEvent::WorkerReady(worker_id)) {
+            tracing::warn!(
+                "Failed to send WorkerReady event for worker {}: {}",
+                worker_id,
+                e
+            );
+        }
     }
 
     const MAX_REQUEST_LOGS: usize = 10000;
@@ -1090,9 +1098,13 @@ impl ProcessManager {
         }
 
         self.metrics.total_failures.fetch_add(1, Ordering::Relaxed);
-        let _ = self
+        if self
             .event_tx
-            .blocking_send(ProcessEvent::WorkerFailed(worker_id, error));
+            .blocking_send(ProcessEvent::WorkerFailed(worker_id, error))
+            .is_err()
+        {
+            tracing::warn!("Failed to send WorkerFailed event for worker {}", worker_id);
+        }
     }
 
     pub fn mark_worker_stopped(&self, worker_id: WorkerId) {
@@ -1604,6 +1616,56 @@ impl ProcessManager {
 
     pub fn get_master_pid(&self) -> Option<u32> {
         Some(std::process::id())
+    }
+
+    pub fn restart_worker_by_id(&self, worker_id_str: &str) -> Result<(), String> {
+        let id = self.parse_worker_id(worker_id_str)?;
+        let worker_id = WorkerId(id);
+
+        let pid = {
+            let workers = self.workers.read();
+            workers.get(&id).and_then(|w| w.pid())
+        };
+
+        let pid = pid.ok_or_else(|| format!("Worker {} has no PID", worker_id_str))?;
+
+        tracing::info!("Sending SIGTERM to worker {} (PID {})", worker_id, pid);
+
+        #[cfg(unix)]
+        {
+            let _ = nix::sys::signal::kill(
+                nix::unistd::Pid::from_raw(pid as i32),
+                nix::sys::signal::Signal::SIGTERM,
+            );
+        }
+
+        #[cfg(not(unix))]
+        {
+            let mut workers = self.workers.write();
+            if let Some(worker) = workers.get_mut(&id) {
+                if let Some(mut child) = worker.child_mut().take() {
+                    let _ = child.kill();
+                }
+                *worker.status_mut() = WorkerStatus::Stopped;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn parse_worker_id(&self, id_str: &str) -> Result<usize, String> {
+        if let Ok(id) = id_str.parse::<usize>() {
+            return Ok(id);
+        }
+        if let Some(inner) = id_str
+            .strip_prefix("Worker(")
+            .and_then(|s| s.strip_suffix(')'))
+        {
+            return inner
+                .parse::<usize>()
+                .map_err(|e| format!("Invalid worker ID: {}", e));
+        }
+        Err(format!("Cannot parse worker ID: {}", id_str))
     }
 
     pub fn subscribe_shutdown(&self) -> broadcast::Receiver<()> {

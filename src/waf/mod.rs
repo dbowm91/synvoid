@@ -191,23 +191,16 @@ impl TestModeConfig {
     }
 
     pub fn disabled_count(&self) -> usize {
-        let mut count = 0;
-        if self.ratelimit_off {
-            count += 1;
-        }
-        if self.attack_off {
-            count += 1;
-        }
-        if self.bot_off {
-            count += 1;
-        }
-        if self.challenge_off {
-            count += 1;
-        }
-        if self.flood_off {
-            count += 1;
-        }
-        count
+        [
+            self.ratelimit_off,
+            self.attack_off,
+            self.bot_off,
+            self.challenge_off,
+            self.flood_off,
+        ]
+        .iter()
+        .filter(|&&x| x)
+        .count()
     }
 }
 
@@ -481,6 +474,132 @@ impl WafCore {
 
     pub fn set_threat_intel(&mut self, threat_intel: Option<Arc<ThreatIntelligenceManager>>) {
         self.threat_intel = threat_intel;
+    }
+
+    fn block_ip_with_threat_intel(
+        &self,
+        client_ip: IpAddr,
+        reason: &str,
+        duration: u64,
+        scope: &str,
+    ) {
+        if let Some(ref store) = self.block_store {
+            store.block_ip(client_ip, reason, duration, scope);
+        }
+        if let Some(ref threat_intel) = self.threat_intel {
+            threat_intel.announce_local_block(
+                client_ip,
+                reason.to_string(),
+                duration,
+                scope.to_string(),
+            );
+        }
+        if let Some(ref threat_intel) = get_threat_intel() {
+            threat_intel.announce_local_block(
+                client_ip,
+                reason.to_string(),
+                duration,
+                scope.to_string(),
+            );
+        }
+    }
+
+    fn maybe_auto_ban_probe(&self, client_ip: IpAddr, tracker: &ProbeTracker) {
+        let config = tracker.get_config();
+        if !config.auto_ban_elevated_threat {
+            return;
+        }
+        let threat_level = self
+            .threat_level
+            .as_ref()
+            .map(|tl| tl.get_level().as_u8())
+            .unwrap_or(1);
+        if threat_level >= config.elevated_threat_threshold {
+            tracing::warn!(
+                ip = %client_ip,
+                threat_level = threat_level,
+                ban_duration_secs = config.elevated_ban_duration,
+                "Auto-banning probe source due to elevated threat level"
+            );
+            self.block_ip_with_threat_intel(
+                client_ip,
+                "probe_auto_ban",
+                config.elevated_ban_duration,
+                "global",
+            );
+        }
+    }
+
+    fn handle_probe_event(
+        &self,
+        client_ip: IpAddr,
+        path: &str,
+        method: &str,
+        user_agent: Option<&str>,
+    ) -> Option<WafDecision> {
+        if let Some(ref tracker) = self.probe_tracker {
+            let result = tracker.record_event(
+                client_ip,
+                path.to_string(),
+                method.to_string(),
+                user_agent.map(String::from),
+            );
+            if let ProbeResult::ProbingDetected {
+                unique_endpoints,
+                event_count,
+            } = result
+            {
+                tracing::warn!(
+                    ip = %client_ip,
+                    endpoints = ?unique_endpoints,
+                    total_events = event_count,
+                    "Probing pattern detected - multiple honeypot endpoints accessed"
+                );
+                self.maybe_auto_ban_probe(client_ip, tracker);
+            }
+        }
+        self.block_ip_with_threat_intel(
+            client_ip,
+            "honeypot",
+            self.honeypot_ban_duration_secs,
+            "global",
+        );
+        Some(WafDecision::Stall)
+    }
+
+    fn maybe_escalate_and_block(
+        &self,
+        client_ip: IpAddr,
+        violation_reason: &str,
+        threat_level: u8,
+        block_status: u16,
+        block_message: &str,
+    ) -> Option<WafDecision> {
+        if let Some(ref tracker) = self.violation_tracker {
+            let violation_count =
+                tracker.record_violation(client_ip, violation_reason, threat_level);
+            let block_threshold = self
+                .threat_level
+                .as_ref()
+                .map(|tl| tl.get_legacy_config().escalation.violations_before_block)
+                .unwrap_or(3);
+            if violation_count >= block_threshold {
+                let ban_duration = self
+                    .threat_level
+                    .as_ref()
+                    .map(|tl| tl.get_base_ban_duration(violation_count))
+                    .unwrap_or(3600);
+                self.block_ip_with_threat_intel(
+                    client_ip,
+                    violation_reason,
+                    ban_duration,
+                    "global",
+                );
+                tracker.clear_violations(client_ip);
+                return Some(WafDecision::Block(block_status, block_message.to_string()));
+            }
+        }
+        None
     }
 
     pub fn is_over_bandwidth_limit(&self) -> bool {
@@ -793,50 +912,14 @@ impl WafCore {
                             .map(|tl| tl.get_level().as_u8())
                             .unwrap_or(1);
 
-                        if let Some(ref tracker) = self.violation_tracker {
-                            let violation_count =
-                                tracker.record_violation(client_ip, "rate_limit", threat_level);
-
-                            if violation_count
-                                >= self
-                                    .threat_level
-                                    .as_ref()
-                                    .map(|tl| {
-                                        tl.get_legacy_config().escalation.violations_before_block
-                                    })
-                                    .unwrap_or(3)
-                            {
-                                let ban_duration = self
-                                    .threat_level
-                                    .as_ref()
-                                    .map(|tl| tl.get_base_ban_duration(violation_count))
-                                    .unwrap_or(3600);
-
-                                if let Some(ref store) = self.block_store {
-                                    store.block_ip(
-                                        client_ip,
-                                        "rate_limit_violation",
-                                        ban_duration,
-                                        "global",
-                                    );
-                                }
-                                if let Some(ref threat_intel) = get_threat_intel() {
-                                    threat_intel.announce_local_block(
-                                        client_ip,
-                                        "rate_limit_violation".to_string(),
-                                        ban_duration,
-                                        "global".to_string(),
-                                    );
-                                }
-                                if let Some(ref tracker) = self.violation_tracker {
-                                    tracker.clear_violations(client_ip);
-                                }
-
-                                return Some(WafDecision::Block(
-                                    429,
-                                    "Too many rate limit violations - IP blocked".to_string(),
-                                ));
-                            }
+                        if let Some(decision) = self.maybe_escalate_and_block(
+                            client_ip,
+                            "rate_limit",
+                            threat_level,
+                            429,
+                            "Too many rate limit violations - IP blocked",
+                        ) {
+                            return Some(decision);
                         }
 
                         let body = format!("Rate limit exceeded ({})", limit_type);
@@ -855,17 +938,7 @@ impl WafCore {
         if let Some(ref ip_feed) = self.ip_feed {
             if ip_feed.is_blocked(&client_ip) {
                 tracing::info!("Blocking IP from feed: {}", client_ip);
-                if let Some(ref store) = self.block_store {
-                    store.block_ip(client_ip, "ip_feed", 0, "global");
-                }
-                if let Some(ref threat_intel) = self.threat_intel {
-                    threat_intel.announce_local_block(
-                        client_ip,
-                        "ip_feed".to_string(),
-                        0,
-                        "global".to_string(),
-                    );
-                }
+                self.block_ip_with_threat_intel(client_ip, "ip_feed", 0, "global");
                 return Some(WafDecision::Drop);
             }
         }
@@ -919,148 +992,12 @@ impl WafCore {
                 path,
                 matched
             );
-
-            if let Some(ref tracker) = self.probe_tracker {
-                let result = tracker.record_event(
-                    client_ip,
-                    matched.clone(),
-                    method.to_string(),
-                    user_agent.map(String::from),
-                );
-
-                if let ProbeResult::ProbingDetected {
-                    unique_endpoints,
-                    event_count,
-                } = result
-                {
-                    tracing::warn!(
-                        ip = %client_ip,
-                        endpoints = ?unique_endpoints,
-                        total_events = event_count,
-                        "Probing pattern detected - multiple honeypot endpoints accessed"
-                    );
-
-                    let config = tracker.get_config();
-                    if config.auto_ban_elevated_threat {
-                        let threat_level = self
-                            .threat_level
-                            .as_ref()
-                            .map(|tl| tl.get_level().as_u8())
-                            .unwrap_or(1);
-                        if threat_level >= config.elevated_threat_threshold {
-                            let ban_duration = config.elevated_ban_duration;
-                            tracing::warn!(
-                                ip = %client_ip,
-                                threat_level = threat_level,
-                                ban_duration_secs = ban_duration,
-                                "Auto-banning probe source due to elevated threat level"
-                            );
-                            if let Some(ref store) = self.block_store {
-                                store.block_ip(client_ip, "probe_auto_ban", ban_duration, "global");
-                            }
-                            if let Some(ref threat_intel) = get_threat_intel() {
-                                threat_intel.announce_local_block(
-                                    client_ip,
-                                    "probe_auto_ban".to_string(),
-                                    ban_duration,
-                                    "global".to_string(),
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-
-            if let Some(ref store) = self.block_store {
-                store.block_ip(
-                    client_ip,
-                    "honeypot",
-                    self.honeypot_ban_duration_secs,
-                    "global",
-                );
-            }
-            if let Some(ref threat_intel) = self.threat_intel {
-                threat_intel.announce_local_block(
-                    client_ip,
-                    "honeypot".to_string(),
-                    self.honeypot_ban_duration_secs,
-                    "global".to_string(),
-                );
-            }
-            return Some(WafDecision::Stall);
+            return self.handle_probe_event(client_ip, &matched, method, user_agent);
         }
 
         if self.challenge_manager.is_honeypot_hit(&client_ip, path) {
             tracing::info!("IP-bound honeypot accessed: {} by {}", path, client_ip);
-
-            if let Some(ref tracker) = self.probe_tracker {
-                let result = tracker.record_event(
-                    client_ip,
-                    path.to_string(),
-                    method.to_string(),
-                    user_agent.map(String::from),
-                );
-
-                if let ProbeResult::ProbingDetected {
-                    unique_endpoints,
-                    event_count,
-                } = result
-                {
-                    tracing::warn!(
-                        ip = %client_ip,
-                        endpoints = ?unique_endpoints,
-                        total_events = event_count,
-                        "Probing pattern detected - multiple honeypot endpoints accessed"
-                    );
-
-                    let config = tracker.get_config();
-                    if config.auto_ban_elevated_threat {
-                        let threat_level = self
-                            .threat_level
-                            .as_ref()
-                            .map(|tl| tl.get_level().as_u8())
-                            .unwrap_or(1);
-                        if threat_level >= config.elevated_threat_threshold {
-                            let ban_duration = config.elevated_ban_duration;
-                            tracing::warn!(
-                                ip = %client_ip,
-                                threat_level = threat_level,
-                                ban_duration_secs = ban_duration,
-                                "Auto-banning probe source due to elevated threat level"
-                            );
-                            if let Some(ref store) = self.block_store {
-                                store.block_ip(client_ip, "probe_auto_ban", ban_duration, "global");
-                            }
-                            if let Some(ref threat_intel) = get_threat_intel() {
-                                threat_intel.announce_local_block(
-                                    client_ip,
-                                    "probe_auto_ban".to_string(),
-                                    ban_duration,
-                                    "global".to_string(),
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-
-            if let Some(ref store) = self.block_store {
-                store.block_ip(
-                    client_ip,
-                    "honeypot",
-                    self.honeypot_ban_duration_secs,
-                    "global",
-                );
-            }
-            if let Some(ref threat_intel) = self.threat_intel {
-                threat_intel.announce_local_block(
-                    client_ip,
-                    "honeypot".to_string(),
-                    self.honeypot_ban_duration_secs,
-                    "global".to_string(),
-                );
-            }
-            return Some(WafDecision::Stall);
+            return self.handle_probe_event(client_ip, path, method, user_agent);
         }
 
         None
@@ -1146,50 +1083,17 @@ impl WafCore {
                     .unwrap_or(1);
 
                 if threat_level >= 3 {
-                    if let Some(ref tracker) = self.violation_tracker {
-                        let violation_count = tracker.record_violation(
-                            client_ip,
-                            &result.attack_type.to_string(),
-                            threat_level,
-                        );
-
-                        let block_threshold = self
-                            .threat_level
-                            .as_ref()
-                            .map(|tl| tl.get_legacy_config().escalation.violations_before_block)
-                            .unwrap_or(3);
-
-                        if violation_count >= block_threshold {
-                            let ban_duration = self
-                                .threat_level
-                                .as_ref()
-                                .map(|tl| tl.get_base_ban_duration(violation_count))
-                                .unwrap_or(3600);
-
-                            if let Some(ref store) = self.block_store {
-                                store.block_ip(client_ip, "attack", ban_duration, "global");
-                            }
-                            if let Some(ref threat_intel) = get_threat_intel() {
-                                threat_intel.announce_local_block(
-                                    client_ip,
-                                    "attack".to_string(),
-                                    ban_duration,
-                                    "global".to_string(),
-                                );
-                            }
-                            if let Some(ref tracker) = self.violation_tracker {
-                                tracker.clear_violations(client_ip);
-                            }
-
-                            if let Some(ref tl) = self.threat_level {
-                                tl.record_blocked();
-                            }
-
-                            return Some(WafDecision::Block(
-                                403,
-                                "Attack detected - IP blocked".to_string(),
-                            ));
+                    if let Some(decision) = self.maybe_escalate_and_block(
+                        client_ip,
+                        "attack",
+                        threat_level,
+                        403,
+                        "Attack detected - IP blocked",
+                    ) {
+                        if let Some(ref tl) = self.threat_level {
+                            tl.record_blocked();
                         }
+                        return Some(decision);
                     }
                 }
 

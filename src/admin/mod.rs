@@ -15,7 +15,7 @@ mod rate_limit;
 mod state;
 mod ws;
 
-pub use auth::{hash_admin_token, verify_admin_token};
+pub use auth::{hash_admin_token, hash_admin_token_with_cost, verify_admin_token};
 pub use metrics::start_metrics_publisher;
 pub use state::{
     get_cpu_memory_usage, get_current_connections, set_current_connections, AdminRateLimiter,
@@ -195,6 +195,61 @@ fn build_router_from_state(
                 .put(handlers::config::update_overseer_config),
         )
         .route(
+            "/config/tls",
+            get(handlers::config::get_tls_config).put(handlers::config::update_tls_config),
+        )
+        .route(
+            "/config/http",
+            get(handlers::config::get_http_config).put(handlers::config::update_http_config),
+        )
+        .route(
+            "/config/security",
+            get(handlers::config::get_security_config)
+                .put(handlers::config::update_security_config),
+        )
+        .route(
+            "/config/tunnel",
+            get(handlers::config::get_tunnel_config).put(handlers::config::update_tunnel_config),
+        )
+        .route(
+            "/config/plugins",
+            get(handlers::config::get_plugins_config).put(handlers::config::update_plugins_config),
+        )
+        .route(
+            "/config/logging",
+            get(handlers::config::get_logging_config).put(handlers::config::update_logging_config),
+        )
+        .route(
+            "/config/traffic-shaping",
+            get(handlers::config::get_traffic_shaping_config)
+                .put(handlers::config::update_traffic_shaping_config),
+        )
+        .route(
+            "/config/rate-limits",
+            get(handlers::config::get_rate_limits_config)
+                .put(handlers::config::update_rate_limits_config),
+        )
+        .route(
+            "/config/bot-detection",
+            get(handlers::config::get_bot_detection_config)
+                .put(handlers::config::update_bot_detection_config),
+        )
+        .route(
+            "/config/mesh",
+            get(handlers::config::get_mesh_config).put(handlers::config::update_mesh_config),
+        )
+        .route(
+            "/config/threat-level",
+            get(handlers::config::get_threat_level_config)
+                .put(handlers::config::update_threat_level_config),
+        )
+        .route(
+            "/config/ip-feeds",
+            get(handlers::config::get_ip_feeds_config)
+                .put(handlers::config::update_ip_feeds_config),
+        )
+        .route("/config/validate", post(handlers::config::validate_config))
+        .route(
             "/config/process-manager",
             get(handlers::config::get_process_manager_config)
                 .put(handlers::config::update_process_manager_config),
@@ -212,7 +267,15 @@ fn build_router_from_state(
             "/tcp-udp/listeners/{listener_id}",
             delete(handlers::tcp_udp::delete_listener),
         )
-        .route("/tcp-udp/protocols", get(handlers::tcp_udp::list_protocols))
+        .route("/tcp-udp/protocols", get(handlers::tcp_udp::list_protocols));
+
+    #[cfg(feature = "dns")]
+    let api_routes = api_routes.route(
+        "/config/dns",
+        get(handlers::config::get_dns_config).put(handlers::config::update_dns_config),
+    );
+
+    let api_routes = api_routes
         .route("/probes", get(handlers::probes::list_probes))
         .route("/probes/stats", get(handlers::probes::get_probe_stats))
         .route("/probes/block", post(handlers::probes::block_probes))
@@ -410,7 +473,8 @@ pub async fn start_admin_server(
     }
 
     let port = cfg.port;
-    let token = hash_admin_token(&cfg.resolve_token());
+    let token = hash_admin_token_with_cost(&cfg.resolve_token(), cfg.bcrypt_cost)
+        .expect("bcrypt hashing must not fail in production");
     let _cors_config = cfg.cors.clone();
     let rate_limit_config = cfg.rate_limit.clone();
     tracing::info!("Admin API token resolved from config/env var");
@@ -497,6 +561,3 @@ pub async fn start_admin_server(
         }
     }
 }
-
-pub use crate::admin::legacy::*;
-mod legacy;

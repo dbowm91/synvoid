@@ -78,9 +78,7 @@ pub struct IntegrityConfig {
     pub allowed_upstream_ips: Vec<String>,
 }
 
-fn default_true() -> bool {
-    true
-}
+use crate::config::defaults::default_true;
 
 fn default_session_ttl_secs() -> u64 {
     300

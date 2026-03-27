@@ -2,7 +2,6 @@ use crate::theme::{CaptchaPageTemplate, ThemeConfig};
 use rand::Rng;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 
 const CAPTCHA_CHARS: &str = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -191,10 +190,7 @@ pub enum CaptchaResult {
 }
 
 fn current_timestamp() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+    crate::utils::current_timestamp()
 }
 
 pub fn generate_captcha_page(challenge_id: &str, theme: ThemeConfig) -> String {

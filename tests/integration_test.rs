@@ -646,7 +646,8 @@ mod tls_config_tests {
     #[test]
     fn test_tls_config_with_values() {
         use maluwaf::tls::config::{
-            InternalAcmeConfig, InternalClientAuthConfig, InternalTlsConfig,
+            InternalAcmeChallengeType, InternalAcmeConfig, InternalClientAuthConfig,
+            InternalTlsConfig,
         };
 
         let config = InternalTlsConfig {
@@ -666,6 +667,7 @@ mod tls_config_tests {
                 cache_dir: Some(PathBuf::from("/var/lib/acme")),
                 staging: true,
                 domains: vec!["example.com".to_string(), "www.example.com".to_string()],
+                challenge_type: InternalAcmeChallengeType::Http01,
             },
             client_auth: InternalClientAuthConfig {
                 enabled: true,

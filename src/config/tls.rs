@@ -123,6 +123,16 @@ pub struct AcmeConfig {
     pub staging: bool,
     #[serde(default)]
     pub domains: Vec<String>,
+    #[serde(default)]
+    pub challenge_type: AcmeChallengeType,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum AcmeChallengeType {
+    #[default]
+    Http01,
+    Dns01,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]

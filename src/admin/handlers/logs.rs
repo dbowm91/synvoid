@@ -163,18 +163,55 @@ pub struct UpdateErrorPageRequest {
     )
 )]
 pub async fn update_error_page(
-    State(_state): State<Arc<AdminState>>,
+    State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Path(code): Path<u16>,
     Json(payload): Json<UpdateErrorPageRequest>,
 ) -> Result<Json<ErrorPageResponse>, StatusCode> {
-    let _error_page = ErrorPage::from_code(code).ok_or(StatusCode::NOT_FOUND)?;
+    let error_page = ErrorPage::from_code(code).ok_or(StatusCode::NOT_FOUND)?;
 
-    tracing::warn!(
-        "update_error_page called for {} but is not yet implemented (title={:?})",
+    let config = state.process.config.read().await;
+    let error_pages_dir = &config.main.defaults.error_pages.directory;
+
+    let page_path = std::path::Path::new(error_pages_dir.as_str()).join(format!("{}.html", code));
+
+    let html_content = format!(
+        r#"<!DOCTYPE html>
+<html>
+<head><title>{} - {}</title></head>
+<body>
+<h1>{}</h1>
+<p>{}</p>
+{}</body>
+</html>"#,
         code,
-        payload.title
+        error_page.name,
+        error_page.name,
+        error_page.description,
+        payload
+            .content
+            .as_deref()
+            .map(|c| format!("\n<div>{}</div>\n", c))
+            .unwrap_or_default()
     );
 
-    Err(StatusCode::NOT_IMPLEMENTED)
+    if let Some(parent) = page_path.parent() {
+        let _ = tokio::fs::create_dir_all(parent).await;
+    }
+
+    tokio::fs::write(&page_path, &html_content)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to write error page {}: {}", code, e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    tracing::info!("Updated error page {} at {:?}", code, page_path);
+
+    Ok(Json(ErrorPageResponse {
+        code: error_page.code,
+        name: payload.title.unwrap_or(error_page.name),
+        description: error_page.description,
+        html_preview: Some(html_content),
+    }))
 }

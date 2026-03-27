@@ -8,9 +8,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 
+use super::validation::{parse_size_string, ConfigValidationError};
 use crate::theme::ThemeColors;
 
-fn default_true() -> Option<bool> {
+fn default_some_true() -> Option<bool> {
     Some(true)
 }
 
@@ -96,6 +97,9 @@ pub struct SiteProxyConfig {
 
     #[serde(default)]
     pub cache: Option<ProxyCacheConfig>,
+
+    #[serde(default)]
+    pub tls_passthrough: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
@@ -725,11 +729,11 @@ pub struct SiteAppServerConfig {
     pub health_check_interval_secs: Option<u64>,
     #[serde(default)]
     pub health_check_timeout_secs: Option<u64>,
-    #[serde(default = "default_true")]
+    #[serde(default = "default_some_true")]
     pub auto_install_granian: Option<bool>,
-    #[serde(default = "default_true")]
+    #[serde(default = "default_some_true")]
     pub auto_detect_venv: Option<bool>,
-    #[serde(default = "default_true")]
+    #[serde(default = "default_some_true")]
     pub auto_detect_app: Option<bool>,
 }
 
@@ -1041,20 +1045,6 @@ pub struct SiteWorkerPoolConfig {
     pub workers: Option<usize>,
 }
 
-#[derive(Debug, Clone)]
-pub struct SiteConfigValidationError {
-    pub field: String,
-    pub message: String,
-}
-
-impl std::fmt::Display for SiteConfigValidationError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}: {}", self.field, self.message)
-    }
-}
-
-impl std::error::Error for SiteConfigValidationError {}
-
 impl SiteConfig {
     pub fn from_file<P: AsRef<std::path::Path>>(
         path: P,
@@ -1070,7 +1060,7 @@ impl SiteConfig {
         Ok(config)
     }
 
-    pub fn validate(&self) -> Result<(), SiteConfigValidationError> {
+    pub fn validate(&self) -> Result<(), ConfigValidationError> {
         self.site.validate()?;
         self.ratelimit.validate()?;
         self.attack_detection.validate()?;
@@ -1487,7 +1477,7 @@ pub struct SiteSecurityHeadersConfig {
     pub cookie: SiteCookieConfig,
 
     // Stealth settings
-    #[serde(default = "default_true")]
+    #[serde(default = "default_some_true")]
     pub date_header: Option<bool>,
     #[serde(default = "default_date_jitter")]
     pub date_jitter_seconds: Option<u32>,
@@ -1504,7 +1494,7 @@ fn default_x_content_type_options() -> Option<String> {
 }
 
 fn default_x_xss_protection() -> Option<String> {
-    Some("1; mode=block".to_string())
+    Some("0".to_string())
 }
 
 fn default_cross_domain_policy() -> Option<String> {
@@ -1609,22 +1599,22 @@ pub struct SiteBasicAuthConfig {
 }
 
 impl SiteInfo {
-    pub fn validate(&self) -> Result<(), SiteConfigValidationError> {
+    pub fn validate(&self) -> Result<(), ConfigValidationError> {
         if self.domains.is_empty() {
-            return Err(SiteConfigValidationError {
+            return Err(ConfigValidationError {
                 field: "site.domains".to_string(),
                 message: "At least one domain is required".to_string(),
             });
         }
         for domain in &self.domains {
             if domain.is_empty() {
-                return Err(SiteConfigValidationError {
+                return Err(ConfigValidationError {
                     field: "site.domains".to_string(),
                     message: "Domain cannot be empty".to_string(),
                 });
             }
             if domain.len() > 253 {
-                return Err(SiteConfigValidationError {
+                return Err(ConfigValidationError {
                     field: "site.domains".to_string(),
                     message: format!("Domain too long: {}", domain),
                 });
@@ -1635,9 +1625,9 @@ impl SiteInfo {
 }
 
 impl UpstreamConfig {
-    pub fn validate(&self) -> Result<(), SiteConfigValidationError> {
+    pub fn validate(&self) -> Result<(), ConfigValidationError> {
         if self.default.is_empty() {
-            return Err(SiteConfigValidationError {
+            return Err(ConfigValidationError {
                 field: "site.upstream.default".to_string(),
                 message: "Default upstream is required".to_string(),
             });
@@ -1647,7 +1637,7 @@ impl UpstreamConfig {
             && !self.default.starts_with("tunnel:")
             && !self.default.starts_with("unix:")
         {
-            return Err(SiteConfigValidationError {
+            return Err(ConfigValidationError {
                 field: "site.upstream.default".to_string(),
                 message: "Upstream must start with http://, https://, tunnel:, or unix:"
                     .to_string(),
@@ -1655,13 +1645,13 @@ impl UpstreamConfig {
         }
         for (route, upstream) in &self.routes {
             if route.is_empty() {
-                return Err(SiteConfigValidationError {
+                return Err(ConfigValidationError {
                     field: "site.upstream.routes".to_string(),
                     message: "Route pattern cannot be empty".to_string(),
                 });
             }
             if upstream.is_empty() {
-                return Err(SiteConfigValidationError {
+                return Err(ConfigValidationError {
                     field: "site.upstream.routes".to_string(),
                     message: format!("Upstream for route {} cannot be empty", route),
                 });
@@ -1672,12 +1662,12 @@ impl UpstreamConfig {
 }
 
 impl SiteRateLimitConfig {
-    pub fn validate(&self) -> Result<(), SiteConfigValidationError> {
+    pub fn validate(&self) -> Result<(), ConfigValidationError> {
         if let Some(ref mode) = self.mode {
             match mode.as_str() {
                 "shared" | "isolated" => {}
                 _ => {
-                    return Err(SiteConfigValidationError {
+                    return Err(ConfigValidationError {
                         field: "ratelimit.mode".to_string(),
                         message: "Mode must be 'shared' or 'isolated'".to_string(),
                     });
@@ -1686,7 +1676,7 @@ impl SiteRateLimitConfig {
         }
         for endpoint in &self.endpoints {
             if endpoint.path_pattern.is_empty() {
-                return Err(SiteConfigValidationError {
+                return Err(ConfigValidationError {
                     field: "ratelimit.endpoints".to_string(),
                     message: "Path pattern cannot be empty".to_string(),
                 });
@@ -1697,12 +1687,12 @@ impl SiteRateLimitConfig {
 }
 
 impl SiteAttackDetectionConfig {
-    pub fn validate(&self) -> Result<(), SiteConfigValidationError> {
+    pub fn validate(&self) -> Result<(), ConfigValidationError> {
         if let Some(ref action) = self.action {
             match action.as_str() {
                 "stall" | "block" | "log" => {}
                 _ => {
-                    return Err(SiteConfigValidationError {
+                    return Err(ConfigValidationError {
                         field: "attack_detection.action".to_string(),
                         message: "Action must be 'stall', 'block', or 'log'".to_string(),
                     });
@@ -1711,7 +1701,7 @@ impl SiteAttackDetectionConfig {
         }
         if let Some(level) = self.paranoia_level {
             if level < 1 || level > 3 {
-                return Err(SiteConfigValidationError {
+                return Err(ConfigValidationError {
                     field: "attack_detection.paranoia_level".to_string(),
                     message: "Paranoia level must be between 1 and 3".to_string(),
                 });
@@ -1722,10 +1712,10 @@ impl SiteAttackDetectionConfig {
 }
 
 impl SiteUploadConfig {
-    pub fn validate(&self) -> Result<(), SiteConfigValidationError> {
+    pub fn validate(&self) -> Result<(), ConfigValidationError> {
         if let Some(ref max_size) = self.max_size {
             if let Err(e) = parse_size_string(max_size) {
-                return Err(SiteConfigValidationError {
+                return Err(ConfigValidationError {
                     field: "upload.max_size".to_string(),
                     message: format!("Invalid size format: {}", e),
                 });
@@ -1733,7 +1723,7 @@ impl SiteUploadConfig {
         }
         for path_config in &self.paths {
             if path_config.pattern.is_empty() {
-                return Err(SiteConfigValidationError {
+                return Err(ConfigValidationError {
                     field: "upload.paths".to_string(),
                     message: "Path pattern cannot be empty".to_string(),
                 });
@@ -1744,12 +1734,12 @@ impl SiteUploadConfig {
 }
 
 impl SiteSecurityHeadersConfig {
-    pub fn validate(&self) -> Result<(), SiteConfigValidationError> {
+    pub fn validate(&self) -> Result<(), ConfigValidationError> {
         if let Some(ref samesite) = self.cookie.samesite {
             match samesite.to_lowercase().as_str() {
                 "strict" | "lax" | "none" => {}
                 _ => {
-                    return Err(SiteConfigValidationError {
+                    return Err(ConfigValidationError {
                         field: "security_headers.cookie.samesite".to_string(),
                         message: "SameSite must be 'strict', 'lax', or 'none'".to_string(),
                     });
@@ -1761,10 +1751,10 @@ impl SiteSecurityHeadersConfig {
 }
 
 impl SiteAppServerConfig {
-    pub fn validate(&self) -> Result<(), SiteConfigValidationError> {
+    pub fn validate(&self) -> Result<(), ConfigValidationError> {
         if self.enabled.unwrap_or(false) {
             if self.app_path.is_none() {
-                return Err(SiteConfigValidationError {
+                return Err(ConfigValidationError {
                     field: "app_server.app_path".to_string(),
                     message: "App path is required when app server is enabled".to_string(),
                 });
@@ -1773,7 +1763,7 @@ impl SiteAppServerConfig {
                 match interface.to_lowercase().as_str() {
                     "asgi" | "rsgi" | "wsgi" => {}
                     _ => {
-                        return Err(SiteConfigValidationError {
+                        return Err(ConfigValidationError {
                             field: "app_server.interface".to_string(),
                             message: "Interface must be 'asgi', 'rsgi', or 'wsgi'".to_string(),
                         });
@@ -1786,10 +1776,10 @@ impl SiteAppServerConfig {
 }
 
 impl SiteGrpcConfig {
-    pub fn validate(&self) -> Result<(), SiteConfigValidationError> {
+    pub fn validate(&self) -> Result<(), ConfigValidationError> {
         if self.enabled.unwrap_or(false) {
             if self.upstream.is_none() {
-                return Err(SiteConfigValidationError {
+                return Err(ConfigValidationError {
                     field: "grpc.upstream".to_string(),
                     message: "Upstream is required when gRPC is enabled".to_string(),
                 });
@@ -1800,10 +1790,10 @@ impl SiteGrpcConfig {
 }
 
 impl SiteWebSocketConfig {
-    pub fn validate(&self) -> Result<(), SiteConfigValidationError> {
+    pub fn validate(&self) -> Result<(), ConfigValidationError> {
         if self.enabled.unwrap_or(false) {
             if self.upstream.is_none() {
-                return Err(SiteConfigValidationError {
+                return Err(ConfigValidationError {
                     field: "websocket.upstream".to_string(),
                     message: "Upstream is required when WebSocket is enabled".to_string(),
                 });
@@ -1811,21 +1801,4 @@ impl SiteWebSocketConfig {
         }
         Ok(())
     }
-}
-
-fn parse_size_string(s: &str) -> Result<usize, String> {
-    let s = s.trim().to_uppercase();
-    let (multiplier, num_str) = if s.ends_with("GB") {
-        (1024 * 1024 * 1024, &s[..s.len() - 2])
-    } else if s.ends_with("MB") {
-        (1024 * 1024, &s[..s.len() - 2])
-    } else if s.ends_with("KB") {
-        (1024, &s[..s.len() - 2])
-    } else if s.ends_with("B") {
-        (1, &s[..s.len() - 1])
-    } else {
-        (1, s.as_str())
-    };
-    let num: usize = num_str.trim().parse().map_err(|_| "Invalid number")?;
-    Ok(num * multiplier)
 }

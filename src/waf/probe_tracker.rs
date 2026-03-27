@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::net::IpAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time;
 
@@ -449,10 +449,7 @@ pub struct ProbeEndpointStats {
 }
 
 fn current_timestamp() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+    crate::utils::current_timestamp()
 }
 
 const MAX_WORD_TRACKER_IPS: usize = 500;

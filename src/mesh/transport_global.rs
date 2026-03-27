@@ -1,4 +1,4 @@
-use crate::mesh::transport::*;
+use crate::mesh::transport::MeshTransport;
 use base64::Engine;
 
 use crate::mesh::protocol::MeshMessage;

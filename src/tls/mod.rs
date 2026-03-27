@@ -6,9 +6,12 @@
 //! [`HttpsServer`] for convenience.
 
 pub mod acme;
+#[cfg(feature = "dns")]
+pub mod acme_dns;
 pub mod cert_resolver;
 pub mod config;
 pub mod server;
+pub mod sni_peek;
 
 pub use cert_resolver::CertResolver;
 pub use config::InternalTlsConfig as ServerTlsConfig;

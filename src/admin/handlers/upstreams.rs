@@ -134,12 +134,52 @@ pub struct HealthCheckResponse {
     )
 )]
 pub async fn trigger_health_check(
-    State(_state): State<Arc<AdminState>>,
+    State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
-    Path(_site_id): Path<String>,
-    Json(_req): Json<TriggerHealthCheckRequest>,
+    Path(site_id): Path<String>,
+    Json(req): Json<TriggerHealthCheckRequest>,
 ) -> Result<Json<HealthCheckResponse>, StatusCode> {
-    tracing::warn!("trigger_health_check endpoint called but is not yet implemented");
+    let config = state.process.config.read().await;
+    let site = config.sites.get(&site_id).ok_or(StatusCode::NOT_FOUND)?;
+    let upstream_url = &site.site.upstream.default;
 
-    Err(StatusCode::NOT_IMPLEMENTED)
+    let force = req._force.unwrap_or(false);
+    tracing::info!(
+        "Health check triggered for site {} (upstream: {}, force: {})",
+        site_id,
+        upstream_url,
+        force
+    );
+
+    let is_healthy = check_upstream_tcp(upstream_url).await;
+
+    Ok(Json(HealthCheckResponse {
+        status: if is_healthy { "healthy" } else { "unhealthy" }.to_string(),
+        message: if is_healthy {
+            format!("Upstream {} is healthy", upstream_url)
+        } else {
+            format!("Upstream {} is unreachable", upstream_url)
+        },
+    }))
+}
+
+async fn check_upstream_tcp(url: &str) -> bool {
+    let host_port = url
+        .strip_prefix("http://")
+        .or_else(|| url.strip_prefix("https://"))
+        .unwrap_or(url);
+
+    let (host, port) = if let Some((h, p)) = host_port.rsplit_once(':') {
+        let p = p.trim_end_matches('/').parse::<u16>().unwrap_or(80);
+        (h.trim_end_matches('/'), p)
+    } else {
+        (host_port.trim_end_matches('/'), 80)
+    };
+
+    tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        tokio::net::TcpStream::connect((host, port)),
+    )
+    .await
+    .is_ok()
 }

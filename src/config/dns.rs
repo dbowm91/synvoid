@@ -881,9 +881,7 @@ pub struct DnsMeshConfig {
     pub qname_minimization: bool,
 }
 
-fn default_true() -> bool {
-    true
-}
+use super::defaults::default_true;
 
 fn default_registration_interval() -> u64 {
     60

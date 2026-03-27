@@ -30,6 +30,8 @@ pub struct AdminConfig {
     pub token: String,
     #[serde(default)]
     pub token_env_var: Option<String>,
+    #[serde(default = "default_bcrypt_cost")]
+    pub bcrypt_cost: u32,
     #[serde(default)]
     pub cors: AdminCorsConfig,
     #[serde(default)]
@@ -97,15 +99,26 @@ impl AdminConfig {
             });
         }
 
+        if self.bcrypt_cost < 10 || self.bcrypt_cost > 15 {
+            return Err(ConfigValidationError {
+                field: "admin.bcrypt_cost".to_string(),
+                message: "bcrypt_cost must be between 10 and 15".to_string(),
+            });
+        }
+
         let token = self.resolve_token();
 
         if token.len() < MIN_TOKEN_LENGTH {
+            if self.token == "changeme" && self.token_env_var.is_none() {
+                let generated = Self::generate_token();
+                tracing::info!("Generated admin token: {}", generated);
+            }
             return Err(ConfigValidationError {
                 field: "admin.token".to_string(),
                 message: format!(
-                    "Admin token must be at least {} characters for security. Generated token: {}",
-                    MIN_TOKEN_LENGTH,
-                    Self::generate_token()
+                    "Admin token must be at least {} characters for security. \
+                     See startup log for generated token.",
+                    MIN_TOKEN_LENGTH
                 ),
             });
         }
@@ -116,9 +129,8 @@ impl AdminConfig {
                 return Err(ConfigValidationError {
                     field: "admin.token".to_string(),
                     message: format!(
-                        "Admin token contains weak pattern '{}'. Use a cryptographically random token. Generated token: {}",
-                        pattern,
-                        Self::generate_token()
+                        "Admin token contains weak pattern '{}'. Use a cryptographically random token.",
+                        pattern
                     ),
                 });
             }
@@ -160,6 +172,10 @@ fn default_admin_token() -> String {
         })
         .collect();
     token
+}
+
+fn default_bcrypt_cost() -> u32 {
+    12
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]

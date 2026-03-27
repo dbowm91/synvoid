@@ -289,9 +289,7 @@ impl SupervisorConfigBuilder {
     }
 }
 
-fn default_true() -> bool {
-    Defaults::true_()
-}
+use super::defaults::default_true;
 fn default_restart_delay() -> u64 {
     Defaults::restart_delay()
 }

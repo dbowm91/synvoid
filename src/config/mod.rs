@@ -66,7 +66,7 @@ pub use protection::{
 };
 pub use security::{MainSecurityConfig, MainStaticConfig};
 pub use server::{FallbackConfig, ServerConfig};
-pub use tls::{AcmeConfig, ClientAuthConfig, TlsConfig};
+pub use tls::{AcmeChallengeType, AcmeConfig, ClientAuthConfig, TlsConfig};
 pub use traffic::{
     ConnectionLimitsConfig, GlobalTrafficShapingConfig, SiteConnectionDefaults,
     SiteTrafficShapingDefaults, TrafficShapingConfig, TrafficShapingDefaults,

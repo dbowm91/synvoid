@@ -1577,3 +1577,560 @@ pub async fn update_supervisor_config(
         "Supervisor config updated and reload signal sent to workers.",
     )))
 }
+
+// --- TLS config ---
+
+#[derive(Debug, Serialize)]
+pub struct TlsConfigResponse {
+    pub config: crate::config::tls::TlsConfig,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateTlsConfigRequest {
+    pub config: crate::config::tls::TlsConfig,
+}
+
+pub async fn get_tls_config(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+) -> Result<Json<TlsConfigResponse>, StatusCode> {
+    let config = state.process.config.read().await;
+    Ok(Json(TlsConfigResponse {
+        config: config.main.tls.clone(),
+    }))
+}
+
+pub async fn update_tls_config(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Json(req): Json<UpdateTlsConfigRequest>,
+) -> Result<Json<StatusResponse>, StatusCode> {
+    let _guard = state.metrics.config_write_lock.write().await;
+    {
+        let mut config = state.process.config.write().await;
+        config.main.tls = req.config;
+    }
+    persist_main_config(&state).await?;
+    Ok(Json(StatusResponse::success("TLS config updated.")))
+}
+
+// --- HTTP config ---
+
+#[derive(Debug, Serialize)]
+pub struct HttpConfigResponse {
+    pub config: crate::config::http::HttpConfig,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateHttpConfigRequest {
+    pub config: crate::config::http::HttpConfig,
+}
+
+pub async fn get_http_config(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+) -> Result<Json<HttpConfigResponse>, StatusCode> {
+    let config = state.process.config.read().await;
+    Ok(Json(HttpConfigResponse {
+        config: config.main.http.clone(),
+    }))
+}
+
+pub async fn update_http_config(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Json(req): Json<UpdateHttpConfigRequest>,
+) -> Result<Json<StatusResponse>, StatusCode> {
+    let _guard = state.metrics.config_write_lock.write().await;
+    {
+        let mut config = state.process.config.write().await;
+        config.main.http = req.config;
+    }
+    persist_main_config(&state).await?;
+    Ok(Json(StatusResponse::success("HTTP config updated.")))
+}
+
+// --- Security config ---
+
+#[derive(Debug, Serialize)]
+pub struct SecurityConfigResponse {
+    pub config: crate::config::security::MainSecurityConfig,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateSecurityConfigRequest {
+    pub config: crate::config::security::MainSecurityConfig,
+}
+
+pub async fn get_security_config(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+) -> Result<Json<SecurityConfigResponse>, StatusCode> {
+    let config = state.process.config.read().await;
+    Ok(Json(SecurityConfigResponse {
+        config: config.main.security.clone(),
+    }))
+}
+
+pub async fn update_security_config(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Json(req): Json<UpdateSecurityConfigRequest>,
+) -> Result<Json<StatusResponse>, StatusCode> {
+    let _guard = state.metrics.config_write_lock.write().await;
+    {
+        let mut config = state.process.config.write().await;
+        config.main.security = req.config;
+    }
+    persist_main_config(&state).await?;
+    Ok(Json(StatusResponse::success("Security config updated.")))
+}
+
+// --- Tunnel config ---
+
+#[derive(Debug, Serialize)]
+pub struct TunnelConfigResponse {
+    pub config: crate::config::tunnel::TunnelConfig,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateTunnelConfigRequest {
+    pub config: crate::config::tunnel::TunnelConfig,
+}
+
+pub async fn get_tunnel_config(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+) -> Result<Json<TunnelConfigResponse>, StatusCode> {
+    let config = state.process.config.read().await;
+    Ok(Json(TunnelConfigResponse {
+        config: config.main.tunnel.clone(),
+    }))
+}
+
+pub async fn update_tunnel_config(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Json(req): Json<UpdateTunnelConfigRequest>,
+) -> Result<Json<StatusResponse>, StatusCode> {
+    let _guard = state.metrics.config_write_lock.write().await;
+    {
+        let mut config = state.process.config.write().await;
+        config.main.tunnel = req.config;
+    }
+    persist_main_config(&state).await?;
+    Ok(Json(StatusResponse::success("Tunnel config updated.")))
+}
+
+// --- Plugins config ---
+
+#[derive(Debug, Serialize)]
+pub struct PluginsConfigResponse {
+    pub config: crate::config::plugins::PluginConfig,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdatePluginsConfigRequest {
+    pub config: crate::config::plugins::PluginConfig,
+}
+
+pub async fn get_plugins_config(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+) -> Result<Json<PluginsConfigResponse>, StatusCode> {
+    let config = state.process.config.read().await;
+    Ok(Json(PluginsConfigResponse {
+        config: config.main.plugins.clone(),
+    }))
+}
+
+pub async fn update_plugins_config(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Json(req): Json<UpdatePluginsConfigRequest>,
+) -> Result<Json<StatusResponse>, StatusCode> {
+    let _guard = state.metrics.config_write_lock.write().await;
+    {
+        let mut config = state.process.config.write().await;
+        config.main.plugins = req.config;
+    }
+    persist_main_config(&state).await?;
+    Ok(Json(StatusResponse::success("Plugins config updated.")))
+}
+
+// --- Logging config ---
+
+#[derive(Debug, Serialize)]
+pub struct LoggingConfigResponse {
+    pub config: crate::config::logging::LoggingConfig,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateLoggingConfigRequest {
+    pub config: crate::config::logging::LoggingConfig,
+}
+
+pub async fn get_logging_config(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+) -> Result<Json<LoggingConfigResponse>, StatusCode> {
+    let config = state.process.config.read().await;
+    Ok(Json(LoggingConfigResponse {
+        config: config.main.logging.clone(),
+    }))
+}
+
+pub async fn update_logging_config(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Json(req): Json<UpdateLoggingConfigRequest>,
+) -> Result<Json<StatusResponse>, StatusCode> {
+    let _guard = state.metrics.config_write_lock.write().await;
+    {
+        let mut config = state.process.config.write().await;
+        config.main.logging = req.config;
+    }
+    persist_main_config(&state).await?;
+    Ok(Json(StatusResponse::success("Logging config updated.")))
+}
+
+// --- Traffic shaping config ---
+
+#[derive(Debug, Serialize)]
+pub struct TrafficShapingConfigResponse {
+    pub config: crate::config::traffic::TrafficShapingConfig,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateTrafficShapingConfigRequest {
+    pub config: crate::config::traffic::TrafficShapingConfig,
+}
+
+pub async fn get_traffic_shaping_config(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+) -> Result<Json<TrafficShapingConfigResponse>, StatusCode> {
+    let config = state.process.config.read().await;
+    Ok(Json(TrafficShapingConfigResponse {
+        config: config.main.traffic_shaping.clone(),
+    }))
+}
+
+pub async fn update_traffic_shaping_config(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Json(req): Json<UpdateTrafficShapingConfigRequest>,
+) -> Result<Json<StatusResponse>, StatusCode> {
+    let _guard = state.metrics.config_write_lock.write().await;
+    {
+        let mut config = state.process.config.write().await;
+        config.main.traffic_shaping = req.config;
+    }
+    persist_main_config(&state).await?;
+    Ok(Json(StatusResponse::success(
+        "Traffic shaping config updated.",
+    )))
+}
+
+// --- Threat level config ---
+
+#[derive(Debug, Serialize)]
+pub struct ThreatLevelConfigResponse {
+    pub config: crate::config::protection::ThreatLevelConfig,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateThreatLevelConfigRequest {
+    pub config: crate::config::protection::ThreatLevelConfig,
+}
+
+pub async fn get_threat_level_config(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+) -> Result<Json<ThreatLevelConfigResponse>, StatusCode> {
+    let config = state.process.config.read().await;
+    Ok(Json(ThreatLevelConfigResponse {
+        config: config.main.threat_level.clone(),
+    }))
+}
+
+pub async fn update_threat_level_config(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Json(req): Json<UpdateThreatLevelConfigRequest>,
+) -> Result<Json<StatusResponse>, StatusCode> {
+    let _guard = state.metrics.config_write_lock.write().await;
+    {
+        let mut config = state.process.config.write().await;
+        config.main.threat_level = req.config;
+    }
+    persist_main_config(&state).await?;
+    Ok(Json(StatusResponse::success(
+        "Threat level config updated.",
+    )))
+}
+
+// --- IP feeds config ---
+
+#[derive(Debug, Serialize)]
+pub struct IpFeedsConfigResponse {
+    pub config: crate::config::protection::IpFeedConfig,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateIpFeedsConfigRequest {
+    pub config: crate::config::protection::IpFeedConfig,
+}
+
+pub async fn get_ip_feeds_config(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+) -> Result<Json<IpFeedsConfigResponse>, StatusCode> {
+    let config = state.process.config.read().await;
+    Ok(Json(IpFeedsConfigResponse {
+        config: config.main.ip_feeds.clone(),
+    }))
+}
+
+pub async fn update_ip_feeds_config(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Json(req): Json<UpdateIpFeedsConfigRequest>,
+) -> Result<Json<StatusResponse>, StatusCode> {
+    let _guard = state.metrics.config_write_lock.write().await;
+    {
+        let mut config = state.process.config.write().await;
+        config.main.ip_feeds = req.config;
+    }
+    persist_main_config(&state).await?;
+    Ok(Json(StatusResponse::success("IP feeds config updated.")))
+}
+
+// --- DNS config (feature-gated) ---
+
+#[cfg(feature = "dns")]
+#[derive(Debug, Serialize)]
+pub struct DnsConfigResponse {
+    pub config: crate::config::dns::DnsConfig,
+}
+
+#[cfg(feature = "dns")]
+#[derive(Debug, Deserialize)]
+pub struct UpdateDnsConfigRequest {
+    pub config: crate::config::dns::DnsConfig,
+}
+
+#[cfg(feature = "dns")]
+pub async fn get_dns_config(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+) -> Result<Json<DnsConfigResponse>, StatusCode> {
+    let config = state.process.config.read().await;
+    Ok(Json(DnsConfigResponse {
+        config: config.main.dns.clone(),
+    }))
+}
+
+#[cfg(feature = "dns")]
+pub async fn update_dns_config(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Json(req): Json<UpdateDnsConfigRequest>,
+) -> Result<Json<StatusResponse>, StatusCode> {
+    let _guard = state.metrics.config_write_lock.write().await;
+    {
+        let mut config = state.process.config.write().await;
+        config.main.dns = req.config;
+    }
+    persist_main_config(&state).await?;
+    Ok(Json(StatusResponse::success("DNS config updated.")))
+}
+
+// --- Rate limits config ---
+
+#[derive(Debug, Serialize)]
+pub struct RateLimitsConfigResponse {
+    pub rate_limit_memory: crate::config::limits::RateLimitMemoryConfig,
+    pub proxy_limits: crate::config::limits::ProxyLimitsConfig,
+    pub blocklist_limits: crate::config::limits::BlocklistLimitsConfig,
+    pub defaults: crate::config::defaults::RateLimitDefaults,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateRateLimitsConfigRequest {
+    pub rate_limit_memory: Option<crate::config::limits::RateLimitMemoryConfig>,
+    pub proxy_limits: Option<crate::config::limits::ProxyLimitsConfig>,
+    pub blocklist_limits: Option<crate::config::limits::BlocklistLimitsConfig>,
+    pub defaults: Option<crate::config::defaults::RateLimitDefaults>,
+}
+
+pub async fn get_rate_limits_config(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+) -> Result<Json<RateLimitsConfigResponse>, StatusCode> {
+    let config = state.process.config.read().await;
+    Ok(Json(RateLimitsConfigResponse {
+        rate_limit_memory: config.main.rate_limit_memory.clone(),
+        proxy_limits: config.main.proxy_limits.clone(),
+        blocklist_limits: config.main.blocklist_limits.clone(),
+        defaults: config.main.defaults.ratelimit.clone(),
+    }))
+}
+
+pub async fn update_rate_limits_config(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Json(req): Json<UpdateRateLimitsConfigRequest>,
+) -> Result<Json<StatusResponse>, StatusCode> {
+    let _guard = state.metrics.config_write_lock.write().await;
+
+    {
+        let mut config = state.process.config.write().await;
+        if let Some(v) = req.rate_limit_memory {
+            config.main.rate_limit_memory = v;
+        }
+        if let Some(v) = req.proxy_limits {
+            config.main.proxy_limits = v;
+        }
+        if let Some(v) = req.blocklist_limits {
+            config.main.blocklist_limits = v;
+        }
+        if let Some(v) = req.defaults {
+            config.main.defaults.ratelimit = v;
+        }
+    }
+
+    persist_main_config(&state).await?;
+    Ok(Json(StatusResponse::success("Rate limits config updated.")))
+}
+
+// --- Bot detection config ---
+
+#[derive(Debug, Serialize)]
+pub struct BotDetectionConfigResponse {
+    pub config: crate::config::defaults::BotDefaults,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateBotDetectionConfigRequest {
+    pub config: crate::config::defaults::BotDefaults,
+}
+
+pub async fn get_bot_detection_config(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+) -> Result<Json<BotDetectionConfigResponse>, StatusCode> {
+    let config = state.process.config.read().await;
+    Ok(Json(BotDetectionConfigResponse {
+        config: config.main.defaults.bot.clone(),
+    }))
+}
+
+pub async fn update_bot_detection_config(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Json(req): Json<UpdateBotDetectionConfigRequest>,
+) -> Result<Json<StatusResponse>, StatusCode> {
+    let _guard = state.metrics.config_write_lock.write().await;
+
+    {
+        let mut config = state.process.config.write().await;
+        config.main.defaults.bot = req.config;
+    }
+
+    persist_main_config(&state).await?;
+    Ok(Json(StatusResponse::success(
+        "Bot detection config updated.",
+    )))
+}
+
+// --- Mesh config ---
+
+#[derive(Debug, Serialize)]
+pub struct MeshConfigResponse {
+    pub config: Option<crate::config::mesh::MeshConfig>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateMeshConfigRequest {
+    pub config: Option<crate::config::mesh::MeshConfig>,
+}
+
+pub async fn get_mesh_config(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+) -> Result<Json<MeshConfigResponse>, StatusCode> {
+    let config = state.process.config.read().await;
+    Ok(Json(MeshConfigResponse {
+        config: config.main.mesh.clone(),
+    }))
+}
+
+pub async fn update_mesh_config(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Json(req): Json<UpdateMeshConfigRequest>,
+) -> Result<Json<StatusResponse>, StatusCode> {
+    let _guard = state.metrics.config_write_lock.write().await;
+
+    {
+        let mut config = state.process.config.write().await;
+        config.main.mesh = req.config;
+    }
+
+    persist_main_config(&state).await?;
+    Ok(Json(StatusResponse::success("Mesh config updated.")))
+}
+
+// --- Validate config ---
+
+#[derive(Debug, Deserialize)]
+pub struct ValidateConfigRequest {
+    pub config: crate::config::main::MainConfig,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ValidateConfigResponse {
+    pub valid: bool,
+    pub errors: Vec<String>,
+}
+
+pub async fn validate_config(
+    State(_state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Json(req): Json<ValidateConfigRequest>,
+) -> Result<Json<ValidateConfigResponse>, StatusCode> {
+    match req.config.validate() {
+        Ok(()) => Ok(Json(ValidateConfigResponse {
+            valid: true,
+            errors: vec![],
+        })),
+        Err(e) => Ok(Json(ValidateConfigResponse {
+            valid: false,
+            errors: vec![format!("{}: {}", e.field, e.message)],
+        })),
+    }
+}
+
+// --- Helper: persist MainConfig to TOML file ---
+
+async fn persist_main_config(state: &Arc<AdminState>) -> Result<(), StatusCode> {
+    let (main_config_path, toml_content) = {
+        let config = state.process.config.read().await;
+        let path = config.config_dir.join("main.toml");
+        let content = toml::to_string_pretty(&config.main).map_err(|e| {
+            tracing::error!("Failed to serialize config: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+        (path, content)
+    };
+
+    tokio::fs::write(&main_config_path, toml_content)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to write main config: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    Ok(())
+}

@@ -3032,6 +3032,7 @@ dependencies = [
  "rustls",
  "rustls-native-certs",
  "rustls-pki-types",
+ "rustls-platform-verifier",
  "tokio",
  "tokio-rustls",
  "tower-service",
@@ -3317,6 +3318,32 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "879f10e63c20629ecabbb64a8010319738c66a5cd0c29b02d63d272b03751d01"
 dependencies = [
  "generic-array",
+]
+
+[[package]]
+name = "instant-acme"
+version = "0.8.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9f05ad37c421b962354c358d347d4a6130151df9407978372d3ad7f0c8f71a64"
+dependencies = [
+ "async-trait",
+ "aws-lc-rs",
+ "base64 0.22.1",
+ "bytes",
+ "http 1.4.0",
+ "http-body",
+ "http-body-util",
+ "httpdate",
+ "hyper",
+ "hyper-rustls",
+ "hyper-util",
+ "rcgen 0.14.7",
+ "rustls",
+ "rustls-pki-types",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
 ]
 
 [[package]]
@@ -3958,6 +3985,7 @@ dependencies = [
  "hyper-util",
  "hyperlocal",
  "infer",
+ "instant-acme",
  "ipnetwork 0.18.0",
  "isbot",
  "libc",
@@ -3986,7 +4014,7 @@ dependencies = [
  "prost-build",
  "quinn",
  "rand 0.9.2",
- "rcgen",
+ "rcgen 0.13.2",
  "regex",
  "rkyv 0.8.15",
  "rusqlite",
@@ -6003,6 +6031,20 @@ dependencies = [
  "ring",
  "rustls-pki-types",
  "time",
+ "yasna",
+]
+
+[[package]]
+name = "rcgen"
+version = "0.14.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "10b99e0098aa4082912d4c649628623db6aba77335e4f4569ff5083a6448b32e"
+dependencies = [
+ "aws-lc-rs",
+ "pem",
+ "rustls-pki-types",
+ "time",
+ "x509-parser 0.18.1",
  "yasna",
 ]
 
@@ -9204,6 +9246,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d43b0f71ce057da06bc0851b23ee24f3f86190b07203dd8f567d0b706a185202"
 dependencies = [
  "asn1-rs 0.7.1",
+ "aws-lc-rs",
  "data-encoding",
  "der-parser 10.0.0",
  "lazy_static",

@@ -249,7 +249,7 @@ impl ViolationTracker {
 
         match serde_json::to_string_pretty(&values) {
             Ok(json) => {
-                if let Err(e) = std::fs::write(path, json) {
+                if let Err(e) = tokio::fs::write(path, json).await {
                     tracing::error!("Failed to persist violations: {}", e);
                 }
             }

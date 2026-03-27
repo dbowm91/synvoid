@@ -176,16 +176,16 @@ Phase 1 (Foundation) ───────────────────�
 
 *Goal: Eliminate known vulnerabilities and security anti-patterns.*
 
-### 2.1 Bcrypt Cost Factor + Remove Plaintext Fallback
+### ~~2.1 Bcrypt Cost Factor + Remove Plaintext Fallback~~ ✅
 
 **Sources**: `plan3.md`, `plan_security_scalability.md`
 
-- Change `BCRYPT_COST` from 4 to 12 in `src/admin/auth.rs`
-- Remove `__plaintext__:token` fallback — return error instead
-- Add migration logic: detect existing plaintext hashes, re-hash with bcrypt on first verify
-- Add `admin.bcrypt_cost` config option (default 12, min 10, max 15)
+- ~~Change `BCRYPT_COST` from 4 to 12 in `src/admin/auth.rs`~~ ✅
+- ~~Remove `__plaintext__:token` fallback — return error instead~~ ✅
+- ~~Add migration logic: detect existing plaintext hashes, re-hash with bcrypt on first verify~~ ✅ (verify_admin_token returns false for legacy hashes, logs warning)
+- ~~Add `admin.bcrypt_cost` config option (default 12, min 10, max 15)~~ ✅
 
-### 2.2 Fix Authentication Timing Attack
+### ~~2.2 Fix Authentication Timing Attack~~ ✅
 
 **Source**: `plan_security_scalability1.md` P0-2
 
@@ -193,81 +193,57 @@ Phase 1 (Foundation) ───────────────────�
 
 **Issue**: When user exists but password is wrong, the code does NOT call `verify_dummy_password()` before returning. When user doesn't exist, it DOES call `verify_dummy_password()`. This ~200ms timing difference allows username enumeration.
 
-**Fix**: Always call `verify_dummy_password(password).await` before returning `AuthError::InvalidCredentials`, regardless of whether the user exists.
+**Fix**: ~~Always call `verify_dummy_password(password).await` before returning `AuthError::InvalidCredentials`, regardless of whether the user exists.~~ ✅
 
-### 2.3 TLS `skip_verify` Hardening
+### 2.3 TLS `skip_verify` Hardening ⏸️ DEFERRED
 
-**Source**: `plan_security_scalability.md`, `plan2.md` §2.4
+**Status**: Deferred to Wave 3. See `deferred.md`.
 
-- Add startup warning when any site has `skip_verify: true`
-- Add `skip_verify_reason` required field
-- Log every request over skip-verify connections at WARN level
+### 2.4 IPC Key Fallback Hardening ⏸️ DEFERRED
 
-### 2.4 IPC Key Fallback Hardening
+**Status**: Deferred to Wave 3. See `deferred.md`.
 
-**Source**: `plan_security_scalability.md`, `plan2.md` §2.3
-
-- Make temp-file fallback fail-hard by default
-- Add `--allow-insecure-ipc-key` CLI flag for env-var fallback
-
-### 2.5 Extend CORS Wildcard Rejection to Site Config
+### ~~2.5 Extend CORS Wildcard Rejection to Site Config~~ ✅
 
 **Source**: `plan2.md` §2.2
 
-Admin API rejects `allow_origin: "*"` in release builds, but site-level CORS in `src/http/headers.rs` doesn't enforce this. Add wildcard rejection check to site-level CORS configuration.
+~~Admin API rejects `allow_origin: "*"` in release builds, but site-level CORS in `src/http/headers.rs` doesn't enforce this. Add wildcard rejection check to site-level CORS configuration.~~ ✅ Now rejects wildcard in release builds, allows with warning in debug builds (matches admin API pattern).
 
-### 2.6 Enable Global Security Headers by Default
+### 2.6 Enable Global Security Headers by Default ⏸️ DEFERRED
 
-**Source**: `plan_security_scalability.md`
+**Status**: Deferred to Wave 3. See `deferred.md`.
 
-- Change `global_security_headers` default from `false` to `true`
-
-### 2.7 Remove Token from Validation Error
+### ~~2.7 Remove Token from Validation Error~~ ✅
 
 **Source**: `plan_security_scalability.md`
 
-- Don't return generated token in error messages in `src/config/admin.rs`
-- Log token separately at INFO level on startup
+- ~~Don't return generated token in error messages in `src/config/admin.rs`~~ ✅
+- ~~Log token separately at INFO level on startup~~ ✅
 
-### 2.8 Credential Env Var Override for Loki/Elasticsearch
+### 2.8 Credential Env Var Override for Loki/Elasticsearch ⏸️ DEFERRED
 
-**Source**: `plan_security_scalability.md`
+**Status**: Deferred to Wave 3. See `deferred.md`.
 
-- Add `MALU_LOKI_PASSWORD`, `MALU_ES_PASSWORD` etc. env var overrides for log exporter credentials
-
-### 2.9 Input Normalizer DoS Protection
+### ~~2.9 Input Normalizer DoS Protection~~ ✅
 
 **Source**: `plan_security_scalability2.md`
 
-- Add `MAX_OUTPUT_RATIO = 100` in `src/waf/attack_detection/normalizer.rs`
-- Break decode loop if output exceeds 100x input size
+- ~~Add `MAX_OUTPUT_RATIO = 100` in `src/waf/attack_detection/normalizer.rs`~~ ✅
+- ~~Break decode loop if output exceeds 100x input size~~ ✅
 
-### 2.10 Plugin Permission Enforcement
+### 2.10 Plugin Permission Enforcement ⏸️ DEFERRED
 
-**Source**: `plan_security_scalability2.md`
+**Status**: Deferred to Wave 3 (Phase 10 scope). See `deferred.md`.
 
-- Change `src/plugin/axum_loader.rs` from warning to rejection for insecure permissions
-
-### 2.11 Deprecate `X-XSS-Protection: 1; mode=block`
+### ~~2.11 Deprecate `X-XSS-Protection: 1; mode=block`~~ ✅
 
 **Source**: `plan_security_scalability.md`
 
-- Change default to `"0"` in `src/config/site.rs`
+- ~~Change default to `"0"` in `src/config/site.rs`~~ ✅
 
-### 2.12 Mesh Network Message Handler Audit
+### 2.12 Mesh Network Message Handler Audit ⏸️ DEFERRED
 
-**Source**: `plan_security_scalability1.md` P0-4
-
-Audit `src/mesh/transport_*.rs` (15+ handler files) for input validation. Prioritized:
-
-| File | Handler Count | Risk |
-|------|---------------|------|
-| `transport_peer.rs` | 20+ | High |
-| `transport_dns.rs` | 15+ | High |
-| `transport_org.rs` | 10+ | Medium |
-| `transport_global.rs` | 10+ | Medium |
-
-Actions: review each handler for unsanitized input, add max message size limits, remove unused dead code.
+**Status**: Deferred to Wave 3. See `deferred.md`.
 
 ---
 
@@ -275,94 +251,62 @@ Actions: review each handler for unsanitized input, add max message size limits,
 
 *Goal: Fix correctness issues that cause crashes, data corruption, or protocol violations.*
 
-### 3.1 Fix IPC Lock Contention
+### ~~3.1 Fix IPC Lock Contention~~ ✅
 
 **Source**: `plan.md`
 
-- Remove crate-wide `#[allow(clippy::await_holding_lock)]` suppression from `src/lib.rs:5`
-- Audit 3 competing worker tasks in `src/worker/mod.rs`
-- Replace with channel-based design or add per-site justification comments
+- ~~Remove crate-wide `#[allow(clippy::await_holding_lock)]` suppression from `src/lib.rs:5`~~ ✅
+- ~~Audit 3 competing worker tasks in `src/worker/mod.rs`~~ ✅ (lock scoped to recv only, dropped before match processing)
+- ~~Replace with channel-based design or add per-site justification comments~~ ✅ (per-site `#[allow]` with justification comments on 8 files)
 
-### 3.2 Replace `std::process::exit()` with Graceful Shutdown
+### ~~3.2 Replace `std::process::exit()` with Graceful Shutdown~~ ✅
 
 **Source**: `plan.md`
 
-- Replace 3 `exit()` calls in `src/worker/mod.rs` and `src/worker/unified_server.rs`
-- Exit code semantics: exit 100 = resize (handled by master), exit 1 = error
-- Use return codes / watch channels instead of direct `exit()`
+- ~~Replace 3 `exit()` calls in `src/worker/mod.rs` and `src/worker/unified_server.rs`~~ ✅
+- ~~Exit code semantics: exit 100 = resize (handled by master), exit 1 = error~~ ✅
+- ~~Use return codes / watch channels instead of direct `exit()`~~ ✅ (AtomicI32 exit code, single exit at function end)
 
-### 3.3 Replace `duration_since(UNIX_EPOCH).unwrap()` with Safe Helper
+### ~~3.3 Replace `duration_since(UNIX_EPOCH).unwrap()` with Safe Helper~~ ✅ (partial)
 
 **Sources**: `plan.md`, `plan_readability3.md`
 
-- Move `safe_unix_timestamp()` from `src/mesh/mod.rs:50-55` to `src/utils.rs`
-- Add `safe_unix_duration()` variant for call sites needing `Duration`
-- Replace 44–111 occurrences across 50 files with safe helper
-- Consolidate 7 duplicate `current_timestamp()` definitions (verified: `src/waf/probe_tracker.rs:446`, `src/process/ipc.rs:1311`, `src/mesh/dht/stake.rs:533`, `src/overseer/state.rs:148`, `src/mesh/transports/manager.rs:32`, `src/captcha/mod.rs:185`, `src/utils.rs:414`) → 1 in `utils.rs`
+- ~~Move `safe_unix_timestamp()` from `src/mesh/mod.rs:50-55` to `src/utils.rs`~~ ✅
+- ~~Add `safe_unix_duration()` variant for call sites needing `Duration`~~ ✅
+- ~~Consolidate 7 duplicate `current_timestamp()` definitions → 1 in `utils.rs`~~ ✅
+- Replace remaining 44–111 `duration_since(UNIX_EPOCH).unwrap()` occurrences — **deferred** (8 in trust_anchor.rs fixed; bulk replacement deferred to Wave 3)
 
-### 3.4 Fix Panics in IPC and Hot Paths
+### ~~3.4 Fix Panics in IPC and Hot Paths~~ ✅ (partial)
 
 **Sources**: `plan3.md`, `plan2.md` §1.3, `plan_security_scalability1.md` P0-1
 
-- Fix 23+ locations using `panic!()` or `.unwrap()` in production code paths
-- Priority: `src/master/ipc.rs` (9 panics), `src/dns/trust_anchor.rs` (5), `src/tunnel/quic/messages.rs` (3)
-- Fix `get_block_store()` panic risk (`src/server/mod.rs:360` uses `.expect()` — change to return `Result`)
-- Replace in critical paths: `src/proxy.rs` (15+), `src/tls/server.rs` (10+), `src/waf/mod.rs` (8+), `src/mesh/proxy.rs` (20+)
-- Replace with proper error propagation using `WafResult` pattern
+- ~~Fix `get_block_store()` panic risk (`src/server/mod.rs:360` uses `.expect()` — change to return `Result`)~~ ✅ (returns `Option`, callers handle `None` gracefully)
+- Fix remaining 23+ locations using `panic!()` or `.unwrap()` in production code paths — **deferred** to Wave 3 (priority: `src/master/ipc.rs`, `src/dns/trust_anchor.rs`, `src/tunnel/quic/messages.rs`, `src/proxy.rs`, `src/tls/server.rs`, `src/waf/mod.rs`, `src/mesh/proxy.rs`)
 
-### 3.5 DNS Wire Format Correctness (12 bugs)
+### 3.5 DNS Wire Format Correctness (12 bugs) ⏸️ DEFERRED
 
-**Source**: `plan_dns3.md`
+**Status**: Deferred to Wave 3 (Phase 8 scope). See `deferred.md`.
 
-| Task | File | Bug |
-|------|------|-----|
-| 1.1 | `dnssec.rs:1324` | NSEC3 hash loop applies salt incorrectly per RFC 5155 §5 |
-| 1.2 | `dnssec.rs:1432` | NSEC3 base32hex includes padding (should be stripped) |
-| 1.3 | `dnssec.rs:1404` | NSEC3 owner name missing hash-length byte per RFC 5155 §3.2 |
-| 1.4 | `dnssec_impl.rs:35` | DNSKEY RRset only publishes KSK, missing ZSK |
-| 1.5 | `dnssec_impl.rs:74` | CDS records use type 43 (DS) instead of 59 (CDS) |
-| 1.6 | `query.rs:807` | NXDOMAIN hardcodes NSEC3 type, breaks NSEC |
-| 1.7 | `query.rs:749` | `handle_query()` returns `None` instead of NXDOMAIN/NODATA |
-| 1.8 | `dnssec.rs:1520` | SRV `canonical_rdata` encodes only priority, missing weight/port/target |
-| 1.9 | `response.rs:30` | ARCOUNT off by one when OPT record appended |
-| 1.10 | `response.rs:135` | MX record missing trailing null byte after exchange name |
-| 1.11 | `dnssec.rs:213` | CDNSKEY flags set incorrect CD bit |
-| 1.12 | `query.rs:376` | TTL extraction doesn't handle DNS name compression pointers |
+### 3.6 Recursive Resolver Bugs ⏸️ DEFERRED
 
-### 3.6 Recursive Resolver Bugs
+**Status**: Deferred to Wave 3 (Phase 8 scope). See `deferred.md`.
 
-**Source**: `plan_dns3.md`
-
-| Task | File | Bug |
-|------|------|-----|
-| 2.1 | `recursive_cache.rs:229` | Negative cache returns `None` on hit (triggers re-query) |
-| 2.2 | `recursive.rs:151` | UDP buffer hardcoded to 512 bytes (EDNS0 clients need 4096+) |
-| 2.3 | `recursive.rs:475` | Upstream failure returns empty vec instead of SERVFAIL |
-| 2.4 | `resolver.rs:663` | RFC 5011 shutdown channel immediately dropped |
-
-### 3.7 DHT Fixes
+### ~~3.7 DHT Fixes~~ ✅ (partial)
 
 **Sources**: `plan_dht.md`, `plan_dht2.md`, `plan_dht3.md`
 
-- **Unbounded PoW nonce loop** (`node_id.rs:138`): Add 10M iteration limit
-- **Duplicate peers in lookup** (`query.rs:50`): Add HashSet dedup in `next_peers_to_query()`
-- **PoW not persisted** (`table.rs:539`): Add `pow_nonce` and `public_key` to `PersistedContact`, verify on restore
-- **XOR distance scoring granularity** (`geo_distance.rs:117`): Use bit-prefix (leading zero bits) instead of first byte only
+- ~~**Unbounded PoW nonce loop** (`node_id.rs:138`): Add 10M iteration limit~~ ✅
+- ~~**Duplicate peers in lookup** (`query.rs:50`): Add HashSet dedup in `next_peers_to_query()`~~ ✅
+- **PoW not persisted** (`table.rs:539`): Add `pow_nonce` and `public_key` to `PersistedContact` — **deferred** to Wave 3
+- **XOR distance scoring granularity** (`geo_distance.rs:117`): Use bit-prefix — **deferred** to Wave 3
 
-### 3.8 DNSSEC Validation Inconsistency
+### 3.8 DNSSEC Validation Inconsistency ⏸️ DEFERRED
 
-**Sources**: `plan_dns.md`, `plan_dns2.md`
+**Status**: Deferred to Wave 3 (Phase 8 scope). See `deferred.md`.
 
-- Forwarder mode (`HickoryResolver`) does NOT perform DNSSEC validation
-- Either: add validation to forwarder, or document limitation clearly
-- Propagate AD bit from upstream response to `is_dnssec_validated` flag
+### 3.9 DNS Cache Security ⏸️ DEFERRED
 
-### 3.9 DNS Cache Security
-
-**Source**: `plan_dns3.md`
-
-- `cache.rs:155`: Require minimum 2 agreeing fingerprints before accepting cached response (prevents poisoning during initial queries)
-- `trust_anchor.rs:319`: Wrap DELETE + INSERT in SQLite transaction
+**Status**: Deferred to Wave 3 (Phase 8 scope). See `deferred.md`.
 
 ---
 
@@ -437,95 +381,66 @@ Refactor `tests/ipc_test.rs` to use `IpcStream` instead of manually reimplementi
 
 *Goal: Fix hot-path bottlenecks identified in codebase review.*
 
-### 5.1 Proxy Cache LRU: VecDeque → LinkedHashMap
+### ~~5.1 Proxy Cache LRU: VecDeque → LinkedHashMap~~ ✅
 
 **Sources**: `plan3.md`, `plan_security_scalability.md`, `plan_security_scalability2.md`, `plan_security_scalability1.md` P1-2
 
-Replace O(n) `VecDeque::position()` + `remove()` in `src/proxy_cache/store.rs` with `LinkedHashMap` (already in Cargo.toml). O(1) move-to-back and evict.
+~~Replace O(n) `VecDeque::position()` + `remove()` in `src/proxy_cache/store.rs` with `LinkedHashMap` (already in Cargo.toml). O(1) move-to-back and evict.~~ ✅
 
-### 5.2 Rate Limiter Cleanup Optimization
+### 5.2 Rate Limiter Cleanup Optimization ⏸️ DEFERRED
 
-**Sources**: `plan3.md`, `plan_security_scalability2.md`, `plan2.md` §3.2
+**Status**: Deferred to Wave 3. See `deferred.md`.
 
-- Move cleanup to per-shard lazy check (time-based, skip if cleaned recently)
-- Eliminate global O(n) retain across all shards
-- Consider combining 6 sequential retain passes into single pass
-- Benchmark current cleanup duration with realistic data first
+### 5.3 Rate Limiter LRU Eviction Optimization ⏸️ DEFERRED
 
-### 5.3 Rate Limiter LRU Eviction Optimization
+**Status**: Deferred to Wave 3. See `deferred.md`.
 
-**Source**: `plan2.md` §3.5
+### 5.4 Rate Limiter Memory Footprint ⏸️ DEFERRED
 
-`src/waf/ratelimit.rs` collects ALL entries into Vec before sorting for eviction. Use partial sort (top-k) instead of full sort. Consider per-shard eviction instead of global.
+**Status**: Deferred to Wave 3. See `deferred.md`.
 
-### 5.4 Rate Limiter Memory Footprint
+### ~~5.5 Remove Blocking I/O from Async Paths~~ ✅ (partial)
 
 **Source**: `plan_security_scalability.md`
 
-- Reduce `max_ip_entries` from 1,000,000 to 100,000
-- Consolidate 6 `RingBuffer<Instant>` into single time-bucketed structure
-- Target: <4KB per IP entry
+- ~~`proxy_cache/store.rs`~~ ✅ Restructured `get()` to release write lock before `std::fs::read()` disk I/O
+- ~~`waf/violation_tracker.rs`~~ ✅ Replaced `std::fs::write()` with `tokio::fs::write().await`
+- `worker/response_builder.rs` — **deferred** to Wave 3
+- `waf/probe_tracker.rs` — **deferred** to Wave 3
 
-### 5.5 Remove Blocking I/O from Async Paths
-
-**Source**: `plan_security_scalability.md`
-
-| File | Issue |
-|------|-------|
-| `proxy_cache/store.rs` | `std::fs::read()` in `get()` while holding write lock |
-| `worker/response_builder.rs` | `std::fs::read()` in async context |
-| `waf/violation_tracker.rs` | Persistence reads/writes |
-| `waf/probe_tracker.rs` | Persistence read |
-
-Use `tokio::task::spawn_blocking()` or `tokio::fs`.
-
-### 5.6 Standardize Atomic Counter Decrement Pattern
+### ~~5.6 Standardize Atomic Counter Decrement Pattern~~ ✅
 
 **Source**: `plan_security_scalability.md`
 
-Replace all `fetch_sub(1, ...)` with `fetch_update(|v| v.checked_sub(1))` across 43 locations to prevent underflow wrapping.
+~~Replace all `fetch_sub(1, ...)` with `fetch_update(|v| v.checked_sub(1))` across 43 locations to prevent underflow wrapping.~~ ✅ Replaced across 15 files.
 
-### 5.7 WAF Whitelist O(n) → O(1)
+### ~~5.7 WAF Whitelist O(n) → O(1)~~ ✅ (already done)
 
 **Source**: `plan_security_scalability.md`
 
-Change `Vec<IpAddr>` to `HashSet<IpAddr>` for IP whitelist lookups.
+~~Change `Vec<IpAddr>` to `HashSet<IpAddr>` for IP whitelist lookups.~~ ✅ Already `HashSet<IpAddr>` in `src/waf/mod.rs:140`. No change needed.
 
-### 5.8 Cache Lowercase Results in Attack Detection
+### ~~5.8 Cache Lowercase Results in Attack Detection~~ ✅
 
 **Source**: `plan2.md` §3.1
 
-SSRF detector (`src/waf/attack_detection/ssrf.rs`) calls `.to_lowercase()` 4+ times on same input. Refactor to compute lowercase once per detector pass. Apply same pattern to other detectors. Cache normalized input in detector common.
+~~SSRF detector (`src/waf/attack_detection/ssrf.rs`) calls `.to_lowercase()` 4+ times on same input. Refactor to compute lowercase once per detector pass. Apply same pattern to other detectors. Cache normalized input in detector common.~~ ✅ SSRF and open_redirect detectors refactored to accept pre-lowered input.
 
-### 5.9 Reduce Per-Request Allocations
+### 5.9 Reduce Per-Request Allocations ⏸️ DEFERRED
 
-**Source**: `plan2.md` §3.4
+**Status**: Deferred to Wave 3. See `deferred.md`.
 
-- Cache base headers filter set (`src/proxy.rs:77-99`)
-- Reuse HashMap for HTTP/TLS requests (`src/tls/server.rs:213,256`)
-- Cache normalized inputs across detector checks
-- Review and optimize `build_headers_to_filter`
+### 5.10 DNS Performance ⏸️ DEFERRED
 
-### 5.10 DNS Performance
+**Status**: Deferred to Wave 3 (Phase 8 scope). See `deferred.md`.
 
-**Source**: `plan_dns3.md`
+### 5.11 Per-Worker Metrics ⏸️ DEFERRED
 
-- Cache RRSIG signatures per (name, type) pair with TTL-matched eviction
-- Move rate limiter cleanup to timer task instead of inline per-request
-- Fix sharded cache allocation on hit (store `Arc<Vec<u8>>` not `Vec<u8>`)
-- Add secondary index for ANY queries (O(1) name lookup)
+**Status**: Deferred to Wave 3. See `deferred.md`.
 
-### 5.11 Per-Worker Metrics
+### 5.12 Graceful Degradation for Global Rate Limiter ⏸️ DEFERRED
 
-**Source**: `plan_security_scalability1.md` P1-5
-
-Add `WorkerMetrics` struct with per-worker Prometheus labels (worker_id, requests_processed, requests_blocked, avg_latency_ms, active_connections, memory_usage_bytes).
-
-### 5.12 Graceful Degradation for Global Rate Limiter
-
-**Source**: `plan_security_scalability1.md` P1-6
-
-Add circuit breaker pattern to `GlobalRateLimiter`. Fallback to per-IP limiting if global fails. Add health check endpoint.
+**Status**: Deferred to Wave 3. See `deferred.md`.
 
 ---
 
@@ -533,93 +448,64 @@ Add circuit breaker pattern to `GlobalRateLimiter`. Fallback to per-IP limiting 
 
 *Goal: Reduce duplication, improve module organization, clean up patterns.*
 
-### 6.1 WAF Deduplication (~200 LOC savings)
+### ~~6.1 WAF Deduplication (~200 LOC savings)~~ ✅
 
 **Source**: `plan_readability.md`
 
-- Extract `block_ip_with_threat_intel()` helper (7 instances → 1)
-- Extract `handle_probe_event()` (2×55-line blocks → 1)
-- Extract `maybe_escalate_and_block()` (2 violation tracking blocks → 1)
-- Simplify `TestModeConfig::disabled_count()` to 1-liner
+- ~~Extract `block_ip_with_threat_intel()` helper (7 instances → 1)~~ ✅
+- ~~Extract `handle_probe_event()` (2×55-line blocks → 1)~~ ✅
+- ~~Extract `maybe_escalate_and_block()` (2 violation tracking blocks → 1)~~ ✅
+- ~~Simplify `TestModeConfig::disabled_count()` to 1-liner~~ ✅
 
-### 6.2 DNS Deduplication (~80 LOC)
+### 6.2 DNS Deduplication (~80 LOC) ⏸️ DEFERRED
 
-**Source**: `plan_readability.md`, `plan_readability3.md`
+**Status**: Deferred to Wave 3 (Phase 8 scope). See `deferred.md`.
 
-- Extract `build_dnskey_rdata()` helper (4 instances)
-- Extract `build_type_bitmap()` helper (NSEC + NSEC3)
-- Extract `ensure_trailing_dot()` helper (9 instances in resolver.rs)
-- Extract generic `lookup_records()` helper (5 similar methods)
-- Consolidate duplicate `TokenBucket` implementations (`dns/rate_limiter.rs` + `dns/server/rate_limit.rs` → `src/rate_limit/`)
-
-### 6.3 Config Deduplication (~170 LOC)
+### ~~6.3 Config Deduplication (~170 LOC)~~ ✅ (partial)
 
 **Source**: `plan_readability.md`, `plan_readability3.md`
 
-- Consolidate 7 `default_true()` functions into 1 canonical version in `src/config/defaults.rs`
-- Unify `SiteConfigValidationError` into `ConfigValidationError`
-- Remove duplicate `parse_size_string` from `site.rs`
-- Consolidate `TrustAnchorConfig` (defined in 2 places → 1)
+- Consolidate 7 `default_true()` functions — **deferred** (canonical `default_true()` in `defaults.rs` exists; `site.rs` has `default_some_true()` returning `Option<bool>` — different type, not a duplicate)
+- ~~Unify `SiteConfigValidationError` into `ConfigValidationError`~~ ✅ (29 usages replaced)
+- Remove duplicate `parse_size_string` from `site.rs` — **deferred** (only 1 definition found)
+- Consolidate `TrustAnchorConfig` (defined in 2 places → 1) — **deferred** to Wave 3
 
-### 6.4 HTTP Response Builder Consolidation
+### 6.4 HTTP Response Builder Consolidation ⏸️ DEFERRED
 
-**Source**: `plan_readability3.md`, `plan.md` §3.2
+**Status**: Deferred to Wave 3. See `deferred.md`.
 
-- Create `ResponseBuilder` in `src/http/response_builder.rs` (5+ similar functions → 1)
-- Consolidate `status_reason_phrase()` mapping (2 duplicate match blocks)
-- Consolidate 8+ identical static 500 response constructions (`src/proxy.rs:397,412,485,954`, `src/tls/server.rs:697,710,726`)
+### 6.5 Module Splits ⏸️ DEFERRED
 
-### 6.5 Module Splits
+**Status**: Deferred to Wave 3. See `deferred.md`.
 
-**Source**: `plan_readability2.md`, `plan2.md` §6.4
-
-| File | Lines | Action |
-|------|-------|--------|
-| `dns/dnssec.rs` | 2,152 | Split into signing, validation, keys, algorithms, nsec submodules |
-| `config/site.rs` | 1,831 | Split into upstream, security, proxy, validation submodules |
-| `mesh/transport.rs` | 1,889 | Already split into extension files; document architecture |
-
-### 6.6 Reduce Wildcard Imports
+### ~~6.6 Reduce Wildcard Imports~~ ✅
 
 **Source**: `plan.md`
 
-Replace ~10 production `use ...::*` in mesh transport files and `src/plugin/wasm_runtime.rs:7` (`use wasmtime::*`) with explicit imports.
+~~Replace ~10 production `use ...::*` in mesh transport files and `src/plugin/wasm_runtime.rs:7` (`use wasmtime::*`) with explicit imports.~~ ✅ wasmtime and 7 mesh transport files updated.
 
-### 6.7 Error Unification
+### 6.7 Error Unification ⏸️ DEFERRED
 
-**Source**: `plan.md`, `plan_readability2.md`
+**Status**: Deferred to Wave 3. See `deferred.md`.
 
-- Adopt `WafError` across the codebase (verified: `WafError`, `WafResult`, `WafErrorExt` are **completely dead code** — zero production usage outside `src/error.rs`)
-- Replace `Result<_, String>` and `Box<dyn Error>` (16 call sites, not 206) with `WafResult`
-- Add missing variants for DNS, mesh, proxy errors
-- Remove `From<String>` and `From<&str>` blanket impls that lose type information
-- Decision gate: adopt `WafError` (Option A) or remove dead `error.rs` (Option B)
+### 6.8 Split Large Functions ⏸️ DEFERRED
 
-### 6.8 Split Large Functions
+**Status**: Deferred to Wave 3. See `deferred.md`.
 
-**Source**: `plan.md` §4.1
-
-20+ functions >200 lines in the codebase. Priority split targets:
-1. `src/proxy.rs` — `handle_request` (>500 lines) — extract header processing, response filtering
-2. `src/tls/server.rs` — TLS handshake handler (~400 lines) — extract certificate verification
-3. `src/waf/mod.rs` — `check_request_full` (~300 lines) — already uses helper functions, but extract remaining blocks
-4. `src/mesh/transport.rs` — connection handler (~300 lines)
-5. `src/dns/dnssec.rs` — signing function (~250 lines)
-
-### 6.9 Replace `eprintln` with Tracing
+### ~~6.9 Replace `eprintln` with Tracing~~ ✅ (partial)
 
 **Source**: `plan2.md` §4.2
 
-- Replace `src/main.rs:632` `eprintln!` with `tracing::warn!`
-- Audit for other direct stderr/stdout usage
+- ~~Replace runtime `eprintln!` with `tracing::warn!` in `src/main.rs`~~ ✅ (test mode warnings, config load failures, daemonize errors)
+- Pre-runtime CLI `eprintln!` calls intentionally kept (no tracing subscriber installed yet)
 
-### 6.10 Log Silent Send Failures
+### ~~6.10 Log Silent Send Failures~~ ✅
 
 **Source**: `plan2.md` §4.1
 
-- `src/supervisor/supervisor.rs:145` and `src/process/manager.rs:950,961` silently drop `WorkerFailed` events
-- Add logging when send fails
-- Add metrics for dropped events
+- ~~`src/supervisor/supervisor.rs:145` and `src/process/manager.rs:950,961` silently drop `WorkerFailed` events~~ ✅
+- ~~Add logging when send fails~~ ✅
+- Add metrics for dropped events — **deferred** to Wave 3
 
 ---
 
@@ -629,9 +515,9 @@ Replace ~10 production `use ...::*` in mesh transport files and `src/plugin/wasm
 
 **Source**: `plan_tls.md`
 
-### 7.1 Built-in ACME Client
+### ~~7.1 Built-in ACME Client~~ ✅
 
-Rewrite `src/tls/acme.rs` (~400 lines, currently a stub returning `AcmeError::UseExternalClient`) with `AcmeManager`:
+~~Rewrite `src/tls/acme.rs` (~400 lines, currently a stub returning `AcmeError::UseExternalClient`) with `AcmeManager`:~~ ✅ Full ACME client implemented with `instant-acme` crate.
 
 ```rust
 pub struct AcmeManager {
@@ -661,9 +547,9 @@ Key methods:
 - `src/config/tls.rs` — Add `challenge_type: AcmeChallengeType` to `AcmeConfig`
 - `src/http/server.rs` — HTTP-01 challenge interception before router dispatch
 
-### 7.2 TLS Cert Distribution (Origin → Edge)
+### 7.2 TLS Cert Distribution (Origin → Edge) ⏸️ DEFERRED
 
-Origin nodes that obtain certs via ACME distribute them to edges over mesh transport.
+**Status**: Deferred to Wave 3. Depends on 7.1 (now complete). See `deferred.md`.
 
 **New file**: `src/mesh/cert_dist.rs` (~250 lines)
 
@@ -702,13 +588,13 @@ Key functions:
 
 **Dependency**: Part 2 depends on Part 1 (needs real certs to distribute).
 
-### 7.3 TLS Passthrough Mode
+### ~~7.3 TLS Passthrough Mode~~ ✅
 
 Site-level config to forward raw TLS bytes from client to origin without decryption. WAF applies layer 3/4 only (IP rate limiting, connection limits).
 
-**How it works**: Edge reads first TLS record, extracts SNI via `sni_peek.rs` (created in Part 1), routes to site based on SNI hostname, then proxies raw TCP to origin. The original ClientHello bytes are preserved and forwarded.
+**How it works**: ~~Edge reads first TLS record, extracts SNI via `sni_peek.rs` (created in Part 1), routes to site based on SNI hostname, then proxies raw TCP to origin. The original ClientHello bytes are preserved and forwarded.~~ ✅
 
-**Layer 3/4 protections**: Applied at TCP accept time, BEFORE TLS handshake (fixes existing bug where `flood_protector.check_tcp_connection()` is called AFTER handshake at `src/tls/server.rs:176`).
+**Layer 3/4 protections**: ~~Applied at TCP accept time, BEFORE TLS handshake (fixes existing bug where `flood_protector.check_tcp_connection()` is called AFTER handshake at `src/tls/server.rs:176`).~~ ✅ Bug fixed.
 
 ```rust
 match flood_protector.check_tcp_connection(client_ip) {
@@ -921,31 +807,24 @@ Phase 7b: Cert distribution (cert_dist.rs + messages) ─┘─ after 7a
 
 *Goal: All config sections accessible via UI, settings page functional.*
 
-### 11.1 Fix Settings Page (Critical)
+### 11.1 Fix Settings Page (Critical) ⏸️ DEFERRED
 
-**Source**: `plan_ui5.md`
+**Status**: Frontend work deferred to Wave 3. See `deferred.md`.
 
-- Replace all hardcoded values in `admin-ui/src/pages/settings.rs` with API-driven data
-- On mount: fetch `GET /api/config/main` + `GET /api/config/schema`
-- Save button: `PUT /api/config/main`
-- Reset button: re-fetch from API
-- Add Export/Import/Reload toolbar (blob download, file picker, reload-from-disk)
-- Add config path helper functions: `get_nested_value()`, `set_nested_value()`, `flatten_schema()` for nested JSON reconstruction
-
-### 11.2 Fix Worker Restart
+### ~~11.2 Fix Worker Restart~~ ✅
 
 **Source**: `plan_ui5.md`, `plan_ui6.md`
 
-- Fix URL: `/system/worker/{id}/restart` → `/system/workers/{id}/restart`
-- Implement `restart_worker` in `src/admin/handlers/system.rs` (send SIGTERM, let reap_zombies auto-restart)
-- Add `restart_worker_by_id()` to `src/process/manager.rs`
-- Add `RestartWorkerRequest`/`RestartWorkerResponse` IPC messages
+- ~~Fix URL: `/system/worker/{id}/restart` → `/system/workers/{id}/restart`~~ ✅
+- ~~Implement `restart_worker` in `src/admin/handlers/system.rs` (send SIGTERM, let reap_zombies auto-restart)~~ ✅
+- ~~Add `restart_worker_by_id()` to `src/process/manager.rs`~~ ✅
+- Add `RestartWorkerRequest`/`RestartWorkerResponse` IPC messages — **deferred** (SIGTERM-based restart sufficient for now)
 
-### 11.3 Add Missing Backend Config Endpoints
+### ~~11.3 Add Missing Backend Config Endpoints~~ ✅
 
 **Sources**: `plan_ui2.md`, `plan_ui3.md`, `plan_ui4.md`, `plan_ui6.md`
 
-Add GET/PUT handlers for:
+~~Add GET/PUT handlers for:~~ ✅ All 13 endpoints implemented in `src/admin/handlers/config.rs` with `persist_main_config()` helper.
 | Config | Endpoint | Handler File |
 |--------|----------|-------------|
 | TLS | `/config/tls` | `tls.rs` |
@@ -963,30 +842,15 @@ Add GET/PUT handlers for:
 
 Pattern: follow existing `/config/overseer` handler in `src/admin/handlers/config.rs`.
 
-### 11.4 Add New Frontend Pages
+### 11.4 Add New Frontend Pages ⏸️ DEFERRED
 
-**Sources**: `plan_ui3.md`, `plan_ui4.md`, `plan_ui5.md`
+**Status**: Frontend work deferred to Wave 3. See `deferred.md`.
 
-| Page | Description |
-|------|-------------|
-| `honeypot.rs` | Honeypot status/control (existing API) |
-| `rule_feed.rs` | Rule feed status/actions (existing API) |
-| `tls_settings.rs` | TLS configuration |
-| `feeds.rs` | IP/Rule feeds management |
-| Upstreams rewrite | Replace mock data with real API calls |
-| `dns.rs` | DNS overview (feature-gated) |
-| `dns_zones.rs` | Zone management |
-| `dns_config.rs` | DNS configuration |
-| `dns_dnssec.rs` | DNSSEC status/keys |
-| `tunnel.rs` | Tunnel overview |
-| `tunnel_vpn.rs` | VPN peer management |
-| `tunnel_config.rs` | Tunnel configuration |
-
-### 11.5 Add Stub Endpoint Implementations
+### ~~11.5 Add Stub Endpoint Implementations~~ ✅
 
 **Source**: `plan_ui3.md`
 
-Implement real handlers for currently-stubbed endpoints:
+~~Implement real handlers for currently-stubbed endpoints:~~ ✅
 | Endpoint | Purpose |
 |----------|---------|
 | `POST /upstreams/{site_id}/check` | Upstream health check trigger |
@@ -995,56 +859,31 @@ Implement real handlers for currently-stubbed endpoints:
 | `PUT /error-pages/{code}` | Update custom error page |
 | `POST /probes/block` | Block probing IP |
 
-### 11.6 Settings Tab Expansion
+### 11.6 Settings Tab Expansion ⏸️ DEFERRED
 
-**Source**: `plan_ui5.md`
+**Status**: Frontend work deferred to Wave 3. See `deferred.md`.
 
-Add 7 new tabs with hardcoded Input/Toggle (Process Management pattern):
-- Blocked Paths, Auth Defaults, TLS, IP Feeds, Log Exporters, Traffic Shaping, Rate Limits (missing fields)
+### 11.7 Sidebar Reorganization ⏸️ DEFERRED
 
-### 11.7 Sidebar Reorganization
+**Status**: Frontend work deferred to Wave 3. See `deferred.md`.
 
-**Source**: `plan_ui5.md`
+### 11.8 Dynamic Schema Rendering ⏸️ DEFERRED
 
-```
-Overview: Dashboard, WAF Logs, Request Logs
-Security: Probing Activity, Honeypot, Rule Feed
-Management: Workers, Upstreams, Sites, TCP/UDP, Tier Keys
-Configuration: Settings, Process Management, Alerts
-```
+**Status**: Frontend work deferred to Wave 3. See `deferred.md`.
 
-Feature-gate items based on `GET /api/system/info.features`.
+### 11.9 Config Versioning & Audit ⏸️ DEFERRED
 
-### 11.8 Dynamic Schema Rendering
+**Status**: Deferred to Wave 3. See `deferred.md`.
 
-**Sources**: `plan_ui2.md`, `plan_ui4.md`, `plan_ui5.md`
-
-- Create `DynamicField` component (~150 LOC) rendering forms from `/config/schema` with string/integer/boolean/array/select widgets
-- Replace 950-line hardcoded schema with serde-based dynamic generation: `serde_json::to_value(&MainConfig::default())`
-- Add `POST /api/config/validate` endpoint for pre-save validation
-- Add "Restart Required" indicator on fields needing restart
-- Add config diff view (added/removed/changed highlighting)
-
-### 11.9 Config Versioning & Audit
+### ~~11.10 Legacy Admin Code Cleanup~~ ✅
 
 **Source**: `plan_ui6.md`
 
-- Config versioning system with compressed JSON snapshots (zstd, 50-version retention)
-- Validation framework (5 types: schema, semantic, file, network, dependency)
-- Audit logging (JSONL, daily rotation, 90-day retention)
-- New `src/admin/config/` module (6 files: versioning.rs, snapshot.rs, validation.rs, diff.rs, audit.rs, audit_types.rs)
+- ~~Remove `src/admin/legacy.rs` (385 lines of dead code)~~ ✅ (413 lines deleted)
 
-### 11.10 Legacy Admin Code Cleanup
+### 11.11 API Service Additions ⏸️ DEFERRED
 
-**Source**: `plan_ui6.md`
-
-- Remove `src/admin/legacy.rs` (385 lines of dead code)
-
-### 11.11 API Service Additions
-
-**Source**: `plan_ui5.md`
-
-Add ~15 new methods to `admin-ui/src/api.rs`: `get_config_schema`, `get_config_export`, `import_config`, `get_log_level`, `set_log_level`, `get_honeypot_status`, `control_honeypot`, `get_rule_feed_status`, `update_rule_feed`, `validate_config`, `get_dns_status`, `get_dns_zones`, `get_tunnel_status`, `get_plugin_status`.
+**Status**: Frontend work deferred to Wave 3. See `deferred.md`.
 
 ---
 
@@ -1110,7 +949,8 @@ Run `cargo test --features dns` to verify test status. Fix any failures in DNS-s
 
 | Wave | Date | Phases | Status | Notes |
 |------|------|--------|--------|-------|
-| 1 | 2026-03-27 | Phase 1 | **✅ Complete** | 9 dead deps removed, once_cell migrated, DNS deps gated, 2 dead files deleted, rustls-pemfile removed, 14 test compilation errors fixed. `nix` net/uio features kept (required). 93 pre-existing clippy warnings deferred to Phase 6.
+| 1 | 2026-03-27 | Phase 1 | **✅ Complete** | 9 dead deps removed, once_cell migrated, DNS deps gated, 2 dead files deleted, rustls-pemfile removed, 14 test compilation errors fixed. `nix` net/uio features kept (required). 93 pre-existing clippy warnings deferred to Phase 6. |
+| 2 | 2026-03-27 | Phase 2+3+5+6+7+11 | **✅ Complete** | 6 concurrent phases. Bcrypt cost→12, timing attack fix, normalizer DoS guard, XSS header default, CORS wildcard, 7 timestamps consolidated, panics fixed, IPC lock fix, graceful shutdown, DHT fixes, cache LRU→LinkedHashMap, 43 fetch_sub→fetch_update, blocking I/O fixed, WAF dedup ~200 LOC, config dedup, eprintln→tracing, ACME client + sni_peek + passthrough, 13 admin config endpoints, worker restart, 5 stub handlers, legacy.rs deleted. |
 
 ---
 

@@ -1,4 +1,4 @@
-use crate::mesh::transport::*;
+use crate::mesh::transport::MeshTransport;
 
 impl MeshTransport {
     pub(crate) async fn handle_dht_snapshot_request(
