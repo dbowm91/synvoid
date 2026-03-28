@@ -1324,10 +1324,7 @@ impl HttpServer {
         alt_svc: &Option<String>,
         main_config: &Arc<MainConfig>,
     ) -> Result<Response<Full<Bytes>>, hyper::Error> {
-        let drain_id = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(0);
+        let drain_id = crate::utils::safe_unix_duration().as_millis() as u64;
 
         let accepted = drain_state.start_drain(drain_id);
         drain_state.stop_accepting();
@@ -1899,10 +1896,7 @@ impl HttpServer {
         }
 
         let max_per_second = verbose_config.max_logs_per_second;
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
+        let now = crate::utils::safe_unix_timestamp();
 
         let last_reset = REQUEST_LOG_RATE_LIMITER_RESET.load(Ordering::Relaxed);
         if now != last_reset {

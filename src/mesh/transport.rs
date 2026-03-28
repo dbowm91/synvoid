@@ -45,6 +45,9 @@ pub(crate) const MAX_PENDING_CONNECTIONS: usize = 100;
 pub(crate) const CONNECTION_RATE_LIMIT_WINDOW_SECS: u64 = 60;
 pub(crate) const MAX_MESSAGE_QUEUE_SIZE: usize = 1000;
 pub(crate) const DEFAULT_MAX_PEER_MESSAGE_RATE: usize = 1000;
+pub(crate) const MAX_MESSAGE_SIZE: usize = 10 * 1024 * 1024;
+pub(crate) const MAX_BATCH_KEYS: usize = 10000;
+pub(crate) const MAX_HTTP_BODY_SIZE: usize = 50 * 1024 * 1024;
 pub(crate) const PEER_RATE_LIMIT_WINDOW_SECS: u64 = 60;
 /// Maximum duration for a block received from another node (24 hours)
 pub(crate) const MAX_BLOCK_DURATION_SECS: u64 = 86400;
@@ -140,10 +143,7 @@ impl MeshGlobalRateLimiter {
     }
 
     pub(crate) fn check(&self) -> GlobalRateLimitCheck {
-        let now_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
+        let now_ms = crate::utils::safe_unix_duration().as_millis() as u64;
 
         GlobalRateLimitCheck {
             current_per_second: self.per_second.get_count(now_ms),
@@ -152,10 +152,7 @@ impl MeshGlobalRateLimiter {
     }
 
     pub fn record(&self) {
-        let now_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
+        let now_ms = crate::utils::safe_unix_duration().as_millis() as u64;
 
         self.per_second.increment(now_ms);
         self.per_minute.increment(now_ms);
@@ -730,10 +727,7 @@ impl MeshTransport {
             }
         };
 
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let timestamp = crate::utils::safe_unix_timestamp();
 
         let key_exchange_endpoint = self.get_key_exchange_endpoint();
 
@@ -1186,6 +1180,12 @@ impl MeshTransport {
             .await
             .map_err(|e| MeshTransportError::ReceiveFailed(e.to_string()))?;
         let len = u32::from_be_bytes(len_buf) as usize;
+        if len > MAX_MESSAGE_SIZE {
+            return Err(MeshTransportError::ReceiveFailed(format!(
+                "Response too large: {} bytes (max {})",
+                len, MAX_MESSAGE_SIZE
+            )));
+        }
         let mut response_buf = vec![0u8; len];
         recv_stream
             .read_exact(&mut response_buf)
@@ -1736,10 +1736,7 @@ impl MeshTransport {
             .await;
 
         // Send Unix timestamp for when block expires (not remaining duration)
-        let block_until_unix = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs()
+        let block_until_unix = crate::utils::safe_unix_timestamp()
             + blocked_duration_secs;
 
         let block_message = MeshMessage::UpstreamBlocked {
@@ -1961,6 +1958,12 @@ impl MeshTransport {
                 if size == 0 {
                     break;
                 }
+                if body.len().saturating_add(size) > MAX_HTTP_BODY_SIZE {
+                    return Err(MeshTransportError::ReceiveFailed(format!(
+                        "Chunked body too large: exceeds {} bytes",
+                        MAX_HTTP_BODY_SIZE
+                    )));
+                }
                 let mut chunk = vec![0u8; size];
                 recv_stream
                     .read_exact(&mut chunk)
@@ -1975,6 +1978,12 @@ impl MeshTransport {
             }
             body
         } else if let Some(len) = content_length {
+            if len > MAX_HTTP_BODY_SIZE {
+                return Err(MeshTransportError::ReceiveFailed(format!(
+                    "Content-Length too large: {} bytes (max {})",
+                    len, MAX_HTTP_BODY_SIZE
+                )));
+            }
             let mut body = vec![0u8; len];
             recv_stream
                 .read_exact(&mut body)

@@ -171,10 +171,7 @@ impl MeshTransport {
             }
         };
 
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let timestamp = crate::utils::safe_unix_timestamp();
 
         let signable = format!(
             "{}:{}:{}:{}",
@@ -251,10 +248,7 @@ impl MeshTransport {
             return;
         };
 
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let timestamp = crate::utils::safe_unix_timestamp();
 
         let signable = format!(
             "{}:{}:{}:{}",
@@ -306,10 +300,7 @@ impl MeshTransport {
         }
 
         let genesis_key = self.config.genesis_key()?;
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let timestamp = crate::utils::safe_unix_timestamp();
 
         let expires_at = timestamp + (validity_hours * 3600);
 
@@ -346,10 +337,7 @@ impl MeshTransport {
         let signature_hex = parts[3];
 
         // Check expiration
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = crate::utils::safe_unix_timestamp();
 
         if now > expires_at {
             tracing::warn!("Invitation expired at {}", expires_at);

@@ -189,6 +189,14 @@ pub struct ElasticsearchConfig {
     pub flush_interval_secs: u64,
 }
 
+impl ElasticsearchConfig {
+    pub fn resolved_api_key(&self) -> Option<String> {
+        std::env::var("MALU_ES_API_KEY")
+            .ok()
+            .or_else(|| self.api_key.clone())
+    }
+}
+
 fn default_es_index() -> String {
     "maluwaf-logs".to_string()
 }
@@ -214,6 +222,20 @@ pub struct LokiConfig {
     pub batch_size: usize,
     #[serde(default = "default_loki_flush_interval_secs")]
     pub flush_interval_secs: u64,
+}
+
+impl LokiConfig {
+    pub fn resolved_username(&self) -> Option<String> {
+        std::env::var("MALU_LOKI_USERNAME")
+            .ok()
+            .or_else(|| self.username.clone())
+    }
+
+    pub fn resolved_password(&self) -> Option<String> {
+        std::env::var("MALU_LOKI_PASSWORD")
+            .ok()
+            .or_else(|| self.password.clone())
+    }
 }
 
 fn default_loki_batch_size() -> usize {

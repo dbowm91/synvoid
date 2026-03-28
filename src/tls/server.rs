@@ -862,7 +862,7 @@ impl HttpsServer {
                 Response::builder()
                     .status(500)
                     .body(Full::new(Bytes::from("Internal Server Error")))
-                    .expect("building static 500 response should never fail")
+                    .unwrap_or_else(|_| Response::new(Full::new(Bytes::new())))
             }))
     }
 
@@ -877,7 +877,7 @@ impl HttpsServer {
                 Response::builder()
                     .status(500)
                     .body(Full::new(Bytes::from("Internal Server Error")))
-                    .expect("building static 500 response should never fail")
+                    .unwrap_or_else(|_| Response::new(Full::new(Bytes::new())))
             })
     }
 
@@ -900,7 +900,7 @@ impl HttpsServer {
                 Response::builder()
                     .status(500)
                     .body(Full::new(Bytes::from("Internal Server Error")))
-                    .expect("building static 500 response should never fail")
+                    .unwrap_or_else(|_| Response::new(Full::new(Bytes::new())))
             })
     }
 }

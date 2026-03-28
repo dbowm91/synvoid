@@ -150,10 +150,7 @@ impl AnycastZoneSync {
             reason
         );
 
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let timestamp = crate::utils::safe_unix_timestamp();
 
         let msg = crate::mesh::protocol::MeshMessage::ZoneSyncRequest {
             request_id: format!("{}-{}-trigger-{}", self.node_id, zone_origin, timestamp).into(),
@@ -214,10 +211,7 @@ impl AnycastZoneSync {
             node_id
         );
 
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let timestamp = crate::utils::safe_unix_timestamp();
 
         let msg = crate::mesh::protocol::MeshMessage::ZoneSyncRequest {
             request_id: format!("{}-{}-immediate-{}", node_id, zone_origin, timestamp).into(),
@@ -264,10 +258,7 @@ impl AnycastZoneSync {
                 }
             };
 
-            let timestamp = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs();
+            let timestamp = crate::utils::safe_unix_timestamp();
 
             let msg = crate::mesh::protocol::MeshMessage::ZoneSyncRequest {
                 request_id: format!("{}-{}", node_id, timestamp).into(),
@@ -495,10 +486,7 @@ impl AnycastZoneSync {
             return Some(SerializedZoneVersion {
                 serial: zone.serial,
                 records,
-                timestamp: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs(),
+                timestamp: crate::utils::safe_unix_timestamp(),
             });
         }
 

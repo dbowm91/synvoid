@@ -409,10 +409,7 @@ impl MeshCertManager {
         std::fs::create_dir_all(&cert_dir)
             .map_err(|e| MeshCertError::IoError(cert_dir.display().to_string(), e))?;
 
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
+        let timestamp = crate::utils::safe_unix_duration().as_nanos();
         let rotated_node_id = format!("{}-{:x}", self.node_id, timestamp);
 
         let (cert_path, key_path) =

@@ -113,10 +113,7 @@ impl IpFeedManager {
                 *self.blocked_networks.write() = trimmed_networks;
                 *self.blocked_ips.write() = trimmed_ips;
 
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0);
+                let now = crate::utils::safe_unix_timestamp();
                 *self.last_update.write() = now;
 
                 tracing::info!(

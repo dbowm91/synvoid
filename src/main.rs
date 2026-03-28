@@ -1035,6 +1035,7 @@ async fn run_master(
         health_check_interval_secs: 5,
         ipc_session_key,
         ipc_enforce_signing: main_config.security.ipc_enforce_signing,
+        allow_insecure_ipc_key: main_config.security.allow_insecure_ipc_key,
         ipc_rate_limit: Default::default(),
     };
 

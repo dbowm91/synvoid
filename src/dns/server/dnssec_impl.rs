@@ -55,8 +55,15 @@ impl DnsServer {
             });
         }
 
-        // Per RFC 4034 Section 2.2, only KSK should be published in DNSKEY set at zone apex.
-        // ZSK is used for signing but not exposed in the DNSKEY RRset.
+        if let Some(ref zsk) = zone.zsk_key {
+            records.push(DnsZoneRecord {
+                name: "@".to_string(),
+                record_type: RecordType::DNSKEY,
+                value: hex::encode(&zsk.public_key),
+                ttl: zone.dnskey_ttl.unwrap_or(3600),
+                priority: None,
+            });
+        }
 
         records
     }
@@ -89,7 +96,7 @@ impl DnsServer {
         {
             records.push(DnsZoneRecord {
                 name: "@".to_string(),
-                record_type: RecordType::DS,
+                record_type: RecordType::CDS,
                 value: hex::encode(&ds_data),
                 ttl: 3600,
                 priority: None,
@@ -499,6 +506,8 @@ impl DnsServer {
             u16::from(record.record_type),
             &record.value,
             record.priority,
+            None,
+            None,
             record.ttl,
         );
 

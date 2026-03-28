@@ -101,10 +101,7 @@ impl DnsPrefetcher {
         }
 
         let key = format!("{}:{}", qname.to_lowercase(), qtype);
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = crate::utils::safe_unix_timestamp();
 
         let expires_at = now + (ttl as u64);
 
@@ -135,10 +132,7 @@ impl DnsPrefetcher {
         let signatures = self.prefetched_signatures.read();
 
         if let Some(sig) = signatures.get(&key) {
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs();
+            let now = crate::utils::safe_unix_timestamp();
 
             if sig.expires_at > now {
                 return Some(sig.signed_data.clone());
@@ -149,10 +143,7 @@ impl DnsPrefetcher {
     }
 
     fn cleanup_stale(&self, signatures: &mut HashMap<String, PrefetchedSignature>) {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = crate::utils::safe_unix_timestamp();
 
         signatures.retain(|_, v| v.expires_at > now);
 

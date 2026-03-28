@@ -1,4 +1,4 @@
-use crate::mesh::transport::{MeshPeerConnection, MeshTransport, MeshTransportError};
+use crate::mesh::transport::{MeshPeerConnection, MeshTransport, MeshTransportError, MAX_MESSAGE_SIZE};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -153,10 +153,7 @@ impl MeshTransport {
                     request_id: request_id.into(),
                     target_node_id: local_id.as_bytes().to_vec(),
                     requester_node_id: routing_manager.local_node_id().into(),
-                    timestamp: std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs(),
+                    timestamp: crate::utils::safe_unix_timestamp(),
                 };
 
                 if let Err(e) = self.send_datagram_to_peer(&seed.node_id, &find_node).await {
@@ -212,10 +209,7 @@ impl MeshTransport {
                 let ping = MeshMessage::Ping {
                     request_id: request_id.into(),
                     node_id: rm.local_node_id().into(),
-                    timestamp: std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs(),
+                    timestamp: crate::utils::safe_unix_timestamp(),
                 };
 
                 if let Err(e) = self.send_datagram_to_peer(peer_node_id, &ping).await {
@@ -348,6 +342,12 @@ impl MeshTransport {
                 let mut len_buf = [0u8; 4];
                 recv_stream.read_exact(&mut len_buf).await?;
                 let len = u32::from_be_bytes(len_buf) as usize;
+                if len > MAX_MESSAGE_SIZE {
+                    return Err(MeshTransportError::ReceiveFailed(format!(
+                        "Keepalive response too large: {} bytes (max {})",
+                        len, MAX_MESSAGE_SIZE
+                    )));
+                }
                 let mut response_buf = vec![0u8; len];
                 recv_stream.read_exact(&mut response_buf).await?;
 

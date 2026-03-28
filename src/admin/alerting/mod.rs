@@ -116,10 +116,7 @@ impl AlertManager {
         }
 
         let mut events = Vec::new();
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
+        let now = crate::utils::safe_unix_timestamp() as i64;
 
         for rule in &config.alerts {
             if !rule.enabled {
@@ -263,10 +260,7 @@ impl AlertManager {
             return Ok(());
         }
 
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
+        let now = crate::utils::safe_unix_timestamp() as i64;
 
         let event = AlertEvent {
             timestamp: now,

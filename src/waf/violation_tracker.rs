@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::net::IpAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time;
 
@@ -22,10 +22,7 @@ pub struct ViolationEntry {
 
 impl ViolationEntry {
     pub fn new(ip: IpAddr, reason: String, threat_level: u8, window_secs: u64) -> Self {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or(Duration::ZERO)
-            .as_secs();
+        let now = crate::utils::safe_unix_timestamp();
 
         Self {
             ip: ip.to_string(),
@@ -39,10 +36,7 @@ impl ViolationEntry {
     }
 
     pub fn increment(&mut self, threat_level: u8, window_secs: u64) {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or(Duration::ZERO)
-            .as_secs();
+        let now = crate::utils::safe_unix_timestamp();
 
         self.violations_count += 1;
         self.last_violation_at = now;
@@ -51,10 +45,7 @@ impl ViolationEntry {
     }
 
     pub fn is_expired(&self) -> bool {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or(Duration::ZERO)
-            .as_secs();
+        let now = crate::utils::safe_unix_timestamp();
         now > self.expires_at
     }
 

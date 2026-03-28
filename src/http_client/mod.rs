@@ -69,6 +69,7 @@ pub struct UpstreamTlsConfig {
     pub ca_cert_path: Option<String>,
     pub server_name: Option<String>,
     pub skip_verify: bool,
+    pub skip_verify_reason: Option<String>,
     pub allow_plaintext: bool,
 }
 
@@ -79,6 +80,7 @@ impl Default for UpstreamTlsConfig {
             ca_cert_path: None,
             server_name: None,
             skip_verify: false,
+            skip_verify_reason: None,
             allow_plaintext: false,
         }
     }
@@ -91,11 +93,18 @@ impl UpstreamTlsConfig {
             return None;
         }
         let skip_verify = config.skip_verify.unwrap_or(false);
+        if skip_verify {
+            tracing::warn!(
+                reason = config.skip_verify_reason.as_deref().unwrap_or("none provided"),
+                "Upstream TLS: skip_verify is ENABLED \u{2014} certificate verification is disabled"
+            );
+        }
         Some(Self {
             verify: !skip_verify,
             ca_cert_path: config.ca_cert.clone(),
             server_name: None,
             skip_verify,
+            skip_verify_reason: config.skip_verify_reason.clone(),
             allow_plaintext: false,
         })
     }

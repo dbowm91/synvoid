@@ -2,7 +2,6 @@ use parking_lot::Mutex;
 use rusqlite::{params, Connection, OptionalExtension};
 use std::path::Path;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::config::StorageConfig;
 
@@ -140,10 +139,7 @@ impl HoneypotStorage {
     pub fn prune_old_records(&self) -> Result<usize, rusqlite::Error> {
         let conn = self.conn.lock();
 
-        let cutoff = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64
+        let cutoff = crate::utils::safe_unix_timestamp() as i64
             - (self.config.retention_days as i64 * 86400);
 
         let deleted = conn.execute(
@@ -265,10 +261,7 @@ impl HoneypotStorage {
     pub fn set_metadata(&self, key: &str, value: &str) -> Result<(), rusqlite::Error> {
         let conn = self.conn.lock();
 
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
+        let now = crate::utils::safe_unix_timestamp() as i64;
 
         conn.execute(
             "INSERT OR REPLACE INTO honeypot_metadata (key, value, updated_at) VALUES (?1, ?2, ?3)",

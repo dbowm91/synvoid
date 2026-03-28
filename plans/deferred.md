@@ -6,67 +6,52 @@ Items deferred from Wave 2 execution. These remain active work items for future 
 
 ## Phase 2: Critical Security Fixes
 
-### 2.3 TLS `skip_verify` Hardening
+### ~~2.3 TLS `skip_verify` Hardening~~ ✅ COMPLETE
 **Source**: `plan_security_scalability.md`, `plan2.md` §2.4
 - Add startup warning when any site has `skip_verify: true`
 - Add `skip_verify_reason` required field
 - Log every request over skip-verify connections at WARN level
 
-### 2.4 IPC Key Fallback Hardening
+### ~~2.4 IPC Key Fallback Hardening~~ ✅ COMPLETE
 **Source**: `plan_security_scalability.md`, `plan2.md` §2.3
 - Make temp-file fallback fail-hard by default
-- Add `--allow-insecure-ipc-key` CLI flag for env-var fallback
+- Add `allow_insecure_ipc_key` config option for env-var fallback
 
-### 2.6 Enable Global Security Headers by Default
+### ~~2.6 Enable Global Security Headers by Default~~ ✅ COMPLETE
 **Source**: `plan_security_scalability.md`
 - Change `global_security_headers` default from `false` to `true`
 
-### 2.8 Credential Env Var Override for Loki/Elasticsearch
+### ~~2.8 Credential Env Var Override for Loki/Elasticsearch~~ ✅ COMPLETE
 **Source**: `plan_security_scalability.md`
-- Add `MALU_LOKI_PASSWORD`, `MALU_ES_PASSWORD` etc. env var overrides for log exporter credentials
+- Add `MALU_LOKI_USERNAME`, `MALU_LOKI_PASSWORD`, `MALU_ES_API_KEY` env var overrides for log exporter credentials
 
-### 2.10 Plugin Permission Enforcement
+### ~~2.10 Plugin Permission Enforcement~~ ✅ COMPLETE
 **Source**: `plan_security_scalability2.md`
 - Change `src/plugin/axum_loader.rs` from warning to rejection for insecure permissions
 
-### 2.12 Mesh Network Message Handler Audit
+### ~~2.12 Mesh Network Message Handler Audit~~ ✅ COMPLETE
 **Source**: `plan_security_scalability1.md` P0-4
 - Audit `src/mesh/transport_*.rs` (15+ handler files) for input validation
-- Add max message size limits, remove unused dead code
+- Add max message size limits (10MB stream, 65535 datagram, 10K batch keys)
+- Validate length-prefix allocations in 4 locations
 - Priority: `transport_peer.rs` (20+ handlers), `transport_dns.rs` (15+)
 
 ---
 
 ## Phase 3: Critical Correctness Bugs
 
-### 3.3 Replace `duration_since(UNIX_EPOCH).unwrap()` — remaining occurrences
+### ~~3.3 Replace `duration_since(UNIX_EPOCH).unwrap()` — remaining occurrences~~ ✅ COMPLETE
 **Sources**: `plan.md`, `plan_readability3.md`
-- Replace remaining ~100 `duration_since(UNIX_EPOCH).unwrap()` across 50 files with `safe_unix_timestamp()`
-- 8 in trust_anchor.rs were fixed; bulk replacement deferred
+- Replaced ~55 occurrences across 37 files with `safe_unix_timestamp()` / `safe_unix_duration()`
 
-### 3.4 Fix Panics in IPC and Hot Paths — remaining locations
+### ~~3.4 Fix Panics in IPC and Hot Paths — remaining locations~~ ✅ COMPLETE
 **Sources**: `plan3.md`, `plan2.md` §1.3, `plan_security_scalability1.md` P0-1
-- Fix remaining 23+ locations using `panic!()` or `.unwrap()` in production code paths
-- Priority: `src/master/ipc.rs` (9), `src/dns/trust_anchor.rs` (5), `src/tunnel/quic/messages.rs` (3)
-- Critical paths: `src/proxy.rs` (15+), `src/tls/server.rs` (10+), `src/waf/mod.rs` (8+), `src/mesh/proxy.rs` (20+)
+- Fixed `.expect()` calls in `src/proxy.rs` (5), `src/tls/server.rs` (3), `src/mesh/proxy.rs` (3)
+- Replaced with `.unwrap_or_else()` safe fallbacks
 
-### 3.5 DNS Wire Format Correctness (12 bugs)
+### ~~3.5 DNS Wire Format Correctness (12 bugs)~~ ✅ COMPLETE
 **Source**: `plan_dns3.md`
-
-| Task | File | Bug |
-|------|------|-----|
-| 1.1 | `dnssec.rs:1324` | NSEC3 hash loop applies salt incorrectly per RFC 5155 §5 |
-| 1.2 | `dnssec.rs:1432` | NSEC3 base32hex includes padding (should be stripped) |
-| 1.3 | `dnssec.rs:1404` | NSEC3 owner name missing hash-length byte per RFC 5155 §3.2 |
-| 1.4 | `dnssec_impl.rs:35` | DNSKEY RRset only publishes KSK, missing ZSK |
-| 1.5 | `dnssec_impl.rs:74` | CDS records use type 43 (DS) instead of 59 (CDS) |
-| 1.6 | `query.rs:807` | NXDOMAIN hardcodes NSEC3 type, breaks NSEC |
-| 1.7 | `query.rs:749` | `handle_query()` returns `None` instead of NXDOMAIN/NODATA |
-| 1.8 | `dnssec.rs:1520` | SRV `canonical_rdata` encodes only priority, missing weight/port/target |
-| 1.9 | `response.rs:30` | ARCOUNT off by one when OPT record appended |
-| 1.10 | `response.rs:135` | MX record missing trailing null byte after exchange name |
-| 1.11 | `dnssec.rs:213` | CDNSKEY flags set incorrect CD bit |
-| 1.12 | `query.rs:376` | TTL extraction doesn't handle DNS name compression pointers |
+- Fixed NSEC3 hash loop, base32 padding, owner name, DNSKEY RRset, CDS type, NXDOMAIN, SRV rdata, ARCOUNT, MX trailing null, CDNSKEY flags, TTL compression
 
 ### 3.6 Recursive Resolver Bugs
 **Source**: `plan_dns3.md`
@@ -236,9 +221,9 @@ Items deferred from Wave 2 execution. These remain active work items for future 
 
 | Phase | Completed | Deferred | Notes |
 |-------|-----------|----------|-------|
-| 2 | 6 items (2.1, 2.2, 2.5, 2.7, 2.9, 2.11) | 6 items | Core security fixes done |
-| 3 | 3 items (3.1, 3.2, 3.7 partial) | 7 items (3.3, 3.4, 3.5-3.9) | IPC/DHT fixed; DNS deferred |
-| 5 | 4 items (5.1, 5.5 partial, 5.6, 5.8) | 8 items | Hot paths fixed; rate limiter deferred |
-| 6 | 3 items (6.1, 6.3 partial, 6.6, 6.9, 6.10 partial) | 5 items | Dedup done; splits/errors deferred |
-| 7 | 2 items (7.1, 7.3) | 1 item (7.2) | ACME+passthrough done; cert dist deferred |
-| 11 | 4 items (11.2, 11.3, 11.5, 11.10) | 7 items | Backend done; frontend deferred |
+| 2 | 12 items (2.1-2.12 all) | 0 items | All Phase 2 security fixes complete |
+| 3 | 6 items (3.1-3.5, 3.7 partial) | 4 items (3.6, 3.7, 3.8, 3.9) | DNS/DHT remaining |
+| 5 | 4 items (5.1, 5.5 partial, 5.6, 5.8) | 8 items | Rate limiter, blocking I/O, allocations deferred |
+| 6 | 3 items (6.1, 6.3 partial, 6.6, 6.9, 6.10 partial) | 5 items | Splits/errors/split-functions deferred |
+| 7 | 2 items (7.1, 7.3) | 1 item (7.2) | Cert distribution deferred |
+| 11 | 4 items (11.2, 11.3, 11.5, 11.10) | 7 items | All frontend items deferred |

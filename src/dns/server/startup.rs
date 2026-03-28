@@ -155,10 +155,7 @@ impl DnsServer {
                             .error_count
                             .checked_div(update.query_count.max(1))
                             .map(|v| v as u8),
-                        timestamp: std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_secs(),
+                        timestamp: crate::utils::safe_unix_timestamp(),
                     };
                     let _ = registry.update_anycast_health(health_update).await;
                 }

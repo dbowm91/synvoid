@@ -473,10 +473,7 @@ impl GeoIpUpdater {
             state.consecutive_failures = 0;
             state.last_error = None;
             state.last_success = Some(
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs() as i64,
+                crate::utils::safe_unix_timestamp() as i64,
             );
         }
 

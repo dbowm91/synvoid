@@ -208,10 +208,7 @@ impl Zone {
         let history_entry = ZoneHistory {
             serial: old_serial,
             records: self.records.clone(),
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
+            timestamp: crate::utils::safe_unix_timestamp(),
         };
 
         if self.history.len() >= max_history {
@@ -223,10 +220,7 @@ impl Zone {
     fn increment_serial_rfc1982(current: u32) -> u32 {
         const HALF_RANGE: u32 = 0x80000000;
 
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs() as u32;
+        let now = crate::utils::safe_unix_timestamp() as u32;
 
         if current < HALF_RANGE && now >= HALF_RANGE {
             return 1;

@@ -40,11 +40,11 @@ fn validate_plugin_path(path: &Path) -> Result<(), AxumPluginError> {
             let mode = permissions.mode();
 
             if mode & 0o777 != 0o755 && mode & 0o777 != 0o500 {
-                tracing::warn!(
-                    "Plugin {} has insecure permissions {:o}, should be 755 or 500",
+                return Err(AxumPluginError::LoadFailed(format!(
+                    "Plugin {} has insecure permissions {:o}, must be 755 or 500",
                     canonical_path.display(),
                     mode & 0o777
-                );
+                )));
             }
         }
     }

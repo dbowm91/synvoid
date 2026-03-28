@@ -212,9 +212,7 @@ fn parse_handshake_time(value: &str) -> Option<u64> {
         }
     }
 
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .ok()?;
+    let now = crate::utils::safe_unix_duration();
 
     Some(now.as_secs() - seconds)
 }

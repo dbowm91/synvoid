@@ -95,10 +95,7 @@ impl SharedWafState {
         }
         
         gauge!("maluwaf.persistence.last_save").set(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs() as f64
+            crate::utils::safe_unix_timestamp() as f64
         );
     }
 

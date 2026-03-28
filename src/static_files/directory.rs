@@ -232,10 +232,7 @@ fn format_modified(timestamp: u64) -> String {
         return "-".to_string();
     }
 
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let now = crate::utils::safe_unix_timestamp();
 
     let diff = now.saturating_sub(timestamp);
 

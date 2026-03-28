@@ -250,6 +250,7 @@ pub struct ProcessManagerConfig {
     pub health_check_interval_secs: u64,
     pub ipc_session_key: Option<[u8; 32]>,
     pub ipc_enforce_signing: bool,
+    pub allow_insecure_ipc_key: bool,
     pub ipc_rate_limit: super::ipc_rate_limit::config::IpcRateLimitConfig,
 }
 
@@ -274,6 +275,7 @@ impl Default for ProcessManagerConfig {
             health_check_interval_secs: 5,
             ipc_session_key: session_key,
             ipc_enforce_signing: true,
+            allow_insecure_ipc_key: false,
             ipc_rate_limit: super::ipc_rate_limit::config::IpcRateLimitConfig::default(),
         }
     }
@@ -524,11 +526,21 @@ impl ProcessManager {
                     cmd.env("MALUWAF_IPC_KEY_FILE", path);
                 }
                 Err(e) => {
-                    tracing::warn!(
-                        "Failed to write IPC key to temp file: {}, falling back to env var",
-                        e
-                    );
-                    cmd.env("MALUWAF_IPC_KEY", key_hex);
+                    if self.config.allow_insecure_ipc_key {
+                        tracing::warn!(
+                            "Failed to write IPC key to temp file: {}, falling back to env var \
+                             (allow_insecure_ipc_key is set)",
+                            e
+                        );
+                        cmd.env("MALUWAF_IPC_KEY", key_hex);
+                    } else {
+                        panic!(
+                            "Failed to write IPC key to temp file: {}. \
+                             Refusing to fall back to env var (key visible in /proc). \
+                             Set security.allow_insecure_ipc_key=true to allow this fallback.",
+                            e
+                        );
+                    }
                 }
             }
         }
@@ -879,10 +891,7 @@ impl ProcessManager {
         drain_response_fn: impl Fn(&Message, u64) -> Option<u64>,
     ) -> Result<u64, String> {
         if let Some(ipc) = ipc {
-            let drain_id = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis() as u64)
-                .unwrap_or(0);
+            let drain_id = crate::utils::safe_unix_duration().as_millis() as u64;
 
             {
                 let mut ipc = ipc.lock().await;

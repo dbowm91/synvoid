@@ -7,10 +7,7 @@ pub const MAX_REASONABLE_TIMESTAMP: u64 = 1767225600;
 static TIME_VALIDATION_ERRORS: AtomicU64 = AtomicU64::new(0);
 
 pub fn validate_system_time() {
-    let now_unix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let now_unix = crate::utils::safe_unix_timestamp();
 
     if now_unix < MIN_REASONABLE_TIMESTAMP {
         let offset = MIN_REASONABLE_TIMESTAMP.saturating_sub(now_unix);

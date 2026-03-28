@@ -877,10 +877,7 @@ impl Orchestrator {
 
         let client: HttpClient = create_simple_http_client(Duration::from_secs(5));
 
-        let drain_id = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(0);
+        let drain_id = crate::utils::safe_unix_duration().as_millis() as u64;
 
         for port in ports {
             let drain_url = format!("http://127.0.0.1:{}/__internal__/drain", port);

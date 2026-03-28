@@ -10,7 +10,6 @@
 
 use std::path::PathBuf;
 use std::result::Result;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use ed25519_dalek::{Signer, SigningKey};
 use sha2::{Digest, Sha256, Sha384};
@@ -273,10 +272,7 @@ impl DnsSecKeyManager {
         validity_days: u32,
         is_standby: bool,
     ) -> Result<(), String> {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let now = crate::utils::safe_unix_timestamp();
         let expires_at = now + (validity_days as u64 * 86400);
 
         let (public_key, private_key, key_tag, flags, key_size) = match algorithm {
@@ -402,10 +398,7 @@ impl DnsSecKeyManager {
     }
 
     pub fn start_key_rollover(&mut self, key_type: KeyType) -> Result<(), String> {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let now = crate::utils::safe_unix_timestamp();
 
         match key_type {
             KeyType::KSK => {
@@ -503,10 +496,7 @@ impl DnsSecKeyManager {
     }
 
     pub fn check_key_rotation(&mut self, config: KeyRotationConfig) -> Result<(), String> {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let now = crate::utils::safe_unix_timestamp();
 
         if let Some(ksk) = &self.key_signing_key {
             let age = now - ksk.created_at;
@@ -631,10 +621,7 @@ impl DnsSecKeyManager {
     ) -> Result<KeyRotationResult, String> {
         let mut result = KeyRotationResult::default();
 
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let now = crate::utils::safe_unix_timestamp();
 
         // Clone key data to avoid borrow checker issues
         let ksk_needs_rotation = self.key_signing_key.as_ref().map(|ksk| {
@@ -700,10 +687,7 @@ impl DnsSecKeyManager {
     }
 
     pub fn get_key_status(&self) -> Result<DnsSecKeyStatus, String> {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let now = crate::utils::safe_unix_timestamp();
 
         let ksk_info = self.key_signing_key.as_ref().map(|k| KeyInfo {
             key_type: "KSK".to_string(),
@@ -740,10 +724,7 @@ impl DnsSecKeyManager {
     }
 
     pub fn cleanup_expired_keys(&self) -> Result<(), String> {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let now = crate::utils::safe_unix_timestamp();
 
         for key_type in ["ksk", "zsk"] {
             let key_dir = self.key_path.join(key_type);
@@ -1323,7 +1304,7 @@ pub fn hash_name_nsec3(name: &str, config: &Nsec3Config) -> Vec<u8> {
 
     let mut hash = name_lower.as_bytes().to_vec();
 
-    for _ in 0..config.iterations {
+    for _ in 0..=config.iterations {
         let mut hasher = Sha1::new();
         hasher.update(&hash);
         hasher.update(&config.salt);
@@ -1403,7 +1384,7 @@ pub fn get_nsec3_type_bitmap() -> Vec<u16> {
 
 pub fn create_nsec3_owner_name(base_name: &str, hash: &[u8]) -> String {
     let hash_b32 = base32_encode(hash);
-    format!("{}.{}", hash_b32, base_name)
+    format!("{}{}.{}", hash.len() as u8 as char, hash_b32, base_name)
 }
 
 fn base32_encode(input: &[u8]) -> String {
@@ -1427,10 +1408,6 @@ fn base32_encode(input: &[u8]) -> String {
     if bits_in_buffer > 0 {
         let index = ((buffer << (5 - bits_in_buffer)) & 0x1F) as usize;
         result.push(BASE32_ALPHABET[index] as char);
-    }
-
-    while !result.len().is_multiple_of(8) {
-        result.push('=');
     }
 
     result
@@ -1465,7 +1442,14 @@ fn decode_der_length(bytes: &[u8]) -> Option<usize> {
     }
 }
 
-pub fn canonical_rdata(record_type: u16, value: &str, priority: Option<u32>, _ttl: u32) -> Vec<u8> {
+pub fn canonical_rdata(
+    record_type: u16,
+    value: &str,
+    priority: Option<u32>,
+    weight: Option<u32>,
+    port: Option<u32>,
+    _ttl: u32,
+) -> Vec<u8> {
     match record_type {
         1 => {
             if let Ok(ip) = value.parse::<std::net::Ipv4Addr>() {
@@ -1479,8 +1463,8 @@ pub fn canonical_rdata(record_type: u16, value: &str, priority: Option<u32>, _tt
             }
             Vec::new()
         }
-        5 => canonical_name(value),
         2 => canonical_name(value),
+        5 => canonical_name(value),
         6 => canonical_soa(value),
         15 => {
             let mut rdata = Vec::new();
@@ -1520,7 +1504,11 @@ pub fn canonical_rdata(record_type: u16, value: &str, priority: Option<u32>, _tt
         33 => {
             let mut rdata = Vec::new();
             let pri = priority.unwrap_or(0);
+            let w = weight.unwrap_or(0);
+            let p = port.unwrap_or(0);
             rdata.extend_from_slice(&pri.to_be_bytes());
+            rdata.extend_from_slice(&w.to_be_bytes());
+            rdata.extend_from_slice(&p.to_be_bytes());
             rdata.extend_from_slice(&canonical_name(value));
             rdata
         }
@@ -1631,7 +1619,7 @@ pub fn sign_record(
 ) -> Result<Vec<u8>, String> {
     let rdata_value = String::new();
     let priority = None;
-    let rdata = canonical_rdata(record_type, &rdata_value, priority, ttl);
+    let rdata = canonical_rdata(record_type, &rdata_value, priority, None, None, ttl);
 
     let canonical_msg = canonical_dns_message(name, record_type, 1, ttl, &rdata);
 
@@ -1662,13 +1650,13 @@ mod tests {
 
     #[test]
     fn test_canonical_a_record() {
-        let result = canonical_rdata(1, "192.0.2.1", None, 3600);
+        let result = canonical_rdata(1, "192.0.2.1", None, None, None, 3600);
         assert_eq!(result, vec![192, 0, 2, 1]);
     }
 
     #[test]
     fn test_canonical_aaaa_record() {
-        let result = canonical_rdata(28, "2001:db8::1", None, 3600);
+        let result = canonical_rdata(28, "2001:db8::1", None, None, None, 3600);
         assert_eq!(
             result,
             vec![0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]
@@ -1677,7 +1665,7 @@ mod tests {
 
     #[test]
     fn test_canonical_cname_record() {
-        let result = canonical_rdata(5, "example.com", None, 3600);
+        let result = canonical_rdata(5, "example.com", None, None, None, 3600);
         assert_eq!(
             result,
             vec![7, 101, 120, 97, 109, 112, 108, 101, 3, 99, 111, 109, 0]
@@ -1686,7 +1674,7 @@ mod tests {
 
     #[test]
     fn test_canonical_txt_record_single_string() {
-        let result = canonical_rdata(16, "Hello World", None, 3600);
+        let result = canonical_rdata(16, "Hello World", None, None, None, 3600);
         assert_eq!(result.len(), 12);
         assert_eq!(result[0], 11);
         assert_eq!(&result[1..], b"Hello World");
@@ -1694,7 +1682,7 @@ mod tests {
 
     #[test]
     fn test_canonical_txt_record_multiple_strings() {
-        let result = canonical_rdata(16, "\x0bHello World", None, 3600);
+        let result = canonical_rdata(16, "\x0bHello World", None, None, None, 3600);
         // TXT record: length byte + text (no trailing null in canonical form)
         assert_eq!(result.len(), 12);
         assert_eq!(result[0], 11);
@@ -1703,7 +1691,7 @@ mod tests {
 
     #[test]
     fn test_canonical_mx_record() {
-        let result = canonical_rdata(15, "example.com", Some(10), 3600);
+        let result = canonical_rdata(15, "example.com", Some(10), None, None, 3600);
         eprintln!(
             "DEBUG: result len = {}, result = {:?}",
             result.len(),
@@ -1724,7 +1712,7 @@ mod tests {
     #[test]
     fn test_canonical_soa_record() {
         let soa_value = "ns.example.com. hostmaster.example.com. 2024010101 3600 600 604800 86400";
-        let result = canonical_rdata(6, soa_value, None, 3600);
+        let result = canonical_rdata(6, soa_value, None, None, None, 3600);
 
         assert!(result.len() > 0);
 
@@ -2032,8 +2020,14 @@ impl ZoneSigner {
             for ((_name, _), records) in records_to_sign {
                 for record in records {
                     let rt_val = rt.to_u16();
-                    let canonical =
-                        canonical_rdata(rt_val, &record.value, record.priority, record.ttl);
+                    let canonical = canonical_rdata(
+                        rt_val,
+                        &record.value,
+                        record.priority,
+                        None,
+                        None,
+                        record.ttl,
+                    );
 
                     let canonical_msg =
                         canonical_dns_message(&record.name, rt_val, 1, record.ttl, &canonical);

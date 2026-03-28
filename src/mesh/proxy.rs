@@ -11,6 +11,7 @@ use http_body_util::combinators::BoxBody;
 use http_body_util::BodyExt;
 use hyper::body::Incoming;
 use hyper::{Request, Response};
+use http::header::HeaderValue;
 use lru_time_cache::LruCache;
 use parking_lot::Mutex as PLMutex;
 use parking_lot::RwLock;
@@ -1119,7 +1120,12 @@ impl MeshProxy {
                 }
 
                 let body = http_body_util::Full::new(entry.body.clone()).boxed();
-                return new_response.body(body).unwrap();
+                return new_response.body(body).unwrap_or_else(|_| {
+                    Response::builder()
+                        .status(500)
+                        .body(http_body_util::Full::new(Bytes::from("Internal Server Error")).boxed())
+                        .unwrap_or_else(|_| Response::new(http_body_util::Full::new(Bytes::new()).boxed()))
+                });
             }
         }
 
@@ -1199,7 +1205,7 @@ impl MeshProxy {
                         transformed = Bytes::from(compressed);
                         response
                             .headers_mut()
-                            .insert("Content-Encoding", "br".parse().unwrap());
+                            .insert("Content-Encoding", HeaderValue::from_static("br"));
                     }
                 } else if accept_encoding.contains("gzip") {
                     let gzip_level = comp_config.gzip_level.unwrap_or(6);
@@ -1210,7 +1216,7 @@ impl MeshProxy {
                         transformed = Bytes::from(compressed);
                         response
                             .headers_mut()
-                            .insert("Content-Encoding", "gzip".parse().unwrap());
+                            .insert("Content-Encoding", HeaderValue::from_static("gzip"));
                     }
                 }
             }

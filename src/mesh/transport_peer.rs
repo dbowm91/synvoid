@@ -1,4 +1,4 @@
-use crate::mesh::transport::{MeshTransport, MeshTransportError, MAX_BLOCK_DURATION_SECS};
+use crate::mesh::transport::{MeshTransport, MeshTransportError, MAX_BLOCK_DURATION_SECS, MAX_MESSAGE_SIZE, MAX_BATCH_KEYS};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -915,6 +915,21 @@ impl MeshTransport {
         request_id: &str,
         keys: &[crate::mesh::protocol::ArcStr],
     ) {
+        if keys.len() > MAX_BATCH_KEYS {
+            tracing::warn!(
+                "Batch lookup request from {} rejected: {} keys exceeds limit of {}",
+                from_peer,
+                keys.len(),
+                MAX_BATCH_KEYS
+            );
+            let response = MeshMessage::Error {
+                code: 400,
+                message: format!("Too many keys: {} (max {})", keys.len(), MAX_BATCH_KEYS).into(),
+            };
+            let _ = self.send_datagram_to_peer(from_peer, &response).await;
+            return;
+        }
+
         tracing::debug!(
             "Received batch lookup request: {} for {} keys from {}",
             request_id,
@@ -980,10 +995,7 @@ impl MeshTransport {
             peer_id: target_peer_id.into(),
             status,
             latency_ms: None,
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
+            timestamp: crate::utils::safe_unix_timestamp(),
         };
 
         if let Err(e) = self.send_datagram_to_peer(from_peer, &response).await {
@@ -1340,10 +1352,7 @@ impl MeshTransport {
         origin_node_id: &str,
     ) {
         // blocked_until is Unix timestamp when block expires
-        let now_unix = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let now_unix = crate::utils::safe_unix_timestamp();
 
         // Validate: block timestamp not unreasonably far in the future
         let max_allowed = now_unix + MAX_BLOCK_DURATION_SECS;
@@ -1497,6 +1506,12 @@ impl MeshTransport {
             .await
             .map_err(|e| MeshTransportError::ReceiveFailed(e.to_string()))?;
         let len = u32::from_be_bytes(len_buf) as usize;
+        if len > MAX_MESSAGE_SIZE {
+            return Err(MeshTransportError::ReceiveFailed(format!(
+                "Message too large: {} bytes (max {})",
+                len, MAX_MESSAGE_SIZE
+            )));
+        }
         let mut data = vec![0u8; len];
         recv_stream
             .read_exact(&mut data)
@@ -1609,10 +1624,7 @@ impl MeshTransport {
 
                 let msg = MeshMessage::PeerHealthCheck {
                     peer_id: self.config.node_id().into(),
-                    timestamp: std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs(),
+                    timestamp: crate::utils::safe_unix_timestamp(),
                 };
 
                 let encoded = msg.encode()?;
@@ -1623,6 +1635,12 @@ impl MeshTransport {
                 let mut len_buf = [0u8; 4];
                 recv_stream.read_exact(&mut len_buf).await?;
                 let len = u32::from_be_bytes(len_buf) as usize;
+                if len > MAX_MESSAGE_SIZE {
+                    return Err(MeshTransportError::ReceiveFailed(format!(
+                        "Health check response too large: {} bytes (max {})",
+                        len, MAX_MESSAGE_SIZE
+                    )));
+                }
                 let mut buf = vec![0u8; len];
                 recv_stream.read_exact(&mut buf).await?;
 

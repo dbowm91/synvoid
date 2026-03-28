@@ -183,6 +183,7 @@ pub struct ProxyServer {
     buffering_config: Option<BufferingConfig>,
     cache: Option<Arc<ProxyCache>>,
     cache_key_builder: Option<CacheKeyBuilder>,
+    skip_verify: bool,
 }
 
 impl ProxyServer {
@@ -241,6 +242,8 @@ impl ProxyServer {
             )
         };
 
+        let skip_verify = tls_config.map(|t| t.skip_verify).unwrap_or(false);
+
         ProxyServer {
             client,
             revalidation_client,
@@ -254,6 +257,7 @@ impl ProxyServer {
             buffering_config: None,
             cache: None,
             cache_key_builder: None,
+            skip_verify,
         }
     }
 
@@ -351,6 +355,7 @@ impl ProxyServer {
             buffering_config,
             cache,
             cache_key_builder,
+            skip_verify: false,
         }
     }
 
@@ -414,7 +419,7 @@ impl ProxyServer {
                         Response::builder()
                             .status(500)
                             .body(bytes::Bytes::from_static(b"Internal Server Error"))
-                            .expect("building static 500 response should never fail")
+                            .unwrap_or_else(|_| Response::new(bytes::Bytes::new()))
                     }));
             }
             WafDecision::ChallengeWithCookie {
@@ -439,7 +444,7 @@ impl ProxyServer {
                         Response::builder()
                             .status(500)
                             .body(bytes::Bytes::from_static(b"Internal Server Error"))
-                            .expect("building static 500 response should never fail")
+                            .unwrap_or_else(|_| Response::new(bytes::Bytes::new()))
                     }));
             }
             WafDecision::Tarpit(_) => {
@@ -526,7 +531,7 @@ impl ProxyServer {
                         Response::builder()
                             .status(500)
                             .body(bytes::Bytes::from_static(b"Internal Server Error"))
-                            .expect("building static 500 response should never fail")
+                            .unwrap_or_else(|_| Response::new(bytes::Bytes::new()))
                     }))
             }
         }
@@ -700,6 +705,14 @@ impl ProxyServer {
         path: &str,
         body: Option<bytes::Bytes>,
     ) -> Result<Response<bytes::Bytes>, Box<dyn std::error::Error + Send + Sync>> {
+        if self.skip_verify {
+            tracing::warn!(
+                site_id = %self.site_id,
+                upstream = %self.upstream_url,
+                path,
+                "Forwarding request over connection with TLS verification DISABLED"
+            );
+        }
         if let Some(ref pool) = self.upstream_pool {
             return self.forward_with_pool(method, path, pool, body).await;
         }
@@ -909,7 +922,7 @@ impl ProxyServer {
         Ok(Response::builder()
             .status(200)
             .body(bytes::Bytes::from(format!("Purged {} entries\n", count)))
-            .expect("building purge response should never fail"))
+            .unwrap_or_else(|_| Response::new(bytes::Bytes::new())))
     }
 
     fn process_cache_invalidate_header(&self, headers: &http::HeaderMap) {
@@ -1064,7 +1077,7 @@ impl ProxyServer {
             Response::builder()
                 .status(500)
                 .body(bytes::Bytes::from_static(b"Internal Server Error"))
-                .expect("building static 500 response should never fail")
+                .unwrap_or_else(|_| Response::new(bytes::Bytes::new()))
         })
     }
 

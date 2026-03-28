@@ -70,10 +70,7 @@ impl PidFileManager {
 
     pub fn write_pid(&self, pid: u32, version: &str) -> std::io::Result<()> {
         let socket_path = self.socket_file_path().to_string_lossy().to_string();
-        let started_at = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let started_at = crate::utils::safe_unix_timestamp();
 
         let content = PidFileContent {
             pid,
@@ -147,10 +144,7 @@ impl PidFileManager {
 
         // Now we have exclusive access - write the PID file
         let socket_path = self.socket_file_path().to_string_lossy().to_string();
-        let started_at = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let started_at = crate::utils::safe_unix_timestamp();
 
         let content = PidFileContent {
             pid,
@@ -194,10 +188,7 @@ impl PidFileManager {
         // The O_CREATE_NEW flag ensures we get an error if file exists
 
         let socket_path = self.socket_file_path().to_string_lossy().to_string();
-        let started_at = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let started_at = crate::utils::safe_unix_timestamp();
 
         let content = PidFileContent {
             pid,
@@ -241,10 +232,7 @@ impl PidFileManager {
         };
 
         let socket_path = self.socket_file_path().to_string_lossy().to_string();
-        let started_at = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let started_at = crate::utils::safe_unix_timestamp();
 
         let content = PidFileContent {
             pid,
@@ -415,14 +403,7 @@ impl OverseerLockFile {
         }
 
         let pid = std::process::id();
-        let content = format!(
-            "{}\n{}",
-            pid,
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs()
-        );
+        let content = format!("{}\n{}", pid, crate::utils::safe_unix_timestamp());
 
         use std::io::Write;
         let mut f = &file;

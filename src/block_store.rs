@@ -17,7 +17,6 @@ use std::net::IpAddr;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
 
 const DEFAULT_MAX_ENTRIES: usize = 500_000;
@@ -35,10 +34,7 @@ pub struct BlockEntry {
 
 impl BlockEntry {
     pub fn new(ip: IpAddr, reason: String, ban_expire_seconds: u64, site_scope: String) -> Self {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or(std::time::Duration::ZERO)
-            .as_secs();
+        let now = crate::utils::safe_unix_timestamp();
         Self {
             ip: ip.to_string(),
             reason,
@@ -58,10 +54,7 @@ impl BlockEntry {
         if self.is_permanent() {
             return false;
         }
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or(std::time::Duration::ZERO)
-            .as_secs();
+        let now = crate::utils::safe_unix_timestamp();
         now > self.blocked_at + self.ban_expire_seconds
     }
 
@@ -70,10 +63,7 @@ impl BlockEntry {
     }
 
     pub fn update_access(&mut self) {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or(std::time::Duration::ZERO)
-            .as_secs();
+        let now = crate::utils::safe_unix_timestamp();
         self.access_count += 1;
         self.last_access = now;
     }

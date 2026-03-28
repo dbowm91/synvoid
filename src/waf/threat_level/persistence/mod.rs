@@ -13,7 +13,6 @@ mod persistence {
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Arc;
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     const CURRENT_VERSION: u32 = 1;
 
@@ -69,10 +68,7 @@ mod persistence {
                 fs::create_dir_all(parent)?;
             }
 
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs() as i64;
+            let now = crate::utils::safe_unix_timestamp() as i64;
 
             let persisted = PersistedBaseline {
                 version: CURRENT_VERSION,

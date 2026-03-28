@@ -164,10 +164,7 @@ pub async fn create_site(
 
     if let Some(ref mesh_transport) = state.mesh.mesh_transport {
         let mesh_transport_clone = mesh_transport.clone();
-        let version = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let version = crate::utils::safe_unix_timestamp();
 
         tokio::spawn(async move {
             match mesh_transport_clone
@@ -300,10 +297,7 @@ pub async fn update_site(
     state_config.sites.insert(site_id.clone(), config.clone());
 
     let site_id_for_broadcast = site_id.clone();
-    let version = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
+    let version = crate::utils::safe_unix_timestamp();
     drop(state_config);
     drop(_guard);
 

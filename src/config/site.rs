@@ -353,6 +353,9 @@ pub struct UpstreamTlsConfig {
 
     #[serde(default)]
     pub skip_verify: Option<bool>,
+
+    #[serde(default)]
+    pub skip_verify_reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
@@ -1435,6 +1438,8 @@ pub struct SiteUpstreamTlsConfig {
     pub server_name: Option<String>,
     #[serde(default)]
     pub skip_verify: Option<bool>,
+    #[serde(default)]
+    pub skip_verify_reason: Option<String>,
 }
 
 fn default_tls_verify() -> Option<bool> {

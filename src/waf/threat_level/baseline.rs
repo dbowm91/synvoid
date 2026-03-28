@@ -2,7 +2,6 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BaselineStats {
@@ -89,10 +88,7 @@ impl RunningStatistics {
     }
 
     pub fn finalize(&self, metric_name: &str) -> BaselineStats {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs() as i64;
+        let now = crate::utils::safe_unix_timestamp() as i64;
 
         BaselineStats {
             metric_name: metric_name.to_string(),
@@ -146,10 +142,7 @@ impl BaselineLearner {
     }
 
     pub fn start_learning(&self) {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs() as i64;
+        let now = crate::utils::safe_unix_timestamp() as i64;
 
         *self.learning_start_time.write() = Some(now);
         *self.learning_enabled.write() = true;
@@ -181,10 +174,7 @@ impl BaselineLearner {
             None => return 0.0,
         };
 
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs() as i64;
+        let now = crate::utils::safe_unix_timestamp() as i64;
 
         let elapsed = now - start;
         let duration = self.learning_duration_secs as i64;
@@ -201,10 +191,7 @@ impl BaselineLearner {
             return;
         }
 
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs() as i64;
+        let now = crate::utils::safe_unix_timestamp() as i64;
 
         if self.learning_start_time.read().is_none() {
             *self.learning_start_time.write() = Some(now);

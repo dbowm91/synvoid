@@ -131,10 +131,7 @@ impl MeshTransport {
             let mut key_bytes = vec![0u8; 32];
             rand::rng().fill_bytes(&mut key_bytes);
 
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs();
+            let now = crate::utils::safe_unix_timestamp();
             let valid_until = now + (365 * 24 * 60 * 60);
 
             let tier_key = crate::mesh::organization::TierKey::new(
@@ -158,10 +155,7 @@ impl MeshTransport {
             let org_data = serde_json::json!({
                 "org_id": org_id,
                 "name": org_name,
-                "registered_at": std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs(),
+                "registered_at": crate::utils::safe_unix_timestamp(),
             });
             let key = format!("org:{}", org_id);
             if let Ok(value) = serde_json::to_vec(&org_data) {
@@ -211,10 +205,7 @@ impl MeshTransport {
         reason: String,
         tier_key: Option<&crate::mesh::organization::TierKey>,
     ) {
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let timestamp = crate::utils::safe_unix_timestamp();
 
         let signature = if approved { Vec::new() } else { Vec::new() };
 

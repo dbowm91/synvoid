@@ -565,10 +565,7 @@ impl RateEntry {
         Self {
             count: AtomicU32::new(1),
             window_start: AtomicI64::new(
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs() as i64,
+                crate::utils::safe_unix_timestamp() as i64,
             ),
         }
     }
@@ -597,10 +594,7 @@ impl UdpRateLimiter {
     }
 
     fn check_with_limit(&self, ip: std::net::IpAddr, limit: u32) -> bool {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs() as i64;
+        let now = crate::utils::safe_unix_timestamp() as i64;
 
         let window_secs: i64 = 1;
         let shard_idx = hash_ip(&ip);
@@ -632,10 +626,7 @@ impl UdpRateLimiter {
     }
 
     fn cleanup_stale(&self, max_age_secs: i64) {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs() as i64;
+        let now = crate::utils::safe_unix_timestamp() as i64;
 
         let mut total_removed = 0u64;
         for shard in &self.shards {

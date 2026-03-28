@@ -87,10 +87,7 @@ impl TsigVerifier {
             return Err(TsigError::BadSignature);
         }
 
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = crate::utils::safe_unix_timestamp();
 
         let fudge_val = fudge as u64;
         let time_diff = time_signed.abs_diff(now);
@@ -184,10 +181,7 @@ impl TsigVerifier {
             .get(key_name)
             .ok_or(TsigError::UnknownKey(key_name.to_string()))?;
 
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = crate::utils::safe_unix_timestamp();
         let fudge: u16 = 300;
 
         let mut data_to_sign = Vec::new();

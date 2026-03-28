@@ -833,6 +833,7 @@ impl DnsServer {
                                     &qname,
                                     qtype,
                                     &nsec_records,
+                                    47,
                                     dnssec_ok,
                                     edns_options.as_ref(),
                                     zsk,
@@ -848,6 +849,7 @@ impl DnsServer {
                                     &qname,
                                     qtype,
                                     &nsec3_records,
+                                    50,
                                     dnssec_ok,
                                     edns_options.as_ref(),
                                     zsk,
@@ -866,7 +868,8 @@ impl DnsServer {
     pub(super) fn build_nxdomain_response(
         qname: &str,
         qtype: u16,
-        nsec3_records: &[DnsZoneRecord],
+        nsec_records: &[DnsZoneRecord],
+        nsec_record_type: u16,
         dnssec_ok: bool,
         edns_options: Option<&EdnsOptions>,
         zsk: Option<&crate::dns::dnssec::ZoneSigningKey>,
@@ -886,7 +889,7 @@ impl DnsServer {
         response.extend_from_slice(&1u16.to_be_bytes());
         response.extend_from_slice(&0u16.to_be_bytes());
         response.extend_from_slice(&0u16.to_be_bytes());
-        response.extend_from_slice(&(nsec3_records.len() as u16).to_be_bytes());
+        response.extend_from_slice(&(nsec_records.len() as u16).to_be_bytes());
 
         let name_parts: Vec<&str> = if qname.is_empty() || qname == "@" {
             vec![""]
@@ -905,7 +908,7 @@ impl DnsServer {
         response.extend_from_slice(&qtype.to_be_bytes());
         response.extend_from_slice(&1u16.to_be_bytes());
 
-        for nsec_record in nsec3_records {
+        for nsec_record in nsec_records {
             let nsec_name_parts: Vec<&str> = nsec_record.name.split('.').collect();
 
             for part in &nsec_name_parts {
@@ -916,7 +919,7 @@ impl DnsServer {
             }
             response.push(0);
 
-            response.extend_from_slice(&50u16.to_be_bytes());
+            response.extend_from_slice(&nsec_record_type.to_be_bytes());
             response.extend_from_slice(&1u16.to_be_bytes());
             response.extend_from_slice(&nsec_record.ttl.to_be_bytes());
 
@@ -926,9 +929,9 @@ impl DnsServer {
             }
         }
 
-        if dnssec_ok && !nsec3_records.is_empty() {
+        if dnssec_ok && !nsec_records.is_empty() {
             if let Some(key) = zsk {
-                for nsec_record in nsec3_records {
+                for nsec_record in nsec_records {
                     let rrsig = Self::create_signed_rrsig(nsec_record, signer_name, key);
                     if !rrsig.is_empty() {
                         let nsec_name_parts: Vec<&str> = nsec_record.name.split('.').collect();

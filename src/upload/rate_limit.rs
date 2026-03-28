@@ -184,10 +184,7 @@ impl UploadRateLimiter {
     }
 
     fn cleanup_if_needed(&self) {
-        let now_secs = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
+        let now_secs = crate::utils::safe_unix_timestamp();
 
         let last_cleanup = self.last_cleanup_ts.load(Ordering::Relaxed);
         if now_secs - last_cleanup > self.cleanup_interval_secs {

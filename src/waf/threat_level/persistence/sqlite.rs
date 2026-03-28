@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, UNIX_EPOCH};
 
 const CURRENT_VERSION: u32 = 1;
 
@@ -78,10 +78,7 @@ impl SqlitePersistence {
         .map_err(|e| std::io::Error::other(format!("Failed to create sites table: {}", e)))?;
 
         if let Some(sid) = site_id {
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs() as i64;
+            let now = crate::utils::safe_unix_timestamp() as i64;
             conn.execute(
                 "INSERT OR IGNORE INTO sites (site_id, created_at, last_sample_at) VALUES (?1, ?2, ?2)",
                 params![sid, now],
@@ -103,10 +100,7 @@ impl SqlitePersistence {
         learning_duration_secs: u32,
         site_id: Option<&str>,
     ) -> std::io::Result<()> {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
+        let now = crate::utils::safe_unix_timestamp() as i64;
 
         let persisted = PersistedBaseline {
             version: CURRENT_VERSION,
@@ -315,10 +309,7 @@ impl SqliteHistory {
         };
 
         let count = samples.len();
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
+        let now = crate::utils::safe_unix_timestamp() as i64;
 
         {
             let conn = self.conn.lock();
@@ -574,11 +565,7 @@ impl SqliteHistory {
     }
 
     pub fn prune(&self, retention_days: u32) -> std::io::Result<usize> {
-        let cutoff = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64
-            - (retention_days as i64 * 86400);
+        let cutoff = crate::utils::safe_unix_timestamp() as i64 - (retention_days as i64 * 86400);
 
         let conn = self.conn.lock();
 
@@ -647,10 +634,7 @@ impl SqliteBackup {
     ) -> std::io::Result<BackupInfo> {
         std::fs::create_dir_all(backup_dir)?;
 
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let timestamp = crate::utils::safe_unix_timestamp();
 
         let backup_filename = format!("threat_history_{}_{}.db", site_id, timestamp);
         let backup_path = backup_dir.join(&backup_filename);

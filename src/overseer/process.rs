@@ -124,10 +124,7 @@ impl OverseerProcess {
         match IpcStream::connect_unix(&socket_path) {
             Ok(mut stream) => {
                 let health_msg = Message::MasterHealthCheck {
-                    timestamp: std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_secs())
-                        .unwrap_or(0),
+                    timestamp: crate::utils::safe_unix_timestamp(),
                 };
 
                 if stream.send(&health_msg).is_err() {
@@ -1098,10 +1095,7 @@ impl OverseerProcess {
         let mut stream =
             IpcStream::connect_unix(&socket_path).map_err(|e| errors::ipc::connect_failed(&e))?;
 
-        let drain_id = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(0);
+        let drain_id = crate::utils::safe_unix_duration().as_millis() as u64;
 
         let msg = Message::DrainRequest {
             timeout_secs,
