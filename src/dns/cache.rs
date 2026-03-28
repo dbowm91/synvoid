@@ -169,11 +169,24 @@ impl DnsCache {
                         });
                     }
                 } else if !existing.is_empty() && !has_fingerprint {
-                    tracing::warn!(
-                        "Potential cache poisoning attempt detected for {} (new fingerprint: {})",
-                        qname,
-                        fingerprint
-                    );
+                    let first_fingerprint = existing[0].0;
+                    let confirmations = existing
+                        .iter()
+                        .filter(|(fp, _)| *fp == first_fingerprint)
+                        .count();
+                    if confirmations < 2 {
+                        tracing::warn!(
+                            "Potential cache poisoning attempt detected for {} (unconfirmed fingerprint: {})",
+                            qname,
+                            fingerprint
+                        );
+                    } else {
+                        tracing::warn!(
+                            "Potential cache poisoning attempt detected for {} (new fingerprint: {})",
+                            qname,
+                            fingerprint
+                        );
+                    }
                     return Err(CachePoisoningError::PotentialPoisoning {
                         qname: qname.clone(),
                         new_fingerprint: fingerprint,

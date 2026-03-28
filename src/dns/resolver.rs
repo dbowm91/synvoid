@@ -127,6 +127,19 @@ pub enum ResolverError {
 
 pub type ResolverResult<T> = Result<T, ResolverError>;
 
+fn ensure_trailing_dot(name: &str) -> String {
+    if name.ends_with('.') {
+        name.to_string()
+    } else {
+        format!("{}.", name)
+    }
+}
+
+/// DNS resolver trait.
+///
+/// **Note:** `HickoryResolver` (forwarder mode) does NOT perform DNSSEC validation —
+/// `is_dnssec_validated` is always `false` on its returned records.
+/// `HickoryRecursor` (recursive mode) performs full DNSSEC validation when `enable_dnssec` is set.
 #[async_trait]
 pub trait DnsResolver: Send + Sync {
     async fn lookup_txt(&self, name: &str) -> ResolverResult<TxtRecord>;
@@ -306,11 +319,7 @@ impl Clone for HickoryResolver {
 #[async_trait]
 impl DnsResolver for HickoryResolver {
     async fn lookup_txt(&self, name: &str) -> ResolverResult<TxtRecord> {
-        let name = if name.ends_with('.') {
-            name.to_string()
-        } else {
-            format!("{}.", name)
-        };
+        let name = ensure_trailing_dot(name);
 
         let lookup = self
             .resolver
@@ -330,11 +339,7 @@ impl DnsResolver for HickoryResolver {
     }
 
     async fn lookup_ns(&self, name: &str) -> ResolverResult<NsRecord> {
-        let name = if name.ends_with('.') {
-            name.to_string()
-        } else {
-            format!("{}.", name)
-        };
+        let name = ensure_trailing_dot(name);
 
         let lookup = self
             .resolver
@@ -354,11 +359,7 @@ impl DnsResolver for HickoryResolver {
     }
 
     async fn lookup_a(&self, name: &str) -> ResolverResult<Vec<IpAddr>> {
-        let name = if name.ends_with('.') {
-            name.to_string()
-        } else {
-            format!("{}.", name)
-        };
+        let name = ensure_trailing_dot(name);
 
         let lookup = self
             .resolver
@@ -370,11 +371,7 @@ impl DnsResolver for HickoryResolver {
     }
 
     async fn lookup_ip_with_ttl(&self, name: &str) -> ResolverResult<IpRecord> {
-        let name = if name.ends_with('.') {
-            name.to_string()
-        } else {
-            format!("{}.", name)
-        };
+        let name = ensure_trailing_dot(name);
 
         let lookup = self
             .resolver
@@ -400,11 +397,7 @@ impl DnsResolver for HickoryResolver {
     }
 
     async fn lookup_mx(&self, name: &str) -> ResolverResult<Vec<MxRecord>> {
-        let name = if name.ends_with('.') {
-            name.to_string()
-        } else {
-            format!("{}.", name)
-        };
+        let name = ensure_trailing_dot(name);
 
         match self.resolver.lookup(&name, RecordType::MX).await {
             Ok(lookup) => {
@@ -438,11 +431,7 @@ impl DnsResolver for HickoryResolver {
     }
 
     async fn lookup_soa(&self, name: &str) -> ResolverResult<Option<SoaRecord>> {
-        let name = if name.ends_with('.') {
-            name.to_string()
-        } else {
-            format!("{}.", name)
-        };
+        let name = ensure_trailing_dot(name);
 
         match self.resolver.lookup(&name, RecordType::SOA).await {
             Ok(lookup) => {
@@ -475,11 +464,7 @@ impl DnsResolver for HickoryResolver {
     }
 
     async fn lookup_ptr(&self, name: &str) -> ResolverResult<Option<PtrRecord>> {
-        let name = if name.ends_with('.') {
-            name.to_string()
-        } else {
-            format!("{}.", name)
-        };
+        let name = ensure_trailing_dot(name);
 
         match self.resolver.lookup(&name, RecordType::PTR).await {
             Ok(lookup) => {
@@ -506,11 +491,7 @@ impl DnsResolver for HickoryResolver {
     }
 
     async fn lookup_srv(&self, name: &str) -> ResolverResult<Vec<SrvRecord>> {
-        let name = if name.ends_with('.') {
-            name.to_string()
-        } else {
-            format!("{}.", name)
-        };
+        let name = ensure_trailing_dot(name);
 
         match self.resolver.lookup(&name, RecordType::SRV).await {
             Ok(lookup) => {
@@ -546,11 +527,7 @@ impl DnsResolver for HickoryResolver {
     }
 
     async fn lookup_cname(&self, name: &str) -> ResolverResult<Option<CNameRecord>> {
-        let name = if name.ends_with('.') {
-            name.to_string()
-        } else {
-            format!("{}.", name)
-        };
+        let name = ensure_trailing_dot(name);
 
         match self.resolver.lookup(&name, RecordType::CNAME).await {
             Ok(lookup) => {
@@ -595,9 +572,8 @@ pub struct HickoryRecursor {
     recursor: Arc<hickory_recursor::Recursor>,
     enable_dnssec: bool,
     trust_anchor_manager: Option<Arc<TrustAnchorManager>>,
-    shutdown_tx: Option<tokio::sync::watch::Sender<()>>,
-    #[allow(dead_code)] // Reserved for RFC 5011 trust anchor rollover
-    rfc5011_handle: Option<tokio::task::JoinHandle<()>>,
+    shutdown_tx: tokio::sync::Mutex<Option<tokio::sync::watch::Sender<()>>>,
+    rfc5011_handle: tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 impl Clone for HickoryRecursor {
@@ -606,8 +582,8 @@ impl Clone for HickoryRecursor {
             recursor: self.recursor.clone(),
             enable_dnssec: self.enable_dnssec,
             trust_anchor_manager: self.trust_anchor_manager.clone(),
-            shutdown_tx: None,
-            rfc5011_handle: None,
+            shutdown_tx: tokio::sync::Mutex::new(None),
+            rfc5011_handle: tokio::sync::Mutex::new(None),
         }
     }
 }
@@ -704,8 +680,8 @@ impl HickoryRecursor {
             recursor: Arc::new(recursor),
             enable_dnssec,
             trust_anchor_manager,
-            shutdown_tx: None,
-            rfc5011_handle: None,
+            shutdown_tx: tokio::sync::Mutex::new(None),
+            rfc5011_handle: tokio::sync::Mutex::new(None),
         })
     }
 
@@ -749,7 +725,7 @@ impl HickoryRecursor {
 
     pub async fn start_rfc5011_updates(
         self: Arc<Self>,
-    ) -> Result<tokio::task::JoinHandle<()>, ResolverError> {
+    ) -> Result<(), ResolverError> {
         let manager = match &self.trust_anchor_manager {
             Some(m) => m.clone(),
             None => {
@@ -759,7 +735,7 @@ impl HickoryRecursor {
             }
         };
 
-        let (_shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(());
+        let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(());
 
         tracing::info!("Starting RFC 5011 trust anchor update task");
 
@@ -808,11 +784,13 @@ impl HickoryRecursor {
 
         tracing::info!("RFC 5011: Background task spawned successfully");
 
-        Ok(handle)
+        *self.shutdown_tx.lock().await = Some(shutdown_tx);
+        *self.rfc5011_handle.lock().await = Some(handle);
+        Ok(())
     }
 
-    pub async fn stop_rfc5011_updates(&mut self) {
-        if let Some(tx) = self.shutdown_tx.take() {
+    pub async fn stop_rfc5011_updates(&self) {
+        if let Some(tx) = self.shutdown_tx.lock().await.take() {
             let _ = tx.send(());
         }
         tracing::info!("RFC 5011: Shutdown signal sent");
@@ -889,11 +867,7 @@ impl HickoryRecursor {
         name: &str,
         record_type: RecordType,
     ) -> ResolverResult<IpRecord> {
-        let name = if name.ends_with('.') {
-            name.to_string()
-        } else {
-            format!("{}.", name)
-        };
+        let name = ensure_trailing_dot(name);
 
         let query_name = hickory_proto::rr::Name::from_str(&name)
             .map_err(|e| ResolverError::InvalidDomain(format!("Invalid domain name: {}", e)))?;
@@ -953,11 +927,7 @@ impl HickoryRecursor {
         name: &str,
         record_type: RecordType,
     ) -> ResolverResult<LookupResult> {
-        let name = if name.ends_with('.') {
-            name.to_string()
-        } else {
-            format!("{}.", name)
-        };
+        let name = ensure_trailing_dot(name);
 
         let query_name = hickory_proto::rr::Name::from_str(&name)
             .map_err(|e| ResolverError::InvalidDomain(format!("Invalid domain name: {}", e)))?;
@@ -1077,11 +1047,7 @@ impl HickoryRecursor {
     pub async fn lookup_dnskey(&self, name: &str) -> ResolverResult<Vec<DnsKeyRecord>> {
         use hickory_proto::dnssec::Algorithm;
 
-        let name = if name.ends_with('.') {
-            name.to_string()
-        } else {
-            format!("{}.", name)
-        };
+        let name = ensure_trailing_dot(name);
 
         let query_name = hickory_proto::rr::Name::from_str(&name)
             .map_err(|e| ResolverError::InvalidDomain(format!("Invalid domain name: {}", e)))?;
@@ -1167,11 +1133,7 @@ impl HickoryRecursor {
     }
 
     pub async fn lookup_cds(&self, name: &str) -> ResolverResult<Vec<CdsRecord>> {
-        let name = if name.ends_with('.') {
-            name.to_string()
-        } else {
-            format!("{}.", name)
-        };
+        let name = ensure_trailing_dot(name);
 
         let query_name = hickory_proto::rr::Name::from_str(&name)
             .map_err(|e| ResolverError::InvalidDomain(format!("Invalid domain name: {}", e)))?;

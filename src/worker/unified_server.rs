@@ -796,7 +796,9 @@ pub async fn run_unified_server_worker(
                 }
                 Some(Message::MasterHealthCheck { timestamp }) => {
                     let mut ipc = ipc_state.ipc.lock().await;
-                    let _ = ipc.send(&Message::HealthCheckAck { timestamp }).await;
+                    if ipc.send(&Message::HealthCheckAck { timestamp }).await.is_err() {
+                        tracing::warn!("Failed to send health check ack to master");
+                    }
                 }
                 Some(Message::BlocklistUpdate { blocks, version: _ }) => {
                     tracing::debug!(

@@ -30,7 +30,7 @@ pub use command::{CommandClient, CommandError, CommandResponse};
 #[cfg(windows)]
 pub use ipc::WindowsIpcListener;
 pub use ipc::{
-    connect_to_master, get_ipc_path, BoxError, BoxResult, CommandMethod, ErrorCode, ErrorSeverity,
+    connect_to_master, get_ipc_path, CommandMethod, ErrorCode, ErrorSeverity,
     IpcStream, IpcValidationError, MasterCommand, MasterStatus, Message, RequestLogPayload,
     SiteMetricsPayload, StatusStats, ThreatIndicatorData, ThreatIndicatorType, ThreatSeverityLevel,
     ThreatSummary, WorkerId, WorkerMetricsPayload, WorkerStatus, WorkerStatusInfo,

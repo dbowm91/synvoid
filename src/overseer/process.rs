@@ -421,7 +421,9 @@ impl OverseerProcess {
                 );
 
                 if let Ok(mut stream) = IpcStream::connect_unix(&get_master_socket_path()) {
-                    let _ = stream.send(&Message::RestoreFromDrain);
+                    if stream.send(&Message::RestoreFromDrain).is_err() {
+                        tracing::warn!("Failed to send RestoreFromDrain to old master during recovery");
+                    }
                     let _ = stream.recv(5000);
                 }
 
@@ -1414,7 +1416,9 @@ impl OverseerProcess {
 
             match IpcStream::connect_unix(&get_master_socket_path()) {
                 Ok(mut stream) => {
-                    let _ = stream.send(&Message::RestoreFromDrain);
+                    if stream.send(&Message::RestoreFromDrain).is_err() {
+                        tracing::warn!("Failed to send RestoreFromDrain to old master");
+                    }
                     let _ = stream.recv(5000);
                 }
                 Err(_) =>

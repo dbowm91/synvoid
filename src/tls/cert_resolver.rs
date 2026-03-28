@@ -115,7 +115,9 @@ impl CertResolver {
             }
         }
 
-        let _ = self.reload_tx.send(());
+        if self.reload_tx.send(()).is_err() {
+            tracing::warn!("Failed to notify TLS reload - receiver dropped");
+        }
         Ok(())
     }
 
@@ -352,6 +354,25 @@ fn load_ca_certs(path: &Path) -> Result<RootCertStore, Box<dyn std::error::Error
     }
 
     Ok(store)
+}
+
+pub fn load_cert_from_pem(
+    pem_data: &[u8],
+) -> Result<Vec<CertificateDer<'static>>, Box<dyn std::error::Error + Send + Sync>> {
+    let mut reader = BufReader::new(pem_data);
+
+    let mut certs = Vec::new();
+    while let Ok(Some((kind, der))) = pem::from_buf(&mut reader) {
+        if kind == pem::SectionKind::Certificate {
+            certs.push(CertificateDer::from(der));
+        }
+    }
+
+    if certs.is_empty() {
+        return Err("No certificates found in PEM data".into());
+    }
+
+    Ok(certs)
 }
 
 fn load_ocsp_response(path: &Path) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {

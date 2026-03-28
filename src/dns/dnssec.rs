@@ -1032,22 +1032,12 @@ pub fn create_rrsig_record(
     rrsig
 }
 
-pub fn create_nsec_record(_current_name: &str, next_name: &str, type_bitmap: &[u16]) -> Vec<u8> {
-    let mut nsec = Vec::new();
-
-    let next_name_labels = next_name.trim_end_matches('.');
-    let next_name_parts: Vec<&str> = next_name_labels.split('.').collect();
-    for part in &next_name_parts {
-        nsec.push((*part).len() as u8);
-        nsec.extend_from_slice(part.as_bytes());
-    }
-    nsec.push(0);
-
+fn build_type_bitmap(type_codes: &[u16]) -> Vec<(u8, Vec<u8>)> {
     let mut window_blocks = Vec::new();
     let mut current_window: u8 = 0;
     let mut block_bits = Vec::new();
 
-    for &rt in type_bitmap {
+    for &rt in type_codes {
         let window = (rt / 256) as u8;
         let bit = rt % 256;
 
@@ -1069,7 +1059,21 @@ pub fn create_nsec_record(_current_name: &str, next_name: &str, type_bitmap: &[u
         window_blocks.push((current_window, block_bits));
     }
 
-    for (window, bits) in window_blocks {
+    window_blocks
+}
+
+pub fn create_nsec_record(_current_name: &str, next_name: &str, type_bitmap: &[u16]) -> Vec<u8> {
+    let mut nsec = Vec::new();
+
+    let next_name_labels = next_name.trim_end_matches('.');
+    let next_name_parts: Vec<&str> = next_name_labels.split('.').collect();
+    for part in &next_name_parts {
+        nsec.push((*part).len() as u8);
+        nsec.extend_from_slice(part.as_bytes());
+    }
+    nsec.push(0);
+
+    for (window, bits) in build_type_bitmap(type_bitmap) {
         nsec.push(window);
         nsec.push(bits.len() as u8);
         nsec.extend_from_slice(&bits);
@@ -1331,33 +1335,7 @@ pub fn create_nsec3_record(
     let next_hash = hash_name_nsec3(next_name, config);
     nsec3.extend_from_slice(&next_hash);
 
-    let mut window_blocks = Vec::new();
-    let mut current_window: u8 = 0;
-    let mut block_bits = Vec::new();
-
-    for &rt in type_bitmap {
-        let window = (rt / 256) as u8;
-        let bit = rt % 256;
-
-        if window != current_window && !block_bits.is_empty() {
-            window_blocks.push((current_window, std::mem::take(&mut block_bits)));
-            current_window = window;
-        }
-
-        let byte_index = bit / 8;
-        let bit_index = bit % 8;
-
-        while block_bits.len() <= byte_index as usize {
-            block_bits.push(0);
-        }
-        block_bits[byte_index as usize] |= 1 << (7 - bit_index);
-    }
-
-    if !block_bits.is_empty() {
-        window_blocks.push((current_window, block_bits));
-    }
-
-    for (window, bits) in window_blocks {
+    for (window, bits) in build_type_bitmap(type_bitmap) {
         nsec3.push(window);
         nsec3.push(bits.len() as u8);
         nsec3.extend_from_slice(&bits);

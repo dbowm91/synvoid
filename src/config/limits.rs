@@ -13,7 +13,7 @@ pub struct RateLimitMemoryConfig {
 impl Default for RateLimitMemoryConfig {
     fn default() -> Self {
         Self {
-            max_ip_entries: 1_000_000,
+            max_ip_entries: 100_000,
             cleanup_interval_secs: 60,
             num_shards: 256,
         }
@@ -21,7 +21,7 @@ impl Default for RateLimitMemoryConfig {
 }
 
 fn default_max_ip_entries() -> usize {
-    1_000_000
+    100_000
 }
 fn default_cleanup_interval() -> u64 {
     60

@@ -23,6 +23,7 @@ use super::recursive_cache::{CachedRecord, RecursiveCacheKey, RecursiveDnsCache}
 use super::resolver::{MxRecord, SrvRecord};
 use super::wire::{
     build_error_response, build_response_header, get_message_id, parse_dns_message, RCODE_NXDOMAIN,
+    RCODE_SERVFAIL,
 };
 use super::{server::DnsRateLimiter, DnsResolver, HickoryRecursor, HickoryResolver};
 
@@ -149,7 +150,7 @@ impl RecursiveDnsServer {
         let socket_clone = socket.clone();
 
         tokio::spawn(async move {
-            let mut buf = vec![0u8; 512];
+            let mut buf = vec![0u8; 4096];
             let mut running = server.running.read().await;
 
             loop {
@@ -296,9 +297,21 @@ impl RecursiveDnsServer {
         let qname_str = question.qname.to_string();
         let qname_bytes = qname_str.as_bytes().to_vec();
 
-        let (response, _) = self
+        let (response, _) = match self
             .resolve_upstream(&qname_bytes, question.qtype, message_id)
-            .await?;
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                if let Some(servfail) = build_error_response(&query, RCODE_SERVFAIL) {
+                    let len = servfail.len() as u16;
+                    let mut len_bytes = len.to_be_bytes().to_vec();
+                    len_bytes.extend_from_slice(&servfail);
+                    let _ = stream.write_all(&len_bytes).await;
+                }
+                return Err(e);
+            }
+        };
 
         let len = response.len() as u16;
         let mut len_bytes = len.to_be_bytes().to_vec();
@@ -371,7 +384,15 @@ impl RecursiveDnsServer {
         }
 
         let message_id = get_message_id(&packet).unwrap_or(0);
-        let response = self.resolve_query(&query, message_id).await?;
+        let response = match self.resolve_query(&query, message_id).await {
+            Ok(response) => response,
+            Err(e) => {
+                if let Some(response) = build_error_response(&packet, RCODE_SERVFAIL) {
+                    let _ = socket.send_to(&response, client_addr).await;
+                }
+                return Err(e);
+            }
+        };
 
         socket
             .send_to(&response, client_addr)

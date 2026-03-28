@@ -1,5 +1,4 @@
 use std::io;
-use std::time::SystemTime;
 
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
@@ -8,9 +7,6 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 
 use super::ipc_framing::{read_message_sync, write_message_sync, DEFAULT_BUFFER_SIZE};
-
-pub type BoxResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
-pub type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CommandMethod {
@@ -592,6 +588,14 @@ pub enum Message {
         active_connections: u64,
         drain_elapsed_secs: u64,
     },
+    RestartWorkerRequest {
+        id: WorkerId,
+    },
+    RestartWorkerResponse {
+        id: WorkerId,
+        success: bool,
+        error: Option<String>,
+    },
 }
 
 const MAX_STRING_LENGTH: usize = 64 * 1024;
@@ -718,7 +722,9 @@ impl Message {
             | Message::DrainRequest { .. }
             | Message::DrainStatusRequest { .. }
             | Message::DrainStatusResponse { .. }
-            | Message::DrainComplete { .. } => Ok(()),
+            | Message::DrainComplete { .. }
+            | Message::RestartWorkerRequest { .. }
+            | Message::RestartWorkerResponse { .. } => Ok(()),
 
             // Variants with string fields that need validation
             Message::WorkerError { error, .. } => {

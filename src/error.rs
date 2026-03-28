@@ -94,6 +94,21 @@ impl From<&str> for WafError {
     }
 }
 
+impl From<WafError> for std::io::Error {
+    fn from(err: WafError) -> Self {
+        match err {
+            WafError::Io(io_err) => io_err,
+            WafError::Timeout(ms) => {
+                std::io::Error::new(std::io::ErrorKind::TimedOut, format!("{}ms", ms))
+            }
+            WafError::InvalidFd => {
+                std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid file descriptor")
+            }
+            other => std::io::Error::new(std::io::ErrorKind::Other, other.to_string()),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -132,5 +147,25 @@ mod tests {
         assert!(mapped.is_err());
         let err = mapped.unwrap_err();
         assert!(err.to_string().contains("context"));
+    }
+
+    #[test]
+    fn test_waf_error_to_io() {
+        let waf_err = WafError::Timeout(5000);
+        let io_err: std::io::Error = waf_err.into();
+        assert_eq!(io_err.kind(), std::io::ErrorKind::TimedOut);
+
+        let waf_err = WafError::InvalidFd;
+        let io_err: std::io::Error = waf_err.into();
+        assert_eq!(io_err.kind(), std::io::ErrorKind::InvalidInput);
+
+        let waf_err = WafError::Internal("test".into());
+        let io_err: std::io::Error = waf_err.into();
+        assert_eq!(io_err.kind(), std::io::ErrorKind::Other);
+
+        let io_in = std::io::Error::new(std::io::ErrorKind::NotFound, "gone");
+        let waf_err: WafError = io_in.into();
+        let io_out: std::io::Error = waf_err.into();
+        assert_eq!(io_out.kind(), std::io::ErrorKind::NotFound);
     }
 }

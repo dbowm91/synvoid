@@ -711,7 +711,7 @@ impl HttpServer {
                 );
                 return Ok(Self::build_response_with_alt_svc(
                     500,
-                    "Internal Server Error".to_string(),
+                    crate::http::reason_phrase(500).to_string(),
                     "text/plain",
                     &alt_svc,
                     &main_config,
@@ -1252,7 +1252,7 @@ impl HttpServer {
                         Ok(builder.body(Full::new(body)).unwrap_or_else(|_| {
                             Self::build_response_with_alt_svc(
                                 500,
-                                "Internal Server Error".to_string(),
+                                crate::http::reason_phrase(500).to_string(),
                                 "text/plain",
                                 &alt_svc,
                                 &main_config,
@@ -1402,12 +1402,7 @@ impl HttpServer {
 
         Ok(builder
             .body(Full::new(Bytes::from(body)))
-            .unwrap_or_else(|_| {
-                Response::builder()
-                    .status(500)
-                    .body(Full::new(Bytes::from("Internal Server Error")))
-                    .unwrap()
-            }))
+            .unwrap_or_else(|_| crate::http::fallback_error_full()))
     }
 
     fn handle_ready_request(
@@ -1452,12 +1447,7 @@ impl HttpServer {
 
         Ok(builder
             .body(Full::new(Bytes::from(body)))
-            .unwrap_or_else(|_| {
-                Response::builder()
-                    .status(500)
-                    .body(Full::new(Bytes::from("Internal Server Error")))
-                    .unwrap()
-            }))
+            .unwrap_or_else(|_| crate::http::fallback_error_full()))
     }
 
     fn build_response_with_alt_svc(
@@ -1487,12 +1477,7 @@ impl HttpServer {
 
         builder
             .body(Full::new(Bytes::from(body)))
-            .unwrap_or_else(|_| {
-                Response::builder()
-                    .status(500)
-                    .body(Full::new(Bytes::from("Internal Server Error")))
-                    .unwrap()
-            })
+            .unwrap_or_else(|_| crate::http::fallback_error_full())
     }
 
     fn build_response_with_cookie(
@@ -1524,12 +1509,7 @@ impl HttpServer {
 
         builder
             .body(Full::new(Bytes::from(body)))
-            .unwrap_or_else(|_| {
-                Response::builder()
-                    .status(500)
-                    .body(Full::new(Bytes::from("Internal Server Error")))
-                    .unwrap()
-            })
+            .unwrap_or_else(|_| crate::http::fallback_error_full())
     }
 
     async fn handle_websocket_tunnel(
@@ -1730,10 +1710,7 @@ impl HttpServer {
         }
 
         builder.body(Full::new(Bytes::new())).unwrap_or_else(|_| {
-            Response::builder()
-                .status(500)
-                .body(Full::new(Bytes::from("Internal Server Error")))
-                .unwrap()
+            crate::http::fallback_error_full()
         })
     }
 

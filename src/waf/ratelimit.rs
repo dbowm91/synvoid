@@ -3,7 +3,9 @@ pub mod sliding;
 
 use metrics::{counter, gauge};
 use parking_lot::RwLock;
+use std::collections::binary_heap::BinaryHeap;
 use std::collections::HashMap;
+use std::cmp::Reverse;
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -35,6 +37,7 @@ pub struct RateLimiterState {
 
 struct RateLimiterShard {
     ip_requests: RwLock<HashMap<IpAddr, IpRateLimitState>>,
+    last_cleanup: RwLock<Instant>,
 }
 
 #[derive(Default)]
@@ -176,6 +179,7 @@ impl RateLimiterManager {
         for _ in 0..num_shards {
             shards.push(RateLimiterShard {
                 ip_requests: RwLock::new(HashMap::new()),
+                last_cleanup: RwLock::new(Instant::now()),
             });
         }
 
@@ -229,6 +233,14 @@ impl RateLimiterManager {
                     let mut total = 0usize;
 
                     for shard in &cleanup_state.shards {
+                        {
+                            let last = *shard.last_cleanup.read();
+                            if now.duration_since(last) < Duration::from_secs(30) {
+                                let requests = shard.ip_requests.read();
+                                total += requests.len();
+                                continue;
+                            }
+                        }
                         let mut requests = shard.ip_requests.write();
                         requests.retain(|_ip, state| {
                             state
@@ -258,6 +270,7 @@ impl RateLimiterManager {
                             }
                         });
                         total += requests.len();
+                        *shard.last_cleanup.write() = now;
                     }
 
                     cleanup_state.slotted_ip_limiter.decay_all(2);
@@ -299,20 +312,27 @@ impl RateLimiterManager {
     }
 
     fn evict_lru_entries(state: &Arc<RateLimiterState>, count: usize) {
-        let mut all_entries: Vec<(IpAddr, Instant)> = Vec::new();
+        // Use a min-heap of size `count` to find the `count` oldest entries
+        // without sorting all entries.
+        let mut heap: BinaryHeap<Reverse<(Instant, IpAddr)>> = BinaryHeap::with_capacity(count + 1);
 
         for shard in &state.shards {
             let requests = shard.ip_requests.read();
             for (ip, ip_state) in requests.iter() {
                 if let Some(last_access) = ip_state.last_access {
-                    all_entries.push((*ip, last_access));
+                    if heap.len() < count {
+                        heap.push(Reverse((last_access, *ip)));
+                    } else if let Some(Reverse((top_time, _))) = heap.peek() {
+                        if last_access < *top_time {
+                            heap.pop();
+                            heap.push(Reverse((last_access, *ip)));
+                        }
+                    }
                 }
             }
         }
 
-        all_entries.sort_by_key(|(_, time)| *time);
-
-        let to_evict: Vec<IpAddr> = all_entries.iter().take(count).map(|(ip, _)| *ip).collect();
+        let to_evict: Vec<IpAddr> = heap.into_sorted_vec().into_iter().map(|r| (r.0).1).collect();
 
         let evicted = to_evict.len();
         for ip in to_evict {

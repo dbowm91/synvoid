@@ -63,6 +63,14 @@ static HOP_BY_HOP_HEADERS_SET: LazyLock<AHashSet<&'static str>> =
 static HEADERS_TO_STRIP_SET: LazyLock<AHashSet<&'static str>> =
     LazyLock::new(|| HEADERS_TO_STRIP.iter().copied().collect());
 
+static STATIC_HEADERS_TO_FILTER: LazyLock<AHashSet<String>> = LazyLock::new(|| {
+    let mut set = AHashSet::with_capacity(HOP_BY_HOP_HEADERS.len() + HEADERS_TO_STRIP.len());
+    for h in HOP_BY_HOP_HEADERS.iter().chain(HEADERS_TO_STRIP.iter()) {
+        set.insert(h.to_string());
+    }
+    set
+});
+
 static HOP_BY_HOP_HEADER_NAMES: LazyLock<AHashSet<http::header::HeaderName>> =
     LazyLock::new(|| {
         HOP_BY_HOP_HEADERS
@@ -87,15 +95,7 @@ pub fn build_headers_to_filter(
     global_headers: &[String],
     site_headers: &[String],
 ) -> AHashSet<String> {
-    let mut to_filter = AHashSet::with_capacity(
-        HOP_BY_HOP_HEADERS.len()
-            + HEADERS_TO_STRIP.len()
-            + global_headers.len()
-            + site_headers.len(),
-    );
-
-    to_filter.extend(HOP_BY_HOP_HEADERS_SET.iter().copied().map(String::from));
-    to_filter.extend(HEADERS_TO_STRIP_SET.iter().copied().map(String::from));
+    let mut to_filter = STATIC_HEADERS_TO_FILTER.clone();
 
     for header in global_headers {
         let lower = header.to_lowercase();
@@ -111,6 +111,14 @@ pub fn build_headers_to_filter(
 }
 
 pub fn sanitize_request_path(path: &str) -> String {
+    // Fast path: no encoding, no control chars, no duplicate slashes, no /./ segments
+    if !path.bytes().any(|b| b == b'%' || b < 0x20)
+        && !path.contains("//")
+        && !path.contains("/./")
+    {
+        return path.to_string();
+    }
+
     let mut result = Vec::<u8>::with_capacity(path.len());
     let mut bytes = path.bytes();
 
@@ -168,6 +176,24 @@ pub fn filter_response_headers(
         })
         .filter_map(|(k, v)| v.to_str().ok().map(|vv| (k.to_string(), vv.to_string())))
         .collect()
+}
+
+#[inline]
+pub fn filter_response_headers_buf(
+    headers: &http::HeaderMap,
+    headers_to_filter: &AHashSet<String>,
+    buf: &mut Vec<(String, String)>,
+) {
+    buf.clear();
+    for (k, v) in headers.iter() {
+        let name_str = k.as_str();
+        if HOP_BY_HOP_HEADERS_SET.contains(name_str) || headers_to_filter.contains(name_str) {
+            continue;
+        }
+        if let Ok(vv) = v.to_str() {
+            buf.push((k.to_string(), vv.to_string()));
+        }
+    }
 }
 
 pub struct ProxyServer {
@@ -415,12 +441,7 @@ impl ProxyServer {
                     .header("Content-Type", "text/html")
                     .header("Cache-Control", "no-store, no-cache, must-revalidate")
                     .body(bytes::Bytes::from(html))
-                    .unwrap_or_else(|_| {
-                        Response::builder()
-                            .status(500)
-                            .body(bytes::Bytes::from_static(b"Internal Server Error"))
-                            .unwrap_or_else(|_| Response::new(bytes::Bytes::new()))
-                    }));
+                    .unwrap_or_else(|_| crate::http::fallback_error_bytes()));
             }
             WafDecision::ChallengeWithCookie {
                 html,
@@ -440,12 +461,7 @@ impl ProxyServer {
                     .header("Cache-Control", "no-store, no-cache, must-revalidate")
                     .header("Set-Cookie", cookie)
                     .body(bytes::Bytes::from(html))
-                    .unwrap_or_else(|_| {
-                        Response::builder()
-                            .status(500)
-                            .body(bytes::Bytes::from_static(b"Internal Server Error"))
-                            .unwrap_or_else(|_| Response::new(bytes::Bytes::new()))
-                    }));
+                    .unwrap_or_else(|_| crate::http::fallback_error_bytes()));
             }
             WafDecision::Tarpit(_) => {
                 counter!("maluwaf.requests.tarpitted").increment(1);
@@ -527,12 +543,7 @@ impl ProxyServer {
                 Ok(Response::builder()
                     .status(502)
                     .body(bytes::Bytes::from_static(b"Bad Gateway"))
-                    .unwrap_or_else(|_| {
-                        Response::builder()
-                            .status(500)
-                            .body(bytes::Bytes::from_static(b"Internal Server Error"))
-                            .unwrap_or_else(|_| Response::new(bytes::Bytes::new()))
-                    }))
+                    .unwrap_or_else(|_| crate::http::fallback_error_bytes()))
             }
         }
     }
@@ -1074,10 +1085,7 @@ impl ProxyServer {
         }
 
         builder.body(entry.content).unwrap_or_else(|_| {
-            Response::builder()
-                .status(500)
-                .body(bytes::Bytes::from_static(b"Internal Server Error"))
-                .unwrap_or_else(|_| Response::new(bytes::Bytes::new()))
+            crate::http::fallback_error_bytes()
         })
     }
 

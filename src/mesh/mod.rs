@@ -8,6 +8,7 @@ pub mod audit;
 pub mod audit_session;
 pub mod backend;
 pub mod cert;
+pub mod cert_dist;
 pub mod cli;
 pub mod client_audit;
 pub mod config;

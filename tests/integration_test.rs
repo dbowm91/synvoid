@@ -153,6 +153,7 @@ mod tests {
             ipc_session_key: None,
             ipc_enforce_signing: false,
             ipc_rate_limit: Default::default(),
+            allow_insecure_ipc_key: false,
         };
 
         assert_eq!(config.min_workers, 2);

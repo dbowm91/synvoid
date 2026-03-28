@@ -48,6 +48,8 @@ pub struct PersistedContact {
     pub last_seen: u64,
     pub is_global: bool,
     pub is_trusted: bool,
+    pub pow_nonce: Option<u64>,
+    pub public_key: Option<Vec<u8>>,
 }
 
 impl PersistedRoutingTable {
@@ -512,6 +514,8 @@ impl RoutingTable {
                         last_seen: p.last_seen.elapsed().as_secs(),
                         is_global: p.is_global,
                         is_trusted: p.is_trusted,
+                        pow_nonce: p.pow_nonce,
+                        public_key: p.public_key.clone(),
                     })
                     .collect(),
                 last_updated: bucket.last_updated().elapsed().as_secs(),
@@ -560,6 +564,8 @@ impl RoutingTable {
 
                     contact.last_seen =
                         Instant::now() - Duration::from_secs(persisted_contact.last_seen);
+                    contact.pow_nonce = persisted_contact.pow_nonce;
+                    contact.public_key = persisted_contact.public_key;
 
                     table.buckets[idx].insert(contact).ok();
                 }

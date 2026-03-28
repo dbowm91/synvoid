@@ -232,13 +232,13 @@ impl RecursiveDnsCache {
             if age < nx_entry.ncache_ttl {
                 inner.stats.write().hits += 1;
                 inner.stats.write().negative_hits += 1;
-                return None;
+                return Some((Vec::new(), false, false));
             }
 
             if age < nx_entry.ncache_ttl + inner.config.stale_ttl {
                 inner.stats.write().hits += 1;
                 inner.stats.write().stale_hits += 1;
-                return None;
+                return Some((Vec::new(), false, false));
             }
         }
 

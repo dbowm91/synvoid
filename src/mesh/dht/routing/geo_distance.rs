@@ -116,24 +116,17 @@ impl GeoDistance {
 
     pub fn xor_distance_score(&self, xor_dist: &NodeId) -> f64 {
         let bytes = xor_dist.as_bytes();
-        let leading_zeros = bytes.iter().take_while(|&&b| b == 0).count();
-
-        // Higher score = closer node (more leading zeros = more similar ID space)
-        // Lower score = farther node (fewer leading zeros = further in ID space)
-        if leading_zeros >= 31 {
-            1.0
-        } else if leading_zeros == 0 {
-            let first_byte = bytes[0];
-            if first_byte == 0 {
-                0.0
+        let total_bits = bytes.len() * 8;
+        let mut leading_zero_bits = 0usize;
+        for &byte in bytes {
+            if byte == 0 {
+                leading_zero_bits += 8;
             } else {
-                // Calculate how "small" this byte is as a fraction of 256
-                1.0 - (first_byte as f64 / 256.0)
+                leading_zero_bits += byte.leading_zeros() as usize;
+                break;
             }
-        } else {
-            // More leading zeros = higher score = closer
-            (leading_zeros as f64) / 31.0
         }
+        leading_zero_bits as f64 / total_bits as f64
     }
 
     pub fn latency_score(&self, latency_ms: Option<u32>) -> f64 {

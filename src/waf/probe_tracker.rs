@@ -383,7 +383,11 @@ impl ProbeTracker {
     fn trigger_persist(&self) {
         if let Some(ref tx) = self.persist_tx {
             let store = self.store.read().clone();
-            let _ = tx.try_send(PersistRequest { entries: store });
+            if let Err(e) = tx.try_send(PersistRequest { entries: store }) {
+                if matches!(e, tokio::sync::mpsc::error::TrySendError::Closed(_)) {
+                    tracing::warn!("Probe tracker persist channel closed");
+                }
+            }
         } else if let Some(ref path) = self.persist_path {
             let store = self.store.read().clone();
             let path = path.clone();

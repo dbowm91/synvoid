@@ -416,7 +416,9 @@ pub async fn handle_worker_connection(
                 }));
 
                 if let Some(response) = blocklist_response {
-                    let _ = ipc.send(&response).await;
+                    if ipc.send(&response).await.is_err() {
+                        tracing::warn!("Failed to send blocklist response to worker");
+                    }
                 }
 
                 match result {

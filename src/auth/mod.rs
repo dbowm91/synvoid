@@ -217,7 +217,9 @@ impl AuthManager {
 
     async fn save_store(&self, store: &AuthStore) {
         let store_clone = store.clone();
-        let _ = self.write_tx.send((store_clone, None)).await;
+        if self.write_tx.send((store_clone, None)).await.is_err() {
+            tracing::warn!("Failed to send auth store for persistence - write channel closed");
+        }
     }
 
     async fn write_store_to_disk(data_dir: &std::path::Path, store: &AuthStore) {
