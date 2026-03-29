@@ -267,4 +267,86 @@ mod tests {
         let (_, _, streaming) = state.get_request_type_counts();
         assert_eq!(streaming, 0);
     }
+
+    #[test]
+    fn test_drain_completes_on_last_connection_decrement() {
+        let state = WorkerDrainState::new();
+        state.start_drain(1);
+        state.increment_active();
+        assert_eq!(state.get_active_connections(), 1);
+
+        // Decrement to 0 triggers drain complete
+        state.decrement_active();
+        assert_eq!(state.get_active_connections(), 0);
+
+        let status = state.get_status();
+        assert!(status.drain_complete);
+        assert!(status.stopped_accepting || status.active_connections == 0);
+    }
+
+    #[test]
+    fn test_stop_accepting_completes_drain_when_no_connections() {
+        let state = WorkerDrainState::new();
+        state.start_drain(42);
+        // No active connections
+        assert_eq!(state.get_active_connections(), 0);
+
+        state.stop_accepting();
+        assert!(state.is_stopped_accepting());
+
+        let status = state.get_status();
+        assert!(status.drain_complete);
+    }
+
+    #[test]
+    fn test_stop_accepting_does_not_complete_with_active_connections() {
+        let state = WorkerDrainState::new();
+        state.start_drain(1);
+        state.increment_active();
+        state.increment_active();
+        assert_eq!(state.get_active_connections(), 2);
+
+        state.stop_accepting();
+        assert!(state.is_stopped_accepting());
+
+        let status = state.get_status();
+        assert!(!status.drain_complete);
+    }
+
+    #[test]
+    fn test_duplicate_drain_id_rejected() {
+        let state = WorkerDrainState::new();
+        assert!(state.start_drain(1));
+
+        // Different drain ID should be rejected
+        assert!(!state.start_drain(2));
+        assert_eq!(state.get_drain_id(), 1);
+    }
+
+    #[test]
+    fn test_same_drain_id_reentry_allowed() {
+        let state = WorkerDrainState::new();
+        assert!(state.start_drain(1));
+
+        // Same drain ID should be allowed
+        assert!(state.start_drain(1));
+        assert_eq!(state.get_drain_id(), 1);
+    }
+
+    #[test]
+    fn test_reset_clears_all_state() {
+        let state = WorkerDrainState::new();
+        state.start_drain(99);
+        state.increment_active();
+        state.increment_active();
+        state.stop_accepting();
+
+        state.reset();
+
+        assert!(!state.is_draining());
+        assert_eq!(state.get_drain_id(), 0);
+        assert!(!state.is_stopped_accepting());
+        // active_connections is NOT reset (only drain metadata is reset)
+        assert_eq!(state.get_active_connections(), 2);
+    }
 }

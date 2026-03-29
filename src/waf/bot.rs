@@ -45,6 +45,14 @@ impl BotDetector {
     }
 
     pub fn check(&self, user_agent: Option<&str>) -> BotDetectionResult {
+        self.check_with_override(user_agent, None)
+    }
+
+    pub fn check_with_override(
+        &self,
+        user_agent: Option<&str>,
+        site_block_ai_crawlers: Option<bool>,
+    ) -> BotDetectionResult {
         let ua = match user_agent {
             Some(ua) => ua,
             None => {
@@ -83,15 +91,32 @@ impl BotDetector {
             };
         }
 
-        if self.block_ai_crawlers && self.is_ai_crawler(&ua_lower) {
+        let effective_block_ai = site_block_ai_crawlers.unwrap_or(self.block_ai_crawlers);
+        if effective_block_ai && self.is_ai_crawler(&ua_lower) {
             return BotDetectionResult::Blocked {
                 reason: "ai_crawler_detected".to_string(),
                 bot_type: "ai".to_string(),
             };
         }
 
+        if effective_block_ai {
+            self.warn_unknown_ai_pattern(ua, &ua_lower);
+        }
+
         BotDetectionResult::Allowed {
             reason: "legitimate".to_string(),
+        }
+    }
+
+    fn warn_unknown_ai_pattern(&self, ua: &str, ua_lower: &str) {
+        let ai_keywords = [
+            "gpt", "claude", "llama", "gemini", "copilot", "bard", "chatbot",
+        ];
+        if ai_keywords.iter().any(|kw| ua_lower.contains(kw)) {
+            tracing::warn!(
+                user_agent = %ua,
+                "Potential unknown AI bot pattern detected - consider adding to ai_crawlers_block"
+            );
         }
     }
 
@@ -284,6 +309,59 @@ mod tests {
         assert!(
             matches!(result, BotDetectionResult::Blocked { ref reason, ref bot_type } 
             if reason == "detected_as_bot" && bot_type == "isbot")
+        );
+    }
+
+    #[test]
+    fn test_per_site_override_blocks_ai() {
+        let detector = BotDetector::new(
+            vec!["googlebot".to_string()],
+            vec!["mycustomapp".to_string()],
+            vec![],
+            false, // global: AI blocking disabled
+        );
+        // Site override: block AI crawlers
+        let result = detector.check_with_override(Some("MyCustomApp/1.0"), Some(true));
+        assert!(
+            matches!(result, BotDetectionResult::Blocked { ref reason, .. }
+            if reason == "ai_crawler_detected"),
+            "Expected ai_crawler_detected, got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_per_site_override_allows_ai() {
+        let detector = BotDetector::new(
+            vec!["googlebot".to_string()],
+            vec!["mycustomapp".to_string()],
+            vec![],
+            true, // global: AI blocking enabled
+        );
+        // Site override: allow AI crawlers - should pass through
+        let result = detector.check_with_override(Some("MyCustomApp/1.0"), Some(false));
+        assert!(
+            matches!(result, BotDetectionResult::Allowed { .. }),
+            "Expected Allowed, got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_per_site_none_uses_global() {
+        let detector = BotDetector::new(
+            vec!["googlebot".to_string()],
+            vec!["mycustomapp".to_string()],
+            vec![],
+            true, // global: AI blocking enabled
+        );
+        // No override - should use global setting (block)
+        let result = detector.check_with_override(Some("MyCustomApp/1.0"), None);
+        assert!(
+            matches!(result, BotDetectionResult::Blocked { ref reason, .. }
+            if reason == "ai_crawler_detected"),
+            "Expected ai_crawler_detected, got {:?}",
+            result
         );
     }
 }

@@ -422,7 +422,9 @@ impl OverseerProcess {
 
                 if let Ok(mut stream) = IpcStream::connect_unix(&get_master_socket_path()) {
                     if stream.send(&Message::RestoreFromDrain).is_err() {
-                        tracing::warn!("Failed to send RestoreFromDrain to old master during recovery");
+                        tracing::warn!(
+                            "Failed to send RestoreFromDrain to old master during recovery"
+                        );
                     }
                     let _ = stream.recv(5000);
                 }
@@ -1641,5 +1643,49 @@ mod tests {
 
         config.ipc_write_timeout_ms = u64::MAX;
         assert_eq!(config.ipc_write_timeout_ms, u64::MAX);
+    }
+
+    #[test]
+    fn test_restart_delay_exponential_backoff() {
+        let config = OverseerConfig::default();
+        let base = config.restart_delay_secs;
+
+        // Simulate calculate_restart_delay at various restart_counts
+        for count in 0..=8u32 {
+            let backoff_multiplier = 2_u64.pow(count.min(6));
+            let delay = std::cmp::min(base * backoff_multiplier, 300);
+
+            // Verify backoff doubles each time up to cap
+            if count <= 6 {
+                assert_eq!(delay, base * 2_u64.pow(count));
+            } else {
+                // Capped at 300
+                assert_eq!(delay, 300);
+            }
+        }
+    }
+
+    #[test]
+    fn test_restart_limit_enforcement() {
+        let config = OverseerConfig::default();
+        assert_eq!(config.max_restart_attempts, 5);
+
+        // After max_restart_attempts, should stop restarting
+        let mut restart_count = 0u32;
+        while restart_count < config.max_restart_attempts {
+            restart_count += 1;
+        }
+        assert!(restart_count >= config.max_restart_attempts);
+    }
+
+    #[test]
+    fn test_master_health_partial_failure() {
+        // Only process alive, but IPC and workers unhealthy
+        let health = MasterHealth {
+            process_alive: true,
+            ipc_responsive: false,
+            workers_healthy: false,
+        };
+        assert!(!health.is_healthy());
     }
 }

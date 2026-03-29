@@ -32,13 +32,12 @@ mod dns_config_tests {
         let mut config = AdminConfig::default();
         config.port = 8081;
         config.token = strong_token.to_string();
-        if config.validate().is_err() {
-            panic!(
-                "Validation failed for strong token: {:?}",
-                config.validate()
-            );
-        }
-        assert!(config.validate().is_ok());
+        config.bcrypt_cost = 12;
+        assert!(
+            config.validate().is_ok(),
+            "Validation failed for strong token: {:?}",
+            config.validate()
+        );
     }
 
     #[test]
@@ -233,8 +232,12 @@ mod dns_config_tests {
         let key = RecursiveCacheKey::new(b"nonexistent.com", 1, None);
         cache.insert_negative(key.clone(), true, 300);
 
+        // Negative cache hit returns Some with empty records (not None, which would mean cache miss)
         let result = cache.get(&key);
-        assert!(result.is_none());
+        assert!(result.is_some());
+        let (records, is_stale, _is_validated) = result.unwrap();
+        assert!(records.is_empty());
+        assert!(!is_stale);
     }
 
     #[tokio::test]

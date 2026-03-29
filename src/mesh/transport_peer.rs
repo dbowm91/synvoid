@@ -1,4 +1,6 @@
-use crate::mesh::transport::{MeshTransport, MeshTransportError, MAX_BLOCK_DURATION_SECS, MAX_MESSAGE_SIZE, MAX_BATCH_KEYS};
+use crate::mesh::transport::{
+    MeshTransport, MeshTransportError, MAX_BATCH_KEYS, MAX_BLOCK_DURATION_SECS, MAX_MESSAGE_SIZE,
+};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};

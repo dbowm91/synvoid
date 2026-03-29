@@ -564,9 +564,7 @@ impl RateEntry {
     fn new() -> Self {
         Self {
             count: AtomicU32::new(1),
-            window_start: AtomicI64::new(
-                crate::utils::safe_unix_timestamp() as i64,
-            ),
+            window_start: AtomicI64::new(crate::utils::safe_unix_timestamp() as i64),
         }
     }
 }

@@ -472,9 +472,7 @@ impl GeoIpUpdater {
             let mut state = self.state.write().await;
             state.consecutive_failures = 0;
             state.last_error = None;
-            state.last_success = Some(
-                crate::utils::safe_unix_timestamp() as i64,
-            );
+            state.last_success = Some(crate::utils::safe_unix_timestamp() as i64);
         }
 
         Ok(updated_editions)

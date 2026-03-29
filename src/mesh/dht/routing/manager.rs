@@ -296,38 +296,6 @@ impl DhtRoutingManager {
         table.find_closest(&target_node_id, k)
     }
 
-    pub async fn find_closest_peers_geo(
-        &self,
-        target_key: &str,
-        k: usize,
-        target_geo: Option<&GeoInfo>,
-    ) -> Vec<PeerContact> {
-        let rt = self.routing_table.read().await;
-        let table = match rt.as_ref() {
-            Some(t) => t,
-            None => return Vec::new(),
-        };
-
-        let target_node_id = NodeId::from_node_id_string(target_key);
-        table.find_closest_geo(&target_node_id, k, target_geo)
-    }
-
-    pub async fn find_closest_peers_geo_weighted(
-        &self,
-        target_key: &str,
-        k: usize,
-        target_geo: Option<&GeoInfo>,
-    ) -> Vec<PeerContact> {
-        let rt = self.routing_table.read().await;
-        let table = match rt.as_ref() {
-            Some(t) => t,
-            None => return Vec::new(),
-        };
-
-        let target_node_id = NodeId::from_node_id_string(target_key);
-        table.find_closest_geo_weighted(&target_node_id, k, target_geo)
-    }
-
     pub async fn find_closest_peers_hybrid(
         &self,
         target_key: &str,

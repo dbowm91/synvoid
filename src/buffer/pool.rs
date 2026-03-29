@@ -63,6 +63,11 @@ impl PoolMetrics {
     }
 }
 
+/// Lock-free, sharded buffer pool for high-throughput HTTP proxying.
+///
+/// Pools `BytesMut` buffers in 4 size classes (small/medium/large/jumbo)
+/// with 8 shards per class to reduce contention. Buffers are returned
+/// to the pool on drop via `PooledBuf`.
 pub struct BufferPool {
     small: Vec<Mutex<VecDeque<BytesMut>>>,
     medium: Vec<Mutex<VecDeque<BytesMut>>>,
@@ -89,6 +94,10 @@ impl BufferPool {
     }
 }
 
+/// Configuration for buffer pool size classes and capacities.
+///
+/// Each size class has a buffer size (in bytes) and a per-shard capacity
+/// (max buffers to retain). Total memory ≈ Σ(size × capacity × num_shards).
 #[derive(Debug, Clone)]
 pub struct BufferPoolConfig {
     pub small_buf_size: usize,

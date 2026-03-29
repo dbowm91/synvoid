@@ -1736,8 +1736,7 @@ impl MeshTransport {
             .await;
 
         // Send Unix timestamp for when block expires (not remaining duration)
-        let block_until_unix = crate::utils::safe_unix_timestamp()
-            + blocked_duration_secs;
+        let block_until_unix = crate::utils::safe_unix_timestamp() + blocked_duration_secs;
 
         let block_message = MeshMessage::UpstreamBlocked {
             mesh_identifier: mesh_id.into(),

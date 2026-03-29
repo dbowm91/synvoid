@@ -373,7 +373,8 @@ mod tests {
 
     #[test]
     fn test_doq_config_defaults() {
-        let config = DnsDoqConfig::default();
+        // Serde defaults are applied during deserialization, not Default::default()
+        let config: DnsDoqConfig = serde_json::from_str("{}").unwrap();
 
         assert_eq!(config.port, 853);
         assert_eq!(config.max_concurrent_streams, 100);

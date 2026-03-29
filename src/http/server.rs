@@ -1709,9 +1709,9 @@ impl HttpServer {
             builder = builder.header("Sec-WebSocket-Protocol", protocols);
         }
 
-        builder.body(Full::new(Bytes::new())).unwrap_or_else(|_| {
-            crate::http::fallback_error_full()
-        })
+        builder
+            .body(Full::new(Bytes::new()))
+            .unwrap_or_else(|_| crate::http::fallback_error_full())
     }
 
     async fn handle_key_exchange_request(

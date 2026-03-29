@@ -748,6 +748,7 @@ impl SqliteBackup {
 mod tests {
     use super::*;
     use std::env;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn test_sqlite_history_basic() {

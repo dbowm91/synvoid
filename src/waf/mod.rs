@@ -13,6 +13,7 @@
 //! let decision = waf.check_request(client_ip, "GET", "/").await;
 //! ```
 
+pub mod asn_tracker;
 pub mod attack_detection;
 pub mod bot;
 pub mod endpoints;
@@ -26,6 +27,7 @@ pub mod threat_level;
 pub mod traffic_shaper;
 pub mod violation_tracker;
 
+pub use asn_tracker::{AsnCheckResult, AsnTracker};
 pub use attack_detection::{
     AttackDetectionConfig, AttackDetectionResult, AttackDetector, AttackType,
 };
@@ -147,6 +149,7 @@ pub struct WafCore {
     pub upstream_error_tracker: Option<Arc<UpstreamErrorTracker>>,
     pub traffic_shaper: Option<Arc<GlobalTrafficShaper>>,
     pub connection_limiter: Option<Arc<ConnectionLimiter>>,
+    pub asn_tracker: Option<Arc<AsnTracker>>,
     test_mode: TestModeConfig,
     honeypot_ban_duration_secs: u64,
 }
@@ -159,6 +162,7 @@ pub struct TestModeConfig {
     pub bot_off: bool,
     pub challenge_off: bool,
     pub flood_off: bool,
+    pub asn_off: bool,
 }
 
 impl TestModeConfig {
@@ -170,6 +174,7 @@ impl TestModeConfig {
             bot_off: true,
             challenge_off: true,
             flood_off: true,
+            asn_off: true,
         }
     }
 
@@ -184,6 +189,7 @@ impl TestModeConfig {
                 "bot-off" | "bot_off" => config.bot_off = true,
                 "challenge-off" | "challenge_off" => config.challenge_off = true,
                 "flood-off" | "flood_off" => config.flood_off = true,
+                "asn-off" | "asn_off" => config.asn_off = true,
                 _ => {}
             }
         }
@@ -262,6 +268,8 @@ pub struct WafCoreConfig {
     pub suspicious_words_config: Option<crate::config::SuspiciousWordsConfig>,
     pub upstream_errors_config: Option<crate::config::UpstreamErrorsConfig>,
     pub traffic_shaping_config: Option<crate::config::TrafficShapingConfig>,
+    pub asn_scraping_config: Option<crate::config::defaults::AsnScrapingConfig>,
+    pub geoip: Option<Arc<crate::geoip::GeoIpManager>>,
     pub data_dir: Option<std::path::PathBuf>,
     pub test_mode: TestModeConfig,
 }
@@ -285,6 +293,8 @@ impl WafCore {
             suspicious_words_config,
             upstream_errors_config,
             traffic_shaping_config,
+            asn_scraping_config,
+            geoip,
             data_dir,
             test_mode,
         } = config;
@@ -436,6 +446,18 @@ impl WafCore {
             (None, None)
         };
 
+        let asn_tracker = asn_scraping_config.and_then(|config| {
+            if config.enabled {
+                Some(Arc::new(AsnTracker::new(
+                    config,
+                    geoip,
+                    block_store.clone(),
+                )))
+            } else {
+                None
+            }
+        });
+
         let whitelist_set: HashSet<IpAddr> = whitelist
             .into_iter()
             .filter_map(|ip_str| ip_str.parse().ok())
@@ -467,6 +489,7 @@ impl WafCore {
             upstream_error_tracker,
             traffic_shaper,
             connection_limiter,
+            asn_tracker,
             test_mode,
             honeypot_ban_duration_secs,
         }
@@ -823,6 +846,15 @@ impl WafCore {
     ) -> WafDecision {
         if let Some(ref tl) = self.threat_level {
             tl.record_request();
+        }
+
+        if !self.test_mode.enabled || !self.test_mode.asn_off {
+            if let Some(ref tracker) = self.asn_tracker {
+                tracker.cleanup_unique_ips();
+                if let Some(decision) = tracker.check_request(client_ip) {
+                    return decision;
+                }
+            }
         }
 
         if let Some(decision) = self.check_rate_limit(client_ip, path).await {

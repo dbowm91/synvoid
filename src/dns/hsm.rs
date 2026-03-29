@@ -486,8 +486,8 @@ mod tests {
             .initialize(&config)
             .expect("initialization should succeed");
         assert!(
-            manager.is_available(),
-            "manager should be available (soft fallback)"
+            !manager.is_available(),
+            "manager should NOT be available when disabled"
         );
     }
 

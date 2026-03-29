@@ -6,12 +6,12 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
+use http::header::HeaderValue;
 use http_body::Body as HttpBody;
 use http_body_util::combinators::BoxBody;
 use http_body_util::BodyExt;
 use hyper::body::Incoming;
 use hyper::{Request, Response};
-use http::header::HeaderValue;
 use lru_time_cache::LruCache;
 use parking_lot::Mutex as PLMutex;
 use parking_lot::RwLock;
@@ -1123,8 +1123,12 @@ impl MeshProxy {
                 return new_response.body(body).unwrap_or_else(|_| {
                     Response::builder()
                         .status(500)
-                        .body(http_body_util::Full::new(Bytes::from("Internal Server Error")).boxed())
-                        .unwrap_or_else(|_| Response::new(http_body_util::Full::new(Bytes::new()).boxed()))
+                        .body(
+                            http_body_util::Full::new(Bytes::from("Internal Server Error")).boxed(),
+                        )
+                        .unwrap_or_else(|_| {
+                            Response::new(http_body_util::Full::new(Bytes::new()).boxed())
+                        })
                 });
             }
         }

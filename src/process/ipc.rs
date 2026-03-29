@@ -106,6 +106,10 @@ pub struct RulePatternData {
     pub patterns: Vec<String>,
 }
 
+/// Unique identifier for a worker process within the master's pool.
+///
+/// Worker IDs are assigned sequentially starting from 0. They are used
+/// for IPC routing, health checks, and drain operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct WorkerId(pub usize);
 
@@ -165,6 +169,12 @@ impl std::fmt::Display for ErrorCode {
     }
 }
 
+/// IPC messages exchanged between overseer, master, and worker processes.
+///
+/// Messages are serialized as JSON over Unix domain sockets. Each variant
+/// includes a `WorkerId` or `id` field for routing to the correct process.
+/// The enum covers worker lifecycle, health monitoring, threat intelligence
+/// sharing, cache coordination, and upgrade orchestration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Message {
     WorkerStarted {
@@ -1501,7 +1511,7 @@ mod tests {
 
     #[test]
     fn test_current_timestamp() {
-        let ts = current_timestamp();
+        let ts = crate::utils::current_timestamp();
         assert!(ts > 0);
     }
 

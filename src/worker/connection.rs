@@ -103,6 +103,8 @@ pub(super) fn create_waf(main_config: &crate::config::MainConfig) -> Arc<crate::
         suspicious_words_config: Some(main_config.defaults.suspicious_words.clone()),
         upstream_errors_config: Some(main_config.defaults.upstream_errors.clone()),
         traffic_shaping_config: Some(main_config.traffic_shaping.clone()),
+        asn_scraping_config: Some(main_config.defaults.asn_scraping.clone()),
+        geoip: None,
         data_dir,
         test_mode: crate::waf::TestModeConfig::default(),
     });

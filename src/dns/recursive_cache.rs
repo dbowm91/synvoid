@@ -399,7 +399,10 @@ mod tests {
         cache.insert_negative(key.clone(), true, 300);
 
         let result = cache.get(&key);
-        assert!(result.is_none());
+        // Negative cache returns Some with empty records
+        assert!(result.is_some());
+        let (records, _stale, _validated) = result.unwrap();
+        assert!(records.is_empty());
     }
 
     #[test]

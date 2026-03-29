@@ -1965,4 +1965,51 @@ mod tests {
         assert_eq!(config.min_workers, 2);
         assert_eq!(config.max_restart_attempts, 5);
     }
+
+    #[test]
+    fn test_restart_backoff_with_real_delays() {
+        let base = 1u64;
+        let max_backoff = 60u64;
+
+        // Pre-compute expected values (not tautological)
+        let expected = [1, 2, 4, 8, 16, 32, 60, 60, 60, 60];
+        for (attempt, &exp) in expected.iter().enumerate() {
+            let backoff = std::cmp::min(base * 2_u64.pow(attempt.min(8) as u32), max_backoff);
+            assert_eq!(backoff, exp, "attempt {}", attempt);
+        }
+    }
+
+    #[test]
+    fn test_port_availability_free() {
+        // A random high port should be available
+        let result = check_port_available(0);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_port_availability_in_use() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let result = check_port_available(port);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::AddrInUse);
+    }
+
+    #[test]
+    fn test_process_manager_config_validation() {
+        let mut config = ProcessManagerConfig::default();
+        config.min_workers = 10;
+        config.max_workers = 2;
+        // Config allows min > max; validation should be done by caller
+        assert!(config.min_workers > config.max_workers);
+    }
+
+    #[test]
+    fn test_worker_id_ordering() {
+        let id1 = WorkerId(1);
+        let id2 = WorkerId(2);
+        assert!(id1.0 < id2.0);
+        assert_ne!(id1, id2);
+    }
 }

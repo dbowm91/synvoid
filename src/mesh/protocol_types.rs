@@ -532,6 +532,7 @@ impl From<proto::ThreatIndicator> for ThreatIndicator {
                 1 => ThreatType::IpBlock,
                 2 => ThreatType::RateLimitViolation,
                 3 => ThreatType::SuspiciousActivity,
+                4 => ThreatType::AsnBlock,
                 _ => ThreatType::Unspecified,
             },
             indicator_value: pb.indicator_value,

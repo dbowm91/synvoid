@@ -723,9 +723,7 @@ impl HickoryRecursor {
         }
     }
 
-    pub async fn start_rfc5011_updates(
-        self: Arc<Self>,
-    ) -> Result<(), ResolverError> {
+    pub async fn start_rfc5011_updates(self: Arc<Self>) -> Result<(), ResolverError> {
         let manager = match &self.trust_anchor_manager {
             Some(m) => m.clone(),
             None => {

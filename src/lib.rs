@@ -1,3 +1,28 @@
+//! # MaluWAF — Multi-Process Web Application Firewall
+//!
+//! MaluWAF is a high-performance WAF with a multi-process architecture:
+//! - **Overseer**: Manages master process lifecycle, upgrades, health monitoring
+//! - **Master**: Parent process that spawns/manages workers, handles IPC
+//! - **Worker**: Handles HTTP requests via Unix domain sockets
+//!
+//! ## Key Modules
+//!
+//! - [`waf`] — Core WAF engine (rate limiting, bot detection, attack detection)
+//! - [`proxy`] — Reverse proxy and request forwarding
+//! - [`config`] — Configuration loading and validation
+//! - [`process`] — IPC communication and process management
+//! - [`mesh`] — Mesh networking and DHT-based peer discovery
+//! - [`tls`] — TLS termination, ACME certificate management
+//! - [`dns`] — DNS server with DNSSEC support (feature-gated)
+//!
+//! ## Feature Flags
+//!
+//! - `dns` — DNS server with DNSSEC signing and recursive resolution
+//! - `mesh` — Mesh networking for multi-node deployments
+//! - `socket-handoff` — Socket transfer between processes
+//! - `post-quantum` — Post-quantum TLS key exchange
+//! - `wireguard` — WireGuard VPN tunnel support
+
 #![allow(
     elided_lifetimes_in_paths,
     mismatched_lifetime_syntaxes,

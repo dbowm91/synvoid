@@ -80,9 +80,9 @@ pub struct PluginManager {
 }
 
 struct AxumPluginWrapper {
-    #[allow(dead_code)] // Reserved for future Axum plugin routing
-    router: axum::Router<()>,
-    #[allow(dead_code)] // Used for logging but not read after construction
+    #[allow(dead_code)] // Retained to keep plugin loaded; read via returned Arc
+    router: Arc<axum::Router<()>>,
+    #[allow(dead_code)] // Used for identification in future lifecycle management
     name: String,
 }
 
@@ -106,16 +106,17 @@ impl PluginManager {
         let (router, wrapper_name) = axum_loader::load_plugin(path)?;
 
         let wrapper_name_for_log = wrapper_name.clone();
+        let shared_router = Arc::new(router);
 
         let wrapper = AxumPluginWrapper {
-            router: Router::new(),
+            router: shared_router.clone(),
             name: wrapper_name,
         };
 
         self.axum_plugins.write().push(Arc::new(wrapper));
         tracing::info!("Loaded Axum plugin: {}", wrapper_name_for_log);
 
-        Ok(Arc::new(router))
+        Ok(shared_router)
     }
 
     pub fn apply_wasm_filters(

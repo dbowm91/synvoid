@@ -108,7 +108,7 @@ impl DnsServer {
         {
             records.push(DnsZoneRecord {
                 name: "@".to_string(),
-                record_type: RecordType::DS,
+                record_type: RecordType::CDS,
                 value: hex::encode(&ds_data_sha1),
                 ttl: 3600,
                 priority: None,
@@ -175,18 +175,8 @@ impl DnsServer {
         if let Some(ref ksk) = zone.ksk_key {
             records.push(DnsZoneRecord {
                 name: "@".to_string(),
-                record_type: RecordType::DNSKEY,
+                record_type: RecordType::CDNSKEY,
                 value: hex::encode(&ksk.public_key),
-                ttl: zone.dnskey_ttl.unwrap_or(3600),
-                priority: None,
-            });
-        }
-
-        if let Some(ref zsk) = zone.zsk_key {
-            records.push(DnsZoneRecord {
-                name: "@".to_string(),
-                record_type: RecordType::DNSKEY,
-                value: hex::encode(&zsk.public_key),
                 ttl: zone.dnskey_ttl.unwrap_or(3600),
                 priority: None,
             });

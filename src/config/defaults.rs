@@ -43,6 +43,8 @@ pub struct DefaultsConfig {
     pub theme: ThemeDefaults,
     #[serde(default)]
     pub traffic_shaping: TrafficShapingDefaults,
+    #[serde(default)]
+    pub asn_scraping: AsnScrapingConfig,
 }
 
 impl Default for DefaultsConfig {
@@ -71,6 +73,7 @@ impl Default for DefaultsConfig {
             upload: UploadDefaults::default(),
             theme: ThemeDefaults::default(),
             traffic_shaping: TrafficShapingDefaults::default(),
+            asn_scraping: AsnScrapingConfig::default(),
         }
     }
 }
@@ -283,12 +286,43 @@ impl Default for BotDefaults {
                 "duckduckbot".to_string(),
             ],
             ai_crawlers_block: vec![
+                // OpenAI
                 "GPTBot".to_string(),
                 "ChatGPT-User".to_string(),
+                "ChatGPT-Plugin".to_string(),
+                "OAI-SearchBot".to_string(),
+                // Anthropic
                 "ClaudeBot".to_string(),
                 "Claude-Web".to_string(),
-                "CCBot".to_string(),
+                "anthropic-ai".to_string(),
+                // Google
                 "Google-Extended".to_string(),
+                "GoogleOther".to_string(),
+                // Common Crawl
+                "CCBot".to_string(),
+                // Perplexity
+                "PerplexityBot".to_string(),
+                // Apple
+                "Applebot".to_string(),
+                "Applebot-Extended".to_string(),
+                // Amazon
+                "Amazonbot".to_string(),
+                // Meta / Facebook
+                "Meta-ExternalBot".to_string(),
+                "FacebookBot".to_string(),
+                "meta-externalagent".to_string(),
+                // ByteDance / TikTok
+                "Bytespider".to_string(),
+                // xAI
+                "Grok".to_string(),
+                // Mistral
+                "MistralAI".to_string(),
+                "MistralAI-User".to_string(),
+                // Cohere
+                "CohereBot".to_string(),
+                "cohere-training-data-crawler".to_string(),
+                // AI21
+                "AI21".to_string(),
             ],
             scraper_patterns: vec![
                 "scrapy".to_string(),
@@ -359,6 +393,85 @@ fn default_challenge_window() -> u64 {
 }
 fn default_js_difficulty() -> u8 {
     1
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct AsnScrapingConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_asn_requests_per_minute")]
+    pub requests_per_minute: u32,
+    #[serde(default = "default_asn_requests_per_5min")]
+    pub requests_per_5min: u32,
+    #[serde(default = "default_asn_requests_per_hour")]
+    pub requests_per_hour: u32,
+    #[serde(default = "default_asn_unique_ips_threshold")]
+    pub unique_ips_threshold: u32,
+    #[serde(default = "default_asn_unique_ips_window_secs")]
+    pub unique_ips_window_secs: u64,
+    #[serde(default = "default_asn_violations_before_block")]
+    pub violations_before_block: u32,
+    #[serde(default = "default_asn_ban_duration_secs")]
+    pub ban_duration_secs: u64,
+    #[serde(default = "default_asn_cache_size")]
+    pub cache_size: usize,
+    #[serde(default)]
+    pub whitelisted_asns: Vec<u32>,
+}
+
+impl Default for AsnScrapingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            requests_per_minute: 300,
+            requests_per_5min: 1000,
+            requests_per_hour: 5000,
+            unique_ips_threshold: 50,
+            unique_ips_window_secs: 300,
+            violations_before_block: 2,
+            ban_duration_secs: 3600,
+            cache_size: 10000,
+            whitelisted_asns: vec![
+                15169, // Google
+                13335, // Cloudflare
+                8075,  // Microsoft
+                32934, // Meta
+                14906, // Apple
+                20940, // Akamai
+                16625, // Akamai
+                13414, // Twitter/X
+                14618, // Amazon
+                16509, // Amazon
+                3836,  // Verizon
+                7922,  // Comcast
+            ],
+        }
+    }
+}
+
+fn default_asn_requests_per_minute() -> u32 {
+    300
+}
+fn default_asn_requests_per_5min() -> u32 {
+    1000
+}
+fn default_asn_requests_per_hour() -> u32 {
+    5000
+}
+fn default_asn_unique_ips_threshold() -> u32 {
+    50
+}
+fn default_asn_unique_ips_window_secs() -> u64 {
+    300
+}
+fn default_asn_violations_before_block() -> u32 {
+    2
+}
+fn default_asn_ban_duration_secs() -> u64 {
+    3600
+}
+fn default_asn_cache_size() -> usize {
+    10000
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]

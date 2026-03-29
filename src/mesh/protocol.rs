@@ -1082,6 +1082,7 @@ pub enum ThreatType {
     IpBlock,
     RateLimitViolation,
     SuspiciousActivity,
+    AsnBlock,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

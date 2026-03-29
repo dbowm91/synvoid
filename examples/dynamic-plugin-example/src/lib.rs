@@ -8,7 +8,7 @@
 // RustWAF will log a warning if versions don't match.
 //
 // Required exports:
-// - rustwaf_abi_version: C string pointer with version
+// - maluwaf_abi_version: C string pointer with version
 // - create_router: Function that returns pointer to Router
 //
 
@@ -20,7 +20,7 @@ pub struct AbiVersion(*const std::ffi::c_char);
 unsafe impl Sync for AbiVersion {}
 
 #[no_mangle]
-pub static rustwaf_abi_version: AbiVersion = {
+pub static maluwaf_abi_version: AbiVersion = {
     let version = concat!(env!("CARGO_PKG_VERSION"), "\0");
     AbiVersion(version.as_ptr() as *const std::ffi::c_char)
 };

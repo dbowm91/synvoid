@@ -241,6 +241,91 @@ mod tests {
         assert_eq!(id2.as_usize(), 2);
         assert_ne!(id1.as_usize(), id2.as_usize());
     }
+
+    #[tokio::test]
+    async fn test_message_dispatch_identifies_worker_id() {
+        // Verify all worker-originating messages carry extractable IDs
+        let messages = vec![
+            (
+                Message::WorkerStarted {
+                    id: WorkerId(1),
+                    pid: 100,
+                    port: 8080,
+                    timestamp: 0,
+                },
+                Some(1u64),
+            ),
+            (Message::WorkerReady { id: WorkerId(2) }, Some(2)),
+            (
+                Message::WorkerHeartbeat {
+                    id: WorkerId(3),
+                    timestamp: 0,
+                    metrics: crate::process::WorkerMetricsPayload::default(),
+                },
+                Some(3),
+            ),
+            (
+                Message::WorkerError {
+                    id: WorkerId(4),
+                    error: "test".into(),
+                    severity: ErrorSeverity::Warning,
+                    error_code: ErrorCode::Unknown,
+                },
+                Some(4),
+            ),
+            (Message::WorkerShutdownComplete { id: WorkerId(5) }, None),
+        ];
+
+        for (msg, expected_id) in messages {
+            let extracted = match &msg {
+                Message::WorkerStarted { id, .. } => Some(id.as_usize() as u64),
+                Message::WorkerReady { id } => Some(id.as_usize() as u64),
+                Message::WorkerHeartbeat { id, .. } => Some(id.as_usize() as u64),
+                Message::WorkerError { id, .. } => Some(id.as_usize() as u64),
+                _ => None,
+            };
+            assert_eq!(extracted, expected_id, "Mismatch for {:?}", msg);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_blocklist_response_structure() {
+        let blocks = vec![crate::process::ipc::BlockEntryData {
+            ip: "1.2.3.4".to_string(),
+            reason: "test".to_string(),
+            blocked_at: 0,
+            ban_expire_seconds: 3600,
+            site_scope: "*".to_string(),
+        }];
+        let response = Message::BlocklistResponse {
+            worker_id: 1,
+            blocks: blocks.clone(),
+            version: 5,
+        };
+
+        match response {
+            Message::BlocklistResponse {
+                worker_id,
+                blocks: b,
+                version,
+            } => {
+                assert_eq!(worker_id, 1);
+                assert_eq!(b.len(), 1);
+                assert_eq!(b[0].ip, "1.2.3.4");
+                assert_eq!(b[0].ban_expire_seconds, 3600);
+                assert_eq!(version, 5);
+            }
+            _ => panic!("Expected BlocklistResponse"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_error_severity_ordering() {
+        // Verify severity levels can be compared
+        assert_ne!(ErrorSeverity::Warning, ErrorSeverity::Error);
+        assert_ne!(ErrorSeverity::Error, ErrorSeverity::Critical);
+        assert_ne!(ErrorSeverity::Warning, ErrorSeverity::Critical);
+    }
 }
 
 pub async fn handle_worker_connection(

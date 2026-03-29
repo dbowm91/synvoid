@@ -112,9 +112,7 @@ pub fn build_headers_to_filter(
 
 pub fn sanitize_request_path(path: &str) -> String {
     // Fast path: no encoding, no control chars, no duplicate slashes, no /./ segments
-    if !path.bytes().any(|b| b == b'%' || b < 0x20)
-        && !path.contains("//")
-        && !path.contains("/./")
+    if !path.bytes().any(|b| b == b'%' || b < 0x20) && !path.contains("//") && !path.contains("/./")
     {
         return path.to_string();
     }
@@ -1084,9 +1082,9 @@ impl ProxyServer {
             builder = builder.header("X-Cache", "STALE");
         }
 
-        builder.body(entry.content).unwrap_or_else(|_| {
-            crate::http::fallback_error_bytes()
-        })
+        builder
+            .body(entry.content)
+            .unwrap_or_else(|_| crate::http::fallback_error_bytes())
     }
 
     async fn revalidate_cache_entry(

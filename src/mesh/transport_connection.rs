@@ -1,4 +1,6 @@
-use crate::mesh::transport::{MeshPeerConnection, MeshTransport, MeshTransportError, MAX_MESSAGE_SIZE};
+use crate::mesh::transport::{
+    MeshPeerConnection, MeshTransport, MeshTransportError, MAX_MESSAGE_SIZE,
+};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 

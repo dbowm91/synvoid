@@ -3,9 +3,9 @@ pub mod sliding;
 
 use metrics::{counter, gauge};
 use parking_lot::RwLock;
+use std::cmp::Reverse;
 use std::collections::binary_heap::BinaryHeap;
 use std::collections::HashMap;
-use std::cmp::Reverse;
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -332,7 +332,11 @@ impl RateLimiterManager {
             }
         }
 
-        let to_evict: Vec<IpAddr> = heap.into_sorted_vec().into_iter().map(|r| (r.0).1).collect();
+        let to_evict: Vec<IpAddr> = heap
+            .into_sorted_vec()
+            .into_iter()
+            .map(|r| (r.0).1)
+            .collect();
 
         let evicted = to_evict.len();
         for ip in to_evict {

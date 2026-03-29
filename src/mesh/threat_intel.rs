@@ -580,6 +580,18 @@ impl ThreatIntelligenceManager {
                     self.apply_suspicious_mesh_action(&indicator, from_node);
                 }
             }
+            ThreatType::AsnBlock => {
+                if let Ok(asn) = indicator.indicator_value.parse::<u32>() {
+                    tracing::info!(
+                        "Applied mesh ASN block from {}: AS{} (reason: {}, TTL: {}s)",
+                        from_node,
+                        asn,
+                        indicator.reason,
+                        indicator.ttl_seconds
+                    );
+                    crate::metrics::record_attack_type("AsnScraping");
+                }
+            }
             ThreatType::Unspecified => {
                 tracing::warn!("Received threat with unspecified type from {}", from_node);
             }

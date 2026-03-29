@@ -204,13 +204,12 @@ impl DnsSecKeyManager {
             return Err("CDNSKEY records can only be generated for KSK keys".to_string());
         }
 
-        // CDNSKEY has the same format as DNSKEY but with CD flag set
+        // CDNSKEY has the same wire format as DNSKEY
+        // The CD flag is in the DNS message header, not in the key flags
         // DNSKEY RDATA: [2 bytes flags][1 byte protocol][1 byte algorithm][public key]
         let mut cdnskey = Vec::new();
 
-        // Set CD (Check Disabled) flag in flags
-        let cd_flags = key.flags | 0x8000; // Set bit 15 (CD flag)
-        cdnskey.extend_from_slice(&cd_flags.to_be_bytes());
+        cdnskey.extend_from_slice(&key.flags.to_be_bytes());
 
         cdnskey.push(3); // Protocol (always 3 for DNSSEC)
         cdnskey.push(key.algorithm.to_u8());
@@ -1731,12 +1730,11 @@ mod tests {
 
     #[test]
     fn test_base32_encode() {
-        // Input of 5 bytes = 40 bits = exactly 8 base32 chars, no padding needed
-        // Use 3 bytes = 24 bits = needs padding to 40 bits (8 chars)
+        // 3 bytes = 24 bits = 4 full 5-bit groups + 4 remaining bits = 5 base32 chars
+        // Per RFC 4648 base32 without padding (used by NSEC3 in RFC 5155)
         let input = vec![0xfb, 0x53, 0x2c];
         let result = base32_encode(&input);
-        // 3 bytes = 24 bits = 5 characters, padded to 8
-        assert!(result.len() == 8, "Expected 8 chars, got {}", result.len());
+        assert_eq!(result.len(), 5, "3 bytes should produce 5 base32 chars");
     }
 
     #[test]

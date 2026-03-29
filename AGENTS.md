@@ -295,7 +295,8 @@ Consolidate into 1 canonical version in `src/config/defaults.rs`. Found in site.
 | BCRYPT_COST = 4 | `src/admin/auth.rs:9` | Trivially brute-forceable auth tokens |
 | Auth timing attack | `src/auth/mod.rs:370-432` | Username enumeration: wrong-password for existing user returns ~200ms faster than non-existent user |
 | IPC lock contention | `src/worker/mod.rs` (3 competing tasks) | Deadlock risk under load |
-| PluginManager discards router | `src/plugin/mod.rs:110` | Loaded Axum plugin router thrown away |
+
+### ~~Plugin ABI Mismatch~~ ✅ FIXED (Wave 4)
 
 ### Security
 
@@ -334,9 +335,9 @@ Consolidate into 1 canonical version in `src/config/defaults.rs`. Found in site.
 
 `src/http/handler.rs` (1,661 lines) and `src/http/range.rs` (194 lines) were deleted in Phase 1 — they were never in the module tree and had compile errors.
 
-### Plugin ABI Mismatch
+### ~~Plugin ABI Mismatch~~ ✅ FIXED (Wave 4)
 
-`examples/dynamic-plugin-example/src/lib.rs:23` exports `rustwaf_abi_version` but `src/plugin/axum_loader.rs:110` looks for `maluwaf_abi_version`. Loading the example plugin will fail with `SymbolNotFound`.
+~~`examples/dynamic-plugin-example/src/lib.rs:23` exports `rustwaf_abi_version` but `src/plugin/axum_loader.rs:110` looks for `maluwaf_abi_version`. Loading the example plugin will fail with `SymbolNotFound`.~~ Fixed: example plugin now exports `maluwaf_abi_version`.
 
 ## Performance Hot Paths
 

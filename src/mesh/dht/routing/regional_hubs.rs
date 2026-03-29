@@ -37,6 +37,7 @@ pub struct RegionalHub {
     geo_distance: GeoDistance,
     hubs: RwLock<HashMap<String, Vec<HubPeer>>>,
     all_peers_by_region: RwLock<HashMap<String, Vec<PeerContact>>>,
+    local_geo: Option<GeoInfo>,
 }
 
 impl Clone for RegionalHub {
@@ -51,9 +52,10 @@ impl Clone for RegionalHub {
         };
         Self {
             config: self.config.clone(),
-            geo_distance: self.geo_distance.clone(),
+            geo_distance: GeoDistance::new(GeoRoutingConfig::default()),
             hubs: RwLock::new(hubs_clone),
             all_peers_by_region: RwLock::new(peers_clone),
+            local_geo: self.local_geo.clone(),
         }
     }
 }
@@ -81,7 +83,13 @@ impl RegionalHub {
             geo_distance: GeoDistance::new(geo_config),
             hubs: RwLock::new(HashMap::new()),
             all_peers_by_region: RwLock::new(HashMap::new()),
+            local_geo: None,
         }
+    }
+
+    pub fn with_local_geo(mut self, geo: GeoInfo) -> Self {
+        self.local_geo = Some(geo);
+        self
     }
 
     pub fn with_defaults() -> Self {
@@ -313,23 +321,9 @@ impl RegionalHub {
             return Vec::new();
         }
 
-        let local_region: String = {
-            let all_peers = self.all_peers_by_region.read();
-            let mut region_found = None;
-            #[allow(clippy::never_loop)]
-            for peers in all_peers.values() {
-                for p in peers {
-                    region_found = Some(match &p.geo {
-                        Some(geo) => region_key(geo),
-                        None => "unknown".to_string(),
-                    });
-                    break;
-                }
-                if region_found.is_some() {
-                    break;
-                }
-            }
-            region_found.unwrap_or_else(|| "unknown".to_string())
+        let local_region: String = match &self.local_geo {
+            Some(geo) => region_key(geo),
+            None => "unknown".to_string(),
         };
 
         let mut results: Vec<PeerContact> = Vec::new();
