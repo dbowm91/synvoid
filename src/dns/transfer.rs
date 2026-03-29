@@ -17,6 +17,7 @@ pub struct ZoneTransfer {
     tsig_verifier: Option<Arc<TsigVerifier>>,
     allow_wildcard_transfer: bool,
     wildcard_transfer_requires_tsig: bool,
+    require_tsig: bool,
     ixfr_enabled: bool,
     ixfr_fallback_to_axfr: bool,
 }
@@ -33,6 +34,7 @@ impl ZoneTransfer {
             tsig_verifier,
             allow_wildcard_transfer: false,
             wildcard_transfer_requires_tsig: true,
+            require_tsig: true,
             ixfr_enabled: true,
             ixfr_fallback_to_axfr: true,
         }
@@ -46,6 +48,7 @@ impl ZoneTransfer {
         wildcard_transfer_requires_tsig: bool,
         ixfr_enabled: bool,
         ixfr_fallback_to_axfr: bool,
+        require_tsig: bool,
     ) -> Self {
         if allowed_transfers.contains(&"*".to_string()) && !allow_wildcard_transfer {
             tracing::warn!(
@@ -67,6 +70,7 @@ impl ZoneTransfer {
             tsig_verifier,
             allow_wildcard_transfer,
             wildcard_transfer_requires_tsig,
+            require_tsig,
             ixfr_enabled,
             ixfr_fallback_to_axfr,
         }
@@ -183,8 +187,9 @@ impl ZoneTransfer {
         qname: &str,
         client_ip: IpAddr,
         tsig: Option<&TsigParseResult>,
+        message_id: u16,
     ) -> Result<Vec<u8>, String> {
-        let messages = self.handle_axfr_request_impl(qname, client_ip, tsig)?;
+        let messages = self.handle_axfr_request_impl(qname, client_ip, tsig, message_id)?;
 
         let mut combined = Vec::new();
         for resp in messages {
@@ -199,8 +204,9 @@ impl ZoneTransfer {
         qname: &str,
         client_ip: IpAddr,
         tsig: Option<&TsigParseResult>,
+        message_id: u16,
     ) -> Result<Vec<Vec<u8>>, String> {
-        self.handle_axfr_request_impl(qname, client_ip, tsig)
+        self.handle_axfr_request_impl(qname, client_ip, tsig, message_id)
     }
 
     fn handle_axfr_request_impl(
@@ -208,6 +214,7 @@ impl ZoneTransfer {
         qname: &str,
         client_ip: IpAddr,
         tsig: Option<&TsigParseResult>,
+        message_id: u16,
     ) -> Result<Vec<Vec<u8>>, String> {
         let origin = qname.trim_end_matches('.');
 
@@ -223,6 +230,15 @@ impl ZoneTransfer {
         if self.is_wildcard_transfer(origin) && self.wildcard_requires_tsig() && tsig.is_none() {
             tracing::warn!(
                 "SECURITY: AXFR request DENIED for zone={} client={} reason=wildcard_requires_tsig",
+                origin,
+                client_ip
+            );
+            return Err("Zone transfer requires TSIG authentication".to_string());
+        }
+
+        if self.require_tsig && tsig.is_none() {
+            tracing::warn!(
+                "SECURITY: AXFR request DENIED for zone={} client={} reason=require_tsig",
                 origin,
                 client_ip
             );
@@ -277,7 +293,11 @@ impl ZoneTransfer {
 
         let soa_record = self.find_soa_record(zone);
         if let Some(ref soa) = soa_record {
-            responses.push(self.build_axfr_first_message(qname, std::slice::from_ref(soa)));
+            responses.push(self.build_axfr_first_message(
+                qname,
+                std::slice::from_ref(soa),
+                message_id,
+            ));
         }
 
         for ((name, record_type), records) in &zone.records {
@@ -287,12 +307,21 @@ impl ZoneTransfer {
                 } else {
                     format!("{}.{}", name, origin)
                 };
-                responses.push(self.build_axfr_record(&full_name, record_type, records));
+                responses.push(self.build_axfr_record(
+                    &full_name,
+                    record_type,
+                    records,
+                    message_id,
+                ));
             }
         }
 
         if let Some(ref soa) = soa_record {
-            responses.push(self.build_axfr_last_message(qname, std::slice::from_ref(soa)));
+            responses.push(self.build_axfr_last_message(
+                qname,
+                std::slice::from_ref(soa),
+                message_id,
+            ));
         }
 
         tracing::info!(
@@ -323,8 +352,9 @@ impl ZoneTransfer {
         client_ip: IpAddr,
         serial: Option<u32>,
         tsig: Option<&TsigParseResult>,
+        message_id: u16,
     ) -> Result<Vec<u8>, String> {
-        let messages = self.handle_ixfr_request_impl(qname, client_ip, serial, tsig)?;
+        let messages = self.handle_ixfr_request_impl(qname, client_ip, serial, tsig, message_id)?;
 
         let mut combined = Vec::new();
         for resp in messages {
@@ -340,8 +370,9 @@ impl ZoneTransfer {
         client_ip: IpAddr,
         serial: Option<u32>,
         tsig: Option<&TsigParseResult>,
+        message_id: u16,
     ) -> Result<Vec<Vec<u8>>, String> {
-        self.handle_ixfr_request_impl(qname, client_ip, serial, tsig)
+        self.handle_ixfr_request_impl(qname, client_ip, serial, tsig, message_id)
     }
 
     fn handle_ixfr_request_impl(
@@ -350,6 +381,7 @@ impl ZoneTransfer {
         client_ip: IpAddr,
         serial: Option<u32>,
         tsig: Option<&TsigParseResult>,
+        message_id: u16,
     ) -> Result<Vec<Vec<u8>>, String> {
         if !self.ixfr_enabled {
             tracing::debug!("IXFR disabled, returning error");
@@ -370,6 +402,15 @@ impl ZoneTransfer {
         if self.is_wildcard_transfer(origin) && self.wildcard_requires_tsig() && tsig.is_none() {
             tracing::warn!(
                 "IXFR request denied for {} from {} - wildcard requires TSIG",
+                origin,
+                client_ip
+            );
+            return Err("Zone transfer requires TSIG authentication".to_string());
+        }
+
+        if self.require_tsig && tsig.is_none() {
+            tracing::warn!(
+                "SECURITY: IXFR request DENIED for zone={} client={} reason=require_tsig",
                 origin,
                 client_ip
             );
@@ -419,17 +460,22 @@ impl ZoneTransfer {
         let client_serial = serial.unwrap_or(0);
 
         let responses = if client_serial == current_serial {
-            vec![self.build_ixfr_current_response(qname, zone)?]
+            vec![self.build_ixfr_current_response(qname, zone, message_id)?]
         } else if client_serial == 0 || client_serial > current_serial {
             if self.ixfr_fallback_to_axfr {
-                self.build_ixfr_full_response_messages(qname, zone)?
+                self.build_ixfr_full_response_messages(qname, zone, message_id)?
             } else {
                 return Err("IXFR cannot proceed: client has newer serial".to_string());
             }
         } else if let Some(old_version) = zone.get_previous_version(client_serial) {
-            self.build_ixfr_incremental_response_messages(qname, zone, &old_version.records)?
+            self.build_ixfr_incremental_response_messages(
+                qname,
+                zone,
+                &old_version.records,
+                message_id,
+            )?
         } else if self.ixfr_fallback_to_axfr {
-            self.build_ixfr_full_response_messages(qname, zone)?
+            self.build_ixfr_full_response_messages(qname, zone, message_id)?
         } else {
             return Err("IXFR cannot proceed: no history available".to_string());
         };
@@ -460,11 +506,16 @@ impl ZoneTransfer {
         &self,
         qname: &str,
         zone: &Zone,
+        message_id: u16,
     ) -> Result<Vec<Vec<u8>>, String> {
         let mut responses = Vec::new();
 
         let soa_record = self.find_soa_record(zone).ok_or("Zone has no SOA record")?;
-        responses.push(self.build_axfr_first_message(qname, std::slice::from_ref(&soa_record)));
+        responses.push(self.build_axfr_first_message(
+            qname,
+            std::slice::from_ref(&soa_record),
+            message_id,
+        ));
 
         for ((name, record_type), records) in &zone.records {
             if *record_type != RecordType::SOA {
@@ -473,11 +524,20 @@ impl ZoneTransfer {
                 } else {
                     format!("{}.{}", name, zone.origin)
                 };
-                responses.push(self.build_axfr_record(&full_name, record_type, records));
+                responses.push(self.build_axfr_record(
+                    &full_name,
+                    record_type,
+                    records,
+                    message_id,
+                ));
             }
         }
 
-        responses.push(self.build_axfr_last_message(qname, std::slice::from_ref(&soa_record)));
+        responses.push(self.build_axfr_last_message(
+            qname,
+            std::slice::from_ref(&soa_record),
+            message_id,
+        ));
 
         tracing::debug!("IXFR full response: {} messages", responses.len());
         Ok(responses)
@@ -488,6 +548,7 @@ impl ZoneTransfer {
         qname: &str,
         zone: &Zone,
         old_records: &std::collections::HashMap<(String, RecordType), Vec<DnsZoneRecord>>,
+        message_id: u16,
     ) -> Result<Vec<Vec<u8>>, String> {
         let current_soa = self
             .find_soa_record(zone)
@@ -534,10 +595,22 @@ impl ZoneTransfer {
         let mut responses = Vec::new();
 
         let first_ancount = (1 + to_delete.len()) as u16;
-        responses.push(self.build_ixfr_message(qname, old_soa.as_ref(), &to_delete, first_ancount));
+        responses.push(self.build_ixfr_message(
+            qname,
+            old_soa.as_ref(),
+            &to_delete,
+            first_ancount,
+            message_id,
+        ));
 
         let second_ancount = (to_add.len() + 1) as u16;
-        responses.push(self.build_ixfr_message(qname, Some(&current_soa), &to_add, second_ancount));
+        responses.push(self.build_ixfr_message(
+            qname,
+            Some(&current_soa),
+            &to_add,
+            second_ancount,
+            message_id,
+        ));
 
         tracing::debug!("IXFR incremental: {} messages", responses.len());
         Ok(responses)
@@ -549,11 +622,11 @@ impl ZoneTransfer {
         soa: Option<&DnsZoneRecord>,
         records: &[((String, RecordType), Vec<DnsZoneRecord>)],
         ancount: u16,
+        message_id: u16,
     ) -> Vec<u8> {
         let mut response = Vec::new();
 
-        let id = super::crypto_rng::random_u16();
-        response.extend_from_slice(&id.to_be_bytes());
+        response.extend_from_slice(&message_id.to_be_bytes());
         response.extend_from_slice(&0x8580u16.to_be_bytes());
         response.extend_from_slice(&1u16.to_be_bytes());
         response.extend_from_slice(&ancount.to_be_bytes());
@@ -586,6 +659,7 @@ impl ZoneTransfer {
                     &full_name,
                     &record.record_type,
                     std::slice::from_ref(record),
+                    message_id,
                 );
                 response.extend_from_slice(&rr[12..]);
             }
@@ -594,12 +668,16 @@ impl ZoneTransfer {
         response
     }
 
-    fn build_ixfr_current_response(&self, qname: &str, zone: &Zone) -> Result<Vec<u8>, String> {
+    fn build_ixfr_current_response(
+        &self,
+        qname: &str,
+        zone: &Zone,
+        message_id: u16,
+    ) -> Result<Vec<u8>, String> {
         let soa = self.find_soa_record(zone).ok_or("Zone has no SOA record")?;
 
         let mut response = Vec::new();
-        let id = super::crypto_rng::random_u16();
-        response.extend_from_slice(&id.to_be_bytes());
+        response.extend_from_slice(&message_id.to_be_bytes());
         response.extend_from_slice(&0x8580u16.to_be_bytes());
         response.extend_from_slice(&1u16.to_be_bytes());
         response.extend_from_slice(&1u16.to_be_bytes());
@@ -690,12 +768,22 @@ impl ZoneTransfer {
             .and_then(|records| records.first().cloned())
     }
 
-    fn build_axfr_first_message(&self, qname: &str, records: &[DnsZoneRecord]) -> Vec<u8> {
-        self.build_axfr_record(qname, &RecordType::SOA, records)
+    fn build_axfr_first_message(
+        &self,
+        qname: &str,
+        records: &[DnsZoneRecord],
+        message_id: u16,
+    ) -> Vec<u8> {
+        self.build_axfr_record(qname, &RecordType::SOA, records, message_id)
     }
 
-    fn build_axfr_last_message(&self, qname: &str, records: &[DnsZoneRecord]) -> Vec<u8> {
-        self.build_axfr_record(qname, &RecordType::SOA, records)
+    fn build_axfr_last_message(
+        &self,
+        qname: &str,
+        records: &[DnsZoneRecord],
+        message_id: u16,
+    ) -> Vec<u8> {
+        self.build_axfr_record(qname, &RecordType::SOA, records, message_id)
     }
 
     fn build_axfr_record(
@@ -703,11 +791,11 @@ impl ZoneTransfer {
         qname: &str,
         record_type: &RecordType,
         records: &[DnsZoneRecord],
+        message_id: u16,
     ) -> Vec<u8> {
         let mut response = Vec::new();
 
-        let id = super::crypto_rng::random_u16();
-        response.extend_from_slice(&id.to_be_bytes());
+        response.extend_from_slice(&message_id.to_be_bytes());
 
         let flags = if record_type == &RecordType::SOA {
             0x8580u16

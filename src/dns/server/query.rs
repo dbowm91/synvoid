@@ -207,7 +207,8 @@ impl DnsServer {
                 if query_qtype == crate::dns::transfer::AXFR_QUERY_TYPE {
                     let qname = Self::extract_query_name(&query);
                     let tsig = crate::dns::tsig::parse_tsig_from_query(&query, 22);
-                    match zt.handle_axfr_request_messages(&qname, client_ip, tsig.as_ref()) {
+                    let message_id = u16::from_be_bytes([query[0], query[1]]);
+                    match zt.handle_axfr_request_messages(&qname, client_ip, tsig.as_ref(), message_id) {
                         Ok(messages) => {
                             for msg in messages {
                                 let len = msg.len() as u16;
@@ -228,7 +229,8 @@ impl DnsServer {
                     let qname = Self::extract_query_name(&query);
                     let serial = Self::extract_ixfr_serial(&query);
                     let tsig = crate::dns::tsig::parse_tsig_from_query(&query, 22);
-                    match zt.handle_ixfr_request_messages(&qname, client_ip, serial, tsig.as_ref())
+                    let message_id = u16::from_be_bytes([query[0], query[1]]);
+                    match zt.handle_ixfr_request_messages(&qname, client_ip, serial, tsig.as_ref(), message_id)
                     {
                         Ok(messages) => {
                             for msg in messages {
@@ -334,7 +336,8 @@ impl DnsServer {
         if qtype == crate::dns::transfer::AXFR_QUERY_TYPE {
             if let (Some(zt), Some(ip)) = (ctx.zone_transfer, client_ip) {
                 let tsig = crate::dns::tsig::parse_tsig_from_query(query, pos + 4);
-                match zt.handle_axfr_request(&qname, ip, tsig.as_ref()) {
+                let message_id = u16::from_be_bytes([query[0], query[1]]);
+                match zt.handle_axfr_request(&qname, ip, tsig.as_ref(), message_id) {
                     Ok(response) => return Some(Arc::new(response)),
                     Err(e) => {
                         tracing::warn!("AXFR failed: {}", e);
@@ -349,7 +352,8 @@ impl DnsServer {
             if let (Some(zt), Some(ip)) = (ctx.zone_transfer, client_ip) {
                 let serial = Self::extract_ixfr_serial(query);
                 let tsig = crate::dns::tsig::parse_tsig_from_query(query, pos + 4);
-                match zt.handle_ixfr_request(&qname, ip, serial, tsig.as_ref()) {
+                let message_id = u16::from_be_bytes([query[0], query[1]]);
+                match zt.handle_ixfr_request(&qname, ip, serial, tsig.as_ref(), message_id) {
                     Ok(response) => return Some(Arc::new(response)),
                     Err(e) => {
                         tracing::warn!("IXFR failed: {}", e);
@@ -815,6 +819,55 @@ impl DnsServer {
                         None,
                         &qname,
                     ));
+                }
+            }
+        }
+
+        // DNS64 synthesis: if AAAA query found no records, try synthesizing from A records
+        if qtype == 28 {
+            if let Some(translator) = ctx.dns64_translator {
+                if translator.should_synthesize(28, client_ip) {
+                    let zones_guard = ctx.zones.read();
+                    if let Some(origin) = trie_guard.find_zone(&qname_lower) {
+                        if let Some(zone) = zones_guard.get(&origin) {
+                            let a_key = (lookup_name.clone(), RecordType::A);
+                            if let Some(a_records) = zone.records.get(&a_key) {
+                                let aaaa_records: Vec<DnsZoneRecord> = a_records
+                                    .iter()
+                                    .filter_map(|rec| {
+                                        rec.value.parse::<std::net::Ipv4Addr>().ok().map(|ipv4| {
+                                            let synth = translator.config().synthesize_aaaa(ipv4);
+                                            DnsZoneRecord {
+                                                name: rec.name.clone(),
+                                                record_type: RecordType::AAAA,
+                                                value: synth.to_string(),
+                                                ttl: rec.ttl,
+                                                priority: None,
+                                            }
+                                        })
+                                    })
+                                    .collect();
+                                if !aaaa_records.is_empty() {
+                                    drop(zones_guard);
+                                    tracing::debug!(
+                                        "DNS64: Synthesized {} AAAA records from A records for {}",
+                                        aaaa_records.len(),
+                                        qname
+                                    );
+                                    return Some(Self::build_response(
+                                        &qname,
+                                        qtype,
+                                        &aaaa_records,
+                                        dnssec_ok,
+                                        edns_options.as_ref(),
+                                        None,
+                                        &origin,
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                    drop(zones_guard);
                 }
             }
         }

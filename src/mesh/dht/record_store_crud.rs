@@ -61,7 +61,7 @@ impl RecordStoreManager {
             }
         }
 
-        if let Some(ref stake_mgr) = *self.stake_manager.read() {
+        if let Some(ref stake_mgr) = self.routing_state.read().stake_manager {
             if !stake_mgr.can_write_dht(&record.source_node_id) {
                 tracing::warn!(
                     "Record store: node {} has insufficient stake to write DHT record",
@@ -143,8 +143,8 @@ impl RecordStoreManager {
         if !is_local_record && !record.signature.is_empty() {
             if let Some(ref signer_pk) = record.signer_public_key {
                 if !signer_pk.is_empty() {
-                    let record_signer = self.record_signer.read();
-                    if let Some(ref verifier) = *record_signer {
+                    let rs = self.record_state.read();
+                    if let Some(ref verifier) = rs.record_signer {
                         let signed_record = crate::mesh::dht::SignedDhtRecord {
                             key: record.key.clone(),
                             value: record.value.clone(),
@@ -173,8 +173,8 @@ impl RecordStoreManager {
         }
 
         if is_local_record {
-            let record_signer = self.record_signer.read();
-            if let Some(ref signer) = *record_signer {
+            let rs = self.record_state.read();
+            if let Some(ref signer) = rs.record_signer {
                 let signed_record = crate::mesh::dht::SignedDhtRecord::new(
                     record.key.clone(),
                     record.value.clone(),
@@ -190,21 +190,22 @@ impl RecordStoreManager {
             }
         }
 
-        let mut records = self.records.write();
-        records.insert(
+        let mut rs = self.record_state.write();
+        let version = rs.local_version;
+        rs.records.insert(
             record.key.clone(),
             DhtRecordEntry {
                 record: record.clone(),
                 local_origin: is_local_record,
-                version: *self.local_version.read(),
+                version,
             },
         );
 
-        *self.local_version.write() += 1;
+        rs.local_version += 1;
 
         tracing::debug!("Stored global record: {}", record.key);
 
-        drop(records);
+        drop(rs);
 
         self.maybe_queue_for_announce(&record);
 
@@ -248,32 +249,33 @@ impl RecordStoreManager {
             signer_public_key: record.signer_public_key.clone(),
         };
 
-        let mut records = self.records.write();
+        let mut rs = self.record_state.write();
 
-        while records.len() >= self.config.edge_cache_max_entries {
-            if let Some(oldest_key) = records.front().map(|(k, _)| k.clone()) {
-                records.remove(&oldest_key);
+        while rs.records.len() >= self.config.edge_cache_max_entries {
+            if let Some(oldest_key) = rs.records.front().map(|(k, _)| k.clone()) {
+                rs.records.remove(&oldest_key);
                 tracing::debug!("Edge cache full, evicted LRU: {}", oldest_key);
             } else {
                 break;
             }
         }
 
-        records.insert(
+        let version = rs.local_version;
+        rs.records.insert(
             record_key,
             DhtRecordEntry {
                 record: cache_ttl_record,
                 local_origin: false,
-                version: *self.local_version.read(),
+                version,
             },
         );
 
-        *self.local_version.write() += 1;
+        rs.local_version += 1;
 
         tracing::debug!("Cached edge record: {}", record.key);
 
         if self.is_global_node() {
-            drop(records);
+            drop(rs);
             self.compute_merkle_tree();
         }
 
@@ -286,8 +288,8 @@ impl RecordStoreManager {
         }
 
         let (record, is_expired) = {
-            let records = self.records.read();
-            match records.get(key) {
+            let rs = self.record_state.read();
+            match rs.records.get(key) {
                 Some(entry) => {
                     let now = crate::mesh::safe_unix_timestamp();
                     let expires_at = entry.record.timestamp + entry.record.ttl_seconds;
@@ -300,21 +302,21 @@ impl RecordStoreManager {
         if let Some(record) = record {
             if !is_expired {
                 if !self.is_global_node() {
-                    *self.cache_hits.write() += 1;
-                    let mut records = self.records.write();
-                    if let Some(entry) = records.remove(key) {
-                        records.insert(key.to_string(), entry);
+                    self.metrics_state.write().cache_hits += 1;
+                    let mut rs = self.record_state.write();
+                    if let Some(entry) = rs.records.remove(key) {
+                        rs.records.insert(key.to_string(), entry);
                     }
                 }
                 return Some(record);
             } else {
-                let mut records = self.records.write();
-                records.remove(key);
+                let mut rs = self.record_state.write();
+                rs.records.remove(key);
             }
         }
 
         if !self.is_global_node() {
-            *self.cache_misses.write() += 1;
+            self.metrics_state.write().cache_misses += 1;
         }
         None
     }
@@ -346,8 +348,8 @@ impl RecordStoreManager {
     }
 
     pub fn get_all_records(&self) -> Vec<DhtRecord> {
-        let records = self.records.read();
-        records
+        let rs = self.record_state.read();
+        rs.records
             .values()
             .filter(|entry| {
                 let now = crate::mesh::safe_unix_timestamp();
@@ -359,7 +361,7 @@ impl RecordStoreManager {
     }
 
     pub fn get_version(&self) -> u64 {
-        *self.local_version.read()
+        self.record_state.read().local_version
     }
 
     pub fn should_sync(&self) -> bool {
@@ -368,18 +370,19 @@ impl RecordStoreManager {
         }
 
         let interval = self.get_adaptive_sync_interval();
-        let last = *self.last_sync.read();
+        let last = self.metrics_state.read().last_sync;
         last.elapsed() > Duration::from_secs(interval)
     }
 
     pub fn get_adaptive_sync_interval(&self) -> u64 {
         let base_interval = self.config.sync_interval_secs;
 
-        let mut recent = self.recent_changes.write();
+        let mut ms = self.metrics_state.write();
         let now = Instant::now();
-        recent.retain(|t| now.duration_since(*t).as_secs() < 300);
+        ms.recent_changes
+            .retain(|t| now.duration_since(*t).as_secs() < 300);
 
-        let change_count = recent.len();
+        let change_count = ms.recent_changes.len();
 
         if change_count > 10 {
             (base_interval / 4).max(60)
@@ -393,18 +396,18 @@ impl RecordStoreManager {
     }
 
     pub fn record_change(&self) {
-        let mut recent = self.recent_changes.write();
-        recent.push(Instant::now());
+        let mut ms = self.metrics_state.write();
+        ms.recent_changes.push(Instant::now());
     }
 
     pub fn record_sync(&self) {
-        *self.last_sync.write() = Instant::now();
+        self.metrics_state.write().last_sync = Instant::now();
     }
 
     pub fn get_records_for_sync(&self, from_version: u64) -> Vec<DhtRecord> {
-        let records = self.records.read();
+        let rs = self.record_state.read();
 
-        records
+        rs.records
             .values()
             .filter(|entry| entry.version > from_version)
             .filter(|entry| {
@@ -417,7 +420,7 @@ impl RecordStoreManager {
     }
 
     pub fn apply_sync(&self, records: Vec<DhtRecord>) {
-        let mut records_map = self.records.write();
+        let mut rs = self.record_state.write();
         let mut changed = false;
 
         for record in records {
@@ -428,43 +431,45 @@ impl RecordStoreManager {
                 continue;
             }
 
-            let existing = records_map.get(&record.key);
+            let existing = rs.records.get(&record.key);
             if existing.is_none()
                 || existing
                     .map(|e| e.record.timestamp < record.timestamp)
                     .unwrap_or(true)
             {
                 changed = true;
-                records_map.insert(
+                let version = rs.local_version + 1;
+                rs.records.insert(
                     record.key.clone(),
                     DhtRecordEntry {
                         record,
                         local_origin: false,
-                        version: *self.local_version.read() + 1,
+                        version,
                     },
                 );
             }
         }
 
         if changed {
-            *self.local_version.write() += 1;
-            drop(records_map);
+            rs.local_version += 1;
+            drop(rs);
             self.compute_merkle_tree();
         }
     }
 
     pub fn queue_for_announce(&self, record: DhtRecord) {
-        let mut queue = self.pending_announces.write();
-        queue.push(record);
+        let mut rs = self.record_state.write();
+        rs.pending_announces.push(record);
     }
 
     pub fn cleanup_expired(&self) {
         let now = crate::mesh::safe_unix_timestamp();
 
-        let count_before = self.records.read().len();
+        let count_before = self.record_state.read().records.len();
 
-        let mut records = self.records.write();
-        let keys_to_remove: Vec<String> = records
+        let mut rs = self.record_state.write();
+        let keys_to_remove: Vec<String> = rs
+            .records
             .iter()
             .filter(|(_, entry)| {
                 let expires_at = entry.record.timestamp + entry.record.ttl_seconds;
@@ -474,10 +479,10 @@ impl RecordStoreManager {
             .collect();
 
         for key in keys_to_remove {
-            records.remove(&key);
+            rs.records.remove(&key);
         }
 
-        let count_after = records.len();
+        let count_after = rs.records.len();
         if count_before != count_after {
             tracing::debug!(
                 "Cleaned up {} expired DHT records",
@@ -487,7 +492,7 @@ impl RecordStoreManager {
     }
 
     pub fn get_record_count(&self) -> usize {
-        self.records.read().len()
+        self.record_state.read().records.len()
     }
 
     pub fn create_record_announce(&self) -> Option<MeshMessage> {
@@ -495,18 +500,17 @@ impl RecordStoreManager {
             return None;
         }
 
-        let queue = self.pending_announces.read();
-        if queue.is_empty() {
+        let mut rs = self.record_state.write();
+        if rs.pending_announces.is_empty() {
             return None;
         }
 
-        let records: Vec<DhtRecord> = queue.iter().cloned().collect();
+        let records: Vec<DhtRecord> = rs.pending_announces.iter().cloned().collect();
 
         let mut signature = Vec::new();
         let mut signer_public_key = String::new();
 
-        let mesh_signer = self.mesh_signer.read();
-        if let Some(ref signer) = *mesh_signer {
+        if let Some(ref signer) = rs.mesh_signer {
             let timestamp = MeshMessage::generate_timestamp();
             let content = format!(
                 "{},{},{},{}",
@@ -531,10 +535,7 @@ impl RecordStoreManager {
             signer_public_key,
         };
 
-        drop(queue);
-
-        let mut pending = self.pending_announces.write();
-        pending.clear();
+        rs.pending_announces.clear();
 
         Some(message)
     }
@@ -607,9 +608,10 @@ impl RecordStoreManager {
             return false;
         }
 
-        let mut records = self.records.write();
-        if records.remove(key).is_some() {
+        let mut rs = self.record_state.write();
+        if rs.records.remove(key).is_some() {
             tracing::debug!("Removed record from DHT: {}", key);
+            drop(rs);
             self.record_change();
             return true;
         }

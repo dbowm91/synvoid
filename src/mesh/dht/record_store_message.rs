@@ -256,36 +256,36 @@ impl RecordStoreManager {
     }
 
     pub fn compute_merkle_tree(&self) {
-        let records = self.records.read();
-        let mut record_map = HashMap::new();
+        let tree = {
+            let rs = self.record_state.read();
+            let mut record_map = HashMap::new();
+            for (key, entry) in rs.records.iter() {
+                record_map.insert(key.clone(), entry.record.value.clone());
+            }
+            MerkleTree::from_records(&record_map)
+        };
 
-        for (key, entry) in records.iter() {
-            record_map.insert(key.clone(), entry.record.value.clone());
-        }
-
-        let tree = MerkleTree::from_records(&record_map);
-
-        let mut merkle = self.merkle_tree.write();
-        *merkle = Some(tree);
+        let mut rs = self.record_state.write();
+        rs.merkle_tree = Some(tree);
     }
 
     pub fn get_merkle_root_hash(&self) -> Option<Vec<u8>> {
-        let merkle = self.merkle_tree.read();
-        merkle.as_ref().and_then(|t| t.root_hash())
+        let rs = self.record_state.read();
+        rs.merkle_tree.as_ref().and_then(|t| t.root_hash())
     }
 
     pub fn generate_merkle_proof(
         &self,
         keys: &[String],
     ) -> Option<crate::mesh::dht::merkle::MerkleProof> {
-        let merkle = self.merkle_tree.read();
-        merkle.as_ref().and_then(|t| t.generate_proof(keys))
+        let rs = self.record_state.read();
+        rs.merkle_tree.as_ref().and_then(|t| t.generate_proof(keys))
     }
 
     pub fn get_records_for_keys(&self, keys: &[String]) -> Vec<DhtRecord> {
-        let records = self.records.read();
+        let rs = self.record_state.read();
         keys.iter()
-            .filter_map(|k| records.get(k).map(|e| e.record.clone()))
+            .filter_map(|k| rs.records.get(k).map(|e| e.record.clone()))
             .collect()
     }
 
@@ -320,9 +320,13 @@ impl RecordStoreManager {
             });
         }
 
-        let records = self.get_records_for_keys(interested_keys);
+        let (records, proof) = {
+            let rs = self.record_state.read();
+            let recs = self.get_records_for_keys(interested_keys);
+            let proof = rs.merkle_tree.as_ref().and_then(|t| t.generate_proof(interested_keys));
+            (recs, proof)
+        };
 
-        let proof = self.generate_merkle_proof(interested_keys);
         let proof_keys: Vec<String> = proof
             .as_ref()
             .map(|p| p.queried_keys.clone())
@@ -335,19 +339,21 @@ impl RecordStoreManager {
         let mut signature = Vec::new();
         let mut signer_public_key = String::new();
 
-        let mesh_signer = self.mesh_signer.read();
-        if let Some(ref signer) = *mesh_signer {
-            let timestamp = MeshMessage::generate_timestamp();
-            let content = format!(
-                "{},{},{},{},{}",
-                request_id,
-                proof_keys.len(),
-                records.len(),
-                self.node_role.bits(),
-                timestamp
-            );
-            signature = signer.sign(&content);
-            signer_public_key = signer.get_public_key();
+        {
+            let rs = self.record_state.read();
+            if let Some(ref signer) = rs.mesh_signer {
+                let timestamp = MeshMessage::generate_timestamp();
+                let content = format!(
+                    "{},{},{},{},{}",
+                    request_id,
+                    proof_keys.len(),
+                    records.len(),
+                    self.node_role.bits(),
+                    timestamp
+                );
+                signature = signer.sign(&content);
+                signer_public_key = signer.get_public_key();
+            }
         }
 
         tracing::debug!(
@@ -451,7 +457,7 @@ impl RecordStoreManager {
         record_store: &Arc<RecordStoreManager>,
         replication_factor: usize,
     ) {
-        let transport = match record_store.transport.read().clone() {
+        let transport = match record_store.routing_state.read().transport.clone() {
             Some(t) => t,
             None => return,
         };
@@ -474,8 +480,8 @@ impl RecordStoreManager {
         let selected_peers: Vec<_> = peers.into_iter().take(peer_count).collect();
 
         let signer_public_key = {
-            let mesh_signer = record_store.mesh_signer.read();
-            mesh_signer
+            let rs = record_store.record_state.read();
+            rs.mesh_signer
                 .as_ref()
                 .map(|s| s.get_public_key())
                 .unwrap_or_default()
@@ -489,8 +495,8 @@ impl RecordStoreManager {
                 let request_id = MeshMessage::generate_nonce().to_string();
 
                 let interested_keys: Vec<String> = {
-                    let records = record_store.records.read();
-                    let mut entries: Vec<_> = records
+                    let rs = record_store.record_state.read();
+                    let mut entries: Vec<_> = rs.records
                         .iter()
                         .map(|(k, v)| (k.clone(), v.version))
                         .collect();

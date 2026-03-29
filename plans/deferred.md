@@ -302,26 +302,32 @@ Items deferred from Waves 2-5 execution. These remain active work items for futu
 - Implement ratio-based check: TCP response ≤ 2× query size for small queries
 - Parse DNS header for QDCOUNT, reject oversized requests
 
-### 8.5 TSIG Enforcement for Zone Transfers
+### ~~8.5 TSIG Enforcement for Zone Transfers~~ ✅ COMPLETE
 **Source**: `plan_dns.md`, `plan_dns2.md`
-- `transfer.rs`: TSIG is optional by default, only forced for wildcard transfers
-- Non-wildcard transfers can proceed without TSIG via IP allowlist
-- Make TSIG mandatory by default for all AXFR requests
+- Added `require_tsig: bool` config field (default `true`) to `DnsSettingsConfig`
+- AXFR and IXFR now require TSIG by default; set `require_tsig: false` to allow unauthenticated transfers
+- Threaded through `ZoneTransfer::with_security_config()`, `with_zone_transfer_config()`, call sites
 
-### 8.6 DNS64 Integration
+### ~~8.6 DNS64 Integration~~ ✅ COMPLETE
 **Source**: `plan_dns.md`
-- `dns64.rs`: Library exists (synthesis, detection, extraction) but NOT wired into query path
-- `translate_aaaa_response()` is a no-op stub returning `response.to_vec()`
-- Wire `Dns64Translator` into `handle_query()` for AAAA queries returning NODATA
+- Wired `Dns64Translator` into `handle_query()` — when AAAA query finds no records, synthesizes from A records using RFC 6052 prefix
+- `Dns64Translator` added to `DnsServer`, `QueryContext`; built from `Dns64Config` in server startup
+- Added `config()` accessor to `Dns64Translator`
 
-### 8.7 Cache Performance
+### ~~8.7 Cache Performance~~ ✅ COMPLETE
 **Source**: `plan_dns2.md`
-- Add secondary index for invalidation by qname (replace linear scan)
+- Added `HashMap<String, HashSet<CacheKey>>` secondary index on qname in `DnsCache`
+- `invalidate_zone()` now uses index for O(matching keys) instead of O(n) scan
+- Prunes stale keys (LRU eviction leftovers) during `invalidate_zone()`
+- Index maintained on `insert`, `get`, `invalidate_record`, `clear`
 
-### 8.8 Replace `dns-parser` with `hickory-proto`
+### ~~8.8 Replace `dns-parser` with `hickory-proto`~~ ✅ COMPLETE
 **Source**: `plan_sec.md`
-- Replace 8-year-old `dns-parser` crate with actively maintained `hickory-proto`
-- ~70 references in `src/dns/recursive.rs`
+- Removed `dns-parser` crate entirely from `Cargo.toml` and feature flags
+- `wire.rs`: `parse_dns_message()` now uses `hickory_proto::op::Message::from_vec()`
+- `recursive.rs`: All `dns_parser::Packet` → `hickory_proto::op::Message`, `dns_parser::QueryType` → `hickory_proto::rr::RecordType`, `QueryType::All` → `RecordType::ANY`
+- `recursive_cache.rs`: Removed `From<RecursiveRecordType> for dns_parser::QueryType` impl
+- 75 references migrated, `Cargo.toml` updated
 
 ### 8.9 DNSSEC Validation in Forwarder Mode
 **Source**: `plan_dns.md`, `plan_dns3.md`
@@ -333,15 +339,36 @@ Items deferred from Waves 2-5 execution. These remain active work items for futu
 
 ## Phase 9: DHT & Mesh (Wave 5 remaining)
 
-### 9.2 Document Transport Architecture
+### ~~9.2 Document Transport Architecture~~ ✅ COMPLETE
 **Source**: `plan_dht3.md`
-- Document: `MeshTransport` is the implementation layer, `MeshTransportManager` is selection/caching
-- Make `timestamp_window_secs` configurable in `DhtConfig`
+- Added architecture documentation to `src/mesh/transport.rs`: `MeshTransport` vs `MeshTransportManager` roles, extension file structure (`transport_peer.rs`, `transport_dns.rs`, `transport_proxy.rs`, `transport_manager.rs`), field visibility requirements
 
-### 9.3 DHT Record Store Lock Consolidation
+### ~~9.3 DHT Record Store Lock Consolidation~~ ✅ COMPLETE
 **Source**: `plan_security_scalability.md`
-- `RecordStoreManager` has 23 flat `RwLock` fields with no grouping
-- Group into inner structs (RecordStoreState, RoutingState, MetricsState)
+- Replaced 22 flat `RwLock` fields in `RecordStoreManager` with 3 grouped inner structs:
+  - `RecordStoreState` — mesh_signer, record_signer, local_version, records, pending_announces, last_snapshot_version, merkle_tree, propagation_states
+  - `RoutingState` — mesh_sender, transport, routing_manager, stake_manager, topology, rate_limiter, network_policy, blocklist
+  - `MetricsState` — last_sync, cache_hits, cache_misses, initial_sync_completed, current_sync_interval, recent_changes
+- Updated 123 access sites across 5 files: `record_store.rs`, `record_store_sync.rs`, `record_store_crud.rs`, `record_store_message.rs`, `record_store_dns.rs`
+- Removed `Arc<RwLock<...>>` wrapping from `mesh_sender` and `transport` (unnecessary)
+- Clone impl uses single lock acquisition per group (no TOCTOU race)
+- `record_successful_sync` uses single write lock for all operations
+
+---
+
+## Additional Fixes (Not in Original Plans)
+
+### Panic/unwrap Fixes in Production Code
+- `overseer/upgrade.rs`: 2 `unwrap()` on `staged_version` → `unwrap_or("unknown")` and `ok_or(UpgradeError::NoStagedUpgrade)?`
+- `overseer/cli.rs`: 3 `unwrap()` on staged state → safe fallbacks with `unwrap_or`
+- `admin/auth.rs`: `hash_admin_token()` changed from `String` (with `.expect()`) to `Result<String, String>`
+- `admin/mod.rs`: 2 `.expect()` on bcrypt hashing → `match` with `tracing::error!` + early return
+- `dns/compression.rs`: `.position().unwrap()` → `if let Some(pos) = ...` with `continue` fallback
+
+### AXFR/IXFR Response Message ID (RFC 5936/1995 Compliance)
+- Response messages now use query ID from request instead of `random_u16()`
+- `message_id: u16` threaded through all public and internal transfer API methods
+- Call sites in `query.rs` extract ID from `query[0..2]`
 
 ---
 
@@ -355,8 +382,8 @@ Items deferred from Waves 2-5 execution. These remain active work items for futu
 | 5 | 12 items (5.1-5.12 all) | 0 items | All performance items done |
 | 6 | 10 items (6.1-6.10 all) | 0 items | All code quality items done |
 | 7 | 3 items (7.1-7.3 all) | 0 items | All TLS items done |
-| 8 | 3.5(wire bugs), 3.6(recursive), 3.8(validation), 3.9(cache), 8.1(signing), 8.10(AD flag) | 7 items (8.2-8.9) | RSA, QNAME, TCP amp, TSIG, DNS64, cache perf, dns-parser replacement |
-| 9 | 3.7(DHT fixes), 9.1(geo routing) | 2 items (9.2, 9.3) | Transport docs, lock consolidation |
+| 8 | 3.5(wire), 3.6(recursive), 3.8(validation), 3.9(cache), 8.1(signing), 8.5(TSIG), 8.6(DNS64), 8.7(cache perf), 8.8(dns-parser), 8.10(AD flag) | 3 items (8.2, 8.3, 8.4) | RSA, QNAME minimization, TCP amplification remain |
+| 9 | 3.7(DHT fixes), 9.1(geo routing), 9.2(transport docs), 9.3(lock consolidation) | 0 items | All Phase 9 items complete |
 | 10 | 8 items (10.1a-10.1d, 10.3, 10.4) | 0 items | All Phase 10 items complete |
 | 11 | 11 items (11.1-11.11 all) | 0 items | All admin panel items done |
 | 12 | 6 items (12.1-12.5 all) | 0 items | All Phase 12 items complete; wasmtime upgraded to v42 (v43 blocked by bumpalo conflict) |

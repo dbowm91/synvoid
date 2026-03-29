@@ -325,6 +325,7 @@ impl UnifiedServer {
                         dns_cfg.settings.ixfr_enabled,
                         dns_cfg.settings.ixfr_fallback_to_axfr,
                         tsig_verifier,
+                        dns_cfg.settings.require_tsig,
                     );
 
                     tracing::info!(

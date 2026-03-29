@@ -16,9 +16,8 @@ pub fn hash_admin_token_with_cost(token: &str, cost: u32) -> Result<String, Stri
     bcrypt::hash(token, cost).map_err(|e| format!("bcrypt hashing failed: {}", e))
 }
 
-pub fn hash_admin_token(token: &str) -> String {
+pub fn hash_admin_token(token: &str) -> Result<String, String> {
     hash_admin_token_with_cost(token, BCRYPT_COST)
-        .expect("bcrypt hashing must not fail in production; check system entropy source")
 }
 
 pub fn verify_admin_token(token: &str, hash: &str) -> bool {

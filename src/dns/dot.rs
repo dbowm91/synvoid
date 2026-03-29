@@ -133,6 +133,7 @@ impl DotServer {
                 update_handler: None,
                 notify_handler: None,
                 query_coalescer: None,
+                dns64_translator: None,
             };
 
             let response = if let Some(c) = &ctx.cache {

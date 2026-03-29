@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -44,6 +44,7 @@ pub struct DnsCache {
 #[allow(dead_code)] // serve_stale_max_count reserved for future rate limiting of stale responses
 struct InnerDnsCache {
     cache: RwLock<LruCache<CacheKey, CachedResponse>>,
+    qname_index: RwLock<HashMap<String, HashSet<CacheKey>>>,
     max_ttl: Duration,
     min_ttl: Duration,
     max_entry_size: usize,
@@ -64,6 +65,7 @@ impl DnsCache {
         Self {
             inner: Arc::new(InnerDnsCache {
                 cache: RwLock::new(cache),
+                qname_index: RwLock::new(HashMap::new()),
                 max_ttl: Duration::from_secs(max_ttl_secs),
                 min_ttl: Duration::from_secs(min_ttl_secs),
                 max_entry_size: 65535,
@@ -92,6 +94,7 @@ impl DnsCache {
         Self {
             inner: Arc::new(InnerDnsCache {
                 cache: RwLock::new(cache),
+                qname_index: RwLock::new(HashMap::new()),
                 max_ttl: Duration::from_secs(max_ttl_secs),
                 min_ttl: Duration::from_secs(min_ttl_secs),
                 max_entry_size,
@@ -120,6 +123,7 @@ impl DnsCache {
         Self {
             inner: Arc::new(InnerDnsCache {
                 cache: RwLock::new(cache),
+                qname_index: RwLock::new(HashMap::new()),
                 max_ttl: Duration::from_secs(max_ttl_secs),
                 min_ttl: Duration::from_secs(min_ttl_secs),
                 max_entry_size: 65535,
@@ -239,6 +243,9 @@ impl DnsCache {
             } else {
                 tracing::debug!("Cache expired for {}", key.qname);
                 cache.remove(key);
+                if let Some(keys) = inner.qname_index.write().get_mut(&key.qname) {
+                    keys.remove(key);
+                }
             }
         }
 
@@ -260,6 +267,9 @@ impl DnsCache {
             } else {
                 tracing::debug!("Cache expired for {}", key.qname);
                 cache.remove(key);
+                if let Some(keys) = inner.qname_index.write().get_mut(&key.qname) {
+                    keys.remove(key);
+                }
             }
         }
 
@@ -304,23 +314,66 @@ impl DnsCache {
         };
 
         let mut cache = inner.cache.write();
-        cache.insert(key, cached);
+        cache.insert(key.clone(), cached);
+        drop(cache);
+
+        let mut index = inner.qname_index.write();
+        index.entry(key.qname.clone()).or_default().insert(key);
+
+        // Opportunistic cleanup: if index has significantly more entries than cache,
+        // clean up stale entries caused by LRU eviction
+        if index.len() > inner.max_capacity * 2 {
+            let stale_qnames: Vec<String> = index
+                .iter()
+                .filter(|(_, keys)| keys.is_empty())
+                .map(|(qname, _)| qname.clone())
+                .collect();
+            for qname in stale_qnames {
+                index.remove(&qname);
+            }
+        }
     }
 
     pub fn invalidate_zone(&self, origin: &str) {
         let inner = &self.inner;
+
+        // Use secondary index for O(1) qname lookup instead of linear scan
+        let keys_to_remove: Vec<CacheKey> = {
+            let index = inner.qname_index.read();
+            index
+                .iter()
+                .filter(|(qname, _)| qname.ends_with(origin) || **qname == origin)
+                .flat_map(|(_, keys)| keys.iter().cloned())
+                .collect()
+        };
+
         let mut cache = inner.cache.write();
-
-        let keys_to_remove: Vec<CacheKey> = cache
-            .iter()
-            .filter(|(key, _)| key.qname.ends_with(origin) || key.qname == origin)
-            .map(|(key, _)| key.clone())
-            .collect();
-
         for key in keys_to_remove.iter() {
             cache.remove(key);
         }
 
+        // Opportunistic: also prune stale keys from the entire index
+        // (keys that LRU evicted but we never cleaned up)
+        {
+            let mut index = inner.qname_index.write();
+            index.retain(|qname, _| !qname.ends_with(origin) && *qname != origin);
+            // Remove keys that no longer exist in cache (LRU eviction leftovers)
+            let stale_qnames: Vec<String> = index
+                .iter_mut()
+                .map(|(qname, keys)| {
+                    let before = keys.len();
+                    keys.retain(|k| cache.contains_key(k));
+                    (qname.clone(), before != keys.len())
+                })
+                .filter(|(_, pruned)| *pruned)
+                .map(|(qname, _)| qname)
+                .collect();
+            for qname in stale_qnames {
+                if index.get(&qname).map_or(true, |k| k.is_empty()) {
+                    index.remove(&qname);
+                }
+            }
+        }
         drop(cache);
 
         let mut fingerprints = inner.cache_fingerprints.write();
@@ -347,6 +400,9 @@ impl DnsCache {
 
         let key = CacheKey::new(full_name, record_type, None);
         cache.remove(&key);
+        if let Some(keys) = inner.qname_index.write().get_mut(&key.qname) {
+            keys.remove(&key);
+        }
 
         tracing::debug!("Invalidated cache entry for {}/{:?}", key.qname, key.qtype);
     }
@@ -355,6 +411,9 @@ impl DnsCache {
         let inner = &self.inner;
         let mut cache = inner.cache.write();
         cache.clear();
+
+        let mut index = inner.qname_index.write();
+        index.clear();
 
         let mut fingerprints = inner.cache_fingerprints.write();
         fingerprints.clear();

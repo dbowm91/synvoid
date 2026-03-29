@@ -55,8 +55,11 @@ impl DnsMessageCompressor {
             output.extend_from_slice(part.as_bytes());
             written += 1 + part.len();
 
-            let remaining: String =
-                parts[parts.len() - parts.iter().position(|&p| p == *part).unwrap()..].join(".");
+            let remaining: String = if let Some(pos) = parts.iter().position(|&p| p == *part) {
+                parts[parts.len() - pos..].join(".")
+            } else {
+                continue;
+            };
             if !remaining.is_empty() {
                 self.labels.insert(remaining, self.current_offset as u16);
             }

@@ -68,34 +68,46 @@ impl Default for RecordStoreConfig {
     }
 }
 
+pub struct RecordStoreState {
+    pub mesh_signer: Option<crate::mesh::protocol::MeshMessageSigner>,
+    pub record_signer: Option<crate::mesh::dht::RecordSigner>,
+    pub local_version: u64,
+    pub records: LinkedHashMap<String, DhtRecordEntry>,
+    pub pending_announces: Vec<DhtRecord>,
+    pub last_snapshot_version: u64,
+    pub merkle_tree: Option<MerkleTree>,
+    pub propagation_states: HashMap<String, PropagationState>,
+}
+
+pub struct RoutingState {
+    pub mesh_sender: Option<mpsc::Sender<MeshMessage>>,
+    pub transport: Option<Arc<crate::mesh::transport::MeshTransport>>,
+    pub routing_manager: Option<Arc<crate::mesh::dht::routing::DhtRoutingManager>>,
+    pub stake_manager: Option<Arc<crate::mesh::dht::StakeManager>>,
+    pub topology: Option<Arc<crate::mesh::topology::MeshTopology>>,
+    pub rate_limiter: Option<crate::mesh::dht::DhtRateLimiter>,
+    pub network_policy: Option<crate::mesh::dht::NetworkPolicy>,
+    pub blocklist: Option<crate::mesh::dht::GlobalNodeBlocklist>,
+}
+
+pub struct MetricsState {
+    pub last_sync: Instant,
+    pub cache_hits: u64,
+    pub cache_misses: u64,
+    pub initial_sync_completed: bool,
+    pub current_sync_interval: u64,
+    pub recent_changes: Vec<Instant>,
+}
+
 pub struct RecordStoreManager {
     config: Arc<RecordStoreConfig>,
     node_id: String,
     node_role: MeshNodeRole,
-    mesh_signer: RwLock<Option<crate::mesh::protocol::MeshMessageSigner>>,
-    record_signer: RwLock<Option<crate::mesh::dht::RecordSigner>>,
     access_control: Arc<DhtAccessControl>,
-    local_version: RwLock<u64>,
-    records: RwLock<LinkedHashMap<String, DhtRecordEntry>>,
-    mesh_sender: Arc<RwLock<Option<mpsc::Sender<MeshMessage>>>>,
-    transport: Arc<RwLock<Option<Arc<crate::mesh::transport::MeshTransport>>>>,
-    routing_manager: RwLock<Option<Arc<crate::mesh::dht::routing::DhtRoutingManager>>>,
-    stake_manager: RwLock<Option<Arc<crate::mesh::dht::StakeManager>>>,
-    topology: RwLock<Option<Arc<crate::mesh::topology::MeshTopology>>>,
-    last_sync: RwLock<Instant>,
-    pending_announces: RwLock<Vec<DhtRecord>>,
-    cache_hits: RwLock<u64>,
-    cache_misses: RwLock<u64>,
-    last_snapshot_version: RwLock<u64>,
-    initial_sync_completed: RwLock<bool>,
-    current_sync_interval: RwLock<u64>,
-    recent_changes: RwLock<Vec<Instant>>,
-    merkle_tree: RwLock<Option<MerkleTree>>,
-    propagation_states: RwLock<HashMap<String, PropagationState>>,
     convergence_threshold: usize,
-    rate_limiter: RwLock<Option<crate::mesh::dht::DhtRateLimiter>>,
-    network_policy: RwLock<Option<crate::mesh::dht::NetworkPolicy>>,
-    blocklist: RwLock<Option<crate::mesh::dht::GlobalNodeBlocklist>>,
+    pub record_state: RwLock<RecordStoreState>,
+    pub routing_state: RwLock<RoutingState>,
+    pub metrics_state: RwLock<MetricsState>,
 }
 
 #[derive(Debug, Clone)]
@@ -130,82 +142,87 @@ impl RecordStoreManager {
             config: Arc::new(config),
             node_id,
             node_role,
-            mesh_signer: RwLock::new(mesh_signer),
-            record_signer: RwLock::new(None),
             access_control: Arc::new(access_control),
-            local_version: RwLock::new(1),
-            records: RwLock::new(LinkedHashMap::new()),
-            mesh_sender: Arc::new(RwLock::new(None)),
-            transport: Arc::new(RwLock::new(None)),
-            routing_manager: RwLock::new(None),
-            stake_manager: RwLock::new(None),
-            topology: RwLock::new(None),
-            last_sync: RwLock::new(Instant::now()),
-            pending_announces: RwLock::new(Vec::new()),
-            cache_hits: RwLock::new(0),
-            cache_misses: RwLock::new(0),
-            last_snapshot_version: RwLock::new(0),
-            initial_sync_completed: RwLock::new(false),
-            current_sync_interval: RwLock::new(initial_interval),
-            recent_changes: RwLock::new(Vec::new()),
-            merkle_tree: RwLock::new(None),
-            propagation_states: RwLock::new(HashMap::new()),
             convergence_threshold,
-            rate_limiter: RwLock::new(None),
-            network_policy: RwLock::new(None),
-            blocklist: RwLock::new(None),
+            record_state: RwLock::new(RecordStoreState {
+                mesh_signer,
+                record_signer: None,
+                local_version: 1,
+                records: LinkedHashMap::new(),
+                pending_announces: Vec::new(),
+                last_snapshot_version: 0,
+                merkle_tree: None,
+                propagation_states: HashMap::new(),
+            }),
+            routing_state: RwLock::new(RoutingState {
+                mesh_sender: None,
+                transport: None,
+                routing_manager: None,
+                stake_manager: None,
+                topology: None,
+                rate_limiter: None,
+                network_policy: None,
+                blocklist: None,
+            }),
+            metrics_state: RwLock::new(MetricsState {
+                last_sync: Instant::now(),
+                cache_hits: 0,
+                cache_misses: 0,
+                initial_sync_completed: false,
+                current_sync_interval: initial_interval,
+                recent_changes: Vec::new(),
+            }),
         }
     }
 
     pub fn set_record_signer(&self, signing_key: Option<[u8; 32]>) {
-        let mut signer = self.record_signer.write();
-        *signer = Some(crate::mesh::dht::RecordSigner::new(signing_key));
+        let mut state = self.record_state.write();
+        state.record_signer = Some(crate::mesh::dht::RecordSigner::new(signing_key));
     }
 
     pub fn enable_rate_limiting(&self, max_requests: u32, window_secs: u64) {
-        let mut limiter = self.rate_limiter.write();
-        *limiter = Some(crate::mesh::dht::DhtRateLimiter::new(
+        let mut routing = self.routing_state.write();
+        routing.rate_limiter = Some(crate::mesh::dht::DhtRateLimiter::new(
             max_requests,
             window_secs,
         ));
     }
 
     pub fn is_rate_limited(&self, peer_id: &str) -> bool {
-        let limiter = self.rate_limiter.read();
-        match limiter.as_ref() {
+        let routing = self.routing_state.read();
+        match routing.rate_limiter.as_ref() {
             Some(l) => !l.is_allowed(peer_id),
             None => false,
         }
     }
 
     pub fn set_mesh_sender(&self, sender: mpsc::Sender<MeshMessage>) {
-        let mut sender_guard = self.mesh_sender.write();
-        *sender_guard = Some(sender);
+        self.routing_state.write().mesh_sender = Some(sender);
     }
 
     pub fn set_transport(&self, transport: Arc<crate::mesh::transport::MeshTransport>) {
-        let mut t = self.transport.write();
-        *t = Some(transport);
+        self.routing_state.write().transport = Some(transport);
     }
 
     pub fn set_routing_manager(&self, manager: Arc<crate::mesh::dht::routing::DhtRoutingManager>) {
-        let mut rm = self.routing_manager.write();
-        *rm = Some(manager);
+        self.routing_state.write().routing_manager = Some(manager);
     }
 
     pub fn set_stake_manager(&self, manager: Arc<crate::mesh::dht::StakeManager>) {
-        let mut sm = self.stake_manager.write();
-        *sm = Some(manager);
+        self.routing_state.write().stake_manager = Some(manager);
     }
 
     pub fn set_topology(&self, topology: Arc<crate::mesh::topology::MeshTopology>) {
-        let mut t = self.topology.write();
-        *t = Some(topology);
+        self.routing_state.write().topology = Some(topology);
     }
 
     pub fn is_routing_enabled(&self) -> bool {
-        let rm = self.routing_manager.read();
-        rm.as_ref().map(|m| m.is_enabled()).unwrap_or(false)
+        self.routing_state
+            .read()
+            .routing_manager
+            .as_ref()
+            .map(|m| m.is_enabled())
+            .unwrap_or(false)
     }
 
     pub fn is_enabled(&self) -> bool {
@@ -217,24 +234,24 @@ impl RecordStoreManager {
     }
 
     pub fn get_network_policy(&self) -> Option<crate::mesh::dht::NetworkPolicy> {
-        self.network_policy.read().clone()
+        self.routing_state.read().network_policy.clone()
     }
 
     pub fn set_network_policy(&self, policy: crate::mesh::dht::NetworkPolicy) {
-        *self.network_policy.write() = Some(policy);
+        self.routing_state.write().network_policy = Some(policy);
     }
 
     pub fn get_blocklist(&self) -> Option<crate::mesh::dht::GlobalNodeBlocklist> {
-        self.blocklist.read().clone()
+        self.routing_state.read().blocklist.clone()
     }
 
     pub fn set_blocklist(&self, blocklist: crate::mesh::dht::GlobalNodeBlocklist) {
-        *self.blocklist.write() = Some(blocklist);
+        self.routing_state.write().blocklist = Some(blocklist);
     }
 
     pub fn is_node_blocked(&self, node_id: &str, ip: Option<&str>) -> bool {
-        let blocklist = self.blocklist.read();
-        if let Some(ref bl) = *blocklist {
+        let routing = self.routing_state.read();
+        if let Some(ref bl) = routing.blocklist {
             bl.is_blocked(node_id, ip)
         } else {
             false
@@ -244,34 +261,52 @@ impl RecordStoreManager {
 
 impl Clone for RecordStoreManager {
     fn clone(&self) -> Self {
+        let rs = self.record_state.read();
+        let record_state = RecordStoreState {
+            mesh_signer: rs.mesh_signer.clone(),
+            record_signer: rs.record_signer.clone(),
+            local_version: rs.local_version,
+            records: rs.records.clone(),
+            pending_announces: rs.pending_announces.clone(),
+            last_snapshot_version: rs.last_snapshot_version,
+            merkle_tree: rs.merkle_tree.clone(),
+            propagation_states: rs.propagation_states.clone(),
+        };
+        drop(rs);
+
+        let routing = self.routing_state.read();
+        let routing_state = RoutingState {
+            mesh_sender: None,
+            transport: None,
+            routing_manager: routing.routing_manager.clone(),
+            stake_manager: routing.stake_manager.clone(),
+            topology: routing.topology.clone(),
+            rate_limiter: routing.rate_limiter.clone(),
+            network_policy: routing.network_policy.clone(),
+            blocklist: routing.blocklist.clone(),
+        };
+        drop(routing);
+
+        let ms = self.metrics_state.read();
+        let metrics_state = MetricsState {
+            last_sync: ms.last_sync,
+            cache_hits: ms.cache_hits,
+            cache_misses: ms.cache_misses,
+            initial_sync_completed: ms.initial_sync_completed,
+            current_sync_interval: ms.current_sync_interval,
+            recent_changes: ms.recent_changes.clone(),
+        };
+        drop(ms);
+
         Self {
             config: self.config.clone(),
             node_id: self.node_id.clone(),
             node_role: self.node_role,
-            mesh_signer: RwLock::new(self.mesh_signer.read().clone()),
-            record_signer: RwLock::new(self.record_signer.read().clone()),
             access_control: self.access_control.clone(),
-            local_version: RwLock::new(*self.local_version.read()),
-            records: RwLock::new(self.records.read().clone()),
-            mesh_sender: self.mesh_sender.clone(),
-            transport: self.transport.clone(),
-            routing_manager: RwLock::new(self.routing_manager.read().clone()),
-            stake_manager: RwLock::new(self.stake_manager.read().clone()),
-            topology: RwLock::new(self.topology.read().clone()),
-            last_sync: RwLock::new(*self.last_sync.read()),
-            pending_announces: RwLock::new(self.pending_announces.read().clone()),
-            cache_hits: RwLock::new(*self.cache_hits.read()),
-            cache_misses: RwLock::new(*self.cache_misses.read()),
-            last_snapshot_version: RwLock::new(*self.last_snapshot_version.read()),
-            initial_sync_completed: RwLock::new(*self.initial_sync_completed.read()),
-            current_sync_interval: RwLock::new(*self.current_sync_interval.read()),
-            recent_changes: RwLock::new(self.recent_changes.read().clone()),
-            merkle_tree: RwLock::new(self.merkle_tree.read().clone()),
-            propagation_states: RwLock::new(self.propagation_states.read().clone()),
             convergence_threshold: self.convergence_threshold,
-            rate_limiter: RwLock::new(self.rate_limiter.read().clone()),
-            network_policy: RwLock::new(self.network_policy.read().clone()),
-            blocklist: RwLock::new(self.blocklist.read().clone()),
+            record_state: RwLock::new(record_state),
+            routing_state: RwLock::new(routing_state),
+            metrics_state: RwLock::new(metrics_state),
         }
     }
 }
@@ -291,16 +326,18 @@ pub struct RecordStoreStats {
 
 impl RecordStoreManager {
     pub fn get_stats(&self) -> RecordStoreStats {
+        let rs = self.record_state.read();
+        let ms = self.metrics_state.read();
         RecordStoreStats {
             node_id: self.node_id.clone(),
             node_role: self.node_role,
-            version: *self.local_version.read(),
-            record_count: self.records.read().len(),
-            pending_announce_count: self.pending_announces.read().len(),
-            cache_hits: *self.cache_hits.read(),
-            cache_misses: *self.cache_misses.read(),
+            version: rs.local_version,
+            record_count: rs.records.len(),
+            pending_announce_count: rs.pending_announces.len(),
+            cache_hits: ms.cache_hits,
+            cache_misses: ms.cache_misses,
             is_global: self.is_global_node(),
-            last_snapshot_version: *self.last_snapshot_version.read(),
+            last_snapshot_version: rs.last_snapshot_version,
         }
     }
 }

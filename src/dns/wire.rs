@@ -5,13 +5,12 @@
 // DESIGN DECISION
 // ===============
 // This module uses a hybrid approach:
-// 1. Parsing: Uses dns_parser::Packet for full message parsing
+// 1. Parsing: Uses hickory_proto::op::Message for full message parsing
 // 2. Query name parsing: Custom implementation with compression support
 // 3. Response building: Custom implementation for performance and flexibility
 //
 // Rationale:
-// - dns_parser::Builder is limited for building responses (no easy answer section support)
-// - Manual implementation is well-tested, performant, and handles all edge cases
+// - Manual response building is well-tested, performant, and handles all edge cases
 // - Custom query name parsing provides better control over compression
 //
 // IMPROVEMENTS MADE
@@ -23,10 +22,9 @@
 // REFERENCES
 // ==========
 // - RFC 1035: Domain Names - Implementation and Specification
-// - dns-parser crate: https://docs.rs/dns-parser
 // - Hickory DNS: https://github.com/hickory-dns/hickory-dns
 
-use dns_parser::Packet;
+use hickory_proto::op::Message;
 
 /// Parse a DNS query name from wire format with compression support
 ///
@@ -107,9 +105,9 @@ pub fn parse_query_name(bytes: &[u8], mut pos: usize) -> Option<String> {
     Some(name)
 }
 
-/// Parse a DNS message using dns-parser
-pub fn parse_dns_message(bytes: &[u8]) -> Result<Packet, String> {
-    Packet::parse(bytes).map_err(|e| format!("DNS parse error: {:?}", e))
+/// Parse a DNS message using hickory-proto
+pub fn parse_dns_message(bytes: &[u8]) -> Result<Message, String> {
+    Message::from_vec(bytes).map_err(|e| format!("DNS parse error: {:?}", e))
 }
 
 /// Extract the query ID from a DNS message
@@ -166,7 +164,7 @@ impl MessageFlags {
 /// Build a simple DNS response header
 ///
 /// This creates a basic response header with the given parameters.
-/// For full response building, consider using dns_parser::Builder.
+/// For full response building, use hickory_proto or custom wire format.
 pub fn build_response_header(
     id: u16,
     flags: MessageFlags,

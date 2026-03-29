@@ -1,5 +1,34 @@
 #![allow(unused_variables, unused_mut, dead_code, clippy::redundant_field_names)]
 
+//! Mesh Transport Layer
+//!
+//! This module implements the QUIC-based mesh transport for inter-node communication.
+//!
+//! # Architecture
+//!
+//! The transport layer is split into two main components:
+//!
+//! - **`MeshTransport`** (this file): The implementation layer that manages QUIC connections,
+//!   peer sessions, message routing, and protocol handling. This struct owns the actual
+//!   connection state, peer maps, and message dispatch logic.
+//!
+//! - **`MeshTransportManager`** (in `transport_manager.rs`): The selection and caching layer
+//!   that wraps `MeshTransport` with peer selection strategies, connection pooling, and
+//!   health-check-based routing. `MeshTransportManager` delegates actual I/O to
+//!   `MeshTransport`.
+//!
+//! # Extension Files
+//!
+//! The implementation is split across several sibling files by concern:
+//!
+//! - `transport_peer.rs` — Per-peer session management, handshake, message handlers
+//! - `transport_dns.rs` — DNS record synchronization over mesh
+//! - `transport_proxy.rs` — Proxy request forwarding between mesh peers
+//! - `transport_manager.rs` — Transport manager with peer selection/caching
+//!
+//! All extension files use `use super::*` to access `MeshTransport` fields, which
+//! must be `pub(crate)` visibility.
+
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::sync::Arc;

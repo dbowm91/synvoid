@@ -72,6 +72,7 @@ impl Dns64Config {
     }
 }
 
+#[derive(Clone)]
 pub struct Dns64Translator {
     config: Dns64Config,
 }
@@ -79,6 +80,10 @@ pub struct Dns64Translator {
 impl Dns64Translator {
     pub fn new(config: Dns64Config) -> Self {
         Self { config }
+    }
+
+    pub fn config(&self) -> &Dns64Config {
+        &self.config
     }
 
     pub fn translate_aaaa_response(&self, response: &[u8], client_ipv6: Option<IpAddr>) -> Vec<u8> {

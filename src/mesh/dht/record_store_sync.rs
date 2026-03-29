@@ -9,7 +9,7 @@ impl RecordStoreManager {
         Some(MeshMessage::DhtSyncRequest {
             request_id: uuid::Uuid::new_v4().to_string().into(),
             node_id: self.node_id.clone().into(),
-            from_version: *self.local_version.read(),
+            from_version: self.record_state.read().local_version,
         })
     }
 
@@ -23,13 +23,13 @@ impl RecordStoreManager {
         let mut signature = Vec::new();
         let mut signer_public_key = String::new();
 
-        let mesh_signer = self.mesh_signer.read();
-        if let Some(ref signer) = *mesh_signer {
+        let rs = self.record_state.read();
+        if let Some(ref signer) = rs.mesh_signer {
             let timestamp = MeshMessage::generate_timestamp();
             let content = format!(
                 "{},{},{},{}",
                 request_id,
-                *self.local_version.read(),
+                self.record_state.read().local_version,
                 records.len(),
                 timestamp
             );
@@ -40,7 +40,7 @@ impl RecordStoreManager {
         Some(MeshMessage::DhtSyncResponse {
             request_id: request_id.into(),
             records,
-            version: *self.local_version.read(),
+            version: self.record_state.read().local_version,
             timestamp: MeshMessage::generate_timestamp(),
             signature,
             signer_public_key,
@@ -55,7 +55,7 @@ impl RecordStoreManager {
         Some(MeshMessage::DhtSnapshotRequest {
             request_id: uuid::Uuid::new_v4().to_string().into(),
             node_id: self.node_id.clone().into(),
-            from_version: *self.local_version.read(),
+            from_version: self.record_state.read().local_version,
         })
     }
 
@@ -80,13 +80,13 @@ impl RecordStoreManager {
         let mut signature = Vec::new();
         let mut signer_public_key = String::new();
 
-        let mesh_signer = self.mesh_signer.read();
-        if let Some(ref signer) = *mesh_signer {
+        let rs = self.record_state.read();
+        if let Some(ref signer) = rs.mesh_signer {
             let timestamp = MeshMessage::generate_timestamp();
             let content = format!(
                 "{},{},{},{}",
                 request_id,
-                *self.local_version.read(),
+                self.record_state.read().local_version,
                 records.len(),
                 timestamp
             );
@@ -97,7 +97,7 @@ impl RecordStoreManager {
         Some(MeshMessage::DhtSnapshotResponse {
             request_id: request_id.into(),
             records,
-            version: *self.local_version.read(),
+            version: self.record_state.read().local_version,
             timestamp: MeshMessage::generate_timestamp(),
             signature,
             signer_public_key,
@@ -122,7 +122,7 @@ impl RecordStoreManager {
             }
         }
 
-        *self.last_snapshot_version.write() = version;
+        self.record_state.write().last_snapshot_version = version;
         self.record_successful_sync();
 
         self.compute_merkle_tree();
@@ -145,8 +145,8 @@ impl RecordStoreManager {
             return 0;
         }
 
-        let record_signer = self.record_signer.read();
-        let Some(ref verifier) = *record_signer else {
+        let rs = self.record_state.read();
+        let Some(ref verifier) = rs.record_signer else {
             tracing::warn!("No record signer configured, rejecting unsigned records");
             return 0;
         };
@@ -205,7 +205,7 @@ impl RecordStoreManager {
             }
         }
 
-        *self.last_snapshot_version.write() = version;
+        self.record_state.write().last_snapshot_version = version;
         self.record_successful_sync();
 
         self.compute_merkle_tree();
@@ -224,9 +224,8 @@ impl RecordStoreManager {
         }
 
         let now = Instant::now();
-        let last_sync = *self.last_sync.read();
-        let current_interval = *self.current_sync_interval.read();
-        now.duration_since(last_sync) > Duration::from_secs(current_interval)
+        let ms = self.metrics_state.read();
+        now.duration_since(ms.last_sync) > Duration::from_secs(ms.current_sync_interval)
     }
 
     pub fn record_successful_sync(&self) {
@@ -234,15 +233,16 @@ impl RecordStoreManager {
             return;
         }
 
-        *self.last_sync.write() = Instant::now();
-        *self.initial_sync_completed.write() = true;
+        let mut ms = self.metrics_state.write();
+        ms.last_sync = Instant::now();
+        ms.initial_sync_completed = true;
 
-        let current = *self.current_sync_interval.read();
+        let current = ms.current_sync_interval;
         let max_interval = self.config.max_sync_interval_secs;
 
         if current < max_interval {
             let new_interval = (current * 2).min(max_interval);
-            *self.current_sync_interval.write() = new_interval;
+            ms.current_sync_interval = new_interval;
             tracing::info!(
                 "DHT sync interval increased to {}s (max: {}s)",
                 new_interval,
@@ -257,16 +257,16 @@ impl RecordStoreManager {
         }
 
         let initial = self.config.initial_sync_interval_secs;
-        *self.current_sync_interval.write() = initial;
+        self.metrics_state.write().current_sync_interval = initial;
         tracing::debug!("DHT sync interval reset to {}s", initial);
     }
 
     pub fn get_current_sync_interval(&self) -> u64 {
-        *self.current_sync_interval.read()
+        self.metrics_state.read().current_sync_interval
     }
 
     pub fn get_last_snapshot_version(&self) -> u64 {
-        *self.last_snapshot_version.read()
+        self.record_state.read().last_snapshot_version
     }
 
     pub fn handle_record_announce(
@@ -326,8 +326,8 @@ impl RecordStoreManager {
             return true;
         }
 
-        let topology = self.topology.read();
-        if let Some(ref topo) = *topology {
+        let routing = self.routing_state.read();
+        if let Some(ref topo) = routing.topology {
             let site_scope = dht_key.site_scope();
             if let Some(site) = site_scope {
                 if let Some(origin_id) = topo.find_origin_by_site_sync(&site) {
@@ -349,7 +349,7 @@ impl RecordStoreManager {
             return None;
         }
 
-        if let Some(ref stake_mgr) = *self.stake_manager.read() {
+        if let Some(ref stake_mgr) = self.routing_state.read().stake_manager {
             if !stake_mgr.can_read_dht(from_node) {
                 tracing::debug!(
                     "DHT query rejected: node {} has insufficient stake to read",
@@ -364,8 +364,8 @@ impl RecordStoreManager {
         let mut signature = Vec::new();
         let mut signer_public_key = String::new();
 
-        let mesh_signer = self.mesh_signer.read();
-        if let Some(ref signer) = *mesh_signer {
+        let rs = self.record_state.read();
+        if let Some(ref signer) = rs.mesh_signer {
             if let Some(ref rec) = record {
                 let timestamp = MeshMessage::generate_timestamp();
                 let content = format!(
@@ -420,8 +420,8 @@ impl RecordStoreManager {
             return;
         }
 
-        let record_signer = self.record_signer.read();
-        let Some(ref verifier) = *record_signer else {
+        let rs = self.record_state.read();
+        let Some(ref verifier) = rs.record_signer else {
             tracing::warn!("No record signer configured, rejecting sync response");
             return;
         };
@@ -490,8 +490,8 @@ impl RecordStoreManager {
             return;
         }
 
-        let record_signer = self.record_signer.read();
-        let Some(ref verifier) = *record_signer else {
+        let rs = self.record_state.read();
+        let Some(ref verifier) = rs.record_signer else {
             tracing::warn!("No record signer configured, rejecting anti-entropy response");
             return;
         };
@@ -560,7 +560,7 @@ impl RecordStoreManager {
                 );
                 rejected_count += 1;
 
-                if let Some(ref stake_mgr) = *self.stake_manager.read() {
+                if let Some(ref stake_mgr) = self.routing_state.read().stake_manager {
                     stake_mgr.submit_global_slash_vote(
                         record.source_node_id.clone(),
                         crate::mesh::dht::stake::SlashReason::InvalidRecordSignature,
@@ -602,13 +602,13 @@ impl RecordStoreManager {
             return;
         };
 
-        let routing_manager = self.routing_manager.read().clone();
+        let routing_manager = self.routing_state.read().routing_manager.clone();
         let Some(rm) = routing_manager else {
             tracing::warn!("No routing manager available for Kademlia announce");
             return;
         };
 
-        let transport_opt = self.transport.read().clone();
+        let transport_opt = self.routing_state.read().transport.clone();
         let Some(transport) = transport_opt else {
             return;
         };
@@ -664,12 +664,12 @@ impl RecordStoreManager {
             return local_record;
         }
 
-        let routing_manager = self.routing_manager.read().clone();
+        let routing_manager = self.routing_state.read().routing_manager.clone();
         let Some(rm) = routing_manager else {
             return None;
         };
 
-        let transport_opt = self.transport.read().clone();
+        let transport_opt = self.routing_state.read().transport.clone();
         let Some(transport) = transport_opt else {
             return None;
         };
@@ -733,12 +733,12 @@ impl RecordStoreManager {
             return 0;
         }
 
-        let routing_manager = self.routing_manager.read().clone();
+        let routing_manager = self.routing_state.read().routing_manager.clone();
         let Some(rm) = routing_manager else {
             return 0;
         };
 
-        let transport_opt = self.transport.read().clone();
+        let transport_opt = self.routing_state.read().transport.clone();
         let Some(transport) = transport_opt else {
             return 0;
         };
@@ -755,8 +755,8 @@ impl RecordStoreManager {
         let request_id = format!("announce-{}-{}", record.key, uuid::Uuid::new_v4());
 
         let signer_public_key = {
-            let mesh_signer = self.mesh_signer.read();
-            mesh_signer
+            let rs = self.record_state.read();
+            rs.mesh_signer
                 .as_ref()
                 .map(|s| s.get_public_key())
                 .unwrap_or_default()
@@ -812,9 +812,9 @@ impl RecordStoreManager {
     }
 
     pub fn init_propagation_state(&self, key: &str) {
-        let mut states = self.propagation_states.write();
-        if !states.contains_key(key) {
-            states.insert(
+        let mut states = self.record_state.write();
+        if !states.propagation_states.contains_key(key) {
+            states.propagation_states.insert(
                 key.to_string(),
                 PropagationState {
                     key: key.to_string(),
@@ -828,8 +828,8 @@ impl RecordStoreManager {
     }
 
     pub fn record_propagation_attempt(&self, key: &str, peer_id: &str) {
-        let mut states = self.propagation_states.write();
-        if let Some(state) = states.get_mut(key) {
+        let mut states = self.record_state.write();
+        if let Some(state) = states.propagation_states.get_mut(key) {
             if !state.attempted_peers.contains(&peer_id.to_string()) {
                 state.attempted_peers.push(peer_id.to_string());
                 state.last_update = Instant::now();
@@ -838,8 +838,8 @@ impl RecordStoreManager {
     }
 
     pub fn record_propagation_ack(&self, key: &str) -> bool {
-        let mut states = self.propagation_states.write();
-        if let Some(state) = states.get_mut(key) {
+        let mut states = self.record_state.write();
+        if let Some(state) = states.propagation_states.get_mut(key) {
             state.ack_count += 1;
             state.last_update = Instant::now();
 
@@ -857,24 +857,25 @@ impl RecordStoreManager {
     }
 
     pub fn is_propagation_complete(&self, key: &str) -> bool {
-        let states = self.propagation_states.read();
-        states.get(key).map(|s| s.completed).unwrap_or(false)
+        let states = self.record_state.read();
+        states.propagation_states.get(key).map(|s| s.completed).unwrap_or(false)
     }
 
     pub fn get_propagation_state(&self, key: &str) -> Option<PropagationState> {
-        let states = self.propagation_states.read();
-        states.get(key).cloned()
+        let states = self.record_state.read();
+        states.propagation_states.get(key).cloned()
     }
 
     pub fn cleanup_stale_propagation_states(&self, max_age_secs: u64) {
-        let mut states = self.propagation_states.write();
+        let mut states = self.record_state.write();
         let now = Instant::now();
-        states.retain(|_, state| now.duration_since(state.last_update).as_secs() < max_age_secs);
+        states.propagation_states.retain(|_, state| now.duration_since(state.last_update).as_secs() < max_age_secs);
     }
 
     pub fn get_pending_propagations(&self) -> Vec<String> {
-        let states = self.propagation_states.read();
+        let states = self.record_state.read();
         states
+            .propagation_states
             .values()
             .filter(|s| !s.completed)
             .map(|s| s.key.clone())

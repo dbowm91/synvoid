@@ -262,6 +262,7 @@ impl DnsServer {
                 update_handler: update_handler_udp.as_ref(),
                 notify_handler: notify_handler_udp.as_ref(),
                 query_coalescer: query_coalescer_udp.as_ref(),
+                dns64_translator: None,
             };
             let mut buf = vec![0u8; udp_buffer_size];
 
@@ -499,6 +500,7 @@ impl DnsServer {
                                         update_handler: update_handler_clone.as_ref(),
                                         notify_handler: notify_handler_clone.as_ref(),
                                         query_coalescer: query_coalescer_clone.as_ref(),
+                                        dns64_translator: None,
                                     };
                                     if let Err(e) = Self::handle_tcp_query(conn.stream, ctx).await {
                                         tracing::debug!("Anycast TCP DNS error: {}", e);
@@ -590,6 +592,7 @@ impl DnsServer {
                 update_handler: update_handler_udp.as_ref(),
                 notify_handler: notify_handler_udp.as_ref(),
                 query_coalescer: query_coalescer_udp.as_ref(),
+                dns64_translator: None,
             };
             let mut buf = vec![0u8; udp_buffer_size];
 
@@ -824,6 +827,7 @@ impl DnsServer {
                                         update_handler: update_handler_clone.as_ref(),
                                         notify_handler: notify_handler_clone.as_ref(),
                                         query_coalescer: query_coalescer_clone.as_ref(),
+                                        dns64_translator: None,
                                     };
                                     if let Err(e) = Self::handle_tcp_query(stream, ctx).await {
                                         tracing::debug!("TCP DNS error: {}", e);

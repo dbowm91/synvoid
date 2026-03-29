@@ -165,6 +165,7 @@ impl DnsServer {
         ixfr_enabled: bool,
         ixfr_fallback_to_axfr: bool,
         tsig_verifier: Option<Arc<crate::dns::tsig::TsigVerifier>>,
+        require_tsig: bool,
     ) -> Self {
         let zone_transfer = crate::dns::transfer::ZoneTransfer::with_security_config(
             self.zones.clone(),
@@ -174,6 +175,7 @@ impl DnsServer {
             wildcard_transfer_requires_tsig,
             ixfr_enabled,
             ixfr_fallback_to_axfr,
+            require_tsig,
         );
         self.zone_transfer = Some(Arc::new(zone_transfer));
         self
@@ -305,6 +307,7 @@ impl DnsServer {
             update_handler: self.update_handler.as_ref(),
             notify_handler: self.notify_handler.as_ref(),
             query_coalescer: self.query_coalescer.as_ref(),
+            dns64_translator: self.dns64_translator.as_ref(),
         }
     }
 

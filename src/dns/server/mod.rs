@@ -468,6 +468,7 @@ pub struct QueryContext<'a> {
     pub update_handler: Option<&'a super::update::DynamicUpdateHandler>,
     pub notify_handler: Option<&'a super::notify::NotifyHandler>,
     pub query_coalescer: Option<&'a Arc<super::query_coalesce::QueryCoalescer>>,
+    pub dns64_translator: Option<&'a super::dns64::Dns64Translator>,
 }
 
 #[allow(dead_code)]
@@ -508,6 +509,7 @@ pub struct DnsServer {
     zone_sync: Option<Arc<super::anycast_sync::AnycastZoneSync>>,
     #[allow(dead_code)]
     recursive_server: Option<Arc<super::recursive::RecursiveDnsServer>>,
+    dns64_translator: Option<super::dns64::Dns64Translator>,
 }
 
 impl Clone for DnsServer {
@@ -544,6 +546,7 @@ impl Clone for DnsServer {
             mesh_transport: None,   // Cannot clone - requires re-initialization
             zone_sync: None,        // Cannot clone - requires re-initialization
             recursive_server: None, // Cannot clone - requires re-initialization
+            dns64_translator: self.dns64_translator.clone(),
         }
     }
 }
@@ -747,6 +750,24 @@ impl DnsServer {
         let ecs_filter_config =
             super::edns::EcsFilterConfig::from_settings(&config.settings.ecs_filtering);
 
+        let dns64_translator = if config.dns64.enabled {
+            let core_config = super::dns64::Dns64Config {
+                prefix: config
+                    .dns64
+                    .prefix
+                    .parse()
+                    .unwrap_or_else(|_| {
+                        tracing::warn!("Invalid DNS64 prefix '{}', using default", config.dns64.prefix);
+                        std::net::Ipv6Addr::new(0x0064, 0xff9b, 0, 0, 0, 0, 0, 0)
+                    }),
+                fallback_resolver: None,
+                enabled: true,
+            };
+            Some(super::dns64::Dns64Translator::new(core_config))
+        } else {
+            None
+        };
+
         Self {
             config: Arc::new(config),
             zones: Arc::new(RwLock::new(HashMap::new())),
@@ -779,6 +800,7 @@ impl DnsServer {
             mesh_transport: None,
             zone_sync: None,
             recursive_server: None,
+            dns64_translator,
         }
     }
 }

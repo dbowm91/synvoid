@@ -1027,22 +1027,22 @@ mod dns_config_tests {
 
     #[test]
     fn test_dns_query_type_to_string() {
-        use dns_parser::QueryType;
+        use hickory_proto::rr::RecordType;
 
         let type_names = vec![
-            QueryType::A,
-            QueryType::AAAA,
-            QueryType::TXT,
-            QueryType::MX,
-            QueryType::NS,
-            QueryType::SOA,
-            QueryType::PTR,
-            QueryType::SRV,
-            QueryType::CNAME,
+            RecordType::A,
+            RecordType::AAAA,
+            RecordType::TXT,
+            RecordType::MX,
+            RecordType::NS,
+            RecordType::SOA,
+            RecordType::PTR,
+            RecordType::SRV,
+            RecordType::CNAME,
         ];
 
         for qtype in type_names {
-            assert!(qtype != QueryType::All);
+            assert!(qtype != RecordType::ANY);
         }
     }
 }

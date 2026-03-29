@@ -66,10 +66,10 @@ impl RecordStoreManager {
             return Vec::new();
         }
 
-        let records = self.records.read();
+        let rs = self.record_state.read();
         let mut registrations = Vec::new();
 
-        for (key, entry) in records.iter() {
+        for (key, entry) in rs.records.iter() {
             if key.starts_with("dns_domain_reg:") {
                 if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&entry.record.value)
                 {
@@ -182,10 +182,10 @@ impl RecordStoreManager {
             return Vec::new();
         }
 
-        let records = self.records.read();
+        let rs = self.record_state.read();
         let mut nodes = Vec::new();
 
-        for (key, entry) in records.iter() {
+        for (key, entry) in rs.records.iter() {
             if key.starts_with("anycast_node:") {
                 if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&entry.record.value)
                 {
@@ -215,10 +215,10 @@ impl RecordStoreManager {
             return Vec::new();
         }
 
-        let records = self.records.read();
+        let rs = self.record_state.read();
         let mut nodes = Vec::new();
 
-        for (key, entry) in records.iter() {
+        for (key, entry) in rs.records.iter() {
             if key.starts_with("anycast_node:") {
                 if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&entry.record.value)
                 {

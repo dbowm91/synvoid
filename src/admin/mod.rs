@@ -106,7 +106,13 @@ pub fn create_admin_router(
     mesh_transport: Option<Arc<MeshTransport>>,
     #[cfg(feature = "icmp-filter")] icmp_filter: Option<Arc<TokioRwLock<IcmpFilterManager>>>,
 ) -> Router {
-    let token_hash = hash_admin_token(&admin_token);
+    let token_hash = match hash_admin_token(&admin_token) {
+        Ok(h) => h,
+        Err(e) => {
+            tracing::error!("Failed to hash admin token: {}", e);
+            return Router::new();
+        }
+    };
     let state_builder = AdminState::new(config, token_hash)
         .with_probe_tracker(probe_tracker)
         .with_suspicious_word_tracker(suspicious_word_tracker)
@@ -473,8 +479,13 @@ pub async fn start_admin_server(
     }
 
     let port = cfg.port;
-    let token = hash_admin_token_with_cost(&cfg.resolve_token(), cfg.bcrypt_cost)
-        .expect("bcrypt hashing must not fail in production");
+    let token = match hash_admin_token_with_cost(&cfg.resolve_token(), cfg.bcrypt_cost) {
+        Ok(h) => h,
+        Err(e) => {
+            tracing::error!("Failed to hash admin token: {}", e);
+            return;
+        }
+    };
     let _cors_config = cfg.cors.clone();
     let rate_limit_config = cfg.rate_limit.clone();
     tracing::info!("Admin API token resolved from config/env var");

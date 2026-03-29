@@ -8,7 +8,8 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use dns_parser::Packet;
+use hickory_proto::op::Message;
+use hickory_proto::rr::RecordType;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio::sync::Semaphore;
@@ -284,21 +285,21 @@ impl RecursiveDnsServer {
 
         let message_id = get_message_id(&query).unwrap_or(0);
 
-        let questions = match parse_dns_message(&query) {
-            Ok(p) => p.questions,
+        let parsed = match parse_dns_message(&query) {
+            Ok(p) => p,
             Err(_) => return Err(RecursiveDnsError::InvalidQuery),
         };
 
-        if questions.is_empty() {
+        if parsed.queries().is_empty() {
             return Err(RecursiveDnsError::InvalidQuery);
         }
 
-        let question = &questions[0];
-        let qname_str = question.qname.to_string();
+        let question = &parsed.queries()[0];
+        let qname_str = question.name().to_string();
         let qname_bytes = qname_str.as_bytes().to_vec();
 
         let (response, _) = match self
-            .resolve_upstream(&qname_bytes, question.qtype, message_id)
+            .resolve_upstream(&qname_bytes, question.query_type(), message_id)
             .await
         {
             Ok(r) => r,
@@ -408,34 +409,21 @@ impl RecursiveDnsServer {
 
     async fn resolve_query(
         &self,
-        query: &Packet<'_>,
+        query: &Message,
         message_id: u16,
     ) -> RecursiveDnsResult<Vec<u8>> {
-        let questions = &query.questions;
-        if questions.is_empty() {
+        if query.queries().is_empty() {
             return Err(RecursiveDnsError::InvalidQuery);
         }
 
-        let question = &questions[0];
-        let qname_str = question.qname.to_string();
+        let question = &query.queries()[0];
+        let qname_str = question.name().to_string();
         let qname_bytes = qname_str.as_bytes().to_vec();
-        let qtype = question.qtype;
+        let qtype = question.query_type();
 
-        debug!("Recursive query for {} (type {:?})", question.qname, qtype);
+        debug!("Recursive query for {} (type {:?})", question.name(), qtype);
 
-        let qtype_u16: u16 = match question.qtype {
-            dns_parser::QueryType::A => 1,
-            dns_parser::QueryType::AAAA => 28,
-            dns_parser::QueryType::TXT => 16,
-            dns_parser::QueryType::NS => 2,
-            dns_parser::QueryType::MX => 15,
-            dns_parser::QueryType::CNAME => 5,
-            dns_parser::QueryType::SOA => 6,
-            dns_parser::QueryType::PTR => 12,
-            dns_parser::QueryType::SRV => 33,
-            dns_parser::QueryType::All => 255,
-            _ => u16::MAX,
-        };
+        let qtype_u16: u16 = qtype.into();
         let cache_key = RecursiveCacheKey::new(&qname_bytes, qtype_u16, None);
 
         if let Some((records, stale, is_dnssec_validated)) = self.cache.get(&cache_key) {
@@ -447,7 +435,7 @@ impl RecursiveDnsServer {
 
             let response = self.build_cached_response(
                 &qname_bytes,
-                question.qtype,
+                question.query_type(),
                 records,
                 message_id,
                 is_dnssec_validated,
@@ -456,7 +444,7 @@ impl RecursiveDnsServer {
         }
 
         let (response, _is_dnssec_validated) = self
-            .resolve_upstream(&qname_bytes, question.qtype, message_id)
+            .resolve_upstream(&qname_bytes, question.query_type(), message_id)
             .await?;
 
         if let Some(metrics) = &self.metrics {
@@ -469,14 +457,14 @@ impl RecursiveDnsServer {
     async fn resolve_upstream(
         &self,
         qname: &[u8],
-        qtype: dns_parser::QueryType,
+        qtype: RecordType,
         message_id: u16,
     ) -> RecursiveDnsResult<(Vec<u8>, bool)> {
         let domain = String::from_utf8_lossy(qname).to_string();
         let mut is_dnssec_validated = false;
 
         let records = match qtype {
-            dns_parser::QueryType::A | dns_parser::QueryType::AAAA => {
+            RecordType::A | RecordType::AAAA => {
                 match self.resolver.lookup_ip_with_ttl(&domain).await {
                     Ok(ip_record) => {
                         is_dnssec_validated = ip_record.is_dnssec_validated;
@@ -489,10 +477,10 @@ impl RecursiveDnsServer {
                                     std::net::IpAddr::V4(_) => 1,
                                     std::net::IpAddr::V6(_) => 28,
                                 };
-                                if qtype == dns_parser::QueryType::AAAA && record_type != 28 {
+                                if qtype == RecordType::AAAA && record_type != 28 {
                                     return None;
                                 }
-                                if qtype == dns_parser::QueryType::A && record_type != 1 {
+                                if qtype == RecordType::A && record_type != 1 {
                                     return None;
                                 }
                                 Some(CachedRecord {
@@ -510,7 +498,7 @@ impl RecursiveDnsServer {
                     Err(_) => Vec::new(),
                 }
             }
-            dns_parser::QueryType::TXT => match self.resolver.lookup_txt(&domain).await {
+            RecordType::TXT => match self.resolver.lookup_txt(&domain).await {
                 Ok(txt) => txt
                     .values
                     .into_iter()
@@ -523,7 +511,7 @@ impl RecursiveDnsServer {
                     .collect(),
                 Err(_) => Vec::new(),
             },
-            dns_parser::QueryType::NS => match self.resolver.lookup_ns(&domain).await {
+            RecordType::NS => match self.resolver.lookup_ns(&domain).await {
                 Ok(ns) => ns
                     .nameservers
                     .into_iter()
@@ -536,7 +524,7 @@ impl RecursiveDnsServer {
                     .collect(),
                 Err(_) => Vec::new(),
             },
-            dns_parser::QueryType::MX => match self.resolver.lookup_mx(&domain).await {
+            RecordType::MX => match self.resolver.lookup_mx(&domain).await {
                 Ok(mx_records) => mx_records
                     .into_iter()
                     .map(|mx: MxRecord| {
@@ -553,7 +541,7 @@ impl RecursiveDnsServer {
                     .collect(),
                 Err(_) => Vec::new(),
             },
-            dns_parser::QueryType::CNAME => match self.resolver.lookup_cname(&domain).await {
+            RecordType::CNAME => match self.resolver.lookup_cname(&domain).await {
                 Ok(Some(cname_record)) => {
                     let mut cname_bytes = cname_record.cname.into_bytes();
                     if !cname_bytes.is_empty() && cname_bytes.last() != Some(&b'.') {
@@ -569,7 +557,7 @@ impl RecursiveDnsServer {
                 Ok(None) => Vec::new(),
                 Err(_) => Vec::new(),
             },
-            dns_parser::QueryType::SOA => match self.resolver.lookup_soa(&domain).await {
+            RecordType::SOA => match self.resolver.lookup_soa(&domain).await {
                 Ok(Some(soa)) => {
                     let ttl = soa.ttl.unwrap_or(300);
                     let mut data = Vec::new();
@@ -592,7 +580,7 @@ impl RecursiveDnsServer {
                 Ok(None) => Vec::new(),
                 Err(_) => Vec::new(),
             },
-            dns_parser::QueryType::PTR => match self.resolver.lookup_ptr(&domain).await {
+            RecordType::PTR => match self.resolver.lookup_ptr(&domain).await {
                 Ok(Some(ptr)) => {
                     let ttl = ptr.ttl.unwrap_or(300);
                     let mut data = ptr.domain.into_bytes();
@@ -609,7 +597,7 @@ impl RecursiveDnsServer {
                 Ok(None) => Vec::new(),
                 Err(_) => Vec::new(),
             },
-            dns_parser::QueryType::SRV => match self.resolver.lookup_srv(&domain).await {
+            RecordType::SRV => match self.resolver.lookup_srv(&domain).await {
                 Ok(srv_records) => srv_records
                     .into_iter()
                     .map(|srv: SrvRecord| {
@@ -635,19 +623,7 @@ impl RecursiveDnsServer {
             _ => Vec::new(),
         };
 
-        let qtype_u16: u16 = match qtype {
-            dns_parser::QueryType::A => 1,
-            dns_parser::QueryType::AAAA => 28,
-            dns_parser::QueryType::TXT => 16,
-            dns_parser::QueryType::NS => 2,
-            dns_parser::QueryType::MX => 15,
-            dns_parser::QueryType::CNAME => 5,
-            dns_parser::QueryType::SOA => 6,
-            dns_parser::QueryType::PTR => 12,
-            dns_parser::QueryType::SRV => 33,
-            dns_parser::QueryType::All => 255,
-            _ => 0,
-        };
+        let qtype_u16: u16 = qtype.into();
 
         if records.is_empty() {
             let cache_key = RecursiveCacheKey::new(qname, qtype_u16, None);
@@ -678,24 +654,12 @@ impl RecursiveDnsServer {
     fn build_cached_response(
         &self,
         qname: &[u8],
-        qtype: dns_parser::QueryType,
+        qtype: RecordType,
         records: Vec<CachedRecord>,
         message_id: u16,
         is_dnssec_validated: bool,
     ) -> Vec<u8> {
-        let qtype_u16: u16 = match qtype {
-            dns_parser::QueryType::A => 1,
-            dns_parser::QueryType::AAAA => 28,
-            dns_parser::QueryType::TXT => 16,
-            dns_parser::QueryType::NS => 2,
-            dns_parser::QueryType::MX => 15,
-            dns_parser::QueryType::CNAME => 5,
-            dns_parser::QueryType::SOA => 6,
-            dns_parser::QueryType::PTR => 12,
-            dns_parser::QueryType::SRV => 33,
-            dns_parser::QueryType::All => 255,
-            _ => 0,
-        };
+        let qtype_u16: u16 = qtype.into();
 
         let qdcount = 1u16;
         let ancount = records.len() as u16;
@@ -846,7 +810,6 @@ mod tests {
     use super::*;
     use crate::config::dns::RecursiveCacheConfig;
     use crate::dns::recursive_cache::RecursiveRecordType;
-    use dns_parser::QueryType;
 
     fn create_test_cache() -> RecursiveDnsCache {
         let config = RecursiveCacheConfig::default();
@@ -1033,16 +996,16 @@ mod tests {
     }
 
     #[test]
-    fn test_qtype_to_u16() {
-        assert_eq!(dns_parser::QueryType::A, QueryType::A);
-        assert_eq!(dns_parser::QueryType::AAAA, QueryType::AAAA);
-        assert_eq!(dns_parser::QueryType::MX, QueryType::MX);
-        assert_eq!(dns_parser::QueryType::TXT, QueryType::TXT);
-        assert_eq!(dns_parser::QueryType::NS, QueryType::NS);
-        assert_eq!(dns_parser::QueryType::SOA, QueryType::SOA);
-        assert_eq!(dns_parser::QueryType::PTR, QueryType::PTR);
-        assert_eq!(dns_parser::QueryType::SRV, QueryType::SRV);
-        assert_eq!(dns_parser::QueryType::CNAME, QueryType::CNAME);
+    fn test_record_type_u16_conversion() {
+        assert_eq!(u16::from(RecordType::A), 1);
+        assert_eq!(u16::from(RecordType::AAAA), 28);
+        assert_eq!(u16::from(RecordType::MX), 15);
+        assert_eq!(u16::from(RecordType::TXT), 16);
+        assert_eq!(u16::from(RecordType::NS), 2);
+        assert_eq!(u16::from(RecordType::SOA), 6);
+        assert_eq!(u16::from(RecordType::PTR), 12);
+        assert_eq!(u16::from(RecordType::SRV), 33);
+        assert_eq!(u16::from(RecordType::CNAME), 5);
     }
 
     #[test]

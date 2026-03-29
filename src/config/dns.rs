@@ -145,6 +145,9 @@ pub struct DnsSettingsConfig {
     #[serde(default)]
     pub wildcard_transfer_requires_tsig: bool,
 
+    #[serde(default = "default_require_tsig")]
+    pub require_tsig: bool,
+
     #[serde(default)]
     pub serve_stale: ServeStaleConfig,
 
@@ -395,6 +398,10 @@ fn default_allow_wildcard_transfer() -> bool {
 }
 
 fn default_wildcard_transfer_requires_tsig() -> bool {
+    true
+}
+
+fn default_require_tsig() -> bool {
     true
 }
 
@@ -1192,6 +1199,7 @@ impl Default for DnsSettingsConfig {
             cache_min_ttl: default_cache_min_ttl(),
             allow_wildcard_transfer: default_allow_wildcard_transfer(),
             wildcard_transfer_requires_tsig: default_wildcard_transfer_requires_tsig(),
+            require_tsig: default_require_tsig(),
             serve_stale: ServeStaleConfig::default(),
             ixfr_history_size: default_ixfr_history_size(),
             ixfr_enabled: default_ixfr_enabled(),

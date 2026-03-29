@@ -175,7 +175,7 @@ impl Orchestrator {
 
         tracing::info!(
             "Staged upgrade: version={}, mode={:?}",
-            state.staged_version.as_ref().unwrap(),
+            state.staged_version.as_deref().unwrap_or("unknown"),
             state.upgrade_mode
         );
 
@@ -204,7 +204,10 @@ impl Orchestrator {
             .clone();
 
         let config_path = state.staged_config_path.clone();
-        let version = state.staged_version.clone().unwrap();
+        let version = state
+            .staged_version
+            .clone()
+            .ok_or(UpgradeError::NoStagedUpgrade)?;
         let mode = state.upgrade_mode.unwrap_or_else(detect_upgrade_mode);
 
         // Create backup of current binary before upgrading

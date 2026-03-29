@@ -20,7 +20,7 @@ path = "src/bin/server.rs"
 
 [features]
 default = ["socket-handoff", "post-quantum", "mesh", "dns"]
-dns = ["dep:hickory-proto", "dep:hickory-resolver", "dep:hickory-recursor", "dep:dns-parser", "dep:tokio-dstip", "dep:cryptoki", "dep:getrandom"]
+dns = ["dep:hickory-proto", "dep:hickory-resolver", "dep:hickory-recursor", "dep:tokio-dstip", "dep:cryptoki", "dep:getrandom"]
 socket-handoff = []
 wireguard = ["dep:defguard_boringtun"]
 icmp-filter = []
@@ -103,7 +103,6 @@ libinjectionrs = "0.1"
 hickory-proto = { version = "0.25", features = ["dnssec-ring", "text-parsing"], optional = true }
 hickory-resolver = { version = "0.25", features = ["system-config"], optional = true }
 hickory-recursor = { version = "0.25", features = ["dnssec-ring"], optional = true }
-dns-parser = { version = "0.8", optional = true }
 thiserror = { version = "2", package = "thiserror" }
 getrandom = { version = "0.2", features = ["std"], optional = true }
 tokio-dstip = { version = "0.1", optional = true }

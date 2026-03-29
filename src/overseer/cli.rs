@@ -93,8 +93,18 @@ async fn handle_stage(
     let state = orchestrator.get_state().await;
 
     println!("✓ Upgrade staged successfully");
-    println!("  Version: {}", state.staged_version.as_ref().unwrap());
-    println!("  Mode: {}", state.upgrade_mode.as_ref().unwrap().name());
+    println!(
+        "  Version: {}",
+        state.staged_version.as_deref().unwrap_or("unknown")
+    );
+    println!(
+        "  Mode: {}",
+        state
+            .upgrade_mode
+            .as_ref()
+            .map(|m| m.name())
+            .unwrap_or("auto")
+    );
     println!("  State: {}", state.state);
 
     if state.staged_binary_checksum.is_some() {
@@ -170,11 +180,8 @@ fn print_state(state: &OverseerState) {
         println!("  Worker Ports: {:?}", ports);
     }
 
-    if state.previous_version.is_some() {
-        println!(
-            "  Previous Version: {}",
-            state.previous_version.as_ref().unwrap()
-        );
+    if let Some(ref previous) = state.previous_version {
+        println!("  Previous Version: {}", previous);
     }
 }
 

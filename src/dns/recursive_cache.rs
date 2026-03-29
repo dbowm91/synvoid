@@ -61,24 +61,6 @@ impl From<RecursiveRecordType> for u16 {
     }
 }
 
-impl From<RecursiveRecordType> for dns_parser::QueryType {
-    fn from(value: RecursiveRecordType) -> Self {
-        match value {
-            RecursiveRecordType::A => dns_parser::QueryType::A,
-            RecursiveRecordType::Aaaa => dns_parser::QueryType::AAAA,
-            RecursiveRecordType::Txt => dns_parser::QueryType::TXT,
-            RecursiveRecordType::Ns => dns_parser::QueryType::NS,
-            RecursiveRecordType::Mx => dns_parser::QueryType::MX,
-            RecursiveRecordType::CName => dns_parser::QueryType::CNAME,
-            RecursiveRecordType::Soa => dns_parser::QueryType::SOA,
-            RecursiveRecordType::Ptr => dns_parser::QueryType::PTR,
-            RecursiveRecordType::Srv => dns_parser::QueryType::SRV,
-            RecursiveRecordType::Any => dns_parser::QueryType::All,
-            RecursiveRecordType::Other(_) => dns_parser::QueryType::All,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct RecursiveCacheKey {
     pub qname: Vec<u8>,
