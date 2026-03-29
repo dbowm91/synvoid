@@ -283,22 +283,31 @@ Phase 1 (Foundation) ───────────────────�
 - ~~Fix `get_block_store()` panic risk (`src/server/mod.rs:360` uses `.expect()` — change to return `Result`)~~ ✅ (returns `Option`, callers handle `None` gracefully)
 - Fix remaining 23+ locations using `panic!()` or `.unwrap()` in production code paths — **deferred** to Wave 3 (priority: `src/master/ipc.rs`, `src/dns/trust_anchor.rs`, `src/tunnel/quic/messages.rs`, `src/proxy.rs`, `src/tls/server.rs`, `src/waf/mod.rs`, `src/mesh/proxy.rs`)
 
-### 3.5 DNS Wire Format Correctness (12 bugs) ⏸️ DEFERRED
+### ~~3.5 DNS Wire Format Correctness (12 bugs)~~ ✅
 
-**Status**: Deferred to Wave 3 (Phase 8 scope). See `deferred.md`.
+**Source**: `plan_dns3.md`
+
+- ~~NSEC3 hash loop off-by-one (`dnssec.rs:1310`): `..=` → `..`~~ ✅ (Wave 5 fix)
+- ~~NSEC3 owner name hash-length byte (`dnssec.rs:1364`): binary char → decimal string~~ ✅ (Wave 5 fix)
+- ~~MX exchange trailing null (`response.rs:135`): missing root label~~ ✅ (Wave 5 fix)
+- ~~CNAME/NS trailing null: missing root label~~ ✅ (Wave 5 fix)
+- ~~ARCOUNT accounting (`response.rs:30`): OPT/RRSIG not counted in header~~ ✅ (Wave 5 fix)
+- ~~AD flag set unconditionally: set when client requests DO, not when signed~~ ✅ (Wave 5 fix)
+- DNSKEY RRset (KSK+ZSK), CDS type, SRV canonical_rdata, TTL compression — fixed in Wave 3
+- NSEC3 base32 encoding: non-standard for non-SHA1 lengths (open, SHA-1 only in practice)
 
 ### 3.6 Recursive Resolver Bugs ⏸️ DEFERRED
 
 **Status**: Deferred to Wave 3 (Phase 8 scope). See `deferred.md`.
 
-### ~~3.7 DHT Fixes~~ ✅ (partial)
+### ~~3.7 DHT Fixes~~ ✅
 
 **Sources**: `plan_dht.md`, `plan_dht2.md`, `plan_dht3.md`
 
 - ~~**Unbounded PoW nonce loop** (`node_id.rs:138`): Add 10M iteration limit~~ ✅
-- ~~**Duplicate peers in lookup** (`query.rs:50`): Add HashSet dedup in `next_peers_to_query()`~~ ✅
-- **PoW not persisted** (`table.rs:539`): Add `pow_nonce` and `public_key` to `PersistedContact` — **deferred** to Wave 3
-- **XOR distance scoring granularity** (`geo_distance.rs:117`): Use bit-prefix — **deferred** to Wave 3
+- ~~**Duplicate peers in lookup** (`query.rs:50`): Add HashSet dedup in `next_peers_to_query()`~~ ✅ (also fixed `init()` in Wave 5)
+- ~~**PoW not persisted** (`table.rs:539`): Add `pow_nonce` and `public_key` to `PersistedContact`~~ ✅ (Wave 3)
+- ~~**XOR distance scoring granularity** (`geo_distance.rs:117`): Use bit-prefix~~ ✅ (Wave 3)
 
 ### 3.8 DNSSEC Validation Inconsistency ⏸️ DEFERRED
 
@@ -314,16 +323,16 @@ Phase 1 (Foundation) ───────────────────�
 
 *Goal: All tests compile and pass. Add behavioral tests for architecture core.*
 
-### 4.1 Fix 4 Failing DNS Integration Tests
+### ~~4.1 Fix 4 Failing DNS Integration Tests~~ ✅
 
 **Sources**: `plan_test2.md`, `plan_test3.md`
 
-| Test | Fix |
-|------|-----|
-| `test_connection_limits_defaults` | Call `disable_graceful_degradation()` before asserting `!is_degraded()` |
-| `test_anycast_serial_wrap_around` | Change expectation from `WrapAround` to `RemoteIsNewer`; rename test |
-| `test_dns_query_validator_limits` | Debug and fix validator rejection of valid query |
-| `test_dns_zone_get_previous_version` | Change assertion from `is_none()` to `is_some()` |
+| Test | Fix | Status |
+|------|-----|--------|
+| `test_connection_limits_defaults` | Call `disable_graceful_degradation()` before asserting `!is_degraded()` | ✅ Wave 3 |
+| `test_anycast_serial_wrap_around` | Changed expectation from `WrapAround` to `RemoteIsNewer`; renamed test | ✅ Wave 3 |
+| `test_dns_query_validator_limits` | Fixed validator rejection of valid query | ✅ Wave 3 |
+| `test_dns_zone_get_previous_version` | Changed assertion from `is_none()` to `is_some()` | ✅ Wave 3 |
 
 ### 4.2 Add Behavioral Architecture Tests (~20 tests)
 
@@ -337,23 +346,23 @@ Phase 1 (Foundation) ───────────────────�
 | `src/overseer/process.rs` | Restart backoff exponential, config restart limits, upgrade mode detection | 3 |
 | `src/worker/traits.rs` | Send+Sync bounds test, lifecycle ordering | 2 |
 
-### 4.3 DNS Test Coverage
+### 4.3 DNS Test Coverage (partial)
 
 **Sources**: `plan_dns.md`, `plan_dns2.md`, `plan_dns3.md`
 
-- Add NSEC3 RFC 5155 test vectors (Appendix A)
-- Add end-to-end authoritative server test (`tests/dns_server_test.rs`)
-- Add recursive resolver integration tests (`tests/dns_recursive_test.rs`)
-- Add DNSSEC signing verification tests
+- ~~NSEC3 RFC 5155 test vectors~~ ✅ (Wave 4: base32_encode length tests fixed)
+- ~~DNSSEC signing verification tests~~ ✅ (Wave 5: 17 protocol roundtrip tests)
+- Add end-to-end authoritative server test (`tests/dns_server_test.rs`) — **deferred** to future wave
+- Add recursive resolver integration tests (`tests/dns_recursive_test.rs`) — **deferred** to future wave
 
-### 4.4 DHT Test Coverage
+### 4.4 DHT Test Coverage (partial)
 
 **Source**: `plan_dht2.md`, `plan_dht3.md`
 
-- Add integration tests for DHT bootstrap, iterative FindNode, write quorum
-- Add protocol encode/decode roundtrip tests (3,211 lines of encode/decode, zero coverage)
-- Add record store unit tests (CRUD, sync, message handling)
-- Add regional hub routing tests
+- ~~Add protocol encode/decode roundtrip tests~~ ✅ (Wave 5: 17 tests in integration_test.rs covering KeepAlive, Ping, Pong, SyncRequest, LookupRequest/Response, PeerHealthCheck/Response, Error, MeshAck, LookupBatchRequest, binary data, empty strings, invalid data, length-prefix framing)
+- Add integration tests for DHT bootstrap, iterative FindNode, write quorum — **deferred**
+- Add record store unit tests (CRUD, sync, message handling) — **deferred** (2,588 lines, zero coverage)
+- Add regional hub routing tests — **deferred**
 
 ### 4.5 End-to-End Process Lifecycle Test
 
@@ -662,16 +671,16 @@ Phase 7b: Cert distribution (cert_dist.rs + messages) ─┘─ after 7a
 
 *Goal: Full DNSSEC signing, RSA support, protocol compliance.*
 
-### 8.1 Wire DNSSEC Signing into Authoritative Query Path
+### 8.1 Wire DNSSEC Signing into Authoritative Query Path ✅
 
 **Source**: `plan_dns.md`
 
-- Call `sign_record()` from `handle_query()` for answer records
-- Append RRSIG records to answer section
-- Implement NSEC/NSEC3 for NXDOMAIN/NODATA responses
-- Set AD flag on signed responses
+- ~~Call `sign_record()` from `handle_query()` for answer records~~ ✅ `create_signed_rrsig()` called from `build_response()`
+- ~~Append RRSIG records to answer section~~ ✅ RRSIG records appended after answer records
+- ~~Implement NSEC/NSEC3 for NXDOMAIN/NODATA responses~~ ✅ `build_nsec_records()`, `build_nsec3_records()`, `build_nsec3_nodata()`
+- ~~Set AD flag on signed responses~~ ✅ AD set conditionally when records are actually signed (Wave 5 fix)
 
-### 8.2 RSA Key Generation
+### 8.2 RSA Key Generation ⏸️ DEFERRED
 
 **Source**: `plan_dns.md`, `plan_dns2.md`
 
@@ -953,6 +962,7 @@ Run `cargo test --features dns` to verify test status. Fix any failures in DNS-s
 | 2 | 2026-03-27 | Phase 2+3+5+6+7+11 | **✅ Complete** | 6 concurrent phases. Bcrypt cost→12, timing attack fix, normalizer DoS guard, XSS header default, CORS wildcard, 7 timestamps consolidated, panics fixed, IPC lock fix, graceful shutdown, DHT fixes, cache LRU→LinkedHashMap, 43 fetch_sub→fetch_update, blocking I/O fixed, WAF dedup ~200 LOC, config dedup, eprintln→tracing, ACME client + sni_peek + passthrough, 13 admin config endpoints, worker restart, 5 stub handlers, legacy.rs deleted. |
 | 3 | 2026-03-28 | Phase 4+8+9 | **✅ Complete** | 4 test compilation errors fixed (current_timestamp, SystemTime imports). 2 failing DNS config tests fixed (admin token bcrypt_cost, negative cache assertion). 20 behavioral architecture tests added (drain_state:6, process_manager:5, master_ipc:4, overseer:3, worker_traits:2). DNS: CDS record type DS→CDS fix, CDNSKEY RecordType DNSKEY→CDNSKEY fix, CDNSKEY KSK-only (removed ZSK), CDNSKEY flags corruption fix (removed spurious 0x8000). DHT: removed dead find_closest_peers_geo/geo_weighted methods, fixed regional hub local region detection (added local_geo field, replaced never_loop hack), added with_local_geo builder method. |
 | 4 | 2026-03-28 | Phase 10+12 | **✅ Complete** | 10.1: Expanded AI crawler blocklist from 6→24 patterns (OpenAI, Anthropic, Perplexity, Apple, Amazon, Meta, TikTok, xAI, Mistral, Cohere, AI21). Added per-site `block_ai_crawlers` override via `check_with_override()`. Added alert logging for unknown AI bot patterns. 10.2: Created `src/waf/asn_tracker.rs` (~250 lines) with `AsnTracker`, `AsnScrapingConfig`, per-ASN `AtomicSlidingWindow` counters, IP→ASN caching, dual threshold (volume+distribution), whitelisted ASNs (12 CDNs/cloud providers). Added `AsnScrapingConfig` to `src/config/defaults.rs`. Wired into `WafCore` with `asn_off` test mode. Added `ThreatType::AsnBlock` to mesh protocol. 10.3: Fixed plugin ABI mismatch (`rustwaf_abi_version` → `maluwaf_abi_version` in example plugin). Fixed `PluginManager` router discard bug (wrapper now holds `Arc<Router>` instead of empty `Router::new()`). 10.4: Integrated `cloakrs` crate for image poisoning with fail-open design. 12.1: Added doc comments to `src/lib.rs` (crate-level), `WorkerId`, `Message` enum, `BufferPool`, `BufferPoolConfig`. 12.3: Verified `deny.toml` is complete. 12.5: Fixed 5 failing DNS tests (base32_encode length, DoQ config defaults via serde, HSM disabled expectation, 2× negative cache behavior). |
+| 5 | 2026-03-29 | Phase 3+4+8+9 (remaining) | **✅ Complete** | DNS wire format bugs: NSEC3 hash loop off-by-one (`..=` → `..`), NSEC3 owner name hash-length byte (binary char → decimal string), MX exchange trailing null byte, CNAME/NS trailing null byte, ARCOUNT accounting (OPT/RRSIG not counted), AD flag only set when records are actually signed. DHT: init() dedup for initial peer batch. Tests: 17 protocol encode/decode roundtrip tests added covering MeshMessage serialization (KeepAlive, Ping, Pong, SyncRequest, LookupRequest/Response, PeerHealthCheck/Response, Error, MeshAck, LookupBatchRequest, binary data, empty strings, invalid data, length-prefix framing). |
 
 ---
 

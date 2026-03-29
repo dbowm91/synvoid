@@ -751,3 +751,325 @@ mod block_store_tests {
         assert_eq!(stats.utilization_percent, 0.0);
     }
 }
+
+#[cfg(test)]
+mod mesh_protocol_roundtrip_tests {
+    use maluwaf::mesh::protocol::{AckStatus, HealthStatus, LookupType, MeshMessage};
+
+    fn roundtrip(msg: &MeshMessage) -> MeshMessage {
+        let encoded = msg.encode().expect("encode failed");
+        MeshMessage::decode(&encoded).expect("decode failed")
+    }
+
+    fn roundtrip_with_length(msg: &MeshMessage) -> MeshMessage {
+        let encoded = msg.encode_with_length();
+        // Skip 4-byte length prefix
+        MeshMessage::decode(&encoded[4..]).expect("decode failed")
+    }
+
+    #[test]
+    fn test_keepalive_roundtrip() {
+        let msg = MeshMessage::KeepAlive;
+        let decoded = roundtrip(&msg);
+        assert!(matches!(decoded, MeshMessage::KeepAlive));
+    }
+
+    #[test]
+    fn test_keepalive_ack_roundtrip() {
+        let msg = MeshMessage::KeepAliveAck;
+        let decoded = roundtrip(&msg);
+        assert!(matches!(decoded, MeshMessage::KeepAliveAck));
+    }
+
+    #[test]
+    fn test_sync_request_roundtrip() {
+        let msg = MeshMessage::SyncRequest {
+            node_id: "node-123".into(),
+        };
+        let decoded = roundtrip(&msg);
+        match decoded {
+            MeshMessage::SyncRequest { node_id } => {
+                assert_eq!(node_id.as_str(), "node-123");
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_ping_roundtrip() {
+        let msg = MeshMessage::Ping {
+            request_id: "req-456".into(),
+            node_id: "node-789".into(),
+            timestamp: 1234567890,
+        };
+        let decoded = roundtrip(&msg);
+        match decoded {
+            MeshMessage::Ping {
+                request_id,
+                node_id,
+                timestamp,
+            } => {
+                assert_eq!(request_id.as_str(), "req-456");
+                assert_eq!(node_id.as_str(), "node-789");
+                assert_eq!(timestamp, 1234567890);
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_pong_roundtrip() {
+        let msg = MeshMessage::Pong {
+            request_id: "req-abc".into(),
+            node_id: "node-def".into(),
+            timestamp: 9876543210,
+        };
+        let decoded = roundtrip(&msg);
+        match decoded {
+            MeshMessage::Pong {
+                request_id,
+                node_id,
+                timestamp,
+            } => {
+                assert_eq!(request_id.as_str(), "req-abc");
+                assert_eq!(node_id.as_str(), "node-def");
+                assert_eq!(timestamp, 9876543210);
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_lookup_request_roundtrip() {
+        let msg = MeshMessage::LookupRequest {
+            request_id: "lr-1".into(),
+            key: "dns:example.com".into(),
+            lookup_type: LookupType::KeyValue,
+        };
+        let decoded = roundtrip(&msg);
+        match decoded {
+            MeshMessage::LookupRequest {
+                request_id,
+                key,
+                lookup_type,
+            } => {
+                assert_eq!(request_id.as_str(), "lr-1");
+                assert_eq!(key.as_str(), "dns:example.com");
+                assert_eq!(lookup_type, LookupType::KeyValue);
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_lookup_response_found_roundtrip() {
+        let msg = MeshMessage::LookupResponse {
+            request_id: "lr-1".into(),
+            key: "dns:example.com".into(),
+            value: Some(b"192.168.1.1".to_vec()),
+            found: true,
+        };
+        let decoded = roundtrip(&msg);
+        match decoded {
+            MeshMessage::LookupResponse {
+                request_id,
+                key,
+                value,
+                found,
+            } => {
+                assert_eq!(request_id.as_str(), "lr-1");
+                assert_eq!(key.as_str(), "dns:example.com");
+                assert_eq!(value, Some(b"192.168.1.1".to_vec()));
+                assert!(found);
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_lookup_response_not_found_roundtrip() {
+        let msg = MeshMessage::LookupResponse {
+            request_id: "lr-2".into(),
+            key: "dns:missing.com".into(),
+            value: None,
+            found: false,
+        };
+        let decoded = roundtrip(&msg);
+        match decoded {
+            MeshMessage::LookupResponse { value, found, .. } => {
+                assert_eq!(value, None);
+                assert!(!found);
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_peer_health_check_roundtrip() {
+        let msg = MeshMessage::PeerHealthCheck {
+            peer_id: "peer-1".into(),
+            timestamp: 1000000,
+        };
+        let decoded = roundtrip(&msg);
+        match decoded {
+            MeshMessage::PeerHealthCheck { peer_id, timestamp } => {
+                assert_eq!(peer_id.as_str(), "peer-1");
+                assert_eq!(timestamp, 1000000);
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_peer_health_response_roundtrip() {
+        let msg = MeshMessage::PeerHealthResponse {
+            peer_id: "peer-1".into(),
+            status: HealthStatus::Healthy,
+            latency_ms: Some(42),
+            timestamp: 1000000,
+        };
+        let decoded = roundtrip(&msg);
+        match decoded {
+            MeshMessage::PeerHealthResponse {
+                peer_id,
+                status,
+                latency_ms,
+                timestamp,
+            } => {
+                assert_eq!(peer_id.as_str(), "peer-1");
+                assert_eq!(status, HealthStatus::Healthy);
+                assert_eq!(latency_ms, Some(42));
+                assert_eq!(timestamp, 1000000);
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_error_roundtrip() {
+        let msg = MeshMessage::Error {
+            code: 404,
+            message: "not found".into(),
+        };
+        let decoded = roundtrip(&msg);
+        match decoded {
+            MeshMessage::Error { code, message } => {
+                assert_eq!(code, 404);
+                assert_eq!(message.as_str(), "not found");
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_mesh_ack_roundtrip() {
+        let msg = MeshMessage::MeshAck {
+            original_message_id: "msg-123".into(),
+            status: AckStatus::Success,
+            timestamp: 9999,
+        };
+        let decoded = roundtrip(&msg);
+        match decoded {
+            MeshMessage::MeshAck {
+                original_message_id,
+                status,
+                timestamp,
+            } => {
+                assert_eq!(original_message_id.as_str(), "msg-123");
+                assert_eq!(status, AckStatus::Success);
+                assert_eq!(timestamp, 9999);
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_lookup_batch_request_roundtrip() {
+        let keys = vec!["key1".into(), "key2".into(), "key3".into()];
+        let msg = MeshMessage::LookupBatchRequest {
+            request_id: "batch-1".into(),
+            keys: keys.clone(),
+        };
+        let decoded = roundtrip(&msg);
+        match decoded {
+            MeshMessage::LookupBatchRequest {
+                request_id,
+                keys: k,
+            } => {
+                assert_eq!(request_id.as_str(), "batch-1");
+                assert_eq!(k.len(), 3);
+                assert_eq!(k[0].as_str(), "key1");
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_length_prefix_roundtrip() {
+        let msg = MeshMessage::Ping {
+            request_id: "lp-test".into(),
+            node_id: "node-lp".into(),
+            timestamp: 42,
+        };
+        let decoded = roundtrip_with_length(&msg);
+        match decoded {
+            MeshMessage::Ping {
+                request_id,
+                node_id,
+                timestamp,
+            } => {
+                assert_eq!(request_id.as_str(), "lp-test");
+                assert_eq!(node_id.as_str(), "node-lp");
+                assert_eq!(timestamp, 42);
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_roundtrip_preserves_binary_data() {
+        let binary_data: Vec<u8> = (0..255).collect();
+        let msg = MeshMessage::LookupResponse {
+            request_id: "bin-test".into(),
+            key: "binary".into(),
+            value: Some(binary_data.clone()),
+            found: true,
+        };
+        let decoded = roundtrip(&msg);
+        match decoded {
+            MeshMessage::LookupResponse { value, .. } => {
+                assert_eq!(value, Some(binary_data));
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_roundtrip_empty_strings() {
+        let msg = MeshMessage::Ping {
+            request_id: "".into(),
+            node_id: "".into(),
+            timestamp: 0,
+        };
+        let decoded = roundtrip(&msg);
+        match decoded {
+            MeshMessage::Ping {
+                request_id,
+                node_id,
+                timestamp,
+            } => {
+                assert_eq!(request_id.as_str(), "");
+                assert_eq!(node_id.as_str(), "");
+                assert_eq!(timestamp, 0);
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_decode_invalid_data_returns_none() {
+        assert!(MeshMessage::decode(&[]).is_none());
+        assert!(MeshMessage::decode(&[0xFF, 0xFF, 0xFF]).is_none());
+        assert!(MeshMessage::decode(b"not protobuf").is_none());
+    }
+}

@@ -712,7 +712,10 @@ impl UnifiedServer {
                         ..Default::default()
                     };
                     let path = std::path::Path::new(&plugin_cfg.path);
-                    match plugin_manager.wasm_manager().load_plugin_with_limits(path, limits) {
+                    match plugin_manager
+                        .wasm_manager()
+                        .load_plugin_with_limits(path, limits)
+                    {
                         Ok(_) => {
                             tracing::info!("Loaded WASM plugin: {}", plugin_cfg.name);
                         }
@@ -739,7 +742,11 @@ impl UnifiedServer {
                         crate::plugin::PluginManagerLifecycle::new(plugin_manager.clone());
                     match lifecycle.load_plugins_from_dir(plugin_dir) {
                         Ok(count) if count > 0 => {
-                            tracing::info!("Auto-loaded {} WASM plugins from {}", count, plugin_dir.display());
+                            tracing::info!(
+                                "Auto-loaded {} WASM plugins from {}",
+                                count,
+                                plugin_dir.display()
+                            );
                         }
                         _ => {}
                     }

@@ -984,7 +984,8 @@ impl HttpServer {
                         if let Some(plugin_router) = pm.get_axum_router() {
                             tracing::debug!(
                                 "Routing to AxumDynamic plugin for site {} path {}",
-                                site_id, path
+                                site_id,
+                                path
                             );
                             // Build request for plugin router from available parts
                             let mut plugin_req_builder = http::Request::builder()
@@ -995,9 +996,7 @@ impl HttpServer {
                             }
                             let plugin_req = plugin_req_builder
                                 .body(axum::body::Body::empty())
-                                .unwrap_or_else(|_| {
-                                    http::Request::new(axum::body::Body::empty())
-                                });
+                                .unwrap_or_else(|_| http::Request::new(axum::body::Body::empty()));
 
                             return Self::handle_axum_dynamic_request(
                                 plugin_req,
@@ -1038,12 +1037,13 @@ impl HttpServer {
                         Ok(crate::plugin::WasmFilterResult::Block(status, msg)) => {
                             tracing::info!(
                                 "WASM plugin blocked request to {} from {}: {}",
-                                path, client_ip, msg
+                                path,
+                                client_ip,
+                                msg
                             );
-                            let body = waf.error_page_manager.render_page(
-                                status.as_u16(),
-                                Some(&msg),
-                            );
+                            let body = waf
+                                .error_page_manager
+                                .render_page(status.as_u16(), Some(&msg));
                             Self::send_request_log_if_enabled(
                                 ipc.clone(),
                                 worker_id,
@@ -1068,7 +1068,9 @@ impl HttpServer {
                         Ok(crate::plugin::WasmFilterResult::Challenge(reason)) => {
                             tracing::info!(
                                 "WASM plugin issued challenge for {} from {}: {}",
-                                path, client_ip, reason
+                                path,
+                                client_ip,
+                                reason
                             );
                             let escaped = reason
                                 .replace('&', "&amp;")
@@ -1884,7 +1886,8 @@ impl HttpServer {
         match response {
             Ok(axum_resp) => {
                 let (resp_parts, resp_body) = axum_resp.into_parts();
-                let collected: Result<http_body_util::Collected<Bytes>, _> = resp_body.collect().await;
+                let collected: Result<http_body_util::Collected<Bytes>, _> =
+                    resp_body.collect().await;
                 let resp_bytes = match collected {
                     Ok(c) => c.to_bytes(),
                     Err(_) => Bytes::new(),

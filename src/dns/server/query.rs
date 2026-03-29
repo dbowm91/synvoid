@@ -881,7 +881,8 @@ impl DnsServer {
         response.extend_from_slice(&response_id.to_be_bytes());
 
         let mut flags = 0x8583u16;
-        if dnssec_ok {
+        // AD flag: only set when NSEC/NSEC3 proof records are present
+        if dnssec_ok && !nsec_records.is_empty() {
             flags |= 0x0020;
         }
         response.extend_from_slice(&flags.to_be_bytes());

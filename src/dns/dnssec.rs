@@ -1307,7 +1307,7 @@ pub fn hash_name_nsec3(name: &str, config: &Nsec3Config) -> Vec<u8> {
 
     let mut hash = name_lower.as_bytes().to_vec();
 
-    for _ in 0..=config.iterations {
+    for _ in 0..config.iterations {
         let mut hasher = Sha1::new();
         hasher.update(&hash);
         hasher.update(&config.salt);
@@ -1361,7 +1361,7 @@ pub fn get_nsec3_type_bitmap() -> Vec<u16> {
 
 pub fn create_nsec3_owner_name(base_name: &str, hash: &[u8]) -> String {
     let hash_b32 = base32_encode(hash);
-    format!("{}{}.{}", hash.len() as u8 as char, hash_b32, base_name)
+    format!("{}.{}.{}", hash.len(), hash_b32, base_name)
 }
 
 fn base32_encode(input: &[u8]) -> String {

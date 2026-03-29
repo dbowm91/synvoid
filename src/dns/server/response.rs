@@ -21,21 +21,22 @@ impl DnsServer {
         response.extend_from_slice(&response_id.to_be_bytes());
 
         let mut qr_aa = 0x8580u16;
-        if dnssec_ok {
+        // AD flag: only set when records are actually DNSSEC-signed (not just when client requests it)
+        let records_signed = dnssec_ok
+            && !records.is_empty()
+            && records[0].record_type != RecordType::DNSKEY
+            && zsk.is_some();
+        if records_signed {
             qr_aa |= 0x0020;
         }
         response.extend_from_slice(&qr_aa.to_be_bytes());
 
         response.extend_from_slice(&1u16.to_be_bytes());
-        let ancount = records.len() as u16;
-        response.extend_from_slice(&ancount.to_be_bytes());
-        response.extend_from_slice(&0u16.to_be_bytes());
-
-        let mut add_count = 0usize;
-        if dnssec_ok && !records.is_empty() {
-            add_count = records.len();
-        }
-        response.extend_from_slice(&(add_count as u16).to_be_bytes());
+        let ancount_offset = response.len();
+        response.extend_from_slice(&0u16.to_be_bytes()); // ANCOUNT placeholder
+        response.extend_from_slice(&0u16.to_be_bytes()); // NSCOUNT
+        let arcount_offset = response.len();
+        response.extend_from_slice(&0u16.to_be_bytes()); // ARCOUNT placeholder
 
         let qname_for_compression = if qname.is_empty() || qname == "@" {
             String::new()
@@ -111,7 +112,7 @@ impl DnsServer {
                     if target_parts.is_empty() {
                         target_parts.push("");
                     }
-                    let mut total_len = 0;
+                    let mut total_len = 1; // trailing null byte
                     for part in &target_parts {
                         total_len += 1 + part.len();
                     }
@@ -120,6 +121,7 @@ impl DnsServer {
                         response.push((*part).len() as u8);
                         response.extend_from_slice(part.as_bytes());
                     }
+                    response.push(0);
                 }
                 RecordType::TXT => {
                     let txt_value = record.value.as_bytes();
@@ -145,6 +147,7 @@ impl DnsServer {
                         response.push((*part).len() as u8);
                         response.extend_from_slice(part.as_bytes());
                     }
+                    response.push(0);
                 }
                 RecordType::DNSKEY => {
                     if let Ok(key_bytes) = hex::decode(&record.value) {
@@ -257,6 +260,24 @@ impl DnsServer {
             response.extend_from_slice(&(opt_record.len() as u16).to_be_bytes());
             response.extend_from_slice(&opt_record);
         }
+
+        // Patch ANCOUNT: answer records + RRSIG records
+        let rrsig_count = if dnssec_ok
+            && !records.is_empty()
+            && records[0].record_type != RecordType::DNSKEY
+            && zsk.is_some()
+        {
+            records.len()
+        } else {
+            0
+        };
+        let ancount = (records.len() + rrsig_count) as u16;
+        response[ancount_offset..ancount_offset + 2].copy_from_slice(&ancount.to_be_bytes());
+
+        // Patch ARCOUNT: 1 for OPT record if present, 0 otherwise
+        let has_opt = edns_options.is_some() || dnssec_ok;
+        let arcount: u16 = if has_opt { 1 } else { 0 };
+        response[arcount_offset..arcount_offset + 2].copy_from_slice(&arcount.to_be_bytes());
 
         if response.len() > max_response_size && max_response_size > 0 {
             return Self::build_truncated_response(
@@ -384,7 +405,7 @@ impl DnsServer {
                     if target_parts.is_empty() {
                         target_parts.push("");
                     }
-                    let mut total_len = 0;
+                    let mut total_len = 1; // trailing null byte
                     for part in &target_parts {
                         total_len += 1 + part.len();
                     }
@@ -393,6 +414,7 @@ impl DnsServer {
                         response.push((*part).len() as u8);
                         response.extend_from_slice(part.as_bytes());
                     }
+                    response.push(0);
                 }
                 RecordType::TXT => {
                     let txt_value = record.value.as_bytes();
@@ -418,6 +440,7 @@ impl DnsServer {
                         response.push((*part).len() as u8);
                         response.extend_from_slice(part.as_bytes());
                     }
+                    response.push(0);
                 }
                 RecordType::SVCB | RecordType::HTTPS => {
                     if let Ok(svcb_data) = Self::parse_svcb_value(&record.value) {

@@ -33,8 +33,9 @@ impl LookupQuery {
     }
 
     pub fn init(&mut self, initial_peers: Vec<PeerContact>) {
+        let mut seen: HashSet<NodeId> = HashSet::new();
         for peer in initial_peers {
-            if !self.contacted.contains(&peer.node_id) {
+            if !self.contacted.contains(&peer.node_id) && seen.insert(peer.node_id) {
                 self.closest.push(peer.clone());
                 self.pending.push(peer);
             }

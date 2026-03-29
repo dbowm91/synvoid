@@ -310,26 +310,27 @@ Consolidate into 1 canonical version in `src/config/defaults.rs`. Found in site.
 
 ### DNS / RFC Compliance
 
-| Bug | Location | Impact |
-|-----|----------|--------|
-| NSEC3 salt application | `dnssec.rs:1324` | Salt applied incorrectly per RFC 5155 §5 |
-| NSEC3 base32 padding | `dnssec.rs:1432` | Includes padding chars that should be stripped |
-| NSEC3 owner name missing hash-length byte | `dnssec.rs:1404` | Violates RFC 5155 §3.2 |
-| DNSKEY publishes KSK only | `dnssec_impl.rs:35` | Missing ZSK in DNSKEY RRset |
-| CDS uses wrong type | `dnssec_impl.rs:74` | Type 43 (DS) instead of 59 (CDS) |
-| SRV canonical_rdata incomplete | `dnssec.rs:1520` | Missing weight/port/target fields |
-| ARCOUNT off by one | `response.rs:30` | OPT record appends incorrectly |
-| MX record trailing null | `response.rs:135` | Missing null byte after exchange name |
-| Forwarder no DNSSEC validation | `HickoryResolver` | Forwarder mode doesn't validate; AD bit not propagated |
+| Bug | Location | Impact | Status |
+|-----|----------|--------|--------|
+| ~~NSEC3 hash loop off-by-one~~ | `dnssec.rs:1310` | ~~iterations+1 instead of iterations~~ | ✅ Fixed: `..=` → `..` |
+| NSEC3 base32 encoding | `dnssec.rs:1367` | Non-standard encoding for non-SHA1 lengths | Open (SHA-1 only in practice) |
+| ~~NSEC3 owner name hash-length byte~~ | `dnssec.rs:1364` | ~~Binary char instead of decimal string~~ | ✅ Fixed: `format!` decimal |
+| ~~DNSKEY publishes KSK only~~ | `dnssec_impl.rs:35` | ~~Missing ZSK in DNSKEY RRset~~ | ✅ Fixed (Wave 3) |
+| ~~CDS uses wrong type~~ | `dnssec_impl.rs:74` | ~~Type 43 (DS) instead of 59 (CDS)~~ | ✅ Fixed (Wave 3) |
+| ~~SRV canonical_rdata incomplete~~ | `dnssec.rs:1520` | ~~Missing weight/port/target fields~~ | ✅ Fixed (Wave 3) |
+| ~~ARCOUNT off by one~~ | `response.rs:30` | ~~OPT/RRSIG not counted in header~~ | ✅ Fixed: post-write patching |
+| ~~MX/CNAME/NS trailing null~~ | `response.rs:135` | ~~Missing null byte after name~~ | ✅ Fixed: added root label |
+| ~~AD flag set unconditionally~~ | `response.rs:25` | ~~Set when client requests DO, not when signed~~ | ✅ Fixed: conditional on signing |
+| Forwarder no DNSSEC validation | `HickoryResolver` | Forwarder mode doesn't validate; AD bit not propagated | Limitation (documented) |
 
 ### DHT
 
-| Bug | Location | Impact |
-|-----|----------|--------|
-| Unbounded PoW nonce loop | `node_id.rs:138` | Can hang on startup if no valid nonce found |
-| Duplicate peers in lookup | `query.rs:50` | Same peer queried multiple times |
-| PoW not persisted | `table.rs:539` | Contact restored without verifying PoW |
-| XOR distance uses first byte only | `geo_distance.rs:117` | Poor ranking granularity for IPv6 |
+| Bug | Location | Impact | Status |
+|-----|----------|--------|--------|
+| ~~Unbounded PoW nonce loop~~ | `node_id.rs:138` | ~~Can hang on startup if no valid nonce found~~ | ✅ Fixed: 10M iteration limit |
+| ~~Duplicate peers in lookup~~ | `query.rs:50` | ~~Same peer queried multiple times~~ | ✅ Fixed: HashSet dedup in init/next_peers_to_query/process_response |
+| ~~PoW not persisted~~ | `table.rs:539` | ~~Contact restored without verifying PoW~~ | ✅ Fixed: pow_nonce/public_key in PersistedContact |
+| ~~XOR distance uses first byte only~~ | `geo_distance.rs:117` | ~~Poor ranking granularity for IPv6~~ | ✅ Fixed: full bit-prefix counting |
 
 ### Dead Code (Removed)
 

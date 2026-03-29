@@ -1,6 +1,6 @@
 # Deferred Items
 
-Items deferred from Waves 2-4 execution. These remain active work items for future waves.
+Items deferred from Waves 2-5 execution. These remain active work items for future waves.
 
 ---
 
@@ -251,15 +251,112 @@ Items deferred from Waves 2-4 execution. These remain active work items for futu
 
 ---
 
+## Phase 4: Testing (Wave 5 remaining)
+
+### 4.1 DNS Server Integration Tests
+**Source**: `plan_test2.md`, `plan_test3.md`
+- Create `tests/dns_server_test.rs` with end-to-end authoritative server tests
+- Test DNS wire format response building, query handling, zone lookup
+- Currently zero dedicated DNS server integration tests
+
+### 4.3 DHT Integration Tests
+**Source**: `plan_dht2.md`, `plan_dht3.md`
+- Add integration tests for DHT bootstrap, iterative FindNode, write quorum
+- Add record store unit tests (CRUD, sync, message handling) — 2,588 lines across 5 files with zero test coverage
+- Add regional hub routing tests
+
+### 4.5 End-to-End Process Lifecycle Test
+**Source**: `plan.md` §5.1
+- Create `tests/e2e_process_test.rs`: spawn overseer → verify master starts → verify worker starts → send SIGTERM → verify graceful shutdown using temporary Unix sockets
+
+### 4.6 Fix IPC Test Duplication
+**Source**: `plan.md` §5.2
+- Refactor `tests/ipc_test.rs` to use `IpcStream` instead of manually reimplementing wire protocol framing
+- Keep one raw-socket regression test
+
+### 4.7 Improve Existing Test Quality
+**Source**: `plan2.md` §5.3
+- Increase assertions in sparse tests
+- Add negative test cases (malformed inputs, edge cases)
+- Add edge case coverage (empty strings, max lengths, boundary values)
+
+---
+
+## Phase 8: DNS Improvements (Wave 5 remaining)
+
+### 8.2 RSA Key Generation
+**Source**: `plan_dns.md`, `plan_dns2.md`
+- `dnssec.rs:293-295`: RSA key generation returns error, only Ed25519 supported
+- Add RSA support using `rsa` crate (2048-bit and 4096-bit)
+- Support RSA algorithms in DNSSEC key generation
+
+### 8.3 QNAME Minimization
+**Source**: `plan_dns.md`, `plan_dns2.md`
+- `qname.rs`: Simplified stub returning wildcard queries, not RFC 7816 compliant
+- `recursive.rs:1160`: `qname_minimization: false` (disabled)
+- Pending hickory-resolver update for native QNAME minimization support
+
+### 8.4 TCP Amplification Fix
+**Source**: `plan_dns.md`
+- `limits.rs`: Flat response size cap (65535), not ratio-based amplification check
+- Implement ratio-based check: TCP response ≤ 2× query size for small queries
+- Parse DNS header for QDCOUNT, reject oversized requests
+
+### 8.5 TSIG Enforcement for Zone Transfers
+**Source**: `plan_dns.md`, `plan_dns2.md`
+- `transfer.rs`: TSIG is optional by default, only forced for wildcard transfers
+- Non-wildcard transfers can proceed without TSIG via IP allowlist
+- Make TSIG mandatory by default for all AXFR requests
+
+### 8.6 DNS64 Integration
+**Source**: `plan_dns.md`
+- `dns64.rs`: Library exists (synthesis, detection, extraction) but NOT wired into query path
+- `translate_aaaa_response()` is a no-op stub returning `response.to_vec()`
+- Wire `Dns64Translator` into `handle_query()` for AAAA queries returning NODATA
+
+### 8.7 Cache Performance
+**Source**: `plan_dns2.md`
+- Add secondary index for invalidation by qname (replace linear scan)
+
+### 8.8 Replace `dns-parser` with `hickory-proto`
+**Source**: `plan_sec.md`
+- Replace 8-year-old `dns-parser` crate with actively maintained `hickory-proto`
+- ~70 references in `src/dns/recursive.rs`
+
+### 8.9 DNSSEC Validation in Forwarder Mode
+**Source**: `plan_dns.md`, `plan_dns3.md`
+- `HickoryResolver` does NOT perform DNSSEC validation (is_dnssec_validated always false)
+- AD bit cannot be propagated (not exposed by hickory-resolver lookup API)
+- Documented limitation: use `HickoryRecursor` with `dnssec_validation: true` for validated responses
+
+---
+
+## Phase 9: DHT & Mesh (Wave 5 remaining)
+
+### 9.2 Document Transport Architecture
+**Source**: `plan_dht3.md`
+- Document: `MeshTransport` is the implementation layer, `MeshTransportManager` is selection/caching
+- Make `timestamp_window_secs` configurable in `DhtConfig`
+
+### 9.3 DHT Record Store Lock Consolidation
+**Source**: `plan_security_scalability.md`
+- `RecordStoreManager` has 23 flat `RwLock` fields with no grouping
+- Group into inner structs (RecordStoreState, RoutingState, MetricsState)
+
+---
+
 ## Summary
 
 | Phase | Completed | Deferred | Notes |
 |-------|-----------|----------|-------|
 | 2 | 12 items (2.1-2.12 all) | 0 items | All Phase 2 security fixes complete |
 | 3 | 10 items (3.1-3.9 all) | 0 items | All correctness bugs fixed |
+| 4 | 4.1(4 failing→fixed), 4.2(20 behavioral tests), 4.3(DNS partial), 4.4(roundtrip tests) | 5 items (4.1, 4.3, 4.5, 4.6, 4.7) | DNS server tests, DHT tests, e2e lifecycle, IPC refactor, test quality |
 | 5 | 12 items (5.1-5.12 all) | 0 items | All performance items done |
 | 6 | 10 items (6.1-6.10 all) | 0 items | All code quality items done |
 | 7 | 3 items (7.1-7.3 all) | 0 items | All TLS items done |
+| 8 | 3.5(wire bugs), 3.6(recursive), 3.8(validation), 3.9(cache), 8.1(signing), 8.10(AD flag) | 7 items (8.2-8.9) | RSA, QNAME, TCP amp, TSIG, DNS64, cache perf, dns-parser replacement |
+| 9 | 3.7(DHT fixes), 9.1(geo routing) | 2 items (9.2, 9.3) | Transport docs, lock consolidation |
 | 10 | 8 items (10.1a-10.1d, 10.3, 10.4) | 0 items | All Phase 10 items complete |
 | 11 | 11 items (11.1-11.11 all) | 0 items | All admin panel items done |
 | 12 | 6 items (12.1-12.5 all) | 0 items | All Phase 12 items complete; wasmtime upgraded to v42 (v43 blocked by bumpalo conflict) |
