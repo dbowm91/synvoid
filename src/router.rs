@@ -12,6 +12,7 @@ use crate::mesh::config::{
     MeshCompressionConfig, MeshImageProtectionConfig, MeshMinificationConfig,
 };
 use crate::platform::fs::PlatformPaths;
+use crate::plugin::PluginManager;
 use crate::static_files::{
     client::{AsyncMinifierClient, MinifierClient},
     minifier::MinifierCache,
@@ -33,6 +34,7 @@ pub struct Router {
     async_minifier_client: Option<AsyncMinifierClient>,
     listen_map: HashMap<SocketAddr, Vec<String>>,
     default_servers: HashMap<SocketAddr, String>,
+    plugin_manager: Option<Arc<PluginManager>>,
 }
 
 #[derive(Clone)]
@@ -236,6 +238,7 @@ impl Router {
             async_minifier_client: Some(async_minifier_client),
             listen_map: listen_map.clone(),
             default_servers,
+            plugin_manager: None,
         };
 
         if !listen_map.is_empty() {
@@ -258,6 +261,15 @@ impl Router {
     #[inline]
     fn clean_domain(domain: &str) -> String {
         domain.trim_start_matches("www.").to_lowercase()
+    }
+
+    pub fn with_plugin_manager(mut self, plugin_manager: Arc<PluginManager>) -> Self {
+        self.plugin_manager = Some(plugin_manager);
+        self
+    }
+
+    pub fn plugin_manager(&self) -> Option<&Arc<PluginManager>> {
+        self.plugin_manager.as_ref()
     }
 
     #[inline]
@@ -726,6 +738,7 @@ impl Default for Router {
             async_minifier_client: None,
             listen_map: HashMap::new(),
             default_servers: HashMap::new(),
+            plugin_manager: None,
         }
     }
 }

@@ -978,6 +978,135 @@ impl HttpServer {
                     return Ok(Self::build_websocket_response(&parts.headers));
                 }
 
+                // Check for AxumDynamic plugin backend
+                if matches!(target.backend_type, crate::router::BackendType::AxumDynamic) {
+                    if let Some(pm) = router.plugin_manager() {
+                        if let Some(plugin_router) = pm.get_axum_router() {
+                            tracing::debug!(
+                                "Routing to AxumDynamic plugin for site {} path {}",
+                                site_id, path
+                            );
+                            // Build request for plugin router from available parts
+                            let mut plugin_req_builder = http::Request::builder()
+                                .method(parts.method.clone())
+                                .uri(parts.uri.clone());
+                            for (name, value) in parts.headers.iter() {
+                                plugin_req_builder = plugin_req_builder.header(name, value);
+                            }
+                            let plugin_req = plugin_req_builder
+                                .body(axum::body::Body::empty())
+                                .unwrap_or_else(|_| {
+                                    http::Request::new(axum::body::Body::empty())
+                                });
+
+                            return Self::handle_axum_dynamic_request(
+                                plugin_req,
+                                plugin_router,
+                                &alt_svc,
+                                &main_config,
+                            )
+                            .await;
+                        }
+                    }
+                    tracing::warn!(
+                        "AxumDynamic backend for site {} but no plugin loaded, falling back to upstream",
+                        site_id
+                    );
+                }
+
+                // Apply WASM plugin filters before proxying
+                if let Some(pm) = router.plugin_manager() {
+                    let body_bytes: Bytes = body_slice
+                        .map(|b| b.to_vec().into())
+                        .unwrap_or_else(Bytes::new);
+
+                    let mut filter_builder = http::Request::builder()
+                        .method(method.clone())
+                        .uri(&parts.uri);
+                    for (name, value) in parts.headers.iter() {
+                        filter_builder = filter_builder.header(name, value);
+                    }
+                    let filter_req = filter_builder.body(body_bytes.clone()).unwrap_or_else(|_| {
+                        http::Request::builder()
+                            .method(method.clone())
+                            .body(Bytes::new())
+                            .unwrap()
+                    });
+
+                    match pm.apply_wasm_filters(filter_req) {
+                        Ok(crate::plugin::WasmFilterResult::Pass) => {}
+                        Ok(crate::plugin::WasmFilterResult::Block(status, msg)) => {
+                            tracing::info!(
+                                "WASM plugin blocked request to {} from {}: {}",
+                                path, client_ip, msg
+                            );
+                            let body = waf.error_page_manager.render_page(
+                                status.as_u16(),
+                                Some(&msg),
+                            );
+                            Self::send_request_log_if_enabled(
+                                ipc.clone(),
+                                worker_id,
+                                &main_config,
+                                client_ip,
+                                method_str.clone(),
+                                path.clone(),
+                                status.as_u16(),
+                                start.elapsed().as_millis() as u64,
+                                site_id.to_string(),
+                                user_agent.clone(),
+                                false,
+                            );
+                            return Ok(Self::build_response_with_alt_svc(
+                                status.as_u16(),
+                                body,
+                                "text/html",
+                                &alt_svc,
+                                &main_config,
+                            ));
+                        }
+                        Ok(crate::plugin::WasmFilterResult::Challenge(reason)) => {
+                            tracing::info!(
+                                "WASM plugin issued challenge for {} from {}: {}",
+                                path, client_ip, reason
+                            );
+                            let escaped = reason
+                                .replace('&', "&amp;")
+                                .replace('<', "&lt;")
+                                .replace('>', "&gt;")
+                                .replace('"', "&quot;");
+                            let html = format!(
+                                "<html><body><h1>Challenge Required</h1><p>{}</p></body></html>",
+                                escaped
+                            );
+                            Self::send_request_log_if_enabled(
+                                ipc.clone(),
+                                worker_id,
+                                &main_config,
+                                client_ip,
+                                method_str.clone(),
+                                path.clone(),
+                                200,
+                                start.elapsed().as_millis() as u64,
+                                site_id.to_string(),
+                                user_agent.clone(),
+                                false,
+                            );
+                            return Ok(Self::build_response_with_alt_svc(
+                                200,
+                                html,
+                                "text/html",
+                                &alt_svc,
+                                &main_config,
+                            ));
+                        }
+                        Err(e) => {
+                            tracing::error!("WASM plugin filter error: {}", e);
+                            // Continue to proxy on plugin error (fail-open)
+                        }
+                    }
+                }
+
                 let target_url = format!("{}{}", target.upstream, path);
 
                 let headers_to_filter = build_headers_to_filter(
@@ -1060,6 +1189,30 @@ impl HttpServer {
 
                         let mut body = resp.body;
                         let mut body_len = body.len() as u64;
+
+                        // Apply WASM response transforms
+                        if let Some(pm) = router.plugin_manager() {
+                            let body_for_transform = body.clone();
+                            let wasm_resp = http::Response::builder()
+                                .status(status)
+                                .body(body_for_transform)
+                                .unwrap_or_else(|_| {
+                                    http::Response::builder()
+                                        .status(status)
+                                        .body(Bytes::new())
+                                        .unwrap()
+                                });
+                            match pm.apply_wasm_response_transforms(wasm_resp) {
+                                Ok(transformed) => {
+                                    body = transformed.into_body();
+                                    body_len = body.len() as u64;
+                                }
+                                Err(e) => {
+                                    tracing::error!("WASM response transform error: {}", e);
+                                    // Keep original body (already cloned)
+                                }
+                            }
+                        }
 
                         if let Some(ref mt) = mesh_transport {
                             let minification = mt.get_minification_for_site(&site_id).await;
@@ -1712,6 +1865,40 @@ impl HttpServer {
         builder
             .body(Full::new(Bytes::new()))
             .unwrap_or_else(|_| crate::http::fallback_error_full())
+    }
+
+    /// Handle requests routed to an AxumDynamic plugin backend.
+    async fn handle_axum_dynamic_request(
+        axum_req: http::Request<axum::body::Body>,
+        plugin_router: Arc<axum::Router<()>>,
+        alt_svc: &Option<String>,
+        main_config: &Arc<MainConfig>,
+    ) -> Result<Response<Full<Bytes>>, hyper::Error> {
+        use http_body_util::BodyExt;
+        use tower::Service;
+
+        // Call the plugin router
+        let mut plugin_router_inner = (*plugin_router).clone();
+        let response = plugin_router_inner.call(axum_req).await;
+
+        match response {
+            Ok(axum_resp) => {
+                let (resp_parts, resp_body) = axum_resp.into_parts();
+                let collected: Result<http_body_util::Collected<Bytes>, _> = resp_body.collect().await;
+                let resp_bytes = match collected {
+                    Ok(c) => c.to_bytes(),
+                    Err(_) => Bytes::new(),
+                };
+                Ok(Response::from_parts(resp_parts, Full::new(resp_bytes)))
+            }
+            Err(e) => Ok(Self::build_response_with_alt_svc(
+                500,
+                format!("Plugin error: {}", e),
+                "text/plain",
+                alt_svc,
+                main_config,
+            )),
+        }
     }
 
     async fn handle_key_exchange_request(

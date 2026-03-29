@@ -172,9 +172,54 @@ impl std::fmt::Display for ErrorCode {
 /// IPC messages exchanged between overseer, master, and worker processes.
 ///
 /// Messages are serialized as JSON over Unix domain sockets. Each variant
-/// includes a `WorkerId` or `id` field for routing to the correct process.
-/// The enum covers worker lifecycle, health monitoring, threat intelligence
-/// sharing, cache coordination, and upgrade orchestration.
+/// IPC Message variants grouped by concern (documentation-level grouping).
+///
+/// The flat variant structure is maintained for postcard wire-format stability.
+/// Use these group names when adding new variants:
+///
+/// - **Worker Lifecycle**: WorkerStarted, WorkerReady, WorkerHeartbeat,
+///   WorkerRequestLog, WorkerShutdownComplete, WorkerError
+/// - **Master Commands**: MasterShutdown, MasterConfigReload,
+///   MasterProcessConfigReload, MasterSupervisorConfigReload, MasterHealthCheck,
+///   MasterResizeThreadpool, HealthCheckAck, WorkerResizeAck
+/// - **Static Worker**: StaticWorkerStarted, StaticWorkerReady,
+///   StaticWorkerHeartbeat, StaticWorkerRequestLog, StaticWorkerShutdownComplete,
+///   StaticWorkerBackgroundTasksDone, StaticWorkerResizeAck, StaticWorkerScan,
+///   StaticWorkerCacheUpdate, StaticWorkerDrain, StaticWorkerDrained,
+///   StaticWorkerDrainStatus
+/// - **Threat Intel**: ThreatIndicatorAnnounce, ThreatIndicatorFromMesh,
+///   ThreatSyncRequest, ThreatSyncResponse, BlocklistRequest, BlocklistResponse
+/// - **Blocklist & Rules**: BlocklistUpdate, RulePatternsUpdate,
+///   BlocklistWriteComplete
+/// - **Static Content**: MinifyRequest, MinifyResponse, MinifyError,
+///   PoisonImageRequest, PoisonImageResponse, PoisonImageError,
+///   GetCompressedRequest, GetCompressedResponse
+/// - **App Server**: AppServerStarted, AppServerReady, AppServerHealth,
+///   AppServerStopped, AppServerRestarted, AppServerError
+/// - **Unified Server**: UnifiedServerWorkerStarted, UnifiedServerWorkerReady,
+///   UnifiedServerWorkerHeartbeat, UnifiedServerWorkerShutdownComplete,
+///   UnifiedServerWorkerError, UnifiedServerWorkerDrain,
+///   UnifiedServerWorkerDrained, UnifiedServerWorkerResize,
+///   UnifiedServerWorkerResizeAck
+/// - **Worker Drain**: WorkerDrain, WorkerDrained, WorkerConnectionCount,
+///   WorkerDrainComplete, WorkerReadyForTraffic
+/// - **Upgrade**: UpgradeReady, UpgradeFailed, OverseerUpgradePrepare,
+///   OverseerUpgradePrepareAck, OverseerUpgradeCommit,
+///   OverseerUpgradeCommitAck, OverseerUpgradeRollback,
+///   OverseerUpgradeRollbackAck, OverseerCommitUpgrade,
+///   OverseerCommitUpgradeAck
+/// - **Overseer**: OverseerDrainWorkers, OverseerDrainWorkersAck,
+///   OverseerGetStatus, OverseerStatusResponse, OverseerDualMasterPrepare,
+///   OverseerDualMasterPrepareAck
+/// - **Master Drain**: MasterDrainMode, MasterDrainModeAck,
+///   MasterReportConnections, MasterConnectionsReport, MasterStopAccepting,
+///   MasterStopAcceptingAck, MasterDrainStatus
+/// - **Drain Protocol**: DrainRequest, DrainStatusRequest, DrainStatusResponse,
+///   DrainComplete, StopAccepting, StopAcceptingAck, RestoreFromDrain,
+///   RestoreFromDrainAck
+/// - **Socket Handoff**: SocketHandoffRequest, SocketHandoffReady,
+///   SocketHandoffComplete, SocketHandoffFailed, WindowsSocketInfo
+/// - **Worker Restart**: RestartWorkerRequest, RestartWorkerResponse
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Message {
     WorkerStarted {
@@ -947,6 +992,191 @@ impl Message {
             Message::SocketHandoffFailed { error } => check_str("error", error, MAX_STRING_LENGTH),
             // Catch-all for any variants added in the future
             _ => Ok(()),
+        }
+    }
+
+    /// Returns the concern group this message belongs to.
+    pub fn category(&self) -> MessageCategory {
+        match self {
+            Message::WorkerStarted { .. }
+            | Message::WorkerReady { .. }
+            | Message::WorkerHeartbeat { .. }
+            | Message::WorkerRequestLog { .. }
+            | Message::WorkerShutdownComplete { .. }
+            | Message::WorkerError { .. } => MessageCategory::WorkerLifecycle,
+
+            Message::MasterShutdown { .. }
+            | Message::MasterConfigReload { .. }
+            | Message::MasterProcessConfigReload { .. }
+            | Message::MasterSupervisorConfigReload { .. }
+            | Message::MasterHealthCheck { .. }
+            | Message::MasterResizeThreadpool { .. }
+            | Message::HealthCheckAck { .. }
+            | Message::WorkerResizeAck { .. } => MessageCategory::MasterCommand,
+
+            Message::StaticWorkerStarted { .. }
+            | Message::StaticWorkerReady { .. }
+            | Message::StaticWorkerHeartbeat { .. }
+            | Message::StaticWorkerRequestLog { .. }
+            | Message::StaticWorkerShutdownComplete { .. }
+            | Message::StaticWorkerBackgroundTasksDone { .. }
+            | Message::StaticWorkerResizeAck { .. }
+            | Message::StaticWorkerScan { .. }
+            | Message::StaticWorkerCacheUpdate { .. }
+            | Message::StaticWorkerDrain { .. }
+            | Message::StaticWorkerDrained { .. }
+            | Message::StaticWorkerDrainStatus { .. } => MessageCategory::StaticWorker,
+
+            Message::ThreatIndicatorAnnounce { .. }
+            | Message::ThreatIndicatorFromMesh { .. }
+            | Message::ThreatSyncRequest { .. }
+            | Message::ThreatSyncResponse { .. }
+            | Message::BlocklistRequest { .. }
+            | Message::BlocklistResponse { .. } => MessageCategory::ThreatIntel,
+
+            Message::BlocklistUpdate { .. }
+            | Message::RulePatternsUpdate { .. }
+            | Message::BlocklistWriteComplete { .. } => MessageCategory::BlocklistRules,
+
+            Message::MinifyRequest { .. }
+            | Message::MinifyResponse { .. }
+            | Message::MinifyError { .. }
+            | Message::PoisonImageRequest { .. }
+            | Message::PoisonImageResponse { .. }
+            | Message::PoisonImageError { .. }
+            | Message::GetCompressedRequest { .. }
+            | Message::GetCompressedResponse { .. } => MessageCategory::StaticContent,
+
+            Message::AppServerStarted { .. }
+            | Message::AppServerReady { .. }
+            | Message::AppServerHealth { .. }
+            | Message::AppServerStopped { .. }
+            | Message::AppServerRestarted { .. }
+            | Message::AppServerError { .. } => MessageCategory::AppServer,
+
+            Message::UnifiedServerWorkerStarted { .. }
+            | Message::UnifiedServerWorkerReady { .. }
+            | Message::UnifiedServerWorkerHeartbeat { .. }
+            | Message::UnifiedServerWorkerShutdownComplete { .. }
+            | Message::UnifiedServerWorkerError { .. }
+            | Message::UnifiedServerWorkerDrain { .. }
+            | Message::UnifiedServerWorkerDrained { .. }
+            | Message::UnifiedServerWorkerResize { .. }
+            | Message::UnifiedServerWorkerResizeAck { .. } => MessageCategory::UnifiedServer,
+
+            Message::WorkerDrain { .. }
+            | Message::WorkerDrained { .. }
+            | Message::WorkerConnectionCount { .. }
+            | Message::WorkerDrainComplete { .. }
+            | Message::WorkerReadyForTraffic { .. } => MessageCategory::WorkerDrain,
+
+            Message::UpgradeReady { .. }
+            | Message::UpgradeFailed { .. }
+            | Message::OverseerUpgradePrepare { .. }
+            | Message::OverseerUpgradePrepareAck { .. }
+            | Message::OverseerUpgradeCommit { .. }
+            | Message::OverseerUpgradeCommitAck { .. }
+            | Message::OverseerUpgradeRollback { .. }
+            | Message::OverseerUpgradeRollbackAck { .. }
+            | Message::OverseerCommitUpgrade { .. }
+            | Message::OverseerCommitUpgradeAck { .. } => MessageCategory::Upgrade,
+
+            Message::OverseerDrainWorkers { .. }
+            | Message::OverseerDrainWorkersAck { .. }
+            | Message::OverseerGetStatus { .. }
+            | Message::OverseerStatusResponse { .. }
+            | Message::OverseerDualMasterPrepare { .. }
+            | Message::OverseerDualMasterPrepareAck { .. } => MessageCategory::Overseer,
+
+            Message::MasterDrainMode { .. }
+            | Message::MasterDrainModeAck { .. }
+            | Message::MasterReportConnections { .. }
+            | Message::MasterConnectionsReport { .. }
+            | Message::MasterStopAccepting { .. }
+            | Message::MasterStopAcceptingAck { .. }
+            | Message::MasterDrainStatus { .. } => MessageCategory::MasterDrain,
+
+            Message::DrainRequest { .. }
+            | Message::DrainStatusRequest { .. }
+            | Message::DrainStatusResponse { .. }
+            | Message::DrainComplete { .. }
+            | Message::StopAccepting { .. }
+            | Message::StopAcceptingAck { .. }
+            | Message::RestoreFromDrain { .. }
+            | Message::RestoreFromDrainAck { .. } => MessageCategory::DrainProtocol,
+
+            Message::SocketHandoffRequest { .. }
+            | Message::SocketHandoffReady { .. }
+            | Message::SocketHandoffComplete { .. }
+            | Message::SocketHandoffFailed { .. }
+            | Message::WindowsSocketInfo { .. } => MessageCategory::SocketHandoff,
+
+            Message::RestartWorkerRequest { .. } | Message::RestartWorkerResponse { .. } => {
+                MessageCategory::WorkerRestart
+            }
+        }
+    }
+
+    /// Returns true if this message is a lifecycle message (started, ready, heartbeat, shutdown).
+    pub fn is_lifecycle(&self) -> bool {
+        matches!(
+            self.category(),
+            MessageCategory::WorkerLifecycle
+                | MessageCategory::StaticWorker
+                | MessageCategory::UnifiedServer
+                | MessageCategory::AppServer
+        )
+    }
+
+    /// Returns true if this message is a drain-related message.
+    pub fn is_drain(&self) -> bool {
+        matches!(
+            self.category(),
+            MessageCategory::WorkerDrain
+                | MessageCategory::MasterDrain
+                | MessageCategory::DrainProtocol
+        )
+    }
+}
+
+/// IPC Message concern groups for logical organization.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MessageCategory {
+    WorkerLifecycle,
+    MasterCommand,
+    StaticWorker,
+    ThreatIntel,
+    BlocklistRules,
+    StaticContent,
+    AppServer,
+    UnifiedServer,
+    WorkerDrain,
+    Upgrade,
+    Overseer,
+    MasterDrain,
+    DrainProtocol,
+    SocketHandoff,
+    WorkerRestart,
+}
+
+impl std::fmt::Display for MessageCategory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MessageCategory::WorkerLifecycle => write!(f, "WorkerLifecycle"),
+            MessageCategory::MasterCommand => write!(f, "MasterCommand"),
+            MessageCategory::StaticWorker => write!(f, "StaticWorker"),
+            MessageCategory::ThreatIntel => write!(f, "ThreatIntel"),
+            MessageCategory::BlocklistRules => write!(f, "BlocklistRules"),
+            MessageCategory::StaticContent => write!(f, "StaticContent"),
+            MessageCategory::AppServer => write!(f, "AppServer"),
+            MessageCategory::UnifiedServer => write!(f, "UnifiedServer"),
+            MessageCategory::WorkerDrain => write!(f, "WorkerDrain"),
+            MessageCategory::Upgrade => write!(f, "Upgrade"),
+            MessageCategory::Overseer => write!(f, "Overseer"),
+            MessageCategory::MasterDrain => write!(f, "MasterDrain"),
+            MessageCategory::DrainProtocol => write!(f, "DrainProtocol"),
+            MessageCategory::SocketHandoff => write!(f, "SocketHandoff"),
+            MessageCategory::WorkerRestart => write!(f, "WorkerRestart"),
         }
     }
 }

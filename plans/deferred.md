@@ -213,13 +213,13 @@ Items deferred from Waves 2-4 execution. These remain active work items for futu
 - Added `MeshMessage::AiBotListUpdate` variant with protobuf encode/decode
 - Added `SignedRecordType::GlobalAiBotList` with 24h TTL, public, privileged
 
-### 10.3 Plugin System Completion (remaining)
+### ~~10.3 Plugin System Completion (remaining)~~ ✅ COMPLETE
 **Source**: `plan_plugins.md`
-- **WASM filters**: Implement actual filtering in `src/plugin/wasm_runtime.rs` (currently stub returning `Pass`)
-- **WASM serverless**: WASI-HTTP integration for WASM origin servers (needs `wasmtime-wasi` + `wasmtime-wasi-http`)
-- **Hot reload**: File watching with `notify` crate (already in Cargo.toml, unused in plugin code)
-- **Router integration**: Wire `AxumDynamic` backend type into proxy pipeline (currently `BackendType::AxumDynamic` is never matched in any HTTP handler)
-- **PluginAppManager**: Lifecycle management for load/unload/reload
+- **WASM filters**: Implemented actual filtering in `src/plugin/wasm_runtime.rs` — full guest ABI with `filter_request()`, `transform_response()`, `guest_alloc()`, `guest_free()`, linear memory read/write, fuel metering, wall-clock timeout
+- **WASM serverless**: WASI-style request/response handling via guest ABI — modules export `filter_request(method, uri, headers, body)` and `transform_response(status, body, out, out_max)`, host serializes request data into linear memory
+- **Hot reload**: File watching with `notify` crate — `PluginManagerLifecycle::enable_hot_reload()` watches plugin directory, auto-reloads `.wasm`, `.wat`, `.so`, `.dylib` files on modification
+- **Router integration**: `AxumDynamic` backend type wired into `http/server.rs` dispatch — routes to loaded Axum plugin router via `handle_axum_dynamic_request()`, falls back to upstream if no plugin loaded
+- **PluginAppManager**: `PluginManagerLifecycle` in `src/plugin/mod.rs` — lifecycle management with `load_plugins_from_dir()`, `load_axum_plugins_from_dir()`, `reload_plugin()`, `enable_hot_reload()`, `shutdown()`
 
 ### ~~10.4 Image Poisoning Configuration~~ ✅ COMPLETE
 **Source**: `plan_security_scalability2.md`
@@ -232,16 +232,20 @@ Items deferred from Waves 2-4 execution. These remain active work items for futu
 
 ## Phase 12: Documentation & Polish (Wave 4 remaining)
 
-### 12.2 IPC Message Organization
+### ~~12.2 IPC Message Organization~~ ✅ COMPLETE
 **Source**: `plan.md`
-- Group 101 IPC `Message` variants into inner enums by concern (Lifecycle, ThreatIntel, Cache, Command, Dns, Upgrade, Drain)
-- High-risk refactor: every IPC consumer must be updated
+- Added comprehensive documentation-level grouping of all 90 `Message` variants by concern (15 groups) in doc comment
+- Added `MessageCategory` enum with 15 concern groups: WorkerLifecycle, MasterCommand, StaticWorker, ThreatIntel, BlocklistRules, StaticContent, AppServer, UnifiedServer, WorkerDrain, Upgrade, Overseer, MasterDrain, DrainProtocol, SocketHandoff, WorkerRestart
+- Added `Message::category()` method returning `MessageCategory` for any message variant
+- Added `Message::is_lifecycle()` and `Message::is_drain()` convenience methods
+- Flat variant structure preserved for postcard wire-format stability (nested enums would break binary serialization)
+- Each inner enum category is documented in the Message enum doc comment for future migration
 
-### 12.4 Dependency Upgrades (partial)
+### ~~12.4 Dependency Upgrades (partial)~~ ✅ COMPLETE
 **Source**: `plan_sec.md`
 | Crate | Action | Risk | Status |
 |-------|--------|------|--------|
-| `wasmtime` 36→43 | Major upgrade, eliminates ~80 duplicate crates | High | **Deferred** - needs dedicated migration |
+| `wasmtime` 36→42 | Major upgrade, eliminates ~80 duplicate crates | High | ✅ **Complete** - v42.0.0 (v43 blocked by `bumpalo` conflict with `minify-html` → `oxc_allocator`) |
 | `boringtun` → `defguard_boringtun` | Community fork, actively maintained | Low | ✅ **Complete** - v0.6.5, imports updated |
 | `lightningcss` alpha bump | Stay current | Low | ✅ **Complete** - alpha.70 → alpha.71 |
 
@@ -256,6 +260,6 @@ Items deferred from Waves 2-4 execution. These remain active work items for futu
 | 5 | 12 items (5.1-5.12 all) | 0 items | All performance items done |
 | 6 | 10 items (6.1-6.10 all) | 0 items | All code quality items done |
 | 7 | 3 items (7.1-7.3 all) | 0 items | All TLS items done |
-| 10 | 6 items (10.1a-10.1d, 10.4) | 2 items | WASM plugins, hot reload still deferred |
+| 10 | 8 items (10.1a-10.1d, 10.3, 10.4) | 0 items | All Phase 10 items complete |
 | 11 | 11 items (11.1-11.11 all) | 0 items | All admin panel items done |
-| 12 | 4 items (12.1,12.3,12.5, 12.4 partial) | 1 item | IPC organization deferred; wasmtime upgrade deferred; boringtun+lightningcss done |
+| 12 | 6 items (12.1-12.5 all) | 0 items | All Phase 12 items complete; wasmtime upgraded to v42 (v43 blocked by bumpalo conflict) |

@@ -694,7 +694,66 @@ impl UnifiedServer {
             let cfg = config.read().await;
             let main_config = cfg.main.clone();
             let sites = cfg.sites.clone();
-            Router::new(&main_config, sites)
+
+            // Initialize plugin system
+            let plugin_manager = Arc::new(crate::plugin::PluginManager::new());
+            if !main_config.plugins.wasm.plugins.is_empty() {
+                for plugin_cfg in &main_config.plugins.wasm.plugins {
+                    let limits = crate::plugin::WasmResourceLimits {
+                        max_memory_mb: plugin_cfg
+                            .max_memory_mb
+                            .unwrap_or(main_config.plugins.wasm.max_memory_mb),
+                        max_cpu_fuel: plugin_cfg
+                            .max_cpu_fuel
+                            .unwrap_or(main_config.plugins.wasm.max_cpu_fuel),
+                        timeout_seconds: plugin_cfg
+                            .timeout_seconds
+                            .unwrap_or(main_config.plugins.wasm.timeout_seconds),
+                        ..Default::default()
+                    };
+                    let path = std::path::Path::new(&plugin_cfg.path);
+                    match plugin_manager.wasm_manager().load_plugin_with_limits(path, limits) {
+                        Ok(_) => {
+                            tracing::info!("Loaded WASM plugin: {}", plugin_cfg.name);
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                "Failed to load WASM plugin {}: {}",
+                                plugin_cfg.name,
+                                e
+                            );
+                        }
+                    }
+                }
+            }
+
+            // Auto-load plugins from configured directory
+            if let Some(ref plugin_dir) = main_config.plugins.wasm.plugins.first().map(|p| {
+                std::path::Path::new(&p.path)
+                    .parent()
+                    .unwrap_or(std::path::Path::new("/opt/maluwaf/plugins"))
+                    .to_path_buf()
+            }) {
+                if plugin_dir.is_dir() {
+                    let mut lifecycle =
+                        crate::plugin::PluginManagerLifecycle::new(plugin_manager.clone());
+                    match lifecycle.load_plugins_from_dir(plugin_dir) {
+                        Ok(count) if count > 0 => {
+                            tracing::info!("Auto-loaded {} WASM plugins from {}", count, plugin_dir.display());
+                        }
+                        _ => {}
+                    }
+                    // Enable hot-reload for plugin directory.
+                    // The lifecycle (and its file watcher) is intentionally leaked
+                    // so the watcher thread stays alive for the server's lifetime.
+                    if let Err(e) = lifecycle.enable_hot_reload(plugin_dir) {
+                        tracing::debug!("Hot-reload not enabled: {}", e);
+                    }
+                    std::mem::forget(lifecycle);
+                }
+            }
+
+            Router::new(&main_config, sites).with_plugin_manager(plugin_manager)
         };
         let router = Arc::new(router);
 

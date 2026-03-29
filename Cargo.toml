@@ -173,7 +173,7 @@ fastcgi-client = "0.10"
 libloading = "0.8"
 
 # WASM support for plugins
-wasmtime = "36"
+wasmtime = "42"
 
 # WireGuard (optional - requires defguard_boringtun)
 defguard_boringtun = { version = "0.6", optional = true }
