@@ -178,3 +178,101 @@ impl GlobalNodeBlocklist {
 
 pub const MAX_REPUTATION_THRESHOLD: i64 = 80;
 pub const MIN_REPUTATION_THRESHOLD: i64 = 0;
+
+#[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
+pub enum BotAction {
+    Add,
+    Remove,
+    Update,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
+pub struct AiBotEntry {
+    pub pattern: String,
+    pub action: BotAction,
+    pub source: String,
+    pub timestamp: u64,
+    pub expires_at: Option<u64>,
+}
+
+impl AiBotEntry {
+    pub fn new(pattern: String, action: BotAction, source: String) -> Self {
+        Self {
+            pattern,
+            action,
+            source,
+            timestamp: crate::mesh::safe_unix_timestamp(),
+            expires_at: None,
+        }
+    }
+
+    pub fn with_expiry(mut self, duration_secs: u64) -> Self {
+        self.expires_at = Some(self.timestamp + duration_secs);
+        self
+    }
+
+    pub fn is_expired(&self) -> bool {
+        if let Some(expires_at) = self.expires_at {
+            crate::mesh::safe_unix_timestamp() > expires_at
+        } else {
+            false
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
+pub struct GlobalAiBotList {
+    pub entries: Vec<AiBotEntry>,
+    pub last_updated: u64,
+    pub updated_by: String,
+    pub signature: Vec<u8>,
+}
+
+impl GlobalAiBotList {
+    pub fn new(updated_by: String) -> Self {
+        Self {
+            entries: Vec::new(),
+            last_updated: crate::mesh::safe_unix_timestamp(),
+            updated_by,
+            signature: Vec::new(),
+        }
+    }
+
+    pub fn add_entry(&mut self, entry: AiBotEntry) {
+        self.entries.retain(|e| e.pattern != entry.pattern);
+        self.entries.push(entry);
+        self.last_updated = crate::mesh::safe_unix_timestamp();
+    }
+
+    pub fn remove_entry(&mut self, pattern: &str) {
+        self.entries.retain(|e| e.pattern != pattern);
+        self.last_updated = crate::mesh::safe_unix_timestamp();
+    }
+
+    pub fn sign(&mut self, signer: &crate::mesh::protocol::MeshMessageSigner) {
+        let content = self.get_signable_content();
+        self.signature = signer.sign(&content);
+    }
+
+    pub fn get_signable_content(&self) -> String {
+        format!(
+            "{}:{}:{}",
+            self.entries.len(),
+            self.last_updated,
+            self.updated_by
+        )
+    }
+
+    pub fn verify_signature(&self, public_key: &[u8]) -> bool {
+        if self.signature.is_empty() {
+            return false;
+        }
+        let content = self.get_signable_content();
+        crate::mesh::cert::verify_ed25519(&content, &self.signature, public_key)
+    }
+
+    pub fn is_stale(&self, max_age_secs: u64) -> bool {
+        let now = crate::mesh::safe_unix_timestamp();
+        now.saturating_sub(self.last_updated) > max_age_secs
+    }
+}

@@ -133,8 +133,8 @@ impl UserspaceWireGuard {
 
     #[cfg(feature = "wireguard")]
     async fn start_boringtun(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        use boringtun::noise::{Tunn, TunnResult};
-        use boringtun::x25519::StaticSecret;
+        use defguard_boringtun::noise::{Tunn, TunnResult};
+        use defguard_boringtun::x25519::StaticSecret;
 
         tracing::info!("Starting boringtun userspace WireGuard");
 

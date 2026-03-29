@@ -253,6 +253,7 @@ message MeshMessage {
         ZoneSyncResponse zone_sync_response = 123;
         ZoneSyncAck zone_sync_ack = 124;
         SiteConfigSync site_config_sync = 125;
+        AiBotListUpdate ai_bot_list_update = 126;
     }
 }
 
@@ -1035,6 +1036,28 @@ message NetworkPolicyUpdate {
 
 message GlobalNodeBlocklistUpdate {
     GlobalNodeBlocklist blocklist = 1;
+    uint64 timestamp = 2;
+    string source_node_id = 3;
+    bytes signature = 4;
+}
+
+message AiBotEntry {
+    string pattern = 1;
+    uint32 action = 2;
+    string source = 3;
+    uint64 timestamp = 4;
+    optional uint64 expires_at = 5;
+}
+
+message GlobalAiBotList {
+    repeated AiBotEntry entries = 1;
+    uint64 last_updated = 2;
+    string updated_by = 3;
+    bytes signature = 4;
+}
+
+message AiBotListUpdate {
+    GlobalAiBotList bot_list = 1;
     uint64 timestamp = 2;
     string source_node_id = 3;
     bytes signature = 4;

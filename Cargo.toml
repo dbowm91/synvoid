@@ -22,7 +22,7 @@ path = "src/bin/server.rs"
 default = ["socket-handoff", "post-quantum", "mesh", "dns"]
 dns = ["dep:hickory-proto", "dep:hickory-resolver", "dep:hickory-recursor", "dep:dns-parser", "dep:tokio-dstip", "dep:cryptoki", "dep:getrandom"]
 socket-handoff = []
-wireguard = ["dep:boringtun"]
+wireguard = ["dep:defguard_boringtun"]
 icmp-filter = []
 flood-ebpf = []
 origin_key_exchange = []
@@ -124,7 +124,7 @@ pqc = { path = "pqc", features = ["async"] }
 zeroize = { version = "1", features = ["derive"] }
 
 # Minification
-lightningcss = "1.0.0-alpha.70"
+lightningcss = "1.0.0-alpha.71"
 minify-html = "0.18"
 minify-js = "0.6"
 brotli = "6"
@@ -175,8 +175,8 @@ libloading = "0.8"
 # WASM support for plugins
 wasmtime = "36"
 
-# WireGuard (optional - requires boringtun)
-boringtun = { version = "0.7", optional = true }
+# WireGuard (optional - requires defguard_boringtun)
+defguard_boringtun = { version = "0.6", optional = true }
 
 # Unix domain socket support for HTTP client
 hyperlocal = { version = "0.9", features = ["hyper-util"] }

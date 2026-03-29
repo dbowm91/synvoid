@@ -330,8 +330,8 @@ pub fn generate_keypair() -> (String, String) {
 pub fn x25519_public_from_private(private_key: &[u8; 32]) -> [u8; 32] {
     #[cfg(feature = "wireguard")]
     {
-        let secret = boringtun::x25519::StaticSecret::from(*private_key);
-        let public = boringtun::x25519::PublicKey::from(&secret);
+        let secret = defguard_boringtun::x25519::StaticSecret::from(*private_key);
+        let public = defguard_boringtun::x25519::PublicKey::from(&secret);
         *public.as_bytes()
     }
 

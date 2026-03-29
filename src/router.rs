@@ -766,6 +766,7 @@ impl SiteConfig {
             websocket: Default::default(),
             tunnel: Default::default(),
             app_server: Default::default(),
+            image_poison: Default::default(),
         }
     }
 }

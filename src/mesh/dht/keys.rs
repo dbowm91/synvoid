@@ -37,6 +37,7 @@ pub enum DhtKey {
     DnsRecord(String, String),
     DnsDomainRegistration(String),
     AnycastNode(String),
+    GlobalAiBotList,
 }
 
 impl DhtKey {
@@ -120,6 +121,10 @@ impl DhtKey {
         DhtKey::AnycastNode(node_id.to_string())
     }
 
+    pub fn global_ai_bot_list() -> Self {
+        DhtKey::GlobalAiBotList
+    }
+
     pub fn as_str(&self) -> String {
         match self {
             DhtKey::Organization(org_id) => format!("org:{}", org_id),
@@ -150,6 +155,7 @@ impl DhtKey {
             DhtKey::DnsRecord(zone, name) => format!("dns_record:{}:{}", zone, name),
             DhtKey::DnsDomainRegistration(domain) => format!("dns_domain_reg:{}", domain),
             DhtKey::AnycastNode(node_id) => format!("anycast_node:{}", node_id),
+            DhtKey::GlobalAiBotList => "global_ai_bot_list".to_string(),
         }
     }
 
@@ -199,6 +205,7 @@ impl DhtKey {
                 DhtKey::DnsDomainRegistration(parts[1..].join(":"))
             }
             "anycast_node" if parts.len() >= 2 => DhtKey::AnycastNode(parts[1..].join(":")),
+            "global_ai_bot_list" => DhtKey::GlobalAiBotList,
             _ => DhtKey::NodeInfo(s.to_string()),
         }
     }
@@ -217,6 +224,7 @@ impl DhtKey {
                 | DhtKey::DnsZone(_)
                 | DhtKey::DnsDomainRegistration(_)
                 | DhtKey::AnycastNode(_)
+                | DhtKey::GlobalAiBotList
         )
     }
 
@@ -235,6 +243,7 @@ impl DhtKey {
                 | DhtKey::DnsZone(_)
                 | DhtKey::DnsRecord(_, _)
                 | DhtKey::AnycastNode(_)
+                | DhtKey::GlobalAiBotList
         )
     }
 
@@ -287,6 +296,7 @@ impl DhtKey {
             DhtKey::DnsRecord(_, _) => "dns_record",
             DhtKey::DnsDomainRegistration(_) => "dns_domain_registration",
             DhtKey::AnycastNode(_) => "anycast_node",
+            DhtKey::GlobalAiBotList => "global_ai_bot_list",
         }
     }
 
@@ -317,6 +327,7 @@ impl DhtKey {
             DhtKey::DnsRecord(_, _) => Some(SignedRecordType::DnsRecord),
             DhtKey::DnsDomainRegistration(_) => Some(SignedRecordType::DnsDomainRegistration),
             DhtKey::AnycastNode(_) => None,
+            DhtKey::GlobalAiBotList => Some(SignedRecordType::GlobalAiBotList),
         }
     }
 

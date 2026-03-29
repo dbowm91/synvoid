@@ -68,6 +68,7 @@ impl MeshMessage {
             Self::GlobalNodeBlocklistUpdate { source_node_id, .. } => {
                 Some(source_node_id.as_str().into())
             }
+            Self::AiBotListUpdate { source_node_id, .. } => Some(source_node_id.as_str().into()),
             Self::SiteConfigSync { request_id, .. } => Some(request_id.as_str().into()),
             Self::UpstreamBlocked {
                 mesh_identifier,

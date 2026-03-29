@@ -55,6 +55,7 @@ pub enum SignedRecordType {
     DnsZone,
     DnsRecord,
     DnsDomainRegistration,
+    GlobalAiBotList,
 }
 
 impl SignedRecordType {
@@ -87,6 +88,7 @@ impl SignedRecordType {
                 | SignedRecordType::YaraRuleVersion
                 | SignedRecordType::DnsZone
                 | SignedRecordType::DnsRecord
+                | SignedRecordType::GlobalAiBotList
         )
     }
 
@@ -123,6 +125,7 @@ impl SignedRecordType {
             SignedRecordType::DnsZone => Some(Duration::from_secs(3600)),
             SignedRecordType::DnsRecord => Some(Duration::from_secs(300)),
             SignedRecordType::DnsDomainRegistration => Some(Duration::from_secs(600)),
+            SignedRecordType::GlobalAiBotList => Some(Duration::from_secs(86400)),
         }
     }
 
@@ -421,6 +424,7 @@ impl TtlManager {
             SignedRecordType::DnsZone => self.node_info_ttl,
             SignedRecordType::DnsRecord => self.upstream_ttl,
             SignedRecordType::DnsDomainRegistration => Duration::from_secs(600),
+            SignedRecordType::GlobalAiBotList => Duration::from_secs(86400),
         }
     }
 

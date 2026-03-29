@@ -205,13 +205,13 @@ Items deferred from Waves 2-4 execution. These remain active work items for futu
 
 ## Phase 10: Feature Work (Wave 4 remaining)
 
-### 10.1d DHT Integration for Bot List Updates
+### ~~10.1d DHT Integration for Bot List Updates~~ ✅ COMPLETE
 **Source**: `plan_bots.md`
-- Global node pushes bot list updates to mesh peers via DHT
-- Add `GlobalAiBotList` DHT key type in `src/mesh/dht/keys.rs`
-- `AiBotEntry` struct with pattern, action (block/allow), source, timestamp
-- `BotAction` enum: `Add`, `Remove`, `Update`
-- New mesh message variant for bot list sync
+- Added `GlobalAiBotList` DHT key type in `src/mesh/dht/keys.rs`
+- Added `AiBotEntry` struct with pattern, action, source, timestamp, expires_at
+- Added `BotAction` enum: `Add`, `Remove`, `Update`
+- Added `MeshMessage::AiBotListUpdate` variant with protobuf encode/decode
+- Added `SignedRecordType::GlobalAiBotList` with 24h TTL, public, privileged
 
 ### 10.3 Plugin System Completion (remaining)
 **Source**: `plan_plugins.md`
@@ -221,11 +221,12 @@ Items deferred from Waves 2-4 execution. These remain active work items for futu
 - **Router integration**: Wire `AxumDynamic` backend type into proxy pipeline (currently `BackendType::AxumDynamic` is never matched in any HTTP handler)
 - **PluginAppManager**: Lifecycle management for load/unload/reload
 
-### 10.4 Image Poisoning Configuration
+### ~~10.4 Image Poisoning Configuration~~ ✅ COMPLETE
 **Source**: `plan_security_scalability2.md`
-- `SiteImagePoisonConfig` with per-site enable/disable, protection level, seed, intensity
-- Currently hardcoded: seed=42, intensity=0.5, level=Standard
-- MAC key configuration for cryptographic payload verification
+- Added `SiteImagePoisonConfig` struct with per-site: enable/disable, protection level, seed, intensity, max_dimension, jpeg_quality
+- Image poisoning now uses site config instead of hardcoded values (seed=42, intensity=0.5, level=Standard)
+- Poisoning disabled by default (`enabled: false`), must be explicitly enabled per-site
+- All config fields wired to `cloakrs::ProtectionContext` builder methods
 
 ---
 
@@ -236,13 +237,13 @@ Items deferred from Waves 2-4 execution. These remain active work items for futu
 - Group 101 IPC `Message` variants into inner enums by concern (Lifecycle, ThreatIntel, Cache, Command, Dns, Upgrade, Drain)
 - High-risk refactor: every IPC consumer must be updated
 
-### 12.4 Dependency Upgrades
+### 12.4 Dependency Upgrades (partial)
 **Source**: `plan_sec.md`
-| Crate | Action | Risk |
-|-------|--------|------|
-| `wasmtime` 36→43 | Major upgrade, eliminates ~80 duplicate crates | High |
-| `boringtun` → `defguard_boringtun` | Community fork, actively maintained | Low |
-| `lightningcss` alpha bump | Stay current | Low |
+| Crate | Action | Risk | Status |
+|-------|--------|------|--------|
+| `wasmtime` 36→43 | Major upgrade, eliminates ~80 duplicate crates | High | **Deferred** - needs dedicated migration |
+| `boringtun` → `defguard_boringtun` | Community fork, actively maintained | Low | ✅ **Complete** - v0.6.5, imports updated |
+| `lightningcss` alpha bump | Stay current | Low | ✅ **Complete** - alpha.70 → alpha.71 |
 
 ---
 
@@ -255,6 +256,6 @@ Items deferred from Waves 2-4 execution. These remain active work items for futu
 | 5 | 12 items (5.1-5.12 all) | 0 items | All performance items done |
 | 6 | 10 items (6.1-6.10 all) | 0 items | All code quality items done |
 | 7 | 3 items (7.1-7.3 all) | 0 items | All TLS items done |
-| 10 | 4 items (10.1a-10.4 partial) | 4 items | DHT bot sync, WASM plugins, hot reload, image config |
+| 10 | 6 items (10.1a-10.1d, 10.4) | 2 items | WASM plugins, hot reload still deferred |
 | 11 | 11 items (11.1-11.11 all) | 0 items | All admin panel items done |
-| 12 | 3 items (12.1,12.3,12.5) | 2 items | IPC organization, dep upgrades |
+| 12 | 4 items (12.1,12.3,12.5, 12.4 partial) | 1 item | IPC organization deferred; wasmtime upgrade deferred; boringtun+lightningcss done |

@@ -1850,6 +1850,41 @@ impl From<&MeshMessage> for proto::MeshMessage {
                     },
                 )),
             },
+            MeshMessage::AiBotListUpdate {
+                bot_list,
+                timestamp,
+                source_node_id,
+                signature,
+            } => proto::MeshMessage {
+                message_type: 126,
+                payload: Some(proto::mesh_message::Payload::AiBotListUpdate(
+                    proto::AiBotListUpdate {
+                        bot_list: Some(proto::GlobalAiBotList {
+                            entries: bot_list
+                                .entries
+                                .iter()
+                                .map(|e| proto::AiBotEntry {
+                                    pattern: e.pattern.clone(),
+                                    action: match e.action {
+                                        crate::mesh::dht::BotAction::Add => 0,
+                                        crate::mesh::dht::BotAction::Remove => 1,
+                                        crate::mesh::dht::BotAction::Update => 2,
+                                    },
+                                    source: e.source.clone(),
+                                    timestamp: e.timestamp,
+                                    expires_at: e.expires_at,
+                                })
+                                .collect(),
+                            last_updated: bot_list.last_updated,
+                            updated_by: bot_list.updated_by.clone(),
+                            signature: bot_list.signature.clone(),
+                        }),
+                        timestamp: *timestamp,
+                        source_node_id: source_node_id.to_string(),
+                        signature: signature.clone(),
+                    },
+                )),
+            },
             MeshMessage::AnycastNodeRegistration {
                 request_id,
                 node_id,

@@ -723,6 +723,12 @@ pub enum MeshMessage {
         source_node_id: ArcStr,
         signature: Vec<u8>,
     },
+    AiBotListUpdate {
+        bot_list: super::dht::GlobalAiBotList,
+        timestamp: u64,
+        source_node_id: ArcStr,
+        signature: Vec<u8>,
+    },
     OriginKeyQuery {
         request_id: ArcStr,
         mesh_id: ArcStr,

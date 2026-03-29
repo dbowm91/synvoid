@@ -1153,6 +1153,36 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                     signature: b.signature,
                 })
             }
+            proto::mesh_message::Payload::AiBotListUpdate(a) => {
+                let bot_list = a.bot_list.unwrap_or_default();
+                let entries: Vec<crate::mesh::dht::AiBotEntry> = bot_list
+                    .entries
+                    .into_iter()
+                    .map(|e| crate::mesh::dht::AiBotEntry {
+                        pattern: e.pattern,
+                        action: match e.action {
+                            0 => crate::mesh::dht::BotAction::Add,
+                            1 => crate::mesh::dht::BotAction::Remove,
+                            _ => crate::mesh::dht::BotAction::Update,
+                        },
+                        source: e.source,
+                        timestamp: e.timestamp,
+                        expires_at: e.expires_at,
+                    })
+                    .collect();
+                let ai_bot_list = crate::mesh::dht::GlobalAiBotList {
+                    entries,
+                    last_updated: bot_list.last_updated,
+                    updated_by: bot_list.updated_by,
+                    signature: bot_list.signature,
+                };
+                Ok(MeshMessage::AiBotListUpdate {
+                    bot_list: ai_bot_list,
+                    timestamp: a.timestamp,
+                    source_node_id: a.source_node_id.into(),
+                    signature: a.signature,
+                })
+            }
             proto::mesh_message::Payload::AnycastNodeRegistration(r) => {
                 Ok(MeshMessage::AnycastNodeRegistration {
                     request_id: r.request_id.into(),
