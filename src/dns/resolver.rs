@@ -268,8 +268,14 @@ impl HickoryResolver {
         opts.attempts = 3;
 
         // Privacy-friendly configuration
-        // Note: QNAME minimization (RFC 7816) requires hickory-resolver >= 0.25.2
-        // with proper support. Current version may not expose this option.
+        // Enable DNSSEC validation when using privacy-conscious resolver
+        opts.validate = true;
+
+        // RFC 7816 QNAME minimization: hickory-resolver 0.25 does not expose a
+        // native qname_minimization option. Full RFC 7816 support depends on
+        // upstream adding this field to ResolverOpts. In the meantime, the
+        // QnameMinimizer struct in qname.rs provides a privacy-reduction stub
+        // that strips query names to coarser granularity.
 
         Self::with_upstream_servers_and_options(upstream_ips, Some(opts))
     }

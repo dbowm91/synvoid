@@ -619,4 +619,128 @@ mod tests {
             assert_eq!(decision, RateLimitDecision::Allowed);
         }
     }
+
+    #[test]
+    fn test_slotted_ip_rate_limiter_at_limit() {
+        let config = IpRateLimitConfig {
+            per_second: 5,
+            ..Default::default()
+        };
+        let limiter = SlottedIpRateLimiter::new(config);
+
+        let ip: IpAddr = "192.168.1.2".parse().unwrap();
+
+        for _ in 0..5 {
+            let decision = limiter.check_and_increment(ip);
+            assert_eq!(decision, RateLimitDecision::Allowed);
+        }
+    }
+
+    #[test]
+    fn test_slotted_ip_rate_limiter_over_limit() {
+        let config = IpRateLimitConfig {
+            per_second: 5,
+            ..Default::default()
+        };
+        let limiter = SlottedIpRateLimiter::new(config);
+
+        let ip: IpAddr = "192.168.1.3".parse().unwrap();
+
+        for _ in 0..5 {
+            assert_eq!(limiter.check_and_increment(ip), RateLimitDecision::Allowed);
+        }
+
+        let decision = limiter.check_and_increment(ip);
+        assert!(matches!(decision, RateLimitDecision::Limited { .. }));
+    }
+
+    #[test]
+    fn test_global_rate_limiter_at_limit() {
+        let config = GlobalRateLimitConfig {
+            per_second: 3,
+            ..Default::default()
+        };
+        let limiter = GlobalRateLimiter::new(config);
+
+        for _ in 0..3 {
+            assert_eq!(limiter.check_and_increment(), RateLimitDecision::Allowed);
+        }
+    }
+
+    #[test]
+    fn test_global_rate_limiter_over_limit() {
+        let config = GlobalRateLimitConfig {
+            per_second: 3,
+            blackhole_entry_threshold: 10.0,
+            ..Default::default()
+        };
+        let limiter = GlobalRateLimiter::new(config);
+
+        for _ in 0..3 {
+            assert_eq!(limiter.check_and_increment(), RateLimitDecision::Allowed);
+        }
+
+        let decision = limiter.check_and_increment();
+        assert!(matches!(decision, RateLimitDecision::Limited { .. }));
+    }
+
+    #[test]
+    fn test_atomic_sliding_window_count_after_rotation() {
+        let window = AtomicSlidingWindow::new(1, 10);
+
+        let _ = window.increment(100);
+        let _ = window.increment(100);
+        let _ = window.increment(100);
+
+        assert_eq!(window.get_count(100), 3);
+    }
+
+    #[test]
+    fn test_atomic_sliding_window_reset() {
+        let window = AtomicSlidingWindow::new(1, 10);
+
+        let _ = window.increment(100);
+        let _ = window.increment(100);
+        assert_eq!(window.get_count(100), 2);
+
+        window.reset();
+        assert_eq!(window.get_count(100), 0);
+    }
+
+    #[test]
+    fn test_global_rate_limiter_stats() {
+        let config = GlobalRateLimitConfig {
+            per_second: 100,
+            ..Default::default()
+        };
+        let limiter = GlobalRateLimiter::new(config);
+
+        for _ in 0..10 {
+            let _ = limiter.check_and_increment();
+        }
+
+        let stats = limiter.get_stats();
+        assert!(stats.per_second >= 10);
+    }
+
+    #[test]
+    fn test_slotted_ip_different_ips_independent() {
+        let config = IpRateLimitConfig {
+            per_second: 2,
+            ..Default::default()
+        };
+        let limiter = SlottedIpRateLimiter::new(config);
+
+        let ip1: IpAddr = "10.1.0.1".parse().unwrap();
+        let ip2: IpAddr = "10.2.0.1".parse().unwrap();
+
+        assert_eq!(limiter.check_and_increment(ip1), RateLimitDecision::Allowed);
+        assert_eq!(limiter.check_and_increment(ip1), RateLimitDecision::Allowed);
+        assert!(matches!(
+            limiter.check_and_increment(ip1),
+            RateLimitDecision::Limited { .. }
+        ));
+
+        assert_eq!(limiter.check_and_increment(ip2), RateLimitDecision::Allowed);
+    }
 }

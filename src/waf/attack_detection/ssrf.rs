@@ -350,4 +350,140 @@ mod tests {
             .detect("http://127.0.0.1:8080/admin", InputLocation::QueryString)
             .is_some());
     }
+
+    #[test]
+    fn test_ssrf_attack_type_field() {
+        let detector = SsrfDetector::new(2, &[], true, vec![]);
+        let result = detector
+            .detect("http://localhost/admin", InputLocation::QueryString)
+            .unwrap();
+        assert_eq!(result.attack_type, AttackType::Ssrf);
+    }
+
+    #[test]
+    fn test_ssrf_attack_type_metadata() {
+        let detector = SsrfDetector::new(2, &[], true, vec![]);
+        let result = detector
+            .detect(
+                "http://169.254.169.254/latest/meta-data",
+                InputLocation::QueryString,
+            )
+            .unwrap();
+        assert_eq!(result.attack_type, AttackType::Ssrf);
+        assert!(result.matched_pattern.is_some());
+    }
+
+    #[test]
+    fn test_ssrf_url_encoded_ip() {
+        let detector = SsrfDetector::new(2, &[], true, vec![]);
+        assert!(detector
+            .detect("http://%3127.0.0.1/admin", InputLocation::QueryString)
+            .is_some());
+    }
+
+    #[test]
+    fn test_ssrf_case_insensitive_localhost_uppercase() {
+        let detector = SsrfDetector::new(2, &[], true, vec![]);
+        assert!(detector
+            .detect("http://LOCALHOST/admin", InputLocation::QueryString)
+            .is_some());
+    }
+
+    #[test]
+    fn test_ssrf_case_insensitive_localhost_mixed() {
+        let detector = SsrfDetector::new(2, &[], true, vec![]);
+        assert!(detector
+            .detect("http://LocalHost/admin", InputLocation::QueryString)
+            .is_some());
+    }
+
+    #[test]
+    fn test_ssrf_case_insensitive_localhost_alternating() {
+        let detector = SsrfDetector::new(2, &[], true, vec![]);
+        assert!(detector
+            .detect("http://lOcAlHoSt/admin", InputLocation::QueryString)
+            .is_some());
+    }
+
+    #[test]
+    fn test_ssrf_ipv6_loopback_bare() {
+        let detector = SsrfDetector::new(2, &[], true, vec![]);
+        assert!(detector
+            .detect("http://::1/admin", InputLocation::QueryString)
+            .is_some());
+    }
+
+    #[test]
+    fn test_ssrf_ipv6_loopback_bracketed() {
+        let detector = SsrfDetector::new(2, &[], true, vec![]);
+        assert!(detector
+            .detect("http://[::1]/admin", InputLocation::QueryString)
+            .is_some());
+    }
+
+    #[test]
+    fn test_ssrf_cloud_metadata_path() {
+        let detector = SsrfDetector::new(2, &[], true, vec![]);
+        let result = detector
+            .detect(
+                "http://169.254.169.254/computeMetadata/v1/",
+                InputLocation::PostBody,
+            )
+            .unwrap();
+        assert_eq!(result.attack_type, AttackType::Ssrf);
+        assert!(matches!(result.input_location, InputLocation::PostBody));
+    }
+
+    #[test]
+    fn test_ssrf_octal_ip_bypass_not_detected() {
+        let detector = SsrfDetector::new(2, &[], true, vec![]);
+        assert!(detector
+            .detect("http://0177.0.0.1/admin", InputLocation::QueryString)
+            .is_none());
+    }
+
+    #[test]
+    fn test_ssrf_decimal_ip_bypass_not_detected() {
+        let detector = SsrfDetector::new(2, &[], true, vec![]);
+        assert!(detector
+            .detect("http://2130706433/admin", InputLocation::QueryString)
+            .is_none());
+    }
+
+    #[test]
+    fn test_ssrf_input_location_preserved() {
+        let detector = SsrfDetector::new(2, &[], true, vec![]);
+        let result = detector
+            .detect("http://192.168.1.1/secret", InputLocation::Path)
+            .unwrap();
+        assert!(matches!(result.input_location, InputLocation::Path));
+    }
+
+    #[test]
+    fn test_ssrf_matched_pattern_present() {
+        let detector = SsrfDetector::new(2, &[], true, vec![]);
+        let result = detector
+            .detect("http://localhost/admin", InputLocation::QueryString)
+            .unwrap();
+        assert!(result.matched_pattern.is_some());
+    }
+
+    #[test]
+    fn test_ssrf_no_block_private_allows_private() {
+        let detector = SsrfDetector::new(2, &[], false, vec![]);
+        assert!(detector
+            .detect("http://10.0.0.1/admin", InputLocation::QueryString)
+            .is_none());
+    }
+
+    #[test]
+    fn test_ssrf_no_block_private_still_detects_pattern_ips() {
+        let detector = SsrfDetector::new(2, &[], false, vec![]);
+        assert!(detector
+            .detect(
+                "http://169.254.169.254/latest/meta-data",
+                InputLocation::QueryString
+            )
+            .is_some());
+    }
 }

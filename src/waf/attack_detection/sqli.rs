@@ -61,4 +61,60 @@ mod tests {
         let input = b"hello world";
         assert!(SqliDetector::detect(input, InputLocation::QueryString).is_none());
     }
+
+    #[test]
+    fn test_sqli_attack_type_field() {
+        let input = b"1' OR '1'='1";
+        let result = SqliDetector::detect(input, InputLocation::QueryString).unwrap();
+        assert_eq!(result.attack_type, AttackType::Sqli);
+    }
+
+    #[test]
+    fn test_sqli_union_select_all() {
+        let input = b"1 UNION SELECT * FROM users";
+        assert!(SqliDetector::detect(input, InputLocation::QueryString).is_some());
+    }
+
+    #[test]
+    fn test_sqli_comment_bypass() {
+        let input = b"1'/**/OR/**/1=1--";
+        assert!(SqliDetector::detect(input, InputLocation::QueryString).is_some());
+    }
+
+    #[test]
+    fn test_sqli_hex_encoded() {
+        let input = b"0x27 OR 0x31=0x31";
+        assert!(SqliDetector::detect(input, InputLocation::QueryString).is_some());
+    }
+
+    #[test]
+    fn test_sqli_stacked_queries() {
+        let input = b"1; DROP TABLE users--";
+        assert!(SqliDetector::detect(input, InputLocation::QueryString).is_some());
+    }
+
+    #[test]
+    fn test_sqli_input_location_preserved() {
+        let input = b"1' OR '1'='1";
+        let result = SqliDetector::detect(input, InputLocation::PostBody).unwrap();
+        assert!(matches!(result.input_location, InputLocation::PostBody));
+    }
+
+    #[test]
+    fn test_sqli_numeric_benign() {
+        let input = b"42";
+        assert!(SqliDetector::detect(input, InputLocation::QueryString).is_none());
+    }
+
+    #[test]
+    fn test_sqli_boolean_based() {
+        let input = b"1' AND 1=1--";
+        assert!(SqliDetector::detect(input, InputLocation::QueryString).is_some());
+    }
+
+    #[test]
+    fn test_sqli_sleep_based() {
+        let input = b"1' AND SLEEP(5)--";
+        assert!(SqliDetector::detect(input, InputLocation::QueryString).is_some());
+    }
 }

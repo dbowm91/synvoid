@@ -284,4 +284,147 @@ mod tests {
 
         assert!(!entry.is_expired());
     }
+
+    #[test]
+    fn test_violation_multiple_entries() {
+        let config = ThreatLevelEscalation::default();
+        let tracker = ViolationTracker::new(config, None, 60, 10);
+
+        let ip: IpAddr = "10.0.0.1".parse().unwrap();
+        let count1 = tracker.record_violation(ip, "first", 1);
+        assert_eq!(count1, 1);
+
+        let count2 = tracker.record_violation(ip, "second", 1);
+        assert_eq!(count2, 2);
+
+        let count3 = tracker.record_violation(ip, "third", 1);
+        assert_eq!(count3, 3);
+
+        let violations = tracker.check_violations(ip);
+        assert_eq!(violations, 3);
+    }
+
+    #[test]
+    fn test_violation_threshold_breach() {
+        let config = ThreatLevelEscalation {
+            enabled: true,
+            violations_before_block: 3,
+            violation_window_secs: 300,
+            excluded_ips: vec![],
+        };
+        let tracker = ViolationTracker::new(config, None, 60, 10);
+
+        let ip: IpAddr = "10.0.0.2".parse().unwrap();
+        assert!(!tracker.should_block(ip));
+
+        tracker.record_violation(ip, "v1", 1);
+        assert!(!tracker.should_block(ip));
+
+        tracker.record_violation(ip, "v2", 1);
+        assert!(!tracker.should_block(ip));
+
+        tracker.record_violation(ip, "v3", 1);
+        assert!(tracker.should_block(ip));
+    }
+
+    #[test]
+    fn test_violation_cleanup_expired() {
+        let config = ThreatLevelEscalation {
+            enabled: true,
+            violations_before_block: 3,
+            violation_window_secs: 300,
+            excluded_ips: vec![],
+        };
+        let tracker = ViolationTracker::new(config, None, 60, 10);
+
+        let ip: IpAddr = "10.0.0.3".parse().unwrap();
+        let mut entry = ViolationEntry::new(ip, "test".to_string(), 1, 0);
+        entry.expires_at = 0;
+
+        let key = ViolationEntry::key(&ip);
+        tracker.store.write().insert(key, entry);
+
+        let violations = tracker.check_violations(ip);
+        assert_eq!(violations, 0);
+    }
+
+    #[test]
+    fn test_violation_different_ips_independent() {
+        let config = ThreatLevelEscalation {
+            enabled: true,
+            violations_before_block: 2,
+            violation_window_secs: 300,
+            excluded_ips: vec![],
+        };
+        let tracker = ViolationTracker::new(config, None, 60, 10);
+
+        let ip1: IpAddr = "10.0.0.4".parse().unwrap();
+        let ip2: IpAddr = "10.0.0.5".parse().unwrap();
+
+        tracker.record_violation(ip1, "v1", 1);
+        tracker.record_violation(ip1, "v2", 1);
+
+        assert!(tracker.should_block(ip1));
+        assert!(!tracker.should_block(ip2));
+
+        let violations_ip1 = tracker.check_violations(ip1);
+        let violations_ip2 = tracker.check_violations(ip2);
+        assert_eq!(violations_ip1, 2);
+        assert_eq!(violations_ip2, 0);
+    }
+
+    #[test]
+    fn test_violation_increment_updates_threat_level() {
+        let mut entry = ViolationEntry::new("1.2.3.4".parse().unwrap(), "test".to_string(), 1, 300);
+        assert_eq!(entry.threat_level_at_violation, 1);
+        assert_eq!(entry.violations_count, 1);
+
+        entry.increment(5, 300);
+        assert_eq!(entry.threat_level_at_violation, 5);
+        assert_eq!(entry.violations_count, 2);
+    }
+
+    #[test]
+    fn test_violation_clear() {
+        let config = ThreatLevelEscalation::default();
+        let tracker = ViolationTracker::new(config, None, 60, 10);
+
+        let ip: IpAddr = "10.0.0.6".parse().unwrap();
+        tracker.record_violation(ip, "test", 1);
+        assert_eq!(tracker.check_violations(ip), 1);
+
+        tracker.clear_violations(ip);
+        assert_eq!(tracker.check_violations(ip), 0);
+    }
+
+    #[test]
+    fn test_violation_disabled_config() {
+        let config = ThreatLevelEscalation {
+            enabled: false,
+            violations_before_block: 1,
+            violation_window_secs: 300,
+            excluded_ips: vec![],
+        };
+        let tracker = ViolationTracker::new(config, None, 60, 10);
+
+        let ip: IpAddr = "10.0.0.7".parse().unwrap();
+        tracker.record_violation(ip, "test", 1);
+        tracker.record_violation(ip, "test", 1);
+        assert!(!tracker.should_block(ip));
+    }
+
+    #[test]
+    fn test_violation_excluded_ip() {
+        let config = ThreatLevelEscalation {
+            enabled: true,
+            violations_before_block: 1,
+            violation_window_secs: 300,
+            excluded_ips: vec!["10.0.0.8".to_string()],
+        };
+        let tracker = ViolationTracker::new(config, None, 60, 10);
+
+        let ip: IpAddr = "10.0.0.8".parse().unwrap();
+        let count = tracker.record_violation(ip, "test", 1);
+        assert_eq!(count, 0);
+    }
 }

@@ -114,6 +114,11 @@ impl RecursiveDnsServer {
                         HickoryResolver::from_system_config()
                             .map_err(|e| RecursiveDnsError::UpstreamFailed(e.to_string()))?,
                     )
+                } else if config.qname_minimization {
+                    Arc::new(
+                        HickoryResolver::with_qname_minimization(&upstream_ips)
+                            .map_err(|e| RecursiveDnsError::UpstreamFailed(e.to_string()))?,
+                    )
                 } else {
                     Arc::new(
                         HickoryResolver::with_upstream_servers(&upstream_ips)

@@ -11,6 +11,7 @@ pub struct ConnectionLimits {
     max_records_per_response: usize,
     max_tcp_idle_time: Duration,
     max_tcp_query_time: Duration,
+    max_amplification_ratio: f32,
     connection_count: AtomicUsize,
     query_count: AtomicUsize,
     degraded_mode: RunningFlag,
@@ -36,6 +37,7 @@ impl ConnectionLimits {
             max_records_per_response,
             max_tcp_idle_time: Duration::from_secs(max_tcp_idle_time_secs),
             max_tcp_query_time: Duration::from_secs(max_tcp_query_time_secs),
+            max_amplification_ratio: 2.0,
             connection_count: AtomicUsize::new(0),
             query_count: AtomicUsize::new(0),
             degraded_mode: RunningFlag::new(),
@@ -193,6 +195,30 @@ impl ConnectionLimits {
         Ok(())
     }
 
+    pub fn validate_amplification(
+        &self,
+        query_size: usize,
+        response_size: usize,
+    ) -> Result<(), ConnectionLimitError> {
+        if query_size == 0 {
+            return Ok(());
+        }
+        let ratio = response_size as f32 / query_size as f32;
+        if ratio > self.max_amplification_ratio {
+            return Err(ConnectionLimitError::AmplificationExceeded {
+                query_size,
+                response_size,
+                ratio,
+                max_ratio: self.max_amplification_ratio,
+            });
+        }
+        Ok(())
+    }
+
+    pub fn set_max_amplification_ratio(&mut self, ratio: f32) {
+        self.max_amplification_ratio = ratio.max(1.0);
+    }
+
     pub fn get_stats(&self) -> ConnectionStats {
         ConnectionStats {
             current_connections: self.connection_count.load(Ordering::Relaxed),
@@ -268,9 +294,24 @@ fn rand_f32() -> f32 {
 pub enum ConnectionLimitError {
     MaxConnectionsReached,
     MaxQueriesReached,
-    QueryTooLarge { size: usize, max: usize },
-    ResponseTooLarge { size: usize, max: usize },
-    TooManyRecords { count: usize, max: usize },
+    QueryTooLarge {
+        size: usize,
+        max: usize,
+    },
+    ResponseTooLarge {
+        size: usize,
+        max: usize,
+    },
+    TooManyRecords {
+        count: usize,
+        max: usize,
+    },
+    AmplificationExceeded {
+        query_size: usize,
+        response_size: usize,
+        ratio: f32,
+        max_ratio: f32,
+    },
     ConnectionTimeout,
     QueryTimeout,
     DegradationReject,
@@ -294,6 +335,18 @@ impl std::fmt::Display for ConnectionLimitError {
             }
             ConnectionLimitError::TooManyRecords { count, max } => {
                 write!(f, "Record count {} exceeds maximum {}", count, max)
+            }
+            ConnectionLimitError::AmplificationExceeded {
+                query_size,
+                response_size,
+                ratio,
+                max_ratio,
+            } => {
+                write!(
+                    f,
+                    "TCP amplification ratio {:.1} (query {} bytes, response {} bytes) exceeds maximum {:.1}",
+                    ratio, query_size, response_size, max_ratio
+                )
             }
             ConnectionLimitError::ConnectionTimeout => {
                 write!(f, "Connection idle timeout")

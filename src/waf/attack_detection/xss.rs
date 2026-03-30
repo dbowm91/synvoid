@@ -58,4 +58,60 @@ mod tests {
         let input = b"<p>Hello, world!</p>";
         assert!(XssDetector::detect(input, InputLocation::QueryString).is_none());
     }
+
+    #[test]
+    fn test_xss_attack_type_field() {
+        let input = b"<script>alert('xss')</script>";
+        let result = XssDetector::detect(input, InputLocation::QueryString).unwrap();
+        assert_eq!(result.attack_type, AttackType::Xss);
+    }
+
+    #[test]
+    fn test_xss_svg_onload() {
+        let input = b"<svg onload=alert(1)>";
+        assert!(XssDetector::detect(input, InputLocation::QueryString).is_some());
+    }
+
+    #[test]
+    fn test_xss_onmouseover() {
+        let input = b"<div onmouseover=alert(1)>";
+        assert!(XssDetector::detect(input, InputLocation::QueryString).is_some());
+    }
+
+    #[test]
+    fn test_xss_onfocus() {
+        let input = b"<input onfocus=alert(1)>";
+        assert!(XssDetector::detect(input, InputLocation::QueryString).is_some());
+    }
+
+    #[test]
+    fn test_xss_encoded_script_tags_not_detected() {
+        let input = b"%3Cscript%3Ealert(1)%3C/script%3E";
+        assert!(XssDetector::detect(input, InputLocation::QueryString).is_none());
+    }
+
+    #[test]
+    fn test_xss_img_onerror() {
+        let input = b"<img src=x onerror=alert(1)>";
+        assert!(XssDetector::detect(input, InputLocation::QueryString).is_some());
+    }
+
+    #[test]
+    fn test_xss_input_location_preserved() {
+        let input = b"<script>alert('xss')</script>";
+        let result = XssDetector::detect(input, InputLocation::PostBody).unwrap();
+        assert!(matches!(result.input_location, InputLocation::PostBody));
+    }
+
+    #[test]
+    fn test_xss_plain_text_benign() {
+        let input = b"just some regular text without any tags";
+        assert!(XssDetector::detect(input, InputLocation::QueryString).is_none());
+    }
+
+    #[test]
+    fn test_xss_href_javascript() {
+        let input = b"<a href=javascript:alert(1)>";
+        assert!(XssDetector::detect(input, InputLocation::QueryString).is_some());
+    }
 }

@@ -14,6 +14,31 @@ use std::result::Result;
 use ed25519_dalek::{Signer, SigningKey};
 use sha2::{Digest, Sha256, Sha384};
 
+/// RNG adapter that wraps getrandom to implement rand_core 0.6 traits.
+/// Required because rsa 0.9 depends on rand_core 0.6 while our project uses rand 0.9.
+struct CryptoRngAdapter;
+
+impl rand_core_06::RngCore for CryptoRngAdapter {
+    fn next_u32(&mut self) -> u32 {
+        let mut buf = [0u8; 4];
+        getrandom::getrandom(&mut buf).expect("getrandom failed");
+        u32::from_le_bytes(buf)
+    }
+    fn next_u64(&mut self) -> u64 {
+        let mut buf = [0u8; 8];
+        getrandom::getrandom(&mut buf).expect("getrandom failed");
+        u64::from_le_bytes(buf)
+    }
+    fn fill_bytes(&mut self, dest: &mut [u8]) {
+        getrandom::getrandom(dest).expect("getrandom failed");
+    }
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core_06::Error> {
+        getrandom::getrandom(dest).map_err(rand_core_06::Error::new)
+    }
+}
+
+impl rand_core_06::CryptoRng for CryptoRngAdapter {}
+
 use super::crypto_rng;
 
 #[derive(Debug, Clone, Copy)]
@@ -291,7 +316,55 @@ impl DnsSecKeyManager {
                 (public, private, key_tag, flags, key_size)
             }
             Algorithm::RSA => {
-                return Err("RSA key generation not yet implemented. Use Ed25519 or generate RSA keys externally with openssl and load via config.".to_string());
+                use rsa::traits::PublicKeyParts;
+
+                let bits = if _rsa_key_size == 0 {
+                    2048_usize
+                } else {
+                    _rsa_key_size as usize
+                };
+                if !matches!(bits, 1024 | 2048 | 4096) {
+                    return Err(format!(
+                        "Unsupported RSA key size {}. Use 1024, 2048, or 4096.",
+                        bits
+                    ));
+                }
+
+                let private_key = rsa::RsaPrivateKey::new(&mut CryptoRngAdapter, bits)
+                    .map_err(|e| format!("RSA key generation failed: {}", e))?;
+                let public_key_rsa = private_key.to_public_key();
+
+                let e_bytes = public_key_rsa.e().to_bytes_be();
+                let n_bytes = public_key_rsa.n().to_bytes_be();
+
+                let mut public_dnskey = Vec::new();
+                if e_bytes.len() > 255 {
+                    public_dnskey.push(0);
+                    public_dnskey.push((e_bytes.len() >> 8) as u8);
+                    public_dnskey.push((e_bytes.len() & 0xFF) as u8);
+                } else {
+                    public_dnskey.push(e_bytes.len() as u8);
+                }
+                public_dnskey.extend_from_slice(&e_bytes);
+                public_dnskey.extend_from_slice(&n_bytes);
+
+                let private_der = {
+                    use rsa::pkcs8::EncodePrivateKey;
+                    let der = private_key
+                        .to_pkcs8_der()
+                        .map_err(|e| format!("RSA private key DER encoding failed: {}", e))?;
+                    der.as_bytes().to_vec()
+                };
+
+                let flags = if key_type == KeyType::KSK { 257 } else { 256 };
+                let key_tag = calculate_key_tag(flags, 3, Algorithm::RSA.to_u8(), &public_dnskey);
+                (
+                    public_dnskey,
+                    private_der,
+                    key_tag,
+                    flags,
+                    Some(bits as u32),
+                )
             }
         };
 
@@ -933,7 +1006,20 @@ pub fn sign_data(data: &[u8], key: &ZoneSigningKey) -> Result<Vec<u8>, String> {
             let sig = signing_key.sign(data);
             Ok(sig.to_bytes().to_vec())
         }
-        Algorithm::RSA => Err("RSA signing not implemented - use Ed25519".to_string()),
+        Algorithm::RSA => {
+            use rsa::pkcs1v15::Pkcs1v15Sign;
+            use rsa::pkcs8::DecodePrivateKey;
+            use rsa::traits::SignatureScheme;
+            use sha2::{Digest, Sha256};
+
+            let private_key = rsa::RsaPrivateKey::from_pkcs8_der(&key.private_key)
+                .map_err(|e| format!("Invalid RSA private key: {}", e))?;
+            let hashed = Sha256::digest(data);
+            let scheme = Pkcs1v15Sign::new::<Sha256>();
+            scheme
+                .sign(Some(&mut CryptoRngAdapter), &private_key, &hashed)
+                .map_err(|e| format!("RSA signing failed: {}", e))
+        }
     }
 }
 
