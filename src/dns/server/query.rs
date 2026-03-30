@@ -208,7 +208,12 @@ impl DnsServer {
                     let qname = Self::extract_query_name(&query);
                     let tsig = crate::dns::tsig::parse_tsig_from_query(&query, 22);
                     let message_id = u16::from_be_bytes([query[0], query[1]]);
-                    match zt.handle_axfr_request_messages(&qname, client_ip, tsig.as_ref(), message_id) {
+                    match zt.handle_axfr_request_messages(
+                        &qname,
+                        client_ip,
+                        tsig.as_ref(),
+                        message_id,
+                    ) {
                         Ok(messages) => {
                             for msg in messages {
                                 let len = msg.len() as u16;
@@ -230,8 +235,13 @@ impl DnsServer {
                     let serial = Self::extract_ixfr_serial(&query);
                     let tsig = crate::dns::tsig::parse_tsig_from_query(&query, 22);
                     let message_id = u16::from_be_bytes([query[0], query[1]]);
-                    match zt.handle_ixfr_request_messages(&qname, client_ip, serial, tsig.as_ref(), message_id)
-                    {
+                    match zt.handle_ixfr_request_messages(
+                        &qname,
+                        client_ip,
+                        serial,
+                        tsig.as_ref(),
+                        message_id,
+                    ) {
                         Ok(messages) => {
                             for msg in messages {
                                 let len = msg.len() as u16;

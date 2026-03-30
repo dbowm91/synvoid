@@ -355,7 +355,7 @@ Phase 1 (Foundation) ───────────────────�
 - ~~NSEC3 RFC 5155 test vectors~~ ✅ (Wave 4: base32_encode length tests fixed)
 - ~~DNSSEC signing verification tests~~ ✅ (Wave 5: 17 protocol roundtrip tests)
 - ~~End-to-end authoritative server test~~ ✅ (Wave 5: `tests/dns_server_test.rs` with 41 tests across 5 modules)
-- Add recursive resolver integration tests (`tests/dns_recursive_test.rs`) — **deferred** to future wave
+- ~~Add recursive resolver integration tests (`tests/dns_recursive_test.rs`)~~ ✅ (36 tests: cache operations, record types, cache keys, wire format, config defaults, rate limiter, firewall, cached records)
 
 ### ~~4.4 DHT Test Coverage~~ ✅ (partial)
 
@@ -363,7 +363,7 @@ Phase 1 (Foundation) ───────────────────�
 
 - ~~Add protocol encode/decode roundtrip tests~~ ✅ (Wave 5: 17 tests in integration_test.rs covering KeepAlive, Ping, Pong, SyncRequest, LookupRequest/Response, PeerHealthCheck/Response, Error, MeshAck, LookupBatchRequest, binary data, empty strings, invalid data, length-prefix framing)
 - ~~DHT integration tests~~ ✅ (Wave 5: `tests/dht_integration_test.rs` with 39 tests across 8 modules)
-- Add regional hub routing tests — **deferred** to future wave
+- ~~Add regional hub routing tests~~ ✅ (16 tests in `tests/dht_integration_test.rs`: config defaults, disabled state, global peer preference, regional separation, hubs_per_region, reputation threshold fallback, remove peer, mark offline/online, find_closest_via_hubs with local/target region preferences, disabled/limit behaviors, routing table hybrid fallback/with-hub/dedup, sync_to_regional_hub)
 
 ### ~~4.5 End-to-End Process Lifecycle Test~~ ✅
 
@@ -514,7 +514,7 @@ Refactored `tests/ipc_test.rs` to use `IpcStream` on both sides; removed manual 
 
 - ~~`src/supervisor/supervisor.rs:145` and `src/process/manager.rs:950,961` silently drop `WorkerFailed` events~~ ✅
 - ~~Add logging when send fails~~ ✅
-- Add metrics for dropped events — **deferred** to Wave 3
+- ~~Add metrics for dropped events~~ ✅ Added 4 global static counters (`DROPPED_TLS_RELOAD_EVENTS`, `DROPPED_THREAT_LEVEL_EVENTS`, `DROPPED_PROCESS_EVENTS`, `DROPPED_WORKER_EVENTS`) with `record_*`/`get_*` functions and `DroppedEventCounts` struct. Instrumented 12 call sites across 5 files: `tls/cert_resolver.rs`, `waf/threat_level/mod.rs` (3), `process/manager.rs` (3), `supervisor/supervisor.rs` (5).
 
 ---
 

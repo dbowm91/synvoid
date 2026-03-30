@@ -157,6 +157,9 @@ Items deferred from Waves 2-5 execution. These remain active work items for futu
 ### ~~6.10 Log Silent Send Failures — metrics~~ ✅ COMPLETE
 - Added `tracing::warn!` for 12 critical silent send failures across 9 files:
   `overseer/process.rs` (×2), `worker/unified_server.rs`, `worker/mod.rs`, `auth/mod.rs`, `tls/cert_resolver.rs`, `master/ipc.rs`, `waf/probe_tracker.rs`, `waf/violation_tracker.rs`, `waf/threat_level/mod.rs` (×3)
+- Added 4 global atomic counters in `src/metrics/mod.rs`: `DROPPED_TLS_RELOAD_EVENTS`, `DROPPED_THREAT_LEVEL_EVENTS`, `DROPPED_PROCESS_EVENTS`, `DROPPED_WORKER_EVENTS`
+- Instrumented 12 call sites: `tls/cert_resolver.rs` (1), `waf/threat_level/mod.rs` (3), `process/manager.rs` (3), `supervisor/supervisor.rs` (5)
+- Public API: `get_dropped_event_counts() -> DroppedEventCounts` with per-category breakdown
 
 ---
 
@@ -300,6 +303,26 @@ Items deferred from Waves 2-5 execution. These remain active work items for futu
 - `src/waf/violation_tracker.rs`: Added 7 new tests (multiple entries, threshold breach, cleanup expired, per-IP independence, increment updates, clear, disabled config, excluded IP)
 - `src/waf/ratelimit/core.rs`: Added 7 new tests (at-limit, over-limit, sliding window rotation, stats, per-IP independence)
 
+### ~~4.8 Recursive Resolver Integration Tests~~ ✅ COMPLETE
+**Source**: `plan_dns.md`, `plan_dns2.md`, `plan_dns3.md`
+- Created `tests/dns_recursive_test.rs` with 36 tests across 8 modules
+- Cache tests (13): positive insert/retrieve, negative nxdomain/nodata, miss, different types same name, invalidation by name/all, stats tracking, positive-negative separation, DNSSEC validation flag, LRU eviction
+- Record type tests (3): u16 roundtrip, unknown values, hickory RecordType conversions
+- Cache key tests (3): same-name-different-type, same-name-type-different-subnet, different-names
+- Wire format tests (6): A/AAAA question building, root question, error response RCODEs, message ID preservation, response flag
+- Config tests (4): cache defaults, DNS config defaults, rate limiter creation, firewall creation
+- Rate limiter tests (3): allows within limit, per-IP tracking, separate IPs
+- Firewall tests (3): block domain, allow non-matching, creation
+- Cached record tests (4): A data, AAAA data, MX data, TTL boundaries
+
+### ~~4.9 Regional Hub Routing Tests~~ ✅ COMPLETE
+**Source**: `plan_dht.md`, `plan_dht2.md`, `plan_dht3.md`
+- Added 16 tests to `tests/dht_integration_test.rs` in `regional_hub_routing_tests` module
+- Hub config defaults, disabled state returns empty, global peer preference, regional separation
+- hubs_per_region limit, reputation threshold fallback, remove peer, mark offline/online
+- find_closest_via_hubs: prefers local region, different target region, disabled returns empty, respects k limit
+- Routing table hybrid: fallback without hub, with hub, dedup, sync_to_regional_hub
+
 ---
 
 ## Phase 8: DNS Improvements (Wave 5 remaining)
@@ -379,9 +402,9 @@ Items deferred from Waves 2-5 execution. These remain active work items for futu
 |-------|-----------|----------|-------|
 | 2 | 12 items (2.1-2.12 all) | 0 items | All Phase 2 security fixes complete |
 | 3 | 10 items (3.1-3.9 all) | 0 items | All correctness bugs fixed |
-| 4 | 7 items (4.1-4.7 all) | 0 items | All testing items complete |
+| 4 | 9 items (4.1-4.9 all) | 0 items | All testing items complete; recursive resolver + hub routing tests added |
 | 5 | 12 items (5.1-5.12 all) | 0 items | All performance items done |
-| 6 | 10 items (6.1-6.10 all) | 0 items | All code quality items done |
+| 6 | 10 items (6.1-6.10 all) | 0 items | All code quality items done; dropped event metrics added |
 | 7 | 3 items (7.1-7.3 all) | 0 items | All TLS items done |
 | 8 | 9 items (8.1-8.9 all) | 0 items | All DNS items complete; RSA added, QNAME wired, TCP amplification done |
 | 9 | 3.7(DHT fixes), 9.1(geo routing), 9.2(transport docs), 9.3(lock consolidation) | 0 items | All Phase 9 items complete |

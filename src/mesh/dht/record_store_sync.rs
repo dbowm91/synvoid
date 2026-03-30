@@ -858,7 +858,11 @@ impl RecordStoreManager {
 
     pub fn is_propagation_complete(&self, key: &str) -> bool {
         let states = self.record_state.read();
-        states.propagation_states.get(key).map(|s| s.completed).unwrap_or(false)
+        states
+            .propagation_states
+            .get(key)
+            .map(|s| s.completed)
+            .unwrap_or(false)
     }
 
     pub fn get_propagation_state(&self, key: &str) -> Option<PropagationState> {
@@ -869,7 +873,9 @@ impl RecordStoreManager {
     pub fn cleanup_stale_propagation_states(&self, max_age_secs: u64) {
         let mut states = self.record_state.write();
         let now = Instant::now();
-        states.propagation_states.retain(|_, state| now.duration_since(state.last_update).as_secs() < max_age_secs);
+        states
+            .propagation_states
+            .retain(|_, state| now.duration_since(state.last_update).as_secs() < max_age_secs);
     }
 
     pub fn get_pending_propagations(&self) -> Vec<String> {

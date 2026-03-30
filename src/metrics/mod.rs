@@ -28,6 +28,11 @@ static STATIC_CACHE_HITS: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(
 
 static STATIC_CACHE_MISSES: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 
+static DROPPED_TLS_RELOAD_EVENTS: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+static DROPPED_THREAT_LEVEL_EVENTS: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+static DROPPED_PROCESS_EVENTS: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+static DROPPED_WORKER_EVENTS: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+
 #[derive(Debug, Clone)]
 pub struct CacheMetrics {
     pub proxy_cache_hits: u64,
@@ -86,6 +91,64 @@ pub fn get_static_cache_hits() -> u64 {
 
 pub fn get_static_cache_misses() -> u64 {
     STATIC_CACHE_MISSES.load(Ordering::Relaxed)
+}
+
+pub fn record_dropped_tls_reload_event() {
+    DROPPED_TLS_RELOAD_EVENTS.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn get_dropped_tls_reload_events() -> u64 {
+    DROPPED_TLS_RELOAD_EVENTS.load(Ordering::Relaxed)
+}
+
+pub fn record_dropped_threat_level_event() {
+    DROPPED_THREAT_LEVEL_EVENTS.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn get_dropped_threat_level_events() -> u64 {
+    DROPPED_THREAT_LEVEL_EVENTS.load(Ordering::Relaxed)
+}
+
+pub fn record_dropped_process_event() {
+    DROPPED_PROCESS_EVENTS.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn get_dropped_process_events() -> u64 {
+    DROPPED_PROCESS_EVENTS.load(Ordering::Relaxed)
+}
+
+pub fn record_dropped_worker_event() {
+    DROPPED_WORKER_EVENTS.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn get_dropped_worker_events() -> u64 {
+    DROPPED_WORKER_EVENTS.load(Ordering::Relaxed)
+}
+
+pub fn total_dropped_events() -> u64 {
+    DROPPED_TLS_RELOAD_EVENTS.load(Ordering::Relaxed)
+        + DROPPED_THREAT_LEVEL_EVENTS.load(Ordering::Relaxed)
+        + DROPPED_PROCESS_EVENTS.load(Ordering::Relaxed)
+        + DROPPED_WORKER_EVENTS.load(Ordering::Relaxed)
+}
+
+#[derive(Debug, Clone)]
+pub struct DroppedEventCounts {
+    pub tls_reload: u64,
+    pub threat_level: u64,
+    pub process: u64,
+    pub worker: u64,
+    pub total: u64,
+}
+
+pub fn get_dropped_event_counts() -> DroppedEventCounts {
+    DroppedEventCounts {
+        tls_reload: DROPPED_TLS_RELOAD_EVENTS.load(Ordering::Relaxed),
+        threat_level: DROPPED_THREAT_LEVEL_EVENTS.load(Ordering::Relaxed),
+        process: DROPPED_PROCESS_EVENTS.load(Ordering::Relaxed),
+        worker: DROPPED_WORKER_EVENTS.load(Ordering::Relaxed),
+        total: total_dropped_events(),
+    }
 }
 
 #[derive(Debug)]

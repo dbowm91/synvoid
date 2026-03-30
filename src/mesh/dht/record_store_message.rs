@@ -323,7 +323,10 @@ impl RecordStoreManager {
         let (records, proof) = {
             let rs = self.record_state.read();
             let recs = self.get_records_for_keys(interested_keys);
-            let proof = rs.merkle_tree.as_ref().and_then(|t| t.generate_proof(interested_keys));
+            let proof = rs
+                .merkle_tree
+                .as_ref()
+                .and_then(|t| t.generate_proof(interested_keys));
             (recs, proof)
         };
 
@@ -496,7 +499,8 @@ impl RecordStoreManager {
 
                 let interested_keys: Vec<String> = {
                     let rs = record_store.record_state.read();
-                    let mut entries: Vec<_> = rs.records
+                    let mut entries: Vec<_> = rs
+                        .records
                         .iter()
                         .map(|(k, v)| (k.clone(), v.version))
                         .collect();

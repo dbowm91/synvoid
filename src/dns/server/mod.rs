@@ -752,14 +752,13 @@ impl DnsServer {
 
         let dns64_translator = if config.dns64.enabled {
             let core_config = super::dns64::Dns64Config {
-                prefix: config
-                    .dns64
-                    .prefix
-                    .parse()
-                    .unwrap_or_else(|_| {
-                        tracing::warn!("Invalid DNS64 prefix '{}', using default", config.dns64.prefix);
-                        std::net::Ipv6Addr::new(0x0064, 0xff9b, 0, 0, 0, 0, 0, 0)
-                    }),
+                prefix: config.dns64.prefix.parse().unwrap_or_else(|_| {
+                    tracing::warn!(
+                        "Invalid DNS64 prefix '{}', using default",
+                        config.dns64.prefix
+                    );
+                    std::net::Ipv6Addr::new(0x0064, 0xff9b, 0, 0, 0, 0, 0, 0)
+                }),
                 fallback_resolver: None,
                 enabled: true,
             };

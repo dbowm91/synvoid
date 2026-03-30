@@ -4,8 +4,8 @@ use maluwaf::mesh::config::MeshNodeRole;
 use maluwaf::mesh::dht::keys::DhtKey;
 use maluwaf::mesh::dht::merkle::MerkleTree;
 use maluwaf::mesh::dht::routing::{
-    GeoInfo, KBucket, NodeId, PeerContact, PersistedContact, PersistedRoutingTable, RoutingTable,
-    K_SIZE,
+    GeoInfo, GeoRoutingConfig, KBucket, NodeId, PeerContact, PersistedContact,
+    PersistedRoutingTable, RegionalHub, RegionalHubConfig, RoutingTable, K_SIZE,
 };
 use maluwaf::mesh::dht::signed::{
     validate_message_timestamp, RecordSigner, SignedDhtRecord, SignedRecordType, TtlManager,
@@ -628,4 +628,436 @@ fn test_signed_record_needs_refresh() {
             assert!(record.needs_refresh());
         }
     }
+}
+
+// ── Regional Hub Routing Tests ───────────────────────────────────
+
+fn make_hub_peer(id: &str, country: &str, lat: f64, lon: f64, is_global: bool) -> PeerContact {
+    let geo = GeoInfo {
+        country: Some(country.to_string()),
+        region: None,
+        latitude: Some(lat),
+        longitude: Some(lon),
+    };
+
+    PeerContact::new(
+        NodeId::from_node_id_string(id),
+        id.to_string(),
+        "192.168.1.1".to_string(),
+        443,
+    )
+    .with_geo(geo)
+    .with_global(is_global)
+}
+
+#[test]
+fn test_regional_hub_config_defaults() {
+    let config = RegionalHubConfig::default();
+    assert!(config.enabled);
+    assert_eq!(config.hubs_per_region, 3);
+    assert_eq!(config.min_reputation_for_hub, 30);
+    assert_eq!(config.refresh_interval_secs, 300);
+    assert!(config.prefer_regional);
+}
+
+#[test]
+fn test_regional_hub_disabled_returns_empty() {
+    let config = RegionalHubConfig {
+        enabled: false,
+        ..RegionalHubConfig::default()
+    };
+    let hub = RegionalHub::new(config, GeoRoutingConfig::default());
+
+    let peers = vec![
+        make_hub_peer("peer1", "US", 37.7749, -122.4194, true),
+        make_hub_peer("peer2", "US", 34.0522, -118.2437, false),
+    ];
+    hub.update_peers(peers);
+
+    assert!(hub.get_hubs().is_empty());
+    assert!(hub.get_hubs_for_region("US").is_empty());
+    assert!(hub.get_regional_hub(None).is_none());
+    assert_eq!(hub.total_hub_count(), 0);
+    assert_eq!(hub.region_count(), 0);
+}
+
+#[test]
+fn test_hub_selection_selects_global_peers() {
+    let hub = RegionalHub::with_defaults();
+    let peers = vec![
+        make_hub_peer("global1", "US", 37.7749, -122.4194, true),
+        make_hub_peer("global2", "US", 34.0522, -118.2437, true),
+        make_hub_peer("local1", "US", 40.7128, -74.0060, false),
+    ];
+
+    hub.update_peers(peers);
+
+    let hubs = hub.get_hubs();
+    assert!(!hubs.is_empty());
+    // Global peers should be preferred (score 50 vs 0)
+    let has_global = hubs.iter().any(|h| h.is_global);
+    assert!(
+        has_global,
+        "Expected at least one global peer in hub selection"
+    );
+}
+
+#[test]
+fn test_regional_separation() {
+    let hub = RegionalHub::with_defaults();
+
+    let us_peers = vec![
+        make_hub_peer("us1", "US", 37.7749, -122.4194, true),
+        make_hub_peer("us2", "US", 40.7128, -74.0060, true),
+    ];
+    let eu_peers = vec![
+        make_hub_peer("eu1", "DE", 52.5200, 13.4050, true),
+        make_hub_peer("eu2", "FR", 48.8566, 2.3522, false),
+    ];
+
+    let all_peers: Vec<PeerContact> = us_peers.into_iter().chain(eu_peers).collect();
+    hub.update_peers(all_peers);
+
+    let us_hubs = hub.get_hubs_for_region("US");
+    let de_hubs = hub.get_hubs_for_region("DE");
+
+    assert!(!us_hubs.is_empty(), "US should have hubs");
+    assert!(!de_hubs.is_empty(), "DE should have hubs");
+    assert_eq!(hub.region_count(), 3);
+}
+
+#[test]
+fn test_hub_count_respects_hubs_per_region() {
+    let config = RegionalHubConfig {
+        hubs_per_region: 2,
+        min_reputation_for_hub: 0,
+        ..RegionalHubConfig::default()
+    };
+    let hub = RegionalHub::new(config, GeoRoutingConfig::default());
+
+    let peers: Vec<PeerContact> = (0..5)
+        .map(|i| make_hub_peer(&format!("peer{}", i), "US", 37.0 + i as f64, -122.0, true))
+        .collect();
+
+    hub.update_peers(peers);
+
+    let hubs = hub.get_hubs_for_region("US");
+    assert!(
+        hubs.len() <= 2,
+        "Expected at most 2 hubs, got {}",
+        hubs.len()
+    );
+}
+
+#[test]
+fn test_hub_reputation_threshold_fallback() {
+    let config = RegionalHubConfig {
+        min_reputation_for_hub: 100,
+        ..RegionalHubConfig::default()
+    };
+    let hub = RegionalHub::new(config, GeoRoutingConfig::default());
+
+    // No peer can have reputation 100 without being global+trusted+low-latency
+    // But with non-global non-trusted peers, it should fall back to best available
+    let peers = vec![
+        make_hub_peer("normal1", "US", 37.7749, -122.4194, false),
+        make_hub_peer("normal2", "US", 34.0522, -118.2437, false),
+    ];
+
+    hub.update_peers(peers);
+    // Fallback should still select hubs
+    let hubs = hub.get_hubs();
+    assert!(!hubs.is_empty(), "Expected fallback hub selection");
+}
+
+#[test]
+fn test_hub_remove_peer() {
+    let hub = RegionalHub::with_defaults();
+    let id1 = NodeId::from_node_id_string("peer-remove-1");
+    let id2 = NodeId::from_node_id_string("peer-remove-2");
+
+    let peers = vec![
+        make_hub_peer("peer-remove-1", "US", 37.7749, -122.4194, true),
+        make_hub_peer("peer-remove-2", "US", 34.0522, -118.2437, true),
+    ];
+    hub.update_peers(peers);
+
+    hub.remove_peer(&id1);
+
+    let hubs = hub.get_hubs();
+    let has_removed = hubs.iter().any(|h| h.node_id == id1);
+    assert!(!has_removed, "Removed peer should not appear in hubs");
+
+    let has_remaining = hubs.iter().any(|h| h.node_id == id2);
+    assert!(has_remaining, "Remaining peer should still be in hubs");
+}
+
+#[test]
+fn test_hub_mark_offline_online() {
+    let hub = RegionalHub::with_defaults();
+    let peers = vec![make_hub_peer("lifecycle-1", "US", 37.7749, -122.4194, true)];
+    hub.update_peers(peers);
+
+    let node_id = NodeId::from_node_id_string("lifecycle-1");
+    hub.mark_hub_offline(&node_id);
+
+    let hubs = hub.get_hubs();
+    let offline = hubs.iter().any(|h| h.node_id == node_id);
+    assert!(!offline, "Offline hub should not appear in online hubs");
+
+    hub.mark_hub_online(&node_id);
+    let hubs = hub.get_hubs();
+    let online = hubs.iter().any(|h| h.node_id == node_id);
+    assert!(online, "Hub should be back online after mark_hub_online");
+}
+
+#[test]
+fn test_find_closest_via_hubs_prefers_local() {
+    let config = RegionalHubConfig {
+        prefer_regional: true,
+        min_reputation_for_hub: 0,
+        ..RegionalHubConfig::default()
+    };
+    let hub = RegionalHub::new(config, GeoRoutingConfig::default());
+
+    let local_geo = GeoInfo {
+        country: Some("US".to_string()),
+        region: None,
+        latitude: Some(37.7749),
+        longitude: Some(-122.4194),
+    };
+    let hub = hub.with_local_geo(local_geo);
+
+    let us_peer = make_hub_peer("us-hub", "US", 37.7749, -122.4194, true);
+    let de_peer = make_hub_peer("de-hub", "DE", 52.5200, 13.4050, true);
+
+    hub.update_peers(vec![us_peer, de_peer]);
+
+    let target = NodeId::random();
+    let result = hub.find_closest_via_hubs(&target, None, 10);
+    assert!(!result.is_empty());
+
+    // Local region (US) hubs should come first
+    let first = &result[0];
+    assert_eq!(
+        first.geo.as_ref().unwrap().country,
+        Some("US".to_string()),
+        "First result should be from local region"
+    );
+}
+
+#[test]
+fn test_find_closest_via_hubs_different_target_region() {
+    let config = RegionalHubConfig {
+        prefer_regional: true,
+        min_reputation_for_hub: 0,
+        ..RegionalHubConfig::default()
+    };
+    let hub = RegionalHub::new(config, GeoRoutingConfig::default());
+
+    let local_geo = GeoInfo {
+        country: Some("US".to_string()),
+        region: None,
+        latitude: Some(37.7749),
+        longitude: Some(-122.4194),
+    };
+    let hub = hub.with_local_geo(local_geo);
+
+    hub.update_peers(vec![
+        make_hub_peer("us-hub", "US", 37.7749, -122.4194, true),
+        make_hub_peer("de-hub", "DE", 52.5200, 13.4050, true),
+        make_hub_peer("jp-hub", "JP", 35.6762, 139.6503, true),
+    ]);
+
+    let target = NodeId::random();
+    let target_geo = GeoInfo {
+        country: Some("DE".to_string()),
+        region: None,
+        latitude: Some(52.5200),
+        longitude: Some(13.4050),
+    };
+
+    let result = hub.find_closest_via_hubs(&target, Some(&target_geo), 10);
+    // Should include both US (local) and DE (target) hubs
+    let countries: Vec<_> = result
+        .iter()
+        .filter_map(|p| p.geo.as_ref().and_then(|g| g.country.clone()))
+        .collect();
+    assert!(
+        countries.contains(&"US".to_string()),
+        "Should include local US hub"
+    );
+    assert!(
+        countries.contains(&"DE".to_string()),
+        "Should include target DE hub"
+    );
+}
+
+#[test]
+fn test_find_closest_via_hubs_disabled_returns_empty() {
+    let config = RegionalHubConfig {
+        enabled: false,
+        ..RegionalHubConfig::default()
+    };
+    let hub = RegionalHub::new(config, GeoRoutingConfig::default());
+    hub.update_peers(vec![make_hub_peer("p1", "US", 37.0, -122.0, true)]);
+
+    let target = NodeId::random();
+    let result = hub.find_closest_via_hubs(&target, None, 5);
+    assert!(result.is_empty());
+}
+
+#[test]
+fn test_find_closest_via_hubs_respects_k_limit() {
+    let config = RegionalHubConfig {
+        min_reputation_for_hub: 0,
+        ..RegionalHubConfig::default()
+    };
+    let hub = RegionalHub::new(config, GeoRoutingConfig::default());
+
+    let peers: Vec<PeerContact> = (0..10)
+        .map(|i| make_hub_peer(&format!("p{}", i), "US", 37.0 + i as f64, -122.0, true))
+        .collect();
+    hub.update_peers(peers);
+
+    let target = NodeId::random();
+    let result = hub.find_closest_via_hubs(&target, None, 3);
+    assert!(result.len() <= 3, "Should not exceed k={}", 3);
+}
+
+#[test]
+fn test_routing_table_hybrid_fallback() {
+    let local_id = NodeId::from_bytes(&[0x01u8; 32]).unwrap();
+    let mut table = RoutingTable::new(local_id, "local".to_string());
+
+    // No regional hub set — find_closest_hybrid should fall back to pure Kademlia
+    for i in 0..5 {
+        let peer = PeerContact::new(
+            NodeId::from_node_id_string(&format!("peer-{}", i)),
+            format!("peer-{}", i),
+            "192.168.1.1".to_string(),
+            443,
+        );
+        table.insert(peer).ok();
+    }
+
+    let target = NodeId::random();
+    let result = table.find_closest_hybrid(&target, None, 3);
+    assert!(result.len() <= 3);
+}
+
+#[test]
+fn test_routing_table_hybrid_with_hub() {
+    use std::sync::Arc;
+
+    let local_id = NodeId::from_bytes(&[0x02u8; 32]).unwrap();
+    let mut table = RoutingTable::new(local_id, "local".to_string());
+
+    let hub = RegionalHub::new(
+        RegionalHubConfig {
+            min_reputation_for_hub: 0,
+            ..RegionalHubConfig::default()
+        },
+        GeoRoutingConfig::default(),
+    );
+
+    let hub_peers = vec![
+        make_hub_peer("hub-us", "US", 37.7749, -122.4194, true),
+        make_hub_peer("hub-de", "DE", 52.5200, 13.4050, true),
+    ];
+    hub.update_peers(hub_peers);
+
+    table = table.with_regional_hub(Arc::new(hub));
+
+    // Add bucket peers
+    for i in 0..5 {
+        let peer = PeerContact::new(
+            NodeId::from_node_id_string(&format!("bucket-{}", i)),
+            format!("bucket-{}", i),
+            "192.168.1.1".to_string(),
+            443,
+        );
+        table.insert(peer).ok();
+    }
+
+    let target = NodeId::random();
+    let result = table.find_closest_hybrid(&target, None, 5);
+    assert!(!result.is_empty());
+    assert!(result.len() <= 5);
+}
+
+#[test]
+fn test_routing_table_hybrid_dedup() {
+    use std::sync::Arc;
+
+    let local_id = NodeId::from_bytes(&[0x03u8; 32]).unwrap();
+    let mut table = RoutingTable::new(local_id, "local".to_string());
+
+    let hub = RegionalHub::new(
+        RegionalHubConfig {
+            min_reputation_for_hub: 0,
+            ..RegionalHubConfig::default()
+        },
+        GeoRoutingConfig::default(),
+    );
+
+    // Same peer in both hub and bucket — should be deduplicated
+    let shared_peer = make_hub_peer("shared-peer", "US", 37.7749, -122.4194, true);
+    hub.update_peers(vec![shared_peer.clone()]);
+
+    table = table.with_regional_hub(Arc::new(hub));
+    table.insert(shared_peer).ok();
+
+    let target = NodeId::random();
+    let result = table.find_closest_hybrid(&target, None, 10);
+
+    let seen_ids: std::collections::HashSet<_> = result.iter().map(|p| p.node_id).collect();
+    assert_eq!(
+        seen_ids.len(),
+        result.len(),
+        "find_closest_hybrid should deduplicate by node_id"
+    );
+}
+
+#[test]
+fn test_sync_to_regional_hub() {
+    use std::sync::Arc;
+
+    let local_id = NodeId::from_bytes(&[0x04u8; 32]).unwrap();
+    let mut table = RoutingTable::new(local_id, "local".to_string());
+
+    let hub = RegionalHub::new(
+        RegionalHubConfig {
+            min_reputation_for_hub: 0,
+            ..RegionalHubConfig::default()
+        },
+        GeoRoutingConfig::default(),
+    );
+
+    table = table.with_regional_hub(Arc::new(hub));
+
+    for i in 0..3 {
+        let peer = PeerContact::new(
+            NodeId::from_node_id_string(&format!("sync-peer-{}", i)),
+            format!("sync-peer-{}", i),
+            "192.168.1.1".to_string(),
+            443,
+        )
+        .with_geo(GeoInfo {
+            country: Some("US".to_string()),
+            region: None,
+            latitude: Some(37.0 + i as f64),
+            longitude: Some(-122.0),
+        })
+        .with_global(true);
+        table.insert(peer).ok();
+    }
+
+    table.sync_to_regional_hub();
+
+    let hubs = table.get_regional_hubs();
+    assert!(
+        !hubs.is_empty(),
+        "sync_to_regional_hub should populate hub peers"
+    );
 }

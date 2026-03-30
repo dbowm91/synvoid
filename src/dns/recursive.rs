@@ -412,11 +412,7 @@ impl RecursiveDnsServer {
         Ok(())
     }
 
-    async fn resolve_query(
-        &self,
-        query: &Message,
-        message_id: u16,
-    ) -> RecursiveDnsResult<Vec<u8>> {
+    async fn resolve_query(&self, query: &Message, message_id: u16) -> RecursiveDnsResult<Vec<u8>> {
         if query.queries().is_empty() {
             return Err(RecursiveDnsError::InvalidQuery);
         }

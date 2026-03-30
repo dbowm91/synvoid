@@ -134,11 +134,13 @@ impl Supervisor {
                 ))
                 .is_err()
             {
+                crate::metrics::record_dropped_worker_event();
                 tracing::warn!("Failed to send WorkerFailed event for worker {}", id.0);
             }
         });
 
         if let Err(e) = self.event_tx.send(SupervisorEvent::WorkerStarted(id)) {
+            crate::metrics::record_dropped_worker_event();
             tracing::warn!(
                 "Failed to send WorkerStarted event for worker {}: {}",
                 id.0,
@@ -348,6 +350,7 @@ impl Supervisor {
                     last_scale = Instant::now();
                     metrics.total_scale_ups.fetch_add(1, Ordering::Relaxed);
                     if let Err(e) = event_tx.send(SupervisorEvent::ScaleUp(scale_up_by)) {
+                        crate::metrics::record_dropped_process_event();
                         tracing::warn!("Failed to send ScaleUp event: {}", e);
                     }
                 } else if avg_load < config.scale_down_threshold
@@ -366,6 +369,7 @@ impl Supervisor {
                     last_scale = Instant::now();
                     metrics.total_scale_downs.fetch_add(1, Ordering::Relaxed);
                     if let Err(e) = event_tx.send(SupervisorEvent::ScaleDown(scale_down_by)) {
+                        crate::metrics::record_dropped_process_event();
                         tracing::warn!("Failed to send ScaleDown event: {}", e);
                     }
                 }
@@ -379,6 +383,7 @@ impl Supervisor {
     pub async fn graceful_shutdown(&self) {
         tracing::info!("Initiating graceful shutdown");
         if let Err(e) = self.event_tx.send(SupervisorEvent::ShutdownInitiated) {
+            crate::metrics::record_dropped_process_event();
             tracing::warn!("Failed to send ShutdownInitiated event: {}", e);
         }
 
@@ -405,6 +410,7 @@ impl Supervisor {
 
         tracing::info!("Supervisor shutdown complete");
         if let Err(e) = self.event_tx.send(SupervisorEvent::ShutdownComplete) {
+            crate::metrics::record_dropped_process_event();
             tracing::warn!("Failed to send ShutdownComplete event: {}", e);
         }
     }

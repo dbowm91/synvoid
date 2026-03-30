@@ -239,6 +239,7 @@ impl ThreatLevelManager {
         self.is_manual.store(1, Ordering::Relaxed);
         self.current_level.store(new_level.0, Ordering::Relaxed);
         if self.scale_tx.send(new_level).is_err() {
+            crate::metrics::record_dropped_threat_level_event();
             tracing::warn!("Failed to send manual threat level change - scaler dropped");
         }
         tracing::info!("ThreatLevel manually set to {}", new_level);
@@ -249,6 +250,7 @@ impl ThreatLevelManager {
         let auto_level = 1u8;
         self.current_level.store(auto_level, Ordering::Relaxed);
         if self.scale_tx.send(ThreatLevel(auto_level)).is_err() {
+            crate::metrics::record_dropped_threat_level_event();
             tracing::warn!("Failed to send threat level reset - scaler dropped");
         }
         tracing::info!("ThreatLevel reset to auto mode (level {})", auto_level);
@@ -311,6 +313,7 @@ impl ThreatLevelManager {
                 .store(new_level.as_u8(), Ordering::Relaxed);
             *self.cooldown_until.write() = now + self.cooldown_duration;
             if self.scale_tx.send(new_level).is_err() {
+                crate::metrics::record_dropped_threat_level_event();
                 tracing::warn!("Failed to send auto threat level change - scaler dropped");
             }
 

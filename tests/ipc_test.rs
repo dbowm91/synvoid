@@ -100,7 +100,13 @@ mod ipc_tests {
             let mut ipc_stream = IpcStream::from_unix_stream(stream);
 
             let msg: Message = ipc_stream.recv().await.unwrap().unwrap();
-            assert!(matches!(msg, Message::WorkerStarted { id: WorkerId(5), .. }));
+            assert!(matches!(
+                msg,
+                Message::WorkerStarted {
+                    id: WorkerId(5),
+                    ..
+                }
+            ));
 
             ipc_stream
                 .send(&Message::WorkerReady { id: WorkerId(5) })
@@ -108,7 +114,13 @@ mod ipc_tests {
                 .unwrap();
 
             let msg: Message = ipc_stream.recv().await.unwrap().unwrap();
-            assert!(matches!(msg, Message::WorkerShutdownComplete { id: WorkerId(5), .. }));
+            assert!(matches!(
+                msg,
+                Message::WorkerShutdownComplete {
+                    id: WorkerId(5),
+                    ..
+                }
+            ));
         });
 
         let socket_path_clone = socket_path.clone();
@@ -132,9 +144,7 @@ mod ipc_tests {
             assert!(matches!(received, Message::WorkerReady { id: WorkerId(5) }));
 
             ipc_stream
-                .send(&Message::WorkerShutdownComplete {
-                    id: WorkerId(5),
-                })
+                .send(&Message::WorkerShutdownComplete { id: WorkerId(5) })
                 .await
                 .unwrap();
         });
@@ -228,9 +238,7 @@ mod ipc_tests {
         assert!(worker_msg.is_lifecycle());
         assert!(!worker_msg.is_drain());
 
-        let shutdown = Message::WorkerShutdownComplete {
-            id: WorkerId(1),
-        };
+        let shutdown = Message::WorkerShutdownComplete { id: WorkerId(1) };
         assert!(shutdown.is_lifecycle());
         assert!(!shutdown.is_drain());
     }

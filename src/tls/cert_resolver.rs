@@ -116,6 +116,7 @@ impl CertResolver {
         }
 
         if self.reload_tx.send(()).is_err() {
+            crate::metrics::record_dropped_tls_reload_event();
             tracing::warn!("Failed to notify TLS reload - receiver dropped");
         }
         Ok(())

@@ -71,7 +71,12 @@ mod e2e_process_tests {
             maluwaf::process::SignedIpcMessage::deserialize_signed(&signed_data, &server_signer)
                 .unwrap();
         match decoded {
-            Message::WorkerStarted { id, pid, port, timestamp } => {
+            Message::WorkerStarted {
+                id,
+                pid,
+                port,
+                timestamp,
+            } => {
                 assert_eq!(id, WorkerId(1));
                 assert_eq!(pid, 42);
                 assert_eq!(port, 8080);
@@ -329,7 +334,12 @@ mod e2e_process_tests {
 
         let started_msg: Message = master_stream.recv().await.unwrap().unwrap();
         match started_msg {
-            Message::WorkerStarted { id, pid, port, timestamp } => {
+            Message::WorkerStarted {
+                id,
+                pid,
+                port,
+                timestamp,
+            } => {
                 assert_eq!(id, WorkerId(0));
                 assert!(pid > 0);
                 assert_eq!(port, 9000);
@@ -397,7 +407,9 @@ mod e2e_process_tests {
                 _ => panic!("expected WorkerStarted"),
             }
 
-            let ack = Message::HealthCheckAck { timestamp: (i as u64) * 1000 };
+            let ack = Message::HealthCheckAck {
+                timestamp: (i as u64) * 1000,
+            };
             stream.send(&ack).await.unwrap();
         }
 
@@ -465,7 +477,10 @@ mod e2e_process_tests {
 
         let drained_msg: Message = master_stream.recv().await.unwrap().unwrap();
         match drained_msg {
-            Message::WorkerDrained { id, remaining_connections } => {
+            Message::WorkerDrained {
+                id,
+                remaining_connections,
+            } => {
                 assert_eq!(id, WorkerId(0));
                 assert_eq!(remaining_connections, 0);
             }

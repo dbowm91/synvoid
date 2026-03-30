@@ -1047,6 +1047,7 @@ impl ProcessManager {
 
         if let Some(evt) = event {
             if let Err(e) = self.event_tx.try_send(evt) {
+                crate::metrics::record_dropped_process_event();
                 tracing::warn!("Failed to send process event: {}", e);
             }
         }
@@ -1060,6 +1061,7 @@ impl ProcessManager {
             }
         }
         if let Err(e) = self.event_tx.try_send(ProcessEvent::WorkerReady(worker_id)) {
+            crate::metrics::record_dropped_worker_event();
             tracing::warn!(
                 "Failed to send WorkerReady event for worker {}: {}",
                 worker_id,
@@ -1112,6 +1114,7 @@ impl ProcessManager {
             .blocking_send(ProcessEvent::WorkerFailed(worker_id, error))
             .is_err()
         {
+            crate::metrics::record_dropped_worker_event();
             tracing::warn!("Failed to send WorkerFailed event for worker {}", worker_id);
         }
     }
