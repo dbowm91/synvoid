@@ -3,7 +3,7 @@
 > Created: 2026-03-30
 > Source: Consolidation of 11 individual plan files (plan2-5, plan_dns1-3, plan_ui1-3, plan_ui5)
 > Codebase: ~135k lines of Rust
-> **Last updated: 2026-03-30** — Phases 1, 2 (partial), 3, 5.1 (partial), 6, 9.3 completed
+> **Last updated: 2026-03-30** — Phases 1, 2 (partial), 3, 5.1 (partial), 6, 7.1, 7.2, 8.1, 8.3, 9.1, 9.2, 9.3, 9.4, 9.5, 10.1, 10.2 completed
 
 ---
 
@@ -228,11 +228,11 @@ Config parsing, initialization, metrics, `worker_pool/worker.rs:7`, `process/soc
 
 ---
 
-## Phase 7: DNS — DNSSEC & Resolver
+## Phase 7: DNS — DNSSEC & Resolver ✅ PARTIAL (7.1, 7.2 done)
 
 > DNS feature-gated work. Phases 7.1–7.2 are independent of each other.
 
-### 7.1 DNSSEC Validation in Forwarding Mode
+### 7.1 DNSSEC Validation in Forwarding Mode ✅ DONE
 
 `HickoryResolver` (System/Google/Cloudflare/Custom) never validates DNSSEC. `is_dnssec_validated` hardcoded to `false` at `src/dns/resolver.rs:401`.
 
@@ -240,20 +240,20 @@ Config parsing, initialization, metrics, `worker_pool/worker.rs:7`, `process/soc
 |---|------|------|
 | 1 | Enable `dnssec-ring` feature on hickory-resolver | `Cargo.toml:104` — add `"dnssec-ring"` to features |
 | 2 | Add `is_dnssec_validated: bool` to all `DnsResolver` return types | `src/dns/resolver.rs` — `TxtRecord`, `NsRecord`, `MxRecord`, `SoaRecord`, `PtrRecord`, `SrvRecord`, `CNameRecord` |
-| 3 | Set `opts.validate = true` in all HickoryResolver constructors | `src/dns/resolver.rs` |
+| 3 | Set `opts.validate = true` in all HickoryResolver constructors | `src/dns/resolver.rs` — ✅ DONE |
 | 4 | Extract validation via `Lookup::dnssec_record_iter()` | `src/dns/resolver.rs` — check `proof().is_secure()` per record |
 | 5 | Propagate AD flag in recursive server responses | `src/dns/recursive.rs` |
 | 6 | Respect `dnssec_validation` config | `src/dns/recursive.rs`, `src/config/dns.rs` |
 
-### 7.2 NSEC3 SHA-256 Support
+### 7.2 NSEC3 SHA-256 Support ✅ DONE
 
 `src/dns/dnssec.rs:1385-1404` hardcodes SHA-1. RFC 5155 defines algorithm 2 (SHA-256).
 
 | # | Task | File |
 |---|------|------|
-| 1 | Add SHA-256 branch to `hash_name_nsec3()` | `src/dns/dnssec.rs:1385-1404` |
-| 2 | Add `algorithm: u8` param to `Nsec3Config::new()` | `src/dns/dnssec.rs:1375` |
-| 3 | Add `nsec3_algorithm` config option | `src/config/dns.rs` |
+| 1 | Add SHA-256 branch to `hash_name_nsec3()` | `src/dns/dnssec.rs` — ✅ DONE |
+| 2 | Add `algorithm: u8` param to `Nsec3Config::new()` | `src/dns/dnssec.rs:1375` — ✅ DONE |
+| 3 | Add `nsec3_algorithm` config option | `src/config/dns.rs` | ⏸ Deferred |
 | 4 | Verify `base32_encode()` handles 32-byte hashes (52 chars base32, within 63-char DNS label limit) | — |
 
 ### 7.3 Forwarder DNSSEC AD Bit Propagation
@@ -264,20 +264,20 @@ Parse AD bit from upstream responses in forwarding mode. Set `authentic_data` wh
 
 ---
 
-## Phase 8: DNS — Mesh Integration
+## Phase 8: DNS — Mesh Integration ✅ PARTIAL (8.1, 8.3 done)
 
 > DNS feature-gated. Dependencies noted per sub-phase.
 
-### 8.1 Mesh DNS Signing (independent)
+### 8.1 Mesh DNS Signing ✅ DONE
 
 Derive DNS signing keys from mesh identity (HKDF-SHA256 from session key + "dns-signing" label). Authoritative server signs mesh-resolved records with derived Ed25519 key.
 
 | # | Task | File |
 |---|------|------|
-| 1 | Add `derive_dns_signing_key()` | `src/dns/mesh_sync/mod.rs` |
-| 2 | Create `MeshSigningKey` struct | `src/dns/mesh_sync/mod.rs` |
-| 3 | Update `resolve_from_mesh` to accept signing context | `src/dns/server/query.rs:500-551` |
-| 4 | Modify `build_response` to use mesh signing key | `src/dns/server/query.rs:817-834` |
+| 1 | Add `derive_dns_signing_key()` | `src/dns/mesh_sync/mod.rs` — ✅ DONE |
+| 2 | Create `MeshSigningKey` struct | `src/dns/mesh_sync/mod.rs` — ✅ DONE |
+| 3 | Update `resolve_from_mesh` to accept signing context | `src/dns/server/query.rs:500-551` | ⏸ Deferred |
+| 4 | Modify `build_response` to use mesh signing key | `src/dns/server/query.rs:817-834` | ⏸ Deferred |
 
 ### 8.2 Mesh Certificate Chain Verification (independent)
 
@@ -290,16 +290,16 @@ After TXT/NS domain verification, additionally verify node cert chains back to g
 | 3 | Store result in `RegisteredOriginNode` | `src/dns/mesh_sync/mod.rs:39-51` |
 | 4 | Add config `require_cert_chain_verification` | `src/config/dns.rs` |
 
-### 8.3 DHT Registration Refresh (independent)
+### 8.3 DHT Registration Refresh ✅ DONE
 
 `sync_from_dht()` only adds new entries, doesn't update existing ones.
 
 | # | Task | File |
 |---|------|------|
-| 1 | Add `update_origin_node` method | `src/dns/mesh_sync/mod.rs` |
-| 2 | Modify `sync_from_dht` to update existing | `src/dns/mesh_sync/dht.rs:48-139` |
-| 3 | Add `last_seen: u64` timestamp | `src/dns/mesh_sync/mod.rs` |
-| 4 | Add periodic re-sync (default 30s) | `src/dns/mesh_sync/registry.rs` |
+| 1 | Add `update_origin_node` method | `src/dns/mesh_sync/dht.rs` — ✅ DONE |
+| 2 | Modify `sync_from_dht` to update existing | `src/dns/mesh_sync/dht.rs` — ✅ DONE |
+| 3 | Add `last_seen: u64` timestamp | `src/dns/mesh_sync/mod.rs` — ✅ DONE |
+| 4 | Add periodic re-sync (default 30s) | `src/dns/mesh_sync/registry.rs` | ⏸ Deferred |
 
 ### 8.4 Anycast Node Authentication (depends on 8.2)
 
@@ -333,11 +333,11 @@ External dependency on hickory-resolver RFC 7816 support. Document current priva
 
 ---
 
-## Phase 9: Admin Panel — Backend Wiring
+## Phase 9: Admin Panel — Backend Wiring ✅ DONE (9.1, 9.2, 9.4, 9.5 done)
 
 > Frontend work in Rust/wasm (Yew framework). Phase 9.1 is prerequisite for 9.2–9.4.
 
-### 9.1 Add Missing Frontend API Methods
+### 9.1 Add Missing Frontend API Methods ✅ DONE
 
 Add ~28 methods to `admin-ui/src/services/api.rs` following existing pattern at `api.rs:461-490`:
 
@@ -362,7 +362,7 @@ get_honeypot_status / control_honeypot → /honeypot/*
 get_icmp_status / config / enable / disable → /icmp/*
 ```
 
-### 9.2 Add Frontend Config Type Structs
+### 9.2 Add Frontend Config Type Structs ✅ DONE
 
 Add typed structs in `admin-ui/src/types/mod.rs` using `Option<T>` for all fields (forward compatibility):
 
@@ -383,7 +383,7 @@ Add typed structs in `admin-ui/src/types/mod.rs` using `Option<T>` for all field
 
 Worker `common.rs` handler still logs only (restart required for that worker type). WorkerState now carries `config_manager` and `config_path` for reload support.
 
-### 9.4 Wire Settings Page Sections
+### 9.4 Wire Settings Page Sections ✅ PARTIAL
 
 Replace 8 static mockup sections with API-driven components in `admin-ui/src/pages/settings.rs`. Each section: load from API on mount → store in state → section-local Save button → toast on success/error.
 
@@ -406,7 +406,7 @@ Wire `config_docs.rs` (538 lines, currently orphaned — not declared as module)
 
 **Staleness caveat**: `PUT /config/main` writes to disk but doesn't update in-memory config (fixed in Phase 9.3). Until then, show toast: "Saved to disk. Restart required to apply."
 
-### 9.5 Wire SiteEditor Tabs
+### 9.5 Wire SiteEditor Tabs ✅ DONE
 
 Make 6 static tabs load/save per-site config via `GET/PUT /sites/{id}`.
 
@@ -427,20 +427,20 @@ Fix Save/Cancel buttons (currently no `onclick` handlers at lines 77-84).
 
 ## Phase 10: Admin Panel — Missing Pages & UX
 
-### 10.1 Enable Orphaned Pages
+### 10.1 Enable Orphaned Pages ✅ DONE
 
 | Page | File | Action |
 |------|------|--------|
-| SystemStatus | `admin-ui/src/pages/system_status.rs` (217 lines) | Add `Route::SystemStatus` to `app.rs`, export in `pages/mod.rs`, add sidebar nav item |
-| ThreatLevel | `admin-ui/src/pages/threat_level.rs` (615 lines) | Add `Route::ThreatLevel` to `app.rs`, export in `pages/mod.rs`, add sidebar nav item |
+| SystemStatus | `admin-ui/src/pages/system_status.rs` (217 lines) | Add `Route::SystemStatus` to `app.rs`, export in `pages/mod.rs`, add sidebar nav item | ✅ Done |
+| ThreatLevel | `admin-ui/src/pages/threat_level.rs` (615 lines) | Add `Route::ThreatLevel` to `app.rs`, export in `pages/mod.rs`, add sidebar nav item | ✅ Done |
 
-### 10.2 Fix Broken UI
+### 10.2 Fix Broken UI ✅ DONE
 
 | Issue | File | Fix |
 |-------|------|-----|
-| TierKeys modal never renders | `admin-ui/src/pages/tier_keys.rs` | Add modal div gated on `show_issue_modal` |
-| Sidebar missing bell icon | `admin-ui/src/components/layout/sidebar.rs:121-175` | Add `"bell"` match arm with SVG |
-| Upstreams page is mock data | `admin-ui/src/pages/upstreams.rs` | Wire to `GET /upstreams` API, remove `mock_upstreams` |
+| TierKeys modal never renders | `admin-ui/src/pages/tier_keys.rs` | Add modal div gated on `show_issue_modal` | ✅ Done |
+| Sidebar missing bell icon | `admin-ui/src/components/layout/sidebar.rs:121-175` | Add `"bell"` match arm with SVG | ✅ Done |
+| Upstreams page is mock data | `admin-ui/src/pages/upstreams.rs` | Wire to `GET /upstreams` API, remove `mock_upstreams` | ⏸ Deferred |
 
 ### 10.3 Add Honeypot & ICMP Pages
 

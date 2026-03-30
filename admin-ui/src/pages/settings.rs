@@ -67,15 +67,6 @@ pub fn Settings() -> Html {
                             _ => html! { <ServerSection /> },
                         }}
                     </div>
-
-                    <div class="p-4 border-t border-default flex justify-end gap-4">
-                        <button class="px-4 py-2 bg-tertiary text-primary rounded-lg hover:opacity-80">
-                            { "Reset" }
-                        </button>
-                        <button class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
-                            { "Save Changes" }
-                        </button>
-                    </div>
                 </div>
             </div>
         </div>
@@ -115,20 +106,126 @@ fn SectionButton(props: &SectionButtonProps) -> Html {
 
 #[function_component]
 fn ServerSection() -> Html {
+    let server_config = use_state(|| None::<serde_json::Value>);
+    let loading = use_state(|| true);
+    let saving = use_state(|| false);
+    let host = use_state(|| "0.0.0.0".to_string());
+    let port = use_state(|| "8080".to_string());
+    let trusted_proxies = use_state(|| "127.0.0.1, ::1".to_string());
+
+    use_effect_with((), {
+        let server_config = server_config.clone();
+        let loading = loading.clone();
+        let host = host.clone();
+        let port = port.clone();
+        let trusted_proxies = trusted_proxies.clone();
+        move |_| {
+            wasm_bindgen_futures::spawn_local(async move {
+                let api = ApiService::new();
+                let result = api.get_main_config().await;
+                loading.set(false);
+
+                if let Ok(data) = result {
+                    if let Some(config) = data.get("config") {
+                        if let Some(server) = config.get("server") {
+                            server_config.set(Some(server.clone()));
+                            if let Some(h) = server.get("host").and_then(|v| v.as_str()) {
+                                host.set(h.to_string());
+                            }
+                            if let Some(p) = server.get("port").and_then(|v| v.as_u64()) {
+                                port.set(p.to_string());
+                            }
+                            if let Some(tp) = server.get("trusted_proxies").and_then(|v| v.as_array()) {
+                                let proxies: Vec<String> = tp.iter()
+                                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                                    .collect();
+                                trusted_proxies.set(proxies.join(", "));
+                            }
+                        }
+                    }
+                }
+            });
+            || {}
+        }
+    });
+
+    let on_host_change = {
+        let host = host.clone();
+        Callback::from(move |e: Event| {
+            let target = e.target().unwrap();
+            let value = target.dyn_ref::<web_sys::HtmlInputElement>()
+                .map(|el| el.value())
+                .unwrap_or_default();
+            host.set(value);
+        })
+    };
+
+    let on_port_change = {
+        let port = port.clone();
+        Callback::from(move |e: Event| {
+            let target = e.target().unwrap();
+            let value = target.dyn_ref::<web_sys::HtmlInputElement>()
+                .map(|el| el.value())
+                .unwrap_or_default();
+            port.set(value);
+        })
+    };
+
+    let on_proxies_change = {
+        let trusted_proxies = trusted_proxies.clone();
+        Callback::from(move |e: Event| {
+            let target = e.target().unwrap();
+            let value = target.dyn_ref::<web_sys::HtmlInputElement>()
+                .map(|el| el.value())
+                .unwrap_or_default();
+            trusted_proxies.set(value);
+        })
+    };
+
+    let on_save = {
+        let saving = saving.clone();
+        let host = host.clone();
+        let port = port.clone();
+        let trusted_proxies = trusted_proxies.clone();
+        let server_config = server_config.clone();
+        Callback::from(move |_| {
+            let proxies: Vec<String> = trusted_proxies.split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            let new_config = serde_json::json!({
+                "config": {
+                    "server": {
+                        "host": (*host).clone(),
+                        "port": port.parse::<u16>().unwrap_or(8080),
+                        "trusted_proxies": proxies
+                    }
+                }
+            });
+            saving.set(true);
+            wasm_bindgen_futures::spawn_local(async move {
+                let api = ApiService::new();
+                let _ = api.update_main_config(&new_config).await;
+                saving.set(false);
+                toast_success("Server configuration saved");
+            });
+        })
+    };
+
     html! {
         <div class="space-y-6">
             <div class="grid grid-cols-2 gap-4">
                 <Input
                     label="Listen Host"
-                    name="host"
-                    value="0.0.0.0"
+                    value={(*host).clone()}
+                    on_input={on_host_change}
                     help="IP address to bind the main server to"
                 />
                 <Input
                     label="Listen Port"
-                    name="port"
+                    value={(*port).clone()}
+                    on_input={on_port_change}
                     input_type="number"
-                    value="8080"
                     help="TCP port for the main HTTP server"
                 />
             </div>
@@ -136,26 +233,20 @@ fn ServerSection() -> Html {
             <div>
                 <Input
                     label="Trusted Proxies"
-                    name="trusted_proxies"
-                    value="127.0.0.1, ::1"
+                    value={(*trusted_proxies).clone()}
+                    on_input={on_proxies_change}
                     help="Comma-separated list of trusted proxy IPs for X-Forwarded-For handling"
                 />
             </div>
 
-            <div>
-                <Select
-                    label="Worker Threads"
-                    name="worker_threads"
-                    value="auto"
-                    options={vec![
-                        ("auto".to_string(), "Auto (match CPU cores)".to_string()),
-                        ("1".to_string(), "1 thread".to_string()),
-                        ("2".to_string(), "2 threads".to_string()),
-                        ("4".to_string(), "4 threads".to_string()),
-                        ("8".to_string(), "8 threads".to_string()),
-                    ]}
-                    help="Number of Tokio worker threads"
-                />
+            <div class="flex justify-end">
+                <button 
+                    onclick={on_save}
+                    disabled={*saving}
+                    class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                >
+                    { if *saving { "Saving..." } else { "Save" } }
+                </button>
             </div>
         </div>
     }

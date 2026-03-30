@@ -6,7 +6,7 @@ use crate::components::ToastContainer;
 use crate::hooks::use_theme::*;
 use crate::pages::{
     Alerts, Dashboard, Logs, Probes, ProcessManagement, RequestLogs, Settings, SiteDetail,
-    SiteEditor, Sites, TcpUdp, TierKeys, Upstreams, Workers,
+    SiteEditor, Sites, SystemStatus, TcpUdp, ThreatLevel, TierKeys, Upstreams, Workers,
 };
 use crate::types::UpdateThemeRequest;
 
@@ -42,6 +42,10 @@ pub enum Route {
     Workers,
     #[at("/alerts")]
     Alerts,
+    #[at("/system-status")]
+    SystemStatus,
+    #[at("/threat-level")]
+    ThreatLevel,
     #[not_found]
     #[at("/404")]
     NotFound,
@@ -104,6 +108,8 @@ fn switch(route: Route) -> Html {
         Route::TierKeys => html! { <TierKeys /> },
         Route::Workers => html! { <Workers /> },
         Route::Alerts => html! { <Alerts /> },
+        Route::SystemStatus => html! { <SystemStatus /> },
+        Route::ThreatLevel => html! { <ThreatLevel /> },
         Route::NotFound => html! { <div class="text-center py-20">
             <h1 class="text-4xl font-bold mb-4">{ "404" }</h1>
             <p class="text-secondary">{ "Page not found" }</p>

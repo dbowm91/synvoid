@@ -1380,6 +1380,15 @@ impl Nsec3Config {
             salt,
         }
     }
+
+    pub fn new_with_algorithm(algorithm: u8, iterations: u16, salt: Vec<u8>) -> Self {
+        Self {
+            algorithm,
+            flags: 0,
+            iterations,
+            salt,
+        }
+    }
 }
 
 pub fn hash_name_nsec3(name: &str, config: &Nsec3Config) -> Vec<u8> {
@@ -1394,10 +1403,26 @@ pub fn hash_name_nsec3(name: &str, config: &Nsec3Config) -> Vec<u8> {
     let mut hash = name_lower.as_bytes().to_vec();
 
     for _ in 0..config.iterations {
-        let mut hasher = Sha1::new();
-        hasher.update(&hash);
-        hasher.update(&config.salt);
-        hash = hasher.finalize().to_vec();
+        match config.algorithm {
+            1 => {
+                let mut hasher = Sha1::new();
+                hasher.update(&hash);
+                hasher.update(&config.salt);
+                hash = hasher.finalize().to_vec();
+            }
+            2 => {
+                let mut hasher = Sha256::new();
+                hasher.update(&hash);
+                hasher.update(&config.salt);
+                hash = hasher.finalize().to_vec();
+            }
+            _ => {
+                let mut hasher = Sha1::new();
+                hasher.update(&hash);
+                hasher.update(&config.salt);
+                hash = hasher.finalize().to_vec();
+            }
+        }
     }
 
     hash

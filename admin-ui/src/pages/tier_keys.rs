@@ -123,6 +123,44 @@ impl Component for TierKeys {
 
         html! {
             <div class="space-y-6">
+                { if self.show_issue_modal {
+                    let on_close = ctx.link().callback(|_| Msg::ToggleIssueModal);
+                    html! {
+                        <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                            <div class="bg-secondary rounded-lg p-6 w-full max-w-md border border-default">
+                                <h2 class="text-xl font-bold mb-4">{ "Issue New Key" }</h2>
+                                <p class="text-secondary mb-4">{ "Issue a new tier key with specified tier level" }</p>
+                                <div class="mb-4">
+                                    <label class="block text-sm font-medium mb-2">{ "Organization ID" }</label>
+                                    <input 
+                                        type="text" 
+                                        class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg"
+                                        placeholder="org_xxx"
+                                    />
+                                </div>
+                                <div class="mb-4">
+                                    <label class="block text-sm font-medium mb-2">{ "Tier Level" }</label>
+                                    <select class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg">
+                                        <option value="1">{ "Tier 1 - Basic" }</option>
+                                        <option value="2">{ "Tier 2 - Standard" }</option>
+                                        <option value="3">{ "Tier 3 - Premium" }</option>
+                                    </select>
+                                </div>
+                                <div class="flex justify-end gap-4">
+                                    <button onclick={on_close} class="px-4 py-2 bg-tertiary rounded-lg">
+                                        { "Cancel" }
+                                    </button>
+                                    <button class="px-4 py-2 bg-accent text-white rounded-lg">
+                                        { "Issue Key" }
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    }
+                } else {
+                    html! {}
+                }}
+
                 <div class="flex justify-between items-center">
                     <div>
                         <h1 class="text-2xl font-bold">{ "Tier Keys" }</h1>

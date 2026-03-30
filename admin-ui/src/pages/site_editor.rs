@@ -17,6 +17,27 @@ pub struct SiteEditorProps {
 pub fn SiteEditor(props: &SiteEditorProps) -> Html {
     let active_tab = use_state(|| "basic".to_string());
     let selected_preset = use_state(|| Option::<ServerPreset>::None);
+    let site_config = use_state(|| None::<serde_json::Value>);
+    let loading = use_state(|| true);
+    let saving = use_state(|| false);
+    let site_id = props.id.clone();
+
+    use_effect_with((), {
+        let site_config = site_config.clone();
+        let loading = loading.clone();
+        let site_id = site_id.clone();
+        move |_| {
+            wasm_bindgen_futures::spawn_local(async move {
+                let api = ApiService::new();
+                let result = api.get_site(&site_id).await;
+                loading.set(false);
+                if let Ok(data) = result {
+                    site_config.set(Some(data));
+                }
+            });
+            || {}
+        }
+    });
 
     let on_tab_click = {
         let active_tab = active_tab.clone();
@@ -33,6 +54,16 @@ pub fn SiteEditor(props: &SiteEditorProps) -> Html {
     };
 
     let presets = get_presets();
+
+    if *loading {
+        return html! {
+            <div class="text-center py-10">
+                <p class="text-secondary">{ "Loading site configuration..." }</p>
+            </div>
+        };
+    }
+
+    let config = (*site_config).clone();
 
     html! {
         <div>
@@ -63,24 +94,15 @@ pub fn SiteEditor(props: &SiteEditorProps) -> Html {
 
                 <div class="p-6">
                     { match active_tab.as_str() {
-                        "basic" => html! { <BasicTab presets={presets} on_preset_select={on_preset_select} selected_preset={(*selected_preset).clone()} /> },
-                        "ratelimit" => html! { <RateLimitTab /> },
-                        "blocking" => html! { <BlockingTab /> },
-                        "attacks" => html! { <AttacksTab /> },
-                        "bot" => html! { <BotTab /> },
-                        "upload" => html! { <UploadTab /> },
+                        "basic" => html! { <BasicTab presets={presets} on_preset_select={on_preset_select} selected_preset={(*selected_preset).clone()} config={config.clone()} site_id={props.id.clone()} /> },
+                        "ratelimit" => html! { <RateLimitTab config={config.clone()} site_id={props.id.clone()} /> },
+                        "blocking" => html! { <BlockingTab config={config.clone()} site_id={props.id.clone()} /> },
+                        "attacks" => html! { <AttacksTab config={config.clone()} site_id={props.id.clone()} /> },
+                        "bot" => html! { <BotTab config={config.clone()} site_id={props.id.clone()} /> },
+                        "upload" => html! { <UploadTab config={config.clone()} site_id={props.id.clone()} /> },
                         "error_pages" => html! { <ErrorPagesTab site_id={props.id.clone()} /> },
-                        _ => html! { <BasicTab presets={presets} on_preset_select={on_preset_select} selected_preset={(*selected_preset).clone()} /> },
+                        _ => html! { <BasicTab presets={presets} on_preset_select={on_preset_select} selected_preset={(*selected_preset).clone()} config={config.clone()} site_id={props.id.clone()} /> },
                     }}
-                </div>
-
-                <div class="p-4 border-t border-default flex justify-end gap-4">
-                    <button class="px-4 py-2 bg-tertiary text-primary rounded-lg hover:opacity-80">
-                        { "Cancel" }
-                    </button>
-                    <button class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
-                        { "Save Changes" }
-                    </button>
                 </div>
             </div>
         </div>
@@ -123,12 +145,95 @@ struct BasicTabProps {
     presets: Vec<ServerPreset>,
     on_preset_select: Callback<ServerPreset>,
     selected_preset: Option<ServerPreset>,
+    config: Option<serde_json::Value>,
+    site_id: String,
 }
 
 #[function_component]
 fn BasicTab(props: &BasicTabProps) -> Html {
     let presets = props.presets.clone();
     let on_preset_select = props.on_preset_select.clone();
+    let config = props.config.clone();
+    let site_id = props.site_id.clone();
+    let saving = use_state(|| false);
+
+    let domains = use_state(|| "".to_string());
+    let upstream = use_state(|| "".to_string());
+    let routes = use_state(|| Vec::<(String, String)>::new());
+
+    use_effect_with((), {
+        let domains = domains.clone();
+        let upstream = upstream.clone();
+        let routes = routes.clone();
+        let config = config.clone();
+        move |_| {
+            if let Some(cfg) = config {
+                if let Some(d) = cfg.get("domains").and_then(|v| v.as_array()) {
+                    let domains_str: Vec<String> = d.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect();
+                    domains.set(domains_str.join(", "));
+                }
+                if let Some(u) = cfg.get("default_upstream").and_then(|v| v.as_str()) {
+                    upstream.set(u.to_string());
+                }
+                if let Some(r) = cfg.get("routes").and_then(|v| v.as_object()) {
+                    let mut routes_vec = Vec::new();
+                    for (k, v) in r.iter() {
+                        if let Some(v_str) = v.as_str() {
+                            routes_vec.push((k.clone(), v_str.to_string()));
+                        }
+                    }
+                    routes.set(routes_vec);
+                }
+            }
+            || {}
+        }
+    });
+
+    let on_domains_change = {
+        let domains = domains.clone();
+        Callback::from(move |e: Event| {
+            let target = e.target().unwrap();
+            let value = target.dyn_ref::<web_sys::HtmlInputElement>()
+                .map(|el| el.value())
+                .unwrap_or_default();
+            domains.set(value);
+        })
+    };
+
+    let on_upstream_change = {
+        let upstream = upstream.clone();
+        Callback::from(move |e: Event| {
+            let target = e.target().unwrap();
+            let value = target.dyn_ref::<web_sys::HtmlInputElement>()
+                .map(|el| el.value())
+                .unwrap_or_default();
+            upstream.set(value);
+        })
+    };
+
+    let on_save = {
+        let saving = saving.clone();
+        let domains = domains.clone();
+        let upstream = upstream.clone();
+        let site_id = site_id.clone();
+        Callback::from(move |_| {
+            let domains_vec: Vec<String> = domains.split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            let new_config = serde_json::json!({
+                "domains": domains_vec,
+                "default_upstream": (*upstream).clone()
+            });
+            saving.set(true);
+            wasm_bindgen_futures::spawn_local(async move {
+                let api = ApiService::new();
+                let _ = api.update_site(&site_id, &new_config).await;
+                saving.set(false);
+                toast_success("Site configuration saved");
+            });
+        })
+    };
 
     html! {
         <div class="space-y-6">
@@ -154,60 +259,13 @@ fn BasicTab(props: &BasicTabProps) -> Html {
                                 <div class="font-medium text-sm">{ &preset.name }</div>
                                 <div class="text-xs text-secondary mt-1">{ &preset.description }</div>
                             </button>
-                        }
-                    })}
+}
                 </div>
             </div>
 
-            <div>
-                <h3 class="text-lg font-semibold mb-4">{ "Site Information" }</h3>
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <InputWithTooltip
-                        label="Domains (comma separated)"
-                        name="domains"
-                        value="example.com, www.example.com"
-                        help="First domain is used as the site identifier"
-                        tooltip_title="Domain Configuration"
-                        tooltip_content="Enter all domains and subdomains that should be handled by this site. The first domain is used as the unique identifier. Use commas to separate multiple domains."
-                    />
-                    <InputWithTooltip
-                        label="Default Upstream"
-                        name="upstream"
-                        value="http://127.0.0.1:8000"
-                        help="Backend server to forward requests to"
-                        tooltip_title="Upstream Backend"
-                        tooltip_content="The URL of the backend server that will handle requests. Can be HTTP or HTTPS. For local development, typically http://127.0.0.1:8000"
-                    />
-                </div>
-            </div>
-
-            <div>
-                <h3 class="text-lg font-semibold mb-4 flex items-center">
-                    { "Path Routes" }
-                    <HelpIcon
-                        content="Define URL path prefixes and their corresponding upstream servers. Requests matching a prefix will be routed to the specified upstream."
-                        title="Path-Based Routing"
-                    />
-                </h3>
-                <div class="space-y-3">
-                    <div class="flex gap-4">
-                        <input
-                            type="text"
-                            value="/api"
-                            class="flex-1 px-3 py-2 bg-tertiary border border-default rounded-lg"
-                            placeholder="Path prefix"
-                        />
-                        <input
-                            type="text"
-                            value="http://api.internal:8001"
-                            class="flex-1 px-3 py-2 bg-tertiary border border-default rounded-lg"
-                            placeholder="Upstream URL"
-                        />
-                        <button class="px-3 py-2 bg-red-600 text-white rounded-lg">{"Remove"}</button>
-                    </div>
-                </div>
-                <button class="mt-3 px-4 py-2 bg-tertiary text-primary rounded-lg hover:opacity-80">
-                    { "+ Add Route" }
+            <div class="flex justify-end">
+                <button onclick={on_save} disabled={*saving} class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">
+                    { if *saving { "Saving..." } else { "Save Changes" } }
                 </button>
             </div>
         </div>
@@ -215,207 +273,13 @@ fn BasicTab(props: &BasicTabProps) -> Html {
 }
 
 #[derive(Properties, PartialEq)]
-struct InputWithTooltipProps {
-    label: String,
-    name: String,
-    value: String,
-    help: String,
-    tooltip_title: String,
-    tooltip_content: String,
-    #[prop_or_default]
-    input_type: String,
+struct AttacksTabProps {
+    config: Option<serde_json::Value>,
+    site_id: String,
 }
 
 #[function_component]
-fn InputWithTooltip(props: &InputWithTooltipProps) -> Html {
-    let name = props.name.clone();
-    let value = props.value.clone();
-    let label = props.label.clone();
-    let input_type = if props.input_type.is_empty() {
-        "text".to_string()
-    } else {
-        props.input_type.clone()
-    };
-
-    html! {
-        <div class="mb-4">
-            <label class="flex items-center gap-1 text-sm font-medium text-primary mb-1" for={name.clone()}>
-                { label }
-                <Tooltip content={props.tooltip_content.clone()} title={props.tooltip_title.clone()} position={TooltipPosition::Right}>
-                    <span class="inline-flex items-center justify-center w-4 h-4 rounded-full bg-tertiary text-secondary text-xs cursor-help hover:bg-blue-600 hover:text-white transition-colors">
-                        {"?"}
-                    </span>
-                </Tooltip>
-            </label>
-            <input
-                type={input_type}
-                id={name.clone()}
-                name={name}
-                value={value}
-                class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-            <p class="mt-1 text-xs text-secondary">{ props.help.clone() }</p>
-        </div>
-    }
-}
-
-#[function_component]
-fn RateLimitTab() -> Html {
-    html! {
-        <div class="space-y-6">
-            <div>
-                <h3 class="text-lg font-semibold mb-4 flex items-center">
-                    { "Rate Limiting Mode" }
-                    <HelpIcon
-                        content="Shared mode applies global rate limits from main config to all sites. Isolated mode allows each site to have its own rate limits."
-                        title="Rate Limit Mode"
-                    />
-                </h3>
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <SelectWithTooltip
-                        label="Mode"
-                        name="ratelimit_mode"
-                        value="isolated"
-                        options={vec![
-                            ("shared".to_string(), "Shared (use global limits)".to_string()),
-                            ("isolated".to_string(), "Isolated (site-specific limits)".to_string()),
-                        ]}
-                        help="Shared mode uses limits from main config, isolated uses per-site limits"
-                        tooltip_title="Rate Limit Mode"
-                        tooltip_content="Shared: All sites share the same rate limits from the main config. \n\nIsolated: Each site can have its own independent rate limits, configured in the per-IP and global sections below."
-                    />
-                </div>
-            </div>
-
-            <div>
-                <h3 class="text-lg font-semibold mb-4">{ "Per-IP Limits" }</h3>
-                <p class="text-sm text-secondary mb-4">
-                    { "Limits apply to each unique client IP address." }
-                </p>
-                <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    <InputWithTooltip label="Per Second" name="per_second" value="10" help="Requests per second per IP" tooltip_title="Per-Second Limit" tooltip_content="Maximum number of requests a single IP can make per second. This is the most granular rate limit." />
-                    <InputWithTooltip label="Per Minute" name="per_minute" value="60" help="Requests per minute per IP" tooltip_title="Per-Minute Limit" tooltip_content="Maximum number of requests a single IP can make per minute." />
-                    <InputWithTooltip label="Per Hour" name="per_hour" value="500" help="Requests per hour per IP" tooltip_title="Per-Hour Limit" tooltip_content="Maximum number of requests a single IP can make per hour." />
-                    <InputWithTooltip label="Burst" name="burst" value="20" help="Allow bursts up to this size" tooltip_title="Burst Allowance" tooltip_content="Allows short bursts of traffic above the per-second limit. The burst size represents how many requests can be made in quick succession." />
-                </div>
-            </div>
-
-            <div>
-                <h3 class="text-lg font-semibold mb-4">{ "Global Site Limits" }</h3>
-                <p class="text-sm text-secondary mb-4">
-                    { "Limits apply to the entire site across all IPs." }
-                </p>
-                <div class="grid grid-cols-2 md:grid-cols-3 gap-4">
-                    <InputWithTooltip label="Per Second" name="global_per_second" value="500" help="Requests per second total" tooltip_title="Global Per-Second" tooltip_content="Maximum total requests per second across all IPs for this site." />
-                    <InputWithTooltip label="Per Minute" name="global_per_minute" value="5000" help="Requests per minute total" tooltip_title="Global Per-Minute" tooltip_content="Maximum total requests per minute across all IPs for this site." />
-                    <InputWithTooltip label="Max Connections" name="max_connections" value="1000" help="Maximum concurrent connections" tooltip_title="Max Connections" tooltip_content="Maximum number of concurrent connections allowed to this site at any time." />
-                </div>
-            </div>
-        </div>
-    }
-}
-
-#[derive(Properties, PartialEq)]
-struct SelectWithTooltipProps {
-    label: String,
-    name: String,
-    value: String,
-    options: Vec<(String, String)>,
-    help: String,
-    tooltip_title: String,
-    tooltip_content: String,
-}
-
-#[function_component]
-fn SelectWithTooltip(props: &SelectWithTooltipProps) -> Html {
-    let name = props.name.clone();
-    let value = props.value.clone();
-    let label = props.label.clone();
-
-    html! {
-        <div class="mb-4">
-            <label class="flex items-center gap-1 text-sm font-medium text-primary mb-1" for={name.clone()}>
-                { label }
-                <Tooltip content={props.tooltip_content.clone()} title={props.tooltip_title.clone()} position={TooltipPosition::Right}>
-                    <span class="inline-flex items-center justify-center w-4 h-4 rounded-full bg-tertiary text-secondary text-xs cursor-help hover:bg-blue-600 hover:text-white transition-colors">
-                        {"?"}
-                    </span>
-                </Tooltip>
-            </label>
-            <select
-                id={name.clone()}
-                name={name}
-                value={value}
-                class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-                {for props.options.iter().map(|(val, text)| {
-                    html! {
-                        <option value={val.clone()}>{ text }</option>
-                    }
-                })}
-            </select>
-            <p class="mt-1 text-xs text-secondary">{ props.help.clone() }</p>
-        </div>
-    }
-}
-
-#[function_component]
-fn BlockingTab() -> Html {
-    html! {
-        <div class="space-y-6">
-            <div>
-                <h3 class="text-lg font-semibold mb-4 flex items-center">
-                    { "Blocked Paths" }
-                    <HelpIcon
-                        content="Paths that should be blocked from access. Supports glob patterns like *.sql, .git/*, etc. One pattern per line."
-                        title="Path Blocking"
-                    />
-                </h3>
-                <textarea
-                    class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg font-mono text-sm"
-                    rows="6"
-                    placeholder="One path per line..."
-                    value={".env\n.git\n.svn\nwp-config.php"}
-                />
-                <p class="mt-1 text-xs text-secondary">{ "One path per line. Glob patterns supported." }</p>
-            </div>
-
-            <div>
-                <h3 class="text-lg font-semibold mb-4">{ "Block Settings" }</h3>
-                <div class="grid grid-cols-2 gap-4">
-                    <SelectWithTooltip
-                        label="Block Response Code"
-                        name="block_response_code"
-                        value="403"
-                        options={vec![
-                            ("403".to_string(), "403 Forbidden".to_string()),
-                            ("404".to_string(), "404 Not Found".to_string()),
-                            ("410".to_string(), "410 Gone".to_string()),
-                        ]}
-                        help="HTTP status code to return for blocked requests"
-                        tooltip_title="Response Code"
-                        tooltip_content="403 Forbidden: Explicitly denies access (recommended)\n404 Not Found: Pretends the file doesn't exist\n410 Gone: Indicates the resource is permanently removed"
-                    />
-                    <SelectWithTooltip
-                        label="Pattern Matching"
-                        name="use_regex"
-                        value="false"
-                        options={vec![
-                            ("false".to_string(), "Glob patterns".to_string()),
-                            ("true".to_string(), "Regular expressions".to_string()),
-                        ]}
-                        help="Use glob or regex for path matching"
-                        tooltip_title="Pattern Matching"
-                        tooltip_content="Glob patterns: Simple wildcard matching (* matches any characters)\n\nRegex: Full regular expression support for advanced matching"
-                    />
-                </div>
-            </div>
-        </div>
-    }
-}
-
-#[function_component]
-fn AttacksTab() -> Html {
+fn AttacksTab(props: &AttacksTabProps) -> Html {
     html! {
         <div class="space-y-6">
             <div>

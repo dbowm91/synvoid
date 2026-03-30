@@ -497,3 +497,269 @@ pub struct SupervisorConfig {
     #[serde(rename = "graceful_shutdown_timeout_secs")]
     pub graceful_shutdown_timeout_secs: u64,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct HttpConfig {
+    #[serde(rename = "request_timeout_secs")]
+    pub request_timeout_secs: Option<u64>,
+    #[serde(rename = "response_timeout_secs")]
+    pub response_timeout_secs: Option<u64>,
+    #[serde(rename = "keep_alive_timeout_secs")]
+    pub keep_alive_timeout_secs: Option<u64>,
+    #[serde(rename = "max_request_size_mb")]
+    pub max_request_size_mb: Option<u64>,
+    #[serde(rename = "max_response_size_mb")]
+    pub max_response_size_mb: Option<u64>,
+    #[serde(rename = "max_connections")]
+    pub max_connections: Option<usize>,
+    #[serde(rename = "max_concurrent_requests")]
+    pub max_concurrent_requests: Option<usize>,
+    #[serde(rename = "http2_enabled")]
+    pub http2_enabled: Option<bool>,
+    #[serde(rename = "compression_enabled")]
+    pub compression_enabled: Option<bool>,
+    #[serde(rename = "compression_min_size_bytes")]
+    pub compression_min_size_bytes: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct LoggingConfig {
+    #[serde(rename = "level")]
+    pub level: Option<String>,
+    #[serde(rename = "format")]
+    pub format: Option<String>,
+    #[serde(rename = "file_path")]
+    pub file_path: Option<String>,
+    #[serde(rename = "max_file_size_mb")]
+    pub max_file_size_mb: Option<u64>,
+    #[serde(rename = "max_files")]
+    pub max_files: Option<u32>,
+    #[serde(rename = "console_enabled")]
+    pub console_enabled: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct SecurityConfig {
+    #[serde(rename = "cors_enabled")]
+    pub cors_enabled: Option<bool>,
+    #[serde(rename = "cors_origins")]
+    pub cors_origins: Option<Vec<String>>,
+    #[serde(rename = "cors_allow_credentials")]
+    pub cors_allow_credentials: Option<bool>,
+    #[serde(rename = "cors_max_age_secs")]
+    pub cors_max_age_secs: Option<u64>,
+    #[serde(rename = "x_frame_options")]
+    pub x_frame_options: Option<String>,
+    #[serde(rename = "x_content_type_options")]
+    pub x_content_type_options: Option<String>,
+    #[serde(rename = "x_xss_protection")]
+    pub x_xss_protection: Option<String>,
+    #[serde(rename = "strict_transport_security")]
+    pub strict_transport_security: Option<String>,
+    #[serde(rename = "content_security_policy")]
+    pub content_security_policy: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct TrafficShapingConfig {
+    #[serde(rename = "enabled")]
+    pub enabled: Option<bool>,
+    #[serde(rename = "global_bandwidth_limit_mbps")]
+    pub global_bandwidth_limit_mbps: Option<u64>,
+    #[serde(rename = "per_site_limits")]
+    pub per_site_limits: Option<std::collections::HashMap<String, u64>>,
+    #[serde(rename = "upstream_limits")]
+    pub upstream_limits: Option<std::collections::HashMap<String, u64>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct RateLimitsConfig {
+    #[serde(rename = "mode")]
+    pub mode: Option<String>,
+    #[serde(rename = "per_ip_enabled")]
+    pub per_ip_enabled: Option<bool>,
+    #[serde(rename = "per_ip_requests_per_second")]
+    pub per_ip_requests_per_second: Option<u32>,
+    #[serde(rename = "per_ip_burst")]
+    pub per_ip_burst: Option<u32>,
+    #[serde(rename = "global_enabled")]
+    pub global_enabled: Option<bool>,
+    #[serde(rename = "global_requests_per_second")]
+    pub global_requests_per_second: Option<u32>,
+    #[serde(rename = "global_burst")]
+    pub global_burst: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct BotDetectionConfig {
+    #[serde(rename = "enabled")]
+    pub enabled: Option<bool>,
+    #[serde(rename = "difficulty")]
+    pub difficulty: Option<String>,
+    #[serde(rename = "enable_challenge")]
+    pub enable_challenge: Option<bool>,
+    #[serde(rename = "enable_captcha")]
+    pub enable_captcha: Option<bool>,
+    #[serde(rename = "enable_js_challenge")]
+    pub enable_js_challenge: Option<bool>,
+    #[serde(rename = "enable_behavioral")]
+    pub enable_behavioral: Option<bool>,
+    #[serde(rename = "challenge_timeout_secs")]
+    pub challenge_timeout_secs: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct IpFeedsConfig {
+    #[serde(rename = "enabled")]
+    pub enabled: Option<bool>,
+    #[serde(rename = "feeds")]
+    pub feeds: Option<Vec<IpFeedEntry>>,
+    #[serde(rename = "update_interval_secs")]
+    pub update_interval_secs: Option<u64>,
+    #[serde(rename = "auto_update")]
+    pub auto_update: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct IpFeedEntry {
+    #[serde(rename = "name")]
+    pub name: Option<String>,
+    #[serde(rename = "url")]
+    pub url: Option<String>,
+    #[serde(rename = "enabled")]
+    pub enabled: Option<bool>,
+    #[serde(rename = "format")]
+    pub format: Option<String>,
+    #[serde(rename = "update_interval_hours")]
+    pub update_interval_hours: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct TlsConfig {
+    #[serde(rename = "enabled")]
+    pub enabled: Option<bool>,
+    #[serde(rename = "min_tls_version")]
+    pub min_tls_version: Option<String>,
+    #[serde(rename = "ciphers")]
+    pub ciphers: Option<Vec<String>>,
+    #[serde(rename = "prefer_server_cipher_order")]
+    pub prefer_server_cipher_order: Option<bool>,
+    #[serde(rename = "http2_enabled")]
+    pub http2_enabled: Option<bool>,
+    #[serde(rename = "http3_enabled")]
+    pub http3_enabled: Option<bool>,
+    #[serde(rename = "ocsp_stapling_enabled")]
+    pub ocsp_stapling_enabled: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct DnsConfig {
+    #[serde(rename = "enabled")]
+    pub enabled: Option<bool>,
+    #[serde(rename = "port")]
+    pub port: Option<u16>,
+    #[serde(rename = "bind_addresses")]
+    pub bind_addresses: Option<Vec<String>>,
+    #[serde(rename = "allow_recursive")]
+    pub allow_recursive: Option<bool>,
+    #[serde(rename = "forwarders")]
+    pub forwarders: Option<Vec<String>>,
+    #[serde(rename = "block_tld")]
+    pub block_tld: Option<Vec<String>>,
+    #[serde(rename = "dnssec_enabled")]
+    pub dnssec_enabled: Option<bool>,
+    #[serde(rename = "nxdomain_redirect")]
+    pub nxdomain_redirect: Option<String>,
+    #[serde(rename = "rpz_enabled")]
+    pub rpz_enabled: Option<bool>,
+    #[serde(rename = "rpz_config")]
+    pub rpz_config: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct MeshConfig {
+    #[serde(rename = "enabled")]
+    pub enabled: Option<bool>,
+    #[serde(rename = "node_id")]
+    pub node_id: Option<String>,
+    #[serde(rename = "listen_port")]
+    pub listen_port: Option<u16>,
+    #[serde(rename = "peer_seed")]
+    pub peer_seed: Option<String>,
+    #[serde(rename = "global_nodes")]
+    pub global_nodes: Option<Vec<String>>,
+    #[serde(rename = "dht_enabled")]
+    pub dht_enabled: Option<bool>,
+    #[serde(rename = "wireguard_enabled")]
+    pub wireguard_enabled: Option<bool>,
+    #[serde(rename = "anycast_enabled")]
+    pub anycast_enabled: Option<bool>,
+    #[serde(rename = "dns_registration_enabled")]
+    pub dns_registration_enabled: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct TunnelConfig {
+    #[serde(rename = "enabled")]
+    pub enabled: Option<bool>,
+    #[serde(rename = "wireguard_enabled")]
+    pub wireguard_enabled: Option<bool>,
+    #[serde(rename = "quic_enabled")]
+    pub quic_enabled: Option<bool>,
+    #[serde(rename = "listen_port")]
+    pub listen_port: Option<u16>,
+    #[serde(rename = "max_connections")]
+    pub max_connections: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct PluginsConfig {
+    #[serde(rename = "enabled")]
+    pub enabled: Option<bool>,
+    #[serde(rename = "plugins_dir")]
+    pub plugins_dir: Option<String>,
+    #[serde(rename = "loaded_plugins")]
+    pub loaded_plugins: Option<Vec<String>>,
+    #[serde(rename = "wasm_enabled")]
+    pub wasm_enabled: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct HoneypotStatus {
+    #[serde(rename = "running")]
+    pub running: Option<bool>,
+    #[serde(rename = "port")]
+    pub port: Option<u16>,
+    #[serde(rename = "protocols")]
+    pub protocols: Option<Vec<String>>,
+    #[serde(rename = "active_connections")]
+    pub active_connections: Option<u32>,
+    #[serde(rename = "blocked_attempts")]
+    pub blocked_attempts: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct IcmpStatus {
+    #[serde(rename = "enabled")]
+    pub enabled: Option<bool>,
+    #[serde(rename = "listen_address")]
+    pub listen_address: Option<String>,
+    #[serde(rename = "active_nodes")]
+    pub active_nodes: Option<u32>,
+    #[serde(rename = "packets_forwarded")]
+    pub packets_forwarded: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct IcmpConfig {
+    #[serde(rename = "enabled")]
+    pub enabled: Option<bool>,
+    #[serde(rename = "listen_address")]
+    pub listen_address: Option<String>,
+    #[serde(rename = "max_ttl")]
+    pub max_ttl: Option<u8>,
+    #[serde(rename = "rate_limit_pps")]
+    pub rate_limit_pps: Option<u32>,
+    #[serde(rename = "backend_selection")]
+    pub backend_selection: Option<String>,
+}

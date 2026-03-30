@@ -1,7 +1,11 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use ed25519_dalek::Signer;
+use ed25519_dalek::Verifier;
+use hkdf::Hkdf;
 use parking_lot::RwLock;
+use sha2::Sha256;
 use tokio::sync::mpsc;
 
 use crate::dns::messages::{
@@ -45,6 +49,7 @@ pub struct RegisteredOriginNode {
     pub latency_ms: Option<u32>,
     pub load_percent: Option<u8>,
     pub last_update: u64,
+    pub last_seen: u64,
     pub authenticated: bool,
     pub edge_node_id: Option<String>,
     pub edge_node_geo: Option<String>,
@@ -334,4 +339,58 @@ mod tests {
             config.verification_retry_interval_secs
         );
     }
+}
+
+#[derive(Clone)]
+pub struct MeshSigningKey {
+    pub signing_key: ed25519_dalek::SigningKey,
+    pub verifying_key: ed25519_dalek::VerifyingKey,
+    pub key_id: String,
+    pub derived_from_mesh_id: String,
+}
+
+impl MeshSigningKey {
+    pub fn sign(&self, message: &[u8]) -> ed25519_dalek::Signature {
+        self.signing_key.sign(message)
+    }
+
+    pub fn verify(&self, message: &[u8], signature: &[u8]) -> bool {
+        let sig_array: [u8; 64] = match signature.try_into() {
+            Ok(arr) => arr,
+            Err(_) => return false,
+        };
+        let sig = ed25519_dalek::Signature::from_bytes(&sig_array);
+        match self.verifying_key.verify(message, &sig) {
+            Ok(_) => true,
+            Err(_) => false,
+        }
+    }
+}
+
+const DNS_SIGNING_INFO: &[u8] = b"dns-signing-key-v1";
+
+pub fn derive_dns_signing_key(
+    session_key: &[u8; 32],
+    mesh_id: &str,
+) -> Option<MeshSigningKey> {
+    let salt = mesh_id.as_bytes();
+    let hk = Hkdf::<Sha256>::new(Some(salt), session_key);
+
+    let mut okm = [0u8; 32];
+    hk.expand(DNS_SIGNING_INFO, &mut okm).ok()?;
+
+    let signing_key = ed25519_dalek::SigningKey::from_bytes(&okm);
+    let verifying_key = signing_key.verifying_key();
+
+    let key_id = verifying_key.as_bytes()[..8]
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect::<String>();
+
+    Some(MeshSigningKey {
+        signing_key,
+        verifying_key,
+        key_id,
+        derived_from_mesh_id: mesh_id.to_string(),
+    })
 }

@@ -490,4 +490,211 @@ impl ApiService {
     ) -> Result<serde_json::Value, String> {
         self.put("/config/supervisor", config).await
     }
+
+    pub async fn get_main_config(&self) -> Result<serde_json::Value, String> {
+        self.get("/config/main").await
+    }
+
+    pub async fn update_main_config(
+        &self,
+        config: &serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        self.put("/config/main", config).await
+    }
+
+    pub async fn get_http_config(&self) -> Result<serde_json::Value, String> {
+        self.get("/config/http").await
+    }
+
+    pub async fn update_http_config(
+        &self,
+        config: &serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        self.put("/config/http", config).await
+    }
+
+    pub async fn get_logging_config(&self) -> Result<serde_json::Value, String> {
+        self.get("/config/logging").await
+    }
+
+    pub async fn update_logging_config(
+        &self,
+        config: &serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        self.put("/config/logging", config).await
+    }
+
+    pub async fn get_security_config(&self) -> Result<serde_json::Value, String> {
+        self.get("/config/security").await
+    }
+
+    pub async fn update_security_config(
+        &self,
+        config: &serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        self.put("/config/security", config).await
+    }
+
+    pub async fn get_tls_config(&self) -> Result<serde_json::Value, String> {
+        self.get("/config/tls").await
+    }
+
+    pub async fn update_tls_config(
+        &self,
+        config: &serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        self.put("/config/tls", config).await
+    }
+
+    pub async fn get_tunnel_config(&self) -> Result<serde_json::Value, String> {
+        self.get("/config/tunnel").await
+    }
+
+    pub async fn update_tunnel_config(
+        &self,
+        config: &serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        self.put("/config/tunnel", config).await
+    }
+
+    pub async fn get_plugins_config(&self) -> Result<serde_json::Value, String> {
+        self.get("/config/plugins").await
+    }
+
+    pub async fn update_plugins_config(
+        &self,
+        config: &serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        self.put("/config/plugins", config).await
+    }
+
+    pub async fn get_traffic_shaping_config(&self) -> Result<serde_json::Value, String> {
+        self.get("/config/traffic-shaping").await
+    }
+
+    pub async fn update_traffic_shaping_config(
+        &self,
+        config: &serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        self.put("/config/traffic-shaping", config).await
+    }
+
+    pub async fn get_ip_feeds_config(&self) -> Result<serde_json::Value, String> {
+        self.get("/config/ip-feeds").await
+    }
+
+    pub async fn update_ip_feeds_config(
+        &self,
+        config: &serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        self.put("/config/ip-feeds", config).await
+    }
+
+    pub async fn get_rate_limits_config(&self) -> Result<serde_json::Value, String> {
+        self.get("/config/rate-limits").await
+    }
+
+    pub async fn update_rate_limits_config(
+        &self,
+        config: &serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        self.put("/config/rate-limits", config).await
+    }
+
+    pub async fn get_bot_detection_config(&self) -> Result<serde_json::Value, String> {
+        self.get("/config/bot-detection").await
+    }
+
+    pub async fn update_bot_detection_config(
+        &self,
+        config: &serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        self.put("/config/bot-detection", config).await
+    }
+
+    pub async fn get_mesh_config(&self) -> Result<serde_json::Value, String> {
+        self.get("/config/mesh").await
+    }
+
+    pub async fn update_mesh_config(
+        &self,
+        config: &serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        self.put("/config/mesh", config).await
+    }
+
+    pub async fn get_dns_config(&self) -> Result<serde_json::Value, String> {
+        self.get("/config/dns").await
+    }
+
+    pub async fn update_dns_config(
+        &self,
+        config: &serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        self.put("/config/dns", config).await
+    }
+
+    pub async fn reload_config(&self) -> Result<serde_json::Value, String> {
+        self.post("/config/reload", &serde_json::json!({})).await
+    }
+
+    pub async fn validate_config(&self) -> Result<serde_json::Value, String> {
+        self.post("/config/validate", &serde_json::json!({})).await
+    }
+
+    pub async fn export_config(&self) -> Result<serde_json::Value, String> {
+        self.get("/config/export").await
+    }
+
+    pub async fn import_config(&self, config: &serde_json::Value) -> Result<serde_json::Value, String> {
+        self.post("/config/import", config).await
+    }
+
+    pub async fn get_honeypot_status(&self) -> Result<serde_json::Value, String> {
+        self.get("/honeypot/status").await
+    }
+
+    pub async fn control_honeypot(&self, action: &str) -> Result<serde_json::Value, String> {
+        self.post("/honeypot/control", &serde_json::json!({ "action": action })).await
+    }
+
+    pub async fn get_icmp_status(&self) -> Result<serde_json::Value, String> {
+        self.get("/icmp/status").await
+    }
+
+    pub async fn get_icmp_config(&self) -> Result<serde_json::Value, String> {
+        self.get("/icmp/config").await
+    }
+
+    pub async fn enable_icmp(&self) -> Result<serde_json::Value, String> {
+        self.post("/icmp/enable", &serde_json::json!({})).await
+    }
+
+    pub async fn disable_icmp(&self) -> Result<serde_json::Value, String> {
+        self.post("/icmp/disable", &serde_json::json!({})).await
+    }
+
+    pub async fn get_site(&self, site_id: &str) -> Result<serde_json::Value, String> {
+        self.get(&format!("/sites/{}", site_id)).await
+    }
+
+    pub async fn update_site(&self, site_id: &str, config: &serde_json::Value) -> Result<serde_json::Value, String> {
+        self.put(&format!("/sites/{}", site_id), config).await
+    }
+
+    pub async fn create_site(&self, domains: Vec<String>, upstream: &str) -> Result<serde_json::Value, String> {
+        let body = serde_json::json!({
+            "domains": domains,
+            "default_upstream": upstream
+        });
+        self.post("/sites", &body).await
+    }
+
+    pub async fn delete_site(&self, site_id: &str) -> Result<serde_json::Value, String> {
+        self.delete(&format!("/sites/{}", site_id)).await
+    }
+
+    pub async fn get_sites(&self) -> Result<serde_json::Value, String> {
+        self.get("/sites").await
+    }
 }

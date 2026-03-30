@@ -30,6 +30,7 @@ impl MeshDnsRegistry {
             return Err("Registration requires mTLS authentication".to_string());
         }
 
+        let now = chrono::Utc::now().timestamp() as u64;
         let origin = RegisteredOriginNode {
             node_id: registration.node_id.clone(),
             domains: vec![registration.domain.clone()],
@@ -38,7 +39,8 @@ impl MeshDnsRegistry {
             capacity: registration.capacity,
             latency_ms: registration.latency_ms,
             load_percent: None,
-            last_update: chrono::Utc::now().timestamp() as u64,
+            last_update: now,
+            last_seen: now,
             authenticated,
             edge_node_id: registration.edge_node_id.clone(),
             edge_node_geo: registration.edge_node_geo.clone(),
@@ -231,6 +233,7 @@ impl MeshDnsRegistry {
                 let mut mapping = self.domain_to_origin_mapping.write();
 
                 for reg in request.domains {
+                    let now = chrono::Utc::now().timestamp() as u64;
                     let origin = RegisteredOriginNode {
                         node_id: reg.node_id.clone(),
                         domains: vec![reg.domain.clone()],
@@ -239,7 +242,8 @@ impl MeshDnsRegistry {
                         capacity: reg.capacity,
                         latency_ms: reg.latency_ms,
                         load_percent: None,
-                        last_update: chrono::Utc::now().timestamp() as u64,
+                        last_update: now,
+                        last_seen: now,
                         authenticated,
                         edge_node_id: reg.edge_node_id.clone(),
                         edge_node_geo: reg.edge_node_geo.clone(),

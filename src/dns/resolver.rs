@@ -218,7 +218,9 @@ impl HickoryResolver {
     }
 
     pub fn with_upstream_servers(upstream_ips: &[IpAddr]) -> Result<Self, ResolverError> {
-        Self::with_upstream_servers_and_options(upstream_ips, None)
+        let mut opts = hickory_resolver::config::ResolverOpts::default();
+        opts.validate = true;
+        Self::with_upstream_servers_and_options(upstream_ips, Some(opts))
     }
 
     pub fn with_upstream_servers_and_options(
@@ -291,11 +293,14 @@ impl HickoryResolver {
 
     pub fn with_google() -> Result<Self, ResolverError> {
         let config = hickory_resolver::config::ResolverConfig::google();
+        let mut opts = hickory_resolver::config::ResolverOpts::default();
+        opts.validate = true;
 
         let resolver = hickory_resolver::Resolver::builder_with_config(
             config,
             hickory_resolver::name_server::TokioConnectionProvider::default(),
         )
+        .with_options(opts)
         .build();
 
         Ok(Self { resolver })
@@ -303,11 +308,14 @@ impl HickoryResolver {
 
     pub fn with_cloudflare() -> Result<Self, ResolverError> {
         let config = hickory_resolver::config::ResolverConfig::cloudflare();
+        let mut opts = hickory_resolver::config::ResolverOpts::default();
+        opts.validate = true;
 
         let resolver = hickory_resolver::Resolver::builder_with_config(
             config,
             hickory_resolver::name_server::TokioConnectionProvider::default(),
         )
+        .with_options(opts)
         .build();
 
         Ok(Self { resolver })

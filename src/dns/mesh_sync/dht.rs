@@ -12,6 +12,8 @@ impl MeshDnsRegistry {
             return;
         }
 
+        let now = chrono::Utc::now().timestamp() as u64;
+
         let origin = RegisteredOriginNode {
             node_id: origin_node_id.clone(),
             domains: vec![domain.clone()],
@@ -20,7 +22,8 @@ impl MeshDnsRegistry {
             capacity: 100,
             latency_ms: None,
             load_percent: None,
-            last_update: chrono::Utc::now().timestamp() as u64,
+            last_update: now,
+            last_seen: now,
             authenticated: true,
             edge_node_id: None,
             edge_node_geo: None,
@@ -45,6 +48,30 @@ impl MeshDnsRegistry {
         );
     }
 
+    pub fn update_origin_node(
+        &self,
+        node_id: &str,
+        domains: Vec<String>,
+        healthy: bool,
+        capacity: u32,
+        latency_ms: Option<u32>,
+        load_percent: Option<u8>,
+    ) {
+        let now = chrono::Utc::now().timestamp() as u64;
+
+        let mut origins = self.origin_nodes.write();
+        if let Some(mut origin) = origins.get_mut(node_id) {
+            origin.domains = domains;
+            origin.healthy = healthy;
+            origin.capacity = capacity;
+            origin.latency_ms = latency_ms;
+            origin.load_percent = load_percent;
+            origin.last_seen = now;
+
+            tracing::debug!("Updated origin node from DHT: {}", node_id);
+        }
+    }
+
     pub fn sync_from_dht(&self) {
         if !self.is_global {
             return;
@@ -60,6 +87,8 @@ impl MeshDnsRegistry {
 
                 if existing.is_none() {
                     self.apply_dht_domain_registration(domain, origin_id, ips);
+                } else {
+                    self.update_origin_node(&origin_id, vec![domain], true, 100, None, None);
                 }
             }
 
