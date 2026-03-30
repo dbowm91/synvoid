@@ -123,6 +123,7 @@ The following vulnerabilities exist in transitive dependencies and are documente
 | `atomic-polyfill` | None | Acceptable | Transitive via postcard/heapless |
 | ~~`rustls-pemfile`~~ | ~~`rustls-pki-types`~~ | **Removed** | Migrated to rustls-pki-types PEM iterator |
 | `once_cell` | `std::sync::LazyLock` | **Removed** | Replaced with std library equivalent |
+| `unicode-segmentation` 1.13.1 | 1.13.2 | **Yanked** | Transitive dep; 1.13.1 yanked, 1.13.2 available |
 
 ---
 
