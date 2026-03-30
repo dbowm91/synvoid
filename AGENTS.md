@@ -32,6 +32,11 @@ cargo test --lib --no-run
 | Category | Command | Expected Time |
 |----------|---------|---------------|
 | Integration Tests | `cargo test --test integration_test` | ~5s |
+| DNS Recursive Tests | `cargo test --test dns_recursive_test` | ~1s |
+| DHT Integration Tests | `cargo test --test dht_integration_test` | ~1s |
+| DNS Server Tests | `cargo test --test dns_server_test` | ~1s |
+| E2E Process Tests | `cargo test --test e2e_process_test` | ~1s |
+| IPC Tests | `cargo test --test ipc_test` | ~1s |
 | All Tests (no DNS) | `cargo test` | ~3-5 min |
 | DNS Feature Tests | `cargo test --features dns` | Varies |
 | Unit Tests Only | `cargo test --lib` | ~3 min |
@@ -187,6 +192,31 @@ assert!(matches!(event, Rfc5011Event::KeyPending { .. }));
 let events = manager.process_rfc5011_updates();
 ```
 
+### Dropped Event Metrics
+
+Global counters for silently dropped channel send failures live in `src/metrics/mod.rs`. Pattern:
+
+```rust
+// 1. Add global static counter
+static DROPPED_FOO_EVENTS: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+
+// 2. Add record/get functions
+pub fn record_dropped_foo_event() {
+    DROPPED_FOO_EVENTS.fetch_add(1, Ordering::Relaxed);
+}
+pub fn get_dropped_foo_events() -> u64 {
+    DROPPED_FOO_EVENTS.load(Ordering::Relaxed)
+}
+
+// 3. Instrument call site
+if sender.send(event).is_err() {
+    crate::metrics::record_dropped_foo_event();
+    tracing::warn!("Failed to send foo event");
+}
+```
+
+Query via `get_dropped_event_counts() -> DroppedEventCounts` (per-category breakdown + total).
+
 ## File Naming Conventions
 
 - Source files: `snake_case.rs`
@@ -240,7 +270,7 @@ Crate-level suppressions in `src/lib.rs`:
 - `src/mesh/` — ~29 items (90+ dead code warnings per clippy)
 - `src/dns/server/` — ~10 items
 
-`cargo clippy` produces ~93 warnings (pre-existing categories, incremental quality issues).
+`cargo clippy` produces ~103 warnings (pre-existing categories, mostly dead code in `src/mesh/`).
 
 ### Build Configuration
 
@@ -271,74 +301,67 @@ Feature flags trimmed: `tower` removed `"timeout"`, `tower-http` removed `"trace
 
 ### Duplicate Timestamp Utility
 
-7 duplicate `current_timestamp()` definitions exist:
-- `src/waf/probe_tracker.rs:446`
-- `src/process/ipc.rs:1311`
-- `src/mesh/dht/stake.rs:533`
-- `src/overseer/state.rs:148`
+6 duplicate `current_timestamp()` definitions exist:
+- `src/waf/probe_tracker.rs:455`
+- `src/mesh/dht/stake.rs:531`
+- `src/overseer/state.rs:146`
 - `src/mesh/transports/manager.rs:32`
-- `src/captcha/mod.rs:185`
-- `src/utils.rs:414` (canonical)
+- `src/captcha/mod.rs:192`
+- `src/utils.rs:423` (canonical)
 
 Use the `utils.rs` version and remove the rest.
 
-### 7 Duplicate `default_true()` Functions
-
-Consolidate into 1 canonical version in `src/config/defaults.rs`. Found in site.rs, security.rs, proxy.rs, logging.rs, and others.
-
 ## Known Bugs (Quick Reference)
 
-### Critical Correctness
-
-| Bug | Location | Impact |
-|-----|----------|--------|
-| BCRYPT_COST = 4 | `src/admin/auth.rs:9` | Trivially brute-forceable auth tokens |
-| Auth timing attack | `src/auth/mod.rs:370-432` | Username enumeration: wrong-password for existing user returns ~200ms faster than non-existent user |
-| IPC lock contention | `src/worker/mod.rs` (3 competing tasks) | Deadlock risk under load |
-
-### ~~Plugin ABI Mismatch~~ ✅ FIXED (Wave 4)
-
-### Security
-
-| Bug | Location | Impact |
-|-----|----------|--------|
-| TLS skip_verify | `src/http_client/mod.rs:201-211` | No verification of upstream certificates |
-| Plaintext bcrypt fallback | `src/admin/auth.rs:15-36` | If bcrypt fails, token stored as plaintext |
-| IPC key fallback to env var | `src/process/manager.rs:446-458` | Key visible in /proc if temp file creation fails |
-| CORS wildcard not enforced at site level | `src/http/headers.rs` | Only admin API rejects `allow_origin: "*"` |
-| Token in validation error | `src/config/admin.rs:105-109` | Generated token appears in error messages |
-
-### DNS / RFC Compliance
+### Remaining Open Issues
 
 | Bug | Location | Impact | Status |
 |-----|----------|--------|--------|
-| ~~NSEC3 hash loop off-by-one~~ | `dnssec.rs:1310` | ~~iterations+1 instead of iterations~~ | ✅ Fixed: `..=` → `..` |
 | NSEC3 base32 encoding | `dnssec.rs:1367` | Non-standard encoding for non-SHA1 lengths | Open (SHA-1 only in practice) |
-| ~~NSEC3 owner name hash-length byte~~ | `dnssec.rs:1364` | ~~Binary char instead of decimal string~~ | ✅ Fixed: `format!` decimal |
-| ~~DNSKEY publishes KSK only~~ | `dnssec_impl.rs:35` | ~~Missing ZSK in DNSKEY RRset~~ | ✅ Fixed (Wave 3) |
-| ~~CDS uses wrong type~~ | `dnssec_impl.rs:74` | ~~Type 43 (DS) instead of 59 (CDS)~~ | ✅ Fixed (Wave 3) |
-| ~~SRV canonical_rdata incomplete~~ | `dnssec.rs:1520` | ~~Missing weight/port/target fields~~ | ✅ Fixed (Wave 3) |
-| ~~ARCOUNT off by one~~ | `response.rs:30` | ~~OPT/RRSIG not counted in header~~ | ✅ Fixed: post-write patching |
-| ~~MX/CNAME/NS trailing null~~ | `response.rs:135` | ~~Missing null byte after name~~ | ✅ Fixed: added root label |
-| ~~AD flag set unconditionally~~ | `response.rs:25` | ~~Set when client requests DO, not when signed~~ | ✅ Fixed: conditional on signing |
 | Forwarder no DNSSEC validation | `HickoryResolver` | Forwarder mode doesn't validate; AD bit not propagated | Limitation (documented) |
 
-### DHT
+### All Fixed Bugs (Reference)
 
-| Bug | Location | Impact | Status |
-|-----|----------|--------|--------|
-| ~~Unbounded PoW nonce loop~~ | `node_id.rs:138` | ~~Can hang on startup if no valid nonce found~~ | ✅ Fixed: 10M iteration limit |
-| ~~Duplicate peers in lookup~~ | `query.rs:50` | ~~Same peer queried multiple times~~ | ✅ Fixed: HashSet dedup in init/next_peers_to_query/process_response |
-| ~~PoW not persisted~~ | `table.rs:539` | ~~Contact restored without verifying PoW~~ | ✅ Fixed: pow_nonce/public_key in PersistedContact |
-| ~~XOR distance uses first byte only~~ | `geo_distance.rs:117` | ~~Poor ranking granularity for IPv6~~ | ✅ Fixed: full bit-prefix counting |
+<details><summary>Click to expand fixed bugs (33 items across all phases)</summary>
+
+**Critical Correctness** (all fixed Phase 2):
+- ~~BCRYPT_COST = 4~~ → now 12 (`src/admin/auth.rs:9`)
+- ~~Auth timing attack~~ → `verify_dummy_password()` always called before returning
+- ~~IPC lock contention~~ → lock scoped to recv only, dropped before match processing
+
+**Security** (all fixed Phase 2):
+- ~~TLS skip_verify~~ → startup warning + `skip_verify_reason` required
+- ~~Plaintext bcrypt fallback~~ → returns error instead
+- ~~IPC key fallback to env var~~ → fail-hard by default, `allow_insecure_ipc_key` opt-in
+- ~~CORS wildcard not enforced at site level~~ → rejected in release builds
+- ~~Token in validation error~~ → logged separately at INFO level
+
+**DNS / RFC Compliance** (all fixed):
+- ~~NSEC3 hash loop off-by-one~~ → `..=` → `..`
+- ~~NSEC3 owner name hash-length byte~~ → `format!` decimal
+- ~~DNSKEY publishes KSK only~~ → ZSK added (Wave 3)
+- ~~CDS uses wrong type~~ → Type 59 CDS (Wave 3)
+- ~~SRV canonical_rdata incomplete~~ → weight/port/target fields added
+- ~~ARCOUNT off by one~~ → post-write patching
+- ~~MX/CNAME/NS trailing null~~ → root label added
+- ~~AD flag set unconditionally~~ → conditional on signing
+
+**DHT** (all fixed):
+- ~~Unbounded PoW nonce loop~~ → 10M iteration limit
+- ~~Duplicate peers in lookup~~ → HashSet dedup
+- ~~PoW not persisted~~ → pow_nonce/public_key in PersistedContact
+- ~~XOR distance uses first byte only~~ → full bit-prefix counting
+
+**Other** (all fixed):
+- ~~Plugin ABI Mismatch~~ → `rustwaf_abi_version` → `maluwaf_abi_version`
+- ~~dns-parser replaced~~ → hickory-proto (75 references migrated)
+- ~~once_cell replaced~~ → std::sync::LazyLock (13 files)
+
+</details>
 
 ### Dead Code (Removed)
 
 `src/http/handler.rs` (1,661 lines) and `src/http/range.rs` (194 lines) were deleted in Phase 1 — they were never in the module tree and had compile errors.
-
-### ~~Plugin ABI Mismatch~~ ✅ FIXED (Wave 4)
-
-~~`examples/dynamic-plugin-example/src/lib.rs:23` exports `rustwaf_abi_version` but `src/plugin/axum_loader.rs:110` looks for `maluwaf_abi_version`. Loading the example plugin will fail with `SymbolNotFound`.~~ Fixed: example plugin now exports `maluwaf_abi_version`.
 
 ## Performance Hot Paths
 
@@ -347,12 +370,12 @@ Agents modifying these areas should be aware of performance characteristics:
 | Area | Concern | Location |
 |------|---------|----------|
 | WAF detection | Runs ~20+ checks per request, lock acquisition per request | `src/waf/mod.rs:660-700` |
-| Cache lookups | O(n) `VecDeque::position/remove` per operation; write lock on LRU update | `src/proxy_cache/store.rs:241` |
+| Cache lookups | O(1) via `LinkedHashMap`; write lock on LRU update | `src/proxy_cache/store.rs:241` |
 | Input normalization | Allocates `String` per request via various transformations | `src/waf/attack_detection/normalizer.rs:20` |
 | Rate limiting | `retain` is O(n) per call, 6 sequential calls | `src/waf/ratelimit.rs:122-142` |
 | HTTP path sanitization | Allocates `Vec` on every request | `src/proxy.rs:101` |
 | Response header filtering | Allocates `Vec` on every proxied response | `src/proxy.rs:147-159` |
-| SSRF detection | Calls `.to_lowercase()` 4+ times on same input | `src/waf/attack_detection/ssrf.rs` |
+| SSRF detection | Calls `.to_lowercase()` multiple times on same input | `src/waf/attack_detection/ssrf.rs` |
 
 ## Module Size Guide
 
@@ -392,21 +415,21 @@ Three-tier HTTP client hierarchy:
 | `create_http_client_with_config()` | `https_only()`, native roots + webpki fallback | Default: proxy, TLS server |
 | `create_upstream_client()` | Configurable via `UpstreamTlsConfig` | Per-site upstream with `skip_verify`/`allow_plaintext` |
 
-### ACME Stub
+### ACME Client
 
-`src/tls/acme.rs` is a stub returning `AcmeError::UseExternalClient`. Config fields exist but no actual ACME protocol implementation. See Phase 7 in `plans/fullplan.md`.
+`src/tls/acme.rs` implements a full ACME client using the `instant-acme` crate. Supports HTTP-01 and DNS-01 (feature-gated `dns`) challenges. Certificate renewal runs every 24h via `spawn_renewal_task()`. Config under `[tls.acme]` in TOML.
 
 ### TLS Passthrough
 
-The `tls_passthrough` field in `src/tunnel/quic/messages.rs` and `src/config/tunnel.rs` is dead code — logged and ignored. See Phase 7.3 in `plans/fullplan.md`.
+Site-level config to forward raw TLS bytes from client to origin without decryption. WAF applies layer 3/4 only (IP rate limiting, connection limits). SNI is extracted via `src/tls/sni_peek.rs` before TLS handshake. Enabled via `tls_passthrough = true` in site proxy config.
 
-### Cert Distribution (Planned)
+### Cert Distribution (Origin → Edge)
 
-The mesh layer will support origin→edge TLS certificate distribution via 3 new messages (`SiteTlsCertSync`, `SiteTlsCertRequest`, `SiteTlsCertResponse`) in `src/mesh/protocol.rs`. Private keys are encrypted with AES-256-GCM using a per-site key derived via HKDF from the mesh session key. See Phase 7.2 in `plans/fullplan.md`.
+`src/mesh/cert_dist.rs` handles origin→edge TLS certificate distribution via 3 mesh messages (`SiteTlsCertSync`, `SiteTlsCertRequest`, `SiteTlsCertResponse`). Private keys encrypted with AES-256-GCM using per-site keys derived via HKDF from the mesh session key.
 
 ### IPC Session Key
 
-The IPC session key is passed via a temp file (`MALUWAF_IPC_KEY_FILE`) instead of an env var. The temp file uses `0600` permissions (Unix only) and is deleted by the worker after reading. Falls back to `MALUWAF_IPC_KEY` env var if file write fails.
+The IPC session key is passed via a temp file (`MALUWAF_IPC_KEY_FILE`) instead of an env var. The temp file uses `0600` permissions (Unix only) and is deleted by the worker after reading. Falls back to `MALUWAF_IPC_KEY` env var only if `allow_insecure_ipc_key = true` (default: fail-hard).
 
 ### Auth Store Merge Pattern
 
@@ -444,4 +467,4 @@ When splitting large modules:
 
 ## Remediation Plans
 
-See `plans/fullplan.md` for the consolidated 33-plan master plan (12 phases) with parallel execution guidance.
+See `plans/fullplan.md` for the consolidated 33-plan master plan (12 phases, all complete). See `plans/deferred.md` for tracking of items deferred across waves (all complete).
