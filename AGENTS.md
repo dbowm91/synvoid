@@ -381,9 +381,13 @@ Agents modifying these areas should be aware of performance characteristics:
 
 | Module | Lines | Status |
 |--------|-------|--------|
-| `src/mesh/protocol_proto_encode.rs` | ~1,989 | Proto conversion (generated pattern, acceptable) |
-| `src/dns/dnssec.rs` | ~2,152 | Above 1,500 but below threshold |
-| `src/mesh/transport.rs` | ~1,897 | Split into submodules |
+| `src/dns/dnssec.rs` | 2,208 | Planned split in `plans/plan.md` Phase 5.2 |
+| `src/admin/handlers/config.rs` | 2,136 | Planned split in `plans/plan.md` Phase 5.2 |
+| `src/http/server.rs` | 2,109 | Planned split in `plans/plan.md` Phase 5.2 |
+| `src/mesh/transport.rs` | 2,086 | Already split into 11 submodules |
+| `src/mesh/protocol_proto_encode.rs` | 2,024 | Generated protobuf pattern — acceptable |
+| `src/process/manager.rs` | 2,018 | Planned split in `plans/plan.md` Phase 5.2 |
+| `src/main.rs` | 1,371 | Planned extraction in `plans/plan.md` Phase 5.3 |
 | `src/mesh/config.rs` | ~1,450 | Split into submodules |
 | `src/mesh/protocol.rs` | ~1,196 | Split into submodules |
 | `src/dns/server/mod.rs` | ~763 | Split into submodules |
@@ -465,6 +469,26 @@ When splitting large modules:
 4. Fields accessed from submodules must be `pub(crate)`, not private
 5. Module declarations go in parent module file, not in the struct's file
 
-## Remediation Plans
+## Remediation Plan
 
-See `plans/fullplan.md` for the consolidated 33-plan master plan (12 phases, all complete). See `plans/deferred.md` for tracking of items deferred across waves (all complete).
+See `plans/plan.md` for the consolidated remediation plan (11 phases covering code quality, security, DNS, and admin UI). Plan supports parallel sub-agent execution — see the Parallelization Strategy section in plan.md.
+
+## Admin Panel Architecture Notes
+
+### Config Propagation (Known Issue)
+
+Config changes via the admin API are persisted to disk but **do not propagate to workers**. The `MasterConfigReload` handler in all three worker code paths is a no-op:
+
+- `src/worker/mod.rs:248` — logs but does nothing
+- `src/worker/common.rs:197` — same
+- `src/worker/unified_server.rs:790` — same
+
+`PUT /config/main` writes to disk but doesn't update in-memory config. `POST /config/reload` only re-reads `sites/*.toml`, not `main.toml`. This is tracked in `plans/plan.md` Phase 9.3.
+
+### Frontend Orphaned Files
+
+These admin UI files are fully implemented but unreachable (no route or sidebar entry):
+
+- `admin-ui/src/pages/system_status.rs` (217 lines)
+- `admin-ui/src/pages/threat_level.rs` (615 lines)
+- `admin-ui/src/config_docs.rs` (538 lines — field documentation, not declared as module)
