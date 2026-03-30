@@ -5,8 +5,8 @@ use crate::components::layout::Sidebar;
 use crate::components::ToastContainer;
 use crate::hooks::use_theme::*;
 use crate::pages::{
-    Alerts, Dashboard, Logs, Probes, ProcessManagement, RequestLogs, Settings, SiteDetail,
-    SiteEditor, Sites, SystemStatus, TcpUdp, ThreatLevel, TierKeys, Upstreams, Workers,
+    Alerts, Dashboard, Honeypot, Icmp, Logs, Probes, ProcessManagement, RequestLogs, Settings,
+    SiteDetail, SiteEdit, SiteEditor, Sites, SystemStatus, TcpUdp, ThreatLevel, TierKeys, Workers,
 };
 use crate::types::UpdateThemeRequest;
 
@@ -46,6 +46,10 @@ pub enum Route {
     SystemStatus,
     #[at("/threat-level")]
     ThreatLevel,
+    #[at("/honeypot")]
+    Honeypot,
+    #[at("/icmp")]
+    Icmp,
     #[not_found]
     #[at("/404")]
     NotFound,
@@ -110,6 +114,8 @@ fn switch(route: Route) -> Html {
         Route::Alerts => html! { <Alerts /> },
         Route::SystemStatus => html! { <SystemStatus /> },
         Route::ThreatLevel => html! { <ThreatLevel /> },
+        Route::Honeypot => html! { <Honeypot /> },
+        Route::Icmp => html! { <Icmp /> },
         Route::NotFound => html! { <div class="text-center py-20">
             <h1 class="text-4xl font-bold mb-4">{ "404" }</h1>
             <p class="text-secondary">{ "Page not found" }</p>

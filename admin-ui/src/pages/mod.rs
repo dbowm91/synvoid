@@ -1,5 +1,7 @@
 mod alerts;
 mod dashboard;
+mod honeypot;
+mod icmp;
 mod logs;
 mod probes;
 mod process_management;
@@ -17,6 +19,8 @@ mod workers;
 
 pub use alerts::Alerts;
 pub use dashboard::Dashboard;
+pub use honeypot::Honeypot;
+pub use icmp::Icmp;
 pub use logs::Logs;
 pub use probes::Probes;
 pub use process_management::ProcessManagement;

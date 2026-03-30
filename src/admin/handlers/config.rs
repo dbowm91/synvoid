@@ -995,10 +995,12 @@ pub async fn update_main_config(
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
-    let main_config_path = {
+    let config_dir = {
         let cfg = state.process.config.read().await;
-        cfg.config_dir.join("main.toml")
+        cfg.config_dir.clone()
     };
+
+    let main_config_path = config_dir.join("main.toml");
 
     {
         let _guard = state.metrics.config_write_lock.write().await;
@@ -1010,8 +1012,21 @@ pub async fn update_main_config(
             })?;
     }
 
+    // Update in-memory config and broadcast to workers
+    {
+        let mut cfg = state.process.config.write().await;
+        if cfg.load_main(&main_config_path).is_ok() {
+            cfg.discover_sites();
+        }
+    }
+
+    // Broadcast to workers if process manager is available
+    if let Some(ref pm) = state.process.process_manager {
+        pm.broadcast_config_reload(config_dir).await;
+    }
+
     Ok(Json(StatusResponse::success(
-        "Configuration updated. Reload required.",
+        "Configuration updated and reloaded to workers.",
     )))
 }
 
@@ -1031,6 +1046,11 @@ pub async fn reload_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<StatusResponse>, StatusCode> {
+    let config_dir = {
+        let config = state.process.config.read().await;
+        config.config_dir.clone()
+    };
+
     let mut config = state.process.config.write().await;
     let results = config.reload_all();
 
@@ -1054,18 +1074,27 @@ pub async fn reload_config(
         }
     }
 
+    // Broadcast to workers after config reload
+    drop(config);
+    if let Some(ref pm) = state.process.process_manager {
+        pm.broadcast_config_reload(config_dir).await;
+    }
+
     let message = if mimes_reloaded {
         format!(
-            "Loaded {} configs, {} failed, mimes reloaded",
+            "Reloaded {} configs, {} failed, mimes reloaded, workers notified",
             loaded, failed
         )
     } else if let Some(err) = mimes_error {
         format!(
-            "Loaded {} configs, {} failed, mimes reload failed: {}",
+            "Reloaded {} configs, {} failed, mimes reload failed: {}, workers notified",
             loaded, failed, err
         )
     } else {
-        format!("Loaded {} configs, {} failed", loaded, failed)
+        format!(
+            "Reloaded {} configs, {} failed, workers notified",
+            loaded, failed
+        )
     };
 
     Ok(Json(StatusResponse {
@@ -1610,7 +1639,7 @@ pub async fn update_tls_config(
         let mut config = state.process.config.write().await;
         config.main.tls = req.config;
     }
-    persist_main_config(&state).await?;
+    persist_main_config_and_notify(&state).await?;
     Ok(Json(StatusResponse::success("TLS config updated.")))
 }
 
@@ -1646,7 +1675,7 @@ pub async fn update_http_config(
         let mut config = state.process.config.write().await;
         config.main.http = req.config;
     }
-    persist_main_config(&state).await?;
+    persist_main_config_and_notify(&state).await?;
     Ok(Json(StatusResponse::success("HTTP config updated.")))
 }
 
@@ -1682,7 +1711,7 @@ pub async fn update_security_config(
         let mut config = state.process.config.write().await;
         config.main.security = req.config;
     }
-    persist_main_config(&state).await?;
+    persist_main_config_and_notify(&state).await?;
     Ok(Json(StatusResponse::success("Security config updated.")))
 }
 
@@ -1718,7 +1747,7 @@ pub async fn update_tunnel_config(
         let mut config = state.process.config.write().await;
         config.main.tunnel = req.config;
     }
-    persist_main_config(&state).await?;
+    persist_main_config_and_notify(&state).await?;
     Ok(Json(StatusResponse::success("Tunnel config updated.")))
 }
 
@@ -1754,7 +1783,7 @@ pub async fn update_plugins_config(
         let mut config = state.process.config.write().await;
         config.main.plugins = req.config;
     }
-    persist_main_config(&state).await?;
+    persist_main_config_and_notify(&state).await?;
     Ok(Json(StatusResponse::success("Plugins config updated.")))
 }
 
@@ -1790,7 +1819,7 @@ pub async fn update_logging_config(
         let mut config = state.process.config.write().await;
         config.main.logging = req.config;
     }
-    persist_main_config(&state).await?;
+    persist_main_config_and_notify(&state).await?;
     Ok(Json(StatusResponse::success("Logging config updated.")))
 }
 
@@ -1826,7 +1855,7 @@ pub async fn update_traffic_shaping_config(
         let mut config = state.process.config.write().await;
         config.main.traffic_shaping = req.config;
     }
-    persist_main_config(&state).await?;
+    persist_main_config_and_notify(&state).await?;
     Ok(Json(StatusResponse::success(
         "Traffic shaping config updated.",
     )))
@@ -1864,7 +1893,7 @@ pub async fn update_threat_level_config(
         let mut config = state.process.config.write().await;
         config.main.threat_level = req.config;
     }
-    persist_main_config(&state).await?;
+    persist_main_config_and_notify(&state).await?;
     Ok(Json(StatusResponse::success(
         "Threat level config updated.",
     )))
@@ -1902,7 +1931,7 @@ pub async fn update_ip_feeds_config(
         let mut config = state.process.config.write().await;
         config.main.ip_feeds = req.config;
     }
-    persist_main_config(&state).await?;
+    persist_main_config_and_notify(&state).await?;
     Ok(Json(StatusResponse::success("IP feeds config updated.")))
 }
 
@@ -1942,7 +1971,7 @@ pub async fn update_dns_config(
         let mut config = state.process.config.write().await;
         config.main.dns = req.config;
     }
-    persist_main_config(&state).await?;
+    persist_main_config_and_notify(&state).await?;
     Ok(Json(StatusResponse::success("DNS config updated.")))
 }
 
@@ -2000,7 +2029,7 @@ pub async fn update_rate_limits_config(
         }
     }
 
-    persist_main_config(&state).await?;
+    persist_main_config_and_notify(&state).await?;
     Ok(Json(StatusResponse::success("Rate limits config updated.")))
 }
 
@@ -2038,7 +2067,7 @@ pub async fn update_bot_detection_config(
         config.main.defaults.bot = req.config;
     }
 
-    persist_main_config(&state).await?;
+    persist_main_config_and_notify(&state).await?;
     Ok(Json(StatusResponse::success(
         "Bot detection config updated.",
     )))
@@ -2078,7 +2107,7 @@ pub async fn update_mesh_config(
         config.main.mesh = req.config;
     }
 
-    persist_main_config(&state).await?;
+    persist_main_config_and_notify(&state).await?;
     Ok(Json(StatusResponse::success("Mesh config updated.")))
 }
 
@@ -2114,15 +2143,15 @@ pub async fn validate_config(
 
 // --- Helper: persist MainConfig to TOML file ---
 
-async fn persist_main_config(state: &Arc<AdminState>) -> Result<(), StatusCode> {
-    let (main_config_path, toml_content) = {
+async fn persist_main_config_and_notify(state: &Arc<AdminState>) -> Result<(), StatusCode> {
+    let (main_config_path, toml_content, config_dir) = {
         let config = state.process.config.read().await;
         let path = config.config_dir.join("main.toml");
         let content = toml::to_string_pretty(&config.main).map_err(|e| {
             tracing::error!("Failed to serialize config: {}", e);
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
-        (path, content)
+        (path, content, config.config_dir.clone())
     };
 
     tokio::fs::write(&main_config_path, toml_content)
@@ -2131,6 +2160,11 @@ async fn persist_main_config(state: &Arc<AdminState>) -> Result<(), StatusCode> 
             tracing::error!("Failed to write main config: {}", e);
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
+
+    // Broadcast config reload to workers
+    if let Some(ref pm) = state.process.process_manager {
+        pm.broadcast_config_reload(config_dir).await;
+    }
 
     Ok(())
 }

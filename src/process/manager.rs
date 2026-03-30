@@ -1197,6 +1197,38 @@ impl ProcessManager {
         }
     }
 
+    pub async fn broadcast_config_reload(&self, config_path: PathBuf) {
+        let msg = Message::MasterConfigReload {
+            config_path: config_path.to_string_lossy().to_string(),
+        };
+
+        // Send to static worker
+        if let Some(ref ipc) = self.get_static_worker_ipc() {
+            let mut ipc = ipc.lock().await;
+            if let Err(e) = ipc.send(&msg) {
+                tracing::error!("Failed to send config reload to static worker: {}", e);
+            } else {
+                tracing::info!("Broadcast config reload to static worker");
+            }
+        }
+
+        // Send to unified server worker
+        if let Some(ref ipc) = self.get_unified_server_worker_ipc() {
+            let mut ipc = ipc.lock().await;
+            if let Err(e) = ipc.send(&msg) {
+                tracing::error!(
+                    "Failed to send config reload to unified server worker: {}",
+                    e
+                );
+            } else {
+                tracing::info!("Broadcast config reload to unified server worker");
+            }
+        }
+
+        // Note: Regular pool workers don't have direct IPC channels.
+        // They receive config reload via signal-based communication or will pick up on next request.
+    }
+
     pub async fn check_workers_health(&self) {
         let workers = self.workers.read();
         let now = Instant::now();

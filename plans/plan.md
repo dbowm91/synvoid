@@ -3,7 +3,7 @@
 > Created: 2026-03-30
 > Source: Consolidation of 11 individual plan files (plan2-5, plan_dns1-3, plan_ui1-3, plan_ui5)
 > Codebase: ~135k lines of Rust
-> **Last updated: 2026-03-30** — Phases 1, 2 (partial), 3, 5.1 (partial), 6, 7.1, 7.2, 8.1, 8.3, 9.1, 9.2, 9.3, 9.4, 9.5, 10.1, 10.2 completed
+> **Last updated: 2026-03-30** — Phases 1, 2 (partial), 3, 5.1 (partial), 6, 7.1, 7.2, 7.3, 8.1, 8.3, 9.1, 9.2, 9.3, 9.4, 9.5, 10.1, 10.2, 10.3 completed
 
 ---
 
@@ -256,9 +256,11 @@ Config parsing, initialization, metrics, `worker_pool/worker.rs:7`, `process/soc
 | 3 | Add `nsec3_algorithm` config option | `src/config/dns.rs` | ⏸ Deferred |
 | 4 | Verify `base32_encode()` handles 32-byte hashes (52 chars base32, within 63-char DNS label limit) | — |
 
-### 7.3 Forwarder DNSSEC AD Bit Propagation
+### 7.3 Forwarder DNSSEC AD Bit Propagation ✅ DONE
 
 Parse AD bit from upstream responses in forwarding mode. Set `authentic_data` when upstream AD=1. Add startup warning when using forwarding + DNSSEC requirements.
+
+Added startup warning at `src/dns/recursive.rs:156-167` when DNSSEC validation is enabled with forwarder mode (Google/Cloudflare/System) that does not perform DNSSEC validation.
 
 **Verification**: `cargo test --test integration_test dnssec`, `cargo test --lib resolver`
 
@@ -368,17 +370,17 @@ Add typed structs in `admin-ui/src/types/mod.rs` using `Option<T>` for all field
 
 `HttpConfig`, `LoggingConfig`, `SecurityConfig`, `TrafficShapingConfig`, `RateLimitsConfig`, `BotDetectionConfig`, `IpFeedsConfig`, `TlsConfig`, `DnsConfig`, `MeshConfig`
 
-### 9.3 Fix Config Propagation (Critical Backend Fix) ✅ PARTIAL
+### 9.3 Fix Config Propagation (Critical Backend Fix) ✅ DONE
 
 **Most critical architectural issue**: config changes are persisted to disk but workers never learn about them.
 
 | # | Task | File | Status |
 |---|------|------|--------|
 | 1 | Fix `MasterConfigReload` handlers — implemented real reload | `src/worker/mod.rs:248`, `src/worker/unified_server.rs:790` | ✅ Done |
-| 2 | Fix `PUT /config/main` staleness — not addressed | `src/admin/handlers/config.rs` | ⏸ Deferred |
-| 3 | Add `broadcast_config_reload()` to `ProcessManager` | `src/process/manager.rs` | ⏸ Deferred |
-| 4 | Call broadcast in all section-specific handlers | `src/admin/handlers/config.rs` | ⏸ Deferred |
-| 5 | Fix `POST /config/reload` — not addressed | `src/admin/handlers/config.rs:1030` | ⏸ Deferred |
+| 2 | Fix `PUT /config/main` staleness — update in-memory config + broadcast | `src/admin/handlers/config.rs:988-1025` | ✅ Done |
+| 3 | Add `broadcast_config_reload()` to `ProcessManager` | `src/process/manager.rs:1199-1243` | ✅ Done |
+| 4 | Call broadcast in all section-specific handlers | `src/admin/handlers/config.rs` (15+ handlers) | ✅ Done |
+| 5 | Fix `POST /config/reload` — broadcast to workers | `src/admin/handlers/config.rs:1061-1110` | ✅ Done |
 | 6 | Define hot-reloadable vs restart-required fields | Return in `/config/schema` endpoint | ⏸ Deferred |
 
 Worker `common.rs` handler still logs only (restart required for that worker type). WorkerState now carries `config_manager` and `config_path` for reload support.
@@ -425,7 +427,7 @@ Fix Save/Cancel buttons (currently no `onclick` handlers at lines 77-84).
 
 ---
 
-## Phase 10: Admin Panel — Missing Pages & UX
+## Phase 10: Admin Panel — Missing Pages & UX ✅ (10.1, 10.2, 10.3 done)
 
 ### 10.1 Enable Orphaned Pages ✅ DONE
 
@@ -445,8 +447,10 @@ Fix Save/Cancel buttons (currently no `onclick` handlers at lines 77-84).
 ### 10.3 Add Honeypot & ICMP Pages
 
 Backend APIs exist. Create:
-- `admin-ui/src/pages/honeypot.rs` — status, connections, enable/disable
-- `admin-ui/src/pages/icmp.rs` — status, config, backends, enable/disable
+- `admin-ui/src/pages/honeypot.rs` — status, connections, enable/disable ✅ DONE
+- `admin-ui/src/pages/icmp.rs` — status, config, backends, enable/disable ✅ DONE
+
+New pages added with full functionality including status display, enable/disable controls, and backend listing for ICMP. Routes added to app.rs, nav items to sidebar.
 
 ### 10.4 Usability Improvements
 

@@ -674,6 +674,14 @@ impl ApiService {
         self.post("/icmp/disable", &serde_json::json!({})).await
     }
 
+    pub async fn get_icmp_backends(&self) -> Result<serde_json::Value, String> {
+        self.get("/icmp/backends").await
+    }
+
+    pub async fn update_icmp_config(&self, config: serde_json::Value) -> Result<serde_json::Value, String> {
+        self.post("/icmp/config", config).await
+    }
+
     pub async fn get_site(&self, site_id: &str) -> Result<serde_json::Value, String> {
         self.get(&format!("/sites/{}", site_id)).await
     }
