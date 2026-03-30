@@ -101,18 +101,36 @@ impl WorkerDrainState {
     }
 
     pub fn decrement_active(&self) {
-        let prev = self.active_connections.fetch_sub(1, Ordering::SeqCst);
+        let prev = self
+            .active_connections
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| v.checked_sub(1))
+            .unwrap_or(0);
         if prev == 1 && self.is_draining() {
             self.mark_drain_complete();
         }
     }
 
     pub fn decrement_active_typed(&self, request_type: RequestType) {
-        let prev = self.active_connections.fetch_sub(1, Ordering::SeqCst);
+        let prev = self
+            .active_connections
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| v.checked_sub(1))
+            .unwrap_or(0);
         match request_type {
-            RequestType::Short => self.short_requests.fetch_sub(1, Ordering::SeqCst),
-            RequestType::Long => self.long_requests.fetch_sub(1, Ordering::SeqCst),
-            RequestType::Streaming => self.streaming_requests.fetch_sub(1, Ordering::SeqCst),
+            RequestType::Short => {
+                let _ = self
+                    .short_requests
+                    .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| v.checked_sub(1));
+            }
+            RequestType::Long => {
+                let _ = self
+                    .long_requests
+                    .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| v.checked_sub(1));
+            }
+            RequestType::Streaming => {
+                let _ =
+                    self.streaming_requests
+                        .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| v.checked_sub(1));
+            }
         };
         if prev == 1 && self.is_draining() {
             self.mark_drain_complete();
@@ -124,7 +142,9 @@ impl WorkerDrainState {
     }
 
     pub fn decrement_idle(&self) {
-        self.idle_connections.fetch_sub(1, Ordering::SeqCst);
+        let _ = self
+            .idle_connections
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| v.checked_sub(1));
     }
 
     pub fn get_active_connections(&self) -> u64 {

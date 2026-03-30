@@ -610,7 +610,11 @@ impl UdpRateLimiter {
 
                 let current = entry.count.fetch_add(1, Ordering::Relaxed);
                 if current >= limit {
-                    entry.count.fetch_sub(1, Ordering::Relaxed);
+                    let _ = entry.count.fetch_update(
+                        Ordering::Relaxed,
+                        Ordering::Relaxed,
+                        |v| v.checked_sub(1),
+                    );
                     return false;
                 }
                 true
@@ -637,8 +641,11 @@ impl UdpRateLimiter {
         }
 
         if total_removed > 0 {
-            self.total_tracked
-                .fetch_sub(total_removed, Ordering::Relaxed);
+            let _ = self.total_tracked.fetch_update(
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+                |v| v.checked_sub(total_removed),
+            );
         }
     }
 }

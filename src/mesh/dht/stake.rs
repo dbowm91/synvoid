@@ -6,6 +6,7 @@ use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use serde::{Deserialize, Serialize};
 
 use crate::mesh::config::MeshNodeRole;
+use crate::utils::current_timestamp;
 
 const DEFAULT_MIN_STAKE_FOR_DHT_WRITE: i64 = 30;
 const DEFAULT_MIN_STAKE_FOR_DHT_READ: i64 = 10;
@@ -526,10 +527,6 @@ impl StakeManager {
         };
         reputation as f64 * role_weight
     }
-}
-
-fn current_timestamp() -> u64 {
-    crate::utils::current_timestamp()
 }
 
 #[cfg(test)]

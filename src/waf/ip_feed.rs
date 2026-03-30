@@ -154,7 +154,7 @@ impl IpFeedManager {
             }
 
             let ip_or_cidr = if line.contains('#') {
-                line.split('#').next().unwrap().trim()
+                line.split('#').next().unwrap_or("").trim()
             } else {
                 line
             };

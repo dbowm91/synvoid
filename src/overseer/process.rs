@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use super::drain_manager::DrainManager;
 use super::socket_handoff::DualMasterHandoff;
 use super::spawn::{spawn_and_log, ProcessMode, SpawnConfig};
-use super::state::{OverseerState, Persistence, UpgradeState};
+use super::state::{Persistence, UpgradeState};
 use super::upgrade::{Orchestrator, UpgradeError};
 pub use crate::config::OverseerConfig;
 use crate::process::{
@@ -745,7 +745,7 @@ impl OverseerProcess {
             state.state = UpgradeState::DualMasterActive;
             state.old_master_pid = old_master_pid;
             state.new_master_pid = self.upgraded_master_child.as_ref().map(|c| c.id());
-            state.dual_master_start_time = Some(OverseerState::current_timestamp());
+            state.dual_master_start_time = Some(crate::utils::current_timestamp());
             self.persistence
                 .save(&state)
                 .map_err(UpgradeError::IoError)?;
@@ -804,7 +804,7 @@ impl OverseerProcess {
             let mut state = self.orchestrator.state.write().await;
             state.state = UpgradeState::Committed;
             state.current_version = Some(version.clone());
-            state.last_upgrade_timestamp = Some(OverseerState::current_timestamp());
+            state.last_upgrade_timestamp = Some(crate::utils::current_timestamp());
             state.old_master_pid = None;
             state.staged_binary_path = None;
             state.staged_version = None;
@@ -924,7 +924,7 @@ impl OverseerProcess {
             state.state = UpgradeState::DualMasterActive;
             state.old_master_pid = old_master_pid;
             state.new_master_pid = self.upgraded_master_child.as_ref().map(|c| c.id());
-            state.dual_master_start_time = Some(OverseerState::current_timestamp());
+            state.dual_master_start_time = Some(crate::utils::current_timestamp());
             self.persistence
                 .save(&state)
                 .map_err(UpgradeError::IoError)?;
@@ -966,7 +966,7 @@ impl OverseerProcess {
             let mut state = self.orchestrator.state.write().await;
             state.state = UpgradeState::Committed;
             state.current_version = Some(version.clone());
-            state.last_upgrade_timestamp = Some(OverseerState::current_timestamp());
+            state.last_upgrade_timestamp = Some(crate::utils::current_timestamp());
             state.old_master_pid = None;
             state.staged_binary_path = None;
             state.staged_version = None;
@@ -1261,7 +1261,7 @@ impl OverseerProcess {
 
             if let Ok(mut stream) = IpcStream::connect_unix(&socket_path) {
                 let health_msg = Message::MasterHealthCheck {
-                    timestamp: OverseerState::current_timestamp(),
+                    timestamp: crate::utils::current_timestamp(),
                 };
 
                 if stream.send(&health_msg).is_ok() {

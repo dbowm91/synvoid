@@ -559,7 +559,7 @@ impl HttpServer {
                     let mut resp = Response::new(Full::new(Bytes::new()));
                     *resp.status_mut() = http::StatusCode::NO_CONTENT;
                     resp.headers_mut()
-                        .insert(http::header::CONNECTION, "close".parse().unwrap());
+                        .insert(http::header::CONNECTION, http::HeaderValue::from_static("close"));
                     return Ok(resp);
                 }
             };
@@ -622,7 +622,7 @@ impl HttpServer {
                     let mut resp = Response::new(Full::new(Bytes::new()));
                     *resp.status_mut() = http::StatusCode::NO_CONTENT;
                     resp.headers_mut()
-                        .insert(http::header::CONNECTION, "close".parse().unwrap());
+                        .insert(http::header::CONNECTION, http::HeaderValue::from_static("close"));
                     return Ok(resp);
                 }
             };
@@ -651,7 +651,7 @@ impl HttpServer {
                     let mut resp = Response::new(Full::new(Bytes::new()));
                     *resp.status_mut() = http::StatusCode::NO_CONTENT;
                     resp.headers_mut()
-                        .insert(http::header::CONNECTION, "close".parse().unwrap());
+                        .insert(http::header::CONNECTION, http::HeaderValue::from_static("close"));
                     return Ok(resp);
                 }
             }
@@ -1029,7 +1029,7 @@ impl HttpServer {
                         http::Request::builder()
                             .method(method.clone())
                             .body(Bytes::new())
-                            .unwrap()
+                            .expect("fallback request body should be valid")
                     });
 
                     match pm.apply_wasm_filters(filter_req) {
@@ -1202,7 +1202,7 @@ impl HttpServer {
                                     http::Response::builder()
                                         .status(status)
                                         .body(Bytes::new())
-                                        .unwrap()
+                                        .expect("fallback response body should be valid")
                                 });
                             match pm.apply_wasm_response_transforms(wasm_resp) {
                                 Ok(transformed) => {

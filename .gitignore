@@ -85,6 +85,10 @@ coverage/
 # Backup files
 *~
 
+# Build artifact backups
+Cargo.bak.*
+Cargo.lock.new
+
 # Archive files (if not source)
 *.zip
 *.tar.gz

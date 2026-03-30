@@ -212,7 +212,7 @@ impl Orchestrator {
 
         // Create backup of current binary before upgrading
         if let Ok(current_exe) = std::env::current_exe() {
-            let timestamp = OverseerState::current_timestamp();
+            let timestamp = crate::utils::current_timestamp();
             let bin_dir = self.data_dir.join("bin");
             let _ = fs::create_dir_all(&bin_dir);
 
@@ -275,7 +275,7 @@ impl Orchestrator {
 
                         state.state = UpgradeState::Committed;
                         state.current_version = Some(version.clone());
-                        state.last_upgrade_timestamp = Some(OverseerState::current_timestamp());
+                        state.last_upgrade_timestamp = Some(crate::utils::current_timestamp());
                         state.staged_binary_path = None;
                         state.staged_config_path = None;
                         state.staged_version = None;
@@ -342,7 +342,7 @@ impl Orchestrator {
         }
 
         state.state = UpgradeState::RollingBack;
-        state.last_rollback_timestamp = Some(OverseerState::current_timestamp());
+        state.last_rollback_timestamp = Some(crate::utils::current_timestamp());
 
         self.save_state(&state).await?;
 
@@ -586,7 +586,7 @@ impl Orchestrator {
 
         let mut state = self.state.write().await;
         state.state = UpgradeState::RollingBack;
-        state.last_rollback_timestamp = Some(OverseerState::current_timestamp());
+        state.last_rollback_timestamp = Some(crate::utils::current_timestamp());
 
         if let Err(e) = self.persistence.save(&state) {
             return Err(format!("Failed to save rollback state: {}", e));
@@ -659,7 +659,7 @@ impl Orchestrator {
         state.state = UpgradeState::DualMasterActive;
         state.old_master_pid = Some(old_pid);
         state.new_master_pid = Some(new_pid);
-        state.dual_master_start_time = Some(OverseerState::current_timestamp());
+        state.dual_master_start_time = Some(crate::utils::current_timestamp());
 
         self.save_state(&state).await?;
 
@@ -687,7 +687,7 @@ impl Orchestrator {
 
         state.state = UpgradeState::Committed;
         state.current_version = Some(version);
-        state.last_upgrade_timestamp = Some(OverseerState::current_timestamp());
+        state.last_upgrade_timestamp = Some(crate::utils::current_timestamp());
         state.old_master_pid = None;
         state.new_master_pid = None;
         state.staged_binary_path = None;

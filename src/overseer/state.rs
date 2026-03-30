@@ -143,18 +143,14 @@ impl OverseerState {
         )
     }
 
-    pub fn current_timestamp() -> u64 {
-        crate::utils::current_timestamp()
-    }
-
     pub fn enter_state(&mut self, new_state: UpgradeState) {
         self.state = new_state;
-        self.state_entered_at = Some(Self::current_timestamp());
+        self.state_entered_at = Some(crate::utils::current_timestamp());
     }
 
     pub fn time_in_current_state(&self) -> Option<Duration> {
         self.state_entered_at.map(|entered| {
-            let now = Self::current_timestamp();
+            let now = crate::utils::current_timestamp();
             Duration::from_secs(now.saturating_sub(entered))
         })
     }

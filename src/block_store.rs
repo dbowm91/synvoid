@@ -156,7 +156,7 @@ impl BlockStore {
                 let path = persist_path.clone().unwrap();
                 let max_entries_clone = max_entries;
 
-                let _ = tokio::spawn(async move {
+                tokio::spawn(async move {
                     let mut interval = tokio::time::interval(std::time::Duration::from_secs(
                         config.persist_interval_secs,
                     ));
@@ -271,7 +271,7 @@ impl BlockStore {
             let store = self.store.read().clone();
             let path = path.clone();
             let max_entries = self.config.max_entries;
-            let _ = tokio::spawn(async move {
+            tokio::spawn(async move {
                 Self::persist_to_disk(&path, store, max_entries).await;
             });
         }
@@ -299,7 +299,7 @@ impl BlockStore {
             .map(|(k, _)| k.clone())
         {
             store.remove(&lru_key);
-            self.total_entries.fetch_sub(1, Ordering::Relaxed);
+            let _ = self.total_entries.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_sub(1));
             tracing::debug!("Evicted LRU block entry: {}", lru_key);
             true
         } else {
@@ -402,7 +402,7 @@ impl BlockStore {
                 return Some(entry.clone());
             } else {
                 store.remove(&key);
-                self.total_entries.fetch_sub(1, Ordering::Relaxed);
+                let _ = self.total_entries.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_sub(1));
             }
         }
 
@@ -425,7 +425,7 @@ impl BlockStore {
                     return Some(entry.clone());
                 } else {
                     store.remove(&global_key);
-                    self.total_entries.fetch_sub(1, Ordering::Relaxed);
+                    let _ = self.total_entries.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_sub(1));
                 }
             }
         }
@@ -436,7 +436,7 @@ impl BlockStore {
     fn remove_entry(&self, key: &str) {
         let removed = self.store.write().remove(key).is_some();
         if removed {
-            self.total_entries.fetch_sub(1, Ordering::Relaxed);
+            let _ = self.total_entries.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_sub(1));
             self.trigger_persist();
         }
     }

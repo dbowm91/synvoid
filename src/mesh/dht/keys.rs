@@ -22,22 +22,17 @@ pub enum DhtKey {
     NodeInfo(String),
     GlobalNodeList,
     OrgNameReservation(String),
-    TierClaim(String),
     GlobalNodePublicKey(String),
     NodeHealth(String),
     NodeLoad(String),
     VerifiedUpstream(String),
     UpstreamRegistrationRequest(String),
     YaraRules(String),
-    YaraRuleSubmission(String),
     YaraRuleVersion(String),
-    NetworkPolicy,
-    GlobalNodeBlocklist,
     DnsZone(String),
     DnsRecord(String, String),
     DnsDomainRegistration(String),
     AnycastNode(String),
-    GlobalAiBotList,
 }
 
 impl DhtKey {
@@ -69,10 +64,6 @@ impl DhtKey {
         DhtKey::OrgNameReservation(org_name.to_lowercase())
     }
 
-    pub fn tier_claim(claim_id: &str) -> Self {
-        DhtKey::TierClaim(claim_id.to_string())
-    }
-
     pub fn global_node_public_key(node_id: &str) -> Self {
         DhtKey::GlobalNodePublicKey(node_id.to_string())
     }
@@ -97,10 +88,6 @@ impl DhtKey {
         DhtKey::YaraRules(org_id.to_string())
     }
 
-    pub fn yara_rule_submission(submission_id: &str) -> Self {
-        DhtKey::YaraRuleSubmission(submission_id.to_string())
-    }
-
     pub fn yara_rule_version(version: &str) -> Self {
         DhtKey::YaraRuleVersion(version.to_string())
     }
@@ -121,10 +108,6 @@ impl DhtKey {
         DhtKey::AnycastNode(node_id.to_string())
     }
 
-    pub fn global_ai_bot_list() -> Self {
-        DhtKey::GlobalAiBotList
-    }
-
     pub fn as_str(&self) -> String {
         match self {
             DhtKey::Organization(org_id) => format!("org:{}", org_id),
@@ -136,7 +119,6 @@ impl DhtKey {
             DhtKey::NodeInfo(node_id) => format!("node_info:{}", node_id),
             DhtKey::GlobalNodeList => "global_node_list".to_string(),
             DhtKey::OrgNameReservation(name) => format!("org_name_reservation:{}", name),
-            DhtKey::TierClaim(claim_id) => format!("tier_claim:{}", claim_id),
             DhtKey::GlobalNodePublicKey(node_id) => format!("global_node_pubkey:{}", node_id),
             DhtKey::NodeHealth(node_id) => format!("node_health:{}", node_id),
             DhtKey::NodeLoad(node_id) => format!("node_load:{}", node_id),
@@ -145,17 +127,11 @@ impl DhtKey {
                 format!("upstream_registration_request:{}", request_id)
             }
             DhtKey::YaraRules(org_id) => format!("yara_rules:{}", org_id),
-            DhtKey::YaraRuleSubmission(submission_id) => {
-                format!("yara_rule_submission:{}", submission_id)
-            }
             DhtKey::YaraRuleVersion(version) => format!("yara_rule_version:{}", version),
-            DhtKey::NetworkPolicy => "network_policy".to_string(),
-            DhtKey::GlobalNodeBlocklist => "global_node_blocklist".to_string(),
             DhtKey::DnsZone(zone) => format!("dns_zone:{}", zone),
             DhtKey::DnsRecord(zone, name) => format!("dns_record:{}:{}", zone, name),
             DhtKey::DnsDomainRegistration(domain) => format!("dns_domain_reg:{}", domain),
             DhtKey::AnycastNode(node_id) => format!("anycast_node:{}", node_id),
-            DhtKey::GlobalAiBotList => "global_ai_bot_list".to_string(),
         }
     }
 
@@ -176,7 +152,6 @@ impl DhtKey {
             "org_name_reservation" if parts.len() >= 2 => {
                 DhtKey::OrgNameReservation(parts[1..].join(":"))
             }
-            "tier_claim" if parts.len() >= 2 => DhtKey::TierClaim(parts[1..].join(":")),
             "global_node_pubkey" if parts.len() >= 2 => {
                 DhtKey::GlobalNodePublicKey(parts[1..].join(":"))
             }
@@ -189,14 +164,9 @@ impl DhtKey {
                 DhtKey::UpstreamRegistrationRequest(parts[1..].join(":"))
             }
             "yara_rules" if parts.len() >= 2 => DhtKey::YaraRules(parts[1..].join(":")),
-            "yara_rule_submission" if parts.len() >= 2 => {
-                DhtKey::YaraRuleSubmission(parts[1..].join(":"))
-            }
             "yara_rule_version" if parts.len() >= 2 => {
                 DhtKey::YaraRuleVersion(parts[1..].join(":"))
             }
-            "network_policy" => DhtKey::NetworkPolicy,
-            "global_node_blocklist" => DhtKey::GlobalNodeBlocklist,
             "dns_zone" if parts.len() >= 2 => DhtKey::DnsZone(parts[1..].join(":")),
             "dns_record" if parts.len() >= 3 => {
                 DhtKey::DnsRecord(parts[1].to_string(), parts[2].to_string())
@@ -205,7 +175,6 @@ impl DhtKey {
                 DhtKey::DnsDomainRegistration(parts[1..].join(":"))
             }
             "anycast_node" if parts.len() >= 2 => DhtKey::AnycastNode(parts[1..].join(":")),
-            "global_ai_bot_list" => DhtKey::GlobalAiBotList,
             _ => DhtKey::NodeInfo(s.to_string()),
         }
     }
@@ -219,12 +188,9 @@ impl DhtKey {
                 | DhtKey::GlobalNodeList
                 | DhtKey::OrgNameReservation(_)
                 | DhtKey::UpstreamRegistrationRequest(_)
-                | DhtKey::NetworkPolicy
-                | DhtKey::GlobalNodeBlocklist
                 | DhtKey::DnsZone(_)
                 | DhtKey::DnsDomainRegistration(_)
                 | DhtKey::AnycastNode(_)
-                | DhtKey::GlobalAiBotList
         )
     }
 
@@ -233,7 +199,6 @@ impl DhtKey {
             self,
             DhtKey::Upstream(_)
                 | DhtKey::NodeInfo(_)
-                | DhtKey::TierClaim(_)
                 | DhtKey::GlobalNodePublicKey(_)
                 | DhtKey::NodeHealth(_)
                 | DhtKey::NodeLoad(_)
@@ -243,12 +208,11 @@ impl DhtKey {
                 | DhtKey::DnsZone(_)
                 | DhtKey::DnsRecord(_, _)
                 | DhtKey::AnycastNode(_)
-                | DhtKey::GlobalAiBotList
         )
     }
 
     pub fn is_global_signature_required(&self) -> bool {
-        matches!(self, DhtKey::VerifiedUpstream(_) | DhtKey::TierClaim(_))
+        matches!(self, DhtKey::VerifiedUpstream(_))
     }
 
     pub fn requires_confirmation(&self) -> bool {
@@ -259,7 +223,6 @@ impl DhtKey {
                 | DhtKey::Upstream(_)
                 | DhtKey::OrgNameReservation(_)
                 | DhtKey::UpstreamRegistrationRequest(_)
-                | DhtKey::YaraRuleSubmission(_)
         )
     }
 
@@ -281,22 +244,17 @@ impl DhtKey {
             DhtKey::NodeInfo(_) => "node_info",
             DhtKey::GlobalNodeList => "global_node_list",
             DhtKey::OrgNameReservation(_) => "org_name_reservation",
-            DhtKey::TierClaim(_) => "tier_claim",
             DhtKey::GlobalNodePublicKey(_) => "global_node_public_key",
             DhtKey::NodeHealth(_) => "node_health",
             DhtKey::NodeLoad(_) => "node_load",
             DhtKey::VerifiedUpstream(_) => "verified_upstream",
             DhtKey::UpstreamRegistrationRequest(_) => "upstream_registration_request",
             DhtKey::YaraRules(_) => "yara_rules",
-            DhtKey::YaraRuleSubmission(_) => "yara_rule_submission",
             DhtKey::YaraRuleVersion(_) => "yara_rule_version",
-            DhtKey::NetworkPolicy => "network_policy",
-            DhtKey::GlobalNodeBlocklist => "global_node_blocklist",
             DhtKey::DnsZone(_) => "dns_zone",
             DhtKey::DnsRecord(_, _) => "dns_record",
             DhtKey::DnsDomainRegistration(_) => "dns_domain_registration",
             DhtKey::AnycastNode(_) => "anycast_node",
-            DhtKey::GlobalAiBotList => "global_ai_bot_list",
         }
     }
 
@@ -310,7 +268,6 @@ impl DhtKey {
             DhtKey::NodeInfo(_) => Some(SignedRecordType::NodeInfo),
             DhtKey::GlobalNodeList => Some(SignedRecordType::GlobalNodeList),
             DhtKey::OrgNameReservation(_) => Some(SignedRecordType::OrgNameReservation),
-            DhtKey::TierClaim(_) => Some(SignedRecordType::TierClaim),
             DhtKey::GlobalNodePublicKey(_) => Some(SignedRecordType::GlobalNodePublicKey),
             DhtKey::NodeHealth(_) => Some(SignedRecordType::NodeHealth),
             DhtKey::NodeLoad(_) => Some(SignedRecordType::NodeLoad),
@@ -319,15 +276,11 @@ impl DhtKey {
                 Some(SignedRecordType::UpstreamRegistrationRequest)
             }
             DhtKey::YaraRules(_) => Some(SignedRecordType::YaraRules),
-            DhtKey::YaraRuleSubmission(_) => Some(SignedRecordType::YaraRuleSubmission),
             DhtKey::YaraRuleVersion(_) => Some(SignedRecordType::YaraRuleVersion),
-            DhtKey::NetworkPolicy => None,
-            DhtKey::GlobalNodeBlocklist => None,
             DhtKey::DnsZone(_) => Some(SignedRecordType::DnsZone),
             DhtKey::DnsRecord(_, _) => Some(SignedRecordType::DnsRecord),
             DhtKey::DnsDomainRegistration(_) => Some(SignedRecordType::DnsDomainRegistration),
             DhtKey::AnycastNode(_) => None,
-            DhtKey::GlobalAiBotList => Some(SignedRecordType::GlobalAiBotList),
         }
     }
 
@@ -355,7 +308,6 @@ impl DhtKey {
             DhtKey::DnsRecord(zone, _) => Some(zone.clone()),
             DhtKey::YaraRules(site) => Some(site.clone()),
             DhtKey::YaraRuleVersion(site) => Some(site.clone()),
-            DhtKey::YaraRuleSubmission(site) => Some(site.clone()),
             _ => None,
         }
     }

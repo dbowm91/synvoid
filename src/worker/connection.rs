@@ -1,8 +1,11 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
+use parking_lot::RwLock;
 use tokio::sync::Mutex as TokioMutex;
 
+use crate::config::ConfigManager;
 use crate::metrics::WorkerMetrics;
 use crate::process::ipc_transport::IpcStream as AsyncIpcStream;
 use crate::process::WorkerId;
@@ -16,6 +19,8 @@ pub(super) struct WorkerState {
     pub(super) ipc: Arc<TokioMutex<AsyncIpcStream>>,
     pub(super) running: RunningFlag,
     pub(super) draining: DrainFlag,
+    pub(super) config_manager: Arc<RwLock<ConfigManager>>,
+    pub(super) config_path: PathBuf,
 }
 
 pub(super) fn create_waf(main_config: &crate::config::MainConfig) -> Arc<crate::waf::WafCore> {

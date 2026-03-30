@@ -19,7 +19,7 @@ fn extract_client_ip_from_request(request: &Request) -> String {
         .headers()
         .get("x-forwarded-for")
         .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.split(',').next())
+        .and_then(|s| s.split(',').last())
         .map(|s| s.trim().to_string())
         .unwrap_or_else(|| {
             request

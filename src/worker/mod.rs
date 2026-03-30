@@ -155,8 +155,8 @@ pub async fn run_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Erro
             .await?;
     }
 
-    let config_manager = load_config(&args.config_path);
-    let main_config = config_manager.main.clone();
+    let config_manager = Arc::new(parking_lot::RwLock::new(load_config(&args.config_path)));
+    let main_config = config_manager.read().main.clone();
 
     let _waf = connection::create_waf(&main_config);
 
@@ -171,6 +171,8 @@ pub async fn run_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Erro
         ipc: ipc.clone(),
         running,
         draining,
+        config_manager: config_manager.clone(),
+        config_path: args.config_path.clone(),
     };
 
     {
@@ -251,6 +253,16 @@ pub async fn run_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Erro
                         ipc_state.worker_id,
                         config_path
                     );
+                    let config_dir = std::path::Path::new(&config_path);
+                    let mut cm = ConfigManager::new(config_dir.to_path_buf());
+                    let main_path = config_dir.join("main.toml");
+                    if cm.load_main(&main_path).is_ok() {
+                        cm.discover_sites();
+                        *ipc_state.config_manager.write() = cm;
+                        tracing::info!("Worker {} config reloaded successfully", ipc_state.worker_id);
+                    } else {
+                        tracing::warn!("Worker {} failed to reload config from {}", ipc_state.worker_id, config_path);
+                    }
                 }
                 Ok(Some(Message::MasterHealthCheck { timestamp })) => {
                     let mut ipc = ipc_state.ipc.lock().await;

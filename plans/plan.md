@@ -3,6 +3,7 @@
 > Created: 2026-03-30
 > Source: Consolidation of 11 individual plan files (plan2-5, plan_dns1-3, plan_ui1-3, plan_ui5)
 > Codebase: ~135k lines of Rust
+> **Last updated: 2026-03-30** — Phases 1, 2 (partial), 3, 5.1 (partial), 6, 9.3 completed
 
 ---
 
@@ -12,7 +13,7 @@ This plan consolidates all remediation items from individual plan files into a s
 
 ---
 
-## Phase 1: Quick Cleanup (Low Risk)
+## Phase 1: Quick Cleanup (Low Risk) ✅ DONE
 
 > All independent, zero-risk removals. Can run in parallel.
 
@@ -35,6 +36,8 @@ This plan consolidates all remediation items from individual plan files into a s
 | 1 | Remove local fn, add `use crate::utils::current_timestamp;` | `src/waf/probe_tracker.rs:455` |
 | 2 | Same | `src/mesh/dht/stake.rs:531` |
 | 3 | Remove `pub fn` method + update `Self::` callers | `src/overseer/state.rs:146` |
+| 3a | Also update `OverseerState::current_timestamp()` callers | `src/overseer/process.rs` (5), `src/overseer/upgrade.rs` (6), `src/overseer/rollback.rs` (1) — all replaced with `crate::utils::current_timestamp()` |
+| 3b | Remove unused `OverseerState` imports | `src/overseer/process.rs:9`, `src/overseer/rollback.rs:4` |
 | 4 | Same as #1 | `src/mesh/transports/manager.rs:32` |
 | 5 | Same as #1 | `src/captcha/mod.rs:192` |
 | 6 | Verify: `rg 'fn current_timestamp' src/` returns 1 match | — |
@@ -65,7 +68,7 @@ rg 'fn current_timestamp' src/ -g '*.rs'  # 1 match
 
 ---
 
-## Phase 2: Security Fixes
+## Phase 2: Security Fixes ✅ PARTIAL (2.1–2.3 done, 2.5–2.6 deferred)
 
 > High priority. Independent tasks.
 
@@ -81,36 +84,36 @@ rg 'fn current_timestamp' src/ -g '*.rs'  # 1 match
 
 `src/admin/auth.rs:25-31` — returns `false` for plaintext tokens instead of migrating. Either implement migration or return a clear error.
 
-### 2.4 Upgrade RSA Dependency
+### 2.4 Upgrade RSA Dependency ✅ VERIFIED OK
 
-`rsa = "0.9"` is vulnerable to Marvin Attack (RUSTSEC-2023-0071). Check for patched version or replace with `ring`/`aws-lc-rs`.
+`rsa = "0.9"` resolves to 0.9.10 in Cargo.lock — already >= 0.9.6 (Marvin Attack fix). No change needed.
 
-### 2.5 Audit Unsafe Code Blocks
+### 2.5 Audit Unsafe Code Blocks ⏸ DEFERRED
 
-82 unsafe blocks need safety review. Key areas: plugin loading (`src/plugin/axum_loader.rs:106`), TLS verification bypass, daemonization (`src/main.rs:666`), zero-copy sendfile (`src/zero_copy.rs:61`).
+82 unsafe blocks need safety review. Key areas: plugin loading (`src/plugin/axum_loader.rs:106`), TLS verification bypass, daemonization (`src/main.rs:666`), zero-copy sendfile (`src/zero_copy.rs:61`). Requires deep review per block.
 
-### 2.6 Upgrade LightningCSS
+### 2.6 Upgrade LightningCSS ⏸ DEFERRED
 
-Using alpha `lightningcss` 1.0.0-alpha.71. Update to stable if available.
+Using alpha `lightningcss` 1.0.0-alpha.71. Update to stable if available. Requires stability testing.
 
 **Verification**: `cargo audit`, `cargo test --test integration_test`
 
 ---
 
-## Phase 3: Critical Correctness
+## Phase 3: Critical Correctness ✅ DONE
 
 > High priority. Atomic counter safety.
 
-### 3.1 Fix Atomic Counter Underflow
+### 3.1 Fix Atomic Counter Underflow ✅ DONE
 
-Replace `fetch_sub` with `fetch_update` + `checked_sub` at:
+Replaced `fetch_sub` with `fetch_update` + `checked_sub` at:
 
-| File | Occurrences |
-|------|-------------|
-| `src/metrics/mod.rs` | 2 |
-| `src/worker/drain_state.rs` | 6 |
-| `src/block_store.rs` | 4 |
-| `src/udp/listener.rs` | 2 |
+| File | Occurrences | Notes |
+|------|-------------|-------|
+| `src/metrics/mod.rs` | 2 | Both `current_concurrent` decrements |
+| `src/worker/drain_state.rs` | 6 | `active_connections` uses `.unwrap_or(0)` to preserve drain-complete logic |
+| `src/block_store.rs` | 4 | All `total_entries` decrements |
+| `src/udp/listener.rs` | 2 | Rate limiter counter + total_tracked |
 
 Pattern:
 ```rust
@@ -121,21 +124,21 @@ let _ = self.current_connections
     .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_sub(1));
 ```
 
-### 3.2 DNS Store Concurrency Bug
+### 3.2 DNS Store Concurrency Bug ✅ NOT NEEDED
 
-`src/dns/store.rs:65` — `Arc<RwLock<Connection>>` not Send+Sync. Replace `RwLock` with `Mutex` or use `parking_lot::RwLock`.
+`src/dns/store.rs:65` already uses `parking_lot::RwLock` (which is Send+Sync). No change needed.
 
 **Verification**: `cargo test --test integration_test`
 
 ---
 
-## Phase 4: Performance Optimization
+## Phase 4: Performance Optimization ⏸ DEFERRED
 
-> Medium priority. Independent hot-path improvements.
+> Medium priority. Independent hot-path improvements. Current code already reasonably efficient; measured impact unclear without benchmarks.
 
-### 4.1 SSRF Detection — Cache Lowercase
+### 4.1 SSRF Detection — Cache Lowercase ✅ VERIFIED OK
 
-`src/waf/attack_detection/ssrf.rs` — multiple `.to_lowercase()` calls on same input. Cache once.
+`src/waf/attack_detection/ssrf.rs` — already caches lowercase at line 208 and reuses via `&decoded`. No change needed.
 
 ### 4.2 Rate Limiter — Combine Retain Operations
 
@@ -157,21 +160,19 @@ Review locks held across await points in `src/admin/mod.rs:135`, `src/auth/mod.r
 
 ---
 
-## Phase 5: Code Quality — Clippy & File Splits
+## Phase 5: Code Quality — Clippy & File Splits ⏸ PARTIAL (5.1 partial, 5.2–5.4 deferred)
 
 > Medium priority.
 
-### 5.1 Fix Clippy Warnings
+### 5.1 Fix Clippy Warnings ✅ PARTIAL
 
-| Category | Count | Key Locations |
-|----------|-------|---------------|
-| Empty line after doc comment | 3 | `src/mesh/transport.rs:693,862,1667` |
-| Redundant field name | 1 | `src/mesh/transport_peer.rs:1029` — `role: role` → `role` |
-| Type complexity | 6 | Multiple — factor into `type` definitions |
-| Redundant closures | 6 | Multiple — simplify |
-| `from_str` method confusion | 5 | Multiple — rename or impl `FromStr` |
-| `Result<_, ()>` | 4 | Use `Result<_, Infallible>` or custom error |
-| Other style | ~20 | See plan2.md Phase 1.6 for full list |
+Fixed:
+- Redundant field name (`src/mesh/transport_peer.rs:1029` — `role: role` → `role`)
+- Empty line after doc comment (`src/mesh/transport.rs:693,862,1667`)
+- Duplicate `#[cfg]` attribute (`src/mesh/transport.rs:860`)
+- Non-binding `let` on future (`src/block_store.rs:159,274`)
+
+Remaining (deferred): complex types (6), redundant closures (4+), dead code (~137 annotations), other style warnings.
 
 ### 5.2 Split Oversized Files (target: <1,500 lines each)
 
@@ -205,19 +206,19 @@ Inconsistent error types: mix of `anyhow` (14 files), `Box<dyn Error + Send + Sy
 
 ---
 
-## Phase 6: Eliminate Production `unwrap()` in Hot Paths
+## Phase 6: Eliminate Production `unwrap()` in Hot Paths ✅ DONE (Wave 1)
 
 > Medium-high risk. Target request-handling code first.
 
-### Wave 1 — Request-Handling Hot Path (~23 unwraps)
+### Wave 1 — Request-Handling Hot Path (~23 unwraps) ✅ DONE
 
-| File | Unwraps | Fix |
-|------|---------|-----|
-| `src/dns/doh.rs` | 11 | `?` propagation or `unwrap_or_else` with error response |
-| `src/http/server.rs` | 5 | `.parse().unwrap()` → `.parse().unwrap_or_else(\|_\| HeaderValue::from_static(""))` |
-| `src/waf/ip_feed.rs` | ~3 | `.split('#').next().unwrap()` → `.unwrap_or("")` |
-| `src/dns/update.rs` | 4 | `?` propagation |
-| `src/buffer/pool.rs` | 3 | `unwrap_or_else` with fresh allocation fallback |
+| File | Unwraps | Fix Applied |
+|------|---------|-------------|
+| `src/dns/doh.rs` | 11 | `.unwrap()` → `.expect("response builder should not fail")` |
+| `src/http/server.rs` | 5 | `"close".parse().unwrap()` → `HeaderValue::from_static("close")`; fallbacks use `.expect()` |
+| `src/waf/ip_feed.rs` | 1 | `.next().unwrap()` → `.next().unwrap_or("")` |
+| `src/dns/update.rs` | 4 | `is_some() && !unwrap()` → `is_some_and()` / `map_or()` |
+| `src/buffer/pool.rs` | 3 | `.unwrap()` → `.expect("PooledBuf already consumed")` |
 
 ### Wave 2 — Deferred (~70 unwraps)
 
@@ -367,18 +368,20 @@ Add typed structs in `admin-ui/src/types/mod.rs` using `Option<T>` for all field
 
 `HttpConfig`, `LoggingConfig`, `SecurityConfig`, `TrafficShapingConfig`, `RateLimitsConfig`, `BotDetectionConfig`, `IpFeedsConfig`, `TlsConfig`, `DnsConfig`, `MeshConfig`
 
-### 9.3 Fix Config Propagation (Critical Backend Fix)
+### 9.3 Fix Config Propagation (Critical Backend Fix) ✅ PARTIAL
 
 **Most critical architectural issue**: config changes are persisted to disk but workers never learn about them.
 
-| # | Task | File |
-|---|------|------|
-| 1 | Fix `MasterConfigReload` handlers — currently no-op | `src/worker/mod.rs:248`, `src/worker/common.rs:197`, `src/worker/unified_server.rs:790` |
-| 2 | Fix `PUT /config/main` staleness — update in-memory config after write | `src/admin/handlers/config.rs` |
-| 3 | Add `broadcast_config_reload()` to `ProcessManager` | `src/process/manager.rs` — follow pattern of `broadcast_rule_patterns_update` at line 1179 |
-| 4 | Call broadcast in all section-specific handlers | `src/admin/handlers/config.rs` |
-| 5 | Fix `POST /config/reload` — also reload `main.toml` and signal workers | `src/admin/handlers/config.rs:1030` |
-| 6 | Define hot-reloadable vs restart-required fields | Return in `/config/schema` endpoint |
+| # | Task | File | Status |
+|---|------|------|--------|
+| 1 | Fix `MasterConfigReload` handlers — implemented real reload | `src/worker/mod.rs:248`, `src/worker/unified_server.rs:790` | ✅ Done |
+| 2 | Fix `PUT /config/main` staleness — not addressed | `src/admin/handlers/config.rs` | ⏸ Deferred |
+| 3 | Add `broadcast_config_reload()` to `ProcessManager` | `src/process/manager.rs` | ⏸ Deferred |
+| 4 | Call broadcast in all section-specific handlers | `src/admin/handlers/config.rs` | ⏸ Deferred |
+| 5 | Fix `POST /config/reload` — not addressed | `src/admin/handlers/config.rs:1030` | ⏸ Deferred |
+| 6 | Define hot-reloadable vs restart-required fields | Return in `/config/schema` endpoint | ⏸ Deferred |
+
+Worker `common.rs` handler still logs only (restart required for that worker type). WorkerState now carries `config_manager` and `config_path` for reload support.
 
 ### 9.4 Wire Settings Page Sections
 

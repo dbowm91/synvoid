@@ -106,14 +106,14 @@ impl DohServer {
             return Ok(hyper::Response::builder()
                 .status(StatusCode::NOT_FOUND)
                 .body(Full::new(Bytes::new()))
-                .unwrap());
+                .expect("response builder should not fail"));
         }
 
         if req.method() != hyper::Method::GET && req.method() != hyper::Method::POST {
             return Ok(hyper::Response::builder()
                 .status(StatusCode::METHOD_NOT_ALLOWED)
                 .body(Full::new(Bytes::new()))
-                .unwrap());
+                .expect("response builder should not fail"));
         }
 
         let dns_query = if *req.method() == hyper::Method::POST {
@@ -123,7 +123,7 @@ impl DohServer {
                     return Ok(hyper::Response::builder()
                         .status(StatusCode::BAD_REQUEST)
                         .body(Full::new(Bytes::from("Failed to read request body")))
-                        .unwrap());
+                        .expect("response builder should not fail"));
                 }
             };
             body.to_vec()
@@ -137,20 +137,20 @@ impl DohServer {
                             return Ok(hyper::Response::builder()
                                 .status(StatusCode::BAD_REQUEST)
                                 .body(Full::new(Bytes::from("Invalid base64url encoding")))
-                                .unwrap());
+                                .expect("response builder should not fail"));
                         }
                     }
                 } else {
                     return Ok(hyper::Response::builder()
                         .status(StatusCode::BAD_REQUEST)
                         .body(Full::new(Bytes::from("Missing dns parameter")))
-                        .unwrap());
+                        .expect("response builder should not fail"));
                 }
             } else {
                 return Ok(hyper::Response::builder()
                     .status(StatusCode::BAD_REQUEST)
                     .body(Full::new(Bytes::from("Missing dns parameter")))
-                    .unwrap());
+                    .expect("response builder should not fail"));
             }
         };
 
@@ -158,7 +158,7 @@ impl DohServer {
             return Ok(hyper::Response::builder()
                 .status(StatusCode::PAYLOAD_TOO_LARGE)
                 .body(Full::new(Bytes::new()))
-                .unwrap());
+                .expect("response builder should not fail"));
         }
 
         let dns_server_guard = dns_server.read();
@@ -168,7 +168,7 @@ impl DohServer {
                 return Ok(hyper::Response::builder()
                     .status(StatusCode::SERVICE_UNAVAILABLE)
                     .body(Full::new(Bytes::new()))
-                    .unwrap());
+                    .expect("response builder should not fail"));
             }
         };
 
@@ -221,19 +221,19 @@ impl DohServer {
                         .status(StatusCode::OK)
                         .header("Content-Type", "application/json")
                         .body(Full::new(Bytes::from(body)))
-                        .unwrap())
+                        .expect("response builder should not fail"))
                 } else {
                     Ok(hyper::Response::builder()
                         .status(StatusCode::OK)
                         .header("Content-Type", "application/dns-message")
                         .body(Full::new(Bytes::from(resp.as_ref().clone())))
-                        .unwrap())
+                        .expect("response builder should not fail"))
                 }
             }
             None => Ok(hyper::Response::builder()
                 .status(500)
                 .body(Full::new(Bytes::new()))
-                .unwrap()),
+                .expect("response builder should not fail")),
         }
     }
 

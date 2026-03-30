@@ -1,4 +1,5 @@
 use crate::theme::{CaptchaPageTemplate, ThemeConfig};
+use crate::utils::current_timestamp;
 use rand::Rng;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -187,10 +188,6 @@ pub enum CaptchaResult {
     Failed,
     Expired,
     Invalid,
-}
-
-fn current_timestamp() -> u64 {
-    crate::utils::current_timestamp()
 }
 
 pub fn generate_captcha_page(challenge_id: &str, theme: ThemeConfig) -> String {

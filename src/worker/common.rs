@@ -196,7 +196,7 @@ pub fn handle_shutdown_message(
         }
         Message::MasterConfigReload { config_path } => {
             tracing::info!(
-                "Worker {} received config reload: {}",
+                "Worker {} received config reload: {} (restart required for this worker type)",
                 lifecycle.worker_id,
                 config_path
             );

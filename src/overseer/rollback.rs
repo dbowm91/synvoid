@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use super::checksum::compute_sha256;
-use super::state::{OverseerState, Persistence, UpgradeState};
+use super::state::{Persistence, UpgradeState};
 use super::upgrade::Orchestrator;
 
 pub struct RollbackManager {
@@ -109,7 +109,7 @@ impl RollbackManager {
                 new_state.state = UpgradeState::Committed;
                 new_state.current_version = state.previous_version.clone();
                 new_state.worker_ports = Some(new_ports);
-                new_state.last_rollback_timestamp = Some(OverseerState::current_timestamp());
+                new_state.last_rollback_timestamp = Some(crate::utils::current_timestamp());
                 new_state.staged_binary_path = None;
                 new_state.staged_version = None;
                 new_state.staged_config_path = None;

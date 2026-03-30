@@ -137,6 +137,14 @@ impl AdminConfig {
         }
 
         if token == "changeme" && self.token_env_var.is_none() {
+            if cfg!(not(debug_assertions)) {
+                return Err(ConfigValidationError {
+                    field: "admin.token".to_string(),
+                    message: "Default token 'changeme' is not allowed in release builds. \
+                              Set admin.token or admin.token_env_var."
+                        .to_string(),
+                });
+            }
             tracing::warn!("Admin token is still set to default 'changeme'. Set admin.token or admin.token_env_var for production.");
         }
 

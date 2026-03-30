@@ -234,7 +234,9 @@ impl SiteMetrics {
         self.total_latency_ms
             .fetch_add(latency_ms, Ordering::Relaxed);
         self.request_count.fetch_add(1, Ordering::Relaxed);
-        self.current_concurrent.fetch_sub(1, Ordering::Relaxed);
+        self.current_concurrent
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_sub(1))
+            .ok();
         self.record_latency(latency_ms);
     }
 
@@ -487,7 +489,9 @@ impl WorkerMetrics {
         self.total_latency_ms
             .fetch_add(latency_ms, Ordering::Relaxed);
         self.request_count.fetch_add(1, Ordering::Relaxed);
-        self.current_concurrent.fetch_sub(1, Ordering::Relaxed);
+        self.current_concurrent
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_sub(1))
+            .ok();
 
         self.record_latency(latency_ms);
     }

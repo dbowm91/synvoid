@@ -10,6 +10,8 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time;
 
+use crate::utils::current_timestamp;
+
 const DEFAULT_MAX_RECORDS: usize = 1000;
 const DEFAULT_RETENTION_DAYS: u64 = 7;
 const DEFAULT_WINDOW_SECS: u64 = 300;
@@ -450,10 +452,6 @@ pub struct ProbeStats {
 pub struct ProbeEndpointStats {
     pub endpoint: String,
     pub count: u32,
-}
-
-fn current_timestamp() -> u64 {
-    crate::utils::current_timestamp()
 }
 
 const MAX_WORD_TRACKER_IPS: usize = 500;

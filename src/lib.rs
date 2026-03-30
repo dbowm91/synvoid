@@ -40,7 +40,6 @@ pub mod challenge;
 pub mod common;
 pub mod config;
 pub mod drain;
-pub mod error;
 pub mod fastcgi;
 pub mod filter;
 pub mod geoip;

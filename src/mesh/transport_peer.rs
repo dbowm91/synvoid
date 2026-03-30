@@ -1026,7 +1026,7 @@ impl MeshTransport {
                 crate::mesh::protocol::MeshPeerInfo {
                     node_id: node_id.to_string(),
                     address: address.to_string(),
-                    role: role,
+                    role,
                     capabilities: capabilities.clone(),
                     is_global: role.is_global(),
                     latency_ms: None,

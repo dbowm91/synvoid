@@ -793,6 +793,23 @@ pub async fn run_unified_server_worker(
                         ipc_state.worker_id,
                         config_path
                     );
+                    let config_dir = std::path::Path::new(&config_path);
+                    let mut cm = ConfigManager::new(config_dir.to_path_buf());
+                    let main_path = config_dir.join("main.toml");
+                    if cm.load_main(&main_path).is_ok() {
+                        cm.discover_sites();
+                        *shared_config.write().await = cm;
+                        tracing::info!(
+                            "Unified Server Worker {} config reloaded successfully",
+                            ipc_state.worker_id
+                        );
+                    } else {
+                        tracing::warn!(
+                            "Unified Server Worker {} failed to reload config from {}",
+                            ipc_state.worker_id,
+                            config_path
+                        );
+                    }
                 }
                 Some(Message::MasterHealthCheck { timestamp }) => {
                     let mut ipc = ipc_state.ipc.lock().await;

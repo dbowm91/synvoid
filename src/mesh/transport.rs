@@ -691,7 +691,6 @@ impl MeshTransport {
 
     /// Send a route query using QUIC streams for reliable, ordered delivery
     /// This is faster than datagrams in lossy networks due to built-in retransmission
-
     pub async fn send_message_to_peer(
         &self,
         peer_id: &str,
@@ -859,8 +858,6 @@ impl MeshTransport {
     #[cfg(feature = "dns")]
     #[cfg(feature = "dns")]
     #[cfg(feature = "dns")]
-    #[cfg(feature = "dns")]
-
     pub async fn start(&self) -> Result<(), MeshTransportError> {
         {
             let mut running = self.running.write();
@@ -1665,7 +1662,6 @@ impl MeshTransport {
     }
 
     /// Preflight: query a newly connected peer for their known routes to warm our cache
-
     /// Proactive cache warming: periodically query for popular routes from peers
     /// This keeps the route cache warm without waiting for actual requests
 

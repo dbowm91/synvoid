@@ -10,6 +10,7 @@ use tokio::sync::Mutex;
 use tokio::time::sleep;
 
 use crate::mesh::config::MeshConfig;
+use crate::utils::current_timestamp;
 use crate::mesh::protocol::MeshMessage;
 use crate::mesh::topology::MeshTopology;
 use crate::mesh::transports::{
@@ -28,10 +29,6 @@ pub const DHT_TTL_GLOBAL_NODE_KEY: u64 = 86400;
 pub const DHT_KEY_PREFIX_KEY_EXCHANGE_ENDPOINT: &str = "key_exchange_endpoint:";
 pub const DHT_KEY_PREFIX_EDGE_KEY: &str = "edge_key:";
 pub const DHT_KEY_PREFIX_GLOBAL_NODE_KEY: &str = "global_node_key:";
-
-fn current_timestamp() -> u64 {
-    crate::utils::current_timestamp()
-}
 
 #[derive(Debug, Clone)]
 pub struct PeerTransportState {

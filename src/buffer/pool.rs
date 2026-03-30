@@ -374,11 +374,11 @@ pub struct PooledBuf {
 
 impl PooledBuf {
     pub fn as_slice(&self) -> &[u8] {
-        &self.buf.as_ref().unwrap()[..self.requested_size]
+        &self.buf.as_ref().expect("PooledBuf already consumed")[..self.requested_size]
     }
 
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
-        &mut self.buf.as_mut().unwrap()[..self.requested_size]
+        &mut self.buf.as_mut().expect("PooledBuf already consumed")[..self.requested_size]
     }
 
     pub fn len(&self) -> usize {
@@ -431,7 +431,7 @@ impl PooledBuf {
     }
 
     pub fn as_bytes_mut(&mut self) -> &mut BytesMut {
-        self.buf.as_mut().unwrap()
+        self.buf.as_mut().expect("PooledBuf already consumed")
     }
 
     pub fn clear(&mut self) {
