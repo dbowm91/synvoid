@@ -33,6 +33,10 @@ pub enum DnsNodeRole {
 pub enum DomainVerificationType {
     NsRecord,
     TxtChallenge,
+    /// Mesh-internal verification using mesh certificate and signing key
+    /// instead of external DNS queries. Provides resilience when external
+    /// DNS is unavailable.
+    MeshCertificate,
 }
 
 #[derive(

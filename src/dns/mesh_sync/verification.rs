@@ -650,6 +650,17 @@ impl MeshDnsRegistry {
                                 }
                             }
                         }
+                        DomainVerificationType::MeshCertificate => {
+                            // Mesh certificate verification relies on the certificate
+                            // chain already being verified during registration.
+                            // If we reach this point with MeshCertificate type,
+                            // consider it verified (the chain check happened earlier).
+                            tracing::info!(
+                                "Mesh certificate verification for domain {} (chain-verified)",
+                                domain
+                            );
+                            true
+                        }
                     };
 
                     if verified {

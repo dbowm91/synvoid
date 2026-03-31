@@ -54,9 +54,9 @@ impl SyslogConfig {
 }
 
 #[derive(Clone)]
-#[allow(dead_code)] // app_name kept for syslog facility identification
 pub struct SyslogLogger {
     min_level: log::Level,
+    #[allow(dead_code)]
     app_name: String,
     #[cfg(unix)]
     _backend: (),

@@ -19,12 +19,8 @@ const MIN_REPUTATION: i64 = 0;
 const THREAT_ACCEPTED_BONUS: i64 = 1;
 const THREAT_REJECTED_PENALTY: i64 = 2;
 const FALSE_POSITIVE_PENALTY: i64 = 5;
-#[allow(dead_code)] // Reserved for global node reputation weighting
-const GLOBAL_NODE_TRUST_BONUS: i64 = 10;
 
 const REPUTATION_DECAY_INTERVAL_SECS: u64 = 3600;
-#[allow(dead_code)] // Reserved for reputation history limiting
-const REPUTATION_HISTORY_SIZE: usize = 1000;
 
 #[derive(Debug, Clone)]
 pub struct PeerReputation {
@@ -63,8 +59,6 @@ pub struct ReputationManager {
 
 struct PeerReputationState {
     reputation: PeerReputation,
-    #[allow(dead_code)] // Reserved for reputation event history
-    history: Vec<ReputationEvent>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -243,7 +237,6 @@ impl ReputationManager {
             node_id.clone(),
             PeerReputationState {
                 reputation: PeerReputation::new(node_id, role),
-                history: Vec::new(),
             },
         );
     }

@@ -237,7 +237,6 @@ pub struct MeshTopology {
     route_cache: RwLock<LruCache<String, CachedRoute>>,
     global_nodes: RwLock<HashSet<String>>,
     pending_queries: RwLock<HashMap<String, crate::mesh::protocol::PendingQuery>>,
-    peer_categories: RwLock<PeerCategories>,
     cache_metrics: RwLock<CacheMetrics>,
     route_stability: RwLock<HashMap<String, RouteStability>>,
     peer_scores: RwLock<HashMap<String, PeerScore>>,
@@ -253,32 +252,22 @@ pub struct MeshTopology {
 }
 
 #[derive(Debug, Clone, Default)]
-#[allow(dead_code)] // local_region, regional, global fields reserved for peer categorization
-struct PeerCategories {
-    local_region: HashSet<String>,
-    regional: HashSet<String>,
-    global: HashSet<String>,
-}
-
-#[derive(Debug, Clone, Default)]
-#[allow(dead_code)] // evictions reserved for cache eviction metrics
 struct CacheMetrics {
     hits: u64,
     misses: u64,
-    evictions: u64,
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // stability_score reserved for routing decisions
 struct CachedRoute {
     provider_node_id: String,
     hops: u8,
+    #[allow(dead_code)]
     stability_score: f64,
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // upstream_id written but not yet read; reserved for multi-upstream routing
 struct RouteStability {
+    #[allow(dead_code)]
     upstream_id: String,
     provider_history: Vec<(String, Instant)>,
     stability: f64,
@@ -492,7 +481,6 @@ impl MeshTopology {
             route_cache: RwLock::new(route_cache),
             global_nodes: RwLock::new(global_nodes),
             pending_queries: RwLock::new(HashMap::new()),
-            peer_categories: RwLock::new(PeerCategories::default()),
             cache_metrics: RwLock::new(CacheMetrics::default()),
             route_stability: RwLock::new(HashMap::new()),
             peer_scores: RwLock::new(HashMap::new()),
@@ -1090,7 +1078,6 @@ impl MeshTopology {
     ) -> Vec<String> {
         let peers = self.peers.read().await;
         let scores = self.peer_scores.read().await;
-        let _categories = self.peer_categories.read().await;
 
         let mut candidates: Vec<_> = peers
             .values()

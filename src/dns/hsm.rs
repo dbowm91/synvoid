@@ -63,7 +63,7 @@ pub struct Pkcs11Hsm {
     pin: Zeroizing<String>,
     key_label: String,
     algorithm: Algorithm,
-    #[allow(dead_code)] // Reserved for HSM key identification
+    #[allow(dead_code)]
     key_id: Vec<u8>,
 }
 

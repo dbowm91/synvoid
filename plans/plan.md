@@ -3,7 +3,7 @@
 > Created: 2026-03-30
 > Source: Consolidation of 11 individual plan files (plan2-5, plan_dns1-3, plan_ui1-3, plan_ui5)
 > Codebase: ~135k lines of Rust
-> **Last updated: 2026-03-31** — Phases 1, 2 (2.1-2.5 done, 2.6 deferred), 3, 4 (4.1-4.5 done), 5.1 (partial — 14 remaining), 5.2 (dnssec split only; others deferred), 5.3, 5.4, 5.5 (partial — 120 remain), 6 (Wave 1+2), 7.1, 7.2, 7.3, 8.1, 8.2, 8.3, 8.5, 9.1, 9.2, 9.3, 9.4, 9.5, 10.1, 10.2, 10.3, 10.4, 10.5, 11.1, 11.2 completed
+> **Last updated: 2026-03-31** — Phases 1, 2 (2.1-2.5 done, 2.6 deferred), 3, 4 (4.1-4.5 done), 5.1 (0 clippy warnings), 5.2 (dnssec split only; deferred), 5.3, 5.4, 5.5 (reduced annotations), 6 (Wave 1+2), 7.1, 7.2, 7.3, 8.1, 8.2, 8.3, 8.4, 8.5, 8.6, 8.7, 8.8, 8.9, 9.1, 9.2, 9.3, 9.4, 9.5, 10.1, 10.2, 10.3, 10.4, 10.5, 11.1, 11.2 completed
 
 ---
 
@@ -68,7 +68,7 @@ rg 'fn current_timestamp' src/ -g '*.rs'  # 1 match
 
 ---
 
-## Phase 2: Security Fixes ✅ PARTIAL (2.1–2.4 done, 2.5–2.6 deferred)
+## Phase 2: Security Fixes ✅ PARTIAL (2.1–2.5 done, 2.6 deferred)
 
 > High priority. Independent tasks.
 
@@ -160,7 +160,7 @@ Reviewed locks across await points in `src/admin/mod.rs:135` (uses tokio RwLock,
 
 ---
 
-## Phase 5: Code Quality — Clippy & File Splits ⏸ PARTIAL (5.1 partial, 5.2-5.3 done, 5.4-5.5 deferred)
+## Phase 5: Code Quality — Clippy & File Splits ✅ PARTIAL (5.1 done, 5.2 deferred, 5.3 done, 5.4 done, 5.5 reduced 120→58)
 
 > Medium priority.
 

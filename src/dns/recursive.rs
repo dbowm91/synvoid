@@ -4,7 +4,7 @@
 //! the authoritative DNS server. It uses the hickory-resolver crate for
 //! upstream recursive resolution.
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -26,7 +26,7 @@ use super::wire::{
     build_error_response, build_response_header, get_message_id, parse_dns_message, RCODE_NXDOMAIN,
     RCODE_SERVFAIL,
 };
-use super::{server::DnsRateLimiter, DnsResolver, HickoryRecursor, HickoryResolver};
+use super::{server::DnsRateLimiter, DnsResolver, GlobalNodeResolver, HickoryRecursor, HickoryResolver};
 
 #[derive(Debug, thiserror::Error)]
 pub enum RecursiveDnsError {
@@ -66,7 +66,17 @@ impl RecursiveDnsServer {
         firewall: Option<Arc<RwLock<DnsFirewall>>>,
         metrics: Option<Arc<DnsMetrics>>,
     ) -> RecursiveDnsResult<Self> {
-        let resolver = Self::create_resolver(&config)?;
+        Self::new_with_global_nodes(config, rate_limiter, firewall, metrics, vec![]).await
+    }
+
+    pub async fn new_with_global_nodes(
+        config: RecursiveDnsConfig,
+        rate_limiter: Option<Arc<DnsRateLimiter>>,
+        firewall: Option<Arc<RwLock<DnsFirewall>>>,
+        metrics: Option<Arc<DnsMetrics>>,
+        global_node_ips: Vec<IpAddr>,
+    ) -> RecursiveDnsResult<Self> {
+        let resolver = Self::create_resolver(&config, &global_node_ips)?;
         let cache = RecursiveDnsCache::new(config.cache.capacity, &config.cache);
         let query_semaphore = Arc::new(Semaphore::new(config.max_concurrent_queries));
 
@@ -82,7 +92,7 @@ impl RecursiveDnsServer {
         })
     }
 
-    fn create_resolver(config: &RecursiveDnsConfig) -> RecursiveDnsResult<Arc<dyn DnsResolver>> {
+    fn create_resolver(config: &RecursiveDnsConfig, global_node_ips: &[IpAddr]) -> RecursiveDnsResult<Arc<dyn DnsResolver>> {
         let resolver: Arc<dyn DnsResolver> = match config.upstream_provider {
             crate::config::dns::RecursiveUpstreamProvider::Recursive => {
                 tracing::info!(
@@ -97,6 +107,16 @@ impl RecursiveDnsServer {
                         config.dnssec_validation,
                     )
                     .map_err(|e| RecursiveDnsError::UpstreamFailed(e.to_string()))?,
+                )
+            }
+            crate::config::dns::RecursiveUpstreamProvider::GlobalNodes => {
+                tracing::info!(
+                    "Configuring GlobalNodes resolver with {} node IPs",
+                    global_node_ips.len()
+                );
+                Arc::new(
+                    GlobalNodeResolver::new(global_node_ips.to_vec())
+                        .map_err(|e| RecursiveDnsError::UpstreamFailed(e.to_string()))?,
                 )
             }
             crate::config::dns::RecursiveUpstreamProvider::Google => Arc::new(

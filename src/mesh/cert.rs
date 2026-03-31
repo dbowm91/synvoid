@@ -14,6 +14,7 @@ use quinn::crypto::rustls::QuicServerConfig;
 use quinn::{ClientConfig, ServerConfig};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rustls_pki_types::pem::{self, PemObject};
+use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
 
 use crate::mesh::config::MeshConfig;
@@ -118,7 +119,7 @@ pub fn verify_post_quantum_tls() {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct MeshCertManager {
     node_id: String,
     cert_path: Option<PathBuf>,
@@ -126,6 +127,10 @@ pub struct MeshCertManager {
     ca_path: Option<PathBuf>,
     auto_generate: bool,
     is_global: bool,
+    ca_mode: bool,
+    ca_key_pair: Arc<RwLock<Option<rcgen::KeyPair>>>,
+    ca_certificate: Arc<RwLock<Option<rcgen::Certificate>>>,
+    ca_cert_der: Arc<RwLock<Option<CertificateDer<'static>>>>,
     verified_nodes: Arc<RwLock<std::collections::HashSet<String>>>,
     global_node_public_keys: Arc<RwLock<std::collections::HashMap<String, Vec<u8>>>>,
     trusted_ca_certs: Arc<RwLock<std::collections::HashMap<String, CertificateDer<'static>>>>,
@@ -133,11 +138,34 @@ pub struct MeshCertManager {
     cert_rotation_interval: Arc<RwLock<Option<std::time::Duration>>>,
     cert_expiration_monitor: Arc<RwLock<Option<std::time::Instant>>>,
     certificate_revocation_list: Arc<RwLock<std::collections::HashSet<String>>>,
+    crl_entries: Arc<RwLock<std::collections::HashMap<String, CrlEntry>>>,
+}
+
+impl std::fmt::Debug for MeshCertManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MeshCertManager")
+            .field("node_id", &self.node_id)
+            .field("cert_path", &self.cert_path)
+            .field("key_path", &self.key_path)
+            .field("ca_path", &self.ca_path)
+            .field("auto_generate", &self.auto_generate)
+            .field("is_global", &self.is_global)
+            .field("ca_mode", &self.ca_mode)
+            .field("verified_nodes", &self.verified_nodes)
+            .field("global_node_public_keys", &self.global_node_public_keys)
+            .field("trusted_ca_certs", &self.trusted_ca_certs)
+            .field(
+                "certificate_revocation_list",
+                &self.certificate_revocation_list,
+            )
+            .finish_non_exhaustive()
+    }
 }
 
 impl MeshCertManager {
     pub fn new(config: &MeshConfig) -> Self {
         let is_global = config.role.is_global();
+        let ca_mode = config.tls.ca_mode;
         let cert_rotation_interval = config
             .tls
             .cert_rotation_interval_secs
@@ -155,6 +183,10 @@ impl MeshCertManager {
             ca_path: config.tls.ca_path.as_ref().map(PathBuf::from),
             auto_generate: config.tls.auto_generate_certs && !is_global,
             is_global,
+            ca_mode,
+            ca_key_pair: Arc::new(RwLock::new(None)),
+            ca_certificate: Arc::new(RwLock::new(None)),
+            ca_cert_der: Arc::new(RwLock::new(None)),
             verified_nodes: Arc::new(RwLock::new(std::collections::HashSet::new())),
             global_node_public_keys: Arc::new(RwLock::new(std::collections::HashMap::new())),
             trusted_ca_certs: Arc::new(RwLock::new(std::collections::HashMap::new())),
@@ -162,6 +194,7 @@ impl MeshCertManager {
             cert_rotation_interval: Arc::new(RwLock::new(cert_rotation_interval)),
             cert_expiration_monitor: Arc::new(RwLock::new(cert_expiration_monitor)),
             certificate_revocation_list: Arc::new(RwLock::new(std::collections::HashSet::new())),
+            crl_entries: Arc::new(RwLock::new(std::collections::HashMap::new())),
         }
     }
 
@@ -562,6 +595,204 @@ impl MeshCertManager {
         let mut keys = self.global_node_public_keys.write();
         keys.insert(peer_node_id.to_string(), public_key);
     }
+
+    pub fn ca_mode(&self) -> bool {
+        self.ca_mode
+    }
+
+    pub fn generate_ca_certificate(&self) -> Result<(), MeshCertError> {
+        if !self.ca_mode {
+            return Err(MeshCertError::ConfigError(
+                "CA mode is not enabled".to_string(),
+            ));
+        }
+
+        let mut params = rcgen::CertificateParams::new(vec![format!("{}.ca.mesh", self.node_id)])
+            .map_err(|e| {
+            MeshCertError::ConfigError(format!("Failed to create CA params: {}", e))
+        })?;
+        params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        params.distinguished_name.push(
+            rcgen::DnType::CommonName,
+            format!("MaluWAF CA - {}", self.node_id),
+        );
+        params
+            .distinguished_name
+            .push(rcgen::DnType::OrganizationName, "MaluWAF");
+
+        let key_pair = rcgen::KeyPair::generate().map_err(|e| {
+            MeshCertError::ConfigError(format!("Failed to generate CA key pair: {}", e))
+        })?;
+
+        let cert = params.self_signed(&key_pair).map_err(|e| {
+            MeshCertError::ConfigError(format!("Failed to self-sign CA cert: {}", e))
+        })?;
+
+        let cert_der = CertificateDer::from(cert.der().to_vec());
+
+        *self.ca_key_pair.write() = Some(key_pair);
+        *self.ca_certificate.write() = Some(cert);
+        *self.ca_cert_der.write() = Some(cert_der.clone());
+
+        let mut trusted = self.trusted_ca_certs.write();
+        trusted.insert(self.node_id.clone(), cert_der);
+
+        tracing::info!(
+            "Generated CA certificate for node {} (CA mode)",
+            self.node_id
+        );
+
+        Ok(())
+    }
+
+    pub fn get_ca_certificate(&self) -> Option<CertificateDer<'static>> {
+        self.ca_cert_der.read().clone()
+    }
+
+    pub fn sign_certificate(
+        &self,
+        subject_node_id: &str,
+        subject_alt_names: Vec<String>,
+    ) -> Result<(Vec<u8>, Vec<u8>), MeshCertError> {
+        let ca_key_pair = self.ca_key_pair.read();
+        let ca_certificate = self.ca_certificate.read();
+
+        let (ca_key, ca_cert) = match (ca_key_pair.as_ref(), ca_certificate.as_ref()) {
+            (Some(k), Some(c)) => (k, c),
+            _ => {
+                return Err(MeshCertError::ConfigError(
+                    "CA certificate not generated. Call generate_ca_certificate() first."
+                        .to_string(),
+                ))
+            }
+        };
+
+        let mut sans = vec![subject_node_id.to_string()];
+        sans.extend(subject_alt_names);
+
+        let mut params = rcgen::CertificateParams::new(sans).map_err(|e| {
+            MeshCertError::ConfigError(format!("Failed to create cert params: {}", e))
+        })?;
+        params
+            .distinguished_name
+            .push(rcgen::DnType::CommonName, subject_node_id);
+
+        let subject_key_pair = rcgen::KeyPair::generate().map_err(|e| {
+            MeshCertError::ConfigError(format!("Failed to generate key pair: {}", e))
+        })?;
+
+        let cert = params
+            .signed_by(&subject_key_pair, ca_cert, ca_key)
+            .map_err(|e| {
+                MeshCertError::ConfigError(format!("Failed to sign certificate: {}", e))
+            })?;
+
+        Ok((cert.der().to_vec(), subject_key_pair.serialize_der()))
+    }
+
+    pub fn generate_crl(&self) -> Result<Vec<CrlEntry>, MeshCertError> {
+        let entries = self.crl_entries.read();
+        Ok(entries.values().cloned().collect())
+    }
+
+    pub fn revoke_certificate_with_reason(
+        &self,
+        node_id: &str,
+        reason: CrlReason,
+    ) -> Result<(), MeshCertError> {
+        {
+            let mut crl = self.certificate_revocation_list.write();
+            crl.insert(node_id.to_string());
+        }
+
+        {
+            let mut entries = self.crl_entries.write();
+            entries.insert(
+                node_id.to_string(),
+                CrlEntry {
+                    serial_number: node_id.to_string(),
+                    revocation_time: crate::utils::safe_unix_duration().as_secs(),
+                    reason,
+                },
+            );
+        }
+
+        tracing::warn!(
+            "Certificate revoked for node: {} (reason: {:?})",
+            node_id,
+            reason
+        );
+
+        #[cfg(feature = "audit")]
+        {
+            crate::audit::log_event(crate::audit::AuditEvent {
+                timestamp: chrono::Utc::now(),
+                event_type: "CERTIFICATE_REVOKED".to_string(),
+                node_id: self.node_id.clone(),
+                details: format!(
+                    "Certificate revoked for node: {} (reason: {:?})",
+                    node_id, reason
+                ),
+                severity: crate::audit::AuditSeverity::Warning,
+            });
+        }
+
+        Ok(())
+    }
+
+    pub fn export_structured_crl(&self, crl_path: &PathBuf) -> Result<usize, MeshCertError> {
+        let entries = self.crl_entries.read();
+        let crl_data = serde_json::json!({
+            "generated_at": chrono::Utc::now().to_rfc3339(),
+            "issuer_node_id": self.node_id,
+            "entries": entries.values().collect::<Vec<_>>(),
+        });
+
+        let content = serde_json::to_string_pretty(&crl_data)
+            .map_err(|e| MeshCertError::ParseError(format!("CRL serialization failed: {}", e)))?;
+
+        std::fs::write(crl_path, content)
+            .map_err(|e| MeshCertError::IoError(crl_path.display().to_string(), e))?;
+
+        tracing::info!(
+            "Exported structured CRL with {} entries to {}",
+            entries.len(),
+            crl_path.display()
+        );
+        Ok(entries.len())
+    }
+
+    pub fn load_structured_crl(&self, crl_path: &PathBuf) -> Result<usize, MeshCertError> {
+        let content = std::fs::read_to_string(crl_path)
+            .map_err(|e| MeshCertError::IoError(crl_path.display().to_string(), e))?;
+
+        let crl_data: serde_json::Value = serde_json::from_str(&content)
+            .map_err(|e| MeshCertError::ParseError(format!("CRL parse error: {}", e)))?;
+
+        let entries_value = crl_data
+            .get("entries")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| MeshCertError::ParseError("Missing entries array in CRL".to_string()))?;
+
+        let mut crl = self.certificate_revocation_list.write();
+        let mut crl_entries = self.crl_entries.write();
+        let mut count = 0;
+
+        for entry_value in entries_value {
+            if let Ok(entry) = serde_json::from_value::<CrlEntry>(entry_value.clone()) {
+                crl.insert(entry.serial_number.clone());
+                crl_entries.insert(entry.serial_number.clone(), entry);
+                count += 1;
+            }
+        }
+
+        tracing::info!(
+            "Loaded {} structured CRL entries from {}",
+            count,
+            crl_path.display()
+        );
+        Ok(count)
+    }
 }
 
 fn generate_mesh_cert(
@@ -738,4 +969,27 @@ impl CertificateInfo {
             .ok()
             .map(|d| -(d.as_secs() as i64 / 86400))
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CrlReason {
+    #[default]
+    Unspecified,
+    KeyCompromise,
+    CaCompromise,
+    AffiliationChanged,
+    Superseded,
+    CessationOfOperation,
+    CertificateHold,
+    RemoveFromCrl,
+    PrivilegeWithdrawn,
+    AaCompromise,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CrlEntry {
+    pub serial_number: String,
+    pub revocation_time: u64,
+    pub reason: CrlReason,
 }

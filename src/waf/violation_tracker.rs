@@ -57,11 +57,7 @@ impl ViolationEntry {
 pub struct ViolationTracker {
     store: Arc<RwLock<HashMap<String, ViolationEntry>>>,
     config: ThreatLevelEscalation,
-    #[allow(dead_code)] // Retained for future periodic persistence
-    persist_path: Option<PathBuf>,
     persist_tx: Option<mpsc::Sender<PersistRequest>>,
-    #[allow(dead_code)] // Retained for future periodic persistence
-    persist_interval: Duration,
     is_attack_mode: Arc<RwLock<bool>>,
 }
 
@@ -148,9 +144,7 @@ impl ViolationTracker {
         Arc::new(Self {
             store,
             config,
-            persist_path: persist_path.clone(),
             persist_tx,
-            persist_interval: Duration::from_secs(attack_interval_secs as u64),
             is_attack_mode,
         })
     }

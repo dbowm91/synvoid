@@ -9,6 +9,7 @@ const AUTH_WINDOW_DURATION: Duration = Duration::from_secs(60);
 const BCRYPT_COST: u32 = 12;
 
 pub struct AuthRateLimiter {
+    #[allow(clippy::type_complexity)]
     attempts: Arc<RwLock<HashMap<String, (Vec<Instant>, bool)>>>,
 }
 

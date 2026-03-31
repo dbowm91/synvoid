@@ -78,10 +78,10 @@ pub fn create_record_store(
     Some(rs)
 }
 
-#[allow(dead_code)] // topology kept for future multi-peer routing
 pub struct MeshBackend {
     upstream_id: String,
     proxy: Arc<MeshProxy>,
+    #[allow(dead_code)]
     topology: Arc<MeshTopology>,
     current_peer: Arc<RwLock<Option<String>>>,
     health_status: Arc<std::sync::atomic::AtomicBool>,

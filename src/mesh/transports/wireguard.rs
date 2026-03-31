@@ -9,14 +9,12 @@ use dashmap::DashMap;
 use parking_lot::RwLock as ParkingRwLock;
 use socket2::{Domain, Protocol, Socket, Type};
 use tokio::net::UdpSocket;
-use tokio::sync::{broadcast, mpsc, RwLock};
+use tokio::sync::{broadcast, RwLock};
 
 use crate::mesh::config::{MeshConfig, MeshNodeRole, MeshWireGuardConfig, MeshWireGuardPeer};
 use crate::mesh::protocol::{MeshMessage, MESH_MESSAGE_VERSION};
 use crate::mesh::topology::{MeshTopology, PeerStatus};
-use crate::mesh::transports::{
-    DatagramPacket, MeshTransportError, MeshTransportTrait, MeshTransportType,
-};
+use crate::mesh::transports::{MeshTransportError, MeshTransportTrait, MeshTransportType};
 use crate::mesh::wireguard_mesh::WireGuardMeshRuntime;
 
 const MESH_HEADER_SIZE: usize = 4;
@@ -25,33 +23,19 @@ pub struct WireGuardMeshTransport {
     config: Arc<MeshConfig>,
     wireguard_config: Arc<MeshWireGuardConfig>,
     topology: Arc<MeshTopology>,
-    #[allow(dead_code)] // Reserved for WireGuard runtime lifecycle
+    #[allow(dead_code)]
     runtime: Option<Arc<WireGuardMeshRuntime>>,
     running: Arc<ParkingRwLock<bool>>,
     shutdown_tx: Arc<ParkingRwLock<Option<broadcast::Sender<()>>>>,
     peer_states: Arc<DashMap<String, WireGuardPeerState>>,
-    #[allow(dead_code)] // Reserved for datagram forwarding
-    datagram_tx: mpsc::Sender<DatagramPacket>,
     local_addresses: Arc<ParkingRwLock<Vec<String>>>,
     socket: Arc<RwLock<Option<Arc<UdpSocket>>>>,
 }
 
 struct WireGuardPeerState {
-    #[allow(dead_code)] // Reserved for peer identification
-    pub peer_id: String,
     pub address: String,
     pub wireguard_ip: String,
-    #[allow(dead_code)] // Reserved for role-based routing
-    pub role: MeshNodeRole,
-    #[allow(dead_code)] // Reserved for upstream discovery
-    pub upstreams: Vec<String>,
-    #[allow(dead_code)] // Reserved for connection lifetime tracking
-    pub connected_at: Instant,
     pub last_seen: Instant,
-    #[allow(dead_code)] // Reserved for multi-protocol support
-    pub quic_port: Option<u16>,
-    #[allow(dead_code)] // Reserved for WireGuard port tracking
-    pub wireguard_port: Option<u16>,
 }
 
 impl WireGuardMeshTransport {
@@ -60,8 +44,6 @@ impl WireGuardMeshTransport {
         wireguard_config: MeshWireGuardConfig,
         topology: Arc<MeshTopology>,
     ) -> Self {
-        let (datagram_tx, _) = mpsc::channel(4096);
-
         Self {
             config: config.clone(),
             wireguard_config: Arc::new(wireguard_config),
@@ -70,7 +52,6 @@ impl WireGuardMeshTransport {
             running: Arc::new(ParkingRwLock::new(false)),
             shutdown_tx: Arc::new(ParkingRwLock::new(None)),
             peer_states: Arc::new(DashMap::new()),
-            datagram_tx,
             local_addresses: Arc::new(ParkingRwLock::new(Vec::new())),
             socket: Arc::new(RwLock::new(None)),
         }
@@ -260,15 +241,9 @@ impl WireGuardMeshTransport {
                 let wireguard_ip = format!("10.100.0.{}", peer_states.len() + 2);
 
                 let state = WireGuardPeerState {
-                    peer_id: node_id.to_string(),
                     address: addr.to_string(),
                     wireguard_ip: wireguard_ip.clone(),
-                    role,
-                    upstreams: upstreams.keys().cloned().collect(),
-                    connected_at: Instant::now(),
                     last_seen: Instant::now(),
-                    quic_port: quic_port.map(|p| p as u16),
-                    wireguard_port: wireguard_port.map(|p| p as u16),
                 };
 
                 peer_states.insert(node_id.to_string(), state);
@@ -418,15 +393,9 @@ impl WireGuardMeshTransport {
             .unwrap_or_else(|| "10.100.0.2".to_string());
 
         let state = WireGuardPeerState {
-            peer_id: peer_id.clone(),
             address: endpoint.clone(),
             wireguard_ip: wireguard_ip.clone(),
-            role: MeshNodeRole::Edge,
-            upstreams: Vec::new(),
-            connected_at: Instant::now(),
             last_seen: Instant::now(),
-            quic_port: None,
-            wireguard_port: None,
         };
 
         self.peer_states.insert(peer_id.clone(), state);

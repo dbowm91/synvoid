@@ -4,6 +4,7 @@ pub use self::persistence::{
     BaselinePersistence, ThreatHistory, ThreatHistoryAll, ThreatHistorySample,
 };
 
+#[allow(clippy::module_inception)]
 mod persistence {
     use crate::waf::threat_level::baseline::BaselineStats;
     use serde::{Deserialize, Serialize};

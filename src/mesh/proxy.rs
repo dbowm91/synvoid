@@ -24,7 +24,7 @@ use crate::mesh::protocol::{ProviderInfo, UpstreamProtocol, WafPolicy};
 use crate::mesh::topology::MeshTopology;
 use crate::mesh::transport::MeshTransport;
 use crate::metrics::bandwidth::get_global_bandwidth_tracker_or_log;
-use crate::proxy_cache::{CacheKeyBuilder, ProxyCache, ProxyCacheSettings};
+use crate::proxy_cache::ProxyCacheSettings;
 
 /// Default TTL for cached routing policies (1 hour)
 const DEFAULT_POLICY_CACHE_TTL_SECS: u64 = 3600;
@@ -48,7 +48,6 @@ const BLOCK_BROADCAST_FAILURE_THRESHOLD: u32 = 5;
 /// from the origin WAF is preserved when we receive blocks from other nodes.
 const BLOCK_DURATION_SECS: u64 = 300;
 
-#[allow(dead_code)] // proxy_cache, cache_key_builder reserved for future use
 pub struct MeshProxy {
     config: Arc<MeshConfig>,
     topology: Arc<MeshTopology>,
@@ -61,8 +60,6 @@ pub struct MeshProxy {
     in_flight_queries: Arc<Mutex<LruCache<String, InFlightQuery>>>,
     provider_stats: Arc<Mutex<LruCache<String, ProviderStats>>>,
     org_manager: Arc<TokioRwLock<OrganizationManager>>,
-    proxy_cache: Option<Arc<ProxyCache>>,
-    cache_key_builder: Option<CacheKeyBuilder>,
     minifier_generator: Arc<crate::static_files::minifier::MinifierGenerator>,
     transform_cache: Arc<PLMutex<LruCache<String, TransformCacheEntry>>>,
 }
@@ -159,8 +156,6 @@ struct TransformCacheEntry {
     body: Bytes,
     content_encoding: Option<String>,
     content_type: Option<String>,
-    #[allow(dead_code)] // Reserved for cache TTL management
-    created_at: Instant,
 }
 
 const DEFAULT_TRANSFORM_CACHE_TTL_SECS: u64 = 300;
@@ -170,7 +165,7 @@ impl MeshProxy {
     pub fn new(
         config: Arc<MeshConfig>,
         topology: Arc<MeshTopology>,
-        cache_config: Option<ProxyCacheSettings>,
+        _cache_config: Option<ProxyCacheSettings>,
     ) -> Self {
         let cache_size = config.persistence.policy_cache_size.max(100);
         let cache = LruCache::with_expiry_duration_and_capacity(
@@ -190,18 +185,6 @@ impl MeshProxy {
             cache_size,
         );
 
-        let (proxy_cache, cache_key_builder) = if let Some(cc) = cache_config {
-            if cc.enabled {
-                let pc = Arc::new(ProxyCache::new(cc.clone()));
-                let kb = CacheKeyBuilder::new(cc.key_pattern.clone(), cc.vary_by.clone());
-                (Some(pc), Some(kb))
-            } else {
-                (None, None)
-            }
-        } else {
-            (None, None)
-        };
-
         let transform_cache = LruCache::with_expiry_duration_and_capacity(
             Duration::from_secs(DEFAULT_TRANSFORM_CACHE_TTL_SECS),
             DEFAULT_TRANSFORM_CACHE_SIZE,
@@ -218,8 +201,6 @@ impl MeshProxy {
             in_flight_queries: Arc::new(Mutex::new(in_flight_cache)),
             provider_stats: Arc::new(Mutex::new(stats_cache)),
             org_manager: Arc::new(TokioRwLock::new(OrganizationManager::new())),
-            proxy_cache,
-            cache_key_builder,
             minifier_generator: Arc::new(crate::static_files::minifier::MinifierGenerator::new()),
             transform_cache: Arc::new(PLMutex::new(transform_cache)),
         }
@@ -432,53 +413,6 @@ impl MeshProxy {
         Ok(upstream_id)
     }
 
-    #[allow(dead_code)] // Reserved for protocol auto-detection
-    fn detect_protocol(req: &Request<Incoming>) -> UpstreamProtocol {
-        let uri = req.uri();
-
-        if let Some(upgrade) = req.headers().get("upgrade") {
-            if let Ok(upgrade_str) = upgrade.to_str() {
-                if upgrade_str.eq_ignore_ascii_case("websocket") {
-                    if uri.scheme().map(|s| s == "https").unwrap_or(false) {
-                        return UpstreamProtocol::Websockets;
-                    }
-                    return UpstreamProtocol::Websocket;
-                }
-            }
-        }
-
-        if let Some(content_type) = req.headers().get("content-type") {
-            if let Ok(ct) = content_type.to_str() {
-                if ct.contains("application/grpc") {
-                    return UpstreamProtocol::Grpc;
-                }
-            }
-        }
-
-        if let Some(scheme) = uri.scheme() {
-            match scheme.as_str() {
-                "https" => return UpstreamProtocol::Https,
-                "http" => return UpstreamProtocol::Http,
-                "wss" => return UpstreamProtocol::Websockets,
-                "ws" => return UpstreamProtocol::Websocket,
-                "grpc" => return UpstreamProtocol::Grpc,
-                "tcp" => return UpstreamProtocol::Tcp,
-                "udp" => return UpstreamProtocol::Udp,
-                _ => {}
-            }
-        }
-
-        let port = uri.port_u16().unwrap_or(80);
-        match port {
-            443 => UpstreamProtocol::Https,
-            8443 => UpstreamProtocol::Https,
-            4433 => UpstreamProtocol::Https,
-            80 => UpstreamProtocol::Http,
-            8080 => UpstreamProtocol::Http,
-            _ => UpstreamProtocol::Http,
-        }
-    }
-
     fn get_cached_policy(&self, upstream_id: &str) -> Option<CachedPolicy> {
         match self.policy_cache.try_lock() {
             Ok(mut cache) => cache.get(upstream_id).cloned(),
@@ -530,16 +464,6 @@ impl MeshProxy {
             .filter(|p| p.priority_tier >= min_tier)
             .cloned()
             .collect()
-    }
-
-    #[allow(dead_code)] // Reserved for tier-based provider validation
-    async fn validate_provider_tier(&self, provider: &ProviderInfo) -> bool {
-        if let Some(ref claim) = provider.tier_claim {
-            if claim.tier > 0 {
-                return self.validate_tier_claim(claim).await;
-            }
-        }
-        true
     }
 
     fn is_provider_unhealthy(&self, provider_node_id: &str) -> bool {
@@ -1253,7 +1177,6 @@ impl MeshProxy {
                     body: transformed,
                     content_encoding: cached_content_encoding,
                     content_type: content_type_header,
-                    created_at: Instant::now(),
                 },
             );
         }

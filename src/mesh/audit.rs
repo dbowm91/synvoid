@@ -10,9 +10,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::mesh::config::MeshConfig;
 
-#[allow(dead_code)] // Reserved for audit log size limiting
-const DEFAULT_MAX_AUDIT_EVENTS: usize = 10000;
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditEvent {
     pub id: String,

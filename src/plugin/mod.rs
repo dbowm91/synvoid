@@ -38,9 +38,7 @@ pub struct PluginManager {
 }
 
 struct AxumPluginWrapper {
-    #[allow(dead_code)]
     router: Arc<axum::Router<()>>,
-    #[allow(dead_code)]
     name: String,
 }
 

@@ -372,6 +372,7 @@ pub fn urlencoding_decode(input: &str) -> String {
     result
 }
 
+#[allow(clippy::result_unit_err)]
 pub fn urlencoding_decode_result(input: &str) -> Result<String, ()> {
     Ok(urlencoding_decode(input))
 }

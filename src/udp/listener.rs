@@ -125,8 +125,6 @@ impl Default for UdpListenerPoolConfig {
 #[derive(Debug, Clone)]
 struct UdpListenerInstance {
     config: UdpListenerConfig,
-    #[allow(dead_code)] // Retained for logging and debugging
-    listen_addr: SocketAddr,
 }
 
 impl UdpListenerPool {
@@ -166,7 +164,6 @@ impl UdpListenerPool {
 
         let instance = UdpListenerInstance {
             config: listener_config,
-            listen_addr: local_addr,
         };
 
         self.listeners.write().push(instance);

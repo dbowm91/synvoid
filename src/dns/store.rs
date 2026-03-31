@@ -62,6 +62,7 @@ impl ZoneStore {
         tracing::info!("DNS zone store initialized at {:?}", db_path);
 
         Ok(Self {
+            #[allow(clippy::arc_with_non_send_sync)]
             conn: Arc::new(RwLock::new(conn)),
         })
     }

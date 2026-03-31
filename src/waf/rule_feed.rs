@@ -264,6 +264,7 @@ pub struct RuleFeedManager {
     last_update: Arc<RwLock<u64>>,
     last_check: Arc<RwLock<u64>>,
     embedded_public_key: VerifyingKey,
+    #[allow(clippy::type_complexity)]
     pub(crate) on_apply_callback: Arc<
         RwLock<
             Option<Box<dyn Fn(String, Vec<crate::process::ipc::RulePatternData>) + Send + Sync>>,

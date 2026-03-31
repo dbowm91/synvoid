@@ -20,7 +20,7 @@ pub(super) struct WorkerState {
     pub(super) running: RunningFlag,
     pub(super) draining: DrainFlag,
     pub(super) config_manager: Arc<RwLock<ConfigManager>>,
-    #[allow(dead_code)] // Reserved for config hot-reload path tracking
+    #[allow(dead_code)]
     pub(super) config_path: PathBuf,
 }
 

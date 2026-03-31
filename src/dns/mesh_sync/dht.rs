@@ -94,75 +94,127 @@ impl MeshDnsRegistry {
                 }
             }
 
-            let anycast_nodes = dht_store.get_all_anycast_nodes();
-            for node_value in anycast_nodes {
-                if let (
-                    Some(node_id),
-                    Some(anycast_ips),
-                    Some(geo),
-                    Some(capacity),
-                    Some(healthy),
-                    Some(dns_zones),
-                ) = (
-                    node_value.get("node_id").and_then(|v| v.as_str()),
-                    node_value
-                        .get("anycast_ips")
-                        .and_then(|v| v.as_array())
-                        .map(|arr| {
-                            arr.iter()
-                                .filter_map(|v| v.as_str().map(String::from))
-                                .collect::<Vec<_>>()
-                        }),
-                    node_value
-                        .get("geo")
-                        .and_then(|v| v.as_str())
-                        .map(String::from),
-                    node_value
-                        .get("capacity")
-                        .and_then(|v| v.as_u64())
-                        .map(|v| v as u32),
-                    node_value.get("healthy").and_then(|v| v.as_bool()),
-                    node_value
-                        .get("dns_zones")
-                        .and_then(|v| v.as_array())
-                        .map(|arr| {
-                            arr.iter()
-                                .filter_map(|v| v.as_str().map(String::from))
-                                .collect::<Vec<_>>()
-                        }),
-                ) {
-                    let existing = {
-                        let nodes = self.anycast_nodes.read();
-                        nodes.get(node_id).cloned()
-                    };
+            let anycast_records = dht_store.get_all_anycast_records();
+            for record in anycast_records {
+                // Verify signature if present
+                let is_authenticated = if !record.signature.is_empty() {
+                    if let Some(ref signer_pk) = record.signer_public_key {
+                        if !signer_pk.is_empty() {
+                            let signed_record = crate::mesh::dht::SignedDhtRecord {
+                                key: record.key.clone(),
+                                value: record.value.clone(),
+                                publisher_id: record.source_node_id.clone(),
+                                signature: record.signature.clone(),
+                                created_at: record.timestamp,
+                                expires_at: Some(record.timestamp + record.ttl_seconds),
+                                record_type: crate::mesh::dht::SignedRecordType::AnycastNode,
+                                sequence_number: 0,
+                                source_node_id: record.source_node_id.clone(),
+                                ttl_seconds: record.ttl_seconds,
+                                signer_public_key: record.signer_public_key.clone(),
+                            };
 
-                    if existing.is_none() {
-                        let anycast = RegisteredAnycastNode {
-                            node_id: node_id.to_string(),
-                            anycast_ips,
-                            geo: Some(geo),
-                            healthy,
-                            capacity,
-                            latency_ms: None,
-                            load_percent: None,
-                            last_update: chrono::Utc::now().timestamp() as u64,
-                            authenticated: false,
-                            dns_zones: dns_zones.clone(),
+                            // Verify using the DHT record verifier if available
+                            if let Some(ref verifier) = dht_store.get_record_verifier() {
+                                verifier.verify(&signed_record)
+                            } else {
+                                tracing::warn!(
+                                    "No record verifier available, cannot verify anycast node signature"
+                                );
+                                false
+                            }
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+
+                if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&record.value) {
+                    if let (
+                        Some(node_id),
+                        Some(anycast_ips),
+                        Some(geo),
+                        Some(capacity),
+                        Some(healthy),
+                        Some(dns_zones),
+                    ) = (
+                        value.get("node_id").and_then(|v| v.as_str()),
+                        value
+                            .get("anycast_ips")
+                            .and_then(|v| v.as_array())
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter_map(|v| v.as_str().map(String::from))
+                                    .collect::<Vec<_>>()
+                            }),
+                        value.get("geo").and_then(|v| v.as_str()).map(String::from),
+                        value
+                            .get("capacity")
+                            .and_then(|v| v.as_u64())
+                            .map(|v| v as u32),
+                        value.get("healthy").and_then(|v| v.as_bool()),
+                        value
+                            .get("dns_zones")
+                            .and_then(|v| v.as_array())
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter_map(|v| v.as_str().map(String::from))
+                                    .collect::<Vec<_>>()
+                            }),
+                    ) {
+                        let existing = {
+                            let nodes = self.anycast_nodes.read();
+                            nodes.get(node_id).cloned()
                         };
 
-                        self.anycast_nodes
-                            .write()
-                            .insert(node_id.to_string(), anycast);
+                        if existing.is_none() {
+                            let anycast = RegisteredAnycastNode {
+                                node_id: node_id.to_string(),
+                                anycast_ips,
+                                geo: Some(geo),
+                                healthy,
+                                capacity,
+                                latency_ms: None,
+                                load_percent: None,
+                                last_update: chrono::Utc::now().timestamp() as u64,
+                                authenticated: is_authenticated,
+                                dns_zones: dns_zones.clone(),
+                            };
 
-                        for zone in &dns_zones {
-                            let mut mapping = self.domain_to_anycast_mapping.write();
-                            mapping
-                                .entry(zone.clone())
-                                .or_default()
-                                .push(node_id.to_string());
+                            self.anycast_nodes
+                                .write()
+                                .insert(node_id.to_string(), anycast);
+
+                            for zone in &dns_zones {
+                                let mut mapping = self.domain_to_anycast_mapping.write();
+                                mapping
+                                    .entry(zone.clone())
+                                    .or_default()
+                                    .push(node_id.to_string());
+                            }
+
+                            tracing::info!(
+                                "Synced anycast node {} from DHT (authenticated: {})",
+                                node_id,
+                                is_authenticated
+                            );
+                        } else if let Some(mut existing_node) = existing {
+                            // Update existing node, preserving authenticated status
+                            existing_node.anycast_ips = anycast_ips;
+                            existing_node.geo = Some(geo);
+                            existing_node.healthy = healthy;
+                            existing_node.capacity = capacity;
+                            existing_node.last_update = chrono::Utc::now().timestamp() as u64;
+                            existing_node.authenticated = is_authenticated;
+                            existing_node.dns_zones = dns_zones.clone();
+                            self.anycast_nodes
+                                .write()
+                                .insert(node_id.to_string(), existing_node);
                         }
-
-                        tracing::info!("Synced anycast node {} from DHT", node_id);
                     }
                 }
             }

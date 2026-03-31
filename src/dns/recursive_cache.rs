@@ -156,10 +156,7 @@ struct InnerRecursiveCache {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // capacity/negative_cache_capacity kept for future eviction tuning
 struct CacheConfig {
-    capacity: usize,
-    negative_cache_capacity: usize,
     negative_ttl: Duration,
     stale_ttl: Duration,
     max_ttl: Duration,
@@ -176,8 +173,6 @@ impl RecursiveDnsCache {
                 positive_cache: RwLock::new(positive_cache),
                 negative_cache: RwLock::new(negative_cache),
                 config: CacheConfig {
-                    capacity,
-                    negative_cache_capacity: capacity / 10,
                     negative_ttl: Duration::from_secs(cache_config.negative_ttl_secs),
                     stale_ttl: Duration::from_secs(cache_config.stale_ttl_secs),
                     max_ttl: Duration::from_secs(cache_config.max_ttl_secs),

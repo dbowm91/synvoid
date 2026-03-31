@@ -1268,6 +1268,8 @@ pub struct MeshTlsConfig {
     #[serde(default = "default_auto_generate")]
     pub auto_generate_certs: bool,
     #[serde(default)]
+    pub ca_mode: bool,
+    #[serde(default)]
     pub cert_rotation_interval_secs: Option<u64>,
     #[serde(default = "default_auto_monitor_expiration")]
     pub auto_monitor_expiration: bool,

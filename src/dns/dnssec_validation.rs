@@ -324,3 +324,273 @@ pub fn get_ds_record(key: &ZoneSigningKey) -> Vec<u8> {
 
     record
 }
+
+/// Result of DNSSEC validation
+#[derive(Debug, Clone)]
+pub struct ValidationResult {
+    pub is_secure: bool,
+    pub trust_anchor_id: Option<String>,
+    pub validation_method: ValidationMethod,
+}
+
+/// How the DNSSEC validation was performed
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValidationMethod {
+    /// Validated via standard RFC 5011 trust anchors
+    Rfc5011,
+    /// Validated via mesh-derived Ed25519 trust anchors
+    MeshEd25519,
+    /// No validation performed
+    None,
+}
+
+/// Trait for DNSSEC record validation.
+///
+/// Supports both standard RFC 5011 trust anchors and mesh-derived
+/// Ed25519 trust anchors. Implementations can use one or both
+/// validation methods.
+pub trait DnsSecValidator: Send + Sync {
+    /// Validate a DNSKEY record against trust anchors
+    fn validate_dnskey(
+        &self,
+        dnskey_name: &str,
+        dnskey_rdata: &[u8],
+        dnskey_rrsig: &[u8],
+    ) -> ValidationResult;
+
+    /// Validate an RRset against its RRSIG
+    fn validate_rrset(
+        &self,
+        rrset_name: &str,
+        rrset_type: u16,
+        rrset_data: &[u8],
+        rrsig_rdata: &[u8],
+        dnskey_name: &str,
+        dnskey_rdata: &[u8],
+    ) -> ValidationResult;
+
+    /// Check if a DS record matches a known trust anchor
+    fn validate_ds(
+        &self,
+        ds_name: &str,
+        ds_key_tag: u16,
+        ds_algorithm: u8,
+        ds_digest_type: u8,
+        ds_digest: &[u8],
+    ) -> ValidationResult;
+}
+
+/// Adapter that imports mesh Ed25519 signing keys as RFC 5011 trust anchors.
+///
+/// This allows mesh-derived keys to be used alongside standard DNSSEC
+/// trust anchors for DNSSEC validation. The adapter bridges between
+/// the mesh signing key system and the standard DNSSEC validation
+/// infrastructure.
+pub struct MeshTrustAnchorAdapter {
+    /// Mesh signing keys indexed by key ID
+    mesh_keys: std::collections::HashMap<String, crate::dns::mesh_sync::MeshSigningKey>,
+    /// Optional fallback validator (e.g., RFC 5011 TrustAnchorManager)
+    fallback: Option<Box<dyn DnsSecValidator>>,
+}
+
+impl std::fmt::Debug for MeshTrustAnchorAdapter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MeshTrustAnchorAdapter")
+            .field("mesh_key_count", &self.mesh_keys.len())
+            .field("has_fallback", &self.fallback.is_some())
+            .finish()
+    }
+}
+
+impl MeshTrustAnchorAdapter {
+    /// Create a new adapter with no keys
+    pub fn new() -> Self {
+        Self {
+            mesh_keys: std::collections::HashMap::new(),
+            fallback: None,
+        }
+    }
+
+    /// Set a fallback validator for non-mesh trust anchor validation
+    pub fn with_fallback(mut self, fallback: Box<dyn DnsSecValidator>) -> Self {
+        self.fallback = Some(fallback);
+        self
+    }
+
+    /// Import a mesh signing key as a trust anchor
+    pub fn import_mesh_key(&mut self, key: crate::dns::mesh_sync::MeshSigningKey) {
+        tracing::info!(
+            "Importing mesh signing key {} as DNSSEC trust anchor",
+            key.key_id
+        );
+        self.mesh_keys.insert(key.key_id.clone(), key);
+    }
+
+    /// Import multiple mesh signing keys
+    pub fn import_mesh_keys(
+        &mut self,
+        keys: impl IntoIterator<Item = crate::dns::mesh_sync::MeshSigningKey>,
+    ) {
+        for key in keys {
+            self.import_mesh_key(key);
+        }
+    }
+
+    /// Get the number of imported mesh keys
+    pub fn mesh_key_count(&self) -> usize {
+        self.mesh_keys.len()
+    }
+
+    /// Verify a signature against mesh trust anchors
+    fn verify_with_mesh_keys(&self, message: &[u8], signature: &[u8]) -> Option<String> {
+        for (key_id, key) in &self.mesh_keys {
+            if key.verify(message, signature) {
+                return Some(key_id.clone());
+            }
+        }
+        None
+    }
+}
+
+impl Default for MeshTrustAnchorAdapter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl DnsSecValidator for MeshTrustAnchorAdapter {
+    fn validate_dnskey(
+        &self,
+        dnskey_name: &str,
+        dnskey_rdata: &[u8],
+        dnskey_rrsig: &[u8],
+    ) -> ValidationResult {
+        // Try mesh trust anchors first
+        let sign_data = format_dnskey_for_verification(dnskey_name, dnskey_rdata);
+        if let Some(key_id) = self.verify_with_mesh_keys(sign_data.as_bytes(), dnskey_rrsig) {
+            return ValidationResult {
+                is_secure: true,
+                trust_anchor_id: Some(key_id),
+                validation_method: ValidationMethod::MeshEd25519,
+            };
+        }
+
+        // Fall back to standard validator
+        if let Some(ref fallback) = self.fallback {
+            return fallback.validate_dnskey(dnskey_name, dnskey_rdata, dnskey_rrsig);
+        }
+
+        ValidationResult {
+            is_secure: false,
+            trust_anchor_id: None,
+            validation_method: ValidationMethod::None,
+        }
+    }
+
+    fn validate_rrset(
+        &self,
+        rrset_name: &str,
+        rrset_type: u16,
+        rrset_data: &[u8],
+        rrsig_rdata: &[u8],
+        _dnskey_name: &str,
+        _dnskey_rdata: &[u8],
+    ) -> ValidationResult {
+        // Try mesh trust anchors
+        let sign_data = format_rrset_for_verification(rrset_name, rrset_type, rrset_data);
+        // RRSIG contains the signature bytes after the header fields
+        if rrsig_rdata.len() > 18 {
+            let sig_bytes = &rrsig_rdata[18..];
+            if let Some(key_id) = self.verify_with_mesh_keys(sign_data.as_bytes(), sig_bytes) {
+                return ValidationResult {
+                    is_secure: true,
+                    trust_anchor_id: Some(key_id),
+                    validation_method: ValidationMethod::MeshEd25519,
+                };
+            }
+        }
+
+        // Fall back to standard validator
+        if let Some(ref fallback) = self.fallback {
+            return fallback.validate_rrset(
+                rrset_name,
+                rrset_type,
+                rrset_data,
+                rrsig_rdata,
+                _dnskey_name,
+                _dnskey_rdata,
+            );
+        }
+
+        ValidationResult {
+            is_secure: false,
+            trust_anchor_id: None,
+            validation_method: ValidationMethod::None,
+        }
+    }
+
+    fn validate_ds(
+        &self,
+        ds_name: &str,
+        ds_key_tag: u16,
+        ds_algorithm: u8,
+        ds_digest_type: u8,
+        ds_digest: &[u8],
+    ) -> ValidationResult {
+        // Check if DS digest matches any mesh key
+        for (key_id, key) in &self.mesh_keys {
+            let key_tag = calculate_key_tag(
+                257, // DNSKEY flag for KSK
+                3,   // Protocol 3
+                15,  // Algorithm 15 (Ed25519)
+                key.verifying_key.as_bytes(),
+            );
+
+            if key_tag == ds_key_tag {
+                // Verify the digest using existing compute_ds_digest function
+                if let Ok(computed_digest) = compute_ds_digest(
+                    ds_digest_type,
+                    257, // DNSKEY flag for KSK
+                    3,   // Protocol 3
+                    15,  // Algorithm 15 (Ed25519)
+                    key.verifying_key.as_bytes(),
+                ) {
+                    if computed_digest == ds_digest {
+                        return ValidationResult {
+                            is_secure: true,
+                            trust_anchor_id: Some(key_id.clone()),
+                            validation_method: ValidationMethod::MeshEd25519,
+                        };
+                    }
+                }
+            }
+        }
+
+        // Fall back to standard validator
+        if let Some(ref fallback) = self.fallback {
+            return fallback.validate_ds(
+                ds_name,
+                ds_key_tag,
+                ds_algorithm,
+                ds_digest_type,
+                ds_digest,
+            );
+        }
+
+        ValidationResult {
+            is_secure: false,
+            trust_anchor_id: None,
+            validation_method: ValidationMethod::None,
+        }
+    }
+}
+
+/// Format a DNSKEY record for signature verification
+fn format_dnskey_for_verification(name: &str, rdata: &[u8]) -> String {
+    format!("{}|dnskey|{}", name, hex::encode(rdata))
+}
+
+/// Format an RRset for signature verification
+fn format_rrset_for_verification(name: &str, rr_type: u16, data: &[u8]) -> String {
+    format!("{}|{}|{}", name, rr_type, hex::encode(data))
+}

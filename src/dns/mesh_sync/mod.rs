@@ -209,6 +209,9 @@ impl VerificationMetrics {
                 self.ns_verifications
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
+            DomainVerificationType::MeshCertificate => {
+                // Mesh certificate verification doesn't use external DNS
+            }
         }
     }
 

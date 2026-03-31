@@ -176,63 +176,6 @@ impl UdpProtocolDetector {
         UdpProtocol::Unknown
     }
 
-    #[allow(dead_code)] // Reserved for DNS protocol validation
-    fn has_valid_dns_question(&self, data: &[u8], _is_query: bool) -> bool {
-        let mut pos = 12;
-        let max_pos = data.len();
-
-        if pos >= max_pos {
-            return false;
-        }
-
-        loop {
-            if pos >= max_pos {
-                return false;
-            }
-
-            let label_len = data[pos] as usize;
-
-            if label_len == 0 {
-                pos += 1;
-                break;
-            }
-
-            if label_len > 63 {
-                if label_len >= 0xC0 {
-                    if pos + 1 >= max_pos {
-                        return false;
-                    }
-                    pos += 2;
-                    break;
-                }
-                return false;
-            }
-
-            pos += 1 + label_len;
-
-            if pos > max_pos {
-                return false;
-            }
-        }
-
-        if pos + 4 > max_pos {
-            return false;
-        }
-
-        let qtype = u16::from_be_bytes([data[pos], data[pos + 1]]);
-        let qclass = u16::from_be_bytes([data[pos + 2], data[pos + 3]]);
-
-        if qtype > 259 {
-            return false;
-        }
-
-        if qclass != 1 && qclass != 255 && qclass != 3 && qclass != 4 {
-            return false;
-        }
-
-        true
-    }
-
     fn looks_like_dhcp(&self, data: &[u8]) -> bool {
         if data.len() < 240 {
             return false;
@@ -354,37 +297,6 @@ impl UdpProtocolDetector {
                 return true;
             }
             return false;
-        }
-
-        false
-    }
-
-    #[allow(dead_code)] // Reserved for mDNS protocol detection
-    fn looks_like_mdns(&self, data: &[u8]) -> bool {
-        if data.len() < 12 {
-            return false;
-        }
-
-        let flags = u16::from_be_bytes([data[2], data[3]]);
-        let _qr = (flags >> 15) & 1;
-
-        let qdcount = u16::from_be_bytes([data[4], data[5]]);
-        let ancount = u16::from_be_bytes([data[6], data[7]]);
-
-        if qdcount == 0 && ancount == 0 {
-            return false;
-        }
-
-        if data.len() > 12 {
-            if let Some(&label_len) = data.get(12) {
-                if label_len > 0 && label_len <= 63 {
-                    if let Some(&first_char) = data.get(13) {
-                        if first_char == b'_' {
-                            return true;
-                        }
-                    }
-                }
-            }
         }
 
         false

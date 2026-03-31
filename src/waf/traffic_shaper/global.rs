@@ -3,7 +3,6 @@ use crate::config::GlobalTrafficShapingConfig;
 use crate::metrics::bandwidth::get_global_bandwidth_tracker_or_log;
 use crate::waf::ThreatLevelManager;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 
 use super::async_bucket::AsyncTokenBucket;
 
@@ -13,8 +12,6 @@ pub struct GlobalTrafficShaper {
     bandwidth_config: BandwidthConfig,
     ingress_bucket: Arc<AsyncTokenBucket>,
     egress_bucket: Arc<AsyncTokenBucket>,
-    #[allow(dead_code)] // Retained for future threat-level-based throttling
-    threat_level: Arc<RwLock<Option<Arc<ThreatLevelManager>>>>,
 }
 
 impl GlobalTrafficShaper {
@@ -36,7 +33,6 @@ impl GlobalTrafficShaper {
                 egress_rate,
                 config.burst_refill_ms,
             ),
-            threat_level: Arc::new(RwLock::new(None)),
         }
     }
 

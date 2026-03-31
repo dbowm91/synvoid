@@ -465,12 +465,10 @@ pub struct SuspiciousWordRecord {
     pub timestamp: u64,
 }
 
-#[allow(dead_code)] // access_order reserved for future LRU eviction
 pub struct SuspiciousWordTracker {
     store: Arc<RwLock<HashMap<IpAddr, Vec<SuspiciousWordRecord>>>>,
     config: crate::config::SuspiciousWordsConfig,
     total_matches: std::sync::atomic::AtomicU64,
-    access_order: RwLock<Vec<IpAddr>>,
 }
 
 impl SuspiciousWordTracker {
@@ -479,7 +477,6 @@ impl SuspiciousWordTracker {
             store: Arc::new(RwLock::new(HashMap::new())),
             config,
             total_matches: std::sync::atomic::AtomicU64::new(0),
-            access_order: RwLock::new(Vec::new()),
         })
     }
 

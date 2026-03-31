@@ -180,6 +180,11 @@ impl RecordStoreManager {
         state.record_signer = Some(crate::mesh::dht::RecordSigner::new(signing_key));
     }
 
+    pub fn get_record_verifier(&self) -> Option<crate::mesh::dht::RecordSigner> {
+        let state = self.record_state.read();
+        state.record_signer.clone()
+    }
+
     pub fn enable_rate_limiting(&self, max_requests: u32, window_secs: u64) {
         let mut routing = self.routing_state.write();
         routing.rate_limiter = Some(crate::mesh::dht::DhtRateLimiter::new(

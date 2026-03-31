@@ -88,10 +88,8 @@ pub struct QueryCoalescerMetrics {
     pub lagged: usize,
 }
 
-#[allow(dead_code)] // max_wait_time reserved for future timeout enforcement
 pub struct QueryCoalescer {
     in_flight: Arc<RwLock<HashMap<QueryKey, CoalescerEntry>>>,
-    max_wait_time: Duration,
     max_entries: usize,
     entry_ttl: Duration,
     metrics: Arc<RwLock<QueryCoalescerMetrics>>,
@@ -101,27 +99,24 @@ impl QueryCoalescer {
     pub fn new() -> Self {
         Self {
             in_flight: Arc::new(RwLock::new(HashMap::new())),
-            max_wait_time: Duration::from_millis(500),
             max_entries: 10000,
             entry_ttl: Duration::from_secs(30),
             metrics: Arc::new(RwLock::new(QueryCoalescerMetrics::default())),
         }
     }
 
-    pub fn with_max_wait_time(max_wait_ms: u64) -> Self {
+    pub fn with_max_wait_time(_max_wait_ms: u64) -> Self {
         Self {
             in_flight: Arc::new(RwLock::new(HashMap::new())),
-            max_wait_time: Duration::from_millis(max_wait_ms),
             max_entries: 10000,
             entry_ttl: Duration::from_secs(30),
             metrics: Arc::new(RwLock::new(QueryCoalescerMetrics::default())),
         }
     }
 
-    pub fn with_config(max_wait_ms: u64, max_entries: usize, entry_ttl_secs: u64) -> Self {
+    pub fn with_config(_max_wait_ms: u64, max_entries: usize, entry_ttl_secs: u64) -> Self {
         Self {
             in_flight: Arc::new(RwLock::new(HashMap::new())),
-            max_wait_time: Duration::from_millis(max_wait_ms),
             max_entries,
             entry_ttl: Duration::from_secs(entry_ttl_secs),
             metrics: Arc::new(RwLock::new(QueryCoalescerMetrics::default())),

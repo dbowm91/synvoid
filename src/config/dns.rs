@@ -1591,6 +1591,7 @@ pub enum RecursiveUpstreamProvider {
     Cloudflare,
     Custom,
     Recursive,
+    GlobalNodes,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

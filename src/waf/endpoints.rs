@@ -9,8 +9,6 @@ use std::sync::Arc;
 pub struct EndpointBlocker {
     blocked_patterns: Vec<Regex>,
     invalid_patterns: Vec<String>,
-    #[allow(dead_code)] // Retained for diagnostic/logging purposes
-    use_regex: bool,
     block_methods: HashSet<String>,
     block_response_code: u16,
     block_page_html: Option<String>,
@@ -50,7 +48,6 @@ impl EndpointBlockerManager {
                     .filter_map(|p| Regex::new(p).ok())
                     .collect(),
                 invalid_patterns: validation.invalid.iter().map(|(p, _)| p.clone()).collect(),
-                use_regex,
                 block_methods,
                 block_response_code,
                 block_page_html,

@@ -20,8 +20,6 @@ struct InnerCookieServer {
 struct CookieEntry {
     client_ip: IpAddr,
     created_at: Instant,
-    #[allow(dead_code)] // Reserved for DNS cookie validation
-    server_cookie: Vec<u8>,
 }
 
 impl DnsCookieServer {
@@ -102,7 +100,6 @@ impl DnsCookieServer {
             CookieEntry {
                 client_ip,
                 created_at: Instant::now(),
-                server_cookie: server_cookie.clone(),
             },
         );
 

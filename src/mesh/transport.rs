@@ -111,7 +111,9 @@ pub struct MeshTransport {
     #[cfg(feature = "dns")]
     pub(crate) dns_registry: Option<Arc<crate::dns::MeshDnsRegistry>>,
     #[cfg(feature = "dns")]
+    #[allow(clippy::type_complexity)]
     pub(crate) dns_zones: Arc<RwLock<Option<Arc<RwLock<HashMap<String, DnsZone>>>>>>,
+    #[allow(clippy::type_complexity)]
     pub(crate) site_config_sync_tx: Arc<RwLock<Option<mpsc::Sender<(String, String)>>>>,
 }
 

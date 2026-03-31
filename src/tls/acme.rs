@@ -14,9 +14,9 @@ use super::config::InternalAcmeConfig;
 
 struct ManagedCert {
     domain: String,
-    #[allow(dead_code)] // Reserved for cert file management
+    #[allow(dead_code)]
     cert_path: PathBuf,
-    #[allow(dead_code)] // Reserved for key file management
+    #[allow(dead_code)]
     key_path: PathBuf,
     expires_at: SystemTime,
 }

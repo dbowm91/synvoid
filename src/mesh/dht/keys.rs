@@ -281,7 +281,7 @@ impl DhtKey {
             DhtKey::DnsZone(_) => Some(SignedRecordType::DnsZone),
             DhtKey::DnsRecord(_, _) => Some(SignedRecordType::DnsRecord),
             DhtKey::DnsDomainRegistration(_) => Some(SignedRecordType::DnsDomainRegistration),
-            DhtKey::AnycastNode(_) => None,
+            DhtKey::AnycastNode(_) => Some(SignedRecordType::AnycastNode),
         }
     }
 

@@ -5,6 +5,7 @@
 //! Re-exports [`Supervisor`], [`Worker`], [`AutoScaler`], and related types.
 
 pub mod autoscaler;
+#[allow(clippy::module_inception)]
 pub mod supervisor;
 pub mod worker;
 

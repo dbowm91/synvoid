@@ -32,8 +32,6 @@ pub struct NormalizedLocation {
 pub struct StaticFileHandler {
     config: Arc<SiteStaticConfig>,
     locations: Vec<NormalizedLocation>,
-    #[allow(dead_code)] // Reserved for custom MIME type handling
-    mime_types: Vec<String>,
     gzip_types: Vec<String>,
     max_file_size: u64,
     gzip_level: u32,
@@ -48,11 +46,11 @@ pub struct StaticFileHandler {
     default_cache_ttl: Option<u64>,
     site_id: String,
     minified_cache_dir: Option<PathBuf>,
-    #[allow(dead_code)] // Reserved for minifier integration
+    #[allow(dead_code)]
     minifier_cache: Option<Arc<MinifierCache>>,
-    #[allow(dead_code)] // Reserved for minifier client integration
+    #[allow(dead_code)]
     minifier_client: Option<client::MinifierClient>,
-    #[allow(dead_code)] // Reserved for async minifier client integration
+    #[allow(dead_code)]
     async_minifier_client: Option<client::AsyncMinifierClient>,
     enable_zero_copy: bool,
     mesh_image_protection: Option<MeshImageProtectionConfig>,
@@ -135,7 +133,6 @@ impl StaticFileHandler {
             return Ok(Self {
                 config: Arc::new(config),
                 locations: vec![],
-                mime_types: vec![],
                 gzip_types: vec![],
                 max_file_size: 100 * 1024 * 1024,
                 gzip_level: 5,
@@ -209,7 +206,6 @@ impl StaticFileHandler {
         Ok(Self {
             config: Arc::new(config_clone),
             locations,
-            mime_types: vec![],
             gzip_types,
             max_file_size,
             gzip_level,

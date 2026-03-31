@@ -66,9 +66,7 @@ pub async fn get_config_schema(
     State(_state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<Vec<ConfigFieldSchema>>, StatusCode> {
-    let mut schema = Vec::new();
-
-    schema.push(ConfigFieldSchema {
+    let mut schema = vec![ConfigFieldSchema {
         path: "server.host".to_string(),
         label: "Listen Host".to_string(),
         field_type: "string".to_string(),
@@ -76,7 +74,7 @@ pub async fn get_config_schema(
         description: "IPv4 address to bind the main server to".to_string(),
         impact: Some("Use 0.0.0.0 for all interfaces, 127.0.0.1 for localhost only".to_string()),
         options: None,
-    });
+    }];
 
     schema.push(ConfigFieldSchema {
         path: "server.port".to_string(),

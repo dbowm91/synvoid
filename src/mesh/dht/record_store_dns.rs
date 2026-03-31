@@ -147,7 +147,7 @@ impl RecordStoreManager {
         let dht_key = DhtKey::anycast_node(&node_id);
         let key = dht_key.as_str();
 
-        let record = DhtRecord {
+        let mut record = DhtRecord {
             key,
             value,
             timestamp: now,
@@ -156,6 +156,23 @@ impl RecordStoreManager {
             signature: Vec::new(),
             signer_public_key: None,
         };
+
+        // Sign the anycast record with the record signer
+        let rs = self.record_state.read();
+        if let Some(ref signer) = rs.record_signer {
+            let signed_record = crate::mesh::dht::SignedDhtRecord::new(
+                record.key.clone(),
+                record.value.clone(),
+                record.source_node_id.clone(),
+                crate::mesh::dht::SignedRecordType::AnycastNode,
+            );
+            if let Some(signature) = signer.sign(&signed_record) {
+                record.signature = signature;
+                record.signer_public_key = signer.get_verifying_key();
+                tracing::debug!("Signed anycast node record with Ed25519: {}", node_id);
+            }
+        }
+        drop(rs);
 
         let stored = self.store_record_global(record);
         if stored {
@@ -228,6 +245,25 @@ impl RecordStoreManager {
         }
 
         nodes
+    }
+
+    #[cfg(feature = "dns")]
+    /// Returns anycast node records with their signatures intact for verification.
+    pub fn get_all_anycast_records(&self) -> Vec<DhtRecord> {
+        if !self.config.enabled {
+            return Vec::new();
+        }
+
+        let rs = self.record_state.read();
+        let mut records = Vec::new();
+
+        for (key, entry) in rs.records.iter() {
+            if key.starts_with("anycast_node:") {
+                records.push(entry.record.clone());
+            }
+        }
+
+        records
     }
 
     #[cfg(feature = "dns")]

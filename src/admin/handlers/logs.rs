@@ -139,9 +139,8 @@ pub async fn get_error_page(
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UpdateErrorPageRequest {
     pub title: Option<String>,
-    #[allow(dead_code)] // Reserved for future error page customization
-    pub message: Option<String>,
     #[allow(dead_code)]
+    pub message: Option<String>,
     pub content: Option<String>,
 }
 

@@ -3,6 +3,10 @@ use std::time::{Duration, Instant};
 
 use parking_lot::RwLock as PLRwLock;
 
+/// Error type returned when a rate limit is exceeded.
+#[derive(Debug, Clone, Copy)]
+pub struct RateLimited;
+
 const MAX_IP_BUCKETS: usize = 100000;
 const MAX_RRL_BUCKETS: usize = 100000;
 const CLEANUP_INTERVAL_SECS: u64 = 60;
@@ -162,17 +166,17 @@ impl DnsRateLimiter {
         *self.last_cleanup.write() = now;
     }
 
-    pub fn check(&self) -> Result<(), ()> {
+    pub fn check(&self) -> Result<(), RateLimited> {
         if self.global_bucket.write().try_consume() {
             Ok(())
         } else {
-            Err(())
+            Err(RateLimited)
         }
     }
 
-    pub fn check_ip(&self, ip: IpAddr) -> Result<(), ()> {
+    pub fn check_ip(&self, ip: IpAddr) -> Result<(), RateLimited> {
         if self.check().is_err() {
-            return Err(());
+            return Err(RateLimited);
         }
 
         self.cleanup_if_needed();
@@ -180,7 +184,7 @@ impl DnsRateLimiter {
         let mut buckets = self.ip_buckets.write();
 
         if buckets.is_over_limit(MAX_IP_BUCKETS) {
-            return Err(());
+            return Err(RateLimited);
         }
 
         let bucket =
@@ -188,17 +192,17 @@ impl DnsRateLimiter {
         if bucket.try_consume() {
             Ok(())
         } else {
-            Err(())
+            Err(RateLimited)
         }
     }
 
-    pub fn check_rrl(&self, source_ip: IpAddr) -> Result<(), ()> {
+    pub fn check_rrl(&self, source_ip: IpAddr) -> Result<(), RateLimited> {
         self.cleanup_if_needed();
 
         let mut buckets = self.rrl_source_buckets.write();
 
         if buckets.is_over_limit(MAX_RRL_BUCKETS) {
-            return Err(());
+            return Err(RateLimited);
         }
 
         let bucket = buckets.get_or_insert_with(&source_ip, || {
@@ -210,7 +214,7 @@ impl DnsRateLimiter {
         if bucket.try_consume() {
             Ok(())
         } else {
-            Err(())
+            Err(RateLimited)
         }
     }
 

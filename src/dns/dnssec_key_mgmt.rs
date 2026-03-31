@@ -158,6 +158,7 @@ impl DnsSecKeyManager {
     /// Generate all CDS records for all active and standby KSKs
     ///
     /// Returns a vector of (key_tag, algorithm, digest_type, digest) tuples
+    #[allow(clippy::type_complexity)]
     pub fn get_all_cds_records(&self) -> Vec<Result<(u16, u8, u8, Vec<u8>), String>> {
         let mut results = Vec::new();
 

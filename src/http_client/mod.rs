@@ -545,7 +545,7 @@ pub async fn send_request_via_quic_tunnel(
                     Ok(Some(0)) => break,
                     Ok(Some(n)) => response_data.extend_from_slice(&buf[..n]),
                     Ok(None) => break,
-                    Err(e) => return Err(anyhow::anyhow!("Read error: {}", e).into()),
+                    Err(e) => return Err(anyhow::anyhow!("Read error: {}", e)),
                 }
             }
             Ok::<_, anyhow::Error>(response_data)

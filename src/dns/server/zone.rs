@@ -241,13 +241,6 @@ impl DnsServer {
         self.zone_index_dirty.store(false, Ordering::Release);
     }
 
-    #[allow(dead_code)] // Reserved for lazy zone index rebuilding
-    fn rebuild_zone_index_if_dirty(&self) {
-        if self.zone_index_dirty.load(Ordering::Acquire) {
-            self.rebuild_zone_index();
-        }
-    }
-
     pub fn with_mesh_registry(mut self, registry: Arc<MeshDnsRegistry>) -> Self {
         self.mesh_registry = Some(registry);
         self

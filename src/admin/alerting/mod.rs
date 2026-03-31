@@ -2,8 +2,6 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock as TokioRwLock;
 
-use crate::http_client::HttpClient;
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AlertConfig {
     pub enabled: bool,
@@ -83,17 +81,14 @@ pub struct AlertEvent {
     pub message: String,
 }
 
-#[allow(dead_code)] // http_client reserved for future webhook delivery
 pub struct AlertManager {
     config: Arc<TokioRwLock<AlertConfig>>,
-    http_client: HttpClient,
 }
 
 impl AlertManager {
     pub fn new() -> Self {
         Self {
             config: Arc::new(TokioRwLock::new(AlertConfig::default())),
-            http_client: crate::http_client::create_http_client(),
         }
     }
 
@@ -218,6 +213,7 @@ async fn send_webhook_internal(urls: &[String], event: &AlertEvent) -> Result<()
     Ok(())
 }
 
+#[allow(clippy::type_complexity)]
 async fn send_email_internal(
     config: (
         Vec<String>,

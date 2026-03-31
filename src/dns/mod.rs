@@ -42,6 +42,7 @@ pub mod query_validator;
 pub mod recursive;
 pub mod recursive_cache;
 pub mod resolver;
+pub mod resolver_global;
 pub mod rpz;
 pub mod secure_server;
 pub mod server;
@@ -120,6 +121,7 @@ pub use resolver::{
     CdsRecord, DnsKeyRecord, DnsResolver, HickoryRecursor, HickoryResolver, NoopResolver, NsRecord,
     ResolverError, ResolverResult, Rfc5011CheckResult, TxtRecord,
 };
+pub use resolver_global::GlobalNodeResolver;
 pub use rpz::{RpzAction, RpzManager, RpzPolicy, RpzZone};
 pub use secure_server::{
     DnsServerConfig, SecureDnsServerBase, MAX_QUERY_SIZE, TLS_HANDSHAKE_TIMEOUT_SECS,
