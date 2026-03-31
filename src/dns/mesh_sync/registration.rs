@@ -30,6 +30,37 @@ impl MeshDnsRegistry {
             return Err("Registration requires mTLS authentication".to_string());
         }
 
+        let cert_chain_verified = if self.config.require_cert_chain_verification
+            && !registration.certificate_chain.is_empty()
+        {
+            match self.verify_certificate_chain(&registration.certificate_chain) {
+                Ok(true) => {
+                    tracing::info!(
+                        "Certificate chain verified for node {}",
+                        registration.node_id
+                    );
+                    true
+                }
+                Ok(false) => {
+                    tracing::warn!(
+                        "Certificate chain verification failed for node {}",
+                        registration.node_id
+                    );
+                    return Err("Certificate chain verification failed".to_string());
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Certificate chain verification error for node {}: {}",
+                        registration.node_id,
+                        e
+                    );
+                    return Err(format!("Certificate chain verification error: {}", e));
+                }
+            }
+        } else {
+            false
+        };
+
         let now = chrono::Utc::now().timestamp() as u64;
         let origin = RegisteredOriginNode {
             node_id: registration.node_id.clone(),
@@ -44,6 +75,8 @@ impl MeshDnsRegistry {
             authenticated,
             edge_node_id: registration.edge_node_id.clone(),
             edge_node_geo: registration.edge_node_geo.clone(),
+            certificate_chain: registration.certificate_chain.clone(),
+            cert_chain_verified,
         };
 
         self.origin_nodes
@@ -234,6 +267,31 @@ impl MeshDnsRegistry {
 
                 for reg in request.domains {
                     let now = chrono::Utc::now().timestamp() as u64;
+                    let cert_chain_verified = if self.config.require_cert_chain_verification
+                        && !reg.certificate_chain.is_empty()
+                    {
+                        match self.verify_certificate_chain(&reg.certificate_chain) {
+                            Ok(true) => true,
+                            Ok(false) => {
+                                tracing::warn!(
+                                    "Certificate chain verification failed for origin {}",
+                                    reg.node_id
+                                );
+                                continue;
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    "Certificate chain verification error for origin {}: {}",
+                                    reg.node_id,
+                                    e
+                                );
+                                continue;
+                            }
+                        }
+                    } else {
+                        false
+                    };
+
                     let origin = RegisteredOriginNode {
                         node_id: reg.node_id.clone(),
                         domains: vec![reg.domain.clone()],
@@ -247,6 +305,8 @@ impl MeshDnsRegistry {
                         authenticated,
                         edge_node_id: reg.edge_node_id.clone(),
                         edge_node_geo: reg.edge_node_geo.clone(),
+                        certificate_chain: reg.certificate_chain.clone(),
+                        cert_chain_verified,
                     };
                     origins.insert(reg.node_id.clone(), origin);
 

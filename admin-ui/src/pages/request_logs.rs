@@ -1,3 +1,4 @@
+use crate::components::skeleton::LoadingSpinner;
 use crate::services::ApiService;
 use crate::types::{RequestLogEntry, SiteInfo};
 use serde::{Deserialize, Serialize};
@@ -300,8 +301,8 @@ pub fn RequestLogs() -> Html {
                         <tbody>
                             if *loading {
                                 <tr>
-                                    <td colspan="8" class="px-4 py-8 text-center text-secondary">
-                                        { "Loading..." }
+                                    <td colspan="8" class="px-4 py-8">
+                                        <LoadingSpinner />
                                     </td>
                                 </tr>
                             } else if logs.is_empty() {

@@ -1,3 +1,4 @@
+use crate::components::{toast_error, toast_success};
 use crate::services::api::ApiService;
 use serde::{Deserialize, Serialize};
 use yew::prelude::*;
@@ -87,9 +88,11 @@ pub fn Alerts() -> Html {
                     {
                         Ok(resp) => {
                             config.set(Some(resp.config));
+                            toast_success("Alert configuration saved");
                         }
                         Err(e) => {
-                            error.set(Some(e));
+                            error.set(Some(e.clone()));
+                            toast_error(&format!("Failed to save: {}", e));
                         }
                     }
                     saving.set(false);
@@ -112,10 +115,11 @@ pub fn Alerts() -> Html {
                     .await
                 {
                     Ok(_) => {
-                        tracing::info!("Test webhook sent");
+                        toast_success("Test webhook sent");
                     }
                     Err(e) => {
-                        error.set(Some(e));
+                        error.set(Some(e.clone()));
+                        toast_error(&format!("Webhook test failed: {}", e));
                     }
                 }
             });

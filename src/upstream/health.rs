@@ -212,12 +212,11 @@ impl HealthChecker {
     async fn tcp_health_check(backend: &Backend) -> bool {
         let url = backend.url.as_ref();
 
-        match tokio::time::timeout(Duration::from_secs(5), tokio::net::TcpStream::connect(url))
-            .await
-        {
-            Ok(Ok(_)) => true,
-            _ => false,
-        }
+        matches!(
+            tokio::time::timeout(Duration::from_secs(5), tokio::net::TcpStream::connect(url))
+                .await,
+            Ok(Ok(_))
+        )
     }
 
     pub fn shutdown(&self) {

@@ -95,34 +95,42 @@ pub fn Icmp() -> Html {
     }
 
     let on_enable = {
+        let status = status.clone();
         Callback::from(move |_| {
             let status = status.clone();
-
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
-                if let Ok(_) = api.enable_icmp().await {
-                    if let Some(ref mut s) = *status.clone() {
-                        s.enabled = true;
-                        s.active = true;
-                        status.set(Some(s.clone()));
-                    }
+                if api.enable_icmp().await.is_ok() {
+                    let mut s = (*status).clone().unwrap_or_else(|| IcmpStatus {
+                        enabled: true,
+                        active: true,
+                        backends_count: 0,
+                        last_ping: None,
+                    });
+                    s.enabled = true;
+                    s.active = true;
+                    status.set(Some(s));
                 }
             });
         })
     };
 
     let on_disable = {
+        let status = status.clone();
         Callback::from(move |_| {
             let status = status.clone();
-
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
-                if let Ok(_) = api.disable_icmp().await {
-                    if let Some(ref mut s) = *status.clone() {
-                        s.enabled = false;
-                        s.active = false;
-                        status.set(Some(s.clone()));
-                    }
+                if api.disable_icmp().await.is_ok() {
+                    let mut s = (*status).clone().unwrap_or_else(|| IcmpStatus {
+                        enabled: false,
+                        active: false,
+                        backends_count: 0,
+                        last_ping: None,
+                    });
+                    s.enabled = false;
+                    s.active = false;
+                    status.set(Some(s));
                 }
             });
         })

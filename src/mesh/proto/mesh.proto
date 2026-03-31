@@ -147,6 +147,7 @@ message MeshPeerInfo {
     optional uint32 quic_port = 9;
     optional uint32 wireguard_port = 10;
     optional uint32 advertised_port = 11;
+    bool dns_serving_healthy = 12;
 }
 
 message MeshMessage {

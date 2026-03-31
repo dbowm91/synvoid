@@ -505,7 +505,7 @@ impl RecordStoreManager {
             return None;
         }
 
-        let records: Vec<DhtRecord> = rs.pending_announces.iter().cloned().collect();
+        let records: Vec<DhtRecord> = rs.pending_announces.to_vec();
 
         let mut signature = Vec::new();
         let mut signer_public_key = String::new();

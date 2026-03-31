@@ -90,6 +90,8 @@ pub struct DnsRegistration {
     pub role: DnsNodeRole,
     pub edge_node_id: Option<String>,
     pub edge_node_geo: Option<String>,
+    #[serde(default)]
+    pub certificate_chain: Vec<Vec<u8>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]

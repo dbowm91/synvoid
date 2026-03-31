@@ -314,6 +314,13 @@ pub async fn run_unified_server_worker(
                     let dns_cfg = config.main.dns.clone();
 
                     if !dns_cfg.enabled {
+                        if mesh_config.role == crate::mesh::config::MeshNodeRole::Global {
+                            tracing::warn!(
+                                "Global node has dns.enabled = false — global nodes are required \
+                                 to serve DNS. DNS-dependent mesh features (verification, \
+                                 zone signing) will be unavailable."
+                            );
+                        }
                         None
                     } else if mesh_config.role != crate::mesh::config::MeshNodeRole::Global {
                         // Edge nodes do NOT get a resolver - they cannot perform verification
@@ -326,6 +333,8 @@ pub async fn run_unified_server_worker(
                             dns_cfg.mesh.verification_timeout_secs;
                         registry_config.verification_retry_interval_secs =
                             dns_cfg.mesh.verification_retry_interval_secs;
+                        registry_config.require_cert_chain_verification =
+                            dns_cfg.mesh.require_cert_chain_verification;
 
                         let registry = crate::dns::MeshDnsRegistry::with_config(
                             mesh_config.node_id(),
@@ -360,6 +369,8 @@ pub async fn run_unified_server_worker(
                                         dns_cfg.mesh.verification_timeout_secs;
                                     registry_config.verification_retry_interval_secs =
                                         dns_cfg.mesh.verification_retry_interval_secs;
+                                    registry_config.require_cert_chain_verification =
+                                        dns_cfg.mesh.require_cert_chain_verification;
 
                                     let registry = crate::dns::MeshDnsRegistry::with_config(
                                         mesh_config.node_id(),
@@ -399,6 +410,12 @@ pub async fn run_unified_server_worker(
             }
             #[cfg(not(feature = "dns"))]
             {
+                if mesh_config.role == crate::mesh::config::MeshNodeRole::Global {
+                    tracing::warn!(
+                        "Global node compiled without dns feature — DNS serving is unavailable. \
+                         Global nodes are required to serve DNS."
+                    );
+                }
                 if let Err(e) = crate::mesh::backend::initialize_mesh_transports(
                     &mesh_config,
                     transport_manager.clone(),

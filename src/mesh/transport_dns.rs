@@ -836,6 +836,7 @@ impl MeshTransport {
                 role: crate::dns::messages::DnsNodeRole::Origin,
                 edge_node_id: None,
                 edge_node_geo: None,
+                certificate_chain: Vec::new(),
             };
 
             if let Err(e) = dns_registry.register_origin_node(registration).await {
@@ -984,6 +985,7 @@ impl MeshTransport {
             role: crate::dns::messages::DnsNodeRole::Origin,
             edge_node_id: None,
             edge_node_geo: None,
+            certificate_chain: Vec::new(),
         };
 
         if let Err(e) = dns_registry.register_origin_node(registration).await {

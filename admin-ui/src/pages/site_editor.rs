@@ -225,6 +225,8 @@ fn BasicTab(props: &BasicTabProps) -> Html {
                 "domains": domains_vec,
                 "default_upstream": (*upstream).clone()
             });
+            let saving = saving.clone();
+            let site_id = site_id.clone();
             saving.set(true);
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
@@ -259,7 +261,8 @@ fn BasicTab(props: &BasicTabProps) -> Html {
                                 <div class="font-medium text-sm">{ &preset.name }</div>
                                 <div class="text-xs text-secondary mt-1">{ &preset.description }</div>
                             </button>
-}
+                        }
+                    })}
                 </div>
             </div>
 
@@ -402,8 +405,14 @@ fn ToggleFieldWithTooltip(props: &ToggleFieldWithTooltipProps) -> Html {
     }
 }
 
+#[derive(Properties, PartialEq)]
+struct BotTabProps {
+    config: Option<serde_json::Value>,
+    site_id: String,
+}
+
 #[function_component]
-fn BotTab() -> Html {
+fn BotTab(_props: &BotTabProps) -> Html {
     html! {
         <div class="space-y-6">
             <div>
@@ -457,8 +466,14 @@ fn BotTab() -> Html {
     }
 }
 
+#[derive(Properties, PartialEq)]
+struct UploadTabProps {
+    config: Option<serde_json::Value>,
+    site_id: String,
+}
+
 #[function_component]
-fn UploadTab() -> Html {
+fn UploadTab(_props: &UploadTabProps) -> Html {
     html! {
         <div class="space-y-6">
             <div>
@@ -915,4 +930,123 @@ fn generate_error_page_preview(
         border = c.border,
         primary = c.primary,
     )
+}
+
+#[derive(Properties, PartialEq)]
+struct SelectWithTooltipProps {
+    label: String,
+    name: String,
+    value: String,
+    options: Vec<(String, String)>,
+    #[prop_or_default]
+    help: String,
+    #[prop_or_default]
+    tooltip_title: String,
+    #[prop_or_default]
+    tooltip_content: String,
+}
+
+#[function_component]
+fn SelectWithTooltip(props: &SelectWithTooltipProps) -> Html {
+    html! {
+        <div>
+            <label class="block text-sm font-medium text-primary mb-2">{ &props.label }</label>
+            <select class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary" value={props.value.clone()}>
+                { for props.options.iter().map(|(v, l)| html! { <option value={v.clone()}>{ l }</option> }) }
+            </select>
+            if !props.help.is_empty() {
+                <p class="mt-1 text-sm text-secondary">{ &props.help }</p>
+            }
+        </div>
+    }
+}
+
+#[derive(Properties, PartialEq)]
+struct InputWithTooltipProps {
+    label: String,
+    name: String,
+    value: String,
+    #[prop_or_default]
+    help: String,
+    #[prop_or_default]
+    tooltip_title: String,
+    #[prop_or_default]
+    tooltip_content: String,
+}
+
+#[function_component]
+fn InputWithTooltip(props: &InputWithTooltipProps) -> Html {
+    html! {
+        <div>
+            <label class="block text-sm font-medium text-primary mb-2">{ &props.label }</label>
+            <input
+                type="text"
+                name={props.name.clone()}
+                value={props.value.clone()}
+                class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary"
+            />
+            if !props.help.is_empty() {
+                <p class="mt-1 text-sm text-secondary">{ &props.help }</p>
+            }
+        </div>
+    }
+}
+
+#[derive(Properties, PartialEq)]
+struct RateLimitTabProps {
+    config: Option<serde_json::Value>,
+    site_id: String,
+}
+
+#[function_component]
+fn RateLimitTab(props: &RateLimitTabProps) -> Html {
+    html! {
+        <div class="space-y-6">
+            <div>
+                <h3 class="text-lg font-semibold mb-4">{ "Per-IP Rate Limits" }</h3>
+                <div class="grid grid-cols-3 gap-4">
+                    <InputWithTooltip label="Per Second" name="ip_per_second" value="10" help="Requests per second per IP" tooltip_title="" tooltip_content="" />
+                    <InputWithTooltip label="Per Minute" name="ip_per_minute" value="60" help="Requests per minute per IP" tooltip_title="" tooltip_content="" />
+                    <InputWithTooltip label="Per 5 Min" name="ip_per_5min" value="200" help="Requests per 5 minutes per IP" tooltip_title="" tooltip_content="" />
+                    <InputWithTooltip label="Per Hour" name="ip_per_hour" value="500" help="Requests per hour per IP" tooltip_title="" tooltip_content="" />
+                    <InputWithTooltip label="Per Day" name="ip_per_day" value="1000" help="Requests per day per IP" tooltip_title="" tooltip_content="" />
+                    <InputWithTooltip label="Burst" name="ip_burst" value="20" help="Burst capacity per IP" tooltip_title="" tooltip_content="" />
+                </div>
+            </div>
+            <div>
+                <h3 class="text-lg font-semibold mb-4">{ "Global Rate Limits" }</h3>
+                <div class="grid grid-cols-3 gap-4">
+                    <InputWithTooltip label="Per Second" name="global_per_second" value="500" help="Total requests per second" tooltip_title="" tooltip_content="" />
+                    <InputWithTooltip label="Per Minute" name="global_per_minute" value="5000" help="Total requests per minute" tooltip_title="" tooltip_content="" />
+                    <InputWithTooltip label="Max Connections" name="max_connections" value="1000" help="Max concurrent connections" tooltip_title="" tooltip_content="" />
+                </div>
+            </div>
+        </div>
+    }
+}
+
+#[derive(Properties, PartialEq)]
+struct BlockingTabProps {
+    config: Option<serde_json::Value>,
+    site_id: String,
+}
+
+#[function_component]
+fn BlockingTab(props: &BlockingTabProps) -> Html {
+    html! {
+        <div class="space-y-6">
+            <div>
+                <h3 class="text-lg font-semibold mb-4">{ "IP Blocking" }</h3>
+                <div class="bg-tertiary rounded-lg p-4">
+                    <p class="text-secondary">{ "Configure IP blocklists and allowlists for this site." }</p>
+                </div>
+            </div>
+            <div>
+                <h3 class="text-lg font-semibold mb-4">{ "Country Blocking" }</h3>
+                <div class="bg-tertiary rounded-lg p-4">
+                    <p class="text-secondary">{ "Block or allow traffic by country code." }</p>
+                </div>
+            </div>
+        </div>
+    }
 }

@@ -369,7 +369,7 @@ impl DnsCache {
                 .map(|(qname, _)| qname)
                 .collect();
             for qname in stale_qnames {
-                if index.get(&qname).map_or(true, |k| k.is_empty()) {
+                if index.get(&qname).is_none_or(|k| k.is_empty()) {
                     index.remove(&qname);
                 }
             }

@@ -1178,6 +1178,9 @@ pub struct MeshPeerInfo {
     pub quic_port: Option<u32>,
     pub wireguard_port: Option<u32>,
     pub advertised_port: Option<u32>,
+    /// True if this global node's DNS server is healthy and serving queries.
+    /// Only meaningful for global nodes which are required to serve DNS.
+    pub dns_serving_healthy: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

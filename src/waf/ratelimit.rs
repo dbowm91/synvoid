@@ -570,3 +570,109 @@ pub enum RateLimitResult {
     },
     Blackholed,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── RingBuffer ─────────────────────────────────────────────────────
+
+    #[test]
+    fn ring_buffer_push_within_capacity() {
+        let mut rb = RingBuffer::with_capacity(3);
+        assert!(rb.is_empty());
+        assert_eq!(rb.len(), 0);
+
+        rb.push(10);
+        rb.push(20);
+        rb.push(30);
+
+        assert!(!rb.is_empty());
+        assert_eq!(rb.len(), 3);
+    }
+
+    #[test]
+    fn ring_buffer_push_beyond_capacity_wraps() {
+        let mut rb = RingBuffer::with_capacity(3);
+        rb.push(1);
+        rb.push(2);
+        rb.push(3);
+        // These overwrite positions 0, 1, 2 circularly
+        rb.push(4);
+        rb.push(5);
+
+        assert_eq!(rb.len(), 3);
+    }
+
+    #[test]
+    fn ring_buffer_push_zero_capacity_is_noop() {
+        let mut rb = RingBuffer::<i32>::with_capacity(0);
+        rb.push(1);
+        rb.push(2);
+        assert_eq!(rb.len(), 0);
+        assert!(rb.is_empty());
+    }
+
+    #[test]
+    fn ring_buffer_retain_keeps_matching() {
+        let mut rb = RingBuffer::with_capacity(5);
+        rb.push(1);
+        rb.push(2);
+        rb.push(3);
+        rb.push(4);
+
+        rb.retain(|&v| v % 2 == 0);
+        assert_eq!(rb.len(), 2);
+    }
+
+    #[test]
+    fn ring_buffer_retain_empty_buffer() {
+        let mut rb = RingBuffer::<i32>::with_capacity(3);
+        rb.retain(|_| false);
+        assert_eq!(rb.len(), 0);
+        assert!(rb.is_empty());
+    }
+
+    #[test]
+    fn ring_buffer_retain_remove_all() {
+        let mut rb = RingBuffer::with_capacity(3);
+        rb.push(1);
+        rb.push(2);
+        rb.push(3);
+
+        rb.retain(|_| false);
+        assert_eq!(rb.len(), 0);
+        assert!(rb.is_empty());
+    }
+
+    #[test]
+    fn ring_buffer_retain_keep_all() {
+        let mut rb = RingBuffer::with_capacity(3);
+        rb.push(1);
+        rb.push(2);
+        rb.push(3);
+
+        rb.retain(|_| true);
+        assert_eq!(rb.len(), 3);
+    }
+
+    // ── IpRateLimitState ───────────────────────────────────────────────
+
+    #[test]
+    fn ip_rate_limit_state_new_is_not_empty() {
+        // After new(), per_second etc. have capacity 0 so len==0, but we
+        // need to verify the is_empty() logic.
+        let state = IpRateLimitState::new();
+        assert!(state.is_empty());
+    }
+
+    #[test]
+    fn ip_rate_limit_state_empty_after_push_and_retain() {
+        let mut state = IpRateLimitState::new();
+        state.per_second.push(Instant::now());
+        assert!(!state.is_empty());
+
+        state.per_second.retain(|_| false);
+        assert!(state.is_empty());
+    }
+}

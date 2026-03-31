@@ -33,7 +33,6 @@ pub async fn start_metrics_publisher(
     tokio::select! {
         _ = shutdown_rx.recv() => {
             tracing::info!("Metrics publisher received shutdown signal");
-            return;
         }
         _ = async {
             loop {

@@ -60,9 +60,6 @@ pub const HEADERS_TO_STRIP: &[&str] = &[
 static HOP_BY_HOP_HEADERS_SET: LazyLock<AHashSet<&'static str>> =
     LazyLock::new(|| HOP_BY_HOP_HEADERS.iter().copied().collect());
 
-static HEADERS_TO_STRIP_SET: LazyLock<AHashSet<&'static str>> =
-    LazyLock::new(|| HEADERS_TO_STRIP.iter().copied().collect());
-
 static STATIC_HEADERS_TO_FILTER: LazyLock<AHashSet<String>> = LazyLock::new(|| {
     let mut set = AHashSet::with_capacity(HOP_BY_HOP_HEADERS.len() + HEADERS_TO_STRIP.len());
     for h in HOP_BY_HOP_HEADERS.iter().chain(HEADERS_TO_STRIP.iter()) {
@@ -1562,4 +1559,132 @@ pub fn build_forward_headers(
     }
 
     forward_headers
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── sanitize_request_path ──────────────────────────────────────────
+
+    #[test]
+    fn sanitize_normal_path_unchanged() {
+        assert_eq!(sanitize_request_path("/api/v1/users"), "/api/v1/users");
+    }
+
+    #[test]
+    fn sanitize_root_path() {
+        assert_eq!(sanitize_request_path("/"), "/");
+    }
+
+    #[test]
+    fn sanitize_decodes_percent_encoding() {
+        assert_eq!(sanitize_request_path("/foo%20bar"), "/foo bar");
+        assert_eq!(sanitize_request_path("/a%2Fb"), "/a/b");
+        assert_eq!(sanitize_request_path("/%7Euser"), "/~user");
+    }
+
+    #[test]
+    fn sanitize_strips_null_bytes() {
+        assert_eq!(sanitize_request_path("/foo%00bar"), "/foobar");
+    }
+
+    #[test]
+    fn sanitize_strips_control_chars() {
+        assert_eq!(sanitize_request_path("/foo\x01bar"), "/foobar");
+        assert_eq!(sanitize_request_path("/foo\x1fbar"), "/foobar");
+    }
+
+    #[test]
+    fn sanitize_collapses_duplicate_slashes() {
+        assert_eq!(sanitize_request_path("/foo//bar"), "/foo/bar");
+        assert_eq!(sanitize_request_path("/foo///bar"), "/foo/bar");
+    }
+
+    #[test]
+    fn sanitize_collapses_dot_segments() {
+        assert_eq!(sanitize_request_path("/foo/./bar"), "/foo/bar");
+    }
+
+    #[test]
+    fn sanitize_preserves_valid_encoding() {
+        assert_eq!(sanitize_request_path("/a%20b%20c"), "/a b c");
+    }
+
+    #[test]
+    fn sanitize_malformed_percent_passes_through() {
+        // Incomplete percent sequence — percent + first char kept, second missing
+        let result = sanitize_request_path("/foo%2");
+        assert!(result.contains('%'));
+    }
+
+    // ── filter_response_headers ────────────────────────────────────────
+
+    #[test]
+    fn filter_strips_hop_by_hop_headers() {
+        let mut headers = http::HeaderMap::new();
+        headers.insert("connection", "keep-alive".parse().unwrap());
+        headers.insert("keep-alive", "timeout=5".parse().unwrap());
+        headers.insert("transfer-encoding", "chunked".parse().unwrap());
+        headers.insert("content-type", "text/html".parse().unwrap());
+
+        let filtered = filter_response_headers(&headers, &AHashSet::new());
+        let names: Vec<&str> = filtered.iter().map(|(k, _)| k.as_str()).collect();
+        assert!(names.contains(&"content-type"));
+        assert!(!names.iter().any(|n| *n == "connection"));
+        assert!(!names.iter().any(|n| *n == "keep-alive"));
+        assert!(!names.iter().any(|n| *n == "transfer-encoding"));
+    }
+
+    #[test]
+    fn filter_strips_custom_headers() {
+        let mut headers = http::HeaderMap::new();
+        headers.insert("x-powered-by", "Express".parse().unwrap());
+        headers.insert("server", "nginx".parse().unwrap());
+        headers.insert("content-length", "1234".parse().unwrap());
+
+        let filtered = filter_response_headers(&headers, &STATIC_HEADERS_TO_FILTER);
+        let names: Vec<&str> = filtered.iter().map(|(k, _)| k.as_str()).collect();
+        assert!(names.contains(&"content-length"));
+        assert!(!names.contains(&"x-powered-by"));
+        assert!(!names.contains(&"server"));
+    }
+
+    #[test]
+    fn filter_strips_site_specific_headers() {
+        let mut headers = http::HeaderMap::new();
+        headers.insert("x-custom", "secret".parse().unwrap());
+        headers.insert("content-type", "text/plain".parse().unwrap());
+
+        let mut filter_set = AHashSet::new();
+        filter_set.insert("x-custom".to_string());
+
+        let filtered = filter_response_headers(&headers, &filter_set);
+        let names: Vec<&str> = filtered.iter().map(|(k, _)| k.as_str()).collect();
+        assert!(names.contains(&"content-type"));
+        assert!(!names.iter().any(|n| *n == "x-custom"));
+    }
+
+    // ── is_hop_by_hop_header ───────────────────────────────────────────
+
+    #[test]
+    fn hop_by_hop_known_headers() {
+        for header in HOP_BY_HOP_HEADERS {
+            assert!(is_hop_by_hop_header(header), "expected {header} to be hop-by-hop");
+            // Case-insensitive check
+            assert!(
+                is_hop_by_hop_header(&header.to_uppercase()),
+                "expected {} (uppercase) to be hop-by-hop",
+                header.to_uppercase()
+            );
+        }
+    }
+
+    #[test]
+    fn hop_by_hop_unknown_headers() {
+        assert!(!is_hop_by_hop_header("content-type"));
+        assert!(!is_hop_by_hop_header("content-length"));
+        assert!(!is_hop_by_hop_header("x-custom"));
+        assert!(!is_hop_by_hop_header("date"));
+    }
 }

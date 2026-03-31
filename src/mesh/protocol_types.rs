@@ -180,6 +180,7 @@ impl From<&MeshPeerInfo> for proto::MeshPeerInfo {
             quic_port: p.quic_port,
             wireguard_port: p.wireguard_port,
             advertised_port: p.advertised_port,
+            dns_serving_healthy: p.dns_serving_healthy,
         }
     }
 }
@@ -204,6 +205,7 @@ impl TryFrom<proto::MeshPeerInfo> for MeshPeerInfo {
             quic_port: pb.quic_port,
             wireguard_port: pb.wireguard_port,
             advertised_port: pb.advertised_port,
+            dns_serving_healthy: pb.dns_serving_healthy,
         })
     }
 }
@@ -468,6 +470,7 @@ impl MeshPeerInfo {
             quic_port: None,
             wireguard_port: None,
             advertised_port: None,
+            dns_serving_healthy: false,
         }
     }
 }

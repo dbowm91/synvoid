@@ -68,6 +68,13 @@ pub struct UpstreamStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SiteUpstreams {
+    pub site_id: String,
+    pub default_upstream: String,
+    pub backends: Vec<UpstreamStatus>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StatusResponse {
     pub success: bool,
     pub message: String,

@@ -739,7 +739,7 @@ impl HttpsServer {
                     .upstream
                     .as_ref()
                     .and_then(|u| u.tls.as_ref())
-                    .and_then(|t| UpstreamTlsConfig::from_site_config(t))
+                    .and_then(UpstreamTlsConfig::from_site_config)
                     .unwrap_or_default();
 
                 let client = create_upstream_client(

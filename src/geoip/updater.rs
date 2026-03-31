@@ -85,21 +85,13 @@ pub struct DownloadResult {
 }
 
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct UpdaterState {
     pub consecutive_failures: u32,
     pub last_success: Option<i64>,
     pub last_error: Option<String>,
 }
 
-impl Default for UpdaterState {
-    fn default() -> Self {
-        Self {
-            consecutive_failures: 0,
-            last_success: None,
-            last_error: None,
-        }
-    }
-}
 
 #[derive(Debug, thiserror::Error)]
 pub enum GeoIpUpdaterError {
@@ -214,7 +206,7 @@ impl GeoIpUpdater {
                 get_with_timeout(&client, &edition.download_url, timeout).await
             }
         }
-        .map_err(|e| GeoIpUpdaterError::NetworkError(e))?;
+        .map_err(GeoIpUpdaterError::NetworkError)?;
 
         if response.status.as_u16() == 401 {
             return Err(GeoIpUpdaterError::AuthError(
@@ -233,7 +225,7 @@ impl GeoIpUpdater {
             .headers
             .get("Last-Modified")
             .and_then(|v| v.to_str().ok())
-            .and_then(|s| parse_http_date(s));
+            .and_then(parse_http_date);
 
         Ok(last_modified)
     }
@@ -286,7 +278,7 @@ impl GeoIpUpdater {
                 get_with_timeout(&client, &edition.download_url, timeout).await
             }
         }
-        .map_err(|e| GeoIpUpdaterError::NetworkError(e))?;
+        .map_err(GeoIpUpdaterError::NetworkError)?;
 
         if response.status.as_u16() == 401 {
             return Err(GeoIpUpdaterError::AuthError(
@@ -305,7 +297,7 @@ impl GeoIpUpdater {
             .headers
             .get("Last-Modified")
             .and_then(|v| v.to_str().ok())
-            .and_then(|s| parse_http_date(s));
+            .and_then(parse_http_date);
 
         let content_encoding = response
             .headers

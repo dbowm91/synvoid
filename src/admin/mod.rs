@@ -436,7 +436,7 @@ fn build_router_from_state(
         .route(
             "/api/openapi.json",
             get(|| async {
-                axum::Json(utoipa::openapi::OpenApi::from(openapi::ApiDoc::openapi()))
+                axum::Json(openapi::ApiDoc::openapi())
             }),
         )
         .route("/health", get(health_check))

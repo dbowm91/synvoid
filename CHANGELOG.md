@@ -2,6 +2,11 @@
 
 All notable changes to MaluWAF will be documented in this file.
 
+## [Planned]
+
+### Added
+- Raft consensus for high availability
+
 ## [Unreleased]
 
 ### Added
@@ -24,7 +29,6 @@ All notable changes to MaluWAF will be documented in this file.
 - AI crawler blocking with CSS honeypot
 - Scraper tarpit with Markov chain content generation
 - Post-quantum TLS support
-- Raft consensus for high availability
 - Real-time metrics streaming via WebSocket
 - Structured JSON logging
 - Custom error pages support

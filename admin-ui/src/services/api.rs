@@ -374,14 +374,14 @@ impl ApiService {
         self.get("/sites").await
     }
 
-    pub async fn get_site(&self, site_id: &str) -> Result<crate::types::SiteInfo, String> {
+    pub async fn get_site(&self, site_id: &str) -> Result<serde_json::Value, String> {
         self.get(&format!("/sites/{}", site_id)).await
     }
 
     pub async fn create_site(
         &self,
         request: &serde_json::Value,
-    ) -> Result<crate::types::SiteInfo, String> {
+    ) -> Result<serde_json::Value, String> {
         self.post("/sites", request).await
     }
 
@@ -389,7 +389,7 @@ impl ApiService {
         &self,
         site_id: &str,
         request: &serde_json::Value,
-    ) -> Result<crate::types::SiteInfo, String> {
+    ) -> Result<serde_json::Value, String> {
         self.put(&format!("/sites/{}", site_id), request).await
     }
 
@@ -634,10 +634,6 @@ impl ApiService {
         self.put("/config/dns", config).await
     }
 
-    pub async fn reload_config(&self) -> Result<serde_json::Value, String> {
-        self.post("/config/reload", &serde_json::json!({})).await
-    }
-
     pub async fn validate_config(&self) -> Result<serde_json::Value, String> {
         self.post("/config/validate", &serde_json::json!({})).await
     }
@@ -678,31 +674,7 @@ impl ApiService {
         self.get("/icmp/backends").await
     }
 
-    pub async fn update_icmp_config(&self, config: serde_json::Value) -> Result<serde_json::Value, String> {
+    pub async fn update_icmp_config(&self, config: &serde_json::Value) -> Result<serde_json::Value, String> {
         self.post("/icmp/config", config).await
-    }
-
-    pub async fn get_site(&self, site_id: &str) -> Result<serde_json::Value, String> {
-        self.get(&format!("/sites/{}", site_id)).await
-    }
-
-    pub async fn update_site(&self, site_id: &str, config: &serde_json::Value) -> Result<serde_json::Value, String> {
-        self.put(&format!("/sites/{}", site_id), config).await
-    }
-
-    pub async fn create_site(&self, domains: Vec<String>, upstream: &str) -> Result<serde_json::Value, String> {
-        let body = serde_json::json!({
-            "domains": domains,
-            "default_upstream": upstream
-        });
-        self.post("/sites", &body).await
-    }
-
-    pub async fn delete_site(&self, site_id: &str) -> Result<serde_json::Value, String> {
-        self.delete(&format!("/sites/{}", site_id)).await
-    }
-
-    pub async fn get_sites(&self) -> Result<serde_json::Value, String> {
-        self.get("/sites").await
     }
 }

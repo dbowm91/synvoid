@@ -27,6 +27,8 @@ impl MeshDnsRegistry {
             authenticated: true,
             edge_node_id: None,
             edge_node_geo: None,
+            certificate_chain: Vec::new(),
+            cert_chain_verified: false,
         };
 
         self.origin_nodes
@@ -60,7 +62,7 @@ impl MeshDnsRegistry {
         let now = chrono::Utc::now().timestamp() as u64;
 
         let mut origins = self.origin_nodes.write();
-        if let Some(mut origin) = origins.get_mut(node_id) {
+        if let Some(origin) = origins.get_mut(node_id) {
             origin.domains = domains;
             origin.healthy = healthy;
             origin.capacity = capacity;

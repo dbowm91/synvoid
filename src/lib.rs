@@ -68,6 +68,7 @@ pub mod serder;
 pub mod serialization;
 pub mod serialization_rkyv;
 pub mod server;
+pub mod startup;
 pub mod static_files;
 pub mod streaming;
 pub mod supervisor;

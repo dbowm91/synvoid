@@ -1035,6 +1035,7 @@ impl MeshTransport {
                     quic_port: None,
                     wireguard_port: None,
                     advertised_port: None,
+                    dns_serving_healthy: false,
                 },
                 PeerStatus::Healthy,
             )
@@ -1204,6 +1205,7 @@ impl MeshTransport {
                     quic_port: p.quic_port,
                     wireguard_port: p.wireguard_port,
                     advertised_port: p.advertised_port,
+                    dns_serving_healthy: false,
                 })
                 .collect(),
             upstreams,

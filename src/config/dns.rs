@@ -886,6 +886,9 @@ pub struct DnsMeshConfig {
 
     #[serde(default)]
     pub qname_minimization: bool,
+
+    #[serde(default)]
+    pub require_cert_chain_verification: bool,
 }
 
 use super::defaults::default_true;
@@ -943,6 +946,9 @@ pub struct DnsZoneDnssecConfig {
 
     #[serde(default)]
     pub nsec3_iterations: Option<u16>,
+
+    #[serde(default)]
+    pub nsec3_algorithm: Option<u8>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1094,6 +1100,9 @@ pub struct DnsSecConfig {
     #[serde(default = "default_nsec3_iterations")]
     pub nsec3_iterations: u16,
 
+    #[serde(default = "default_nsec3_algorithm")]
+    pub nsec3_algorithm: u8,
+
     #[serde(default)]
     pub tsig_keys: Vec<TsigKeyConfig>,
 
@@ -1134,6 +1143,10 @@ fn default_ksk_key_size() -> u32 {
 
 fn default_nsec3_iterations() -> u16 {
     50
+}
+
+fn default_nsec3_algorithm() -> u8 {
+    1 // SHA-1 (RFC 5155)
 }
 
 fn default_dnssec_key_path() -> String {
@@ -1236,6 +1249,7 @@ impl Default for DnsMeshConfig {
             verification_retry_interval_secs: default_verification_retry_interval(),
             verification_timeout_secs: default_verification_timeout(),
             qname_minimization: true,
+            require_cert_chain_verification: false,
         }
     }
 }
@@ -1253,6 +1267,7 @@ impl Default for DnsSecConfig {
             nsec3_enabled: default_true(),
             nsec_enabled: false,
             nsec3_iterations: default_nsec3_iterations(),
+            nsec3_algorithm: default_nsec3_algorithm(),
             tsig_keys: Vec::new(),
             hsm: HsmConfig::default(),
         }
@@ -1437,6 +1452,12 @@ impl DnsSecConfig {
         if self.rollover_interval_days == 0 {
             return Err(DnsConfigError::InvalidDnsSec(
                 "rollover_interval_days must be greater than zero".to_string(),
+            ));
+        }
+
+        if self.nsec3_algorithm != 1 && self.nsec3_algorithm != 2 {
+            return Err(DnsConfigError::InvalidDnsSec(
+                "nsec3_algorithm must be 1 (SHA-1) or 2 (SHA-256)".to_string(),
             ));
         }
 

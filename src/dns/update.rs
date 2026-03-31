@@ -355,7 +355,7 @@ impl DynamicUpdateHandler {
                 let records = zone
                     .records
                     .get(&(prereq.name.clone(), RecordType::from(prereq.rtype)));
-                Ok(records.map_or(true, |r| r.is_empty()))
+                Ok(records.is_none_or(|r| r.is_empty()))
             }
             PrerequisiteCondition::ExistsRRset => {
                 let records = zone
@@ -367,7 +367,7 @@ impl DynamicUpdateHandler {
                 let records = zone
                     .records
                     .get(&(prereq.name.clone(), RecordType::from(prereq.rtype)));
-                Ok(records.map_or(true, |r| r.is_empty()))
+                Ok(records.is_none_or(|r| r.is_empty()))
             }
         }
     }

@@ -761,7 +761,7 @@ impl Message {
             | Message::OverseerUpgradeCommit { .. }
             | Message::OverseerDrainWorkers { .. }
             | Message::OverseerDrainWorkersAck { .. }
-            | Message::OverseerGetStatus { .. }
+            | Message::OverseerGetStatus
             | Message::MasterDrainMode { .. }
             | Message::MasterDrainModeAck { .. }
             | Message::MasterReportConnections { .. }
@@ -1083,7 +1083,7 @@ impl Message {
 
             Message::OverseerDrainWorkers { .. }
             | Message::OverseerDrainWorkersAck { .. }
-            | Message::OverseerGetStatus { .. }
+            | Message::OverseerGetStatus
             | Message::OverseerStatusResponse { .. }
             | Message::OverseerDualMasterPrepare { .. }
             | Message::OverseerDualMasterPrepareAck { .. } => MessageCategory::Overseer,
@@ -1102,7 +1102,7 @@ impl Message {
             | Message::DrainComplete { .. }
             | Message::StopAccepting { .. }
             | Message::StopAcceptingAck { .. }
-            | Message::RestoreFromDrain { .. }
+            | Message::RestoreFromDrain
             | Message::RestoreFromDrainAck { .. } => MessageCategory::DrainProtocol,
 
             Message::SocketHandoffRequest { .. }

@@ -128,6 +128,11 @@ impl MeshDiscovery {
                 is_global: true,
                 latency_ms: None,
                 upstreams: vec![],
+                is_trusted: true,
+                quic_port: None,
+                wireguard_port: None,
+                advertised_port: None,
+                dns_serving_healthy: false,
             },
             PeerStatus::Connecting,
         ).await;
@@ -331,6 +336,7 @@ impl MeshDiscovery {
                     quic_port,
                     wireguard_port,
                     advertised_port: quic_port.or(wireguard_port),
+                    dns_serving_healthy: false,
                 };
 
                 self.topology.add_peer(peer_info, PeerStatus::Handshake);

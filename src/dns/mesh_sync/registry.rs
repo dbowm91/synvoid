@@ -125,4 +125,24 @@ impl MeshDnsRegistry {
     pub fn set_shutdown_sender(&mut self, tx: mpsc::Sender<DnsNodeShutdown>) {
         self.shutdown_tx = Some(tx);
     }
+
+    pub fn start_periodic_dht_sync(self: &Arc<Self>, interval_secs: u64) {
+        if !self.is_global {
+            return;
+        }
+        let registry = Arc::clone(self);
+        let interval_secs = if interval_secs == 0 { 30 } else { interval_secs };
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(std::time::Duration::from_secs(interval_secs));
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                ticker.tick().await;
+                registry.sync_from_dht();
+            }
+        });
+        tracing::info!(
+            "Started periodic DHT sync with interval {}s",
+            interval_secs
+        );
+    }
 }

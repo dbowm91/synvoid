@@ -6,7 +6,7 @@ use crate::components::ToastContainer;
 use crate::hooks::use_theme::*;
 use crate::pages::{
     Alerts, Dashboard, Honeypot, Icmp, Logs, Probes, ProcessManagement, RequestLogs, Settings,
-    SiteDetail, SiteEdit, SiteEditor, Sites, SystemStatus, TcpUdp, ThreatLevel, TierKeys, Workers,
+    SiteDetail, SiteEditor, Sites, SystemStatus, TcpUdp, ThreatLevel, TierKeys, Upstreams, Workers,
 };
 use crate::types::UpdateThemeRequest;
 

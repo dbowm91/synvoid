@@ -53,6 +53,8 @@ pub struct RegisteredOriginNode {
     pub authenticated: bool,
     pub edge_node_id: Option<String>,
     pub edge_node_geo: Option<String>,
+    pub certificate_chain: Vec<Vec<u8>>,
+    pub cert_chain_verified: bool,
 }
 
 #[derive(Clone)]
@@ -115,6 +117,7 @@ pub struct MeshDnsRegistryConfig {
     pub graceful_shutdown_lead_time_secs: u64,
     pub verification_timeout_secs: u64,
     pub verification_retry_interval_secs: u64,
+    pub require_cert_chain_verification: bool,
 }
 
 impl Default for MeshDnsRegistryConfig {
@@ -129,6 +132,7 @@ impl Default for MeshDnsRegistryConfig {
             graceful_shutdown_lead_time_secs: 30,
             verification_timeout_secs: 600,
             verification_retry_interval_secs: 30,
+            require_cert_chain_verification: false,
         }
     }
 }
@@ -360,10 +364,7 @@ impl MeshSigningKey {
             Err(_) => return false,
         };
         let sig = ed25519_dalek::Signature::from_bytes(&sig_array);
-        match self.verifying_key.verify(message, &sig) {
-            Ok(_) => true,
-            Err(_) => false,
-        }
+        self.verifying_key.verify(message, &sig).is_ok()
     }
 }
 

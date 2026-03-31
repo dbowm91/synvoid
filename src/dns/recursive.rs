@@ -152,8 +152,8 @@ impl RecursiveDnsServer {
         );
 
         // Warn about DNSSEC limitations in forwarder mode
-        if !matches!(self.config.upstream_provider, crate::config::dns::RecursiveUpstreamProvider::Recursive) {
-            if self.config.dnssec_validation {
+        if !matches!(self.config.upstream_provider, crate::config::dns::RecursiveUpstreamProvider::Recursive)
+            && self.config.dnssec_validation {
                 tracing::warn!(
                     "DNSSEC validation is enabled but forwarder mode ({:?}) does not perform validation. \
                     Upstream servers are trusted to validate DNSSEC. For validated lookups, \
@@ -161,7 +161,6 @@ impl RecursiveDnsServer {
                     self.config.upstream_provider
                 );
             }
-        }
 
         let server = self.clone();
         let socket = Arc::new(socket);

@@ -1017,7 +1017,7 @@ impl HttpServer {
                 if let Some(pm) = router.plugin_manager() {
                     let body_bytes: Bytes = body_slice
                         .map(|b| b.to_vec().into())
-                        .unwrap_or_else(Bytes::new);
+                        .unwrap_or_default();
 
                     let mut filter_builder = http::Request::builder()
                         .method(method.clone())
@@ -1135,17 +1135,13 @@ impl HttpServer {
                     .upstream
                     .as_ref()
                     .and_then(|u| u.tls.as_ref())
-                    .and_then(|t| UpstreamTlsConfig::from_site_config(t));
-                let site_client = if let Some(ref tls) = site_tls_config {
-                    Some(create_upstream_client(
+                    .and_then(UpstreamTlsConfig::from_site_config);
+                let site_client = site_tls_config.as_ref().map(|tls| create_upstream_client(
                         std::time::Duration::from_secs(5),
                         100,
                         std::time::Duration::from_secs(30),
                         tls,
-                    ))
-                } else {
-                    None
-                };
+                    ));
                 let forwarding_client = site_client.as_ref().unwrap_or(&client);
 
                 let resp = if crate::http_client::is_quictunnel_url(&target.upstream) {

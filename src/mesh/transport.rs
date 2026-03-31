@@ -1403,6 +1403,7 @@ impl MeshTransport {
                             quic_port: peer_quic_port,
                             wireguard_port: peer_wireguard_port,
                             advertised_port: peer_quic_port.or(peer_wireguard_port),
+                            dns_serving_healthy: false,
                         },
                         PeerStatus::Healthy,
                     )
@@ -1664,10 +1665,9 @@ impl MeshTransport {
     /// Preflight: query a newly connected peer for their known routes to warm our cache
     /// Proactive cache warming: periodically query for popular routes from peers
     /// This keeps the route cache warm without waiting for actual requests
-
+    ///
     /// Periodic DHT cache resync for edge nodes
     /// Checks if local cache is stale and requests fresh snapshot from global nodes
-
     pub async fn announce_upstream(
         &self,
         upstream_id: &str,

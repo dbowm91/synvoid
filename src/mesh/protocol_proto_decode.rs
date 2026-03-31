@@ -896,6 +896,7 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                                 .registration
                                 .as_ref()
                                 .and_then(|reg| reg.edge_node_geo.clone()),
+                            certificate_chain: Vec::new(),
                         },
                         verify_domain_ownership: r.verify_domain_ownership,
                         timestamp: r.timestamp,

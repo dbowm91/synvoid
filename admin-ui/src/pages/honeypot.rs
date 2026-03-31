@@ -76,11 +76,11 @@ pub fn Honeypot() -> Html {
 
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
-                if let Ok(value) = api.control_honeypot("enable").await {
-                    if let Some(ref mut s) = *status.clone() {
+                if api.control_honeypot("enable").await.is_ok() {
+                    if let Some(mut s) = (*status).clone() {
                         s.enabled = true;
                         s.running = true;
-                        status.set(Some(s.clone()));
+                        status.set(Some(s));
                     }
                 }
                 loading.set(false);
@@ -96,11 +96,11 @@ pub fn Honeypot() -> Html {
 
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
-                if let Ok(value) = api.control_honeypot("disable").await {
-                    if let Some(ref mut s) = *status.clone() {
+                if api.control_honeypot("disable").await.is_ok() {
+                    if let Some(mut s) = (*status).clone() {
                         s.enabled = false;
                         s.running = false;
-                        status.set(Some(s.clone()));
+                        status.set(Some(s));
                     }
                 }
             });
@@ -158,7 +158,7 @@ pub fn Honeypot() -> Html {
                             {for ports.iter().map(|port| {
                                 html! {
                                     <span class="px-3 py-1 bg-blue-900/50 text-blue-300 rounded-full">
-                                        { port }
+                                        { *port }
                                     </span>
                                 }
                             })}

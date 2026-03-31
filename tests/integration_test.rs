@@ -1073,3 +1073,209 @@ mod mesh_protocol_roundtrip_tests {
         assert!(MeshMessage::decode(b"not protobuf").is_none());
     }
 }
+
+#[cfg(test)]
+mod ipc_serialization_tests {
+    use maluwaf::process::{ErrorCode, ErrorSeverity, Message, WorkerId};
+
+    fn roundtrip(msg: &Message) -> Message {
+        let json = serde_json::to_string(msg).expect("serialize");
+        serde_json::from_str(&json).expect("deserialize")
+    }
+
+    #[test]
+    fn worker_started_roundtrip() {
+        let msg = Message::WorkerStarted {
+            id: WorkerId(3),
+            pid: 9999,
+            port: 8443,
+            timestamp: 1700000000,
+        };
+        let decoded = roundtrip(&msg);
+        match decoded {
+            Message::WorkerStarted { id, pid, port, timestamp } => {
+                assert_eq!(id, WorkerId(3));
+                assert_eq!(pid, 9999);
+                assert_eq!(port, 8443);
+                assert_eq!(timestamp, 1700000000);
+            }
+            _ => panic!("wrong variant after roundtrip"),
+        }
+    }
+
+    #[test]
+    fn worker_ready_roundtrip() {
+        let msg = Message::WorkerReady { id: WorkerId(7) };
+        let decoded = roundtrip(&msg);
+        match decoded {
+            Message::WorkerReady { id } => assert_eq!(id, WorkerId(7)),
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn worker_error_roundtrip() {
+        let msg = Message::WorkerError {
+            id: WorkerId(1),
+            error: "disk full".to_string(),
+            severity: ErrorSeverity::Critical,
+            error_code: ErrorCode::ResourceExhausted,
+        };
+        let decoded = roundtrip(&msg);
+        match decoded {
+            Message::WorkerError { id, error, severity, error_code } => {
+                assert_eq!(id, WorkerId(1));
+                assert_eq!(error, "disk full");
+                assert_eq!(severity, ErrorSeverity::Critical);
+                assert_eq!(error_code, ErrorCode::ResourceExhausted);
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn master_shutdown_roundtrip() {
+        let msg = Message::MasterShutdown {
+            graceful: true,
+            timeout_secs: 30,
+        };
+        let decoded = roundtrip(&msg);
+        match decoded {
+            Message::MasterShutdown { graceful, timeout_secs } => {
+                assert!(graceful);
+                assert_eq!(timeout_secs, 30);
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn master_config_reload_roundtrip() {
+        let msg = Message::MasterConfigReload {
+            config_path: "/etc/maluwaf/main.toml".to_string(),
+        };
+        let decoded = roundtrip(&msg);
+        match decoded {
+            Message::MasterConfigReload { config_path } => {
+                assert_eq!(config_path, "/etc/maluwaf/main.toml");
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn health_check_ack_roundtrip() {
+        let msg = Message::HealthCheckAck { timestamp: 1234567890 };
+        let decoded = roundtrip(&msg);
+        match decoded {
+            Message::HealthCheckAck { timestamp } => assert_eq!(timestamp, 1234567890),
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn worker_drain_roundtrip() {
+        let msg = Message::WorkerDrain {
+            id: WorkerId(2),
+            timeout_secs: 60,
+        };
+        let decoded = roundtrip(&msg);
+        match decoded {
+            Message::WorkerDrain { id, timeout_secs } => {
+                assert_eq!(id, WorkerId(2));
+                assert_eq!(timeout_secs, 60);
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn drain_request_roundtrip() {
+        let msg = Message::DrainRequest {
+            timeout_secs: 45,
+            drain_id: 42,
+        };
+        let decoded = roundtrip(&msg);
+        match decoded {
+            Message::DrainRequest { timeout_secs, drain_id } => {
+                assert_eq!(timeout_secs, 45);
+                assert_eq!(drain_id, 42);
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn restore_from_drain_roundtrip() {
+        let msg = Message::RestoreFromDrain;
+        let decoded = roundtrip(&msg);
+        assert!(matches!(decoded, Message::RestoreFromDrain));
+    }
+
+    #[test]
+    fn overseer_get_status_roundtrip() {
+        let msg = Message::OverseerGetStatus;
+        let decoded = roundtrip(&msg);
+        assert!(matches!(decoded, Message::OverseerGetStatus));
+    }
+
+    #[test]
+    fn minify_error_roundtrip() {
+        let msg = Message::MinifyError {
+            request_id: 555,
+            error: "syntax error in CSS".to_string(),
+        };
+        let decoded = roundtrip(&msg);
+        match decoded {
+            Message::MinifyError { request_id, error } => {
+                assert_eq!(request_id, 555);
+                assert_eq!(error, "syntax error in CSS");
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn restart_worker_request_roundtrip() {
+        let msg = Message::RestartWorkerRequest { id: WorkerId(0) };
+        let decoded = roundtrip(&msg);
+        match decoded {
+            Message::RestartWorkerRequest { id } => assert_eq!(id, WorkerId(0)),
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn worker_connection_count_roundtrip() {
+        let msg = Message::WorkerConnectionCount {
+            id: WorkerId(5),
+            active: 100,
+            idle: 20,
+        };
+        let decoded = roundtrip(&msg);
+        match decoded {
+            Message::WorkerConnectionCount { id, active, idle } => {
+                assert_eq!(id, WorkerId(5));
+                assert_eq!(active, 100);
+                assert_eq!(idle, 20);
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn socket_handoff_complete_roundtrip() {
+        let msg = Message::SocketHandoffComplete {
+            success: true,
+            fd_count: 4,
+        };
+        let decoded = roundtrip(&msg);
+        match decoded {
+            Message::SocketHandoffComplete { success, fd_count } => {
+                assert!(success);
+                assert_eq!(fd_count, 4);
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+}

@@ -2,6 +2,7 @@ use yew::prelude::*;
 use yew_router::prelude::*;
 
 use crate::app::Route;
+use crate::components::skeleton::LoadingSpinner;
 use crate::services::ApiService;
 use crate::types::{SiteInfo, SiteStats};
 
@@ -80,7 +81,7 @@ pub fn Sites() -> Html {
             }
 
             if *loading {
-                <div class="text-center py-8">{ "Loading..." }</div>
+                <LoadingSpinner />
             } else if sites.is_empty() {
                 <div class="text-center py-8 text-secondary">
                     { "No sites configured. Click '+ Add Site' to create one." }

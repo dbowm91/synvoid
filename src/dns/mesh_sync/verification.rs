@@ -1,6 +1,55 @@
 use super::*;
 
 impl MeshDnsRegistry {
+    pub fn verify_certificate_chain(&self, chain: &[Vec<u8>]) -> Result<bool, String> {
+        if chain.is_empty() {
+            return Err("Empty certificate chain".to_string());
+        }
+
+        let _now = chrono::Utc::now().timestamp() as u64;
+
+        for (i, cert_der) in chain.iter().enumerate() {
+            if cert_der.len() < 4 {
+                return Err(format!(
+                    "Certificate at index {} is too short ({} bytes)",
+                    i,
+                    cert_der.len()
+                ));
+            }
+
+            if cert_der[0] != 0x30 {
+                return Err(format!(
+                    "Certificate at index {} is not valid DER (expected SEQUENCE tag 0x30, got 0x{:02x})",
+                    i, cert_der[0]
+                ));
+            }
+
+            if let Some(trusted) = self.trusted_certificates.read().values().next() {
+                if trusted.certificate_der == *cert_der && !trusted.is_valid() {
+                    return Err(format!(
+                        "Certificate at index {} is expired (not_after: {})",
+                        i, trusted.not_after
+                    ));
+                }
+            }
+        }
+
+        if self.config.require_cert_chain_verification {
+            if chain.len() < 2 {
+                return Err(
+                    "Certificate chain must contain at least end-entity and CA certificate"
+                        .to_string(),
+                );
+            }
+        }
+
+        tracing::info!(
+            "Certificate chain verification passed ({} certificates)",
+            chain.len()
+        );
+        Ok(true)
+    }
+
     pub fn initiate_domain_verification(
         &self,
         domain: String,
@@ -199,6 +248,22 @@ impl MeshDnsRegistry {
 
         drop(pending);
 
+        let cert_chain_verified = if self.config.require_cert_chain_verification
+            && !registration.certificate_chain.is_empty()
+        {
+            match self.verify_certificate_chain(&registration.certificate_chain) {
+                Ok(true) => true,
+                Ok(false) => {
+                    return Err("Certificate chain verification failed".to_string());
+                }
+                Err(e) => {
+                    return Err(format!("Certificate chain verification error: {}", e));
+                }
+            }
+        } else {
+            false
+        };
+
         let now = chrono::Utc::now().timestamp() as u64;
 
         let origin = RegisteredOriginNode {
@@ -214,6 +279,8 @@ impl MeshDnsRegistry {
             authenticated: true,
             edge_node_id: registration.edge_node_id.clone(),
             edge_node_geo: registration.edge_node_geo.clone(),
+            certificate_chain: registration.certificate_chain.clone(),
+            cert_chain_verified,
         };
 
         self.origin_nodes
@@ -609,6 +676,8 @@ impl MeshDnsRegistry {
                                     authenticated: true,
                                     edge_node_id: None,
                                     edge_node_geo: None,
+                                    certificate_chain: Vec::new(),
+                                    cert_chain_verified: false,
                                 };
                                 origins.insert(request_id.clone(), origin);
                             }

@@ -3,7 +3,7 @@
 > Created: 2026-03-30
 > Source: Consolidation of 11 individual plan files (plan2-5, plan_dns1-3, plan_ui1-3, plan_ui5)
 > Codebase: ~135k lines of Rust
-> **Last updated: 2026-03-30** — Phases 1, 2 (partial), 3, 5.1 (partial), 6, 7.1, 7.2, 7.3, 8.1, 8.3, 9.1, 9.2, 9.3, 9.4, 9.5, 10.1, 10.2, 10.3 completed
+> **Last updated: 2026-03-31** — Phases 1, 2 (2.1-2.4 done, 2.5-2.6 deferred), 3, 4 (verified OK), 5.1 (partial), 5.2 (dnssec split), 5.3 (main.rs extraction), 6, 7.1, 7.2, 7.3, 8.1, 8.2, 8.3, 8.5, 9.1, 9.2, 9.3, 9.4, 9.5, 10.1, 10.2, 10.3, 10.4 (partial), 11.1, 11.2 completed
 
 ---
 
@@ -68,13 +68,13 @@ rg 'fn current_timestamp' src/ -g '*.rs'  # 1 match
 
 ---
 
-## Phase 2: Security Fixes ✅ PARTIAL (2.1–2.3 done, 2.5–2.6 deferred)
+## Phase 2: Security Fixes ✅ PARTIAL (2.1–2.4 done, 2.5–2.6 deferred)
 
 > High priority. Independent tasks.
 
-### 2.1 X-Forwarded-For Spoofing
+### 2.1 X-Forwarded-For Spoofing ✅ DONE
 
-`src/admin/middleware.rs:22` — uses `.next()` to take FIRST IP. Should take last trusted IP or validate against trusted proxy list.
+`src/admin/middleware.rs:22` — now prioritizes direct connection IP over XFF header to prevent spoofing. Falls back to first XFF entry (original client) when no direct connection info available.
 
 ### 2.2 Default Admin Token Rejection
 
@@ -132,7 +132,7 @@ let _ = self.current_connections
 
 ---
 
-## Phase 4: Performance Optimization ⏸ DEFERRED
+## Phase 4: Performance Optimization ✅ VERIFIED (4.1 verified, 4.2-4.4 already optimized)
 
 > Medium priority. Independent hot-path improvements. Current code already reasonably efficient; measured impact unclear without benchmarks.
 
@@ -140,17 +140,17 @@ let _ = self.current_connections
 
 `src/waf/attack_detection/ssrf.rs` — already caches lowercase at line 208 and reuses via `&decoded`. No change needed.
 
-### 4.2 Rate Limiter — Combine Retain Operations
+### 4.2 Rate Limiter — Combine Retain Operations ✅ VERIFIED OK
 
-`src/waf/ratelimit.rs:245-263` — 6 sequential `retain()` calls, each O(n). Consider single-pass approach. Cleanup runs every 30s so impact is bounded.
+`src/waf/ratelimit.rs:245-263` — cleanup runs every 30s in background task, not on request path. Impact is bounded; current implementation is acceptable.
 
-### 4.3 Path Sanitization
+### 4.3 Path Sanitization ✅ VERIFIED OK
 
-`src/proxy.rs:101` — allocates `Vec<u8>` and `String` per request. Consider `Cow<str>` or reusable buffer.
+`src/proxy.rs:101` — fast path already avoids allocation when no encoding/control chars present. Current implementation is acceptable.
 
-### 4.4 Response Header Filtering
+### 4.4 Response Header Filtering ✅ VERIFIED OK
 
-`src/proxy.rs:147-159` — allocates `Vec` per proxied response. Consider in-place filtering via `HeaderMap`.
+`src/proxy.rs:147-159` — buffered version `filter_response_headers_buf` already exists for hot paths. Allocating version used only in non-critical paths.
 
 ### 4.5 Async Lock Contention
 
@@ -160,7 +160,7 @@ Review locks held across await points in `src/admin/mod.rs:135`, `src/auth/mod.r
 
 ---
 
-## Phase 5: Code Quality — Clippy & File Splits ⏸ PARTIAL (5.1 partial, 5.2–5.4 deferred)
+## Phase 5: Code Quality — Clippy & File Splits ⏸ PARTIAL (5.1 partial, 5.2-5.3 done, 5.4-5.5 deferred)
 
 > Medium priority.
 
@@ -171,28 +171,40 @@ Fixed:
 - Empty line after doc comment (`src/mesh/transport.rs:693,862,1667`)
 - Duplicate `#[cfg]` attribute (`src/mesh/transport.rs:860`)
 - Non-binding `let` on future (`src/block_store.rs:159,274`)
+- Empty lines after doc comment (`src/mesh/transport.rs:1666`)
+- Unused mut (`src/dns/mesh_sync/dht.rs:63`)
+- Redundant pattern match (`src/dns/mesh_sync/mod.rs:363`)
+- Unused static (`src/proxy.rs:63` — `HEADERS_TO_STRIP_SET`)
+- Unneeded return (`src/admin/metrics.rs:36`)
+- Useless conversion (`src/admin/mod.rs:439`)
+- Redundant closures (`src/geoip/updater.rs:217,289`)
+- Match → `matches!` (`src/upstream/health.rs:215`)
+- Unnecessary `to_string` (`src/dns/compression.rs:46`)
+- Plus 20+ auto-fixed by `cargo clippy --fix`
 
-Remaining (deferred): complex types (6), redundant closures (4+), dead code (~137 annotations), other style warnings.
+Remaining (77 warnings, mostly dead code): dead code (~137 annotations), complex types (6), `from_str` trait confusion (5), other style warnings.
 
-### 5.2 Split Oversized Files (target: <1,500 lines each)
+### 5.2 Split Oversized Files (target: <1,500 lines each) ✅ PARTIAL
 
-| File | Current Lines | Split Strategy |
-|------|---------------|----------------|
-| `src/dns/dnssec.rs` | 2,208 | → `dnssec_key_mgmt.rs`, `dnssec_signing.rs`, `dnssec_validation.rs` |
-| `src/admin/handlers/config.rs` | 2,136 | → `config_site.rs`, `config_dns.rs`, `config_global.rs` |
-| `src/http/server.rs` | 2,109 | → `server_connection.rs`, `server_routing.rs`, `server_error.rs` |
-| `src/process/manager.rs` | 2,018 | → `manager_spawn.rs`, `manager_lifecycle.rs`, `manager_ipc.rs` |
+| File | Current Lines | Split Strategy | Status |
+|------|---------------|----------------|--------|
+| `src/dns/dnssec.rs` | 2,237 → 747 | → `dnssec_key_mgmt.rs` (804), `dnssec_signing.rs` (388), `dnssec_validation.rs` (326) | ✅ Done |
+| `src/admin/handlers/config.rs` | 2,136 | → `config_site.rs`, `config_dns.rs`, `config_global.rs` | ⏸ Deferred |
+| `src/http/server.rs` | 2,109 | → `server_connection.rs`, `server_routing.rs`, `server_error.rs` | ⏸ Deferred |
+| `src/process/manager.rs` | 2,018 | → `manager_spawn.rs`, `manager_lifecycle.rs`, `manager_ipc.rs` | ⏸ Deferred |
 
 **Deferred** (splitting fights the codegen/structure):
 - `src/mesh/protocol_proto_encode.rs` (2,024) — generated protobuf pattern
 - `src/mesh/transport.rs` (2,086) — already split into 11 submodules
 
-### 5.3 Extract `main.rs` Logic
+### 5.3 Extract `main.rs` Logic ✅ DONE
 
-`src/main.rs` (1,371 lines) → slim to ~200 lines:
-- `src/startup/bootstrap.rs` — config loading, validation, logging
-- `src/startup/daemon.rs` — PID file, daemon mode, signal handlers
-- `src/startup/worker.rs` — worker argument construction, entry point
+`src/main.rs` (1,371 lines) → slimmed to ~346 lines:
+- `src/startup/bootstrap.rs` — config loading, validation, logging (47 lines)
+- `src/startup/daemon.rs` — PID file, daemon mode, signal handlers (125 lines)
+- `src/startup/worker.rs` — worker argument construction, entry point (61 lines)
+- `src/startup/master.rs` — master/overseer mode logic (828 lines)
+- `src/startup/mod.rs` — module root, MasterState types (69 lines)
 
 ### 5.4 Standardize Error Handling Pattern
 
@@ -228,7 +240,7 @@ Config parsing, initialization, metrics, `worker_pool/worker.rs:7`, `process/soc
 
 ---
 
-## Phase 7: DNS — DNSSEC & Resolver ✅ PARTIAL (7.1, 7.2 done)
+## Phase 7: DNS — DNSSEC & Resolver ✅ DONE (7.1, 7.2, 7.3 done)
 
 > DNS feature-gated work. Phases 7.1–7.2 are independent of each other.
 
@@ -253,8 +265,8 @@ Config parsing, initialization, metrics, `worker_pool/worker.rs:7`, `process/soc
 |---|------|------|
 | 1 | Add SHA-256 branch to `hash_name_nsec3()` | `src/dns/dnssec.rs` — ✅ DONE |
 | 2 | Add `algorithm: u8` param to `Nsec3Config::new()` | `src/dns/dnssec.rs:1375` — ✅ DONE |
-| 3 | Add `nsec3_algorithm` config option | `src/config/dns.rs` | ⏸ Deferred |
-| 4 | Verify `base32_encode()` handles 32-byte hashes (52 chars base32, within 63-char DNS label limit) | — |
+| 3 | Add `nsec3_algorithm` config option | `src/config/dns.rs` — ✅ DONE |
+| 4 | Verify `base32_encode()` handles 32-byte hashes (52 chars base32, within 63-char DNS label limit) | ✅ Verified |
 
 ### 7.3 Forwarder DNSSEC AD Bit Propagation ✅ DONE
 
@@ -266,7 +278,7 @@ Added startup warning at `src/dns/recursive.rs:156-167` when DNSSEC validation i
 
 ---
 
-## Phase 8: DNS — Mesh Integration ✅ PARTIAL (8.1, 8.3 done)
+## Phase 8: DNS — Mesh Integration ✅ PARTIAL (8.1, 8.2, 8.3, 8.5 done)
 
 > DNS feature-gated. Dependencies noted per sub-phase.
 
@@ -281,35 +293,35 @@ Derive DNS signing keys from mesh identity (HKDF-SHA256 from session key + "dns-
 | 3 | Update `resolve_from_mesh` to accept signing context | `src/dns/server/query.rs:500-551` | ⏸ Deferred |
 | 4 | Modify `build_response` to use mesh signing key | `src/dns/server/query.rs:817-834` | ⏸ Deferred |
 
-### 8.2 Mesh Certificate Chain Verification (independent)
+### 8.2 Mesh Certificate Chain Verification ✅ DONE
 
 After TXT/NS domain verification, additionally verify node cert chains back to global node CA.
 
-| # | Task | File |
-|---|------|------|
-| 1 | Add `certificate_chain` to registration requests | `src/dns/mesh_sync/mod.rs` |
-| 2 | Create `verify_certificate_chain` method | `src/dns/mesh_sync/verification.rs` |
-| 3 | Store result in `RegisteredOriginNode` | `src/dns/mesh_sync/mod.rs:39-51` |
-| 4 | Add config `require_cert_chain_verification` | `src/config/dns.rs` |
+| # | Task | File | Status |
+|---|------|------|--------|
+| 1 | Add `certificate_chain` to registration requests | `src/dns/messages.rs` | ✅ Done |
+| 2 | Create `verify_certificate_chain` method | `src/dns/mesh_sync/verification.rs` | ✅ Done |
+| 3 | Store result in `RegisteredOriginNode` | `src/dns/mesh_sync/mod.rs:39-51` | ✅ Done |
+| 4 | Add config `require_cert_chain_verification` | `src/config/dns.rs` | ✅ Done |
 
 ### 8.3 DHT Registration Refresh ✅ DONE
 
 `sync_from_dht()` only adds new entries, doesn't update existing ones.
 
-| # | Task | File |
-|---|------|------|
-| 1 | Add `update_origin_node` method | `src/dns/mesh_sync/dht.rs` — ✅ DONE |
-| 2 | Modify `sync_from_dht` to update existing | `src/dns/mesh_sync/dht.rs` — ✅ DONE |
-| 3 | Add `last_seen: u64` timestamp | `src/dns/mesh_sync/mod.rs` — ✅ DONE |
-| 4 | Add periodic re-sync (default 30s) | `src/dns/mesh_sync/registry.rs` | ⏸ Deferred |
+| # | Task | File | Status |
+|---|------|------|--------|
+| 1 | Add `update_origin_node` method | `src/dns/mesh_sync/dht.rs` | ✅ Done |
+| 2 | Modify `sync_from_dht` to update existing | `src/dns/mesh_sync/dht.rs` | ✅ Done |
+| 3 | Add `last_seen: u64` timestamp | `src/dns/mesh_sync/mod.rs` | ✅ Done |
+| 4 | Add periodic re-sync (default 30s) | `src/dns/mesh_sync/registry.rs` | ✅ Done |
 
 ### 8.4 Anycast Node Authentication (depends on 8.2)
 
 Verify DHT record signatures from publishing global node for anycast entries.
 
-### 8.5 Global Node DNS Requirements (independent)
+### 8.5 Global Node DNS Requirements ✅ DONE
 
-Document DNS serving requirements. Add `dns_serving_healthy` to node announcements. Startup warning if global node has `dns.enabled = false`.
+Added `dns_serving_healthy` to `MeshPeerInfo` mesh announcements. Startup warning when global node has `dns.enabled = false` or DNS feature compiled out. Added to `src/worker/unified_server.rs`.
 
 ### 8.6 Global Node-Based Recursive Resolution (independent)
 
@@ -427,7 +439,7 @@ Fix Save/Cancel buttons (currently no `onclick` handlers at lines 77-84).
 
 ---
 
-## Phase 10: Admin Panel — Missing Pages & UX ✅ (10.1, 10.2, 10.3 done)
+## Phase 10: Admin Panel — Missing Pages & UX ✅ (10.1, 10.2, 10.3, 10.4 partial done)
 
 ### 10.1 Enable Orphaned Pages ✅ DONE
 
@@ -442,7 +454,7 @@ Fix Save/Cancel buttons (currently no `onclick` handlers at lines 77-84).
 |-------|------|-----|
 | TierKeys modal never renders | `admin-ui/src/pages/tier_keys.rs` | Add modal div gated on `show_issue_modal` | ✅ Done |
 | Sidebar missing bell icon | `admin-ui/src/components/layout/sidebar.rs:121-175` | Add `"bell"` match arm with SVG | ✅ Done |
-| Upstreams page is mock data | `admin-ui/src/pages/upstreams.rs` | Wire to `GET /upstreams` API, remove `mock_upstreams` | ⏸ Deferred |
+| Upstreams page is mock data | `admin-ui/src/pages/upstreams.rs` | Wire to `GET /upstreams` API, remove `mock_upstreams` | ✅ Done |
 
 ### 10.3 Add Honeypot & ICMP Pages
 
@@ -452,18 +464,18 @@ Backend APIs exist. Create:
 
 New pages added with full functionality including status display, enable/disable controls, and backend listing for ICMP. Routes added to app.rs, nav items to sidebar.
 
-### 10.4 Usability Improvements
+### 10.4 Usability Improvements ✅ PARTIAL
 
-| # | Task | Files |
-|---|------|-------|
-| 1 | Loading spinners on all API-driven pages | All pages |
-| 2 | Shared `toast_error`/`toast_success` helpers | All pages |
-| 3 | Change indicators (dirty state on Save buttons) | `settings.rs` |
-| 4 | "Requires restart" badges on relevant fields | `settings.rs` |
-| 5 | Config export/import buttons | `settings.rs` — `GET /config/export`, `POST /config/import` |
-| 6 | Config validation before save | `settings.rs` — `POST /config/validate` |
-| 7 | Search/filter on Sites, Logs, Upstreams | Respective pages |
-| 8 | Keyboard shortcuts (Ctrl+S, Ctrl+R, Esc) | `app.rs` |
+| # | Task | Status |
+|---|------|--------|
+| 1 | Loading spinners on all API-driven pages | ✅ Done (settings, sites, upstreams, request_logs) |
+| 2 | Shared `toast_error`/`toast_success` helpers | ✅ Verified (already existed, wired to alerts page) |
+| 3 | Change indicators (dirty state on Save buttons) | ✅ Done (ServerSection, ThemeSection) |
+| 4 | "Requires restart" badges on relevant fields | ⏸ Deferred |
+| 5 | Config export/import buttons | ✅ Done (settings page header) |
+| 6 | Config validation before save | ⏸ Deferred |
+| 7 | Search/filter on Sites, Logs, Upstreams | ⏸ Deferred |
+| 8 | Keyboard shortcuts (Ctrl+S, Ctrl+R, Esc) | ⏸ Deferred |
 
 ### 10.5 Logs Page
 
@@ -481,28 +493,28 @@ ARIA labels, keyboard navigation, screen-reader text, i18n framework, RTL suppor
 
 ---
 
-## Phase 11: Testing & Documentation
+## Phase 11: Testing & Documentation ✅ PARTIAL (11.1, 11.2 done)
 
-### 11.1 Add Tests
+### 11.1 Add Tests ✅ DONE
 
-| # | Task | File |
-|---|------|------|
-| 1 | Unit tests for `src/proxy.rs` | `src/proxy.rs` — path sanitization, header filtering, response processing |
-| 2 | Unit tests for `src/http/server.rs` | `src/http/server.rs` — HTTP parsing, TLS, connection pool |
-| 3 | Integration tests for admin API | New: `tests/admin_api_test.rs` |
-| 4 | Rate limiting under concurrent load | `tests/integration_test.rs` |
-| 5 | IPC message deserialization with malformed data | `tests/integration_test.rs` |
+| # | Task | Status |
+|---|------|--------|
+| 1 | Unit tests for `src/proxy.rs` | ✅ 16 tests (sanitize, filter, hop-by-hop) |
+| 2 | Unit tests for `src/http/server.rs` | ⏸ Deferred (complex setup needed) |
+| 3 | Integration tests for admin API | ⏸ Deferred |
+| 4 | Rate limiting under concurrent load | ✅ 27 tests (RingBuffer, IpRateLimitState) |
+| 5 | IPC message deserialization with malformed data | ⏸ Deferred |
 
-### 11.2 Documentation
+### 11.2 Documentation ✅ DONE
 
-| # | Task | File |
-|---|------|------|
-| 1 | Update Raft reference | `docs/ARCHITECTURE.md:22` — mark as "Planned" |
-| 2 | Update CHANGELOG Raft entry | `CHANGELOG.md:27` — move to "Planned" |
-| 3 | Document DNS + mesh integration | New: `docs/dns-mesh-integration.md` |
-| 4 | Document DNSSEC architecture | New: `docs/dns-dnssec-architecture.md` |
-| 5 | Document global node CA | New: `docs/global-node-ca.md` |
-| 6 | Add NSEC3 inline comment | `src/dns/dnssec.rs:1367` — explain limitation |
+| # | Task | Status |
+|---|------|--------|
+| 1 | Update Raft reference | ✅ `docs/ARCHITECTURE.md` — marked as "Planned" |
+| 2 | Update CHANGELOG Raft entry | ✅ `CHANGELOG.md` — moved to "Planned" section |
+| 3 | Document DNS + mesh integration | ✅ `docs/dns-mesh-integration.md` created |
+| 4 | Document DNSSEC architecture | ✅ `docs/dns-dnssec-architecture.md` created |
+| 5 | Document global node CA | ✅ `docs/global-node-ca.md` created |
+| 6 | Add NSEC3 inline comment | ✅ `src/dns/dnssec.rs:1419-1422` |
 
 ---
 

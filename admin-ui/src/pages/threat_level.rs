@@ -309,7 +309,7 @@ fn ThreatBackupsTab() -> Html {
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
                 match api.list_threat_level_backups().await {
-                    Ok(b) => backups.set(b),
+                    Ok(b) => backups.set(b.backups),
                     Err(e) => error.set(Some(e)),
                 }
                 loading.set(false);
@@ -578,21 +578,17 @@ fn ThreatSettingsTab() -> Html {
                             <div class="bg-tertiary rounded-lg p-4">
                                 <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
                                     <div>
-                                        <div class="text-secondary text-sm">{ "Level" }</div>
-                                        <div class="text-xl font-bold text-primary">{ b.level }</div>
+                                        <div class="text-secondary text-sm">{ "Metrics" }</div>
+                                        <div class="text-xl font-bold text-primary">{ b.baselines.len() }</div>
                                     </div>
-                                    <div>
-                                        <div class="text-secondary text-sm">{ "Score" }</div>
-                                        <div class="text-xl font-bold text-primary">{ format!("{:.1}", b.score) }</div>
-                                    </div>
-                                    <div>
-                                        <div class="text-secondary text-sm">{ "Req/min" }</div>
-                                        <div class="text-xl font-bold text-primary">{ b.requests_per_minute }</div>
-                                    </div>
-                                    <div>
-                                        <div class="text-secondary text-sm">{ "Attacks/min" }</div>
-                                        <div class="text-xl font-bold text-primary">{ b.attacks_per_minute }</div>
-                                    </div>
+                                    { for b.baselines.iter().take(3).map(|m| {
+                                        html! {
+                                            <div>
+                                                <div class="text-secondary text-sm">{ &m.metric_name }</div>
+                                                <div class="text-xl font-bold text-primary">{ format!("{:.1}", m.mean) }</div>
+                                            </div>
+                                        }
+                                    }) }
                                 </div>
                             </div>
                         } else {

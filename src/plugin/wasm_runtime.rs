@@ -373,7 +373,7 @@ impl WasmRuntime {
         let end = (ptr as usize) + data_len;
         if end > mem_size {
             // Try to grow memory
-            let pages_needed = (end - mem_size + 65535) / 65536;
+            let pages_needed = (end - mem_size).div_ceil(65536);
             let max_pages = (self.limits.max_memory_mb * 1024 * 1024) / 65536;
             let current_pages = mem_size / 65536;
             if current_pages + pages_needed > max_pages {

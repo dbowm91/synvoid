@@ -15,19 +15,24 @@ pub async fn extract_client_ip_middleware(mut request: Request, next: Next) -> R
 }
 
 fn extract_client_ip_from_request(request: &Request) -> String {
+    // Prefer direct connection IP to prevent XFF spoofing.
+    // Only fall back to X-Forwarded-For when no direct connection info is available
+    // (e.g., behind a reverse proxy that strips client IP from ConnectInfo).
+    if let Some(connect_info) = request
+        .extensions()
+        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+    {
+        return connect_info.0.ip().to_string();
+    }
+
     request
         .headers()
         .get("x-forwarded-for")
         .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.split(',').last())
+        .and_then(|s| s.split(',').next())
         .map(|s| s.trim().to_string())
-        .unwrap_or_else(|| {
-            request
-                .extensions()
-                .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
-                .map(|c| c.0.ip().to_string())
-                .unwrap_or_else(|| "unknown".to_string())
-        })
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "unknown".to_string())
 }
 
 pub async fn auth_middleware_with_state(

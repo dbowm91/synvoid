@@ -43,7 +43,7 @@ impl DnsMessageCompressor {
         let mut used_compression = false;
 
         for part in &parts {
-            if let Some(&offset) = self.labels.get(&(*part).to_string()) {
+            if let Some(&offset) = self.labels.get(*part) {
                 output.push(0xC0 | (offset >> 8) as u8);
                 output.push((offset & 0xFF) as u8);
                 written += 2;

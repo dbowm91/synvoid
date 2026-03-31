@@ -287,6 +287,7 @@ impl WireGuardMeshTransport {
                             quic_port,
                             wireguard_port,
                             advertised_port: quic_port.or(wireguard_port),
+                            dns_serving_healthy: false,
                         },
                         PeerStatus::Healthy,
                     )
@@ -452,6 +453,7 @@ impl WireGuardMeshTransport {
                     quic_port: None,
                     wireguard_port: None,
                     advertised_port: None,
+                    dns_serving_healthy: false,
                 },
                 PeerStatus::Healthy,
             )

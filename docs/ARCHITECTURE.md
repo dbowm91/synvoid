@@ -19,7 +19,7 @@ MaluWAF combines a nginx-inspired reverse proxy concurrency model with a sophist
 │  ┌─────────────────────────────────────────────────────────────────────┐   │
 │  │  • Global health monitoring                                         │   │
 │  │  • Traffic distribution orchestration                                │   │
-│  │  • Leader election (Raft consensus)                                 │   │
+│  │  • Leader election (Raft consensus) — Planned                      │   │
 │  │  • Configuration synchronization                                     │   │
 │  └─────────────────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────────────────┘

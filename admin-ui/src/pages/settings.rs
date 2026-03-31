@@ -1,13 +1,28 @@
 use crate::components::forms::{Input, Select};
+use crate::components::skeleton::LoadingSpinner;
 use crate::components::{toast_error, toast_success};
 use crate::services::ApiService;
 use crate::types::{ThemeResponse, UpdateThemeRequest};
 use wasm_bindgen::JsCast;
 use yew::prelude::*;
 
+fn export_config_to_file(json: &str) {
+    let blob =
+        web_sys::Blob::new_with_str_sequence(&js_sys::Array::of1(&json.into())).unwrap();
+    let url = web_sys::Url::create_object_url_with_blob(&blob).unwrap();
+    let window = web_sys::window().unwrap();
+    let document = window.document().unwrap();
+    let a = document.create_element("a").unwrap();
+    a.set_attribute("href", &url).unwrap();
+    a.set_attribute("download", "maluwaf-config.json").unwrap();
+    let _ = a.dispatch_event(&web_sys::MouseEvent::new("click").unwrap());
+}
+
 #[function_component]
 pub fn Settings() -> Html {
     let active_section = use_state(|| "server".to_string());
+    let exporting = use_state(|| false);
+    let importing = use_state(|| false);
 
     let on_section_click = {
         let active_section = active_section.clone();
@@ -16,9 +31,104 @@ pub fn Settings() -> Html {
         })
     };
 
+    let on_export = {
+        let exporting = exporting.clone();
+        Callback::from(move |_: MouseEvent| {
+            let exporting = exporting.clone();
+            exporting.set(true);
+            wasm_bindgen_futures::spawn_local(async move {
+                let api = ApiService::new();
+                match api.export_config().await {
+                    Ok(data) => {
+                        let json = serde_json::to_string_pretty(&data)
+                            .unwrap_or_else(|_| "{}".to_string());
+                        export_config_to_file(&json);
+                        toast_success("Configuration exported");
+                    }
+                    Err(e) => {
+                        toast_error(&format!("Export failed: {}", e));
+                    }
+                }
+                exporting.set(false);
+            });
+        })
+    };
+
+    let on_import = {
+        let importing = importing.clone();
+        Callback::from(move |_: MouseEvent| {
+            let importing = importing.clone();
+            let window = web_sys::window().unwrap();
+            let document = window.document().unwrap();
+            let input: web_sys::HtmlInputElement = document
+                .create_element("input")
+                .unwrap()
+                .dyn_into()
+                .unwrap();
+            input.set_type("file");
+            input.set_accept(".json");
+
+            let importing_clone = importing.clone();
+            let input_clone = input.clone();
+            let closure = wasm_bindgen::closure::Closure::wrap(Box::new(move |_: web_sys::Event| {
+                let input: web_sys::HtmlInputElement = input_clone.clone().dyn_into().unwrap();
+                if let Some(files) = input.files() {
+                    if let Some(file) = files.get(0) {
+                        let importing = importing_clone.clone();
+                        importing.set(true);
+                        let reader = web_sys::FileReader::new().unwrap();
+                        let reader_clone = reader.clone();
+                        let read_closure = wasm_bindgen::closure::Closure::wrap(Box::new(move |_: web_sys::Event| {
+                            let result = reader_clone.result().unwrap();
+                            let text = result.as_string().unwrap();
+                            let importing = importing.clone();
+                            wasm_bindgen_futures::spawn_local(async move {
+                                let api = ApiService::new();
+                                match serde_json::from_str::<serde_json::Value>(&text) {
+                                    Ok(config) => {
+                                        match api.import_config(&config).await {
+                                            Ok(_) => toast_success("Configuration imported successfully"),
+                                            Err(e) => toast_error(&format!("Import failed: {}", e)),
+                                        }
+                                    }
+                                    Err(e) => toast_error(&format!("Invalid JSON: {}", e)),
+                                }
+                                importing.set(false);
+                            });
+                        }) as Box<dyn FnMut(web_sys::Event)>);
+                        let _ = reader.add_event_listener_with_callback("load", read_closure.as_ref().unchecked_ref());
+                        read_closure.forget();
+                        let _ = reader.read_as_text(&file);
+                    }
+                }
+            }) as Box<dyn FnMut(web_sys::Event)>);
+            let _ = input.add_event_listener_with_callback("change", closure.as_ref().unchecked_ref());
+            closure.forget();
+            input.click();
+        })
+    };
+
     html! {
         <div>
-            <h1 class="text-2xl font-bold mb-6">{ "Global Settings" }</h1>
+            <div class="flex justify-between items-center mb-6">
+                <h1 class="text-2xl font-bold">{ "Global Settings" }</h1>
+                <div class="flex gap-2">
+                    <button
+                        onclick={on_export}
+                        disabled={*exporting}
+                        class="px-3 py-2 bg-tertiary text-secondary rounded-lg hover:text-primary text-sm disabled:opacity-50"
+                    >
+                        { if *exporting { "Exporting..." } else { "Export Config" } }
+                    </button>
+                    <button
+                        onclick={on_import}
+                        disabled={*importing}
+                        class="px-3 py-2 bg-tertiary text-secondary rounded-lg hover:text-primary text-sm disabled:opacity-50"
+                    >
+                        { if *importing { "Importing..." } else { "Import Config" } }
+                    </button>
+                </div>
+            </div>
 
             <div class="flex gap-6">
                 <nav class="w-48 flex-shrink-0">
@@ -112,6 +222,13 @@ fn ServerSection() -> Html {
     let host = use_state(|| "0.0.0.0".to_string());
     let port = use_state(|| "8080".to_string());
     let trusted_proxies = use_state(|| "127.0.0.1, ::1".to_string());
+    let original_host = use_state(|| "0.0.0.0".to_string());
+    let original_port = use_state(|| "8080".to_string());
+    let original_proxies = use_state(|| "127.0.0.1, ::1".to_string());
+
+    let is_dirty = *host != *original_host
+        || *port != *original_port
+        || *trusted_proxies != *original_proxies;
 
     use_effect_with((), {
         let server_config = server_config.clone();
@@ -119,6 +236,9 @@ fn ServerSection() -> Html {
         let host = host.clone();
         let port = port.clone();
         let trusted_proxies = trusted_proxies.clone();
+        let original_host = original_host.clone();
+        let original_port = original_port.clone();
+        let original_proxies = original_proxies.clone();
         move |_| {
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
@@ -131,15 +251,19 @@ fn ServerSection() -> Html {
                             server_config.set(Some(server.clone()));
                             if let Some(h) = server.get("host").and_then(|v| v.as_str()) {
                                 host.set(h.to_string());
+                                original_host.set(h.to_string());
                             }
                             if let Some(p) = server.get("port").and_then(|v| v.as_u64()) {
                                 port.set(p.to_string());
+                                original_port.set(p.to_string());
                             }
                             if let Some(tp) = server.get("trusted_proxies").and_then(|v| v.as_array()) {
                                 let proxies: Vec<String> = tp.iter()
                                     .filter_map(|v| v.as_str().map(|s| s.to_string()))
                                     .collect();
-                                trusted_proxies.set(proxies.join(", "));
+                                let joined = proxies.join(", ");
+                                trusted_proxies.set(joined.clone());
+                                original_proxies.set(joined);
                             }
                         }
                     }
@@ -149,35 +273,27 @@ fn ServerSection() -> Html {
         }
     });
 
+    if *loading {
+        return html! { <LoadingSpinner /> };
+    }
+
     let on_host_change = {
         let host = host.clone();
-        Callback::from(move |e: Event| {
-            let target = e.target().unwrap();
-            let value = target.dyn_ref::<web_sys::HtmlInputElement>()
-                .map(|el| el.value())
-                .unwrap_or_default();
+        Callback::from(move |value: String| {
             host.set(value);
         })
     };
 
     let on_port_change = {
         let port = port.clone();
-        Callback::from(move |e: Event| {
-            let target = e.target().unwrap();
-            let value = target.dyn_ref::<web_sys::HtmlInputElement>()
-                .map(|el| el.value())
-                .unwrap_or_default();
+        Callback::from(move |value: String| {
             port.set(value);
         })
     };
 
     let on_proxies_change = {
         let trusted_proxies = trusted_proxies.clone();
-        Callback::from(move |e: Event| {
-            let target = e.target().unwrap();
-            let value = target.dyn_ref::<web_sys::HtmlInputElement>()
-                .map(|el| el.value())
-                .unwrap_or_default();
+        Callback::from(move |value: String| {
             trusted_proxies.set(value);
         })
     };
@@ -188,6 +304,9 @@ fn ServerSection() -> Html {
         let port = port.clone();
         let trusted_proxies = trusted_proxies.clone();
         let server_config = server_config.clone();
+        let original_host = original_host.clone();
+        let original_port = original_port.clone();
+        let original_proxies = original_proxies.clone();
         Callback::from(move |_| {
             let proxies: Vec<String> = trusted_proxies.split(',')
                 .map(|s| s.trim().to_string())
@@ -202,11 +321,21 @@ fn ServerSection() -> Html {
                     }
                 }
             });
+            let saving = saving.clone();
+            let host = host.clone();
+            let port = port.clone();
+            let trusted_proxies = trusted_proxies.clone();
+            let original_host = original_host.clone();
+            let original_port = original_port.clone();
+            let original_proxies = original_proxies.clone();
             saving.set(true);
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
                 let _ = api.update_main_config(&new_config).await;
                 saving.set(false);
+                original_host.set((*host).clone());
+                original_port.set((*port).clone());
+                original_proxies.set((*trusted_proxies).clone());
                 toast_success("Server configuration saved");
             });
         })
@@ -217,14 +346,16 @@ fn ServerSection() -> Html {
             <div class="grid grid-cols-2 gap-4">
                 <Input
                     label="Listen Host"
+                    name="host"
                     value={(*host).clone()}
-                    on_input={on_host_change}
+                    on_change={on_host_change}
                     help="IP address to bind the main server to"
                 />
                 <Input
                     label="Listen Port"
+                    name="port"
                     value={(*port).clone()}
-                    on_input={on_port_change}
+                    on_change={on_port_change}
                     input_type="number"
                     help="TCP port for the main HTTP server"
                 />
@@ -233,8 +364,9 @@ fn ServerSection() -> Html {
             <div>
                 <Input
                     label="Trusted Proxies"
+                    name="trusted_proxies"
                     value={(*trusted_proxies).clone()}
-                    on_input={on_proxies_change}
+                    on_change={on_proxies_change}
                     help="Comma-separated list of trusted proxy IPs for X-Forwarded-For handling"
                 />
             </div>
@@ -243,9 +375,13 @@ fn ServerSection() -> Html {
                 <button 
                     onclick={on_save}
                     disabled={*saving}
-                    class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                    class={if is_dirty {
+                        "px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 disabled:opacity-50"
+                    } else {
+                        "px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                    }}
                 >
-                    { if *saving { "Saving..." } else { "Save" } }
+                    { if *saving { "Saving..." } else if is_dirty { "Save*" } else { "Save" } }
                 </button>
             </div>
         </div>
@@ -563,6 +699,12 @@ fn ThemeSection() -> Html {
     let preview_html = use_state(|| String::new());
     let preview_light = use_state(|| false);
     let saving = use_state(|| false);
+    let loading = use_state(|| true);
+    let original_preset = use_state(|| "default".to_string());
+    let original_mode = use_state(|| "auto".to_string());
+
+    let is_dirty = *selected_preset != *original_preset
+        || *selected_mode != *original_mode;
 
     use_effect_with((), {
         let theme_data = theme_data.clone();
@@ -570,6 +712,9 @@ fn ThemeSection() -> Html {
         let selected_mode = selected_mode.clone();
         let preview_html = preview_html.clone();
         let preview_light = preview_light.clone();
+        let loading = loading.clone();
+        let original_preset = original_preset.clone();
+        let original_mode = original_mode.clone();
         move |_| {
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
@@ -581,12 +726,15 @@ fn ThemeSection() -> Html {
                     theme_data.set(Some(data.clone()));
                     selected_preset.set(data.preset.clone());
                     selected_mode.set(data.mode.clone());
+                    original_preset.set(data.preset.clone());
+                    original_mode.set(data.mode.clone());
 
                     if let Ok(css) = css_result {
                         let html = generate_preview_html(&css, &data.colors, use_light);
                         preview_html.set(html);
                     }
                 }
+                loading.set(false);
             });
             || {}
         }
@@ -650,6 +798,8 @@ fn ThemeSection() -> Html {
         let theme_data = theme_data.clone();
         let preview_html = preview_html.clone();
         let preview_light = preview_light.clone();
+        let original_preset = original_preset.clone();
+        let original_mode = original_mode.clone();
         Callback::from(move |_| {
             let preset = (*selected_preset).clone();
             let mode = (*selected_mode).clone();
@@ -657,6 +807,10 @@ fn ThemeSection() -> Html {
             let preview_html = preview_html.clone();
             let preview_light = *preview_light;
             let saving = saving.clone();
+            let original_preset = original_preset.clone();
+            let original_mode = original_mode.clone();
+            let preset_for_orig = preset.clone();
+            let mode_for_orig = mode.clone();
 
             saving.set(true);
 
@@ -671,6 +825,8 @@ fn ThemeSection() -> Html {
                 match api.update_theme(&request).await {
                     Ok(data) => {
                         theme_data.set(Some(data.clone()));
+                        original_preset.set(preset_for_orig);
+                        original_mode.set(mode_for_orig);
                         toast_success("Theme updated successfully");
 
                         match api.get_theme_css().await {
@@ -747,6 +903,10 @@ fn ThemeSection() -> Html {
         ("light", "Light"),
     ];
 
+    if *loading {
+        return html! { <LoadingSpinner /> };
+    }
+
     html! {
         <div class="space-y-6">
             <div>
@@ -812,9 +972,13 @@ fn ThemeSection() -> Html {
                 <button
                     onclick={on_save}
                     disabled={*saving}
-                    class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                    class={if is_dirty {
+                        "px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 disabled:opacity-50"
+                    } else {
+                        "px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                    }}
                 >
-                    { if *saving { "Saving..." } else { "Save Changes" } }
+                    { if *saving { "Saving..." } else if is_dirty { "Save Changes*" } else { "Save Changes" } }
                 </button>
             </div>
         </div>
