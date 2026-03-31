@@ -52,8 +52,8 @@ pub fn create_rrsig_record(
     let sig_expire = now + (7 * 86400);
     let sig_inception = now - (86400);
 
-    rrsig.extend_from_slice(&sig_expire.to_be_bytes());
-    rrsig.extend_from_slice(&sig_inception.to_be_bytes());
+    rrsig.extend_from_slice(&(sig_expire as u32).to_be_bytes());
+    rrsig.extend_from_slice(&(sig_inception as u32).to_be_bytes());
     rrsig.extend_from_slice(&key.key_tag.to_be_bytes());
 
     let signer_name_labels = signer_name.trim_end_matches('.');
@@ -178,20 +178,20 @@ pub fn hash_name_nsec3(name: &str, config: &Nsec3Config) -> Vec<u8> {
     }
     name_lower.push('.');
 
+    // First iteration: hash(name || salt) per RFC 5155 Section 5.1
     let mut hash = name_lower.as_bytes().to_vec();
+    hash.extend_from_slice(&config.salt);
 
     for _ in 0..config.iterations {
         match config.algorithm {
             1 => {
                 let mut hasher = Sha1::new();
                 hasher.update(&hash);
-                hasher.update(&config.salt);
                 hash = hasher.finalize().to_vec();
             }
             2 => {
                 let mut hasher = Sha256::new();
                 hasher.update(&hash);
-                hasher.update(&config.salt);
                 hash = hasher.finalize().to_vec();
             }
             // Non-SHA1 algorithms (e.g., SHA-256) fall back to SHA-1 here.
@@ -201,7 +201,6 @@ pub fn hash_name_nsec3(name: &str, config: &Nsec3Config) -> Vec<u8> {
             _ => {
                 let mut hasher = Sha1::new();
                 hasher.update(&hash);
-                hasher.update(&config.salt);
                 hash = hasher.finalize().to_vec();
             }
         }

@@ -257,6 +257,8 @@ impl ZoneSigner {
 
         self.add_dnskey_record(zone, ksk)?;
         self.add_rrsig_records(zone, zsk)?;
+        // Sign DNSKEY RRset with KSK per RFC 4034 Section 2.2
+        self.add_dnskey_rrsig_record(zone, ksk)?;
         self.add_nsec_records(zone)?;
 
         tracing::info!("Zone {} signed successfully", zone.origin);
@@ -301,6 +303,82 @@ impl ZoneSigner {
         Ok(())
     }
 
+    fn add_dnskey_rrsig_record(
+        &self,
+        zone: &mut super::server::Zone,
+        ksk: &ZoneSigningKey,
+    ) -> Result<(), String> {
+        use super::server::RecordTypeExt;
+
+        let signer_name = zone.origin.clone();
+        let label_count = count_labels(&zone.origin);
+
+        // Get the DNSKEY record(s) for the RRset
+        let dnskey_records: Vec<_> = zone
+            .records
+            .get(&("@".to_string(), super::server::RecordType::DNSKEY))
+            .cloned()
+            .unwrap_or_default();
+
+        if dnskey_records.is_empty() {
+            return Ok(());
+        }
+
+        // Build concatenated canonical RDATA for DNSKEY RRset
+        // The DNSKEY records already contain properly formatted RDATA (flags+protocol+algorithm+public_key)
+        let mut concatenated_rdata = Vec::new();
+        for record in &dnskey_records {
+            if let Ok(dnskey_bytes) =
+                base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &record.value)
+            {
+                concatenated_rdata.extend_from_slice(&dnskey_bytes);
+            }
+        }
+
+        if concatenated_rdata.is_empty() {
+            return Ok(());
+        }
+
+        // Sign the DNSKEY RRset with KSK
+        let canonical_msg = canonical_dns_message(
+            "@",
+            super::server::RecordType::DNSKEY.to_u16(),
+            dnskey_records.len() as u16,
+            dnskey_records[0].ttl,
+            &concatenated_rdata,
+        );
+
+        let signature = sign_data(&canonical_msg, ksk)?;
+
+        let rrsig = create_rrsig_record(
+            ksk,
+            super::server::RecordType::DNSKEY.to_u16(),
+            dnskey_records[0].ttl,
+            &signer_name,
+            &signature,
+            label_count,
+        );
+
+        let rrsig_value =
+            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &rrsig);
+
+        let rrsig_record = super::server::DnsZoneRecord {
+            name: "@".to_string(),
+            record_type: super::server::RecordType::RRSIG,
+            value: rrsig_value,
+            ttl: dnskey_records[0].ttl,
+            priority: None,
+        };
+
+        let rrsig_key = ("@".to_string(), super::server::RecordType::RRSIG);
+        zone.records
+            .entry(rrsig_key)
+            .or_default()
+            .push(rrsig_record);
+
+        Ok(())
+    }
+
     fn add_rrsig_records(
         &self,
         zone: &mut super::server::Zone,
@@ -318,63 +396,75 @@ impl ZoneSigner {
             super::server::RecordType::SOA,
             super::server::RecordType::TXT,
             super::server::RecordType::SRV,
-            super::server::RecordType::DNSKEY,
+            // DNSKEY is signed separately with KSK in add_dnskey_rrsig_record
         ];
 
         for rt in record_types_to_sign {
             use super::server::RecordTypeExt;
 
-            // Collect records to sign first to avoid borrow issues
-            let records_to_sign: Vec<_> = zone
+            // Collect all records for this type grouped by name (RRset)
+            let rrsets: std::collections::HashMap<String, Vec<_>> = zone
                 .records
                 .iter()
                 .filter(|((_, rt_iter), _)| *rt_iter == rt)
-                .map(|(k, v)| (k.clone(), v.clone()))
+                .map(|(k, v)| (k.0.clone(), v.clone()))
                 .collect();
 
-            for ((_name, _), records) in records_to_sign {
-                for record in records {
-                    let rt_val = rt.to_u16();
+            for (name, records) in rrsets {
+                if records.is_empty() {
+                    continue;
+                }
+
+                // Build concatenated canonical RDATA for entire RRset (RFC 4034 Section 3.2)
+                let mut concatenated_rdata = Vec::new();
+                for record in &records {
                     let canonical = canonical_rdata(
-                        rt_val,
+                        rt.to_u16(),
                         &record.value,
                         record.priority,
                         None,
                         None,
                         record.ttl,
                     );
-
-                    let canonical_msg =
-                        canonical_dns_message(&record.name, rt_val, 1, record.ttl, &canonical);
-
-                    let signature = sign_data(&canonical_msg, zsk)?;
-
-                    let rrsig = create_rrsig_record(
-                        zsk,
-                        rt_val,
-                        record.ttl,
-                        &signer_name,
-                        &signature,
-                        label_count,
-                    );
-
-                    let rrsig_value =
-                        base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &rrsig);
-
-                    let rrsig_record = super::server::DnsZoneRecord {
-                        name: record.name.clone(),
-                        record_type: super::server::RecordType::RRSIG,
-                        value: rrsig_value,
-                        ttl: record.ttl,
-                        priority: None,
-                    };
-
-                    let rrsig_key = (record.name.clone(), super::server::RecordType::RRSIG);
-                    zone.records
-                        .entry(rrsig_key)
-                        .or_default()
-                        .push(rrsig_record);
+                    concatenated_rdata.extend_from_slice(&canonical);
                 }
+
+                // Sign the entire RRset once
+                let canonical_msg = canonical_dns_message(
+                    &name,
+                    rt.to_u16(),
+                    records.len() as u16,
+                    records[0].ttl,
+                    &concatenated_rdata,
+                );
+
+                let signature = sign_data(&canonical_msg, zsk)?;
+
+                let rrsig = create_rrsig_record(
+                    zsk,
+                    rt.to_u16(),
+                    records[0].ttl,
+                    &signer_name,
+                    &signature,
+                    label_count,
+                );
+
+                let rrsig_value =
+                    base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &rrsig);
+
+                let rrsig_record = super::server::DnsZoneRecord {
+                    name: name.clone(),
+                    record_type: super::server::RecordType::RRSIG,
+                    value: rrsig_value,
+                    ttl: records[0].ttl,
+                    priority: None,
+                };
+
+                let rrsig_key = (name, super::server::RecordType::RRSIG);
+                zone.records
+                    .entry(rrsig_key)
+                    .or_default()
+                    .push(rrsig_record);
             }
         }
 

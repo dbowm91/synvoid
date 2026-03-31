@@ -46,20 +46,22 @@ impl DnsServer {
         let mut records = Vec::new();
 
         if let Some(ref ksk) = zone.ksk_key {
+            let dnskey_rdata = crate::dns::dnssec::compute_dnskey(ksk);
             records.push(DnsZoneRecord {
                 name: "@".to_string(),
                 record_type: RecordType::DNSKEY,
-                value: hex::encode(&ksk.public_key),
+                value: hex::encode(&dnskey_rdata),
                 ttl: zone.dnskey_ttl.unwrap_or(3600),
                 priority: None,
             });
         }
 
         if let Some(ref zsk) = zone.zsk_key {
+            let dnskey_rdata = crate::dns::dnssec::compute_dnskey(zsk);
             records.push(DnsZoneRecord {
                 name: "@".to_string(),
                 record_type: RecordType::DNSKEY,
-                value: hex::encode(&zsk.public_key),
+                value: hex::encode(&dnskey_rdata),
                 ttl: zone.dnskey_ttl.unwrap_or(3600),
                 priority: None,
             });
@@ -173,10 +175,11 @@ impl DnsServer {
         let mut records = Vec::new();
 
         if let Some(ref ksk) = zone.ksk_key {
+            let cdnskey_rdata = crate::dns::dnssec::compute_dnskey(ksk);
             records.push(DnsZoneRecord {
                 name: "@".to_string(),
                 record_type: RecordType::CDNSKEY,
-                value: hex::encode(&ksk.public_key),
+                value: hex::encode(&cdnskey_rdata),
                 ttl: zone.dnskey_ttl.unwrap_or(3600),
                 priority: None,
             });

@@ -405,10 +405,23 @@ impl ProxyServer {
 
         let drop = self.waf.config.drop_blocked_requests;
 
-        match self
-            .check_waf(&client_ip, &path, &method, user_agent.as_deref())
-            .await
-        {
+        let body_slice: Option<&[u8]> = body.as_deref();
+        let query_string = None;
+
+        let waf_decision = self
+            .waf
+            .check_request_full(
+                client_ip,
+                method.as_str(),
+                &path,
+                query_string,
+                &http::HeaderMap::new(),
+                body_slice,
+                user_agent.as_deref(),
+            )
+            .await;
+
+        match waf_decision {
             WafDecision::Drop => {
                 counter!("maluwaf.requests.dropped").increment(1);
                 return Err("blackholed".to_string());
@@ -543,6 +556,7 @@ impl ProxyServer {
         }
     }
 
+    #[allow(dead_code)]
     async fn check_waf(
         &self,
         client_ip: &std::net::IpAddr,
@@ -1670,7 +1684,10 @@ mod tests {
     #[test]
     fn hop_by_hop_known_headers() {
         for header in HOP_BY_HOP_HEADERS {
-            assert!(is_hop_by_hop_header(header), "expected {header} to be hop-by-hop");
+            assert!(
+                is_hop_by_hop_header(header),
+                "expected {header} to be hop-by-hop"
+            );
             // Case-insensitive check
             assert!(
                 is_hop_by_hop_header(&header.to_uppercase()),
@@ -1713,20 +1730,14 @@ mod tests {
 
     #[test]
     fn build_filter_combines_global_and_site() {
-        let filter = build_headers_to_filter(
-            &["X-Global".to_string()],
-            &["X-Site".to_string()],
-        );
+        let filter = build_headers_to_filter(&["X-Global".to_string()], &["X-Site".to_string()]);
         assert!(filter.contains("x-global"));
         assert!(filter.contains("x-site"));
     }
 
     #[test]
     fn build_filter_deduplicates() {
-        let filter = build_headers_to_filter(
-            &["x-dup".to_string()],
-            &["x-dup".to_string()],
-        );
+        let filter = build_headers_to_filter(&["x-dup".to_string()], &["x-dup".to_string()]);
         // Should only appear once in the set
         assert!(filter.contains("x-dup"));
         let count = filter.iter().filter(|h| *h == "x-dup").count();

@@ -1,6 +1,7 @@
 use bytes::Bytes;
 use futures::{SinkExt, StreamExt};
 use http::Response;
+use http_body_util::BodyExt;
 use http_body_util::Full;
 use hyper_util::rt::TokioIo;
 use metrics::counter;
@@ -23,8 +24,8 @@ use crate::http::headers::{
     is_websocket_upgrade,
 };
 use crate::http_client::{
-    create_http_client_with_config, create_upstream_client, send_request_with_timeout, HttpClient,
-    UpstreamTlsConfig,
+    create_http_client_with_config, create_upstream_client, send_request_with_body_and_timeout,
+    HttpClient, UpstreamTlsConfig,
 };
 use crate::mesh::config::MeshConfig;
 use crate::mesh::transports::MeshTransportManager;
@@ -451,7 +452,7 @@ impl HttpServer {
             None
         };
 
-        let (parts, _body) = req.into_parts();
+        let (parts, body) = req.into_parts();
         let method = parts.method.clone();
         let path = parts
             .uri
@@ -472,6 +473,24 @@ impl HttpServer {
             .map(|s| s.to_string());
 
         let mut request_body_size: u64 = 0;
+        const MAX_WAF_BODY_SIZE: usize = 1024 * 1024; // 1MB limit for WAF inspection
+        let body_bytes: Bytes = match body.collect().await {
+            Ok(collected) => {
+                let bytes = collected.to_bytes();
+                request_body_size = bytes.len() as u64;
+                if bytes.len() > MAX_WAF_BODY_SIZE {
+                    bytes.slice(..MAX_WAF_BODY_SIZE)
+                } else {
+                    bytes
+                }
+            }
+            Err(_) => Bytes::new(),
+        };
+        let body_slice: Option<&[u8]> = if body_bytes.is_empty() {
+            None
+        } else {
+            Some(&body_bytes)
+        };
         if let Some(ref m) = metrics {
             if let Some(content_length) = parts.headers.get("content-length") {
                 if let Ok(len_str) = content_length.to_str() {
@@ -558,8 +577,10 @@ impl HttpServer {
                     );
                     let mut resp = Response::new(Full::new(Bytes::new()));
                     *resp.status_mut() = http::StatusCode::NO_CONTENT;
-                    resp.headers_mut()
-                        .insert(http::header::CONNECTION, http::HeaderValue::from_static("close"));
+                    resp.headers_mut().insert(
+                        http::header::CONNECTION,
+                        http::HeaderValue::from_static("close"),
+                    );
                     return Ok(resp);
                 }
             };
@@ -621,8 +642,10 @@ impl HttpServer {
                     );
                     let mut resp = Response::new(Full::new(Bytes::new()));
                     *resp.status_mut() = http::StatusCode::NO_CONTENT;
-                    resp.headers_mut()
-                        .insert(http::header::CONNECTION, http::HeaderValue::from_static("close"));
+                    resp.headers_mut().insert(
+                        http::header::CONNECTION,
+                        http::HeaderValue::from_static("close"),
+                    );
                     return Ok(resp);
                 }
             };
@@ -650,8 +673,10 @@ impl HttpServer {
                 crate::challenge::CssAssetAction::DropConnection => {
                     let mut resp = Response::new(Full::new(Bytes::new()));
                     *resp.status_mut() = http::StatusCode::NO_CONTENT;
-                    resp.headers_mut()
-                        .insert(http::header::CONNECTION, http::HeaderValue::from_static("close"));
+                    resp.headers_mut().insert(
+                        http::header::CONNECTION,
+                        http::HeaderValue::from_static("close"),
+                    );
                     return Ok(resp);
                 }
             }
@@ -660,8 +685,6 @@ impl HttpServer {
         let _drain_guard = DrainGuard::new(drain_state.clone());
 
         let query_string = parts.uri.query();
-
-        let body_slice: Option<&[u8]> = None;
 
         let route = router.route_with_local_addr(&host, &path, local_addr);
 
@@ -1015,9 +1038,8 @@ impl HttpServer {
 
                 // Apply WASM plugin filters before proxying
                 if let Some(pm) = router.plugin_manager() {
-                    let body_bytes: Bytes = body_slice
-                        .map(|b| b.to_vec().into())
-                        .unwrap_or_default();
+                    let body_bytes: Bytes =
+                        body_slice.map(|b| b.to_vec().into()).unwrap_or_default();
 
                     let mut filter_builder = http::Request::builder()
                         .method(method.clone())
@@ -1136,12 +1158,14 @@ impl HttpServer {
                     .as_ref()
                     .and_then(|u| u.tls.as_ref())
                     .and_then(UpstreamTlsConfig::from_site_config);
-                let site_client = site_tls_config.as_ref().map(|tls| create_upstream_client(
+                let site_client = site_tls_config.as_ref().map(|tls| {
+                    create_upstream_client(
                         std::time::Duration::from_secs(5),
                         100,
                         std::time::Duration::from_secs(30),
                         tls,
-                    ));
+                    )
+                });
                 let forwarding_client = site_client.as_ref().unwrap_or(&client);
 
                 let resp = if crate::http_client::is_quictunnel_url(&target.upstream) {
@@ -1149,15 +1173,16 @@ impl HttpServer {
                         method,
                         &target_url,
                         Some(&parts.headers),
-                        None,
+                        Some(body_bytes.clone()),
                         Some(std::time::Duration::from_secs(30)),
                     )
                     .await
                 } else {
-                    send_request_with_timeout(
+                    send_request_with_body_and_timeout(
                         forwarding_client,
                         method,
                         &target_url,
+                        Some(body_bytes.clone()),
                         Some(std::time::Duration::from_secs(30)),
                     )
                     .await

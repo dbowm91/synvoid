@@ -71,30 +71,25 @@ use crate::theme::ThemeConfig;
 use parking_lot::RwLock;
 use std::net::IpAddr;
 use std::sync::Arc;
+use std::sync::OnceLock;
 
-thread_local! {
-    static THREAT_INTEL: RwLock<Option<Arc<ThreatIntelligenceManager>>> = const { RwLock::new(None) };
-    static YARA_RULES: RwLock<Option<Arc<YaraRulesManager>>> = const { RwLock::new(None) };
-}
+static THREAT_INTEL: OnceLock<Arc<ThreatIntelligenceManager>> = OnceLock::new();
+static YARA_RULES: OnceLock<Arc<YaraRulesManager>> = OnceLock::new();
 
 pub fn set_threat_intel(ti: Option<Arc<ThreatIntelligenceManager>>) {
-    THREAT_INTEL.with(|t| {
-        *t.write() = ti;
-    });
+    let _ = THREAT_INTEL.set(ti.expect("THREAT_INTEL already initialized"));
 }
 
 pub fn get_threat_intel() -> Option<Arc<ThreatIntelligenceManager>> {
-    THREAT_INTEL.with(|t| t.read().clone())
+    THREAT_INTEL.get().cloned()
 }
 
 pub fn set_yara_rules(yr: Option<Arc<YaraRulesManager>>) {
-    YARA_RULES.with(|y| {
-        *y.write() = yr;
-    });
+    let _ = YARA_RULES.set(yr.expect("YARA_RULES already initialized"));
 }
 
 pub fn get_yara_rules() -> Option<Arc<YaraRulesManager>> {
-    YARA_RULES.with(|y| y.read().clone())
+    YARA_RULES.get().cloned()
 }
 use rand::Rng;
 use std::collections::HashSet;
@@ -846,6 +841,10 @@ impl WafCore {
         body: Option<&[u8]>,
         user_agent: Option<&str>,
     ) -> WafDecision {
+        if self.whitelist.contains(&client_ip) {
+            return WafDecision::Pass;
+        }
+
         if let Some(ref tl) = self.threat_level {
             tl.record_request();
         }
@@ -875,10 +874,6 @@ impl WafCore {
 
         if let Some(decision) = self.check_honeypot(client_ip, path, method, user_agent) {
             return decision;
-        }
-
-        if self.whitelist.contains(&client_ip) {
-            return WafDecision::Pass;
         }
 
         if let Some(decision) = self.check_bot_protection(client_ip, path, user_agent) {
