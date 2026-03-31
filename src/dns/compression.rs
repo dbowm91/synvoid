@@ -95,7 +95,7 @@ impl DnsMessageCompressor {
             let suffix = parts[i..].join(".");
             if let Some(&offset) = self.labels.get(&suffix) {
                 output.extend_from_slice(
-                    name_lower[..name_lower.len() - suffix.len() - 1].as_bytes(),
+                    &name_lower.as_bytes()[..name_lower.len() - suffix.len() - 1],
                 );
                 output.push(0xC0 | (offset >> 8) as u8);
                 output.push((offset & 0xFF) as u8);

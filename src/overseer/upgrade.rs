@@ -861,20 +861,19 @@ impl Orchestrator {
 
         #[derive(Deserialize)]
         struct DrainStatusResponse {
-            #[allow(dead_code)] // Reserved for drain state tracking
+            #[allow(dead_code)] // serde: field required for deserialization
             drain_id: u64,
-            #[allow(dead_code)]
+            #[allow(dead_code)] // serde: field required for deserialization
             is_draining: bool,
-            #[allow(dead_code)]
             active_connections: u64,
-            #[allow(dead_code)]
+            #[allow(dead_code)] // serde: field required for deserialization
             idle_connections: u64,
-            #[allow(dead_code)]
+            #[allow(dead_code)] // serde: field required for deserialization
             connections_drained: u64,
-            #[allow(dead_code)]
+            #[allow(dead_code)] // serde: field required for deserialization
             drain_elapsed_secs: u64,
             drain_complete: bool,
-            #[allow(dead_code)]
+            #[allow(dead_code)] // serde: field required for deserialization
             stopped_accepting: bool,
         }
 

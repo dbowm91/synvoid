@@ -1278,4 +1278,124 @@ mod ipc_serialization_tests {
             _ => panic!("wrong variant"),
         }
     }
+
+    // ── Admin config validation tests ────────────────────────────────
+
+    mod admin_config_tests {
+        use maluwaf::config::admin::{AdminConfig, AdminCorsConfig, AdminRateLimitConfig};
+
+        #[test]
+        fn test_admin_config_valid() {
+            let config = AdminConfig {
+                enabled: true,
+                port: 8081,
+                bind_address: "127.0.0.1".to_string(),
+                token: "xR4kT9mW2pQ7vN3jL5hB8cF1gA6eD0yZ".to_string(),
+                token_env_var: None,
+                bcrypt_cost: 12,
+                cors: AdminCorsConfig::default(),
+                rate_limit: AdminRateLimitConfig::default(),
+            };
+            assert!(config.validate().is_ok());
+        }
+
+        #[test]
+        fn test_admin_config_port_zero_rejected() {
+            let config = AdminConfig {
+                enabled: true,
+                port: 0,
+                bind_address: "127.0.0.1".to_string(),
+                token: "xR4kT9mW2pQ7vN3jL5hB8cF1gA6eD0yZ".to_string(),
+                token_env_var: None,
+                bcrypt_cost: 12,
+                cors: AdminCorsConfig::default(),
+                rate_limit: AdminRateLimitConfig::default(),
+            };
+            let err = config.validate().unwrap_err();
+            assert_eq!(err.field, "admin.port");
+        }
+
+        #[test]
+        fn test_admin_config_bcrypt_cost_too_low() {
+            let config = AdminConfig {
+                enabled: true,
+                port: 8081,
+                bind_address: "127.0.0.1".to_string(),
+                token: "xR4kT9mW2pQ7vN3jL5hB8cF1gA6eD0yZ".to_string(),
+                token_env_var: None,
+                bcrypt_cost: 4,
+                cors: AdminCorsConfig::default(),
+                rate_limit: AdminRateLimitConfig::default(),
+            };
+            let err = config.validate().unwrap_err();
+            assert_eq!(err.field, "admin.bcrypt_cost");
+        }
+
+        #[test]
+        fn test_admin_config_bcrypt_cost_too_high() {
+            let config = AdminConfig {
+                enabled: true,
+                port: 8081,
+                bind_address: "127.0.0.1".to_string(),
+                token: "xR4kT9mW2pQ7vN3jL5hB8cF1gA6eD0yZ".to_string(),
+                token_env_var: None,
+                bcrypt_cost: 20,
+                cors: AdminCorsConfig::default(),
+                rate_limit: AdminRateLimitConfig::default(),
+            };
+            let err = config.validate().unwrap_err();
+            assert_eq!(err.field, "admin.bcrypt_cost");
+        }
+
+        #[test]
+        fn test_admin_config_weak_token_rejected() {
+            let config = AdminConfig {
+                enabled: true,
+                port: 8081,
+                bind_address: "127.0.0.1".to_string(),
+                token: "password1234567890abcdefghijklmnopqrstuvwxyz".to_string(),
+                token_env_var: None,
+                bcrypt_cost: 12,
+                cors: AdminCorsConfig::default(),
+                rate_limit: AdminRateLimitConfig::default(),
+            };
+            let err = config.validate().unwrap_err();
+            assert_eq!(err.field, "admin.token");
+            assert!(err.message.contains("weak pattern"), "Expected weak pattern error, got: {}", err.message);
+        }
+
+        #[test]
+        fn test_admin_config_short_token_rejected() {
+            let config = AdminConfig {
+                enabled: true,
+                port: 8081,
+                bind_address: "127.0.0.1".to_string(),
+                token: "short".to_string(),
+                token_env_var: None,
+                bcrypt_cost: 12,
+                cors: AdminCorsConfig::default(),
+                rate_limit: AdminRateLimitConfig::default(),
+            };
+            let err = config.validate().unwrap_err();
+            assert_eq!(err.field, "admin.token");
+            assert!(err.message.contains("at least"));
+        }
+
+        #[test]
+        fn test_admin_config_default_token_debug_only() {
+            let config = AdminConfig {
+                enabled: true,
+                port: 8081,
+                bind_address: "127.0.0.1".to_string(),
+                token: "changeme".to_string(),
+                token_env_var: None,
+                bcrypt_cost: 12,
+                cors: AdminCorsConfig::default(),
+                rate_limit: AdminRateLimitConfig::default(),
+            };
+            let result = config.validate();
+            // In debug builds, it warns but still returns error to force setting a real token
+            assert!(result.is_err());
+        }
+    }
 }

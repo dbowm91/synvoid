@@ -444,6 +444,10 @@ impl DnsCache {
         self.inner.cache.read().len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn stats(&self) -> CacheStats {
         let inner = &self.inner;
         let cache = inner.cache.read();
@@ -595,6 +599,10 @@ impl SecureDnsCache {
         self.0.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn stats(&self) -> CacheStats {
         self.0.stats()
     }
@@ -606,7 +614,7 @@ impl Default for SecureDnsCache {
     }
 }
 
-#[allow(dead_code)]
+#[allow(dead_code)] // Used behind dns feature in sharded_cache.rs
 fn skip_name(data: &[u8], mut offset: usize) -> Option<usize> {
     loop {
         if offset >= data.len() {
@@ -627,7 +635,7 @@ fn skip_name(data: &[u8], mut offset: usize) -> Option<usize> {
     }
 }
 
-#[allow(dead_code)]
+#[allow(dead_code)] // Used behind dns feature in sharded_cache.rs
 pub(crate) fn detect_dnssec_signed(data: &[u8]) -> bool {
     if data.len() < 12 {
         return false;

@@ -186,11 +186,7 @@ impl ProtocolHandler for GrpcHandler {
             let payload = &data[GRPC_FRAME_HEADER_SIZE..];
             if payload.starts_with(&[0x00]) {
                 if let Ok(text) = std::str::from_utf8(&payload[1..]) {
-                    if let Ok(code) = text.parse::<u16>() {
-                        code
-                    } else {
-                        0
-                    }
+                    text.parse::<u16>().unwrap_or_default()
                 } else {
                     0
                 }

@@ -1,3 +1,5 @@
+#![allow(dead_code)] // Reserved for future peer communication handling
+
 use crate::mesh::transport::{
     MeshTransport, MeshTransportError, MAX_BATCH_KEYS, MAX_BLOCK_DURATION_SECS, MAX_MESSAGE_SIZE,
 };
@@ -1280,8 +1282,7 @@ impl MeshTransport {
 
         let load_score = ((cpu_load_percent as f64 / 100.0) * 0.6
             + (memory_percent as f64 / 100.0) * 0.4)
-            .min(1.0)
-            .max(0.0);
+            .clamp(0.0, 1.0);
 
         let mut scores = self.topology.peer_scores().write().await;
         if let Some(score) = scores.get_mut(node_id) {

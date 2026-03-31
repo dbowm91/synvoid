@@ -1,3 +1,5 @@
+#![allow(dead_code)] // Reserved for future routing protocol handling
+
 use crate::mesh::transport::{MeshPeerConnection, MeshTransport, MeshTransportError};
 use std::time::{Duration, Instant};
 
@@ -515,16 +517,14 @@ impl MeshTransport {
                 .is_ok()
             {
                 // Wait briefly for response (non-blocking)
-                if let Ok(result) = tokio::time::timeout(Duration::from_millis(100), rx).await {
-                    if let Ok(route_result) = result {
-                        // Cache the route (already cached by handle_route_response)
-                        if let Some(best) = route_result.best_provider() {
+                if let Ok(Ok(route_result)) = tokio::time::timeout(Duration::from_millis(100), rx).await {
+                    // Cache the route (already cached by handle_route_response)
+                    if let Some(best) = route_result.best_provider() {
                             tracing::debug!(
                                 "Preflight cached route for {} -> {}",
                                 upstream_id,
                                 best.node_id
                             );
-                        }
                     }
                 }
             }

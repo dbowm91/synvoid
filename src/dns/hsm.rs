@@ -269,12 +269,20 @@ pub struct SoftHsm {
 impl SoftHsm {
     pub fn new(key_id: String) -> Self {
         let bytes = super::crypto_rng::random_bytes(32);
-        let key = ed25519_dalek::SigningKey::from_bytes(bytes.as_slice().try_into().unwrap());
+        let key = ed25519_dalek::SigningKey::from_bytes(
+            bytes
+                .as_slice()
+                .try_into()
+                .expect("random_bytes(32) should return exactly 32 bytes"),
+        );
         Self { key, key_id }
     }
 
     pub fn from_bytes(key_id: String, seed: &[u8]) -> Self {
-        let key = ed25519_dalek::SigningKey::from_bytes(seed.try_into().unwrap());
+        let key = ed25519_dalek::SigningKey::from_bytes(
+            seed.try_into()
+                .expect("Ed25519 seed must be exactly 32 bytes"),
+        );
         Self { key, key_id }
     }
 }

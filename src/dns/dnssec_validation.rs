@@ -163,8 +163,8 @@ fn canonical_soa(value: &str) -> Vec<u8> {
             rdata.extend_from_slice(&0u32.to_be_bytes());
         }
 
-        for i in 3..7 {
-            if let Ok(refresh) = parts[i].parse::<u32>() {
+        for part in parts.iter().take(7).skip(3) {
+            if let Ok(refresh) = part.parse::<u32>() {
                 rdata.extend_from_slice(&refresh.to_be_bytes());
             } else {
                 rdata.extend_from_slice(&0u32.to_be_bytes());

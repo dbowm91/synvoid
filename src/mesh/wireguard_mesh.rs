@@ -98,16 +98,18 @@ impl WireGuardMeshRuntime {
             .clone()
             .ok_or("WireGuard private key is required for mesh")?;
 
-        let mut wg_config = WireGuardConfig::default();
-        wg_config.enabled = true;
-        wg_config.interface_name = config.interface.clone();
-        wg_config.private_key = private_key;
-        wg_config.listen_port = config.listen_port;
-        wg_config.mtu = config.mtu;
-        wg_config.dns = config.dns.clone();
-        wg_config.auto_reconnect = true;
-        wg_config.reconnect_interval_secs = 5;
-        wg_config.implementation = WgImplementation::Auto;
+        let mut wg_config = WireGuardConfig {
+            enabled: true,
+            interface_name: config.interface.clone(),
+            private_key,
+            listen_port: config.listen_port,
+            mtu: config.mtu,
+            dns: config.dns.clone(),
+            auto_reconnect: true,
+            reconnect_interval_secs: 5,
+            implementation: WgImplementation::Auto,
+            ..Default::default()
+        };
 
         for peer_config in &config.peers {
             let endpoint = peer_config.endpoint.clone().ok_or_else(|| {

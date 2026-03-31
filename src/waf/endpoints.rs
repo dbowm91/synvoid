@@ -233,7 +233,7 @@ pub enum ErrorPageMode {
 }
 
 impl ErrorPageMode {
-    pub fn from_str(s: &str) -> Self {
+    pub fn from_mode_str(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "styled" => ErrorPageMode::Styled,
             "custom" => ErrorPageMode::Custom,
@@ -285,7 +285,7 @@ impl ErrorPageManager {
         mode: &str,
         theme: ThemeConfig,
     ) -> Self {
-        let error_page_mode = ErrorPageMode::from_str(mode);
+        let error_page_mode = ErrorPageMode::from_mode_str(mode);
 
         let resolved_dir = if error_page_mode == ErrorPageMode::Custom {
             custom_dir.clone().unwrap_or_else(|| {
@@ -655,19 +655,19 @@ mod tests {
     #[test]
     fn test_error_page_mode_from_str() {
         assert!(matches!(
-            ErrorPageMode::from_str("styled"),
+            ErrorPageMode::from_mode_str("styled"),
             ErrorPageMode::Styled
         ));
         assert!(matches!(
-            ErrorPageMode::from_str("custom"),
+            ErrorPageMode::from_mode_str("custom"),
             ErrorPageMode::Custom
         ));
         assert!(matches!(
-            ErrorPageMode::from_str("generic"),
+            ErrorPageMode::from_mode_str("generic"),
             ErrorPageMode::Generic
         ));
         assert!(matches!(
-            ErrorPageMode::from_str("unknown"),
+            ErrorPageMode::from_mode_str("unknown"),
             ErrorPageMode::Generic
         ));
     }

@@ -313,19 +313,14 @@ fn load_private_key(
     let file = File::open(path)?;
     let mut reader = BufReader::new(file);
 
-    loop {
-        match pem::from_buf(&mut reader)? {
-            Some((kind, der)) => {
-                if kind == pem::SectionKind::PrivateKey
-                    || kind == pem::SectionKind::EcPrivateKey
-                    || kind == pem::SectionKind::RsaPrivateKey
-                {
-                    if let Some(key) = PrivateKeyDer::from_pem(kind, der) {
-                        return Ok(key);
-                    }
-                }
+    while let Some((kind, der)) = pem::from_buf(&mut reader)? {
+        if kind == pem::SectionKind::PrivateKey
+            || kind == pem::SectionKind::EcPrivateKey
+            || kind == pem::SectionKind::RsaPrivateKey
+        {
+            if let Some(key) = PrivateKeyDer::from_pem(kind, der) {
+                return Ok(key);
             }
-            None => break,
         }
     }
 

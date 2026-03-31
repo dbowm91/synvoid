@@ -6,6 +6,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
+use anyhow::{Context, Result};
 use bytes::Bytes;
 use http::{header, Method, Request, Response, Uri};
 use http_body_util::BodyExt;
@@ -174,14 +175,15 @@ pub fn create_upstream_client(
 
 fn load_ca_certs_from_path(
     path: &str,
-) -> Result<Vec<rustls_pki_types::CertificateDer<'static>>, Box<dyn std::error::Error + Send + Sync>>
-{
+) -> Result<Vec<rustls_pki_types::CertificateDer<'static>>> {
     use rustls_pki_types::pem::PemObject;
-    let pem_data = std::fs::read(path)?;
+    let pem_data = std::fs::read(path)
+        .with_context(|| format!("Failed to read CA certificate file: {}", path))?;
     let certs: Vec<_> = rustls_pki_types::CertificateDer::pem_slice_iter(&pem_data)
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Result<Vec<_>, _>>()
+        .context("Failed to parse PEM certificates")?;
     if certs.is_empty() {
-        return Err(format!("No certificates found in {}", path).into());
+        anyhow::bail!("No certificates found in {}", path);
     }
     Ok(certs)
 }
@@ -317,7 +319,7 @@ pub async fn send_unix_request_with_timeout(
     path: &str,
     method: Method,
     timeout: Option<Duration>,
-) -> Result<HttpResponse, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<HttpResponse> {
     send_unix_request_with_body(client, socket_path, path, method, None, timeout).await
 }
 
@@ -328,7 +330,7 @@ pub async fn send_unix_request_with_body(
     method: Method,
     body: Option<bytes::Bytes>,
     timeout: Option<Duration>,
-) -> Result<HttpResponse, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<HttpResponse> {
     let uri = HyperlocalUri::new(socket_path, path);
 
     let full_body = if let Some(b) = body {
@@ -347,7 +349,7 @@ pub async fn send_unix_request_with_body(
         match tokio::time::timeout(t, client.request(req)).await {
             Ok(Ok(resp)) => resp,
             Ok(Err(e)) => return Err(e.into()),
-            Err(_) => return Err("request timed out".into()),
+            Err(_) => return Err(anyhow::anyhow!("request timed out")),
         }
     } else {
         client.request(req).await?
@@ -360,7 +362,7 @@ pub async fn send_request(
     client: &HttpClient,
     method: Method,
     url: &str,
-) -> Result<HttpResponse, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<HttpResponse> {
     send_request_with_timeout(client, method, url, None).await
 }
 
@@ -369,7 +371,7 @@ pub async fn send_request_with_timeout(
     method: Method,
     url: &str,
     timeout: Option<Duration>,
-) -> Result<HttpResponse, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<HttpResponse> {
     send_request_with_body_and_timeout(client, method, url, None, timeout).await
 }
 
@@ -379,7 +381,7 @@ pub async fn send_request_with_body_and_timeout(
     url: &str,
     body: Option<Bytes>,
     timeout: Option<Duration>,
-) -> Result<HttpResponse, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<HttpResponse> {
     let uri: Uri = url.parse()?;
     let body = Full::new(body.unwrap_or_default());
     let req = Request::builder().method(method).uri(uri).body(body)?;
@@ -388,7 +390,7 @@ pub async fn send_request_with_body_and_timeout(
         match tokio::time::timeout(t, client.request(req)).await {
             Ok(Ok(resp)) => resp,
             Ok(Err(e)) => return Err(e.into()),
-            Err(_) => return Err("request timed out".into()),
+            Err(_) => return Err(anyhow::anyhow!("request timed out")),
         }
     } else {
         client.request(req).await?
@@ -446,7 +448,7 @@ pub async fn send_request_via_quic_tunnel(
     headers: Option<&http::HeaderMap>,
     body: Option<bytes::Bytes>,
     timeout: Option<Duration>,
-) -> Result<HttpResponse, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<HttpResponse> {
     use crate::tunnel::quic::framing::{read_message, write_message};
     use crate::tunnel::quic::messages::TunnelMessage;
     use crate::tunnel::QUIC_TUNNEL_REGISTRY;
@@ -466,24 +468,24 @@ pub async fn send_request_via_quic_tunnel(
         };
         (peer, port_str)
     } else {
-        return Err("Invalid quictunnel URL format: expected quictunnel://peer:port".into());
+        return Err(anyhow::anyhow!("Invalid quictunnel URL format: expected quictunnel://peer:port"));
     };
 
     let port: u16 = port_str
         .parse()
-        .map_err(|_| format!("Invalid port in quictunnel URL: {}", port_str))?;
+        .map_err(|_| anyhow::anyhow!("Invalid port in quictunnel URL: {}", port_str))?;
 
     let runtime = QUIC_TUNNEL_REGISTRY
         .get_runtime()
         .await
-        .ok_or_else(|| "QUIC tunnel runtime not available".to_string())?;
+        .ok_or_else(|| anyhow::anyhow!("QUIC tunnel runtime not available"))?;
 
     let identifier = format!("http-port-{}", port);
 
     let (mut send_stream, mut recv_stream) = runtime
         .open_tunnel_stream_to_peer(peer, &identifier)
         .await
-        .map_err(|e| format!("Failed to open QUIC tunnel stream: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("Failed to open QUIC tunnel stream: {}", e))?;
 
     let stream_open = TunnelMessage::StreamOpen {
         identifier: identifier.clone(),
@@ -499,10 +501,10 @@ pub async fn send_request_via_quic_tunnel(
             success, message, ..
         } => {
             if !success {
-                return Err(format!("Stream open failed: {}", message.unwrap_or_default()).into());
+                return Err(anyhow::anyhow!("Stream open failed: {}", message.unwrap_or_default()));
             }
         }
-        _ => return Err("Unexpected response to StreamOpen".into()),
+        _ => return Err(anyhow::anyhow!("Unexpected response to StreamOpen")),
     }
 
     let mut http_request = format!(
@@ -532,7 +534,7 @@ pub async fn send_request_via_quic_tunnel(
 
     send_stream
         .finish()
-        .map_err(|e| format!("Failed to finish send stream: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("Failed to finish send stream: {}", e))?;
 
     let result = if let Some(t) = timeout {
         match tokio::time::timeout(t, async {
@@ -543,16 +545,16 @@ pub async fn send_request_via_quic_tunnel(
                     Ok(Some(0)) => break,
                     Ok(Some(n)) => response_data.extend_from_slice(&buf[..n]),
                     Ok(None) => break,
-                    Err(e) => return Err(format!("Read error: {}", e).into()),
+                    Err(e) => return Err(anyhow::anyhow!("Read error: {}", e).into()),
                 }
             }
-            Ok::<_, Box<dyn std::error::Error + Send + Sync>>(response_data)
+            Ok::<_, anyhow::Error>(response_data)
         })
         .await
         {
             Ok(Ok(data)) => data,
             Ok(Err(e)) => return Err(e),
-            Err(_) => return Err("Request timed out".into()),
+            Err(_) => return Err(anyhow::anyhow!("Request timed out")),
         }
     } else {
         let mut response_data = Vec::new();
@@ -562,7 +564,7 @@ pub async fn send_request_via_quic_tunnel(
                 Ok(Some(0)) => break,
                 Ok(Some(n)) => response_data.extend_from_slice(&buf[..n]),
                 Ok(None) => break,
-                Err(e) => return Err(format!("Read error: {}", e).into()),
+                    Err(e) => return Err(anyhow::anyhow!("Read error: {}", e)),
             }
         }
         response_data
@@ -571,14 +573,14 @@ pub async fn send_request_via_quic_tunnel(
     let response_str = String::from_utf8_lossy(&result);
     let mut header_lines = response_str.split("\r\n");
 
-    let status_line = header_lines.next().ok_or("No status line in response")?;
+    let status_line = header_lines.next().ok_or_else(|| anyhow::anyhow!("No status line in response"))?;
 
     let status_parts: Vec<&str> = status_line.splitn(3, ' ').collect();
     let status_code: u16 = status_parts
         .get(1)
-        .ok_or("No status code in response")?
+        .ok_or_else(|| anyhow::anyhow!("No status code in response"))?
         .parse()
-        .map_err(|_| "Invalid status code")?;
+        .map_err(|_| anyhow::anyhow!("Invalid status code"))?;
 
     let mut response_headers = http::HeaderMap::new();
     loop {

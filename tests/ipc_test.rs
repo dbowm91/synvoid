@@ -5,6 +5,313 @@ mod ipc_tests {
     use tempfile::TempDir;
     use tokio::net::UnixListener;
 
+    // ── Malformed deserialization tests ──────────────────────────────
+
+    #[test]
+    fn test_deserialize_truncated_json() {
+        let json = r#"{"WorkerStarted":{"id":0,"pid":1234"#;
+        let result: Result<Message, _> = serde_json::from_str(json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_deserialize_empty_string() {
+        let result: Result<Message, _> = serde_json::from_str("");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_deserialize_invalid_json_syntax() {
+        let result: Result<Message, _> = serde_json::from_str("{invalid json}");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_deserialize_wrong_field_type() {
+        // pid should be u32, not string
+        let json = r#"{"WorkerStarted":{"id":0,"pid":"not_a_number","port":8080,"timestamp":0}}"#;
+        let result: Result<Message, _> = serde_json::from_str(json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_deserialize_missing_required_field() {
+        // Missing 'id' field
+        let json = r#"{"WorkerStarted":{"pid":1234,"port":8080,"timestamp":0}}"#;
+        let result: Result<Message, _> = serde_json::from_str(json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_deserialize_unknown_variant() {
+        let json = r#"{"NonExistentVariant":{"id":0}}"#;
+        let result: Result<Message, _> = serde_json::from_str(json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_deserialize_extra_fields_allowed() {
+        // serde(default) should allow extra fields
+        let json = r#"{"WorkerStarted":{"id":0,"pid":1234,"port":8080,"timestamp":0,"extra_field":"ignored"}}"#;
+        let result: Result<Message, _> = serde_json::from_str(json);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_deserialize_nested_type_mismatch() {
+        // WorkerError severity should be an enum, not a number
+        let json = r#"{"WorkerError":{"id":0,"error":"test","severity":123,"error_code":"Unknown"}}"#;
+        let result: Result<Message, _> = serde_json::from_str(json);
+        assert!(result.is_err());
+    }
+
+    // ── Round-trip serialization tests ───────────────────────────────
+
+    #[test]
+    fn test_roundtrip_worker_started() {
+        let msg = Message::WorkerStarted {
+            id: WorkerId(1),
+            pid: 1234,
+            port: 8080,
+            timestamp: 1234567890,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: Message = serde_json::from_str(&json).unwrap();
+        assert!(matches!(
+            decoded,
+            Message::WorkerStarted {
+                id: WorkerId(1),
+                pid: 1234,
+                port: 8080,
+                timestamp: 1234567890,
+            }
+        ));
+    }
+
+    #[test]
+    fn test_roundtrip_worker_ready() {
+        let msg = Message::WorkerReady { id: WorkerId(42) };
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: Message = serde_json::from_str(&json).unwrap();
+        assert!(matches!(decoded, Message::WorkerReady { id: WorkerId(42) }));
+    }
+
+    #[test]
+    fn test_roundtrip_worker_shutdown_complete() {
+        let msg = Message::WorkerShutdownComplete { id: WorkerId(7) };
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: Message = serde_json::from_str(&json).unwrap();
+        assert!(matches!(
+            decoded,
+            Message::WorkerShutdownComplete { id: WorkerId(7) }
+        ));
+    }
+
+    #[test]
+    fn test_roundtrip_worker_error() {
+        let msg = Message::WorkerError {
+            id: WorkerId(3),
+            error: "connection timeout".to_string(),
+            severity: maluwaf::process::ErrorSeverity::Error,
+            error_code: maluwaf::process::ErrorCode::Unknown,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: Message = serde_json::from_str(&json).unwrap();
+        match decoded {
+            Message::WorkerError {
+                id,
+                error,
+                severity,
+                error_code,
+            } => {
+                assert_eq!(id, WorkerId(3));
+                assert_eq!(error, "connection timeout");
+                assert_eq!(severity, maluwaf::process::ErrorSeverity::Error);
+                assert_eq!(error_code, maluwaf::process::ErrorCode::Unknown);
+            }
+            _ => panic!("Expected WorkerError"),
+        }
+    }
+
+    #[test]
+    fn test_roundtrip_master_shutdown() {
+        let msg = Message::MasterShutdown {
+            graceful: true,
+            timeout_secs: 30,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: Message = serde_json::from_str(&json).unwrap();
+        assert!(matches!(
+            decoded,
+            Message::MasterShutdown {
+                graceful: true,
+                timeout_secs: 30,
+            }
+        ));
+    }
+
+    #[test]
+    fn test_roundtrip_master_config_reload() {
+        let msg = Message::MasterConfigReload {
+            config_path: "/etc/maluwaf/main.toml".to_string(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: Message = serde_json::from_str(&json).unwrap();
+        match decoded {
+            Message::MasterConfigReload { config_path } => {
+                assert_eq!(config_path, "/etc/maluwaf/main.toml");
+            }
+            _ => panic!("Expected MasterConfigReload"),
+        }
+    }
+
+    #[test]
+    fn test_roundtrip_health_check_ack() {
+        let msg = Message::HealthCheckAck {
+            timestamp: 9999999,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: Message = serde_json::from_str(&json).unwrap();
+        assert!(matches!(
+            decoded,
+            Message::HealthCheckAck {
+                timestamp: 9999999
+            }
+        ));
+    }
+
+    #[test]
+    fn test_roundtrip_worker_resize_ack() {
+        let msg = Message::WorkerResizeAck {
+            id: WorkerId(5),
+            worker_threads: 8,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: Message = serde_json::from_str(&json).unwrap();
+        assert!(matches!(
+            decoded,
+            Message::WorkerResizeAck {
+                id: WorkerId(5),
+                worker_threads: 8,
+            }
+        ));
+    }
+
+    #[test]
+    fn test_roundtrip_static_worker_started() {
+        let msg = Message::StaticWorkerStarted {
+            worker_id: 2,
+            pid: 5678,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: Message = serde_json::from_str(&json).unwrap();
+        assert!(matches!(
+            decoded,
+            Message::StaticWorkerStarted {
+                worker_id: 2,
+                pid: 5678,
+            }
+        ));
+    }
+
+    #[test]
+    fn test_roundtrip_master_resize_threadpool() {
+        let msg = Message::MasterResizeThreadpool {
+            worker_threads: 16,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: Message = serde_json::from_str(&json).unwrap();
+        assert!(matches!(
+            decoded,
+            Message::MasterResizeThreadpool {
+                worker_threads: 16,
+            }
+        ));
+    }
+
+    #[test]
+    fn test_roundtrip_drain_messages() {
+        let drain = Message::WorkerDrain {
+            id: WorkerId(1),
+            timeout_secs: 30,
+        };
+        let json = serde_json::to_string(&drain).unwrap();
+        let decoded: Message = serde_json::from_str(&json).unwrap();
+        assert!(matches!(
+            decoded,
+            Message::WorkerDrain {
+                id: WorkerId(1),
+                timeout_secs: 30,
+            }
+        ));
+
+        let drained = Message::WorkerDrained {
+            id: WorkerId(1),
+            remaining_connections: 0,
+        };
+        let json = serde_json::to_string(&drained).unwrap();
+        let decoded: Message = serde_json::from_str(&json).unwrap();
+        assert!(matches!(
+            decoded,
+            Message::WorkerDrained {
+                id: WorkerId(1),
+                remaining_connections: 0,
+            }
+        ));
+    }
+
+    #[test]
+    fn test_roundtrip_unified_server_messages() {
+        let started = Message::UnifiedServerWorkerStarted {
+            id: WorkerId(1),
+            pid: 1111,
+            timestamp: 100,
+        };
+        let json = serde_json::to_string(&started).unwrap();
+        let decoded: Message = serde_json::from_str(&json).unwrap();
+        assert!(matches!(
+            decoded,
+            Message::UnifiedServerWorkerStarted {
+                id: WorkerId(1),
+                pid: 1111,
+                timestamp: 100,
+            }
+        ));
+
+        let ready = Message::UnifiedServerWorkerReady { id: WorkerId(2) };
+        let json = serde_json::to_string(&ready).unwrap();
+        let decoded: Message = serde_json::from_str(&json).unwrap();
+        assert!(matches!(
+            decoded,
+            Message::UnifiedServerWorkerReady { id: WorkerId(2) }
+        ));
+    }
+
+    #[test]
+    fn test_roundtrip_socket_handoff_messages() {
+        let req = Message::SocketHandoffRequest {
+            socket_path: "/tmp/handoff.sock".to_string(),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let decoded: Message = serde_json::from_str(&json).unwrap();
+        assert!(matches!(
+            decoded,
+            Message::SocketHandoffRequest {
+                socket_path,
+            } if socket_path == "/tmp/handoff.sock"
+        ));
+
+        let ready = Message::SocketHandoffReady {
+            ports: vec![8080, 8443],
+        };
+        let json = serde_json::to_string(&ready).unwrap();
+        let decoded: Message = serde_json::from_str(&json).unwrap();
+        assert!(matches!(
+            decoded,
+            Message::SocketHandoffReady { ports } if ports == vec![8080, 8443]
+        ));
+    }
+
     #[tokio::test]
     async fn test_ipc_unix_socket_send_recv() {
         let temp_dir = TempDir::new().unwrap();

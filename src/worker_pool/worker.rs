@@ -101,7 +101,7 @@ impl Worker {
                         let client_ip = real_ip
                             .map(|ip| ip.ip())
                             .or(remote_addr.map(|ip| ip.ip()))
-                            .unwrap_or_else(|| "127.0.0.1".parse().unwrap());
+                            .unwrap_or_else(|| "127.0.0.1".parse().expect("Hardcoded IP should always parse"));
                         
                         let user_agent = headers.get("user-agent")
                             .and_then(|v| v.to_str().ok())
@@ -139,7 +139,7 @@ impl Worker {
                                     .status(status)
                                     .header("Content-Type", "text/html")
                                     .body(body)
-                                    .unwrap())
+                                    .expect("Failed to build block response"))
                             }
                             WafDecision::Challenge(html) => {
                                 metrics.challenged.fetch_add(1, Ordering::Relaxed);
@@ -155,7 +155,7 @@ impl Worker {
                                     .header("Content-Type", "text/html")
                                     .header("Cache-Control", "no-store, no-cache, must-revalidate")
                                     .body(html)
-                                    .unwrap())
+                                    .expect("Failed to build challenge response"))
                             }
                             WafDecision::ChallengeWithCookie { html, session_cookie_name, session_cookie_value, session_cookie_max_age } => {
                                 metrics.challenged.fetch_add(1, Ordering::Relaxed);
@@ -173,7 +173,7 @@ impl Worker {
                                     .header("Cache-Control", "no-store, no-cache, must-revalidate")
                                     .header("Set-Cookie", cookie)
                                     .body(html)
-                                    .unwrap())
+                                    .expect("Failed to build challenge-with-cookie response"))
                             }
                             WafDecision::Tarpit(_) => {
                                 metrics.blocked.fetch_add(1, Ordering::Relaxed);
@@ -188,7 +188,7 @@ impl Worker {
                                     .status(200)
                                     .header("Content-Type", "text/html")
                                     .body("Please wait...".to_string())
-                                    .unwrap())
+                                    .expect("Failed to build tarpit response"))
                             }
                             WafDecision::Pass => {
                                 let target_url = format!("{}{}", *upstream_url, path_str);
@@ -218,7 +218,7 @@ impl Worker {
                                         histogram!("maluwaf.worker.request_duration").record(elapsed as f64);
                                         metrics.current_concurrent.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_sub(1));
                                         
-                                        Ok(builder.body(body).unwrap())
+                                        Ok(builder.body(body).expect("Failed to build proxied response"))
                                     }
                                     Err(e) => {
                                         tracing::error!("Upstream error: {}", e);
@@ -232,7 +232,7 @@ impl Worker {
                                         Ok(Response::builder()
                                             .status(502)
                                             .body("Bad Gateway".to_string())
-                                            .unwrap())
+                                            .expect("Failed to build error response"))
                                     }
                                 }
                             }

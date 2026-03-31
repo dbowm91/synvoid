@@ -1,3 +1,5 @@
+#![allow(dead_code)] // Reserved for future DNS mesh protocol handling
+
 use crate::mesh::transport::MeshTransport;
 use flate2::read::ZlibDecoder as ReadZlibDecoder;
 use flate2::write::ZlibEncoder;

@@ -40,7 +40,7 @@ impl UdpProtocol {
         }
     }
 
-    pub fn from_str(s: &str) -> Self {
+    pub fn from_protocol_str(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "dns" => UdpProtocol::Dns,
             "dhcp" => UdpProtocol::Dhcp,
@@ -67,7 +67,7 @@ impl crate::filter::Protocol for UdpProtocol {
     }
 
     fn from_str(s: &str) -> Self {
-        UdpProtocol::from_str(s)
+        UdpProtocol::from_protocol_str(s)
     }
 }
 
@@ -176,6 +176,7 @@ impl UdpProtocolDetector {
         UdpProtocol::Unknown
     }
 
+    #[allow(dead_code)] // Reserved for DNS protocol validation
     fn has_valid_dns_question(&self, data: &[u8], _is_query: bool) -> bool {
         let mut pos = 12;
         let max_pos = data.len();
@@ -358,6 +359,7 @@ impl UdpProtocolDetector {
         false
     }
 
+    #[allow(dead_code)] // Reserved for mDNS protocol detection
     fn looks_like_mdns(&self, data: &[u8]) -> bool {
         if data.len() < 12 {
             return false;

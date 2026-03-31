@@ -4,6 +4,7 @@
     clippy::collapsible_if
 )]
 
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
@@ -1051,14 +1052,18 @@ pub struct SiteWorkerPoolConfig {
 }
 
 impl SiteConfig {
-    pub fn from_file<P: AsRef<std::path::Path>>(
-        path: P,
-    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        let content = std::fs::read_to_string(path)?;
-        let config: SiteConfig = toml::from_str(&content)?;
+    pub fn from_file<P: AsRef<std::path::Path>>(path: P) -> Result<Self> {
+        let content = std::fs::read_to_string(&path).with_context(|| {
+            format!(
+                "Failed to read site config from {}",
+                path.as_ref().display()
+            )
+        })?;
+        let config: SiteConfig =
+            toml::from_str(&content).context("Failed to parse site config TOML")?;
 
         if config.site.domains.is_empty() {
-            return Err("Site config must have at least one domain".into());
+            anyhow::bail!("Site config must have at least one domain");
         }
 
         config.validate()?;

@@ -89,6 +89,13 @@ pub fn SiteEditor(props: &SiteEditorProps) -> Html {
                         <TabButton label="Bot Protection" tab="bot" active={*active_tab == "bot"} on_click={on_tab_click.clone()} />
                         <TabButton label="Upload" tab="upload" active={*active_tab == "upload"} on_click={on_tab_click.clone()} />
                         <TabButton label="Error Pages" tab="error_pages" active={*active_tab == "error_pages"} on_click={on_tab_click.clone()} />
+                        <TabButton label="Proxy" tab="proxy" active={*active_tab == "proxy"} on_click={on_tab_click.clone()} />
+                        <TabButton label="Security Headers" tab="security_headers" active={*active_tab == "security_headers"} on_click={on_tab_click.clone()} />
+                        <TabButton label="Static" tab="static" active={*active_tab == "static"} on_click={on_tab_click.clone()} />
+                        <TabButton label="Auth" tab="auth" active={*active_tab == "auth"} on_click={on_tab_click.clone()} />
+                        <TabButton label="WebSocket" tab="websocket" active={*active_tab == "websocket"} on_click={on_tab_click.clone()} />
+                        <TabButton label="gRPC" tab="grpc" active={*active_tab == "grpc"} on_click={on_tab_click.clone()} />
+                        <TabButton label="Tunnel" tab="tunnel" active={*active_tab == "tunnel"} on_click={on_tab_click.clone()} />
                     </nav>
                 </div>
 
@@ -101,6 +108,13 @@ pub fn SiteEditor(props: &SiteEditorProps) -> Html {
                         "bot" => html! { <BotTab config={config.clone()} site_id={props.id.clone()} /> },
                         "upload" => html! { <UploadTab config={config.clone()} site_id={props.id.clone()} /> },
                         "error_pages" => html! { <ErrorPagesTab site_id={props.id.clone()} /> },
+                        "proxy" => html! { <ProxyTab config={config.clone()} site_id={props.id.clone()} /> },
+                        "security_headers" => html! { <SecurityHeadersTab config={config.clone()} site_id={props.id.clone()} /> },
+                        "static" => html! { <StaticTab config={config.clone()} site_id={props.id.clone()} /> },
+                        "auth" => html! { <AuthTab config={config.clone()} site_id={props.id.clone()} /> },
+                        "websocket" => html! { <WebSocketTab config={config.clone()} site_id={props.id.clone()} /> },
+                        "grpc" => html! { <GrpcTab config={config.clone()} site_id={props.id.clone()} /> },
+                        "tunnel" => html! { <TunnelTab config={config.clone()} site_id={props.id.clone()} /> },
                         _ => html! { <BasicTab presets={presets} on_preset_select={on_preset_select} selected_preset={(*selected_preset).clone()} config={config.clone()} site_id={props.id.clone()} /> },
                     }}
                 </div>
@@ -1045,6 +1059,299 @@ fn BlockingTab(props: &BlockingTabProps) -> Html {
                 <h3 class="text-lg font-semibold mb-4">{ "Country Blocking" }</h3>
                 <div class="bg-tertiary rounded-lg p-4">
                     <p class="text-secondary">{ "Block or allow traffic by country code." }</p>
+                </div>
+            </div>
+        </div>
+    }
+}
+
+#[derive(Properties, PartialEq)]
+struct ProxyTabProps {
+    config: Option<serde_json::Value>,
+    site_id: String,
+}
+
+#[function_component]
+fn ProxyTab(props: &ProxyTabProps) -> Html {
+    let upstream_timeout = use_state(|| "30".to_string());
+    let keepalive = use_state(|| "60".to_string());
+    let saving = use_state(|| false);
+
+    use_effect_with((), {
+        let upstream_timeout = upstream_timeout.clone();
+        let keepalive = keepalive.clone();
+        let config = props.config.clone();
+        move |_| {
+            if let Some(cfg) = config {
+                if let Some(t) = cfg.get("upstream_timeout_secs").and_then(|v| v.as_u64()) {
+                    upstream_timeout.set(t.to_string());
+                }
+                if let Some(k) = cfg.get("keepalive_timeout_secs").and_then(|v| v.as_u64()) {
+                    keepalive.set(k.to_string());
+                }
+            }
+            || {}
+        }
+    });
+
+    let on_save = {
+        let saving = saving.clone();
+        let upstream_timeout = upstream_timeout.clone();
+        let keepalive = keepalive.clone();
+        let site_id = props.site_id.clone();
+        Callback::from(move |_| {
+            let new_config = serde_json::json!({
+                "upstream_timeout_secs": upstream_timeout.parse::<u64>().unwrap_or(30),
+                "keepalive_timeout_secs": keepalive.parse::<u64>().unwrap_or(60),
+            });
+            let saving = saving.clone();
+            let site_id = site_id.clone();
+            saving.set(true);
+            wasm_bindgen_futures::spawn_local(async move {
+                let api = crate::services::ApiService::new();
+                let _ = api.update_site(&site_id, &new_config).await;
+                saving.set(false);
+                toast_success("Proxy settings saved");
+            });
+        })
+    };
+
+    html! {
+        <div class="space-y-6">
+            <div>
+                <h3 class="text-lg font-semibold mb-4">{ "Proxy Settings" }</h3>
+                <div class="grid grid-cols-2 gap-4">
+                    <Input label="Upstream Timeout (secs)" name="upstream_timeout" value={(*upstream_timeout).clone()} input_type="number" help="Timeout for upstream requests" />
+                    <Input label="Keep-Alive Timeout (secs)" name="keepalive" value={(*keepalive).clone()} input_type="number" help="Upstream keep-alive timeout" />
+                </div>
+            </div>
+            <div class="flex justify-end">
+                <button onclick={on_save} disabled={*saving} class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">
+                    { if *saving { "Saving..." } else { "Save Changes" } }
+                </button>
+            </div>
+        </div>
+    }
+}
+
+#[derive(Properties, PartialEq)]
+struct SecurityHeadersTabProps {
+    config: Option<serde_json::Value>,
+    site_id: String,
+}
+
+#[function_component]
+fn SecurityHeadersTab(props: &SecurityHeadersTabProps) -> Html {
+    let hsts = use_state(|| true);
+    let hsts_max_age = use_state(|| "31536000".to_string());
+    let x_frame_options = use_state(|| "SAMEORIGIN".to_string());
+    let x_content_type = use_state(|| true);
+    let referrer_policy = use_state(|| "strict-origin-when-cross-origin".to_string());
+    let saving = use_state(|| false);
+
+    use_effect_with((), {
+        let hsts = hsts.clone();
+        let hsts_max_age = hsts_max_age.clone();
+        let x_frame_options = x_frame_options.clone();
+        let x_content_type = x_content_type.clone();
+        let referrer_policy = referrer_policy.clone();
+        let config = props.config.clone();
+        move |_| {
+            if let Some(cfg) = config {
+                if let Some(v) = cfg.get("hsts").and_then(|v| v.as_bool()) { hsts.set(v); }
+                if let Some(v) = cfg.get("hsts_max_age").and_then(|v| v.as_u64()) { hsts_max_age.set(v.to_string()); }
+                if let Some(v) = cfg.get("x_frame_options").and_then(|v| v.as_str()) { x_frame_options.set(v.to_string()); }
+                if let Some(v) = cfg.get("x_content_type_options").and_then(|v| v.as_bool()) { x_content_type.set(v); }
+                if let Some(v) = cfg.get("referrer_policy").and_then(|v| v.as_str()) { referrer_policy.set(v.to_string()); }
+            }
+            || {}
+        }
+    });
+
+    let on_save = {
+        let saving = saving.clone();
+        let hsts = hsts.clone();
+        let hsts_max_age = hsts_max_age.clone();
+        let x_frame_options = x_frame_options.clone();
+        let x_content_type = x_content_type.clone();
+        let referrer_policy = referrer_policy.clone();
+        let site_id = props.site_id.clone();
+        Callback::from(move |_| {
+            let new_config = serde_json::json!({
+                "hsts": *hsts,
+                "hsts_max_age": hsts_max_age.parse::<u64>().unwrap_or(31536000),
+                "x_frame_options": (*x_frame_options).clone(),
+                "x_content_type_options": *x_content_type,
+                "referrer_policy": (*referrer_policy).clone(),
+            });
+            let saving = saving.clone();
+            let site_id = site_id.clone();
+            saving.set(true);
+            wasm_bindgen_futures::spawn_local(async move {
+                let api = crate::services::ApiService::new();
+                let _ = api.update_site(&site_id, &new_config).await;
+                saving.set(false);
+                toast_success("Security headers saved");
+            });
+        })
+    };
+
+    html! {
+        <div class="space-y-6">
+            <div>
+                <h3 class="text-lg font-semibold mb-4">{ "Security Headers" }</h3>
+                <div class="space-y-3">
+                    <ToggleField label="HSTS (Strict-Transport-Security)" enabled={*hsts} />
+                    <Input label="HSTS Max Age (secs)" name="hsts_max_age" value={(*hsts_max_age).clone()} input_type="number" help="How long browsers should remember to use HTTPS" />
+                    <SelectWithTooltip label="X-Frame-Options" name="x_frame_options" value={(*x_frame_options).clone()} options={vec![("SAMEORIGIN".to_string(), "Same Origin".to_string()), ("DENY".to_string(), "Deny".to_string())]} help="Prevents clickjacking" tooltip_title="" tooltip_content="" />
+                    <ToggleField label="X-Content-Type-Options" enabled={*x_content_type} />
+                    <Input label="Referrer-Policy" name="referrer_policy" value={(*referrer_policy).clone()} help="How much referrer info to send" />
+                </div>
+            </div>
+            <div class="flex justify-end">
+                <button onclick={on_save} disabled={*saving} class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">
+                    { if *saving { "Saving..." } else { "Save Changes" } }
+                </button>
+            </div>
+        </div>
+    }
+}
+
+#[derive(Properties, PartialEq)]
+struct StaticTabProps {
+    config: Option<serde_json::Value>,
+    site_id: String,
+}
+
+#[function_component]
+fn StaticTab(_props: &StaticTabProps) -> Html {
+    html! {
+        <div class="space-y-6">
+            <div>
+                <h3 class="text-lg font-semibold mb-4">{ "Static File Serving" }</h3>
+                <div class="space-y-3">
+                    <ToggleField label="Enable Static Serving" enabled=false />
+                    <Input label="Document Root" name="doc_root" value="/var/www/html" help="Path to static files directory" />
+                    <Input label="Index File" name="index" value="index.html" help="Default file to serve for directory requests" />
+                </div>
+            </div>
+            <div>
+                <h3 class="text-lg font-semibold mb-4">{ "Caching" }</h3>
+                <div class="grid grid-cols-2 gap-4">
+                    <Input label="Cache Max Age (secs)" name="cache_max_age" value="3600" input_type="number" help="Browser cache duration" />
+                    <Input label="ETag" name="etag" value="true" help="Enable ETag headers" />
+                </div>
+            </div>
+        </div>
+    }
+}
+
+#[derive(Properties, PartialEq)]
+struct AuthTabProps {
+    config: Option<serde_json::Value>,
+    site_id: String,
+}
+
+#[function_component]
+fn AuthTab(_props: &AuthTabProps) -> Html {
+    html! {
+        <div class="space-y-6">
+            <div>
+                <h3 class="text-lg font-semibold mb-4">{ "Site Authentication" }</h3>
+                <div class="space-y-3">
+                    <ToggleField label="Enable Site Auth" enabled=false />
+                    <SelectWithTooltip label="Auth Type" name="auth_type" value="basic" options={vec![("basic".to_string(), "HTTP Basic".to_string()), ("bearer".to_string(), "Bearer Token".to_string()), ("jwt".to_string(), "JWT".to_string())]} help="Authentication method" tooltip_title="" tooltip_content="" />
+                    <Input label="Realm" name="realm" value="Restricted" help="Authentication realm shown to browsers" />
+                </div>
+            </div>
+            <div>
+                <h3 class="text-lg font-semibold mb-4">{ "Allowed Paths" }</h3>
+                <textarea class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg font-mono text-sm" rows="4" value={"/health\n/public/*"} />
+                <p class="mt-1 text-xs text-secondary">{ "Paths that don't require authentication (one per line)" }</p>
+            </div>
+        </div>
+    }
+}
+
+#[derive(Properties, PartialEq)]
+struct WebSocketTabProps {
+    config: Option<serde_json::Value>,
+    site_id: String,
+}
+
+#[function_component]
+fn WebSocketTab(_props: &WebSocketTabProps) -> Html {
+    html! {
+        <div class="space-y-6">
+            <div>
+                <h3 class="text-lg font-semibold mb-4">{ "WebSocket Proxy" }</h3>
+                <div class="space-y-3">
+                    <ToggleField label="Enable WebSocket Proxy" enabled=true />
+                    <Input label="Max Frame Size" name="max_frame_size" value="65536" input_type="number" help="Maximum WebSocket frame size in bytes" />
+                    <Input label="Idle Timeout (secs)" name="ws_idle_timeout" value="300" input_type="number" help="Close idle connections after this period" />
+                </div>
+            </div>
+            <div>
+                <h3 class="text-lg font-semibold mb-4">{ "Subprotocols" }</h3>
+                <textarea class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg font-mono text-sm" rows="3" value={"wamp\nmqtt"} />
+                <p class="mt-1 text-xs text-secondary">{ "Allowed WebSocket subprotocols (one per line)" }</p>
+            </div>
+        </div>
+    }
+}
+
+#[derive(Properties, PartialEq)]
+struct GrpcTabProps {
+    config: Option<serde_json::Value>,
+    site_id: String,
+}
+
+#[function_component]
+fn GrpcTab(_props: &GrpcTabProps) -> Html {
+    html! {
+        <div class="space-y-6">
+            <div>
+                <h3 class="text-lg font-semibold mb-4">{ "gRPC Proxy" }</h3>
+                <div class="space-y-3">
+                    <ToggleField label="Enable gRPC Proxy" enabled=false />
+                    <Input label="Max Message Size" name="max_msg_size" value="4194304" input_type="number" help="Maximum gRPC message size in bytes (default 4MB)" />
+                    <Input label="Max Header List Size" name="max_header_list" value="8192" input_type="number" help="Maximum header list size in bytes" />
+                </div>
+            </div>
+            <div>
+                <h3 class="text-lg font-semibold mb-4">{ "HTTP/2 Settings" }</h3>
+                <div class="grid grid-cols-2 gap-4">
+                    <Input label="Max Concurrent Streams" name="max_streams" value="100" input_type="number" />
+                    <Input label="Initial Window Size" name="init_window" value="65535" input_type="number" />
+                </div>
+            </div>
+        </div>
+    }
+}
+
+#[derive(Properties, PartialEq)]
+struct TunnelTabProps {
+    config: Option<serde_json::Value>,
+    site_id: String,
+}
+
+#[function_component]
+fn TunnelTab(_props: &TunnelTabProps) -> Html {
+    html! {
+        <div class="space-y-6">
+            <div>
+                <h3 class="text-lg font-semibold mb-4">{ "Tunnel Settings" }</h3>
+                <div class="space-y-3">
+                    <ToggleField label="Enable Tunnel" enabled=false />
+                    <Input label="Tunnel Port" name="tunnel_port" value="8443" input_type="number" help="Port for tunnel connections" />
+                    <SelectWithTooltip label="Protocol" name="tunnel_proto" value="wireguard" options={vec![("wireguard".to_string(), "WireGuard".to_string()), ("quic".to_string(), "QUIC".to_string())]} help="Tunnel protocol" tooltip_title="" tooltip_content="" />
+                </div>
+            </div>
+            <div>
+                <h3 class="text-lg font-semibold mb-4">{ "Connection Limits" }</h3>
+                <div class="grid grid-cols-2 gap-4">
+                    <Input label="Max Peers" name="max_peers" value="100" input_type="number" />
+                    <Input label="Keepalive Interval (secs)" name="keepalive" value="25" input_type="number" />
                 </div>
             </div>
         </div>

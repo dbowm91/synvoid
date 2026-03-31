@@ -262,15 +262,13 @@ Crate-level suppressions in `src/lib.rs`:
 - `elided_lifetimes_in_paths` — compiler style preference
 - `mismatched_lifetime_syntaxes` — compiler style preference
 
-`#[allow(dead_code)]` annotations: **137 across 75 files** (verified via grep). Notable per-module breakdown:
-- `src/worker/mod.rs` — 4 items (MinifierCache, get_content_type, get_compressed_content, ListenerType)
-- `src/waf/ratelimit.rs` — 2 items
-- `src/dns/cache.rs` — 2 items (skip_name, detect_dnssec_signed)
-- `src/dns/dnssec.rs` — 3 items (extract_rsa_modulus, len_of_der_length, decode_der_length)
-- `src/mesh/` — ~29 items (90+ dead code warnings per clippy)
-- `src/dns/server/` — ~10 items
+`#[allow(dead_code)]` annotations: **~120 across ~70 files** (reduced from 137/75). Notable per-module breakdown:
+- `src/mesh/` — ~27 items
+- `src/dns/server/` — ~4 items (6 incorrect annotations removed — fields were actively used)
+- `src/dns/dnssec_signing.rs` — 3 dead functions removed (extract_rsa_modulus, len_of_der_length, decode_der_length — 57 lines)
+- `src/worker/mod.rs` — dead code removed (MinifierCache, get_content_type, get_compressed_content, ListenerType)
 
-`cargo clippy` produces ~103 warnings (pre-existing categories, mostly dead code in `src/mesh/`).
+`cargo clippy` produces ~14 non-dead-code warnings (6 type_complexity, 4 result_unit_err, 2 module_inception, 1 vec_init_then_push, 1 arc_with_non_send_sync).
 
 ### Build Configuration
 
@@ -297,7 +295,7 @@ Feature flags trimmed: `tower` removed `"timeout"`, `tower-http` removed `"trace
 
 ### Error Handling Status
 
-`src/error.rs` defines `WafError`, `WafResult`, and `WafErrorExt` — **all are completely dead code**. Zero production usage outside `error.rs` itself. Every other module uses `anyhow`, `Box<dyn Error>` (16 call sites), or custom error types.
+`src/error.rs` defines `WafError`, `WafResult`, and `WafErrorExt` — **all are completely dead code**. Zero production usage outside `error.rs` itself. Every other module uses `anyhow`, `Box<dyn Error>` (~13 call sites remaining after converting 3 files to anyhow), or custom types.
 
 ### Duplicate Timestamp Utility
 
@@ -335,6 +333,7 @@ Use the `utils.rs` version and remove the rest.
 - ~~IPC key fallback to env var~~ → fail-hard by default, `allow_insecure_ipc_key` opt-in
 - ~~CORS wildcard not enforced at site level~~ → rejected in release builds
 - ~~Token in validation error~~ → logged separately at INFO level
+- ~~"changeme" token rejection dead code~~ → check moved before `resolve_token()` (`src/config/admin.rs:109`)
 
 **DNS / RFC Compliance** (all fixed):
 - ~~NSEC3 hash loop off-by-one~~ → `..=` → `..`
@@ -475,20 +474,18 @@ See `plans/plan.md` for the consolidated remediation plan (11 phases covering co
 
 ## Admin Panel Architecture Notes
 
-### Config Propagation (Known Issue)
+### Config Propagation (Fixed)
 
-Config changes via the admin API are persisted to disk but **do not propagate to workers**. The `MasterConfigReload` handler in all three worker code paths is a no-op:
+Config changes via the admin API now propagate to workers. `MasterConfigReload` handlers implement real reload in `src/worker/mod.rs` and `src/worker/unified_server.rs`. `PUT /config/main` updates in-memory config and broadcasts via `ProcessManager::broadcast_config_reload()`. `POST /config/reload` also broadcasts. Section-specific handlers (HTTP, TLS, security, etc.) call broadcast after persisting.
 
-- `src/worker/mod.rs:248` — logs but does nothing
-- `src/worker/common.rs:197` — same
-- `src/worker/unified_server.rs:790` — same
-
-`PUT /config/main` writes to disk but doesn't update in-memory config. `POST /config/reload` only re-reads `sites/*.toml`, not `main.toml`. This is tracked in `plans/plan.md` Phase 9.3.
+Worker `common.rs` handler still logs only (full restart required for that worker type). Hot-reloadable vs restart-required field distinction is tracked for future implementation.
 
 ### Frontend Orphaned Files
 
-These admin UI files are fully implemented but unreachable (no route or sidebar entry):
+These admin UI files were previously orphaned but are now reachable:
 
-- `admin-ui/src/pages/system_status.rs` (217 lines)
-- `admin-ui/src/pages/threat_level.rs` (615 lines)
-- `admin-ui/src/config_docs.rs` (538 lines — field documentation, not declared as module)
+- `admin-ui/src/pages/system_status.rs` — now at Route `/system-status` ✅
+- `admin-ui/src/pages/threat_level.rs` — now at Route `/threat-level` ✅
+
+Still orphaned (not declared as module):
+- `admin-ui/src/config_docs.rs` (538 lines — field documentation)

@@ -4,14 +4,10 @@
 //! and WAF enforcement. Workers are spawned by the master process and
 //! communicate via IPC.
 
-use bytes::Bytes;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-
-#[cfg(unix)]
-use std::os::unix::net::UnixListener;
 
 use tokio::sync::Mutex as TokioMutex;
 
@@ -42,60 +38,7 @@ pub use unified_server::{
     run_unified_server_worker, setup_unified_server_panic_handler, UnifiedServerWorkerArgs,
 };
 
-#[allow(dead_code)]
-type MinifierCache = Arc<minifier::MinifierCache>;
 
-#[allow(dead_code)]
-fn get_content_type(path: &str) -> String {
-    path.rsplit('.')
-        .next()
-        .and_then(|e| crate::mime::MIME_REGISTRY.read().get_mime_for_extension(e))
-        .unwrap_or_else(|| "application/octet-stream".to_string())
-}
-
-#[allow(dead_code)]
-fn get_compressed_content(
-    cache: &MinifierCache,
-    site_id: &str,
-    path: &str,
-    minified_content: &[u8],
-    encoding: Option<&str>,
-) -> Result<Vec<u8>, String> {
-    let enc = match encoding {
-        Some("gzip") => minifier::Encoding::Gzip,
-        Some("br") => minifier::Encoding::Br,
-        _ => return Ok(minified_content.to_vec()),
-    };
-
-    let enc_key = minifier::CacheKey {
-        site_id: Arc::from(site_id),
-        path: Arc::from(path),
-        encoding: enc,
-    };
-
-    match cache.get(&enc_key) {
-        Some(entry) => Ok(entry.content.to_vec()),
-        None => {
-            let enc_for_gen = match encoding {
-                Some("gzip") => minifier::Encoding::Gzip,
-                Some("br") => minifier::Encoding::Br,
-                _ => return Ok(minified_content.to_vec()),
-            };
-            let content: Bytes = cache
-                .generate_compressed(site_id, path, minified_content, &enc_for_gen)
-                .map_err(|e| format!("{:?} compression failed: {}", enc_for_gen, e))?;
-            let content_vec = content.to_vec();
-            let _ = cache.write_compressed_to_disk(site_id, path, &content, &enc_for_gen);
-            Ok(content_vec)
-        }
-    }
-}
-
-#[cfg(unix)]
-#[allow(dead_code)]
-enum ListenerType {
-    Unix(UnixListener),
-}
 
 #[derive(Clone)]
 pub struct WorkerArgs {
@@ -423,8 +366,6 @@ struct StaticWorkerState {
     config_manager: Arc<std::sync::RwLock<ConfigManager>>,
     minifier_caches: Arc<std::sync::RwLock<HashMap<String, Arc<minifier::MinifierCache>>>>,
     compression_queue: Arc<std::sync::RwLock<Vec<CompressionTask>>>,
-    #[allow(dead_code)] // Reserved for future request ID tracking
-    next_request_id: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl StaticWorkerState {
@@ -514,7 +455,6 @@ pub async fn run_static_worker(
         config_manager: config_manager.clone(),
         minifier_caches,
         compression_queue,
-        next_request_id: Arc::new(std::sync::atomic::AtomicU64::new(1)),
     };
 
     response_builder::init_minifier_caches(&state, &main_config);
@@ -803,7 +743,6 @@ pub async fn run_static_worker(
                     config_manager: Arc::new(std::sync::RwLock::new(cm)),
                     minifier_caches: caches_for_reload.clone(),
                     compression_queue: queue_for_reload.clone(),
-                    next_request_id: Arc::new(std::sync::atomic::AtomicU64::new(1)),
                 };
                 response_builder::init_minifier_caches(&temp_state, &main_config);
             }

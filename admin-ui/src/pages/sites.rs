@@ -12,6 +12,7 @@ pub fn Sites() -> Html {
     let site_stats = use_state(|| Vec::<SiteStats>::new());
     let loading = use_state(|| true);
     let error = use_state(|| None as Option<String>);
+    let filter = use_state(String::new);
 
     {
         let sites = sites.clone();
@@ -62,6 +63,16 @@ pub fn Sites() -> Html {
         })
     };
 
+    let filter_lower = filter.to_lowercase();
+    let filtered: Vec<&SiteInfo> = sites.iter().filter(|site| {
+        if filter_lower.is_empty() {
+            return true;
+        }
+        site.id.to_lowercase().contains(&filter_lower)
+            || site.domains.iter().any(|d| d.to_lowercase().contains(&filter_lower))
+            || site.default_upstream.to_lowercase().contains(&filter_lower)
+    }).collect();
+
     html! {
         <div>
             <div class="flex justify-between items-center mb-6">
@@ -72,6 +83,22 @@ pub fn Sites() -> Html {
                 >
                     { "+ Add Site" }
                 </Link<Route>>
+            </div>
+
+            <div class="mb-4">
+                <input
+                    type="text"
+                    placeholder="Filter sites by name or domain..."
+                    value={(*filter).clone()}
+                    oninput={{
+                        let filter = filter.clone();
+                        Callback::from(move |e: InputEvent| {
+                            let input: web_sys::HtmlInputElement = e.target_unchecked_into();
+                            filter.set(input.value());
+                        })
+                    }}
+                    class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
             </div>
 
             if let Some(err) = &*error {
@@ -86,9 +113,13 @@ pub fn Sites() -> Html {
                 <div class="text-center py-8 text-secondary">
                     { "No sites configured. Click '+ Add Site' to create one." }
                 </div>
+            } else if filtered.is_empty() && !filter.is_empty() {
+                <div class="text-center py-8 text-secondary">
+                    { "No sites match your filter." }
+                </div>
             } else {
                 <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                    { for sites.iter().map(|site| {
+                    { for filtered.iter().map(|site| {
                         let site_id = site.id.clone();
                         let domains = site.domains.clone();
                         let routes_count = site.routes.keys().count();

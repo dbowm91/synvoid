@@ -1,5 +1,7 @@
 use quinn::{RecvStream, SendStream};
 
+use anyhow::Result;
+
 use super::messages::TunnelMessage;
 use crate::buffer::BufferPool;
 
@@ -119,7 +121,7 @@ impl std::error::Error for TunnelFramingError {}
 pub async fn read_message(
     recv_stream: &mut RecvStream,
     max_message_size: usize,
-) -> Result<TunnelMessage, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<TunnelMessage> {
     let codec = TunnelMessageCodec::new().with_max_message_size(max_message_size);
     codec.read(recv_stream).await.map_err(|e| e.into())
 }
@@ -127,13 +129,13 @@ pub async fn read_message(
 pub async fn write_message(
     send_stream: &mut SendStream,
     msg: &TunnelMessage,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<()> {
     let codec = TunnelMessageCodec::new();
     codec.write(send_stream, msg).await.map_err(|e| e.into())
 }
 
 pub async fn read_message_default(
     recv_stream: &mut RecvStream,
-) -> Result<TunnelMessage, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<TunnelMessage> {
     read_message(recv_stream, DEFAULT_MAX_MESSAGE_SIZE).await
 }

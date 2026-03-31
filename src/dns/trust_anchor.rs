@@ -54,7 +54,7 @@ impl TrustAnchorState {
         }
     }
 
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn from_state_str(s: &str) -> Option<Self> {
         match s {
             "Valid" => Some(TrustAnchorState::Valid),
             "Seen" => Some(TrustAnchorState::Seen),
@@ -356,8 +356,8 @@ impl TrustAnchorManager {
         let anchor_iter = stmt
             .query_map([], |row| {
                 let state_str: String = row.get(4)?;
-                let state =
-                    TrustAnchorState::from_str(&state_str).unwrap_or(TrustAnchorState::Missing);
+                let state = TrustAnchorState::from_state_str(&state_str)
+                    .unwrap_or(TrustAnchorState::Missing);
 
                 Ok(TrustAnchor {
                     key_id: row.get(0)?,
@@ -941,10 +941,10 @@ mod tests {
         assert_eq!(TrustAnchorState::Seen.as_str(), "Seen");
         assert_eq!(TrustAnchorState::Pending.as_str(), "Pending");
         assert_eq!(
-            TrustAnchorState::from_str("Valid"),
+            TrustAnchorState::from_state_str("Valid"),
             Some(TrustAnchorState::Valid)
         );
-        assert_eq!(TrustAnchorState::from_str("Invalid"), None);
+        assert_eq!(TrustAnchorState::from_state_str("Invalid"), None);
     }
 
     #[test]
@@ -1223,30 +1223,30 @@ mod tests {
     #[test]
     fn test_trust_anchor_state_from_str() {
         assert_eq!(
-            TrustAnchorState::from_str("Valid"),
+            TrustAnchorState::from_state_str("Valid"),
             Some(TrustAnchorState::Valid)
         );
         assert_eq!(
-            TrustAnchorState::from_str("Seen"),
+            TrustAnchorState::from_state_str("Seen"),
             Some(TrustAnchorState::Seen)
         );
         assert_eq!(
-            TrustAnchorState::from_str("Pending"),
+            TrustAnchorState::from_state_str("Pending"),
             Some(TrustAnchorState::Pending)
         );
         assert_eq!(
-            TrustAnchorState::from_str("Revoked"),
+            TrustAnchorState::from_state_str("Revoked"),
             Some(TrustAnchorState::Revoked)
         );
         assert_eq!(
-            TrustAnchorState::from_str("Removed"),
+            TrustAnchorState::from_state_str("Removed"),
             Some(TrustAnchorState::Removed)
         );
         assert_eq!(
-            TrustAnchorState::from_str("Missing"),
+            TrustAnchorState::from_state_str("Missing"),
             Some(TrustAnchorState::Missing)
         );
-        assert_eq!(TrustAnchorState::from_str("InvalidState"), None);
+        assert_eq!(TrustAnchorState::from_state_str("InvalidState"), None);
     }
 
     #[test]

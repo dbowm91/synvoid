@@ -8,6 +8,7 @@ pub fn Upstreams() -> Html {
     let upstreams = use_state(Vec::<SiteUpstreams>::new);
     let loading = use_state(|| true);
     let error = use_state(|| None::<String>);
+    let filter = use_state(String::new);
 
     {
         let upstreams = upstreams.clone();
@@ -69,8 +70,18 @@ pub fn Upstreams() -> Html {
         })
     };
 
-    let total_backends: usize = (*upstreams).iter().map(|s| s.backends.len()).sum();
-    let healthy_count: usize = (*upstreams)
+    let filter_lower = filter.to_lowercase();
+    let filtered: Vec<&SiteUpstreams> = (*upstreams).iter().filter(|site| {
+        if filter_lower.is_empty() {
+            return true;
+        }
+        site.site_id.to_lowercase().contains(&filter_lower)
+            || site.default_upstream.to_lowercase().contains(&filter_lower)
+            || site.backends.iter().any(|b| b.url.to_lowercase().contains(&filter_lower))
+    }).collect();
+
+    let total_backends: usize = filtered.iter().map(|s| s.backends.len()).sum();
+    let healthy_count: usize = filtered
         .iter()
         .flat_map(|s| s.backends.iter())
         .filter(|b| b.healthy)
@@ -102,6 +113,21 @@ pub fn Upstreams() -> Html {
                     <p class="text-secondary">{ "No sites configured. Add a site to see upstream servers." }</p>
                 </div>
             } else {
+                <div class="mb-4">
+                    <input
+                        type="text"
+                        placeholder="Filter upstreams by site ID or backend URL..."
+                        value={(*filter).clone()}
+                        oninput={{
+                            let filter = filter.clone();
+                            Callback::from(move |e: InputEvent| {
+                                let input: web_sys::HtmlInputElement = e.target_unchecked_into();
+                                filter.set(input.value());
+                            })
+                        }}
+                        class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                </div>
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
                     <div class="bg-secondary rounded-lg border border-default p-4">
                         <div class="flex items-center gap-3">
@@ -145,52 +171,58 @@ pub fn Upstreams() -> Html {
                 </div>
 
                 <div class="space-y-6">
-                    {for (*upstreams).iter().map(|site| {
-                        html! {
-                            <div class="bg-secondary rounded-lg border border-default p-4">
-                                <div class="flex items-center justify-between mb-4">
-                                    <div>
-                                        <h3 class="text-lg font-semibold">{ &site.site_id }</h3>
-                                        <p class="text-sm text-secondary">
-                                            { format!("Default: {}", site.default_upstream) }
-                                        </p>
+                    if filtered.is_empty() && !filter.is_empty() {
+                        <div class="bg-secondary rounded-lg border border-default p-8 text-center">
+                            <p class="text-secondary">{ "No upstreams match your filter." }</p>
+                        </div>
+                    } else {
+                        {for filtered.iter().map(|site| {
+                            html! {
+                                <div class="bg-secondary rounded-lg border border-default p-4">
+                                    <div class="flex items-center justify-between mb-4">
+                                        <div>
+                                            <h3 class="text-lg font-semibold">{ &site.site_id }</h3>
+                                            <p class="text-sm text-secondary">
+                                                { format!("Default: {}", site.default_upstream) }
+                                            </p>
+                                        </div>
+                                        <button
+                                            class="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700"
+                                            onclick={health_check(site.site_id.clone())}
+                                        >
+                                            { "Check Health" }
+                                        </button>
                                     </div>
-                                    <button
-                                        class="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700"
-                                        onclick={health_check(site.site_id.clone())}
-                                    >
-                                        { "Check Health" }
-                                    </button>
-                                </div>
 
-                                <div class="space-y-3">
-                                    {for site.backends.iter().map(|backend| {
-                                        let status_color = if backend.healthy { "bg-green-500" } else { "bg-red-500" };
-                                        let status_text = if backend.healthy { "Healthy" } else { "Unhealthy" };
+                                    <div class="space-y-3">
+                                        {for site.backends.iter().map(|backend| {
+                                            let status_color = if backend.healthy { "bg-green-500" } else { "bg-red-500" };
+                                            let status_text = if backend.healthy { "Healthy" } else { "Unhealthy" };
 
-                                        html! {
-                                            <div class="flex items-center justify-between p-3 bg-primary rounded border border-default">
-                                                <div class="flex items-center gap-3">
-                                                    <span class={format!("w-2.5 h-2.5 rounded-full {}", status_color)} />
-                                                    <span class="font-mono text-sm">{ &backend.url }</span>
-                                                    <span class="text-xs text-secondary">{ status_text }</span>
+                                            html! {
+                                                <div class="flex items-center justify-between p-3 bg-primary rounded border border-default">
+                                                    <div class="flex items-center gap-3">
+                                                        <span class={format!("w-2.5 h-2.5 rounded-full {}", status_color)} />
+                                                        <span class="font-mono text-sm">{ &backend.url }</span>
+                                                        <span class="text-xs text-secondary">{ status_text }</span>
+                                                    </div>
+                                                    <div class="flex items-center gap-6 text-sm text-secondary">
+                                                        <span>{ format!("{}/{} conn", backend.current_connections, backend.max_connections) }</span>
+                                                        <span>{ format!("weight: {}", backend.weight) }</span>
+                                                        if backend.consecutive_failures > 0 {
+                                                            <span class="text-red-500">{ format!("{} failures", backend.consecutive_failures) }</span>
+                                                        } else {
+                                                            <span class="text-green-500">{ "OK" }</span>
+                                                        }
+                                                    </div>
                                                 </div>
-                                                <div class="flex items-center gap-6 text-sm text-secondary">
-                                                    <span>{ format!("{}/{} conn", backend.current_connections, backend.max_connections) }</span>
-                                                    <span>{ format!("weight: {}", backend.weight) }</span>
-                                                    if backend.consecutive_failures > 0 {
-                                                        <span class="text-red-500">{ format!("{} failures", backend.consecutive_failures) }</span>
-                                                    } else {
-                                                        <span class="text-green-500">{ "OK" }</span>
-                                                    }
-                                                </div>
-                                            </div>
-                                        }
-                                    })}
+                                            }
+                                        })}
+                                    </div>
                                 </div>
-                            </div>
-                        }
-                    })}
+                            }
+                        })}
+                    }
                 </div>
             }
         </div>

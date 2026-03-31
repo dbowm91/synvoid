@@ -106,18 +106,35 @@ impl AdminConfig {
             });
         }
 
-        let token = self.resolve_token();
-
-        if token.len() < MIN_TOKEN_LENGTH {
-            if self.token == "changeme" && self.token_env_var.is_none() {
-                let generated = Self::generate_token();
-                tracing::info!("Generated admin token: {}", generated);
+        if self.token == "changeme" && self.token_env_var.is_none() {
+            if cfg!(not(debug_assertions)) {
+                return Err(ConfigValidationError {
+                    field: "admin.token".to_string(),
+                    message: "Default token 'changeme' is not allowed in release builds. \
+                              Set admin.token or admin.token_env_var."
+                        .to_string(),
+                });
             }
+            tracing::warn!("Admin token is still set to default 'changeme'. Set admin.token or admin.token_env_var for production.");
+            let generated = Self::generate_token();
+            tracing::info!("Generated admin token: {}", generated);
             return Err(ConfigValidationError {
                 field: "admin.token".to_string(),
                 message: format!(
                     "Admin token must be at least {} characters for security. \
                      See startup log for generated token.",
+                    MIN_TOKEN_LENGTH
+                ),
+            });
+        }
+
+        let token = self.resolve_token();
+
+        if token.len() < MIN_TOKEN_LENGTH {
+            return Err(ConfigValidationError {
+                field: "admin.token".to_string(),
+                message: format!(
+                    "Admin token must be at least {} characters for security.",
                     MIN_TOKEN_LENGTH
                 ),
             });
@@ -134,18 +151,6 @@ impl AdminConfig {
                     ),
                 });
             }
-        }
-
-        if token == "changeme" && self.token_env_var.is_none() {
-            if cfg!(not(debug_assertions)) {
-                return Err(ConfigValidationError {
-                    field: "admin.token".to_string(),
-                    message: "Default token 'changeme' is not allowed in release builds. \
-                              Set admin.token or admin.token_env_var."
-                        .to_string(),
-                });
-            }
-            tracing::warn!("Admin token is still set to default 'changeme'. Set admin.token or admin.token_env_var for production.");
         }
 
         if let Some(ref origin) = self.cors.allow_origin {

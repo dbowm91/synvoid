@@ -33,64 +33,6 @@ pub fn sign_data(data: &[u8], key: &ZoneSigningKey) -> Result<Vec<u8>, String> {
     }
 }
 
-#[allow(dead_code)]
-pub(super) fn extract_rsa_modulus(der_bytes: &[u8]) -> Vec<u8> {
-    let mut i = 0;
-    if der_bytes.len() < 2 || der_bytes[0] != 0x30 {
-        return Vec::new();
-    }
-    i += 1 + len_of_der_length(der_bytes[i]);
-
-    if i >= der_bytes.len() || der_bytes[i] != 0x02 {
-        return Vec::new();
-    }
-    i += 1 + len_of_der_length(der_bytes[i]);
-
-    while i < der_bytes.len() && der_bytes[i] == 0x02 {
-        i += 1 + len_of_der_length(der_bytes[i]);
-        while i < der_bytes.len() && (der_bytes[i] & 0x80) == 0x80 {
-            i += 1;
-        }
-        i += 1;
-    }
-
-    if i >= der_bytes.len() || der_bytes[i] != 0x03 {
-        return Vec::new();
-    }
-    i += 1 + len_of_der_length(der_bytes[i]);
-
-    i += 1;
-    let bit_string_len = decode_der_length(&der_bytes[i..]).unwrap_or(0);
-    i += len_of_der_length(der_bytes[i]);
-
-    if i >= der_bytes.len() || der_bytes[i] != 0x30 {
-        return Vec::new();
-    }
-    i += 1 + len_of_der_length(der_bytes[i]);
-
-    if i >= der_bytes.len() || der_bytes[i] != 0x30 {
-        return Vec::new();
-    }
-    i += 1 + len_of_der_length(der_bytes[i]);
-
-    if i >= der_bytes.len() {
-        return Vec::new();
-    }
-
-    let alg_len = decode_der_length(&der_bytes[i..]).unwrap_or(0);
-    i += len_of_der_length(der_bytes[i]);
-    i += alg_len;
-
-    if i >= der_bytes.len() {
-        return Vec::new();
-    }
-
-    let key_start = i;
-    let key_end = std::cmp::min(i + bit_string_len - alg_len - 2, der_bytes.len());
-
-    der_bytes[key_start..key_end].to_vec()
-}
-
 pub fn create_rrsig_record(
     key: &ZoneSigningKey,
     type_covered: u16,
@@ -339,35 +281,6 @@ pub fn base32_encode(input: &[u8]) -> String {
     }
 
     result
-}
-
-#[allow(dead_code)]
-fn len_of_der_length(byte: u8) -> usize {
-    if byte < 0x80 {
-        1
-    } else {
-        1 + (byte & 0x7f) as usize
-    }
-}
-
-#[allow(dead_code)]
-fn decode_der_length(bytes: &[u8]) -> Option<usize> {
-    if bytes.is_empty() {
-        return None;
-    }
-    if bytes[0] < 0x80 {
-        Some(bytes[0] as usize)
-    } else {
-        let num_bytes = (bytes[0] & 0x7f) as usize;
-        if num_bytes > bytes.len() - 1 || num_bytes > 4 {
-            return None;
-        }
-        let mut result = 0usize;
-        for i in 1..=num_bytes {
-            result = (result << 8) | (bytes[i] as usize);
-        }
-        Some(result)
-    }
 }
 
 pub fn sign_record(

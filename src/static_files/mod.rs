@@ -50,9 +50,9 @@ pub struct StaticFileHandler {
     minified_cache_dir: Option<PathBuf>,
     #[allow(dead_code)] // Reserved for minifier integration
     minifier_cache: Option<Arc<MinifierCache>>,
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Reserved for minifier client integration
     minifier_client: Option<client::MinifierClient>,
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Reserved for async minifier client integration
     async_minifier_client: Option<client::AsyncMinifierClient>,
     enable_zero_copy: bool,
     mesh_image_protection: Option<MeshImageProtectionConfig>,

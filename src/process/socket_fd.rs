@@ -277,7 +277,8 @@ pub fn create_listening_socket(port: u16, reuse_port: bool) -> Result<RawFd, Soc
         .map_err(nix_to_io_error)
         .map_err(SocketFDError::BindFailed)?;
 
-    let backlog = Backlog::new(1024).unwrap_or_else(|_| Backlog::new(128).unwrap());
+    let backlog = Backlog::new(1024)
+        .unwrap_or_else(|_| Backlog::new(128).expect("Backlog 128 should always be valid"));
     socket::listen(&fd, backlog)
         .map_err(nix_to_io_error)
         .map_err(SocketFDError::ListenFailed)?;
@@ -334,7 +335,8 @@ pub fn create_listening_socket_v6(port: u16, reuse_port: bool) -> Result<RawFd, 
         .map_err(nix_to_io_error)
         .map_err(SocketFDError::BindFailed)?;
 
-    let backlog = Backlog::new(1024).unwrap_or_else(|_| Backlog::new(128).unwrap());
+    let backlog = Backlog::new(1024)
+        .unwrap_or_else(|_| Backlog::new(128).expect("Backlog 128 should always be valid"));
     socket::listen(&fd, backlog)
         .map_err(nix_to_io_error)
         .map_err(SocketFDError::ListenFailed)?;

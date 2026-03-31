@@ -664,15 +664,8 @@ impl RecordStoreManager {
             return local_record;
         }
 
-        let routing_manager = self.routing_state.read().routing_manager.clone();
-        let Some(rm) = routing_manager else {
-            return None;
-        };
-
-        let transport_opt = self.routing_state.read().transport.clone();
-        let Some(transport) = transport_opt else {
-            return None;
-        };
+        let rm = self.routing_state.read().routing_manager.clone()?;
+        let transport = self.routing_state.read().transport.clone()?;
 
         let dht_key = crate::mesh::dht::keys::DhtKey::from_str(key);
 

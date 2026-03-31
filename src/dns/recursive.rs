@@ -107,7 +107,8 @@ impl RecursiveDnsServer {
                 HickoryResolver::with_cloudflare()
                     .map_err(|e| RecursiveDnsError::UpstreamFailed(e.to_string()))?,
             ),
-            crate::config::dns::RecursiveUpstreamProvider::System | _ => {
+            crate::config::dns::RecursiveUpstreamProvider::System
+            | crate::config::dns::RecursiveUpstreamProvider::Custom => {
                 let upstream_ips = config.upstream_ips();
                 if upstream_ips.is_empty() {
                     Arc::new(

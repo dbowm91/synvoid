@@ -117,7 +117,7 @@ impl Protocol {
         }
     }
 
-    pub fn from_str(s: &str) -> Self {
+    pub fn from_protocol_str(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "smtp" => Protocol::Smtp,
             "imap" => Protocol::Imap,
@@ -181,7 +181,7 @@ impl crate::filter::Protocol for Protocol {
     }
 
     fn from_str(s: &str) -> Self {
-        Protocol::from_str(s)
+        Protocol::from_protocol_str(s)
     }
 }
 

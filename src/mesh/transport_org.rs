@@ -1,3 +1,5 @@
+#![allow(dead_code)] // Reserved for future organization protocol handling
+
 use crate::mesh::transport::MeshTransport;
 
 use crate::mesh::protocol::MeshMessage;
@@ -207,7 +209,7 @@ impl MeshTransport {
     ) {
         let timestamp = crate::utils::safe_unix_timestamp();
 
-        let signature = if approved { Vec::new() } else { Vec::new() };
+        let signature = Vec::new();
 
         let response = crate::mesh::protocol::MeshMessage::OrgRegistrationResponse {
             request_id: request_id.into(),

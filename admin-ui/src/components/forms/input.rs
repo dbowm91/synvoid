@@ -14,6 +14,8 @@ pub struct InputProps {
     pub help: Option<String>,
     #[prop_or_default]
     pub on_change: Callback<String>,
+    #[prop_or_default]
+    pub badge: Option<yew::Html>,
 }
 
 #[function_component]
@@ -34,10 +36,15 @@ pub fn Input(props: &InputProps) -> Html {
         input.value()
     });
 
+    let badge = props.badge.clone();
+
     html! {
         <div class="mb-4">
             <label class="block text-sm font-medium text-primary mb-1" for={name.clone()}>
                 { label }
+                if let Some(b) = badge {
+                    { b }
+                }
             </label>
             <input
                 type={input_type}

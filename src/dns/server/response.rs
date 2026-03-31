@@ -712,6 +712,7 @@ impl DnsServer {
         Ok(result)
     }
 
+    #[allow(dead_code)] // Reserved for DNS URI record support
     pub(super) fn parse_uri_value(value: &str) -> Result<Vec<u8>, String> {
         let parts: Vec<&str> = value.split_whitespace().collect();
         if parts.len() < 3 {
@@ -747,6 +748,7 @@ impl DnsServer {
         Ok(result)
     }
 
+    #[allow(dead_code)] // Reserved for DNS RP record support
     pub(super) fn parse_rp_value(value: &str) -> Result<Vec<u8>, String> {
         let parts: Vec<&str> = value.split_whitespace().collect();
         if parts.len() < 2 {
@@ -791,6 +793,7 @@ impl DnsServer {
         Ok(result)
     }
 
+    #[allow(dead_code)] // Reserved for DNS AFSDB record support
     pub(super) fn parse_afsdb_value(value: &str) -> Result<Vec<u8>, String> {
         let parts: Vec<&str> = value.split_whitespace().collect();
         if parts.len() < 2 {

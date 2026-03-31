@@ -273,7 +273,7 @@ impl PidFileManager {
     /// Platform-specific implementation:
     /// - Unix: Uses `kill(pid, 0)` to check process existence without sending a signal
     /// - Windows: Uses `tasklist` command to check if process exists
-    /// Both approaches are standard for their platforms.
+    ///   Both approaches are standard for their platforms.
     pub fn is_running(&self) -> bool {
         if let Some(content) = self.read_pid() {
             #[cfg(unix)]

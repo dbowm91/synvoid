@@ -179,8 +179,10 @@ impl TestModeConfig {
     }
 
     pub fn from_flags(flags: &[&str]) -> Self {
-        let mut config = Self::default();
-        config.enabled = true;
+        let mut config = Self {
+            enabled: true,
+            ..Self::default()
+        };
 
         for flag in flags {
             match *flag {

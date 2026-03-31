@@ -168,8 +168,7 @@ impl QuicRuntime {
 
         let idle_timeout_varint = VarInt::try_from(self.max_idle_timeout.as_millis() as u64)
             .unwrap_or_else(|_| VarInt::from(300_000u32));
-        let idle_timeout = IdleTimeout::try_from(idle_timeout_varint)
-            .unwrap_or_else(|_| IdleTimeout::from(VarInt::from(300_000u32)));
+        let idle_timeout = IdleTimeout::from(idle_timeout_varint);
         transport.max_idle_timeout(Some(idle_timeout));
 
         Arc::new(transport)

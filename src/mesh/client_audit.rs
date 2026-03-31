@@ -193,11 +193,11 @@ impl ClientAuditManager {
 
     fn has_leading_zeros(&self, hash: &[u8], zeros: usize) -> bool {
         let mut bit_index = 0;
-        for i in 0..hash.len() {
+        for byte in hash {
             if bit_index >= zeros {
                 return true;
             }
-            let byte = hash[i];
+            let byte = *byte;
             for j in (0..8).rev() {
                 if bit_index >= zeros {
                     return true;

@@ -621,7 +621,6 @@ impl DhtQueryExecutor {
             let query_futures: Vec<_> = limited_peers
                 .iter()
                 .map(|peer| {
-                    let target_node_id = target_node_id;
                     let local_id = local_id.clone();
                     let target_key = target_key.to_string();
 

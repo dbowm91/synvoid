@@ -6,6 +6,39 @@ use crate::types::{ThemeResponse, UpdateThemeRequest};
 use wasm_bindgen::JsCast;
 use yew::prelude::*;
 
+fn restart_badge() -> Html {
+    html! {
+        <span class="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-yellow-500/20 text-yellow-400 border border-yellow-500/30">
+            { "Requires restart" }
+        </span>
+    }
+}
+
+fn bytes_to_human(bytes: usize) -> String {
+    if bytes >= 1_073_741_824 {
+        format!("{}GB", bytes / 1_073_741_824)
+    } else if bytes >= 1_048_576 {
+        format!("{}MB", bytes / 1_048_576)
+    } else if bytes >= 1024 {
+        format!("{}KB", bytes / 1024)
+    } else {
+        format!("{}", bytes)
+    }
+}
+
+fn human_to_bytes(s: &str) -> usize {
+    let s = s.trim().to_uppercase();
+    if let Some(val) = s.strip_suffix("GB") {
+        val.trim().parse::<usize>().unwrap_or(0) * 1_073_741_824
+    } else if let Some(val) = s.strip_suffix("MB") {
+        val.trim().parse::<usize>().unwrap_or(0) * 1_048_576
+    } else if let Some(val) = s.strip_suffix("KB") {
+        val.trim().parse::<usize>().unwrap_or(0) * 1024
+    } else {
+        s.parse::<usize>().unwrap_or(0)
+    }
+}
+
 fn export_config_to_file(json: &str) {
     let blob =
         web_sys::Blob::new_with_str_sequence(&js_sys::Array::of1(&json.into())).unwrap();
@@ -331,6 +364,14 @@ fn ServerSection() -> Html {
             saving.set(true);
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
+                match api.validate_config().await {
+                    Ok(_) => {}
+                    Err(e) => {
+                        saving.set(false);
+                        toast_error(&format!("Validation failed: {}", e));
+                        return;
+                    }
+                }
                 let _ = api.update_main_config(&new_config).await;
                 saving.set(false);
                 original_host.set((*host).clone());
@@ -350,6 +391,7 @@ fn ServerSection() -> Html {
                     value={(*host).clone()}
                     on_change={on_host_change}
                     help="IP address to bind the main server to"
+                    badge={restart_badge()}
                 />
                 <Input
                     label="Listen Port"
@@ -358,6 +400,7 @@ fn ServerSection() -> Html {
                     on_change={on_port_change}
                     input_type="number"
                     help="TCP port for the main HTTP server"
+                    badge={restart_badge()}
                 />
             </div>
 
@@ -390,6 +433,153 @@ fn ServerSection() -> Html {
 
 #[function_component]
 fn HttpSection() -> Html {
+    let loading = use_state(|| true);
+    let saving = use_state(|| false);
+
+    let header_read_timeout = use_state(|| "10".to_string());
+    let keep_alive_timeout = use_state(|| "60".to_string());
+    let max_headers = use_state(|| "128".to_string());
+    let max_request_size = use_state(|| "1MB".to_string());
+    let max_header_size_ingress = use_state(|| "4KB".to_string());
+    let max_header_size_egress = use_state(|| "16KB".to_string());
+
+    let original_header_read_timeout = use_state(|| "10".to_string());
+    let original_keep_alive_timeout = use_state(|| "60".to_string());
+    let original_max_headers = use_state(|| "128".to_string());
+    let original_max_request_size = use_state(|| "1MB".to_string());
+    let original_max_header_size_ingress = use_state(|| "4KB".to_string());
+    let original_max_header_size_egress = use_state(|| "16KB".to_string());
+
+    let is_dirty = *header_read_timeout != *original_header_read_timeout
+        || *keep_alive_timeout != *original_keep_alive_timeout
+        || *max_headers != *original_max_headers
+        || *max_request_size != *original_max_request_size
+        || *max_header_size_ingress != *original_max_header_size_ingress
+        || *max_header_size_egress != *original_max_header_size_egress;
+
+    use_effect_with((), {
+        let loading = loading.clone();
+        let header_read_timeout = header_read_timeout.clone();
+        let keep_alive_timeout = keep_alive_timeout.clone();
+        let max_headers = max_headers.clone();
+        let max_request_size = max_request_size.clone();
+        let max_header_size_ingress = max_header_size_ingress.clone();
+        let max_header_size_egress = max_header_size_egress.clone();
+        let original_header_read_timeout = original_header_read_timeout.clone();
+        let original_keep_alive_timeout = original_keep_alive_timeout.clone();
+        let original_max_headers = original_max_headers.clone();
+        let original_max_request_size = original_max_request_size.clone();
+        let original_max_header_size_ingress = original_max_header_size_ingress.clone();
+        let original_max_header_size_egress = original_max_header_size_egress.clone();
+        move |_| {
+            wasm_bindgen_futures::spawn_local(async move {
+                let api = ApiService::new();
+                let result = api.get_http_config().await;
+                loading.set(false);
+
+                if let Ok(data) = result {
+                    if let Some(config) = data.get("config") {
+                        if let Some(v) = config.get("header_read_timeout_secs").and_then(|v| v.as_u64()) {
+                            let s = v.to_string();
+                            header_read_timeout.set(s.clone());
+                            original_header_read_timeout.set(s);
+                        }
+                        if let Some(v) = config.get("keep_alive_timeout_secs").and_then(|v| v.as_u64()) {
+                            let s = v.to_string();
+                            keep_alive_timeout.set(s.clone());
+                            original_keep_alive_timeout.set(s);
+                        }
+                        if let Some(v) = config.get("max_headers").and_then(|v| v.as_u64()) {
+                            let s = v.to_string();
+                            max_headers.set(s.clone());
+                            original_max_headers.set(s);
+                        }
+                        if let Some(v) = config.get("max_request_size").and_then(|v| v.as_u64()) {
+                            let s = bytes_to_human(v as usize);
+                            max_request_size.set(s.clone());
+                            original_max_request_size.set(s);
+                        }
+                        if let Some(v) = config.get("max_header_size_ingress").and_then(|v| v.as_u64()) {
+                            let s = bytes_to_human(v as usize);
+                            max_header_size_ingress.set(s.clone());
+                            original_max_header_size_ingress.set(s);
+                        }
+                        if let Some(v) = config.get("max_header_size_egress").and_then(|v| v.as_u64()) {
+                            let s = bytes_to_human(v as usize);
+                            max_header_size_egress.set(s.clone());
+                            original_max_header_size_egress.set(s);
+                        }
+                    }
+                }
+            });
+            || {}
+        }
+    });
+
+    if *loading {
+        return html! { <LoadingSpinner /> };
+    }
+
+    let on_change = |state: UseStateHandle<String>| -> Callback<String> {
+        Callback::from(move |value: String| {
+            state.set(value);
+        })
+    };
+
+    let on_save = {
+        let saving = saving.clone();
+        let header_read_timeout = header_read_timeout.clone();
+        let keep_alive_timeout = keep_alive_timeout.clone();
+        let max_headers = max_headers.clone();
+        let max_request_size = max_request_size.clone();
+        let max_header_size_ingress = max_header_size_ingress.clone();
+        let max_header_size_egress = max_header_size_egress.clone();
+        let original_header_read_timeout = original_header_read_timeout.clone();
+        let original_keep_alive_timeout = original_keep_alive_timeout.clone();
+        let original_max_headers = original_max_headers.clone();
+        let original_max_request_size = original_max_request_size.clone();
+        let original_max_header_size_ingress = original_max_header_size_ingress.clone();
+        let original_max_header_size_egress = original_max_header_size_egress.clone();
+        Callback::from(move |_| {
+            let config = serde_json::json!({
+                "config": {
+                    "header_read_timeout_secs": header_read_timeout.parse::<u64>().unwrap_or(10),
+                    "keep_alive_timeout_secs": keep_alive_timeout.parse::<u64>().unwrap_or(60),
+                    "max_headers": max_headers.parse::<usize>().unwrap_or(128),
+                    "max_request_size": human_to_bytes(&max_request_size),
+                    "max_header_size_ingress": human_to_bytes(&max_header_size_ingress),
+                    "max_header_size_egress": human_to_bytes(&max_header_size_egress),
+                }
+            });
+            let saving = saving.clone();
+            let header_read_timeout = header_read_timeout.clone();
+            let keep_alive_timeout = keep_alive_timeout.clone();
+            let max_headers = max_headers.clone();
+            let max_request_size = max_request_size.clone();
+            let max_header_size_ingress = max_header_size_ingress.clone();
+            let max_header_size_egress = max_header_size_egress.clone();
+            let original_header_read_timeout = original_header_read_timeout.clone();
+            let original_keep_alive_timeout = original_keep_alive_timeout.clone();
+            let original_max_headers = original_max_headers.clone();
+            let original_max_request_size = original_max_request_size.clone();
+            let original_max_header_size_ingress = original_max_header_size_ingress.clone();
+            let original_max_header_size_egress = original_max_header_size_egress.clone();
+            saving.set(true);
+            wasm_bindgen_futures::spawn_local(async move {
+                let api = ApiService::new();
+                let _ = api.update_http_config(&config).await;
+                saving.set(false);
+                original_header_read_timeout.set((*header_read_timeout).clone());
+                original_keep_alive_timeout.set((*keep_alive_timeout).clone());
+                original_max_headers.set((*max_headers).clone());
+                original_max_request_size.set((*max_request_size).clone());
+                original_max_header_size_ingress.set((*max_header_size_ingress).clone());
+                original_max_header_size_egress.set((*max_header_size_egress).clone());
+                toast_success("HTTP configuration saved");
+            });
+        })
+    };
+
     html! {
         <div class="space-y-6">
             <div class="grid grid-cols-2 gap-4">
@@ -397,13 +587,15 @@ fn HttpSection() -> Html {
                     label="Header Read Timeout (secs)"
                     name="header_read_timeout"
                     input_type="number"
-                    value="10"
+                    value={(*header_read_timeout).clone()}
+                    on_change={on_change(header_read_timeout.clone())}
                 />
                 <Input
                     label="Keep-Alive Timeout (secs)"
                     name="keep_alive_timeout"
                     input_type="number"
-                    value="60"
+                    value={(*keep_alive_timeout).clone()}
+                    on_change={on_change(keep_alive_timeout.clone())}
                 />
             </div>
 
@@ -412,12 +604,14 @@ fn HttpSection() -> Html {
                     label="Max Headers"
                     name="max_headers"
                     input_type="number"
-                    value="128"
+                    value={(*max_headers).clone()}
+                    on_change={on_change(max_headers.clone())}
                 />
                 <Input
                     label="Max Request Size"
                     name="max_request_size"
-                    value="1MB"
+                    value={(*max_request_size).clone()}
+                    on_change={on_change(max_request_size.clone())}
                     help="Maximum request body size"
                 />
             </div>
@@ -426,13 +620,29 @@ fn HttpSection() -> Html {
                 <Input
                     label="Max Header Size (Ingress)"
                     name="max_header_size_ingress"
-                    value="4KB"
+                    value={(*max_header_size_ingress).clone()}
+                    on_change={on_change(max_header_size_ingress.clone())}
                 />
                 <Input
                     label="Max Header Size (Egress)"
                     name="max_header_size_egress"
-                    value="16KB"
+                    value={(*max_header_size_egress).clone()}
+                    on_change={on_change(max_header_size_egress.clone())}
                 />
+            </div>
+
+            <div class="flex justify-end">
+                <button
+                    onclick={on_save}
+                    disabled={*saving}
+                    class={if is_dirty {
+                        "px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 disabled:opacity-50"
+                    } else {
+                        "px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                    }}
+                >
+                    { if *saving { "Saving..." } else if is_dirty { "Save*" } else { "Save" } }
+                </button>
             </div>
         </div>
     }
@@ -440,12 +650,143 @@ fn HttpSection() -> Html {
 
 #[function_component]
 fn LoggingSection() -> Html {
+    let loading = use_state(|| true);
+    let saving = use_state(|| false);
+
+    let log_level = use_state(|| "info".to_string());
+    let access_log_format = use_state(|| "json".to_string());
+    let access_log_dir = use_state(|| "/var/log/rustwaf".to_string());
+    let retention_days = use_state(|| "5".to_string());
+    let max_entries_per_file = use_state(|| "50000".to_string());
+
+    let original_log_level = use_state(|| "info".to_string());
+    let original_access_log_format = use_state(|| "json".to_string());
+    let original_access_log_dir = use_state(|| "/var/log/rustwaf".to_string());
+    let original_retention_days = use_state(|| "5".to_string());
+    let original_max_entries_per_file = use_state(|| "50000".to_string());
+
+    let is_dirty = *log_level != *original_log_level
+        || *access_log_format != *original_access_log_format
+        || *access_log_dir != *original_access_log_dir
+        || *retention_days != *original_retention_days
+        || *max_entries_per_file != *original_max_entries_per_file;
+
+    use_effect_with((), {
+        let loading = loading.clone();
+        let log_level = log_level.clone();
+        let access_log_format = access_log_format.clone();
+        let access_log_dir = access_log_dir.clone();
+        let retention_days = retention_days.clone();
+        let max_entries_per_file = max_entries_per_file.clone();
+        let original_log_level = original_log_level.clone();
+        let original_access_log_format = original_access_log_format.clone();
+        let original_access_log_dir = original_access_log_dir.clone();
+        let original_retention_days = original_retention_days.clone();
+        let original_max_entries_per_file = original_max_entries_per_file.clone();
+        move |_| {
+            wasm_bindgen_futures::spawn_local(async move {
+                let api = ApiService::new();
+                let result = api.get_logging_config().await;
+                loading.set(false);
+
+                if let Ok(data) = result {
+                    if let Some(config) = data.get("config") {
+                        if let Some(v) = config.get("level").and_then(|v| v.as_str()) {
+                            let s = v.to_string();
+                            log_level.set(s.clone());
+                            original_log_level.set(s);
+                        }
+                        if let Some(v) = config.get("access_log_format").and_then(|v| v.as_str()) {
+                            let s = v.to_string();
+                            access_log_format.set(s.clone());
+                            original_access_log_format.set(s);
+                        }
+                        if let Some(v) = config.get("access_log_dir").and_then(|v| v.as_str()) {
+                            let s = v.to_string();
+                            access_log_dir.set(s.clone());
+                            original_access_log_dir.set(s);
+                        }
+                        if let Some(v) = config.get("retention_days").and_then(|v| v.as_u64()) {
+                            let s = v.to_string();
+                            retention_days.set(s.clone());
+                            original_retention_days.set(s);
+                        }
+                        if let Some(v) = config.get("max_entries_per_file").and_then(|v| v.as_u64()) {
+                            let s = v.to_string();
+                            max_entries_per_file.set(s.clone());
+                            original_max_entries_per_file.set(s);
+                        }
+                    }
+                }
+            });
+            || {}
+        }
+    });
+
+    if *loading {
+        return html! { <LoadingSpinner /> };
+    }
+
+    let on_change = |state: UseStateHandle<String>| -> Callback<String> {
+        Callback::from(move |value: String| {
+            state.set(value);
+        })
+    };
+
+    let on_save = {
+        let saving = saving.clone();
+        let log_level = log_level.clone();
+        let access_log_format = access_log_format.clone();
+        let access_log_dir = access_log_dir.clone();
+        let retention_days = retention_days.clone();
+        let max_entries_per_file = max_entries_per_file.clone();
+        let original_log_level = original_log_level.clone();
+        let original_access_log_format = original_access_log_format.clone();
+        let original_access_log_dir = original_access_log_dir.clone();
+        let original_retention_days = original_retention_days.clone();
+        let original_max_entries_per_file = original_max_entries_per_file.clone();
+        Callback::from(move |_| {
+            let config = serde_json::json!({
+                "config": {
+                    "level": (*log_level).clone(),
+                    "access_log_format": (*access_log_format).clone(),
+                    "access_log_dir": (*access_log_dir).clone(),
+                    "retention_days": retention_days.parse::<u32>().unwrap_or(5),
+                    "max_entries_per_file": max_entries_per_file.parse::<u32>().unwrap_or(50000),
+                }
+            });
+            let saving = saving.clone();
+            let log_level = log_level.clone();
+            let access_log_format = access_log_format.clone();
+            let access_log_dir = access_log_dir.clone();
+            let retention_days = retention_days.clone();
+            let max_entries_per_file = max_entries_per_file.clone();
+            let original_log_level = original_log_level.clone();
+            let original_access_log_format = original_access_log_format.clone();
+            let original_access_log_dir = original_access_log_dir.clone();
+            let original_retention_days = original_retention_days.clone();
+            let original_max_entries_per_file = original_max_entries_per_file.clone();
+            saving.set(true);
+            wasm_bindgen_futures::spawn_local(async move {
+                let api = ApiService::new();
+                let _ = api.update_logging_config(&config).await;
+                saving.set(false);
+                original_log_level.set((*log_level).clone());
+                original_access_log_format.set((*access_log_format).clone());
+                original_access_log_dir.set((*access_log_dir).clone());
+                original_retention_days.set((*retention_days).clone());
+                original_max_entries_per_file.set((*max_entries_per_file).clone());
+                toast_success("Logging configuration saved");
+            });
+        })
+    };
+
     html! {
         <div class="space-y-6">
             <Select
                 label="Log Level"
                 name="log_level"
-                value="info"
+                value={(*log_level).clone()}
                 options={vec![
                     ("trace".to_string(), "Trace".to_string()),
                     ("debug".to_string(), "Debug".to_string()),
@@ -454,22 +795,25 @@ fn LoggingSection() -> Html {
                     ("error".to_string(), "Error".to_string()),
                 ]}
                 help="Minimum log level to record"
+                on_change={on_change(log_level.clone())}
             />
 
             <div class="grid grid-cols-2 gap-4">
                 <Select
                     label="Access Log Format"
                     name="access_log_format"
-                    value="json"
+                    value={(*access_log_format).clone()}
                     options={vec![
                         ("json".to_string(), "JSON".to_string()),
                         ("text".to_string(), "Plain Text".to_string()),
                     ]}
+                    on_change={on_change(access_log_format.clone())}
                 />
                 <Input
                     label="Access Log Directory"
                     name="access_log_dir"
-                    value="/var/log/rustwaf"
+                    value={(*access_log_dir).clone()}
+                    on_change={on_change(access_log_dir.clone())}
                 />
             </div>
 
@@ -478,14 +822,30 @@ fn LoggingSection() -> Html {
                     label="Retention Days"
                     name="retention_days"
                     input_type="number"
-                    value="5"
+                    value={(*retention_days).clone()}
+                    on_change={on_change(retention_days.clone())}
                 />
                 <Input
                     label="Max Entries Per File"
                     name="max_entries_per_file"
                     input_type="number"
-                    value="50000"
+                    value={(*max_entries_per_file).clone()}
+                    on_change={on_change(max_entries_per_file.clone())}
                 />
+            </div>
+
+            <div class="flex justify-end">
+                <button
+                    onclick={on_save}
+                    disabled={*saving}
+                    class={if is_dirty {
+                        "px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 disabled:opacity-50"
+                    } else {
+                        "px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                    }}
+                >
+                    { if *saving { "Saving..." } else if is_dirty { "Save*" } else { "Save" } }
+                </button>
             </div>
         </div>
     }
@@ -493,6 +853,100 @@ fn LoggingSection() -> Html {
 
 #[function_component]
 fn MetricsSection() -> Html {
+    let loading = use_state(|| true);
+    let saving = use_state(|| false);
+
+    let metrics_enabled = use_state(|| true);
+    let metrics_port = use_state(|| "9090".to_string());
+
+    let original_metrics_enabled = use_state(|| true);
+    let original_metrics_port = use_state(|| "9090".to_string());
+
+    let is_dirty = *metrics_enabled != *original_metrics_enabled
+        || *metrics_port != *original_metrics_port;
+
+    use_effect_with((), {
+        let loading = loading.clone();
+        let metrics_enabled = metrics_enabled.clone();
+        let metrics_port = metrics_port.clone();
+        let original_metrics_enabled = original_metrics_enabled.clone();
+        let original_metrics_port = original_metrics_port.clone();
+        move |_| {
+            wasm_bindgen_futures::spawn_local(async move {
+                let api = ApiService::new();
+                let result = api.get_main_config().await;
+                loading.set(false);
+
+                if let Ok(data) = result {
+                    if let Some(config) = data.get("config") {
+                        if let Some(metrics) = config.get("metrics") {
+                            if let Some(v) = metrics.get("enabled").and_then(|v| v.as_bool()) {
+                                metrics_enabled.set(v);
+                                original_metrics_enabled.set(v);
+                            }
+                            if let Some(v) = metrics.get("port").and_then(|v| v.as_u64()) {
+                                let s = v.to_string();
+                                metrics_port.set(s.clone());
+                                original_metrics_port.set(s);
+                            }
+                        }
+                    }
+                }
+            });
+            || {}
+        }
+    });
+
+    if *loading {
+        return html! { <LoadingSpinner /> };
+    }
+
+    let on_port_change = {
+        let metrics_port = metrics_port.clone();
+        Callback::from(move |value: String| {
+            metrics_port.set(value);
+        })
+    };
+
+    let on_toggle_enabled = {
+        let metrics_enabled = metrics_enabled.clone();
+        Callback::from(move |_: MouseEvent| {
+            metrics_enabled.set(!*metrics_enabled);
+        })
+    };
+
+    let on_save = {
+        let saving = saving.clone();
+        let metrics_enabled = metrics_enabled.clone();
+        let metrics_port = metrics_port.clone();
+        let original_metrics_enabled = original_metrics_enabled.clone();
+        let original_metrics_port = original_metrics_port.clone();
+        Callback::from(move |_| {
+            let config = serde_json::json!({
+                "config": {
+                    "metrics": {
+                        "enabled": *metrics_enabled,
+                        "port": metrics_port.parse::<u16>().unwrap_or(9090),
+                    }
+                }
+            });
+            let saving = saving.clone();
+            let metrics_enabled = metrics_enabled.clone();
+            let metrics_port = metrics_port.clone();
+            let original_metrics_enabled = original_metrics_enabled.clone();
+            let original_metrics_port = original_metrics_port.clone();
+            saving.set(true);
+            wasm_bindgen_futures::spawn_local(async move {
+                let api = ApiService::new();
+                let _ = api.update_main_config(&config).await;
+                saving.set(false);
+                original_metrics_enabled.set(*metrics_enabled);
+                original_metrics_port.set((*metrics_port).clone());
+                toast_success("Metrics configuration saved");
+            });
+        })
+    };
+
     html! {
         <div class="space-y-6">
             <div class="flex items-center justify-between py-2">
@@ -500,8 +954,11 @@ fn MetricsSection() -> Html {
                     <p class="text-primary font-medium">{ "Enable Metrics" }</p>
                     <p class="text-sm text-secondary">{ "Expose Prometheus metrics endpoint" }</p>
                 </div>
-                <button class="relative w-10 h-6 bg-blue-600 rounded-full">
-                    <span class="absolute top-1 left-1 w-4 h-4 bg-white rounded-full translate-x-5" />
+                <button
+                    onclick={on_toggle_enabled}
+                    class={format!("relative w-10 h-6 rounded-full {}", if *metrics_enabled { "bg-blue-600" } else { "bg-gray-600" })}
+                >
+                    <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *metrics_enabled { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
             </div>
 
@@ -509,32 +966,243 @@ fn MetricsSection() -> Html {
                 label="Metrics Port"
                 name="metrics_port"
                 input_type="number"
-                value="9090"
+                value={(*metrics_port).clone()}
+                on_change={on_port_change}
                 help="Port for Prometheus metrics endpoint"
+                badge={restart_badge()}
             />
+
+            <div class="flex justify-end">
+                <button
+                    onclick={on_save}
+                    disabled={*saving}
+                    class={if is_dirty {
+                        "px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 disabled:opacity-50"
+                    } else {
+                        "px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                    }}
+                >
+                    { if *saving { "Saving..." } else if is_dirty { "Save*" } else { "Save" } }
+                </button>
+            </div>
         </div>
     }
 }
 
 #[function_component]
 fn RateLimitsSection() -> Html {
+    let loading = use_state(|| true);
+    let saving = use_state(|| false);
+
+    let ip_per_second = use_state(|| "10".to_string());
+    let ip_per_minute = use_state(|| "60".to_string());
+    let ip_per_5min = use_state(|| "200".to_string());
+    let ip_per_hour = use_state(|| "500".to_string());
+    let ip_per_day = use_state(|| "1000".to_string());
+    let ip_burst = use_state(|| "20".to_string());
+    let global_per_second = use_state(|| "500".to_string());
+    let global_per_minute = use_state(|| "5000".to_string());
+    let max_connections = use_state(|| "1000".to_string());
+
+    let original_ip_per_second = use_state(|| "10".to_string());
+    let original_ip_per_minute = use_state(|| "60".to_string());
+    let original_ip_per_5min = use_state(|| "200".to_string());
+    let original_ip_per_hour = use_state(|| "500".to_string());
+    let original_ip_per_day = use_state(|| "1000".to_string());
+    let original_ip_burst = use_state(|| "20".to_string());
+    let original_global_per_second = use_state(|| "500".to_string());
+    let original_global_per_minute = use_state(|| "5000".to_string());
+    let original_max_connections = use_state(|| "1000".to_string());
+
+    let is_dirty = *ip_per_second != *original_ip_per_second
+        || *ip_per_minute != *original_ip_per_minute
+        || *ip_per_5min != *original_ip_per_5min
+        || *ip_per_hour != *original_ip_per_hour
+        || *ip_per_day != *original_ip_per_day
+        || *ip_burst != *original_ip_burst
+        || *global_per_second != *original_global_per_second
+        || *global_per_minute != *original_global_per_minute
+        || *max_connections != *original_max_connections;
+
+    use_effect_with((), {
+        let loading = loading.clone();
+        let ip_per_second = ip_per_second.clone();
+        let ip_per_minute = ip_per_minute.clone();
+        let ip_per_5min = ip_per_5min.clone();
+        let ip_per_hour = ip_per_hour.clone();
+        let ip_per_day = ip_per_day.clone();
+        let ip_burst = ip_burst.clone();
+        let global_per_second = global_per_second.clone();
+        let global_per_minute = global_per_minute.clone();
+        let max_connections = max_connections.clone();
+        let original_ip_per_second = original_ip_per_second.clone();
+        let original_ip_per_minute = original_ip_per_minute.clone();
+        let original_ip_per_5min = original_ip_per_5min.clone();
+        let original_ip_per_hour = original_ip_per_hour.clone();
+        let original_ip_per_day = original_ip_per_day.clone();
+        let original_ip_burst = original_ip_burst.clone();
+        let original_global_per_second = original_global_per_second.clone();
+        let original_global_per_minute = original_global_per_minute.clone();
+        let original_max_connections = original_max_connections.clone();
+        move |_| {
+            wasm_bindgen_futures::spawn_local(async move {
+                let api = ApiService::new();
+                let result = api.get_rate_limits_config().await;
+                loading.set(false);
+
+                if let Ok(data) = result {
+                    if let Some(defaults) = data.get("defaults") {
+                        if let Some(ip) = defaults.get("ip") {
+                            let set_field = |key: &str, state: &UseStateHandle<String>, orig: &UseStateHandle<String>| {
+                                if let Some(v) = ip.get(key).and_then(|v| v.as_u64()) {
+                                    let s = v.to_string();
+                                    state.set(s.clone());
+                                    orig.set(s);
+                                }
+                            };
+                            set_field("per_second", &ip_per_second, &original_ip_per_second);
+                            set_field("per_minute", &ip_per_minute, &original_ip_per_minute);
+                            set_field("per_5min", &ip_per_5min, &original_ip_per_5min);
+                            set_field("per_hour", &ip_per_hour, &original_ip_per_hour);
+                            set_field("per_day", &ip_per_day, &original_ip_per_day);
+                            set_field("burst", &ip_burst, &original_ip_burst);
+                        }
+                        if let Some(global) = defaults.get("global") {
+                            let set_field = |key: &str, state: &UseStateHandle<String>, orig: &UseStateHandle<String>| {
+                                if let Some(v) = global.get(key).and_then(|v| v.as_u64()) {
+                                    let s = v.to_string();
+                                    state.set(s.clone());
+                                    orig.set(s);
+                                }
+                            };
+                            set_field("per_second", &global_per_second, &original_global_per_second);
+                            set_field("per_minute", &global_per_minute, &original_global_per_minute);
+                            set_field("max_connections", &max_connections, &original_max_connections);
+                        }
+                    }
+                }
+            });
+            || {}
+        }
+    });
+
+    if *loading {
+        return html! { <LoadingSpinner /> };
+    }
+
+    let on_change = |state: UseStateHandle<String>| -> Callback<String> {
+        Callback::from(move |value: String| {
+            state.set(value);
+        })
+    };
+
+    let on_save = {
+        let saving = saving.clone();
+        let ip_per_second = ip_per_second.clone();
+        let ip_per_minute = ip_per_minute.clone();
+        let ip_per_5min = ip_per_5min.clone();
+        let ip_per_hour = ip_per_hour.clone();
+        let ip_per_day = ip_per_day.clone();
+        let ip_burst = ip_burst.clone();
+        let global_per_second = global_per_second.clone();
+        let global_per_minute = global_per_minute.clone();
+        let max_connections = max_connections.clone();
+        let original_ip_per_second = original_ip_per_second.clone();
+        let original_ip_per_minute = original_ip_per_minute.clone();
+        let original_ip_per_5min = original_ip_per_5min.clone();
+        let original_ip_per_hour = original_ip_per_hour.clone();
+        let original_ip_per_day = original_ip_per_day.clone();
+        let original_ip_burst = original_ip_burst.clone();
+        let original_global_per_second = original_global_per_second.clone();
+        let original_global_per_minute = original_global_per_minute.clone();
+        let original_max_connections = original_max_connections.clone();
+        Callback::from(move |_| {
+            let config = serde_json::json!({
+                "defaults": {
+                    "ip": {
+                        "per_second": ip_per_second.parse::<u32>().unwrap_or(10),
+                        "per_minute": ip_per_minute.parse::<u32>().unwrap_or(60),
+                        "per_5min": ip_per_5min.parse::<u32>().unwrap_or(200),
+                        "per_hour": ip_per_hour.parse::<u32>().unwrap_or(500),
+                        "per_day": ip_per_day.parse::<u32>().unwrap_or(1000),
+                        "burst": ip_burst.parse::<u32>().unwrap_or(20),
+                    },
+                    "global": {
+                        "per_second": global_per_second.parse::<u32>().unwrap_or(500),
+                        "per_minute": global_per_minute.parse::<u32>().unwrap_or(5000),
+                        "max_connections": max_connections.parse::<u32>().unwrap_or(1000),
+                    }
+                }
+            });
+            let saving = saving.clone();
+            let ip_per_second = ip_per_second.clone();
+            let ip_per_minute = ip_per_minute.clone();
+            let ip_per_5min = ip_per_5min.clone();
+            let ip_per_hour = ip_per_hour.clone();
+            let ip_per_day = ip_per_day.clone();
+            let ip_burst = ip_burst.clone();
+            let global_per_second = global_per_second.clone();
+            let global_per_minute = global_per_minute.clone();
+            let max_connections = max_connections.clone();
+            let original_ip_per_second = original_ip_per_second.clone();
+            let original_ip_per_minute = original_ip_per_minute.clone();
+            let original_ip_per_5min = original_ip_per_5min.clone();
+            let original_ip_per_hour = original_ip_per_hour.clone();
+            let original_ip_per_day = original_ip_per_day.clone();
+            let original_ip_burst = original_ip_burst.clone();
+            let original_global_per_second = original_global_per_second.clone();
+            let original_global_per_minute = original_global_per_minute.clone();
+            let original_max_connections = original_max_connections.clone();
+            saving.set(true);
+            wasm_bindgen_futures::spawn_local(async move {
+                let api = ApiService::new();
+                let _ = api.update_rate_limits_config(&config).await;
+                saving.set(false);
+                original_ip_per_second.set((*ip_per_second).clone());
+                original_ip_per_minute.set((*ip_per_minute).clone());
+                original_ip_per_5min.set((*ip_per_5min).clone());
+                original_ip_per_hour.set((*ip_per_hour).clone());
+                original_ip_per_day.set((*ip_per_day).clone());
+                original_ip_burst.set((*ip_burst).clone());
+                original_global_per_second.set((*global_per_second).clone());
+                original_global_per_minute.set((*global_per_minute).clone());
+                original_max_connections.set((*max_connections).clone());
+                toast_success("Rate limits configuration saved");
+            });
+        })
+    };
+
     html! {
         <div class="space-y-6">
             <h3 class="font-semibold text-primary">{ "Per-IP Defaults" }</h3>
             <div class="grid grid-cols-3 gap-4">
-                <Input label="Per Second" name="ip_per_second" input_type="number" value="10" />
-                <Input label="Per Minute" name="ip_per_minute" input_type="number" value="60" />
-                <Input label="Per 5 Min" name="ip_per_5min" input_type="number" value="200" />
-                <Input label="Per Hour" name="ip_per_hour" input_type="number" value="500" />
-                <Input label="Per Day" name="ip_per_day" input_type="number" value="1000" />
-                <Input label="Burst" name="ip_burst" input_type="number" value="20" />
+                <Input label="Per Second" name="ip_per_second" input_type="number" value={(*ip_per_second).clone()} on_change={on_change(ip_per_second.clone())} />
+                <Input label="Per Minute" name="ip_per_minute" input_type="number" value={(*ip_per_minute).clone()} on_change={on_change(ip_per_minute.clone())} />
+                <Input label="Per 5 Min" name="ip_per_5min" input_type="number" value={(*ip_per_5min).clone()} on_change={on_change(ip_per_5min.clone())} />
+                <Input label="Per Hour" name="ip_per_hour" input_type="number" value={(*ip_per_hour).clone()} on_change={on_change(ip_per_hour.clone())} />
+                <Input label="Per Day" name="ip_per_day" input_type="number" value={(*ip_per_day).clone()} on_change={on_change(ip_per_day.clone())} />
+                <Input label="Burst" name="ip_burst" input_type="number" value={(*ip_burst).clone()} on_change={on_change(ip_burst.clone())} />
             </div>
 
             <h3 class="font-semibold text-primary mt-6">{ "Global Defaults" }</h3>
             <div class="grid grid-cols-3 gap-4">
-                <Input label="Per Second" name="global_per_second" input_type="number" value="500" />
-                <Input label="Per Minute" name="global_per_minute" input_type="number" value="5000" />
-                <Input label="Max Connections" name="max_connections" input_type="number" value="1000" />
+                <Input label="Per Second" name="global_per_second" input_type="number" value={(*global_per_second).clone()} on_change={on_change(global_per_second.clone())} />
+                <Input label="Per Minute" name="global_per_minute" input_type="number" value={(*global_per_minute).clone()} on_change={on_change(global_per_minute.clone())} />
+                <Input label="Max Connections" name="max_connections" input_type="number" value={(*max_connections).clone()} on_change={on_change(max_connections.clone())} />
+            </div>
+
+            <div class="flex justify-end">
+                <button
+                    onclick={on_save}
+                    disabled={*saving}
+                    class={if is_dirty {
+                        "px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 disabled:opacity-50"
+                    } else {
+                        "px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                    }}
+                >
+                    { if *saving { "Saving..." } else if is_dirty { "Save*" } else { "Save" } }
+                </button>
             </div>
         </div>
     }
@@ -542,6 +1210,165 @@ fn RateLimitsSection() -> Html {
 
 #[function_component]
 fn BandwidthSection() -> Html {
+    let loading = use_state(|| true);
+    let saving = use_state(|| false);
+
+    let monthly_cap_ingress = use_state(|| "0".to_string());
+    let monthly_cap_egress = use_state(|| "0".to_string());
+    let action_on_limit = use_state(|| "block".to_string());
+    let reset_mode = use_state(|| "rolling_30_days".to_string());
+    let fixed_day = use_state(|| String::new());
+    let data_dir = use_state(|| "/var/lib/maluwaf".to_string());
+
+    let original_monthly_cap_ingress = use_state(|| "0".to_string());
+    let original_monthly_cap_egress = use_state(|| "0".to_string());
+    let original_action_on_limit = use_state(|| "block".to_string());
+    let original_reset_mode = use_state(|| "rolling_30_days".to_string());
+    let original_fixed_day = use_state(|| String::new());
+    let original_data_dir = use_state(|| "/var/lib/maluwaf".to_string());
+
+    let is_dirty = *monthly_cap_ingress != *original_monthly_cap_ingress
+        || *monthly_cap_egress != *original_monthly_cap_egress
+        || *action_on_limit != *original_action_on_limit
+        || *reset_mode != *original_reset_mode
+        || *fixed_day != *original_fixed_day
+        || *data_dir != *original_data_dir;
+
+    use_effect_with((), {
+        let loading = loading.clone();
+        let monthly_cap_ingress = monthly_cap_ingress.clone();
+        let monthly_cap_egress = monthly_cap_egress.clone();
+        let action_on_limit = action_on_limit.clone();
+        let reset_mode = reset_mode.clone();
+        let fixed_day = fixed_day.clone();
+        let data_dir = data_dir.clone();
+        let original_monthly_cap_ingress = original_monthly_cap_ingress.clone();
+        let original_monthly_cap_egress = original_monthly_cap_egress.clone();
+        let original_action_on_limit = original_action_on_limit.clone();
+        let original_reset_mode = original_reset_mode.clone();
+        let original_fixed_day = original_fixed_day.clone();
+        let original_data_dir = original_data_dir.clone();
+        move |_| {
+            wasm_bindgen_futures::spawn_local(async move {
+                let api = ApiService::new();
+                let result = api.get_traffic_shaping_config().await;
+                loading.set(false);
+
+                if let Ok(data) = result {
+                    if let Some(config) = data.get("config") {
+                        if let Some(bw) = config.get("bandwidth") {
+                            if let Some(v) = bw.get("monthly_cap_ingress_gb").and_then(|v| v.as_u64()) {
+                                let s = v.to_string();
+                                monthly_cap_ingress.set(s.clone());
+                                original_monthly_cap_ingress.set(s);
+                            }
+                            if let Some(v) = bw.get("monthly_cap_egress_gb").and_then(|v| v.as_u64()) {
+                                let s = v.to_string();
+                                monthly_cap_egress.set(s.clone());
+                                original_monthly_cap_egress.set(s);
+                            }
+                            if let Some(v) = bw.get("action_on_limit").and_then(|v| v.as_str()) {
+                                let s = v.to_string();
+                                action_on_limit.set(s.clone());
+                                original_action_on_limit.set(s);
+                            }
+                            if let Some(v) = bw.get("data_dir").and_then(|v| v.as_str()) {
+                                let s = v.to_string();
+                                data_dir.set(s.clone());
+                                original_data_dir.set(s);
+                            }
+                            if let Some(reset) = bw.get("monthly_reset") {
+                                if let Some(v) = reset.get("mode").and_then(|v| v.as_str()) {
+                                    let s = v.to_string();
+                                    reset_mode.set(s.clone());
+                                    original_reset_mode.set(s);
+                                }
+                                if let Some(v) = reset.get("fixed_day").and_then(|v| v.as_u64()) {
+                                    let s = v.to_string();
+                                    fixed_day.set(s.clone());
+                                    original_fixed_day.set(s);
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+            || {}
+        }
+    });
+
+    if *loading {
+        return html! { <LoadingSpinner /> };
+    }
+
+    let on_change = |state: UseStateHandle<String>| -> Callback<String> {
+        Callback::from(move |value: String| {
+            state.set(value);
+        })
+    };
+
+    let on_save = {
+        let saving = saving.clone();
+        let monthly_cap_ingress = monthly_cap_ingress.clone();
+        let monthly_cap_egress = monthly_cap_egress.clone();
+        let action_on_limit = action_on_limit.clone();
+        let reset_mode = reset_mode.clone();
+        let fixed_day = fixed_day.clone();
+        let data_dir = data_dir.clone();
+        let original_monthly_cap_ingress = original_monthly_cap_ingress.clone();
+        let original_monthly_cap_egress = original_monthly_cap_egress.clone();
+        let original_action_on_limit = original_action_on_limit.clone();
+        let original_reset_mode = original_reset_mode.clone();
+        let original_fixed_day = original_fixed_day.clone();
+        let original_data_dir = original_data_dir.clone();
+        Callback::from(move |_| {
+            let fixed_day_val = fixed_day.parse::<u32>().ok();
+            let mut reset_obj = serde_json::json!({
+                "mode": (*reset_mode).clone(),
+            });
+            if let Some(fd) = fixed_day_val {
+                reset_obj["fixed_day"] = serde_json::json!(fd);
+            }
+            let config = serde_json::json!({
+                "config": {
+                    "bandwidth": {
+                        "monthly_cap_ingress_gb": monthly_cap_ingress.parse::<u64>().unwrap_or(0),
+                        "monthly_cap_egress_gb": monthly_cap_egress.parse::<u64>().unwrap_or(0),
+                        "action_on_limit": (*action_on_limit).clone(),
+                        "monthly_reset": reset_obj,
+                        "data_dir": (*data_dir).clone(),
+                    }
+                }
+            });
+            let saving = saving.clone();
+            let monthly_cap_ingress = monthly_cap_ingress.clone();
+            let monthly_cap_egress = monthly_cap_egress.clone();
+            let action_on_limit = action_on_limit.clone();
+            let reset_mode = reset_mode.clone();
+            let fixed_day = fixed_day.clone();
+            let data_dir = data_dir.clone();
+            let original_monthly_cap_ingress = original_monthly_cap_ingress.clone();
+            let original_monthly_cap_egress = original_monthly_cap_egress.clone();
+            let original_action_on_limit = original_action_on_limit.clone();
+            let original_reset_mode = original_reset_mode.clone();
+            let original_fixed_day = original_fixed_day.clone();
+            let original_data_dir = original_data_dir.clone();
+            saving.set(true);
+            wasm_bindgen_futures::spawn_local(async move {
+                let api = ApiService::new();
+                let _ = api.update_traffic_shaping_config(&config).await;
+                saving.set(false);
+                original_monthly_cap_ingress.set((*monthly_cap_ingress).clone());
+                original_monthly_cap_egress.set((*monthly_cap_egress).clone());
+                original_action_on_limit.set((*action_on_limit).clone());
+                original_reset_mode.set((*reset_mode).clone());
+                original_fixed_day.set((*fixed_day).clone());
+                original_data_dir.set((*data_dir).clone());
+                toast_success("Bandwidth configuration saved");
+            });
+        })
+    };
+
     html! {
         <div class="space-y-6">
             <h3 class="font-semibold text-primary">{ "Monthly Limits" }</h3>
@@ -550,14 +1377,16 @@ fn BandwidthSection() -> Html {
                     label="Monthly Ingress Cap (GB)"
                     name="monthly_cap_ingress_gb"
                     input_type="number"
-                    value="0"
+                    value={(*monthly_cap_ingress).clone()}
+                    on_change={on_change(monthly_cap_ingress.clone())}
                     help="Set to 0 for unlimited. For example: 5000 for 5TB"
                 />
                 <Input
                     label="Monthly Egress Cap (GB)"
                     name="monthly_cap_egress_gb"
                     input_type="number"
-                    value="0"
+                    value={(*monthly_cap_egress).clone()}
+                    on_change={on_change(monthly_cap_egress.clone())}
                     help="Set to 0 for unlimited. For example: 5000 for 5TB"
                 />
             </div>
@@ -567,9 +1396,19 @@ fn BandwidthSection() -> Html {
                     <p class="text-primary font-medium">{ "Action on Limit Exceeded" }</p>
                     <p class="text-sm text-secondary">{ "What to do when monthly bandwidth cap is reached" }</p>
                 </div>
-                <select class="bg-tertiary text-primary px-3 py-2 rounded-lg border border-default">
-                    <option value="block">{ "Hard Block (503)" }</option>
-                    <option value="throttle">{ "Throttle to Monthly Rate" }</option>
+                <select
+                    class="bg-tertiary text-primary px-3 py-2 rounded-lg border border-default"
+                    value={(*action_on_limit).clone()}
+                    onchange={
+                        let action_on_limit = action_on_limit.clone();
+                        Callback::from(move |e: Event| {
+                            let target: web_sys::HtmlSelectElement = e.target_unchecked_into();
+                            action_on_limit.set(target.value());
+                        })
+                    }
+                >
+                    <option value="block" selected={*action_on_limit == "block"}>{ "Hard Block (503)" }</option>
+                    <option value="throttle" selected={*action_on_limit == "throttle"}>{ "Throttle to Monthly Rate" }</option>
                 </select>
             </div>
 
@@ -579,10 +1418,20 @@ fn BandwidthSection() -> Html {
                     <p class="text-primary font-medium">{ "Reset Mode" }</p>
                     <p class="text-sm text-secondary">{ "How to determine the billing period" }</p>
                 </div>
-                <select class="bg-tertiary text-primary px-3 py-2 rounded-lg border border-default">
-                    <option value="rolling_30_days">{ "Rolling 30 Days" }</option>
-                    <option value="calendar_month">{ "Calendar Month (1st of each month)" }</option>
-                    <option value="fixed_date">{ "Fixed Day of Month" }</option>
+                <select
+                    class="bg-tertiary text-primary px-3 py-2 rounded-lg border border-default"
+                    value={(*reset_mode).clone()}
+                    onchange={
+                        let reset_mode = reset_mode.clone();
+                        Callback::from(move |e: Event| {
+                            let target: web_sys::HtmlSelectElement = e.target_unchecked_into();
+                            reset_mode.set(target.value());
+                        })
+                    }
+                >
+                    <option value="rolling_30_days" selected={*reset_mode == "rolling_30_days"}>{ "Rolling 30 Days" }</option>
+                    <option value="calendar_month" selected={*reset_mode == "calendar_month"}>{ "Calendar Month (1st of each month)" }</option>
+                    <option value="fixed_date" selected={*reset_mode == "fixed_date"}>{ "Fixed Day of Month" }</option>
                 </select>
             </div>
 
@@ -590,7 +1439,8 @@ fn BandwidthSection() -> Html {
                 label="Fixed Day of Month (1-28)"
                 name="fixed_day"
                 input_type="number"
-                value=""
+                value={(*fixed_day).clone()}
+                on_change={on_change(fixed_day.clone())}
                 help="Day of month to reset bandwidth counters (only for Fixed Date mode)"
             />
 
@@ -598,15 +1448,143 @@ fn BandwidthSection() -> Html {
             <Input
                 label="Data Directory"
                 name="bandwidth_data_dir"
-                value="/var/lib/maluwaf"
+                value={(*data_dir).clone()}
+                on_change={on_change(data_dir.clone())}
                 help="Directory to store bandwidth counter persistence file"
             />
+
+            <div class="flex justify-end">
+                <button
+                    onclick={on_save}
+                    disabled={*saving}
+                    class={if is_dirty {
+                        "px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 disabled:opacity-50"
+                    } else {
+                        "px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                    }}
+                >
+                    { if *saving { "Saving..." } else if is_dirty { "Save*" } else { "Save" } }
+                </button>
+            </div>
         </div>
     }
 }
 
 #[function_component]
 fn BotSection() -> Html {
+    let loading = use_state(|| true);
+    let saving = use_state(|| false);
+
+    let block_ai_crawlers = use_state(|| true);
+    let enable_css_honeypot = use_state(|| true);
+    let enable_js_challenge = use_state(|| false);
+    let js_difficulty = use_state(|| "6".to_string());
+
+    let original_block_ai_crawlers = use_state(|| true);
+    let original_enable_css_honeypot = use_state(|| true);
+    let original_enable_js_challenge = use_state(|| false);
+    let original_js_difficulty = use_state(|| "6".to_string());
+
+    let is_dirty = *block_ai_crawlers != *original_block_ai_crawlers
+        || *enable_css_honeypot != *original_enable_css_honeypot
+        || *enable_js_challenge != *original_enable_js_challenge
+        || *js_difficulty != *original_js_difficulty;
+
+    use_effect_with((), {
+        let loading = loading.clone();
+        let block_ai_crawlers = block_ai_crawlers.clone();
+        let enable_css_honeypot = enable_css_honeypot.clone();
+        let enable_js_challenge = enable_js_challenge.clone();
+        let js_difficulty = js_difficulty.clone();
+        let original_block_ai_crawlers = original_block_ai_crawlers.clone();
+        let original_enable_css_honeypot = original_enable_css_honeypot.clone();
+        let original_enable_js_challenge = original_enable_js_challenge.clone();
+        let original_js_difficulty = original_js_difficulty.clone();
+        move |_| {
+            wasm_bindgen_futures::spawn_local(async move {
+                let api = ApiService::new();
+                let result = api.get_bot_detection_config().await;
+                loading.set(false);
+
+                if let Ok(data) = result {
+                    if let Some(config) = data.get("config") {
+                        if let Some(v) = config.get("block_ai_crawlers").and_then(|v| v.as_bool()) {
+                            block_ai_crawlers.set(v);
+                            original_block_ai_crawlers.set(v);
+                        }
+                        if let Some(v) = config.get("enable_css_honeypot").and_then(|v| v.as_bool()) {
+                            enable_css_honeypot.set(v);
+                            original_enable_css_honeypot.set(v);
+                        }
+                        if let Some(v) = config.get("enable_js_challenge").and_then(|v| v.as_bool()) {
+                            enable_js_challenge.set(v);
+                            original_enable_js_challenge.set(v);
+                        }
+                        if let Some(v) = config.get("js_difficulty").and_then(|v| v.as_u64()) {
+                            let s = v.to_string();
+                            js_difficulty.set(s.clone());
+                            original_js_difficulty.set(s);
+                        }
+                    }
+                }
+            });
+            || {}
+        }
+    });
+
+    if *loading {
+        return html! { <LoadingSpinner /> };
+    }
+
+    let on_difficulty_change = {
+        let js_difficulty = js_difficulty.clone();
+        Callback::from(move |value: String| {
+            js_difficulty.set(value);
+        })
+    };
+
+    let on_save = {
+        let saving = saving.clone();
+        let block_ai_crawlers = block_ai_crawlers.clone();
+        let enable_css_honeypot = enable_css_honeypot.clone();
+        let enable_js_challenge = enable_js_challenge.clone();
+        let js_difficulty = js_difficulty.clone();
+        let original_block_ai_crawlers = original_block_ai_crawlers.clone();
+        let original_enable_css_honeypot = original_enable_css_honeypot.clone();
+        let original_enable_js_challenge = original_enable_js_challenge.clone();
+        let original_js_difficulty = original_js_difficulty.clone();
+        Callback::from(move |_| {
+            let config = serde_json::json!({
+                "config": {
+                    "block_ai_crawlers": *block_ai_crawlers,
+                    "enable_css_honeypot": *enable_css_honeypot,
+                    "enable_js_challenge": *enable_js_challenge,
+                    "js_difficulty": js_difficulty.parse::<u8>().unwrap_or(6),
+                }
+            });
+            let saving = saving.clone();
+            let block_ai_crawlers = block_ai_crawlers.clone();
+            let enable_css_honeypot = enable_css_honeypot.clone();
+            let enable_js_challenge = enable_js_challenge.clone();
+            let js_difficulty = js_difficulty.clone();
+            let original_block_ai_crawlers = original_block_ai_crawlers.clone();
+            let original_enable_css_honeypot = original_enable_css_honeypot.clone();
+            let original_enable_js_challenge = original_enable_js_challenge.clone();
+            let original_js_difficulty = original_js_difficulty.clone();
+            saving.set(true);
+            wasm_bindgen_futures::spawn_local(async move {
+                let api = ApiService::new();
+                let _ = api.update_bot_detection_config(&config).await;
+                saving.set(false);
+                original_block_ai_crawlers.set(*block_ai_crawlers);
+                original_enable_css_honeypot.set(*enable_css_honeypot);
+                original_enable_js_challenge.set(*enable_js_challenge);
+                original_js_difficulty.set((*js_difficulty).clone());
+                toast_success("Bot detection configuration saved");
+            });
+        })
+    };
+
     html! {
         <div class="space-y-6">
             <div class="flex items-center justify-between py-2">
@@ -614,8 +1592,16 @@ fn BotSection() -> Html {
                     <p class="text-primary font-medium">{ "Block AI Crawlers" }</p>
                     <p class="text-sm text-secondary">{ "Block known AI/ML web crawlers" }</p>
                 </div>
-                <button class="relative w-10 h-6 bg-blue-600 rounded-full">
-                    <span class="absolute top-1 left-1 w-4 h-4 bg-white rounded-full translate-x-5" />
+                <button
+                    onclick={
+                        let block_ai_crawlers = block_ai_crawlers.clone();
+                        Callback::from(move |_: MouseEvent| {
+                            block_ai_crawlers.set(!*block_ai_crawlers);
+                        })
+                    }
+                    class={format!("relative w-10 h-6 rounded-full {}", if *block_ai_crawlers { "bg-blue-600" } else { "bg-gray-600" })}
+                >
+                    <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *block_ai_crawlers { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
             </div>
 
@@ -624,46 +1610,200 @@ fn BotSection() -> Html {
                     <p class="text-primary font-medium">{ "Enable CSS Honeypot" }</p>
                     <p class="text-sm text-secondary">{ "Use CSS-based bot detection" }</p>
                 </div>
-                <button class="relative w-10 h-6 bg-blue-600 rounded-full">
-                    <span class="absolute top-1 left-1 w-4 h-4 bg-white rounded-full translate-x-5" />
+                <button
+                    onclick={
+                        let enable_css_honeypot = enable_css_honeypot.clone();
+                        Callback::from(move |_: MouseEvent| {
+                            enable_css_honeypot.set(!*enable_css_honeypot);
+                        })
+                    }
+                    class={format!("relative w-10 h-6 rounded-full {}", if *enable_css_honeypot { "bg-blue-600" } else { "bg-gray-600" })}
+                >
+                    <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *enable_css_honeypot { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
             </div>
 
             <div class="flex items-center justify-between py-2">
                 <div>
-                    <p class="text-primary font-medium">{ "Enable PoW Challenge" }</p>
+                    <p class="text-primary font-medium">{ "Enable JS Challenge" }</p>
                     <p class="text-sm text-secondary">{ "Use Proof-of-Work challenges" }</p>
                 </div>
-                <button class="relative w-10 h-6 bg-blue-600 rounded-full">
-                    <span class="absolute top-1 left-1 w-4 h-4 bg-white rounded-full translate-x-5" />
+                <button
+                    onclick={
+                        let enable_js_challenge = enable_js_challenge.clone();
+                        Callback::from(move |_: MouseEvent| {
+                            enable_js_challenge.set(!*enable_js_challenge);
+                        })
+                    }
+                    class={format!("relative w-10 h-6 rounded-full {}", if *enable_js_challenge { "bg-blue-600" } else { "bg-gray-600" })}
+                >
+                    <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *enable_js_challenge { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
             </div>
 
             <Input
-                label="PoW Difficulty"
-                name="pow_difficulty"
+                label="JS Challenge Difficulty"
+                name="js_difficulty"
                 input_type="number"
-                value="6"
+                value={(*js_difficulty).clone()}
+                on_change={on_difficulty_change}
                 help="Higher values = harder challenges (1-10)"
             />
+
+            <div class="flex justify-end">
+                <button
+                    onclick={on_save}
+                    disabled={*saving}
+                    class={if is_dirty {
+                        "px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 disabled:opacity-50"
+                    } else {
+                        "px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                    }}
+                >
+                    { if *saving { "Saving..." } else if is_dirty { "Save*" } else { "Save" } }
+                </button>
+            </div>
         </div>
     }
 }
 
 #[function_component]
 fn UploadSection() -> Html {
+    let loading = use_state(|| true);
+    let saving = use_state(|| false);
+
+    let max_size = use_state(|| "100MB".to_string());
+    let memory_threshold = use_state(|| "10MB".to_string());
+    let scan_with_yara = use_state(|| true);
+    let sandbox_enabled = use_state(|| true);
+
+    let original_max_size = use_state(|| "100MB".to_string());
+    let original_memory_threshold = use_state(|| "10MB".to_string());
+    let original_scan_with_yara = use_state(|| true);
+    let original_sandbox_enabled = use_state(|| true);
+
+    let is_dirty = *max_size != *original_max_size
+        || *memory_threshold != *original_memory_threshold
+        || *scan_with_yara != *original_scan_with_yara
+        || *sandbox_enabled != *original_sandbox_enabled;
+
+    use_effect_with((), {
+        let loading = loading.clone();
+        let max_size = max_size.clone();
+        let memory_threshold = memory_threshold.clone();
+        let scan_with_yara = scan_with_yara.clone();
+        let sandbox_enabled = sandbox_enabled.clone();
+        let original_max_size = original_max_size.clone();
+        let original_memory_threshold = original_memory_threshold.clone();
+        let original_scan_with_yara = original_scan_with_yara.clone();
+        let original_sandbox_enabled = original_sandbox_enabled.clone();
+        move |_| {
+            wasm_bindgen_futures::spawn_local(async move {
+                let api = ApiService::new();
+                let result = api.get_main_config().await;
+                loading.set(false);
+
+                if let Ok(data) = result {
+                    if let Some(config) = data.get("config") {
+                        if let Some(defaults) = config.get("defaults") {
+                            if let Some(upload) = defaults.get("upload") {
+                                if let Some(v) = upload.get("max_size").and_then(|v| v.as_str()) {
+                                    let s = v.to_string();
+                                    max_size.set(s.clone());
+                                    original_max_size.set(s);
+                                }
+                                if let Some(v) = upload.get("memory_threshold").and_then(|v| v.as_str()) {
+                                    let s = v.to_string();
+                                    memory_threshold.set(s.clone());
+                                    original_memory_threshold.set(s);
+                                }
+                                if let Some(v) = upload.get("scan_with_yara").and_then(|v| v.as_bool()) {
+                                    scan_with_yara.set(v);
+                                    original_scan_with_yara.set(v);
+                                }
+                                if let Some(v) = upload.get("sandbox_enabled").and_then(|v| v.as_bool()) {
+                                    sandbox_enabled.set(v);
+                                    original_sandbox_enabled.set(v);
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+            || {}
+        }
+    });
+
+    if *loading {
+        return html! { <LoadingSpinner /> };
+    }
+
+    let on_change = |state: UseStateHandle<String>| -> Callback<String> {
+        Callback::from(move |value: String| {
+            state.set(value);
+        })
+    };
+
+    let on_save = {
+        let saving = saving.clone();
+        let max_size = max_size.clone();
+        let memory_threshold = memory_threshold.clone();
+        let scan_with_yara = scan_with_yara.clone();
+        let sandbox_enabled = sandbox_enabled.clone();
+        let original_max_size = original_max_size.clone();
+        let original_memory_threshold = original_memory_threshold.clone();
+        let original_scan_with_yara = original_scan_with_yara.clone();
+        let original_sandbox_enabled = original_sandbox_enabled.clone();
+        Callback::from(move |_| {
+            let config = serde_json::json!({
+                "config": {
+                    "defaults": {
+                        "upload": {
+                            "max_size": (*max_size).clone(),
+                            "memory_threshold": (*memory_threshold).clone(),
+                            "scan_with_yara": *scan_with_yara,
+                            "sandbox_enabled": *sandbox_enabled,
+                        }
+                    }
+                }
+            });
+            let saving = saving.clone();
+            let max_size = max_size.clone();
+            let memory_threshold = memory_threshold.clone();
+            let scan_with_yara = scan_with_yara.clone();
+            let sandbox_enabled = sandbox_enabled.clone();
+            let original_max_size = original_max_size.clone();
+            let original_memory_threshold = original_memory_threshold.clone();
+            let original_scan_with_yara = original_scan_with_yara.clone();
+            let original_sandbox_enabled = original_sandbox_enabled.clone();
+            saving.set(true);
+            wasm_bindgen_futures::spawn_local(async move {
+                let api = ApiService::new();
+                let _ = api.update_main_config(&config).await;
+                saving.set(false);
+                original_max_size.set((*max_size).clone());
+                original_memory_threshold.set((*memory_threshold).clone());
+                original_scan_with_yara.set(*scan_with_yara);
+                original_sandbox_enabled.set(*sandbox_enabled);
+                toast_success("Upload configuration saved");
+            });
+        })
+    };
+
     html! {
         <div class="space-y-6">
             <div class="grid grid-cols-2 gap-4">
                 <Input
                     label="Max Upload Size"
                     name="upload_max_size"
-                    value="100MB"
+                    value={(*max_size).clone()}
+                    on_change={on_change(max_size.clone())}
                 />
                 <Input
                     label="Memory Threshold"
                     name="upload_memory_threshold"
-                    value="10MB"
+                    value={(*memory_threshold).clone()}
+                    on_change={on_change(memory_threshold.clone())}
                     help="Files under this threshold are scanned in-memory"
                 />
             </div>
@@ -673,8 +1813,16 @@ fn UploadSection() -> Html {
                     <p class="text-primary font-medium">{ "Scan with YARA" }</p>
                     <p class="text-sm text-secondary">{ "Scan uploads for malware signatures" }</p>
                 </div>
-                <button class="relative w-10 h-6 bg-blue-600 rounded-full">
-                    <span class="absolute top-1 left-1 w-4 h-4 bg-white rounded-full translate-x-5" />
+                <button
+                    onclick={
+                        let scan_with_yara = scan_with_yara.clone();
+                        Callback::from(move |_: MouseEvent| {
+                            scan_with_yara.set(!*scan_with_yara);
+                        })
+                    }
+                    class={format!("relative w-10 h-6 rounded-full {}", if *scan_with_yara { "bg-blue-600" } else { "bg-gray-600" })}
+                >
+                    <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *scan_with_yara { "translate-x-5" } else { "translate-x-0" })} />
                 </button>
             </div>
 
@@ -683,8 +1831,30 @@ fn UploadSection() -> Html {
                     <p class="text-primary font-medium">{ "Sandbox Files" }</p>
                     <p class="text-sm text-secondary">{ "Isolate uploads before forwarding" }</p>
                 </div>
-                <button class="relative w-10 h-6 bg-blue-600 rounded-full">
-                    <span class="absolute top-1 left-1 w-4 h-4 bg-white rounded-full translate-x-5" />
+                <button
+                    onclick={
+                        let sandbox_enabled = sandbox_enabled.clone();
+                        Callback::from(move |_: MouseEvent| {
+                            sandbox_enabled.set(!*sandbox_enabled);
+                        })
+                    }
+                    class={format!("relative w-10 h-6 rounded-full {}", if *sandbox_enabled { "bg-blue-600" } else { "bg-gray-600" })}
+                >
+                    <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *sandbox_enabled { "translate-x-5" } else { "translate-x-0" })} />
+                </button>
+            </div>
+
+            <div class="flex justify-end">
+                <button
+                    onclick={on_save}
+                    disabled={*saving}
+                    class={if is_dirty {
+                        "px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 disabled:opacity-50"
+                    } else {
+                        "px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                    }}
+                >
+                    { if *saving { "Saving..." } else if is_dirty { "Save*" } else { "Save" } }
                 </button>
             </div>
         </div>

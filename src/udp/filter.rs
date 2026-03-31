@@ -222,7 +222,7 @@ impl UdpProtocolFilter {
         }
 
         if let Some(port_config) = self.port_overrides.get(&port) {
-            let expected = UdpProtocol::from_str(&port_config.expected_protocol);
+            let expected = UdpProtocol::from_protocol_str(&port_config.expected_protocol);
 
             if expected == *detected_protocol {
                 if let Some(rate) = port_config.rate_limit {

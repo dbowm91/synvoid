@@ -171,8 +171,7 @@ impl OpenRedirectDetector {
             });
         }
 
-        if matched_pattern.is_some() {
-            let matched = matched_pattern.unwrap();
+        if let Some(matched) = matched_pattern {
             let matched_str = input_lower[matched.start()..matched.end()].to_string();
             tracing::warn!(
                 attack_type = "open_redirect",

@@ -353,7 +353,6 @@ impl HealthChecker {
             retries,
             interval_secs,
             || {
-                let this = this;
                 let host = host.clone();
                 async move { this.check_workers(ports, &host).await }
             },

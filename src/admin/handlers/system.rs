@@ -96,14 +96,15 @@ pub async fn get_system_info(
     State(_state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<SystemInfoResponse>, StatusCode> {
-    let mut features = Vec::new();
+    #[allow(unused_mut)]
+    let mut features = vec![
+        "TLS".to_string(),
+        "HTTP/3".to_string(),
+        "WebSocket".to_string(),
+    ];
 
     #[cfg(feature = "icmp-filter")]
-    features.push("ICMP Filter".to_string());
-
-    features.push("TLS".to_string());
-    features.push("HTTP/3".to_string());
-    features.push("WebSocket".to_string());
+    features.insert(0, "ICMP Filter".to_string());
 
     Ok(Json(SystemInfoResponse {
         version: env!("CARGO_PKG_VERSION").to_string(),

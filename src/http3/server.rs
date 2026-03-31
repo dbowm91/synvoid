@@ -93,7 +93,6 @@ impl Http3Server {
                             let router = router.clone();
                             let waf = waf.clone();
                             let flood_protector = flood_protector.clone();
-                            let max_request_size = max_request_size;
                             tokio::spawn(async move {
                                 if let Err(e) = Self::handle_quic_connection(conn, router, waf, flood_protector, max_request_size).await {
                                     tracing::debug!("HTTP/3 connection error: {}", e);
@@ -166,7 +165,6 @@ impl Http3Server {
                 Ok(Some(resolver)) => {
                     let router = router.clone();
                     let waf = waf.clone();
-                    let max_request_size = max_request_size;
                     let _flood_protector = flood_protector.clone();
                     tokio::spawn(async move {
                         if let Err(e) = Self::handle_request(

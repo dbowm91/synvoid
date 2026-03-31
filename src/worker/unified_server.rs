@@ -328,13 +328,12 @@ pub async fn run_unified_server_worker(
                         tracing::debug!("Edge node - DNS resolver not created (verification only on global nodes)");
 
                         // Create minimal registry for edge nodes (no resolver)
-                        let mut registry_config = crate::dns::MeshDnsRegistryConfig::default();
-                        registry_config.verification_timeout_secs =
-                            dns_cfg.mesh.verification_timeout_secs;
-                        registry_config.verification_retry_interval_secs =
-                            dns_cfg.mesh.verification_retry_interval_secs;
-                        registry_config.require_cert_chain_verification =
-                            dns_cfg.mesh.require_cert_chain_verification;
+                        let registry_config = crate::dns::MeshDnsRegistryConfig {
+                            verification_timeout_secs: dns_cfg.mesh.verification_timeout_secs,
+                            verification_retry_interval_secs: dns_cfg.mesh.verification_retry_interval_secs,
+                            require_cert_chain_verification: dns_cfg.mesh.require_cert_chain_verification,
+                            ..Default::default()
+                        };
 
                         let registry = crate::dns::MeshDnsRegistry::with_config(
                             mesh_config.node_id(),
@@ -363,14 +362,12 @@ pub async fn run_unified_server_worker(
                                     tracing::info!("Global node DNS resolver initialized with upstream servers: {:?}", upstream_servers);
 
                                     // Create mesh DNS registry with resolver - only global nodes verify
-                                    let mut registry_config =
-                                        crate::dns::MeshDnsRegistryConfig::default();
-                                    registry_config.verification_timeout_secs =
-                                        dns_cfg.mesh.verification_timeout_secs;
-                                    registry_config.verification_retry_interval_secs =
-                                        dns_cfg.mesh.verification_retry_interval_secs;
-                                    registry_config.require_cert_chain_verification =
-                                        dns_cfg.mesh.require_cert_chain_verification;
+                                    let registry_config = crate::dns::MeshDnsRegistryConfig {
+                                        verification_timeout_secs: dns_cfg.mesh.verification_timeout_secs,
+                                        verification_retry_interval_secs: dns_cfg.mesh.verification_retry_interval_secs,
+                                        require_cert_chain_verification: dns_cfg.mesh.require_cert_chain_verification,
+                                        ..Default::default()
+                                    };
 
                                     let registry = crate::dns::MeshDnsRegistry::with_config(
                                         mesh_config.node_id(),
@@ -441,16 +438,14 @@ pub async fn run_unified_server_worker(
             if mesh_config.role == crate::mesh::config::MeshNodeRole::Edge
                 && mesh_config.global_node.key_exchange_enabled
                 && mesh_config.global_node.key_exchange_require_edge_auth
-                && mesh_config.global_node_key.is_some()
             {
-                // Announce edge's public key to DHT for global nodes to verify tokens
-                transport_manager.announce_edge_key(
-                    &mesh_config.node_id(),
-                    mesh_config
-                        .global_node_key
-                        .as_ref()
-                        .expect("guarded by is_some check above"),
-                );
+                if let Some(ref global_node_key) = mesh_config.global_node_key {
+                    // Announce edge's public key to DHT for global nodes to verify tokens
+                    transport_manager.announce_edge_key(
+                        &mesh_config.node_id(),
+                        global_node_key,
+                    );
+                }
             }
 
             // Start background tasks for threat intel (periodic sync, cleanup)

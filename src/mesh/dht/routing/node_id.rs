@@ -67,8 +67,8 @@ impl NodeId {
 
     pub fn xor_distance(&self, other: &NodeId) -> NodeId {
         let mut result = [0u8; NODE_ID_LEN];
-        for i in 0..NODE_ID_LEN {
-            result[i] = self.0[i] ^ other.0[i];
+        for (i, result_byte) in result.iter_mut().enumerate().take(NODE_ID_LEN) {
+            *result_byte = self.0[i] ^ other.0[i];
         }
         NodeId(result)
     }

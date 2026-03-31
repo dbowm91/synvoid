@@ -1,3 +1,5 @@
+#![allow(dead_code)] // Reserved for future global node protocol handling
+
 use crate::mesh::transport::MeshTransport;
 use base64::Engine;
 

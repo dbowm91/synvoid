@@ -209,13 +209,6 @@ impl RunningFlag {
     pub fn set(&self, value: bool) {
         self.inner.store(value, Ordering::SeqCst);
     }
-
-    #[inline]
-    pub fn clone(&self) -> Self {
-        Self {
-            inner: self.inner.clone(),
-        }
-    }
 }
 
 impl Default for RunningFlag {
@@ -260,13 +253,6 @@ impl DrainFlag {
     #[inline]
     pub fn set(&self, value: bool) {
         self.inner.store(value, Ordering::SeqCst);
-    }
-
-    #[inline]
-    pub fn clone(&self) -> Self {
-        Self {
-            inner: self.inner.clone(),
-        }
     }
 }
 
@@ -324,8 +310,8 @@ pub fn parse_duration(s: &str) -> Option<u64> {
         }
     }
 
-    if s.ends_with("ms") {
-        let value = s[..s.len() - 2].parse::<u64>().ok()?;
+    if let Some(stripped) = s.strip_suffix("ms") {
+        let value = stripped.parse::<u64>().ok()?;
         return Some(value / 1000);
     }
 

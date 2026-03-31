@@ -201,7 +201,7 @@ impl InputNormalizer {
                 if let Ok(code) = u32::from_str_radix(hex, 16) {
                     return char::from_u32(code);
                 }
-            } else if let Ok(code) = u32::from_str_radix(rest, 10) {
+            } else if let Ok(code) = rest.parse::<u32>() {
                 return char::from_u32(code);
             }
             return None;

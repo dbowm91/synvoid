@@ -202,32 +202,20 @@ impl std::error::Error for ConnectionLimitError {}
 pub struct SiteConnectionLimiter {
     site_id: String,
     limiter: Arc<ConnectionLimiter>,
-    #[allow(dead_code)] // Reserved for future site-specific connection limits
-    max_connections: Option<u32>,
-    #[allow(dead_code)]
-    max_connections_per_ip: Option<u32>,
-    #[allow(dead_code)]
-    queue_size: Option<u32>,
-    #[allow(dead_code)]
-    burst: Option<u32>,
 }
 
 impl SiteConnectionLimiter {
     pub fn new(
         site_id: String,
         global_limiter: Arc<ConnectionLimiter>,
-        max_connections: Option<u32>,
-        max_connections_per_ip: Option<u32>,
-        queue_size: Option<u32>,
-        burst: Option<u32>,
+        _max_connections: Option<u32>,
+        _max_connections_per_ip: Option<u32>,
+        _queue_size: Option<u32>,
+        _burst: Option<u32>,
     ) -> Self {
         Self {
             site_id,
             limiter: global_limiter,
-            max_connections,
-            max_connections_per_ip,
-            queue_size,
-            burst,
         }
     }
 

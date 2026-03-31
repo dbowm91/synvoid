@@ -126,16 +126,12 @@ impl FastCgiClient {
     }
 
     fn find_header_body_separator(data: &[u8]) -> Option<usize> {
-        for i in 0..data.len().saturating_sub(3) {
-            if data[i] == b'\r'
+        (0..data.len().saturating_sub(3)).find(|&i| {
+            data[i] == b'\r'
                 && data[i + 1] == b'\n'
                 && data[i + 2] == b'\r'
                 && data[i + 3] == b'\n'
-            {
-                return Some(i);
-            }
-        }
-        None
+        })
     }
 
     fn parse_status(header_bytes: &[u8]) -> StatusCode {

@@ -471,7 +471,6 @@ pub struct QueryContext<'a> {
     pub dns64_translator: Option<&'a super::dns64::Dns64Translator>,
 }
 
-#[allow(dead_code)]
 pub struct DnsServer {
     config: Arc<DnsConfig>,
     zones: Arc<RwLock<HashMap<String, Zone>>>,
@@ -485,29 +484,25 @@ pub struct DnsServer {
     connection_limits: Arc<super::limits::ConnectionLimits>,
     mesh_registry: Option<Arc<MeshDnsRegistry>>,
     geoip_lookup: Option<Arc<crate::geoip::GeoIpManager>>,
-    #[allow(dead_code)]
     shutdown_tx: Option<oneshot::Sender<()>>,
     cache: Option<Arc<DnsCache>>,
     dnssec: Option<Arc<RwLock<DnsSecKeyManager>>>,
     signer_name: Option<String>,
     rrl_enabled: bool,
     cert_resolver: Option<Arc<CertResolver>>,
-    #[allow(dead_code)]
     dot_server: Option<DotServer>,
-    #[allow(dead_code)]
     doh_server: Option<DohServer>,
-    #[allow(dead_code)]
     doq_server: Option<DoqServer>,
     zone_transfer: Option<Arc<super::transfer::ZoneTransfer>>,
     ecs_filter_config: super::edns::EcsFilterConfig,
     update_handler: Option<super::update::DynamicUpdateHandler>,
     notify_handler: Option<super::notify::NotifyHandler>,
+    #[allow(dead_code)] // Reserved for HSM-backed DNSSEC key management
     hsm_manager: Option<super::hsm::HsmManager>,
     query_coalescer: Option<Arc<super::query_coalesce::QueryCoalescer>>,
     anycast_manager: Option<Arc<super::anycast::AnycastSocketManager>>,
     mesh_transport: Option<Arc<crate::mesh::transport::MeshTransport>>,
     zone_sync: Option<Arc<super::anycast_sync::AnycastZoneSync>>,
-    #[allow(dead_code)]
     recursive_server: Option<Arc<super::recursive::RecursiveDnsServer>>,
     dns64_translator: Option<super::dns64::Dns64Translator>,
 }

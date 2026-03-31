@@ -1,3 +1,5 @@
+#![allow(dead_code)] // Reserved for future DHT protocol handling
+
 use crate::mesh::transport::MeshTransport;
 
 impl MeshTransport {

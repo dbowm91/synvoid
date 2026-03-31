@@ -253,7 +253,7 @@ pub struct MeshTopology {
 }
 
 #[derive(Debug, Clone, Default)]
-#[allow(dead_code)] // Fields used for categorization, read dynamically
+#[allow(dead_code)] // local_region, regional, global fields reserved for peer categorization
 struct PeerCategories {
     local_region: HashSet<String>,
     regional: HashSet<String>,
@@ -261,7 +261,7 @@ struct PeerCategories {
 }
 
 #[derive(Debug, Clone, Default)]
-#[allow(dead_code)] // Metrics tracked but not yet exposed
+#[allow(dead_code)] // evictions reserved for cache eviction metrics
 struct CacheMetrics {
     hits: u64,
     misses: u64,
@@ -277,7 +277,7 @@ struct CachedRoute {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // upstream_id reserved for multi-upstream routing
+#[allow(dead_code)] // upstream_id written but not yet read; reserved for multi-upstream routing
 struct RouteStability {
     upstream_id: String,
     provider_history: Vec<(String, Instant)>,
@@ -846,10 +846,12 @@ impl MeshTopology {
             score += weights.random * random_component * 100.0;
         }
 
-        if weights.latency > 0.0 && peer.latency_ms.is_some() {
-            let latency = peer.latency_ms.unwrap() as f64;
-            let latency_score = 100.0 / (1.0 + latency / 10.0);
-            score += weights.latency * latency_score;
+        if weights.latency > 0.0 {
+            if let Some(latency_ms) = peer.latency_ms {
+                let latency = latency_ms as f64;
+                let latency_score = 100.0 / (1.0 + latency / 10.0);
+                score += weights.latency * latency_score;
+            }
         }
 
         if weights.reputation > 0.0 {

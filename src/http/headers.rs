@@ -152,3 +152,161 @@ pub fn generate_stealth_timestamp(jitter_seconds: u32) -> String {
     };
     offset.format("%a, %d %b %Y %H:%M:%S GMT").to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::site::{SiteCookieConfig, SiteCorsConfig, SiteSecurityHeadersConfig};
+
+    fn default_security_config() -> SiteSecurityHeadersConfig {
+        SiteSecurityHeadersConfig {
+            enabled: None,
+            strict_transport_security: None,
+            content_security_policy: None,
+            x_frame_options: None,
+            x_content_type_options: None,
+            x_xss_protection: None,
+            referrer_policy: None,
+            permissions_policy: None,
+            cache_control: None,
+            expect_ct: None,
+            x_permitted_cross_domain_policies: None,
+            x_download_options: None,
+            content_type: None,
+            more_clear_headers: vec![],
+            cors: SiteCorsConfig::default(),
+            cookie: SiteCookieConfig::default(),
+            date_header: None,
+            date_jitter_seconds: None,
+            server_token: None,
+        }
+    }
+
+    #[test]
+    fn test_inject_security_headers_hsts() {
+        let config = SiteSecurityHeadersConfig {
+            strict_transport_security: Some("max-age=31536000".to_string()),
+            ..default_security_config()
+        };
+        let builder = http::Response::builder();
+        let resp = inject_security_headers(builder, &config).body(()).unwrap();
+        assert_eq!(
+            resp.headers().get("strict-transport-security").unwrap(),
+            "max-age=31536000"
+        );
+    }
+
+    #[test]
+    fn test_inject_security_headers_csp() {
+        let config = SiteSecurityHeadersConfig {
+            content_security_policy: Some("default-src 'self'".to_string()),
+            ..default_security_config()
+        };
+        let builder = http::Response::builder();
+        let resp = inject_security_headers(builder, &config).body(()).unwrap();
+        assert_eq!(
+            resp.headers().get("content-security-policy").unwrap(),
+            "default-src 'self'"
+        );
+    }
+
+    #[test]
+    fn test_inject_security_headers_multiple() {
+        let config = SiteSecurityHeadersConfig {
+            x_frame_options: Some("DENY".to_string()),
+            x_content_type_options: Some("nosniff".to_string()),
+            referrer_policy: Some("no-referrer".to_string()),
+            ..default_security_config()
+        };
+        let builder = http::Response::builder();
+        let resp = inject_security_headers(builder, &config).body(()).unwrap();
+        assert_eq!(resp.headers().get("x-frame-options").unwrap(), "DENY");
+        assert_eq!(
+            resp.headers().get("x-content-type-options").unwrap(),
+            "nosniff"
+        );
+        assert_eq!(
+            resp.headers().get("referrer-policy").unwrap(),
+            "no-referrer"
+        );
+    }
+
+    #[test]
+    fn test_inject_security_headers_none_config() {
+        let config = default_security_config();
+        let builder = http::Response::builder();
+        let resp = inject_security_headers(builder, &config).body(()).unwrap();
+        assert!(resp.headers().is_empty());
+    }
+
+    #[test]
+    fn test_is_websocket_upgrade_positive() {
+        let mut headers = http::HeaderMap::new();
+        headers.insert("upgrade", "websocket".parse().unwrap());
+        headers.insert("connection", "Upgrade".parse().unwrap());
+        assert!(is_websocket_upgrade(&headers));
+    }
+
+    #[test]
+    fn test_is_websocket_upgrade_missing_upgrade() {
+        let mut headers = http::HeaderMap::new();
+        headers.insert("connection", "Upgrade".parse().unwrap());
+        assert!(!is_websocket_upgrade(&headers));
+    }
+
+    #[test]
+    fn test_is_websocket_upgrade_missing_connection() {
+        let mut headers = http::HeaderMap::new();
+        headers.insert("upgrade", "websocket".parse().unwrap());
+        assert!(!is_websocket_upgrade(&headers));
+    }
+
+    #[test]
+    fn test_is_websocket_upgrade_wrong_value() {
+        let mut headers = http::HeaderMap::new();
+        headers.insert("upgrade", "h2c".parse().unwrap());
+        headers.insert("connection", "Upgrade".parse().unwrap());
+        assert!(!is_websocket_upgrade(&headers));
+    }
+
+    #[test]
+    fn test_is_websocket_upgrade_case_insensitive() {
+        let mut headers = http::HeaderMap::new();
+        headers.insert("upgrade", "WebSocket".parse().unwrap());
+        headers.insert("connection", "keep-alive, Upgrade".parse().unwrap());
+        assert!(is_websocket_upgrade(&headers));
+    }
+
+    #[test]
+    fn test_compute_websocket_accept_key_known_value() {
+        // RFC 6455 Section 4.2.2 test vector
+        let key = "dGhlIHNhbXBsZSBub25jZQ==";
+        let expected = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
+        assert_eq!(compute_websocket_accept_key(key), expected);
+    }
+
+    #[test]
+    fn test_compute_websocket_accept_key_deterministic() {
+        let key = "test-key-12345";
+        let result1 = compute_websocket_accept_key(key);
+        let result2 = compute_websocket_accept_key(key);
+        assert_eq!(result1, result2);
+    }
+
+    #[test]
+    fn test_generate_stealth_timestamp_format() {
+        let ts = generate_stealth_timestamp(0);
+        // Should match RFC 7231 date format
+        assert!(ts.contains("GMT"));
+        assert!(ts.len() > 20);
+    }
+
+    #[test]
+    fn test_generate_stealth_timestamp_with_jitter() {
+        let ts1 = generate_stealth_timestamp(10);
+        let ts2 = generate_stealth_timestamp(10);
+        // Both should be valid timestamps
+        assert!(ts1.contains("GMT"));
+        assert!(ts2.contains("GMT"));
+    }
+}

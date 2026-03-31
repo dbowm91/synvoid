@@ -207,19 +207,16 @@ fn load_private_key(path: &PathBuf) -> Result<PrivateKeyDer<'static>, QuicTlsErr
         File::open(path).map_err(|e| QuicTlsError::IoError(path.display().to_string(), e))?;
     let mut reader = BufReader::new(file);
 
-    loop {
-        match pem::from_buf(&mut reader).map_err(|e| QuicTlsError::ParseError(e.to_string()))? {
-            Some((kind, der)) => {
-                if kind == pem::SectionKind::PrivateKey
-                    || kind == pem::SectionKind::EcPrivateKey
-                    || kind == pem::SectionKind::RsaPrivateKey
-                {
-                    if let Some(key) = PrivateKeyDer::from_pem(kind, der) {
-                        return Ok(key);
-                    }
-                }
+    while let Some((kind, der)) =
+        pem::from_buf(&mut reader).map_err(|e| QuicTlsError::ParseError(e.to_string()))?
+    {
+        if kind == pem::SectionKind::PrivateKey
+            || kind == pem::SectionKind::EcPrivateKey
+            || kind == pem::SectionKind::RsaPrivateKey
+        {
+            if let Some(key) = PrivateKeyDer::from_pem(kind, der) {
+                return Ok(key);
             }
-            None => break,
         }
     }
 

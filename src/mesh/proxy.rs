@@ -48,7 +48,7 @@ const BLOCK_BROADCAST_FAILURE_THRESHOLD: u32 = 5;
 /// from the origin WAF is preserved when we receive blocks from other nodes.
 const BLOCK_DURATION_SECS: u64 = 300;
 
-#[allow(dead_code)] // topology, proxy_cache, cache_key_builder reserved for future use
+#[allow(dead_code)] // proxy_cache, cache_key_builder reserved for future use
 pub struct MeshProxy {
     config: Arc<MeshConfig>,
     topology: Arc<MeshTopology>,
@@ -432,6 +432,7 @@ impl MeshProxy {
         Ok(upstream_id)
     }
 
+    #[allow(dead_code)] // Reserved for protocol auto-detection
     fn detect_protocol(req: &Request<Incoming>) -> UpstreamProtocol {
         let uri = req.uri();
 
@@ -531,6 +532,7 @@ impl MeshProxy {
             .collect()
     }
 
+    #[allow(dead_code)] // Reserved for tier-based provider validation
     async fn validate_provider_tier(&self, provider: &ProviderInfo) -> bool {
         if let Some(ref claim) = provider.tier_claim {
             if claim.tier > 0 {

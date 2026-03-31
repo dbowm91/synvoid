@@ -34,13 +34,11 @@ impl MeshDnsRegistry {
             }
         }
 
-        if self.config.require_cert_chain_verification {
-            if chain.len() < 2 {
-                return Err(
-                    "Certificate chain must contain at least end-entity and CA certificate"
-                        .to_string(),
-                );
-            }
+        if self.config.require_cert_chain_verification && chain.len() < 2 {
+            return Err(
+                "Certificate chain must contain at least end-entity and CA certificate"
+                    .to_string(),
+            );
         }
 
         tracing::info!(

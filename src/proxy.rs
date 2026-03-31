@@ -1687,4 +1687,82 @@ mod tests {
         assert!(!is_hop_by_hop_header("x-custom"));
         assert!(!is_hop_by_hop_header("date"));
     }
+
+    // ── build_headers_to_filter ───────────────────────────────────────
+
+    #[test]
+    fn build_filter_empty_lists() {
+        let filter = build_headers_to_filter(&[], &[]);
+        // Should still contain the static headers
+        assert!(!filter.is_empty());
+        assert!(filter.contains("server"));
+        assert!(filter.contains("x-powered-by"));
+    }
+
+    #[test]
+    fn build_filter_global_headers_lowercase() {
+        let filter = build_headers_to_filter(&["X-Custom-Header".to_string()], &[]);
+        assert!(filter.contains("x-custom-header"));
+    }
+
+    #[test]
+    fn build_filter_site_headers_lowercase() {
+        let filter = build_headers_to_filter(&[], &["X-Site-Secret".to_string()]);
+        assert!(filter.contains("x-site-secret"));
+    }
+
+    #[test]
+    fn build_filter_combines_global_and_site() {
+        let filter = build_headers_to_filter(
+            &["X-Global".to_string()],
+            &["X-Site".to_string()],
+        );
+        assert!(filter.contains("x-global"));
+        assert!(filter.contains("x-site"));
+    }
+
+    #[test]
+    fn build_filter_deduplicates() {
+        let filter = build_headers_to_filter(
+            &["x-dup".to_string()],
+            &["x-dup".to_string()],
+        );
+        // Should only appear once in the set
+        assert!(filter.contains("x-dup"));
+        let count = filter.iter().filter(|h| *h == "x-dup").count();
+        assert_eq!(count, 1);
+    }
+
+    // ── filter_response_headers_buf ──────────────────────────────────
+
+    #[test]
+    fn filter_headers_buf_reuses_buffer() {
+        let mut buf = Vec::new();
+
+        let mut headers1 = http::HeaderMap::new();
+        headers1.insert("content-type", "text/html".parse().unwrap());
+        headers1.insert("x-secret", "hidden".parse().unwrap());
+
+        let mut filter_set = AHashSet::new();
+        filter_set.insert("x-secret".to_string());
+
+        filter_response_headers_buf(&headers1, &filter_set, &mut buf);
+        assert_eq!(buf.len(), 1);
+        assert_eq!(buf[0].0, "content-type");
+
+        // Second call should clear and repopulate
+        let mut headers2 = http::HeaderMap::new();
+        headers2.insert("x-custom", "value".parse().unwrap());
+
+        filter_response_headers_buf(&headers2, &AHashSet::new(), &mut buf);
+        assert_eq!(buf.len(), 1);
+        assert_eq!(buf[0].0, "x-custom");
+    }
+
+    #[test]
+    fn filter_headers_buf_empty_headers() {
+        let mut buf = Vec::new();
+        filter_response_headers_buf(&http::HeaderMap::new(), &AHashSet::new(), &mut buf);
+        assert!(buf.is_empty());
+    }
 }

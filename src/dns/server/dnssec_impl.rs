@@ -470,9 +470,7 @@ impl DnsServer {
     }
 
     pub(super) fn build_nsec3param_record(zone: &Zone) -> Option<DnsZoneRecord> {
-        let Some(ref nsec3param) = zone.nsec3param else {
-            return None;
-        };
+        let nsec3param = zone.nsec3param.as_ref()?;
 
         let nsec3param_data = crate::dns::dnssec::create_nsec3param_record(nsec3param);
 
