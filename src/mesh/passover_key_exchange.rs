@@ -319,11 +319,119 @@ pub const EDGE_TOKEN_PREFIX: &str = "edge:";
 
 pub struct KeyExchangeService {
     config: Arc<MeshConfig>,
+    mesh_transport: Option<Arc<crate::mesh::transport::MeshTransport>>,
+    pending_key_requests: Arc<
+        RwLock<std::collections::HashMap<String, tokio::sync::oneshot::Sender<KeySignedResponse>>>,
+    >,
 }
 
 impl KeyExchangeService {
     pub fn new(config: Arc<MeshConfig>) -> Self {
-        Self { config }
+        Self {
+            config,
+            mesh_transport: None,
+            pending_key_requests: Arc::new(RwLock::new(std::collections::HashMap::new())),
+        }
+    }
+
+    pub fn with_transport(mut self, transport: Arc<crate::mesh::transport::MeshTransport>) -> Self {
+        self.mesh_transport = Some(transport);
+        self
+    }
+
+    pub async fn proxy_key_request_to_origin(
+        &self,
+        mesh_id: &str,
+        client_x25519_pubkey: &str,
+        nonce: &str,
+    ) -> Result<KeyOfferOrigin, String> {
+        let transport = self
+            .mesh_transport
+            .as_ref()
+            .ok_or("Mesh transport not configured")?;
+
+        let origin_node_id = self
+            .config
+            .global_node
+            .known_origin_keys
+            .get(mesh_id)
+            .cloned()
+            .ok_or_else(|| format!("Unknown origin for mesh_id: {}", mesh_id))?;
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let session_id = uuid::Uuid::new_v4().to_string();
+        let key_id = uuid::Uuid::new_v4().to_string();
+
+        {
+            let mut pending = self.pending_key_requests.write().await;
+            pending.insert(session_id.clone(), tx);
+        }
+
+        tracing::info!(
+            "Proxying key request to origin {} for mesh {}",
+            origin_node_id,
+            mesh_id
+        );
+
+        let global_node_id = self.config.node_id();
+
+        let key_forward = crate::mesh::protocol::MeshMessage::KeyForward {
+            session_id: session_id.clone().into(),
+            key_id: key_id.clone().into(),
+            mesh_id: mesh_id.into(),
+            client_x25519_pubkey: client_x25519_pubkey.into(),
+            global_node_id: global_node_id.clone().into(),
+            nonce: nonce.into(),
+            timestamp: chrono::Utc::now().timestamp() as u64,
+        };
+
+        transport
+            .send_datagram_to_peer(&origin_node_id, &key_forward)
+            .await
+            .map_err(|e| format!("Failed to send key request to origin: {}", e))?;
+
+        let timeout = Duration::from_secs(10);
+        match tokio::time::timeout(timeout, rx).await {
+            Ok(Ok(response)) => {
+                let mut pending = self.pending_key_requests.write().await;
+                pending.remove(&session_id);
+
+                Ok(KeyOfferOrigin {
+                    r#type: "key_offer_origin".to_string(),
+                    session_id: response.session_id.to_string(),
+                    key_id: response.key_id.to_string(),
+                    mesh_id: mesh_id.to_string(),
+                    server_x25519_pubkey: self.config.node_id(),
+                    origin_mesh_id: mesh_id.to_string(),
+                    origin_ed25519_pubkey: response.origin_ed25519_pubkey.to_string(),
+                    origin_signature: response.origin_signature.to_string(),
+                    expires_at: response.expires_at,
+                    nonce: nonce.to_string(),
+                    server_ed25519_pubkey: self.config.global_node_key.clone().unwrap_or_default(),
+                })
+            }
+            Ok(Err(_)) => {
+                let mut pending = self.pending_key_requests.write().await;
+                pending.remove(&session_id);
+                Err("Channel closed unexpectedly".to_string())
+            }
+            Err(_) => {
+                let mut pending = self.pending_key_requests.write().await;
+                pending.remove(&session_id);
+                Err("Timeout waiting for origin response".to_string())
+            }
+        }
+    }
+
+    pub async fn complete_key_request(&self, session_id: &str, response: KeySignedResponse) {
+        let tx = {
+            let mut pending = self.pending_key_requests.write().await;
+            pending.remove(session_id)
+        };
+
+        if let Some(tx) = tx {
+            let _ = tx.send(response);
+        }
     }
 }
 
@@ -351,6 +459,18 @@ impl GrpcKeyExchangeService for KeyExchangeService {
             mesh_id,
             &client_x25519_pubkey[..client_x25519_pubkey.len().min(16)]
         );
+
+        if self.mesh_transport.is_some() {
+            match self
+                .proxy_key_request_to_origin(&mesh_id, &client_x25519_pubkey, &nonce)
+                .await
+            {
+                Ok(key_offer) => return Ok(Response::new(key_offer)),
+                Err(e) => {
+                    tracing::warn!("Failed to proxy to origin, falling back to local: {}", e);
+                }
+            }
+        }
 
         let origin_ed25519_pubkey = self
             .config

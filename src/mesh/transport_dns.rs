@@ -1071,9 +1071,38 @@ impl MeshTransport {
 
         let txt_query = format!("_maluwaf-challenge.{}", domain);
 
-        tracing::debug!("Would query TXT record for {}", txt_query);
-
-        true
+        match &self.dns_resolver {
+            Some(resolver) => match resolver.lookup_txt(&txt_query).await {
+                Ok(txt_record) => {
+                    for value in &txt_record.values {
+                        if value.contains(expected_token) {
+                            tracing::info!(
+                                "TXT challenge verified for domain {}: token found in TXT record",
+                                domain
+                            );
+                            return true;
+                        }
+                    }
+                    tracing::warn!(
+                            "TXT challenge verification failed for {}: token not found in TXT records: {:?}",
+                            domain,
+                            txt_record.values
+                        );
+                    false
+                }
+                Err(e) => {
+                    tracing::warn!("TXT lookup failed for {}: {}", txt_query, e);
+                    false
+                }
+            },
+            None => {
+                tracing::warn!(
+                    "DNS resolver not available - cannot verify TXT challenge for domain {}",
+                    domain
+                );
+                false
+            }
+        }
     }
 
     pub(crate) async fn verify_oauth_challenge(
@@ -1115,12 +1144,12 @@ impl MeshTransport {
 
         if let Ok(signature_bytes) = hex::decode(signature_hex) {
             if signature_bytes.len() == 64 {
-                tracing::info!(
-                    "Signed challenge received for domain {} from node {} (verification stub)",
-                    domain,
-                    origin_node_id
+                tracing::warn!(
+                    "Signed challenge for domain {}: signature verification NOT IMPLEMENTED - accepting challenge. \
+                     In production, this should verify the Ed25519 signature using the origin node's public key.",
+                    domain
                 );
-                return true;
+                return false;
             }
         }
 

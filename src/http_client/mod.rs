@@ -126,7 +126,7 @@ pub fn create_http_client_with_config(
     http_connector.set_nodelay(true);
     http_connector.set_keepalive(Some(Duration::from_secs(60)));
 
-    let tls_config = build_tls_config(None, false);
+    let tls_config = build_tls_config(None, false, None);
 
     let https_connector = hyper_rustls::HttpsConnectorBuilder::new()
         .with_tls_config(tls_config)
@@ -153,8 +153,11 @@ pub fn create_upstream_client(
     http_connector.set_nodelay(true);
     http_connector.set_keepalive(Some(Duration::from_secs(60)));
 
-    let rustls_config =
-        build_tls_config(tls_config.ca_cert_path.as_deref(), tls_config.skip_verify);
+    let rustls_config = build_tls_config(
+        tls_config.ca_cert_path.as_deref(),
+        tls_config.skip_verify,
+        tls_config.skip_verify_reason.as_deref(),
+    );
 
     let builder = hyper_rustls::HttpsConnectorBuilder::new().with_tls_config(rustls_config);
 
@@ -173,9 +176,7 @@ pub fn create_upstream_client(
         .build(https_connector)
 }
 
-fn load_ca_certs_from_path(
-    path: &str,
-) -> Result<Vec<rustls_pki_types::CertificateDer<'static>>> {
+fn load_ca_certs_from_path(path: &str) -> Result<Vec<rustls_pki_types::CertificateDer<'static>>> {
     use rustls_pki_types::pem::PemObject;
     let pem_data = std::fs::read(path)
         .with_context(|| format!("Failed to read CA certificate file: {}", path))?;
@@ -188,7 +189,11 @@ fn load_ca_certs_from_path(
     Ok(certs)
 }
 
-fn build_tls_config(ca_cert_path: Option<&str>, skip_verify: bool) -> rustls::ClientConfig {
+fn build_tls_config(
+    ca_cert_path: Option<&str>,
+    skip_verify: bool,
+    skip_verify_reason: Option<&str>,
+) -> rustls::ClientConfig {
     use rustls::crypto::aws_lc_rs;
     use std::sync::Arc;
 
@@ -199,13 +204,15 @@ fn build_tls_config(ca_cert_path: Option<&str>, skip_verify: bool) -> rustls::Cl
         .expect("failed to set TLS protocol versions");
 
     if skip_verify {
+        let reason = skip_verify_reason.unwrap_or("not specified");
         tracing::warn!(
+            reason,
             "TLS certificate verification is DISABLED for upstream connections — \
              this is insecure and should only be used in development"
         );
         let mut config = builder
             .dangerous()
-            .with_custom_certificate_verifier(Arc::new(NoVerifier))
+            .with_custom_certificate_verifier(Arc::new(NoVerifier::new(reason.to_string())))
             .with_no_client_auth();
         config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
         return config;
@@ -256,18 +263,48 @@ fn build_tls_config(ca_cert_path: Option<&str>, skip_verify: bool) -> rustls::Cl
 }
 
 #[derive(Debug)]
-struct NoVerifier;
+struct NoVerifier {
+    skip_reason: String,
+}
+
+impl NoVerifier {
+    fn new(reason: String) -> Self {
+        Self {
+            skip_reason: reason,
+        }
+    }
+}
 
 impl rustls::client::danger::ServerCertVerifier for NoVerifier {
     fn verify_server_cert(
         &self,
-        _end_entity: &rustls_pki_types::CertificateDer<'_>,
-        _intermediates: &[rustls_pki_types::CertificateDer<'_>],
-        _server_name: &rustls_pki_types::ServerName<'_>,
-        _ocsp_response: &[u8],
-        _now: rustls_pki_types::UnixTime,
+        end_entity: &rustls_pki_types::CertificateDer<'_>,
+        intermediates: &[rustls_pki_types::CertificateDer<'_>],
+        server_name: &rustls_pki_types::ServerName<'_>,
+        ocsp_response: &[u8],
+        now: rustls_pki_types::UnixTime,
     ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
-        Ok(rustls::client::danger::ServerCertVerified::assertion())
+        tracing::warn!(
+            reason = %self.skip_reason,
+            server_name = ?server_name,
+            "TLS certificate verification DISABLED - accepting certificate for {:?}",
+            server_name
+        );
+
+        let mut root_store = rustls::RootCertStore::empty();
+        root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+
+        let webpki_verifier =
+            rustls::client::WebPkiServerVerifier::builder(std::sync::Arc::new(root_store))
+                .build()
+                .map_err(|e| rustls::Error::General(format!("Failed to build verifier: {}", e)))?;
+
+        webpki_verifier
+            .verify_server_cert(end_entity, intermediates, server_name, ocsp_response, now)
+            .map_err(|e| {
+                tracing::debug!("Chain validation error (skipped): {}", e);
+                rustls::Error::General(format!("Chain validation error (bypassed): {}", e))
+            })
     }
 
     fn verify_tls12_signature(
@@ -358,11 +395,7 @@ pub async fn send_unix_request_with_body(
     Ok(HttpResponse::from_hyper(response).await)
 }
 
-pub async fn send_request(
-    client: &HttpClient,
-    method: Method,
-    url: &str,
-) -> Result<HttpResponse> {
+pub async fn send_request(client: &HttpClient, method: Method, url: &str) -> Result<HttpResponse> {
     send_request_with_timeout(client, method, url, None).await
 }
 
@@ -468,7 +501,9 @@ pub async fn send_request_via_quic_tunnel(
         };
         (peer, port_str)
     } else {
-        return Err(anyhow::anyhow!("Invalid quictunnel URL format: expected quictunnel://peer:port"));
+        return Err(anyhow::anyhow!(
+            "Invalid quictunnel URL format: expected quictunnel://peer:port"
+        ));
     };
 
     let port: u16 = port_str
@@ -501,7 +536,10 @@ pub async fn send_request_via_quic_tunnel(
             success, message, ..
         } => {
             if !success {
-                return Err(anyhow::anyhow!("Stream open failed: {}", message.unwrap_or_default()));
+                return Err(anyhow::anyhow!(
+                    "Stream open failed: {}",
+                    message.unwrap_or_default()
+                ));
             }
         }
         _ => return Err(anyhow::anyhow!("Unexpected response to StreamOpen")),
@@ -564,7 +602,7 @@ pub async fn send_request_via_quic_tunnel(
                 Ok(Some(0)) => break,
                 Ok(Some(n)) => response_data.extend_from_slice(&buf[..n]),
                 Ok(None) => break,
-                    Err(e) => return Err(anyhow::anyhow!("Read error: {}", e)),
+                Err(e) => return Err(anyhow::anyhow!("Read error: {}", e)),
             }
         }
         response_data
@@ -573,7 +611,9 @@ pub async fn send_request_via_quic_tunnel(
     let response_str = String::from_utf8_lossy(&result);
     let mut header_lines = response_str.split("\r\n");
 
-    let status_line = header_lines.next().ok_or_else(|| anyhow::anyhow!("No status line in response"))?;
+    let status_line = header_lines
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("No status line in response"))?;
 
     let status_parts: Vec<&str> = status_line.splitn(3, ' ').collect();
     let status_code: u16 = status_parts

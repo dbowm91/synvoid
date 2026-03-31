@@ -1340,15 +1340,17 @@ mod tests {
     #[test]
     fn test_pbkdf2_derivation_is_deterministic() {
         let passphrase = "test_password_123";
-        let key1 = NodeIdentityConfig::derive_encryption_key(passphrase);
-        let key2 = NodeIdentityConfig::derive_encryption_key(passphrase);
+        let salt = b"test_salt_value";
+        let key1 = NodeIdentityConfig::derive_encryption_key(passphrase, salt);
+        let key2 = NodeIdentityConfig::derive_encryption_key(passphrase, salt);
         assert_eq!(key1, key2, "Same passphrase should produce same key");
     }
 
     #[test]
     fn test_pbkdf2_different_passphrases_different_keys() {
-        let key1 = NodeIdentityConfig::derive_encryption_key("password1");
-        let key2 = NodeIdentityConfig::derive_encryption_key("password2");
+        let salt = b"test_salt_value";
+        let key1 = NodeIdentityConfig::derive_encryption_key("password1", salt);
+        let key2 = NodeIdentityConfig::derive_encryption_key("password2", salt);
         assert_ne!(
             key1, key2,
             "Different passphrases should produce different keys"

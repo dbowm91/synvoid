@@ -248,12 +248,11 @@ impl NodeIdentityConfig {
         Ok(())
     }
 
-    pub(crate) fn derive_encryption_key(passphrase: &str) -> [u8; 32] {
+    pub(crate) fn derive_encryption_key(passphrase: &str, salt: &[u8]) -> [u8; 32] {
         use pbkdf2::pbkdf2_hmac_array;
         use sha2::Sha256;
 
-        const SALT: &[u8] = b"rustwaf-node-identity-v1";
-        pbkdf2_hmac_array::<Sha256, 32>(passphrase.as_bytes(), SALT, 100_000)
+        pbkdf2_hmac_array::<Sha256, 32>(passphrase.as_bytes(), salt, 100_000)
     }
 
     pub(crate) fn encrypt_key(
@@ -269,7 +268,10 @@ impl NodeIdentityConfig {
                 };
                 use rand::RngCore;
 
-                let key = Self::derive_encryption_key(pass);
+                let mut salt = [0u8; 16];
+                rand::rng().fill_bytes(&mut salt);
+
+                let key = Self::derive_encryption_key(pass, &salt);
                 let cipher = Aes256Gcm::new_from_slice(&key)
                     .map_err(|e| format!("Cipher init failed: {}", e))?;
 
@@ -281,8 +283,9 @@ impl NodeIdentityConfig {
                     .encrypt(nonce, plaintext)
                     .map_err(|e| format!("Encryption failed: {}", e))?;
 
-                let mut result = Vec::with_capacity(12 + ciphertext.len() + 16);
+                let mut result = Vec::with_capacity(12 + 16 + ciphertext.len());
                 result.extend_from_slice(&nonce_bytes);
+                result.extend_from_slice(&salt);
                 result.extend_from_slice(&ciphertext);
                 Ok(result)
             }
@@ -302,15 +305,16 @@ impl NodeIdentityConfig {
                     Aes256Gcm, Nonce,
                 };
 
-                if ciphertext.len() < 12 + 16 {
+                if ciphertext.len() < 12 + 16 + 16 {
                     return Err("Ciphertext too short".to_string());
                 }
 
-                let key = Self::derive_encryption_key(pass);
-                let cipher = Aes256Gcm::new_from_slice(&key).map_err(|e| e.to_string())?;
-
                 let nonce = Nonce::from_slice(&ciphertext[..12]);
-                let ciphertext_only = &ciphertext[12..];
+                let salt = &ciphertext[12..28];
+                let ciphertext_only = &ciphertext[28..];
+
+                let key = Self::derive_encryption_key(pass, salt);
+                let cipher = Aes256Gcm::new_from_slice(&key).map_err(|e| e.to_string())?;
 
                 cipher
                     .decrypt(nonce, ciphertext_only)

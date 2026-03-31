@@ -10,13 +10,13 @@ use tokio::sync::Mutex;
 use tokio::time::sleep;
 
 use crate::mesh::config::MeshConfig;
-use crate::utils::current_timestamp;
 use crate::mesh::protocol::MeshMessage;
 use crate::mesh::topology::MeshTopology;
 use crate::mesh::transports::{
     MeshTransportError, MeshTransportTrait, MeshTransportType, QuicMeshTransport, TransportHint,
     WireGuardMeshTransport,
 };
+use crate::utils::current_timestamp;
 
 pub const DEFAULT_MAX_RETRIES: u32 = 5;
 pub const RETRY_BACKOFF_BASE_MS: u64 = 500;

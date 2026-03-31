@@ -517,14 +517,16 @@ impl MeshTransport {
                 .is_ok()
             {
                 // Wait briefly for response (non-blocking)
-                if let Ok(Ok(route_result)) = tokio::time::timeout(Duration::from_millis(100), rx).await {
+                if let Ok(Ok(route_result)) =
+                    tokio::time::timeout(Duration::from_millis(100), rx).await
+                {
                     // Cache the route (already cached by handle_route_response)
                     if let Some(best) = route_result.best_provider() {
-                            tracing::debug!(
-                                "Preflight cached route for {} -> {}",
-                                upstream_id,
-                                best.node_id
-                            );
+                        tracing::debug!(
+                            "Preflight cached route for {} -> {}",
+                            upstream_id,
+                            best.node_id
+                        );
                     }
                 }
             }

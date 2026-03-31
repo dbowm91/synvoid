@@ -7,11 +7,10 @@
 //! for attack detection before forwarding.
 
 use ::metrics::{counter, histogram};
-use http::{header::HeaderName, Method, Response};
+use http::{header::HeaderName, Response};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::challenge::ChallengeResult;
 use crate::config::site::{BufferingConfig, ProxyCacheConfig, ProxyHeadersConfig, RetryConfig};
 use crate::http_client::{
     create_http_client_with_config, create_upstream_client, send_request_with_body_and_timeout,
@@ -22,9 +21,7 @@ use crate::proxy_cache::{
     CacheHit, CacheKey, CacheKeyBuilder, ProxyCache, ProxyCacheEntry, ProxyCacheSettings,
 };
 use crate::upstream::{Backend, LoadBalanceAlgorithm, UpstreamPool};
-use crate::waf::{
-    BotDetectionResult, EndpointCheckResult, RateLimitResult, UpstreamErrorTracker, WafCore,
-};
+use crate::waf::{UpstreamErrorTracker, WafCore};
 use ahash::AHashSet;
 use std::sync::LazyLock;
 
@@ -554,169 +551,6 @@ impl ProxyServer {
                     .unwrap_or_else(|_| crate::http::fallback_error_bytes()))
             }
         }
-    }
-
-    #[allow(dead_code)]
-    async fn check_waf(
-        &self,
-        client_ip: &std::net::IpAddr,
-        path: &str,
-        method: &Method,
-        user_agent: Option<&str>,
-    ) -> WafDecision {
-        if self.waf.whitelist.contains(client_ip) {
-            return WafDecision::Pass;
-        }
-
-        if self.waf.rate_limiter.is_in_blackhole() {
-            counter!("maluwaf.ratelimit.blackhole_drop").increment(1);
-            return WafDecision::Drop;
-        }
-
-        match self.waf.rate_limiter.check_global() {
-            RateLimitResult::Blackholed => {
-                counter!("maluwaf.ratelimit.blackhole_drop").increment(1);
-                return WafDecision::Drop;
-            }
-            RateLimitResult::Limited {
-                limit_type,
-                retry_after_millis,
-            } => {
-                tracing::debug!(
-                    "Global rate limited: {} ({})",
-                    limit_type,
-                    retry_after_millis
-                );
-                return WafDecision::Block(
-                    429,
-                    format!("Global rate limit exceeded ({})", limit_type),
-                );
-            }
-            RateLimitResult::Allowed => {}
-        }
-
-        match self.waf.rate_limiter.acquire_global_connection().await {
-            Ok(_permit) => {}
-            Err(_) => {
-                tracing::warn!("Global connection limit exceeded");
-                return WafDecision::Block(
-                    503,
-                    "Service Unavailable - Server overloaded".to_string(),
-                );
-            }
-        }
-
-        match self.waf.rate_limiter.check_rate_limit(*client_ip).await {
-            RateLimitResult::Limited {
-                limit_type,
-                retry_after_millis,
-            } => {
-                tracing::debug!(
-                    "Rate limited: {} for {} ({})",
-                    limit_type,
-                    client_ip,
-                    retry_after_millis
-                );
-                let body = format!("Rate limit exceeded ({})", limit_type);
-                return WafDecision::Block(429, body);
-            }
-            RateLimitResult::Blackholed => {
-                return WafDecision::Drop;
-            }
-            RateLimitResult::Allowed => {}
-        }
-
-        if let EndpointCheckResult::Blocked {
-            response_code: _,
-            html: _,
-            ..
-        } = self.waf.endpoint_blocker.check(path, method.as_str())
-        {
-            tracing::info!("Blocked endpoint accessed: {} - method: {}", path, method);
-            return WafDecision::Stall;
-        }
-
-        let bot_result = self.waf.bot_detector.check(user_agent);
-        match bot_result {
-            BotDetectionResult::Blocked { reason, .. } => {
-                tracing::info!("Blocking bot: {} - UA: {:?}", reason, user_agent);
-                return WafDecision::Stall;
-            }
-            BotDetectionResult::Tarpit { reason, .. } => {
-                tracing::info!("Tarpitting scraper: {} - UA: {:?}", reason, user_agent);
-                return WafDecision::Tarpit(path.to_string());
-            }
-            BotDetectionResult::Allowed { .. } => {}
-        }
-
-        if let Some(matched) = self.waf.sensitive_endpoint_manager.check(path) {
-            tracing::info!(
-                "Honeypot endpoint accessed: {} - matched: {}",
-                path,
-                matched
-            );
-            if let Some(ref store) = self.waf.block_store {
-                let ban_duration = 24 * 60 * 60;
-                store.block_ip(*client_ip, "honeypot", ban_duration, "global");
-            }
-            if let Some(ref threat_intel) = crate::waf::get_threat_intel() {
-                threat_intel.announce_local_block(
-                    *client_ip,
-                    "honeypot".to_string(),
-                    24 * 60 * 60,
-                    "global".to_string(),
-                );
-            }
-            return WafDecision::Stall;
-        }
-
-        if self.waf.challenge_manager.is_honeypot_hit(client_ip, path) {
-            tracing::info!("IP-bound honeypot accessed: {} by {}", path, client_ip);
-            if let Some(ref store) = self.waf.block_store {
-                let ban_duration = 24 * 60 * 60;
-                store.block_ip(*client_ip, "honeypot", ban_duration, "global");
-            }
-            if let Some(ref threat_intel) = crate::waf::get_threat_intel() {
-                threat_intel.announce_local_block(
-                    *client_ip,
-                    "honeypot".to_string(),
-                    24 * 60 * 60,
-                    "global".to_string(),
-                );
-            }
-            return WafDecision::Stall;
-        }
-
-        if self.waf.config.enable_pow_challenge || self.waf.config.enable_css_honeypot {
-            let challenge_result = self.waf.challenge_manager.check_cookie(None);
-            match challenge_result {
-                ChallengeResult::NotSet | ChallengeResult::Failed => {
-                    let (html, session_id) = self
-                        .waf
-                        .challenge_manager
-                        .generate_challenge_page(client_ip);
-                    if let Some(sid) = session_id {
-                        let session_cookie_name =
-                            self.waf.challenge_manager.css_session_cookie_name();
-                        let window_secs = self.waf.challenge_manager.css_window_secs();
-                        return WafDecision::ChallengeWithCookie {
-                            html,
-                            session_cookie_name,
-                            session_cookie_value: sid,
-                            session_cookie_max_age: window_secs,
-                        };
-                    } else {
-                        return WafDecision::Challenge(html);
-                    }
-                }
-                ChallengeResult::Passed => {}
-                ChallengeResult::RateLimited => {
-                    return WafDecision::Pass;
-                }
-            }
-        }
-
-        WafDecision::Pass
     }
 
     async fn forward_request(

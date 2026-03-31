@@ -108,6 +108,7 @@ pub struct MeshTransport {
     pub(crate) seen_messages: Arc<RwLock<lru_time_cache::LruCache<String, Instant>>>,
     pub(crate) stake_manager: Option<Arc<crate::mesh::dht::StakeManager>>,
     pub(crate) mlkem_session_manager: Option<Arc<SessionManager<MlKem768>>>,
+    pub(crate) dns_resolver: Option<Arc<dyn crate::dns::resolver::DnsResolver>>,
     #[cfg(feature = "dns")]
     pub(crate) dns_registry: Option<Arc<crate::dns::MeshDnsRegistry>>,
     #[cfg(feature = "dns")]
@@ -151,6 +152,7 @@ impl Clone for MeshTransport {
             )),
             stake_manager: self.stake_manager.clone(),
             mlkem_session_manager: self.mlkem_session_manager.clone(),
+            dns_resolver: self.dns_resolver.clone(),
             #[cfg(feature = "dns")]
             dns_registry: self.dns_registry.clone(),
             #[cfg(feature = "dns")]
@@ -286,6 +288,7 @@ impl MeshTransport {
         threat_intel: Option<Arc<crate::mesh::threat_intel::ThreatIntelligenceManager>>,
         mesh_signer: Option<Arc<crate::mesh::protocol::MeshMessageSigner>>,
         stake_manager: Option<Arc<crate::mesh::dht::StakeManager>>,
+        dns_resolver: Option<Arc<dyn crate::dns::resolver::DnsResolver>>,
         #[cfg(feature = "dns")] dns_registry: Option<Arc<crate::dns::MeshDnsRegistry>>,
     ) -> Self {
         let is_genesis = config.is_genesis_node();
@@ -365,6 +368,7 @@ impl MeshTransport {
             seen_messages: Arc::new(RwLock::new(seen_messages)),
             stake_manager,
             mlkem_session_manager,
+            dns_resolver,
             #[cfg(feature = "dns")]
             dns_registry,
             #[cfg(feature = "dns")]
@@ -1264,7 +1268,10 @@ impl MeshTransport {
                         }
                     }
                 } else {
-                    tracing::warn!("Node {} did not provide public key in handshake - NodeID verification skipped", node_id);
+                    tracing::warn!("Node {} did not provide public key in handshake", node_id);
+                    return Err(MeshTransportError::AuthFailed(
+                        "Public key is required for authentication".to_string(),
+                    ));
                 }
 
                 let is_genesis_org_member = {

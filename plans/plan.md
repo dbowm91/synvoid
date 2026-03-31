@@ -1089,15 +1089,15 @@ cargo fmt --check && cargo clippy -- -D warnings
 
 ## Success Criteria
 
-- [ ] All critical security bypasses closed (Wave 0)
+- [x] All critical security bypasses closed (Wave 0)
 - [ ] All high-severity correctness issues fixed (Wave 1)
 - [ ] Performance hot paths optimized with measurable improvement (Wave 2)
 - [ ] Feature additions complete with tests (Wave 3)
 - [ ] Dead code reduced, clippy clean, no module-level suppressions (Wave 4)
 - [ ] Documentation accurate, integration tests pass (Wave 5)
-- [ ] `cargo test` passes
-- [ ] `cargo clippy -- -D warnings` passes
-- [ ] `cargo fmt --check` passes
+- [x] `cargo test` passes
+- [x] `cargo clippy -- -D warnings` passes
+- [x] `cargo fmt --check` passes
 
 ---
 
@@ -1141,6 +1141,18 @@ All items from the original plans have been reviewed, deduplicated, and incorpor
 ---
 
 ## Notes
+
+- **2026-03-31**: Wave 0 completed - All critical security fixes implemented:
+  - 0A.2: Removed dead code `check_waf()` from proxy.rs
+  - 0A.4: Whitelist already at position 1 (no change needed)
+  - 0C.1: Global node auth enforced via `role.is_global()` checks (already in place)
+  - 0C.3: Hard-fail on missing public_key in node ID verification
+  - 0C.4: Added `enforce_mutual_tls` parameter to QUIC mesh server config
+  - 0E.2: NoVerifier now logs per-connection and validates certificate chain
+  - 0E.3: PBKDF2 now uses random 16-byte salt
+  - 0C.2: gRPC key exchange proxies to origin node via mesh
+  - 0D.1: Domain verification uses real DNS TXT lookups, rejects unsigned challenges
+  - 0D.2: Mesh certificate verification uses proper X.509 chain validation
 
 - This plan is organized by **priority and dependency**, not by domain. Critical security fixes come first regardless of which subsystem they affect.
 - Each wave is designed to be **independently testable** — you can run the full test suite after any wave.

@@ -330,8 +330,12 @@ pub async fn run_unified_server_worker(
                         // Create minimal registry for edge nodes (no resolver)
                         let registry_config = crate::dns::MeshDnsRegistryConfig {
                             verification_timeout_secs: dns_cfg.mesh.verification_timeout_secs,
-                            verification_retry_interval_secs: dns_cfg.mesh.verification_retry_interval_secs,
-                            require_cert_chain_verification: dns_cfg.mesh.require_cert_chain_verification,
+                            verification_retry_interval_secs: dns_cfg
+                                .mesh
+                                .verification_retry_interval_secs,
+                            require_cert_chain_verification: dns_cfg
+                                .mesh
+                                .require_cert_chain_verification,
                             ..Default::default()
                         };
 
@@ -363,9 +367,15 @@ pub async fn run_unified_server_worker(
 
                                     // Create mesh DNS registry with resolver - only global nodes verify
                                     let registry_config = crate::dns::MeshDnsRegistryConfig {
-                                        verification_timeout_secs: dns_cfg.mesh.verification_timeout_secs,
-                                        verification_retry_interval_secs: dns_cfg.mesh.verification_retry_interval_secs,
-                                        require_cert_chain_verification: dns_cfg.mesh.require_cert_chain_verification,
+                                        verification_timeout_secs: dns_cfg
+                                            .mesh
+                                            .verification_timeout_secs,
+                                        verification_retry_interval_secs: dns_cfg
+                                            .mesh
+                                            .verification_retry_interval_secs,
+                                        require_cert_chain_verification: dns_cfg
+                                            .mesh
+                                            .require_cert_chain_verification,
                                         ..Default::default()
                                     };
 
@@ -398,6 +408,7 @@ pub async fn run_unified_server_worker(
                     transport_manager.clone(),
                     Some(threat_intel.clone()),
                     Some(Arc::new(signer_for_mesh)),
+                    None::<Arc<dyn crate::dns::resolver::DnsResolver>>,
                     dns_registry,
                 )
                 .await
@@ -418,6 +429,7 @@ pub async fn run_unified_server_worker(
                     transport_manager.clone(),
                     Some(threat_intel.clone()),
                     Some(Arc::new(signer_for_mesh)),
+                    None::<Arc<dyn crate::dns::resolver::DnsResolver>>,
                 )
                 .await
                 {
@@ -441,10 +453,7 @@ pub async fn run_unified_server_worker(
             {
                 if let Some(ref global_node_key) = mesh_config.global_node_key {
                     // Announce edge's public key to DHT for global nodes to verify tokens
-                    transport_manager.announce_edge_key(
-                        &mesh_config.node_id(),
-                        global_node_key,
-                    );
+                    transport_manager.announce_edge_key(&mesh_config.node_id(), global_node_key);
                 }
             }
 

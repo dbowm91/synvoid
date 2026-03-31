@@ -303,19 +303,56 @@ impl MeshCertManager {
         Ok((cert_chain, private_key))
     }
 
-    pub fn build_server_config(&self) -> Result<ServerConfig, MeshCertError> {
+    pub fn build_server_config(
+        &self,
+        enforce_mutual_tls: bool,
+    ) -> Result<ServerConfig, MeshCertError> {
         let (Some(cert_path), Some(key_path)) = (&self.cert_path, &self.key_path) else {
             return Err(MeshCertError::MissingCert);
         };
 
         let (cert_chain, private_key) = Self::load_cert_chain_and_key(cert_path, key_path)?;
 
-        let server_config = rustls::ServerConfig::builder()
-            .with_no_client_auth()
-            .with_single_cert(cert_chain, private_key)
-            .map_err(|e| {
-                MeshCertError::ConfigError(format!("Failed to build server config: {}", e))
-            })?;
+        let server_config = if enforce_mutual_tls {
+            let mut root_store = rustls::RootCertStore::empty();
+            if let Some(ref ca_path) = self.ca_path {
+                if let Ok(ca_file) = File::open(ca_path) {
+                    let mut ca_reader = BufReader::new(ca_file);
+                    let mut ca_certs = Vec::new();
+                    while let Ok(Some((kind, der))) = pem::from_buf(&mut ca_reader) {
+                        if kind == pem::SectionKind::Certificate {
+                            ca_certs.push(CertificateDer::from(der));
+                        }
+                    }
+                    for ca_cert in ca_certs {
+                        root_store.add(ca_cert).ok();
+                    }
+                }
+            }
+            let client_cert_verifier =
+                rustls::server::WebPkiClientVerifier::builder(std::sync::Arc::new(root_store))
+                    .build()
+                    .map_err(|e| {
+                        MeshCertError::ConfigError(format!(
+                            "Failed to build client verifier: {}",
+                            e
+                        ))
+                    })?;
+
+            rustls::ServerConfig::builder()
+                .with_client_cert_verifier(client_cert_verifier)
+                .with_single_cert(cert_chain, private_key)
+                .map_err(|e| {
+                    MeshCertError::ConfigError(format!("Failed to build server config: {}", e))
+                })?
+        } else {
+            rustls::ServerConfig::builder()
+                .with_no_client_auth()
+                .with_single_cert(cert_chain, private_key)
+                .map_err(|e| {
+                    MeshCertError::ConfigError(format!("Failed to build server config: {}", e))
+                })?
+        };
 
         let quic_server_config = QuicServerConfig::try_from(std::sync::Arc::new(server_config))
             .map_err(|e| {
@@ -569,26 +606,53 @@ impl MeshCertManager {
             return Ok(true);
         }
 
-        use x509_parser::prelude::*;
+        use rustls::client::danger::ServerCertVerifier;
+        use rustls::client::WebPkiServerVerifier;
+        use rustls::RootCertStore;
+        use std::time::SystemTime;
 
-        let (_, cert) = X509Certificate::from_der(cert_der)
-            .map_err(|e| MeshCertError::ParseError(e.to_string()))?;
-
+        let mut root_store = RootCertStore::empty();
         for (_, trusted_cert) in trusted.iter() {
-            let trusted_der = trusted_cert.as_ref();
-            if let Ok((_, trusted_x509)) = X509Certificate::from_der(trusted_der) {
-                if cert.subject().to_string() == trusted_x509.subject().to_string() {
-                    tracing::debug!(
-                        "Peer {} certificate issuer matches trusted CA",
-                        peer_node_id
-                    );
-                    return Ok(true);
-                }
-            }
+            root_store
+                .add(trusted_cert.clone())
+                .map_err(|e| MeshCertError::ConfigError(format!("Failed to add CA: {}", e)))?;
         }
 
-        tracing::warn!("Peer {} certificate verification failed", peer_node_id);
-        Ok(false)
+        let verifier = WebPkiServerVerifier::builder(std::sync::Arc::new(root_store))
+            .build()
+            .map_err(|e| MeshCertError::ConfigError(format!("Failed to build verifier: {}", e)))?;
+
+        let cert = CertificateDer::from(cert_der);
+        let now = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map_err(|e| MeshCertError::ConfigError(format!("System time error: {}", e)))?
+            .as_secs() as i64;
+
+        let server_name = rustls_pki_types::ServerName::try_from(peer_node_id.to_string())
+            .map_err(|e| MeshCertError::ConfigError(format!("Invalid server name: {}", e)))?;
+
+        match verifier.verify_server_cert(
+            &cert,
+            &[],
+            &server_name,
+            &[],
+            rustls_pki_types::UnixTime::since_unix_epoch(std::time::Duration::from_secs(
+                now as u64,
+            )),
+        ) {
+            Ok(_) => {
+                tracing::debug!("Peer {} certificate verified successfully", peer_node_id);
+                Ok(true)
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Peer {} certificate verification failed: {}",
+                    peer_node_id,
+                    e
+                );
+                Ok(false)
+            }
+        }
     }
 
     pub fn add_peer_public_key(&self, peer_node_id: &str, public_key: Vec<u8>) {
