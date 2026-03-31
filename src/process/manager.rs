@@ -560,13 +560,18 @@ impl ProcessManager {
     }
 
     fn write_ipc_key_to_tempfile(&self, key_hex: &str) -> std::io::Result<String> {
+        use std::fs::OpenOptions;
         use std::io::Write;
 
         let temp_dir = std::env::temp_dir();
         let file_path = temp_dir.join(format!("maluwaf_ipc_key_{}", std::process::id()));
 
         {
-            let mut file = std::fs::File::create(&file_path)?;
+            // Use create_new to prevent symlink attacks (TOCTOU fix)
+            let mut file = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&file_path)?;
 
             #[cfg(unix)]
             {

@@ -33,7 +33,7 @@ impl RecordStoreManager {
         let dht_key = DhtKey::dns_domain_registration(&domain);
         let key = dht_key.as_str();
 
-        let record = DhtRecord {
+        let mut record = DhtRecord {
             key,
             value,
             timestamp: now,
@@ -42,6 +42,26 @@ impl RecordStoreManager {
             signature: Vec::new(),
             signer_public_key: None,
         };
+
+        // Sign the DNS domain registration record with the record signer
+        let rs = self.record_state.read();
+        if let Some(ref signer) = rs.record_signer {
+            let signed_record = crate::mesh::dht::SignedDhtRecord::new(
+                record.key.clone(),
+                record.value.clone(),
+                record.source_node_id.clone(),
+                crate::mesh::dht::SignedRecordType::DnsDomainRegistration,
+            );
+            if let Some(signature) = signer.sign(&signed_record) {
+                record.signature = signature;
+                record.signer_public_key = signer.get_verifying_key();
+                tracing::debug!(
+                    "Signed DNS domain registration record with Ed25519: {}",
+                    domain
+                );
+            }
+        }
+        drop(rs);
 
         let stored = self.store_record_global(record);
         if stored {

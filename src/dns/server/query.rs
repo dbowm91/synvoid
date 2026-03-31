@@ -820,13 +820,22 @@ impl DnsServer {
             {
                 if !mesh_records.is_empty() {
                     tracing::debug!("Resolved {} from mesh network", qname);
+                    let zones_guard = ctx.zones.read();
+                    let qname_lower = qname.to_lowercase();
+                    let zsk = zones_guard
+                        .iter()
+                        .find(|(origin, _)| {
+                            qname_lower.ends_with(&origin.to_lowercase())
+                                || qname_lower == origin.to_lowercase()
+                        })
+                        .and_then(|(_, zone)| zone.zsk_key.as_ref());
                     return Some(Self::build_response(
                         &qname,
                         qtype,
                         &mesh_records,
                         dnssec_ok,
                         edns_options.as_ref(),
-                        None,
+                        zsk,
                         &qname,
                     ));
                 }

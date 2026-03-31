@@ -36,8 +36,7 @@ impl MeshDnsRegistry {
 
         if self.config.require_cert_chain_verification && chain.len() < 2 {
             return Err(
-                "Certificate chain must contain at least end-entity and CA certificate"
-                    .to_string(),
+                "Certificate chain must contain at least end-entity and CA certificate".to_string(),
             );
         }
 
@@ -669,11 +668,11 @@ impl MeshDnsRegistry {
 
                         {
                             let mut origins = origin_nodes.write();
-                            if !origins.contains_key(
-                                &request_id.split('-').nth(1).unwrap_or("").to_string(),
-                            ) {
+                            let origin_node_id =
+                                request_id.rsplit('-').nth(1).unwrap_or("").to_string();
+                            if !origins.contains_key(&origin_node_id) {
                                 let origin = RegisteredOriginNode {
-                                    node_id: request_id.split('-').nth(1).unwrap_or("").to_string(),
+                                    node_id: origin_node_id.clone(),
                                     domains: vec![domain.clone()],
                                     geo: None,
                                     healthy: true,
@@ -717,7 +716,7 @@ impl MeshDnsRegistry {
                                     request_id: request_id.clone(),
                                     domain: domain.clone(),
                                     origin_node_id: request_id
-                                        .split('-')
+                                        .rsplit('-')
                                         .nth(1)
                                         .unwrap_or("")
                                         .to_string(),

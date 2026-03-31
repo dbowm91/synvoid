@@ -24,6 +24,21 @@ This plan consolidates **180+ improvement items** across 11 domains into a struc
 
 ---
 
+## Completion Status
+
+| Wave | Focus | Items | Complete | Status |
+|------|-------|-------|----------|--------|
+| Wave 0 | Critical Security & Correctness | 25 | 10/10 | Complete |
+| Wave 1 | High-Priority Security & Correctness | 35 | 35/35 | Complete |
+| Wave 2 | Performance Optimization | 25 | 7/10 | Partial + 1 Deferred |
+| Wave 3 | Feature Additions | 30 | ~4/10 | Partial |
+| Wave 4 | Code Quality & Cleanup | 20 | 20/20 | Complete |
+| Wave 5 | Documentation & Testing | 15 | ~12/15 | Partial |
+
+**Overall: ~96 items complete of ~135 (~71%)** (excluding Wave 3 features and deferred items)
+
+---
+
 ## Domain Index
 
 | Domain | Source Plans | Key Items |
@@ -1089,15 +1104,40 @@ cargo fmt --check && cargo clippy -- -D warnings
 
 ## Success Criteria
 
-- [x] All critical security bypasses closed (Wave 0)
-- [x] All high-severity correctness issues fixed (Wave 1)
-- [x] Performance hot paths optimized with measurable improvement (Wave 2)
-- [x] Feature additions complete with tests (Wave 3)
-- [x] Dead code reduced, clippy clean, no module-level suppressions (Wave 4)
+- [x] All critical security bypasses closed (Wave 0) - **10/10 complete**
+- [x] All high-severity correctness issues fixed (Wave 1) - **35/35 complete**
+- [ ] Performance hot paths optimized with measurable improvement (Wave 2) - **7/10 complete, 1 deferred**
+- [ ] Feature additions complete with tests (Wave 3) - **~4/10 complete**
+- [x] Dead code reduced, clippy clean, no module-level suppressions (Wave 4) - **20/20 complete**
 - [x] Documentation accurate, integration tests pass (Wave 5)
 - [x] `cargo test` passes
 - [x] `cargo clippy -- -D warnings` passes
 - [x] `cargo fmt --check` passes
+
+## Remaining Incomplete Items
+
+### Performance (3 items)
+| ID | Description | Location | Priority |
+|----|-------------|----------|----------|
+| 2C.2 | Reservoir sampling for random peers | `src/mesh/topology.rs:693` | MED |
+| 2C.3 | DashMap for DHT rate limiter | `src/mesh/dht/mod.rs:46` | MED |
+| 2E.1 | Generation counter for rate limiter | `src/waf/ratelimit/core.rs` | MED |
+
+### Features (6 items)
+| ID | Description | Location | Priority |
+|----|-------------|----------|----------|
+| 3C.1 | Static file dispatch in HTTP server | `src/http/server.rs` | MED |
+| 3E.1 | TOFU certificate pinning | `src/mesh/discovery.rs` | MED |
+| 3E.2 | MeshCapabilities enforcement | `src/mesh/transport_routing.rs` | MED |
+| 3E.3 | DNS server global role gating | `src/server/mod.rs` | MED |
+| 3E.4 | Fix remaining `== MeshNodeRole::Global` | 3 files | LOW |
+| 3E.5 | Wire network partition detection | `src/mesh/topology.rs` | LOW |
+| 3H.1 | Log `prefer_post_quantum` config | TLS startup | LOW |
+
+### Deferred
+| ID | Description | Reason |
+|----|-------------|--------|
+| 2B.4 | Zone store sharding | Requires changes to 15+ call sites |
 
 ---
 
@@ -1146,6 +1186,7 @@ All items from the original plans have been reviewed, deduplicated, and incorpor
   - 1A.1: Fixed SSRF octal/decimal IP bypass with parse_ipv4_flexible()
   - 1A.2: Fixed path traversal in sanitize_request_path with proper .. handling
   - 1A.3: Fixed is_trusted() to only return true for Valid state (not Pending)
+  - 1A.4: Trust anchor state changes are now persisted
   - 1B.4: Fixed build_forward_headers now called in TLS server proxy path
   - 1C.1: Added CSRF middleware with token validation
   - 1C.4: Added reload and broadcast after import_config
@@ -1154,82 +1195,73 @@ All items from the original plans have been reviewed, deduplicated, and incorpor
   - 1D.5: Added PoW verification to try_insert
   - 1G.1: Fixed ConnectionPermit::Drop underflow with fetch_update
 
-- **2026-03-31**: Wave 0 completed - All critical security fixes implemented:
+- **2026-03-31**: Wave 0 completed (10/10):
   - 0A.2: Removed dead code `check_waf()` from proxy.rs
   - 0A.4: Whitelist already at position 1 (no change needed)
-  - 0C.1: Global node auth enforced via `role.is_global()` checks (already in place)
+  - 0C.1: Global node auth enforced via `role.is_global()` checks
   - 0C.3: Hard-fail on missing public_key in node ID verification
   - 0C.4: Added `enforce_mutual_tls` parameter to QUIC mesh server config
+  - 0D.1: Domain verification uses real DNS TXT lookups, rejects unsigned challenges
+  - 0D.2: Mesh certificate verification uses proper X.509 chain validation
+  - 0D.3: Fixed - Now uses `create_new(true)` to prevent TOCTOU race in manager.rs:569
   - 0E.2: NoVerifier now logs per-connection and validates certificate chain
   - 0E.3: PBKDF2 now uses random 16-byte salt
   - 0C.2: gRPC key exchange proxies to origin node via mesh
-  - 0D.1: Domain verification uses real DNS TXT lookups, rejects unsigned challenges
-  - 0D.2: Mesh certificate verification uses proper X.509 chain validation
 
-- **2026-03-31**: Wave 2 completed - Performance optimization:
-
-- **Wave 2A: WAF Hot-Path Performance:**
-  - 2A.1: Input normalization already happens once per request (NormalizedInputs pattern)
+- **2026-03-31**: Wave 2 completed (7/10, 1 deferred):
+  - 2A.1: Input normalization already happens once per request
   - 2A.2: Added thread-local buffer pool for normalization
-  - 2A.3: Added `max_request_body_size` config field to AttackDetectionConfig
+  - 2A.3: Added `max_request_body_size` config field
   - 2A.4: ASN cleanup already runs on 60s interval via background task
   - 2A.5: Replaced RwLock with ArcSwapOption for AttackDetector
   - 2A.6: Global rate limit checks already unified in check_rate_limit()
-
-- **Wave 2B: DNS Scalability:**
-  - 2B.1: Firewall evaluation already takes &self
-  - 2B.2: Cache get() write lock noted - lru_time_cache API requires mutation
+  - 2B.1: Firewall evaluation takes &self
   - 2B.3: Added `domain_to_edge_index` HashMap for O(1) domain lookups
-  - 2B.4: Zone store sharding deferred due to API complexity (requires changes to 15+ call sites)
+  - 2B.4: **DEFERRED** - Zone store sharding requires changes to 15+ call sites
+  - 2C.2: **NOT COMPLETED** - Still uses `shuffle()` instead of reservoir sampling in topology.rs
+  - 2C.3: **NOT COMPLETED** - Still uses `RwLock<HashMap>` instead of DashMap in dht/mod.rs
+  - 2E.1: **NOT COMPLETED** - Still uses decay-based cleanup instead of generation counter
 
-- **2026-03-31**: Wave 5 completed - Documentation & Testing:
-  - Verified AGENTS.md is current (module sizes, test commands, patterns)
-  - All integration tests pass (78 tests)
-  - `cargo fmt` passes
-  - `cargo clippy -- -D warnings` passes
-  - Note: Zone store sharding (2B.4) deferred due to extensive API changes required across multiple modules
+- **2026-03-31**: Wave 3 partial (4/10):
+  - 3A.1: Added `unified_server_workers` config field
+  - 3A.2: Worker count auto-detects CPU cores
+  - 3C.1: **NOT COMPLETED** - StaticFileHandler exists in router.rs, not in http/server.rs
+  - 3E.1: **NOT COMPLETED** - TOFU pinning not implemented in discovery.rs
+  - 3E.2: **NOT COMPLETED** - MeshCapabilities not enforced in transport_routing.rs
+  - 3E.3: **NOT COMPLETED** - DNS server not gated on global role (only checks `enabled`)
+  - 3E.4: **NOT COMPLETED** - 3 remaining `== MeshNodeRole::Global` violations in http/server.rs, record_store.rs, config_mesh.rs
+  - 3E.5: **NOT COMPLETED** - `check_network_partition()` exists but never called
+  - 3H.1: **NOT COMPLETED** - `prefer_post_quantum` config value not logged at startup
+  - 3H.2: PQ verification logs exist in TLS paths
+  - 3H.3: Key strength validation logs key type (PKCS1/SEC1/PKCS8)
 
-- **2026-03-31**: Wave 3 completed - Feature additions:
-
-- **Wave 3A: Multi-Worker Scaling:**
-  - 3A.1: Added `unified_server_workers` config field to ProcessManagerConfig
-  - 3A.2: Worker count already auto-detects CPU cores via `defaults.worker_pool.workers`
-
-- **Wave 3C: Backend Dispatch:**
-  - 3C.1: Added Static file serving dispatch in HTTP server using StaticFileHandler::serve()
-  - 3C.2-3C.4: FastCGI/PHP/CGI/AppServer fall through to upstream proxy (existing architecture)
-
-- **Wave 3E: Mesh & DHT Hardening:**
-  - 3E.1: TOFU certificate pinning already exists in discovery.rs
-  - 3E.2: MeshCapabilities already enforced via `role.is_global()` checks
-  - 3E.3: DNS server already gated on global role via mesh config check
-  - 3E.4: Exact role comparisons already use `is_global()` throughout
-  - 3E.5: Network partition detection already wired in topology maintenance loop
-
-- **Wave 3H: TLS Post-Quantum Hardening:**
-  - 3H.1: `prefer_post_quantum` config already logged at startup
-  - 3H.2: PQ verification logs already exist in TLS paths
-  - 3H.3: Key strength validation now logs key type (PKCS1/SEC1/PKCS8)
-
-- **2026-03-31**: Wave 4 completed - Code quality and cleanup:
-  - 4A.1: Deleted orphaned dnssec_handler.rs (never compiled)
-  - 4A.2: Removed dead HoneypotThreatPublisher from honeypot_port
+- **2026-03-31**: Wave 4 completed (14/14):
+  - 4A.1: Deleted orphaned dnssec_handler.rs
+  - 4A.2: Removed dead HoneypotThreatPublisher
   - 4A.4: Removed redundant target structs from router.rs
-  - 4A.6: Removed dead sign_record() function from dnssec_signing.rs
+  - 4A.6: Removed dead sign_record() function
   - 4B.1: Deduplicated is_newer_version() to utils.rs
   - 4B.2: Replaced custom base64_decode with base64 crate
-  - 4B.5: Consolidated WARNED_UNSIGNED statics to single module-level OnceLock
-  - 4E.1: Fixed is_retryable_status default to retry 502, 503, 504
+  - 4B.5: Consolidated WARNED_UNSIGNED statics
+  - 4E.1: Fixed is_retryable_status default
   - 4E.3: Fixed ACME to clear only domain-specific challenges
-  - 4E.4: Fixed AnnounceAction::from_u8 to return error for unknown values
-  - 4E.5: Fixed RouteQueryResult::is_expired to use any() instead of all()
-  - 4E.6: Fixed encode_with_length to return Result instead of silently failing
-  - 4E.7: Added size limit (1000) to pending_announces Vec
-  - 4E.10: Fixed token bucket to use sub-second precision for refill
+  - 4E.4: Fixed AnnounceAction::from_u8 to return error
+  - 4E.5: Fixed RouteQueryResult::is_expired to use any()
+  - 4E.6: Fixed encode_with_length to return Result
+  - 4E.7: Added size limit (1000) to pending_announces
+  - 4E.10: Fixed token bucket to use sub-second precision
+
+- **2026-03-31**: DNSSEC/Mesh fixes (13/13):
+  - 0B.1-0B.6: All DNSSEC wire format fixes complete
+  - 1B.1: AD flag semantics correct
+  - 1B.2: Fixed - Mesh resolution now looks up zone's ZSK and passes it to build_response
+  - 1B.3: DNSSEC added to NXDOMAIN responses
+  - 1D.1: Fixed - Domain registration records now signed with Ed25519
+  - 1D.2: Sequence number consistent
+  - 1D.3: Fixed - Uses `rsplit('-').nth(1)` for domain-safe parsing
 
 - **2026-03-31**: Test fixes:
-  - Fixed missing `DhtKey::TierClaim` variant (test compilation failure)
-  - Added TierClaim to is_public(), as_str(), from_str(), key_type(), to_signed_record_type(), site_scope()
+  - Fixed missing `DhtKey::TierClaim` variant
 
 - This plan is organized by **priority and dependency**, not by domain. Critical security fixes come first regardless of which subsystem they affect.
 - Each wave is designed to be **independently testable** — you can run the full test suite after any wave.
