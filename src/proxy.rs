@@ -175,7 +175,7 @@ pub fn sanitize_request_path(path: &str) -> String {
         segments.push(current_segment);
     }
 
-    for (i, segment) in segments.iter().enumerate() {
+    for segment in segments.iter() {
         if segment == b".." {
             if let Some(pos) = result.iter().rposition(|&b| b == b'/') {
                 let before_slash = result[..pos].iter().rposition(|&b| b == b'/').map(|p| p + 1).unwrap_or(0);

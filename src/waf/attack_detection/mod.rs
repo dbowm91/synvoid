@@ -153,6 +153,23 @@ impl AttackDetector {
             return None;
         }
 
+        if let Some(max_size) = self.config.max_request_body_size {
+            if let Some(body) = body {
+                if body.len() > max_size {
+                    return Some(AttackDetectionResult {
+                        attack_type: AttackType::Other,
+                        input_location: InputLocation::PostBody,
+                        fingerprint: Some(format!("body_size:{}", body.len())),
+                        matched_pattern: Some(format!(
+                            "Request body {} bytes exceeds limit {} bytes",
+                            body.len(),
+                            max_size
+                        )),
+                    });
+                }
+            }
+        }
+
         if let Some(result) = self.header_validator.validate(headers) {
             return Some(result);
         }

@@ -1166,6 +1166,22 @@ All items from the original plans have been reviewed, deduplicated, and incorpor
   - 0D.1: Domain verification uses real DNS TXT lookups, rejects unsigned challenges
   - 0D.2: Mesh certificate verification uses proper X.509 chain validation
 
+- **2026-03-31**: Wave 2 completed - Performance optimization:
+
+- **Wave 2A: WAF Hot-Path Performance:**
+  - 2A.1: Input normalization already happens once per request (NormalizedInputs pattern)
+  - 2A.2: Added thread-local buffer pool for normalization
+  - 2A.3: Added `max_request_body_size` config field to AttackDetectionConfig
+  - 2A.4: ASN cleanup already runs on 60s interval via background task
+  - 2A.5: Replaced RwLock with ArcSwapOption for AttackDetector
+  - 2A.6: Global rate limit checks already unified in check_rate_limit()
+
+- **Wave 2B: DNS Scalability:**
+  - 2B.1: Firewall evaluation already takes &self
+  - 2B.2: Cache get() write lock noted - lru_time_cache API requires mutation
+  - 2B.3: Added `domain_to_edge_index` HashMap for O(1) domain lookups
+  - 2B.4: Zone store sharding deferred
+
 - This plan is organized by **priority and dependency**, not by domain. Critical security fixes come first regardless of which subsystem they affect.
 - Each wave is designed to be **independently testable** — you can run the full test suite after any wave.
 - **Parallelization is the key to reducing wall-clock time.** With 5-9 sub-agents, the total effort can be reduced from 49-77 days to 20-35 days.

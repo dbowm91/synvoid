@@ -1,6 +1,29 @@
+use std::cell::RefCell;
+use std::collections::VecDeque;
 use unicode_normalization::UnicodeNormalization;
 
 const MAX_OUTPUT_RATIO: usize = 100;
+
+thread_local! {
+    static BUFFER_POOL: RefCell<VecDeque<String>> = const { RefCell::new(VecDeque::new()) };
+}
+
+fn acquire_buffer() -> String {
+    BUFFER_POOL.with(|pool| {
+        pool.borrow_mut()
+            .pop_front()
+            .unwrap_or_else(|| String::with_capacity(256))
+    })
+}
+
+fn release_buffer(buffer: String) {
+    BUFFER_POOL.with(|pool| {
+        let mut pool = pool.borrow_mut();
+        if pool.len() < 4 {
+            pool.push_back(buffer);
+        }
+    });
+}
 
 pub struct InputNormalizer {
     max_decode_passes: usize,
@@ -20,7 +43,7 @@ impl InputNormalizer {
     }
 
     pub fn normalize(&self, input: &str) -> NormalizedInput {
-        let mut buffer = String::with_capacity(input.len());
+        let mut buffer = acquire_buffer();
         let mut passes = 0;
         let max_output = input.len().saturating_mul(MAX_OUTPUT_RATIO);
 
@@ -40,10 +63,12 @@ impl InputNormalizer {
 
         self.apply_normalizations_inplace(&mut buffer);
 
-        NormalizedInput {
+        let result = NormalizedInput {
             normalized: buffer,
             passes,
-        }
+        };
+        release_buffer(result.normalized.clone());
+        result
     }
 
     fn decode_single_pass_inplace(&self, input: &mut String) -> usize {
@@ -359,19 +384,10 @@ impl InputNormalizer {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct NormalizedInput {
     pub normalized: String,
     pub passes: usize,
-}
-
-impl Default for NormalizedInput {
-    fn default() -> Self {
-        Self {
-            normalized: String::new(),
-            passes: 0,
-        }
-    }
 }
 
 impl std::fmt::Display for NormalizedInput {

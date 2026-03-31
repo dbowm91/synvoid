@@ -14,6 +14,7 @@ impl MeshDnsRegistry {
             anycast_nodes: Arc::new(RwLock::new(HashMap::new())),
             domain_to_origin_mapping: Arc::new(RwLock::new(HashMap::new())),
             domain_to_anycast_mapping: Arc::new(RwLock::new(HashMap::new())),
+            domain_to_edge_index: Arc::new(RwLock::new(HashMap::new())),
             registration_tx: None,
             health_tx: None,
             shutdown_tx: None,
@@ -29,6 +30,25 @@ impl MeshDnsRegistry {
             verification_failure_tx: None,
             verification_metrics: VerificationMetrics::new(),
         }
+    }
+
+    pub fn rebuild_edge_index(&self) {
+        let mut index = self.domain_to_edge_index.write();
+        index.clear();
+        let edges = self.edge_nodes.read();
+        for (node_id, node) in edges.iter() {
+            for domain in &node.domains {
+                index.entry(domain.clone()).or_default().push(node_id.clone());
+            }
+        }
+    }
+
+    pub fn get_edge_node_ids_for_domain(&self, domain: &str) -> Vec<String> {
+        self.domain_to_edge_index
+            .read()
+            .get(domain)
+            .cloned()
+            .unwrap_or_default()
     }
 
     pub fn with_dns_resolver<R: DnsResolver + 'static>(mut self, resolver: R) -> Self {
@@ -131,7 +151,11 @@ impl MeshDnsRegistry {
             return;
         }
         let registry = Arc::clone(self);
-        let interval_secs = if interval_secs == 0 { 30 } else { interval_secs };
+        let interval_secs = if interval_secs == 0 {
+            30
+        } else {
+            interval_secs
+        };
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(std::time::Duration::from_secs(interval_secs));
             ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -140,9 +164,6 @@ impl MeshDnsRegistry {
                 registry.sync_from_dht();
             }
         });
-        tracing::info!(
-            "Started periodic DHT sync with interval {}s",
-            interval_secs
-        );
+        tracing::info!("Started periodic DHT sync with interval {}s", interval_secs);
     }
 }

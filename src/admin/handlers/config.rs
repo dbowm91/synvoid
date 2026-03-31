@@ -1044,7 +1044,7 @@ pub async fn reload_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<StatusResponse>, StatusCode> {
-    let config_dir = {
+    let _config_dir = {
         let config = state.process.config.read().await;
         config.config_dir.clone()
     };
@@ -1107,18 +1107,16 @@ pub async fn reload_config(
                 loaded, failed, err
             )
         }
+    } else if broadcast_success {
+        format!(
+            "Reloaded {} configs, {} failed, workers notified",
+            loaded, failed
+        )
     } else {
-        if broadcast_success {
-            format!(
-                "Reloaded {} configs, {} failed, workers notified",
-                loaded, failed
-            )
-        } else {
-            format!(
-                "Reloaded {} configs, {} failed (workers not notified)",
-                loaded, failed
-            )
-        }
+        format!(
+            "Reloaded {} configs, {} failed (workers not notified)",
+            loaded, failed
+        )
     };
 
     Ok(Json(StatusResponse {

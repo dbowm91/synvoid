@@ -144,6 +144,7 @@ pub struct MeshDnsRegistry {
     anycast_nodes: Arc<RwLock<HashMap<String, RegisteredAnycastNode>>>,
     domain_to_origin_mapping: Arc<RwLock<HashMap<String, Vec<String>>>>,
     domain_to_anycast_mapping: Arc<RwLock<HashMap<String, Vec<String>>>>,
+    domain_to_edge_index: Arc<RwLock<HashMap<String, Vec<String>>>>,
     registration_tx: Option<mpsc::Sender<DnsRegistrationRequest>>,
     health_tx: Option<mpsc::Sender<DnsHealthUpdate>>,
     shutdown_tx: Option<mpsc::Sender<DnsNodeShutdown>>,
@@ -373,10 +374,7 @@ impl MeshSigningKey {
 
 const DNS_SIGNING_INFO: &[u8] = b"dns-signing-key-v1";
 
-pub fn derive_dns_signing_key(
-    session_key: &[u8; 32],
-    mesh_id: &str,
-) -> Option<MeshSigningKey> {
+pub fn derive_dns_signing_key(session_key: &[u8; 32], mesh_id: &str) -> Option<MeshSigningKey> {
     let salt = mesh_id.as_bytes();
     let hk = Hkdf::<Sha256>::new(Some(salt), session_key);
 

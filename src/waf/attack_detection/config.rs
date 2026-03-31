@@ -43,6 +43,8 @@ pub struct AttackDetectionConfig {
     pub max_header_size: usize,
     #[serde(default = "default_max_headers")]
     pub max_headers: usize,
+    #[serde(default = "default_max_body_size")]
+    pub max_request_body_size: Option<usize>,
     #[serde(default)]
     pub sqli: SimpleDetectorConfig,
     #[serde(default)]
@@ -87,6 +89,10 @@ fn default_max_headers() -> usize {
     128
 }
 
+fn default_max_body_size() -> Option<usize> {
+    Some(10485760) // 10MB default
+}
+
 impl Default for AttackDetectionConfig {
     fn default() -> Self {
         Self {
@@ -95,6 +101,7 @@ impl Default for AttackDetectionConfig {
             action: default_action(),
             max_header_size: default_max_header_size(),
             max_headers: default_max_headers(),
+            max_request_body_size: default_max_body_size(),
             sqli: SimpleDetectorConfig::default(),
             xss: SimpleDetectorConfig::default(),
             path_traversal: DetectorConfig::default(),
@@ -164,6 +171,7 @@ pub enum AttackType {
     LdapInjection,
     XPathInjection,
     OpenRedirect,
+    Other,
 }
 
 impl std::fmt::Display for AttackType {
@@ -182,6 +190,7 @@ impl std::fmt::Display for AttackType {
             AttackType::LdapInjection => write!(f, "LdapInjection"),
             AttackType::XPathInjection => write!(f, "XPathInjection"),
             AttackType::OpenRedirect => write!(f, "OpenRedirect"),
+            AttackType::Other => write!(f, "Other"),
         }
     }
 }

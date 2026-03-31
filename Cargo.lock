@@ -237,6 +237,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "arc-swap"
+version = "1.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a07d1f37ff60921c83bdfc7407723bdefe89b44b98a9b772f225c8f9d67141a6"
+dependencies = [
+ "rustversion",
+]
+
+[[package]]
 name = "ascii_tree"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4162,6 +4171,7 @@ dependencies = [
  "ahash 0.8.12",
  "aho-corasick 1.1.4",
  "anyhow",
+ "arc-swap",
  "async-trait",
  "aws-lc-rs",
  "axum 0.8.8",
@@ -4219,6 +4229,7 @@ dependencies = [
  "metrics-exporter-prometheus",
  "minify-html",
  "minify-js",
+ "moka",
  "nix 0.29.0",
  "notify",
  "parking_lot",
@@ -8002,7 +8013,7 @@ dependencies = [
  "serde",
  "tempfile",
  "textwrap",
- "toml 0.8.23",
+ "toml 0.9.12+spec-1.1.0",
  "uniffi_internal_macros",
  "uniffi_meta",
  "uniffi_pipeline",
@@ -8058,7 +8069,7 @@ dependencies = [
  "quote",
  "serde",
  "syn 2.0.117",
- "toml 0.8.23",
+ "toml 0.9.12+spec-1.1.0",
  "uniffi_meta",
 ]
 

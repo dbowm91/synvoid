@@ -68,11 +68,11 @@ use crate::mesh::yara_rules::YaraRulesManager;
 use crate::proxy::WafDecision;
 use crate::theme::ThemeConfig;
 
-use parking_lot::RwLock;
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::sync::OnceLock;
 use std::time::Duration;
+use arc_swap::ArcSwapOption;
 
 static THREAT_INTEL: OnceLock<Arc<ThreatIntelligenceManager>> = OnceLock::new();
 static YARA_RULES: OnceLock<Arc<YaraRulesManager>> = OnceLock::new();
@@ -130,7 +130,7 @@ pub struct WafCore {
     pub error_page_manager: ErrorPageManager,
     pub challenge_manager: ChallengeManager,
     pub auth_manager: Option<Arc<AuthManager>>,
-    attack_detector: RwLock<Option<Arc<AttackDetector>>>,
+    attack_detector: ArcSwapOption<AttackDetector>,
     attack_detection_config: Option<AttackDetectionConfig>,
     pub block_store: Option<Arc<BlockStore>>,
     pub threat_intel: Option<Arc<ThreatIntelligenceManager>>,
@@ -423,7 +423,7 @@ impl WafCore {
             mesh_audit_urls: bot_config.mesh_audit_urls.clone(),
         });
 
-        let attack_detector = RwLock::new(
+        let attack_detector = ArcSwapOption::new(
             attack_detection_config
                 .as_ref()
                 .map(|config| Arc::new(AttackDetector::new(config.clone()))),
@@ -674,7 +674,7 @@ impl WafCore {
         merge_patterns!("xpath_injection", xpath_injection);
         merge_patterns!("open_redirect", open_redirect);
 
-        *self.attack_detector.write() = Some(Arc::new(AttackDetector::new(new_config)));
+        self.attack_detector.store(Some(Arc::new(AttackDetector::new(new_config))));
 
         Ok(())
     }
@@ -1080,7 +1080,7 @@ impl WafCore {
         headers: &http::HeaderMap,
         body: Option<&[u8]>,
     ) -> Option<WafDecision> {
-        if let Some(ref attack_detector) = *self.attack_detector.read() {
+        if let Some(attack_detector) = self.attack_detector.load().as_ref() {
             let method_enum = match method {
                 "GET" => http::Method::GET,
                 "POST" => http::Method::POST,
