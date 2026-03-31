@@ -126,16 +126,11 @@ pub async fn read_message(
     codec.read(recv_stream).await.map_err(|e| e.into())
 }
 
-pub async fn write_message(
-    send_stream: &mut SendStream,
-    msg: &TunnelMessage,
-) -> Result<()> {
+pub async fn write_message(send_stream: &mut SendStream, msg: &TunnelMessage) -> Result<()> {
     let codec = TunnelMessageCodec::new();
     codec.write(send_stream, msg).await.map_err(|e| e.into())
 }
 
-pub async fn read_message_default(
-    recv_stream: &mut RecvStream,
-) -> Result<TunnelMessage> {
+pub async fn read_message_default(recv_stream: &mut RecvStream) -> Result<TunnelMessage> {
     read_message(recv_stream, DEFAULT_MAX_MESSAGE_SIZE).await
 }

@@ -30,7 +30,7 @@ impl MeshConfig {
     pub fn validate(&self) -> Result<(), String> {
         // Validate genesis key configuration
         if let Some(ref genesis) = self.genesis_key {
-            if genesis.is_first_node && self.role != MeshNodeRole::Global {
+            if genesis.is_first_node && !self.role.is_global() {
                 return Err(
                     "genesis_key.is_first_node can only be true for global nodes".to_string(),
                 );
@@ -45,7 +45,7 @@ impl MeshConfig {
         }
 
         // If role is Global, we should have either a genesis key or be the first node
-        if self.role == MeshNodeRole::Global && self.genesis_key.is_none() {
+        if self.role.is_global() && self.genesis_key.is_none() {
             tracing::warn!(
                 "Global node without genesis key - cannot add/remove other global nodes"
             );

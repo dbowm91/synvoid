@@ -64,14 +64,20 @@ pub fn Sites() -> Html {
     };
 
     let filter_lower = filter.to_lowercase();
-    let filtered: Vec<&SiteInfo> = sites.iter().filter(|site| {
-        if filter_lower.is_empty() {
-            return true;
-        }
-        site.id.to_lowercase().contains(&filter_lower)
-            || site.domains.iter().any(|d| d.to_lowercase().contains(&filter_lower))
-            || site.default_upstream.to_lowercase().contains(&filter_lower)
-    }).collect();
+    let filtered: Vec<&SiteInfo> = sites
+        .iter()
+        .filter(|site| {
+            if filter_lower.is_empty() {
+                return true;
+            }
+            site.id.to_lowercase().contains(&filter_lower)
+                || site
+                    .domains
+                    .iter()
+                    .any(|d| d.to_lowercase().contains(&filter_lower))
+                || site.default_upstream.to_lowercase().contains(&filter_lower)
+        })
+        .collect();
 
     html! {
         <div>

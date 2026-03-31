@@ -642,7 +642,10 @@ impl ApiService {
         self.get("/config/export").await
     }
 
-    pub async fn import_config(&self, config: &serde_json::Value) -> Result<serde_json::Value, String> {
+    pub async fn import_config(
+        &self,
+        config: &serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
         self.post("/config/import", config).await
     }
 
@@ -651,7 +654,11 @@ impl ApiService {
     }
 
     pub async fn control_honeypot(&self, action: &str) -> Result<serde_json::Value, String> {
-        self.post("/honeypot/control", &serde_json::json!({ "action": action })).await
+        self.post(
+            "/honeypot/control",
+            &serde_json::json!({ "action": action }),
+        )
+        .await
     }
 
     pub async fn get_icmp_status(&self) -> Result<serde_json::Value, String> {
@@ -674,7 +681,10 @@ impl ApiService {
         self.get("/icmp/backends").await
     }
 
-    pub async fn update_icmp_config(&self, config: &serde_json::Value) -> Result<serde_json::Value, String> {
+    pub async fn update_icmp_config(
+        &self,
+        config: &serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
         self.post("/icmp/config", config).await
     }
 }

@@ -417,7 +417,10 @@ pub async fn send_request_with_timeout_and_headers(
 ) -> Result<HttpResponse> {
     let uri: Uri = url.parse()?;
     let body = Full::new(Bytes::new());
-    let mut req_builder = Request::builder().method(method).uri(uri).body(body)
+    let mut req_builder = Request::builder()
+        .method(method)
+        .uri(uri)
+        .body(body)
         .map_err(|e| anyhow::anyhow!("Failed to build request: {}", e))?;
     *req_builder.headers_mut() = headers;
     let req = req_builder;

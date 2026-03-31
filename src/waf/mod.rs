@@ -68,11 +68,11 @@ use crate::mesh::yara_rules::YaraRulesManager;
 use crate::proxy::WafDecision;
 use crate::theme::ThemeConfig;
 
+use arc_swap::ArcSwapOption;
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::sync::OnceLock;
 use std::time::Duration;
-use arc_swap::ArcSwapOption;
 
 static THREAT_INTEL: OnceLock<Arc<ThreatIntelligenceManager>> = OnceLock::new();
 static YARA_RULES: OnceLock<Arc<YaraRulesManager>> = OnceLock::new();
@@ -674,7 +674,8 @@ impl WafCore {
         merge_patterns!("xpath_injection", xpath_injection);
         merge_patterns!("open_redirect", open_redirect);
 
-        self.attack_detector.store(Some(Arc::new(AttackDetector::new(new_config))));
+        self.attack_detector
+            .store(Some(Arc::new(AttackDetector::new(new_config))));
 
         Ok(())
     }

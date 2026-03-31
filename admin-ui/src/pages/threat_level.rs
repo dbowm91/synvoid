@@ -1,6 +1,8 @@
-use yew::prelude::*;
 use crate::services::api::ApiService;
-use crate::types::{BackupInfo, HistorySample, ThreatLevelBaseline, ThreatLevelHistory, ThreatLevelStatus};
+use crate::types::{
+    BackupInfo, HistorySample, ThreatLevelBaseline, ThreatLevelHistory, ThreatLevelStatus,
+};
+use yew::prelude::*;
 
 #[derive(Clone, PartialEq)]
 enum ThreatTab {
@@ -13,7 +15,7 @@ enum ThreatTab {
 #[function_component]
 pub fn ThreatLevel() -> Html {
     let active_tab = use_state(|| ThreatTab::Status);
-    
+
     let tab_class = |tab: &ThreatTab| {
         if *active_tab == *tab {
             "px-4 py-2 bg-primary text-white rounded-t-lg border-b-2 border-primary"
@@ -29,25 +31,25 @@ pub fn ThreatLevel() -> Html {
             </div>
 
             <div class="flex gap-2 mb-4">
-                <button 
+                <button
                     class={tab_class(&ThreatTab::Status)}
                     onclick={let active_tab = active_tab.clone(); move |_| active_tab.set(ThreatTab::Status)}
                 >
                     { "Status" }
                 </button>
-                <button 
+                <button
                     class={tab_class(&ThreatTab::History)}
                     onclick={let active_tab = active_tab.clone(); move |_| active_tab.set(ThreatTab::History)}
                 >
                     { "History" }
                 </button>
-                <button 
+                <button
                     class={tab_class(&ThreatTab::Backups)}
                     onclick={let active_tab = active_tab.clone(); move |_| active_tab.set(ThreatTab::Backups)}
                 >
                     { "Backups" }
                 </button>
-                <button 
+                <button
                     class={tab_class(&ThreatTab::Settings)}
                     onclick={let active_tab = active_tab.clone(); move |_| active_tab.set(ThreatTab::Settings)}
                 >
@@ -129,18 +131,18 @@ fn ThreatStatusTab() -> Html {
                         </div>
                         <div class="text-secondary mt-1">{ level_label(s.level) }</div>
                     </div>
-                    
+
                     <div class="bg-tertiary rounded-lg p-4">
                         <h3 class="text-secondary text-sm mb-2">{ "Score" }</h3>
                         <div class="text-4xl font-bold text-primary">
                             { format!("{:.1}", s.score) }
                         </div>
                         <div class="text-secondary mt-1">
-                            { format!("Request: {:.1}, Attack: {:.1}, RateLimit: {:.1}", 
+                            { format!("Request: {:.1}, Attack: {:.1}, RateLimit: {:.1}",
                                 s.request_score, s.attack_score, s.rate_limit_score) }
                         </div>
                     </div>
-                    
+
                     <div class="bg-tertiary rounded-lg p-4">
                         <h3 class="text-secondary text-sm mb-2">{ "Throttling" }</h3>
                         <div class="text-4xl font-bold text-primary">
@@ -236,7 +238,7 @@ fn ThreatHistoryTab() -> Html {
                                     <td class="py-2 px-3">
                                         <span class={match s.level {
                                             1 => "text-green-500",
-                                            2 => "text-yellow-500", 
+                                            2 => "text-yellow-500",
                                             3 => "text-orange-500",
                                             4 => "text-red-500",
                                             5 => "text-red-700",
@@ -357,7 +359,7 @@ fn ThreatBackupsTab() -> Html {
         <div class="bg-secondary rounded-lg border border-default p-6">
             <div class="flex justify-between items-center mb-4">
                 <h3 class="text-lg font-semibold">{ "Backups" }</h3>
-                <button 
+                <button
                     onclick={on_create_backup}
                     class="px-4 py-2 bg-primary text-white rounded-lg hover:opacity-80"
                 >
@@ -391,7 +393,7 @@ fn ThreatBackupsTab() -> Html {
                                     <td class="py-2 px-3 text-primary">{ b.level }</td>
                                     <td class="py-2 px-3 text-primary">{ format_bytes(b.size_bytes) }</td>
                                     <td class="py-2 px-3 text-right">
-                                        <button 
+                                        <button
                                             onclick={let on_delete = on_delete.clone(); let id = b.id.clone(); move |_| on_delete.emit(id.clone())}
                                             class="text-red-500 hover:text-red-400"
                                         >
@@ -521,7 +523,7 @@ fn ThreatSettingsTab() -> Html {
                                 let on_set = on_set_level.clone();
                                 let base_class = if is_active { "bg-primary text-white border-primary" } else { "bg-tertiary text-primary border-default hover:border-primary" };
                                 html! {
-                                    <button 
+                                    <button
                                         onclick={move |_| on_set.emit(level)}
                                         class={classes!("px-4", "py-2", "rounded-lg", "border", base_class)}
                                     >
@@ -544,7 +546,7 @@ fn ThreatSettingsTab() -> Html {
                                     { "Automatically adjust threat level based on attack frequency" }
                                 </p>
                             </div>
-                            <button 
+                            <button
                                 onclick={let on_toggle = on_toggle_auto.clone(); let status = current_status.clone(); move |_| {
                                     let enabled = status.as_ref().map_or(false, |s| s.is_learning);
                                     on_toggle.emit(!enabled);
@@ -594,7 +596,7 @@ fn ThreatSettingsTab() -> Html {
                         } else {
                             <p class="text-secondary">{ "No baseline established yet" }</p>
                         }
-                        <button 
+                        <button
                             onclick={on_reset_baseline}
                             class="mt-4 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
                         >

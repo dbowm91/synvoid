@@ -17,15 +17,19 @@ use tokio::sync::broadcast;
 use tokio_rustls::TlsAcceptor;
 
 use crate::challenge::HONEYPOT_PREFIX;
+use crate::config::site::ProxyHeadersConfig;
 use crate::config::HttpConfig;
 use crate::config::MainConfig;
-use crate::config::site::ProxyHeadersConfig;
 use crate::http::headers::{generate_stealth_timestamp, inject_security_headers};
-use crate::http_client::{create_upstream_client, send_request_with_timeout_and_headers, UpstreamTlsConfig};
+use crate::http_client::{
+    create_upstream_client, send_request_with_timeout_and_headers, UpstreamTlsConfig,
+};
 use crate::metrics::bandwidth::{
     get_global_bandwidth_tracker_or_log, BandwidthProtocol, EgressDirection,
 };
-use crate::proxy::{build_forward_headers, build_headers_to_filter, filter_response_headers, ProxyServer};
+use crate::proxy::{
+    build_forward_headers, build_headers_to_filter, filter_response_headers, ProxyServer,
+};
 use crate::proxy_cache::{ProxyCache, ProxyCacheSettings};
 use crate::router::Router;
 use crate::waf::{FloodDecision, FloodProtector, WafCore};
@@ -753,13 +757,21 @@ impl HttpsServer {
                 let forward_headers = build_forward_headers(
                     client_ip,
                     &parts.headers,
-                    target.site_config.proxy.headers.as_ref().unwrap_or(&ProxyHeadersConfig::default()),
+                    target
+                        .site_config
+                        .proxy
+                        .headers
+                        .as_ref()
+                        .unwrap_or(&ProxyHeadersConfig::default()),
                     true,
                 );
 
                 let mut forward_header_map = http::HeaderMap::new();
                 for (key, value) in &forward_headers {
-                    if let (Ok(name), Ok(val)) = (key.parse::<http::HeaderName>(), value.parse::<http::HeaderValue>()) {
+                    if let (Ok(name), Ok(val)) = (
+                        key.parse::<http::HeaderName>(),
+                        value.parse::<http::HeaderValue>(),
+                    ) {
                         forward_header_map.insert(name, val);
                     }
                 }

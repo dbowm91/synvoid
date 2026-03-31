@@ -60,7 +60,8 @@ mod ipc_tests {
     #[test]
     fn test_deserialize_nested_type_mismatch() {
         // WorkerError severity should be an enum, not a number
-        let json = r#"{"WorkerError":{"id":0,"error":"test","severity":123,"error_code":"Unknown"}}"#;
+        let json =
+            r#"{"WorkerError":{"id":0,"error":"test","severity":123,"error_code":"Unknown"}}"#;
         let result: Result<Message, _> = serde_json::from_str(json);
         assert!(result.is_err());
     }
@@ -167,16 +168,12 @@ mod ipc_tests {
 
     #[test]
     fn test_roundtrip_health_check_ack() {
-        let msg = Message::HealthCheckAck {
-            timestamp: 9999999,
-        };
+        let msg = Message::HealthCheckAck { timestamp: 9999999 };
         let json = serde_json::to_string(&msg).unwrap();
         let decoded: Message = serde_json::from_str(&json).unwrap();
         assert!(matches!(
             decoded,
-            Message::HealthCheckAck {
-                timestamp: 9999999
-            }
+            Message::HealthCheckAck { timestamp: 9999999 }
         ));
     }
 
@@ -216,16 +213,12 @@ mod ipc_tests {
 
     #[test]
     fn test_roundtrip_master_resize_threadpool() {
-        let msg = Message::MasterResizeThreadpool {
-            worker_threads: 16,
-        };
+        let msg = Message::MasterResizeThreadpool { worker_threads: 16 };
         let json = serde_json::to_string(&msg).unwrap();
         let decoded: Message = serde_json::from_str(&json).unwrap();
         assert!(matches!(
             decoded,
-            Message::MasterResizeThreadpool {
-                worker_threads: 16,
-            }
+            Message::MasterResizeThreadpool { worker_threads: 16 }
         ));
     }
 

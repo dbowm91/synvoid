@@ -93,8 +93,7 @@ pub fn acquire_pid_file() -> PidFileManager {
 pub fn daemonize(pid_manager: &PidFileManager) {
     #[cfg(unix)]
     {
-        let current_dir =
-            std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/"));
+        let current_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/"));
 
         let result = {
             // SAFETY: daemon.start() must be called before any threads exist.
@@ -118,8 +117,6 @@ pub fn daemonize(pid_manager: &PidFileManager) {
     #[cfg(not(unix))]
     {
         let _ = pid_manager;
-        tracing::warn!(
-            "Daemonization is not supported on this platform, running in foreground"
-        );
+        tracing::warn!("Daemonization is not supported on this platform, running in foreground");
     }
 }

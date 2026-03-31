@@ -49,10 +49,19 @@ pub fn Icmp() -> Html {
 
                 match api.get_icmp_status().await {
                     Ok(value) => {
-                        let enabled = value.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false);
-                        let active = value.get("active").and_then(|v| v.as_bool()).unwrap_or(false);
-                        let backends_count = value.get("backends_count")
-                            .and_then(|v| v.as_u64()).map(|n| n as usize).unwrap_or(0);
+                        let enabled = value
+                            .get("enabled")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        let active = value
+                            .get("active")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        let backends_count = value
+                            .get("backends_count")
+                            .and_then(|v| v.as_u64())
+                            .map(|n| n as usize)
+                            .unwrap_or(0);
                         let last_ping = value.get("last_ping").and_then(|v| v.as_u64());
 
                         status.set(Some(IcmpStatus {
@@ -70,11 +79,23 @@ pub fn Icmp() -> Html {
                         if let Some(arr) = value.as_array() {
                             let mut backend_list = Vec::new();
                             for item in arr {
-                                if let Some(node_id) = item.get("node_id").and_then(|v| v.as_str()) {
-                                    let address = item.get("address").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                                    let latency_ms = item.get("latency_ms").and_then(|v| v.as_u64()).map(|n| n as u32);
-                                    let last_seen = item.get("last_seen").and_then(|v| v.as_u64()).unwrap_or(0);
-                                    let healthy = item.get("healthy").and_then(|v| v.as_bool()).unwrap_or(false);
+                                if let Some(node_id) = item.get("node_id").and_then(|v| v.as_str())
+                                {
+                                    let address = item
+                                        .get("address")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("")
+                                        .to_string();
+                                    let latency_ms = item
+                                        .get("latency_ms")
+                                        .and_then(|v| v.as_u64())
+                                        .map(|n| n as u32);
+                                    let last_seen =
+                                        item.get("last_seen").and_then(|v| v.as_u64()).unwrap_or(0);
+                                    let healthy = item
+                                        .get("healthy")
+                                        .and_then(|v| v.as_bool())
+                                        .unwrap_or(false);
 
                                     backend_list.push(IcmpBackend {
                                         node_id: node_id.to_string(),

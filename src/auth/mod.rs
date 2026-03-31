@@ -99,8 +99,7 @@ pub struct AuthManager {
 
 impl AuthManager {
     pub fn new(
-    #[allow(dead_code)]
-    data_dir: PathBuf,
+        #[allow(dead_code)] data_dir: PathBuf,
         session_duration_secs: u64,
         max_failed_attempts: u32,
         lockout_duration_secs: u64,

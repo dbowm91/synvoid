@@ -71,14 +71,20 @@ pub fn Upstreams() -> Html {
     };
 
     let filter_lower = filter.to_lowercase();
-    let filtered: Vec<&SiteUpstreams> = (*upstreams).iter().filter(|site| {
-        if filter_lower.is_empty() {
-            return true;
-        }
-        site.site_id.to_lowercase().contains(&filter_lower)
-            || site.default_upstream.to_lowercase().contains(&filter_lower)
-            || site.backends.iter().any(|b| b.url.to_lowercase().contains(&filter_lower))
-    }).collect();
+    let filtered: Vec<&SiteUpstreams> = (*upstreams)
+        .iter()
+        .filter(|site| {
+            if filter_lower.is_empty() {
+                return true;
+            }
+            site.site_id.to_lowercase().contains(&filter_lower)
+                || site.default_upstream.to_lowercase().contains(&filter_lower)
+                || site
+                    .backends
+                    .iter()
+                    .any(|b| b.url.to_lowercase().contains(&filter_lower))
+        })
+        .collect();
 
     let total_backends: usize = filtered.iter().map(|s| s.backends.len()).sum();
     let healthy_count: usize = filtered

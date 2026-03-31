@@ -213,8 +213,7 @@ impl HealthChecker {
         let url = backend.url.as_ref();
 
         matches!(
-            tokio::time::timeout(Duration::from_secs(5), tokio::net::TcpStream::connect(url))
-                .await,
+            tokio::time::timeout(Duration::from_secs(5), tokio::net::TcpStream::connect(url)).await,
             Ok(Ok(_))
         )
     }

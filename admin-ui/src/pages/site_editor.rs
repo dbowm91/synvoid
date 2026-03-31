@@ -183,7 +183,10 @@ fn BasicTab(props: &BasicTabProps) -> Html {
         move |_| {
             if let Some(cfg) = config {
                 if let Some(d) = cfg.get("domains").and_then(|v| v.as_array()) {
-                    let domains_str: Vec<String> = d.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect();
+                    let domains_str: Vec<String> = d
+                        .iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect();
                     domains.set(domains_str.join(", "));
                 }
                 if let Some(u) = cfg.get("default_upstream").and_then(|v| v.as_str()) {
@@ -207,7 +210,8 @@ fn BasicTab(props: &BasicTabProps) -> Html {
         let domains = domains.clone();
         Callback::from(move |e: Event| {
             let target = e.target().unwrap();
-            let value = target.dyn_ref::<web_sys::HtmlInputElement>()
+            let value = target
+                .dyn_ref::<web_sys::HtmlInputElement>()
                 .map(|el| el.value())
                 .unwrap_or_default();
             domains.set(value);
@@ -218,7 +222,8 @@ fn BasicTab(props: &BasicTabProps) -> Html {
         let upstream = upstream.clone();
         Callback::from(move |e: Event| {
             let target = e.target().unwrap();
-            let value = target.dyn_ref::<web_sys::HtmlInputElement>()
+            let value = target
+                .dyn_ref::<web_sys::HtmlInputElement>()
                 .map(|el| el.value())
                 .unwrap_or_default();
             upstream.set(value);
@@ -231,7 +236,8 @@ fn BasicTab(props: &BasicTabProps) -> Html {
         let upstream = upstream.clone();
         let site_id = site_id.clone();
         Callback::from(move |_| {
-            let domains_vec: Vec<String> = domains.split(',')
+            let domains_vec: Vec<String> = domains
+                .split(',')
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())
                 .collect();
@@ -1158,11 +1164,21 @@ fn SecurityHeadersTab(props: &SecurityHeadersTabProps) -> Html {
         let config = props.config.clone();
         move |_| {
             if let Some(cfg) = config {
-                if let Some(v) = cfg.get("hsts").and_then(|v| v.as_bool()) { hsts.set(v); }
-                if let Some(v) = cfg.get("hsts_max_age").and_then(|v| v.as_u64()) { hsts_max_age.set(v.to_string()); }
-                if let Some(v) = cfg.get("x_frame_options").and_then(|v| v.as_str()) { x_frame_options.set(v.to_string()); }
-                if let Some(v) = cfg.get("x_content_type_options").and_then(|v| v.as_bool()) { x_content_type.set(v); }
-                if let Some(v) = cfg.get("referrer_policy").and_then(|v| v.as_str()) { referrer_policy.set(v.to_string()); }
+                if let Some(v) = cfg.get("hsts").and_then(|v| v.as_bool()) {
+                    hsts.set(v);
+                }
+                if let Some(v) = cfg.get("hsts_max_age").and_then(|v| v.as_u64()) {
+                    hsts_max_age.set(v.to_string());
+                }
+                if let Some(v) = cfg.get("x_frame_options").and_then(|v| v.as_str()) {
+                    x_frame_options.set(v.to_string());
+                }
+                if let Some(v) = cfg.get("x_content_type_options").and_then(|v| v.as_bool()) {
+                    x_content_type.set(v);
+                }
+                if let Some(v) = cfg.get("referrer_policy").and_then(|v| v.as_str()) {
+                    referrer_policy.set(v.to_string());
+                }
             }
             || {}
         }

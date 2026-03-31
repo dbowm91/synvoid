@@ -40,8 +40,7 @@ fn human_to_bytes(s: &str) -> usize {
 }
 
 fn export_config_to_file(json: &str) {
-    let blob =
-        web_sys::Blob::new_with_str_sequence(&js_sys::Array::of1(&json.into())).unwrap();
+    let blob = web_sys::Blob::new_with_str_sequence(&js_sys::Array::of1(&json.into())).unwrap();
     let url = web_sys::Url::create_object_url_with_blob(&blob).unwrap();
     let window = web_sys::window().unwrap();
     let document = window.document().unwrap();
@@ -111,31 +110,39 @@ pub fn Settings() -> Html {
                         importing.set(true);
                         let reader = web_sys::FileReader::new().unwrap();
                         let reader_clone = reader.clone();
-                        let read_closure = wasm_bindgen::closure::Closure::wrap(Box::new(move |_: web_sys::Event| {
-                            let result = reader_clone.result().unwrap();
-                            let text = result.as_string().unwrap();
-                            let importing = importing.clone();
-                            wasm_bindgen_futures::spawn_local(async move {
-                                let api = ApiService::new();
-                                match serde_json::from_str::<serde_json::Value>(&text) {
-                                    Ok(config) => {
-                                        match api.import_config(&config).await {
-                                            Ok(_) => toast_success("Configuration imported successfully"),
+                        let read_closure = wasm_bindgen::closure::Closure::wrap(Box::new(
+                            move |_: web_sys::Event| {
+                                let result = reader_clone.result().unwrap();
+                                let text = result.as_string().unwrap();
+                                let importing = importing.clone();
+                                wasm_bindgen_futures::spawn_local(async move {
+                                    let api = ApiService::new();
+                                    match serde_json::from_str::<serde_json::Value>(&text) {
+                                        Ok(config) => match api.import_config(&config).await {
+                                            Ok(_) => {
+                                                toast_success("Configuration imported successfully")
+                                            }
                                             Err(e) => toast_error(&format!("Import failed: {}", e)),
-                                        }
+                                        },
+                                        Err(e) => toast_error(&format!("Invalid JSON: {}", e)),
                                     }
-                                    Err(e) => toast_error(&format!("Invalid JSON: {}", e)),
-                                }
-                                importing.set(false);
-                            });
-                        }) as Box<dyn FnMut(web_sys::Event)>);
-                        let _ = reader.add_event_listener_with_callback("load", read_closure.as_ref().unchecked_ref());
+                                    importing.set(false);
+                                });
+                            },
+                        )
+                            as Box<dyn FnMut(web_sys::Event)>);
+                        let _ = reader.add_event_listener_with_callback(
+                            "load",
+                            read_closure.as_ref().unchecked_ref(),
+                        );
                         read_closure.forget();
                         let _ = reader.read_as_text(&file);
                     }
                 }
-            }) as Box<dyn FnMut(web_sys::Event)>);
-            let _ = input.add_event_listener_with_callback("change", closure.as_ref().unchecked_ref());
+            })
+                as Box<dyn FnMut(web_sys::Event)>);
+            let _ =
+                input.add_event_listener_with_callback("change", closure.as_ref().unchecked_ref());
             closure.forget();
             input.click();
         })
@@ -259,9 +266,8 @@ fn ServerSection() -> Html {
     let original_port = use_state(|| "8080".to_string());
     let original_proxies = use_state(|| "127.0.0.1, ::1".to_string());
 
-    let is_dirty = *host != *original_host
-        || *port != *original_port
-        || *trusted_proxies != *original_proxies;
+    let is_dirty =
+        *host != *original_host || *port != *original_port || *trusted_proxies != *original_proxies;
 
     use_effect_with((), {
         let server_config = server_config.clone();
@@ -290,8 +296,11 @@ fn ServerSection() -> Html {
                                 port.set(p.to_string());
                                 original_port.set(p.to_string());
                             }
-                            if let Some(tp) = server.get("trusted_proxies").and_then(|v| v.as_array()) {
-                                let proxies: Vec<String> = tp.iter()
+                            if let Some(tp) =
+                                server.get("trusted_proxies").and_then(|v| v.as_array())
+                            {
+                                let proxies: Vec<String> = tp
+                                    .iter()
                                     .filter_map(|v| v.as_str().map(|s| s.to_string()))
                                     .collect();
                                 let joined = proxies.join(", ");
@@ -341,7 +350,8 @@ fn ServerSection() -> Html {
         let original_port = original_port.clone();
         let original_proxies = original_proxies.clone();
         Callback::from(move |_| {
-            let proxies: Vec<String> = trusted_proxies.split(',')
+            let proxies: Vec<String> = trusted_proxies
+                .split(',')
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())
                 .collect();
@@ -415,7 +425,7 @@ fn ServerSection() -> Html {
             </div>
 
             <div class="flex justify-end">
-                <button 
+                <button
                     onclick={on_save}
                     disabled={*saving}
                     class={if is_dirty {
@@ -479,12 +489,18 @@ fn HttpSection() -> Html {
 
                 if let Ok(data) = result {
                     if let Some(config) = data.get("config") {
-                        if let Some(v) = config.get("header_read_timeout_secs").and_then(|v| v.as_u64()) {
+                        if let Some(v) = config
+                            .get("header_read_timeout_secs")
+                            .and_then(|v| v.as_u64())
+                        {
                             let s = v.to_string();
                             header_read_timeout.set(s.clone());
                             original_header_read_timeout.set(s);
                         }
-                        if let Some(v) = config.get("keep_alive_timeout_secs").and_then(|v| v.as_u64()) {
+                        if let Some(v) = config
+                            .get("keep_alive_timeout_secs")
+                            .and_then(|v| v.as_u64())
+                        {
                             let s = v.to_string();
                             keep_alive_timeout.set(s.clone());
                             original_keep_alive_timeout.set(s);
@@ -499,12 +515,18 @@ fn HttpSection() -> Html {
                             max_request_size.set(s.clone());
                             original_max_request_size.set(s);
                         }
-                        if let Some(v) = config.get("max_header_size_ingress").and_then(|v| v.as_u64()) {
+                        if let Some(v) = config
+                            .get("max_header_size_ingress")
+                            .and_then(|v| v.as_u64())
+                        {
                             let s = bytes_to_human(v as usize);
                             max_header_size_ingress.set(s.clone());
                             original_max_header_size_ingress.set(s);
                         }
-                        if let Some(v) = config.get("max_header_size_egress").and_then(|v| v.as_u64()) {
+                        if let Some(v) = config
+                            .get("max_header_size_egress")
+                            .and_then(|v| v.as_u64())
+                        {
                             let s = bytes_to_human(v as usize);
                             max_header_size_egress.set(s.clone());
                             original_max_header_size_egress.set(s);
@@ -711,7 +733,8 @@ fn LoggingSection() -> Html {
                             retention_days.set(s.clone());
                             original_retention_days.set(s);
                         }
-                        if let Some(v) = config.get("max_entries_per_file").and_then(|v| v.as_u64()) {
+                        if let Some(v) = config.get("max_entries_per_file").and_then(|v| v.as_u64())
+                        {
                             let s = v.to_string();
                             max_entries_per_file.set(s.clone());
                             original_max_entries_per_file.set(s);
@@ -862,8 +885,8 @@ fn MetricsSection() -> Html {
     let original_metrics_enabled = use_state(|| true);
     let original_metrics_port = use_state(|| "9090".to_string());
 
-    let is_dirty = *metrics_enabled != *original_metrics_enabled
-        || *metrics_port != *original_metrics_port;
+    let is_dirty =
+        *metrics_enabled != *original_metrics_enabled || *metrics_port != *original_metrics_port;
 
     use_effect_with((), {
         let loading = loading.clone();
@@ -1053,13 +1076,16 @@ fn RateLimitsSection() -> Html {
                 if let Ok(data) = result {
                     if let Some(defaults) = data.get("defaults") {
                         if let Some(ip) = defaults.get("ip") {
-                            let set_field = |key: &str, state: &UseStateHandle<String>, orig: &UseStateHandle<String>| {
-                                if let Some(v) = ip.get(key).and_then(|v| v.as_u64()) {
-                                    let s = v.to_string();
-                                    state.set(s.clone());
-                                    orig.set(s);
-                                }
-                            };
+                            let set_field =
+                                |key: &str,
+                                 state: &UseStateHandle<String>,
+                                 orig: &UseStateHandle<String>| {
+                                    if let Some(v) = ip.get(key).and_then(|v| v.as_u64()) {
+                                        let s = v.to_string();
+                                        state.set(s.clone());
+                                        orig.set(s);
+                                    }
+                                };
                             set_field("per_second", &ip_per_second, &original_ip_per_second);
                             set_field("per_minute", &ip_per_minute, &original_ip_per_minute);
                             set_field("per_5min", &ip_per_5min, &original_ip_per_5min);
@@ -1068,16 +1094,31 @@ fn RateLimitsSection() -> Html {
                             set_field("burst", &ip_burst, &original_ip_burst);
                         }
                         if let Some(global) = defaults.get("global") {
-                            let set_field = |key: &str, state: &UseStateHandle<String>, orig: &UseStateHandle<String>| {
-                                if let Some(v) = global.get(key).and_then(|v| v.as_u64()) {
-                                    let s = v.to_string();
-                                    state.set(s.clone());
-                                    orig.set(s);
-                                }
-                            };
-                            set_field("per_second", &global_per_second, &original_global_per_second);
-                            set_field("per_minute", &global_per_minute, &original_global_per_minute);
-                            set_field("max_connections", &max_connections, &original_max_connections);
+                            let set_field =
+                                |key: &str,
+                                 state: &UseStateHandle<String>,
+                                 orig: &UseStateHandle<String>| {
+                                    if let Some(v) = global.get(key).and_then(|v| v.as_u64()) {
+                                        let s = v.to_string();
+                                        state.set(s.clone());
+                                        orig.set(s);
+                                    }
+                                };
+                            set_field(
+                                "per_second",
+                                &global_per_second,
+                                &original_global_per_second,
+                            );
+                            set_field(
+                                "per_minute",
+                                &global_per_minute,
+                                &original_global_per_minute,
+                            );
+                            set_field(
+                                "max_connections",
+                                &max_connections,
+                                &original_max_connections,
+                            );
                         }
                     }
                 }
@@ -1257,12 +1298,16 @@ fn BandwidthSection() -> Html {
                 if let Ok(data) = result {
                     if let Some(config) = data.get("config") {
                         if let Some(bw) = config.get("bandwidth") {
-                            if let Some(v) = bw.get("monthly_cap_ingress_gb").and_then(|v| v.as_u64()) {
+                            if let Some(v) =
+                                bw.get("monthly_cap_ingress_gb").and_then(|v| v.as_u64())
+                            {
                                 let s = v.to_string();
                                 monthly_cap_ingress.set(s.clone());
                                 original_monthly_cap_ingress.set(s);
                             }
-                            if let Some(v) = bw.get("monthly_cap_egress_gb").and_then(|v| v.as_u64()) {
+                            if let Some(v) =
+                                bw.get("monthly_cap_egress_gb").and_then(|v| v.as_u64())
+                            {
                                 let s = v.to_string();
                                 monthly_cap_egress.set(s.clone());
                                 original_monthly_cap_egress.set(s);
@@ -1512,11 +1557,13 @@ fn BotSection() -> Html {
                             block_ai_crawlers.set(v);
                             original_block_ai_crawlers.set(v);
                         }
-                        if let Some(v) = config.get("enable_css_honeypot").and_then(|v| v.as_bool()) {
+                        if let Some(v) = config.get("enable_css_honeypot").and_then(|v| v.as_bool())
+                        {
                             enable_css_honeypot.set(v);
                             original_enable_css_honeypot.set(v);
                         }
-                        if let Some(v) = config.get("enable_js_challenge").and_then(|v| v.as_bool()) {
+                        if let Some(v) = config.get("enable_js_challenge").and_then(|v| v.as_bool())
+                        {
                             enable_js_challenge.set(v);
                             original_enable_js_challenge.set(v);
                         }
@@ -1712,16 +1759,22 @@ fn UploadSection() -> Html {
                                     max_size.set(s.clone());
                                     original_max_size.set(s);
                                 }
-                                if let Some(v) = upload.get("memory_threshold").and_then(|v| v.as_str()) {
+                                if let Some(v) =
+                                    upload.get("memory_threshold").and_then(|v| v.as_str())
+                                {
                                     let s = v.to_string();
                                     memory_threshold.set(s.clone());
                                     original_memory_threshold.set(s);
                                 }
-                                if let Some(v) = upload.get("scan_with_yara").and_then(|v| v.as_bool()) {
+                                if let Some(v) =
+                                    upload.get("scan_with_yara").and_then(|v| v.as_bool())
+                                {
                                     scan_with_yara.set(v);
                                     original_scan_with_yara.set(v);
                                 }
-                                if let Some(v) = upload.get("sandbox_enabled").and_then(|v| v.as_bool()) {
+                                if let Some(v) =
+                                    upload.get("sandbox_enabled").and_then(|v| v.as_bool())
+                                {
                                     sandbox_enabled.set(v);
                                     original_sandbox_enabled.set(v);
                                 }
@@ -1873,8 +1926,7 @@ fn ThemeSection() -> Html {
     let original_preset = use_state(|| "default".to_string());
     let original_mode = use_state(|| "auto".to_string());
 
-    let is_dirty = *selected_preset != *original_preset
-        || *selected_mode != *original_mode;
+    let is_dirty = *selected_preset != *original_preset || *selected_mode != *original_mode;
 
     use_effect_with((), {
         let theme_data = theme_data.clone();

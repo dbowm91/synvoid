@@ -38,7 +38,10 @@ impl MeshDnsRegistry {
         let edges = self.edge_nodes.read();
         for (node_id, node) in edges.iter() {
             for domain in &node.domains {
-                index.entry(domain.clone()).or_default().push(node_id.clone());
+                index
+                    .entry(domain.clone())
+                    .or_default()
+                    .push(node_id.clone());
             }
         }
     }

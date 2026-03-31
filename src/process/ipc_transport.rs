@@ -332,7 +332,7 @@ impl IpcStream {
                     "IPC signing enforced but no signer configured",
                 ));
             }
-WARNED_UNSIGNED.get_or_init(|| {
+            WARNED_UNSIGNED.get_or_init(|| {
                 tracing::warn!("Using unsigned IPC communication - this is insecure for production deployments");
             });
             write_message(&mut self.inner, msg).await
@@ -377,7 +377,7 @@ WARNED_UNSIGNED.get_or_init(|| {
                     "IPC signing enforced but no signer configured",
                 ));
             }
-WARNED_UNSIGNED.get_or_init(|| {
+            WARNED_UNSIGNED.get_or_init(|| {
                 tracing::warn!("Using unsigned IPC communication - this is insecure for production deployments");
             });
             read_message(&mut self.inner, &mut self.read_buffer).await
@@ -406,7 +406,7 @@ WARNED_UNSIGNED.get_or_init(|| {
                     "IPC signing enforced but no signer configured",
                 ));
             }
-WARNED_UNSIGNED.get_or_init(|| {
+            WARNED_UNSIGNED.get_or_init(|| {
                 tracing::warn!("Using unsigned IPC communication - this is insecure for production deployments");
             });
             read_message_with_timeout(&mut self.inner, &mut self.read_buffer, timeout_ms).await

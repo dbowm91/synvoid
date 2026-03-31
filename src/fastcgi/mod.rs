@@ -127,10 +127,7 @@ impl FastCgiClient {
 
     fn find_header_body_separator(data: &[u8]) -> Option<usize> {
         (0..data.len().saturating_sub(3)).find(|&i| {
-            data[i] == b'\r'
-                && data[i + 1] == b'\n'
-                && data[i + 2] == b'\r'
-                && data[i + 3] == b'\n'
+            data[i] == b'\r' && data[i + 1] == b'\n' && data[i + 2] == b'\r' && data[i + 3] == b'\n'
         })
     }
 

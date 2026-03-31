@@ -435,7 +435,7 @@ impl RecordStoreManager {
             loop {
                 interval.tick().await;
 
-                if !config.enabled || node_role != MeshNodeRole::Global {
+                if !config.enabled || !node_role.is_global() {
                     continue;
                 }
 

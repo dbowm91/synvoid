@@ -41,14 +41,25 @@ pub fn Honeypot() -> Html {
 
                 match api.get_honeypot_status().await {
                     Ok(value) => {
-                        if let Ok(enabled) = value.get("enabled").and_then(|v| v.as_bool()).ok_or(()) {
-                            let running = value.get("running").and_then(|v| v.as_bool()).unwrap_or(false);
-                            let ports = value.get("ports").and_then(|v| v.as_array())
-                                .map(|arr| arr.iter().filter_map(|p| p.as_u64().map(|n| n as u16)).collect());
-                            let connections_count = value.get("connections_count")
-                                .and_then(|v| v.as_u64()).map(|n| n as u64).unwrap_or(0);
-                            let last_connection = value.get("last_connection")
-                                .and_then(|v| v.as_u64());
+                        if let Ok(enabled) =
+                            value.get("enabled").and_then(|v| v.as_bool()).ok_or(())
+                        {
+                            let running = value
+                                .get("running")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false);
+                            let ports = value.get("ports").and_then(|v| v.as_array()).map(|arr| {
+                                arr.iter()
+                                    .filter_map(|p| p.as_u64().map(|n| n as u16))
+                                    .collect()
+                            });
+                            let connections_count = value
+                                .get("connections_count")
+                                .and_then(|v| v.as_u64())
+                                .map(|n| n as u64)
+                                .unwrap_or(0);
+                            let last_connection =
+                                value.get("last_connection").and_then(|v| v.as_u64());
 
                             status.set(Some(HoneypotStatus {
                                 enabled,

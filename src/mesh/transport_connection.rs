@@ -111,6 +111,19 @@ impl MeshTransport {
                 _ = cleanup_interval.tick() => {
                     Self::cleanup_stale_connections(&peer_connections, &topology).await;
                     Self::cleanup_blocked_upstreams(&topology).await;
+                    if let Some(partition) = topology.check_network_partition().await {
+                        match partition {
+                            crate::mesh::topology::NetworkPartitionState::Isolated { .. } => {
+                                tracing::warn!("Network partition detected: isolated from all peers");
+                            }
+                            crate::mesh::topology::NetworkPartitionState::DisconnectedFromGlobal { .. } => {
+                                tracing::warn!("Network partition detected: disconnected from global nodes");
+                            }
+                            crate::mesh::topology::NetworkPartitionState::Degraded { .. } => {
+                                tracing::warn!("Network partition detected: degraded peer connectivity");
+                            }
+                        }
+                    }
                 }
             }
         }

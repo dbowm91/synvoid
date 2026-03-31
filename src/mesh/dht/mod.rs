@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use parking_lot::RwLock;
+use dashmap::DashMap;
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -43,7 +43,7 @@ pub const DEFAULT_RATE_LIMIT_WINDOW_SECS: u64 = 60;
 pub struct DhtRateLimiter {
     max_requests: u32,
     window_secs: u64,
-    peer_requests: Arc<RwLock<HashMap<String, Vec<Instant>>>>,
+    peer_requests: Arc<DashMap<String, Vec<Instant>>>,
 }
 
 impl DhtRateLimiter {
@@ -51,15 +51,15 @@ impl DhtRateLimiter {
         Self {
             max_requests,
             window_secs,
-            peer_requests: Arc::new(RwLock::new(HashMap::new())),
+            peer_requests: Arc::new(DashMap::new()),
         }
     }
 
     pub fn is_allowed(&self, peer_id: &str) -> bool {
         let now = Instant::now();
-        let mut peer_requests = self.peer_requests.write();
 
-        let requests = peer_requests.entry(peer_id.to_string()).or_default();
+        let mut entry = self.peer_requests.entry(peer_id.to_string()).or_default();
+        let requests = &mut entry.value_mut();
 
         requests.retain(|t| now.duration_since(*t).as_secs() < self.window_secs);
 
@@ -73,13 +73,12 @@ impl DhtRateLimiter {
 
     pub fn cleanup(&self) {
         let now = Instant::now();
-        let mut peer_requests = self.peer_requests.write();
 
-        for requests in peer_requests.values_mut() {
-            requests.retain(|t| now.duration_since(*t).as_secs() < self.window_secs);
+        for mut entry in self.peer_requests.iter_mut() {
+            entry.value_mut().retain(|t| now.duration_since(*t).as_secs() < self.window_secs);
         }
 
-        peer_requests.retain(|_, v| !v.is_empty());
+        self.peer_requests.retain(|_, v| !v.is_empty());
     }
 }
 

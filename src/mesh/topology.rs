@@ -4,8 +4,6 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use rand::seq::SliceRandom;
-
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
@@ -684,14 +682,27 @@ impl MeshTopology {
 
     pub async fn get_random_peers(&self, count: usize, exclude: Option<&str>) -> Vec<PeerState> {
         let peers = self.peers.read().await;
-        let mut eligible: Vec<&PeerState> = peers
+        let eligible: Vec<&PeerState> = peers
             .values()
             .filter(|p| p.status == PeerStatus::Healthy)
             .filter(|p| exclude.map(|e| p.node_id.as_str() != e).unwrap_or(true))
             .collect();
 
-        eligible.shuffle(&mut rand::rng());
-        eligible.into_iter().take(count).cloned().collect()
+        let count = count.min(eligible.len());
+        if count == 0 {
+            return vec![];
+        }
+
+        use rand::Rng;
+        let mut rng = rand::rng();
+        let mut indices: Vec<usize> = (0..eligible.len()).collect();
+        
+        for i in (1..indices.len()).rev() {
+            let j = rng.random_range(0..=i);
+            indices.swap(i, j);
+        }
+        
+        indices.into_iter().take(count).map(|i| (*eligible[i]).clone()).collect()
     }
 
     pub async fn get_peers_by_latency(

@@ -436,7 +436,9 @@ All items in `plans/plan.md` are complete. The plan was organized into 6 waves:
 - **Waves 0-4**: Complete (security, correctness, performance, features, code quality)
 - **Wave 5**: Complete (documentation, testing)
 
-One item was deferred: Zone store sharding (2B.4) due to API complexity requiring changes to 15+ call sites.
+Two items were deferred:
+- Zone store sharding (2B.4) due to API complexity requiring changes to 15+ call sites
+- DNS server global role gating (3E.3) due to complex code structure in server/mod.rs
 
 ## Admin Panel Architecture Notes
 

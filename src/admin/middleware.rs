@@ -74,10 +74,7 @@ pub async fn csrf_middleware(
     let path = request.uri().path();
     let method = request.method();
 
-    let requires_csrf = matches!(
-        method.as_str(),
-        "POST" | "PUT" | "PATCH" | "DELETE"
-    )
+    let requires_csrf = matches!(method.as_str(), "POST" | "PUT" | "PATCH" | "DELETE")
         && !path.starts_with("/ws/")
         && !path.starts_with("/stats")
         && !path.eq("/health")

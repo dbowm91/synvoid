@@ -38,8 +38,6 @@ pub use unified_server::{
     run_unified_server_worker, setup_unified_server_panic_handler, UnifiedServerWorkerArgs,
 };
 
-
-
 #[derive(Clone)]
 pub struct WorkerArgs {
     pub worker_id: usize,
@@ -202,9 +200,16 @@ pub async fn run_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Erro
                     if cm.load_main(&main_path).is_ok() {
                         cm.discover_sites();
                         *ipc_state.config_manager.write() = cm;
-                        tracing::info!("Worker {} config reloaded successfully", ipc_state.worker_id);
+                        tracing::info!(
+                            "Worker {} config reloaded successfully",
+                            ipc_state.worker_id
+                        );
                     } else {
-                        tracing::warn!("Worker {} failed to reload config from {}", ipc_state.worker_id, config_path);
+                        tracing::warn!(
+                            "Worker {} failed to reload config from {}",
+                            ipc_state.worker_id,
+                            config_path
+                        );
                     }
                 }
                 Ok(Some(Message::MasterHealthCheck { timestamp })) => {

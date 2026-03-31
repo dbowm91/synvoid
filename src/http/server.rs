@@ -29,7 +29,6 @@ use crate::http_client::{
 };
 use crate::mesh::config::MeshConfig;
 use crate::mesh::transports::MeshTransportManager;
-use crate::mesh::MeshNodeRole;
 use crate::metrics::bandwidth::{BandwidthProtocol, EgressDirection};
 use crate::metrics::WorkerMetrics;
 use crate::process::{current_timestamp, RequestLogPayload};
@@ -365,7 +364,7 @@ impl HttpServer {
         // Handle key exchange requests for global nodes
         if path.starts_with("/key-") || path == "/health" {
             if let Some(ref mesh_cfg) = mesh_config {
-                if mesh_cfg.role == MeshNodeRole::Global
+                if mesh_cfg.role.is_global()
                     && mesh_cfg.global_node.key_exchange_enabled
                     && mesh_cfg.origin_signing_key.is_some()
                 {

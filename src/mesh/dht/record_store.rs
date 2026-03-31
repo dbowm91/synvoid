@@ -235,7 +235,7 @@ impl RecordStoreManager {
     }
 
     pub fn is_global_node(&self) -> bool {
-        self.node_role == MeshNodeRole::Global
+        self.node_role.is_global()
     }
 
     pub fn get_network_policy(&self) -> Option<crate::mesh::dht::NetworkPolicy> {

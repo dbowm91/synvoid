@@ -299,7 +299,9 @@ impl BlockStore {
             .map(|(k, _)| k.clone())
         {
             store.remove(&lru_key);
-            let _ = self.total_entries.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_sub(1));
+            let _ = self
+                .total_entries
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_sub(1));
             tracing::debug!("Evicted LRU block entry: {}", lru_key);
             true
         } else {
@@ -402,7 +404,9 @@ impl BlockStore {
                 return Some(entry.clone());
             } else {
                 store.remove(&key);
-                let _ = self.total_entries.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_sub(1));
+                let _ =
+                    self.total_entries
+                        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_sub(1));
             }
         }
 
@@ -425,7 +429,11 @@ impl BlockStore {
                     return Some(entry.clone());
                 } else {
                     store.remove(&global_key);
-                    let _ = self.total_entries.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_sub(1));
+                    let _ = self.total_entries.fetch_update(
+                        Ordering::Relaxed,
+                        Ordering::Relaxed,
+                        |v| v.checked_sub(1),
+                    );
                 }
             }
         }
@@ -436,7 +444,9 @@ impl BlockStore {
     fn remove_entry(&self, key: &str) {
         let removed = self.store.write().remove(key).is_some();
         if removed {
-            let _ = self.total_entries.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_sub(1));
+            let _ = self
+                .total_entries
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_sub(1));
             self.trigger_persist();
         }
     }

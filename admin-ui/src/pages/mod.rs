@@ -12,8 +12,8 @@ mod site_editor;
 mod sites;
 mod system_status;
 mod tcp_udp;
-mod tier_keys;
 mod threat_level;
+mod tier_keys;
 mod upstreams;
 mod workers;
 
@@ -31,7 +31,7 @@ pub use site_editor::SiteEditor;
 pub use sites::Sites;
 pub use system_status::SystemStatus;
 pub use tcp_udp::TcpUdp;
-pub use tier_keys::TierKeys;
 pub use threat_level::ThreatLevel;
+pub use tier_keys::TierKeys;
 pub use upstreams::Upstreams;
 pub use workers::Workers;

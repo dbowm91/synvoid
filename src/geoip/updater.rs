@@ -84,14 +84,12 @@ pub struct DownloadResult {
     pub last_modified: Option<i64>,
 }
 
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct UpdaterState {
     pub consecutive_failures: u32,
     pub last_success: Option<i64>,
     pub last_error: Option<String>,
 }
-
 
 #[derive(Debug, thiserror::Error)]
 pub enum GeoIpUpdaterError {

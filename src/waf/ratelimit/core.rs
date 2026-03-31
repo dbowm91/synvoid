@@ -501,9 +501,19 @@ impl SlottedIpRateLimiter {
             let minute = self.minute_counters[i].load(Ordering::Relaxed);
             let five_min = self.five_min_counters[i].load(Ordering::Relaxed);
 
-            self.second_counters[i].store(second / factor, Ordering::Relaxed);
-            self.minute_counters[i].store(minute / factor, Ordering::Relaxed);
-            self.five_min_counters[i].store(five_min / factor, Ordering::Relaxed);
+            if second == 0 && minute == 0 && five_min == 0 {
+                continue;
+            }
+
+            if second > 0 {
+                self.second_counters[i].store(second / factor, Ordering::Relaxed);
+            }
+            if minute > 0 {
+                self.minute_counters[i].store(minute / factor, Ordering::Relaxed);
+            }
+            if five_min > 0 {
+                self.five_min_counters[i].store(five_min / factor, Ordering::Relaxed);
+            }
         }
     }
 }

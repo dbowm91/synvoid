@@ -234,7 +234,8 @@ impl YaraRuleFeedManager {
         signature_b64: &str,
         public_key: &VerifyingKey,
     ) -> Result<(), String> {
-        let signature_bytes = STANDARD.decode(signature_b64)
+        let signature_bytes = STANDARD
+            .decode(signature_b64)
             .map_err(|e| format!("Invalid signature encoding: {}", e))?;
 
         if signature_bytes.len() != 64 {

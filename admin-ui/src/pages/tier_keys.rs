@@ -132,8 +132,8 @@ impl Component for TierKeys {
                                 <p class="text-secondary mb-4">{ "Issue a new tier key with specified tier level" }</p>
                                 <div class="mb-4">
                                     <label class="block text-sm font-medium mb-2">{ "Organization ID" }</label>
-                                    <input 
-                                        type="text" 
+                                    <input
+                                        type="text"
                                         class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg"
                                         placeholder="org_xxx"
                                     />
