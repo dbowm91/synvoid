@@ -135,10 +135,7 @@ impl TrustAnchor {
     }
 
     pub fn is_trusted(&self) -> bool {
-        matches!(
-            self.state,
-            TrustAnchorState::Valid | TrustAnchorState::Pending
-        )
+        matches!(self.state, TrustAnchorState::Valid)
     }
 
     pub fn generate_key_id(key_tag: u16, algorithm: u8) -> String {

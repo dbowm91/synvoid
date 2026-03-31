@@ -343,6 +343,18 @@ All duplicate `current_timestamp()` definitions have been consolidated into `src
 - ~~PoW not persisted~~ → pow_nonce/public_key in PersistedContact
 - ~~XOR distance uses first byte only~~ → full bit-prefix counting
 
+**Wave 1 Fixes** (2026-03-31):
+- ~~SSRF octal IP bypass~~ → parse_ipv4_flexible() now handles octal/decimal/hex
+- ~~Path traversal in sanitize_request_path~~ → proper .. handling added
+- ~~Trust Anchor Pending state considered trusted~~ → only Valid now trusted
+- ~~build_forward_headers not called in TLS server~~ → now wired via send_request_with_timeout_and_headers
+- ~~CSRF tokens generated but not validated~~ → middleware added
+- ~~import_config not reloaded in memory~~ → now calls load_main and broadcasts
+- ~~Worker broadcast on partial config failure~~ → now skipped when failed > 0
+- ~~PoW difficulty 16 bits trivial to solve~~ → increased to 24 bits
+- ~~try_insert bypasses PoW verification~~ → now calls peer.verify_pow()
+- ~~ConnectionPermit::Drop underflow~~ → fetch_update with checked_sub
+
 **Other** (all fixed):
 - ~~Plugin ABI Mismatch~~ → `rustwaf_abi_version` → `maluwaf_abi_version`
 - ~~dns-parser replaced~~ → hickory-proto (75 references migrated)

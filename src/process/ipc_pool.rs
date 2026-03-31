@@ -125,7 +125,8 @@ pub struct ConnectionPermit {
 
 impl Drop for ConnectionPermit {
     fn drop(&mut self) {
-        self.active_counter.fetch_sub(1, Ordering::AcqRel);
+        let _ = self.active_counter
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |v| v.checked_sub(1));
     }
 }
 

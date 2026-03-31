@@ -15,9 +15,6 @@ pub async fn extract_client_ip_middleware(mut request: Request, next: Next) -> R
 }
 
 fn extract_client_ip_from_request(request: &Request) -> String {
-    // Prefer direct connection IP to prevent XFF spoofing.
-    // Only fall back to X-Forwarded-For when no direct connection info is available
-    // (e.g., behind a reverse proxy that strips client IP from ConnectInfo).
     if let Some(connect_info) = request
         .extensions()
         .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
@@ -40,7 +37,6 @@ pub async fn auth_middleware_with_state(
     request: Request,
     next: Next,
 ) -> Response {
-    // Skip auth for health endpoint
     if request.uri().path() == "/health" {
         return next.run(request).await;
     }
@@ -68,4 +64,42 @@ pub async fn auth_middleware_with_state(
     super::auth::AUTH_RATE_LIMITER.record_failure(client_ip);
     tracing::warn!("Auth middleware: authentication failed for {}", client_ip);
     StatusCode::UNAUTHORIZED.into_response()
+}
+
+pub async fn csrf_middleware(
+    axum::extract::State(state): axum::extract::State<std::sync::Arc<super::state::AdminState>>,
+    request: Request,
+    next: Next,
+) -> Response {
+    let path = request.uri().path();
+    let method = request.method();
+
+    let requires_csrf = matches!(
+        method.as_str(),
+        "POST" | "PUT" | "PATCH" | "DELETE"
+    )
+        && !path.starts_with("/ws/")
+        && !path.starts_with("/stats")
+        && !path.eq("/health")
+        && !path.eq("/config/schema")
+        && !path.eq("/logs");
+
+    if !requires_csrf {
+        return next.run(request).await;
+    }
+
+    let csrf_token = request
+        .headers()
+        .get("x-csrf-token")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
+    if let Some(token) = csrf_token {
+        if state.validate_csrf(&token) {
+            return next.run(request).await;
+        }
+    }
+
+    tracing::warn!("CSRF validation failed for {} {}", method, path);
+    StatusCode::FORBIDDEN.into_response()
 }

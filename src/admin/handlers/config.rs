@@ -1072,27 +1072,53 @@ pub async fn reload_config(
         }
     }
 
-    // Broadcast to workers after config reload
+    // Only broadcast to workers if all reloads succeeded
+    let broadcast_success = failed == 0;
+
     drop(config);
-    if let Some(ref pm) = state.process.process_manager {
-        pm.broadcast_config_reload(config_dir).await;
+    if broadcast_success {
+        if let Some(ref pm) = state.process.process_manager {
+            let config_dir = state.process.config.read().await.config_dir.clone();
+            pm.broadcast_config_reload(config_dir).await;
+        }
     }
 
     let message = if mimes_reloaded {
-        format!(
-            "Reloaded {} configs, {} failed, mimes reloaded, workers notified",
-            loaded, failed
-        )
+        if broadcast_success {
+            format!(
+                "Reloaded {} configs, {} failed, mimes reloaded, workers notified",
+                loaded, failed
+            )
+        } else {
+            format!(
+                "Reloaded {} configs, {} failed (workers not notified)",
+                loaded, failed
+            )
+        }
     } else if let Some(err) = mimes_error {
-        format!(
-            "Reloaded {} configs, {} failed, mimes reload failed: {}, workers notified",
-            loaded, failed, err
-        )
+        if broadcast_success {
+            format!(
+                "Reloaded {} configs, {} failed, mimes reload failed: {}, workers notified",
+                loaded, failed, err
+            )
+        } else {
+            format!(
+                "Reloaded {} configs, {} failed, mimes reload failed: {} (workers not notified)",
+                loaded, failed, err
+            )
+        }
     } else {
-        format!(
-            "Reloaded {} configs, {} failed, workers notified",
-            loaded, failed
-        )
+        if broadcast_success {
+            format!(
+                "Reloaded {} configs, {} failed, workers notified",
+                loaded, failed
+            )
+        } else {
+            format!(
+                "Reloaded {} configs, {} failed (workers not notified)",
+                loaded, failed
+            )
+        }
     };
 
     Ok(Json(StatusResponse {
@@ -1235,8 +1261,19 @@ pub async fn import_config(
             })?;
     }
 
+    let mut config = state.process.config.write().await;
+    if let Err(e) = config.load_main(&main_config_path) {
+        tracing::error!("Failed to reload imported config in memory: {}", e);
+    }
+    drop(config);
+
+    if let Some(ref pm) = state.process.process_manager {
+        let config_dir = state.process.config.read().await.config_dir.clone();
+        pm.broadcast_config_reload(config_dir).await;
+    }
+
     Ok(Json(StatusResponse::success(
-        "Configuration imported. Reload required.",
+        "Configuration imported and reloaded.",
     )))
 }
 

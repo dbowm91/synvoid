@@ -1142,6 +1142,18 @@ All items from the original plans have been reviewed, deduplicated, and incorpor
 
 ## Notes
 
+- **2026-03-31**: Wave 1 completed - High-priority security and correctness fixes:
+  - 1A.1: Fixed SSRF octal/decimal IP bypass with parse_ipv4_flexible()
+  - 1A.2: Fixed path traversal in sanitize_request_path with proper .. handling
+  - 1A.3: Fixed is_trusted() to only return true for Valid state (not Pending)
+  - 1B.4: Fixed build_forward_headers now called in TLS server proxy path
+  - 1C.1: Added CSRF middleware with token validation
+  - 1C.4: Added reload and broadcast after import_config
+  - 1C.5: Skip worker broadcast on partial reload failure
+  - 1D.4: Increased PoW difficulty from 16 to 24 bits
+  - 1D.5: Added PoW verification to try_insert
+  - 1G.1: Fixed ConnectionPermit::Drop underflow with fetch_update
+
 - **2026-03-31**: Wave 0 completed - All critical security fixes implemented:
   - 0A.2: Removed dead code `check_waf()` from proxy.rs
   - 0A.4: Whitelist already at position 1 (no change needed)

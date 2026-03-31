@@ -105,14 +105,22 @@ pub fn build_headers_to_filter(
 }
 
 pub fn sanitize_request_path(path: &str) -> String {
-    // Fast path: no encoding, no control chars, no duplicate slashes, no /./ segments
-    if !path.bytes().any(|b| b == b'%' || b < 0x20) && !path.contains("//") && !path.contains("/./")
-    {
+    if path.is_empty() {
+        return String::new();
+    }
+
+    let fast_path = {
+        let bytes = path.as_bytes();
+        !bytes.iter().any(|&b| b == b'%' || b == b'.' || b < 0x20) && !path.contains("//")
+    };
+    if fast_path {
         return path.to_string();
     }
 
     let mut result = Vec::<u8>::with_capacity(path.len());
     let mut bytes = path.bytes();
+    let mut segments: Vec<Vec<u8>> = Vec::new();
+    let mut current_segment: Vec<u8> = Vec::new();
 
     while let Some(b) = bytes.next() {
         match b {
@@ -126,7 +134,7 @@ pub fn sanitize_request_path(path: &str) -> String {
                     ) {
                         let decoded = (h << 4) | l;
                         if decoded != 0 {
-                            result.push(decoded);
+                            current_segment.push(decoded);
                         }
                     } else {
                         result.push(b'%');
@@ -140,11 +148,49 @@ pub fn sanitize_request_path(path: &str) -> String {
                     }
                 }
             }
-            b'.' if result.last() == Some(&b'/') => {}
-            b'/' if result.last() == Some(&b'/') => {}
+            b'.' => {
+                if !current_segment.is_empty() {
+                    segments.push(std::mem::take(&mut current_segment));
+                    current_segment = Vec::new();
+                }
+                continue;
+            }
+            b'/' => {
+                if !current_segment.is_empty() {
+                    segments.push(std::mem::take(&mut current_segment));
+                    current_segment = Vec::new();
+                }
+                while result.last() == Some(&b'/') {
+                    result.pop();
+                }
+                result.push(b'/');
+                continue;
+            }
             b if b < 0x20 => {}
-            _ => result.push(b),
+            _ => current_segment.push(b),
         }
+    }
+
+    if !current_segment.is_empty() {
+        segments.push(current_segment);
+    }
+
+    for (i, segment) in segments.iter().enumerate() {
+        if segment == b".." {
+            if let Some(pos) = result.iter().rposition(|&b| b == b'/') {
+                let before_slash = result[..pos].iter().rposition(|&b| b == b'/').map(|p| p + 1).unwrap_or(0);
+                result.drain(before_slash..);
+            }
+        } else if !segment.is_empty() {
+            if !result.is_empty() && result.last() != Some(&b'/') {
+                result.push(b'/');
+            }
+            result.extend_from_slice(segment);
+        }
+    }
+
+    if result.is_empty() {
+        return "/".to_string();
     }
 
     String::from_utf8(result).unwrap_or_else(|e| {

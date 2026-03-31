@@ -435,9 +435,7 @@ fn build_router_from_state(
         )
         .route(
             "/api/openapi.json",
-            get(|| async {
-                axum::Json(openapi::ApiDoc::openapi())
-            }),
+            get(|| async { axum::Json(openapi::ApiDoc::openapi()) }),
         )
         .route("/health", get(health_check))
         .fallback_service(ServeDir::new("admin-ui/dist"))
@@ -448,6 +446,10 @@ fn build_router_from_state(
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             middleware::auth_middleware_with_state,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            middleware::csrf_middleware,
         ))
         .layer(rate_limit_layer)
         .with_state(state)

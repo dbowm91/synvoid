@@ -39,7 +39,89 @@ impl SsrfDetector {
     }
 
     fn is_private_ip(ip: &str) -> bool {
-        ip.parse::<IpAddr>().is_ok_and(|addr| match addr {
+        if let Some(normalized) = Self::parse_ipv4_flexible(ip) {
+            return Self::check_is_private_ip(&normalized);
+        }
+        false
+    }
+
+    fn parse_ipv4_flexible(s: &str) -> Option<String> {
+        let s = s.trim();
+        if s.is_empty() {
+            return None;
+        }
+
+        if s.starts_with('0') && s.len() > 1 {
+            if s.starts_with("0x") || s.starts_with("0X") {
+                return Self::parse_ipv4_hex(s);
+            } else if s.chars().all(|c| c.is_ascii_digit()) {
+                return Self::parse_ipv4_decimal(s);
+            } else if s.chars().all(|c| c.is_ascii_digit() || c == '.') {
+                return Self::parse_ipv4_octal(s);
+            }
+        }
+
+        if let Ok(ip) = s.parse::<IpAddr>() {
+            return Some(ip.to_string());
+        }
+
+        None
+    }
+
+    fn parse_ipv4_decimal(s: &str) -> Option<String> {
+        let decimal: u64 = s.parse().ok()?;
+        if decimal > u32::MAX as u64 {
+            return None;
+        }
+        let ip = u32::try_from(decimal).ok()?;
+        let octets = ip.to_be_bytes();
+        Some(format!(
+            "{}.{}.{}.{}",
+            octets[0], octets[1], octets[2], octets[3]
+        ))
+    }
+
+    fn parse_ipv4_octal(s: &str) -> Option<String> {
+        let parts: Vec<&str> = s.split('.').collect();
+        if parts.len() != 4 {
+            return None;
+        }
+
+        let mut octets = [0u8; 4];
+        for (i, part) in parts.iter().enumerate() {
+            if part.is_empty() {
+                return None;
+            }
+            if part.len() > 1 && part.starts_with('0') {
+                let octal: u32 = part.parse().ok()?;
+                if octal > 255 {
+                    return None;
+                }
+                octets[i] = octal as u8;
+            } else {
+                let decimal: u8 = part.parse().ok()?;
+                octets[i] = decimal;
+            }
+        }
+
+        Some(format!(
+            "{}.{}.{}.{}",
+            octets[0], octets[1], octets[2], octets[3]
+        ))
+    }
+
+    fn parse_ipv4_hex(s: &str) -> Option<String> {
+        let hex_str = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X"))?;
+        let hex: u32 = u32::from_str_radix(hex_str, 16).ok()?;
+        let octets = hex.to_be_bytes();
+        Some(format!(
+            "{}.{}.{}.{}",
+            octets[0], octets[1], octets[2], octets[3]
+        ))
+    }
+
+    fn check_is_private_ip(ip_str: &str) -> bool {
+        ip_str.parse::<IpAddr>().is_ok_and(|addr| match addr {
             IpAddr::V4(v4) => {
                 let octets = v4.octets();
                 octets[0] == 10

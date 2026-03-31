@@ -209,6 +209,11 @@ impl RoutingTable {
             return None;
         }
 
+        if peer.requires_pow() && !peer.verify_pow() {
+            tracing::debug!("Rejected peer {}: PoW verification failed", peer.node_id);
+            return None;
+        }
+
         let bucket_index = peer.node_id.bucket_index(&self.local_node_id);
         let bucket = &mut self.buckets[bucket_index];
 

@@ -408,6 +408,33 @@ pub async fn send_request_with_timeout(
     send_request_with_body_and_timeout(client, method, url, None, timeout).await
 }
 
+pub async fn send_request_with_timeout_and_headers(
+    client: &HttpClient,
+    method: Method,
+    url: &str,
+    headers: http::HeaderMap,
+    timeout: Option<Duration>,
+) -> Result<HttpResponse> {
+    let uri: Uri = url.parse()?;
+    let body = Full::new(Bytes::new());
+    let mut req_builder = Request::builder().method(method).uri(uri).body(body)
+        .map_err(|e| anyhow::anyhow!("Failed to build request: {}", e))?;
+    *req_builder.headers_mut() = headers;
+    let req = req_builder;
+
+    let response = if let Some(t) = timeout {
+        match tokio::time::timeout(t, client.request(req)).await {
+            Ok(Ok(resp)) => resp,
+            Ok(Err(e)) => return Err(e.into()),
+            Err(_) => return Err(anyhow::anyhow!("request timed out")),
+        }
+    } else {
+        client.request(req).await?
+    };
+
+    Ok(HttpResponse::from_hyper(response).await)
+}
+
 pub async fn send_request_with_body_and_timeout(
     client: &HttpClient,
     method: Method,
