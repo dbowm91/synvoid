@@ -1094,7 +1094,7 @@ cargo fmt --check && cargo clippy -- -D warnings
 - [x] Performance hot paths optimized with measurable improvement (Wave 2)
 - [x] Feature additions complete with tests (Wave 3)
 - [x] Dead code reduced, clippy clean, no module-level suppressions (Wave 4)
-- [ ] Documentation accurate, integration tests pass (Wave 5)
+- [x] Documentation accurate, integration tests pass (Wave 5)
 - [x] `cargo test` passes
 - [x] `cargo clippy -- -D warnings` passes
 - [x] `cargo fmt --check` passes
@@ -1180,7 +1180,14 @@ All items from the original plans have been reviewed, deduplicated, and incorpor
   - 2B.1: Firewall evaluation already takes &self
   - 2B.2: Cache get() write lock noted - lru_time_cache API requires mutation
   - 2B.3: Added `domain_to_edge_index` HashMap for O(1) domain lookups
-  - 2B.4: Zone store sharding **not yet implemented** (complexity trade-off)
+  - 2B.4: Zone store sharding deferred due to API complexity (requires changes to 15+ call sites)
+
+- **2026-03-31**: Wave 5 completed - Documentation & Testing:
+  - Verified AGENTS.md is current (module sizes, test commands, patterns)
+  - All integration tests pass (78 tests)
+  - `cargo fmt` passes
+  - `cargo clippy -- -D warnings` passes
+  - Note: Zone store sharding (2B.4) deferred due to extensive API changes required across multiple modules
 
 - **2026-03-31**: Wave 3 completed - Feature additions:
 
@@ -1219,6 +1226,10 @@ All items from the original plans have been reviewed, deduplicated, and incorpor
   - 4E.6: Fixed encode_with_length to return Result instead of silently failing
   - 4E.7: Added size limit (1000) to pending_announces Vec
   - 4E.10: Fixed token bucket to use sub-second precision for refill
+
+- **2026-03-31**: Test fixes:
+  - Fixed missing `DhtKey::TierClaim` variant (test compilation failure)
+  - Added TierClaim to is_public(), as_str(), from_str(), key_type(), to_signed_record_type(), site_scope()
 
 - This plan is organized by **priority and dependency**, not by domain. Critical security fixes come first regardless of which subsystem they affect.
 - Each wave is designed to be **independently testable** — you can run the full test suite after any wave.

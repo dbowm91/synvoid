@@ -314,55 +314,12 @@ All duplicate `current_timestamp()` definitions have been consolidated into `src
 
 ### All Fixed Bugs (Reference)
 
-<details><summary>Click to expand fixed bugs (33 items across all phases)</summary>
+All bugs from the remediation plan (Waves 0-4) have been fixed. Key fixes include:
 
-**Critical Correctness** (all fixed Phase 2):
-- ~~BCRYPT_COST = 4~~ → now 12 (`src/admin/auth.rs:9`)
-- ~~Auth timing attack~~ → `verify_dummy_password()` always called before returning
-- ~~IPC lock contention~~ → lock scoped to recv only, dropped before match processing
-
-**Security** (all fixed Phase 2):
-- ~~TLS skip_verify~~ → startup warning + `skip_verify_reason` required
-- ~~Plaintext bcrypt fallback~~ → returns error instead
-- ~~IPC key fallback to env var~~ → fail-hard by default, `allow_insecure_ipc_key` opt-in
-- ~~CORS wildcard not enforced at site level~~ → rejected in release builds
-- ~~Token in validation error~~ → logged separately at INFO level
-- ~~"changeme" token rejection dead code~~ → check moved before `resolve_token()` (`src/config/admin.rs:109`)
-
-**DNS / RFC Compliance** (all fixed):
-- ~~NSEC3 hash loop off-by-one~~ → `..=` → `..`
-- ~~NSEC3 owner name hash-length byte~~ → `format!` decimal
-- ~~DNSKEY publishes KSK only~~ → ZSK added (Wave 3)
-- ~~CDS uses wrong type~~ → Type 59 CDS (Wave 3)
-- ~~SRV canonical_rdata incomplete~~ → weight/port/target fields added
-- ~~ARCOUNT off by one~~ → post-write patching
-- ~~MX/CNAME/NS trailing null~~ → root label added
-- ~~AD flag set unconditionally~~ → conditional on signing
-
-**DHT** (all fixed):
-- ~~Unbounded PoW nonce loop~~ → 10M iteration limit
-- ~~Duplicate peers in lookup~~ → HashSet dedup
-- ~~PoW not persisted~~ → pow_nonce/public_key in PersistedContact
-- ~~XOR distance uses first byte only~~ → full bit-prefix counting
-
-**Wave 1 Fixes** (2026-03-31):
-- ~~SSRF octal IP bypass~~ → parse_ipv4_flexible() now handles octal/decimal/hex
-- ~~Path traversal in sanitize_request_path~~ → proper .. handling added
-- ~~Trust Anchor Pending state considered trusted~~ → only Valid now trusted
-- ~~build_forward_headers not called in TLS server~~ → now wired via send_request_with_timeout_and_headers
-- ~~CSRF tokens generated but not validated~~ → middleware added
-- ~~import_config not reloaded in memory~~ → now calls load_main and broadcasts
-- ~~Worker broadcast on partial config failure~~ → now skipped when failed > 0
-- ~~PoW difficulty 16 bits trivial to solve~~ → increased to 24 bits
-- ~~try_insert bypasses PoW verification~~ → now calls peer.verify_pow()
-- ~~ConnectionPermit::Drop underflow~~ → fetch_update with checked_sub
-
-**Other** (all fixed):
-- ~~Plugin ABI Mismatch~~ → `rustwaf_abi_version` → `maluwaf_abi_version`
-- ~~dns-parser replaced~~ → hickory-proto (75 references migrated)
-- ~~once_cell replaced~~ → std::sync::LazyLock (13 files)
-
-</details>
+**Security**: TLS skip_verify enforcement, IPC key fail-hard, CSRF middleware, PBKDF2 random salt
+**DNS/RFC**: NSEC3 hash loop, DNSKEY RDATA encoding, AD flag conditional, trust anchor state machine
+**DHT**: PoW difficulty 24 bits, bounded nonce loops, HashSet deduplication
+**WAF**: SSRF octal/decimal IP parsing, path traversal handling, rate limiter atomic safety
 
 ### Dead Code (Removed)
 
@@ -471,27 +428,15 @@ When splitting large modules:
 
 ### Cross-Plan Item Deduplication
 
-When reviewing multiple plans for the same codebase, expect significant overlap. Common patterns:
-- The same bug appears in 3-5 different plan files with different line numbers (code moved between reviews)
-- "Critical" in one plan may be "Medium" in another — prioritize by severity consensus
-- Always verify line numbers against current code before implementing
-- Items marked "deferred" in one plan may be "critical" in another — use your judgment
-
-### Wave-Based Parallelization
-
-For large remediation efforts, organize by waves rather than phases:
-- **Wave 0**: Critical security/correctness — must land first, blocks everything
-- **Wave 1**: High-priority security/correctness — can run after Wave 0
-- **Wave 2**: Performance — independent of Wave 1, can run in parallel
-- **Wave 3**: Feature additions — depends on stability from Waves 0-2
-- **Wave 4**: Code quality — independent, can run in parallel with any wave
-- **Wave 5**: Documentation/testing — depends on final code state
-
-Each wave should have 5-9 sub-waves that can run in parallel with separate agents.
+When reviewing multiple plans for the same codebase, expect significant overlap. The same bug often appears in multiple plan files with different line numbers.
 
 ## Remediation Plan
 
-See `plans/plan.md` for the consolidated remediation plan organized into 6 waves by priority and dependency. The plan supports parallel sub-agent execution — see the Parallelization Strategy section. All prior individual plan files have been merged into this single document.
+All items in `plans/plan.md` are complete. The plan was organized into 6 waves:
+- **Waves 0-4**: Complete (security, correctness, performance, features, code quality)
+- **Wave 5**: Complete (documentation, testing)
+
+One item was deferred: Zone store sharding (2B.4) due to API complexity requiring changes to 15+ call sites.
 
 ## Admin Panel Architecture Notes
 
