@@ -262,13 +262,13 @@ Crate-level suppressions in `src/lib.rs`:
 - `elided_lifetimes_in_paths` — compiler style preference
 - `mismatched_lifetime_syntaxes` — compiler style preference
 
-`#[allow(dead_code)]` annotations: **~120 across ~70 files** (reduced from 137/75). Notable per-module breakdown:
+`#[allow(dead_code)]` annotations: **~83 across ~70 files** (reduced from 137/75). Notable per-module breakdown:
 - `src/mesh/` — ~27 items
 - `src/dns/server/` — ~4 items (6 incorrect annotations removed — fields were actively used)
 - `src/dns/dnssec_signing.rs` — 3 dead functions removed (extract_rsa_modulus, len_of_der_length, decode_der_length — 57 lines)
 - `src/worker/mod.rs` — dead code removed (MinifierCache, get_content_type, get_compressed_content, ListenerType)
 
-`cargo clippy` produces ~14 non-dead-code warnings (6 type_complexity, 4 result_unit_err, 2 module_inception, 1 vec_init_then_push, 1 arc_with_non_send_sync).
+`cargo clippy -- -D warnings` passes clean (previously ~14 non-dead-code warnings, now resolved).
 
 ### Build Configuration
 
@@ -295,19 +295,11 @@ Feature flags trimmed: `tower` removed `"timeout"`, `tower-http` removed `"trace
 
 ### Error Handling Status
 
-`src/error.rs` defines `WafError`, `WafResult`, and `WafErrorExt` — **all are completely dead code**. Zero production usage outside `error.rs` itself. Every other module uses `anyhow`, `Box<dyn Error>` (~13 call sites remaining after converting 3 files to anyhow), or custom types.
+`src/error.rs` defines `WafError`, `WafResult`, and `WafErrorExt` — **all are completely dead code**. Zero production usage outside `error.rs` itself. Every other module uses `anyhow`, `Box<dyn Error>`, or custom types.
 
 ### Duplicate Timestamp Utility
 
-6 duplicate `current_timestamp()` definitions exist:
-- `src/waf/probe_tracker.rs:455`
-- `src/mesh/dht/stake.rs:531`
-- `src/overseer/state.rs:146`
-- `src/mesh/transports/manager.rs:32`
-- `src/captcha/mod.rs:192`
-- `src/utils.rs:423` (canonical)
-
-Use the `utils.rs` version and remove the rest.
+All duplicate `current_timestamp()` definitions have been consolidated into `src/utils.rs`. Use `crate::utils::current_timestamp()` as the canonical version.
 
 ## Known Bugs (Quick Reference)
 
@@ -380,13 +372,8 @@ Agents modifying these areas should be aware of performance characteristics:
 
 | Module | Lines | Status |
 |--------|-------|--------|
-| `src/dns/dnssec.rs` | 2,208 | Planned split in `plans/plan.md` Phase 5.2 |
-| `src/admin/handlers/config.rs` | 2,136 | Planned split in `plans/plan.md` Phase 5.2 |
-| `src/http/server.rs` | 2,109 | Planned split in `plans/plan.md` Phase 5.2 |
-| `src/mesh/transport.rs` | 2,086 | Already split into 11 submodules |
-| `src/mesh/protocol_proto_encode.rs` | 2,024 | Generated protobuf pattern — acceptable |
-| `src/process/manager.rs` | 2,018 | Planned split in `plans/plan.md` Phase 5.2 |
-| `src/main.rs` | 1,371 | Planned extraction in `plans/plan.md` Phase 5.3 |
+| `src/mesh/transport.rs` | ~2,086 | Already split into 11 submodules |
+| `src/mesh/protocol_proto_encode.rs` | ~2,024 | Generated protobuf pattern — acceptable |
 | `src/mesh/config.rs` | ~1,450 | Split into submodules |
 | `src/mesh/protocol.rs` | ~1,196 | Split into submodules |
 | `src/dns/server/mod.rs` | ~763 | Split into submodules |
@@ -468,9 +455,29 @@ When splitting large modules:
 4. Fields accessed from submodules must be `pub(crate)`, not private
 5. Module declarations go in parent module file, not in the struct's file
 
+### Cross-Plan Item Deduplication
+
+When reviewing multiple plans for the same codebase, expect significant overlap. Common patterns:
+- The same bug appears in 3-5 different plan files with different line numbers (code moved between reviews)
+- "Critical" in one plan may be "Medium" in another — prioritize by severity consensus
+- Always verify line numbers against current code before implementing
+- Items marked "deferred" in one plan may be "critical" in another — use your judgment
+
+### Wave-Based Parallelization
+
+For large remediation efforts, organize by waves rather than phases:
+- **Wave 0**: Critical security/correctness — must land first, blocks everything
+- **Wave 1**: High-priority security/correctness — can run after Wave 0
+- **Wave 2**: Performance — independent of Wave 1, can run in parallel
+- **Wave 3**: Feature additions — depends on stability from Waves 0-2
+- **Wave 4**: Code quality — independent, can run in parallel with any wave
+- **Wave 5**: Documentation/testing — depends on final code state
+
+Each wave should have 5-9 sub-waves that can run in parallel with separate agents.
+
 ## Remediation Plan
 
-See `plans/plan.md` for the consolidated remediation plan (11 phases covering code quality, security, DNS, and admin UI). Plan supports parallel sub-agent execution — see the Parallelization Strategy section in plan.md.
+See `plans/plan.md` for the consolidated remediation plan organized into 6 waves by priority and dependency. The plan supports parallel sub-agent execution — see the Parallelization Strategy section. All prior individual plan files have been merged into this single document.
 
 ## Admin Panel Architecture Notes
 
