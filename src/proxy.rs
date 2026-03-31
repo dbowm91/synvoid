@@ -178,7 +178,11 @@ pub fn sanitize_request_path(path: &str) -> String {
     for segment in segments.iter() {
         if segment == b".." {
             if let Some(pos) = result.iter().rposition(|&b| b == b'/') {
-                let before_slash = result[..pos].iter().rposition(|&b| b == b'/').map(|p| p + 1).unwrap_or(0);
+                let before_slash = result[..pos]
+                    .iter()
+                    .rposition(|&b| b == b'/')
+                    .map(|p| p + 1)
+                    .unwrap_or(0);
                 result.drain(before_slash..);
             }
         } else if !segment.is_empty() {
@@ -1179,7 +1183,7 @@ impl ProxyServer {
         if !config.retry_on_status.is_empty() {
             return config.retry_on_status.contains(&status);
         }
-        false
+        matches!(status, 502..=504)
     }
 
     fn is_connection_error(&self, error: &str) -> bool {

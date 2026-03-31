@@ -63,43 +63,6 @@ pub struct RouteTarget {
 }
 
 #[derive(Clone)]
-pub struct FastCgiTarget {
-    pub site_id: String,
-    pub socket: String,
-    pub site_config: SiteConfig,
-}
-
-#[derive(Clone)]
-pub struct PhpTarget {
-    pub site_id: String,
-    pub socket: String,
-    pub root: String,
-    pub site_config: SiteConfig,
-}
-
-#[derive(Clone)]
-pub struct CgiTarget {
-    pub site_id: String,
-    pub root: String,
-    pub site_config: SiteConfig,
-}
-
-#[derive(Clone)]
-pub struct AxumDynamicTarget {
-    pub site_id: String,
-    pub socket: String,
-    pub plugin_path: String,
-    pub site_config: SiteConfig,
-}
-
-#[derive(Clone)]
-pub struct StaticTarget {
-    pub site_id: String,
-    pub site_config: SiteConfig,
-    pub handler: Arc<StaticFileHandler>,
-}
-
-#[derive(Clone)]
 pub enum RouteResult {
     Found(RouteTarget),
     NotFound(String),

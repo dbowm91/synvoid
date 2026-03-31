@@ -14,7 +14,7 @@ pub use super::dnssec_key_mgmt::DnsSecKeyManager;
 pub use super::dnssec_signing::{
     base32_encode, create_nsec3_owner_name, create_nsec3_record, create_nsec3param_record,
     create_nsec_record, create_rrsig_record, find_next_name_in_zone, get_nsec3_type_bitmap,
-    get_nsec_type_bitmap, hash_name_nsec3, sign_data, sign_record,
+    get_nsec_type_bitmap, hash_name_nsec3, sign_data,
 };
 pub use super::dnssec_validation::{
     calculate_key_tag, canonical_dns_message, canonical_name, canonical_rdata, compute_dnskey,

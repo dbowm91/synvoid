@@ -975,3 +975,24 @@ mod error_helpers_tests {
         assert!(msg.contains("10"));
     }
 }
+
+pub fn is_newer_version(new: &str, current: &str) -> bool {
+    if new == current {
+        return false;
+    }
+
+    let new_parts: Vec<u32> = new.split('.').filter_map(|s| s.parse().ok()).collect();
+    let current_parts: Vec<u32> = current.split('.').filter_map(|s| s.parse().ok()).collect();
+
+    for i in 0..new_parts.len().max(current_parts.len()) {
+        let new_part = new_parts.get(i).unwrap_or(&0);
+        let current_part = current_parts.get(i).unwrap_or(&0);
+
+        if new_part > current_part {
+            return true;
+        } else if new_part < current_part {
+            return false;
+        }
+    }
+    false
+}

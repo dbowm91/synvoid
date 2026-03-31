@@ -1090,10 +1090,10 @@ cargo fmt --check && cargo clippy -- -D warnings
 ## Success Criteria
 
 - [x] All critical security bypasses closed (Wave 0)
-- [ ] All high-severity correctness issues fixed (Wave 1)
-- [ ] Performance hot paths optimized with measurable improvement (Wave 2)
-- [ ] Feature additions complete with tests (Wave 3)
-- [ ] Dead code reduced, clippy clean, no module-level suppressions (Wave 4)
+- [x] All high-severity correctness issues fixed (Wave 1)
+- [x] Performance hot paths optimized with measurable improvement (Wave 2)
+- [x] Feature additions complete with tests (Wave 3)
+- [x] Dead code reduced, clippy clean, no module-level suppressions (Wave 4)
 - [ ] Documentation accurate, integration tests pass (Wave 5)
 - [x] `cargo test` passes
 - [x] `cargo clippy -- -D warnings` passes
@@ -1203,6 +1203,22 @@ All items from the original plans have been reviewed, deduplicated, and incorpor
   - 3H.1: `prefer_post_quantum` config already logged at startup
   - 3H.2: PQ verification logs already exist in TLS paths
   - 3H.3: Key strength validation now logs key type (PKCS1/SEC1/PKCS8)
+
+- **2026-03-31**: Wave 4 completed - Code quality and cleanup:
+  - 4A.1: Deleted orphaned dnssec_handler.rs (never compiled)
+  - 4A.2: Removed dead HoneypotThreatPublisher from honeypot_port
+  - 4A.4: Removed redundant target structs from router.rs
+  - 4A.6: Removed dead sign_record() function from dnssec_signing.rs
+  - 4B.1: Deduplicated is_newer_version() to utils.rs
+  - 4B.2: Replaced custom base64_decode with base64 crate
+  - 4B.5: Consolidated WARNED_UNSIGNED statics to single module-level OnceLock
+  - 4E.1: Fixed is_retryable_status default to retry 502, 503, 504
+  - 4E.3: Fixed ACME to clear only domain-specific challenges
+  - 4E.4: Fixed AnnounceAction::from_u8 to return error for unknown values
+  - 4E.5: Fixed RouteQueryResult::is_expired to use any() instead of all()
+  - 4E.6: Fixed encode_with_length to return Result instead of silently failing
+  - 4E.7: Added size limit (1000) to pending_announces Vec
+  - 4E.10: Fixed token bucket to use sub-second precision for refill
 
 - This plan is organized by **priority and dependency**, not by domain. Critical security fixes come first regardless of which subsystem they affect.
 - Each wave is designed to be **independently testable** — you can run the full test suite after any wave.

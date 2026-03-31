@@ -10,6 +10,8 @@ pub enum ProtocolError {
     ConversionFailed(&'static str),
     #[error("Invalid value: {0}")]
     InvalidValue(&'static str),
+    #[error("Invalid field: {0}")]
+    InvalidField(&'static str),
 }
 
 impl TryFrom<proto::MeshMessage> for MeshMessage {
@@ -366,9 +368,11 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                 })
             }
             proto::mesh_message::Payload::UpstreamAnnounce(a) => {
+                let action = AnnounceAction::from_u8(a.action as u8)
+                    .map_err(|_| ProtocolError::InvalidField("invalid announce action"))?;
                 Ok(MeshMessage::UpstreamAnnounce {
                     upstream_id: a.upstream_id.into(),
-                    action: AnnounceAction::from_u8(a.action as u8),
+                    action,
                     signature: a.signature,
                 })
             }

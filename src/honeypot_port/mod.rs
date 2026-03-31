@@ -27,6 +27,5 @@ pub use rotation::{PortInfo, PortManager, PortMode, StablePort};
 pub use runner::PortHoneypotRunner;
 pub use storage::HoneypotStorage;
 pub use threat_intel::{
-    HoneypotIndicator, HoneypotIntelExtractor, HoneypotThreatPublisher, IndicatorType,
-    SeverityLevel,
+    HoneypotIndicator, HoneypotIntelExtractor, IndicatorType, SeverityLevel,
 };

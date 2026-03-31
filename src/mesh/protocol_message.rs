@@ -114,13 +114,13 @@ impl MeshMessage {
         pb.try_into().ok()
     }
 
-    pub fn encode_with_length(&self) -> Vec<u8> {
-        let encoded = self.encode().unwrap_or_else(|e| {
+    pub fn encode_with_length(&self) -> Result<Vec<u8>, String> {
+        let encoded = self.encode().map_err(|e| {
             tracing::error!("Failed to encode mesh message: {}", e);
-            Vec::new()
-        });
+            e.to_string()
+        })?;
         let len = (encoded.len() as u32).to_be_bytes().to_vec();
-        len.into_iter().chain(encoded).collect()
+        Ok(len.into_iter().chain(encoded).collect())
     }
 
     pub fn decode_with_length(data: &[u8]) -> Option<(Self, usize)> {

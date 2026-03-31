@@ -458,7 +458,11 @@ impl RecordStoreManager {
     }
 
     pub fn queue_for_announce(&self, record: DhtRecord) {
+        const MAX_PENDING_ANNOUNCES: usize = 1000;
         let mut rs = self.record_state.write();
+        if rs.pending_announces.len() >= MAX_PENDING_ANNOUNCES {
+            rs.pending_announces.remove(0);
+        }
         rs.pending_announces.push(record);
     }
 

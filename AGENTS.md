@@ -262,11 +262,13 @@ Crate-level suppressions in `src/lib.rs`:
 - `elided_lifetimes_in_paths` — compiler style preference
 - `mismatched_lifetime_syntaxes` — compiler style preference
 
-`#[allow(dead_code)]` annotations: **~83 across ~70 files** (reduced from 137/75). Notable per-module breakdown:
+`#[allow(dead_code)]` annotations: **~81 across ~70 files** (reduced from 137/75). Notable per-module breakdown:
 - `src/mesh/` — ~27 items
-- `src/dns/server/` — ~4 items (6 incorrect annotations removed — fields were actively used)
-- `src/dns/dnssec_signing.rs` — 3 dead functions removed (extract_rsa_modulus, len_of_der_length, decode_der_length — 57 lines)
-- `src/worker/mod.rs` — dead code removed (MinifierCache, get_content_type, get_compressed_content, ListenerType)
+- `src/dns/server/` — ~4 items
+- `src/dns/dnssec_signing.rs` — 4 dead functions removed (sign_record added to removal list)
+- `src/worker/mod.rs` — dead code removed
+- `src/honeypot_port/threat_intel.rs` — HoneypotThreatPublisher removed
+- `src/router.rs` — 4 unused target structs removed (FastCgiTarget, PhpTarget, CgiTarget, AxumDynamicTarget)
 
 `cargo clippy -- -D warnings` passes clean (previously ~14 non-dead-code warnings, now resolved).
 

@@ -394,12 +394,12 @@ impl From<proto::WafPolicy> for WafPolicy {
 }
 
 impl AnnounceAction {
-    pub fn from_u8(v: u8) -> Self {
+    pub fn from_u8(v: u8) -> Result<Self, String> {
         match v {
-            0 => AnnounceAction::Add,
-            1 => AnnounceAction::Update,
-            2 => AnnounceAction::Remove,
-            _ => AnnounceAction::Add,
+            0 => Ok(AnnounceAction::Add),
+            1 => Ok(AnnounceAction::Update),
+            2 => Ok(AnnounceAction::Remove),
+            _ => Err(format!("Unknown AnnounceAction value: {}", v)),
         }
     }
 }
@@ -408,7 +408,7 @@ impl RouteQueryResult {
     pub fn is_expired(&self) -> bool {
         self.providers
             .iter()
-            .all(|p| Instant::now().duration_since(self.discovered_at) > p.ttl)
+            .any(|p| Instant::now().duration_since(self.discovered_at) > p.ttl)
     }
 
     pub fn remaining_ttl(&self) -> Duration {

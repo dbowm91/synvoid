@@ -1,6 +1,7 @@
 use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::OnceLock;
 
 use serde::{de::DeserializeOwned, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -16,6 +17,8 @@ use super::ipc_framing::{
     DEFAULT_BUFFER_SIZE,
 };
 use super::ipc_signed::IpcSigner;
+
+static WARNED_UNSIGNED: OnceLock<()> = OnceLock::new();
 
 pub struct IpcStream {
     #[cfg(unix)]
@@ -329,8 +332,7 @@ impl IpcStream {
                     "IPC signing enforced but no signer configured",
                 ));
             }
-            static WARNED_UNSIGNED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
-            WARNED_UNSIGNED.get_or_init(|| {
+WARNED_UNSIGNED.get_or_init(|| {
                 tracing::warn!("Using unsigned IPC communication - this is insecure for production deployments");
             });
             write_message(&mut self.inner, msg).await
@@ -375,8 +377,7 @@ impl IpcStream {
                     "IPC signing enforced but no signer configured",
                 ));
             }
-            static WARNED_UNSIGNED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
-            WARNED_UNSIGNED.get_or_init(|| {
+WARNED_UNSIGNED.get_or_init(|| {
                 tracing::warn!("Using unsigned IPC communication - this is insecure for production deployments");
             });
             read_message(&mut self.inner, &mut self.read_buffer).await
@@ -405,8 +406,7 @@ impl IpcStream {
                     "IPC signing enforced but no signer configured",
                 ));
             }
-            static WARNED_UNSIGNED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
-            WARNED_UNSIGNED.get_or_init(|| {
+WARNED_UNSIGNED.get_or_init(|| {
                 tracing::warn!("Using unsigned IPC communication - this is insecure for production deployments");
             });
             read_message_with_timeout(&mut self.inner, &mut self.read_buffer, timeout_ms).await

@@ -130,7 +130,7 @@ impl TokenBucket {
     fn refill(&mut self) {
         let now = Instant::now();
         let elapsed = now.duration_since(self.last_refill);
-        let ticks = elapsed.as_secs() * self.refill_rate;
+        let ticks = ((elapsed.as_millis() as u64) * self.refill_rate) / 1000;
 
         if ticks > 0 {
             self.tokens = (self.tokens + ticks).min(self.max_tokens);

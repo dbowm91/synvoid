@@ -1,5 +1,6 @@
 use crate::config::YaraRuleFeedConfig;
 use crate::http_client::{create_simple_http_client, get_with_timeout, HttpClient};
+use base64::{engine::general_purpose::STANDARD, Engine};
 use ed25519_dalek::{Signature as Ed25519Signature, Verifier, VerifyingKey};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
@@ -88,7 +89,7 @@ impl YaraRuleFeedManager {
     }
 
     fn parse_embedded_key(key_str: &str) -> Option<VerifyingKey> {
-        if let Ok(bytes) = base64_decode(key_str) {
+        if let Ok(bytes) = STANDARD.decode(key_str) {
             if bytes.len() == 32 {
                 let array: [u8; 32] = match bytes[..32].try_into() {
                     Ok(arr) => arr,
@@ -138,7 +139,8 @@ impl YaraRuleFeedManager {
                 let current_str = current.as_deref().unwrap_or("none");
 
                 if !self.config.allow_downgrade
-                    && !Self::is_newer_version(&rules.version, current_str)
+                    && current_str != "none"
+                    && !crate::utils::is_newer_version(&rules.version, current_str)
                 {
                     tracing::info!(
                         "YARA rule version {} is not newer than current {}",
@@ -160,27 +162,6 @@ impl YaraRuleFeedManager {
                 tracing::error!("Failed to fetch YARA rule feed: {}", e);
             }
         }
-    }
-
-    fn is_newer_version(new: &str, current: &str) -> bool {
-        if current == "none" {
-            return true;
-        }
-
-        let new_parts: Vec<u32> = new.split('.').filter_map(|s| s.parse().ok()).collect();
-        let current_parts: Vec<u32> = current.split('.').filter_map(|s| s.parse().ok()).collect();
-
-        for i in 0..new_parts.len().max(current_parts.len()) {
-            let new_part = new_parts.get(i).unwrap_or(&0);
-            let current_part = current_parts.get(i).unwrap_or(&0);
-
-            if new_part > current_part {
-                return true;
-            } else if new_part < current_part {
-                return false;
-            }
-        }
-        false
     }
 
     async fn fetch_rules(&self, url: &str) -> Result<ParsedYaraRules, String> {
@@ -253,7 +234,7 @@ impl YaraRuleFeedManager {
         signature_b64: &str,
         public_key: &VerifyingKey,
     ) -> Result<(), String> {
-        let signature_bytes = base64_decode(signature_b64)
+        let signature_bytes = STANDARD.decode(signature_b64)
             .map_err(|e| format!("Invalid signature encoding: {}", e))?;
 
         if signature_bytes.len() != 64 {
@@ -399,48 +380,4 @@ impl YaraRuleFeedManager {
 
 fn now_timestamp() -> u64 {
     crate::utils::safe_unix_timestamp()
-}
-
-fn base64_decode(input: &str) -> Result<Vec<u8>, String> {
-    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-    let input = input.as_bytes();
-    let mut output = Vec::with_capacity(input.len() * 3 / 4);
-
-    let mut buf = [0u8; 4];
-    let mut buf_len = 0;
-
-    for &byte in input {
-        if byte == b'=' {
-            break;
-        }
-        if byte == b'\n' || byte == b'\r' {
-            continue;
-        }
-
-        let val = CHARS
-            .iter()
-            .position(|&x| x == byte)
-            .ok_or_else(|| format!("Invalid base64 character: {}", byte as char))?
-            as u8;
-
-        buf[buf_len] = val;
-        buf_len += 1;
-
-        if buf_len == 4 {
-            output.push((buf[0] << 2) | (buf[1] >> 4));
-            output.push((buf[1] << 4) | (buf[2] >> 2));
-            output.push((buf[2] << 6) | buf[3]);
-            buf_len = 0;
-        }
-    }
-
-    if buf_len > 0 {
-        output.push((buf[0] << 2) | (buf[1] >> 4));
-        if buf_len > 2 {
-            output.push((buf[1] << 4) | (buf[2] >> 2));
-        }
-    }
-
-    Ok(output)
 }

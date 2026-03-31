@@ -281,20 +281,3 @@ pub fn base32_encode(input: &[u8]) -> String {
 
     result
 }
-
-pub fn sign_record(
-    name: &str,
-    record_type: u16,
-    ttl: u32,
-    key: &ZoneSigningKey,
-    _signer_name: &str,
-) -> Result<Vec<u8>, String> {
-    let rdata_value = String::new();
-    let priority = None;
-    let rdata =
-        super::dnssec::canonical_rdata(record_type, &rdata_value, priority, None, None, ttl);
-
-    let canonical_msg = super::dnssec::canonical_dns_message(name, record_type, 1, ttl, &rdata);
-
-    sign_data(&canonical_msg, key)
-}

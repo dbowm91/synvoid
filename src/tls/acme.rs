@@ -275,8 +275,8 @@ impl AcmeManager {
             },
         );
 
-        // Clear challenges for this domain
-        self.http_challenges.clear();
+        // Clear challenges for this domain only
+        self.http_challenges.remove(domain);
 
         tracing::info!(
             "ACME certificate obtained for {} (expires: {:?}), written to {:?}",
