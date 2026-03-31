@@ -115,7 +115,7 @@ impl DnsServer {
         // Firewall check
         if let Some(fw) = ctx.firewall.as_ref() {
             let qname = Self::extract_query_name(&query);
-            let mut fw_read = fw.write();
+            let fw_read = fw.read();
             match fw_read.evaluate_query(&query, client_ip, &qname) {
                 Ok(decision) => {
                     if decision.action == crate::dns::firewall::DnsFirewallAction::Block {

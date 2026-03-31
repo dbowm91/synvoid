@@ -300,7 +300,7 @@ impl DnsServer {
                                 let query_name = Self::extract_query_name(&buf[..len]);
 
                                 if let Some(fw) = firewall_udp.as_ref() {
-                                    let mut firewall = fw.write();
+                                    let firewall = fw.read();
                                     match firewall.evaluate_query(&buf[..len], client_ip, &query_name) {
                                         Ok(decision) => {
                                             if decision.action == crate::dns::firewall::DnsFirewallAction::Block {
@@ -632,7 +632,7 @@ impl DnsServer {
 
                                 // Firewall check
                                 if let Some(fw) = firewall_udp.as_ref() {
-                                    let mut firewall = fw.write();
+                                    let firewall = fw.read();
                                     match firewall.evaluate_query(&buf[..len], client_ip, &query_name) {
                                         Ok(decision) => {
                                             if decision.action == crate::dns::firewall::DnsFirewallAction::Block {

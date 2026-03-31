@@ -167,6 +167,9 @@ pub async fn run_unified_server_worker(
     // Wrap in Arc immediately for easier sharing
     let unified_server: Arc<UnifiedServer> = Arc::new(unified_server);
 
+    // Start background tasks for WAF components (ASN cleanup, etc.)
+    unified_server.get_waf().start_background_tasks();
+
     // ============================================================================================
     // Mesh and Threat Intelligence Initialization
     //

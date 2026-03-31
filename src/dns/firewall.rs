@@ -136,13 +136,11 @@ impl DnsFirewall {
     }
 
     pub fn evaluate_query(
-        &mut self,
+        &self,
         query: &[u8],
         client_ip: IpAddr,
         qname: &str,
     ) -> Result<DnsFirewallDecision, String> {
-        self.cleanup_expired_rules();
-
         for rule in &self.rules {
             if !rule.enabled {
                 continue;

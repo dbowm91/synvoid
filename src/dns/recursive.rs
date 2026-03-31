@@ -26,7 +26,9 @@ use super::wire::{
     build_error_response, build_response_header, get_message_id, parse_dns_message, RCODE_NXDOMAIN,
     RCODE_SERVFAIL,
 };
-use super::{server::DnsRateLimiter, DnsResolver, GlobalNodeResolver, HickoryRecursor, HickoryResolver};
+use super::{
+    server::DnsRateLimiter, DnsResolver, GlobalNodeResolver, HickoryRecursor, HickoryResolver,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum RecursiveDnsError {
@@ -92,7 +94,10 @@ impl RecursiveDnsServer {
         })
     }
 
-    fn create_resolver(config: &RecursiveDnsConfig, global_node_ips: &[IpAddr]) -> RecursiveDnsResult<Arc<dyn DnsResolver>> {
+    fn create_resolver(
+        config: &RecursiveDnsConfig,
+        global_node_ips: &[IpAddr],
+    ) -> RecursiveDnsResult<Arc<dyn DnsResolver>> {
         let resolver: Arc<dyn DnsResolver> = match config.upstream_provider {
             crate::config::dns::RecursiveUpstreamProvider::Recursive => {
                 tracing::info!(
@@ -173,15 +178,18 @@ impl RecursiveDnsServer {
         );
 
         // Warn about DNSSEC limitations in forwarder mode
-        if !matches!(self.config.upstream_provider, crate::config::dns::RecursiveUpstreamProvider::Recursive)
-            && self.config.dnssec_validation {
-                tracing::warn!(
+        if !matches!(
+            self.config.upstream_provider,
+            crate::config::dns::RecursiveUpstreamProvider::Recursive
+        ) && self.config.dnssec_validation
+        {
+            tracing::warn!(
                     "DNSSEC validation is enabled but forwarder mode ({:?}) does not perform validation. \
                     Upstream servers are trusted to validate DNSSEC. For validated lookups, \
                     configure 'recursive' as the upstream provider.",
                     self.config.upstream_provider
                 );
-            }
+        }
 
         let server = self.clone();
         let socket = Arc::new(socket);
@@ -309,7 +317,7 @@ impl RecursiveDnsServer {
         }
 
         if let Some(ref firewall) = self.firewall {
-            let mut fw = firewall.write();
+            let fw = firewall.read();
             if let Ok(decision) = fw.evaluate_query(&query, client_addr.ip(), "") {
                 if decision.action == crate::dns::firewall::DnsFirewallAction::Block {
                     if let Some(metrics) = &self.metrics {
@@ -410,7 +418,7 @@ impl RecursiveDnsServer {
         }
 
         if let Some(ref firewall) = self.firewall {
-            let mut fw = firewall.write();
+            let fw = firewall.read();
             if let Ok(decision) = fw.evaluate_query(&packet, client_addr.ip(), "") {
                 if decision.action == crate::dns::firewall::DnsFirewallAction::Block {
                     if let Some(metrics) = &self.metrics {

@@ -365,6 +365,15 @@ pub struct NormalizedInput {
     pub passes: usize,
 }
 
+impl Default for NormalizedInput {
+    fn default() -> Self {
+        Self {
+            normalized: String::new(),
+            passes: 0,
+        }
+    }
+}
+
 impl std::fmt::Display for NormalizedInput {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.normalized)
@@ -384,6 +393,43 @@ impl NormalizedInput {
 
     pub fn as_bytes(&self) -> &[u8] {
         self.normalized.as_bytes()
+    }
+}
+
+pub struct NormalizedInputs {
+    pub path: Option<NormalizedInput>,
+    pub query_string: Option<NormalizedInput>,
+    pub headers: Vec<(String, NormalizedInput)>,
+    pub body: Option<NormalizedInput>,
+}
+
+impl NormalizedInputs {
+    pub fn normalize_all(
+        normalizer: &InputNormalizer,
+        path: Option<&str>,
+        query_string: Option<&str>,
+        headers: &http::HeaderMap,
+        body: Option<&[u8]>,
+    ) -> Self {
+        let path = path.map(|p| normalizer.normalize(p));
+        let query_string = query_string.map(|qs| normalizer.normalize(qs));
+
+        let mut normalized_headers = Vec::new();
+        for (name, value) in headers.iter() {
+            if let Ok(value_str) = value.to_str() {
+                normalized_headers
+                    .push((name.as_str().to_string(), normalizer.normalize(value_str)));
+            }
+        }
+
+        let body = body.and_then(|b| std::str::from_utf8(b).ok().map(|s| normalizer.normalize(s)));
+
+        Self {
+            path,
+            query_string,
+            headers: normalized_headers,
+            body,
+        }
     }
 }
 

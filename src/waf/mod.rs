@@ -72,6 +72,7 @@ use parking_lot::RwLock;
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::sync::OnceLock;
+use std::time::Duration;
 
 static THREAT_INTEL: OnceLock<Arc<ThreatIntelligenceManager>> = OnceLock::new();
 static YARA_RULES: OnceLock<Arc<YaraRulesManager>> = OnceLock::new();
@@ -492,6 +493,19 @@ impl WafCore {
         }
     }
 
+    pub fn start_background_tasks(&self) {
+        if let Some(ref tracker) = self.asn_tracker {
+            let tracker = tracker.clone();
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(Duration::from_secs(60));
+                loop {
+                    interval.tick().await;
+                    tracker.cleanup_unique_ips();
+                }
+            });
+        }
+    }
+
     pub fn set_threat_intel(&mut self, threat_intel: Option<Arc<ThreatIntelligenceManager>>) {
         self.threat_intel = threat_intel;
     }
@@ -851,7 +865,6 @@ impl WafCore {
 
         if !self.test_mode.enabled || !self.test_mode.asn_off {
             if let Some(ref tracker) = self.asn_tracker {
-                tracker.cleanup_unique_ips();
                 if let Some(decision) = tracker.check_request(client_ip) {
                     return decision;
                 }
