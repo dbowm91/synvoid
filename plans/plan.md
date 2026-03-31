@@ -1180,7 +1180,7 @@ All items from the original plans have been reviewed, deduplicated, and incorpor
   - 2B.1: Firewall evaluation already takes &self
   - 2B.2: Cache get() write lock noted - lru_time_cache API requires mutation
   - 2B.3: Added `domain_to_edge_index` HashMap for O(1) domain lookups
-  - 2B.4: Zone store sharding deferred
+  - 2B.4: Zone store sharding **not yet implemented** (complexity trade-off)
 
 - **2026-03-31**: Wave 3 completed - Feature additions:
 

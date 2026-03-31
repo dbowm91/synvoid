@@ -101,6 +101,20 @@ struct Args {
 
     #[arg(
         long,
+        value_name = "TOKEN",
+        help = "Hash an admin token for use in config (reads token from stdin if not provided)"
+    )]
+    hash_token: Option<Option<String>>,
+
+    #[arg(
+        long,
+        value_name = "COST",
+        help = "Bcrypt cost for token hashing (default: 12, min: 4, max: 31)"
+    )]
+    hash_cost: Option<u32>,
+
+    #[arg(
+        long,
         value_name = "MODE",
         help = "Test mode: challenge-off, ratelimit-off, attack-off, bot-off, flood-off, all-off"
     )]
@@ -156,6 +170,31 @@ fn main() {
     if args.generatetoken {
         handle_generatetoken();
         std::process::exit(0);
+    }
+
+    if args.hash_token.is_some() {
+        use maluwaf::admin::hash_admin_token_with_cost;
+        let token = match args.hash_token.flatten() {
+            Some(t) => t,
+            None => {
+                eprintln!("Error: Token argument required");
+                eprintln!("Usage: maluwaf --hash-token <TOKEN>");
+                std::process::exit(1);
+            }
+        };
+
+        let cost = args.hash_cost.unwrap_or(12).clamp(4, 31);
+
+        match hash_admin_token_with_cost(&token, cost) {
+            Ok(hash) => {
+                println!("{}", hash);
+                std::process::exit(0);
+            }
+            Err(e) => {
+                eprintln!("Error hashing token: {}", e);
+                std::process::exit(1);
+            }
+        }
     }
 
     if let Some(pattern) = args.checkregex {

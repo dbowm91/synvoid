@@ -763,7 +763,7 @@ mod mesh_protocol_roundtrip_tests {
     }
 
     fn roundtrip_with_length(msg: &MeshMessage) -> MeshMessage {
-        let encoded = msg.encode_with_length();
+        let encoded = msg.encode_with_length().expect("encode_with_length failed");
         // Skip 4-byte length prefix
         MeshMessage::decode(&encoded[4..]).expect("decode failed")
     }
