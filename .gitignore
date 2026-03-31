@@ -5,6 +5,9 @@
 *.dylib
 *.so
 
+# Cloak steganography library
+cloak/
+
 # Build outputs
 *.exe
 *.dll
