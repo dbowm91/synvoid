@@ -1036,7 +1036,64 @@ impl HttpServer {
                     );
                 }
 
-                // Apply WASM plugin filters before proxying
+                // Handle static file serving
+                if matches!(target.backend_type, crate::router::BackendType::Static) {
+                    if let Some(ref static_handler) = target.static_handler {
+                        let accept_encoding = parts
+                            .headers
+                            .get("accept-encoding")
+                            .and_then(|v| v.to_str().ok())
+                            .map(|s| s.to_string());
+                        let if_none_match = parts
+                            .headers
+                            .get("if-none-match")
+                            .and_then(|v| v.to_str().ok())
+                            .map(|s| s.to_string());
+                        let if_modified_since = parts
+                            .headers
+                            .get("if-modified-since")
+                            .and_then(|v| v.to_str().ok())
+                            .map(|s| s.to_string());
+                        let range_header = parts
+                            .headers
+                            .get("range")
+                            .and_then(|v| v.to_str().ok())
+                            .map(|s| s.to_string());
+
+                        match static_handler
+                            .serve(
+                                &path,
+                                &method,
+                                accept_encoding.as_deref(),
+                                if_none_match.as_deref(),
+                                if_modified_since.as_deref(),
+                                range_header.as_deref(),
+                            )
+                            .await
+                        {
+                            Ok(response) => {
+                                let mut builder = http::Response::builder().status(response.status);
+                                for (name, value) in response.headers {
+                                    builder = builder.header(&name, &value);
+                                }
+                                if let Some(zero_copy_path) = response.zero_copy_path {
+                                    tracing::debug!(
+                                        "Zero-copy serve for {} via {}",
+                                        path,
+                                        zero_copy_path.display()
+                                    );
+                                }
+                                return Ok(builder.body(Full::new(response.body)).unwrap());
+                            }
+                            Err(e) => {
+                                tracing::warn!("Static file error for {}: {}", path, e);
+                            }
+                        }
+                    }
+                }
+
+                // FastCGI, PHP, CGI, and AppServer backends fall through to upstream proxy
+                // The RouteTarget has the appropriate socket configured in backend_socket
                 if let Some(pm) = router.plugin_manager() {
                     let body_bytes: Bytes =
                         body_slice.map(|b| b.to_vec().into()).unwrap_or_default();

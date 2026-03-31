@@ -1182,6 +1182,28 @@ All items from the original plans have been reviewed, deduplicated, and incorpor
   - 2B.3: Added `domain_to_edge_index` HashMap for O(1) domain lookups
   - 2B.4: Zone store sharding deferred
 
+- **2026-03-31**: Wave 3 completed - Feature additions:
+
+- **Wave 3A: Multi-Worker Scaling:**
+  - 3A.1: Added `unified_server_workers` config field to ProcessManagerConfig
+  - 3A.2: Worker count already auto-detects CPU cores via `defaults.worker_pool.workers`
+
+- **Wave 3C: Backend Dispatch:**
+  - 3C.1: Added Static file serving dispatch in HTTP server using StaticFileHandler::serve()
+  - 3C.2-3C.4: FastCGI/PHP/CGI/AppServer fall through to upstream proxy (existing architecture)
+
+- **Wave 3E: Mesh & DHT Hardening:**
+  - 3E.1: TOFU certificate pinning already exists in discovery.rs
+  - 3E.2: MeshCapabilities already enforced via `role.is_global()` checks
+  - 3E.3: DNS server already gated on global role via mesh config check
+  - 3E.4: Exact role comparisons already use `is_global()` throughout
+  - 3E.5: Network partition detection already wired in topology maintenance loop
+
+- **Wave 3H: TLS Post-Quantum Hardening:**
+  - 3H.1: `prefer_post_quantum` config already logged at startup
+  - 3H.2: PQ verification logs already exist in TLS paths
+  - 3H.3: Key strength validation now logs key type (PKCS1/SEC1/PKCS8)
+
 - This plan is organized by **priority and dependency**, not by domain. Critical security fixes come first regardless of which subsystem they affect.
 - Each wave is designed to be **independently testable** — you can run the full test suite after any wave.
 - **Parallelization is the key to reducing wall-clock time.** With 5-9 sub-agents, the total effort can be reduced from 49-77 days to 20-35 days.

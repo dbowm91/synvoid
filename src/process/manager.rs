@@ -236,6 +236,7 @@ delegate_to_base!(UnifiedServerWorkerProcess);
 pub struct ProcessManagerConfig {
     pub min_workers: usize,
     pub max_workers: usize,
+    pub unified_server_workers: usize,
     pub max_restart_attempts: u32,
     pub restart_cooldown_secs: u64,
     pub restart_backoff_max_secs: u64,
@@ -261,6 +262,7 @@ impl Default for ProcessManagerConfig {
         Self {
             min_workers: 2,
             max_workers: 16,
+            unified_server_workers: 1,
             max_restart_attempts: 5,
             restart_cooldown_secs: 60,
             restart_backoff_max_secs: 300,
@@ -348,6 +350,7 @@ impl ProcessManager {
         let dynamic_config = crate::config::ProcessManagerConfig {
             min_workers: config.min_workers,
             max_workers: config.max_workers,
+            unified_server_workers: config.unified_server_workers,
             max_restart_attempts: config.max_restart_attempts,
             restart_cooldown_secs: config.restart_cooldown_secs,
             restart_backoff_max_secs: config.restart_backoff_max_secs,
@@ -491,6 +494,7 @@ impl ProcessManager {
         crate::config::ProcessManagerConfig {
             min_workers: dynamic.min_workers,
             max_workers: dynamic.max_workers,
+            unified_server_workers: dynamic.unified_server_workers,
             max_restart_attempts: dynamic.max_restart_attempts,
             restart_cooldown_secs: dynamic.restart_cooldown_secs,
             restart_backoff_max_secs: dynamic.restart_backoff_max_secs,

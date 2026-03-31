@@ -138,6 +138,7 @@ mod tests {
         let config = ProcessManagerConfig {
             min_workers: 2,
             max_workers: 4,
+            unified_server_workers: 1,
             max_restart_attempts: 3,
             restart_cooldown_secs: 2,
             restart_backoff_max_secs: 30,
@@ -1093,7 +1094,12 @@ mod ipc_serialization_tests {
         };
         let decoded = roundtrip(&msg);
         match decoded {
-            Message::WorkerStarted { id, pid, port, timestamp } => {
+            Message::WorkerStarted {
+                id,
+                pid,
+                port,
+                timestamp,
+            } => {
                 assert_eq!(id, WorkerId(3));
                 assert_eq!(pid, 9999);
                 assert_eq!(port, 8443);
@@ -1123,7 +1129,12 @@ mod ipc_serialization_tests {
         };
         let decoded = roundtrip(&msg);
         match decoded {
-            Message::WorkerError { id, error, severity, error_code } => {
+            Message::WorkerError {
+                id,
+                error,
+                severity,
+                error_code,
+            } => {
                 assert_eq!(id, WorkerId(1));
                 assert_eq!(error, "disk full");
                 assert_eq!(severity, ErrorSeverity::Critical);
@@ -1141,7 +1152,10 @@ mod ipc_serialization_tests {
         };
         let decoded = roundtrip(&msg);
         match decoded {
-            Message::MasterShutdown { graceful, timeout_secs } => {
+            Message::MasterShutdown {
+                graceful,
+                timeout_secs,
+            } => {
                 assert!(graceful);
                 assert_eq!(timeout_secs, 30);
             }
@@ -1165,7 +1179,9 @@ mod ipc_serialization_tests {
 
     #[test]
     fn health_check_ack_roundtrip() {
-        let msg = Message::HealthCheckAck { timestamp: 1234567890 };
+        let msg = Message::HealthCheckAck {
+            timestamp: 1234567890,
+        };
         let decoded = roundtrip(&msg);
         match decoded {
             Message::HealthCheckAck { timestamp } => assert_eq!(timestamp, 1234567890),
@@ -1197,7 +1213,10 @@ mod ipc_serialization_tests {
         };
         let decoded = roundtrip(&msg);
         match decoded {
-            Message::DrainRequest { timeout_secs, drain_id } => {
+            Message::DrainRequest {
+                timeout_secs,
+                drain_id,
+            } => {
                 assert_eq!(timeout_secs, 45);
                 assert_eq!(drain_id, 42);
             }
@@ -1361,7 +1380,11 @@ mod ipc_serialization_tests {
             };
             let err = config.validate().unwrap_err();
             assert_eq!(err.field, "admin.token");
-            assert!(err.message.contains("weak pattern"), "Expected weak pattern error, got: {}", err.message);
+            assert!(
+                err.message.contains("weak pattern"),
+                "Expected weak pattern error, got: {}",
+                err.message
+            );
         }
 
         #[test]

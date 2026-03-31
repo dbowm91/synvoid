@@ -11,9 +11,7 @@ use crate::master::handle_worker_connection;
 use crate::mime;
 use crate::overseer::{OverseerConfig, OverseerProcess};
 use crate::platform::fs::PlatformPaths;
-use crate::process::{
-    IpcEndpoint, ProcessEvent, ProcessManager, ProcessManagerConfig,
-};
+use crate::process::{IpcEndpoint, ProcessEvent, ProcessManager, ProcessManagerConfig};
 use crate::waf::RuleFeedManagerForWaf;
 
 use super::bootstrap::init_logging;
@@ -22,10 +20,7 @@ use super::{MasterState, MasterStateTrackers};
 
 use crate::common::setup_panic_handler;
 
-pub fn run_master_mode(
-    config_path: Option<PathBuf>,
-    log_level: Option<String>,
-) {
+pub fn run_master_mode(config_path: Option<PathBuf>, log_level: Option<String>) {
     let master_panic_log = format!(
         "{}/maluwaf-master-panic.log",
         std::env::temp_dir().display()
@@ -73,11 +68,7 @@ pub fn run_master_mode(
         .expect("Failed to build Tokio runtime");
 
     let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-        rt.block_on(run_master(
-            config_manager,
-            main_config,
-            log_level.clone(),
-        ))
+        rt.block_on(run_master(config_manager, main_config, log_level.clone()))
     }));
 
     match result {
@@ -158,9 +149,7 @@ pub fn run_overseer_mode(
         upgrade_validation_timeout_secs: main_config.overseer.upgrade_validation_timeout_secs,
         upgrade_drain_timeout_secs: main_config.overseer.upgrade_drain_timeout_secs,
         upgrade_health_check_retries: main_config.overseer.upgrade_health_check_retries,
-        upgrade_health_check_interval_secs: main_config
-            .overseer
-            .upgrade_health_check_interval_secs,
+        upgrade_health_check_interval_secs: main_config.overseer.upgrade_health_check_interval_secs,
         ipc_read_timeout_ms: main_config.overseer.ipc_read_timeout_ms,
         ipc_write_timeout_ms: main_config.overseer.ipc_write_timeout_ms,
         master_startup_timeout_secs: main_config.overseer.master_startup_timeout_secs,
@@ -478,6 +467,7 @@ async fn run_master(
     let process_config = ProcessManagerConfig {
         min_workers: main_config.defaults.worker_pool.workers,
         max_workers: 16,
+        unified_server_workers: main_config.process_manager.unified_server_workers,
         max_restart_attempts: 5,
         restart_cooldown_secs: 60,
         restart_backoff_max_secs: 300,

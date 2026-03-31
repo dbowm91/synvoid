@@ -47,6 +47,9 @@ impl Defaults {
     pub const fn max_workers() -> usize {
         16
     }
+    pub const fn unified_server_workers() -> usize {
+        1
+    }
     pub const fn restart_cooldown() -> u64 {
         60
     }
@@ -138,6 +141,8 @@ pub struct ProcessManagerConfig {
     pub min_workers: usize,
     #[serde(default = "default_max_workers")]
     pub max_workers: usize,
+    #[serde(default = "default_unified_server_workers")]
+    pub unified_server_workers: usize,
     #[serde(default = "default_max_restart_attempts")]
     pub max_restart_attempts: u32,
     #[serde(default = "default_restart_cooldown")]
@@ -163,6 +168,7 @@ impl Default for ProcessManagerConfig {
         Self {
             min_workers: 2,
             max_workers: 16,
+            unified_server_workers: 1,
             max_restart_attempts: 5,
             restart_cooldown_secs: 60,
             restart_backoff_max_secs: 300,
@@ -328,6 +334,9 @@ fn default_min_workers() -> usize {
 }
 fn default_max_workers() -> usize {
     Defaults::max_workers()
+}
+fn default_unified_server_workers() -> usize {
+    Defaults::unified_server_workers()
 }
 fn default_restart_cooldown() -> u64 {
     Defaults::restart_cooldown()

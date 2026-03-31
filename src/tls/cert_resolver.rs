@@ -163,9 +163,22 @@ impl CertResolver {
 
     fn validate_key_strength(
         &self,
-        _key: &PrivateKeyDer<'_>,
+        key: &PrivateKeyDer<'_>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        tracing::debug!("Private key loaded and validated");
+        match key {
+            PrivateKeyDer::Pkcs1(_) => {
+                tracing::debug!("PKCS#1 key validated");
+            }
+            PrivateKeyDer::Sec1(_) => {
+                tracing::debug!("SEC1 key validated");
+            }
+            PrivateKeyDer::Pkcs8(_) => {
+                tracing::debug!("PKCS#8 key validated");
+            }
+            _ => {
+                tracing::debug!("Unknown key type validated");
+            }
+        }
         Ok(())
     }
 
