@@ -4,7 +4,7 @@ use axum::{extract::State, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct RuleFeedStatusResponse {
     pub enabled: bool,
     pub current_version: Option<String>,
@@ -15,33 +15,20 @@ pub struct RuleFeedStatusResponse {
     pub url: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct RuleFeedCheckResponse {
     pub updated: bool,
     pub new_version: Option<String>,
     pub changelog: Vec<serde_json::Value>,
 }
 
-#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct RuleFeedApplyResponse {
     pub success: bool,
     pub version: String,
     pub message: String,
 }
 
-#[utoipa::path(
-    get,
-    path = "/rules/feed/status",
-    tag = "Rules",
-    responses(
-        (status = 200, description = "Rule feed status"),
-        (status = 401, description = "Unauthorized - missing or invalid bearer token"),
-        (status = 404, description = "Rule feed manager not available")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn get_status(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -65,19 +52,6 @@ pub async fn get_status(
     Ok(Json(status))
 }
 
-#[utoipa::path(
-    post,
-    path = "/rules/feed/check",
-    tag = "Rules",
-    responses(
-        (status = 200, description = "Rule feed check result"),
-        (status = 401, description = "Unauthorized - missing or invalid bearer token"),
-        (status = 404, description = "Rule feed manager not available")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn check_for_updates(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -115,19 +89,6 @@ pub async fn check_for_updates(
     }
 }
 
-#[utoipa::path(
-    post,
-    path = "/rules/feed/apply",
-    tag = "Rules",
-    responses(
-        (status = 200, description = "Rule feed apply result"),
-        (status = 401, description = "Unauthorized - missing or invalid bearer token"),
-        (status = 404, description = "Rule feed manager not available")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn apply_pending(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -162,19 +123,6 @@ pub async fn apply_pending(
     }
 }
 
-#[utoipa::path(
-    delete,
-    path = "/rules/feed/pending",
-    tag = "Rules",
-    responses(
-        (status = 200, description = "Pending update discarded"),
-        (status = 401, description = "Unauthorized - missing or invalid bearer token"),
-        (status = 404, description = "Rule feed manager not available")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn discard_pending(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,

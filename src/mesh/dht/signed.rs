@@ -57,6 +57,7 @@ pub enum SignedRecordType {
     DnsDomainRegistration,
     GlobalAiBotList,
     AnycastNode,
+    ThreatIndicator,
 }
 
 impl SignedRecordType {
@@ -92,6 +93,7 @@ impl SignedRecordType {
                 | SignedRecordType::DnsRecord
                 | SignedRecordType::GlobalAiBotList
                 | SignedRecordType::AnycastNode
+                | SignedRecordType::ThreatIndicator
         )
     }
 
@@ -130,6 +132,7 @@ impl SignedRecordType {
             SignedRecordType::DnsDomainRegistration => Some(Duration::from_secs(600)),
             SignedRecordType::GlobalAiBotList => Some(Duration::from_secs(86400)),
             SignedRecordType::AnycastNode => Some(Duration::from_secs(600)),
+            SignedRecordType::ThreatIndicator => Some(Duration::from_secs(3600)),
         }
     }
 
@@ -430,6 +433,7 @@ impl TtlManager {
             SignedRecordType::DnsDomainRegistration => Duration::from_secs(600),
             SignedRecordType::GlobalAiBotList => Duration::from_secs(86400),
             SignedRecordType::AnycastNode => Duration::from_secs(600),
+            SignedRecordType::ThreatIndicator => Duration::from_secs(3600),
         }
     }
 

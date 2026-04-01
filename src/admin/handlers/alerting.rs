@@ -5,24 +5,11 @@ use axum::{extract::State, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct AlertConfigResponse {
     pub config: serde_json::Value,
 }
 
-#[utoipa::path(
-    get,
-    path = "/alerting/config",
-    tag = "Alerting",
-    responses(
-        (status = 200, description = "Alert configuration"),
-        (status = 401, description = "Unauthorized - missing or invalid bearer token"),
-        (status = 404, description = "Alert manager not available")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn get_alert_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -38,24 +25,11 @@ pub async fn get_alert_config(
     Ok(Json(AlertConfigResponse { config: json }))
 }
 
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Deserialize)]
 pub struct UpdateAlertConfigRequest {
     pub config: serde_json::Value,
 }
 
-#[utoipa::path(
-    put,
-    path = "/alerting/config",
-    tag = "Alerting",
-    responses(
-        (status = 200, description = "Alert configuration updated"),
-        (status = 401, description = "Unauthorized - missing or invalid bearer token"),
-        (status = 404, description = "Alert manager not available")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn update_alert_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -74,25 +48,12 @@ pub async fn update_alert_config(
     Ok(Json(AlertConfigResponse { config: req.config }))
 }
 
-#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct TestAlertResponse {
     pub success: bool,
     pub message: String,
 }
 
-#[utoipa::path(
-    post,
-    path = "/alerting/test",
-    tag = "Alerting",
-    responses(
-        (status = 200, description = "Test alert result", body = [TestAlertResponse]),
-        (status = 401, description = "Unauthorized - missing or invalid bearer token"),
-        (status = 404, description = "Alert manager not available")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn test_webhook(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,

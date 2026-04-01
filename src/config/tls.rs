@@ -1,3 +1,4 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::validation::ConfigValidationError;
@@ -6,7 +7,7 @@ fn default_tls_1_3_only() -> bool {
     true
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
 pub struct TlsConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -111,7 +112,7 @@ impl TlsConfig {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct AcmeConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -127,7 +128,7 @@ pub struct AcmeConfig {
     pub challenge_type: AcmeChallengeType,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Default, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum AcmeChallengeType {
     #[default]
@@ -135,7 +136,7 @@ pub enum AcmeChallengeType {
     Dns01,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct ClientAuthConfig {
     #[serde(default)]
     pub enabled: bool,

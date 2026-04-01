@@ -6,7 +6,7 @@ use super::super::state::AdminState;
 use super::common::OptionalAuth;
 use crate::theme::{ThemeConfig, ThemeDefaults, ThemePreset, ThemeRenderer};
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct ThemeResponse {
     pub preset: String,
     pub mode: String,
@@ -15,13 +15,13 @@ pub struct ThemeResponse {
     pub presets_available: Vec<ThemePresetInfo>,
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct ThemeColorsResponse {
     pub dark: DarkColors,
     pub light: LightColors,
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct DarkColors {
     pub background: String,
     pub surface: String,
@@ -33,7 +33,7 @@ pub struct DarkColors {
     pub accent_secondary: String,
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct LightColors {
     pub background: String,
     pub surface: String,
@@ -45,13 +45,13 @@ pub struct LightColors {
     pub accent_secondary: String,
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct ThemePresetInfo {
     pub id: String,
     pub name: String,
 }
 
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Deserialize)]
 pub struct UpdateThemeRequest {
     #[serde(default)]
     pub preset: Option<String>,
@@ -118,15 +118,6 @@ fn build_theme_response(theme: &ThemeDefaults) -> ThemeResponse {
     }
 }
 
-#[utoipa::path(
-    get,
-    path = "/theme",
-    tag = "Theme",
-    responses(
-        (status = 200, description = "Current theme configuration"),
-        (status = 401, description = "Unauthorized - missing or invalid bearer token")
-    )
-)]
 pub async fn get_theme(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -136,15 +127,6 @@ pub async fn get_theme(
     Ok(Json(build_theme_response(theme)))
 }
 
-#[utoipa::path(
-    put,
-    path = "/theme",
-    tag = "Theme",
-    responses(
-        (status = 200, description = "Theme updated"),
-        (status = 401, description = "Unauthorized - missing or invalid bearer token")
-    )
-)]
 pub async fn update_theme(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -191,15 +173,6 @@ pub async fn update_theme(
     Ok(Json(response))
 }
 
-#[utoipa::path(
-    get,
-    path = "/theme/css",
-    tag = "Theme",
-    responses(
-        (status = 200, description = "Generated theme CSS"),
-        (status = 401, description = "Unauthorized - missing or invalid bearer token")
-    )
-)]
 pub async fn get_theme_css(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -210,15 +183,6 @@ pub async fn get_theme_css(
     Ok(renderer.generate_css())
 }
 
-#[utoipa::path(
-    get,
-    path = "/theme/presets",
-    tag = "Theme",
-    responses(
-        (status = 200, description = "Available theme presets", body = [ThemePresetInfo]),
-        (status = 401, description = "Unauthorized - missing or invalid bearer token")
-    )
-)]
 pub async fn get_theme_presets(
     _auth: OptionalAuth,
 ) -> Result<Json<Vec<ThemePresetInfo>>, StatusCode> {

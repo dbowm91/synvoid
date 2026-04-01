@@ -288,7 +288,7 @@ pub struct ProcessManager {
     dynamic_config: Arc<PLRwLock<crate::config::ProcessManagerConfig>>,
     workers: Arc<PLRwLock<HashMap<usize, WorkerProcess>>>,
     static_worker: Arc<PLRwLock<Option<StaticWorkerProcess>>>,
-    unified_server_worker: Arc<PLRwLock<Option<UnifiedServerWorkerProcess>>>,
+    unified_server_workers: Arc<PLRwLock<HashMap<usize, UnifiedServerWorkerProcess>>>,
     next_worker_id: Arc<PLRwLock<usize>>,
     running: Arc<AtomicBool>,
     shutdown_tx: broadcast::Sender<()>,
@@ -368,7 +368,7 @@ impl ProcessManager {
                 dynamic_config: Arc::new(PLRwLock::new(dynamic_config)),
                 workers: Arc::new(PLRwLock::new(HashMap::new())),
                 static_worker: Arc::new(PLRwLock::new(None)),
-                unified_server_worker: Arc::new(PLRwLock::new(None)),
+                unified_server_workers: Arc::new(PLRwLock::new(HashMap::new())),
                 next_worker_id: Arc::new(PLRwLock::new(0)),
                 running: Arc::new(AtomicBool::new(true)),
                 shutdown_tx,
@@ -737,9 +737,24 @@ impl ProcessManager {
         Ok(0)
     }
 
-    pub fn spawn_unified_server_worker(&self) -> std::io::Result<WorkerId> {
-        let id = WorkerId(0);
+    pub fn spawn_unified_server_workers(&self, count: usize) -> std::io::Result<Vec<WorkerId>> {
+        let mut ids = Vec::with_capacity(count);
 
+        for _ in 0..count {
+            let id = self.allocate_worker_id();
+            let worker_id = self.spawn_unified_server_worker_with_id(id)?;
+            ids.push(worker_id);
+        }
+
+        Ok(ids)
+    }
+
+    pub fn spawn_unified_server_worker(&self) -> std::io::Result<WorkerId> {
+        let id = self.allocate_worker_id();
+        self.spawn_unified_server_worker_with_id(id)
+    }
+
+    fn spawn_unified_server_worker_with_id(&self, id: WorkerId) -> std::io::Result<WorkerId> {
         let worker_binary = self.find_worker_binary()?;
 
         let pending_threads = *self.pending_thread_count.read();
@@ -748,7 +763,7 @@ impl ProcessManager {
         let mut cmd = self.build_worker_command(&worker_binary);
         cmd.arg("--unified-server-worker")
             .arg("--worker-id")
-            .arg("0")
+            .arg(id.as_usize().to_string())
             .arg("--worker-threads")
             .arg(worker_threads.to_string());
 
@@ -761,8 +776,8 @@ impl ProcessManager {
         let unified_worker_process = UnifiedServerWorkerProcess::new(id, pid, child);
 
         {
-            let mut unified_server_worker = self.unified_server_worker.write();
-            *unified_server_worker = Some(unified_worker_process);
+            let mut unified_server_workers = self.unified_server_workers.write();
+            unified_server_workers.insert(id.as_usize(), unified_worker_process);
         }
 
         self.record_spawn(
@@ -780,8 +795,8 @@ impl ProcessManager {
         metrics: WorkerMetricsPayload,
     ) {
         let event = {
-            let mut unified_server_worker = self.unified_server_worker.write();
-            if let Some(worker) = unified_server_worker.as_mut() {
+            let mut unified_server_workers = self.unified_server_workers.write();
+            if let Some(worker) = unified_server_workers.get_mut(&worker_id.as_usize()) {
                 *worker.last_heartbeat_mut() = Instant::now();
                 worker.metrics = metrics;
 
@@ -805,8 +820,8 @@ impl ProcessManager {
 
     pub fn handle_unified_server_worker_ready(&self, worker_id: WorkerId) {
         {
-            let mut unified_server_worker = self.unified_server_worker.write();
-            if let Some(worker) = unified_server_worker.as_mut() {
+            let mut unified_server_workers = self.unified_server_workers.write();
+            if let Some(worker) = unified_server_workers.get_mut(&worker_id.as_usize()) {
                 *worker.status_mut() = WorkerStatus::Ready;
             }
         }
@@ -819,21 +834,37 @@ impl ProcessManager {
     }
 
     pub fn is_unified_server_worker_ready(&self) -> bool {
-        let unified_server_worker = self.unified_server_worker.read();
-        unified_server_worker
-            .as_ref()
-            .map(|w| *w.status() == WorkerStatus::Ready)
-            .unwrap_or(false)
+        let unified_server_workers = self.unified_server_workers.read();
+        unified_server_workers
+            .values()
+            .all(|w| *w.status() == WorkerStatus::Ready)
     }
 
-    pub fn get_unified_server_worker_metrics(&self) -> Option<WorkerMetricsPayload> {
-        let unified_server_worker = self.unified_server_worker.read();
-        unified_server_worker.as_ref().map(|w| w.metrics.clone())
+    pub fn get_unified_server_worker_count(&self) -> usize {
+        self.unified_server_workers.read().len()
+    }
+
+    pub fn get_all_unified_server_worker_metrics(&self) -> Vec<(WorkerId, WorkerMetricsPayload)> {
+        let unified_server_workers = self.unified_server_workers.read();
+        unified_server_workers
+            .values()
+            .map(|w| (w.id, w.metrics.clone()))
+            .collect()
+    }
+
+    pub fn get_unified_server_worker_metrics(
+        &self,
+        worker_id: WorkerId,
+    ) -> Option<WorkerMetricsPayload> {
+        let unified_server_workers = self.unified_server_workers.read();
+        unified_server_workers
+            .get(&worker_id.as_usize())
+            .map(|w| w.metrics.clone())
     }
 
     pub fn mark_unified_server_worker_stopped(&self, worker_id: WorkerId) {
-        let mut unified_server_worker = self.unified_server_worker.write();
-        if let Some(worker) = unified_server_worker.as_mut() {
+        let mut unified_server_workers = self.unified_server_workers.write();
+        if let Some(worker) = unified_server_workers.get_mut(&worker_id.as_usize()) {
             *worker.status_mut() = WorkerStatus::Stopped;
             worker.ipc = None;
             if let Some(mut child) = worker.child_mut().take() {
@@ -845,32 +876,67 @@ impl ProcessManager {
             .blocking_send(ProcessEvent::UnifiedServerWorkerStopped(worker_id));
     }
 
-    pub fn set_unified_server_worker_ipc(&self, ipc: IpcStream) {
-        let mut unified_server_worker = self.unified_server_worker.write();
-        if let Some(worker) = unified_server_worker.as_mut() {
+    pub fn remove_unified_server_worker(&self, worker_id: WorkerId) {
+        let mut unified_server_workers = self.unified_server_workers.write();
+        unified_server_workers.remove(&worker_id.as_usize());
+    }
+
+    pub fn set_unified_server_worker_ipc(&self, worker_id: WorkerId, ipc: IpcStream) {
+        let mut unified_server_workers = self.unified_server_workers.write();
+        if let Some(worker) = unified_server_workers.get_mut(&worker_id.as_usize()) {
             worker.ipc = Some(Arc::new(tokio::sync::Mutex::new(ipc)));
         }
     }
 
-    pub fn set_unified_server_worker_ipc_arc(&self, ipc: Arc<tokio::sync::Mutex<IpcStream>>) {
-        let mut unified_server_worker = self.unified_server_worker.write();
-        if let Some(worker) = unified_server_worker.as_mut() {
+    pub fn set_unified_server_worker_ipc_arc(
+        &self,
+        worker_id: WorkerId,
+        ipc: Arc<tokio::sync::Mutex<IpcStream>>,
+    ) {
+        let mut unified_server_workers = self.unified_server_workers.write();
+        if let Some(worker) = unified_server_workers.get_mut(&worker_id.as_usize()) {
             worker.ipc = Some(ipc);
         }
     }
 
-    pub fn get_unified_server_worker_ipc(&self) -> Option<Arc<tokio::sync::Mutex<IpcStream>>> {
-        let unified_server_worker = self.unified_server_worker.read();
-        unified_server_worker.as_ref().and_then(|w| w.ipc.clone())
+    pub fn get_unified_server_worker_ipc(
+        &self,
+        worker_id: WorkerId,
+    ) -> Option<Arc<tokio::sync::Mutex<IpcStream>>> {
+        let unified_server_workers = self.unified_server_workers.read();
+        unified_server_workers
+            .get(&worker_id.as_usize())
+            .and_then(|w| w.ipc.clone())
+    }
+
+    pub fn get_first_unified_server_worker_ipc(
+        &self,
+    ) -> Option<Arc<tokio::sync::Mutex<IpcStream>>> {
+        let unified_server_workers = self.unified_server_workers.read();
+        unified_server_workers
+            .values()
+            .next()
+            .and_then(|w| w.ipc.clone())
+    }
+
+    pub fn get_all_unified_server_worker_ipc(&self) -> Vec<Arc<tokio::sync::Mutex<IpcStream>>> {
+        let unified_server_workers = self.unified_server_workers.read();
+        unified_server_workers
+            .values()
+            .filter_map(|w| w.ipc.clone())
+            .collect()
     }
 
     pub async fn drain_unified_server_worker_async(
         &self,
+        worker_id: WorkerId,
         timeout_secs: u64,
     ) -> Result<u64, String> {
         let ipc = {
-            let unified_server_worker = self.unified_server_worker.read();
-            unified_server_worker.as_ref().and_then(|w| w.ipc.clone())
+            let unified_server_workers = self.unified_server_workers.read();
+            unified_server_workers
+                .get(&worker_id.as_usize())
+                .and_then(|w| w.ipc.clone())
         };
 
         self.drain_worker_async(
@@ -992,9 +1058,16 @@ impl ProcessManager {
         }
     }
 
-    pub fn clear_unified_server_worker_ipc(&self) {
-        let mut unified_server_worker = self.unified_server_worker.write();
-        if let Some(worker) = unified_server_worker.as_mut() {
+    pub fn clear_unified_server_worker_ipc(&self, worker_id: WorkerId) {
+        let mut unified_server_workers = self.unified_server_workers.write();
+        if let Some(worker) = unified_server_workers.get_mut(&worker_id.as_usize()) {
+            worker.ipc = None;
+        }
+    }
+
+    pub fn clear_all_unified_server_worker_ipc(&self) {
+        let mut unified_server_workers = self.unified_server_workers.write();
+        for worker in unified_server_workers.values_mut() {
             worker.ipc = None;
         }
     }
@@ -1192,8 +1265,8 @@ impl ProcessManager {
     ) {
         let msg = Message::RulePatternsUpdate { version, patterns };
 
-        // Send to unified server worker
-        if let Some(ref ipc) = self.get_unified_server_worker_ipc() {
+        // Send to all unified server workers
+        for ipc in self.get_all_unified_server_worker_ipc() {
             let mut ipc = ipc.lock().await;
             if let Err(e) = ipc.send(&msg) {
                 tracing::error!(
@@ -1221,8 +1294,8 @@ impl ProcessManager {
             }
         }
 
-        // Send to unified server worker
-        if let Some(ref ipc) = self.get_unified_server_worker_ipc() {
+        // Send to all unified server workers
+        for ipc in self.get_all_unified_server_worker_ipc() {
             let mut ipc = ipc.lock().await;
             if let Err(e) = ipc.send(&msg) {
                 tracing::error!(
@@ -1268,7 +1341,7 @@ impl ProcessManager {
         let (resize_restart_ids, failure_restarts) = self.detect_dead_workers();
         self.handle_resize_restarts(resize_restart_ids).await;
         self.handle_failure_restarts(failure_restarts).await;
-        self.handle_unified_worker_restart().await;
+        self.handle_unified_workers_restart().await;
     }
 
     fn detect_dead_workers(&self) -> (Vec<usize>, Vec<(usize, u32)>) {
@@ -1383,18 +1456,22 @@ impl ProcessManager {
         }
     }
 
-    async fn handle_unified_worker_restart(&self) {
-        let mut unified_worker = self.unified_server_worker.write();
-        if let Some(ref mut worker) = unified_worker.as_mut() {
-            if let Some(child) = worker.child_mut() {
-                match child.try_wait() {
-                    Ok(Some(status)) => {
+    async fn handle_unified_workers_restart(&self) {
+        let _dead_workers: Vec<WorkerId> = {
+            let mut unified_workers = self.unified_server_workers.write();
+            let dead = Vec::new();
+
+            for (id, worker) in unified_workers.iter_mut() {
+                if let Some(child) = worker.child_mut() {
+                    if let Ok(Some(status)) = child.try_wait() {
                         let exit_code = status.code();
                         let is_resize_restart = exit_code == Some(100);
+                        let worker_id = WorkerId(*id);
 
                         if is_resize_restart {
                             tracing::info!(
-                                "UnifiedServerWorker (PID {:?}) exited for threadpool resize",
+                                "UnifiedServerWorker {} (PID {:?}) exited for threadpool resize",
+                                worker_id,
                                 worker.pid()
                             );
 
@@ -1402,9 +1479,13 @@ impl ProcessManager {
                             let new_threads = *pending;
                             drop(pending);
 
-                            tracing::info!("Respawning UnifiedServerWorker for threadpool resize to {:?} threads", new_threads);
-                            if let Err(e) = self.spawn_unified_server_worker() {
-                                tracing::error!("Failed to respawn UnifiedServerWorker: {}", e);
+                            tracing::info!("Respawning UnifiedServerWorker {} for threadpool resize to {:?} threads", worker_id, new_threads);
+                            if let Err(e) = self.spawn_unified_server_worker_with_id(worker_id) {
+                                tracing::error!(
+                                    "Failed to respawn UnifiedServerWorker {}: {}",
+                                    worker_id,
+                                    e
+                                );
                             } else {
                                 self.metrics.total_restarts.fetch_add(1, Ordering::Relaxed);
                             }
@@ -1412,7 +1493,8 @@ impl ProcessManager {
                             let restart_count = worker.restart_count;
 
                             tracing::error!(
-                                "UnifiedServerWorker (PID {:?}) exited unexpectedly with status: {} (restart {}/{})",
+                                "UnifiedServerWorker {} (PID {:?}) exited unexpectedly with status: {} (restart {}/{})",
+                                worker_id,
                                 worker.pid(),
                                 status,
                                 restart_count,
@@ -1427,29 +1509,33 @@ impl ProcessManager {
                                 worker.last_restart_at = Some(Instant::now());
 
                                 tracing::info!(
-                                    "Respawning UnifiedServerWorker (attempt {})",
+                                    "Respawning UnifiedServerWorker {} (attempt {})",
+                                    worker_id,
                                     new_count
                                 );
-                                if let Err(e) = self.spawn_unified_server_worker() {
-                                    tracing::error!("Failed to respawn UnifiedServerWorker: {}", e);
+                                if let Err(e) = self.spawn_unified_server_worker_with_id(worker_id)
+                                {
+                                    tracing::error!(
+                                        "Failed to respawn UnifiedServerWorker {}: {}",
+                                        worker_id,
+                                        e
+                                    );
                                 } else {
                                     self.metrics.total_restarts.fetch_add(1, Ordering::Relaxed);
                                 }
                             } else {
                                 tracing::error!(
-                                    "UnifiedServerWorker exceeded max restart attempts ({}), not restarting",
+                                    "UnifiedServerWorker {} exceeded max restart attempts ({}), not restarting",
+                                    worker_id,
                                     self.config.max_restart_attempts
                                 );
                             }
                         }
                     }
-                    Ok(None) => {}
-                    Err(e) => {
-                        tracing::error!("Error checking UnifiedServerWorker: {}", e);
-                    }
                 }
             }
-        }
+            dead
+        };
     }
 
     fn restart_worker(&self, worker_id: WorkerId, port: u16, restart_count: u32) {
@@ -1499,11 +1585,13 @@ impl ProcessManager {
                 .collect()
         };
 
-        if let Some(ref worker) = *self.unified_server_worker.read() {
+        let unified_server_workers = self.unified_server_workers.read();
+        for worker in unified_server_workers.values() {
             if let Some(child) = worker.child_ref().as_ref() {
                 pids.push((child.id(), graceful));
             }
         }
+        drop(unified_server_workers);
 
         for (pid, is_graceful) in pids {
             if is_graceful {
@@ -1557,10 +1645,10 @@ impl ProcessManager {
                         let workers = self.workers.read();
                         let workers_stopped = workers.values().all(|w| *w.status() == WorkerStatus::Stopped);
 
-                        let unified_stopped = self.unified_server_worker.read()
-                            .as_ref()
-                            .map(|w| *w.status() == WorkerStatus::Stopped)
-                            .unwrap_or(true);
+                        let unified_server_workers = self.unified_server_workers.read();
+                        let unified_stopped = unified_server_workers
+                            .values()
+                            .all(|w| *w.status() == WorkerStatus::Stopped);
 
                         workers_stopped && unified_stopped
                     };
@@ -1596,8 +1684,8 @@ impl ProcessManager {
         }
 
         {
-            let mut unified_server_worker = self.unified_server_worker.write();
-            if let Some(ref mut worker) = unified_server_worker.as_mut() {
+            let mut unified_server_workers = self.unified_server_workers.write();
+            for worker in unified_server_workers.values_mut() {
                 if let Some(child) = worker.child_mut() {
                     let _ = child.kill();
                 }
@@ -1823,43 +1911,55 @@ impl ProcessManager {
         &self,
         worker_threads: u32,
     ) -> Result<(), String> {
-        let ipc = {
-            let unified_server_worker = self.unified_server_worker.read();
-            unified_server_worker.as_ref().and_then(|w| w.ipc.clone())
-        };
+        let ipcs = self.get_all_unified_server_worker_ipc();
 
-        if let Some(ipc) = ipc {
-            {
+        if ipcs.is_empty() {
+            return Err("No unified server workers available".to_string());
+        }
+
+        for ipc in &ipcs {
+            let mut ipc = ipc.lock().await;
+            ipc.send(&Message::UnifiedServerWorkerResize { worker_threads })
+                .map_err(|e| format!("Failed to send resize request: {}", e))?;
+        }
+
+        let start = std::time::Instant::now();
+        let timeout = std::time::Duration::from_secs(35);
+        let mut acked_count = 0;
+        let total_workers = ipcs.len();
+
+        while start.elapsed() < timeout && acked_count < total_workers {
+            for ipc in &ipcs {
                 let mut ipc = ipc.lock().await;
-                ipc.send(&Message::UnifiedServerWorkerResize { worker_threads })
-                    .map_err(|e| format!("Failed to send resize request: {}", e))?;
-            }
-
-            let start = std::time::Instant::now();
-            let timeout = std::time::Duration::from_secs(35);
-
-            while start.elapsed() < timeout {
+                if let Ok(Some(Message::UnifiedServerWorkerResizeAck {
+                    id: _,
+                    worker_threads: ack_threads,
+                })) = ipc.recv(100)
                 {
-                    let mut ipc = ipc.lock().await;
-                    if let Ok(Some(Message::UnifiedServerWorkerResizeAck {
-                        id: _,
-                        worker_threads: ack_threads,
-                    })) = ipc.recv(100)
-                    {
-                        tracing::info!(
-                            "UnifiedServerWorker acknowledged resize to {} threads",
-                            ack_threads
-                        );
-                        return Ok(());
-                    }
+                    tracing::info!(
+                        "UnifiedServerWorker acknowledged resize to {} threads",
+                        ack_threads
+                    );
+                    acked_count += 1;
                 }
-                tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
             }
+            tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+        }
 
-            tracing::warn!("Resize timeout waiting for UnifiedServerWorker ack");
+        if acked_count < total_workers {
+            tracing::warn!(
+                "Resize timeout: only {}/{} workers acknowledged",
+                acked_count,
+                total_workers
+            );
             return Err("Resize timeout".to_string());
         }
-        Err("No unified server worker IPC available".to_string())
+
+        tracing::info!(
+            "All unified server workers acknowledged threadpool resize to {} threads",
+            worker_threads
+        );
+        Ok(())
     }
 
     pub fn get_status(&self) -> super::ipc::MasterStatus {
@@ -1881,8 +1981,8 @@ impl ProcessManager {
 
         drop(workers);
 
-        let unified_server_worker = self.unified_server_worker.read();
-        if let Some(ref worker) = *unified_server_worker {
+        let unified_server_workers = self.unified_server_workers.read();
+        for worker in unified_server_workers.values() {
             worker_infos.push(super::ipc::WorkerStatusInfo {
                 id: worker.id.as_usize(),
                 pid: worker.pid().unwrap_or(0),
@@ -1892,6 +1992,20 @@ impl ProcessManager {
                 blocked: worker.metrics.blocked,
             });
         }
+
+        let unified_total_requests: u64 = unified_server_workers
+            .values()
+            .map(|w| w.metrics.total_requests)
+            .sum();
+        let unified_total_blocked: u64 = unified_server_workers
+            .values()
+            .map(|w| w.metrics.blocked)
+            .sum();
+
+        drop(unified_server_workers);
+
+        let total_requests = total_requests + unified_total_requests;
+        let total_blocked = total_blocked + unified_total_blocked;
 
         super::ipc::MasterStatus {
             master_pid: std::process::id(),

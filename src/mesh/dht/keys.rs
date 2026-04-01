@@ -34,6 +34,7 @@ pub enum DhtKey {
     DnsRecord(String, String),
     DnsDomainRegistration(String),
     AnycastNode(String),
+    ThreatIndicator(String),
 }
 
 impl DhtKey {
@@ -113,6 +114,10 @@ impl DhtKey {
         DhtKey::AnycastNode(node_id.to_string())
     }
 
+    pub fn threat_indicator(indicator_id: &str) -> Self {
+        DhtKey::ThreatIndicator(indicator_id.to_string())
+    }
+
     pub fn as_str(&self) -> String {
         match self {
             DhtKey::Organization(org_id) => format!("org:{}", org_id),
@@ -138,6 +143,7 @@ impl DhtKey {
             DhtKey::DnsRecord(zone, name) => format!("dns_record:{}:{}", zone, name),
             DhtKey::DnsDomainRegistration(domain) => format!("dns_domain_reg:{}", domain),
             DhtKey::AnycastNode(node_id) => format!("anycast_node:{}", node_id),
+            DhtKey::ThreatIndicator(indicator_id) => format!("threat_indicator:{}", indicator_id),
         }
     }
 
@@ -183,6 +189,7 @@ impl DhtKey {
                 DhtKey::DnsDomainRegistration(parts[1..].join(":"))
             }
             "anycast_node" if parts.len() >= 2 => DhtKey::AnycastNode(parts[1..].join(":")),
+            "threat_indicator" if parts.len() >= 2 => DhtKey::ThreatIndicator(parts[1..].join(":")),
             _ => DhtKey::NodeInfo(s.to_string()),
         }
     }
@@ -217,6 +224,7 @@ impl DhtKey {
                 | DhtKey::DnsZone(_)
                 | DhtKey::DnsRecord(_, _)
                 | DhtKey::AnycastNode(_)
+                | DhtKey::ThreatIndicator(_)
         )
     }
 
@@ -265,6 +273,7 @@ impl DhtKey {
             DhtKey::DnsRecord(_, _) => "dns_record",
             DhtKey::DnsDomainRegistration(_) => "dns_domain_registration",
             DhtKey::AnycastNode(_) => "anycast_node",
+            DhtKey::ThreatIndicator(_) => "threat_indicator",
         }
     }
 
@@ -292,6 +301,7 @@ impl DhtKey {
             DhtKey::DnsRecord(_, _) => Some(SignedRecordType::DnsRecord),
             DhtKey::DnsDomainRegistration(_) => Some(SignedRecordType::DnsDomainRegistration),
             DhtKey::AnycastNode(_) => Some(SignedRecordType::AnycastNode),
+            DhtKey::ThreatIndicator(_) => Some(SignedRecordType::ThreatIndicator),
         }
     }
 

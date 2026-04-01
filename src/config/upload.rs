@@ -1,8 +1,9 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::validation::{parse_size_string, ConfigValidationError};
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
 pub struct UploadDefaults {
     #[serde(default = "default_upload_enabled")]
     pub enabled: bool,
@@ -98,7 +99,7 @@ fn default_yara_timeout_ms() -> u64 {
     30000
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
 pub struct UploadAllowedTypesDefaults {
     #[serde(default = "default_allowed_types_mode")]
     pub mode: String,

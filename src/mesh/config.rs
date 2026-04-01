@@ -3,6 +3,7 @@
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use parking_lot::RwLock;
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -19,6 +20,7 @@ use crate::config::site::ProxyUpstreamConfig;
     Archive,
     RkyvDeserialize,
     RkyvSerialize,
+    JsonSchema,
 )]
 pub struct MeshNodeRole(u8);
 
@@ -102,7 +104,7 @@ pub use crate::mesh::reputation::ReputationConfig;
 pub use crate::mesh::threat_intel::ThreatIntelligenceConfig;
 use crate::mesh::ADMIN_ORG_ID;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct YaraRulesMeshConfig {
     #[serde(default = "default_yara_mesh_enabled")]
     pub enabled: bool,
@@ -171,7 +173,7 @@ impl Default for SequenceCounter {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 pub struct MeshSeedNode {
     pub address: String,
     #[serde(default)]
@@ -188,14 +190,14 @@ pub struct MeshSeedNode {
     pub wireguard_port: Option<u16>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct MeshPeerConfig {
     pub address: String,
     #[serde(default)]
     pub auth_token: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum WireGuardPerformanceProfile {
     #[default]
@@ -204,7 +206,7 @@ pub enum WireGuardPerformanceProfile {
     HighThroughput,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct WireGuardPerfConfig {
     #[serde(default)]
     pub rx_buffer_size: usize,
@@ -252,7 +254,7 @@ impl WireGuardPerfConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct MeshWireGuardConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -308,7 +310,7 @@ impl Default for MeshWireGuardConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct MeshWireGuardPeer {
     pub public_key: String,
     #[serde(default)]
@@ -319,14 +321,14 @@ pub struct MeshWireGuardPeer {
     pub persistent_keepalive: Option<u16>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct MeshUpstreamPeer {
     pub node_id: String,
     #[serde(default)]
     pub allowed: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 pub struct MeshLocalUpstream {
     pub upstream_url: String,
     #[serde(default)]
@@ -339,7 +341,7 @@ pub struct MeshLocalUpstream {
     pub priority_tier: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 pub struct MeshServicePolicy {
     #[serde(default)]
     pub allow: Vec<String>,
@@ -359,7 +361,7 @@ impl MeshServicePolicy {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct MeshRoutingConfig {
     #[serde(default = "default_max_hops")]
     pub max_hops: u8,
@@ -425,7 +427,7 @@ fn default_mesh_messages_per_sec() -> usize {
     10000
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct MeshConnectionConfig {
     #[serde(default = "default_min_peers")]
     pub min_peer_connections: usize,
@@ -491,7 +493,7 @@ impl Default for MeshConnectionConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ConnectionScoreWeights {
     #[serde(default = "default_latency_weight")]
     pub latency: f64,
@@ -533,7 +535,7 @@ impl Default for ConnectionScoreWeights {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ReconnectionPriority {
     #[serde(default = "default_priority_global")]
     pub global_nodes: usize,
@@ -563,7 +565,7 @@ impl Default for ReconnectionPriority {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct MeshUpstreamConfig {
     pub upstream_url: String,
     #[serde(default)]
@@ -586,14 +588,14 @@ pub struct MeshUpstreamConfig {
     pub minification: Option<MeshMinificationConfig>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 pub struct MeshImageProtectionConfig {
     pub enabled: Option<bool>,
     pub min_size_bytes: Option<usize>,
     pub whitelist_patterns: Option<Vec<String>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 pub struct MeshCompressionConfig {
     pub enabled: Option<bool>,
     pub gzip_on_the_fly: Option<bool>,
@@ -604,7 +606,7 @@ pub struct MeshCompressionConfig {
     pub brotli_level: Option<u32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 pub struct MeshMinificationConfig {
     pub enabled: Option<bool>,
     pub enable_html: Option<bool>,
@@ -634,7 +636,7 @@ impl MeshUpstreamConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum MeshTransportPreference {
     #[default]
@@ -642,7 +644,7 @@ pub enum MeshTransportPreference {
     Quic,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct MeshConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -730,7 +732,7 @@ pub struct MeshConfig {
 
 pub(crate) const POW_CACHE_TTL_SECS: u64 = 3600; // 1 hour
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct OriginSigningKeyConfig {
     pub mesh_id: String,
     #[serde(default)]
@@ -765,7 +767,7 @@ impl OriginSigningKeyConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 pub struct GlobalNodeConfig {
     #[serde(default)]
     pub known_origin_keys: HashMap<String, String>,
@@ -815,7 +817,7 @@ fn default_key_exchange_port() -> u16 {
 
 use crate::config::defaults::default_true;
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 pub struct GenesisKeyConfig {
     #[serde(default)]
     pub private_key_base64: Option<String>,
@@ -827,7 +829,7 @@ pub struct GenesisKeyConfig {
     pub is_first_node: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct TrustedNodeConfig {
     pub node_id: String,
     pub trusted_at: u64,
@@ -847,7 +849,7 @@ impl TrustedNodeConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct MeshDhtConfig {
     #[serde(default = "default_dht_enabled")]
     pub enabled: bool,
@@ -1074,9 +1076,8 @@ impl Default for MeshDhtConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema, Default)]
 #[serde(rename_all = "lowercase")]
-#[derive(Default)]
 pub enum MlKemVariant {
     #[serde(rename = "ml-kem-768")]
     #[default]
@@ -1085,7 +1086,7 @@ pub enum MlKemVariant {
     MlKem1024,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct MeshMlKemConfig {
     #[serde(default = "default_mlkem_enabled")]
     pub enabled: bool,
@@ -1131,7 +1132,7 @@ impl Default for MeshMlKemConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 pub struct NodeIdentityConfig {
     #[serde(default)]
     pub private_key_path: Option<String>,
@@ -1174,7 +1175,7 @@ pub fn derive_router_id(private_key: &[u8]) -> String {
     )
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct TierConfig {
     #[serde(default = "default_tier_names")]
     pub names: HashMap<u32, String>,
@@ -1200,7 +1201,7 @@ fn default_tier_names() -> HashMap<u32, String> {
     m
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct OrgConfig {
     #[serde(default = "default_true")]
     pub auto_approve: bool,
@@ -1220,13 +1221,13 @@ impl Default for OrgConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct UpstreamResolutionConfig {
     #[serde(default)]
     pub use_first_segment: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct MeshPersistenceConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -1257,7 +1258,7 @@ impl Default for MeshPersistenceConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 pub struct MeshTlsConfig {
     #[serde(default)]
     pub cert_path: Option<String>,

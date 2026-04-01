@@ -1,3 +1,4 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::validation::ConfigValidationError;
@@ -8,7 +9,7 @@ const WEAK_TOKEN_PATTERNS: &[&str] = &[
     "master",
 ];
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct AdminCorsConfig {
     #[serde(default)]
     pub allow_origin: Option<String>,
@@ -18,7 +19,7 @@ pub struct AdminCorsConfig {
     pub allow_headers: Option<Vec<String>>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct AdminConfig {
     #[serde(default = "default_admin_enabled")]
     pub enabled: bool,
@@ -38,7 +39,7 @@ pub struct AdminConfig {
     pub rate_limit: AdminRateLimitConfig,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct AdminRateLimitConfig {
     #[serde(default = "default_admin_rate_limit_requests")]
     pub requests_per_minute: u32,
@@ -191,7 +192,7 @@ fn default_bcrypt_cost() -> u32 {
     12
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
 pub struct MetricsConfig {
     #[serde(default = "default_metrics_enabled")]
     pub enabled: bool,

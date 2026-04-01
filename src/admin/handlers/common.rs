@@ -98,7 +98,7 @@ impl<T> PaginatedResponse<T> {
     }
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct StatusResponse {
     pub status: String,
     pub message: String,

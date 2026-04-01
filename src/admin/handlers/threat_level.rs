@@ -15,7 +15,7 @@ use super::common::{OptionalAuth, StatusResponse};
 const DEFAULT_THREAT_LEVEL_DB_PATH: &str = "/var/lib/maluwaf/threat_level/history.db";
 const DEFAULT_THREAT_LEVEL_BACKUP_DIR: &str = "/var/lib/maluwaf/threat_level/backups";
 
-#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ThreatLevelStatusResponse {
     pub level: u8,
     pub score: f64,
@@ -33,7 +33,7 @@ pub struct ThreatLevelStatusResponse {
     pub blocked: u32,
 }
 
-#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ThreatLevelHistoryResponse {
     pub minute: Vec<HistorySample>,
     pub hour: Vec<HistorySample>,
@@ -42,7 +42,7 @@ pub struct ThreatLevelHistoryResponse {
     pub month: Vec<HistorySample>,
 }
 
-#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct HistorySample {
     pub timestamp: i64,
     pub level: u8,
@@ -53,12 +53,12 @@ pub struct HistorySample {
     pub blocked: u32,
 }
 
-#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct BaselineStatsResponse {
     pub baselines: Vec<BaselineMetric>,
 }
 
-#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct BaselineMetric {
     pub metric_name: String,
     pub mean: f64,
@@ -69,23 +69,12 @@ pub struct BaselineMetric {
     pub computed_at: i64,
 }
 
-#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct SetLevelRequest {
     pub level: u8,
 }
 
-#[utoipa::path(
-    get,
-    path = "/threat-level/status",
-    tag = "Threat Level",
-    responses(
-        (status = 200, description = "Threat level status"),
-        (status = 401, description = "Unauthorized")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn get_status(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -124,18 +113,6 @@ pub async fn get_status(
     }))
 }
 
-#[utoipa::path(
-    get,
-    path = "/threat-level/history",
-    tag = "Threat Level",
-    responses(
-        (status = 200, description = "Threat level history"),
-        (status = 401, description = "Unauthorized")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn get_history(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -171,19 +148,6 @@ pub async fn get_history(
     }))
 }
 
-#[utoipa::path(
-    get,
-    path = "/threat-level/baseline",
-    tag = "Threat Level",
-    responses(
-        (status = 200, description = "Baseline statistics"),
-        (status = 401, description = "Unauthorized"),
-        (status = 404, description = "Threat level manager not available")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn get_baseline(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -216,19 +180,6 @@ pub async fn get_baseline(
     }))
 }
 
-#[utoipa::path(
-    post,
-    path = "/threat-level/baseline/reset",
-    tag = "Threat Level",
-    responses(
-        (status = 200, description = "Baseline reset"),
-        (status = 401, description = "Unauthorized"),
-        (status = 404, description = "Threat level manager not available")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn reset_baseline(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -242,18 +193,6 @@ pub async fn reset_baseline(
     )))
 }
 
-#[utoipa::path(
-    post,
-    path = "/threat-level/level",
-    tag = "Threat Level",
-    responses(
-        (status = 200, description = "Threat level set"),
-        (status = 401, description = "Unauthorized")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn set_level(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -270,18 +209,6 @@ pub async fn set_level(
     })))
 }
 
-#[utoipa::path(
-    post,
-    path = "/threat-level/auto",
-    tag = "Threat Level",
-    responses(
-        (status = 200, description = "Auto threat level set"),
-        (status = 401, description = "Unauthorized")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn set_auto(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -293,36 +220,23 @@ pub async fn set_auto(
     Ok(Json(StatusResponse::ok("Threat level set to auto mode")))
 }
 
-#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct BackupResponse {
     pub status: String,
     pub backup: serde_json::Value,
 }
 
-#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct BackupsListResponse {
     pub backups: Vec<serde_json::Value>,
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct PruneResponse {
     pub status: String,
     pub deleted_count: u64,
 }
 
-#[utoipa::path(
-    post,
-    path = "/threat-level/backup",
-    tag = "Threat Level",
-    responses(
-        (status = 200, description = "Backup created"),
-        (status = 401, description = "Unauthorized"),
-        (status = 404, description = "Threat level manager not available")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn create_backup(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -353,19 +267,6 @@ pub async fn create_backup(
     }))
 }
 
-#[utoipa::path(
-    get,
-    path = "/threat-level/backups",
-    tag = "Threat Level",
-    responses(
-        (status = 200, description = "List of backups"),
-        (status = 401, description = "Unauthorized"),
-        (status = 404, description = "Threat level manager not available")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn list_backups(
     State(_state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -388,24 +289,11 @@ pub async fn list_backups(
     }))
 }
 
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Deserialize)]
 pub struct DeleteBackupQuery {
     path: String,
 }
 
-#[utoipa::path(
-    delete,
-    path = "/threat-level/backup",
-    tag = "Threat Level",
-    responses(
-        (status = 200, description = "Backup deleted"),
-        (status = 401, description = "Unauthorized"),
-        (status = 404, description = "Backup not found")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn delete_backup(
     State(_state): State<Arc<AdminState>>,
     Query(query): Query<DeleteBackupQuery>,
@@ -427,19 +315,6 @@ pub async fn delete_backup(
     Ok(Json(StatusResponse::ok("Backup deleted")))
 }
 
-#[utoipa::path(
-    delete,
-    path = "/threat-level/history",
-    tag = "Threat Level",
-    responses(
-        (status = 200, description = "History pruned"),
-        (status = 401, description = "Unauthorized"),
-        (status = 404, description = "Threat level manager not available")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn prune_history(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -466,19 +341,6 @@ pub async fn prune_history(
     }))
 }
 
-#[utoipa::path(
-    get,
-    path = "/threat-level/history/stats",
-    tag = "Threat Level",
-    responses(
-        (status = 200, description = "History statistics"),
-        (status = 401, description = "Unauthorized"),
-        (status = 404, description = "Threat level manager not available")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn get_history_stats(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,

@@ -1,8 +1,9 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::validation::ConfigValidationError;
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
 pub struct ThreatLevelConfig {
     #[serde(default = "default_threat_level_initial")]
     pub initial: u8,
@@ -107,7 +108,7 @@ fn default_auto_deescalate_timeout() -> u32 {
     15
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
 pub struct ThreatLevelGlobalLimits {
     #[serde(default = "default_level_1_multiplier")]
     pub level_1: f32,
@@ -149,7 +150,7 @@ fn default_level_5_multiplier() -> f32 {
     0.1
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
 pub struct ThreatLevelBanDurations {
     #[serde(default = "default_level_1_base")]
     pub level_1_base: String,
@@ -191,7 +192,7 @@ fn default_level_5_base() -> String {
     "permanent".to_string()
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
 pub struct ThreatLevelEscalation {
     #[serde(default = "default_escalation_enabled")]
     pub enabled: bool,
@@ -224,7 +225,7 @@ fn default_violation_window() -> u32 {
     300
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
 pub struct IpFeedConfig {
     #[serde(default = "default_ip_feed_enabled")]
     pub enabled: bool,
@@ -258,7 +259,7 @@ fn default_feed_url() -> String {
     "https://raw.githubusercontent.com/bitwire-it/ipblocklist/main/inbound.txt".to_string()
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
 pub struct MimesConfig {
     #[serde(default = "default_mimes_enabled")]
     pub enabled: bool,
@@ -279,7 +280,7 @@ fn default_mimes_enabled() -> bool {
     true
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
 pub struct RuleFeedConfig {
     #[serde(default = "default_rule_feed_enabled")]
     pub enabled: bool,
@@ -321,7 +322,7 @@ fn default_rule_feed_allow_downgrade() -> bool {
     false
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
 pub struct YaraRuleFeedConfig {
     #[serde(default = "default_yara_feed_enabled")]
     pub enabled: bool,

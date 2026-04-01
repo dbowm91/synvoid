@@ -177,6 +177,11 @@ libloading = "0.8"
 # WASM support for plugins
 wasmtime = "42"
 
+# Deno runtime for serverless functions
+deno_core = "0.254"
+url = "2"
+# URL parsing (already used elsewhere)
+
 # WireGuard (optional - requires defguard_boringtun)
 defguard_boringtun = { version = "0.6", optional = true }
 
@@ -190,9 +195,7 @@ syslog = "6"
 log = "0.4"
 
 # OpenAPI / Swagger UI
-utoipa = { version = "5", features = ["axum_extras", "chrono"] }
-utoipa-axum = "0.2"
-utoipa-swagger-ui = { version = "9", features = ["axum"] }
+schemars = "0.8"
 prost = "0.13"
 prost-build = "0.13"
 lru_time_cache = "0.11"
@@ -215,6 +218,7 @@ sha3 = "0.10"
 x25519-dalek = { version = "2", features = ["static_secrets"] }
 base32 = "0.5"
 libc = "0.2"
+windows-sys = { version = "0.59", features = ["Win32_System_LibraryLoader"] }
 tonic = { version = "0.12", features = ["gzip", "prost"] }
 tonic-reflection = "0.12"
 

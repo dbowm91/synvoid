@@ -1,6 +1,6 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use utoipa::ToSchema;
 
 pub struct Defaults;
 
@@ -85,7 +85,7 @@ impl Defaults {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, ToSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
 pub struct OverseerConfig {
     #[serde(default, skip_deserializing)]
     pub config_path: Option<PathBuf>,
@@ -135,7 +135,7 @@ impl Default for OverseerConfig {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, ToSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
 pub struct ProcessManagerConfig {
     #[serde(default = "default_min_workers")]
     pub min_workers: usize,
@@ -182,7 +182,7 @@ impl Default for ProcessManagerConfig {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, ToSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
 pub struct SupervisorConfig {
     #[serde(default = "default_min_workers")]
     pub min_workers: usize,

@@ -4,6 +4,8 @@
     clippy::manual_range_contains
 )]
 
+#[allow(unused_imports)]
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "icmp-filter")]
@@ -24,6 +26,7 @@ use super::protection::{
 };
 use super::security::{MainSecurityConfig, MainStaticConfig};
 use super::server::{FallbackConfig, ServerConfig};
+use super::serverless::ServerlessConfig;
 use super::tls::TlsConfig;
 use super::traffic::TrafficShapingConfig;
 use super::tunnel::TunnelConfig;
@@ -49,6 +52,7 @@ pub use super::protection::{
     YaraRuleFeedConfig as MainYaraRuleFeedConfig,
 };
 pub use super::server::{FallbackConfig as MainFallbackConfig, ServerConfig as MainServerConfig};
+pub use super::serverless::ServerlessConfig as MainServerlessConfig;
 pub use super::tls::{
     AcmeConfig as MainAcmeConfig, ClientAuthConfig as MainClientAuthConfig,
     TlsConfig as MainTlsConfig,
@@ -65,7 +69,7 @@ pub use super::tunnel::{
     VpnAccessLevel as MainVpnAccessLevel, WireGuardPeerConfig as MainWireGuardPeerConfig,
 };
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
 pub struct MainConfig {
     pub server: ServerConfig,
     pub fallback: FallbackConfig,
@@ -113,6 +117,8 @@ pub struct MainConfig {
     pub tunnel: TunnelConfig,
     #[serde(default)]
     pub plugins: PluginConfig,
+    #[serde(default)]
+    pub serverless: ServerlessConfig,
     #[serde(default)]
     pub upgrade: Option<UpgradeConfig>,
     #[cfg(feature = "icmp-filter")]
@@ -226,6 +232,7 @@ impl MainConfig {
             static_config: None,
             tunnel: TunnelConfig::default(),
             plugins: PluginConfig::default(),
+            serverless: ServerlessConfig::default(),
             upgrade: None,
             #[cfg(feature = "icmp-filter")]
             icmp_filter: IcmpFilterConfig::default(),

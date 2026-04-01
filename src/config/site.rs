@@ -5,6 +5,7 @@
 )]
 
 use anyhow::{Context, Result};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
@@ -69,6 +70,8 @@ pub struct SiteConfig {
     #[serde(default)]
     pub app_server: SiteAppServerConfig,
     #[serde(default)]
+    pub serverless: Option<super::serverless::ServerlessConfig>,
+    #[serde(default)]
     pub image_poison: SiteImagePoisonConfig,
 }
 
@@ -103,6 +106,9 @@ pub struct SiteProxyConfig {
 
     #[serde(default)]
     pub tls_passthrough: Option<bool>,
+
+    #[serde(default)]
+    pub wasm_plugins: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
@@ -279,7 +285,7 @@ pub struct BufferingConfig {
     pub client_body_buffer: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct ProxyCacheConfig {
     #[serde(default)]
     pub enable: Option<bool>,
@@ -481,6 +487,8 @@ pub struct LocationConfig {
     pub proxy: Option<LocationProxyConfig>,
     #[serde(default)]
     pub allowed_methods: Option<Vec<String>>,
+    #[serde(default)]
+    pub serverless: Option<super::serverless::ServerlessConfig>,
 }
 
 impl LocationConfig {

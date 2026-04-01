@@ -158,11 +158,37 @@ pub async fn run_unified_server_worker(
         WorkerMetrics::shared_with_bandwidth(bandwidth_retention_days, bandwidth_mesh_excluded);
     let ipc_for_server = ipc.clone();
     let worker_id_for_server = worker_id;
+
+    // Initialize serverless manager if configured
+    let serverless_manager = {
+        let config = shared_config.read().await;
+        let serverless_config = &config.main.serverless;
+        if serverless_config.enabled {
+            let manager = Arc::new(crate::serverless::manager::ServerlessManager::new());
+            if let Err(e) = manager.initialize(serverless_config.clone()) {
+                tracing::warn!("Failed to initialize serverless manager: {}", e);
+                None
+            } else {
+                tracing::info!(
+                    "Serverless manager initialized with {} functions",
+                    serverless_config.functions.len()
+                );
+                Some(manager)
+            }
+        } else {
+            None
+        }
+    };
+
     let unified_server = UnifiedServer::new(shared_config.clone(), None)
         .await?
         .with_drain_state(drain_state.clone())
         .with_metrics(metrics.clone())
-        .with_ipc(ipc_for_server, worker_id_for_server);
+        .with_ipc(ipc_for_server, worker_id_for_server)
+        .with_serverless_manager(
+            serverless_manager
+                .unwrap_or_else(|| Arc::new(crate::serverless::manager::ServerlessManager::new())),
+        );
 
     // Wrap in Arc immediately for easier sharing
     let unified_server: Arc<UnifiedServer> = Arc::new(unified_server);

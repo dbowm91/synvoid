@@ -8,8 +8,13 @@ use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use parking_lot::RwLock;
 
 pub mod axum_loader;
+pub mod deno_pool;
+pub mod deno_runtime;
+pub mod wasm_metrics;
 pub mod wasm_runtime;
 
+pub use deno_pool::{DenoPool, PoolStats};
+pub use deno_runtime::{DenoPluginManager, DenoResourceLimits, DenoRuntime};
 pub use wasm_runtime::{WasmPluginManager, WasmResourceLimits, WasmRuntime};
 
 pub enum WasmFilterResult {
@@ -107,11 +112,29 @@ impl PluginManager {
         self.wasm_manager.filter_request(request)
     }
 
+    pub fn apply_wasm_filters_with_plugins(
+        &self,
+        request: Request<Bytes>,
+        plugin_names: &[String],
+    ) -> Result<WasmFilterResult, WasmPluginError> {
+        self.wasm_manager
+            .filter_request_with_plugins(request, plugin_names)
+    }
+
     pub fn apply_wasm_response_transforms(
         &self,
         response: Response<Bytes>,
     ) -> Result<Response<Bytes>, WasmPluginError> {
         self.wasm_manager.transform_response(response)
+    }
+
+    pub fn apply_wasm_response_transforms_with_plugins(
+        &self,
+        response: Response<Bytes>,
+        plugin_names: &[String],
+    ) -> Result<Response<Bytes>, WasmPluginError> {
+        self.wasm_manager
+            .transform_response_with_plugins(response, plugin_names)
     }
 
     /// Get the underlying WASM plugin manager

@@ -59,13 +59,13 @@ fn empty_upstream_error_stats_response() -> Result<Json<UpstreamErrorStatsRespon
     }))
 }
 
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Deserialize)]
 pub struct BlockProbesRequest {
     pub ips: Vec<String>,
     pub duration: String,
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct ProbeResponse {
     pub ip: String,
     pub event_count: u32,
@@ -76,7 +76,7 @@ pub struct ProbeResponse {
     pub recent_endpoints: Vec<ProbeEventResponse>,
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct ProbeEventResponse {
     pub endpoint: String,
     pub method: String,
@@ -84,7 +84,7 @@ pub struct ProbeEventResponse {
     pub user_agent: Option<String>,
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct ProbeStatsResponse {
     pub total_records: usize,
     pub active_records: usize,
@@ -92,24 +92,12 @@ pub struct ProbeStatsResponse {
     pub top_endpoints: Vec<ProbeEndpointStatsResponse>,
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct ProbeEndpointStatsResponse {
     pub endpoint: String,
     pub count: u32,
 }
 
-#[utoipa::path(
-    get,
-    path = "/probes",
-    tag = "Probes",
-    responses(
-        (status = 200, description = "List of probe records"),
-        (status = 401, description = "Unauthorized")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn list_probes(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -158,19 +146,6 @@ pub async fn list_probes(
     Ok(Json(PaginatedResponse::new(probes, total, limit, offset)))
 }
 
-#[utoipa::path(
-    get,
-    path = "/probes/{ip}",
-    tag = "Probes",
-    responses(
-        (status = 200, description = "Probe record details"),
-        (status = 401, description = "Unauthorized"),
-        (status = 404, description = "Probe not found")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn get_probe(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -209,18 +184,6 @@ pub async fn get_probe(
     }))
 }
 
-#[utoipa::path(
-    get,
-    path = "/probes/stats",
-    tag = "Probes",
-    responses(
-        (status = 200, description = "Probe statistics"),
-        (status = 401, description = "Unauthorized")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn get_probe_stats(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -247,19 +210,6 @@ pub async fn get_probe_stats(
     }))
 }
 
-#[utoipa::path(
-    delete,
-    path = "/probes/{ip}",
-    tag = "Probes",
-    responses(
-        (status = 204, description = "Probe deleted"),
-        (status = 401, description = "Unauthorized"),
-        (status = 404, description = "Probe not found")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn delete_probe(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -300,18 +250,6 @@ fn parse_duration(duration: &str) -> u64 {
     }
 }
 
-#[utoipa::path(
-    post,
-    path = "/probes/block",
-    tag = "Probes",
-    responses(
-        (status = 200, description = "Probes blocked"),
-        (status = 401, description = "Unauthorized")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn block_probes(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -354,7 +292,7 @@ pub async fn block_probes(
     })))
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct SuspiciousWordRecordResponse {
     pub ip: String,
     pub matched_word: String,
@@ -363,37 +301,25 @@ pub struct SuspiciousWordRecordResponse {
     pub timestamp: u64,
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct SuspiciousWordListResponse {
     pub records: Vec<SuspiciousWordRecordResponse>,
     pub total: usize,
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct SuspiciousWordStatsResponse {
     pub total_ips: usize,
     pub total_matches: u64,
     pub top_words: Vec<SuspiciousWordCountResponse>,
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct SuspiciousWordCountResponse {
     pub word: String,
     pub count: u32,
 }
 
-#[utoipa::path(
-    get,
-    path = "/probes/suspicious-words",
-    tag = "Probes",
-    responses(
-        (status = 200, description = "List of suspicious words"),
-        (status = 401, description = "Unauthorized")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn list_suspicious_words(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -430,18 +356,6 @@ pub async fn list_suspicious_words(
     }))
 }
 
-#[utoipa::path(
-    get,
-    path = "/probes/suspicious-words/stats",
-    tag = "Probes",
-    responses(
-        (status = 200, description = "Suspicious word statistics"),
-        (status = 401, description = "Unauthorized")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn get_suspicious_word_stats(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -467,19 +381,6 @@ pub async fn get_suspicious_word_stats(
     }))
 }
 
-#[utoipa::path(
-    delete,
-    path = "/probes/suspicious-words/{ip}",
-    tag = "Probes",
-    responses(
-        (status = 204, description = "Suspicious word record deleted"),
-        (status = 401, description = "Unauthorized"),
-        (status = 404, description = "Record not found")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn delete_suspicious_word(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -498,7 +399,7 @@ pub async fn delete_suspicious_word(
     }
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct UpstreamErrorRecordResponse {
     pub ip: String,
     pub endpoint: String,
@@ -506,37 +407,25 @@ pub struct UpstreamErrorRecordResponse {
     pub timestamp: u64,
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct UpstreamErrorListResponse {
     pub records: Vec<UpstreamErrorRecordResponse>,
     pub total: usize,
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct UpstreamErrorStatsResponse {
     pub total_ips: usize,
     pub total_errors: u64,
     pub top_endpoints: Vec<UpstreamErrorEndpointCountResponse>,
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct UpstreamErrorEndpointCountResponse {
     pub endpoint: String,
     pub count: u32,
 }
 
-#[utoipa::path(
-    get,
-    path = "/probes/upstream-errors",
-    tag = "Probes",
-    responses(
-        (status = 200, description = "List of upstream errors"),
-        (status = 401, description = "Unauthorized")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn list_upstream_errors(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -572,18 +461,6 @@ pub async fn list_upstream_errors(
     }))
 }
 
-#[utoipa::path(
-    get,
-    path = "/probes/upstream-errors/stats",
-    tag = "Probes",
-    responses(
-        (status = 200, description = "Upstream error statistics"),
-        (status = 401, description = "Unauthorized")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn get_upstream_error_stats(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -609,19 +486,6 @@ pub async fn get_upstream_error_stats(
     }))
 }
 
-#[utoipa::path(
-    delete,
-    path = "/probes/upstream-errors/{ip}",
-    tag = "Probes",
-    responses(
-        (status = 204, description = "Upstream error record deleted"),
-        (status = 401, description = "Unauthorized"),
-        (status = 404, description = "Record not found")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn delete_upstream_error(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,

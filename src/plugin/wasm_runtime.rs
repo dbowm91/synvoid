@@ -1,3 +1,4 @@
+use std::convert::TryInto;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -7,6 +8,10 @@ use http::{HeaderMap, Request, Response, StatusCode};
 use parking_lot::RwLock;
 use wasmtime::{Config, Engine, Instance, Linker, Memory, Module, OptLevel, Store, TypedFunc};
 
+use crate::plugin::wasm_metrics::{
+    record_wasm_decision_block, record_wasm_decision_challenge, record_wasm_decision_pass,
+    record_wasm_duration, record_wasm_error, record_wasm_fuel_consumed, record_wasm_invocation,
+};
 use crate::plugin::{WasmFilterResult, WasmPluginError};
 
 /// Maximum size of request/response data passed through WASM memory (1MB)
@@ -22,6 +27,12 @@ type FilterRequestFn = TypedFunc<(i32, i32, i32, i32, i32, i32, i32, i32), i32>;
 /// transform_response(status_code, body_ptr, body_len, out_ptr, out_max) -> i32
 /// Returns: new body length, or -1 on error
 type TransformResponseFn = TypedFunc<(i32, i32, i32, i32, i32), i32>;
+
+/// handle_request(method_ptr, method_len, uri_ptr, uri_len,
+///                headers_ptr, headers_len, body_ptr, body_len,
+///                out_status_ptr, out_body_ptr, out_body_max) -> i32
+/// Returns: 0=success, -1=error; out_status and out_body written to memory
+type HandleRequestFn = TypedFunc<(i32, i32, i32, i32, i32, i32, i32, i32, i32, i32, i32), i32>;
 
 /// guest_alloc(size) -> i32
 type GuestAllocFn = TypedFunc<i32, i32>;
@@ -52,6 +63,7 @@ impl Default for WasmResourceLimits {
 struct GuestExports {
     filter_request: Option<FilterRequestFn>,
     transform_response: Option<TransformResponseFn>,
+    handle_request: Option<HandleRequestFn>,
     guest_alloc: Option<GuestAllocFn>,
     guest_free: Option<GuestFreeFn>,
     memory: Option<Memory>,
@@ -142,6 +154,23 @@ impl WasmPluginManager {
         Ok(WasmFilterResult::Pass)
     }
 
+    pub fn filter_request_with_plugins(
+        &self,
+        request: Request<Bytes>,
+        plugin_names: &[String],
+    ) -> Result<WasmFilterResult, WasmPluginError> {
+        let runtimes = self.runtimes.read();
+        for name in plugin_names {
+            if let Some(runtime) = runtimes.iter().find(|r| r.name() == name) {
+                match runtime.filter_request(request.clone())? {
+                    WasmFilterResult::Pass => continue,
+                    result => return Ok(result),
+                }
+            }
+        }
+        Ok(WasmFilterResult::Pass)
+    }
+
     pub fn transform_response(
         &self,
         response: Response<Bytes>,
@@ -149,6 +178,21 @@ impl WasmPluginManager {
         let mut result = response;
         for runtime in self.runtimes.read().iter() {
             result = runtime.transform_response(result)?;
+        }
+        Ok(result)
+    }
+
+    pub fn transform_response_with_plugins(
+        &self,
+        response: Response<Bytes>,
+        plugin_names: &[String],
+    ) -> Result<Response<Bytes>, WasmPluginError> {
+        let runtimes = self.runtimes.read();
+        let mut result = response;
+        for name in plugin_names {
+            if let Some(runtime) = runtimes.iter().find(|r| r.name() == name) {
+                result = runtime.transform_response(result)?;
+            }
         }
         Ok(result)
     }
@@ -193,21 +237,23 @@ impl WasmRuntime {
         // Validate that the module exports at least one of the expected functions
         let has_filter = module.get_export("filter_request").is_some();
         let has_transform = module.get_export("transform_response").is_some();
-        if !has_filter && !has_transform {
+        let has_handle = module.get_export("handle_request").is_some();
+        if !has_filter && !has_transform && !has_handle {
             tracing::warn!(
-                "WASM plugin '{}' does not export filter_request or transform_response; will be a pass-through",
+                "WASM plugin '{}' does not export filter_request, transform_response, or handle_request; will be a pass-through",
                 name
             );
         }
 
         tracing::info!(
-            "Loaded WASM plugin '{}' with limits: {}MB memory, {} fuel, {}s timeout (filter={}, transform={})",
+            "Loaded WASM plugin '{}' with limits: {}MB memory, {} fuel, {}s timeout (filter={}, transform={}, handle={})",
             name,
             limits.max_memory_mb,
             limits.max_cpu_fuel,
             limits.timeout_seconds,
             has_filter,
             has_transform,
+            has_handle,
         );
 
         Ok(Self {
@@ -284,12 +330,14 @@ impl WasmRuntime {
         // Resolve optional guest ABI functions
         let filter_request = self.resolve_filter_request(&instance, store);
         let transform_response = self.resolve_transform_response(&instance, store);
+        let handle_request = self.resolve_handle_request(&instance, store);
         let guest_alloc = self.resolve_guest_alloc(&instance, store);
         let guest_free = self.resolve_guest_free(&instance, store);
 
         Ok(GuestExports {
             filter_request,
             transform_response,
+            handle_request,
             guest_alloc,
             guest_free,
             memory,
@@ -311,6 +359,15 @@ impl WasmRuntime {
         store: &mut Store<RequestContext>,
     ) -> Option<TransformResponseFn> {
         let func = instance.get_func(&mut *store, "transform_response")?;
+        func.typed(&mut *store).ok()
+    }
+
+    fn resolve_handle_request(
+        &self,
+        instance: &Instance,
+        store: &mut Store<RequestContext>,
+    ) -> Option<HandleRequestFn> {
+        let func = instance.get_func(&mut *store, "handle_request")?;
         func.typed(&mut *store).ok()
     }
 
@@ -484,6 +541,11 @@ impl WasmRuntime {
         &self,
         request: Request<Bytes>,
     ) -> Result<WasmFilterResult, WasmPluginError> {
+        let start = Instant::now();
+        let plugin_name = &self.name;
+
+        record_wasm_invocation(plugin_name);
+
         let (parts, body) = request.into_parts();
 
         tracing::debug!(
@@ -499,13 +561,15 @@ impl WasmRuntime {
         let filter_fn = match exports.filter_request.as_ref() {
             Some(f) => f,
             None => {
+                let duration_ms = start.elapsed().as_millis() as u64;
+                record_wasm_duration(plugin_name, duration_ms);
+                record_wasm_decision_pass(plugin_name);
                 return Ok(WasmFilterResult::Pass);
             }
         };
 
         Self::check_timeout(&store)?;
 
-        // Write request components to guest memory
         let method_str = parts.method.as_str();
         let method_bytes = method_str.as_bytes();
         let uri_str = parts.uri.to_string();
@@ -515,11 +579,9 @@ impl WasmRuntime {
             self.write_to_guest_memory(&mut store, &exports, method_bytes)?;
         let (uri_ptr, uri_len) = self.write_to_guest_memory(&mut store, &exports, uri_bytes)?;
 
-        // Write headers as serialized metadata
         let headers_meta = Self::serialize_headers(&parts.headers);
         let (hdr_ptr, hdr_len) = self.write_to_guest_memory(&mut store, &exports, &headers_meta)?;
 
-        // Write body
         let body_bytes = body.as_ref();
         let (body_ptr, body_len) = if !body_bytes.is_empty() {
             self.write_to_guest_memory(&mut store, &exports, body_bytes)?
@@ -534,12 +596,18 @@ impl WasmRuntime {
             ),
         );
 
-        // Free guest allocations
         self.free_guest_memory(&mut store, &exports, method_ptr, method_len);
         self.free_guest_memory(&mut store, &exports, uri_ptr, uri_len);
         self.free_guest_memory(&mut store, &exports, hdr_ptr, hdr_len);
         if body_len > 0 {
             self.free_guest_memory(&mut store, &exports, body_ptr, body_len);
+        }
+
+        if self.limits.max_cpu_fuel > 0 {
+            if let Ok(remaining) = store.get_fuel() {
+                let consumed = self.limits.max_cpu_fuel.saturating_sub(remaining);
+                record_wasm_fuel_consumed(plugin_name, consumed);
+            }
         }
 
         let code = result.map_err(|e| {
@@ -556,26 +624,42 @@ impl WasmRuntime {
             }
         })?;
 
+        let duration_ms = start.elapsed().as_millis() as u64;
+        record_wasm_duration(plugin_name, duration_ms);
+
         match code {
-            0 => Ok(WasmFilterResult::Pass),
-            1 => Ok(WasmFilterResult::Block(
-                StatusCode::FORBIDDEN,
-                format!("Blocked by WASM plugin '{}'", self.name),
-            )),
-            2 => Ok(WasmFilterResult::Challenge(format!(
-                "challenge:wasm:{}",
-                self.name
-            ))),
-            -1 => Err(WasmPluginError::ExecutionFailed(format!(
-                "WASM plugin '{}' returned error",
-                self.name
-            ))),
+            0 => {
+                record_wasm_decision_pass(plugin_name);
+                Ok(WasmFilterResult::Pass)
+            }
+            1 => {
+                record_wasm_decision_block(plugin_name);
+                Ok(WasmFilterResult::Block(
+                    StatusCode::FORBIDDEN,
+                    format!("Blocked by WASM plugin '{}'", self.name),
+                ))
+            }
+            2 => {
+                record_wasm_decision_challenge(plugin_name);
+                Ok(WasmFilterResult::Challenge(format!(
+                    "challenge:wasm:{}",
+                    self.name
+                )))
+            }
+            -1 => {
+                record_wasm_error(plugin_name);
+                Err(WasmPluginError::ExecutionFailed(format!(
+                    "WASM plugin '{}' returned error",
+                    self.name
+                )))
+            }
             other => {
                 tracing::warn!(
                     "WASM plugin '{}' returned unknown filter code {}",
                     self.name,
                     other
                 );
+                record_wasm_decision_pass(plugin_name);
                 Ok(WasmFilterResult::Pass)
             }
         }
@@ -585,6 +669,11 @@ impl WasmRuntime {
         &self,
         response: Response<Bytes>,
     ) -> Result<Response<Bytes>, WasmPluginError> {
+        let start = Instant::now();
+        let plugin_name = &self.name;
+
+        record_wasm_invocation(plugin_name);
+
         let (parts, body) = response.into_parts();
 
         tracing::debug!(
@@ -599,7 +688,9 @@ impl WasmRuntime {
         let transform_fn = match exports.transform_response.as_ref() {
             Some(f) => f,
             None => {
-                // Module doesn't export transform_response; pass through
+                let duration_ms = start.elapsed().as_millis() as u64;
+                record_wasm_duration(plugin_name, duration_ms);
+                record_wasm_decision_pass(plugin_name);
                 return Ok(Response::from_parts(parts, body));
             }
         };
@@ -608,14 +699,12 @@ impl WasmRuntime {
         let (body_ptr, body_len) = if !body_bytes.is_empty() {
             self.write_to_guest_memory(&mut store, &exports, body_bytes)?
         } else {
-            // Allocate a zero-length buffer so the guest gets a valid pointer
             let (p, _) = self.write_to_guest_memory(&mut store, &exports, &[])?;
             (p, 0i32)
         };
 
         Self::check_timeout(&store)?;
 
-        // Allocate output buffer (same size as input + 64KB headroom)
         let out_max = (body_bytes.len() + 65536).min(MAX_WASM_DATA_SIZE) as i32;
         let (out_ptr, _) =
             self.write_to_guest_memory(&mut store, &exports, &vec![0u8; out_max as usize])?;
@@ -628,11 +717,23 @@ impl WasmRuntime {
                 (status_code, body_ptr, body_len, out_ptr, out_max),
             )
             .map_err(|e| {
+                record_wasm_error(plugin_name);
                 WasmPluginError::ExecutionFailed(format!(
                     "transform_response failed in '{}': {}",
                     self.name, e
                 ))
             })?;
+
+        if self.limits.max_cpu_fuel > 0 {
+            if let Ok(remaining) = store.get_fuel() {
+                let consumed = self.limits.max_cpu_fuel.saturating_sub(remaining);
+                record_wasm_fuel_consumed(plugin_name, consumed);
+            }
+        }
+
+        let duration_ms = start.elapsed().as_millis() as u64;
+        record_wasm_duration(plugin_name, duration_ms);
+        record_wasm_decision_pass(plugin_name);
 
         let result_body = if new_len > 0 && (new_len as usize) <= MAX_WASM_DATA_SIZE {
             let data = self.read_from_guest_memory(&mut store, &exports, out_ptr, new_len)?;
@@ -640,7 +741,6 @@ impl WasmRuntime {
         } else if new_len == 0 {
             Bytes::new()
         } else {
-            // Negative or implausible size: return original body
             tracing::warn!(
                 "WASM plugin '{}' returned invalid transform length {}",
                 self.name,
@@ -649,7 +749,6 @@ impl WasmRuntime {
             body
         };
 
-        // Free allocations
         self.free_guest_memory(&mut store, &exports, body_ptr, body_len);
         self.free_guest_memory(&mut store, &exports, out_ptr, out_max);
 
@@ -666,6 +765,133 @@ impl WasmRuntime {
 
     pub fn module(&self) -> &Module {
         &self.module
+    }
+
+    pub fn invoke_handler(
+        &self,
+        method: &str,
+        uri: &str,
+        headers: &str,
+        body: &[u8],
+    ) -> Result<Response<Bytes>, WasmPluginError> {
+        let start = Instant::now();
+        let plugin_name = &self.name;
+
+        record_wasm_invocation(plugin_name);
+
+        tracing::debug!(
+            "WASM serverless function '{}' handling {} {}",
+            self.name,
+            method,
+            uri
+        );
+
+        let mut store = self.create_store();
+        let exports = self.instantiate(&mut store)?;
+
+        let handle_fn = match exports.handle_request.as_ref() {
+            Some(f) => f,
+            None => {
+                let duration_ms = start.elapsed().as_millis() as u64;
+                record_wasm_duration(plugin_name, duration_ms);
+                record_wasm_error(plugin_name);
+                return Err(WasmPluginError::ExecutionFailed(
+                    "handle_request function not exported".into(),
+                ));
+            }
+        };
+
+        Self::check_timeout(&store)?;
+
+        let method_bytes = method.as_bytes();
+        let uri_bytes = uri.as_bytes();
+        let headers_bytes = headers.as_bytes();
+
+        let (method_ptr, method_len) =
+            self.write_to_guest_memory(&mut store, &exports, method_bytes)?;
+        let (uri_ptr, uri_len) = self.write_to_guest_memory(&mut store, &exports, uri_bytes)?;
+        let (hdr_ptr, hdr_len) = self.write_to_guest_memory(&mut store, &exports, headers_bytes)?;
+        let (body_ptr, body_len) = self.write_to_guest_memory(&mut store, &exports, body)?;
+
+        const OUT_BODY_MAX: usize = 65536;
+        let (out_status_ptr, _) = self.write_to_guest_memory(&mut store, &exports, &[0u8; 4])?;
+        let (out_body_ptr, _) =
+            self.write_to_guest_memory(&mut store, &exports, &[0u8; OUT_BODY_MAX])?;
+
+        let result = handle_fn.call(
+            &mut store,
+            (
+                method_ptr,
+                method_len,
+                uri_ptr,
+                uri_len,
+                hdr_ptr,
+                hdr_len,
+                body_ptr,
+                body_len,
+                out_status_ptr,
+                out_body_ptr,
+                OUT_BODY_MAX as i32,
+            ),
+        );
+
+        self.free_guest_memory(&mut store, &exports, method_ptr, method_len);
+        self.free_guest_memory(&mut store, &exports, uri_ptr, uri_len);
+        self.free_guest_memory(&mut store, &exports, hdr_ptr, hdr_len);
+        self.free_guest_memory(&mut store, &exports, body_ptr, body_len);
+
+        if self.limits.max_cpu_fuel > 0 {
+            if let Ok(remaining) = store.get_fuel() {
+                let consumed = self.limits.max_cpu_fuel.saturating_sub(remaining);
+                record_wasm_fuel_consumed(plugin_name, consumed);
+            }
+        }
+
+        let code = result.map_err(|e| {
+            record_wasm_error(plugin_name);
+            WasmPluginError::ExecutionFailed(format!(
+                "handle_request failed in '{}': {}",
+                self.name, e
+            ))
+        })?;
+
+        let duration_ms = start.elapsed().as_millis() as u64;
+        record_wasm_duration(plugin_name, duration_ms);
+
+        if code < 0 {
+            record_wasm_error(plugin_name);
+            return Err(WasmPluginError::ExecutionFailed(format!(
+                "Serverless function '{}' returned error",
+                self.name
+            )));
+        }
+
+        record_wasm_decision_pass(plugin_name);
+
+        let status_data = self.read_from_guest_memory(&mut store, &exports, out_status_ptr, 4)?;
+        let status_code = u32::from_le_bytes(
+            status_data
+                .try_into()
+                .map_err(|_| WasmPluginError::ExecutionFailed("Invalid status read".into()))?,
+        ) as u16;
+
+        let body_data = self.read_from_guest_memory(&mut store, &exports, out_body_ptr, code)?;
+        let result_body = Bytes::from(body_data);
+
+        self.free_guest_memory(&mut store, &exports, out_status_ptr, 4);
+        self.free_guest_memory(
+            &mut store,
+            &exports,
+            out_body_ptr,
+            OUT_BODY_MAX.try_into().unwrap(),
+        );
+
+        let response = Response::builder()
+            .status(StatusCode::from_u16(status_code).unwrap_or(StatusCode::OK))
+            .body(result_body)
+            .map_err(|e| WasmPluginError::ExecutionFailed(e.to_string()))?;
+
+        Ok(response)
     }
 }
 

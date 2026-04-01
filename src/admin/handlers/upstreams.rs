@@ -23,7 +23,7 @@ fn create_upstream_status(url: &str) -> UpstreamStatus {
     }
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct UpstreamStatus {
     pub url: String,
     pub healthy: bool,
@@ -34,25 +34,13 @@ pub struct UpstreamStatus {
     pub consecutive_successes: u32,
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct SiteUpstreams {
     pub site_id: String,
     pub default_upstream: String,
     pub backends: Vec<UpstreamStatus>,
 }
 
-#[utoipa::path(
-    get,
-    path = "/upstreams",
-    tag = "Upstreams",
-    responses(
-        (status = 200, description = "List of all upstreams", body = [SiteUpstreams]),
-        (status = 401, description = "Unauthorized - missing or invalid bearer token")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn list_upstreams(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -72,22 +60,6 @@ pub async fn list_upstreams(
     Ok(Json(upstreams))
 }
 
-#[utoipa::path(
-    get,
-    path = "/upstreams/{site_id}",
-    tag = "Upstreams",
-    params(
-        ("site_id" = String, Path, description = "Site identifier")
-    ),
-    responses(
-        (status = 200, description = "Site upstream configuration", body = [SiteUpstreams]),
-        (status = 401, description = "Unauthorized - missing or invalid bearer token"),
-        (status = 404, description = "Site not found")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn get_site_upstreams(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -105,34 +77,17 @@ pub async fn get_site_upstreams(
     }
 }
 
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Deserialize)]
 pub struct TriggerHealthCheckRequest {
     pub _force: Option<bool>,
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct HealthCheckResponse {
     pub status: String,
     pub message: String,
 }
 
-#[utoipa::path(
-    post,
-    path = "/upstreams/{site_id}/check",
-    tag = "Upstreams",
-    params(
-        ("site_id" = String, Path, description = "Site identifier")
-    ),
-    request_body = TriggerHealthCheckRequest,
-    responses(
-        (status = 200, description = "Health check triggered", body = [HealthCheckResponse]),
-        (status = 401, description = "Unauthorized - missing or invalid bearer token"),
-        (status = 404, description = "Site not found")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn trigger_health_check(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,

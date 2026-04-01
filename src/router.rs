@@ -8,6 +8,7 @@
 
 use crate::config::site::BackendConfig;
 use crate::config::{MainConfig, SiteConfig};
+use crate::location_matcher::LocationMatcher;
 use crate::mesh::config::{
     MeshCompressionConfig, MeshImageProtectionConfig, MeshMinificationConfig,
 };
@@ -47,6 +48,7 @@ pub enum BackendType {
     AppServer,
     Static,
     QuicTunnel,
+    Serverless,
 }
 
 #[derive(Clone)]
@@ -60,6 +62,7 @@ pub struct RouteTarget {
     pub backend_plugin: Option<Arc<str>>,
     pub tunnel_peer: Option<Arc<str>>,
     pub tunnel_port: Option<u16>,
+    pub serverless_function: Option<Arc<str>>,
 }
 
 #[derive(Clone)]
@@ -271,6 +274,251 @@ impl Router {
         None
     }
 
+    fn get_location_backend(
+        &self,
+        site_config: &Arc<SiteConfig>,
+        path: &str,
+    ) -> Option<RouteResult> {
+        let locations = &site_config.proxy.locations;
+        if locations.is_empty() {
+            return None;
+        }
+
+        let patterns: Vec<String> = locations.iter().map(|loc| loc.path.clone()).collect();
+        let matcher = LocationMatcher::new(patterns);
+
+        if let Some((idx, _match_type)) = matcher.match_uri(path) {
+            let location = &locations[idx];
+
+            if let Some(ref backend) = location.backend {
+                let site_id = site_config.site_id();
+                return Some(match backend {
+                    BackendConfig::Upstream { url } => {
+                        let upstream = url
+                            .clone()
+                            .unwrap_or_else(|| site_config.site.upstream.get_upstream(path));
+
+                        if let Some((peer, port)) = Self::parse_quictunnel_url(&upstream) {
+                            RouteResult::Found(RouteTarget {
+                                site_id: Arc::from(site_id.as_str()),
+                                upstream: Arc::from(upstream.as_str()),
+                                site_config: site_config.clone(),
+                                static_handler: None,
+                                backend_type: BackendType::QuicTunnel,
+                                backend_socket: None,
+                                backend_plugin: None,
+                                tunnel_peer: Some(Arc::from(peer.as_str())),
+                                tunnel_port: Some(port),
+                                serverless_function: None,
+                            })
+                        } else {
+                            RouteResult::Found(RouteTarget {
+                                site_id: Arc::from(site_id.as_str()),
+                                upstream: Arc::from(upstream.as_str()),
+                                site_config: site_config.clone(),
+                                static_handler: None,
+                                backend_type: BackendType::Upstream,
+                                backend_socket: None,
+                                backend_plugin: None,
+                                tunnel_peer: None,
+                                tunnel_port: None,
+                                serverless_function: None,
+                            })
+                        }
+                    }
+                    BackendConfig::FastCgi { socket } => {
+                        let socket = socket
+                            .clone()
+                            .unwrap_or_else(|| "/run/php-fpm.sock".to_string());
+                        RouteResult::Found(RouteTarget {
+                            site_id: Arc::from(site_id.as_str()),
+                            upstream: Arc::from(format!("fastcgi://{}", socket)),
+                            site_config: site_config.clone(),
+                            static_handler: None,
+                            backend_type: BackendType::FastCgi,
+                            backend_socket: Some(Arc::from(socket.as_str())),
+                            backend_plugin: None,
+                            tunnel_peer: None,
+                            tunnel_port: None,
+                            serverless_function: None,
+                        })
+                    }
+                    BackendConfig::AxumDynamic { socket, plugin } => {
+                        let socket = socket
+                            .clone()
+                            .unwrap_or_else(|| "/run/maluwaf/axum.sock".to_string());
+                        let plugin = plugin
+                            .clone()
+                            .unwrap_or_else(|| "/opt/maluwaf/plugins/app.so".to_string());
+                        RouteResult::Found(RouteTarget {
+                            site_id: Arc::from(site_id.as_str()),
+                            upstream: Arc::from(format!("http://{}", socket)),
+                            site_config: site_config.clone(),
+                            static_handler: None,
+                            backend_type: BackendType::AxumDynamic,
+                            backend_socket: Some(Arc::from(socket.as_str())),
+                            backend_plugin: Some(Arc::from(plugin.as_str())),
+                            tunnel_peer: None,
+                            tunnel_port: None,
+                            serverless_function: None,
+                        })
+                    }
+                    BackendConfig::AppServer { socket } => {
+                        let socket = socket.clone().unwrap_or_else(|| {
+                            site_config
+                                .app_server
+                                .socket_path_for_site(&site_id, 0)
+                                .display()
+                                .to_string()
+                        });
+                        RouteResult::Found(RouteTarget {
+                            site_id: Arc::from(site_id.as_str()),
+                            upstream: Arc::from(format!("http://unix:{}:", socket)),
+                            site_config: site_config.clone(),
+                            static_handler: None,
+                            backend_type: BackendType::AppServer,
+                            backend_socket: Some(Arc::from(socket.as_str())),
+                            backend_plugin: None,
+                            tunnel_peer: None,
+                            tunnel_port: None,
+                            serverless_function: None,
+                        })
+                    }
+                    BackendConfig::Static { enabled } => {
+                        if enabled.unwrap_or(false) {
+                            let site_id = site_config.site_id();
+                            if let Some(handler) = self.static_handlers.get(&site_id) {
+                                return Some(RouteResult::Found(RouteTarget {
+                                    site_id: Arc::from(site_id.as_str()),
+                                    upstream: Arc::from(""),
+                                    site_config: site_config.clone(),
+                                    static_handler: Some(handler.clone()),
+                                    backend_type: BackendType::Static,
+                                    backend_socket: None,
+                                    backend_plugin: None,
+                                    tunnel_peer: None,
+                                    tunnel_port: None,
+                                    serverless_function: None,
+                                }));
+                            }
+                        }
+                        RouteResult::Error("Static backend not available".to_string())
+                    }
+                    BackendConfig::Axum { .. } => {
+                        tracing::warn!(
+                            "Axum compile-time integration not yet implemented, use axum-dynamic"
+                        );
+                        RouteResult::Error(
+                            "Axum compile-time not implemented, use axum-dynamic".to_string(),
+                        )
+                    }
+                });
+            }
+
+            if let Some(ref php_config) = location.php {
+                if let Some(socket) = php_config.socket.clone().or_else(|| {
+                    php_config.host.as_ref().map(|h| {
+                        if let Some(port) = php_config.port {
+                            format!("{}:{}", h, port)
+                        } else {
+                            format!("{}:9000", h)
+                        }
+                    })
+                }) {
+                    let site_id = site_config.site_id();
+                    return Some(RouteResult::Found(RouteTarget {
+                        site_id: Arc::from(site_id.as_str()),
+                        upstream: Arc::from(format!("php://{}", socket)),
+                        site_config: site_config.clone(),
+                        static_handler: None,
+                        backend_type: BackendType::Php,
+                        backend_socket: Some(Arc::from(socket.as_str())),
+                        backend_plugin: None,
+                        tunnel_peer: None,
+                        tunnel_port: None,
+                        serverless_function: None,
+                    }));
+                }
+            }
+
+            if let Some(ref fastcgi_config) = location.fastcgi {
+                if let Some(socket) = fastcgi_config.socket.clone() {
+                    let site_id = site_config.site_id();
+                    return Some(RouteResult::Found(RouteTarget {
+                        site_id: Arc::from(site_id.as_str()),
+                        upstream: Arc::from(format!("fastcgi://{}", socket)),
+                        site_config: site_config.clone(),
+                        static_handler: None,
+                        backend_type: BackendType::FastCgi,
+                        backend_socket: Some(Arc::from(socket.as_str())),
+                        backend_plugin: None,
+                        tunnel_peer: None,
+                        tunnel_port: None,
+                        serverless_function: None,
+                    }));
+                }
+            }
+
+            if let Some(ref cgi_config) = location.cgi {
+                if let Some(ref root) = cgi_config.root {
+                    let site_id = site_config.site_id();
+                    return Some(RouteResult::Found(RouteTarget {
+                        site_id: Arc::from(site_id.as_str()),
+                        upstream: Arc::from(format!("cgi://{}", root)),
+                        site_config: site_config.clone(),
+                        static_handler: None,
+                        backend_type: BackendType::Cgi,
+                        backend_socket: Some(Arc::from(root.as_str())),
+                        backend_plugin: None,
+                        tunnel_peer: None,
+                        tunnel_port: None,
+                        serverless_function: None,
+                    }));
+                }
+            }
+
+            if let Some(ref proxy_config) = location.proxy {
+                if let Some(ref upstream) = proxy_config.url {
+                    let site_id = site_config.site_id();
+                    return Some(RouteResult::Found(RouteTarget {
+                        site_id: Arc::from(site_id.as_str()),
+                        upstream: Arc::from(upstream.as_str()),
+                        site_config: site_config.clone(),
+                        static_handler: None,
+                        backend_type: BackendType::Upstream,
+                        backend_socket: None,
+                        backend_plugin: None,
+                        tunnel_peer: None,
+                        tunnel_port: None,
+                        serverless_function: None,
+                    }));
+                }
+            }
+
+            if let Some(ref serverless_config) = location.serverless {
+                if serverless_config.enabled {
+                    if let Some(func) = serverless_config.functions.first() {
+                        let site_id = site_config.site_id();
+                        return Some(RouteResult::Found(RouteTarget {
+                            site_id: Arc::from(site_id.as_str()),
+                            upstream: Arc::from(""),
+                            site_config: site_config.clone(),
+                            static_handler: None,
+                            backend_type: BackendType::Serverless,
+                            backend_socket: None,
+                            backend_plugin: None,
+                            tunnel_peer: None,
+                            tunnel_port: None,
+                            serverless_function: Some(Arc::from(func.name.clone())),
+                        }));
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
     fn route_to_target(&self, site_config: &Arc<SiteConfig>, path: &str) -> RouteResult {
         let site_id = site_config.site_id();
 
@@ -278,6 +526,10 @@ impl Router {
             && !self.is_host_valid_for_site(&site_id, site_config)
         {
             return RouteResult::NotFound("Host not allowed".to_string());
+        }
+
+        if let Some(location_backend) = self.get_location_backend(site_config, path) {
+            return location_backend;
         }
 
         if let Some(ref backend) = site_config.proxy.backend {
@@ -298,6 +550,7 @@ impl Router {
                             backend_plugin: None,
                             tunnel_peer: Some(Arc::from(peer.as_str())),
                             tunnel_port: Some(port),
+                            serverless_function: None,
                         });
                     }
 
@@ -311,6 +564,7 @@ impl Router {
                         backend_plugin: None,
                         tunnel_peer: None,
                         tunnel_port: None,
+                        serverless_function: None,
                     });
                 }
                 BackendConfig::FastCgi { socket } => {
@@ -327,6 +581,7 @@ impl Router {
                         backend_plugin: None,
                         tunnel_peer: None,
                         tunnel_port: None,
+                        serverless_function: None,
                     });
                 }
                 BackendConfig::AxumDynamic { socket, plugin } => {
@@ -346,6 +601,7 @@ impl Router {
                         backend_plugin: Some(Arc::from(plugin.as_str())),
                         tunnel_peer: None,
                         tunnel_port: None,
+                        serverless_function: None,
                     });
                 }
                 BackendConfig::AppServer { socket } => {
@@ -366,6 +622,7 @@ impl Router {
                         backend_plugin: None,
                         tunnel_peer: None,
                         tunnel_port: None,
+                        serverless_function: None,
                     });
                 }
                 BackendConfig::Static { enabled } => {
@@ -381,6 +638,7 @@ impl Router {
                                 backend_plugin: None,
                                 tunnel_peer: None,
                                 tunnel_port: None,
+                                serverless_function: None,
                             });
                         }
                     }
@@ -420,6 +678,7 @@ impl Router {
                     backend_plugin: None,
                     tunnel_peer: None,
                     tunnel_port: None,
+                    serverless_function: None,
                 });
             }
         }
@@ -436,6 +695,7 @@ impl Router {
                     backend_plugin: None,
                     tunnel_peer: None,
                     tunnel_port: None,
+                    serverless_function: None,
                 });
             }
         }
@@ -456,6 +716,7 @@ impl Router {
                 backend_plugin: None,
                 tunnel_peer: None,
                 tunnel_port: None,
+                serverless_function: None,
             });
         }
 
@@ -472,6 +733,7 @@ impl Router {
                     backend_plugin: None,
                     tunnel_peer: None,
                     tunnel_port: None,
+                    serverless_function: None,
                 });
             }
         }
@@ -487,6 +749,7 @@ impl Router {
             backend_plugin: None,
             tunnel_peer: None,
             tunnel_port: None,
+            serverless_function: None,
         })
     }
 
@@ -568,6 +831,7 @@ impl Router {
                         backend_plugin: None,
                         tunnel_peer: None,
                         tunnel_port: None,
+                        serverless_function: None,
                     })
                 } else {
                     RouteResult::Error(
@@ -742,6 +1006,7 @@ impl SiteConfig {
             websocket: Default::default(),
             tunnel: Default::default(),
             app_server: Default::default(),
+            serverless: Default::default(),
             image_poison: Default::default(),
         }
     }

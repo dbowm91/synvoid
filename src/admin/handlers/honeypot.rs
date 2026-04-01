@@ -4,7 +4,7 @@ use axum::{extract::State, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct HoneypotStatusResponse {
     pub enabled: bool,
     pub paused: bool,
@@ -13,14 +13,14 @@ pub struct HoneypotStatusResponse {
     pub total_connections: u64,
 }
 
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Deserialize)]
 pub struct HoneypotControlRequest {
     pub command: String,
     pub reason: Option<String>,
     pub duration_secs: Option<u32>,
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct HoneypotControlResponse {
     pub success: bool,
     pub message: String,

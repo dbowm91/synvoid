@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use super::common::{OptionalAuth, StatusResponse};
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct MasterStatusResponse {
     pub running: bool,
     pub pid: Option<u32>,
@@ -20,7 +20,7 @@ pub struct MasterStatusResponse {
     pub metrics: MasterMetricsResponse,
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct MasterMetricsResponse {
     pub total_requests: u64,
     pub blocked: u64,
@@ -32,7 +32,7 @@ pub struct MasterMetricsResponse {
     pub requests_per_second: f64,
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct SystemInfoResponse {
     pub version: String,
     pub build_timestamp: String,
@@ -41,19 +41,6 @@ pub struct SystemInfoResponse {
     pub running_mode: String,
 }
 
-#[utoipa::path(
-    get,
-    path = "/system/master",
-    tag = "System",
-    responses(
-        (status = 200, description = "Master process status", body = [MasterStatusResponse]),
-        (status = 401, description = "Unauthorized - missing or invalid bearer token"),
-        (status = 404, description = "Process manager not available")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn get_master_status(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -80,18 +67,6 @@ pub async fn get_master_status(
     }))
 }
 
-#[utoipa::path(
-    get,
-    path = "/system/info",
-    tag = "System",
-    responses(
-        (status = 200, description = "System information", body = [SystemInfoResponse]),
-        (status = 401, description = "Unauthorized - missing or invalid bearer token")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn get_system_info(
     State(_state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -115,7 +90,7 @@ pub async fn get_system_info(
     }))
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct WorkerStatusResponse {
     pub id: String,
     pub worker_type: String,
@@ -129,19 +104,6 @@ pub struct WorkerStatusResponse {
     pub cpu_percent: f64,
 }
 
-#[utoipa::path(
-    get,
-    path = "/system/workers",
-    tag = "System",
-    responses(
-        (status = 200, description = "List of worker processes", body = [WorkerStatusResponse]),
-        (status = 401, description = "Unauthorized - missing or invalid bearer token"),
-        (status = 404, description = "Process manager not available")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn get_workers(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -180,22 +142,6 @@ pub async fn get_workers(
     Ok(Json(workers))
 }
 
-#[utoipa::path(
-    post,
-    path = "/system/workers/{worker_id}/restart",
-    tag = "System",
-    params(
-        ("worker_id" = String, Path, description = "ID of the worker to restart")
-    ),
-    responses(
-        (status = 200, description = "Worker restart signal sent", body = [StatusResponse]),
-        (status = 401, description = "Unauthorized - missing or invalid bearer token"),
-        (status = 404, description = "Process manager not available")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn restart_worker(
     State(state): State<Arc<AdminState>>,
     Path(worker_id): Path<String>,
@@ -218,12 +164,12 @@ pub async fn restart_worker(
     ))))
 }
 
-#[derive(Debug, serde::Deserialize, utoipa::ToSchema)]
+#[derive(Debug, serde::Deserialize)]
 pub struct ScaleWorkersRequest {
     pub target_count: usize,
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct ScaleWorkersResponse {
     pub success: bool,
     pub message: String,
@@ -231,26 +177,13 @@ pub struct ScaleWorkersResponse {
     pub target_count: usize,
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct WorkerCountResponse {
     pub current: usize,
     pub min: usize,
     pub max: usize,
 }
 
-#[utoipa::path(
-    get,
-    path = "/system/workers/count",
-    tag = "System",
-    responses(
-        (status = 200, description = "Worker count information", body = [WorkerCountResponse]),
-        (status = 401, description = "Unauthorized - missing or invalid bearer token"),
-        (status = 404, description = "Process manager not available")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn get_worker_count(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -269,20 +202,6 @@ pub async fn get_worker_count(
     Ok(Json(WorkerCountResponse { current, min, max }))
 }
 
-#[utoipa::path(
-    post,
-    path = "/system/workers/scale",
-    tag = "System",
-    request_body = ScaleWorkersRequest,
-    responses(
-        (status = 200, description = "Worker scaling request", body = [ScaleWorkersResponse]),
-        (status = 401, description = "Unauthorized - missing or invalid bearer token"),
-        (status = 404, description = "Process manager not available")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn scale_workers(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -336,7 +255,7 @@ pub async fn scale_workers(
     }))
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct OverseerStatusResponse {
     pub running: bool,
     pub pid: Option<u32>,
@@ -347,19 +266,6 @@ pub struct OverseerStatusResponse {
     pub drain_status: String,
 }
 
-#[utoipa::path(
-    get,
-    path = "/system/overseer",
-    tag = "System",
-    responses(
-        (status = 200, description = "Overseer status", body = [OverseerStatusResponse]),
-        (status = 401, description = "Unauthorized - missing or invalid bearer token"),
-        (status = 404, description = "Process manager not available")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn get_overseer(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,

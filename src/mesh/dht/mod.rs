@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -75,7 +76,9 @@ impl DhtRateLimiter {
         let now = Instant::now();
 
         for mut entry in self.peer_requests.iter_mut() {
-            entry.value_mut().retain(|t| now.duration_since(*t).as_secs() < self.window_secs);
+            entry
+                .value_mut()
+                .retain(|t| now.duration_since(*t).as_secs() < self.window_secs);
         }
 
         self.peer_requests.retain(|_, v| !v.is_empty());
@@ -130,6 +133,7 @@ pub enum DhtError {
     RkyvSerialize,
     RkyvDeserialize,
     Default,
+    JsonSchema,
 )]
 pub enum DhtConsistencyLevel {
     Low,

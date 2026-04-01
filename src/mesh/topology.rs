@@ -259,13 +259,11 @@ struct CacheMetrics {
 struct CachedRoute {
     provider_node_id: String,
     hops: u8,
-    #[allow(dead_code)]
-    stability_score: f64,
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct RouteStability {
-    #[allow(dead_code)]
     upstream_id: String,
     provider_history: Vec<(String, Instant)>,
     stability: f64,
@@ -696,13 +694,17 @@ impl MeshTopology {
         use rand::Rng;
         let mut rng = rand::rng();
         let mut indices: Vec<usize> = (0..eligible.len()).collect();
-        
+
         for i in (1..indices.len()).rev() {
             let j = rng.random_range(0..=i);
             indices.swap(i, j);
         }
-        
-        indices.into_iter().take(count).map(|i| (*eligible[i]).clone()).collect()
+
+        indices
+            .into_iter()
+            .take(count)
+            .map(|i| (*eligible[i]).clone())
+            .collect()
     }
 
     pub async fn get_peers_by_latency(
@@ -1156,7 +1158,6 @@ impl MeshTopology {
             CachedRoute {
                 provider_node_id,
                 hops,
-                stability_score,
             },
         );
     }

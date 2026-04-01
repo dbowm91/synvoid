@@ -1004,7 +1004,17 @@ pub struct UpstreamOwner {
     pub peered_wafs: Vec<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    Default,
+    schemars::JsonSchema,
+)]
 pub enum UpstreamProtocol {
     #[default]
     Unknown = 0,
@@ -1017,7 +1027,7 @@ pub enum UpstreamProtocol {
     Websockets = 7,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default, schemars::JsonSchema)]
 pub struct WafPolicy {
     pub skip_rate_limit: bool,
     pub skip_auth_challenge: bool,
@@ -1041,7 +1051,7 @@ pub struct WafPolicy {
     pub fallback_to_regular_pow: bool,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default, schemars::JsonSchema)]
 pub struct RateLimitOverride {
     pub requests_per_second: Option<u64>,
     pub requests_per_minute: Option<u64>,

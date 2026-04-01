@@ -1,8 +1,9 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::validation::ConfigValidationError;
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
 pub struct HttpConfig {
     #[serde(default = "default_header_read_timeout")]
     pub header_read_timeout_secs: u64,
@@ -22,6 +23,8 @@ pub struct HttpConfig {
     pub pipeline_limit: usize,
     #[serde(default = "default_waf_stall_timeout")]
     pub waf_stall_timeout_secs: u64,
+    #[serde(default = "default_max_connections")]
+    pub max_connections: u32,
 }
 
 impl Default for HttpConfig {
@@ -36,6 +39,7 @@ impl Default for HttpConfig {
             max_request_size: default_max_request_size(),
             pipeline_limit: default_pipeline_limit(),
             waf_stall_timeout_secs: default_waf_stall_timeout(),
+            max_connections: default_max_connections(),
         }
     }
 }
@@ -69,6 +73,10 @@ fn default_pipeline_limit() -> usize {
     32
 }
 
+fn default_max_connections() -> u32 {
+    10000
+}
+
 impl HttpConfig {
     pub fn validate(&self) -> Result<(), ConfigValidationError> {
         if self.header_read_timeout_secs == 0 {
@@ -89,11 +97,17 @@ impl HttpConfig {
                 message: "max_request_size must be greater than 0".to_string(),
             });
         }
+        if self.max_connections == 0 {
+            return Err(ConfigValidationError {
+                field: "http.max_connections".to_string(),
+                message: "max_connections must be greater than 0".to_string(),
+            });
+        }
         Ok(())
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct Http3Config {
     #[serde(default)]
     pub enabled: bool,
@@ -119,7 +133,7 @@ fn default_http3_max_request_size() -> usize {
     10 * 1024 * 1024 // 10MB default for HTTP/3
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, JsonSchema)]
 pub struct TokioConfig {
     pub worker_threads: usize,
 }

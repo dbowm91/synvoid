@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use parking_lot::RwLock;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::mesh::config::MeshNodeRole;
@@ -61,7 +62,7 @@ struct PeerReputationState {
     reputation: PeerReputation,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ReputationConfig {
     #[serde(default = "default_enabled")]
     pub enabled: bool,

@@ -84,8 +84,8 @@ pub struct LoginLog {
     pub reason: Option<String>,
 }
 
+#[allow(dead_code)]
 pub struct AuthManager {
-    #[allow(dead_code)]
     data_dir: PathBuf,
     store: Arc<RwLock<AuthStore>>,
     session_duration_secs: u64,
@@ -99,7 +99,7 @@ pub struct AuthManager {
 
 impl AuthManager {
     pub fn new(
-        #[allow(dead_code)] data_dir: PathBuf,
+        data_dir: PathBuf,
         session_duration_secs: u64,
         max_failed_attempts: u32,
         lockout_duration_secs: u64,

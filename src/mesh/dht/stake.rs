@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use parking_lot::RwLock;
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::mesh::config::MeshNodeRole;
@@ -18,7 +19,9 @@ const GLOBAL_NODE_STAKE_WEIGHT: f64 = 1.5;
 const ORIGIN_NODE_STAKE_WEIGHT: f64 = 1.2;
 const EDGE_NODE_STAKE_WEIGHT: f64 = 1.0;
 
-#[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize, JsonSchema,
+)]
 pub struct StakeConfig {
     #[serde(default = "default_min_stake_for_dht_write")]
     pub min_stake_for_dht_write: i64,

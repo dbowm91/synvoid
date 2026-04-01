@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use super::common::{ErrorPage, OptionalAuth};
 
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Deserialize)]
 #[allow(dead_code)] // Fields used for OpenAPI schema/documentation
 pub struct LogsQuery {
     pub level: Option<String>,
@@ -19,7 +19,7 @@ pub struct LogsQuery {
     pub offset: Option<usize>,
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct LogEntry {
     pub timestamp: String,
     pub level: String,
@@ -30,32 +30,13 @@ pub struct LogEntry {
     pub status: Option<u16>,
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct LogsResponse {
     pub entries: Vec<LogEntry>,
     pub total: usize,
     pub has_more: bool,
 }
 
-#[utoipa::path(
-    get,
-    path = "/logs",
-    tag = "Logs",
-    params(
-        ("level" = Option<String>, Query, description = "Filter by log level"),
-        ("site_id" = Option<String>, Query, description = "Filter by site ID"),
-        ("search" = Option<String>, Query, description = "Search in log messages"),
-        ("limit" = Option<usize>, Query, description = "Maximum number of entries"),
-        ("offset" = Option<usize>, Query, description = "Number of entries to skip")
-    ),
-    responses(
-        (status = 200, description = "Log entries", body = [LogsResponse]),
-        (status = 401, description = "Unauthorized - missing or invalid bearer token")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn get_logs(
     State(_state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -68,7 +49,7 @@ pub async fn get_logs(
     }))
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct ErrorPageResponse {
     pub code: u16,
     pub name: String,
@@ -76,18 +57,6 @@ pub struct ErrorPageResponse {
     pub html_preview: Option<String>,
 }
 
-#[utoipa::path(
-    get,
-    path = "/error-pages",
-    tag = "Logs",
-    responses(
-        (status = 200, description = "List of error pages", body = [ErrorPageResponse]),
-        (status = 401, description = "Unauthorized - missing or invalid bearer token")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn list_error_pages(
     State(_state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -105,22 +74,6 @@ pub async fn list_error_pages(
     Ok(Json(error_pages))
 }
 
-#[utoipa::path(
-    get,
-    path = "/error-pages/{code}",
-    tag = "Logs",
-    params(
-        ("code" = u16, Path, description = "HTTP status code (e.g., 404, 500)")
-    ),
-    responses(
-        (status = 200, description = "Error page details", body = [ErrorPageResponse]),
-        (status = 401, description = "Unauthorized - missing or invalid bearer token"),
-        (status = 404, description = "Error page not found")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn get_error_page(
     State(_state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -136,31 +89,14 @@ pub async fn get_error_page(
     }))
 }
 
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct UpdateErrorPageRequest {
     pub title: Option<String>,
-    #[allow(dead_code)]
     pub message: Option<String>,
     pub content: Option<String>,
 }
 
-#[utoipa::path(
-    put,
-    path = "/error-pages/{code}",
-    tag = "Logs",
-    params(
-        ("code" = u16, Path, description = "HTTP status code to update")
-    ),
-    request_body = UpdateErrorPageRequest,
-    responses(
-        (status = 200, description = "Error page updated", body = [ErrorPageResponse]),
-        (status = 401, description = "Unauthorized - missing or invalid bearer token"),
-        (status = 404, description = "Error page not found")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn update_error_page(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,

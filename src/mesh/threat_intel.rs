@@ -7,11 +7,13 @@ use std::time::{Duration, Instant};
 
 use base64::Engine;
 use parking_lot::RwLock;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
 use crate::block_store::BlockStore;
 use crate::mesh::config::MeshNodeRole;
+use crate::mesh::dht::keys::DhtKey;
 use crate::mesh::protocol::{
     MeshMessage, MeshPeerInfo, ThreatIndicator, ThreatSeverity, ThreatType,
 };
@@ -19,7 +21,7 @@ use crate::mesh::reputation::{ReputationConfig, ReputationManager};
 
 const DEFAULT_SYNC_INTERVAL_SECS: u64 = 300;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ThreatIntelligenceConfig {
     #[serde(default = "default_enabled")]
     pub enabled: bool,
@@ -275,8 +277,11 @@ impl ThreatIntelligenceManager {
         if self.config.push_enabled {
             let threshold = self.config.push_severity_threshold as u32;
             if ThreatSeverity::High as u32 >= threshold {
+                self.publish_indicator_to_dht(&indicator);
                 self.queue_for_push(indicator);
             }
+        } else {
+            self.publish_indicator_to_dht(&indicator);
         }
     }
 
@@ -329,7 +334,10 @@ impl ThreatIntelligenceManager {
 
         let threshold = self.config.push_severity_threshold as u32;
         if self.config.push_enabled && (severity as u32) >= threshold {
+            self.publish_indicator_to_dht(&indicator);
             self.queue_for_push(indicator);
+        } else {
+            self.publish_indicator_to_dht(&indicator);
         }
 
         tracing::debug!("Announced honeypot indicator: {} from {}", reason, ip);
@@ -379,6 +387,7 @@ impl ThreatIntelligenceManager {
 
         *self.local_version.write() += 1;
 
+        self.publish_indicator_to_dht(&indicator);
         if self.config.push_enabled {
             self.queue_for_push(indicator);
         }
@@ -443,6 +452,7 @@ impl ThreatIntelligenceManager {
 
         let indicator_reason = indicator.reason.clone();
 
+        self.publish_indicator_to_dht(&indicator);
         if self.config.push_enabled {
             let threshold = self.config.push_severity_threshold as u32;
             if severity as u32 >= threshold {
@@ -465,6 +475,49 @@ impl ThreatIntelligenceManager {
         }
 
         queue.push(indicator);
+    }
+
+    pub fn publish_indicator_to_dht(&self, indicator: &ThreatIndicator) {
+        if !self.config.enabled {
+            return;
+        }
+
+        let transport_opt = self.transport.read().clone();
+        let Some(transport) = transport_opt else {
+            return;
+        };
+
+        let Some(record_store) = transport.get_record_store() else {
+            return;
+        };
+
+        let key = DhtKey::threat_indicator(&indicator.indicator_value);
+        let key_str = key.as_str();
+
+        let value = serde_json::json!({
+            "indicator_value": indicator.indicator_value,
+            "threat_type": indicator.threat_type as u8,
+            "severity": indicator.severity as u8,
+            "reason": indicator.reason,
+            "ttl_seconds": indicator.ttl_seconds,
+            "source_node_id": indicator.source_node_id,
+            "timestamp": indicator.timestamp,
+            "site_scope": indicator.site_scope,
+            "rate_limit_requests": indicator.rate_limit_requests,
+            "rate_limit_window_secs": indicator.rate_limit_window_secs,
+            "suspicious_pattern": indicator.suspicious_pattern,
+        });
+
+        if let Ok(bytes) = serde_json::to_vec(&value) {
+            let ttl = indicator.ttl_seconds.max(self.config.min_ttl_seconds);
+            if record_store.store_and_announce(key_str.to_string(), bytes, ttl) {
+                tracing::debug!(
+                    "Published threat indicator to DHT: {} ({})",
+                    indicator.indicator_value,
+                    indicator.threat_type as u8
+                );
+            }
+        }
     }
 
     pub fn handle_incoming_threat(

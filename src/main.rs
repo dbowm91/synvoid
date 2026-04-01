@@ -158,11 +158,11 @@ fn main() {
     }
 
     if args.export_openapi {
-        use maluwaf::admin::openapi::ApiDoc;
-        let spec: utoipa::openapi::OpenApi = ApiDoc.into();
+        use maluwaf::config::MainConfig;
+        let schema = schemars::schema_for!(MainConfig);
         println!(
             "{}",
-            serde_json::to_string_pretty(&spec).unwrap_or_default()
+            serde_json::to_string_pretty(&schema).unwrap_or_default()
         );
         std::process::exit(0);
     }

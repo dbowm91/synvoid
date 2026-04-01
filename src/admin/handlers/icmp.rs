@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use super::common::OptionalAuth;
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct IcmpStatusResponse {
     pub enabled: bool,
     pub status: String,
@@ -13,7 +13,7 @@ pub struct IcmpStatusResponse {
     pub stats: Option<IcmpStats>,
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct IcmpStats {
     pub packets_blocked_v4: u64,
     pub packets_blocked_v6: u64,
@@ -23,47 +23,35 @@ pub struct IcmpStats {
     pub rate_limited_v6: u64,
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct IcmpConfigResponse {
     pub config: serde_json::Value,
 }
 
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Deserialize)]
 pub struct UpdateIcmpConfigRequest {
     #[allow(dead_code)] // Reserved for ICMP configuration updates
     pub config: serde_json::Value,
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct IcmpEnableResponse {
     pub success: bool,
     pub message: String,
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct IcmpBackend {
     pub name: String,
     pub available: bool,
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct IcmpBackendsResponse {
     pub backends: Vec<IcmpBackend>,
     pub current_backend: Option<String>,
 }
 
-#[utoipa::path(
-    get,
-    path = "/icmp/status",
-    tag = "ICMP",
-    responses(
-        (status = 200, description = "ICMP filter status"),
-        (status = 401, description = "Unauthorized")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn get_status(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -132,18 +120,6 @@ pub async fn get_status(
     }
 }
 
-#[utoipa::path(
-    get,
-    path = "/icmp/config",
-    tag = "ICMP",
-    responses(
-        (status = 200, description = "ICMP filter configuration"),
-        (status = 401, description = "Unauthorized")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn get_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -166,18 +142,6 @@ pub async fn get_config(
     }
 }
 
-#[utoipa::path(
-    put,
-    path = "/icmp/config",
-    tag = "ICMP",
-    responses(
-        (status = 200, description = "ICMP filter config updated"),
-        (status = 401, description = "Unauthorized")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn update_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -244,18 +208,6 @@ pub async fn update_config(
     }
 }
 
-#[utoipa::path(
-    post,
-    path = "/icmp/enable",
-    tag = "ICMP",
-    responses(
-        (status = 200, description = "ICMP filter enabled"),
-        (status = 401, description = "Unauthorized")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn enable(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -302,18 +254,6 @@ pub async fn enable(
     }
 }
 
-#[utoipa::path(
-    post,
-    path = "/icmp/disable",
-    tag = "ICMP",
-    responses(
-        (status = 200, description = "ICMP filter disabled"),
-        (status = 401, description = "Unauthorized")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn disable(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -359,18 +299,6 @@ pub async fn disable(
     }
 }
 
-#[utoipa::path(
-    get,
-    path = "/icmp/backends",
-    tag = "ICMP",
-    responses(
-        (status = 200, description = "List of available ICMP backends"),
-        (status = 401, description = "Unauthorized")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn list_backends(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,

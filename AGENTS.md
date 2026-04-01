@@ -262,7 +262,7 @@ Crate-level suppressions in `src/lib.rs`:
 - `elided_lifetimes_in_paths` — compiler style preference
 - `mismatched_lifetime_syntaxes` — compiler style preference
 
-`#[allow(dead_code)]` annotations: **~81 across ~70 files** (reduced from 137/75). Notable per-module breakdown:
+`#[allow(dead_code)]` annotations: **71 across ~50 files** (reduced from 81/70). Notable per-module breakdown:
 - `src/mesh/` — ~27 items
 - `src/dns/server/` — ~4 items
 - `src/dns/dnssec_signing.rs` — 4 dead functions removed (sign_record added to removal list)

@@ -3,6 +3,7 @@ use std::fmt::Debug;
 
 use parking_lot::RwLock;
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::contact::{GeoInfo, PeerContact};
@@ -11,7 +12,9 @@ use super::node_id::NodeId;
 
 const DEFAULT_HUBS_PER_REGION: usize = 3;
 
-#[derive(Clone, Debug, Serialize, Deserialize, Archive, RkyvDeserialize, RkyvSerialize)]
+#[derive(
+    Clone, Debug, Serialize, Deserialize, Archive, RkyvDeserialize, RkyvSerialize, JsonSchema,
+)]
 pub struct RegionalHubConfig {
     pub enabled: bool,
     pub hubs_per_region: usize,

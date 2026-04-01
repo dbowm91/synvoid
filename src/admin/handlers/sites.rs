@@ -8,7 +8,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct SiteInfo {
     pub id: String,
     pub domains: Vec<String>,
@@ -16,24 +16,12 @@ pub struct SiteInfo {
     pub routes: std::collections::HashMap<String, String>,
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct SiteDetail {
     pub id: String,
     pub config: serde_json::Value,
 }
 
-#[utoipa::path(
-    get,
-    path = "/sites",
-    tag = "Sites",
-    responses(
-        (status = 200, description = "List of sites"),
-        (status = 401, description = "Unauthorized")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn list_sites(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -54,19 +42,6 @@ pub async fn list_sites(
     Ok(Json(sites))
 }
 
-#[utoipa::path(
-    get,
-    path = "/sites/{site_id}",
-    tag = "Sites",
-    responses(
-        (status = 200, description = "Site details"),
-        (status = 401, description = "Unauthorized"),
-        (status = 404, description = "Site not found")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn get_site(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -86,25 +61,12 @@ pub async fn get_site(
     }
 }
 
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Deserialize)]
 pub struct CreateSiteRequest {
     pub domains: Vec<String>,
     pub default_upstream: String,
 }
 
-#[utoipa::path(
-    post,
-    path = "/sites",
-    tag = "Sites",
-    responses(
-        (status = 200, description = "Site created"),
-        (status = 401, description = "Unauthorized"),
-        (status = 400, description = "Invalid request")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn create_site(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -200,19 +162,6 @@ pub async fn create_site(
     }))
 }
 
-#[utoipa::path(
-    delete,
-    path = "/sites/{site_id}",
-    tag = "Sites",
-    responses(
-        (status = 204, description = "Site deleted"),
-        (status = 401, description = "Unauthorized"),
-        (status = 404, description = "Site not found")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn delete_site(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -236,24 +185,11 @@ pub async fn delete_site(
     Ok(StatusCode::NO_CONTENT)
 }
 
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Deserialize)]
 pub struct UpdateSiteRequest {
     pub config: serde_json::Value,
 }
 
-#[utoipa::path(
-    put,
-    path = "/sites/{site_id}",
-    tag = "Sites",
-    responses(
-        (status = 200, description = "Site updated"),
-        (status = 401, description = "Unauthorized"),
-        (status = 404, description = "Site not found")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn update_site(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -338,7 +274,7 @@ pub async fn update_site(
     }))
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct SiteThemeResponse {
     pub site_id: String,
     pub preset: Option<String>,
@@ -346,7 +282,7 @@ pub struct SiteThemeResponse {
     pub allow_only: Option<String>,
 }
 
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Deserialize)]
 pub struct UpdateSiteThemeRequest {
     #[serde(default)]
     pub preset: Option<String>,
@@ -356,19 +292,6 @@ pub struct UpdateSiteThemeRequest {
     pub allow_only: Option<String>,
 }
 
-#[utoipa::path(
-    get,
-    path = "/sites/{site_id}/theme",
-    tag = "Sites",
-    responses(
-        (status = 200, description = "Site theme"),
-        (status = 401, description = "Unauthorized"),
-        (status = 404, description = "Site not found")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn get_site_theme(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -388,19 +311,6 @@ pub async fn get_site_theme(
     }))
 }
 
-#[utoipa::path(
-    put,
-    path = "/sites/{site_id}/theme",
-    tag = "Sites",
-    responses(
-        (status = 200, description = "Site theme updated"),
-        (status = 401, description = "Unauthorized"),
-        (status = 404, description = "Site not found")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn update_site_theme(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,

@@ -11,18 +11,6 @@ pub struct MainConfigResponse {
     pub config: crate::config::main::MainConfig,
 }
 
-#[utoipa::path(
-    get,
-    path = "/config/main",
-    tag = "Config",
-    responses(
-        (status = 200, description = "Main configuration"),
-        (status = 401, description = "Unauthorized - missing or invalid bearer token")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn get_main_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -39,7 +27,7 @@ pub struct UpdateMainConfigRequest {
     pub config: crate::config::main::MainConfig,
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct ConfigFieldSchema {
     pub path: String,
     pub label: String,
@@ -50,18 +38,6 @@ pub struct ConfigFieldSchema {
     pub options: Option<Vec<String>>,
 }
 
-#[utoipa::path(
-    get,
-    path = "/config/schema",
-    tag = "Config",
-    responses(
-        (status = 200, description = "Configuration schema", body = [ConfigFieldSchema]),
-        (status = 401, description = "Unauthorized - missing or invalid bearer token")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn get_config_schema(
     State(_state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -1028,18 +1004,6 @@ pub async fn update_main_config(
     )))
 }
 
-#[utoipa::path(
-    post,
-    path = "/config/reload",
-    tag = "Config",
-    responses(
-        (status = 200, description = "Configuration reloaded", body = [StatusResponse]),
-        (status = 401, description = "Unauthorized - missing or invalid bearer token")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn reload_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -1125,25 +1089,11 @@ pub async fn reload_config(
     }))
 }
 
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Deserialize)]
 pub struct SetLogLevelRequest {
     pub level: String,
 }
 
-#[utoipa::path(
-    put,
-    path = "/config/log-level",
-    tag = "Config",
-    request_body = SetLogLevelRequest,
-    responses(
-        (status = 200, description = "Log level updated", body = [StatusResponse]),
-        (status = 400, description = "Invalid log level"),
-        (status = 401, description = "Unauthorized - missing or invalid bearer token")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn set_log_level(
     State(_state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -1161,18 +1111,6 @@ pub async fn set_log_level(
     }
 }
 
-#[utoipa::path(
-    get,
-    path = "/config/log-level",
-    tag = "Config",
-    responses(
-        (status = 200, description = "Current log level", body = [StatusResponse]),
-        (status = 401, description = "Unauthorized - missing or invalid bearer token")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn get_log_level(
     State(_state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -1184,18 +1122,6 @@ pub async fn get_log_level(
     }))
 }
 
-#[utoipa::path(
-    get,
-    path = "/config/export",
-    tag = "Config",
-    responses(
-        (status = 200, description = "Exported configuration as TOML"),
-        (status = 401, description = "Unauthorized - missing or invalid bearer token")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn export_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -1209,26 +1135,11 @@ pub async fn export_config(
     Ok(toml_content)
 }
 
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Deserialize)]
 pub struct ImportConfigRequest {
     pub config: String,
 }
 
-#[utoipa::path(
-    post,
-    path = "/config/import",
-    tag = "Config",
-    request_body = ImportConfigRequest,
-    responses(
-        (status = 200, description = "Configuration imported", body = [StatusResponse]),
-        (status = 400, description = "Invalid configuration"),
-        (status = 401, description = "Unauthorized - missing or invalid bearer token"),
-        (status = 500, description = "Internal server error")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn import_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -1277,31 +1188,18 @@ pub async fn import_config(
 
 use crate::utils::check_regex_complexity;
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct RegexCheckResult {
     pub pattern: String,
     pub safe: bool,
     pub reason: Option<String>,
 }
 
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Deserialize)]
 pub struct CheckRegexRequest {
     pub pattern: String,
 }
 
-#[utoipa::path(
-    post,
-    path = "/config/check-regex",
-    tag = "Config",
-    request_body = CheckRegexRequest,
-    responses(
-        (status = 200, description = "Regex check result", body = [RegexCheckResult]),
-        (status = 401, description = "Unauthorized - missing or invalid bearer token")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn check_regex(
     State(_state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -1316,28 +1214,16 @@ pub async fn check_regex(
     }))
 }
 
-#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct OverseerConfigResponse {
     pub config: crate::config::OverseerConfig,
 }
 
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Deserialize)]
 pub struct UpdateOverseerConfigRequest {
     pub config: crate::config::OverseerConfig,
 }
 
-#[utoipa::path(
-    get,
-    path = "/config/overseer",
-    tag = "Config",
-    responses(
-        (status = 200, description = "Overseer configuration", body = [OverseerConfigResponse]),
-        (status = 401, description = "Unauthorized")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn get_overseer_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -1348,19 +1234,6 @@ pub async fn get_overseer_config(
     }))
 }
 
-#[utoipa::path(
-    put,
-    path = "/config/overseer",
-    tag = "Config",
-    request_body = UpdateOverseerConfigRequest,
-    responses(
-        (status = 200, description = "Overseer configuration updated", body = [StatusResponse]),
-        (status = 401, description = "Unauthorized")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn update_overseer_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -1425,28 +1298,16 @@ pub async fn update_overseer_config(
     )))
 }
 
-#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ProcessManagerConfigResponse {
     pub config: crate::config::ProcessManagerConfig,
 }
 
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Deserialize)]
 pub struct UpdateProcessManagerConfigRequest {
     pub config: crate::config::ProcessManagerConfig,
 }
 
-#[utoipa::path(
-    get,
-    path = "/config/process-manager",
-    tag = "Config",
-    responses(
-        (status = 200, description = "Process manager configuration", body = [ProcessManagerConfigResponse]),
-        (status = 401, description = "Unauthorized")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn get_process_manager_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -1463,19 +1324,6 @@ pub async fn get_process_manager_config(
     }
 }
 
-#[utoipa::path(
-    put,
-    path = "/config/process-manager",
-    tag = "Config",
-    request_body = UpdateProcessManagerConfigRequest,
-    responses(
-        (status = 200, description = "Process manager configuration updated", body = [StatusResponse]),
-        (status = 401, description = "Unauthorized")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn update_process_manager_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -1527,28 +1375,16 @@ pub async fn update_process_manager_config(
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct SupervisorConfigResponse {
     pub config: crate::config::SupervisorConfig,
 }
 
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Deserialize)]
 pub struct UpdateSupervisorConfigRequest {
     pub config: crate::config::SupervisorConfig,
 }
 
-#[utoipa::path(
-    get,
-    path = "/config/supervisor",
-    tag = "Config",
-    responses(
-        (status = 200, description = "Supervisor configuration", body = [SupervisorConfigResponse]),
-        (status = 401, description = "Unauthorized")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn get_supervisor_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -1559,19 +1395,6 @@ pub async fn get_supervisor_config(
     }))
 }
 
-#[utoipa::path(
-    put,
-    path = "/config/supervisor",
-    tag = "Config",
-    request_body = UpdateSupervisorConfigRequest,
-    responses(
-        (status = 200, description = "Supervisor configuration updated", body = [StatusResponse]),
-        (status = 401, description = "Unauthorized")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn update_supervisor_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,

@@ -1,3 +1,4 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::metrics::bandwidth::{MonthlyResetConfig, MonthlyResetMode};
@@ -18,7 +19,7 @@ const fn default_monthly_cap_egress() -> u64 {
     0
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Default, JsonSchema)]
 pub enum BandwidthLimitAction {
     #[serde(rename = "block")]
     #[default]
@@ -27,7 +28,7 @@ pub enum BandwidthLimitAction {
     Throttle,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
 pub struct BandwidthConfig {
     #[serde(default = "default_bandwidth_retention_days")]
     pub retention_days: u32,
@@ -79,7 +80,7 @@ impl BandwidthConfig {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
 pub struct TrafficShapingConfig {
     #[serde(default = "default_ts_enabled")]
     pub enabled: bool,
@@ -106,7 +107,7 @@ fn default_ts_enabled() -> bool {
     true
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
 pub struct GlobalTrafficShapingConfig {
     #[serde(default = "default_ingress_max")]
     pub ingress_max_mb_s: u64,
@@ -148,7 +149,7 @@ fn default_attack_multiplier() -> f64 {
     0.5
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
 pub struct ConnectionLimitsConfig {
     #[serde(default = "default_max_connections")]
     pub max_connections: u32,
@@ -190,7 +191,7 @@ fn default_connection_burst() -> u32 {
     5
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
 pub struct TrafficShapingDefaults {
     #[serde(default = "default_ts_enabled")]
     pub enabled: bool,
@@ -207,7 +208,7 @@ impl Default for TrafficShapingDefaults {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
 pub struct SiteTrafficShapingDefaults {
     #[serde(default = "default_site_ingress_max")]
     pub ingress_max_mb_s: u64,
@@ -240,7 +241,7 @@ fn default_site_burst_allowance() -> u64 {
     5
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct SiteConnectionDefaults {
     #[serde(default = "default_site_max_connections")]
     pub max_connections: Option<u32>,

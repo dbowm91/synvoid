@@ -1,3 +1,4 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 fn default_ipc_enforce_signing() -> bool {
@@ -8,7 +9,7 @@ fn default_global_security_headers() -> bool {
     true
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct MainSecurityConfig {
     #[serde(default)]
     pub more_clear_headers: Vec<String>,
@@ -28,7 +29,7 @@ fn default_sanitize_forwarded() -> bool {
     true
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct MainStaticConfig {
     #[serde(default = "default_static_worker_enabled")]
     pub enabled: Option<bool>,

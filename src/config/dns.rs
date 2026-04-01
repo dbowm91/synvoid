@@ -1,6 +1,7 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum DnsMode {
     #[default]
@@ -8,7 +9,7 @@ pub enum DnsMode {
     Mesh,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum DnsRateLimitMode {
     #[default]
@@ -16,7 +17,7 @@ pub enum DnsRateLimitMode {
     Dedicated,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct DnsConfig {
     #[serde(default)]
@@ -91,7 +92,7 @@ fn default_dns_port() -> u16 {
     53
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct DnsRateLimitConfig {
     #[serde(default)]
@@ -112,7 +113,7 @@ fn default_dns_per_minute() -> u64 {
     5000
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct DnsSettingsConfig {
     #[serde(default = "default_dns_ttl")]
@@ -179,7 +180,7 @@ pub struct DnsSettingsConfig {
     pub qname_privacy: QnamePrivacyConfig,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(default)]
 pub struct DnsPaddingConfig {
     #[serde(default = "default_padding_enabled")]
@@ -204,7 +205,7 @@ fn default_padding_mode() -> DnsPaddingMode {
     DnsPaddingMode::Normal
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum DnsPaddingMode {
     #[default]
@@ -212,7 +213,7 @@ pub enum DnsPaddingMode {
     Block,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(default)]
 pub struct QnamePrivacyConfig {
     #[serde(default = "default_qname_privacy_enabled")]
@@ -237,7 +238,7 @@ fn default_qname_log_level() -> QnameLogLevel {
     QnameLogLevel::Zone
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum QnamePrivacyMode {
     #[default]
@@ -246,7 +247,7 @@ pub enum QnamePrivacyMode {
     Full,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum QnameLogLevel {
     #[default]
@@ -255,7 +256,7 @@ pub enum QnameLogLevel {
     Hidden,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(default)]
 pub struct QueryCoalescingConfig {
     #[serde(default = "default_coalescing_enabled")]
@@ -294,7 +295,7 @@ fn default_coalescing_cleanup_interval() -> u64 {
     10
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(default)]
 pub struct DynamicUpdateConfig {
     #[serde(default = "default_dynamic_update_enabled")]
@@ -311,7 +312,7 @@ fn default_dynamic_update_enabled() -> bool {
     false
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(default)]
 pub struct NotifyConfig {
     #[serde(default = "default_notify_enabled")]
@@ -325,7 +326,7 @@ fn default_notify_enabled() -> bool {
     false
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct EcsFilteringConfig {
     #[serde(default = "default_ecs_enabled")]
@@ -405,7 +406,7 @@ fn default_require_tsig() -> bool {
     true
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(default)]
 pub struct ServeStaleConfig {
     #[serde(default = "default_serve_stale_enabled")]
@@ -430,7 +431,7 @@ fn default_serve_stale_max_count() -> usize {
     100
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(default)]
 pub struct DnsRrlConfig {
     #[serde(default = "default_rrl_enabled")]
@@ -469,7 +470,7 @@ fn default_rrl_ttl() -> u32 {
     300
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum FirewallAction {
     #[default]
@@ -477,7 +478,7 @@ pub enum FirewallAction {
     Block,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(default)]
 pub struct DnsFirewallConfig {
     #[serde(default)]
@@ -503,7 +504,7 @@ fn default_firewall_max_rules() -> usize {
     1000
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(default)]
 pub struct RebindingProtectionConfig {
     #[serde(default = "default_true")]
@@ -523,7 +524,7 @@ fn default_min_rebinding_ttl() -> u32 {
     1800
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(default)]
 pub struct DnsLimitsConfig {
     #[serde(default = "default_max_tcp_connections")]
@@ -586,7 +587,7 @@ fn default_udp_buffer_size() -> usize {
     65535
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(default)]
 pub struct DnsDotConfig {
     #[serde(default)]
@@ -612,7 +613,7 @@ fn default_dot_port() -> u16 {
     853
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(default)]
 pub struct DnsDohConfig {
     #[serde(default)]
@@ -648,7 +649,7 @@ fn default_doh_path() -> String {
     "/dns-query".to_string()
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(default)]
 pub struct DnsDoqConfig {
     #[serde(default)]
@@ -688,7 +689,7 @@ fn default_doq_idle_timeout() -> u64 {
     30
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(default)]
 pub struct DnsRpzConfig {
     #[serde(default)]
@@ -719,7 +720,7 @@ pub struct DnsRpzConfig {
     pub default_action: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct Dns64Config {
     #[serde(default)]
@@ -746,7 +747,7 @@ impl Default for Dns64Config {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct DnsPrefetchConfig {
     #[serde(default)]
@@ -785,7 +786,7 @@ impl Default for DnsPrefetchConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct TrustAnchorConfig {
     #[serde(default)]
@@ -860,7 +861,7 @@ impl Default for TrustAnchorConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct DnsMeshConfig {
     #[serde(default = "default_true")]
@@ -913,13 +914,13 @@ fn default_upstream_dns_servers() -> Vec<String> {
     vec![]
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 pub struct DnsZonesConfig {
     #[serde(default)]
     pub items: Vec<DnsZoneEntry>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct DnsZoneEntry {
     pub zone: String,
 
@@ -930,7 +931,7 @@ pub struct DnsZoneEntry {
     pub dnssec: Option<DnsZoneDnssecConfig>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct DnsZoneDnssecConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -951,7 +952,7 @@ pub struct DnsZoneDnssecConfig {
     pub nsec3_algorithm: Option<u8>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum DnsRecordType {
     A,
@@ -977,7 +978,7 @@ pub enum DnsRecordType {
     Other,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct DnsRecordEntry {
     pub name: String,
 
@@ -1001,7 +1002,7 @@ fn default_record_ttl() -> Option<u32> {
     None
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum DnsSecAlgorithm {
     #[default]
@@ -1017,7 +1018,7 @@ pub enum DnsSecKeyType {
     Ksk,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum TsigAlgorithm {
     #[default]
@@ -1027,9 +1028,8 @@ pub enum TsigAlgorithm {
     HmacSha512,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 #[serde(default)]
-#[derive(Default)]
 pub struct TsigKeyConfig {
     pub name: String,
     pub secret_base64: String,
@@ -1067,7 +1067,7 @@ impl TsigAlgorithm {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct DnsSecConfig {
     #[serde(default)]
@@ -1110,7 +1110,7 @@ pub struct DnsSecConfig {
     pub hsm: HsmConfig,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(default)]
 pub struct HsmConfig {
     #[serde(default)]
@@ -1129,7 +1129,7 @@ pub struct HsmConfig {
     pub pin: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum HsmProvider {
     #[default]
@@ -1483,7 +1483,7 @@ impl DnsMeshConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct DnsAnycastConfig {
     #[serde(default)]
@@ -1582,7 +1582,7 @@ impl DnsAnycastConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum RecursiveUpstreamProvider {
     #[default]
@@ -1594,7 +1594,7 @@ pub enum RecursiveUpstreamProvider {
     GlobalNodes,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct RecursiveUpstreamServer {
     #[serde(default)]
@@ -1617,7 +1617,7 @@ impl Default for RecursiveUpstreamServer {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct RecursiveCacheConfig {
     #[serde(default = "default_recursive_cache_size")]
@@ -1668,7 +1668,7 @@ impl Default for RecursiveCacheConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct RecursiveDnsConfig {
     #[serde(default)]

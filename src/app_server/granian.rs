@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use bytes::Bytes;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
@@ -770,6 +771,57 @@ impl GranianSupervisor {
             let port = self.config.port.unwrap_or(8000);
             format!("http://{}:{}", host, port)
         }
+    }
+
+    pub async fn forward_request(
+        &self,
+        method: http::Method,
+        path: &str,
+        headers: &http::HeaderMap<http::HeaderValue>,
+        body: Bytes,
+    ) -> Result<http::Response<Bytes>, String> {
+        let socket_path = self.config.resolve_socket_path();
+
+        #[cfg(unix)]
+        let url = { format!("http://unix:{}:{}", socket_path.display(), path) };
+
+        #[cfg(not(unix))]
+        let url = {
+            let host = self.config.host.as_deref().unwrap_or("127.0.0.1");
+            let port = self.config.port.unwrap_or(8000);
+            format!("http://{}:{}{}", host, port, path)
+        };
+
+        let client = crate::http_client::create_http_client_with_config(
+            std::time::Duration::from_secs(30),
+            10,
+            std::time::Duration::from_secs(60),
+        );
+
+        let mut builder = http::Request::builder().method(method.clone()).uri(&url);
+
+        for (name, value) in headers.iter() {
+            builder = builder.header(name, value);
+        }
+
+        builder
+            .body(body)
+            .map_err(|e| format!("Failed to build request: {}", e))?;
+
+        let response =
+            crate::http_client::get_with_timeout(&client, &url, std::time::Duration::from_secs(30))
+                .await
+                .map_err(|e| format!("Granian request failed: {}", e))?;
+
+        let mut builder = http::Response::builder().status(response.status);
+        for name in response.headers.keys() {
+            if let Some(value) = response.headers.get(name) {
+                builder = builder.header(name, value);
+            }
+        }
+        builder
+            .body(response.body)
+            .map_err(|e| format!("Failed to build response: {}", e))
     }
 }
 

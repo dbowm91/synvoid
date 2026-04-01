@@ -1,8 +1,9 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::validation::ConfigValidationError;
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
 pub struct ServerConfig {
     pub host: String,
     pub port: u16,
@@ -58,7 +59,7 @@ impl ServerConfig {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
 pub struct FallbackConfig {
     #[serde(default = "default_fallback_mode")]
     pub mode: String,

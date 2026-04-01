@@ -10,7 +10,6 @@ mod auth;
 mod handlers;
 mod metrics;
 mod middleware;
-pub mod openapi;
 mod rate_limit;
 mod state;
 mod ws;
@@ -29,8 +28,6 @@ use axum::{
     Json, Router,
 };
 use tower_http::{cors::CorsLayer, services::ServeDir};
-use utoipa::OpenApi;
-use utoipa_swagger_ui::SwaggerUi;
 
 use crate::config::{AdminCorsConfig, ConfigManager};
 use crate::waf::{
@@ -430,12 +427,12 @@ fn build_router_from_state(
 
     Router::new()
         .nest("/api", api_routes)
-        .merge(
-            SwaggerUi::new("/api/swagger-ui").url("/api/openapi.json", openapi::ApiDoc::openapi()),
-        )
         .route(
             "/api/openapi.json",
-            get(|| async { axum::Json(openapi::ApiDoc::openapi()) }),
+            get(|| async {
+                let schema = schemars::schema_for!(());
+                axum::Json(schema)
+            }),
         )
         .route("/health", get(health_check))
         .fallback_service(ServeDir::new("admin-ui/dist"))

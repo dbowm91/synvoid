@@ -18,6 +18,7 @@ pub mod process;
 pub mod protection;
 pub mod security;
 pub mod server;
+pub mod serverless;
 pub mod site;
 pub mod tls;
 pub mod traffic;
@@ -66,6 +67,7 @@ pub use protection::{
 };
 pub use security::{MainSecurityConfig, MainStaticConfig};
 pub use server::{FallbackConfig, ServerConfig};
+pub use serverless::{FunctionDefinition, ServerlessConfig};
 pub use tls::{AcmeChallengeType, AcmeConfig, ClientAuthConfig, TlsConfig};
 pub use traffic::{
     ConnectionLimitsConfig, GlobalTrafficShapingConfig, SiteConnectionDefaults,

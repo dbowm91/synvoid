@@ -21,6 +21,7 @@ use crate::waf::{AttackDetectionConfig, FloodProtector, RateLimitConfigStore, Wa
 use crate::worker::drain_state::WorkerDrainState;
 
 #[derive(Clone)]
+#[allow(dead_code)]
 struct ServerSharedState {
     config: Arc<RwLock<ConfigManager>>,
     router: Arc<Router>,
@@ -31,6 +32,7 @@ struct ServerSharedState {
     metrics: Option<Arc<WorkerMetrics>>,
     ipc: Option<Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>>,
     worker_id: Option<WorkerId>,
+    serverless_manager: Option<Arc<crate::serverless::manager::ServerlessManager>>,
 }
 
 #[derive(Clone)]
@@ -60,6 +62,7 @@ pub struct UnifiedServer {
     metrics: Option<Arc<WorkerMetrics>>,
     ipc: Option<Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>>,
     worker_id: Option<WorkerId>,
+    serverless_manager: Option<Arc<crate::serverless::manager::ServerlessManager>>,
 
     // DNS Server
     #[cfg(feature = "dns")]
@@ -282,6 +285,18 @@ impl UnifiedServer {
 
             if !dns_cfg.enabled {
                 (None, None, None, None)
+            } else if !cfg
+                .main
+                .tunnel
+                .mesh
+                .as_ref()
+                .map(|m| m.role.is_global())
+                .unwrap_or(false)
+            {
+                tracing::warn!(
+                    "DNS server is only available on global mesh nodes. Refusing to start DNS server on non-global node."
+                );
+                (None, None, None, None)
             } else {
                 let bind_addr: SocketAddr = format!("{}:{}", dns_cfg.bind_address, dns_cfg.port)
                     .parse()
@@ -389,6 +404,7 @@ impl UnifiedServer {
             metrics: None,
             ipc: None,
             worker_id: None,
+            serverless_manager: None,
             #[cfg(feature = "dns")]
             _dns_config: dns_config,
             #[cfg(feature = "dns")]
@@ -417,6 +433,14 @@ impl UnifiedServer {
     ) -> Self {
         self.ipc = Some(ipc);
         self.worker_id = Some(worker_id);
+        self
+    }
+
+    pub fn with_serverless_manager(
+        mut self,
+        manager: Arc<crate::serverless::manager::ServerlessManager>,
+    ) -> Self {
+        self.serverless_manager = Some(manager);
         self
     }
 
@@ -775,6 +799,7 @@ impl UnifiedServer {
             metrics: self.metrics.clone(),
             ipc: self.ipc.clone(),
             worker_id: self.worker_id,
+            serverless_manager: self.serverless_manager.clone(),
         });
 
         let http_jh = {

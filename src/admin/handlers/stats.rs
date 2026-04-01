@@ -10,7 +10,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-#[derive(Debug, Serialize, Deserialize, Clone, utoipa::ToSchema)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SystemStats {
     pub uptime_secs: u64,
     pub total_requests: u64,
@@ -35,7 +35,7 @@ pub struct SystemStats {
     pub time_validation_errors: u64,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, utoipa::ToSchema)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SiteStats {
     pub site_id: String,
     pub domains: Vec<String>,
@@ -58,18 +58,6 @@ pub struct SiteStats {
     pub mesh_bytes_received: u64,
 }
 
-#[utoipa::path(
-    get,
-    path = "/stats/summary",
-    tag = "Stats",
-    responses(
-        (status = 200, description = "System statistics", body = [SystemStats]),
-        (status = 401, description = "Unauthorized - missing or invalid bearer token")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn get_summary(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -108,18 +96,6 @@ pub async fn get_summary(
     Ok(Json(stats))
 }
 
-#[utoipa::path(
-    get,
-    path = "/stats/sites",
-    tag = "Stats",
-    responses(
-        (status = 200, description = "Per-site statistics", body = [SiteStats]),
-        (status = 401, description = "Unauthorized - missing or invalid bearer token")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn get_sites_stats(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -171,26 +147,11 @@ pub async fn get_sites_stats(
     Ok(Json(site_stats))
 }
 
-#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct MetricsHistoryParams {
     pub seconds: Option<u64>,
 }
 
-#[utoipa::path(
-    get,
-    path = "/stats/history",
-    tag = "Stats",
-    params(
-        ("seconds" = Option<u64>, Query, description = "Number of seconds of history to return (default 300)")
-    ),
-    responses(
-        (status = 200, description = "Historical metrics data"),
-        (status = 401, description = "Unauthorized - missing or invalid bearer token")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn get_metrics_history(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -202,24 +163,12 @@ pub async fn get_metrics_history(
     Ok(Json(history))
 }
 
-#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct AttackStats {
     pub total_blocked: u64,
     pub by_type: std::collections::HashMap<String, u64>,
 }
 
-#[utoipa::path(
-    get,
-    path = "/stats/attacks",
-    tag = "Stats",
-    responses(
-        (status = 200, description = "Attack statistics", body = [AttackStats]),
-        (status = 401, description = "Unauthorized - missing or invalid bearer token")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn get_attack_stats(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -234,7 +183,7 @@ pub async fn get_attack_stats(
     Ok(Json(stats))
 }
 
-#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct CacheStats {
     pub proxy_cache_hits: u64,
     pub proxy_cache_misses: u64,
@@ -244,18 +193,6 @@ pub struct CacheStats {
     pub static_cache_hit_rate: f64,
 }
 
-#[utoipa::path(
-    get,
-    path = "/stats/cache",
-    tag = "Stats",
-    responses(
-        (status = 200, description = "Cache statistics", body = [CacheStats]),
-        (status = 401, description = "Unauthorized - missing or invalid bearer token")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn get_cache_stats(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -296,18 +233,6 @@ pub async fn get_cache_stats(
 
 use crate::metrics::bandwidth::{get_global_bandwidth_tracker, BandwidthPayload};
 
-#[utoipa::path(
-    get,
-    path = "/stats/bandwidth",
-    tag = "Stats",
-    responses(
-        (status = 200, description = "Bandwidth statistics"),
-        (status = 401, description = "Unauthorized - missing or invalid bearer token")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn get_bandwidth(
     State(_state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -321,7 +246,7 @@ pub async fn get_bandwidth(
     Ok(Json(payload))
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, utoipa::ToSchema)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct RequestLogResponse {
     pub id: String,
     pub timestamp: String,
@@ -336,14 +261,14 @@ pub struct RequestLogResponse {
     pub bytes_received: u64,
 }
 
-#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct RequestLogsResponse {
     pub entries: Vec<RequestLogResponse>,
     pub total: usize,
     pub has_more: bool,
 }
 
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Deserialize)]
 pub struct RequestLogsQuery {
     pub site_id: Option<String>,
     pub method: Option<String>,
@@ -353,26 +278,6 @@ pub struct RequestLogsQuery {
     pub offset: Option<usize>,
 }
 
-#[utoipa::path(
-    get,
-    path = "/stats/requests",
-    tag = "Stats",
-    params(
-        ("site_id" = Option<String>, Query, description = "Filter by site ID"),
-        ("method" = Option<String>, Query, description = "Filter by HTTP method"),
-        ("status" = Option<String>, Query, description = "Filter by status code (2xx, 3xx, 4xx, 5xx)"),
-        ("search" = Option<String>, Query, description = "Search in path or IP"),
-        ("limit" = Option<usize>, Query, description = "Maximum entries to return"),
-        ("offset" = Option<usize>, Query, description = "Number of entries to skip")
-    ),
-    responses(
-        (status = 200, description = "Request log entries", body = [RequestLogsResponse]),
-        (status = 401, description = "Unauthorized - missing or invalid bearer token")
-    ),
-    security(
-        ("bearerAuth" = [])
-    )
-)]
 pub async fn get_request_logs(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,

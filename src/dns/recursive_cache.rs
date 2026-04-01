@@ -7,7 +7,7 @@ use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use lru_time_cache::LruCache;
+use moka::sync::Cache;
 use parking_lot::RwLock;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -149,8 +149,8 @@ pub struct RecursiveDnsCache {
 }
 
 struct InnerRecursiveCache {
-    positive_cache: RwLock<LruCache<RecursiveCacheKey, PositiveCacheEntry>>,
-    negative_cache: RwLock<LruCache<RecursiveCacheKey, NegativeCacheEntry>>,
+    positive_cache: Cache<RecursiveCacheKey, PositiveCacheEntry>,
+    negative_cache: Cache<RecursiveCacheKey, NegativeCacheEntry>,
     config: CacheConfig,
     stats: RwLock<RecursiveCacheStats>,
 }
@@ -165,13 +165,13 @@ struct CacheConfig {
 
 impl RecursiveDnsCache {
     pub fn new(capacity: usize, cache_config: &crate::config::dns::RecursiveCacheConfig) -> Self {
-        let positive_cache = LruCache::with_capacity(capacity);
-        let negative_cache = LruCache::with_capacity(capacity / 10);
+        let positive_cache = Cache::new(capacity as u64);
+        let negative_cache = Cache::new((capacity / 10) as u64);
 
         Self {
             inner: Arc::new(InnerRecursiveCache {
-                positive_cache: RwLock::new(positive_cache),
-                negative_cache: RwLock::new(negative_cache),
+                positive_cache,
+                negative_cache,
                 config: CacheConfig {
                     negative_ttl: Duration::from_secs(cache_config.negative_ttl_secs),
                     stale_ttl: Duration::from_secs(cache_config.stale_ttl_secs),
@@ -187,7 +187,7 @@ impl RecursiveDnsCache {
         let inner = &self.inner;
         let now = Instant::now();
 
-        if let Some(entry) = inner.positive_cache.write().get(key) {
+        if let Some(entry) = inner.positive_cache.get(key) {
             let age = now.duration_since(entry.cached_at);
             let is_stale = age >= entry.ttl && age < entry.ttl + inner.config.stale_ttl;
             let is_validated = entry.is_dnssec_validated;
@@ -203,7 +203,7 @@ impl RecursiveDnsCache {
             }
         }
 
-        if let Some(nx_entry) = inner.negative_cache.write().get(key) {
+        if let Some(nx_entry) = inner.negative_cache.get(key) {
             let age = now.duration_since(nx_entry.cached_at);
 
             if age < nx_entry.ncache_ttl {
@@ -244,8 +244,7 @@ impl RecursiveDnsCache {
             is_dnssec_validated,
         };
 
-        let mut cache = inner.positive_cache.write();
-        cache.insert(key, entry);
+        inner.positive_cache.insert(key, entry);
         inner.stats.write().insertions += 1;
     }
 
@@ -262,37 +261,36 @@ impl RecursiveDnsCache {
             is_nxdomain,
         };
 
-        let mut cache = inner.negative_cache.write();
-        cache.insert(key, entry);
+        inner.negative_cache.insert(key, entry);
         inner.stats.write().insertions += 1;
     }
 
     pub fn invalidate(&self, qname: &[u8]) {
         let inner = &self.inner;
 
-        let mut positive_cache = inner.positive_cache.write();
-        let keys_to_remove: Vec<RecursiveCacheKey> = positive_cache
+        let keys_to_remove: Vec<RecursiveCacheKey> = inner
+            .positive_cache
             .iter()
             .filter(|(key, _)| key.qname == qname)
-            .map(|(key, _)| key.clone())
+            .map(|(key, _)| (*key).clone())
             .collect();
 
         let mut removed_count = 0;
         for key in keys_to_remove {
-            if positive_cache.remove(&key).is_some() {
+            if inner.positive_cache.remove(&key).is_some() {
                 removed_count += 1;
             }
         }
 
-        let mut negative_cache = inner.negative_cache.write();
-        let nx_keys_to_remove: Vec<RecursiveCacheKey> = negative_cache
+        let nx_keys_to_remove: Vec<RecursiveCacheKey> = inner
+            .negative_cache
             .iter()
             .filter(|(key, _)| key.qname == qname)
-            .map(|(key, _)| key.clone())
+            .map(|(key, _)| (*key).clone())
             .collect();
 
         for key in nx_keys_to_remove {
-            if negative_cache.remove(&key).is_some() {
+            if inner.negative_cache.remove(&key).is_some() {
                 removed_count += 1;
             }
         }
@@ -304,8 +302,8 @@ impl RecursiveDnsCache {
 
     pub fn invalidate_all(&self) {
         let inner = &self.inner;
-        inner.positive_cache.write().clear();
-        inner.negative_cache.write().clear();
+        inner.positive_cache.invalidate_all();
+        inner.negative_cache.invalidate_all();
         inner.stats.write().invalidations += 1;
     }
 
@@ -315,20 +313,20 @@ impl RecursiveDnsCache {
 
     pub fn len(&self) -> usize {
         let inner = &self.inner;
-        inner.positive_cache.read().len() + inner.negative_cache.read().len()
+        inner.positive_cache.entry_count() as usize + inner.negative_cache.entry_count() as usize
     }
 
     pub fn is_empty(&self) -> bool {
         let inner = &self.inner;
-        inner.positive_cache.read().is_empty() && inner.negative_cache.read().is_empty()
+        inner.positive_cache.entry_count() == 0 && inner.negative_cache.entry_count() == 0
     }
 
     pub fn positive_len(&self) -> usize {
-        self.inner.positive_cache.read().len()
+        self.inner.positive_cache.entry_count() as usize
     }
 
     pub fn negative_len(&self) -> usize {
-        self.inner.negative_cache.read().len()
+        self.inner.negative_cache.entry_count() as usize
     }
 }
 

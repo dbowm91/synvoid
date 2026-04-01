@@ -15,9 +15,9 @@ struct IpcConnectionPoolInner {
 }
 
 #[derive(Clone)]
+#[allow(dead_code)]
 struct PoolConfig {
     max_connections_per_endpoint: usize,
-    #[allow(dead_code)]
     connection_ttl: Duration,
 }
 

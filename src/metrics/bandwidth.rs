@@ -1,5 +1,6 @@
 use chrono::{DateTime, Datelike, TimeZone, Utc};
 use parking_lot::RwLock;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -78,7 +79,7 @@ pub fn create_bandwidth_tracker(retention_days: u32, mesh_excluded: bool) -> Arc
     Arc::new(BandwidthTracker::new(retention_days, mesh_excluded))
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct MonthlyResetConfig {
     pub mode: MonthlyResetMode,
     pub fixed_day: Option<u32>,
@@ -93,7 +94,7 @@ impl Default for MonthlyResetConfig {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub enum MonthlyResetMode {
     #[serde(rename = "rolling_30_days")]
     Rolling30Days,
