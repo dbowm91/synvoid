@@ -34,9 +34,6 @@ use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-#[cfg(feature = "dns")]
-use crate::dns::server::Zone as DnsZone;
-
 use lru_time_cache::LruCache;
 
 use bytes::Bytes;
@@ -113,8 +110,7 @@ pub struct MeshTransport {
     #[cfg(feature = "dns")]
     pub(crate) dns_registry: Option<Arc<crate::dns::MeshDnsRegistry>>,
     #[cfg(feature = "dns")]
-    #[allow(clippy::type_complexity)]
-    pub(crate) dns_zones: Arc<RwLock<Option<Arc<RwLock<HashMap<String, DnsZone>>>>>>,
+    pub(crate) dns_zones: Arc<RwLock<Option<Arc<crate::dns::server::ShardedZoneStore>>>>,
     #[allow(clippy::type_complexity)]
     pub(crate) site_config_sync_tx: Arc<RwLock<Option<mpsc::Sender<(String, String)>>>>,
 }
@@ -384,7 +380,7 @@ impl MeshTransport {
     }
 
     #[cfg(feature = "dns")]
-    pub fn set_dns_zones(&self, zones: Arc<RwLock<HashMap<String, DnsZone>>>) {
+    pub fn set_dns_zones(&self, zones: Arc<crate::dns::server::ShardedZoneStore>) {
         let mut lock = self.dns_zones.write();
         *lock = Some(zones);
     }

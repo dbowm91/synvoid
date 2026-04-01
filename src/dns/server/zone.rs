@@ -2,8 +2,6 @@ use super::*;
 
 impl DnsServer {
     pub fn load_zones(&self, zone_configs: Vec<DnsZoneEntry>) -> Result<(), String> {
-        let mut zones = self.zones.write();
-
         for zone_config in zone_configs {
             let mut zone = Zone::new(zone_config.zone.clone());
             zone.dnskey_ttl = Some(3600);
@@ -83,10 +81,9 @@ impl DnsServer {
             }
 
             tracing::info!("Loaded DNS zone: {} (serial: {})", zone.origin, zone.serial);
-            zones.insert(zone.origin.clone(), zone);
+            self.zones.insert(zone.origin.clone(), zone);
         }
 
-        drop(zones);
         self.rebuild_zone_index();
 
         Ok(())
@@ -94,23 +91,19 @@ impl DnsServer {
 
     pub fn load_zones_from_store(&self, store: &ZoneStore) -> Result<(), String> {
         let stored_zones = store.load_zones()?;
-        let mut zones = self.zones.write();
 
         for (origin, zone) in stored_zones {
             tracing::info!("Loaded DNS zone from store: {}", origin);
-            zones.insert(origin, zone);
+            self.zones.insert(origin, zone);
         }
 
-        drop(zones);
         self.rebuild_zone_index();
 
         Ok(())
     }
 
     pub fn save_zones_to_store(&self, store: &ZoneStore) -> Result<(), String> {
-        let zones = self.zones.read();
-
-        for (origin, zone) in zones.iter() {
+        self.zones.for_each(|origin, zone| {
             let records: Vec<(String, RecordType, String, u32, Option<u32>)> = zone
                 .records
                 .values()
@@ -126,24 +119,18 @@ impl DnsServer {
                 })
                 .collect();
 
-            store.save_zone(origin, &records)?;
-        }
+            let _ = store.save_zone(origin, &records);
+        });
 
         Ok(())
     }
 
     pub fn add_record(&self, zone: &str, record: DnsZoneRecord) -> Result<(), String> {
-        let mut zones = self.zones.write();
-
-        let zone_entry = zones
-            .entry(zone.to_string())
-            .or_insert_with(|| Zone::new(zone.to_string()));
-
         let key = (record.name.clone(), record.record_type);
-        zone_entry.records.entry(key).or_default().push(record);
-
-        let zone_origin = zone_entry.origin.clone();
-        drop(zones);
+        let zone_origin = zone.to_string();
+        self.zones.get_or_create_and_update(zone, |zone_entry| {
+            zone_entry.records.entry(key).or_default().push(record);
+        });
 
         if let Some(ref cache) = self.cache {
             cache.invalidate_zone(&zone_origin);
@@ -218,12 +205,11 @@ impl DnsServer {
     }
 
     fn rebuild_zone_index(&self) {
-        let zones = self.zones.read();
         let mut index = Vec::new();
         let mut btree_index = BTreeMap::new();
         let mut trie = crate::dns::zone_trie::ZoneTrie::new();
 
-        for origin in zones.keys() {
+        self.zones.for_each(|origin, _zone| {
             let origin_lower = origin.to_lowercase();
             index.push((origin_lower.clone(), origin.clone()));
 
@@ -231,9 +217,8 @@ impl DnsServer {
             btree_index.insert(reversed, origin.clone());
 
             trie.insert(&origin_lower);
-        }
+        });
         index.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
-        drop(zones);
 
         *self.zone_index.write() = index;
         *self.zone_index_btree.write() = btree_index;
@@ -251,7 +236,7 @@ impl DnsServer {
         self
     }
 
-    pub fn get_zones(&self) -> Arc<RwLock<HashMap<String, Zone>>> {
+    pub fn get_zones(&self) -> Arc<ShardedZoneStore> {
         self.zones.clone()
     }
 

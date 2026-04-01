@@ -921,7 +921,13 @@ impl UnifiedServer {
         #[cfg(feature = "dns")]
         let dns_jh: Option<tokio::task::JoinHandle<()>> = {
             match &self.dns_server {
-                Some(dns_server) => {
+                Some(dns_server)
+                    if self
+                        .mesh_transport
+                        .as_ref()
+                        .map(|mt| mt.is_global_node())
+                        .unwrap_or(true) =>
+                {
                     let dns_server = dns_server.clone();
                     Some(tokio::spawn(async move {
                         let mut server = (*dns_server).clone();
@@ -929,6 +935,10 @@ impl UnifiedServer {
                             tracing::error!("DNS server error: {}", e);
                         }
                     }))
+                }
+                Some(_) => {
+                    tracing::warn!("DNS server requires global mesh role; skipping start");
+                    None
                 }
                 None => None,
             }

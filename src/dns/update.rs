@@ -1,9 +1,8 @@
-use parking_lot::RwLock;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::server::{DnsZoneRecord, RecordType, Zone};
 use super::wire;
+use crate::dns::server::ShardedZoneStore;
 
 #[derive(Debug, Clone)]
 pub struct UpdateZone {
@@ -226,7 +225,7 @@ impl DynamicUpdate {
 
 #[derive(Clone)]
 pub struct DynamicUpdateHandler {
-    zones: Arc<RwLock<HashMap<String, Zone>>>,
+    zones: Arc<ShardedZoneStore>,
     enabled: bool,
     allow_any: bool,
     require_tsig: bool,
@@ -234,7 +233,7 @@ pub struct DynamicUpdateHandler {
 }
 
 impl DynamicUpdateHandler {
-    pub fn new(zones: Arc<RwLock<HashMap<String, Zone>>>) -> Self {
+    pub fn new(zones: Arc<ShardedZoneStore>) -> Self {
         Self {
             zones,
             enabled: false,
@@ -279,11 +278,7 @@ impl DynamicUpdateHandler {
             zone.name.clone()
         };
 
-        let mut updated_zone: Zone = {
-            let zones = self.zones.read();
-            let zone_data = zones.get(&zone_origin).ok_or("Zone not found")?;
-            zone_data.clone()
-        };
+        let mut updated_zone: Zone = self.zones.get(&zone_origin).ok_or("Zone not found")?;
 
         for prereq in &update.prerequisites {
             if !self.check_prerequisite(&updated_zone, prereq)? {
@@ -322,7 +317,7 @@ impl DynamicUpdateHandler {
 
         let zone_key = zone_origin.clone();
         let zone_value = updated_zone;
-        self.zones.write().insert(zone_key.clone(), zone_value);
+        self.zones.insert(zone_key.clone(), zone_value);
 
         if let Some(ref sync) = self.zone_sync {
             let zone_origin_for_sync = zone_origin.clone();

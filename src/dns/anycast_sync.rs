@@ -4,11 +4,10 @@ use std::time::Duration;
 
 use futures::FutureExt;
 use metrics::counter;
-use parking_lot::RwLock;
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use serde::{Deserialize, Serialize};
 
-use crate::dns::server::{DnsZoneRecord, RecordType, Zone, ZoneHistory};
+use crate::dns::server::{DnsZoneRecord, RecordType, ShardedZoneStore, Zone, ZoneHistory};
 use crate::mesh::transport::MeshTransport;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -78,7 +77,7 @@ pub struct SerializedRecord {
 
 pub struct AnycastZoneSync {
     mesh_transport: Option<Arc<MeshTransport>>,
-    local_zones: Arc<RwLock<HashMap<String, Zone>>>,
+    local_zones: Arc<ShardedZoneStore>,
     node_id: String,
     sync_interval_secs: u64,
     notify_handler: Option<super::notify::NotifyHandler>,
@@ -100,7 +99,7 @@ pub enum ZoneSyncReason {
 }
 
 impl AnycastZoneSync {
-    pub fn new(node_id: String, local_zones: Arc<RwLock<HashMap<String, Zone>>>) -> Self {
+    pub fn new(node_id: String, local_zones: Arc<ShardedZoneStore>) -> Self {
         Self {
             mesh_transport: None,
             local_zones,
@@ -136,8 +135,7 @@ impl AnycastZoneSync {
         };
 
         let (serial, _record_count) = {
-            let z = self.local_zones.read();
-            match z.get(zone_origin) {
+            match self.local_zones.get(zone_origin) {
                 Some(zone) => (zone.serial, zone.records.len()),
                 None => return Err(format!("Zone {} not found", zone_origin)),
             }
@@ -192,13 +190,12 @@ impl AnycastZoneSync {
 
     pub async fn broadcast_single_zone(
         transport: &Arc<MeshTransport>,
-        local_zones: &Arc<RwLock<HashMap<String, Zone>>>,
+        local_zones: &Arc<ShardedZoneStore>,
         node_id: &str,
         zone_origin: &str,
     ) -> Result<(), String> {
         let (serial, _record_count) = {
-            let z = local_zones.read();
-            match z.get(zone_origin) {
+            match local_zones.get(zone_origin) {
                 Some(zone) => (zone.serial, zone.records.len()),
                 None => return Err(format!("Zone {} not found", zone_origin)),
             }
@@ -230,13 +227,10 @@ impl AnycastZoneSync {
 
     async fn broadcast_zone_availability(
         transport: &Arc<MeshTransport>,
-        local_zones: &Arc<RwLock<HashMap<String, Zone>>>,
+        local_zones: &Arc<ShardedZoneStore>,
         node_id: &str,
     ) -> Result<(), String> {
-        let zones: Vec<String> = {
-            let z = local_zones.read();
-            z.keys().cloned().collect()
-        };
+        let zones: Vec<String> = local_zones.keys();
 
         if zones.is_empty() {
             return Ok(());
@@ -250,8 +244,7 @@ impl AnycastZoneSync {
 
         for zone_origin in zones {
             let (serial, _record_count) = {
-                let z = local_zones.read();
-                if let Some(zone) = z.get(&zone_origin) {
+                if let Some(zone) = local_zones.get(&zone_origin) {
                     (zone.serial, zone.records.len())
                 } else {
                     continue;
@@ -281,8 +274,7 @@ impl AnycastZoneSync {
     }
 
     pub fn serialize_zone(&self, zone_origin: &str) -> Option<SerializedZoneData> {
-        let zones = self.local_zones.read();
-        let zone = zones.get(zone_origin)?;
+        let zone = self.local_zones.get(zone_origin)?;
 
         let records: Vec<SerializedRecord> = zone
             .records
@@ -348,8 +340,7 @@ impl AnycastZoneSync {
         zone_origin: &str,
         previous_serial: u32,
     ) -> Option<SerializedIxfrData> {
-        let zones = self.local_zones.read();
-        let zone = zones.get(zone_origin)?;
+        let zone = self.local_zones.get(zone_origin)?;
 
         if zone.serial <= previous_serial {
             return None;
@@ -462,8 +453,7 @@ impl AnycastZoneSync {
         zone_origin: &str,
         serial: u32,
     ) -> Option<SerializedZoneVersion> {
-        let zones = self.local_zones.read();
-        let zone = zones.get(zone_origin)?;
+        let zone = self.local_zones.get(zone_origin)?;
 
         if zone.serial == serial {
             let records: Vec<SerializedRecord> = zone
@@ -667,8 +657,7 @@ impl AnycastZoneSync {
         let remote_serial = remote_zone.serial;
 
         let should_accept = {
-            let zones = self.local_zones.read();
-            if let Some(local_zone) = zones.get(&zone_origin) {
+            if let Some(local_zone) = self.local_zones.get(&zone_origin) {
                 let local_serial = local_zone.serial;
 
                 let decision = Self::compare_and_decide(local_serial, remote_serial);
@@ -690,8 +679,7 @@ impl AnycastZoneSync {
         };
 
         if should_accept {
-            let mut zones = self.local_zones.write();
-            zones.insert(zone_origin.clone(), remote_zone);
+            self.local_zones.insert(zone_origin.clone(), remote_zone);
             tracing::info!(
                 "Accepted remote zone {} (serial: {}) from node {}",
                 zone_origin,
@@ -731,13 +719,11 @@ impl AnycastZoneSync {
     }
 
     pub fn get_zone_serial(&self, zone_origin: &str) -> Option<u32> {
-        let zones = self.local_zones.read();
-        zones.get(zone_origin).map(|z| z.serial)
+        self.local_zones.get_serial(zone_origin)
     }
 
     pub fn get_origin_for_zone(&self, zone_origin: &str) -> Option<String> {
-        let zones = self.local_zones.read();
-        zones.get(zone_origin).map(|z| z.origin.clone())
+        self.local_zones.get_origin(zone_origin)
     }
 
     pub async fn request_zone_from_peers(&self, zone_origin: &str) -> Result<Option<Zone>, String> {
@@ -861,22 +847,17 @@ impl AnycastZoneSync {
     }
 
     pub fn get_local_zone(&self, zone_origin: &str) -> Option<Zone> {
-        let zones = self.local_zones.read();
-        zones.get(zone_origin).cloned()
+        self.local_zones.get(zone_origin)
     }
 
     pub fn get_all_local_zones(&self) -> Vec<String> {
-        let zones = self.local_zones.read();
-        zones.keys().cloned().collect()
+        self.local_zones.keys()
     }
 
     pub fn update_local_zone(&self, zone: Zone) -> Result<(), String> {
         let origin = zone.origin.clone();
 
-        {
-            let mut zones = self.local_zones.write();
-            zones.insert(origin.clone(), zone);
-        }
+        self.local_zones.insert(origin.clone(), zone);
 
         tracing::info!("Updated local zone: {}", origin);
 
@@ -888,13 +869,11 @@ impl AnycastZoneSync {
     }
 
     pub fn remove_local_zone(&self, zone_origin: &str) -> bool {
-        let mut zones = self.local_zones.write();
-        zones.remove(zone_origin).is_some()
+        self.local_zones.remove(zone_origin).is_some()
     }
 
     pub fn get_zone_count(&self) -> usize {
-        let zones = self.local_zones.read();
-        zones.len()
+        self.local_zones.len()
     }
 
     pub fn create_zone_sync_handler(

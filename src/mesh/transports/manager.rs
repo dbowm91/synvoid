@@ -147,6 +147,10 @@ impl MeshTransportManager {
         self.topology.clone()
     }
 
+    pub fn is_global_node(&self) -> bool {
+        self.config.role.is_global()
+    }
+
     pub async fn find_origin_by_mesh_id(&self, mesh_id: &str) -> Option<String> {
         self.topology.find_origin_by_mesh_id(mesh_id).await
     }

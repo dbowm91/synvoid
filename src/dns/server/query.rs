@@ -629,7 +629,6 @@ impl DnsServer {
 
         let record_type = RecordType::from(qtype);
 
-        let zones_guard = ctx.zones.read();
         let trie_guard = ctx.zone_trie.read();
 
         let qname_lower = qname.to_lowercase();
@@ -638,7 +637,7 @@ impl DnsServer {
         let best_match = trie_guard.find_zone(&qname_lower);
 
         let (origin_str, zone) = match best_match {
-            Some(origin) => match zones_guard.get(&origin) {
+            Some(origin) => match ctx.zones.get(&origin) {
                 Some(zone) => (origin.clone(), zone),
                 None => return None,
             },
@@ -740,7 +739,7 @@ impl DnsServer {
             }
 
             if record_type == RecordType::DNSKEY && qname_lower_trimmed == origin_lower_for_strip {
-                let dnskey_records = Self::build_dnskey_records(zone);
+                let dnskey_records = Self::build_dnskey_records(&zone);
                 return Some(Self::build_response(
                     &qname,
                     qtype,
@@ -768,7 +767,7 @@ impl DnsServer {
             }
 
             if qtype == 60 && qname_lower_trimmed == origin_lower_for_strip {
-                let cdnskey_records = Self::build_cdnskey_records(zone);
+                let cdnskey_records = Self::build_cdnskey_records(&zone);
                 return Some(Self::build_response(
                     &qname,
                     qtype,
@@ -798,7 +797,7 @@ impl DnsServer {
             if record_type == RecordType::NSEC3PARAM
                 && qname_lower_trimmed == origin_lower_for_strip
             {
-                if let Some(nsec3param_record) = Self::build_nsec3param_record(zone) {
+                if let Some(nsec3param_record) = Self::build_nsec3param_record(&zone) {
                     return Some(Self::build_response(
                         &qname,
                         qtype,
@@ -812,23 +811,18 @@ impl DnsServer {
             }
         }
 
-        drop(zones_guard);
-
         if let (Some(registry), Some(ip)) = (ctx.mesh_registry, client_ip) {
             if let Some(mesh_records) =
                 Self::resolve_from_mesh(registry, &qname, ip, ctx.geoip_lookup, qtype)
             {
                 if !mesh_records.is_empty() {
                     tracing::debug!("Resolved {} from mesh network", qname);
-                    let zones_guard = ctx.zones.read();
                     let qname_lower = qname.to_lowercase();
-                    let zsk = zones_guard
-                        .iter()
-                        .find(|(origin, _)| {
-                            qname_lower.ends_with(&origin.to_lowercase())
-                                || qname_lower == origin.to_lowercase()
-                        })
-                        .and_then(|(_, zone)| zone.zsk_key.as_ref());
+                    let mesh_zone = ctx.zones.find(|origin, _| {
+                        qname_lower.ends_with(&origin.to_lowercase())
+                            || qname_lower == origin.to_lowercase()
+                    });
+                    let zsk = mesh_zone.as_ref().and_then(|zone| zone.zsk_key.as_ref());
                     return Some(Self::build_response(
                         &qname,
                         qtype,
@@ -846,89 +840,95 @@ impl DnsServer {
         if qtype == 28 {
             if let Some(translator) = ctx.dns64_translator {
                 if translator.should_synthesize(28, client_ip) {
-                    let zones_guard = ctx.zones.read();
-                    if let Some(origin) = trie_guard.find_zone(&qname_lower) {
-                        if let Some(zone) = zones_guard.get(&origin) {
-                            let a_key = (lookup_name.clone(), RecordType::A);
-                            if let Some(a_records) = zone.records.get(&a_key) {
-                                let aaaa_records: Vec<DnsZoneRecord> = a_records
-                                    .iter()
-                                    .filter_map(|rec| {
-                                        rec.value.parse::<std::net::Ipv4Addr>().ok().map(|ipv4| {
-                                            let synth = translator.config().synthesize_aaaa(ipv4);
-                                            DnsZoneRecord {
-                                                name: rec.name.clone(),
-                                                record_type: RecordType::AAAA,
-                                                value: synth.to_string(),
-                                                ttl: rec.ttl,
-                                                priority: None,
-                                            }
-                                        })
+                    if let Some(zone) = ctx.zones.find(|origin, _| {
+                        qname_lower == *origin
+                            || qname_lower.trim_end_matches('.') == origin.trim_end_matches('.')
+                    }) {
+                        let a_key = (lookup_name.clone(), RecordType::A);
+                        if let Some(a_records) = zone.records.get(&a_key) {
+                            let aaaa_records: Vec<DnsZoneRecord> = a_records
+                                .iter()
+                                .filter_map(|rec| {
+                                    rec.value.parse::<std::net::Ipv4Addr>().ok().map(|ipv4| {
+                                        let synth = translator.config().synthesize_aaaa(ipv4);
+                                        DnsZoneRecord {
+                                            name: rec.name.clone(),
+                                            record_type: RecordType::AAAA,
+                                            value: synth.to_string(),
+                                            ttl: rec.ttl,
+                                            priority: None,
+                                        }
                                     })
-                                    .collect();
-                                if !aaaa_records.is_empty() {
-                                    drop(zones_guard);
-                                    tracing::debug!(
-                                        "DNS64: Synthesized {} AAAA records from A records for {}",
-                                        aaaa_records.len(),
-                                        qname
-                                    );
-                                    return Some(Self::build_response(
-                                        &qname,
-                                        qtype,
-                                        &aaaa_records,
-                                        dnssec_ok,
-                                        edns_options.as_ref(),
-                                        None,
-                                        &origin,
-                                    ));
-                                }
+                                })
+                                .collect();
+                            if !aaaa_records.is_empty() {
+                                tracing::debug!(
+                                    "DNS64: Synthesized {} AAAA records from A records for {}",
+                                    aaaa_records.len(),
+                                    qname
+                                );
+                                let origin = qname_lower
+                                    .split_once('.')
+                                    .map(|(_, suffix)| format!(".{}", suffix))
+                                    .unwrap_or_else(|| qname_lower.clone());
+                                return Some(Self::build_response(
+                                    &qname,
+                                    qtype,
+                                    &aaaa_records,
+                                    dnssec_ok,
+                                    edns_options.as_ref(),
+                                    None,
+                                    &origin,
+                                ));
                             }
                         }
                     }
-                    drop(zones_guard);
                 }
             }
         }
 
         if dnssec_ok {
-            if let Some(zones) = ctx.zones.try_read() {
-                let qname_lower = qname.to_lowercase();
-                for (origin, zone) in zones.iter() {
+            if let Some((origin, zone)) = ctx
+                .zones
+                .find(|origin, zone| {
                     let origin_lower = origin.to_lowercase();
-                    if qname_lower.ends_with(&origin_lower) || qname_lower == origin_lower {
-                        if zone.nsec_enabled {
-                            let nsec_records = Self::build_nsec_records(zone, &qname, record_type);
-                            if !nsec_records.is_empty() {
-                                let zsk = zone.zsk_key.as_ref();
-                                return Some(Self::build_nxdomain_response(
-                                    &qname,
-                                    qtype,
-                                    &nsec_records,
-                                    47,
-                                    dnssec_ok,
-                                    edns_options.as_ref(),
-                                    zsk,
-                                    origin.as_str(),
-                                ));
-                            }
-                        } else if zone.nsec3_enabled {
-                            let nsec3_records =
-                                Self::build_nsec3_records(zone, &qname, record_type);
-                            if !nsec3_records.is_empty() {
-                                let zsk = zone.zsk_key.as_ref();
-                                return Some(Self::build_nxdomain_response(
-                                    &qname,
-                                    qtype,
-                                    &nsec3_records,
-                                    50,
-                                    dnssec_ok,
-                                    edns_options.as_ref(),
-                                    zsk,
-                                    origin.as_str(),
-                                ));
-                            }
-                        }
+                    (qname_lower.ends_with(&origin_lower) || qname_lower == origin_lower)
+                        && (zone.nsec_enabled || zone.nsec3_enabled)
+                })
+                .map(|zone| {
+                    let origin = zone.origin.clone();
+                    (origin, zone)
+                })
+            {
+                if zone.nsec_enabled {
+                    let nsec_records = Self::build_nsec_records(&zone, &qname, record_type);
+                    if !nsec_records.is_empty() {
+                        let zsk = zone.zsk_key.as_ref();
+                        return Some(Self::build_nxdomain_response(
+                            &qname,
+                            qtype,
+                            &nsec_records,
+                            47,
+                            dnssec_ok,
+                            edns_options.as_ref(),
+                            zsk,
+                            origin.as_str(),
+                        ));
+                    }
+                } else if zone.nsec3_enabled {
+                    let nsec3_records = Self::build_nsec3_records(&zone, &qname, record_type);
+                    if !nsec3_records.is_empty() {
+                        let zsk = zone.zsk_key.as_ref();
+                        return Some(Self::build_nxdomain_response(
+                            &qname,
+                            qtype,
+                            &nsec3_records,
+                            50,
+                            dnssec_ok,
+                            edns_options.as_ref(),
+                            zsk,
+                            origin.as_str(),
+                        ));
                     }
                 }
             }

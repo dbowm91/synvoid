@@ -4,8 +4,8 @@ use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Arc;
 
-use super::server::Zone;
 use super::wire;
+use crate::dns::server::ShardedZoneStore;
 
 #[derive(Clone, Debug, Default)]
 pub struct NotifyConfig {
@@ -24,13 +24,13 @@ impl From<&crate::config::dns::NotifyConfig> for NotifyConfig {
 
 #[derive(Clone)]
 pub struct NotifyHandler {
-    zones: Arc<RwLock<HashMap<String, Zone>>>,
+    zones: Arc<ShardedZoneStore>,
     config: NotifyConfig,
     notified_secondaries: Arc<RwLock<HashMap<String, u32>>>,
 }
 
 impl NotifyHandler {
-    pub fn new(zones: Arc<RwLock<HashMap<String, Zone>>>, config: NotifyConfig) -> Self {
+    pub fn new(zones: Arc<ShardedZoneStore>, config: NotifyConfig) -> Self {
         Self {
             zones,
             config,
@@ -47,10 +47,8 @@ impl NotifyHandler {
             return;
         }
 
-        let zones = self.zones.read();
-        if let Some(zone) = zones.get(zone_origin) {
+        if let Some(zone) = self.zones.get(zone_origin) {
             let serial = zone.serial;
-            drop(zones);
             self.notify_secondaries(zone_origin, serial);
         }
     }
@@ -86,8 +84,7 @@ impl NotifyHandler {
             zone_name.clone()
         };
 
-        let zones = self.zones.read();
-        let zone = zones.get(&zone_origin);
+        let zone = self.zones.get(&zone_origin);
 
         let rcode = if zone.is_some() {
             wire::RCODE_NOERROR
@@ -118,8 +115,7 @@ impl NotifyHandler {
             notified.insert(zone_origin.to_string(), new_serial);
         }
 
-        let zones = self.zones.read();
-        if let Some(zone) = zones.get(zone_origin) {
+        if let Some(zone) = self.zones.get(zone_origin) {
             let soa = zone
                 .records
                 .get(&(zone_origin.to_string(), super::server::RecordType::SOA));

@@ -31,8 +31,11 @@ mod dnssec_impl;
 mod query;
 mod rate_limit;
 mod response;
+mod sharded_store;
 mod startup;
 mod zone;
+
+pub use sharded_store::ShardedZoneStore;
 
 pub trait RecordTypeExt {
     fn to_u16(&self) -> u16;
@@ -425,7 +428,7 @@ mod nxdomain_tests {
 
 #[derive(Clone)]
 struct DnsHandlerState {
-    zones: Arc<RwLock<HashMap<String, Zone>>>,
+    zones: Arc<ShardedZoneStore>,
     zone_trie: Arc<RwLock<super::zone_trie::ZoneTrie>>,
     zone_index: Arc<RwLock<Vec<(String, String)>>>,
     rate_limiter: Option<Arc<DnsRateLimiter>>,
@@ -448,7 +451,7 @@ struct DnsHandlerState {
 /// Shared DNS query context to reduce function parameter count.
 /// Contains the Arc-wrapped service references needed to handle queries.
 pub struct QueryContext<'a> {
-    pub zones: &'a Arc<RwLock<HashMap<String, Zone>>>,
+    pub zones: &'a Arc<ShardedZoneStore>,
     pub zone_trie: &'a Arc<RwLock<super::zone_trie::ZoneTrie>>,
     pub mesh_registry: Option<&'a Arc<MeshDnsRegistry>>,
     pub geoip_lookup: Option<&'a Arc<crate::geoip::GeoIpManager>>,
@@ -473,7 +476,7 @@ pub struct QueryContext<'a> {
 
 pub struct DnsServer {
     config: Arc<DnsConfig>,
-    zones: Arc<RwLock<HashMap<String, Zone>>>,
+    zones: Arc<ShardedZoneStore>,
     zone_trie: Arc<RwLock<super::zone_trie::ZoneTrie>>,
     zone_index: Arc<RwLock<Vec<(String, String)>>>,
     zone_index_btree: Arc<RwLock<BTreeMap<String, String>>>,
@@ -764,7 +767,7 @@ impl DnsServer {
 
         Self {
             config: Arc::new(config),
-            zones: Arc::new(RwLock::new(HashMap::new())),
+            zones: Arc::new(ShardedZoneStore::new()),
             zone_trie: Arc::new(RwLock::new(super::zone_trie::ZoneTrie::new())),
             zone_index: Arc::new(RwLock::new(Vec::new())),
             zone_index_btree: Arc::new(RwLock::new(BTreeMap::new())),

@@ -118,10 +118,7 @@ impl DnsServer {
 
         let geo = self.config.anycast.geo.clone();
 
-        let zones_list: Vec<String> = {
-            let zones = self.zones.read();
-            zones.keys().cloned().collect()
-        };
+        let zones_list = self.zones.keys();
 
         if let Some(ref mesh_registry) = self.mesh_registry {
             let anycast_ips = manager.get_bound_ips();

@@ -32,12 +32,11 @@ impl DnsServer {
 
         drop(manager);
 
-        let mut zones = self.zones.write();
-        for (_, zone) in zones.iter_mut() {
+        self.zones.for_each_mut(|zone| {
             zone.ksk_key = ksk.clone();
             zone.zsk_key = zsk.clone();
             tracing::info!("Initialized DNSSEC keys for zone: {}", zone.origin);
-        }
+        });
 
         Ok(())
     }
@@ -121,8 +120,7 @@ impl DnsServer {
     }
 
     pub fn export_ds_records(&self, zone_name: &str) -> Result<Vec<DsRecordExport>, String> {
-        let zones = self.zones.read();
-        let zone = zones.get(zone_name).ok_or("Zone not found")?;
+        let zone = self.zones.get(zone_name).ok_or("Zone not found")?;
 
         let ksk = zone.ksk_key.as_ref().ok_or("KSK not configured")?;
 

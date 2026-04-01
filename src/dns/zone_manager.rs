@@ -12,23 +12,20 @@ impl DnsServer {
     }
 
     fn rebuild_zone_index(&self) {
-        let zones = self.zones.read();
         let mut index = Vec::new();
         let mut btree_index = BTreeMap::new();
         let mut trie = super::zone_trie::ZoneTrie::new();
 
-        for origin in zones.keys() {
+        self.zones.for_each(|origin, _zone| {
             let origin_lower = origin.to_lowercase();
             index.push((origin_lower.clone(), origin.clone()));
 
             let reversed = Self::reverse_domain(&origin_lower);
             btree_index.insert(reversed, origin.clone());
 
-            // Insert into the trie for efficient lookup
             trie.insert(&origin_lower);
-        }
+        });
         index.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
-        drop(zones);
 
         *self.zone_index.write() = index;
         *self.zone_index_btree.write() = btree_index;
@@ -42,7 +39,7 @@ impl DnsServer {
         }
     }
 
-    pub fn get_zones(&self) -> Arc<RwLock<HashMap<String, Zone>>> {
+    pub fn get_zones(&self) -> Arc<super::sharded_store::ShardedZoneStore> {
         self.zones.clone()
     }
 
@@ -55,17 +52,12 @@ impl DnsServer {
     }
 
     pub fn add_record(&self, zone: &str, record: DnsZoneRecord) -> Result<(), String> {
-        let mut zones = self.zones.write();
+        let zone_origin = zone.to_string();
 
-        let zone_entry = zones
-            .entry(zone.to_string())
-            .or_insert_with(|| Zone::new(zone.to_string()));
-
-        let key = (record.name.clone(), record.record_type);
-        zone_entry.records.entry(key).or_default().push(record);
-
-        let zone_origin = zone_entry.origin.clone();
-        drop(zones);
+        self.zones.get_or_create_and_update(zone, |zone_entry| {
+            let key = (record.name.clone(), record.record_type);
+            zone_entry.records.entry(key).or_default().push(record);
+        });
 
         if let Some(ref cache) = self.cache {
             cache.invalidate_zone(&zone_origin);

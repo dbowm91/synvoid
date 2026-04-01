@@ -179,9 +179,8 @@ impl MeshTransport {
             });
 
             if is_origin {
-                let lock = self.dns_zones.read();
-                let zone_opt = if let Some(ref zones) = *lock {
-                    zones.read().get(zone_origin).cloned()
+                let zone_opt = if let Some(ref zones) = *self.dns_zones.read() {
+                    zones.get(zone_origin)
                 } else {
                     None
                 };
@@ -562,8 +561,7 @@ impl MeshTransport {
             let should_accept = {
                 let zones_guard = self.dns_zones.read();
                 if let Some(ref zones) = *zones_guard {
-                    let zones_read = zones.read();
-                    if let Some(local_zone) = zones_read.get(zone_origin) {
+                    if let Some(local_zone) = zones.get(zone_origin) {
                         let local_serial = local_zone.serial;
                         let remote_newer = serial.wrapping_sub(local_serial) <= (u32::MAX / 2);
                         if remote_newer {
@@ -594,9 +592,8 @@ impl MeshTransport {
                 }
 
                 if let Some(ref zones) = *self.dns_zones.read() {
-                    let mut zones_write = zones.write();
                     if let Ok(zone) = Self::parse_zone_from_json(zone_origin, &final_json, serial) {
-                        zones_write.insert(zone_origin.to_string(), zone);
+                        zones.insert(zone_origin.to_string(), zone);
                         tracing::info!(
                             "Applied zone {} from peer {} (serial: {})",
                             zone_origin,

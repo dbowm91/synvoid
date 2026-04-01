@@ -339,6 +339,7 @@ Agents modifying these areas should be aware of performance characteristics:
 | HTTP path sanitization | Allocates `Vec` on every request | `src/proxy.rs:101` |
 | Response header filtering | Allocates `Vec` on every proxied response | `src/proxy.rs:147-159` |
 | SSRF detection | Calls `.to_lowercase()` multiple times on same input | `src/waf/attack_detection/ssrf.rs` |
+| DNS zone store | 64-sharded `RwLock`; prefer single-shard ops over full iteration | `src/dns/server/sharded_store.rs` |
 
 ## Module Size Guide
 
@@ -429,6 +430,21 @@ When splitting large modules:
 4. Fields accessed from submodules must be `pub(crate)`, not private
 5. Module declarations go in parent module file, not in the struct's file
 
+### ShardedZoneStore
+
+The DNS zone store (`src/dns/server/sharded_store.rs`) uses 64 shards to reduce lock contention. Each shard is an independent `parking_lot::RwLock<HashMap<String, Zone>>`. Zones are distributed by hashing the origin string (djb2 variant).
+
+Key API:
+- `get(&str) -> Option<Zone>` — single-shard read, clones zone
+- `insert(String, Zone)` — single-shard write
+- `for_each(FnMut(&String, &Zone))` — iterates all shards (read locks)
+- `for_each_mut(FnMut(&mut Zone))` — iterates all shards (write locks)
+- `find(Fn(&str, &Zone) -> bool) -> Option<Zone>` — search all shards
+- `get_or_create_and_update(&str, FnOnce(&mut Zone))` — entry-or-insert on one shard
+- `keys() -> Vec<String>` — collect all zone names (all shards)
+
+When modifying zone access code, prefer single-shard operations (`get`, `insert`, `update_zone`) over full-shard iteration (`for_each`, `keys`). The `Arc<ShardedZoneStore>` replaces the former `Arc<RwLock<HashMap<String, Zone>>>` pattern.
+
 ### Cross-Plan Item Deduplication
 
 When reviewing multiple plans for the same codebase, expect significant overlap. The same bug often appears in multiple plan files with different line numbers.
@@ -440,9 +456,9 @@ All items in `plans/plan.md` are complete. The plan was organized into 6 waves:
 - **Wave 5**: Complete (documentation, testing)
 - **Wave 6**: Complete (remaining items including multi-worker, WASM pooling, serverless, backend dispatch, mesh transport optimizations, upload security, config schema, dead code cleanup)
 
-Two items were deferred:
-- Zone store sharding (2B.4/6A.2) due to API complexity requiring changes to 15+ call sites
-- DNS server global role gating (3E.3/6H.1) due to complex code structure in server/mod.rs
+~~Two items were deferred:~~ All deferred items now complete:
+- ~~Zone store sharding (2B.4/6A.2)~~ — Implemented as `ShardedZoneStore` with 64 shards
+- ~~DNS server global role gating (3E.3/6H.1)~~ — Runtime check via `MeshTransportManager::is_global_node()`
 
 ## Admin Panel Architecture Notes
 

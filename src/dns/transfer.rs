@@ -1,10 +1,7 @@
-use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Arc;
 
-use parking_lot::RwLock;
-
-use crate::dns::server::{DnsZoneRecord, RecordType, RecordTypeExt, Zone};
+use crate::dns::server::{DnsZoneRecord, RecordType, RecordTypeExt, ShardedZoneStore, Zone};
 use crate::dns::tsig::{TsigParseResult, TsigVerifier};
 use crate::dns::wire;
 
@@ -12,7 +9,7 @@ pub const AXFR_QUERY_TYPE: u16 = 252;
 pub const IXFR_QUERY_TYPE: u16 = 251;
 
 pub struct ZoneTransfer {
-    zones: Arc<RwLock<HashMap<String, Zone>>>,
+    zones: Arc<ShardedZoneStore>,
     allowed_transfers: Vec<String>,
     tsig_verifier: Option<Arc<TsigVerifier>>,
     allow_wildcard_transfer: bool,
@@ -24,7 +21,7 @@ pub struct ZoneTransfer {
 
 impl ZoneTransfer {
     pub fn new(
-        zones: Arc<RwLock<HashMap<String, Zone>>>,
+        zones: Arc<ShardedZoneStore>,
         allowed_transfers: Vec<String>,
         tsig_verifier: Option<Arc<TsigVerifier>>,
     ) -> Self {
@@ -41,7 +38,7 @@ impl ZoneTransfer {
     }
 
     pub fn with_security_config(
-        zones: Arc<RwLock<HashMap<String, Zone>>>,
+        zones: Arc<ShardedZoneStore>,
         allowed_transfers: Vec<String>,
         tsig_verifier: Option<Arc<TsigVerifier>>,
         allow_wildcard_transfer: bool,
@@ -284,14 +281,14 @@ impl ZoneTransfer {
             }
         }
 
-        let zones = self.zones.read();
-        let zone = zones
+        let zone = self
+            .zones
             .get(origin)
             .ok_or_else(|| "Zone not found".to_string())?;
 
         let mut responses = Vec::new();
 
-        let soa_record = self.find_soa_record(zone);
+        let soa_record = self.find_soa_record(&zone);
         if let Some(ref soa) = soa_record {
             responses.push(self.build_axfr_first_message(
                 qname,
@@ -452,30 +449,30 @@ impl ZoneTransfer {
             }
         }
 
-        let zones = self.zones.read();
-        let zone = zones
+        let zone = self
+            .zones
             .get(origin)
             .ok_or_else(|| "Zone not found".to_string())?;
         let current_serial = zone.serial;
         let client_serial = serial.unwrap_or(0);
 
         let responses = if client_serial == current_serial {
-            vec![self.build_ixfr_current_response(qname, zone, message_id)?]
+            vec![self.build_ixfr_current_response(qname, &zone, message_id)?]
         } else if client_serial == 0 || client_serial > current_serial {
             if self.ixfr_fallback_to_axfr {
-                self.build_ixfr_full_response_messages(qname, zone, message_id)?
+                self.build_ixfr_full_response_messages(qname, &zone, message_id)?
             } else {
                 return Err("IXFR cannot proceed: client has newer serial".to_string());
             }
         } else if let Some(old_version) = zone.get_previous_version(client_serial) {
             self.build_ixfr_incremental_response_messages(
                 qname,
-                zone,
+                &zone,
                 &old_version.records,
                 message_id,
             )?
         } else if self.ixfr_fallback_to_axfr {
-            self.build_ixfr_full_response_messages(qname, zone, message_id)?
+            self.build_ixfr_full_response_messages(qname, &zone, message_id)?
         } else {
             return Err("IXFR cannot proceed: no history available".to_string());
         };
