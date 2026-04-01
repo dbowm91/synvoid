@@ -6,8 +6,6 @@ use super::upgrade::Orchestrator;
 
 pub struct RollbackManager {
     persistence: Persistence,
-    #[allow(dead_code)] // Reserved for future backup and rollback operations
-    data_dir: PathBuf,
 }
 
 impl RollbackManager {
@@ -18,8 +16,7 @@ impl RollbackManager {
                 .unwrap_or_else(|| PathBuf::from(".maluwaf"))
         });
         Self {
-            persistence: Persistence::new(Some(data_dir.clone())),
-            data_dir,
+            persistence: Persistence::new(Some(data_dir)),
         }
     }
 

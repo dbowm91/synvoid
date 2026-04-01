@@ -10,7 +10,6 @@ use parking_lot::{Mutex, RwLock};
 use super::deno_runtime::{DenoIsolate, DenoPluginManager, DenoResourceLimits, DenoRuntime};
 use crate::plugin::WasmPluginError;
 
-#[allow(dead_code)]
 pub struct DenoPool {
     manager: Arc<DenoPluginManager>,
     warm_isolates: RwLock<Vec<IsolateHandle>>,
@@ -20,7 +19,6 @@ pub struct DenoPool {
     active_count: Mutex<usize>,
 }
 
-#[allow(dead_code)]
 struct IsolateHandle {
     isolate: Arc<Mutex<DenoIsolate>>,
     runtime_name: String,

@@ -1,4 +1,5 @@
 use bytes::Bytes;
+use dashmap::DashMap;
 use futures::{SinkExt, StreamExt};
 use http::Response;
 use http_body_util::BodyExt;
@@ -8,12 +9,23 @@ use metrics::counter;
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::sync::broadcast;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Role, WebSocketStream};
+
+static WHITELIST_REGEX_CACHE: LazyLock<DashMap<String, Option<regex::Regex>>> =
+    LazyLock::new(DashMap::new);
+
+fn get_cached_regex(pattern: &str) -> Option<regex::Regex> {
+    WHITELIST_REGEX_CACHE
+        .entry(pattern.to_string())
+        .or_insert_with(|| regex::Regex::new(pattern).ok())
+        .value()
+        .clone()
+}
 
 use crate::challenge::HONEYPOT_PREFIX;
 use crate::config::site::SiteWebSocketConfig;
@@ -113,6 +125,7 @@ pub struct HttpServer {
     metrics: Option<Arc<WorkerMetrics>>,
     ipc: Option<Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>>,
     worker_id: Option<crate::process::ipc::WorkerId>,
+    serverless_manager: Option<Arc<crate::serverless::manager::ServerlessManager>>,
 }
 
 impl HttpServer {
@@ -146,7 +159,16 @@ impl HttpServer {
             metrics: None,
             ipc: None,
             worker_id: None,
+            serverless_manager: None,
         }
+    }
+
+    pub fn with_serverless_manager(
+        mut self,
+        manager: Arc<crate::serverless::manager::ServerlessManager>,
+    ) -> Self {
+        self.serverless_manager = Some(manager);
+        self
     }
 
     pub fn with_metrics(mut self, metrics: Arc<WorkerMetrics>) -> Self {
@@ -205,6 +227,7 @@ impl HttpServer {
         let mesh_transport = self.mesh_transport.clone();
         let metrics = self.metrics.clone();
         let worker_id = self.worker_id;
+        let serverless_manager = self.serverless_manager.clone();
 
         let header_read_timeout = Duration::from_secs(self.http_config.header_read_timeout_secs);
         let max_headers = self.http_config.max_headers;
@@ -248,6 +271,7 @@ impl HttpServer {
                             let mesh_transport = mesh_transport.clone();
                             let metrics = metrics.clone();
                             let ipc = self.ipc.clone();
+                            let serverless_manager = serverless_manager.clone();
 
                             let http_conn = Arc::new(HttpConnection::new(stream));
                             let http_conn_clone = http_conn.clone();
@@ -279,8 +303,9 @@ impl HttpServer {
                                     let http_conn = http_conn_clone.clone();
                                     let ipc_for_request = ipc.clone();
                                     let worker_id_for_request = worker_id;
+                                    let serverless_manager = serverless_manager.clone();
                                     async move {
-                                        Self::handle_request(req, client_addr, local_addr, router, waf, client, alt_svc, main_config, drain_state, http_config, mesh_config, mesh_transport, metrics, http_conn, ipc_for_request, worker_id_for_request).await
+                                        Self::handle_request(req, client_addr, local_addr, router, waf, client, alt_svc, main_config, drain_state, http_config, mesh_config, mesh_transport, metrics, http_conn, ipc_for_request, worker_id_for_request, serverless_manager).await
                                     }
                                 }))
                                 .with_upgrades();
@@ -326,6 +351,7 @@ impl HttpServer {
         http_conn: Arc<HttpConnection>,
         ipc: Option<Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>>,
         worker_id: Option<crate::process::ipc::WorkerId>,
+        serverless_manager: Option<Arc<crate::serverless::manager::ServerlessManager>>,
     ) -> Result<Response<Full<Bytes>>, hyper::Error> {
         let start = std::time::Instant::now();
         let client_ip = client_addr.ip();
@@ -1091,6 +1117,58 @@ impl HttpServer {
                     }
                 }
 
+                // Serverless function dispatch
+                if matches!(target.backend_type, crate::router::BackendType::Serverless) {
+                    if let Some(ref sm) = serverless_manager {
+                        let body_bytes_for_serverless: Bytes =
+                            body_slice.map(|b| b.to_vec().into()).unwrap_or_default();
+                        match crate::serverless::manager::handle_serverless_function(
+                            sm,
+                            &method,
+                            &path,
+                            &parts.headers,
+                            Some(body_bytes_for_serverless),
+                        )
+                        .await
+                        {
+                            Ok(response) => {
+                                let status = response.status();
+                                Self::send_request_log_if_enabled(
+                                    ipc.clone(),
+                                    worker_id,
+                                    &main_config,
+                                    client_ip,
+                                    method_str.clone(),
+                                    path.clone(),
+                                    status.as_u16(),
+                                    start.elapsed().as_millis() as u64,
+                                    site_id.to_string(),
+                                    user_agent.clone(),
+                                    false,
+                                );
+                                return Ok(Response::builder()
+                                    .status(status)
+                                    .body(Full::new(response.into_body()))
+                                    .unwrap());
+                            }
+                            Err(e) => {
+                                tracing::warn!("Serverless function error for {}: {}", path, e);
+                                return Ok(Self::build_response_with_alt_svc(
+                                    502,
+                                    format!("Serverless Error: {}", e),
+                                    "text/plain",
+                                    &alt_svc,
+                                    &main_config,
+                                ));
+                            }
+                        }
+                    }
+                    tracing::warn!(
+                        "Serverless backend for site {} but no serverless manager, falling back",
+                        site_id
+                    );
+                }
+
                 // FastCGI, PHP, CGI, and AppServer backends fall through to upstream proxy
                 // The RouteTarget has the appropriate socket configured in backend_socket
                 if let Some(pm) = router.plugin_manager() {
@@ -1355,7 +1433,7 @@ impl HttpServer {
                                             .as_ref()
                                             .map(|patterns| {
                                                 patterns.iter().any(|p| {
-                                                    if let Ok(re) = regex::Regex::new(p) {
+                                                    if let Some(re) = get_cached_regex(p) {
                                                         re.is_match(&path_str)
                                                     } else {
                                                         false

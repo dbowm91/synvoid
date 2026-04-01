@@ -281,8 +281,8 @@ pub async fn get_peer_stats(
     Ok(stats.peer_by_public_key(public_key).cloned())
 }
 
-#[allow(dead_code)]
 pub struct WgStatsCollector {
+    #[allow(dead_code)]
     interface: String,
     last_stats: Option<WgInterfaceStats>,
     last_update: Option<Instant>,

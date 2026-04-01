@@ -36,6 +36,7 @@ pub struct Router {
     listen_map: HashMap<SocketAddr, Vec<String>>,
     default_servers: HashMap<SocketAddr, String>,
     plugin_manager: Option<Arc<PluginManager>>,
+    cleaned_site_domains: HashMap<String, Vec<Arc<str>>>,
 }
 
 #[derive(Clone)]
@@ -79,6 +80,7 @@ impl Router {
         let mut static_handlers = HashMap::new();
         let mut listen_map: HashMap<SocketAddr, Vec<String>> = HashMap::new();
         let mut default_servers: HashMap<SocketAddr, String> = HashMap::new();
+        let mut cleaned_site_domains: HashMap<String, Vec<Arc<str>>> = HashMap::new();
 
         let static_worker_socket = main_config
             .static_config
@@ -96,16 +98,24 @@ impl Router {
 
         for (_site_id, config) in sites {
             let config_arc = Arc::new(config);
+            let site_id = config_arc.site_id();
 
-            for domain in &config_arc.site.domains {
-                let clean_domain = Self::clean_domain(domain);
+            let cleaned: Vec<Arc<str>> = config_arc
+                .site
+                .domains
+                .iter()
+                .map(|d| Arc::from(Self::clean_domain(d).as_str()))
+                .collect();
 
+            for clean_domain in &cleaned {
                 if clean_domain.starts_with('.') || clean_domain.contains('*') {
-                    suffix_domain_map.push((Arc::from(clean_domain.as_str()), config_arc.clone()));
+                    suffix_domain_map.push((clean_domain.clone(), config_arc.clone()));
                 } else {
-                    domain_map.insert(Arc::from(clean_domain.as_str()), config_arc.clone());
+                    domain_map.insert(clean_domain.clone(), config_arc.clone());
                 }
             }
+
+            cleaned_site_domains.insert(site_id.clone(), cleaned);
 
             if config_arc.r#static.enabled.unwrap_or(false) {
                 let site_id = config_arc.site_id();
@@ -205,6 +215,7 @@ impl Router {
             listen_map: listen_map.clone(),
             default_servers,
             plugin_manager: None,
+            cleaned_site_domains,
         };
 
         if !listen_map.is_empty() {
@@ -239,13 +250,14 @@ impl Router {
     }
 
     #[inline]
-    fn is_host_valid_for_site(&self, host: &str, site_config: &Arc<SiteConfig>) -> bool {
-        let clean_host = Self::clean_domain(host);
-
-        for domain in &site_config.site.domains {
-            let clean_domain = Self::clean_domain(domain);
-            if clean_host == clean_domain || clean_host.ends_with(&format!(".{}", clean_domain)) {
-                return true;
+    fn is_host_valid_for_site(&self, clean_host: &str, site_config: &Arc<SiteConfig>) -> bool {
+        if let Some(cleaned) = self.cleaned_site_domains.get(&site_config.site_id()) {
+            for clean_domain in cleaned {
+                if clean_host == clean_domain.as_ref()
+                    || clean_host.ends_with(&format!(".{}", clean_domain))
+                {
+                    return true;
+                }
             }
         }
 
@@ -775,12 +787,13 @@ impl Router {
                         {
                             return self.route_to_target(site_config, path);
                         }
-                        for domain in &site_config.site.domains {
-                            let clean_domain = Self::clean_domain(domain);
-                            if clean_host == clean_domain
-                                || clean_host.ends_with(&format!(".{}", clean_domain))
-                            {
-                                return self.route_to_target(site_config, path);
+                        if let Some(cleaned) = self.cleaned_site_domains.get(site_id) {
+                            for clean_domain in cleaned {
+                                if clean_host == clean_domain.as_ref()
+                                    || clean_host.ends_with(&format!(".{}", clean_domain))
+                                {
+                                    return self.route_to_target(site_config, path);
+                                }
                             }
                         }
                     }
@@ -849,22 +862,31 @@ impl Router {
         self.static_handlers.clear();
         self.listen_map.clear();
         self.default_servers.clear();
+        self.cleaned_site_domains.clear();
 
         for (_site_id, config) in sites {
             let config_arc = Arc::new(config);
             let site_id_str = config_arc.site_id();
 
-            for domain in &config_arc.site.domains {
-                let clean_domain = Self::clean_domain(domain);
+            let cleaned: Vec<Arc<str>> = config_arc
+                .site
+                .domains
+                .iter()
+                .map(|d| Arc::from(Self::clean_domain(d).as_str()))
+                .collect();
 
+            for clean_domain in &cleaned {
                 if clean_domain.starts_with('.') || clean_domain.contains('*') {
                     self.suffix_domain_map
-                        .push((Arc::from(clean_domain.as_str()), config_arc.clone()));
+                        .push((clean_domain.clone(), config_arc.clone()));
                 } else {
                     self.domain_map
-                        .insert(Arc::from(clean_domain.as_str()), config_arc.clone());
+                        .insert(clean_domain.clone(), config_arc.clone());
                 }
             }
+
+            self.cleaned_site_domains
+                .insert(site_id_str.clone(), cleaned);
 
             if config_arc.r#static.enabled.unwrap_or(false) {
                 let minifier_cache = if config_arc.r#static.enable_minification.unwrap_or(true) {
@@ -966,6 +988,7 @@ impl Default for Router {
             listen_map: HashMap::new(),
             default_servers: HashMap::new(),
             plugin_manager: None,
+            cleaned_site_domains: HashMap::new(),
         }
     }
 }

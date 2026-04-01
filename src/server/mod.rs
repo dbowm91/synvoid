@@ -21,7 +21,6 @@ use crate::waf::{AttackDetectionConfig, FloodProtector, RateLimitConfigStore, Wa
 use crate::worker::drain_state::WorkerDrainState;
 
 #[derive(Clone)]
-#[allow(dead_code)]
 struct ServerSharedState {
     config: Arc<RwLock<ConfigManager>>,
     router: Arc<Router>,
@@ -53,7 +52,7 @@ pub struct UnifiedServer {
     tls_config: InternalTlsConfig,
     http3_config: Http3Config,
     cert_resolver: Option<Arc<CertResolver>>,
-    #[allow(dead_code)] // Reserved for future tunnel support
+    #[allow(dead_code)]
     tunnel_manager: Option<Arc<TunnelManager>>,
     tunnel_router: Option<Arc<Mutex<TunnelRouter>>>,
     tunnel_config: Option<TunnelConfig>,
@@ -1051,6 +1050,10 @@ impl UnifiedServer {
 
         if let (Some(ipc), Some(worker_id)) = (state.ipc.clone(), state.worker_id) {
             server = server.with_ipc(ipc, worker_id);
+        }
+
+        if let Some(sm) = state.serverless_manager.clone() {
+            server = server.with_serverless_manager(sm);
         }
 
         server.serve().await

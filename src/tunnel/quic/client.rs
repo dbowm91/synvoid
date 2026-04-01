@@ -21,13 +21,14 @@ use crate::tunnel::quic::tls::QuicTlsConfig;
 use crate::tunnel::quic::validation::JitteredBackoff;
 use crate::tunnel::quic::ConnectionQuality;
 
-#[allow(dead_code)]
 pub struct QuicTunnelClient {
     config: TunnelQuicConfig,
+    #[allow(dead_code)]
     tls_config: QuicTlsConfig,
     runtime: Arc<QuicRuntime>,
     sessions: Arc<DashMap<String, QuicClientSession>>,
     shutdown_tx: broadcast::Sender<()>,
+    #[allow(dead_code)]
     peer_connections: Arc<DashMap<String, QuicConnection>>,
     connections: Arc<DashMap<String, Connection>>,
     health_monitor: Option<Arc<QuicHealthMonitor>>,

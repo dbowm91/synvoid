@@ -49,9 +49,6 @@ pub enum SignedRecordType {
     VerifiedUpstream,
     OrgNameReservation,
     UpstreamRegistrationRequest,
-    YaraRules,
-    YaraRuleSubmission,
-    YaraRuleVersion,
     DnsZone,
     DnsRecord,
     DnsDomainRegistration,
@@ -70,7 +67,6 @@ impl SignedRecordType {
                 | SignedRecordType::GlobalNodeList
                 | SignedRecordType::OrgNameReservation
                 | SignedRecordType::UpstreamRegistrationRequest
-                | SignedRecordType::YaraRuleSubmission
                 | SignedRecordType::DnsZone
                 | SignedRecordType::DnsDomainRegistration
                 | SignedRecordType::AnycastNode
@@ -87,8 +83,6 @@ impl SignedRecordType {
                 | SignedRecordType::NodeHealth
                 | SignedRecordType::NodeLoad
                 | SignedRecordType::VerifiedUpstream
-                | SignedRecordType::YaraRules
-                | SignedRecordType::YaraRuleVersion
                 | SignedRecordType::DnsZone
                 | SignedRecordType::DnsRecord
                 | SignedRecordType::GlobalAiBotList
@@ -105,7 +99,6 @@ impl SignedRecordType {
                 | SignedRecordType::Upstream
                 | SignedRecordType::OrgNameReservation
                 | SignedRecordType::UpstreamRegistrationRequest
-                | SignedRecordType::YaraRuleSubmission
         )
     }
 
@@ -124,9 +117,6 @@ impl SignedRecordType {
             SignedRecordType::VerifiedUpstream => Some(Duration::from_secs(300)),
             SignedRecordType::OrgNameReservation => Some(Duration::from_secs(86400 * 7)),
             SignedRecordType::UpstreamRegistrationRequest => Some(Duration::from_secs(3600)),
-            SignedRecordType::YaraRules => Some(Duration::from_secs(86400)),
-            SignedRecordType::YaraRuleSubmission => Some(Duration::from_secs(86400)),
-            SignedRecordType::YaraRuleVersion => Some(Duration::from_secs(86400 * 7)),
             SignedRecordType::DnsZone => Some(Duration::from_secs(3600)),
             SignedRecordType::DnsRecord => Some(Duration::from_secs(300)),
             SignedRecordType::DnsDomainRegistration => Some(Duration::from_secs(600)),
@@ -150,7 +140,6 @@ impl SignedRecordType {
                 | SignedRecordType::DnsZone
                 | SignedRecordType::DnsRecord
                 | SignedRecordType::VerifiedUpstream
-                | SignedRecordType::YaraRules
         )
     }
 }
@@ -425,9 +414,6 @@ impl TtlManager {
             SignedRecordType::VerifiedUpstream => self.verified_upstream_ttl,
             SignedRecordType::OrgNameReservation => self.org_name_reservation_ttl,
             SignedRecordType::UpstreamRegistrationRequest => self.upstream_registration_request_ttl,
-            SignedRecordType::YaraRules => self.upstream_ttl,
-            SignedRecordType::YaraRuleSubmission => self.upstream_registration_request_ttl,
-            SignedRecordType::YaraRuleVersion => self.org_ttl,
             SignedRecordType::DnsZone => self.node_info_ttl,
             SignedRecordType::DnsRecord => self.upstream_ttl,
             SignedRecordType::DnsDomainRegistration => Duration::from_secs(600),

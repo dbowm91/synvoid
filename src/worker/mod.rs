@@ -390,11 +390,11 @@ impl StaticWorkerState {
 }
 
 #[derive(Clone)]
-#[allow(dead_code)] // queued_at reserved for future queue management
 struct CompressionTask {
     site_id: String,
     path: String,
     encoding: String,
+    #[allow(dead_code)]
     queued_at: Instant,
 }
 

@@ -208,10 +208,16 @@ pub struct YaraScanner {
     rules: Arc<RwLock<Rules>>,
     rules_source: YaraRulesSource,
     current_version: Arc<RwLock<Option<String>>>,
+    #[allow(dead_code)]
+    timeout_ms: u64,
 }
 
 impl YaraScanner {
     pub fn new(rules_source: YaraRulesSource) -> Result<Self, YaraError> {
+        Self::with_timeout(rules_source, 30000)
+    }
+
+    pub fn with_timeout(rules_source: YaraRulesSource, timeout_ms: u64) -> Result<Self, YaraError> {
         let rules_content = Self::compile_rules(&rules_source)?;
 
         let rules = yara_x::compile(rules_content.as_str())
@@ -221,6 +227,7 @@ impl YaraScanner {
             rules: Arc::new(RwLock::new(rules)),
             rules_source,
             current_version: Arc::new(RwLock::new(None)),
+            timeout_ms,
         })
     }
 

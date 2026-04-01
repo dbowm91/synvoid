@@ -4,10 +4,12 @@
 //! with support for connection pooling, timeouts, and per-site TLS settings.
 
 use std::path::PathBuf;
+use std::sync::LazyLock;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
+use dashmap::DashMap;
 use http::{header, Method, Request, Response, Uri};
 use http_body_util::BodyExt;
 use http_body_util::Full;
@@ -20,6 +22,16 @@ use serde::{de::DeserializeOwned, Serialize};
 
 pub type HttpClient = Client<HttpsConnector<HttpConnector>, Full<Bytes>>;
 pub type UnixHttpClient = Client<UnixConnector, Full<Bytes>>;
+
+#[derive(Hash, PartialEq, Eq)]
+struct UpstreamClientKey {
+    tls_config: UpstreamTlsConfig,
+    pool_max_idle: usize,
+    pool_idle_secs: u64,
+}
+
+static UPSTREAM_CLIENT_CACHE: LazyLock<DashMap<UpstreamClientKey, HttpClient>> =
+    LazyLock::new(DashMap::new);
 
 pub fn is_unix_socket_url(url: &str) -> Option<PathBuf> {
     let trimmed = url.trim();
@@ -64,7 +76,7 @@ impl hyper::body::Body for EmptyBody {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct UpstreamTlsConfig {
     pub verify: bool,
     pub ca_cert_path: Option<String>,
@@ -147,6 +159,16 @@ pub fn create_upstream_client(
     pool_idle_timeout: Duration,
     tls_config: &UpstreamTlsConfig,
 ) -> HttpClient {
+    let key = UpstreamClientKey {
+        tls_config: tls_config.clone(),
+        pool_max_idle: pool_max_idle_per_host,
+        pool_idle_secs: pool_idle_timeout.as_secs(),
+    };
+
+    if let Some(client) = UPSTREAM_CLIENT_CACHE.get(&key) {
+        return client.clone();
+    }
+
     let mut http_connector = HttpConnector::new();
     http_connector.set_connect_timeout(Some(connect_timeout));
     http_connector.enforce_http(false);
@@ -169,11 +191,14 @@ pub fn create_upstream_client(
 
     let https_connector = builder.enable_http2().wrap_connector(http_connector);
 
-    Client::builder(TokioExecutor::new())
+    let client = Client::builder(TokioExecutor::new())
         .pool_max_idle_per_host(pool_max_idle_per_host)
         .pool_idle_timeout(pool_idle_timeout)
         .http2_only(false)
-        .build(https_connector)
+        .build(https_connector);
+
+    UPSTREAM_CLIENT_CACHE.insert(key, client.clone());
+    client
 }
 
 fn load_ca_certs_from_path(path: &str) -> Result<Vec<rustls_pki_types::CertificateDer<'static>>> {

@@ -666,12 +666,62 @@ impl ThreatIntelligenceManager {
         *self.local_version.write() += 1;
         self.reputation.record_threat_accepted(from_node);
 
+        // Also publish accepted threat to DHT for broader distribution
+        self.publish_indicator_to_dht(&indicator);
+
         tracing::debug!(
             "Accepted threat from {} (score: {})",
             from_node,
             decision.reputation_score
         );
         true
+    }
+
+    pub fn lookup_threat_indicator_in_dht(&self, indicator_value: &str) -> Option<ThreatIndicator> {
+        let transport = self.transport.read().clone()?;
+        let record_store = transport.get_record_store()?;
+
+        let key = DhtKey::threat_indicator(indicator_value);
+        let key_str = key.as_str();
+
+        let record = record_store.get(&key_str)?;
+        let value: serde_json::Value = serde_json::from_slice(&record.value).ok()?;
+
+        let threat_type = match value.get("threat_type")?.as_u64()? {
+            0 => ThreatType::IpBlock,
+            1 => ThreatType::RateLimitViolation,
+            2 => ThreatType::SuspiciousActivity,
+            3 => ThreatType::AsnBlock,
+            _ => ThreatType::Unspecified,
+        };
+
+        let severity = match value.get("severity")?.as_u64()? {
+            0 => ThreatSeverity::Unspecified,
+            1 => ThreatSeverity::Low,
+            2 => ThreatSeverity::Medium,
+            3 => ThreatSeverity::High,
+            4 => ThreatSeverity::Critical,
+            _ => ThreatSeverity::Unspecified,
+        };
+
+        Some(ThreatIndicator {
+            threat_type,
+            indicator_value: value.get("indicator_value")?.as_str()?.to_string(),
+            severity,
+            reason: value.get("reason")?.as_str()?.to_string(),
+            ttl_seconds: value.get("ttl_seconds")?.as_u64().unwrap_or(300),
+            source_node_id: value.get("source_node_id")?.as_str()?.to_string(),
+            timestamp: value.get("timestamp")?.as_u64().unwrap_or(0),
+            site_scope: value.get("site_scope")?.as_str()?.to_string(),
+            rate_limit_requests: value.get("rate_limit_requests").and_then(|v| v.as_u64()),
+            rate_limit_window_secs: value.get("rate_limit_window_secs").and_then(|v| v.as_u64()),
+            suspicious_pattern: value
+                .get("suspicious_pattern")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+            signature: Vec::new(),
+            signer_public_key: None,
+        })
     }
 
     fn apply_rate_limit_mesh_action(&self, indicator: &ThreatIndicator, from_node: &str) {

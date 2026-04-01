@@ -418,6 +418,7 @@ mod cache_tests {
         let key = CacheKey::new("stats-test.example.com".to_string(), RecordType::A, None);
         cache.insert(key, vec![1], 3600);
 
+        cache.run_pending_tasks();
         let stats = cache.stats();
         assert_eq!(stats.entries, 1);
     }

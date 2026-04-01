@@ -41,7 +41,6 @@ pub struct DnsCache {
     inner: Arc<InnerDnsCache>,
 }
 
-#[allow(dead_code)] // serve_stale_max_count reserved for future rate limiting of stale responses
 struct InnerDnsCache {
     cache: Cache<CacheKey, CachedResponse>,
     qname_index: RwLock<HashMap<String, HashSet<CacheKey>>>,
@@ -55,6 +54,7 @@ struct InnerDnsCache {
     max_capacity: usize,
     serve_stale_enabled: bool,
     serve_stale_max_stale: Duration,
+    #[allow(dead_code)] // reserved for future rate limiting of stale responses
     serve_stale_max_count: usize,
 }
 
@@ -440,6 +440,10 @@ impl DnsCache {
 
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    pub fn run_pending_tasks(&self) {
+        self.inner.cache.run_pending_tasks();
     }
 
     pub fn stats(&self) -> CacheStats {

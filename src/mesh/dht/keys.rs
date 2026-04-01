@@ -28,8 +28,7 @@ pub enum DhtKey {
     VerifiedUpstream(String),
     TierClaim(String),
     UpstreamRegistrationRequest(String),
-    YaraRules(String),
-    YaraRuleVersion(String),
+
     DnsZone(String),
     DnsRecord(String, String),
     DnsDomainRegistration(String),
@@ -90,14 +89,6 @@ impl DhtKey {
         DhtKey::UpstreamRegistrationRequest(request_id.to_string())
     }
 
-    pub fn yara_rules(org_id: &str) -> Self {
-        DhtKey::YaraRules(org_id.to_string())
-    }
-
-    pub fn yara_rule_version(version: &str) -> Self {
-        DhtKey::YaraRuleVersion(version.to_string())
-    }
-
     pub fn dns_zone(zone: &str) -> Self {
         DhtKey::DnsZone(zone.to_string())
     }
@@ -137,8 +128,6 @@ impl DhtKey {
             DhtKey::UpstreamRegistrationRequest(request_id) => {
                 format!("upstream_registration_request:{}", request_id)
             }
-            DhtKey::YaraRules(org_id) => format!("yara_rules:{}", org_id),
-            DhtKey::YaraRuleVersion(version) => format!("yara_rule_version:{}", version),
             DhtKey::DnsZone(zone) => format!("dns_zone:{}", zone),
             DhtKey::DnsRecord(zone, name) => format!("dns_record:{}:{}", zone, name),
             DhtKey::DnsDomainRegistration(domain) => format!("dns_domain_reg:{}", domain),
@@ -176,10 +165,6 @@ impl DhtKey {
             "tier_claim" if parts.len() >= 2 => DhtKey::TierClaim(parts[1..].join(":")),
             "upstream_registration_request" if parts.len() >= 2 => {
                 DhtKey::UpstreamRegistrationRequest(parts[1..].join(":"))
-            }
-            "yara_rules" if parts.len() >= 2 => DhtKey::YaraRules(parts[1..].join(":")),
-            "yara_rule_version" if parts.len() >= 2 => {
-                DhtKey::YaraRuleVersion(parts[1..].join(":"))
             }
             "dns_zone" if parts.len() >= 2 => DhtKey::DnsZone(parts[1..].join(":")),
             "dns_record" if parts.len() >= 3 => {
@@ -219,8 +204,6 @@ impl DhtKey {
                 | DhtKey::NodeLoad(_)
                 | DhtKey::VerifiedUpstream(_)
                 | DhtKey::TierClaim(_)
-                | DhtKey::YaraRules(_)
-                | DhtKey::YaraRuleVersion(_)
                 | DhtKey::DnsZone(_)
                 | DhtKey::DnsRecord(_, _)
                 | DhtKey::AnycastNode(_)
@@ -267,8 +250,6 @@ impl DhtKey {
             DhtKey::VerifiedUpstream(_) => "verified_upstream",
             DhtKey::TierClaim(_) => "tier_claim",
             DhtKey::UpstreamRegistrationRequest(_) => "upstream_registration_request",
-            DhtKey::YaraRules(_) => "yara_rules",
-            DhtKey::YaraRuleVersion(_) => "yara_rule_version",
             DhtKey::DnsZone(_) => "dns_zone",
             DhtKey::DnsRecord(_, _) => "dns_record",
             DhtKey::DnsDomainRegistration(_) => "dns_domain_registration",
@@ -295,8 +276,6 @@ impl DhtKey {
             DhtKey::UpstreamRegistrationRequest(_) => {
                 Some(SignedRecordType::UpstreamRegistrationRequest)
             }
-            DhtKey::YaraRules(_) => Some(SignedRecordType::YaraRules),
-            DhtKey::YaraRuleVersion(_) => Some(SignedRecordType::YaraRuleVersion),
             DhtKey::DnsZone(_) => Some(SignedRecordType::DnsZone),
             DhtKey::DnsRecord(_, _) => Some(SignedRecordType::DnsRecord),
             DhtKey::DnsDomainRegistration(_) => Some(SignedRecordType::DnsDomainRegistration),
@@ -328,8 +307,6 @@ impl DhtKey {
             DhtKey::TierClaim(id) => Some(id.clone()),
             DhtKey::DnsZone(zone) => Some(zone.clone()),
             DhtKey::DnsRecord(zone, _) => Some(zone.clone()),
-            DhtKey::YaraRules(site) => Some(site.clone()),
-            DhtKey::YaraRuleVersion(site) => Some(site.clone()),
             _ => None,
         }
     }

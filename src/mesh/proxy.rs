@@ -2,10 +2,11 @@
 
 use std::collections::HashMap;
 use std::convert::Infallible;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
+use dashmap::DashMap;
 use http::header::HeaderValue;
 use http_body::Body as HttpBody;
 use http_body_util::combinators::BoxBody;
@@ -17,6 +18,17 @@ use parking_lot::Mutex as PLMutex;
 use parking_lot::RwLock;
 use rand::Rng;
 use tokio::sync::{Mutex, RwLock as TokioRwLock};
+
+static WHITELIST_REGEX_CACHE: LazyLock<DashMap<String, Option<regex::Regex>>> =
+    LazyLock::new(DashMap::new);
+
+fn get_cached_regex(pattern: &str) -> Option<regex::Regex> {
+    WHITELIST_REGEX_CACHE
+        .entry(pattern.to_string())
+        .or_insert_with(|| regex::Regex::new(pattern).ok())
+        .value()
+        .clone()
+}
 
 use crate::mesh::config::{MeshConfig, MeshMinificationConfig};
 use crate::mesh::organization::OrganizationManager;
@@ -1103,7 +1115,7 @@ impl MeshProxy {
                         .as_ref()
                         .map(|patterns| {
                             patterns.iter().any(|p| {
-                                regex::Regex::new(p)
+                                get_cached_regex(p)
                                     .map(|re| re.is_match(upstream_id))
                                     .unwrap_or(false)
                             })

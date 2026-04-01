@@ -262,8 +262,8 @@ struct CachedRoute {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 struct RouteStability {
+    #[allow(dead_code)]
     upstream_id: String,
     provider_history: Vec<(String, Instant)>,
     stability: f64,

@@ -87,9 +87,7 @@ pub struct TunnelPortForward {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct TunnelManager {
-    config: TunnelConfig,
     sessions: Arc<RwLock<HashMap<String, TunnelSession>>>,
     shutdown_tx: broadcast::Sender<()>,
 }
@@ -103,11 +101,10 @@ pub struct TunnelSession {
 }
 
 impl TunnelManager {
-    pub fn new(config: TunnelConfig) -> Self {
+    pub fn new(_config: TunnelConfig) -> Self {
         let (shutdown_tx, _) = broadcast::channel(1);
 
         Self {
-            config,
             sessions: Arc::new(RwLock::new(HashMap::new())),
             shutdown_tx,
         }

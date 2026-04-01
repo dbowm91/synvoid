@@ -568,6 +568,31 @@ impl Default for HoneypotProbingDefaults {
 fn default_probing_enabled() -> bool {
     true
 }
+
+fn default_honeypot_ports() -> Vec<u16> {
+    vec![22, 80, 443, 3306, 6379, 8080, 8443]
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct HoneypotPortConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_honeypot_ports")]
+    pub ports: Vec<u16>,
+    #[serde(default)]
+    pub standalone_mode: bool,
+}
+
+impl Default for HoneypotPortConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            ports: default_honeypot_ports(),
+            standalone_mode: false,
+        }
+    }
+}
+
 fn default_probing_max_endpoints() -> usize {
     3
 }

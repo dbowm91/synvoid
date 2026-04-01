@@ -15,9 +15,9 @@ struct IpcConnectionPoolInner {
 }
 
 #[derive(Clone)]
-#[allow(dead_code)]
 struct PoolConfig {
     max_connections_per_endpoint: usize,
+    #[allow(dead_code)]
     connection_ttl: Duration,
 }
 
@@ -72,10 +72,7 @@ impl IpcConnectionPool {
         endpoint_stats.last_connection_time = Some(Instant::now());
 
         Ok(ConnectionPermit {
-            endpoint_name: endpoint_name.to_string(),
             active_counter: endpoint_stats.active_connections.clone(),
-            total_counter: endpoint_stats.total_connections.clone(),
-            acquired_at: Instant::now(),
         })
     }
 
@@ -114,13 +111,7 @@ impl IpcConnectionPool {
 }
 
 pub struct ConnectionPermit {
-    #[allow(dead_code)]
-    endpoint_name: String,
     active_counter: Arc<AtomicUsize>,
-    #[allow(dead_code)]
-    total_counter: Arc<AtomicU64>,
-    #[allow(dead_code)]
-    acquired_at: Instant,
 }
 
 impl Drop for ConnectionPermit {

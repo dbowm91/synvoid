@@ -65,8 +65,8 @@ pub enum AuditSeverity {
     Critical,
 }
 
-#[allow(dead_code)] // config kept for future log filtering
 pub struct AuditLogger {
+    #[allow(dead_code)]
     config: Arc<MeshConfig>,
     events: Arc<RwLock<VecDeque<AuditEvent>>>,
     max_events: usize,

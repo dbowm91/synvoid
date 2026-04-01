@@ -222,9 +222,9 @@ impl IpFeedManager {
     }
 }
 
-#[allow(dead_code)] // config kept for feed reconfiguration
 pub struct MultiFeedManager {
     feeds: Vec<Arc<IpFeedManager>>,
+    #[allow(dead_code)]
     config: IpFeedConfig,
 }
 

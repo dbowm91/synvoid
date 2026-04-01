@@ -17,11 +17,11 @@ pub enum WireGuardBackend {
     Userspace(UserspaceWireGuard),
 }
 
-#[allow(dead_code)]
 pub struct WireGuardRuntime {
     config: WireGuardConfig,
     backend: Option<WireGuardBackend>,
     sessions: Arc<WgSessionManager>,
+    #[allow(dead_code)]
     stats: Arc<DashMap<String, WgConnectionStats>>,
     shutdown_tx: broadcast::Sender<()>,
     running: bool,

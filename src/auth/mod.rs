@@ -84,8 +84,8 @@ pub struct LoginLog {
     pub reason: Option<String>,
 }
 
-#[allow(dead_code)]
 pub struct AuthManager {
+    #[allow(dead_code)]
     data_dir: PathBuf,
     store: Arc<RwLock<AuthStore>>,
     session_duration_secs: u64,

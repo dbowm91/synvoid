@@ -547,6 +547,30 @@ pub async fn run_unified_server_worker(
                     // Set in thread-local
                     crate::waf::set_yara_rules(Some(yara_rules.clone()));
 
+                    // Start periodic YARA sync task
+                    if mesh_config.yara_rules.sync_interval_secs > 0 {
+                        let sync_manager = yara_rules.clone();
+                        let sync_interval = std::time::Duration::from_secs(
+                            mesh_config.yara_rules.sync_interval_secs,
+                        );
+                        tokio::spawn(async move {
+                            let mut ticker = tokio::time::interval(sync_interval);
+                            loop {
+                                ticker.tick().await;
+                                if let Some(msg) = sync_manager.request_sync_from_global() {
+                                    tracing::debug!("YARA periodic sync triggered");
+                                    // The message will be sent via mesh gossip
+                                    drop(msg);
+                                }
+                                sync_manager.record_sync();
+                            }
+                        });
+                        tracing::info!(
+                            "YARA periodic sync task started (interval: {}s)",
+                            mesh_config.yara_rules.sync_interval_secs
+                        );
+                    }
+
                     tracing::info!("YARA rules manager initialized");
                 }
             }

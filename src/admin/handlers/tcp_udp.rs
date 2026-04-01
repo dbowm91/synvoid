@@ -51,10 +51,8 @@ pub async fn list_listeners(
 #[derive(Debug, Deserialize)]
 pub struct CreateListenerRequest {
     pub site_id: String,
-    #[allow(dead_code)] // Reserved for future listener creation
     pub port: u16,
     pub protocol: String,
-    #[allow(dead_code)]
     pub upstream: String,
 }
 

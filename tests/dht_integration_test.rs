@@ -300,9 +300,6 @@ fn test_signed_record_type_variants() {
     let _ = SignedRecordType::VerifiedUpstream;
     let _ = SignedRecordType::OrgNameReservation;
     let _ = SignedRecordType::UpstreamRegistrationRequest;
-    let _ = SignedRecordType::YaraRules;
-    let _ = SignedRecordType::YaraRuleSubmission;
-    let _ = SignedRecordType::YaraRuleVersion;
     let _ = SignedRecordType::DnsZone;
     let _ = SignedRecordType::DnsRecord;
     let _ = SignedRecordType::DnsDomainRegistration;

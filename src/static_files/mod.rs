@@ -41,17 +41,9 @@ pub struct StaticFileHandler {
     enable_compression: bool,
     gzip_on_the_fly: bool,
     directory_listing: bool,
-    #[allow(dead_code)] // Reserved for custom directory listing format
-    directory_listing_format: Option<String>,
     default_cache_ttl: Option<u64>,
     site_id: String,
     minified_cache_dir: Option<PathBuf>,
-    #[allow(dead_code)]
-    minifier_cache: Option<Arc<MinifierCache>>,
-    #[allow(dead_code)]
-    minifier_client: Option<client::MinifierClient>,
-    #[allow(dead_code)]
-    async_minifier_client: Option<client::AsyncMinifierClient>,
     enable_zero_copy: bool,
     mesh_image_protection: Option<MeshImageProtectionConfig>,
     mesh_compression: Option<MeshCompressionConfig>,
@@ -102,9 +94,9 @@ impl StaticFileHandler {
     pub fn new_with_minifier(
         config: SiteStaticConfig,
         site_id: String,
-        minifier_cache: Option<Arc<MinifierCache>>,
-        minifier_client: Option<client::MinifierClient>,
-        async_minifier_client: Option<client::AsyncMinifierClient>,
+        _minifier_cache: Option<Arc<MinifierCache>>,
+        _minifier_client: Option<client::MinifierClient>,
+        _async_minifier_client: Option<client::AsyncMinifierClient>,
         mesh_image_protection: Option<MeshImageProtectionConfig>,
         mesh_compression: Option<MeshCompressionConfig>,
         mesh_minification: Option<MeshMinificationConfig>,
@@ -118,7 +110,6 @@ impl StaticFileHandler {
         let enable_compression = config.enable_compression.unwrap_or(true);
         let gzip_on_the_fly = config.gzip_on_the_fly.unwrap_or(true);
         let directory_listing = config.directory_listing.unwrap_or(false);
-        let directory_listing_format = config.directory_listing_format.clone();
 
         let config_clone = config.clone();
 
@@ -142,13 +133,9 @@ impl StaticFileHandler {
                 enable_compression: true,
                 gzip_on_the_fly: true,
                 directory_listing: false,
-                directory_listing_format: None,
                 default_cache_ttl: None,
                 site_id,
                 minified_cache_dir,
-                minifier_cache,
-                minifier_client,
-                async_minifier_client: None,
                 enable_zero_copy: false,
                 mesh_image_protection,
                 mesh_compression,
@@ -215,13 +202,9 @@ impl StaticFileHandler {
             enable_compression,
             gzip_on_the_fly,
             directory_listing,
-            directory_listing_format,
             default_cache_ttl,
             site_id,
             minified_cache_dir,
-            minifier_cache,
-            minifier_client,
-            async_minifier_client,
             enable_zero_copy: cfg!(unix),
             mesh_image_protection,
             mesh_compression,

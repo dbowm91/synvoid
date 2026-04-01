@@ -621,4 +621,9 @@ impl RecordStoreManager {
         }
         false
     }
+
+    pub fn get(&self, key: &str) -> Option<crate::mesh::protocol::DhtRecord> {
+        let rs = self.record_state.read();
+        rs.records.get(key).map(|entry| entry.record.clone())
+    }
 }

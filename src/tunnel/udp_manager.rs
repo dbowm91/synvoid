@@ -24,7 +24,6 @@ pub struct UdpTunnelManager {
 }
 
 #[derive(Clone)]
-#[allow(dead_code)]
 pub struct ActiveUdpTunnel {
     pub identifier: String,
     pub peer_id: String,
@@ -35,6 +34,7 @@ pub struct ActiveUdpTunnel {
     pub last_activity: Arc<parking_lot::RwLock<Instant>>,
     pending_requests: Arc<DashMap<u64, PendingRequest>>,
     sequence: Arc<AtomicU64>,
+    #[allow(dead_code)]
     response_tx: mpsc::Sender<UdpResponse>,
 }
 

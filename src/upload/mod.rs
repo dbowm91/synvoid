@@ -18,6 +18,13 @@ use std::sync::Arc;
 use thiserror::Error;
 use tracing::{debug, warn};
 
+use crate::upload::malware_scanner::MalwareScanner;
+
+const RESERVED_WINDOWS_NAMES: &[&str] = &[
+    "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+    "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+];
+
 const HEADER_READ_SIZE: usize = 8192;
 
 #[derive(Debug, Error)]
@@ -48,6 +55,12 @@ pub enum UploadValidationError {
 
     #[error("No file data received")]
     NoData,
+
+    #[error("Invalid filename: {reason}")]
+    InvalidFilename { reason: String },
+
+    #[error("Empty filename")]
+    EmptyFilename,
 }
 
 #[derive(Debug, Clone)]
@@ -74,7 +87,7 @@ pub struct UploadedFile {
 
 pub struct UploadValidator {
     sandbox: Arc<Sandbox>,
-    yara_scanner: Option<Arc<YaraScanner>>,
+    malware_scanner: Option<Arc<MalwareScanner>>,
     config: UploadConfig,
     reload_lock: parking_lot::RwLock<()>,
 }
@@ -84,45 +97,47 @@ impl UploadValidator {
         let sandbox_config = SandboxConfig::new(&config.sandbox_dir, &config.quarantine_dir);
         let sandbox = Arc::new(Sandbox::new(sandbox_config));
 
-        let yara_scanner = if config.scan_with_yara {
+        let malware_scanner = if config.scan_with_yara {
             let source = YaraRulesSource::from_config(
                 config.yara_rules_dir.clone().map(std::path::PathBuf::from),
                 true,
             )
             .unwrap_or(YaraRulesSource::Bundled);
-            let scanner = YaraScanner::new(source)?;
-            Some(Arc::new(scanner))
+            let scanner = YaraScanner::with_timeout(source, config.yara_timeout_ms)?;
+            Some(Arc::new(MalwareScanner::with_yara(Some(scanner))))
         } else {
-            None
+            Some(Arc::new(MalwareScanner::with_yara(None)))
         };
 
         Ok(Self {
             sandbox,
-            yara_scanner,
+            malware_scanner,
             config,
             reload_lock: parking_lot::RwLock::new(()),
         })
     }
 
     pub fn reload_yara_rules_if_needed(&self) -> Result<(), YaraError> {
-        if let Some(scanner) = &self.yara_scanner {
-            if let Some(yara_rules) = crate::waf::get_yara_rules() {
-                let current_version = scanner.get_version();
-                let new_version = yara_rules.get_current_version();
-
-                if current_version != new_version {
-                    let _guard = self.reload_lock.write();
-                    let current_version = scanner.get_version();
+        if let Some(scanner) = &self.malware_scanner {
+            if let Some(yara_scanner) = scanner.get_yara_scanner() {
+                if let Some(yara_rules) = crate::waf::get_yara_rules() {
+                    let current_version = yara_scanner.get_version();
                     let new_version = yara_rules.get_current_version();
 
                     if current_version != new_version {
-                        if let Some(new_rules) = yara_rules.get_current_rules() {
-                            tracing::debug!(
-                                current_version = ?current_version,
-                                new_version = ?new_version,
-                                "Reloading YARA rules with new version"
-                            );
-                            scanner.reload_with_rules(&new_rules, new_version)?;
+                        let _guard = self.reload_lock.write();
+                        let current_version = yara_scanner.get_version();
+                        let new_version = yara_rules.get_current_version();
+
+                        if current_version != new_version {
+                            if let Some(new_rules) = yara_rules.get_current_rules() {
+                                tracing::debug!(
+                                    current_version = ?current_version,
+                                    new_version = ?new_version,
+                                    "Reloading YARA rules with new version"
+                                );
+                                yara_scanner.reload_with_rules(&new_rules, new_version)?;
+                            }
                         }
                     }
                 }
@@ -167,11 +182,21 @@ impl UploadValidator {
         }
 
         let (scanned, yara_matches) = if effective_config.scan_with_yara {
-            if let Some(scanner) = &self.yara_scanner {
-                let matches = scanner.scan_bytes(data, NO_EXCLUDED_CATEGORIES)?;
-                let matched_names: Vec<String> =
-                    matches.iter().map(|m| m.rule_name.clone()).collect();
-                (true, matched_names)
+            if let Some(scanner) = &self.malware_scanner {
+                match scanner.scan_bytes(data) {
+                    Ok(scan_result) => {
+                        let matched_names: Vec<String> = scan_result
+                            .matches
+                            .iter()
+                            .map(|m| m.rule_name.clone())
+                            .collect();
+                        (true, matched_names)
+                    }
+                    Err(e) => {
+                        tracing::warn!("Malware scan error: {}", e);
+                        (true, Vec::new())
+                    }
+                }
             } else {
                 (false, Vec::new())
             }
@@ -248,11 +273,21 @@ impl UploadValidator {
         }
 
         let (scanned, yara_matches) = if effective_config.scan_with_yara {
-            if let Some(scanner) = &self.yara_scanner {
-                let matches = scanner.scan_bytes(data, NO_EXCLUDED_CATEGORIES)?;
-                let matched_names: Vec<String> =
-                    matches.iter().map(|m| m.rule_name.clone()).collect();
-                (true, matched_names)
+            if let Some(scanner) = &self.malware_scanner {
+                match scanner.scan_bytes(data) {
+                    Ok(scan_result) => {
+                        let matched_names: Vec<String> = scan_result
+                            .matches
+                            .iter()
+                            .map(|m| m.rule_name.clone())
+                            .collect();
+                        (true, matched_names)
+                    }
+                    Err(e) => {
+                        tracing::warn!("Malware scan error: {}", e);
+                        (true, Vec::new())
+                    }
+                }
             } else {
                 (false, Vec::new())
             }
@@ -349,12 +384,21 @@ impl UploadValidator {
         }
 
         let (scanned, yara_matches) = if effective_config.scan_with_yara {
-            if let Some(scanner) = &self.yara_scanner {
-                let matches = scanner
-                    .scan_file_with_exclusions(sandbox_handle.path(), NO_EXCLUDED_CATEGORIES)?;
-                let matched_names: Vec<String> =
-                    matches.iter().map(|m| m.rule_name.clone()).collect();
-                (true, matched_names)
+            if let Some(scanner) = &self.malware_scanner {
+                match scanner.scan_file(sandbox_handle.path()) {
+                    Ok(scan_result) => {
+                        let matched_names: Vec<String> = scan_result
+                            .matches
+                            .iter()
+                            .map(|m| m.rule_name.clone())
+                            .collect();
+                        (true, matched_names)
+                    }
+                    Err(e) => {
+                        tracing::warn!("Malware scan error: {}", e);
+                        (true, Vec::new())
+                    }
+                }
             } else {
                 (false, Vec::new())
             }
@@ -397,6 +441,8 @@ impl UploadValidator {
 pub fn is_upload_content_type(content_type: &str) -> bool {
     let ct = content_type.to_lowercase();
     ct.starts_with("multipart/form-data")
+        || ct.starts_with("application/octet-stream")
+        || ct.starts_with("application/x-www-form-urlencoded")
 }
 
 pub fn parse_content_length(content_length: Option<&str>) -> Option<u64> {
@@ -429,6 +475,100 @@ pub fn should_validate_upload(
     false
 }
 
+pub fn validate_filename(filename: &str) -> Result<(), UploadValidationError> {
+    if filename.is_empty() {
+        return Err(UploadValidationError::EmptyFilename);
+    }
+
+    if filename.contains('\0') {
+        return Err(UploadValidationError::InvalidFilename {
+            reason: "null byte in filename".to_string(),
+        });
+    }
+
+    if filename.contains("..") {
+        return Err(UploadValidationError::InvalidFilename {
+            reason: "path traversal sequence '..' in filename".to_string(),
+        });
+    }
+
+    if filename.contains('/') || filename.contains('\\') {
+        return Err(UploadValidationError::InvalidFilename {
+            reason: "path separator in filename".to_string(),
+        });
+    }
+
+    let name_upper = filename.to_uppercase();
+    let base_name = name_upper.split('.').next().unwrap_or("");
+    if RESERVED_WINDOWS_NAMES.contains(&base_name) {
+        return Err(UploadValidationError::InvalidFilename {
+            reason: format!("reserved Windows name: {}", base_name),
+        });
+    }
+
+    Ok(())
+}
+
+pub fn parse_content_disposition_filename(header_value: &str) -> Option<String> {
+    let header_lower = header_value.to_lowercase();
+    if !header_lower.contains("form-data") && !header_lower.contains("attachment") {
+        return None;
+    }
+
+    // Try filename*= (RFC 5987 encoded) first
+    if let Some(pos) = header_lower.find("filename*=") {
+        let after = &header_value[pos + "filename*=".len()..];
+        let after = after.trim();
+        // Format: charset'language'value
+        let parts: Vec<&str> = after.splitn(3, '\'').collect();
+        if parts.len() == 3 {
+            let value = parts[2].trim().trim_matches('"');
+            // Simple percent-decoding for ASCII
+            let decoded = percent_decode(value);
+            if !decoded.is_empty() {
+                return Some(decoded);
+            }
+        }
+    }
+
+    // Try filename=
+    if let Some(pos) = header_lower.find("filename=") {
+        let after = &header_value[pos + "filename=".len()..];
+        let after = after.trim().trim_matches('"');
+        // Stop at semicolon (next parameter)
+        let filename = after.split(';').next().unwrap_or(after).trim();
+        if !filename.is_empty() {
+            return Some(filename.to_string());
+        }
+    }
+
+    None
+}
+
+fn percent_decode(s: &str) -> String {
+    let mut bytes = Vec::with_capacity(s.len());
+    let mut chars = s.bytes();
+    while let Some(b) = chars.next() {
+        if b == b'%' {
+            let hex: String = chars.by_ref().take(2).map(|b| b as char).collect();
+            if hex.len() == 2 {
+                if let Ok(val) = u8::from_str_radix(&hex, 16) {
+                    bytes.push(val);
+                    continue;
+                }
+            }
+            bytes.push(b'%');
+            for c in hex.bytes() {
+                bytes.push(c);
+            }
+        } else {
+            bytes.push(b);
+        }
+    }
+    String::from_utf8(bytes.clone())
+        .unwrap_or_else(|_| String::from_utf8_lossy(&bytes).into_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -439,6 +579,8 @@ mod tests {
         assert!(is_upload_content_type(
             "multipart/form-data; boundary=----WebKitFormBoundary"
         ));
+        assert!(is_upload_content_type("application/octet-stream"));
+        assert!(is_upload_content_type("application/x-www-form-urlencoded"));
         assert!(!is_upload_content_type("application/json"));
         assert!(!is_upload_content_type("text/plain"));
     }
@@ -449,5 +591,103 @@ mod tests {
         assert_eq!(parse_content_length(Some("0")), Some(0));
         assert_eq!(parse_content_length(Some("invalid")), None);
         assert_eq!(parse_content_length(None), None);
+    }
+
+    #[test]
+    fn test_validate_filename_valid() {
+        assert!(validate_filename("document.pdf").is_ok());
+        assert!(validate_filename("image-2024.jpg").is_ok());
+        assert!(validate_filename("my_file.txt").is_ok());
+    }
+
+    #[test]
+    fn test_validate_filename_empty() {
+        assert!(matches!(
+            validate_filename(""),
+            Err(UploadValidationError::EmptyFilename)
+        ));
+    }
+
+    #[test]
+    fn test_validate_filename_null_byte() {
+        assert!(matches!(
+            validate_filename("file\0.exe"),
+            Err(UploadValidationError::InvalidFilename { .. })
+        ));
+    }
+
+    #[test]
+    fn test_validate_filename_path_traversal() {
+        assert!(matches!(
+            validate_filename("../../../etc/passwd"),
+            Err(UploadValidationError::InvalidFilename { .. })
+        ));
+        assert!(matches!(
+            validate_filename("foo/../bar"),
+            Err(UploadValidationError::InvalidFilename { .. })
+        ));
+    }
+
+    #[test]
+    fn test_validate_filename_path_separators() {
+        assert!(matches!(
+            validate_filename("foo/bar.txt"),
+            Err(UploadValidationError::InvalidFilename { .. })
+        ));
+        assert!(matches!(
+            validate_filename("foo\\bar.txt"),
+            Err(UploadValidationError::InvalidFilename { .. })
+        ));
+    }
+
+    #[test]
+    fn test_validate_filename_reserved_windows_names() {
+        assert!(matches!(
+            validate_filename("CON"),
+            Err(UploadValidationError::InvalidFilename { .. })
+        ));
+        assert!(matches!(
+            validate_filename("con.txt"),
+            Err(UploadValidationError::InvalidFilename { .. })
+        ));
+        assert!(matches!(
+            validate_filename("PRN"),
+            Err(UploadValidationError::InvalidFilename { .. })
+        ));
+        assert!(matches!(
+            validate_filename("COM1.dat"),
+            Err(UploadValidationError::InvalidFilename { .. })
+        ));
+        assert!(matches!(
+            validate_filename("LPT9"),
+            Err(UploadValidationError::InvalidFilename { .. })
+        ));
+    }
+
+    #[test]
+    fn test_parse_content_disposition_filename() {
+        let header = r#"form-data; name="file"; filename="document.pdf""#;
+        assert_eq!(
+            parse_content_disposition_filename(header),
+            Some("document.pdf".to_string())
+        );
+
+        let header = r#"attachment; filename="report.xlsx""#;
+        assert_eq!(
+            parse_content_disposition_filename(header),
+            Some("report.xlsx".to_string())
+        );
+
+        let header = "form-data; name=\"file\"; filename*=UTF-8''%E4%B8%AD%E6%96%87.txt";
+        assert_eq!(
+            parse_content_disposition_filename(header),
+            Some("中文.txt".to_string())
+        );
+
+        let header = "application/json";
+        assert_eq!(parse_content_disposition_filename(header), None);
+
+        let header = "form-data; name=\"field\"";
+        assert_eq!(parse_content_disposition_filename(header), None);
     }
 }

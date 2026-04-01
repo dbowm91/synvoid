@@ -132,6 +132,7 @@ Key features that affect testing:
 - `socket-handoff` - Socket transfer between processes
 - `post-quantum` - Post-quantum cryptography
 - `wireguard` - WireGuard VPN support
+- `deno` - Deno/JavaScript runtime for serverless functions (stub implementation)
 
 ## Common Patterns
 
@@ -262,13 +263,13 @@ Crate-level suppressions in `src/lib.rs`:
 - `elided_lifetimes_in_paths` — compiler style preference
 - `mismatched_lifetime_syntaxes` — compiler style preference
 
-`#[allow(dead_code)]` annotations: **71 across ~50 files** (reduced from 81/70). Notable per-module breakdown:
-- `src/mesh/` — ~27 items
+`#[allow(dead_code)]` annotations: **~73 across ~51 files** (reduced from 84/56). Notable per-module breakdown:
+- `src/mesh/` — ~14 items
 - `src/dns/server/` — ~4 items
-- `src/dns/dnssec_signing.rs` — 4 dead functions removed (sign_record added to removal list)
-- `src/worker/mod.rs` — dead code removed
-- `src/honeypot_port/threat_intel.rs` — HoneypotThreatPublisher removed
-- `src/router.rs` — 4 unused target structs removed (FastCgiTarget, PhpTarget, CgiTarget, AxumDynamicTarget)
+- `src/waf/` — ~4 items
+- `src/tunnel/` — ~5 items
+- `src/admin/handlers/` — ~6 items
+- `src/overseer/` — ~9 items
 
 `cargo clippy -- -D warnings` passes clean (previously ~14 non-dead-code warnings, now resolved).
 
@@ -376,6 +377,8 @@ Three-tier HTTP client hierarchy:
 | `create_http_client_with_config()` | `https_only()`, native roots + webpki fallback | Default: proxy, TLS server |
 | `create_upstream_client()` | Configurable via `UpstreamTlsConfig` | Per-site upstream with `skip_verify`/`allow_plaintext` |
 
+Upstream TLS clients are cached by config hash in a `DashMap` for reuse across requests.
+
 ### ACME Client
 
 `src/tls/acme.rs` implements a full ACME client using the `instant-acme` crate. Supports HTTP-01 and DNS-01 (feature-gated `dns`) challenges. Certificate renewal runs every 24h via `spawn_renewal_task()`. Config under `[tls.acme]` in TOML.
@@ -435,10 +438,11 @@ When reviewing multiple plans for the same codebase, expect significant overlap.
 All items in `plans/plan.md` are complete. The plan was organized into 6 waves:
 - **Waves 0-4**: Complete (security, correctness, performance, features, code quality)
 - **Wave 5**: Complete (documentation, testing)
+- **Wave 6**: Complete (remaining items including multi-worker, WASM pooling, serverless, backend dispatch, mesh transport optimizations, upload security, config schema, dead code cleanup)
 
 Two items were deferred:
-- Zone store sharding (2B.4) due to API complexity requiring changes to 15+ call sites
-- DNS server global role gating (3E.3) due to complex code structure in server/mod.rs
+- Zone store sharding (2B.4/6A.2) due to API complexity requiring changes to 15+ call sites
+- DNS server global role gating (3E.3/6H.1) due to complex code structure in server/mod.rs
 
 ## Admin Panel Architecture Notes
 
