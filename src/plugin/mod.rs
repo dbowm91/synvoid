@@ -12,6 +12,7 @@ pub mod axum_loader;
 pub mod deno_pool;
 #[cfg(feature = "deno")]
 pub mod deno_runtime;
+pub mod instance_pool;
 pub mod wasm_metrics;
 pub mod wasm_runtime;
 

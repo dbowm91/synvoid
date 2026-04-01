@@ -13,6 +13,7 @@ use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::sync::broadcast;
+use tokio::sync::Semaphore;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Role, WebSocketStream};
 
@@ -126,6 +127,7 @@ pub struct HttpServer {
     ipc: Option<Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>>,
     worker_id: Option<crate::process::ipc::WorkerId>,
     serverless_manager: Option<Arc<crate::serverless::manager::ServerlessManager>>,
+    connection_limit: Arc<Semaphore>,
 }
 
 impl HttpServer {
@@ -142,6 +144,8 @@ impl HttpServer {
             100,
             std::time::Duration::from_secs(30),
         );
+
+        let max_connections = http_config.max_connections as usize;
 
         Self {
             addr,
@@ -160,6 +164,7 @@ impl HttpServer {
             ipc: None,
             worker_id: None,
             serverless_manager: None,
+            connection_limit: Arc::new(Semaphore::new(max_connections)),
         }
     }
 
@@ -228,6 +233,7 @@ impl HttpServer {
         let metrics = self.metrics.clone();
         let worker_id = self.worker_id;
         let serverless_manager = self.serverless_manager.clone();
+        let connection_limit = self.connection_limit.clone();
 
         let header_read_timeout = Duration::from_secs(self.http_config.header_read_timeout_secs);
         let max_headers = self.http_config.max_headers;
@@ -272,6 +278,7 @@ impl HttpServer {
                             let metrics = metrics.clone();
                             let ipc = self.ipc.clone();
                             let serverless_manager = serverless_manager.clone();
+                            let connection_limit = connection_limit.clone();
 
                             let http_conn = Arc::new(HttpConnection::new(stream));
                             let http_conn_clone = http_conn.clone();
@@ -304,8 +311,9 @@ impl HttpServer {
                                     let ipc_for_request = ipc.clone();
                                     let worker_id_for_request = worker_id;
                                     let serverless_manager = serverless_manager.clone();
+                                    let connection_limit = connection_limit.clone();
                                     async move {
-                                        Self::handle_request(req, client_addr, local_addr, router, waf, client, alt_svc, main_config, drain_state, http_config, mesh_config, mesh_transport, metrics, http_conn, ipc_for_request, worker_id_for_request, serverless_manager).await
+                                        Self::handle_request(req, client_addr, local_addr, router, waf, client, alt_svc, main_config, drain_state, http_config, mesh_config, mesh_transport, metrics, http_conn, ipc_for_request, worker_id_for_request, serverless_manager, connection_limit).await
                                     }
                                 }))
                                 .with_upgrades();
@@ -352,7 +360,22 @@ impl HttpServer {
         ipc: Option<Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>>,
         worker_id: Option<crate::process::ipc::WorkerId>,
         serverless_manager: Option<Arc<crate::serverless::manager::ServerlessManager>>,
+        connection_limit: Arc<Semaphore>,
     ) -> Result<Response<Full<Bytes>>, hyper::Error> {
+        let _permit = match connection_limit.clone().acquire_owned().await {
+            Ok(p) => p,
+            Err(_) => {
+                tracing::error!("Connection limit semaphore closed");
+                return Ok(Self::build_response_with_alt_svc(
+                    503,
+                    "Service Unavailable".to_string(),
+                    "text/plain",
+                    &None,
+                    &main_config,
+                ));
+            }
+        };
+
         let start = std::time::Instant::now();
         let client_ip = client_addr.ip();
 
@@ -1276,6 +1299,77 @@ impl HttpServer {
                         Err(e) => {
                             tracing::error!("WASM plugin filter error: {}", e);
                             // Continue to proxy on plugin error (fail-open)
+                        }
+                    }
+                }
+
+                // Validate upload if content-type indicates an upload
+                let content_type = parts
+                    .headers
+                    .get("content-type")
+                    .and_then(|v| v.to_str().ok());
+                if let Some(ct) = content_type {
+                    if crate::upload::is_upload_content_type(ct) {
+                        if let Some(upload_validator) = crate::waf::get_upload_validator() {
+                            let effective_config = upload_validator.get_effective_config(&path);
+                            if effective_config.scan_with_yara
+                                || effective_config.max_size_bytes > 0
+                            {
+                                match upload_validator.validate_bytes(&body_bytes, &path) {
+                                    Ok(result) => {
+                                        if !result.is_clean() {
+                                            tracing::warn!(
+                                                path = %path,
+                                                mime_type = %result.mime_type,
+                                                matches = ?result.yara_matches,
+                                                "Upload blocked due to malware detection"
+                                            );
+                                            let body = waf.error_page_manager.render_page(
+                                                403,
+                                                Some("Upload blocked: malware detected"),
+                                            );
+                                            return Ok(Self::build_response_with_alt_svc(
+                                                403,
+                                                body,
+                                                "text/html",
+                                                &alt_svc,
+                                                &main_config,
+                                            ));
+                                        }
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            path = %path,
+                                            error = %e,
+                                            "Upload validation failed"
+                                        );
+                                        let (status, _message) = match &e {
+                                            crate::upload::UploadValidationError::SizeExceeded { .. } => (
+                                                413,
+                                                "Upload size exceeds maximum allowed",
+                                            ),
+                                            crate::upload::UploadValidationError::TypeNotAllowed { .. } => (
+                                                415,
+                                                "Upload file type not allowed",
+                                            ),
+                                            _ => (
+                                                400,
+                                                "Upload validation failed",
+                                            ),
+                                        };
+                                        let body = waf
+                                            .error_page_manager
+                                            .render_page(status, Some(&e.to_string()));
+                                        return Ok(Self::build_response_with_alt_svc(
+                                            status,
+                                            body,
+                                            "text/html",
+                                            &alt_svc,
+                                            &main_config,
+                                        ));
+                                    }
+                                }
+                            }
                         }
                     }
                 }

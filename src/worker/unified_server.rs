@@ -21,6 +21,7 @@ use crate::platform::fs::PlatformPaths;
 use crate::process::ipc_transport::IpcStream as AsyncIpcStream;
 use crate::process::{current_timestamp, Message, WorkerId};
 use crate::server::UnifiedServer;
+use crate::upload::UploadValidator;
 use crate::{DrainFlag, RunningFlag};
 
 #[derive(Clone)]
@@ -196,6 +197,48 @@ pub async fn run_unified_server_worker(
     // Start background tasks for WAF components (ASN cleanup, etc.)
     unified_server.get_waf().start_background_tasks();
 
+    // Initialize UploadValidator
+    {
+        let upload_config = {
+            let config = shared_config.read().await;
+            let defaults = &config.main.defaults.upload;
+            crate::upload::UploadConfig {
+                enabled: defaults.enabled,
+                max_size: defaults.max_size.clone(),
+                memory_threshold: defaults.memory_threshold.clone(),
+                scan_with_yara: defaults.scan_with_yara,
+                sandbox_enabled: defaults.sandbox_enabled,
+                sandbox_dir: defaults.sandbox_dir.clone(),
+                quarantine_dir: defaults.quarantine_dir.clone(),
+                yara_rules_dir: defaults.yara_rules_dir.clone(),
+                yara_timeout_ms: defaults.yara_timeout_ms,
+                verify_signature: true,
+                signature_strict_mode: false,
+                rate_limit_enabled: true,
+                max_uploads_per_minute: 30,
+                max_uploads_per_hour: 200,
+                max_bytes_per_minute: "100MB".to_string(),
+                burst_allowance: 5,
+                allowed_types: crate::upload::AllowedTypesConfig {
+                    mode: crate::upload::AllowedTypesMode::Allowlist,
+                    mime_types: defaults.allowed_types.mime_types.clone(),
+                },
+                paths: Vec::new(),
+            }
+        };
+
+        match UploadValidator::new(upload_config) {
+            Ok(validator) => {
+                let validator = Arc::new(validator);
+                crate::waf::set_upload_validator(Some(validator));
+                tracing::info!("UploadValidator initialized");
+            }
+            Err(e) => {
+                tracing::warn!("Failed to initialize UploadValidator: {}", e);
+            }
+        }
+    }
+
     // ============================================================================================
     // Mesh and Threat Intelligence Initialization
     //
@@ -343,7 +386,7 @@ pub async fn run_unified_server_worker(
                     let dns_cfg = config.main.dns.clone();
 
                     if !dns_cfg.enabled {
-                        if mesh_config.role == crate::mesh::config::MeshNodeRole::Global {
+                        if mesh_config.role.is_global() {
                             tracing::warn!(
                                 "Global node has dns.enabled = false — global nodes are required \
                                  to serve DNS. DNS-dependent mesh features (verification, \
@@ -351,7 +394,7 @@ pub async fn run_unified_server_worker(
                             );
                         }
                         None
-                    } else if mesh_config.role != crate::mesh::config::MeshNodeRole::Global {
+                    } else if !mesh_config.role.is_global() {
                         // Edge nodes do NOT get a resolver - they cannot perform verification
                         // Only global nodes (which are trusted) perform DNS verification
                         tracing::debug!("Edge node - DNS resolver not created (verification only on global nodes)");

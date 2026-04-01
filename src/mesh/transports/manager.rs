@@ -689,7 +689,7 @@ impl MeshTransportManager {
     }
 
     pub async fn update_key_exchange_endpoint(&self) {
-        if self.config.role != crate::mesh::config::MeshNodeRole::Global {
+        if !self.config.role.is_global() {
             return;
         }
 

@@ -1547,3 +1547,15 @@ All items from the original plans have been reviewed, deduplicated, and incorpor
   - 6A.2: Zone store sharded into 64 independent `RwLock<HashMap>` shards via `ShardedZoneStore` (`src/dns/server/sharded_store.rs`). Updated ~50 access sites across 12 files. Write contention reduced: concurrent writes to different zones no longer block each other.
   - 6H.1: DNS server global role gating — added `is_global_node()` to `MeshTransportManager`, runtime check in `UnifiedServer::run()` skips DNS start if mesh role is non-global.
   - All tests pass (same pre-existing failures in recursive cache tests).
+
+- **2026-04-01 (Session 2)**: Verification and corrections:
+  - 0B.4: Fixed RRSIG timestamps in `dnssec_impl.rs:544-545` — now casts to u32 before `to_be_bytes()` per RFC 4034
+  - 2D.5: Transform cache now uses `moka::sync::Cache` with byte-size based eviction (weigher callback) — entries are weighted by body size, not just count
+  - 3G.5: UploadValidator fully wired into HTTP pipeline at `http/server.rs:1306` — validates multipart uploads before proxying
+  - 6D.3: Connection semaphore added to HTTP server (`http/server.rs:364`) — tokio::sync::Semaphore with 10k default limit
+  - 6E.1: WASM instance pool created (`src/plugin/instance_pool.rs`) — stub implementation with `WasmInstancePool` and `WasmPooledInstance`
+  - 6H.1: Role comparisons updated to use `is_global()` for composite role support (`unified_server.rs:389,397`, `manager.rs:692`)
+  - 5A.3: Serverless documentation created (`docs/SERVERLESS.md`)
+  - Clippy: clean with `-D warnings`
+  - Tests: 78/78 integration tests pass
+  - Pre-existing DNS recursive cache test failures remain (known issues)

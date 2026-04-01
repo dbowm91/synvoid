@@ -541,8 +541,8 @@ impl DnsServer {
         rrsig.push(key.algorithm.to_u8());
         rrsig.push(labels);
         rrsig.extend_from_slice(&record.ttl.to_be_bytes());
-        rrsig.extend_from_slice(&sig_expire.to_be_bytes());
-        rrsig.extend_from_slice(&sig_inception.to_be_bytes());
+        rrsig.extend_from_slice(&(sig_expire as u32).to_be_bytes());
+        rrsig.extend_from_slice(&(sig_inception as u32).to_be_bytes());
         rrsig.extend_from_slice(&key.key_tag.to_be_bytes());
 
         let signer = signer_name.trim_end_matches('.');

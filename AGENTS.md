@@ -449,6 +449,46 @@ When modifying zone access code, prefer single-shard operations (`get`, `insert`
 
 When reviewing multiple plans for the same codebase, expect significant overlap. The same bug often appears in multiple plan files with different line numbers.
 
+## Session Lessons Learned
+
+### Subagent Verification Required
+
+When using subagents to make code changes:
+1. **Always verify the actual code** — subagents may claim a fix was applied but the code still shows the old version
+2. **Run compilation checks** — `cargo clippy --lib -- -D warnings` to catch type errors
+3. **Run tests** — `cargo test --test integration_test` to verify runtime behavior
+4. **Run format check** — `cargo fmt` then `cargo fmt --check` to catch drift
+
+Common failure mode: subagent reports success but code wasn't actually modified, or was modified incorrectly. Always read the actual file content to confirm.
+
+### Moka Cache Migration
+
+When migrating from `LruCache` to `moka::sync::Cache`:
+1. `moka::Cache` is already thread-safe — do NOT wrap in `Mutex` or `RwLock`
+2. Remove all `.lock()` calls on the cache
+3. Use `.get()`, `.insert()` directly (these methods are thread-safe)
+4. For TTL: use `.time_to_live()` not `.expire_after()` (latter requires custom `Expiry` trait implementation)
+5. For byte-size eviction: use `.max_capacity()` + `.weigher()` where the weigher returns `u32`
+6. `max_capacity` expects `u64`, not `usize`
+
+### Role Comparison Best Practices
+
+Always use `role.is_global()` instead of `role == MeshNodeRole::Global` because:
+- `MeshNodeRole` is a bitmask (Global=0b010, Edge=0b001, Origin=0b100)
+- Composite roles like `GLOBAL_EDGE` (0b011) have the Global bit set
+- Direct equality only matches pure roles, missing composite role cases
+
+### RRSIG Timestamp Encoding
+
+RFC 4034 requires 32-bit (u32) timestamps in RRSIG records. When writing:
+```rust
+// CORRECT:
+rrsig.extend_from_slice(&(timestamp as u32).to_be_bytes());
+
+// WRONG (writes 64-bit):
+rrsig.extend_from_slice(&timestamp.to_be_bytes());
+```
+
 ## Remediation Plan
 
 All items in `plans/plan.md` are complete. The plan was organized into 6 waves:

@@ -14,7 +14,7 @@ use http_body_util::BodyExt;
 use hyper::body::Incoming;
 use hyper::{Request, Response};
 use lru_time_cache::LruCache;
-use parking_lot::Mutex as PLMutex;
+use moka::sync::Cache;
 use parking_lot::RwLock;
 use rand::Rng;
 use tokio::sync::{Mutex, RwLock as TokioRwLock};
@@ -73,7 +73,7 @@ pub struct MeshProxy {
     provider_stats: Arc<Mutex<LruCache<String, ProviderStats>>>,
     org_manager: Arc<TokioRwLock<OrganizationManager>>,
     minifier_generator: Arc<crate::static_files::minifier::MinifierGenerator>,
-    transform_cache: Arc<PLMutex<LruCache<String, TransformCacheEntry>>>,
+    transform_cache: Arc<Cache<String, TransformCacheEntry>>,
 }
 
 #[allow(dead_code)] // peer_node_id/request_id for future request tracking
@@ -197,10 +197,13 @@ impl MeshProxy {
             cache_size,
         );
 
-        let transform_cache = LruCache::with_expiry_duration_and_capacity(
-            Duration::from_secs(DEFAULT_TRANSFORM_CACHE_TTL_SECS),
-            DEFAULT_TRANSFORM_CACHE_SIZE,
-        );
+        let transform_cache = Cache::builder()
+            .max_capacity(DEFAULT_TRANSFORM_CACHE_SIZE as u64)
+            .weigher(|_key: &String, value: &TransformCacheEntry| {
+                u32::try_from(value.body.len()).unwrap_or(u32::MAX)
+            })
+            .time_to_live(Duration::from_secs(DEFAULT_TRANSFORM_CACHE_TTL_SECS))
+            .build();
 
         Self {
             config,
@@ -214,7 +217,7 @@ impl MeshProxy {
             provider_stats: Arc::new(Mutex::new(stats_cache)),
             org_manager: Arc::new(TokioRwLock::new(OrganizationManager::new())),
             minifier_generator: Arc::new(crate::static_files::minifier::MinifierGenerator::new()),
-            transform_cache: Arc::new(PLMutex::new(transform_cache)),
+            transform_cache: Arc::new(transform_cache),
         }
     }
 
@@ -1045,8 +1048,7 @@ impl MeshProxy {
         );
 
         {
-            let mut cache = self.transform_cache.lock();
-            if let Some(entry) = cache.get(&cache_key) {
+            if let Some(entry) = self.transform_cache.get(&cache_key) {
                 tracing::debug!("Transform cache hit for {}", cache_key);
                 let mut new_response = Response::builder().status(200);
 
@@ -1182,8 +1184,7 @@ impl MeshProxy {
             .map(|s| s.to_string());
 
         {
-            let mut cache = self.transform_cache.lock();
-            cache.insert(
+            self.transform_cache.insert(
                 cache_key,
                 TransformCacheEntry {
                     body: transformed,

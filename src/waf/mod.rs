@@ -67,6 +67,7 @@ use crate::mesh::threat_intel::ThreatIntelligenceManager;
 use crate::mesh::yara_rules::YaraRulesManager;
 use crate::proxy::WafDecision;
 use crate::theme::ThemeConfig;
+use crate::upload::UploadValidator;
 
 use arc_swap::ArcSwapOption;
 use std::net::IpAddr;
@@ -76,6 +77,7 @@ use std::time::Duration;
 
 static THREAT_INTEL: OnceLock<Arc<ThreatIntelligenceManager>> = OnceLock::new();
 static YARA_RULES: OnceLock<Arc<YaraRulesManager>> = OnceLock::new();
+static UPLOAD_VALIDATOR: OnceLock<Arc<UploadValidator>> = OnceLock::new();
 
 pub fn set_threat_intel(ti: Option<Arc<ThreatIntelligenceManager>>) {
     let _ = THREAT_INTEL.set(ti.expect("THREAT_INTEL already initialized"));
@@ -91,6 +93,14 @@ pub fn set_yara_rules(yr: Option<Arc<YaraRulesManager>>) {
 
 pub fn get_yara_rules() -> Option<Arc<YaraRulesManager>> {
     YARA_RULES.get().cloned()
+}
+
+pub fn set_upload_validator(uv: Option<Arc<UploadValidator>>) {
+    let _ = UPLOAD_VALIDATOR.set(uv.expect("UPLOAD_VALIDATOR already initialized"));
+}
+
+pub fn get_upload_validator() -> Option<Arc<UploadValidator>> {
+    UPLOAD_VALIDATOR.get().cloned()
 }
 use rand::Rng;
 use std::collections::HashSet;
