@@ -1298,7 +1298,23 @@ impl HttpServer {
                         }
                         Err(e) => {
                             tracing::error!("WASM plugin filter error: {}", e);
-                            // Continue to proxy on plugin error (fail-open)
+                            match target.site_config.proxy.wasm_on_error {
+                                crate::config::site::WasmOnError::FailClosed => {
+                                    let body = waf
+                                        .error_page_manager
+                                        .render_page(500, Some("WASM plugin error"));
+                                    return Ok(Self::build_response_with_alt_svc(
+                                        500,
+                                        body,
+                                        "text/html",
+                                        &alt_svc,
+                                        &main_config,
+                                    ));
+                                }
+                                crate::config::site::WasmOnError::FailOpen => {
+                                    // Continue to proxy on plugin error (fail-open)
+                                }
+                            }
                         }
                     }
                 }

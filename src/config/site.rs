@@ -17,6 +17,10 @@ fn default_some_true() -> Option<bool> {
     Some(true)
 }
 
+fn default_wasm_on_error() -> WasmOnError {
+    WasmOnError::FailOpen
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
 pub struct SiteConfig {
     pub site: SiteInfo,
@@ -109,6 +113,17 @@ pub struct SiteProxyConfig {
 
     #[serde(default)]
     pub wasm_plugins: Option<Vec<String>>,
+
+    #[serde(default = "default_wasm_on_error")]
+    pub wasm_on_error: WasmOnError,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, Default, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WasmOnError {
+    #[default]
+    FailOpen,
+    FailClosed,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
