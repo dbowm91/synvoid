@@ -603,9 +603,13 @@ async fn run_master(
         .await;
     });
 
-    tracing::info!("Spawning unified server worker...");
-    if let Err(e) = process_manager.spawn_unified_server_worker() {
-        tracing::error!("Failed to spawn unified server worker: {}", e);
+    let unified_worker_count = process_manager.get_config().unified_server_workers.max(1);
+    tracing::info!(
+        "Spawning {} unified server worker(s)...",
+        unified_worker_count
+    );
+    if let Err(e) = process_manager.spawn_unified_server_workers(unified_worker_count) {
+        tracing::error!("Failed to spawn unified server workers: {}", e);
         std::process::exit(1);
     }
 

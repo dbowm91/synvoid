@@ -78,7 +78,7 @@ pub struct MeshTransportManager {
     preferred_transport: Arc<RwLock<MeshTransportType>>,
     peer_states: Arc<RwLock<HashMap<String, PeerTransportState>>>,
     record_store: Option<Arc<crate::mesh::dht::RecordStoreManager>>,
-    routing_manager: Option<Arc<crate::mesh::dht::routing::DhtRoutingManager>>,
+    routing_manager: Arc<RwLock<Option<Arc<crate::mesh::dht::routing::DhtRoutingManager>>>>,
     // Config caches with metrics
     image_protection_cache:
         Arc<RwLock<LruCache<String, (crate::mesh::config::MeshImageProtectionConfig, Instant)>>>,
@@ -120,7 +120,7 @@ impl MeshTransportManager {
             preferred_transport: Arc::new(RwLock::new(MeshTransportType::Quic)),
             peer_states: Arc::new(RwLock::new(HashMap::new())),
             record_store,
-            routing_manager: None,
+            routing_manager: Arc::new(RwLock::new(None)),
             image_protection_cache: Arc::new(RwLock::new(image_protection_cache)),
             compression_cache: Arc::new(RwLock::new(compression_cache)),
             minification_cache: Arc::new(RwLock::new(minification_cache)),
@@ -136,11 +136,8 @@ impl MeshTransportManager {
         }
     }
 
-    pub fn set_routing_manager(
-        &mut self,
-        manager: Arc<crate::mesh::dht::routing::DhtRoutingManager>,
-    ) {
-        self.routing_manager = Some(manager);
+    pub fn set_routing_manager(&self, manager: Arc<crate::mesh::dht::routing::DhtRoutingManager>) {
+        *self.routing_manager.write() = Some(manager);
     }
 
     pub fn get_topology(&self) -> Arc<MeshTopology> {
@@ -647,7 +644,7 @@ impl MeshTransportManager {
     }
 
     pub fn get_routing_manager(&self) -> Option<Arc<crate::mesh::dht::routing::DhtRoutingManager>> {
-        self.routing_manager.clone()
+        self.routing_manager.read().clone()
     }
 
     pub fn get_wireguard_transport(&self) -> Option<Arc<WireGuardMeshTransport>> {

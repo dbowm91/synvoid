@@ -281,6 +281,7 @@ impl MeshDiscovery {
                 public_key,
                 pow_nonce,
                 pow_public_key,
+                global_node_key,
                 ..
             } => {
                 if version != MESH_MESSAGE_VERSION {
@@ -321,6 +322,30 @@ impl MeshDiscovery {
                         }
                     } else {
                         return Err(MeshDiscoveryError::AuthFailed("Edge node must provide PoW".to_string()));
+                    }
+                }
+
+                if role.is_global() {
+                    if let Some(ref expected_key) = self.config.global_node_key {
+                        if let Some(ref peer_key) = global_node_key {
+                            if peer_key.as_str() != expected_key.as_str() {
+                                tracing::warn!(
+                                    "Global node key verification failed for {} via Discovery",
+                                    node_id
+                                );
+                                return Err(MeshDiscoveryError::AuthFailed(
+                                    "Invalid global node key".to_string(),
+                                ));
+                            }
+                        } else {
+                            tracing::warn!(
+                                "Global node {} did not provide key verification via Discovery",
+                                node_id
+                            );
+                            return Err(MeshDiscoveryError::AuthFailed(
+                                "Global node key required".to_string(),
+                            ));
+                        }
                     }
                 }
 

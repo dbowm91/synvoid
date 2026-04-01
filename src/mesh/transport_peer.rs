@@ -845,6 +845,32 @@ impl MeshTransport {
                 self.handle_zone_sync_ack(peer_id, &request_id, &zone_origin, serial)
                     .await;
             }
+            MeshMessage::ThreatAnnounce { .. }
+            | MeshMessage::ThreatSyncRequest { .. }
+            | MeshMessage::ThreatSyncResponse { .. }
+            | MeshMessage::ThreatAcknowledgement { .. } => {
+                if let Some(ref threat_intel) = self.threat_intel {
+                    let peer_role = self
+                        .topology
+                        .get_peer(peer_id)
+                        .await
+                        .map(|p| p.role)
+                        .unwrap_or(crate::mesh::config::MeshNodeRole::Edge);
+                    if let Some(response) = threat_intel.handle_mesh_message(
+                        &msg,
+                        peer_id,
+                        peer_role,
+                        self.mesh_signer.as_ref(),
+                    ) {
+                        let _ = self.send_datagram_to_peer(peer_id, &response).await;
+                    }
+                } else {
+                    tracing::trace!(
+                        "Threat message received but threat intel not enabled: {:?}",
+                        msg
+                    );
+                }
+            }
             _ => {
                 tracing::trace!(
                     "Received unhandled datagram type from {}: {:?}",

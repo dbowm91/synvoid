@@ -328,7 +328,9 @@ pub async fn initialize_mesh_transports(
     #[cfg(feature = "dns")] dns_registry: Option<Arc<crate::dns::MeshDnsRegistry>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let config = Arc::new(config.clone());
-    let topology = Arc::new(MeshTopology::new(config.clone()));
+    // Use the topology from the transport_manager (created in unified_server.rs)
+    // to ensure all components share the same peer topology
+    let topology = transport_manager.get_topology();
 
     match config.transport_preference {
         crate::mesh::config::MeshTransportPreference::WireGuard => {
@@ -421,9 +423,6 @@ pub async fn initialize_mesh_transports(
             .map(|d| d.edge_cache_enabled)
             .unwrap_or(false)
     );
-
-    let mut transport_manager =
-        MeshTransportManager::new(config.clone(), topology.clone(), record_store.clone());
 
     if let Some(rm) = routing_manager.clone() {
         transport_manager.set_routing_manager(rm);

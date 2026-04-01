@@ -223,7 +223,7 @@ impl WireGuardMeshTransport {
                 upstreams,
                 auth_token: _,
                 network_id: _,
-                global_node_key: _,
+                global_node_key: peer_global_key,
                 timestamp: _,
                 nonce: _,
                 is_trusted: _,
@@ -240,6 +240,26 @@ impl WireGuardMeshTransport {
                     quic_port,
                     wireguard_port
                 );
+
+                if role.is_global() {
+                    if let Some(ref expected_key) = config.global_node_key {
+                        if let Some(ref peer_key) = peer_global_key {
+                            if peer_key.as_str() != expected_key.as_str() {
+                                tracing::warn!(
+                                    "Global node key verification failed for {} via WireGuard",
+                                    node_id
+                                );
+                                return Err("Invalid global node key".into());
+                            }
+                        } else {
+                            tracing::warn!(
+                                "Global node {} did not provide key verification via WireGuard",
+                                node_id
+                            );
+                            return Err("Global node key required".into());
+                        }
+                    }
+                }
 
                 let wireguard_ip = format!("10.100.0.{}", peer_states.len() + 2);
 

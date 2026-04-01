@@ -1109,10 +1109,16 @@ impl ThreatIntelligenceManager {
 
     pub fn start_background_tasks(&self) {
         let transport = self.transport.read().clone();
+        let mesh_sender = self.mesh_sender.read().clone();
         let config = self.config.clone();
         let node_id = self.node_id.clone();
         let node_role = self.node_role;
         let initial_interval = config.sync_interval_secs;
+        let signer = self.signer.clone();
+        let reputation = self.reputation.clone();
+        let pending_announces = Arc::new(parking_lot::RwLock::new(
+            self.pending_announces.read().clone(),
+        ));
 
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(60));
@@ -1125,16 +1131,67 @@ impl ThreatIntelligenceManager {
                     continue;
                 }
 
-                if let Some(ref transport) = transport {
-                    if let Some(message) = None::<MeshMessage> {
-                        let (success, fail) = transport
-                            .broadcast_to_random_peers(message, 0.5, None)
-                            .await;
-                        tracing::debug!(
-                            "Fanout threat announce: {} sent, {} failed",
-                            success,
-                            fail
+                let message = {
+                    let queue = pending_announces.read();
+                    if queue.is_empty() {
+                        continue;
+                    }
+
+                    let indicators: Vec<ThreatIndicator> = queue.iter().cloned().collect();
+                    let highest_severity = indicators
+                        .iter()
+                        .map(|i| i.severity)
+                        .max_by_key(|s| *s as u32)
+                        .unwrap_or(ThreatSeverity::Unspecified);
+
+                    let mut signature = Vec::new();
+                    let source_reputation = reputation
+                        .get_peer_reputation(&node_id)
+                        .map(|p| p.score)
+                        .unwrap_or(50);
+
+                    let mut signer_public_key = String::new();
+
+                    if let Some(ref signer) = signer {
+                        let request_id = uuid::Uuid::new_v4().to_string();
+                        let timestamp = MeshMessage::generate_timestamp();
+                        let content = format!(
+                            "{},{},{:?},{},{}",
+                            request_id,
+                            node_id,
+                            highest_severity,
+                            node_role.bits(),
+                            timestamp
                         );
+                        signature = signer.sign(&content);
+                        signer_public_key = signer.get_public_key();
+                    }
+
+                    let request_id = uuid::Uuid::new_v4().to_string();
+
+                    MeshMessage::ThreatAnnounce {
+                        request_id: request_id.into(),
+                        indicators,
+                        highest_severity,
+                        timestamp: MeshMessage::generate_timestamp(),
+                        source_node_id: node_id.clone().into(),
+                        source_role: node_role,
+                        source_reputation: source_reputation as u64,
+                        signature,
+                        signer_public_key,
+                    }
+                };
+
+                if let Some(ref transport) = transport {
+                    let (success, fail) = transport
+                        .broadcast_to_random_peers(message, 0.5, None)
+                        .await;
+                    tracing::debug!("Fanout threat announce: {} sent, {} failed", success, fail);
+                } else if let Some(ref sender) = mesh_sender {
+                    if let Err(e) = sender.send(message).await {
+                        tracing::warn!("Failed to send threat announce via mesh_sender: {}", e);
+                    } else {
+                        tracing::debug!("Sent threat announce via mesh_sender");
                     }
                 }
 

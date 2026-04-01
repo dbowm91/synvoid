@@ -379,6 +379,16 @@ impl HttpServer {
         let start = std::time::Instant::now();
         let client_ip = client_addr.ip();
 
+        // Sanitize X-Forwarded-For headers based on trusted proxies
+        let client_ip = {
+            let sanitizer =
+                crate::waf::RequestSanitizer::new(main_config.server.trusted_proxies.clone(), true);
+            sanitizer.sanitize_request_headers(req.headers_mut(), client_ip);
+            sanitizer
+                .get_real_ip(req.headers(), client_ip)
+                .unwrap_or(client_ip)
+        };
+
         let path = req
             .uri()
             .path_and_query()
@@ -1193,6 +1203,62 @@ impl HttpServer {
                     return Ok(Self::build_response_with_alt_svc(
                         502,
                         "Serverless backend misconfigured: no runtime available".to_string(),
+                        "text/plain",
+                        &alt_svc,
+                        &main_config,
+                    ));
+                }
+
+                // FastCGI and PHP backend dispatch
+                if matches!(
+                    target.backend_type,
+                    crate::router::BackendType::FastCgi | crate::router::BackendType::Php
+                ) {
+                    if let Some(ref socket) = target.backend_socket {
+                        let body_bytes_for_fcgi: Bytes =
+                            body_slice.map(|b| b.to_vec().into()).unwrap_or_default();
+
+                        let fcgi_config =
+                            target.site_config.proxy.fastcgi.clone().unwrap_or_default();
+
+                        let client = crate::fastcgi::FastCgiClient::new(socket.to_string());
+                        match client
+                            .execute(
+                                &method,
+                                &parts.uri,
+                                &parts.headers,
+                                body_bytes_for_fcgi,
+                                &fcgi_config,
+                            )
+                            .await
+                        {
+                            Ok(response) => {
+                                return Ok(response.into_http_response().map(Full::new));
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    "FastCGI error for site {} path {}: {}",
+                                    site_id,
+                                    path,
+                                    e
+                                );
+                                return Ok(Self::build_response_with_alt_svc(
+                                    502,
+                                    format!("Backend Error: {}", e),
+                                    "text/plain",
+                                    &alt_svc,
+                                    &main_config,
+                                ));
+                            }
+                        }
+                    }
+                    tracing::warn!(
+                        "FastCGI/PHP backend for site {} but no socket configured",
+                        site_id
+                    );
+                    return Ok(Self::build_response_with_alt_svc(
+                        502,
+                        "Backend misconfigured: no socket configured".to_string(),
                         "text/plain",
                         &alt_svc,
                         &main_config,

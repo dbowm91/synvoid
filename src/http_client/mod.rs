@@ -303,33 +303,17 @@ impl NoVerifier {
 impl rustls::client::danger::ServerCertVerifier for NoVerifier {
     fn verify_server_cert(
         &self,
-        end_entity: &rustls_pki_types::CertificateDer<'_>,
-        intermediates: &[rustls_pki_types::CertificateDer<'_>],
-        server_name: &rustls_pki_types::ServerName<'_>,
-        ocsp_response: &[u8],
-        now: rustls_pki_types::UnixTime,
+        _end_entity: &rustls_pki_types::CertificateDer<'_>,
+        _intermediates: &[rustls_pki_types::CertificateDer<'_>],
+        _server_name: &rustls_pki_types::ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: rustls_pki_types::UnixTime,
     ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
         tracing::warn!(
             reason = %self.skip_reason,
-            server_name = ?server_name,
-            "TLS certificate verification DISABLED - accepting certificate for {:?}",
-            server_name
+            "TLS certificate verification DISABLED - accepting certificate without validation"
         );
-
-        let mut root_store = rustls::RootCertStore::empty();
-        root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-
-        let webpki_verifier =
-            rustls::client::WebPkiServerVerifier::builder(std::sync::Arc::new(root_store))
-                .build()
-                .map_err(|e| rustls::Error::General(format!("Failed to build verifier: {}", e)))?;
-
-        webpki_verifier
-            .verify_server_cert(end_entity, intermediates, server_name, ocsp_response, now)
-            .map_err(|e| {
-                tracing::debug!("Chain validation error (skipped): {}", e);
-                rustls::Error::General(format!("Chain validation error (bypassed): {}", e))
-            })
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
     }
 
     fn verify_tls12_signature(

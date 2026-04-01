@@ -509,6 +509,30 @@ pub async fn run_unified_server_worker(
                 }
             }
 
+            // Wire mesh_sender for threat intel and YARA rules mesh broadcast
+            let mesh_broadcast_tx_for_yara = {
+                let (mesh_broadcast_tx, mut mesh_broadcast_rx) =
+                    tokio::sync::mpsc::channel::<crate::mesh::protocol::MeshMessage>(128);
+
+                // Set sender on threat_intel before start_background_tasks()
+                threat_intel.set_mesh_sender(mesh_broadcast_tx.clone());
+
+                // Spawn forwarder task that receives mesh messages and broadcasts to peers
+                if let Some(quic_transport) = transport_manager.get_quic_transport() {
+                    let mesh_transport = quic_transport.get_inner();
+                    tokio::spawn(async move {
+                        while let Some(msg) = mesh_broadcast_rx.recv().await {
+                            let transport = mesh_transport.clone();
+                            tokio::spawn(async move {
+                                transport.broadcast_to_random_peers(msg, 0.5, None).await;
+                            });
+                        }
+                    });
+                }
+
+                mesh_broadcast_tx
+            };
+
             // Announce key exchange endpoint if global node with key exchange enabled
             if mesh_config.role == crate::mesh::config::MeshNodeRole::Global
                 && mesh_config.global_node.key_exchange_enabled
@@ -568,6 +592,9 @@ pub async fn run_unified_server_worker(
                         feed_mgr,
                         yara_data_dir,
                     ));
+
+                    // Wire mesh sender for YARA rules mesh broadcast
+                    yara_rules.set_mesh_sender(mesh_broadcast_tx_for_yara.clone());
 
                     // Get elevated threat level for feed polling interval
                     let is_elevated: Arc<parking_lot::RwLock<bool>> =
