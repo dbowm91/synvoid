@@ -4,6 +4,8 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Instant;
 
+use futures::stream::{FuturesUnordered, StreamExt};
+
 use bytes::Bytes;
 use dashmap::DashMap;
 use parking_lot::RwLock as ParkingRwLock;
@@ -19,6 +21,7 @@ use crate::mesh::wireguard_mesh::WireGuardMeshRuntime;
 
 const MESH_HEADER_SIZE: usize = 4;
 
+#[derive(Clone)]
 pub struct WireGuardMeshTransport {
     config: Arc<MeshConfig>,
     wireguard_config: Arc<MeshWireGuardConfig>,
@@ -511,9 +514,18 @@ impl MeshTransportTrait for WireGuardMeshTransport {
             .encode()
             .map_err(|e| MeshTransportError::SendFailed(e.to_string()))?;
 
+        let mut futures = FuturesUnordered::new();
         for entry in self.peer_states.iter() {
-            let peer_id = entry.key();
-            if let Err(e) = self.send_to_peer(peer_id, &encoded).await {
+            let peer_id = entry.key().clone();
+            let encoded = encoded.clone();
+            let transport = self.clone();
+            futures.push(async move {
+                let result = transport.send_to_peer(&peer_id, &encoded).await;
+                (peer_id, result)
+            });
+        }
+        while let Some((peer_id, result)) = futures.next().await {
+            if let Err(e) = result {
                 tracing::warn!("Failed to send broadcast to {}: {}", peer_id, e);
             }
         }

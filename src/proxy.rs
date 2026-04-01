@@ -1212,16 +1212,7 @@ impl ProxyServer {
         headers: Option<&http::HeaderMap>,
         body: Option<bytes::Bytes>,
     ) -> Result<Response<bytes::Bytes>, Box<dyn std::error::Error + Send + Sync>> {
-        let hop_by_hop_headers = [
-            "connection",
-            "keep-alive",
-            "proxy-authenticate",
-            "proxy-authorization",
-            "te",
-            "trailers",
-            "transfer-encoding",
-            "upgrade",
-        ];
+        let hop_by_hop_headers = HOP_BY_HOP_HEADERS;
 
         if crate::http_client::is_quictunnel_url(url) {
             let response = crate::http_client::send_request_via_quic_tunnel(

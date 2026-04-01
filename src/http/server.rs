@@ -1164,9 +1164,16 @@ impl HttpServer {
                         }
                     }
                     tracing::warn!(
-                        "Serverless backend for site {} but no serverless manager, falling back",
+                        "Serverless backend for site {} but no serverless manager",
                         site_id
                     );
+                    return Ok(Self::build_response_with_alt_svc(
+                        502,
+                        "Serverless backend misconfigured: no runtime available".to_string(),
+                        "text/plain",
+                        &alt_svc,
+                        &main_config,
+                    ));
                 }
 
                 // FastCGI, PHP, CGI, and AppServer backends fall through to upstream proxy
@@ -1188,7 +1195,15 @@ impl HttpServer {
                             .expect("fallback request body should be valid")
                     });
 
-                    match pm.apply_wasm_filters(filter_req) {
+                    // Use per-site WASM plugins if configured, otherwise run all
+                    let wasm_result =
+                        if let Some(ref plugin_names) = target.site_config.proxy.wasm_plugins {
+                            pm.apply_wasm_filters_with_plugins(filter_req, plugin_names)
+                        } else {
+                            pm.apply_wasm_filters(filter_req)
+                        };
+
+                    match wasm_result {
                         Ok(crate::plugin::WasmFilterResult::Pass) => {}
                         Ok(crate::plugin::WasmFilterResult::Block(status, msg)) => {
                             tracing::info!(
@@ -1359,7 +1374,18 @@ impl HttpServer {
                                         .body(Bytes::new())
                                         .expect("fallback response body should be valid")
                                 });
-                            match pm.apply_wasm_response_transforms(wasm_resp) {
+                            // Use per-site WASM plugins for response transforms if configured
+                            let transform_result = if let Some(ref plugin_names) =
+                                target.site_config.proxy.wasm_plugins
+                            {
+                                pm.apply_wasm_response_transforms_with_plugins(
+                                    wasm_resp,
+                                    plugin_names,
+                                )
+                            } else {
+                                pm.apply_wasm_response_transforms(wasm_resp)
+                            };
+                            match transform_result {
                                 Ok(transformed) => {
                                     body = transformed.into_body();
                                     body_len = body.len() as u64;

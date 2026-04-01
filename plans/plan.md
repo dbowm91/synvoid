@@ -1527,6 +1527,16 @@ All items from the original plans have been reviewed, deduplicated, and incorpor
   - Fixed pre-existing cache stats test (moka eventual consistency)
   - All tests pass: 217/217 across integration, DHT, IPC, DNS server, E2E suites
 
+- **2026-04-01**: Review corrections applied:
+  - 6B.1: Re-applied FuturesUnordered broadcast in transport.rs and wireguard.rs (initial commit didn't persist changes)
+  - 6B.2: Re-applied BufReader buffered header parsing in transport.rs (initial commit didn't persist changes)
+  - 6B.3: Re-applied early route query return via polling (initial commit didn't persist changes)
+  - Fixed WASM per-site plugin dispatch: now uses `apply_wasm_filters_with_plugins()` when site config has `wasm_plugins`
+  - Fixed serverless dispatch: returns 502 when serverless_manager is None instead of falling through
+  - Fixed proxy.rs hop-by-hop header inconsistency: local array now uses shared `HOP_BY_HOP_HEADERS` constant
+  - Added `Clone` derive to WireGuardMeshTransport for concurrent broadcast support
+  - All tests pass: 133/133 across integration and DHT test suites
+
 - This plan is organized by **priority and dependency**, not by domain. Critical security fixes come first regardless of which subsystem they affect.
 - Each wave is designed to be **independently testable** — you can run the full test suite after any wave.
 - **Parallelization is the key to reducing wall-clock time.** With 5-9 sub-agents, the total effort can be reduced from 49-77 days to 20-35 days.

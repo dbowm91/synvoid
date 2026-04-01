@@ -42,6 +42,7 @@ use lru_time_cache::LruCache;
 use bytes::Bytes;
 use dashmap::DashMap;
 use futures::future::join_all;
+use futures::stream::{FuturesUnordered, StreamExt};
 use http_body::Body as HttpBody;
 use http_body_util::combinators::BoxBody;
 use hyper::{Request, Response};
@@ -1560,7 +1561,22 @@ impl MeshTransport {
 
             join_all(queries).await;
 
-            tokio::time::sleep(collection_timeout).await;
+            // Poll for early return: check every 100ms if providers are available
+            // Return early if we have results, otherwise wait up to collection_timeout
+            let poll_interval = Duration::from_millis(100);
+            let deadline = Instant::now() + collection_timeout;
+            loop {
+                {
+                    let pending = self.pending_queries.lock().await;
+                    if pending.collected_providers.contains_key(&query_id) {
+                        break;
+                    }
+                }
+                if Instant::now() >= deadline {
+                    break;
+                }
+                tokio::time::sleep(poll_interval).await;
+            }
 
             let providers = {
                 let mut pending = self.pending_queries.lock().await;
@@ -1827,12 +1843,22 @@ impl MeshTransport {
         let mut success_count = 0;
         let mut fail_count = 0;
 
+        let mut futures = FuturesUnordered::new();
         for peer in &peers {
-            match self.send_datagram_to_peer(&peer.node_id, &message).await {
+            let transport = self.clone();
+            let message = message.clone();
+            let node_id = peer.node_id.clone();
+            futures.push(async move {
+                let result = transport.send_datagram_to_peer(&node_id, &message).await;
+                (node_id, result)
+            });
+        }
+        while let Some((node_id, result)) = futures.next().await {
+            match result {
                 Ok(_) => success_count += 1,
                 Err(e) => {
                     fail_count += 1;
-                    tracing::debug!("Fanout broadcast to {} failed: {}", peer.node_id, e);
+                    tracing::debug!("Fanout broadcast to {} failed: {}", node_id, e);
                 }
             }
         }
@@ -1914,40 +1940,39 @@ impl MeshTransport {
         let mut content_length: Option<usize> = None;
         let mut chunked = false;
 
-        loop {
-            let mut line = String::new();
+        {
+            use tokio::io::{AsyncBufReadExt, BufReader};
+            let mut reader = BufReader::with_capacity(4096, &mut recv_stream);
+
             loop {
-                let mut buf = [0u8; 1];
-                recv_stream
-                    .read_exact(&mut buf)
+                let mut line = String::new();
+                reader
+                    .read_line(&mut line)
                     .await
                     .map_err(|e| MeshTransportError::ReceiveFailed(e.to_string()))?;
-                if buf[0] == b'\n' {
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
                     break;
                 }
-                if buf[0] != b'\r' {
-                    line.push(buf[0] as char);
+                if trimmed.to_lowercase().starts_with("content-length:") {
+                    content_length = Some(
+                        trimmed
+                            .split(':')
+                            .nth(1)
+                            .unwrap_or("")
+                            .trim()
+                            .parse()
+                            .unwrap_or(0),
+                    );
                 }
+                if trimmed.to_lowercase().starts_with("transfer-encoding:")
+                    && trimmed.to_lowercase().contains("chunked")
+                {
+                    chunked = true;
+                }
+                response_headers.push_str(trimmed);
+                response_headers.push_str("\r\n");
             }
-            let line = line.trim();
-            if line.is_empty() {
-                break;
-            }
-            if line.to_lowercase().starts_with("content-length:") {
-                content_length = Some(
-                    line.split(':')
-                        .nth(1)
-                        .unwrap_or("")
-                        .trim()
-                        .parse()
-                        .unwrap_or(0),
-                );
-            }
-            if line.to_lowercase().contains("chunked") {
-                chunked = true;
-            }
-            response_headers.push_str(line);
-            response_headers.push_str("\r\n");
         }
         response_headers.push_str("\r\n");
 
@@ -1972,42 +1997,37 @@ impl MeshTransport {
 
         let body_bytes = if chunked {
             let mut body = Vec::new();
-            loop {
-                let mut size_line = String::new();
+            {
+                use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
+                let mut reader = BufReader::with_capacity(4096, &mut recv_stream);
                 loop {
-                    let mut buf = [0u8; 1];
-                    recv_stream
-                        .read_exact(&mut buf)
+                    let mut size_line = String::new();
+                    reader
+                        .read_line(&mut size_line)
                         .await
                         .map_err(|e| MeshTransportError::ReceiveFailed(e.to_string()))?;
-                    if buf[0] == b'\n' {
+                    let size = usize::from_str_radix(size_line.trim(), 16).unwrap_or(0);
+                    if size == 0 {
                         break;
                     }
-                    if buf[0] != b'\r' {
-                        size_line.push(buf[0] as char);
+                    if body.len().saturating_add(size) > MAX_HTTP_BODY_SIZE {
+                        return Err(MeshTransportError::ReceiveFailed(format!(
+                            "Chunked body too large: exceeds {} bytes",
+                            MAX_HTTP_BODY_SIZE
+                        )));
                     }
+                    let mut chunk = vec![0u8; size];
+                    reader
+                        .read_exact(&mut chunk)
+                        .await
+                        .map_err(|e| MeshTransportError::ReceiveFailed(e.to_string()))?;
+                    body.extend_from_slice(&chunk);
+                    let mut crlf = [0u8; 2];
+                    reader
+                        .read_exact(&mut crlf)
+                        .await
+                        .map_err(|e| MeshTransportError::ReceiveFailed(e.to_string()))?;
                 }
-                let size = usize::from_str_radix(size_line.trim(), 16).unwrap_or(0);
-                if size == 0 {
-                    break;
-                }
-                if body.len().saturating_add(size) > MAX_HTTP_BODY_SIZE {
-                    return Err(MeshTransportError::ReceiveFailed(format!(
-                        "Chunked body too large: exceeds {} bytes",
-                        MAX_HTTP_BODY_SIZE
-                    )));
-                }
-                let mut chunk = vec![0u8; size];
-                recv_stream
-                    .read_exact(&mut chunk)
-                    .await
-                    .map_err(|e| MeshTransportError::ReceiveFailed(e.to_string()))?;
-                body.extend_from_slice(&chunk);
-                let mut crlf = [0u8; 2];
-                recv_stream
-                    .read_exact(&mut crlf)
-                    .await
-                    .map_err(|e| MeshTransportError::ReceiveFailed(e.to_string()))?;
             }
             body
         } else if let Some(len) = content_length {
