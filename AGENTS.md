@@ -132,7 +132,7 @@ Key features that affect testing:
 - `socket-handoff` - Socket transfer between processes
 - `post-quantum` - Post-quantum cryptography
 - `wireguard` - WireGuard VPN support
-- `deno` - Deno/JavaScript runtime for serverless functions (stub implementation)
+- Serverless functions use WASM (wasmtime), not Deno
 
 ## Common Patterns
 
