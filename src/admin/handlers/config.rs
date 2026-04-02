@@ -1241,35 +1241,18 @@ pub async fn update_overseer_config(
 ) -> Result<Json<StatusResponse>, StatusCode> {
     let _guard = state.metrics.config_write_lock.write().await;
 
-    {
-        let mut config = state.process.config.write().await;
-        config.main.overseer = req.config.clone();
-    }
-
     let main_config_path = {
-        let cfg = state.process.config.read().await;
-        cfg.config_dir.join("main.toml")
+        let mut config = state.process.config.write().await;
+        config.main.overseer = req.config;
+        config.config_dir.join("main.toml")
     };
 
-    let toml_content = tokio::fs::read_to_string(&main_config_path)
-        .await
-        .map_err(|e| {
-            tracing::error!("Failed to read main config: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
-
-    let mut main_config: crate::config::MainConfig =
-        toml::from_str(&toml_content).map_err(|e| {
-            tracing::error!("Failed to parse main config: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
-
-    main_config.overseer = req.config;
-
-    let toml_content = toml::to_string_pretty(&main_config).map_err(|e| {
+    let config = state.process.config.read().await;
+    let toml_content = toml::to_string_pretty(&config.main).map_err(|e| {
         tracing::error!("Failed to serialize config: {}", e);
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
+    drop(config);
 
     tokio::fs::write(&main_config_path, toml_content)
         .await

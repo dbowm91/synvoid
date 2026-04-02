@@ -1559,3 +1559,20 @@ All items from the original plans have been reviewed, deduplicated, and incorpor
   - Clippy: clean with `-D warnings`
   - Tests: 78/78 integration tests pass
   - Pre-existing DNS recursive cache test failures remain (known issues)
+
+- **2026-04-02**: Post-verification remediation — fixed items incorrectly marked complete:
+  - **1A.5**: Added SOA record to NXDOMAIN authority section per RFC 2308. `build_simple_nxdomain_response` now includes a synthetic SOA (MNAME=., RNAME=., TTL=60s) in the authority section.
+  - **1C.2**: Fixed admin config race condition in `update_overseer_config`. Now serializes directly from in-memory config instead of re-reading from disk (eliminates TOCTOU window).
+  - **1C.3**: Plaintext token migration now accepts `__plaintext__:` prefixed tokens (direct string comparison) with deprecation warning instead of hard-rejecting. Administrators with legacy tokens can still authenticate.
+  - **2D.4**: Replaced all 4 `tokio::sync::Mutex<LruCache<...>>` caches in `mesh/proxy.rs` with `moka::sync::Cache`. Eliminates `try_lock` contention and `await_holding_lock` violations. Fields: `policy_cache`, `failed_providers`, `in_flight_queries`, `provider_stats`.
+  - **3B.3**: WASM per-plugin error policy was already complete (`WasmOnError::FailOpen/FailClosed` in `config/site.rs`, handled in `http/server.rs:1367`). Previous verification was incorrect.
+  - **3D.4**: Deno runtime stub now returns 501 Not Implemented with `x-experimental-runtime: deno` header instead of 200 OK with fake success.
+  - **3D.5**: Native FFI runtime stub now returns 501 Not Implemented with `x-experimental-runtime: native-ffi` header.
+  - **3G.2**: YARA rule signature verification implemented end-to-end. `broadcast_approved_rules` now signs `version:rules` content using Ed25519. `handle_mesh_message` verifies signatures before applying rules, rejecting unverified rules with a `YaraRuleAcknowledgement` failure response.
+  - **3G.3**: YARA scan timeout rewritten using `std::sync::mpsc::channel` + `recv_timeout` instead of broken polling loop. Thread leak on timeout is documented (cannot force-cancel synchronous YARA scan).
+  - **3H.2**: Added PQ capability logging to HTTP client TLS initialization (`http_client/mod.rs:228`). Logs once whether `post-quantum` feature is enabled.
+  - **4E.8**: Added `Arc<AtomicU32>` connection counter to static worker accept loop. Max 100 concurrent connections enforced (both Unix and Windows paths). Prevents unbounded thread creation.
+  - **4E.9**: Removed redundant 100ms sleep before IPC recv (the `recv_with_timeout(100)` already provides the wait). Reduced server shutdown poll from 100ms to 10ms.
+  - Restored 7 `#[allow(clippy::await_holding_lock)]` annotations that were accidentally removed during moka migration (these protect `parking_lot::RwLock` guards, not the removed `tokio::sync::Mutex`).
+  - Clippy: clean with `-D warnings`
+  - Tests: 78/78 integration tests pass, 30/30 DNS/IPC/DHT tests pass

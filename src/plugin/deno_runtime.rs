@@ -204,13 +204,15 @@ impl DenoIsolate {
         tracing::debug!("Request: {}", request_json);
 
         let response_json = serde_json::json!({
-            "status": 200,
-            "body": format!("Deno function '{}' executed successfully with deno_core", self.runtime.name())
+            "status": 501,
+            "error": "Deno runtime is experimental - full execution not yet implemented",
+            "function": self.runtime.name()
         });
 
         let response = Response::builder()
-            .status(StatusCode::OK)
+            .status(StatusCode::NOT_IMPLEMENTED)
             .header("content-type", "application/json")
+            .header("x-experimental-runtime", "deno")
             .body(Bytes::from(response_json.to_string()))
             .map_err(|e| WasmPluginError::ExecutionFailed(e.to_string()))?;
 

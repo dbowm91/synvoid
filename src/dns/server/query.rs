@@ -21,29 +21,61 @@ impl DnsServer {
             response_code: 3, // NXDOMAIN
         };
 
-        let mut response = build_response_header(id, flags, 1, 0, 0, 0);
+        // RFC 2308: NXDOMAIN responses MUST include SOA in authority section.
+        // Build SOA record before header so we know the authority count.
+        let mut soa_rdata = Vec::new();
+        // MNAME: root label (.)
+        soa_rdata.push(0);
+        // RNAME: root label (.)
+        soa_rdata.push(0);
+        // SERIAL
+        soa_rdata.extend_from_slice(&0u32.to_be_bytes());
+        // REFRESH
+        soa_rdata.extend_from_slice(&3600u32.to_be_bytes());
+        // RETRY
+        soa_rdata.extend_from_slice(&600u32.to_be_bytes());
+        // EXPIRE
+        soa_rdata.extend_from_slice(&604800u32.to_be_bytes());
+        // MINIMUM
+        soa_rdata.extend_from_slice(&60u32.to_be_bytes());
 
+        // Copy question name from query for SOA owner
+        let mut question_name = Vec::new();
         let mut pos = 12;
         while pos < query.len() {
             let len = query[pos] as usize;
             if len == 0 {
-                response.push(query[pos]);
+                question_name.push(query[pos]);
                 pos += 1;
                 break;
             }
             if pos + 1 + len > query.len() {
                 break;
             }
-            response.push(query[pos]);
-            response.extend_from_slice(&query[pos + 1..pos + 1 + len]);
+            question_name.push(query[pos]);
+            question_name.extend_from_slice(&query[pos + 1..pos + 1 + len]);
             pos += 1 + len;
         }
-        if pos == 12 {
-            response.push(0);
+        if question_name.is_empty() {
+            question_name.push(0);
         }
+
+        // Build header with 1 question, 0 answer, 1 authority (SOA), 0 additional
+        let mut response = build_response_header(id, flags, 1, 0, 1, 0);
+
+        // Append question section (name + type + class)
+        response.extend_from_slice(&question_name);
         if pos + 4 <= query.len() {
             response.extend_from_slice(&query[pos..pos + 4]);
         }
+
+        // Append SOA record in authority section
+        response.extend_from_slice(&question_name); // owner name (same as query name)
+        response.extend_from_slice(&6u16.to_be_bytes()); // type: SOA
+        response.extend_from_slice(&1u16.to_be_bytes()); // class: IN
+        response.extend_from_slice(&0u32.to_be_bytes()); // TTL: 0
+        response.extend_from_slice(&(soa_rdata.len() as u16).to_be_bytes()); // RDLENGTH
+        response.extend_from_slice(&soa_rdata);
 
         Some(Arc::new(response))
     }

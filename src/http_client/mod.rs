@@ -224,6 +224,20 @@ fn build_tls_config(
 
     let provider = Arc::new(aws_lc_rs::default_provider());
 
+    // Log crypto provider capabilities at first build
+    static PROVIDER_LOGGED: std::sync::Once = std::sync::Once::new();
+    PROVIDER_LOGGED.call_once(|| {
+        tracing::info!(
+            "HTTP client TLS initialized with aws-lc-rs provider (TLS 1.3, \
+             PQ support: {})",
+            if cfg!(feature = "post-quantum") {
+                "enabled"
+            } else {
+                "not available"
+            }
+        );
+    });
+
     let builder = rustls::ClientConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
         .expect("failed to set TLS protocol versions");

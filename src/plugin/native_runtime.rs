@@ -200,13 +200,15 @@ impl NativeFunction {
         );
 
         let response_json = serde_json::json!({
-            "status": 200,
-            "body": format!("Native function '{}' executed successfully (FFI stub - full implementation loads .so/.dylib/.dll)", self.runtime.name())
+            "status": 501,
+            "error": "Native FFI runtime is experimental - full execution not yet implemented",
+            "function": self.runtime.name()
         });
 
         let response = Response::builder()
-            .status(StatusCode::OK)
+            .status(StatusCode::NOT_IMPLEMENTED)
             .header("content-type", "application/json")
+            .header("x-experimental-runtime", "native-ffi")
             .body(Bytes::from(response_json.to_string()))
             .map_err(|e| WasmPluginError::ExecutionFailed(e.to_string()))?;
 

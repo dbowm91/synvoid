@@ -13,11 +13,10 @@ use http_body_util::combinators::BoxBody;
 use http_body_util::BodyExt;
 use hyper::body::Incoming;
 use hyper::{Request, Response};
-use lru_time_cache::LruCache;
 use moka::sync::Cache;
 use parking_lot::RwLock;
 use rand::Rng;
-use tokio::sync::{Mutex, RwLock as TokioRwLock};
+use tokio::sync::RwLock as TokioRwLock;
 
 static WHITELIST_REGEX_CACHE: LazyLock<DashMap<String, Option<regex::Regex>>> =
     LazyLock::new(DashMap::new);
@@ -67,10 +66,10 @@ pub struct MeshProxy {
     transport_manager:
         Arc<RwLock<Option<Arc<crate::mesh::transports::manager::MeshTransportManager>>>>,
     active_connections: Arc<RwLock<HashMap<String, MeshConnection>>>,
-    policy_cache: Arc<Mutex<LruCache<String, CachedPolicy>>>,
-    failed_providers: Arc<Mutex<LruCache<String, Instant>>>,
-    in_flight_queries: Arc<Mutex<LruCache<String, InFlightQuery>>>,
-    provider_stats: Arc<Mutex<LruCache<String, ProviderStats>>>,
+    policy_cache: Cache<String, CachedPolicy>,
+    failed_providers: Cache<String, Instant>,
+    in_flight_queries: Cache<String, InFlightQuery>,
+    provider_stats: Cache<String, ProviderStats>,
     org_manager: Arc<TokioRwLock<OrganizationManager>>,
     minifier_generator: Arc<crate::static_files::minifier::MinifierGenerator>,
     transform_cache: Arc<Cache<String, TransformCacheEntry>>,
@@ -93,6 +92,8 @@ pub struct CachedPolicy {
     pub expires_at: Instant,
 }
 
+#[derive(Clone)]
+#[allow(dead_code)]
 struct InFlightQuery {
     provider: Option<ProviderInfo>,
     completed: bool,
@@ -180,22 +181,22 @@ impl MeshProxy {
         _cache_config: Option<ProxyCacheSettings>,
     ) -> Self {
         let cache_size = config.persistence.policy_cache_size.max(100);
-        let cache = LruCache::with_expiry_duration_and_capacity(
-            Duration::from_secs(DEFAULT_POLICY_CACHE_TTL_SECS),
-            cache_size,
-        );
-        let failed_cache = LruCache::with_expiry_duration_and_capacity(
-            Duration::from_secs(FAILED_PROVIDER_COOLDOWN_SECS * 2),
-            cache_size,
-        );
-        let in_flight_cache = LruCache::with_expiry_duration_and_capacity(
-            Duration::from_secs(30),
-            MAX_IN_FLIGHT_QUERIES,
-        );
-        let stats_cache = LruCache::with_expiry_duration_and_capacity(
-            Duration::from_secs(HEALTH_METRICS_WINDOW_SECS),
-            cache_size,
-        );
+        let policy_cache = Cache::builder()
+            .max_capacity(cache_size as u64)
+            .time_to_live(Duration::from_secs(DEFAULT_POLICY_CACHE_TTL_SECS))
+            .build();
+        let failed_providers = Cache::builder()
+            .max_capacity(cache_size as u64)
+            .time_to_live(Duration::from_secs(FAILED_PROVIDER_COOLDOWN_SECS * 2))
+            .build();
+        let in_flight_queries = Cache::builder()
+            .max_capacity(MAX_IN_FLIGHT_QUERIES as u64)
+            .time_to_live(Duration::from_secs(30))
+            .build();
+        let provider_stats = Cache::builder()
+            .max_capacity(cache_size as u64)
+            .time_to_live(Duration::from_secs(HEALTH_METRICS_WINDOW_SECS))
+            .build();
 
         let transform_cache = Cache::builder()
             .max_capacity(DEFAULT_TRANSFORM_CACHE_SIZE as u64)
@@ -211,10 +212,10 @@ impl MeshProxy {
             transport: Arc::new(RwLock::new(None)),
             transport_manager: Arc::new(RwLock::new(None)),
             active_connections: Arc::new(RwLock::new(HashMap::new())),
-            policy_cache: Arc::new(Mutex::new(cache)),
-            failed_providers: Arc::new(Mutex::new(failed_cache)),
-            in_flight_queries: Arc::new(Mutex::new(in_flight_cache)),
-            provider_stats: Arc::new(Mutex::new(stats_cache)),
+            policy_cache,
+            failed_providers,
+            in_flight_queries,
+            provider_stats,
             org_manager: Arc::new(TokioRwLock::new(OrganizationManager::new())),
             minifier_generator: Arc::new(crate::static_files::minifier::MinifierGenerator::new()),
             transform_cache: Arc::new(transform_cache),
@@ -429,35 +430,24 @@ impl MeshProxy {
     }
 
     fn get_cached_policy(&self, upstream_id: &str) -> Option<CachedPolicy> {
-        match self.policy_cache.try_lock() {
-            Ok(mut cache) => cache.get(upstream_id).cloned(),
-            Err(_) => None,
-        }
+        self.policy_cache.get(upstream_id)
     }
 
     fn cache_policy(&self, upstream_id: &str, policy: CachedPolicy) {
-        if let Ok(mut cache) = self.policy_cache.try_lock() {
-            cache.insert(upstream_id.to_string(), policy);
-        }
+        self.policy_cache.insert(upstream_id.to_string(), policy);
     }
 
     fn is_provider_failed(&self, provider_node_id: &str) -> bool {
-        match self.failed_providers.try_lock() {
-            Ok(mut failed) => failed.get(provider_node_id).is_some(),
-            Err(_) => false,
-        }
+        self.failed_providers.get(provider_node_id).is_some()
     }
 
     fn mark_provider_failed(&self, provider_node_id: &str) {
-        if let Ok(mut failed) = self.failed_providers.try_lock() {
-            failed.insert(provider_node_id.to_string(), Instant::now());
-        }
+        self.failed_providers
+            .insert(provider_node_id.to_string(), Instant::now());
     }
 
     fn clear_provider_failure(&self, provider_node_id: &str) {
-        if let Ok(mut failed) = self.failed_providers.try_lock() {
-            failed.remove(provider_node_id);
-        }
+        self.failed_providers.remove(provider_node_id);
     }
 
     fn filter_failed_providers(&self, providers: &[ProviderInfo]) -> Vec<ProviderInfo> {
@@ -482,11 +472,11 @@ impl MeshProxy {
     }
 
     fn is_provider_unhealthy(&self, provider_node_id: &str) -> bool {
-        if let Ok(mut stats) = self.provider_stats.try_lock() {
-            if let Some(provider_stats) = stats.get_mut(provider_node_id) {
-                provider_stats.decay();
-                return !provider_stats.is_healthy();
-            }
+        if let Some(mut provider_stats) = self.provider_stats.get(provider_node_id) {
+            provider_stats.decay();
+            self.provider_stats
+                .insert(provider_node_id.to_string(), provider_stats.clone());
+            return !provider_stats.is_healthy();
         }
         self.is_provider_failed(provider_node_id)
     }
@@ -494,37 +484,38 @@ impl MeshProxy {
     fn record_provider_success(&self, provider_node_id: &str) {
         self.clear_provider_failure(provider_node_id);
 
-        if let Ok(mut stats) = self.provider_stats.try_lock() {
-            let stats = stats
-                .entry(provider_node_id.to_string())
-                .or_insert_with(|| ProviderStats {
-                    total_requests: 0,
-                    successful_requests: 0,
-                    consecutive_failures: 0,
-                    last_failure: None,
-                    last_success: None,
-                    cooldown_until: None,
-                });
-            stats.record_success();
-        }
+        let mut stats = self
+            .provider_stats
+            .get(provider_node_id)
+            .unwrap_or(ProviderStats {
+                total_requests: 0,
+                successful_requests: 0,
+                consecutive_failures: 0,
+                last_failure: None,
+                last_success: None,
+                cooldown_until: None,
+            });
+        stats.record_success();
+        self.provider_stats
+            .insert(provider_node_id.to_string(), stats);
     }
 
     fn record_provider_failure(&self, provider_node_id: &str) -> u32 {
-        let mut failure_count = 0u32;
-        if let Ok(mut stats) = self.provider_stats.try_lock() {
-            let stats = stats
-                .entry(provider_node_id.to_string())
-                .or_insert_with(|| ProviderStats {
-                    total_requests: 0,
-                    successful_requests: 0,
-                    consecutive_failures: 0,
-                    last_failure: None,
-                    last_success: None,
-                    cooldown_until: None,
-                });
-            stats.record_failure();
-            failure_count = stats.consecutive_failures;
-        }
+        let mut stats = self
+            .provider_stats
+            .get(provider_node_id)
+            .unwrap_or(ProviderStats {
+                total_requests: 0,
+                successful_requests: 0,
+                consecutive_failures: 0,
+                last_failure: None,
+                last_success: None,
+                cooldown_until: None,
+            });
+        stats.record_failure();
+        let failure_count = stats.consecutive_failures;
+        self.provider_stats
+            .insert(provider_node_id.to_string(), stats);
         self.mark_provider_failed(provider_node_id);
         failure_count
     }
@@ -534,23 +525,18 @@ impl MeshProxy {
         upstream_id: &str,
     ) -> Result<ProviderInfo, MeshProxyError> {
         let should_initiate = {
-            match self.in_flight_queries.try_lock() {
-                Ok(mut in_flight) => {
-                    if in_flight.get(upstream_id).is_some() {
-                        false
-                    } else {
-                        in_flight.insert(
-                            upstream_id.to_string(),
-                            InFlightQuery {
-                                provider: None,
-                                completed: false,
-                                failed: false,
-                            },
-                        );
-                        true
-                    }
-                }
-                Err(_) => true,
+            if self.in_flight_queries.get(upstream_id).is_some() {
+                false
+            } else {
+                self.in_flight_queries.insert(
+                    upstream_id.to_string(),
+                    InFlightQuery {
+                        provider: None,
+                        completed: false,
+                        failed: false,
+                    },
+                );
+                true
             }
         };
 
@@ -561,19 +547,7 @@ impl MeshProxy {
 
         let result = self.execute_route_query(upstream_id).await;
 
-        {
-            if let Ok(mut in_flight) = self.in_flight_queries.try_lock() {
-                if let Some(query) = in_flight.get_mut(upstream_id) {
-                    query.completed = true;
-                    if let Ok(ref p) = result {
-                        query.provider = Some(p.clone());
-                    } else {
-                        query.failed = true;
-                    }
-                }
-                in_flight.remove(upstream_id);
-            }
-        }
+        self.in_flight_queries.remove(upstream_id);
 
         result
     }
@@ -847,19 +821,16 @@ impl MeshProxy {
     }
 
     fn mark_stale_cache_for_refresh(&self, upstream_id: &str) {
-        let upstream_id_owned = upstream_id.to_string();
-        if let Ok(mut cache) = self.policy_cache.try_lock() {
-            if let Some(cached) = cache.get(&upstream_id_owned).cloned() {
-                let refreshed = CachedPolicy {
-                    provider_node_id: cached.provider_node_id,
-                    upstream_url: cached.upstream_url,
-                    waf_policy: cached.waf_policy,
-                    protocol: cached.protocol,
-                    priority_tier: cached.priority_tier,
-                    expires_at: Instant::now() + Duration::from_secs(1),
-                };
-                cache.insert(upstream_id_owned, refreshed);
-            }
+        if let Some(cached) = self.policy_cache.get(upstream_id) {
+            let refreshed = CachedPolicy {
+                provider_node_id: cached.provider_node_id,
+                upstream_url: cached.upstream_url,
+                waf_policy: cached.waf_policy,
+                protocol: cached.protocol,
+                priority_tier: cached.priority_tier,
+                expires_at: Instant::now() + Duration::from_secs(1),
+            };
+            self.policy_cache.insert(upstream_id.to_string(), refreshed);
         }
     }
 

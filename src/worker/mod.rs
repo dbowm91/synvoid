@@ -157,8 +157,6 @@ pub async fn run_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Erro
                 break;
             }
 
-            tokio::time::sleep(Duration::from_millis(100)).await;
-
             // Receive message with lock held, then drop lock before sending responses.
             // Holding the lock across both recv and send would deadlock if another
             // task (e.g. heartbeat) also needs the lock.
@@ -325,7 +323,10 @@ pub async fn run_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Erro
                         }
                     }
                 }
-                _ = tokio::time::sleep(Duration::from_millis(100)) => {
+                // Periodic shutdown check — uses short interval to minimize
+                // shutdown latency. Would be better with a watch channel but
+                // keeping change minimal.
+                _ = tokio::time::sleep(Duration::from_millis(10)) => {
                     if !server_state.running.is_running() {
                         break;
                     }
@@ -489,6 +490,10 @@ pub async fn run_static_worker(
         };
 
         let socket_state = state.clone();
+        use std::sync::atomic::{AtomicU32, Ordering};
+        let active_connections = Arc::new(AtomicU32::new(0));
+        const MAX_STATIC_CONNECTIONS: u32 = 100;
+
         std::thread::spawn(move || loop {
             if !socket_state.running.is_running() {
                 break;
@@ -496,10 +501,23 @@ pub async fn run_static_worker(
 
             match listener.accept() {
                 Ok((stream, _)) => {
+                    if active_connections.load(Ordering::Relaxed) >= MAX_STATIC_CONNECTIONS {
+                        tracing::debug!(
+                            "Static worker at max connections ({}), dropping",
+                            MAX_STATIC_CONNECTIONS
+                        );
+                        drop(stream);
+                        continue;
+                    }
+                    active_connections.fetch_add(1, Ordering::Relaxed);
                     let ipc = crate::process::IpcStream::new(stream);
                     let state = socket_state.clone();
+                    let counter = active_connections.clone();
                     std::thread::spawn(move || {
                         handle_minify_client_connection(ipc, state);
+                        let _ = counter.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+                            v.checked_sub(1)
+                        });
                     });
                 }
                 Err(e) => {
@@ -514,6 +532,9 @@ pub async fn run_static_worker(
     {
         let listener = crate::process::ipc::WindowsIpcListener::new("rustwaf-static-worker");
         let socket_state = state.clone();
+        use std::sync::atomic::{AtomicU32, Ordering};
+        let active_connections = Arc::new(AtomicU32::new(0));
+        const MAX_STATIC_CONNECTIONS: u32 = 100;
 
         std::thread::spawn(move || loop {
             if !socket_state.running.is_running() {
@@ -522,10 +543,23 @@ pub async fn run_static_worker(
 
             match listener.accept() {
                 Ok(stream) => {
+                    if active_connections.load(Ordering::Relaxed) >= MAX_STATIC_CONNECTIONS {
+                        tracing::debug!(
+                            "Static worker at max connections ({}), dropping",
+                            MAX_STATIC_CONNECTIONS
+                        );
+                        drop(stream);
+                        continue;
+                    }
+                    active_connections.fetch_add(1, Ordering::Relaxed);
                     let ipc = crate::process::IpcStream::new(stream);
                     let state = socket_state.clone();
+                    let counter = active_connections.clone();
                     std::thread::spawn(move || {
                         handle_minify_client_connection(ipc, state);
+                        let _ = counter.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+                            v.checked_sub(1)
+                        });
                     });
                 }
                 Err(e) => {

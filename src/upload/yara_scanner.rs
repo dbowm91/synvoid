@@ -1,7 +1,7 @@
 use parking_lot::RwLock;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use thiserror::Error;
 use yara_x::Rules;
 use yara_x::Scanner;
@@ -328,75 +328,77 @@ impl YaraScanner {
             .map(|s| (*s).to_string())
             .collect();
 
-        let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+        let (tx, rx) = std::sync::mpsc::channel();
 
-        let scan_task = move || -> Result<Vec<YaraMatch>, YaraError> {
+        std::thread::spawn(move || {
             let rules_guard = rules.read();
             let mut scanner = Scanner::new(&rules_guard);
 
-            let results = scanner
-                .scan(&data)
-                .map_err(|e| YaraError::ScanError(e.to_string()))?;
+            let result = match scanner.scan(&data) {
+                Ok(results) => {
+                    let matches: Vec<YaraMatch> = results
+                        .matching_rules()
+                        .filter_map(|rule| {
+                            let mut category = "unknown".to_string();
+                            let mut severity = "medium".to_string();
+                            let mut description = String::new();
 
-            let matches: Vec<YaraMatch> = results
-                .matching_rules()
-                .filter_map(|rule| {
-                    let mut category = "unknown".to_string();
-                    let mut severity = "medium".to_string();
-                    let mut description = String::new();
-
-                    for (key, value) in rule.metadata() {
-                        match key {
-                            "category" => {
-                                if let yara_x::MetaValue::String(s) = value {
-                                    category = s.to_string();
+                            for (key, value) in rule.metadata() {
+                                match key {
+                                    "category" => {
+                                        if let yara_x::MetaValue::String(s) = value {
+                                            category = s.to_string();
+                                        }
+                                    }
+                                    "severity" => {
+                                        if let yara_x::MetaValue::String(s) = value {
+                                            severity = s.to_string();
+                                        }
+                                    }
+                                    "description" => {
+                                        if let yara_x::MetaValue::String(s) = value {
+                                            description = s.to_string();
+                                        }
+                                    }
+                                    _ => {}
                                 }
                             }
-                            "severity" => {
-                                if let yara_x::MetaValue::String(s) = value {
-                                    severity = s.to_string();
-                                }
-                            }
-                            "description" => {
-                                if let yara_x::MetaValue::String(s) = value {
-                                    description = s.to_string();
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
 
-                    if excluded.contains(&category) {
-                        None
-                    } else {
-                        let tags = vec![];
-                        Some(YaraMatch {
-                            rule_name: rule.identifier().to_string(),
-                            namespace: rule.namespace().to_string(),
-                            tags,
-                            category,
-                            severity,
-                            description,
+                            if excluded.contains(&category) {
+                                None
+                            } else {
+                                Some(YaraMatch {
+                                    rule_name: rule.identifier().to_string(),
+                                    namespace: rule.namespace().to_string(),
+                                    tags: vec![],
+                                    category,
+                                    severity,
+                                    description,
+                                })
+                            }
                         })
-                    }
-                })
-                .collect();
+                        .collect();
+                    Ok(matches)
+                }
+                Err(e) => Err(YaraError::ScanError(e.to_string())),
+            };
 
-            Ok(matches)
-        };
+            let _ = tx.send(result);
+        });
 
-        let handle = std::thread::spawn(scan_task);
-
-        while Instant::now() < deadline {
-            if handle.is_finished() {
-                return handle
-                    .join()
-                    .unwrap_or_else(|_| Err(YaraError::ScanError("panic during scan".into())));
+        match rx.recv_timeout(Duration::from_millis(timeout_ms)) {
+            Ok(result) => result,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                tracing::warn!(
+                    timeout_ms,
+                    "YARA scan timed out; scan thread continues in background"
+                );
+                Err(YaraError::Timeout)
             }
-            std::thread::sleep(Duration::from_millis(1));
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                Err(YaraError::ScanError("scan thread panicked".into()))
+            }
         }
-
-        Err(YaraError::Timeout)
     }
 
     pub fn scan_file_with_exclusions(

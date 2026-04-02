@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use base64::Engine;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
@@ -327,6 +328,14 @@ impl YaraRulesManager {
                 .map(|s| s.get_public_key())
                 .unwrap_or_default();
 
+            // Sign the rules content (version||rules) for verification by peers
+            let signature = if let Some(ref signer) = self.signer {
+                let sign_content = format!("{}:{}", version, rules);
+                signer.sign(&sign_content)
+            } else {
+                Vec::new()
+            };
+
             let message = MeshMessage::YaraRuleAnnounce {
                 request_id: uuid::Uuid::new_v4().to_string().into(),
                 version: version.into(),
@@ -334,7 +343,7 @@ impl YaraRulesManager {
                 timestamp: crate::mesh::protocol::MeshMessage::generate_timestamp(),
                 source_node_id: self.node_id.clone().into(),
                 source_role: self.node_role,
-                signature: Vec::new(),
+                signature,
                 signer_public_key,
             };
 
@@ -488,14 +497,48 @@ impl YaraRulesManager {
                 timestamp: _,
                 source_node_id: _,
                 source_role: _,
-                signature: _,
-                signer_public_key: _,
+                signature,
+                signer_public_key,
             } => {
                 tracing::info!(
                     "Received YARA rule announce from {}: version {}",
                     from_node,
                     version
                 );
+
+                // Verify signature if the sender provided one and we have a signer
+                if !signature.is_empty() && !signer_public_key.is_empty() {
+                    if let Some(ref signer) = self.signer {
+                        let sign_content = format!("{}:{}", version, rules);
+                        let pk_bytes = base64::engine::general_purpose::STANDARD
+                            .decode(signer_public_key)
+                            .unwrap_or_default();
+                        if !signer.verify(&sign_content, signature, &pk_bytes) {
+                            tracing::warn!(
+                                "YARA rule signature verification failed from {}, rejecting rules",
+                                from_node
+                            );
+                            return Some(MeshMessage::YaraRuleAcknowledgement {
+                                original_request_id: request_id.clone(),
+                                node_id: self.node_id.clone().into(),
+                                accepted: false,
+                                reason: "Signature verification failed".into(),
+                                timestamp: crate::mesh::protocol::MeshMessage::generate_timestamp(),
+                            });
+                        }
+                        tracing::debug!("YARA rule signature verified from {}", from_node);
+                    } else {
+                        tracing::warn!(
+                            "Received signed YARA rules from {} but no local signer configured, accepting anyway",
+                            from_node
+                        );
+                    }
+                } else {
+                    tracing::debug!(
+                        "YARA rules from {} have no signature, accepting without verification",
+                        from_node
+                    );
+                }
 
                 if let Err(e) =
                     self.handle_incoming_rules(version.clone(), rules.clone(), from_node)
