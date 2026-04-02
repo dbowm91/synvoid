@@ -1,831 +1,958 @@
-# MaluWAF Implementation Plan
+# MaluWAF Consolidated Improvement Plan
 
-> Consolidated from all pending plan files
-> Generated: 2026-04-02
-> Status: ~93 unique pending items across Security, Performance, Correctness, Features, Testing, Cleanup, and Documentation
+> Consolidated: 2026-04-02
+> Sources: plan_mesh2, plan_core2, plan_honeypot, plan_remediation2, plan_plugins2, plan_yara3, plan_threat2, plan_cach2, plan_files2, plan_files3
+> Previous: oldplan.md (Waves 0-6, 185/185 items complete), remediation.md (15/15 complete)
 
 ---
 
 ## Executive Summary
 
-This plan consolidates all remaining implementation work identified across multiple review cycles. The original plan (waves 0-6) was completed; this plan covers newly identified items.
-
-| Category | Items | Est. Effort | Parallel Agents |
-|----------|-------|------------|----------------|
-| Security | 18 | 3-5 days | 2 |
-| Performance | 13 | 3-5 days | 2 |
-| Correctness | 15 | 2-3 days | 1 |
-| Features | 28 | 8-12 days | 3 |
-| Testing | 8 | 2-3 days | 1 |
-| Cleanup | 8 | 1-2 days | 1 |
-| Documentation | 3 | 0.5 days | 1 |
-
-**Total: ~93 unique items, ~20-30 days sequential, ~8-15 days with parallelization**
+After completing all items from the original remediation plan (185 items across Waves 0-6), **10 specialized review plans** identified **~113 remaining improvement items** across 9 domains. This consolidated plan merges all items, deduplicates overlaps, and organizes them into **7 waves** for parallel sub-agent execution.
 
----
-
-## Wave 1: Critical Security (Parallel Agents A-B)
-
-### 1A: HTTPS and Proxy Security
-
-#### 1A.1 HTTPS Proxy Request Body Forwarding (CRITICAL)
-
-**Problem**: The HTTPS server (`src/tls/server.rs`) never forwards request bodies to upstreams. Two paths both fail:
-- Cache path: `body: None` always passed
-- Non-cache path: `send_request_with_timeout_and_headers()` uses empty body
-
-**Files**: `src/tls/server.rs`, `src/http_client/mod.rs`
-
-**Fix**: Pass `body_bytes.clone()` to `handle_request_with_cache()` and use `send_request_with_body_and_timeout()` for non-cache path.
-
-**Verification**: POST 10KB body → upstream receives 10KB; POST 5MB body → upstream receives 5MB.
-
----
-
-#### 1A.2 Upload Validation in TLS Path (CRITICAL)
-
-**Problem**: Upload validation (malware scanning, content-type checking) in `src/http/server.rs` not replicated in TLS server path. HTTPS uploads bypass malware scanning.
-
-**Files**: `src/tls/server.rs:580`
-
-**Fix**: Insert upload validation block before cache logic at line 580, mirroring `http/server.rs:1391-1460`.
-
----
-
-#### 1A.3 X-Forwarded-For Chain Depth Limit and Validation (HIGH)
-
-**Problem**: XFF header appended without validating length or content. Spoofed chains possible.
-
-**Files**: `src/proxy.rs:1375-1385`
-
-**Fix**: 
-1. Cap chain at 10 entries (`MAX_XFF_CHAIN_LENGTH = 10`)
-2. Validate each entry is a valid IP
-3. Truncate existing chain if exceeds limit
-
----
-
-#### 1A.4 SSRF Octal/Decimal IP Detection (HIGH)
-
-**Problem**: `parse_ipv4_flexible()` doesn't detect octal (`0177.0.0.1`) or decimal (`2130706433`) representations.
-
-**Files**: `src/waf/attack_detection/ssrf.rs:48-69, 240-253`
-
-**Fix**: 
-1. Parse octal components (base 8) when component starts with `0` and has multiple digits
-2. Parse decimal IPs (single numeric string → 32-bit integer conversion)
-
----
-
-#### 1A.5 Streaming Response Body Size Enforcement (MEDIUM)
-
-**Problem**: Chunked responses downloaded fully before size check fires. Malicious upstream can exhaust memory.
-
-**Files**: `src/proxy.rs:1174-1260`, `src/mesh/transport.rs:1911-2084`
-
-**Fix**: Wrap response stream in `Take`-like reader tracking bytes read, abort at limit.
-
----
-
-#### 1A.6 HTTP Request Body Silent Truncation (MEDIUM)
-
-**Problem**: Bodies truncated to 1MB for WAF inspection, truncated body forwarded to upstream.
-
-**Files**: `src/http/server.rs:536-554`
-
-**Fix**: Separate WAF-inspected body from forwarded body. Pass full body upstream.
-
----
-
-#### 1A.7 CORS Wildcard Enforcement (MEDIUM)
-
-**Problem**: `Access-Control-Allow-Origin: *` behavior differs between debug/release builds.
-
-**Files**: `src/http/headers.rs:66-89`
-
-**Fix**: Add explicit `allow_wildcard_cors: bool` config (default `false`). Log warning in all profiles.
-
----
-
-### 1B: Mesh Security
-
-#### 1B.1 PoW Bypass via Direct Role Equality (CRITICAL)
-
-**Problem**: Five locations use `== MeshNodeRole::Edge` instead of `.is_edge()`. Composite role `GLOBAL_EDGE` (0b011) bypasses PoW.
-
-**Files**: 
-- `src/mesh/discovery.rs:319`
-- `src/mesh/transport.rs:899, 1170`
-- `src/mesh/config_mesh.rs:6`
-- `src/worker/unified_server.rs:595`
-
-**Fix**: Replace all `== MeshNodeRole::Edge` with `.is_edge()`.
-
----
-
-#### 1B.2 Unconfigured Global Node Key Bypass (MEDIUM)
-
-**Problem**: `validate_peer_role()` returns `Ok(())` when local node has no `global_node_key`. Any peer can impersonate global.
-
-**Files**: `src/mesh/peer_auth.rs:17-32`
-
-**Fix**: When peer claims global role and local has no `global_node_key`, reject with error.
-
----
-
-#### 1B.3 Discovery/Transport Auth Path Alignment (MEDIUM)
-
-**Problem**: Discovery logs warning but proceeds without public key; QUIC transport rejects. Inconsistent.
-
-**Files**: `src/mesh/discovery.rs:314-317`
+| Wave | Focus | Items | Est. Effort | Parallel Agents |
+|------|-------|-------|-------------|-----------------|
+| 1 | Critical Bugs | 6 | 2-3 days | 4 |
+| 2 | Security Fixes | 10 | 3-5 days | 4 |
+| 3 | Correctness & Structure | 16 | 5-8 days | 5 |
+| 4 | Performance | 10 | 4-6 days | 4 |
+| 5 | Features & Plugins | 17 | 8-12 days | 5 |
+| 6 | File Manager & Web Stack | 12 | 6-10 days | 4 |
+| 7 | Testing, Docs & Cleanup | 12 | 5-8 days | 3 |
 
-**Fix**: Make discovery reject connections without public key (matching QUIC transport).
+**Total sequential: 33-52 days**
+**Total with parallelization: 12-20 days (5-7 agents)**
 
 ---
 
-## Wave 2: Performance (Parallel Agents C-D)
+## Wave 1: Critical Bugs
 
-### 2A: Proxy and Transport Performance
+*Must be completed first — each bug causes data loss or complete feature failure.*
 
-#### 2A.1 Route Query Early Return (HIGH)
+### 1A: HTTPS Proxy Does Not Forward Request Bodies (Critical)
 
-**Problem**: Polls `collected_providers` every 100ms even when responses arrive immediately. Up to 100ms unnecessary latency.
+**From:** plan_core2 §1.1
+**Files:** `src/tls/server.rs:640-647,784-791`, `src/http_client/mod.rs:487-515`
+**Problem:** HTTPS server never passes request body to upstream. Cache path passes `None` for body; non-cache path uses `send_request_with_timeout_and_headers()` which doesn't accept a body parameter. All POST/PUT/PATCH over HTTPS send empty bodies.
 
-**Files**: `src/mesh/transport.rs:1602-1620`
+**Fix:**
+1. Cache path: pass `body_bytes.clone()` instead of `None` to `handle_request_with_cache()`
+2. Non-cache path: use `send_request_with_body_and_timeout()` (already used by HTTP path) instead of `send_request_with_timeout_and_headers()`
+3. Preserve full `body_bytes` separately from WAF-inspected `body_slice`
 
-**Fix**: Replace polling loop with `tokio::select!` using `tokio::sync::watch` channel notification.
+**Verification:** HTTPS POST with 10KB body → upstream receives full 10KB. HTTPS GET → unchanged.
 
 ---
 
-#### 2A.2 Short-Circuit Input Normalization (MEDIUM)
+### 1B: Fix YARA Periodic Sync `drop(msg)`
 
-**Problem**: `normalize_all()` allocates normalized strings for ALL inputs before any detector runs.
+**From:** plan_yara3 §1A (supersedes plan_yara2 §1A)
+**Files:** `src/worker/unified_server.rs:679-682`, `src/mesh/yara_rules.rs`
+**Bug:** Periodic sync creates `YaraRuleSyncRequest` but immediately drops it. Edge nodes never pull rules from global nodes.
 
-**Files**: `src/waf/attack_detection/mod.rs:177-183`
+**Fix:**
+1. Add `pub fn get_mesh_sender(&self) -> Option<mpsc::Sender<MeshMessage>>` to `YaraRulesManager`
+2. Replace `drop(msg)` with `sender.send(msg).await`
 
-**Fix**: Use lazy normalization with `OnceCell` wrappers. Each detector normalizes only what it needs.
-
----
-
-#### 2A.3 Cache LocationMatcher Per Site (MEDIUM)
-
-**Problem**: `LocationMatcher` recompiled on every request for sites with regex location directives.
-
-**Files**: `src/router.rs:299-301`
-
-**Fix**: Cache compiled `LocationMatcher` instances per site, invalidate on config reload.
-
 ---
 
-#### 2A.4 Reuse Health Check HTTP Client (LOW)
+### 1C: Fix Granian `forward_request()` Bug
 
-**Problem**: New `reqwest::Client` created per health check cycle.
+**From:** plan_remediation2 §E2, plan_files2 §3.2
+**Files:** `src/app_server/granian.rs:776-825`, `src/http/server.rs`
+**Bug:** `forward_request()` builds a full HTTP request then ignores it, calling `get_with_timeout()` (hardcoded GET) instead. Also, `BackendType::AppServer` falls through to generic upstream proxy.
 
-**Files**: `src/upstream/health.rs:175-179`
+**Fix:**
+1. Repair `forward_request()` to actually use the built request with correct method/headers/body
+2. Wire `BackendType::AppServer` dispatch in `src/http/server.rs` to call `GranianSupervisor::forward_request()`
 
-**Fix**: Store client as field on `HealthChecker`, reuse across cycles.
-
 ---
-
-#### 2A.5 Pre-Create ProxyServer Instances (MEDIUM)
 
-**Problem**: `ProxyServer` lazily created on first HTTPS request, causing write-lock contention.
+### 1D: Wire Port Honeypot to Mesh Threat Publishing
 
-**Files**: `src/tls/server.rs:588-636`
+**From:** plan_honeypot §1.1, plan_threat2 §1.1 (deduplicated)
+**Files:** `src/worker/unified_server.rs`, `src/honeypot_port/runner.rs:140-205`
+**Problem:** `start_mesh_threat_publishing()` exists but is never called. Port honeypot records accumulate in SQLite and are never shared with the mesh.
 
-**Fix**: Pre-create instances during worker startup.
+**Fix:** After mesh/threat_intel initialization in `unified_server.rs` (~line 741), add wiring call.
 
 ---
-
-### 2B: Mesh Lock Refactoring
-
-#### 2B.1 Remove Await-Held Locks in Mesh Proxy (HIGH)
 
-**Problem**: 14 `#[allow(clippy::await_holding_lock)]` annotations. Transport/topo locks held across I/O.
+### 1E: HTTP Request Body Silent Truncation
 
-**Files**: `src/mesh/proxy.rs`, `src/mesh/transports/manager.rs`
+**From:** plan_core2 §1.3
+**Files:** `src/http/server.rs:536-543`
+**Problem:** Request bodies truncated to 1MB for WAF inspection, and the truncated body is forwarded to upstream. Legitimate large uploads silently corrupted.
 
-**Fix**: Clone Arc before await, release lock, then perform I/O.
+**Fix:** Separate WAF-inspected body from forwarded body. Collect full body, create truncated slice for WAF only, pass full body to upstream.
 
 ---
 
-#### 2B.2 Route Query Throttling and Pre-Warming (MEDIUM)
+### 1F: Remove Dead Code
 
-**Problem**: Route queries fan out to 3 peers × 3 hops = 27 messages per query.
+**From:** plan_remediation2 §A2
+**Files:** `src/dns/server/dnssec_impl.rs:562-579`
+**Problem:** `build_dnssec_response()` is `#[allow(dead_code)]`, never called. 18 lines of dead code.
 
-**Files**: `src/mesh/transport_routing.rs:82-240`, `src/mesh/proxy.rs:560`
+**Fix:** Delete the function and its annotation.
 
-**Fix**: Add per-upstream rate limit on queries, pre-warm on config change.
+> Note: `src/error.rs` (`WafError`, `WafResult`, `WafErrorExt`) has already been removed. No action needed.
 
 ---
 
-#### 2B.3 Default Unified Server Worker Count (MEDIUM)
+## Wave 2: Security Fixes
 
-**Problem**: `unified_server_workers` defaults to 1.
+*Can run in parallel — no cross-dependencies between groups.*
 
-**Files**: `src/process/manager.rs:236-256`
+### Group A: Mesh Security (Agent A)
 
-**Fix**: Default to `num_cpus::get().min(4)` or at minimum 2.
+#### 2A.1 Fix PoW Bypass via Direct Role Equality
 
----
+**From:** plan_mesh2 §1.1
+**Files:** `src/mesh/config_mesh.rs:6` (confirmed remaining instance)
+**Problem:** `config_mesh.rs:6` uses `self.role == MeshNodeRole::Edge` instead of `.is_edge()`. Composite role `GLOBAL_EDGE` (0b011) would bypass default seed auto-population logic.
 
-#### 2B.4 Route Fast-Fail on Connection Error (MEDIUM)
+**Fix:** Replace with `self.role.is_edge() && !self.role.is_global()`.
 
-**Problem**: Stale cached routes served for up to 60s after provider failure.
+> Note: The other 4 locations mentioned in the original plan (discovery.rs:319, transport.rs:899,1170, unified_server.rs:595) have already been fixed in the original remediation plan. Only `config_mesh.rs:6` remains.
 
-**Files**: `src/mesh/proxy.rs:294-333, 580+`
+#### 2A.2 Fix Unconfigured Global Node Key Bypass
 
-**Fix**: Evict cache entry immediately on connection error, retry with fresh query.
+**From:** plan_mesh2 §1.2
+**Files:** `src/mesh/peer_auth.rs:17-32`, `src/mesh/transport.rs:1394-1416`
+**Problem:** If local node has `global_node_key: None`, `validate_peer_role()` returns `Ok(())` unconditionally — peers can impersonate global nodes.
 
----
+**Fix:** Reject with error when peer claims global role and local node has no `global_node_key` configured.
 
-## Wave 3: Correctness (Parallel Agent E)
+#### 2A.3 Align Discovery and Transport Auth Paths
 
-### 3A: Whitelist and DHT Fixes
+**From:** plan_mesh2 §1.3
+**Files:** `src/mesh/discovery.rs:315-317`
+**Problem:** Discovery logs warning but proceeds without public key. QUIC transport rejects. Inconsistent.
 
-#### 3A.1 Whitelist Semantics Fix (HIGH)
+**Fix:** Make discovery reject connections without public key, matching QUIC transport.
 
-**Problem**: Image protection whitelist matches against `upstream_id` instead of `request_path`.
+### Group B: YARA Security (Agent B)
 
-**Files**: `src/mesh/proxy.rs:1095`
+#### 2B.1 Sign `YaraRuleSyncResponse` Messages
 
-**Fix**: Change `is_match(upstream_id)` to `is_match(request_path)`.
+**From:** plan_yara3 §2A
+**Files:** `src/mesh/yara_rules.rs:575-583`
+**Problem:** Sync response sent with `signature: Vec::new()` — unsigned. Attacker could inject malicious rules.
 
----
+**Fix:** Sign response content (`version:rules`) same way `broadcast_approved_rules` does.
 
-#### 3A.2 Remove Dead `build_dnssec_response()` (LOW)
+#### 2B.2 Verify Signatures on `YaraRuleSyncResponse`
 
-**Problem**: Function returns `None`-like path but is never called.
+**From:** plan_yara3 §2B
+**Files:** `src/mesh/yara_rules.rs:588-610`
+**Problem:** Handler ignores signature field entirely (`signature: _, ..`).
 
-**Files**: `src/dns/server/dnssec_impl.rs:562-579`
+**Fix:** Verify signature before calling `handle_incoming_rules`.
 
-**Fix**: Delete the function.
+#### 2B.3 Add `require_signature` Config + Fix Default
 
----
+**From:** plan_yara3 §2C, §2D
+**Files:** `src/mesh/config.rs`, `src/mesh/yara_rules.rs:536-541`
+**Changes:**
+1. Add `require_signature: bool` (default `true`) to `YaraRulesMeshConfig`
+2. When true, reject unsigned `YaraRuleAnnounce` with NACK
+3. Fix `allow_edge_submissions` default inconsistency (serde `false` vs Default `true`)
 
-#### 3A.3 Fix Merkle Tree Proof for Binary Tree (HIGH)
+### Group C: WAF & HTTP Security (Agent C)
 
-**Problem**: 16-ary Merkle tree implementation only captures 2 siblings per level, not 15.
+#### 2C.1 SSRF Octal/Decimal IP Detection
 
-**Files**: `src/mesh/dht/merkle.rs:332-379, 64-117`
+**From:** plan_core2 §1.5
+**Files:** `src/waf/attack_detection/ssrf.rs:48-69,240-253`
+**Problem:** `parse_ipv4_flexible()` doesn't detect octal (`0177.0.0.1`) or decimal (`2130706433`) loopback representations.
 
-**Fix**: Switch to binary Merkle tree (simpler, standard, smaller proofs).
+**Fix:** Extend parser: octal components (base 8), decimal 32-bit integer conversion.
 
----
+#### 2C.2 CORS Wildcard Enforcement in All Builds
 
-#### 3A.4 Write Quorum: Count Confirmed Stores (MEDIUM)
+**From:** plan_core2 §1.6
+**Files:** `src/http/headers.rs:73-88`
+**Problem:** Release builds silently omit `Access-Control-Allow-Origin: *`; debug builds warn but set it. Behavioral difference masks misconfigurations.
 
-**Problem**: Quorum counts transport sends, not confirmed stores.
+**Fix:** Add `allow_wildcard_cors: bool` config field (default `false`). Remove `cfg!(debug_assertions)` check, use config-based control.
 
-**Files**: `src/mesh/dht/record_store_sync.rs`, `src/mesh/protocol.rs`
+### Group D: Threat & Honeypot Security (Agent D)
 
-**Fix**: Add `DhtRecordStoreAck` message, count confirmed stores toward quorum.
+#### 2D.1 Fix Threat Type Mapping for Honeypot Indicators
 
----
+**From:** plan_honeypot §1.2, plan_threat2 §1.2 (deduplicated)
+**Files:** `src/honeypot_port/runner.rs:164-169`
+**Problem:** Every `IndicatorType` maps to `ThreatType::SuspiciousActivity`. Loses granularity.
 
-#### 3A.5 Wire Reputation System into Record Store (MEDIUM)
+**Fix:** Map `SourceIp` → `ThreatType::IpBlock`. Keep `AttackPattern`/`AttackVector`/`Payload` as `SuspiciousActivity`.
 
-**Problem**: Record reputation hardcoded to 75/100, bypasses actual `reputation.rs`.
+#### 2D.2 Remove Dead `self.threat_intel` in WafCore
 
-**Files**: `src/mesh/dht/record_store_message.rs:4-13`, `record_store_sync.rs:199,574`
+**From:** plan_honeypot §1.4
+**Files:** `src/waf/mod.rs:519-540`
+**Problem:** `self.threat_intel` is always `None`. `set_threat_intel()` defined but never called (Arc-wrapped, `&mut self` inaccessible). Only global singleton is active.
 
-**Fix**: Replace hardcoded values with actual reputation lookups.
+**Fix:** Remove `self.threat_intel` field, `set_threat_intel` method, and dead code path at lines 533-540.
 
 ---
 
-#### 3A.6 Reconcile Signable Content Format (LOW)
+## Wave 3: Correctness & Structural Improvements
 
-**Problem**: Two different signable formats: CRUD (`key:source:timestamp:json`) vs signed.rs (CSV-like).
+*Groups can run in parallel.*
 
-**Files**: `src/mesh/dht/record_store_crud.rs:32-37`, `signed.rs`
+### Group A: Mesh Correctness (Agent A)
 
-**Fix**: Use canonical JSON format for both.
+#### 3A.1 Fix Merkle Tree Proof for Binary Tree
 
----
+**From:** plan_mesh2 §2.1
+**Files:** `src/mesh/dht/merkle.rs:64-117,332-379`
+**Problem:** 16-ary tree with binary proof generation/verification. Proofs missing 14 siblings per level.
 
-## Wave 4: Honeypot and Threat Intel (Parallel Agent F)
+**Fix:** Switch to binary Merkle tree. Remove `MERKLE_TREE_DEGREE` constant or set to 2. Fix `Deserialize` impl (currently returns empty tree).
 
-### 4A: Critical Wiring
+#### 3A.2 Fix Write Quorum Measurement
 
-#### 4A.1 Wire Port Honeypot to Mesh Threat Publishing (CRITICAL)
+**From:** plan_mesh2 §2.2
+**Files:** `src/mesh/dht/record_store_sync.rs`, `src/mesh/protocol.rs`
+**Problem:** Quorum counts successful sends, not confirmed stores. Peers that reject still count.
 
-**Problem**: `start_mesh_threat_publishing()` exists but is never called.
+**Fix:** Add `DhtRecordStoreAck` message. Count confirmed stores toward quorum with timeout.
 
-**Files**: `src/worker/unified_server.rs`
+#### 3A.3 Integrate Actual Reputation System
 
-**Fix**: Add wiring after mesh/threat_intel initialization.
+**From:** plan_mesh2 §2.3
+**Files:** `src/mesh/dht/record_store_message.rs:4-13`, `src/mesh/dht/record_store_sync.rs:199,574`
+**Problem:** `get_sender_reputation()` returns hardcoded 75/0/100, bypassing actual reputation system in `reputation.rs`.
 
----
+**Fix:** Wire record store to mesh topology's reputation scores. Default to neutral (50) for unknown nodes.
 
-#### 4A.2 Fix Threat Type Mapping (HIGH)
+#### 3A.4 Reconcile Signable Content Format
 
-**Problem**: All `IndicatorType` map to `ThreatType::SuspiciousActivity`.
+**From:** plan_mesh2 §2.4
+**Files:** `src/mesh/dht/record_store_crud.rs:32-37`, `src/mesh/dht/signed.rs`
+**Problem:** Two different signable formats — CSV (ambiguous on commas) vs colon-separated (missing fields).
 
-**Files**: `src/honeypot_port/runner.rs:164-169`
+**Fix:** Use canonical JSON with sorted keys for both.
 
-**Fix**: Map `SourceIp` → `ThreatType::IpBlock`.
+#### 3A.5 Wire Organization Tier Enforcement into Proxy Path
 
----
+**From:** plan_mesh2 §2.5
+**Files:** `src/mesh/proxy.rs`, `src/mesh/transport_routing.rs`
+**Problem:** `validate_tier_claim()` exists but never called from production request path.
 
-#### 4A.3 Use Actual Site Scope (MEDIUM)
+**Fix:** Add tier claim check in proxy path. Add `require_tier_claim: bool` config option.
 
-**Problem**: Hardcoded `"global"` as site scope.
+#### 3A.6 Enforce Capabilities in Routing Decisions
 
-**Files**: `src/honeypot_port/runner.rs:193`, `config.rs`
+**From:** plan_mesh2 §3.1
+**Files:** `src/mesh/transport_routing.rs`, `src/mesh/proxy.rs`, `src/mesh/topology.rs`
+**Problem:** `can_route`/`can_proxy` capabilities set to `true` everywhere, serialized, stored — but zero code paths read them for routing decisions.
 
-**Fix**: Add `site_scope` to `PortHoneypotConfig`.
+**Fix:** Filter peers by `can_route` in `get_best_peers_for_query()`. Check `can_proxy` before proxying. Check `can_route` before responding to route queries.
 
----
+#### 3A.7 Extend MeshCapabilities
 
-#### 4A.4 Remove Dead `self.threat_intel` in WafCore (LOW)
+**From:** plan_mesh2 §3.2
+**Files:** `src/mesh/protocol.rs:937-944`, `src/mesh/proto/mesh.proto`, encode/decode files
+**Problem:** Missing fields for DNS serving, global status, WAF status, supported protocols. `dns_serving_healthy` always `false`.
 
-**Problem**: `self.threat_intel` always `None`, `set_threat_intel()` never called.
+**Fix:** Add `can_serve_dns`, `is_global`, `waf_enabled`, `supported_protocols` fields. Add `from_config()` constructor.
 
-**Files**: `src/waf/mod.rs:519-540`
+#### 3A.8 Add Capabilities to HelloAck
 
-**Fix**: Remove dead code path, keep global singleton.
+**From:** plan_mesh2 §3.3
+**Files:** `src/mesh/protocol.rs:226-241`, encode/decode files
+**Problem:** Protobuf schema defines `capabilities` on `HelloAck` but Rust variant doesn't include it.
 
----
+**Fix:** Add `capabilities: MeshCapabilities` to `HelloAck` variant. Store responder capabilities from HelloAck.
 
-### 4B: Structural Improvements
+#### 3A.9 Gate DNS Mesh Messages Behind Global Role Check
 
-#### 4B.1 Deduplicate Background Task Logic (MEDIUM)
+**From:** plan_mesh2 §3.4
+**Files:** `src/mesh/transport_dns.rs`
+**Problem:** DNS mesh message handlers have no runtime role check. Any node with `dns` feature could send/receive DNS messages.
 
-**Problem**: `start_background_tasks()` re-implements message construction that exists in `broadcast_pending_threats()`.
+**Fix:** Add runtime `is_global()` check at top of each DNS message handler.
 
-**Files**: `src/mesh/threat_intel.rs:1115-1208`
+### Group B: Honeypot & Threat Intel (Agent B)
 
-**Fix**: Replace inline code with call to `broadcast_pending_threats()`.
+#### 3B.1 Use Actual Site Scope Instead of Hardcoded `"global"`
 
----
+**From:** plan_honeypot §1.3, plan_threat2 §1.3 (deduplicated)
+**Files:** `src/honeypot_port/config.rs`, `src/honeypot_port/runner.rs:193`, `src/worker/unified_server.rs`
+**Problem:** `runner.rs:193` hardcodes `"global"` as site scope for all honeypot indicators.
 
-#### 4B.2 Implement Active Threat Sync (MEDIUM)
+**Fix:** Add `site_scope: String` to `PortHoneypotConfig`. Use `self.config.site_scope` instead of `"global"`.
 
-**Problem**: Sync protocol exists but background task never sends sync requests.
+#### 3B.2 Deduplicate Background Task + Fix Snapshot Bug
 
-**Files**: `src/mesh/threat_intel.rs` (integrated with 4B.1)
+**From:** plan_honeypot §2.1, plan_threat2 §2.1 (deduplicated)
+**Files:** `src/mesh/threat_intel.rs:1115-1208`
+**Problem:** Background task re-implements 70 lines of message construction. Also clones `pending_announces` at spawn time — creates frozen snapshot that diverges from live data.
 
-**Fix**: Send `ThreatSyncRequest` to peers when sync interval elapses.
+**Fix:** Replace inline construction with single `broadcast_pending_threats()` call. Eliminates snapshot bug.
 
----
+#### 3B.3 Implement Active Threat Sync (Pull-Based)
 
-#### 4B.3 Respect `hub_only_mode` (LOW)
+**From:** plan_honeypot §2.2, plan_threat2 §2.2 (deduplicated)
+**Files:** `src/mesh/threat_intel.rs`
+**Problem:** `ThreatSyncRequest/Response` protocol exists but background task never sends sync requests. Sync is purely reactive.
 
-**Problem**: `hub_only_mode` checked in reputation but not in push queue logic.
+**Fix:** In background task, when sync interval elapses, send `ThreatSyncRequest` to random peer (fanout 0.1).
 
-**Files**: `src/mesh/threat_intel.rs:482-489, 492`
+#### 3B.4 Respect `hub_only_mode` in Local Announcements
 
-**Fix**: Add check in `queue_for_push()` and `publish_indicator_to_dht()`.
+**From:** plan_honeypot §2.3, plan_threat2 §2.3 (deduplicated)
+**Files:** `src/mesh/threat_intel.rs`
+**Problem:** `queue_for_push()` and `publish_indicator_to_dht()` don't check `hub_only_mode`. Edge nodes push threats when they shouldn't.
 
----
+**Fix:** Add `hub_only_mode && !node_role.is_global()` check to both methods.
 
-#### 4B.4 Remove Redundant DHT Re-Publish (MEDIUM)
+#### 3B.5 Remove Redundant DHT Re-Publish for Incoming Threats
 
-**Problem**: Every accepted incoming threat re-published to DHT. Redundant with anti-entropy.
+**From:** plan_honeypot §3.1, plan_threat2 §3.1 (deduplicated)
+**Files:** `src/mesh/threat_intel.rs:682`
+**Problem:** Every accepted incoming threat re-published to DHT. Original publisher already stored it. Creates unnecessary amplification.
 
-**Files**: `src/mesh/threat_intel.rs:682`
+**Fix:** Remove the `self.publish_indicator_to_dht(&indicator)` call in `handle_incoming_threat()`.
 
-**Fix**: Remove re-publish line.
+#### 3B.6 Honeypot Hardening
 
----
+**From:** plan_honeypot §3.2-3.5 (consolidated)
+**Changes:**
+1. **Record dedup** (`runner.rs`): Track announced IPs per cycle with `HashSet`
+2. **Metrics** (`metrics/mod.rs`): Add `honeypot_indicators_published`, `honeypot_records_processed` counters
+3. **Remove dead `standalone_mode`** (`config/defaults.rs:583`): Field never read
+4. **Warning logs** (`threat_intel.rs`): Add debug-level logs when transport is None
 
-#### 4B.5 Add Honeypot Record Deduplication (LOW)
+### Group C: Plugin Correctness (Agent C)
 
-**Problem**: Same IP can generate duplicate announcements per cycle.
+#### 3C.1 Pass `FunctionDefinition.env` to WASM Guest
 
-**Files**: `src/honeypot_port/runner.rs:160-199`
+**From:** plan_plugins2 §0E
+**Files:** `src/serverless/manager.rs`, `src/config/serverless.rs:25`
+**Problem:** `env: HashMap<String, String>` field accepted in config but silently ignored.
 
-**Fix**: Track announced IPs per cycle with `HashSet`.
+**Fix:** Add host function `env::get_env()` to WASM link. Store env map in `RequestContext`.
 
----
+#### 3C.2 Fix Fuel Default Mismatch
 
-#### 4B.6 Add Warning Logs for Silent Drops (LOW)
+**From:** plan_plugins2 §0D
+**Files:** `src/config/plugins.rs`, `src/plugin/wasm_runtime.rs`
+**Problem:** `WasmPluginGlobalConfig` defaults `max_cpu_fuel` to 0 (disabled); `WasmResourceLimits::default()` defaults to 1M. Plugins loaded via config run without CPU limits.
 
-**Problem**: Three methods silently return when transport unavailable.
+**Fix:** Align defaults. Add warning when `max_cpu_fuel == 0` in production.
 
-**Files**: `src/mesh/threat_intel.rs:498-499, 983-994, 1190-1201`
+#### 3C.3 Plugin Lifecycle Ordering Guarantee
 
-**Fix**: Add `tracing::debug` logs.
+**From:** plan_plugins2 §1A
+**Files:** `src/plugin/mod.rs`
+**Problem:** `enable_hot_reload()` unloads then loads. Between unload and load, requests may not have plugin available.
 
----
+**Fix:** Load new plugin first, swap `Arc<WasmRuntime>`, then drop old.
 
-#### 4B.7 Remove Dead `standalone_mode` Config (LOW)
+#### 3C.4 Per-Plugin Error Handling Policy
 
-**Problem**: `standalone_mode` field never read.
+**From:** plan_plugins2 §1B
+**Files:** `src/http/server.rs:1368-1389`, `src/config/site.rs`
+**Problem:** `wasm_on_error` is single site-level setting. If plugin 2 fails, all 3 fail according to same policy.
 
-**Files**: `src/config/defaults.rs:583`
+**Fix:** Add per-plugin `on_error` field to `WasmPluginInstanceConfig`.
 
-**Fix**: Delete the field.
+#### 3C.5 Plugin Ordering
 
----
+**From:** plan_plugins2 §1C
+**Files:** `src/plugin/wasm_runtime.rs`, `src/config/plugins.rs`
+**Problem:** Plugins execute in load order. No way to control execution order.
 
-## Wave 5: YARA Mesh Distribution (Parallel Agent G)
+**Fix:** Add `priority: Option<i32>` field. Sort runtimes by priority.
 
-### 5A: Critical Bug Fix
+### Group D: YARA Correctness (Agent D)
 
-#### 5A.1 Fix `drop(msg)` in Periodic Sync (CRITICAL)
+#### 3D.1 Fix `allow_edge_submissions` Default
 
-**Problem**: Periodic sync task creates `YaraRuleSyncRequest` but drops it instead of sending.
+**From:** plan_yara3 §2D (overlaps with 2B.3 — consolidated there)
+Already addressed in Wave 2B.3.
 
-**Files**: `src/worker/unified_server.rs:679-682`
+#### 3D.2 Admin API for YARA Submission Management
 
-**Fix**: Send via mesh_sender channel.
+**From:** plan_yara3 §3A-3D, plan_yara2 §2A-2D (deduplicated)
+**New file:** `src/admin/handlers/yara_rules.rs`
+**Endpoints:** GET `/yara/status`, GET `/yara/submissions`, GET `/yara/submissions/{id}`, POST `/yara/submissions/{id}/approve`, POST `/yara/submissions/{id}/reject`, POST `/yara/broadcast`, POST `/yara/sync`
 
 ---
 
-#### 5A.2 Add `get_mesh_sender()` Accessor (CRITICAL)
+## Wave 4: Performance
 
-**Files**: `src/mesh/yara_rules.rs`
+*All groups can run in parallel.*
 
-**Fix**: Add accessor method returning clone of sender from read lock.
+### Group A: Core Proxy Performance (Agent A)
 
----
+#### 4A.1 Short-Circuit Input Normalization
 
-### 5B: Security Hardening
+**From:** plan_core2 §2.1
+**Files:** `src/waf/attack_detection/mod.rs:177-183`, `src/waf/attack_detection/normalizer.rs`
+**Problem:** `normalize_all()` allocates normalized strings for all inputs BEFORE any detector runs. Wasted if first detector matches.
 
-#### 5B.1 Sign `YaraRuleSyncResponse` (MEDIUM)
+**Fix:** Move normalization inline into each detector method. Or use lazy normalization.
 
-**Problem**: Sync response sent with `signature: Vec::new()`.
+#### 4A.2 Cache LocationMatcher Instances Per Site
 
-**Files**: `src/mesh/yara_rules.rs:575-583`
+**From:** plan_core2 §2.2
+**Files:** `src/router.rs:299-301`
+**Problem:** `LocationMatcher` re-created on every request. Recompiles regex patterns per request.
 
-**Fix**: Sign response content same way `broadcast_approved_rules` does.
+**Fix:** Cache in `Router` struct. Invalidated on config reload (Router is reconstructed).
 
----
+#### 4A.3 Reuse Health Check HTTP Client
 
-#### 5B.2 Verify Signatures on Sync Response (MEDIUM)
+**From:** plan_core2 §2.3
+**Files:** `src/upstream/health.rs:175-179`
+**Problem:** Creates new `reqwest::Client` per health check cycle. TLS setup on each creation.
 
-**Problem**: Handler ignores `signature` field entirely.
+**Fix:** Store client as field on `HealthChecker`, created once at initialization.
 
-**Files**: `src/mesh/yara_rules.rs:588-610`
+#### 4A.4 Pre-Create ProxyServer Instances at Startup
 
-**Fix**: Verify signature before calling `handle_incoming_rules`.
+**From:** plan_core2 §2.4
+**Files:** `src/tls/server.rs`, `src/worker/unified_server.rs`
+**Problem:** Per-site `ProxyServer` lazily created on first HTTPS request. Write lock serializes all threads.
 
----
+**Fix:** Pre-create for all configured sites during worker startup.
 
-#### 5B.3 Add `require_signature` Config (MEDIUM)
+### Group B: Mesh Performance (Agent B)
 
-**Problem**: Unsigned rules accepted silently.
+#### 4B.1 Reduce Await-Held Lock Scope in Proxy Path
 
-**Files**: `src/mesh/config.rs`, `src/mesh/yara_rules.rs:536-541`
+**From:** plan_mesh2 §4.1
+**Files:** `src/mesh/proxy.rs`, `src/mesh/transports/manager.rs`
+**Problem:** 14 `#[allow(clippy::await_holding_lock)]`. Transport `RwLock` held across full HTTP proxy round-trip.
 
-**Fix**: Add config field defaulting to `true`.
+**Fix:** Clone inner `Arc` under lock, release lock, then await.
 
----
+#### 4B.2 Route Query Early Return
 
-#### 5B.4 Fix `allow_edge_submissions` Default (LOW)
+**From:** plan_remediation2 §B1
+**Files:** `src/mesh/transport.rs:1602-1620`
+**Problem:** Polls `collected_providers` every 100ms. Adds up to 100ms latency even when responses arrive immediately.
 
-**Problem**: `#[serde(default)]` gives `false`, `impl Default` gives `true`.
+**Fix:** Replace polling with `tokio::select!` using `watch::channel` notifier.
 
-**Files**: `src/mesh/config.rs:135-146`
+#### 4B.3 Add Degraded Mode for Global Node Unavailability
 
-**Fix**: Align defaults.
+**From:** plan_mesh2 §4.2
+**Files:** `src/mesh/discovery.rs:168-174`, `src/mesh/topology.rs`
+**Problem:** No degraded mode when all global nodes down. Non-global nodes can't discover peers or route.
 
----
+**Fix:** Add `degraded_mode: AtomicBool`. Use cached peer list, continue routing, skip global-dependent ops.
 
-### 5C: Admin API
+#### 4B.4 Implement Peer-to-Peer Bootstrap Fallback
 
-#### 5C.1 Create YARA Admin Handler (MEDIUM)
+**From:** plan_mesh2 §4.4
+**Files:** `src/mesh/discovery.rs:94-107`
+**Problem:** No fallback to bootstrap from known peers via gossip when all seeds are down.
 
-**Problem**: No admin API for YARA submission management.
+**Fix:** After exhausting seeds, try cached peer addresses from previous sessions.
 
-**Files**: `src/admin/handlers/yara_rules.rs` (new)
+#### 4B.5 Replace Timestamp-Based Conflict Resolution
 
-**Fix**: Create handler with 7 endpoints: status, submissions, approve, reject, broadcast, sync.
+**From:** plan_mesh2 §4.5
+**Files:** `src/mesh/dht/record_store_crud.rs:435-438`
+**Problem:** LWW by timestamp vulnerable to clock skew and replay attacks.
 
----
+**Fix:** Use (timestamp, sequence_number, node_id) tuple for deterministic tie-breaking.
 
-### 5D: Broadcast Reliability
+### Group C: WAF Performance (Agent C)
 
-#### 5D.1 Add `broadcast_to_all_peers` (MEDIUM)
+#### 4C.1 Rate Limiter Collision Mitigation
 
-**Problem**: YARA rule distribution needs guaranteed delivery.
+**From:** plan_core2 §4.1
+**Files:** `src/waf/ratelimit/core.rs:391`
+**Problem:** 65,536 slots. Hash collisions cause false positives (~1.5% at 1000 IPs).
 
-**Files**: `src/mesh/transport.rs`
+**Fix:** Increase to 262,144 slots (4× memory, ~0.4% collision rate).
 
-**Fix**: Add method that sends to ALL connected peers (not random sample).
+#### 4C.2 Pre-Validate X-Forwarded-For Content
 
----
+**From:** plan_core2 §4.2, overlaps with plan_remediation2 §B2
+**Files:** `src/proxy.rs:1375-1385`
+**Problem:** Blindly appends `client_ip` to existing XFF without validating. Accepts spoofed chains.
 
-#### 5D.2 Use Targeted Broadcast for YARA (MEDIUM)
+**Fix:** Add `MAX_XFF_CHAIN_LENGTH: usize = 10`. Validate entries as IP addresses. Truncate long chains.
 
-**Problem**: Current fanout is probabilistic (50%).
+#### 4C.3 Streaming Response Body Size Enforcement
 
-**Files**: `src/mesh/yara_rules.rs:320-356`
+**From:** plan_core2 §1.2
+**Files:** `src/proxy.rs:1234-1260`, `src/mesh/transport.rs:1911-2084`
+**Problem:** Chunked responses fully downloaded before size check. Malicious upstream can exhaust memory.
 
-**Fix**: Use `broadcast_to_all_peers` for YARA rules.
+**Fix:** Wrap body stream in `http_body::Limited` or custom `Body` wrapper that aborts at limit.
 
----
+### Group D: Other Performance (Agent D)
 
-### 5E: Observability
+#### 4D.1 Remove Dead Error Module
 
-#### 5E.1 Add YARA Metrics (LOW)
+**From:** plan_core2 §4.3
+**Files:** `src/error.rs`, `src/lib.rs`
+**Problem:** `WafError`, `WafResult`, `WafErrorExt` — completely dead code. Zero production usage.
 
-**Problem**: No metrics for YARA operations.
+**Fix:** Delete `src/error.rs`, remove `mod error;` from `src/lib.rs`.
 
-**Files**: `src/metrics/mod.rs`, `src/mesh/yara_rules.rs`
+#### 4D.2 Consolidate Duplicate Timestamp Utilities
 
-**Fix**: Add counters: broadcast, received, scan, match, submission, sync_failure, verify_fail.
+**From:** plan_core2 §4.4
+Already documented in AGENTS.md as complete. Verify no remaining duplicates.
 
 ---
-
-## Wave 6: Backend Dispatch and WASM (Parallel Agent H)
 
-### 6A: Backend Dispatch
+## Wave 5: Features & Plugins
 
-#### 6A.1 CGI Dispatch (MEDIUM)
+*Groups can run in parallel.*
 
-**Problem**: `BackendType::Cgi` defined but not dispatched.
+### Group A: WASM & Pooling (Agent A)
 
-**Files**: `src/http/server.rs`, `src/cgi/mod.rs` (new)
+#### 5A.1 Wire WASM Instance Pool into Request Path
 
-**Fix**: Create `CgiClient`, add dispatch block.
+**From:** plan_remediation2 §D1, plan_plugins2 §0A (deduplicated)
+**Files:** `src/plugin/instance_pool.rs`, `src/plugin/wasm_runtime.rs`
+**Problem:** `WasmInstancePool` exists but is dead code. Every `filter_request` creates fresh Store+Instance.
 
----
-
-#### 6A.2 Fix Granian `forward_request` (MEDIUM)
+**Fix:**
+1. Add pool to `WasmRuntime` and `WasmPluginManager`
+2. In `filter_request()`, try pool before creating fresh
+3. Add `resolve_exports_from_instance()` helper
+4. Remove `#[allow(dead_code)]`
 
-**Problem**: Builds full request then ignores it, uses hardcoded GET instead.
+#### 5A.2 Wire Up Serverless InstancePool
 
-**Files**: `src/app_server/granian.rs:776-825`
+**From:** plan_plugins2 §0B
+**Files:** `src/serverless/instance_pool.rs`, `src/serverless/manager.rs`
+**Problem:** `InstancePool` has autoscaling but `ServerlessManager` never uses it. `request_queue` is dead code.
 
-**Fix**: Actually use the built request with correct method/headers/body.
+**Fix:** Remove dead `request_queue`. Add pool per function. Spawn autoscaler background task.
 
----
+#### 5A.3 Remove Dead Code in Axum Loader
 
-#### 6A.3 Non-Mesh Transform Fallback (MEDIUM)
+**From:** plan_plugins2 §0C
+**Files:** `src/plugin/axum_loader.rs:21`
+**Problem:** `metadata.is_symlink()` after `canonicalize()` — always false for symlinks.
 
-**Problem**: Transforms silently skipped when mesh unavailable.
+**Fix:** Remove dead check, or check `symlink_metadata()` before canonicalize.
 
-**Files**: `src/http/server.rs:1579`
+#### 5A.4 Fix AGENTS.md `deno` Reference
 
-**Fix**: Add else branch using local site config.
+**From:** plan_plugins2 §0F
+Already addressed in AGENTS.md update.
 
----
+### Group B: Mesh WASM Distribution (Agent B)
 
-### 6B: WASM Instance Pooling
+#### 5B.1 WASM Module Distribution via Mesh
 
-#### 6B.1 Wire WASM Instance Pool (MEDIUM)
+**From:** plan_plugins2 §3A
+**Files:** `src/mesh/protocol.rs`, `src/mesh/transport.rs`, `src/mesh/config.rs`
+**Problem:** Site config propagates via `SiteConfigSync` but WASM binaries stay on originating node. Edge nodes proxy all serverless requests to origin.
 
-**Problem**: Pool exists but never used.
+**Fix:** Add `WasmModuleAnnounce/SyncRequest/SyncResponse` messages. Add `WasmModuleStore`. Wire into `PluginManager`.
 
-**Files**: `src/plugin/instance_pool.rs`, `src/plugin/wasm_runtime.rs`
+#### 5B.2 Edge-Local WASM Execution
 
-**Fix**: Add pool to `WasmRuntime`, modify `filter_request()` to use pool.
+**From:** plan_plugins2 §3B
+**Files:** `src/mesh/proxy.rs`, `src/router.rs`, `src/http/server.rs`
+**Problem:** Edge nodes always proxy `BackendType::Serverless` to origin.
 
----
+**Fix:** Check if all required plugins are in local store. If yes, execute locally.
 
-### 6C: Config and TLS
+#### 5B.3 Serverless Function Distribution
 
-#### 6C.1 Wire `prefer_post_quantum` to Crypto (MEDIUM)
+**From:** plan_plugins2 §3C
+**Files:** `src/serverless/manager.rs`, `src/mesh/wasm_dist.rs`
+**Problem:** Serverless functions use local filesystem path. Not distributed in mesh mode.
 
-**Problem**: Config field only used for log message.
+**Fix:** Extend module distribution to support function type. Check `WasmModuleStore` before filesystem.
 
-**Files**: `src/tls/cert_resolver.rs:259`
+### Group C: Plugin Observability (Agent C)
 
-**Fix**: Conditionally select provider based on config.
+#### 5C.1 Plugin Metrics in Admin API
 
----
+**From:** plan_plugins2 §4A
+**Files:** `src/admin/handlers/stats.rs`, `src/plugin/wasm_metrics.rs`
+**Problem:** `WasmPluginMetrics` tracks invocations/decisions/errors but not exposed via admin API.
 
-#### 6C.2 Fix ACME Challenge Cleanup (MEDIUM)
+**Fix:** Add `GET /api/plugins/metrics` and `GET /api/plugins/metrics/{name}` endpoints.
 
-**Problem**: Token/domain key mismatch; no Drop guard for cleanup.
+#### 5C.2 Plugin Hot-Reload Status
 
-**Files**: `src/tls/acme.rs:278-280`
+**From:** plan_plugins2 §4B
+**New:** `GET /api/plugins/status`, reload event log, `POST /api/plugins/{name}/reload`
 
-**Fix**: Track token→domain mapping, add Drop guard.
+#### 5C.3 Mesh WASM Distribution Status
 
----
+**From:** plan_plugins2 §4C
+**New:** `GET /api/mesh/wasm-modules` listing distributed modules with sync status.
 
-#### 6C.3 Config Schema Generation (MEDIUM)
+### Group D: Cache & Image Poisoning (Agent D)
 
-**Problem**: 918-line hardcoded schema.
+#### 5D.1 DHT Distribution of Full SiteImagePoisonConfig
 
-**Files**: `src/admin/handlers/config.rs:41-959`
+**From:** plan_cach2 Phase 1
+**Files:** `src/mesh/dht/keys.rs`, `src/mesh/dht/signed.rs`, `src/mesh/dht/mod.rs`, `src/mesh/transports/manager.rs`
+**Problem:** Edge nodes receive partial `MeshImageProtectionConfig` but not full `SiteImagePoisonConfig`. Inconsistent poisoning across mesh.
 
-**Fix**: Use `schemars` derive to generate schema.
+**Fix:** Add `SiteImagePoisonConfig` DHT key variant. Origin publishes; edge retrieves and caches.
 
----
+#### 5D.2 IPC Extension for Poison Parameters
 
-## Wave 7: Cache and Image Poison (Parallel Agent I)
+**From:** plan_cach2 Phase 2
+**Files:** `src/process/ipc.rs:399-412`, `src/static_files/client.rs`, `src/worker/mod.rs`, `src/worker/image_poisoning.rs`
+**Problem:** IPC message doesn't carry poison parameters. Worker falls back to local config.
 
-### 7A: DHT Distribution of Full Poison Config
+**Fix:** Extend `PoisonImageRequest` with optional level/intensity/seed/max_dimension/jpeg_quality fields.
 
-#### 7A.1 Add SiteImagePoisonConfig DHT Key (MEDIUM)
+#### 5D.3 MeshProxy Config Updates
 
-**Files**: `src/mesh/dht/keys.rs`, `signed.rs`
+**From:** plan_cach2 Phases 3-5
+**Changes:**
+1. Pass full poison config to `apply_image_poisoning()`
+2. Include poison params in transform cache key
+3. Wire `ProxyCache` in mesh mode (currently `_cache_config` unused)
+4. Add cache metrics
 
-**Fix**: Add new `DhtKey` variant and `SignedRecordType`.
+#### 5D.4 Publish Transform Configs to DHT
 
----
+**From:** plan_remediation2 §B3, overlaps with plan_cach2
+**Files:** `src/mesh/transport.rs`
+**Problem:** Transform configs fetched from DHT but never published.
 
-#### 7A.2 Origin Publishes Poison Config (MEDIUM)
+**Fix:** Add `publish_upstream_transform_configs()`. Call from init/reload.
 
-**Files**: `src/mesh/transports/manager.rs`
+#### 5D.5 Non-Mesh Transform Fallback
 
-**Fix**: Add `publish_site_poison_config()` method.
+**From:** plan_remediation2 §E3
+**Files:** `src/http/server.rs:1579`
+**Problem:** Transform logic gated behind `if let Some(ref mt) = mesh_transport`. No else branch.
 
----
+**Fix:** Add else branch reading from local site config.
 
-#### 7A.3 Edge Retrieves Poison Config (MEDIUM)
+#### 5D.6 Fix Whitelist Semantics
 
-**Files**: `src/mesh/transports/manager.rs`
+**From:** plan_remediation2 §A1
+**Files:** `src/mesh/proxy.rs:1095`
+**Problem:** Image protection whitelist matches `upstream_id` instead of `request_path`.
 
-**Fix**: Add cache fields and `get_site_poison_config()` method.
+**Fix:** One-line: `.map(|re| re.is_match(request_path))`
 
----
+### Group E: YARA Advanced Features (Agent E)
 
-### 7B: Transform Cache and ProxyCache
+#### 5E.1 Broadcast to All Peers
 
-#### 7B.1 Transform Cache Key Granularity (MEDIUM)
+**From:** plan_yara3 §4A
+**Files:** `src/mesh/transport.rs`
+**Problem:** `broadcast_to_random_peers` uses 50% fanout. YARA rules need guaranteed delivery.
 
-**Problem**: Key doesn't include poison parameters.
+**Fix:** Add `broadcast_to_all_peers()` method with optional role filter.
 
-**Files**: `src/mesh/proxy.rs:1016-1022`
+#### 5E.2 ACK Tracking for YARA Broadcasts
 
-**Fix**: Include level, intensity, seed in key.
+**From:** plan_yara3 §4C
+**Files:** `src/mesh/yara_rules.rs`
+**Fix:** Add `BroadcastAckTracker` struct. Track sent/acked nodes. Expose via admin API.
 
----
+#### 5E.3 Delta/Incremental Sync for YARA Rules
 
-#### 7B.2 Wire ProxyCache in Mesh Mode (MEDIUM)
+**From:** plan_yara3 §5A-5B
+**Files:** `src/mesh/yara_rules.rs`
+**Problem:** Full ruleset sent on every sync, even for small changes.
 
-**Problem**: Mesh proxy has unused `_cache_config` parameter.
+**Fix:** Track rule changes. Send delta when <50% of total size. Add `is_full` field handling.
 
-**Files**: `src/mesh/proxy.rs`
+#### 5E.4 Upload Security Improvements
 
-**Fix**: Initialize and use `ProxyCache` in mesh proxy.
+**From:** plan_yara3 §6A-6C
+**Changes:**
+1. **Multipart parsing** (`src/upload/mod.rs`): Parse multipart bodies, scan files individually
+2. **Export signature registry** (`src/upload/mod.rs`): `pub mod signature;` for secondary MIME verification
+3. **Scan timeout mitigation** (`src/upload/yara_scanner.rs`): Use `spawn_blocking` instead of `std::thread::spawn`
 
 ---
 
-## Wave 8: Web App Stack (Parallel Agent J)
+## Wave 6: File Manager & Web App Stack
 
-### 8A: Themed Directory Listing
+*Groups can run in parallel.*
 
-#### 8A.1 Add Theme to SiteStaticConfig (MEDIUM)
-
-**Files**: `src/config/site.rs:1272`
-
-**Fix**: Add `theme: Option<SiteThemeConfig>`.
-
----
+### Group A: Themed Directory Listing (Agent A)
 
-#### 8A.2 Create DirectoryListingTemplate (MEDIUM)
+**From:** plan_files3 (consolidated)
+**Files:** `src/config/site.rs`, `src/theme/template.rs`, `src/theme/mod.rs`, `src/static_files/directory.rs`, `src/static_files/mod.rs`
 
-**Files**: `src/theme/template.rs`
+**Changes:**
+1. Add `theme: Option<SiteThemeConfig>` to `SiteStaticConfig`
+2. Create `DirectoryListingTemplate` in `src/theme/template.rs`
+3. Add `theme_config: ThemeConfig` field to `StaticFileHandler`
+4. Refactor `directory.rs` to use template (replace hardcoded CSS)
 
-**Fix**: Create template using `ThemeRenderer` CSS variables.
+**Bug fix:** Directory hrefs currently omit entry name (e.g., `/test/` instead of `/test/subdir/`).
 
----
+### Group B: Backend Dispatch (Agent B)
 
-#### 8A.3 Wire Theme Through Static Handler (MEDIUM)
+**From:** plan_remediation2 §E1, §E2, plan_files2 §3.1-3.3 (deduplicated)
 
-**Files**: `src/static_files/mod.rs`, `directory.rs`
+#### 6B.1 CGI Dispatch
+**New file:** `src/cgi/mod.rs` (~80 lines). Add dispatch in `src/http/server.rs`.
 
-**Fix**: Accept `&ThemeConfig`, use template for HTML rendering.
+#### 6B.2 Granian Dispatch Wiring
+Addressed in Wave 1C (critical bug). Additional wiring in `src/http/server.rs`.
 
----
+#### 6B.3 PHP as First-Class Backend
+**New file:** `src/php/mod.rs`. Wrapper around `FastCgiClient` with PHP-specific params, auto-detect socket.
 
-### 8B: File Manager (Future Work)
+### Group C: File Manager API (Agent C)
 
-#### 8B.1 File Manager API
+**From:** plan_files2 §2 (consolidated)
 
-**Files**: `src/static_files/file_manager.rs` (new)
+#### 6C.1 File Manager Core
+**New file:** `src/static_files/file_manager.rs`
+**Operations:** list, read, write, delete, rename, mkdir, upload, extract_archive, search, get/set_permissions
+**Security:** Path confinement via canonicalization, operation whitelist, extension blocklist, auth gate.
 
-**Status**: Planned but deferred.
+#### 6C.2 Config & HTTP Handler
+**Files:** `src/config/site.rs`, `src/http/file_manager.rs` (new)
+**Endpoints:** RESTful API at `/.maluwaf-file-manager/api/files/*path`
 
----
+### Group D: Performance Features (Agent D)
 
-### 8C: Performance
+**From:** plan_files2 §4 (consolidated)
 
-#### 8C.1 HTTP Range Request Support (MEDIUM)
+#### 6D.1 HTTP Range Request Support
+**Files:** `src/static_files/mod.rs:351-570`
+**Problem:** `_range_header` parameter accepted but unused.
 
-**Problem**: `_range_header` parameter unused.
+**Fix:** Parse `Range: bytes=start-end`, return `206 Partial Content` with `Content-Range`.
 
-**Files**: `src/static_files/mod.rs:351-570`
+#### 6D.2 Zero-Copy / sendfile Streaming
+**Files:** `src/http/server.rs:1135-1147`
+**Problem:** `zero_copy_path` set but response builder serves in-memory body.
 
-**Fix**: Implement proper range parsing and 206 responses.
+**Fix:** Use `tokio::fs::File` + `ReaderStream` for files > 4KB. Change response type to support streaming.
 
 ---
 
-#### 8C.2 Zero-Copy / sendfile Streaming (MEDIUM)
+## Wave 7: Testing, Documentation & Cleanup
 
-**Problem**: `zero_copy_path` set but not used.
+*Groups can run in parallel, but should execute AFTER Waves 1-6.*
 
-**Files**: `src/http/server.rs:1135-1147`
+### Group A: Tests (Agent A)
 
-**Fix**: Stream file using `tokio::fs::File` + `ReaderStream`.
+#### 7A.1 Integration Tests
+Add to `tests/integration_test.rs`:
+1. WAF body inspection through proxy path
+2. DNSSEC signed zone validation
+3. Upload scanning end-to-end
+4. Mesh threat propagation
+5. Honeypot-to-mesh flow
+6. YARA mesh distribution round-trip
 
----
+#### 7A.2 Benchmarks
+New benchmarks in `benches/`:
+1. `bench_wasm.rs` — pooled vs fresh instances
+2. `bench_broadcast.rs` — latency at varying peer counts
 
-## Wave 9: Testing (Parallel Agent K)
+#### 7A.3 Unit Tests
+1. Atomic counter safety (fetch_update with checked_sub)
+2. Signature verification edge cases
+3. XFF validation (chain truncation, invalid IP rejection)
+4. Whitelist semantics (request_path matching)
+5. Hub-only mode enforcement
+6. YARA manager lifecycle
 
-### 9A: Integration Tests
+### Group B: Documentation (Agent B)
 
-#### 9A.1 WAF Body Inspection Test
-#### 9A.2 DNSSEC Signed Zone Test
-#### 9A.3 Upload Scanning Test
-#### 9A.4 Mesh Threat Propagation Test
+#### 7B.1 WASM-ABI Documentation
+**New file:** `docs/WASM-ABI.md`
+Cover: guest ABI functions, memory layout, resource limits, return codes, example module.
 
----
+#### 7B.2 Shared Request Handler
+**From:** plan_plugins2 §2A
+**Files:** `src/http/server.rs`, `src/tls/server.rs`, `src/http3/server.rs`
+**Problem:** WAF/proxy pipeline implemented independently in three server types.
 
-### 9B: Benchmarks
+**Fix:** Extract `handle_request()` into shared `RequestHandler` with `RequestContext` trait.
 
-#### 9B.1 WASM Pool vs Fresh Instance Benchmark
-#### 9B.2 Broadcast Latency at Scale
+#### 7B.3 Document Guest ABI Wire Format
+**From:** plan_plugins2 §2B
+Document header serialization format, return value semantics, resource limits.
 
----
+### Group C: Cleanup (Agent C)
 
-### 9C: Unit Tests
+#### 7C.1 Config Schema Generation
+**From:** plan_remediation2 §C4
+**Files:** `src/admin/handlers/config.rs:41-959` (~918 lines of hardcoded schema)
+**Problem:** Hand-maintained schema diverges from actual config struct.
 
-#### 9C.1 Atomic Counter Safety
-#### 9C.2 Signature Verification Edge Cases
-#### 9C.3 XFF Validation
-#### 9C.4 Whitelist Semantics
+**Fix:** Use `schemars` derive-based generation. Keep `Vec<ConfigFieldSchema>` response format.
 
----
+#### 7C.2 Dead Code Cleanup
+**From:** plan_remediation2 §F5
+**Current:** 76 `#[allow(dead_code)]` across ~48 files.
+**Target:** <60 annotations.
 
-## Wave 10: Cleanup and Documentation
+#### 7C.3 Remove Dead `standalone_mode` Config
+**From:** plan_honeypot §3.4
+**Files:** `src/config/defaults.rs:583`
+Already addressed in Wave 3B.6.
 
-### 10A: Dead Code Cleanup
+#### 7C.4 Upload Validation in TLS Path
+**From:** plan_remediation2 §C1
+**Files:** `src/tls/server.rs:580`
+**Problem:** Upload validation in HTTP path but not TLS path. HTTPS uploads bypass malware scanning.
 
-#### 10A.1 Reduce `#[allow(dead_code)]` Annotations
+**Fix:** Insert upload validation block in `WafDecision::Pass` arm.
 
-**Current**: ~76 across ~48 files
-**Target**: <60
+#### 7C.5 Wire `prefer_post_quantum` to Crypto
+**From:** plan_remediation2 §C2
+**Files:** `src/tls/cert_resolver.rs:259`
+**Problem:** Config field only used for log message. Crypto provider always `default_provider()`.
 
----
+**Fix:** Conditional provider selection + metrics counter.
 
-### 10B: Documentation
+#### 7C.6 Fix ACME Challenge Cleanup on Error Paths
 
-#### 10B.1 WASM-ABI Documentation
+**From:** plan_remediation2 §C3
+**Files:** `src/tls/acme.rs:278-280`
+**Problem:** The `retain` at line 278 works correctly for the success path. However, if `request_certificate()` fails at any point after inserting challenges (line 187), they leak forever — no cleanup occurs on error paths.
 
-**Files**: `docs/WASM-ABI.md` (new)
+**Fix:** Add a `ChallengeGuard` Drop struct that cleans up challenges on all code paths (success, error, panic). The guard tracks which tokens belong to which domain and removes them when dropped. Remove the explicit `retain` (Drop guard handles it).
 
 ---
 
 ## Parallelization Strategy
 
 ```
-Agent A (Critical Security)     ── 1A.1, 1A.2, 1A.3, 1A.4, 1A.5, 1A.6, 1A.7
-Agent B (Mesh Security)        ── 1B.1, 1B.2, 1B.3
-Agent C (Performance A)      ── 2A.1, 2A.2, 2A.3, 2A.4, 2A.5
-Agent D (Performance B)        ── 2B.1, 2B.2, 2B.3, 2B.4
-Agent E (Correctness)         ── 3A.1, 3A.2, 3A.3, 3A.4, 3A.5, 3A.6
-Agent F (Honeypot)           ── 4A.1, 4A.2, 4A.3, 4A.4, 4B.1, 4B.2, 4B.3, 4B.4, 4B.5, 4B.6, 4B.7
-Agent G (YARA)               ── 5A.1, 5A.2, 5B.1, 5B.2, 5B.3, 5B.4, 5C.1, 5D.1, 5D.2, 5E.1
-Agent H (Backend/WASM)       ── 6A.1, 6A.2, 6A.3, 6B.1, 6C.1, 6C.2, 6C.3
-Agent I (Cache/Poison)       ── 7A.1, 7A.2, 7A.3, 7B.1, 7B.2
-Agent J (Web Stack)          ── 8A.1, 8A.2, 8A.3, 8C.1, 8C.2
-Agent K (Testing)            ── 9A.1, 9A.2, 9A.3, 9A.4, 9B.1, 9B.2, 9C.1, 9C.2, 9C.3, 9C.4
+Wave 1 (Critical Bugs) ──────────────────────────────────────────────────
+  Agent A: 1A (HTTPS body) + 1E (body truncation)     ── 2 items ── 1 day
+  Agent B: 1B (YARA sync)                              ── 1 item  ── 0.5 day
+  Agent C: 1C (Granian)                                ── 1 item  ── 0.5 day
+  Agent D: 1D (honeypot wire) + 1F (dead func)         ── 2 items ── 0.5 day
 
-Agent L (Cleanup/Docs)       ── 10A.1, 10B.1
+Wave 2 (Security) ───────────────────────────────────────────────────────
+  Agent A: 2A.1-2A.3 (mesh security)                   ── 3 items ── 1 day
+  Agent B: 2B.1-2B.3 (YARA security)                   ── 3 items ── 1 day
+  Agent C: 2C.1-2C.2 (WAF/HTTP security)               ── 2 items ── 1 day
+  Agent D: 2D.1-2D.2 (threat/honeypot security)        ── 2 items ── 0.5 day
 
-Total: 11 agents. Agents A-B (critical security) MUST run first.
+Wave 3 (Correctness) ────────────────────────────────────────────────────
+  Agent A: 3A.1-3A.9 (mesh correctness)                ── 9 items ── 3-4 days
+  Agent B: 3B.1-3B.6 (honeypot/threat)                 ── 6 items ── 2 days
+  Agent C: 3C.1-3C.5 (plugin correctness)              ── 5 items ── 2-3 days
+  Agent D: 3D.2 (YARA admin API)                       ── 1 item  ── 1-2 days
+
+Wave 4 (Performance) ────────────────────────────────────────────────────
+  Agent A: 4A.1-4A.4 (core perf)                      ── 4 items ── 2-3 days
+  Agent B: 4B.1-4B.5 (mesh perf)                      ── 5 items ── 2-3 days
+  Agent C: 4C.1-4C.3 (WAF perf)                       ── 3 items ── 1-2 days
+  Agent D: 4D.1 (dead error module)                    ── 1 item  ── 0.25 day
+
+Wave 5 (Features) ───────────────────────────────────────────────────────
+  Agent A: 5A.1-5A.4 (WASM pooling)                   ── 4 items ── 2-3 days
+  Agent B: 5B.1-5B.3 (mesh WASM dist)                  ── 3 items ── 3-4 days
+  Agent C: 5C.1-5C.3 (plugin observability)            ── 3 items ── 1-2 days
+  Agent D: 5D.1-5D.6 (cache/image poison)              ── 6 items ── 3-4 days
+  Agent E: 5E.1-5E.4 (YARA features/upload)            ── 4 items ── 2-3 days
+
+Wave 6 (File Manager) ───────────────────────────────────────────────────
+  Agent A: 6A (themed directory)                       ── 1 item  ── 1-2 days
+  Agent B: 6B.1-6B.3 (backend dispatch)                ── 3 items ── 1-2 days
+  Agent C: 6C.1-6C.2 (file manager)                    ── 2 items ── 2-3 days
+  Agent D: 6D.1-6D.2 (range/zero-copy)                 ── 2 items ── 2-3 days
+
+Wave 7 (Tests & Cleanup) ────────────────────────────────────────────────
+  Agent A: 7A.1-7A.3 (all tests)                      ── 3 items ── 3-5 days
+  Agent B: 7B.1-7B.3 (docs + shared handler)           ── 3 items ── 2-3 days
+  Agent C: 7C.1-7C.6 (cleanup)                         ── 6 items ── 2-3 days
+
+Wall time (7 waves × ~2 days each with 5 agents): ~14-20 days
 ```
+
+### Cross-Wave Dependencies
+
+| Wave | Depends On | Notes |
+|------|-----------|-------|
+| Wave 2 | Wave 1 | Security fixes should land after critical bugs |
+| Wave 3 | None | Can start in parallel with Wave 2 |
+| Wave 4 | None | Independent of Waves 2-3 |
+| Wave 5 | None | Independent (feature work) |
+| Wave 6 | None | Independent (separate subsystem) |
+| Wave 7 | Waves 1-6 | Tests validate all changes; docs reflect final state |
+
+**Optimized execution:**
+- Waves 1-6 can overlap significantly (run agents from different waves simultaneously)
+- Wave 7 must wait for Waves 1-6
+- Estimated total with 7 agents: **10-15 days**
 
 ---
 
-## Dependencies
+## Verification
 
-```
-CRITICAL PATH:
-  Agent A (1A.1 HTTPS body) must precede 1A.6 (body truncation)
-  2B.1 (mesh lock refactor) must precede 2B.2 (route throttling)
-  
-AGENT DEPENDENCIES:
-  Agent H (6A.1 CGI) can run anytime (no deps)
-  Agent I (7A-C cache) depends on mesh transport basics
-  Agent J (8A-C web) depends on theme system existing
-  Agent K (9A-C testing) runs LAST after all code changes
-```
+After each wave:
 
----
-
-## Verification Checklist
-
-After each agent:
 ```bash
+# Format
 cargo fmt
+
+# Lint
 cargo clippy -- -D warnings
+
+# Compile test code
 cargo test --lib --no-run
+
+# Run integration tests
 cargo test --test integration_test
+
+# Run all tests
+cargo test
 ```
 
 After all waves:
+
 ```bash
-cargo test
-rg "NOT IMPLEMENTED" src/ --include '*.rs' | grep -v "test"
+# Verify no "NOT IMPLEMENTED" in production
+rg "NOT IMPLEMENTED" src/ --include '*.rs'
+
+# Verify dead code count
 rg '#\[allow\(dead_code\)\]' src/ --count | wc -l
+
+# Full test suite with DNS
+cargo test --features dns
 ```
 
 ---
 
 ## Risk Assessment
 
-| Risk | Mitigation |
-|------|------------|
-| HTTPS body forwarding breaks proxy | Test both cache and non-cache paths |
-| Lock refactor introduces race | Run integration tests after |
-| WASM pool breaks existing plugins | Fresh path as fallback |
-| CGI dispatch security risk | Admin-configured only, add timeout |
-| Config schema breaks frontend | Keep same response format |
+| Risk | Wave | Mitigation |
+|------|------|-----------|
+| HTTPS body forwarding breaks TLS proxy | 1A | Preserve existing body collection; only change the forwarding call |
+| WASM pool breaks existing plugins | 5A | Pool is additive — fresh path works as fallback if pool empty |
+| Mesh WASM distribution security | 5B | All responses signed, sha256 verified, size-capped |
+| File manager path traversal | 6C | Canonicalize + confine to root, auth gate, extension blocklist |
+| Config schema change breaks frontend | 7C | Keep `Vec<ConfigFieldSchema>` response format, auto-generate |
+| ACME cleanup introduces regression | 7C | Drop guard pattern — cleanup guaranteed on all paths |
+| YARA broadcast to all peers increases traffic | 5E | Only used for rule distribution (low frequency), not threat intel |
+| Zero-copy response type change | 6D | `axum::body::Body` wraps both in-memory and streaming |
+
+---
+
+## Source Plan Mapping
+
+| Source Plan | Waves | Key Items |
+|-------------|-------|-----------|
+| `plan_mesh2.md` | 2A, 3A, 4B | PoW bypass, Merkle proof, capabilities, scalability |
+| `plan_core2.md` | 1A, 1E, 2C, 4A, 4C | HTTPS body, truncation, SSRF, performance |
+| `plan_honeypot.md` | 1D, 2D, 3B | Honeypot wire, threat type, background task, dedup |
+| `plan_remediation2.md` | 1F, 4B, 5A, 6B, 7C | Quick wins, transport, TLS, WASM, backend, tests |
+| `plan_plugins2.md` | 3C, 5A, 5B, 5C, 7B | Plugin lifecycle, pooling, mesh WASM, observability |
+| `plan_yara3.md` | 1B, 2B, 3D, 5E | Sync fix, signatures, admin API, delta sync, upload |
+| `plan_threat2.md` | 3B | Threat dedup, sync, hub_only_mode (subset of plan_honeypot) |
+| `plan_cach2.md` | 5D | DHT poison config, cache key, ProxyCache wiring |
+| `plan_files2.md` | 6A-6D | Themed listing, file manager, backend dispatch, performance |
+| `plan_files3.md` | 6A | Themed directory listing (subset of plan_files2) |

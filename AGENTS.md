@@ -298,7 +298,7 @@ Feature flags trimmed: `tower` removed `"timeout"`, `tower-http` removed `"trace
 
 ### Error Handling Status
 
-`src/error.rs` defines `WafError`, `WafResult`, and `WafErrorExt` — **all are completely dead code**. Zero production usage outside `error.rs` itself. Every other module uses `anyhow`, `Box<dyn Error>`, or custom types.
+`src/error.rs` has been deleted. `WafError`, `WafResult`, and `WafErrorExt` no longer exist. Every module uses `anyhow`, `Box<dyn Error>`, or custom types.
 
 ### Duplicate Timestamp Utility
 
@@ -312,19 +312,10 @@ All duplicate `current_timestamp()` definitions have been consolidated into `src
 |-----|----------|--------|--------|
 | NSEC3 base32 encoding | `dnssec.rs:1367` | Non-standard encoding for non-SHA1 lengths | Open (SHA-1 only in practice) |
 | Forwarder no DNSSEC validation | `HickoryResolver` | Forwarder mode doesn't validate; AD bit not propagated | Limitation (documented) |
-
-### All Fixed Bugs (Reference)
-
-All bugs from the remediation plan (Waves 0-4) have been fixed. Key fixes include:
-
-**Security**: TLS skip_verify enforcement, IPC key fail-hard, CSRF middleware, PBKDF2 random salt
-**DNS/RFC**: NSEC3 hash loop, DNSKEY RDATA encoding, AD flag conditional, trust anchor state machine
-**DHT**: PoW difficulty 24 bits, bounded nonce loops, HashSet deduplication
-**WAF**: SSRF octal/decimal IP parsing, path traversal handling, rate limiter atomic safety
-
-### Dead Code (Removed)
-
-`src/http/handler.rs` (1,661 lines) and `src/http/range.rs` (194 lines) were deleted in Phase 1 — they were never in the module tree and had compile errors.
+| HTTPS proxy body forwarding | `src/tls/server.rs` | POST/PUT/PATCH over HTTPS send empty body to upstream | See plan.md Wave 1A |
+| YARA periodic sync | `src/worker/unified_server.rs:679` | `drop(msg)` — sync request never sent | See plan.md Wave 1B |
+| Granian dispatch | `src/app_server/granian.rs:776` | `forward_request()` ignores built request, sends GET | See plan.md Wave 1C |
+| Honeypot mesh wiring | `src/worker/unified_server.rs` | `start_mesh_threat_publishing` never called | See plan.md Wave 1D |
 
 ## Performance Hot Paths
 
@@ -455,10 +446,6 @@ Key API:
 
 When modifying zone access code, prefer single-shard operations (`get`, `insert`, `update_zone`) over full-shard iteration (`for_each`, `keys`). The `Arc<ShardedZoneStore>` replaces the former `Arc<RwLock<HashMap<String, Zone>>>` pattern.
 
-### Cross-Plan Item Deduplication
-
-When reviewing multiple plans for the same codebase, expect significant overlap. The same bug often appears in multiple plan files with different line numbers.
-
 ## Session Lessons Learned
 
 ### Subagent Verification Required
@@ -499,16 +486,13 @@ rrsig.extend_from_slice(&(timestamp as u32).to_be_bytes());
 rrsig.extend_from_slice(&timestamp.to_be_bytes());
 ```
 
+### Plan Verification
+
+When reviewing plan files against the codebase, always verify claims directly. Plans may reference items already fixed, use outdated line numbers, or describe bugs incorrectly. Run `grep`/search for the specific patterns described to confirm they still exist before implementing fixes.
+
 ## Remediation Plan
 
-All items in `plans/plan.md` are complete. The plan was organized into 6 waves:
-- **Waves 0-4**: Complete (security, correctness, performance, features, code quality)
-- **Wave 5**: Complete (documentation, testing)
-- **Wave 6**: Complete (remaining items including multi-worker, WASM pooling, serverless, backend dispatch, mesh transport optimizations, upload security, config schema, dead code cleanup)
-
-~~Two items were deferred:~~ All deferred items now complete:
-- ~~Zone store sharding (2B.4/6A.2)~~ — Implemented as `ShardedZoneStore` with 64 shards
-- ~~DNS server global role gating (3E.3/6H.1)~~ — Runtime check via `MeshTransportManager::is_global_node()`
+The original remediation plan (Waves 0-6, 185 items) is complete. A **new consolidated improvement plan** with ~113 remaining items is at `plan.md`, organized into 7 waves for parallel sub-agent execution. See that file for the current work queue.
 
 ## Admin Panel Architecture Notes
 
