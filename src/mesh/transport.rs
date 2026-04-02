@@ -103,6 +103,7 @@ pub struct MeshTransport {
     pub(crate) record_store: Option<Arc<crate::mesh::dht::RecordStoreManager>>,
     pub(crate) routing_manager: Option<Arc<crate::mesh::dht::routing::DhtRoutingManager>>,
     pub(crate) threat_intel: Option<Arc<crate::mesh::threat_intel::ThreatIntelligenceManager>>,
+    pub(crate) yara_rules: Option<Arc<crate::mesh::yara_rules::YaraRulesManager>>,
     pub(crate) seen_messages: Arc<RwLock<lru_time_cache::LruCache<String, Instant>>>,
     pub(crate) stake_manager: Option<Arc<crate::mesh::dht::StakeManager>>,
     pub(crate) mlkem_session_manager: Option<Arc<SessionManager<MlKem768>>>,
@@ -141,6 +142,7 @@ impl Clone for MeshTransport {
             record_store: self.record_store.clone(),
             routing_manager: self.routing_manager.clone(),
             threat_intel: self.threat_intel.clone(),
+            yara_rules: self.yara_rules.clone(),
             seen_messages: Arc::new(RwLock::new(
                 lru_time_cache::LruCache::with_expiry_duration_and_capacity(
                     Duration::from_secs(300),
@@ -362,6 +364,7 @@ impl MeshTransport {
             record_store,
             routing_manager: None,
             threat_intel,
+            yara_rules: None,
             seen_messages: Arc::new(RwLock::new(seen_messages)),
             stake_manager,
             mlkem_session_manager,
@@ -746,7 +749,7 @@ impl MeshTransport {
     }
 
     pub async fn update_key_exchange_endpoint(&self) {
-        if self.config.role != crate::mesh::config::MeshNodeRole::Global {
+        if !self.config.role.is_global() {
             return;
         }
 
@@ -1106,6 +1109,30 @@ impl MeshTransport {
             .connection
             .clone()
             .ok_or_else(|| MeshTransportError::ConnectionFailed("No connection".to_string()))?;
+
+        // TOFU: Verify seed peer certificate fingerprint
+        {
+            let cert_mgr = self.cert_manager.read();
+            if cert_mgr.is_tofu_enabled() {
+                if let Some(peer_cert_any) = connection.peer_identity() {
+                    if let Some(peer_cert) =
+                        peer_cert_any.downcast_ref::<rustls_pki_types::CertificateDer<'_>>()
+                    {
+                        let fingerprint =
+                            crate::mesh::cert::MeshCertManager::compute_cert_fingerprint(peer_cert);
+                        let addr = &peer_config.address;
+                        if let Err(e) = cert_mgr.verify_seed_fingerprint(addr, &fingerprint) {
+                            tracing::warn!(
+                                "TOFU fingerprint verification failed for {}: {}",
+                                addr,
+                                e
+                            );
+                            return Err(MeshTransportError::AuthFailed(e));
+                        }
+                    }
+                }
+            }
+        }
 
         let (mut send_stream, mut recv_stream) = connection
             .open_bi()
@@ -1932,43 +1959,41 @@ impl MeshTransport {
                 .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
         }
 
+        use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
+        let mut reader = BufReader::with_capacity(4096, &mut recv_stream);
+
         let mut response_headers = String::new();
         let mut content_length: Option<usize> = None;
         let mut chunked = false;
 
-        {
-            use tokio::io::{AsyncBufReadExt, BufReader};
-            let mut reader = BufReader::with_capacity(4096, &mut recv_stream);
-
-            loop {
-                let mut line = String::new();
-                reader
-                    .read_line(&mut line)
-                    .await
-                    .map_err(|e| MeshTransportError::ReceiveFailed(e.to_string()))?;
-                let trimmed = line.trim();
-                if trimmed.is_empty() {
-                    break;
-                }
-                if trimmed.to_lowercase().starts_with("content-length:") {
-                    content_length = Some(
-                        trimmed
-                            .split(':')
-                            .nth(1)
-                            .unwrap_or("")
-                            .trim()
-                            .parse()
-                            .unwrap_or(0),
-                    );
-                }
-                if trimmed.to_lowercase().starts_with("transfer-encoding:")
-                    && trimmed.to_lowercase().contains("chunked")
-                {
-                    chunked = true;
-                }
-                response_headers.push_str(trimmed);
-                response_headers.push_str("\r\n");
+        loop {
+            let mut line = String::new();
+            reader
+                .read_line(&mut line)
+                .await
+                .map_err(|e| MeshTransportError::ReceiveFailed(e.to_string()))?;
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                break;
             }
+            if trimmed.to_lowercase().starts_with("content-length:") {
+                content_length = Some(
+                    trimmed
+                        .split(':')
+                        .nth(1)
+                        .unwrap_or("")
+                        .trim()
+                        .parse()
+                        .unwrap_or(0),
+                );
+            }
+            if trimmed.to_lowercase().starts_with("transfer-encoding:")
+                && trimmed.to_lowercase().contains("chunked")
+            {
+                chunked = true;
+            }
+            response_headers.push_str(trimmed);
+            response_headers.push_str("\r\n");
         }
         response_headers.push_str("\r\n");
 
@@ -1993,37 +2018,33 @@ impl MeshTransport {
 
         let body_bytes = if chunked {
             let mut body = Vec::new();
-            {
-                use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
-                let mut reader = BufReader::with_capacity(4096, &mut recv_stream);
-                loop {
-                    let mut size_line = String::new();
-                    reader
-                        .read_line(&mut size_line)
-                        .await
-                        .map_err(|e| MeshTransportError::ReceiveFailed(e.to_string()))?;
-                    let size = usize::from_str_radix(size_line.trim(), 16).unwrap_or(0);
-                    if size == 0 {
-                        break;
-                    }
-                    if body.len().saturating_add(size) > MAX_HTTP_BODY_SIZE {
-                        return Err(MeshTransportError::ReceiveFailed(format!(
-                            "Chunked body too large: exceeds {} bytes",
-                            MAX_HTTP_BODY_SIZE
-                        )));
-                    }
-                    let mut chunk = vec![0u8; size];
-                    reader
-                        .read_exact(&mut chunk)
-                        .await
-                        .map_err(|e| MeshTransportError::ReceiveFailed(e.to_string()))?;
-                    body.extend_from_slice(&chunk);
-                    let mut crlf = [0u8; 2];
-                    reader
-                        .read_exact(&mut crlf)
-                        .await
-                        .map_err(|e| MeshTransportError::ReceiveFailed(e.to_string()))?;
+            loop {
+                let mut size_line = String::new();
+                reader
+                    .read_line(&mut size_line)
+                    .await
+                    .map_err(|e| MeshTransportError::ReceiveFailed(e.to_string()))?;
+                let size = usize::from_str_radix(size_line.trim(), 16).unwrap_or(0);
+                if size == 0 {
+                    break;
                 }
+                if body.len().saturating_add(size) > MAX_HTTP_BODY_SIZE {
+                    return Err(MeshTransportError::ReceiveFailed(format!(
+                        "Chunked body too large: exceeds {} bytes",
+                        MAX_HTTP_BODY_SIZE
+                    )));
+                }
+                let mut chunk = vec![0u8; size];
+                reader
+                    .read_exact(&mut chunk)
+                    .await
+                    .map_err(|e| MeshTransportError::ReceiveFailed(e.to_string()))?;
+                body.extend_from_slice(&chunk);
+                let mut crlf = [0u8; 2];
+                reader
+                    .read_exact(&mut crlf)
+                    .await
+                    .map_err(|e| MeshTransportError::ReceiveFailed(e.to_string()))?;
             }
             body
         } else if let Some(len) = content_length {
@@ -2034,7 +2055,7 @@ impl MeshTransport {
                 )));
             }
             let mut body = vec![0u8; len];
-            recv_stream
+            reader
                 .read_exact(&mut body)
                 .await
                 .map_err(|e| MeshTransportError::ReceiveFailed(e.to_string()))?;
@@ -2043,9 +2064,9 @@ impl MeshTransport {
             let mut body = Vec::new();
             let mut buf = [0u8; 8192];
             loop {
-                match recv_stream.read(&mut buf).await {
-                    Ok(Some(0)) | Ok(None) => break,
-                    Ok(Some(n)) => body.extend_from_slice(&buf[..n]),
+                match reader.read(&mut buf).await {
+                    Ok(0) => break,
+                    Ok(n) => body.extend_from_slice(&buf[..n]),
                     Err(_) => break,
                 }
             }

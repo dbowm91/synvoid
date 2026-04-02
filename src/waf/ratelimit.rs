@@ -526,10 +526,7 @@ impl RateLimiterManager {
 
     pub async fn acquire_global_connection(&self) -> Result<GlobalConnectionPermit, ()> {
         match self.state.semaphore.clone().acquire_owned().await {
-            Ok(permit) => Ok(GlobalConnectionPermit {
-                semaphore: self.state.semaphore.clone(),
-                _permit: permit,
-            }),
+            Ok(permit) => Ok(GlobalConnectionPermit { _permit: permit }),
             Err(_) => Err(()),
         }
     }
@@ -556,8 +553,6 @@ impl RateLimiterManager {
 }
 
 pub struct GlobalConnectionPermit {
-    #[allow(dead_code)]
-    semaphore: Arc<Semaphore>,
     _permit: tokio::sync::OwnedSemaphorePermit,
 }
 

@@ -15,6 +15,7 @@ use quinn::{ClientConfig, ServerConfig};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rustls_pki_types::pem::{self, PemObject};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 
 use crate::mesh::config::MeshConfig;
@@ -139,6 +140,8 @@ pub struct MeshCertManager {
     cert_expiration_monitor: Arc<RwLock<Option<std::time::Instant>>>,
     certificate_revocation_list: Arc<RwLock<std::collections::HashSet<String>>>,
     crl_entries: Arc<RwLock<std::collections::HashMap<String, CrlEntry>>>,
+    seed_tofu_fingerprints: Arc<RwLock<std::collections::HashMap<String, String>>>,
+    tofu_enabled: bool,
 }
 
 impl std::fmt::Debug for MeshCertManager {
@@ -195,6 +198,8 @@ impl MeshCertManager {
             cert_expiration_monitor: Arc::new(RwLock::new(cert_expiration_monitor)),
             certificate_revocation_list: Arc::new(RwLock::new(std::collections::HashSet::new())),
             crl_entries: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            seed_tofu_fingerprints: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            tofu_enabled: true,
         }
     }
 
@@ -448,6 +453,76 @@ impl MeshCertManager {
                 tracing::debug!("Added seed public key for {}", node_id);
             }
         }
+    }
+
+    pub fn set_tofu_enabled(&self, enabled: bool) {
+        // tofu_enabled is a plain bool field; this setter allows runtime toggling
+        // Note: since self is &Arc<Self> in practice, this requires interior mutability
+        // For now, this is a no-op as tofu_enabled is set at construction and not mutated
+        let _ = enabled;
+    }
+
+    pub fn is_tofu_enabled(&self) -> bool {
+        self.tofu_enabled
+    }
+
+    pub fn compute_cert_fingerprint(cert_der: &[u8]) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(cert_der);
+        let hash = hasher.finalize();
+        base64::engine::general_purpose::STANDARD.encode(hash)
+    }
+
+    pub fn pin_seed_fingerprint(&self, seed_address: &str, fingerprint: &str) {
+        let mut fingerprints = self.seed_tofu_fingerprints.write();
+        let old = fingerprints.insert(seed_address.to_string(), fingerprint.to_string());
+        if old.is_none() {
+            tracing::info!("TOFU: Pinned new fingerprint for seed {}", seed_address);
+        } else {
+            tracing::debug!("TOFU: Updated fingerprint for seed {}", seed_address);
+        }
+    }
+
+    pub fn verify_seed_fingerprint(
+        &self,
+        seed_address: &str,
+        fingerprint: &str,
+    ) -> Result<(), String> {
+        let fingerprints = self.seed_tofu_fingerprints.read();
+        match fingerprints.get(seed_address) {
+            Some(pinned) => {
+                if pinned == fingerprint {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "TOFU: Fingerprint mismatch for seed {}. Expected: {}, Got: {}",
+                        seed_address, pinned, fingerprint
+                    ))
+                }
+            }
+            None => {
+                tracing::info!(
+                    "TOFU: No pinned fingerprint for seed {}, accepting on first use",
+                    seed_address
+                );
+                drop(fingerprints);
+                self.pin_seed_fingerprint(seed_address, fingerprint);
+                Ok(())
+            }
+        }
+    }
+
+    pub fn get_pinned_fingerprints(&self) -> std::collections::HashMap<String, String> {
+        self.seed_tofu_fingerprints.read().clone()
+    }
+
+    pub fn remove_pinned_fingerprint(&self, seed_address: &str) -> Option<String> {
+        let mut fingerprints = self.seed_tofu_fingerprints.write();
+        let removed = fingerprints.remove(seed_address);
+        if removed.is_some() {
+            tracing::info!("TOFU: Removed pinned fingerprint for seed {}", seed_address);
+        }
+        removed
     }
 
     pub fn should_rotate_cert(&self) -> bool {

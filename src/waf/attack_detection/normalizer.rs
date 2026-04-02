@@ -1,28 +1,11 @@
 use std::cell::RefCell;
-use std::collections::VecDeque;
 use unicode_normalization::UnicodeNormalization;
 
 const MAX_OUTPUT_RATIO: usize = 100;
 
 thread_local! {
-    static BUFFER_POOL: RefCell<VecDeque<String>> = const { RefCell::new(VecDeque::new()) };
-}
-
-fn acquire_buffer() -> String {
-    BUFFER_POOL.with(|pool| {
-        pool.borrow_mut()
-            .pop_front()
-            .unwrap_or_else(|| String::with_capacity(256))
-    })
-}
-
-fn release_buffer(buffer: String) {
-    BUFFER_POOL.with(|pool| {
-        let mut pool = pool.borrow_mut();
-        if pool.len() < 4 {
-            pool.push_back(buffer);
-        }
-    });
+    static NORMALIZE_BUFFER: RefCell<String> = RefCell::new(String::with_capacity(4096));
+    static NORMALIZE_CHARS: RefCell<Vec<char>> = RefCell::new(Vec::with_capacity(4096));
 }
 
 pub struct InputNormalizer {
@@ -43,38 +26,47 @@ impl InputNormalizer {
     }
 
     pub fn normalize(&self, input: &str) -> NormalizedInput {
-        let mut buffer = acquire_buffer();
-        let mut passes = 0;
-        let max_output = input.len().saturating_mul(MAX_OUTPUT_RATIO);
+        NORMALIZE_BUFFER.with(|buf_cell| {
+            NORMALIZE_CHARS.with(|chars_cell| {
+                let mut buffer = buf_cell.borrow_mut();
+                let mut chars = chars_cell.borrow_mut();
+                buffer.clear();
+                chars.clear();
 
-        buffer.push_str(input);
+                let mut passes = 0;
+                let max_output = input.len().saturating_mul(MAX_OUTPUT_RATIO);
 
-        for _ in 0..self.max_decode_passes {
-            let prev_len = buffer.len();
-            let decoded = self.decode_single_pass_inplace(&mut buffer);
-            if decoded == prev_len {
-                break;
-            }
-            if decoded > max_output {
-                break;
-            }
-            passes += 1;
-        }
+                buffer.push_str(input);
 
-        self.apply_normalizations_inplace(&mut buffer);
+                for _ in 0..self.max_decode_passes {
+                    let prev_len = buffer.len();
+                    chars.clear();
+                    chars.extend(buffer.chars());
+                    buffer.clear();
+                    let decoded = self.decode_single_pass_with_chars(&mut buffer, &mut chars);
+                    if decoded == prev_len {
+                        break;
+                    }
+                    if decoded > max_output {
+                        break;
+                    }
+                    passes += 1;
+                }
 
-        let result = NormalizedInput {
-            normalized: buffer,
-            passes,
-        };
-        release_buffer(result.normalized.clone());
-        result
+                chars.clear();
+                chars.extend(buffer.chars());
+                buffer.clear();
+                self.apply_normalizations_with_chars(&mut buffer, &mut chars);
+
+                NormalizedInput {
+                    normalized: buffer.clone(),
+                    passes,
+                }
+            })
+        })
     }
 
-    fn decode_single_pass_inplace(&self, input: &mut String) -> usize {
-        let chars: Vec<char> = input.chars().collect();
-        input.clear();
-
+    fn decode_single_pass_with_chars(&self, input: &mut String, chars: &mut [char]) -> usize {
         let mut i = 0;
         while i < chars.len() {
             match chars[i] {
@@ -274,11 +266,8 @@ impl InputNormalizer {
         })
     }
 
-    fn apply_normalizations_inplace(&self, input: &mut String) {
-        let chars: Vec<char> = input.chars().collect();
-        input.clear();
-
-        for c in chars {
+    fn apply_normalizations_with_chars(&self, input: &mut String, chars: &mut [char]) {
+        for c in chars.iter() {
             if matches!(c,
                 '\u{200B}' | '\u{200C}' | '\u{200D}' | '\u{200E}' | '\u{200F}' |
                 '\u{FEFF}' | '\u{2060}' | '\u{2061}' | '\u{2062}' | '\u{2063}' |
@@ -341,7 +330,7 @@ impl InputNormalizer {
                 '\u{FF0E}' => Some('.'),
                 '\u{FF0F}' => Some('/'),
                 '\u{FF10}'..='\u{FF19}' => {
-                    let offset = c as u32 - 0xFF10;
+                    let offset = *c as u32 - 0xFF10;
                     char::from_u32(0x30 + offset)
                 }
                 '\u{FF1A}' => Some(':'),
@@ -352,7 +341,7 @@ impl InputNormalizer {
                 '\u{FF1F}' => Some('?'),
                 '\u{FF20}' => Some('@'),
                 '\u{FF21}'..='\u{FF3A}' => {
-                    let offset = c as u32 - 0xFF21;
+                    let offset = *c as u32 - 0xFF21;
                     char::from_u32(0x41 + offset)
                 }
                 '\u{FF3B}' => Some('['),
@@ -362,14 +351,14 @@ impl InputNormalizer {
                 '\u{FF3F}' => Some('_'),
                 '\u{FF40}' => Some('`'),
                 '\u{FF41}'..='\u{FF5A}' => {
-                    let offset = c as u32 - 0xFF41;
+                    let offset = *c as u32 - 0xFF41;
                     char::from_u32(0x61 + offset)
                 }
                 '\u{FF5B}' => Some('{'),
                 '\u{FF5C}' => Some('|'),
                 '\u{FF5D}' => Some('}'),
                 '\u{FF5E}' => Some('~'),
-                _ => Some(c),
+                _ => Some(*c),
             };
 
             if let Some(n) = normalized {

@@ -241,24 +241,14 @@ impl WireGuardMeshTransport {
                     wireguard_port
                 );
 
-                if role.is_global() {
-                    if let Some(ref expected_key) = config.global_node_key {
-                        if let Some(ref peer_key) = peer_global_key {
-                            if peer_key.as_str() != expected_key.as_str() {
-                                tracing::warn!(
-                                    "Global node key verification failed for {} via WireGuard",
-                                    node_id
-                                );
-                                return Err("Invalid global node key".into());
-                            }
-                        } else {
-                            tracing::warn!(
-                                "Global node {} did not provide key verification via WireGuard",
-                                node_id
-                            );
-                            return Err("Global node key required".into());
-                        }
-                    }
+                if let Err(e) = crate::mesh::peer_auth::validate_peer_role(
+                    &role,
+                    config.global_node_key.as_deref(),
+                    peer_global_key.as_deref(),
+                    &node_id,
+                ) {
+                    tracing::warn!("{}", e);
+                    return Err(e.into());
                 }
 
                 let wireguard_ip = format!("10.100.0.{}", peer_states.len() + 2);

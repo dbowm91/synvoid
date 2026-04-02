@@ -23,7 +23,7 @@ pub struct AdminRateLimiter {
 struct AdminRateLimiterInner {
     requests: RwLock<HashMap<String, (u32, Instant)>>,
     requests_per_minute: u32,
-    #[allow(dead_code)] // Retained for future burst configuration
+    #[allow(dead_code)]
     burst: u32,
 }
 

@@ -15,6 +15,7 @@ use super::admin::{AdminConfig, AdminCorsConfig, AdminRateLimitConfig, MetricsCo
 use super::defaults::DefaultsConfig;
 #[cfg(feature = "dns")]
 use super::dns::DnsConfig;
+use super::honeypot_port::HoneypotPortConfig;
 use super::http::{Http3Config, HttpConfig, TokioConfig};
 use super::limits::{BlocklistLimitsConfig, ProxyLimitsConfig, RateLimitMemoryConfig};
 use super::logging::LoggingConfig;
@@ -35,7 +36,6 @@ use super::validation::ConfigValidationError;
 
 pub use super::defaults::{
     GlobalRateLimitConfig as MainGlobalRateLimitConfig,
-    HoneypotPortConfig as MainHoneypotPortConfig,
     HoneypotProbingDefaults as MainHoneypotProbingDefaults,
     IpRateLimitConfig as MainIpRateLimitConfig, SuspiciousWordsConfig as MainSuspiciousWordsConfig,
     UpstreamErrorsConfig as MainUpstreamErrorsConfig, WorkerPoolDefaults as MainWorkerPoolDefaults,
@@ -139,7 +139,7 @@ pub struct MainConfig {
     #[serde(default)]
     pub supervisor: SupervisorConfig,
     #[serde(default)]
-    pub honeypot_port: super::defaults::HoneypotPortConfig,
+    pub honeypot_port: HoneypotPortConfig,
 }
 
 impl MainConfig {
@@ -246,7 +246,7 @@ impl MainConfig {
             overseer: super::OverseerConfig::default(),
             process_manager: super::ProcessManagerConfig::default(),
             supervisor: super::SupervisorConfig::default(),
-            honeypot_port: super::defaults::HoneypotPortConfig::default(),
+            honeypot_port: HoneypotPortConfig::default(),
         }
     }
 }

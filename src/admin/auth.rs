@@ -40,7 +40,7 @@ impl AuthRateLimiter {
         }
     }
 
-    #[allow(dead_code)] // Reserved for external rate limit checks
+    #[allow(dead_code)]
     pub fn check(&self, identifier: &str) -> bool {
         let attempts = self.attempts.read();
         if let Some((times, locked)) = attempts.get(identifier) {

@@ -127,7 +127,6 @@ impl<K: Eq + std::hash::Hash + Clone> TimedBucketMap<K> {
 pub struct DnsRateLimiter {
     global_bucket: PLRwLock<TokenBucket>,
     ip_buckets: PLRwLock<TimedBucketMap<IpAddr>>,
-    #[allow(dead_code)]
     rrl_buckets: PLRwLock<TimedBucketMap<String>>,
     rrl_source_buckets: PLRwLock<TimedBucketMap<IpAddr>>,
     rrl_threshold: u64,

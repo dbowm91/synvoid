@@ -188,6 +188,20 @@ pub struct MeshSeedNode {
     pub quic_port: Option<u16>,
     #[serde(default)]
     pub wireguard_port: Option<u16>,
+    #[serde(default)]
+    pub pinned_cert_fingerprint: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
+pub struct SeedTofuConfig {
+    #[serde(default = "default_tofu_enabled")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub pinned_fingerprints: HashMap<String, String>,
+}
+
+fn default_tofu_enabled() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -811,11 +825,13 @@ fn default_key_exchange_enabled() -> bool {
     true
 }
 
+fn default_true() -> bool {
+    true
+}
+
 fn default_key_exchange_port() -> u16 {
     50052
 }
-
-use crate::config::defaults::default_true;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 pub struct GenesisKeyConfig {

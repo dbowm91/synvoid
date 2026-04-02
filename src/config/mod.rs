@@ -7,6 +7,7 @@ pub mod admin;
 pub mod defaults;
 pub mod dns;
 pub mod geoip;
+pub mod honeypot_port;
 pub mod http;
 pub mod limits;
 pub mod logging;

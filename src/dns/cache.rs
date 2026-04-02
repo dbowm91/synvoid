@@ -54,7 +54,7 @@ struct InnerDnsCache {
     max_capacity: usize,
     serve_stale_enabled: bool,
     serve_stale_max_stale: Duration,
-    #[allow(dead_code)] // reserved for future rate limiting of stale responses
+    #[allow(dead_code)]
     serve_stale_max_count: usize,
 }
 

@@ -14,7 +14,7 @@ use crate::RunningFlag;
 pub struct Supervisor {
     config: SupervisorConfig,
     workers: Arc<PLRwLock<Vec<Arc<Worker>>>>,
-    #[allow(dead_code)] // Reserved for future auto-scaling functionality
+    #[allow(dead_code)]
     auto_scaler: AutoScaler,
     event_tx: broadcast::Sender<SupervisorEvent>,
     shutdown_tx: Option<broadcast::Sender<()>>,

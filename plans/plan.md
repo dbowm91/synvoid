@@ -1576,3 +1576,28 @@ All items from the original plans have been reviewed, deduplicated, and incorpor
   - Restored 7 `#[allow(clippy::await_holding_lock)]` annotations that were accidentally removed during moka migration (these protect `parking_lot::RwLock` guards, not the removed `tokio::sync::Mutex`).
   - Clippy: clean with `-D warnings`
   - Tests: 78/78 integration tests pass, 30/30 DNS/IPC/DHT tests pass
+
+- **2026-04-02**: Plan verification and gap remediation — 26 previously incomplete items fixed:
+  - **0C.1**: Created `src/mesh/peer_auth.rs` with `validate_peer_role()`, wired into Discovery and WireGuard transports
+  - **0E.1**: `NoVerifier` replaced with `HostnameSkippingVerifier` — validates chain + signature, skips hostname only
+  - **1D.3**: `request_id` parsing uses `rsplit('-')` for hyphen-safe parsing in `mesh_sync/verification.rs`
+  - **1E.4**: `std::mem::take` for atomic drain in `create_threat_announce()` (race condition fix)
+  - **1E.5**: Port honeypot wired into `unified_server.rs` worker initialization
+  - **1F.2**: 6 YARA message handlers added to `transport_peer.rs` dispatch
+  - **2A.2**: Thread-local buffer pool for normalization (`NORMALIZE_BUFFER`, `NORMALIZE_CHARS`)
+  - **2D.3**: `tokio::join!` for parallel mesh config fetch (minification, image protection, compression)
+  - **3E.1**: TOFU certificate pinning wired into `connect_to_peer()` — fingerprint verified on QUIC connection
+  - **3F.2**: Honeypot indicators signed with Ed25519 when signer available
+  - **3F.4**: `HoneypotPortConfig` added to config system (`src/config/honeypot_port.rs`)
+  - **3E.4**: All remaining `== MeshNodeRole::Global` replaced with `.is_global()` (9 instances)
+  - **4B.1**: `is_newer_version()` deduplicated — removed from `rule_feed.rs`, uses `utils::is_newer_version`
+  - **4B.2**: Custom `base64_decode` replaced with `base64` crate in `rule_feed.rs`
+  - **4B.4**: `get_cache_max_age` instance method delegates to static helper in `proxy.rs`
+  - **4E.9**: Worker poll loop replaced with `tokio::select!` + watch channel for instant shutdown
+  - **4D.3**: Image protection regex pre-compiled via `LazyLock` static
+  - **4E.3**: ACME clears only domain-specific challenges via `retain()`
+  - **3H.2**: PQ capability log added to TLS server init
+  - **6B.2**: BufReader (4KB) replaces byte-at-a-time header parsing in `transport.rs`
+  - **6J.1**: `#[allow(dead_code)]` annotations reduced from 93 to 48 files (76 total annotations)
+  - Clippy: clean with `-D warnings`
+  - Tests: 217/217 across all suites (integration, DHT, IPC, DNS server, E2E)

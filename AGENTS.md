@@ -263,7 +263,7 @@ Crate-level suppressions in `src/lib.rs`:
 - `elided_lifetimes_in_paths` — compiler style preference
 - `mismatched_lifetime_syntaxes` — compiler style preference
 
-`#[allow(dead_code)]` annotations: **~76 across ~51 files** (reduced from 84/56). Notable per-module breakdown:
+`#[allow(dead_code)]` annotations: **~76 across ~48 files** (reduced from 84/56). Notable per-module breakdown:
 - `src/mesh/` — ~14 items
 - `src/dns/server/` — ~4 items
 - `src/waf/` — ~4 items
@@ -380,6 +380,8 @@ Three-tier HTTP client hierarchy:
 
 Upstream TLS clients are cached by config hash in a `DashMap` for reuse across requests.
 
+**NoVerifier replacement**: `HostnameSkippingVerifier` wraps `WebPkiServerVerifier` — validates certificate chain and signatures, only skips hostname verification. Logs WARN on every use.
+
 ### ACME Client
 
 `src/tls/acme.rs` implements a full ACME client using the `instant-acme` crate. Supports HTTP-01 and DNS-01 (feature-gated `dns`) challenges. Certificate renewal runs every 24h via `spawn_renewal_task()`. Config under `[tls.acme]` in TOML.
@@ -395,6 +397,14 @@ Site-level config to forward raw TLS bytes from client to origin without decrypt
 ### IPC Session Key
 
 The IPC session key is passed via a temp file (`MALUWAF_IPC_KEY_FILE`) instead of an env var. The temp file uses `0600` permissions (Unix only) and is deleted by the worker after reading. Falls back to `MALUWAF_IPC_KEY` env var only if `allow_insecure_ipc_key = true` (default: fail-hard).
+
+### Peer Role Validation
+
+Use `crate::mesh::peer_auth::validate_peer_role()` for centralized global node authentication. This function validates that peers claiming a global role provide the correct `global_node_key`. Used by both Discovery and WireGuard transports.
+
+### TOFU Certificate Pinning
+
+Seed node certificate fingerprints are managed by `MeshCertManager` in `src/mesh/cert.rs`. On first connection, fingerprints are pinned automatically (Trust On First Use). On subsequent connections, fingerprints are verified in `connect_to_peer()` via `verify_seed_fingerprint()`. Pre-configured fingerprints can be set in TOML config via `pinned_cert_fingerprint` on seed nodes.
 
 ### Auth Store Merge Pattern
 

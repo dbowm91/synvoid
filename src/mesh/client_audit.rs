@@ -79,7 +79,7 @@ pub struct AuditReportResponse {
 }
 
 pub struct ClientAuditManager {
-    #[allow(dead_code)] // Reserved for configurable client audit
+    #[allow(dead_code)]
     config: Arc<MeshConfig>,
     topology: Arc<TokioRwLock<MeshTopology>>,
     session_manager: Arc<AuditSessionManager>,
@@ -89,7 +89,7 @@ pub struct ClientAuditManager {
     pow_enabled: bool,
     pow_difficulty: u8,
     pow_timeout_secs: u64,
-    #[allow(dead_code)] // Reserved for configurable PoW window
+    #[allow(dead_code)]
     pow_window_secs: u64,
     pow_secret_key: [u8; 32],
 }

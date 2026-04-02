@@ -1,16 +1,15 @@
+#![allow(dead_code)]
 use std::sync::Arc;
 
 use parking_lot::Mutex;
 use wasmtime::{Engine, Instance, Linker, Module, Store};
 
-#[allow(dead_code)]
 pub struct WasmInstancePool {
     pool: Arc<Mutex<Vec<WasmPooledInstance>>>,
     engine: Arc<Engine>,
     max_size: usize,
 }
 
-#[allow(dead_code)]
 pub(crate) struct WasmPooledInstance {
     instance: Instance,
     store: Store<()>,
@@ -18,7 +17,6 @@ pub(crate) struct WasmPooledInstance {
     max_cpu_fuel: u64,
 }
 
-#[allow(dead_code)]
 impl WasmInstancePool {
     pub fn new(engine: Arc<Engine>, max_size: usize) -> Self {
         Self {

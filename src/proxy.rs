@@ -897,41 +897,7 @@ impl ProxyServer {
     }
 
     fn get_cache_max_age(&self, headers: &http::HeaderMap) -> Option<std::time::Duration> {
-        if let Some(cc) = headers.get("cache-control") {
-            if let Ok(cc_str) = cc.to_str() {
-                let mut max_age: Option<u64> = None;
-                let mut s_maxage: Option<u64> = None;
-                let mut no_cache = false;
-
-                for part in cc_str.split(',') {
-                    let part = part.trim().to_ascii_lowercase();
-                    if let Some(val) = part.strip_prefix("s-maxage=") {
-                        if let Ok(age) = val.trim_matches('"').parse::<u64>() {
-                            s_maxage = Some(age);
-                        }
-                    } else if let Some(val) = part.strip_prefix("max-age=") {
-                        if let Ok(age) = val.trim_matches('"').parse::<u64>() {
-                            max_age = Some(age);
-                        }
-                    } else if part == "no-cache" || part.starts_with("no-cache=") {
-                        no_cache = true;
-                    }
-                }
-
-                if no_cache {
-                    return Some(std::time::Duration::from_secs(0));
-                }
-
-                // s-maxage takes precedence for shared caches (like a proxy cache)
-                if let Some(age) = s_maxage {
-                    return Some(std::time::Duration::from_secs(age));
-                }
-                if let Some(age) = max_age {
-                    return Some(std::time::Duration::from_secs(age));
-                }
-            }
-        }
-        None
+        Self::get_cache_max_age_static(headers)
     }
 
     fn build_cached_response(&self, entry: ProxyCacheEntry) -> Response<bytes::Bytes> {

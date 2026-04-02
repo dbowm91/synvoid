@@ -29,8 +29,8 @@ pub struct IcmpConfigResponse {
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 pub struct UpdateIcmpConfigRequest {
+    #[allow(dead_code)]
     pub config: serde_json::Value,
 }
 

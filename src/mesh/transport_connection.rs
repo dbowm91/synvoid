@@ -40,6 +40,7 @@ impl MeshTransport {
             record_store: self.record_store.clone(),
             routing_manager: self.routing_manager.clone(),
             threat_intel: self.threat_intel.clone(),
+            yara_rules: self.yara_rules.clone(),
             seen_messages: Arc::new(RwLock::new(
                 lru_time_cache::LruCache::with_expiry_duration_and_capacity(
                     Duration::from_secs(300),

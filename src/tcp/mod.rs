@@ -12,7 +12,7 @@ use tokio::net::TcpStream;
 pub use crate::listener::ConnectionContext;
 
 pub struct TcpProxy {
-    #[allow(dead_code)] // Config retained for future hot-reload
+    #[allow(dead_code)]
     config: TcpProxyConfig,
     protocol_detector: ProtocolDetector,
     protocol_filter: ProtocolFilter,

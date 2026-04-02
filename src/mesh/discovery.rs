@@ -109,6 +109,16 @@ impl MeshDiscovery {
     async fn connect_to_seed(&self, seed: &MeshSeedNode) -> Result<(), MeshDiscoveryError> {
         let cert_manager = self.cert_manager.read();
         cert_manager.add_seed_public_key(&seed.address, seed.public_key.clone());
+
+        if let Some(ref pinned_fp) = seed.pinned_cert_fingerprint {
+            let fingerprints = cert_manager.get_pinned_fingerprints();
+            if !fingerprints.contains_key(&seed.address) {
+                drop(cert_manager);
+                let cert_manager = self.cert_manager.read();
+                cert_manager.pin_seed_fingerprint(&seed.address, pinned_fp);
+                tracing::info!("TOFU: Loaded pre-configured fingerprint for seed {}", seed.address);
+            }
+        }
         drop(cert_manager);
 
         tracing::debug!("Connecting to seed: {}", seed.address);
@@ -325,28 +335,14 @@ impl MeshDiscovery {
                     }
                 }
 
-                if role.is_global() {
-                    if let Some(ref expected_key) = self.config.global_node_key {
-                        if let Some(ref peer_key) = global_node_key {
-                            if peer_key.as_str() != expected_key.as_str() {
-                                tracing::warn!(
-                                    "Global node key verification failed for {} via Discovery",
-                                    node_id
-                                );
-                                return Err(MeshDiscoveryError::AuthFailed(
-                                    "Invalid global node key".to_string(),
-                                ));
-                            }
-                        } else {
-                            tracing::warn!(
-                                "Global node {} did not provide key verification via Discovery",
-                                node_id
-                            );
-                            return Err(MeshDiscoveryError::AuthFailed(
-                                "Global node key required".to_string(),
-                            ));
-                        }
-                    }
+                if let Err(e) = crate::mesh::peer_auth::validate_peer_role(
+                    &role,
+                    self.config.global_node_key.as_deref(),
+                    global_node_key.as_deref(),
+                    &node_id,
+                ) {
+                    tracing::warn!("{}", e);
+                    return Err(MeshDiscoveryError::AuthFailed(e));
                 }
 
                 let peer_info = crate::mesh::protocol::MeshPeerInfo {

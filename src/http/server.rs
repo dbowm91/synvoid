@@ -20,6 +20,9 @@ use tokio_tungstenite::{connect_async, tungstenite::protocol::Role, WebSocketStr
 static WHITELIST_REGEX_CACHE: LazyLock<DashMap<String, Option<regex::Regex>>> =
     LazyLock::new(DashMap::new);
 
+static IMAGE_PROTECTION_REGEX: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"\.(?:jpe?g|png|gif|webp|bmp|svg|ico)(?:\?|$)").unwrap());
+
 fn get_cached_regex(pattern: &str) -> Option<regex::Regex> {
     WHITELIST_REGEX_CACHE
         .entry(pattern.to_string())
@@ -1574,7 +1577,11 @@ impl HttpServer {
                         }
 
                         if let Some(ref mt) = mesh_transport {
-                            let minification = mt.get_minification_for_site(&site_id).await;
+                            let (minification, image_protection, compression) = tokio::join!(
+                                mt.get_minification_for_site(&site_id),
+                                mt.get_image_protection_for_site(&site_id),
+                                mt.get_compression_for_site(&site_id),
+                            );
                             if let Some(ref min_config) = minification {
                                 if min_config.enabled.unwrap_or(false) {
                                     let ct = content_type.as_deref().unwrap_or("");
@@ -1611,14 +1618,16 @@ impl HttpServer {
                                 }
                             }
 
-                            let image_protection = mt.get_image_protection_for_site(&site_id).await;
-
                             if let Some(ref config) = image_protection {
                                 if config.enabled.unwrap_or(false) {
-                                    let is_image = content_type
+                                    let mut is_image = content_type
                                         .as_ref()
                                         .map(|ct| ct.starts_with("image/"))
                                         .unwrap_or(false);
+                                    if !is_image {
+                                        let path_str = path.to_string();
+                                        is_image = IMAGE_PROTECTION_REGEX.is_match(&path_str);
+                                    }
                                     let min_size =
                                         config.min_size_bytes.unwrap_or(100 * 1024) as u64;
                                     let in_range = body_len >= min_size;
@@ -1658,7 +1667,6 @@ impl HttpServer {
                                 }
                             }
 
-                            let compression = mt.get_compression_for_site(&site_id).await;
                             if let Some(ref comp_config) = compression {
                                 if comp_config.enabled.unwrap_or(false) {
                                     let accept_encoding: &str = parts

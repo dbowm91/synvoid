@@ -23,7 +23,6 @@ pub struct MasterState {
     pub upstream_error_tracker: Option<Arc<UpstreamErrorTracker>>,
     pub threat_level_manager: Option<Arc<ThreatLevelManager>>,
     pub rule_feed_manager: Option<Arc<RuleFeedManagerForWaf>>,
-    #[allow(dead_code)] // Reserved for master-level IP blocking
     pub block_store: Arc<BlockStore>,
     pub mesh_transport: Option<Arc<crate::mesh::transport::MeshTransport>>,
 }

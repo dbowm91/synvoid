@@ -239,6 +239,55 @@ pub async fn run_unified_server_worker(
         }
     }
 
+    // Initialize Port Honeypot
+    let honeypot_port_config = {
+        let config = shared_config.read().await;
+        config.main.honeypot_port.clone()
+    };
+
+    let port_honeypot_runner: Option<Arc<crate::honeypot_port::PortHoneypotRunner>> =
+        if honeypot_port_config.enabled {
+            let port_honeypot_config = crate::honeypot_port::PortHoneypotConfig {
+                enabled: honeypot_port_config.enabled,
+                min_port: honeypot_port_config
+                    .ports
+                    .iter()
+                    .copied()
+                    .min()
+                    .unwrap_or(10000),
+                max_port: honeypot_port_config
+                    .ports
+                    .iter()
+                    .copied()
+                    .max()
+                    .unwrap_or(60000),
+                num_honeypot_ports: honeypot_port_config.ports.len(),
+                ..Default::default()
+            };
+
+            match crate::honeypot_port::PortHoneypotRunner::new(port_honeypot_config) {
+                Ok(runner) => {
+                    tracing::info!("Port honeypot runner initialized");
+                    Some(runner)
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to initialize port honeypot runner: {}", e);
+                    None
+                }
+            }
+        } else {
+            tracing::info!("Port honeypot is disabled");
+            None
+        };
+
+    // Spawn port honeypot background task
+    if let Some(ref runner) = port_honeypot_runner {
+        let runner_clone = runner.clone();
+        tokio::spawn(async move {
+            runner_clone.run().await;
+        });
+    }
+
     // ============================================================================================
     // Mesh and Threat Intelligence Initialization
     //
@@ -490,7 +539,7 @@ pub async fn run_unified_server_worker(
             }
             #[cfg(not(feature = "dns"))]
             {
-                if mesh_config.role == crate::mesh::config::MeshNodeRole::Global {
+                if mesh_config.role.is_global() {
                     tracing::warn!(
                         "Global node compiled without dns feature — DNS serving is unavailable. \
                          Global nodes are required to serve DNS."
@@ -534,7 +583,7 @@ pub async fn run_unified_server_worker(
             };
 
             // Announce key exchange endpoint if global node with key exchange enabled
-            if mesh_config.role == crate::mesh::config::MeshNodeRole::Global
+            if mesh_config.role.is_global()
                 && mesh_config.global_node.key_exchange_enabled
                 && mesh_config.origin_signing_key.is_some()
             {
@@ -649,7 +698,7 @@ pub async fn run_unified_server_worker(
 
             // Key exchange endpoints are served by the main HTTP/HTTPS server
             // For global nodes with key exchange enabled
-            let is_global = mesh_config_arc.role == crate::mesh::config::MeshNodeRole::Global;
+            let is_global = mesh_config_arc.role.is_global();
             if is_global
                 && mesh_config_arc.global_node.key_exchange_enabled
                 && mesh_config_arc.origin_signing_key.is_some()

@@ -37,7 +37,7 @@ impl Default for RegionalHubConfig {
 
 pub struct RegionalHub {
     config: RegionalHubConfig,
-    #[allow(dead_code)] // Reserved for geo-aware routing decisions
+    #[allow(dead_code)]
     geo_distance: GeoDistance,
     hubs: RwLock<HashMap<String, Vec<HubPeer>>>,
     all_peers_by_region: RwLock<HashMap<String, Vec<PeerContact>>>,

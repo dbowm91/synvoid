@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use tokio::sync::Mutex as TokioMutex;
+use tokio::sync::{watch, Mutex as TokioMutex};
 
 use crate::config::ConfigManager;
 use crate::metrics::WorkerMetrics;
@@ -104,6 +104,7 @@ pub async fn run_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Erro
     let metrics = Arc::new(WorkerMetrics::default());
     let running = RunningFlag::new();
     let draining = DrainFlag::new();
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
     let state = connection::WorkerState {
         worker_id,
@@ -114,7 +115,10 @@ pub async fn run_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Erro
         draining,
         config_manager: config_manager.clone(),
         config_path: args.config_path.clone(),
+        shutdown_rx,
     };
+
+    let shutdown_tx = Arc::new(shutdown_tx);
 
     {
         let mut ipc_guard = ipc.lock().await;
@@ -151,6 +155,7 @@ pub async fn run_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Erro
     });
 
     let ipc_state = state.clone();
+    let shutdown_tx_for_ipc = shutdown_tx.clone();
     let ipc_handle = tokio::spawn(async move {
         loop {
             if !ipc_state.running.is_running() {
@@ -177,6 +182,7 @@ pub async fn run_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Erro
                         timeout_secs
                     );
                     ipc_state.running.stop();
+                    let _ = shutdown_tx_for_ipc.send(true);
 
                     let mut ipc = ipc_state.ipc.lock().await;
                     let _ = ipc
@@ -251,6 +257,7 @@ pub async fn run_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Erro
     let worker_exit_code: Arc<std::sync::atomic::AtomicI32> =
         Arc::new(std::sync::atomic::AtomicI32::new(0));
     let server_exit_code = worker_exit_code.clone();
+    let mut server_shutdown_rx = state.shutdown_rx.clone();
     let server_handle = tokio::spawn(async move {
         let addr: std::net::SocketAddr = format!("127.0.0.1:{}", port)
             .parse()
@@ -289,7 +296,10 @@ pub async fn run_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Erro
                     worker_id_for_log,
                     concurrent
                 );
-                tokio::time::sleep(Duration::from_millis(100)).await;
+                tokio::select! {
+                    _ = server_shutdown_rx.changed() => break,
+                    _ = tokio::time::sleep(Duration::from_millis(10)) => {}
+                }
                 continue;
             }
 
@@ -323,13 +333,8 @@ pub async fn run_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Erro
                         }
                     }
                 }
-                // Periodic shutdown check — uses short interval to minimize
-                // shutdown latency. Would be better with a watch channel but
-                // keeping change minimal.
-                _ = tokio::time::sleep(Duration::from_millis(10)) => {
-                    if !server_state.running.is_running() {
-                        break;
-                    }
+                _ = server_shutdown_rx.changed() => {
+                    break;
                 }
             }
         }

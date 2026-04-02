@@ -29,8 +29,8 @@ pub struct EncryptedConfig {
     pub checksum: String,
 }
 
-#[allow(dead_code)] // config kept for future audit logging
 pub struct SecureConfigManager {
+    #[allow(dead_code)]
     config: Arc<MeshConfig>,
     encryption_key: Arc<RwLock<Option<[u8; CONFIG_ENCRYPTION_KEY_SIZE]>>>,
     secured_values: Arc<RwLock<HashMap<String, String>>>,
@@ -312,7 +312,7 @@ pub enum SecureConfigError {
 }
 
 pub struct SecurityEventLogger {
-    #[allow(dead_code)] // Reserved for configurable security event logging
+    #[allow(dead_code)]
     config: Arc<MeshConfig>,
     event_buffer: Arc<RwLock<Vec<SecurityEvent>>>,
     max_buffer_size: usize,

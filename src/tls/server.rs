@@ -125,6 +125,11 @@ impl HttpsServer {
             return Ok(());
         }
 
+        #[cfg(feature = "post-quantum")]
+        tracing::info!("Post-quantum cryptography: ENABLED");
+        #[cfg(not(feature = "post-quantum"))]
+        tracing::info!("Post-quantum cryptography: disabled (feature not enabled)");
+
         let server_config = self.cert_resolver.build_server_config()?;
         let acceptor = TlsAcceptor::from(server_config);
 

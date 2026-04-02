@@ -30,7 +30,7 @@ pub struct OverseerProcess {
     stable_since: Option<Instant>,
     dual_master_mode: bool,
     socket_handoff: Option<DualMasterHandoff>,
-    #[allow(dead_code)] // Reserved for future drain management integration
+    #[allow(dead_code)]
     drain_manager: Arc<DrainManager>,
     upgrade_generation: Option<u32>,
 }

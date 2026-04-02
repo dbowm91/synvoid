@@ -19,7 +19,7 @@ impl MeshTransport {
             requesting_node_id
         );
 
-        if self.config.role != crate::mesh::config::MeshNodeRole::Global {
+        if !self.config.role.is_global() {
             tracing::warn!("Received org registration request on non-global node");
             return;
         }
@@ -341,7 +341,7 @@ impl MeshTransport {
             tier_keys.len()
         );
 
-        if self.config.role != crate::mesh::config::MeshNodeRole::Global {
+        if !self.config.role.is_global() {
             tracing::debug!("Ignoring UnspentTierKeyAnnounce on non-global node");
             return;
         }
@@ -416,7 +416,7 @@ impl MeshTransport {
             upstream_id
         );
 
-        if self.config.role != crate::mesh::config::MeshNodeRole::Global {
+        if !self.config.role.is_global() {
             tracing::warn!("Received upstream registration request on non-global node");
             return;
         }

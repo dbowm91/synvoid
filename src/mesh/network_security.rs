@@ -42,8 +42,8 @@ pub enum Protocol {
     Any,
 }
 
-#[allow(dead_code)] // config kept for future logging
 pub struct NetworkAccessControl {
+    #[allow(dead_code)]
     config: Arc<MeshConfig>,
     rules: Arc<RwLock<Vec<NetworkAccessRule>>>,
     connection_tracker: Arc<RwLock<HashMap<String, ConnectionState>>>,
@@ -295,7 +295,7 @@ pub struct AccessDecision {
 }
 
 pub struct MeshDataEncryption {
-    #[allow(dead_code)] // Reserved for configurable data encryption
+    #[allow(dead_code)]
     config: Arc<MeshConfig>,
     encryption_key: Arc<RwLock<Option<[u8; 32]>>>,
 }

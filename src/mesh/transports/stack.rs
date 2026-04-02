@@ -26,12 +26,13 @@ impl TransportPeerId {
 }
 
 #[derive(Clone)]
-#[allow(dead_code)] // config/topology kept for future transport selection logic
 pub struct MeshTransportStack {
+    #[allow(dead_code)]
     config: Arc<MeshConfig>,
     quic_transport: Option<Arc<QuicTransportWrapper>>,
     wireguard_transport: Option<Arc<WireGuardTransportWrapper>>,
     active_transports: Arc<RwLock<HashMap<TransportPeerId, MeshTransportType>>>,
+    #[allow(dead_code)]
     topology: Arc<MeshTopology>,
 }
 

@@ -10,12 +10,16 @@ use std::sync::Arc;
 use super::common::{ErrorPage, OptionalAuth};
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)] // Fields used for OpenAPI schema/documentation
 pub struct LogsQuery {
+    #[allow(dead_code)]
     pub level: Option<String>,
+    #[allow(dead_code)]
     pub site_id: Option<String>,
+    #[allow(dead_code)]
     pub search: Option<String>,
+    #[allow(dead_code)]
     pub limit: Option<usize>,
+    #[allow(dead_code)]
     pub offset: Option<usize>,
 }
 
@@ -90,9 +94,9 @@ pub async fn get_error_page(
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 pub struct UpdateErrorPageRequest {
     pub title: Option<String>,
+    #[allow(dead_code)]
     pub message: Option<String>,
     pub content: Option<String>,
 }

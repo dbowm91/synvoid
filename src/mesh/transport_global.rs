@@ -159,7 +159,7 @@ impl MeshTransport {
     }
 
     pub(crate) async fn add_global_node(&self, target_node_id: &str, target_public_key: &str) {
-        if self.config.role != crate::mesh::config::MeshNodeRole::Global {
+        if !self.config.role.is_global() {
             tracing::warn!("Only global nodes can add new global nodes");
             return;
         }
@@ -222,7 +222,7 @@ impl MeshTransport {
     }
 
     pub(crate) async fn remove_global_node(&self, target_node_id: &str) {
-        if self.config.role != crate::mesh::config::MeshNodeRole::Global {
+        if !self.config.role.is_global() {
             tracing::warn!("Only global nodes can remove global nodes");
             return;
         }

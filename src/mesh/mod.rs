@@ -18,6 +18,7 @@ pub mod ml_kem_key_exchange;
 pub mod network_security;
 pub mod organization;
 pub mod passover_key_exchange;
+pub mod peer_auth;
 pub mod protocol;
 pub mod proxy;
 pub mod reputation;

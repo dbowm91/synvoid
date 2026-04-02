@@ -871,6 +871,23 @@ impl MeshTransport {
                     );
                 }
             }
+            MeshMessage::YaraRuleAnnounce { .. }
+            | MeshMessage::YaraRuleSyncRequest { .. }
+            | MeshMessage::YaraRuleSyncResponse { .. }
+            | MeshMessage::YaraRuleAcknowledgement { .. }
+            | MeshMessage::YaraRuleSubmission { .. }
+            | MeshMessage::YaraRuleSubmissionResponse { .. } => {
+                if let Some(ref yara_rules) = self.yara_rules {
+                    if let Some(response) = yara_rules.handle_mesh_message(&msg, peer_id) {
+                        let _ = self.send_datagram_to_peer(peer_id, &response).await;
+                    }
+                } else {
+                    tracing::trace!(
+                        "YARA message received but YARA rules not enabled: {:?}",
+                        msg
+                    );
+                }
+            }
             _ => {
                 tracing::trace!(
                     "Received unhandled datagram type from {}: {:?}",

@@ -246,12 +246,53 @@ fn build_tls_config(
         let reason = skip_verify_reason.unwrap_or("not specified");
         tracing::warn!(
             reason,
-            "TLS certificate verification is DISABLED for upstream connections — \
-             this is insecure and should only be used in development"
+            "TLS hostname verification skipped for upstream connections — \
+             chain validation is still performed"
         );
+
+        let mut root_store = rustls::RootCertStore::empty();
+        let native_certs = rustls_native_certs::load_native_certs();
+        for cert in native_certs.certs {
+            let _ = root_store.add(cert);
+        }
+        if root_store.is_empty() {
+            tracing::warn!("No native root certificates available, falling back to webpki roots");
+            root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+        }
+        if !native_certs.errors.is_empty() {
+            tracing::warn!(
+                "Some native root certificates failed to load: {} errors",
+                native_certs.errors.len()
+            );
+        }
+
+        if let Some(ca_path) = ca_cert_path {
+            match load_ca_certs_from_path(ca_path) {
+                Ok(certs) => {
+                    let added = certs.len();
+                    for cert in certs {
+                        let _ = root_store.add(cert);
+                    }
+                    tracing::info!("Loaded {} custom CA certificate(s) from {}", added, ca_path);
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to load custom CA certificates from {}: {}",
+                        ca_path,
+                        e
+                    );
+                }
+            }
+        }
+
+        let inner = WebPkiServerVerifier::builder(Arc::new(root_store))
+            .build()
+            .expect("failed to build WebPkiServerVerifier");
+        let verifier = HostnameSkippingVerifier::new(inner, reason.to_string());
+
         let mut config = builder
             .dangerous()
-            .with_custom_certificate_verifier(Arc::new(NoVerifier::new(reason.to_string())))
+            .with_custom_certificate_verifier(Arc::new(verifier))
             .with_no_client_auth();
         config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
         return config;
@@ -301,67 +342,79 @@ fn build_tls_config(
     config
 }
 
+use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+use rustls::client::WebPkiServerVerifier;
+use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
+use rustls::DigitallySignedStruct;
+use std::sync::Arc;
+
 #[derive(Debug)]
-struct NoVerifier {
+struct HostnameSkippingVerifier {
+    inner: Arc<WebPkiServerVerifier>,
     skip_reason: String,
 }
 
-impl NoVerifier {
-    fn new(reason: String) -> Self {
+impl HostnameSkippingVerifier {
+    fn new(inner: Arc<WebPkiServerVerifier>, reason: String) -> Self {
         Self {
+            inner,
             skip_reason: reason,
         }
     }
 }
 
-impl rustls::client::danger::ServerCertVerifier for NoVerifier {
+impl ServerCertVerifier for HostnameSkippingVerifier {
     fn verify_server_cert(
         &self,
-        _end_entity: &rustls_pki_types::CertificateDer<'_>,
-        _intermediates: &[rustls_pki_types::CertificateDer<'_>],
-        _server_name: &rustls_pki_types::ServerName<'_>,
-        _ocsp_response: &[u8],
-        _now: rustls_pki_types::UnixTime,
-    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
-        tracing::warn!(
-            reason = %self.skip_reason,
-            "TLS certificate verification DISABLED - accepting certificate without validation"
-        );
-        Ok(rustls::client::danger::ServerCertVerified::assertion())
+        end_entity: &CertificateDer<'_>,
+        intermediates: &[CertificateDer<'_>],
+        server_name: &ServerName<'_>,
+        ocsp_response: &[u8],
+        now: UnixTime,
+    ) -> Result<ServerCertVerified, rustls::Error> {
+        match self.inner.verify_server_cert(
+            end_entity,
+            intermediates,
+            server_name,
+            ocsp_response,
+            now,
+        ) {
+            Ok(scv) => Ok(scv),
+            Err(rustls::Error::InvalidCertificate(cert_error)) => {
+                if let rustls::CertificateError::NotValidForName = cert_error {
+                    tracing::warn!(
+                        reason = %self.skip_reason,
+                        "Skipping hostname verification for upstream connection"
+                    );
+                    Ok(ServerCertVerified::assertion())
+                } else {
+                    Err(rustls::Error::InvalidCertificate(cert_error))
+                }
+            }
+            Err(e) => Err(e),
+        }
     }
 
     fn verify_tls12_signature(
         &self,
-        _message: &[u8],
-        _cert: &rustls_pki_types::CertificateDer<'_>,
-        _dss: &rustls::DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        self.inner.verify_tls12_signature(message, cert, dss)
     }
 
     fn verify_tls13_signature(
         &self,
-        _message: &[u8],
-        _cert: &rustls_pki_types::CertificateDer<'_>,
-        _dss: &rustls::DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        self.inner.verify_tls13_signature(message, cert, dss)
     }
 
     fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-        vec![
-            rustls::SignatureScheme::RSA_PKCS1_SHA256,
-            rustls::SignatureScheme::RSA_PKCS1_SHA384,
-            rustls::SignatureScheme::RSA_PKCS1_SHA512,
-            rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
-            rustls::SignatureScheme::ECDSA_NISTP384_SHA384,
-            rustls::SignatureScheme::ECDSA_NISTP521_SHA512,
-            rustls::SignatureScheme::ED25519,
-            rustls::SignatureScheme::ED448,
-            rustls::SignatureScheme::RSA_PSS_SHA256,
-            rustls::SignatureScheme::RSA_PSS_SHA384,
-            rustls::SignatureScheme::RSA_PSS_SHA512,
-        ]
+        self.inner.supported_verify_schemes()
     }
 }
 

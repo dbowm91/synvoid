@@ -693,18 +693,18 @@ impl MeshTopology {
 
         use rand::Rng;
         let mut rng = rand::rng();
-        let mut indices: Vec<usize> = (0..eligible.len()).collect();
-
-        for i in (1..indices.len()).rev() {
-            let j = rng.random_range(0..=i);
-            indices.swap(i, j);
+        let mut reservoir: Vec<PeerState> = Vec::with_capacity(count);
+        for (i, peer) in eligible.iter().enumerate() {
+            if i < count {
+                reservoir.push((*peer).clone());
+            } else {
+                let j = rng.random_range(0..=i);
+                if j < count {
+                    reservoir[j] = (*peer).clone();
+                }
+            }
         }
-
-        indices
-            .into_iter()
-            .take(count)
-            .map(|i| (*eligible[i]).clone())
-            .collect()
+        reservoir
     }
 
     pub async fn get_peers_by_latency(

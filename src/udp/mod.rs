@@ -9,7 +9,7 @@ pub use protocol::{UdpProtocol, UdpProtocolDetector, UdpProtocolResult};
 pub use crate::listener::ConnectionContext;
 
 pub struct UdpProxy {
-    #[allow(dead_code)] // Config retained for future hot-reload
+    #[allow(dead_code)]
     config: UdpProxyConfig,
     protocol_detector: UdpProtocolDetector,
     protocol_filter: UdpProtocolFilter,

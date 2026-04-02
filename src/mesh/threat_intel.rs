@@ -296,6 +296,18 @@ impl ThreatIntelligenceManager {
     ) {
         let now = crate::mesh::safe_unix_timestamp();
 
+        let mut signature = Vec::new();
+        let mut signer_public_key = None;
+
+        if let Some(ref signer) = self.signer {
+            let content = format!(
+                "{},{},{:?},{},{}",
+                ip, threat_type as u32, severity, now, self.node_id
+            );
+            signature = signer.sign(&content);
+            signer_public_key = Some(signer.get_public_key());
+        }
+
         let indicator = ThreatIndicator {
             threat_type,
             indicator_value: ip.to_string(),
@@ -308,8 +320,8 @@ impl ThreatIntelligenceManager {
             rate_limit_requests: None,
             rate_limit_window_secs: None,
             suspicious_pattern: None,
-            signature: Vec::new(),
-            signer_public_key: None,
+            signature,
+            signer_public_key,
         };
 
         let key = format!(
@@ -841,12 +853,10 @@ impl ThreatIntelligenceManager {
     }
 
     pub fn create_threat_announce(&self) -> Option<MeshMessage> {
-        let queue = self.pending_announces.read();
-        if queue.is_empty() {
+        let indicators: Vec<ThreatIndicator> = std::mem::take(&mut *self.pending_announces.write());
+        if indicators.is_empty() {
             return None;
         }
-
-        let indicators: Vec<ThreatIndicator> = queue.iter().cloned().collect();
         let highest_severity = indicators
             .iter()
             .map(|i| i.severity)
@@ -890,11 +900,6 @@ impl ThreatIntelligenceManager {
             signature,
             signer_public_key,
         };
-
-        drop(queue);
-
-        let mut pending = self.pending_announces.write();
-        pending.clear();
 
         Some(message)
     }

@@ -75,9 +75,10 @@ pub struct MeshProxy {
     transform_cache: Arc<Cache<String, TransformCacheEntry>>,
 }
 
-#[allow(dead_code)] // peer_node_id/request_id for future request tracking
 struct MeshConnection {
+    #[allow(dead_code)]
     peer_node_id: String,
+    #[allow(dead_code)]
     request_id: String,
     started_at: std::time::Instant,
 }
@@ -93,10 +94,12 @@ pub struct CachedPolicy {
 }
 
 #[derive(Clone)]
-#[allow(dead_code)]
 struct InFlightQuery {
+    #[allow(dead_code)]
     provider: Option<ProviderInfo>,
+    #[allow(dead_code)]
     completed: bool,
+    #[allow(dead_code)]
     failed: bool,
 }
 
