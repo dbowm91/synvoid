@@ -62,15 +62,3 @@ pub enum ProtocolError {
     #[error("Not implemented: {0}")]
     NotImplemented(String),
 }
-
-pub type BoxedHandler = Box<dyn ProtocolHandler>;
-
-pub fn create_protocol_handler(protocol: ProtocolType) -> Option<BoxedHandler> {
-    match protocol {
-        ProtocolType::Grpc => Some(Box::new(crate::protocol::grpc::GrpcHandler::new())),
-        ProtocolType::WebSocket => {
-            Some(Box::new(crate::protocol::websocket::WebSocketHandler::new()))
-        }
-        _ => None,
-    }
-}

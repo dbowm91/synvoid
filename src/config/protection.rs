@@ -292,6 +292,10 @@ pub struct RuleFeedConfig {
     pub auto_apply: bool,
     #[serde(default = "default_rule_feed_allow_downgrade")]
     pub allow_downgrade: bool,
+    /// Base64-encoded Ed25519 public key for rule feed signature verification.
+    /// If not set, falls back to the compiled-in key (placeholder by default).
+    #[serde(default)]
+    pub public_key: Option<String>,
 }
 
 impl Default for RuleFeedConfig {
@@ -302,6 +306,7 @@ impl Default for RuleFeedConfig {
             update_interval_hours: 24,
             auto_apply: true,
             allow_downgrade: false,
+            public_key: None,
         }
     }
 }

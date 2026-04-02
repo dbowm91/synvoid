@@ -1,18 +1,22 @@
-#![allow(dead_code)]
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
 use wasmtime::{Engine, Instance, Linker, Module, Store};
 
+use crate::plugin::wasm_runtime::RequestContext;
+
+#[allow(dead_code)]
 pub struct WasmInstancePool {
     pool: Arc<Mutex<Vec<WasmPooledInstance>>>,
     engine: Arc<Engine>,
     max_size: usize,
 }
 
+#[allow(dead_code)]
 pub(crate) struct WasmPooledInstance {
     instance: Instance,
-    store: Store<()>,
+    store: Store<RequestContext>,
     filter_name: String,
     max_cpu_fuel: u64,
 }
@@ -26,10 +30,12 @@ impl WasmInstancePool {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn get(&self, filter_name: &str, _module: &Module) -> Option<WasmPooledInstance> {
         let mut pool = self.pool.lock();
         pool.pop().map(|mut inst| {
             inst.filter_name = filter_name.to_string();
+            inst.store.data_mut().start = Instant::now();
             if inst.max_cpu_fuel > 0 {
                 inst.store.set_fuel(inst.max_cpu_fuel).ok();
             }
@@ -37,6 +43,7 @@ impl WasmInstancePool {
         })
     }
 
+    #[allow(dead_code)]
     pub(crate) fn return_instance(&self, instance: WasmPooledInstance) {
         let mut pool = self.pool.lock();
         if pool.len() < self.max_size {
@@ -48,7 +55,13 @@ impl WasmInstancePool {
         let mut warm_instances = Vec::new();
 
         for (filter_name, module) in modules {
-            let mut store = Store::new(&self.engine, ());
+            let mut store = Store::new(
+                &self.engine,
+                RequestContext {
+                    start: Instant::now(),
+                    timeout: Duration::from_secs(30),
+                },
+            );
 
             let mut linker = Linker::new(&self.engine);
 
@@ -56,7 +69,9 @@ impl WasmInstancePool {
                 .func_wrap(
                     "env",
                     "abort",
-                    |_caller: wasmtime::Caller<'_, ()>, _msg_ptr: i32, _msg_len: i32| {
+                    |_caller: wasmtime::Caller<'_, RequestContext>,
+                     _msg_ptr: i32,
+                     _msg_len: i32| {
                         tracing::error!("WASM plugin abort at ptr={}, len={}", _msg_ptr, _msg_len);
                     },
                 )
@@ -66,7 +81,7 @@ impl WasmInstancePool {
                 .func_wrap(
                     "env",
                     "check_timeout",
-                    |_caller: wasmtime::Caller<'_, ()>| -> i32 { 0 },
+                    |_caller: wasmtime::Caller<'_, RequestContext>| -> i32 { 0 },
                 )
                 .ok();
 

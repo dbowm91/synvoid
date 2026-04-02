@@ -101,7 +101,41 @@ impl MeshDnsSecValidator {
                     Err(_) => Ok(false),
                 }
             }
-            Algorithm::RSA => Err("RSA verification not implemented".to_string()),
+            Algorithm::RSA => {
+                // RSA/SHA-256 verification (DNSSEC algorithm 8)
+                use rsa::pkcs1v15::VerifyingKey;
+                use rsa::signature::Verifier;
+                use sha2::Sha256;
+
+                let public_key_bytes = &matching_key.public_key;
+                if public_key_bytes.len() < 3 {
+                    return Err("RSA public key too short".to_string());
+                }
+
+                let exponent_len = public_key_bytes[0] as usize;
+                if public_key_bytes.len() < 1 + exponent_len {
+                    return Err("RSA public key truncated".to_string());
+                }
+
+                let exponent = rsa::BigUint::from_bytes_be(&public_key_bytes[1..1 + exponent_len]);
+                let modulus = rsa::BigUint::from_bytes_be(&public_key_bytes[1 + exponent_len..]);
+
+                let rsa_public_key = rsa::RsaPublicKey::new(modulus, exponent)
+                    .map_err(|e| format!("Invalid RSA public key: {}", e))?;
+
+                let verifying_key = VerifyingKey::<Sha256>::new(rsa_public_key);
+
+                let signature_bytes = &rrsig[18..];
+
+                match verifying_key.verify(
+                    signed_data,
+                    &rsa::pkcs1v15::Signature::try_from(signature_bytes)
+                        .map_err(|e| format!("Invalid RSA signature: {}", e))?,
+                ) {
+                    Ok(_) => Ok(true),
+                    Err(_) => Ok(false),
+                }
+            }
         }
     }
 

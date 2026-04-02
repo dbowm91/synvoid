@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use parking_lot::RwLock;
 use tokio::sync::mpsc;
 
-use crate::config::serverless::{FunctionDefinition, ServerlessConfig};
+use crate::config::serverless::FunctionDefinition;
 
 #[derive(Debug, Clone)]
 pub struct InstancePoolConfig {
@@ -447,52 +447,4 @@ pub enum InstancePoolError {
     AtMaxCapacity,
     #[error("Pool at minimum capacity")]
     AtMinCapacity,
-}
-
-pub struct ServerlessManager {
-    pools: RwLock<HashMap<String, Arc<InstancePool>>>,
-    config: ServerlessConfig,
-}
-
-impl ServerlessManager {
-    pub fn new(config: ServerlessConfig) -> Self {
-        Self {
-            pools: RwLock::new(HashMap::new()),
-            config,
-        }
-    }
-
-    pub async fn initialize(&self) -> Result<(), InstancePoolError> {
-        for function in &self.config.functions {
-            let pool = Arc::new(InstancePool::new(
-                InstancePoolConfig::default(),
-                function.clone(),
-            ));
-            pool.initialize().await?;
-            self.pools.write().insert(function.name.clone(), pool);
-        }
-        Ok(())
-    }
-
-    pub fn get_pool(&self, function_name: &str) -> Option<Arc<InstancePool>> {
-        self.pools.read().get(function_name).cloned()
-    }
-
-    pub fn list_functions(&self) -> Vec<String> {
-        self.pools.read().keys().cloned().collect()
-    }
-
-    pub fn get_all_metrics(&self) -> HashMap<String, PoolMetrics> {
-        self.pools
-            .read()
-            .iter()
-            .map(|(name, pool)| (name.clone(), pool.get_metrics()))
-            .collect()
-    }
-}
-
-impl Default for ServerlessManager {
-    fn default() -> Self {
-        Self::new(ServerlessConfig::default())
-    }
 }

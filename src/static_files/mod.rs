@@ -1,5 +1,4 @@
 pub mod client;
-pub mod compression;
 pub mod directory;
 pub mod minifier;
 

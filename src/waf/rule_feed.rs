@@ -11,6 +11,19 @@ use std::time::Duration;
 
 use std::sync::LazyLock;
 
+/// Default embedded Ed25519 public key for rule feed signature verification.
+///
+/// Deployments MUST replace this placeholder with a real base64-encoded
+/// 32-byte Ed25519 public key matching the private key used to sign rule feeds.
+///
+/// To generate a key pair:
+///   ed25519-dalek: SigningKey::generate(&mut rand::rng())
+///
+/// Configure via `waf.rule_feed.public_key` in the TOML config, or set the
+/// MALUWAF_RULE_FEED_PUBLIC_KEY environment variable.
+///
+/// If this placeholder remains, a random key is generated at startup and all
+/// rule feed signature verifications will fail (rules will not be applied).
 const EMBEDDED_PUBLIC_KEY: &str = "DEFAULT_EMBEDDED_PUBLIC_KEY_PLACEHOLDER";
 
 static RULE_PATTERN_STORE: LazyLock<RwLock<GlobalRulePatterns>> =
@@ -276,7 +289,12 @@ pub struct RuleFeedManager {
 
 impl RuleFeedManager {
     pub fn new(config: RuleFeedConfig) -> Arc<Self> {
-        let embedded_public_key = Self::parse_embedded_key(EMBEDDED_PUBLIC_KEY);
+        let embedded_public_key = config
+            .public_key
+            .as_deref()
+            .filter(|k| !k.is_empty())
+            .map(Self::parse_embedded_key)
+            .unwrap_or_else(|| Self::parse_embedded_key(EMBEDDED_PUBLIC_KEY));
 
         Arc::new(Self {
             config,
@@ -313,9 +331,9 @@ impl RuleFeedManager {
         // This means rule signature verification will only work if the feed
         // server signs with the same key. Log a warning so operators know.
         tracing::warn!(
-            "No valid embedded Ed25519 public key configured (placeholder or invalid). \
-             Generating a random key — rule feed signature verification will fail unless \
-             the feed server uses the corresponding private key."
+            "No valid embedded Ed25519 public key configured. Set [waf.rule_feed.public_key] \
+             in the TOML config to a base64-encoded 32-byte Ed25519 verifying key. \
+             Generating a random key — rule feed signature verification will fail."
         );
         let mut key_bytes = [0u8; 32];
         rand::Rng::fill(&mut rand::rng(), &mut key_bytes);

@@ -32,7 +32,6 @@ verify-pq = []
 tun-rs = []
 mesh = []
 rkyv = []
-deno = []
 
 # TODO: Remove git patch when quinn 0.11.10+ is released with fixed quinn-proto
 # Tracking: https://github.com/quinn-rs/quinn/releases
@@ -178,10 +177,8 @@ libloading = "0.8"
 # WASM support for plugins
 wasmtime = "42"
 
-# Deno runtime for serverless functions
-deno_core = "0.254"
-url = "2"
 # URL parsing (already used elsewhere)
+url = "2"
 
 # WireGuard (optional - requires defguard_boringtun)
 defguard_boringtun = { version = "0.6", optional = true }

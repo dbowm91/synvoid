@@ -205,9 +205,9 @@ impl Default for WasmPluginManager {
 }
 
 /// Per-request store data with wall-clock timeout tracking
-struct RequestContext {
-    start: Instant,
-    timeout: Duration,
+pub(crate) struct RequestContext {
+    pub(crate) start: Instant,
+    pub(crate) timeout: Duration,
 }
 
 impl WasmRuntime {

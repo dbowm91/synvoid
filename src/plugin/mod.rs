@@ -8,20 +8,10 @@ use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use parking_lot::RwLock;
 
 pub mod axum_loader;
-#[cfg(feature = "deno")]
-pub mod deno_pool;
-#[cfg(feature = "deno")]
-pub mod deno_runtime;
 pub mod instance_pool;
-pub mod native_runtime;
 pub mod wasm_metrics;
 pub mod wasm_runtime;
 
-#[cfg(feature = "deno")]
-pub use deno_pool::{DenoPool, PoolStats};
-#[cfg(feature = "deno")]
-pub use deno_runtime::{DenoPluginManager, DenoResourceLimits, DenoRuntime};
-pub use native_runtime::{NativePluginManager, NativeResourceLimits, NativeRuntime};
 pub use wasm_runtime::{WasmPluginManager, WasmResourceLimits, WasmRuntime};
 
 pub enum WasmFilterResult {

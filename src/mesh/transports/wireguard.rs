@@ -320,6 +320,7 @@ impl WireGuardMeshTransport {
                     upstream_id.to_string(),
                     max_hops,
                     initiator.to_string(),
+                    socket,
                 )
                 .await;
             }
@@ -354,6 +355,7 @@ impl WireGuardMeshTransport {
         upstream_id: String,
         _max_hops: u8,
         initiator: String,
+        socket: &Arc<RwLock<Option<Arc<UdpSocket>>>>,
     ) {
         let provider = topology.get_cached_route(&upstream_id).await;
         let mesh_name = topology.config().mesh_name().map(|s| s.into());
@@ -385,7 +387,18 @@ impl WireGuardMeshTransport {
         };
 
         if let Some(peer) = peer_states.iter().find(|p| p.key() == &initiator) {
-            tracing::debug!("Sending route response to {}", peer.value().address);
+            let addr_str = peer.value().address.clone();
+            if let Ok(addr) = addr_str.parse::<SocketAddr>() {
+                if let Ok(encoded) = response.encode() {
+                    if let Some(sock) = &*socket.read().await {
+                        if let Err(e) = sock.send_to(&encoded, addr).await {
+                            tracing::warn!("Failed to send route response to {}: {}", addr, e);
+                        } else {
+                            tracing::debug!("Sent route response to {}", addr);
+                        }
+                    }
+                }
+            }
         }
     }
 

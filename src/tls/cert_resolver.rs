@@ -165,18 +165,48 @@ impl CertResolver {
         &self,
         key: &PrivateKeyDer<'_>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        use rsa::pkcs8::DecodePrivateKey;
+        use rsa::traits::PublicKeyParts;
+
         match key {
-            PrivateKeyDer::Pkcs1(_) => {
-                tracing::debug!("PKCS#1 key validated");
+            PrivateKeyDer::Pkcs1(pkcs1) => {
+                let der = pkcs1.secret_pkcs1_der();
+                let mod_len = der.len();
+                let rough_bits = mod_len.saturating_sub(10).saturating_mul(8);
+                if rough_bits < 2048 {
+                    return Err(
+                        format!("RSA key too weak: ~{} bits (minimum 2048)", rough_bits).into(),
+                    );
+                }
+                if rough_bits < 3072 {
+                    tracing::warn!("RSA key uses ~{} bits (3072+ recommended)", rough_bits);
+                } else {
+                    tracing::debug!("RSA key validated: ~{} bits", rough_bits);
+                }
             }
-            PrivateKeyDer::Sec1(_) => {
-                tracing::debug!("SEC1 key validated");
+            PrivateKeyDer::Sec1(_sec1) => {
+                tracing::debug!("SEC1 key validated (EC keys are >= 160 bits, inherently strong)");
             }
-            PrivateKeyDer::Pkcs8(_) => {
-                tracing::debug!("PKCS#8 key validated");
+            PrivateKeyDer::Pkcs8(pkcs8) => {
+                let der = pkcs8.secret_pkcs8_der();
+                if let Ok(rsa_key) = rsa::RsaPrivateKey::from_pkcs8_der(der) {
+                    let bits = rsa_key.n().bits();
+                    if bits < 2048 {
+                        return Err(
+                            format!("RSA key too weak: {} bits (minimum 2048)", bits).into()
+                        );
+                    }
+                    if bits < 3072 {
+                        tracing::warn!("RSA key uses {} bits (3072+ recommended)", bits);
+                    } else {
+                        tracing::debug!("RSA PKCS#8 key validated: {} bits", bits);
+                    }
+                } else {
+                    tracing::debug!("Non-RSA PKCS#8 key validated (Ed25519/EC)");
+                }
             }
             _ => {
-                tracing::debug!("Unknown key type validated");
+                tracing::debug!("Unknown key type, skipping strength validation");
             }
         }
         Ok(())

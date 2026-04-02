@@ -1,6 +1,7 @@
 #![allow(dead_code)] // Reserved for future DNS mesh protocol handling
 
 use crate::mesh::transport::MeshTransport;
+use base64::Engine;
 use flate2::read::ZlibDecoder as ReadZlibDecoder;
 use flate2::write::ZlibEncoder;
 use flate2::Compression;
@@ -1139,23 +1140,85 @@ impl MeshTransport {
             return false;
         }
 
-        if let Ok(signature_bytes) = hex::decode(signature_hex) {
-            if signature_bytes.len() == 64 {
+        let signature_bytes = match hex::decode(signature_hex) {
+            Ok(bytes) if bytes.len() == 64 => bytes,
+            Ok(bytes) => {
                 tracing::warn!(
-                    "Signed challenge for domain {}: signature verification NOT IMPLEMENTED - accepting challenge. \
-                     In production, this should verify the Ed25519 signature using the origin node's public key.",
+                    "Invalid signature length for domain {}: expected 64, got {}",
+                    domain,
+                    bytes.len()
+                );
+                return false;
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to decode signature hex for domain {}: {}",
+                    domain,
+                    e
+                );
+                return false;
+            }
+        };
+
+        let public_key_b64 = match self
+            .config
+            .global_node
+            .known_origin_keys
+            .get(origin_node_id)
+        {
+            Some(key) => key.clone(),
+            None => {
+                tracing::warn!(
+                    "No known public key for origin node {} when verifying challenge for {}",
+                    origin_node_id,
                     domain
                 );
                 return false;
             }
-        }
+        };
 
-        tracing::warn!(
-            "Signed challenge verification failed for domain {} from node {}",
-            domain,
-            origin_node_id
-        );
-        false
+        let public_key_bytes: Vec<u8> =
+            match base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(&public_key_b64) {
+                Ok(bytes) if bytes.len() == 32 => bytes,
+                Ok(bytes) => {
+                    tracing::warn!(
+                        "Invalid public key length for origin node {}: expected 32, got {}",
+                        origin_node_id,
+                        bytes.len()
+                    );
+                    return false;
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to decode public key for origin node {}: {}",
+                        origin_node_id,
+                        e
+                    );
+                    return false;
+                }
+            };
+
+        let challenge_content = format!("{}:{}", domain, origin_node_id);
+
+        if crate::integrity::signing::verify_ed25519_raw(
+            &public_key_bytes,
+            &challenge_content,
+            &signature_bytes,
+        ) {
+            tracing::info!(
+                "Signed challenge verified for domain {} from node {}",
+                domain,
+                origin_node_id
+            );
+            true
+        } else {
+            tracing::warn!(
+                "Signed challenge verification failed for domain {} from node {}",
+                domain,
+                origin_node_id
+            );
+            false
+        }
     }
 
     pub(crate) async fn broadcast_dns_domain_registered(

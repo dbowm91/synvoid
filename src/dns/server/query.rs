@@ -920,6 +920,37 @@ impl DnsServer {
         }
 
         if dnssec_ok {
+            // Check for NODATA: name exists but requested type does not
+            if let Some((origin, zone)) = ctx
+                .zones
+                .find(|origin, zone| {
+                    let origin_lower = origin.to_lowercase();
+                    (qname_lower.ends_with(&origin_lower) || qname_lower == origin_lower)
+                        && zone.nsec3_enabled
+                        && Self::is_nodata(zone, &qname, record_type)
+                })
+                .map(|zone| {
+                    let origin = zone.origin.clone();
+                    (origin, zone)
+                })
+            {
+                let nsec3_records = Self::build_nsec3_nodata(&zone, &qname, record_type);
+                if !nsec3_records.is_empty() {
+                    let zsk = zone.zsk_key.as_ref();
+                    return Some(Self::build_nodata_response(
+                        &qname,
+                        qtype,
+                        &nsec3_records,
+                        50,
+                        dnssec_ok,
+                        edns_options.as_ref(),
+                        zsk,
+                        origin.as_str(),
+                    ));
+                }
+            }
+
+            // NXDOMAIN NSEC/NSEC3 proof
             if let Some((origin, zone)) = ctx
                 .zones
                 .find(|origin, zone| {
@@ -1056,6 +1087,120 @@ impl DnsServer {
                 }
             }
         }
+
+        if let Some(edns) = edns_options {
+            let opt_record =
+                crate::dns::edns::EdnsOptions::build_opt_record(edns.udp_payload_size, dnssec_ok);
+            response.extend_from_slice(&[0]);
+            response.extend_from_slice(&41u16.to_be_bytes());
+            response.extend_from_slice(&(opt_record.len() as u16).to_be_bytes());
+            response.extend_from_slice(&opt_record);
+        } else if dnssec_ok {
+            let opt_record = crate::dns::edns::EdnsOptions::build_opt_record(4096, dnssec_ok);
+            response.extend_from_slice(&[0]);
+            response.extend_from_slice(&41u16.to_be_bytes());
+            response.extend_from_slice(&(opt_record.len() as u16).to_be_bytes());
+            response.extend_from_slice(&opt_record);
+        }
+
+        Arc::new(response)
+    }
+
+    pub(super) fn build_nodata_response(
+        qname: &str,
+        qtype: u16,
+        nsec_records: &[DnsZoneRecord],
+        nsec_record_type: u16,
+        dnssec_ok: bool,
+        edns_options: Option<&EdnsOptions>,
+        zsk: Option<&crate::dns::dnssec::ZoneSigningKey>,
+        signer_name: &str,
+    ) -> Arc<Vec<u8>> {
+        let mut response = Vec::new();
+
+        let response_id = Self::generate_random_id();
+        response.extend_from_slice(&response_id.to_be_bytes());
+
+        // NODATA: RCODE 0 (NOERROR), authoritative answer
+        let mut flags = 0x8580u16;
+        // AD flag: set when NSEC3 proof records are present
+        if dnssec_ok && !nsec_records.is_empty() {
+            flags |= 0x0020;
+        }
+        response.extend_from_slice(&flags.to_be_bytes());
+
+        response.extend_from_slice(&1u16.to_be_bytes()); // QDCOUNT
+        response.extend_from_slice(&0u16.to_be_bytes()); // ANCOUNT (empty for NODATA)
+        response.extend_from_slice(&0u16.to_be_bytes()); // NSCOUNT placeholder
+        let nscount_offset = response.len() - 2;
+        response.extend_from_slice(&(nsec_records.len() as u16).to_be_bytes()); // ARCOUNT placeholder
+
+        let name_parts: Vec<&str> = if qname.is_empty() || qname == "@" {
+            vec![""]
+        } else {
+            qname.split('.').collect()
+        };
+
+        for part in &name_parts {
+            if !part.is_empty() {
+                response.push((*part).len() as u8);
+                response.extend_from_slice(part.as_bytes());
+            }
+        }
+        response.push(0);
+
+        response.extend_from_slice(&qtype.to_be_bytes());
+        response.extend_from_slice(&1u16.to_be_bytes());
+
+        let mut nscount: u16 = 0;
+        for nsec_record in nsec_records {
+            let nsec_name_parts: Vec<&str> = nsec_record.name.split('.').collect();
+
+            for part in &nsec_name_parts {
+                if !part.is_empty() {
+                    response.push((*part).len() as u8);
+                    response.extend_from_slice(part.as_bytes());
+                }
+            }
+            response.push(0);
+
+            response.extend_from_slice(&nsec_record_type.to_be_bytes());
+            response.extend_from_slice(&1u16.to_be_bytes());
+            response.extend_from_slice(&nsec_record.ttl.to_be_bytes());
+
+            if let Ok(nsec_data) = hex::decode(&nsec_record.value) {
+                response.extend_from_slice(&(nsec_data.len() as u16).to_be_bytes());
+                response.extend_from_slice(&nsec_data);
+            }
+            nscount += 1;
+        }
+
+        if dnssec_ok && !nsec_records.is_empty() {
+            if let Some(key) = zsk {
+                for nsec_record in nsec_records {
+                    let rrsig = Self::create_signed_rrsig(nsec_record, signer_name, key);
+                    if !rrsig.is_empty() {
+                        let nsec_name_parts: Vec<&str> = nsec_record.name.split('.').collect();
+                        for part in &nsec_name_parts {
+                            if !part.is_empty() {
+                                response.push((*part).len() as u8);
+                                response.extend_from_slice(part.as_bytes());
+                            }
+                        }
+                        response.push(0);
+                        response.extend_from_slice(&46u16.to_be_bytes());
+                        response.extend_from_slice(&1u16.to_be_bytes());
+                        response.extend_from_slice(&nsec_record.ttl.to_be_bytes());
+                        response.extend_from_slice(&(rrsig.len() as u16).to_be_bytes());
+                        response.extend_from_slice(&rrsig);
+                        nscount += 1;
+                    }
+                }
+            }
+        }
+
+        // Update NSCOUNT
+        response[nscount_offset..nscount_offset + 2].copy_from_slice(&nscount.to_be_bytes());
 
         if let Some(edns) = edns_options {
             let opt_record =

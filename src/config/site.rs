@@ -581,12 +581,6 @@ pub enum BackendConfig {
     #[serde(rename = "upstream")]
     Upstream { url: Option<String> },
 
-    #[serde(rename = "axum")]
-    Axum {
-        #[serde(default)]
-        socket: Option<String>,
-    },
-
     #[serde(rename = "axum-dynamic")]
     AxumDynamic {
         #[serde(default)]

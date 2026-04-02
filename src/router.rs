@@ -416,14 +416,6 @@ impl Router {
                         }
                         RouteResult::Error("Static backend not available".to_string())
                     }
-                    BackendConfig::Axum { .. } => {
-                        tracing::warn!(
-                            "Axum compile-time integration not yet implemented, use axum-dynamic"
-                        );
-                        RouteResult::Error(
-                            "Axum compile-time not implemented, use axum-dynamic".to_string(),
-                        )
-                    }
                 });
             }
 
@@ -654,14 +646,6 @@ impl Router {
                             });
                         }
                     }
-                }
-                BackendConfig::Axum { .. } => {
-                    tracing::warn!(
-                        "Axum compile-time integration not yet implemented, use axum-dynamic"
-                    );
-                    return RouteResult::Error(
-                        "Axum compile-time not implemented, use axum-dynamic".to_string(),
-                    );
                 }
             }
         }

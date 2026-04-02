@@ -364,7 +364,6 @@ impl DnsServer {
         records
     }
 
-    #[allow(dead_code)]
     pub(super) fn build_nsec3_nodata(
         zone: &Zone,
         qname: &str,
@@ -445,8 +444,7 @@ impl DnsServer {
         records
     }
 
-    #[allow(dead_code)]
-    pub(super) fn is_nodata(zone: &Zone, qname: &str) -> bool {
+    pub(super) fn is_nodata(zone: &Zone, qname: &str, qtype: RecordType) -> bool {
         let zone_origin = zone.origin.trim_end_matches('.');
 
         if qname.ends_with(zone_origin) || qname == zone_origin {
@@ -459,12 +457,14 @@ impl DnsServer {
                     .to_string()
             };
 
-            let has_records = zone
+            // NODATA: name exists but requested type does not
+            let name_exists = zone.records.keys().any(|(name, _)| name == &lookup_name);
+            let type_exists = zone
                 .records
                 .keys()
-                .any(|(name, _)| name == &lookup_name || name.is_empty());
+                .any(|(name, rt)| name == &lookup_name && *rt == qtype);
 
-            return has_records;
+            return name_exists && !type_exists;
         }
 
         false
@@ -563,12 +563,19 @@ impl DnsServer {
     pub(super) fn build_dnssec_response(
         &self,
         _id: u16,
-        _qname: &str,
-        _qtype: u16,
-        _records: &[DnsZoneRecord],
+        qname: &str,
+        qtype: u16,
+        records: &[DnsZoneRecord],
     ) -> Option<Vec<u8>> {
-        // DNSSEC disabled - return None
-        None
+        let zone = self.zones.get(qname)?;
+        let dnssec = self.dnssec.as_ref()?;
+        let manager = dnssec.read();
+        let zsk = manager.zone_signing_key.as_ref()?;
+        let signer_name = zone.origin.trim_end_matches('.');
+
+        let response =
+            Self::build_response(qname, qtype, records, true, None, Some(zsk), signer_name);
+        Some(response.to_vec())
     }
 
     pub fn start_key_rotation_task(
