@@ -263,7 +263,7 @@ Crate-level suppressions in `src/lib.rs`:
 - `elided_lifetimes_in_paths` — compiler style preference
 - `mismatched_lifetime_syntaxes` — compiler style preference
 
-`#[allow(dead_code)]` annotations: **~89 across ~53 files** (increased due to reserved protocol modules). Notable per-module breakdown:
+`#[allow(dead_code)]` annotations: **~72 across ~48 files**. Notable per-module breakdown:
 - `src/mesh/transport_*.rs` — ~6 items (reserved protocol handlers)
 - `src/mesh/` — ~14 items
 - `src/dns/server/` — ~4 items
@@ -313,8 +313,15 @@ All duplicate `current_timestamp()` definitions have been consolidated into `src
 
 | Bug | Location | Impact | Status |
 |-----|----------|--------|--------|
-| NSEC3 base32 encoding | `dnssec.rs:1367` | Non-standard encoding for non-SHA1 lengths | Open (SHA-1 only in practice) |
+| NSEC3 base32 encoding | `src/dns/dnssec_signing.rs:259-282` | Non-standard encoding (uses base32 instead of base32hex) | Open (SHA-1 only in practice) |
 | Forwarder no DNSSEC validation | `HickoryResolver` | Forwarder mode doesn't validate; AD bit not propagated | Limitation (documented) |
+| `pattern_detector!` macro infinite recursion | `src/waf/attack_detection/detector_common.rs:85-87` | Stack overflow when trait method called | Open |
+| WAF empty headers in proxy path | `src/proxy.rs:486` | Header-based WAF rules bypassed | Open |
+| SSRF substring matching bypass | `src/waf/attack_detection/ssrf.rs:278-285` | `evil-example.com` passes when `example.com` whitelisted | Open |
+| Dynamic worker server stub | `src/worker/mod.rs:261-343` | Placeholder code — drops connections | Open |
+| Duplicate AppServer init | `src/worker/unified_server.rs:205-235,858-888` | Second init shadows first | Open |
+| WireGuard transport unauthenticated | `src/mesh/transports/wireguard.rs` | Raw UDP with zero authentication | Open |
+| DHT query response non-functional | `src/mesh/dht/record_store_sync.rs:657-718` | Returns None immediately without awaiting responses | Open |
 
 ### Fixed Issues (Wave 1-7 Complete)
 
@@ -502,22 +509,11 @@ When reviewing plan files against the codebase, always verify claims directly. P
 
 ## Remediation Plan
 
-The original remediation plan (Waves 0-6, 185 items) is **complete**. The consolidated improvement plan (`plan.md`) with ~113 items across 7 waves has also been **completed** (2026-04-03).
+The original remediation plan (Waves 0-6, 185 items) is **complete**. The consolidated improvement plan (`plan.md`) has been updated with ~180 items across 8 waves, organized for parallel sub-agent execution. See `plan.md` for full details.
 
-### Completed Waves Summary
-| Wave | Focus | Items |
-|------|-------|-------|
-| 1 | Critical Bugs | 6/6 |
-| 2 | Security Fixes | 10/10 |
-| 3 | Correctness & Structure | 16/16 |
-| 4 | Performance | 10/10 |
-| 5 | Features & Plugins | 17/17 |
-| 6 | File Manager & Web Stack | 12/12 |
-| 7 | Testing, Docs & Cleanup | 12/12 |
-
-### Partially Completed Items
-- **7C.1 Config Schema Generation**: Requires significant refactoring to use schemars derive-based generation (~918 lines of hardcoded schema)
-- **7C.2 Dead Code Cleanup**: Target of <60 annotations not met (89 current); many reserved protocol modules added
+### Partially Completed Items (from previous waves)
+- **Config Schema Generation**: Requires significant refactoring to use schemars derive-based generation (~918 lines of hardcoded schema)
+- **Dead Code Cleanup**: Target of <60 annotations not met (~72 current); many reserved protocol modules added
 
 ### New Files Added
 - `src/admin/handlers/yara_rules.rs` - YARA submission management API
