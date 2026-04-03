@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::os::fd::AsRawFd;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -473,17 +474,20 @@ impl AnycastSocketManager {
                 Err(_) => return None,
             };
 
-        for cmsg in msg.cmsgs().filter_map(|r| r.ok()) {
-            match cmsg {
-                ControlMessageOwned::Ipv4PacketInfo(pktinfo) => {
-                    let addr = IpAddr::from(Ipv4Addr::from(pktinfo.ipi_addr.s_addr.to_ne_bytes()));
-                    return Some(addr);
+        if let Ok(cmsg_iter) = msg.cmsgs() {
+            for cmsg in cmsg_iter {
+                match cmsg {
+                    ControlMessageOwned::Ipv4PacketInfo(pktinfo) => {
+                        let addr =
+                            IpAddr::from(Ipv4Addr::from(pktinfo.ipi_addr.s_addr.to_ne_bytes()));
+                        return Some(addr);
+                    }
+                    ControlMessageOwned::Ipv6PacketInfo(pktinfo) => {
+                        let addr = IpAddr::from(Ipv6Addr::from(pktinfo.ipi6_addr.s6_addr));
+                        return Some(addr);
+                    }
+                    _ => continue,
                 }
-                ControlMessageOwned::Ipv6PacketInfo(pktinfo) => {
-                    let addr = IpAddr::from(Ipv6Addr::from(pktinfo.ipi6_addr.s6_addr));
-                    return Some(addr);
-                }
-                _ => continue,
             }
         }
 

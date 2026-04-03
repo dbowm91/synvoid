@@ -64,7 +64,7 @@ impl BroadcastAckTracker {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct BroadcastAckStatus {
     pub request_id: String,
     pub total_peers: usize,
@@ -486,13 +486,10 @@ impl YaraRulesManager {
     }
 
     pub fn start_broadcast_tracking(&self, request_id: String, sent_peers: Vec<String>) {
+        let peer_count = sent_peers.len();
         let tracker = BroadcastAckTracker::new(request_id, sent_peers);
         *self.broadcast_tracker.write() = Some(tracker);
-        tracing::debug!(
-            "Started broadcast tracking for {} with {} peers",
-            request_id,
-            sent_peers.len()
-        );
+        tracing::debug!("Started broadcast tracking with {} peers", peer_count);
     }
 
     pub fn record_broadcast_ack(&self, node_id: &str) {
@@ -950,7 +947,7 @@ impl YaraRulesManager {
                     accepted,
                     reason
                 );
-                if accepted {
+                if *accepted {
                     self.record_broadcast_ack(from_node);
                 } else {
                     self.record_broadcast_failure(from_node);
@@ -994,6 +991,7 @@ pub struct YaraRulesStats {
     pub current_version: Option<String>,
     pub pending_submissions: usize,
     pub total_submissions: usize,
+    #[serde(skip_serializing)]
     pub last_sync: Instant,
     pub is_global: bool,
     #[serde(skip_serializing_if = "Option::is_none")]

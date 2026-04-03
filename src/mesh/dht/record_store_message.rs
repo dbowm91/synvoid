@@ -1,7 +1,7 @@
 use super::*;
 
 impl RecordStoreManager {
-    fn get_sender_reputation(
+    async fn get_sender_reputation(
         &self,
         from_node: &str,
         _signer: Option<&Arc<crate::mesh::protocol::MeshMessageSigner>>,
@@ -16,15 +16,14 @@ impl RecordStoreManager {
         }
 
         if let Some(ref stake_mgr) = routing.stake_manager {
-            if let Some(stake) = stake_mgr.get_stake(from_node) {
-                return (stake * 100.0) as i64;
-            }
+            let stake = stake_mgr.get_stake_weight(from_node);
+            return (stake * 100.0) as i64;
         }
 
         50
     }
 
-    pub fn handle_mesh_message(
+    pub async fn handle_mesh_message(
         &self,
         message: &MeshMessage,
         from_node: &str,
@@ -99,7 +98,7 @@ impl RecordStoreManager {
                     }
                 }
 
-                let reputation = self.get_sender_reputation(from_node, signer);
+                let reputation = self.get_sender_reputation(from_node, signer).await;
                 self.handle_record_announce(records.clone(), from_node, reputation, signer);
                 None
             }
@@ -215,7 +214,7 @@ impl RecordStoreManager {
                     return None;
                 }
 
-                let reputation = self.get_sender_reputation(from_node, signer);
+                let reputation = self.get_sender_reputation(from_node, signer).await;
                 for record in records {
                     self.store_record(record.clone(), reputation);
                     self.init_propagation_state(&record.key);
@@ -389,7 +388,7 @@ impl RecordStoreManager {
         })
     }
 
-    pub fn handle_anti_entropy_response(&self, response: &MeshMessage, from_node: &str) {
+    pub async fn handle_anti_entropy_response(&self, response: &MeshMessage, from_node: &str) {
         if !self.config.enabled {
             return;
         }
@@ -414,7 +413,7 @@ impl RecordStoreManager {
         }
 
         let mut stored_count = 0;
-        let reputation = self.get_sender_reputation(from_node, None);
+        let reputation = self.get_sender_reputation(from_node, None).await;
 
         for record in missing_records {
             if self.store_record(record.clone(), reputation) {

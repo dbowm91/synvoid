@@ -201,6 +201,7 @@ impl HttpsServer {
                             let waf = waf.clone();
                             let http_config = http_config.clone();
                             let main_config = main_config.clone();
+                            let proxy_servers = proxy_servers.clone();
 
                             tokio::spawn(async move {
                                 match acceptor.accept(stream).await {
@@ -591,7 +592,7 @@ impl HttpsServer {
                             if effective_config.scan_with_yara
                                 || effective_config.max_size_bytes > 0
                             {
-                                match upload_validator.validate_bytes(&body_bytes, &path) {
+                                match upload_validator.validate_bytes(&body_bytes, &path).await {
                                     Ok(result) => {
                                         if !result.is_clean() {
                                             tracing::warn!(

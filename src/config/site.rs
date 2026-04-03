@@ -1891,6 +1891,8 @@ pub struct SiteImagePoisonConfig {
     pub max_dimension: Option<u32>,
     #[serde(default = "default_jpeg_quality")]
     pub jpeg_quality: Option<u8>,
+    #[serde(default)]
+    pub whitelist_patterns: Option<Vec<String>>,
 }
 
 fn default_poison_level() -> Option<String> {

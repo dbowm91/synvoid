@@ -23,6 +23,14 @@ pub struct FunctionDefinition {
     pub timeout_seconds: Option<u64>,
     #[serde(default)]
     pub env: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    pub pre_warm_instances: Option<usize>,
+    #[serde(default)]
+    pub min_instances: Option<usize>,
+    #[serde(default)]
+    pub max_instances: Option<usize>,
+    #[serde(default)]
+    pub idle_timeout_seconds: Option<u64>,
 }
 
 fn default_handler_name() -> String {

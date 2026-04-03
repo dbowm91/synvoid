@@ -67,6 +67,7 @@ impl ServerlessManager {
                 None
             };
 
+            let has_runtime = runtime.is_some();
             let function = ServerlessFunction {
                 definition: func_def.clone(),
                 runtime,
@@ -76,7 +77,7 @@ impl ServerlessManager {
                 .write()
                 .insert(func_def.name.clone(), function);
 
-            if runtime.is_some() {
+            if has_runtime {
                 let pool_config = InstancePoolConfig {
                     min_instances: func_def.min_instances.unwrap_or(1),
                     max_instances: func_def.max_instances.unwrap_or(10),

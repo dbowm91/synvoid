@@ -58,9 +58,17 @@ fn apply_tcp_socket_options(stream: &TcpStream, options: &TcpSocketOptions) -> s
         if options.quickack {
             #[cfg(target_os = "linux")]
             {
-                use socket2::SockRef;
-                let sock_ref = SockRef::from(stream);
-                let _ = sock_ref.set_quickack(true);
+                use std::os::fd::AsRawFd;
+                let fd = stream.as_raw_fd();
+                let _ = unsafe {
+                    libc::setsockopt(
+                        fd,
+                        libc::SOL_TCP,
+                        libc::TCP_QUICKACK,
+                        &1i32 as *const i32 as *const libc::c_void,
+                        std::mem::size_of::<libc::c_int>() as libc::socklen_t,
+                    )
+                };
             }
         }
 

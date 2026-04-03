@@ -299,6 +299,20 @@ Feature flags trimmed: `tower` removed `"timeout"`, `tower-http` removed `"trace
 
 **Note**: `once_cell` and `bincode` still appear in `Cargo.lock` as transitive dependencies (via tracing-core, gloo-worker, etc.). This is expected.
 
+### Dependency Conflict (2026-04-03)
+
+**Problem**: `tonic 0.12.3` pulls `axum 0.7.9`, but main project uses `axum 0.8.8`. This causes Handler trait mismatches for certain file manager routes.
+
+**Impact**: 4 file manager routes disabled (mkdir, rename, permissions, extract) in `src/http/file_manager.rs`
+
+**Solution**: Upgrade tonic to 0.14+ which uses `axum ^0.8`:
+```toml
+# In Cargo.toml
+tonic = { version = "0.14", features = ["gzip", "prost"] }
+tonic-reflection = "0.14"
+tonic-build = "0.14"
+```
+
 ### Error Handling Status
 
 `src/error.rs` has been deleted. `WafError`, `WafResult`, and `WafErrorExt` no longer exist. Every module uses `anyhow`, `Box<dyn Error>`, or custom types.

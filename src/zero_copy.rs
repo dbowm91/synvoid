@@ -104,19 +104,23 @@ impl FilePath for File {
 pub fn copy_file_range(src: &File, dst: &File, count: usize) -> Result<usize> {
     use std::os::unix::io::AsRawFd;
 
-    let mut c_count = count as libc::size_t;
+    let c_count = count as libc::size_t;
+    let mut off_in = 0i64 as libc::off_t;
+    let mut off_out = 0i64 as libc::off_t;
 
     // SAFETY: This is a direct syscall to Linux kernel's copy_file_range(2).
     // - src.as_raw_fd() and dst.as_raw_fd() are valid file descriptors
-    // - The kernel handles all copying internally (no user-space buffer involvement)
-    // - c_count is a valid size_t that we have mutable access to
+    // - off_in and off_out point to valid loff_t values
+    // - c_count is a valid size_t
+    // - 0 for flags means no special behavior
     // No safe Rust wrapper exists for this efficient file-to-file syscall.
     let written = unsafe {
         libc::copy_file_range(
             src.as_raw_fd(),
-            std::ptr::null_mut(),
+            &mut off_in,
             dst.as_raw_fd(),
-            &mut c_count,
+            &mut off_out,
+            c_count,
             0,
         )
     };

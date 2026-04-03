@@ -959,7 +959,7 @@ pub enum SignatureError {
     VerificationFailed(String),
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct MeshCapabilities {
     pub can_route: bool,
     pub can_proxy: bool,

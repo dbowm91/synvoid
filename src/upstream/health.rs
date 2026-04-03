@@ -4,14 +4,14 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::interval;
 
-use crate::http_client::{create_http_client_with_config, send_request_with_timeout};
+use crate::http_client::{create_http_client_with_config, send_request_with_timeout, HttpClient};
 use crate::upstream::pool::Backend;
 
 pub struct HealthChecker {
     pools: Arc<tokio::sync::RwLock<Vec<Arc<crate::upstream::UpstreamPool>>>>,
     config: HealthCheckConfig,
     shutdown_tx: tokio::sync::broadcast::Sender<()>,
-    client: reqwest::Client,
+    client: HttpClient,
 }
 
 #[derive(Clone)]
@@ -98,7 +98,7 @@ impl HealthChecker {
     async fn check_all_pools(
         pools: &Arc<tokio::sync::RwLock<Vec<Arc<crate::upstream::UpstreamPool>>>>,
         config: &HealthCheckConfig,
-        client: &reqwest::Client,
+        client: &HttpClient,
     ) {
         let backends_to_check: Vec<Arc<Backend>> = {
             let pools_guard = pools.read().await;
@@ -175,7 +175,7 @@ impl HealthChecker {
     async fn check_backend(
         backend: &Backend,
         config: &HealthCheckConfig,
-        client: &reqwest::Client,
+        client: &HttpClient,
     ) -> bool {
         match config.health_check_method {
             HealthCheckMethod::Head | HealthCheckMethod::Get => {
@@ -188,7 +188,7 @@ impl HealthChecker {
     async fn http_health_check(
         backend: &Backend,
         config: &HealthCheckConfig,
-        client: &reqwest::Client,
+        client: &HttpClient,
     ) -> bool {
         let url = format!(
             "{}{}",

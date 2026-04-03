@@ -1200,8 +1200,22 @@ impl HttpServer {
                                         use http_body_util::StreamBody;
                                         use tokio_util::io::ReaderStream;
                                         let stream = ReaderStream::new(file);
-                                        let body = StreamBody::new(stream);
-                                        return Ok(builder.body(body).unwrap());
+                                        let mut body = StreamBody::new(stream);
+                                        let mut body_bytes = Vec::new();
+                                        use futures::StreamExt;
+                                        while let Some(chunk) = body.next().await {
+                                            match chunk {
+                                                Ok(bytes) => body_bytes.extend_from_slice(&bytes),
+                                                Err(e) => {
+                                                    tracing::warn!(
+                                                        "Failed to read body chunk: {}",
+                                                        e
+                                                    );
+                                                }
+                                            }
+                                        }
+                                        let body = Bytes::from(body_bytes);
+                                        return Ok(builder.body(Full::new(body).boxed()).unwrap());
                                     }
                                 }
                             }
@@ -1637,7 +1651,7 @@ impl HttpServer {
                             if effective_config.scan_with_yara
                                 || effective_config.max_size_bytes > 0
                             {
-                                match upload_validator.validate_bytes(&full_body, &path) {
+                                match upload_validator.validate_bytes(&full_body, &path).await {
                                     Ok(result) => {
                                         if !result.is_clean() {
                                             tracing::warn!(
@@ -2350,7 +2364,7 @@ impl HttpServer {
         content_type: &str,
         alt_svc: &Option<String>,
         main_config: &Arc<MainConfig>,
-    ) -> Response<Full<Bytes>> {
+    ) -> Response<BoxBody<Bytes, Infallible>> {
         let mut builder = Response::builder()
             .status(status)
             .header("Content-Type", content_type)
@@ -2381,7 +2395,7 @@ impl HttpServer {
         cookie: &str,
         alt_svc: &Option<String>,
         main_config: &Arc<MainConfig>,
-    ) -> Response<Full<Bytes>> {
+    ) -> Response<BoxBody<Bytes, Infallible>> {
         let mut builder = Response::builder()
             .status(status)
             .header("Content-Type", content_type)
@@ -2581,7 +2595,7 @@ impl HttpServer {
         compute_websocket_accept_key(key)
     }
 
-    fn build_websocket_response(headers: &http::HeaderMap) -> Response<Full<Bytes>> {
+    fn build_websocket_response(headers: &http::HeaderMap) -> Response<BoxBody<Bytes, Infallible>> {
         let ws_key = headers
             .get("sec-websocket-key")
             .and_then(|v| v.to_str().ok())
@@ -2605,7 +2619,7 @@ impl HttpServer {
 
         builder
             .body(Full::new(Bytes::new()).boxed())
-            .unwrap_or_else(|_| crate::http::fallback_error_full())
+            .unwrap_or_else(|_| crate::http::fallback_error_boxed())
     }
 
     /// Handle requests routed to an AxumDynamic plugin backend.
@@ -2759,7 +2773,16 @@ impl HttpServer {
         let client = crate::static_files::client::PoisonImageClient::new(socket_path);
 
         match client
-            .poison_image(&site_id, body.to_vec(), last_modified)
+            .poison_image(
+                &site_id,
+                body.to_vec(),
+                last_modified,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
             .await
         {
             Ok(poisoned) => Bytes::from(poisoned),

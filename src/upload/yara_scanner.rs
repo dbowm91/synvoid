@@ -315,7 +315,7 @@ impl YaraScanner {
         Ok(combined_rules)
     }
 
-    pub fn scan_bytes(
+    pub async fn scan_bytes(
         &self,
         data: &[u8],
         excluded_categories: &[&str],
@@ -329,7 +329,7 @@ impl YaraScanner {
             .collect();
 
         let runtime = tokio::runtime::Handle::current();
-        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+        let (tx, rx) = tokio::sync::oneshot::channel();
 
         runtime.spawn_blocking(move || {
             let rules_guard = rules.read();
@@ -384,12 +384,12 @@ impl YaraScanner {
                 Err(e) => Err(YaraError::ScanError(e.to_string())),
             };
 
-            let _ = tx.blocking_send(result);
+            let _ = tx.send(result);
         });
 
-        match tokio::time::timeout(Duration::from_millis(timeout_ms), rx.recv()).await {
-            Ok(Some(result)) => result,
-            Ok(None) => Err(YaraError::ScanError("scan task panicked".into())),
+        match tokio::time::timeout(Duration::from_millis(timeout_ms), rx).await {
+            Ok(Ok(result)) => result,
+            Ok(Err(_)) => Err(YaraError::ScanError("scan task panicked".into())),
             Err(_) => {
                 tracing::warn!(
                     timeout_ms,
@@ -400,13 +400,13 @@ impl YaraScanner {
         }
     }
 
-    pub fn scan_file_with_exclusions(
+    pub async fn scan_file_with_exclusions(
         &self,
         path: &Path,
         excluded_categories: &[&str],
     ) -> Result<Vec<YaraMatch>, YaraError> {
         let data = std::fs::read(path)?;
-        self.scan_bytes(&data, excluded_categories)
+        self.scan_bytes(&data, excluded_categories).await
     }
 }
 

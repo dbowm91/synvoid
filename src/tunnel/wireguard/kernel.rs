@@ -10,8 +10,13 @@ use metrics::{counter, gauge};
 use tokio::process::Command;
 use tokio::sync::{broadcast, RwLock};
 
-#[cfg(target_os = "linux")]
-use wireguard_control::{AllowedIp, Backend, DeviceUpdate, InterfaceName, PeerConfigBuilder};
+#[cfg(all(target_os = "linux", feature = "wireguard"))]
+use wireguard_control::{
+    AllowedIp, Backend, DeviceUpdate, Error as WgError, InterfaceName, PeerConfigBuilder,
+};
+
+#[cfg(not(all(target_os = "linux", feature = "wireguard")))]
+use tokio::time::Duration;
 
 use super::config::{WireGuardConfig, WireGuardPeerConfig};
 use super::session::{WgConnectionStats, WgPeerSession, WgSessionManager};
@@ -60,7 +65,7 @@ impl KernelWireGuard {
         })
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(all(target_os = "linux", feature = "wireguard"))]
     async fn setup_interface(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let iface = InterfaceName::from(&self.interface_name);
 
@@ -114,9 +119,9 @@ impl KernelWireGuard {
         Ok(())
     }
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(all(target_os = "linux", feature = "wireguard")))]
     async fn setup_interface(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        Err("Kernel WireGuard is only available on Linux".into())
+        Err("Kernel WireGuard requires Linux with wireguard feature".into())
     }
 
     async fn configure_interface_address(
@@ -177,7 +182,7 @@ impl KernelWireGuard {
         Ok(())
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(all(target_os = "linux", feature = "wireguard"))]
     async fn add_peer_kernel(
         &self,
         peer: &WireGuardPeerConfig,
@@ -229,15 +234,15 @@ impl KernelWireGuard {
         Ok(())
     }
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(all(target_os = "linux", feature = "wireguard")))]
     async fn add_peer_kernel(
         &self,
         peer: &WireGuardPeerConfig,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        Err("Kernel WireGuard peer addition is only available on Linux".into())
+        Err("Kernel WireGuard peer addition requires Linux with wireguard feature".into())
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(all(target_os = "linux", feature = "wireguard"))]
     async fn remove_peer_kernel(
         &self,
         public_key: &str,
@@ -266,17 +271,17 @@ impl KernelWireGuard {
         Ok(())
     }
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(all(target_os = "linux", feature = "wireguard")))]
     async fn remove_peer_kernel(
         &self,
         _public_key: &str,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        Err("Kernel WireGuard peer removal is only available on Linux".into())
+        Err("Kernel WireGuard peer removal requires Linux with wireguard feature".into())
     }
 
     async fn teardown_interface(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if self.interface_created {
-            #[cfg(target_os = "linux")]
+            #[cfg(all(target_os = "linux", feature = "wireguard"))]
             {
                 use wireguard_control::Error as WgError;
                 let iface = InterfaceName::from(&self.interface_name);
@@ -347,9 +352,9 @@ impl KernelWireGuard {
                                                 .set(handshake as f64);
                                         }
                                         counter!("maluwaf.tunnel.wireguard.peer.rx")
-                                            .absolute(peer.transfer_rx as f64);
+                                            .absolute(peer.transfer_rx);
                                         counter!("maluwaf.tunnel.wireguard.peer.tx")
-                                            .absolute(peer.transfer_tx as f64);
+                                            .absolute(peer.transfer_tx);
                                     }
                                 }
                                 Err(e) => {
@@ -490,7 +495,7 @@ pub async fn is_kernel_wireguard_available() -> bool {
         return false;
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(all(target_os = "linux", feature = "wireguard"))]
     {
         match wireguard_control::get_interfaces() {
             Ok(interfaces) => !interfaces.is_empty() || true,
@@ -498,7 +503,7 @@ pub async fn is_kernel_wireguard_available() -> bool {
         }
     }
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(all(target_os = "linux", feature = "wireguard")))]
     {
         false
     }

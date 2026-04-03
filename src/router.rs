@@ -77,6 +77,7 @@ pub enum RouteResult {
 
 impl Router {
     pub fn new(main_config: &MainConfig, sites: HashMap<String, SiteConfig>) -> Self {
+        let sites_clone = sites.clone();
         let mut domain_map = HashMap::new();
         let mut suffix_domain_map: Vec<(Arc<str>, Arc<SiteConfig>)> = Vec::new();
         let mut static_handlers = HashMap::new();
@@ -217,7 +218,7 @@ impl Router {
         suffix_domain_map.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
 
         let mut location_matchers: HashMap<String, LocationMatcher> = HashMap::new();
-        for (site_id, config) in &sites {
+        for (site_id, config) in &sites_clone {
             if !config.proxy.locations.is_empty() {
                 let patterns: Vec<String> = config
                     .proxy
@@ -925,6 +926,7 @@ impl Router {
                     None,
                     None,
                     None,
+                    ThemeConfig::default(),
                 ) {
                     Ok(handler) => {
                         if handler.is_enabled() {
@@ -1002,6 +1004,7 @@ impl Default for Router {
             default_servers: HashMap::new(),
             plugin_manager: None,
             cleaned_site_domains: HashMap::new(),
+            location_matchers: HashMap::new(),
         }
     }
 }
@@ -1044,6 +1047,7 @@ impl SiteConfig {
             app_server: Default::default(),
             serverless: Default::default(),
             image_poison: Default::default(),
+            file_manager: Default::default(),
         }
     }
 }

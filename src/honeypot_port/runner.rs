@@ -144,6 +144,7 @@ impl PortHoneypotRunner {
     ) {
         let storage = self.storage.clone();
         let threat_intel = threat_intel.clone();
+        let site_scope = self.config.site_scope.clone();
 
         tokio::spawn(async move {
             let mut interval = time::interval(Duration::from_secs(publish_interval_secs));
@@ -188,13 +189,12 @@ impl PortHoneypotRunner {
                                 }
                             };
 
-                            if let Ok(ip) = indicator.value.parse() {
+                            if let Ok(ip) = indicator.value.parse::<std::net::IpAddr>() {
                                 if announced_ips.contains(&ip.to_string()) {
                                     continue;
                                 }
                                 announced_ips.insert(ip.to_string());
 
-                                let site_scope = self.config.site_scope.clone();
                                 threat_intel.announce_honeypot_indicator(
                                     ip,
                                     threat_type,

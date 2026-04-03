@@ -2021,6 +2021,76 @@ impl From<&MeshMessage> for proto::MeshMessage {
                     },
                 )),
             },
+            MeshMessage::WasmModuleAnnounce {
+                request_id,
+                module_name,
+                module_type,
+                version,
+                size_bytes,
+                checksum,
+                timestamp,
+                source_node_id,
+                signature,
+                signer_public_key,
+            } => proto::MeshMessage {
+                message_type: 127,
+                payload: Some(proto::mesh_message::Payload::WasmModuleAnnounce(
+                    proto::WasmModuleAnnounce {
+                        request_id: request_id.to_string(),
+                        module_name: module_name.to_string(),
+                        module_type: *module_type as i32,
+                        version: *version,
+                        size_bytes: *size_bytes,
+                        checksum: checksum.to_string(),
+                        timestamp: *timestamp,
+                        source_node_id: source_node_id.to_string(),
+                        signature: signature.clone(),
+                        signer_public_key: signer_public_key.as_ref().map(|s| s.to_string()),
+                    },
+                )),
+            },
+            MeshMessage::WasmModuleSyncRequest {
+                request_id,
+                node_id,
+                module_names,
+                timestamp,
+            } => proto::MeshMessage {
+                message_type: 128,
+                payload: Some(proto::mesh_message::Payload::WasmModuleSyncRequest(
+                    proto::WasmModuleSyncRequest {
+                        request_id: request_id.to_string(),
+                        node_id: node_id.to_string(),
+                        module_names: module_names.iter().map(|s| s.to_string()).collect(),
+                        timestamp: *timestamp,
+                    },
+                )),
+            },
+            MeshMessage::WasmModuleSyncResponse {
+                request_id,
+                node_id,
+                modules,
+                timestamp,
+            } => proto::MeshMessage {
+                message_type: 129,
+                payload: Some(proto::mesh_message::Payload::WasmModuleSyncResponse(
+                    proto::WasmModuleSyncResponse {
+                        request_id: request_id.to_string(),
+                        node_id: node_id.to_string(),
+                        modules: modules
+                            .iter()
+                            .map(|m| proto::WasmModuleInfo {
+                                module_name: m.module_name.to_string(),
+                                module_type: m.module_type as i32,
+                                version: m.version,
+                                size_bytes: m.size_bytes,
+                                checksum: m.checksum.to_string(),
+                                data: m.data.clone(),
+                            })
+                            .collect(),
+                        timestamp: *timestamp,
+                    },
+                )),
+            },
         }
     }
 }

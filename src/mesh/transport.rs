@@ -683,9 +683,9 @@ impl MeshTransport {
 
                 let message = MeshMessage::SiteConfigSync {
                     request_id,
-                    site_id: site_id.clone(),
+                    site_id: site_id.clone().into(),
                     config_version,
-                    config_json: config_json.clone(),
+                    config_json: config_json.clone().into(),
                     timestamp,
                     source_node_id: current_node_id.clone().into(),
                     signature,
@@ -1422,7 +1422,8 @@ impl MeshTransport {
 
                 let upstreams: Vec<String> = upstreams.keys().cloned().collect();
 
-                let peer_capabilities = peer_capabilities.unwrap_or_default();
+                let peer_capabilities = peer_capabilities;
+                let dns_serving_healthy = peer_capabilities.can_serve_dns;
 
                 let peer_connection = MeshPeerConnection {
                     node_id: node_id.to_string(),
@@ -1450,7 +1451,7 @@ impl MeshTransport {
                             quic_port: peer_quic_port,
                             wireguard_port: peer_wireguard_port,
                             advertised_port: peer_quic_port.or(peer_wireguard_port),
-                            dns_serving_healthy: peer_capabilities.can_serve_dns,
+                            dns_serving_healthy,
                         },
                         PeerStatus::Healthy,
                     )

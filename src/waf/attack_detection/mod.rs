@@ -187,19 +187,19 @@ impl AttackDetector {
         }
 
         if self.config.sqli.enabled {
-            if let Some(result) = self.check_sqli(path, query_string, headers, body) {
+            if let Some(result) = self.check_sqli(Some(path), query_string, headers, body) {
                 return Some(result);
             }
         }
 
         if self.config.xss.enabled {
-            if let Some(result) = self.check_xss(path, query_string, headers, body) {
+            if let Some(result) = self.check_xss(Some(path), query_string, headers, body) {
                 return Some(result);
             }
         }
 
         if self.config.ssti.enabled {
-            if let Some(result) = self.check_ssti(path, query_string, headers, body) {
+            if let Some(result) = self.check_ssti(Some(path), query_string, headers, body) {
                 return Some(result);
             }
         }
@@ -456,6 +456,108 @@ impl AttackDetector {
         if let Some(ref body) = inputs.body {
             if let Some(result) = self
                 .cmd_injection_detector
+                .detect(body.as_str(), InputLocation::PostBody)
+            {
+                return Some(result);
+            }
+        }
+
+        None
+    }
+
+    fn check_path_traversal(&self, inputs: &NormalizedInputs) -> Option<AttackDetectionResult> {
+        if let Some(ref path) = inputs.path {
+            if let Some(result) = self
+                .path_traversal_detector
+                .detect(path.as_str(), InputLocation::Path)
+            {
+                return Some(result);
+            }
+        }
+
+        if let Some(ref qs) = inputs.query_string {
+            if let Some(result) = self
+                .path_traversal_detector
+                .detect(qs.as_str(), InputLocation::QueryString)
+            {
+                return Some(result);
+            }
+        }
+
+        for (name, value) in &inputs.headers {
+            if let Some(result) = self
+                .path_traversal_detector
+                .detect(value.as_str(), InputLocation::Header(name.clone().into()))
+            {
+                return Some(result);
+            }
+        }
+
+        if let Some(ref body) = inputs.body {
+            if let Some(result) = self
+                .path_traversal_detector
+                .detect(body.as_str(), InputLocation::PostBody)
+            {
+                return Some(result);
+            }
+        }
+
+        None
+    }
+
+    fn check_rfi(&self, inputs: &NormalizedInputs) -> Option<AttackDetectionResult> {
+        if let Some(ref qs) = inputs.query_string {
+            if let Some(result) = self
+                .rfi_detector
+                .detect(qs.as_str(), InputLocation::QueryString)
+            {
+                return Some(result);
+            }
+        }
+
+        for (name, value) in &inputs.headers {
+            if let Some(result) = self
+                .rfi_detector
+                .detect(value.as_str(), InputLocation::Header(name.clone().into()))
+            {
+                return Some(result);
+            }
+        }
+
+        if let Some(ref body) = inputs.body {
+            if let Some(result) = self
+                .rfi_detector
+                .detect(body.as_str(), InputLocation::PostBody)
+            {
+                return Some(result);
+            }
+        }
+
+        None
+    }
+
+    fn check_ssrf(&self, inputs: &NormalizedInputs) -> Option<AttackDetectionResult> {
+        if let Some(ref qs) = inputs.query_string {
+            if let Some(result) = self
+                .ssrf_detector
+                .detect(qs.as_str(), InputLocation::QueryString)
+            {
+                return Some(result);
+            }
+        }
+
+        for (name, value) in &inputs.headers {
+            if let Some(result) = self
+                .ssrf_detector
+                .detect(value.as_str(), InputLocation::Header(name.clone().into()))
+            {
+                return Some(result);
+            }
+        }
+
+        if let Some(ref body) = inputs.body {
+            if let Some(result) = self
+                .ssrf_detector
                 .detect(body.as_str(), InputLocation::PostBody)
             {
                 return Some(result);

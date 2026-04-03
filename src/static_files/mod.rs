@@ -774,19 +774,24 @@ impl StaticFileHandler {
     ) -> Response<Full<Bytes>> {
         match result {
             Ok(resp) => {
-                let mut builder = Response::builder().status(resp.status);
+                let status = resp.status;
                 let headers: Vec<_> = resp.headers.into_iter().collect();
+                let body_bytes = match resp.body {
+                    StaticResponseBody::InMemory(b) => b,
+                    StaticResponseBody::ZeroCopy(path) => {
+                        Bytes::from(std::fs::read(&path).unwrap_or_default())
+                    }
+                };
+                let mut builder = Response::builder().status(status);
                 for (key, value) in headers {
                     builder = builder.header(&key, &value);
                 }
-                builder
-                    .body(Full::new(resp.into_bytes()).boxed())
-                    .unwrap_or_else(|_| {
-                        Response::builder()
-                            .status(500)
-                            .body(Full::new(Bytes::from("Internal Server Error").boxed()))
-                            .unwrap()
-                    })
+                builder.body(Full::new(body_bytes)).unwrap_or_else(|_| {
+                    Response::builder()
+                        .status(500)
+                        .body(Full::new(Bytes::from("Internal Server Error")))
+                        .unwrap()
+                })
             }
             Err(e) => {
                 counter!("maluwaf.static.errors").increment(1);

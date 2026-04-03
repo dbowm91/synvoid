@@ -583,7 +583,6 @@ impl UnifiedServer {
             },
             whitelist: Vec::new(),
             block_store: None,
-            threat_intel: None,
             attack_detection_config: Some(AttackDetectionConfig::default()),
             auth_manager: None,
             threat_level_config: Some(main_config.threat_level.clone()),
@@ -1078,9 +1077,7 @@ impl UnifiedServer {
             server = server.with_serverless_manager(sm);
         }
 
-        if let Some(asrv) = state.app_servers.clone() {
-            server = server.with_app_servers(asrv);
-        }
+        server = server.with_app_servers(Some(state.app_servers.clone()));
 
         server.serve().await
     }

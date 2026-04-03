@@ -2,6 +2,7 @@
 
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::sync::Arc;
 
 use bytes::BytesMut;
 use tokio::sync::broadcast;
@@ -168,7 +169,7 @@ mod platform {
         pub fn into_async(self) -> Result<AsyncTunDevice, io::Error> {
             Ok(AsyncTunDevice {
                 fd: self.fd,
-                name: self.name,
+                name: self.name.clone(),
             })
         }
     }
@@ -233,9 +234,6 @@ pub use platform::{
     add_route, delete_interface, delete_route, set_interface_address, set_interface_mtu,
     set_interface_up, AsyncTunDevice, LinuxTunDevice,
 };
-
-#[cfg(target_os = "linux")]
-pub use {TunReader, TunWriter};
 
 #[cfg(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"))]
 mod bsd_platform {

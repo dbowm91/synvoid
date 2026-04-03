@@ -152,7 +152,7 @@ impl UploadValidator {
         self.sandbox.config.ensure_dirs_exist().await
     }
 
-    pub fn validate_bytes(
+    pub async fn validate_bytes(
         &self,
         data: &[u8],
         request_path: &str,
@@ -185,7 +185,7 @@ impl UploadValidator {
 
         let (scanned, yara_matches) = if effective_config.scan_with_yara {
             if let Some(scanner) = &self.malware_scanner {
-                match scanner.scan_bytes(data) {
+                match scanner.scan_bytes(data).await {
                     Ok(scan_result) => {
                         let matched_names: Vec<String> = scan_result
                             .matches
@@ -239,7 +239,7 @@ impl UploadValidator {
             });
         }
 
-        self.validate_bytes(&data, request_path)
+        self.validate_bytes(&data, request_path).await
     }
 
     pub async fn validate_with_sandbox(
@@ -276,7 +276,7 @@ impl UploadValidator {
 
         let (scanned, yara_matches) = if effective_config.scan_with_yara {
             if let Some(scanner) = &self.malware_scanner {
-                match scanner.scan_bytes(data) {
+                match scanner.scan_bytes(data).await {
                     Ok(scan_result) => {
                         let matched_names: Vec<String> = scan_result
                             .matches
@@ -387,7 +387,7 @@ impl UploadValidator {
 
         let (scanned, yara_matches) = if effective_config.scan_with_yara {
             if let Some(scanner) = &self.malware_scanner {
-                match scanner.scan_file(sandbox_handle.path()) {
+                match scanner.scan_bytes(&header).await {
                     Ok(scan_result) => {
                         let matched_names: Vec<String> = scan_result
                             .matches
@@ -626,7 +626,7 @@ pub fn parse_multipart(
         if in_part {
             let header_end = part
                 .windows(2)
-                .position(|w| w == [b'\r', b'\n'] as &[u8])
+                .position(|w| w == &[b'\r', b'\n'])
                 .map(|p| p + 2);
             let header_section = match header_end {
                 Some(pos) => &part[..pos],

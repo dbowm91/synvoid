@@ -1257,6 +1257,57 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                 signature: r.signature,
                 signer_public_key: r.signer_public_key.map(|s| s.into()),
             }),
+            proto::mesh_message::Payload::WasmModuleAnnounce(r) => {
+                Ok(MeshMessage::WasmModuleAnnounce {
+                    request_id: r.request_id.into(),
+                    module_name: r.module_name.into(),
+                    module_type: match r.module_type {
+                        0 => crate::mesh::protocol::WasmModuleType::Plugin,
+                        1 => crate::mesh::protocol::WasmModuleType::Serverless,
+                        _ => return Err(ProtocolError::InvalidValue("WasmModuleType")),
+                    },
+                    version: r.version,
+                    size_bytes: r.size_bytes,
+                    checksum: r.checksum.into(),
+                    timestamp: r.timestamp,
+                    source_node_id: r.source_node_id.into(),
+                    signature: r.signature,
+                    signer_public_key: r.signer_public_key.map(|s| s.into()),
+                })
+            }
+            proto::mesh_message::Payload::WasmModuleSyncRequest(r) => {
+                Ok(MeshMessage::WasmModuleSyncRequest {
+                    request_id: r.request_id.into(),
+                    node_id: r.node_id.into(),
+                    module_names: r.module_names.into_iter().map(|s| s.into()).collect(),
+                    timestamp: r.timestamp,
+                })
+            }
+            proto::mesh_message::Payload::WasmModuleSyncResponse(r) => {
+                Ok(MeshMessage::WasmModuleSyncResponse {
+                    request_id: r.request_id.into(),
+                    node_id: r.node_id.into(),
+                    modules: r
+                        .modules
+                        .into_iter()
+                        .map(|m| {
+                            Ok(crate::mesh::protocol::WasmModuleInfo {
+                                module_name: m.module_name.into(),
+                                module_type: match m.module_type {
+                                    0 => crate::mesh::protocol::WasmModuleType::Plugin,
+                                    1 => crate::mesh::protocol::WasmModuleType::Serverless,
+                                    _ => return Err(ProtocolError::InvalidValue("WasmModuleType")),
+                                },
+                                version: m.version,
+                                size_bytes: m.size_bytes,
+                                checksum: m.checksum.into(),
+                                data: m.data,
+                            })
+                        })
+                        .collect::<Result<Vec<_>, _>>()?,
+                    timestamp: r.timestamp,
+                })
+            }
         }
     }
 }

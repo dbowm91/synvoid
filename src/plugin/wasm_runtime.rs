@@ -62,13 +62,13 @@ impl Default for WasmResourceLimits {
 }
 
 /// Tracks which guest ABI functions are available in a loaded module
-struct GuestExports {
-    filter_request: Option<FilterRequestFn>,
-    transform_response: Option<TransformResponseFn>,
-    handle_request: Option<HandleRequestFn>,
-    guest_alloc: Option<GuestAllocFn>,
-    guest_free: Option<GuestFreeFn>,
-    memory: Option<Memory>,
+pub(crate) struct GuestExports {
+    pub(crate) filter_request: Option<FilterRequestFn>,
+    pub(crate) transform_response: Option<TransformResponseFn>,
+    pub(crate) handle_request: Option<HandleRequestFn>,
+    pub(crate) guest_alloc: Option<GuestAllocFn>,
+    pub(crate) guest_free: Option<GuestFreeFn>,
+    pub(crate) memory: Option<Memory>,
 }
 
 pub struct WasmRuntime {
@@ -496,7 +496,7 @@ impl WasmRuntime {
             .func_wrap(
                 "env",
                 "get_env",
-                |caller: wasmtime::Caller<'_, RequestContext>,
+                |mut caller: wasmtime::Caller<'_, RequestContext>,
                  key_ptr: i32,
                  key_len: i32,
                  out_ptr: i32,
@@ -519,7 +519,8 @@ impl WasmRuntime {
 
                     // Look up env var
                     let value = caller.data().env.get(key.as_ref());
-                    let value_str = value.unwrap_or(&String::new());
+                    let fallback = String::new();
+                    let value_str = value.unwrap_or(&fallback);
                     let value_bytes = value_str.as_bytes();
                     let value_len = value_bytes.len().min(out_max as usize);
 
@@ -530,8 +531,16 @@ impl WasmRuntime {
                         return -1; // invalid output pointer
                     }
 
-                    mem.data_mut(&mut *caller)[out_start..out_end]
-                        .copy_from_slice(&value_bytes[..value_len]);
+                    // SAFETY: We're writing to WASM memory at a known valid offset.
+                    // The caller has exclusive access to this memory region.
+                    unsafe {
+                        let mem_ptr = mem.data_ptr(&caller) as *mut u8;
+                        let slice = std::slice::from_raw_parts_mut(
+                            mem_ptr.add(out_start),
+                            out_end - out_start,
+                        );
+                        slice.copy_from_slice(&value_bytes[..value_len]);
+                    }
 
                     value_len as i32
                 },
@@ -820,31 +829,32 @@ impl WasmRuntime {
         let uri_bytes = uri_str.as_bytes();
 
         let (method_ptr, method_len) =
-            self.write_to_guest_memory(&mut store, &exports, method_bytes)?;
-        let (uri_ptr, uri_len) = self.write_to_guest_memory(&mut store, &exports, uri_bytes)?;
+            self.write_to_guest_memory(&mut *store, &exports, method_bytes)?;
+        let (uri_ptr, uri_len) = self.write_to_guest_memory(&mut *store, &exports, uri_bytes)?;
 
         let headers_meta = Self::serialize_headers(&parts.headers);
-        let (hdr_ptr, hdr_len) = self.write_to_guest_memory(&mut store, &exports, &headers_meta)?;
+        let (hdr_ptr, hdr_len) =
+            self.write_to_guest_memory(&mut *store, &exports, &headers_meta)?;
 
         let body_bytes = body.as_ref();
         let (body_ptr, body_len) = if !body_bytes.is_empty() {
-            self.write_to_guest_memory(&mut store, &exports, body_bytes)?
+            self.write_to_guest_memory(&mut *store, &exports, body_bytes)?
         } else {
             (0, 0i32)
         };
 
         let result = filter_fn.call(
-            &mut store,
+            &mut *store,
             (
                 method_ptr, method_len, uri_ptr, uri_len, hdr_ptr, hdr_len, body_ptr, body_len,
             ),
         );
 
-        self.free_guest_memory(&mut store, &exports, method_ptr, method_len);
-        self.free_guest_memory(&mut store, &exports, uri_ptr, uri_len);
-        self.free_guest_memory(&mut store, &exports, hdr_ptr, hdr_len);
+        self.free_guest_memory(&mut *store, &exports, method_ptr, method_len);
+        self.free_guest_memory(&mut *store, &exports, uri_ptr, uri_len);
+        self.free_guest_memory(&mut *store, &exports, hdr_ptr, hdr_len);
         if body_len > 0 {
-            self.free_guest_memory(&mut store, &exports, body_ptr, body_len);
+            self.free_guest_memory(&mut *store, &exports, body_ptr, body_len);
         }
 
         if self.limits.max_cpu_fuel > 0 {

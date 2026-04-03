@@ -1259,7 +1259,16 @@ impl MeshProxy {
         let client = crate::static_files::client::PoisonImageClient::new(socket_path);
 
         match client
-            .poison_image(site_id, body.to_vec(), last_modified)
+            .poison_image(
+                site_id,
+                body.to_vec(),
+                last_modified,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
             .await
         {
             Ok(poisoned) => Bytes::from(poisoned),

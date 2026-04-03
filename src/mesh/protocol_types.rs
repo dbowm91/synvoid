@@ -95,9 +95,9 @@ impl TryFrom<proto::MeshCapabilities> for MeshCapabilities {
         Ok(MeshCapabilities {
             can_route: pb.can_route,
             can_proxy: pb.can_proxy,
-            can_serve_dns: pb.can_serve_dns.unwrap_or(false),
-            is_global: pb.is_global.unwrap_or(false),
-            waf_enabled: pb.waf_enabled.unwrap_or(true),
+            can_serve_dns: pb.can_serve_dns,
+            is_global: pb.is_global,
+            waf_enabled: pb.waf_enabled,
             max_hops: pb.max_hops as u8,
             supported_services: pb.supported_services,
             preferred_transport: match pb.preferred_transport {
@@ -117,9 +117,9 @@ impl TryFrom<&proto::MeshCapabilities> for MeshCapabilities {
         Ok(MeshCapabilities {
             can_route: pb.can_route,
             can_proxy: pb.can_proxy,
-            can_serve_dns: pb.can_serve_dns.unwrap_or(false),
-            is_global: pb.is_global.unwrap_or(false),
-            waf_enabled: pb.waf_enabled.unwrap_or(true),
+            can_serve_dns: pb.can_serve_dns,
+            is_global: pb.is_global,
+            waf_enabled: pb.waf_enabled,
             max_hops: pb.max_hops as u8,
             supported_services: pb.supported_services.clone(),
             preferred_transport: match pb.preferred_transport {
@@ -570,6 +570,7 @@ impl From<proto::DhtRecord> for DhtRecord {
             key: pb.key,
             value: pb.value,
             timestamp: pb.timestamp,
+            sequence_number: 0,
             ttl_seconds: pb.ttl_seconds,
             source_node_id: pb.source_node_id,
             signature: pb.signature,

@@ -1,6 +1,9 @@
 use bytes::Bytes;
 use http::{Response, StatusCode};
+use http_body_util::combinators::BoxBody;
+use http_body_util::BodyExt;
 use http_body_util::Full;
+use std::convert::Infallible;
 
 use crate::config::MainConfig;
 
@@ -15,7 +18,7 @@ impl SharedRequestHandler {
         &self,
         alt_svc: &Option<String>,
         main_config: &MainConfig,
-    ) -> Response<Full<Bytes>> {
+    ) -> Response<BoxBody<Bytes, Infallible>> {
         let body = serde_json::json!({
             "status": "healthy",
         })
@@ -29,7 +32,7 @@ impl SharedRequestHandler {
         is_ready: bool,
         alt_svc: &Option<String>,
         main_config: &MainConfig,
-    ) -> Response<Full<Bytes>> {
+    ) -> Response<BoxBody<Bytes, Infallible>> {
         let (status_code, body) = if is_ready {
             let body = serde_json::json!({
                 "ready": true,
@@ -61,7 +64,7 @@ impl SharedRequestHandler {
         content_type: &str,
         alt_svc: &Option<String>,
         main_config: &MainConfig,
-    ) -> Response<Full<Bytes>> {
+    ) -> Response<BoxBody<Bytes, Infallible>> {
         let mut builder = Response::builder()
             .status(status)
             .header("Content-Type", content_type)
@@ -81,8 +84,8 @@ impl SharedRequestHandler {
         builder = builder.header("Date", crate::http::headers::generate_stealth_timestamp(5));
 
         builder
-            .body(Full::new(Bytes::from(body)))
-            .unwrap_or_else(|_| crate::http::fallback_error_full())
+            .body(Full::new(Bytes::from(body)).boxed())
+            .unwrap_or_else(|_| crate::http::fallback_error_boxed())
     }
 
     pub fn build_response_with_cookie(
@@ -93,7 +96,7 @@ impl SharedRequestHandler {
         cookie: &str,
         alt_svc: &Option<String>,
         main_config: &MainConfig,
-    ) -> Response<Full<Bytes>> {
+    ) -> Response<BoxBody<Bytes, Infallible>> {
         let mut builder = Response::builder()
             .status(status)
             .header("Content-Type", content_type)
@@ -114,8 +117,8 @@ impl SharedRequestHandler {
         builder = builder.header("Date", crate::http::headers::generate_stealth_timestamp(5));
 
         builder
-            .body(Full::new(Bytes::from(body)))
-            .unwrap_or_else(|_| crate::http::fallback_error_full())
+            .body(Full::new(Bytes::from(body)).boxed())
+            .unwrap_or_else(|_| crate::http::fallback_error_boxed())
     }
 
     pub fn build_json_response(
@@ -124,7 +127,7 @@ impl SharedRequestHandler {
         body: String,
         alt_svc: &Option<String>,
         main_config: &MainConfig,
-    ) -> Response<Full<Bytes>> {
+    ) -> Response<BoxBody<Bytes, Infallible>> {
         let mut builder = Response::builder()
             .status(status)
             .header("Content-Type", "application/json")
@@ -144,8 +147,8 @@ impl SharedRequestHandler {
         builder = builder.header("Date", crate::http::headers::generate_stealth_timestamp(5));
 
         builder
-            .body(Full::new(Bytes::from(body)))
-            .unwrap_or_else(|_| crate::http::fallback_error_full())
+            .body(Full::new(Bytes::from(body)).boxed())
+            .unwrap_or_else(|_| crate::http::fallback_error_boxed())
     }
 
     pub fn build_error_response(
@@ -154,7 +157,7 @@ impl SharedRequestHandler {
         message: &str,
         alt_svc: &Option<String>,
         main_config: &MainConfig,
-    ) -> Response<Full<Bytes>> {
+    ) -> Response<BoxBody<Bytes, Infallible>> {
         let body = serde_json::json!({
             "error": message
         })
@@ -163,11 +166,11 @@ impl SharedRequestHandler {
         self.build_response_with_alt_svc(status, body, "application/json", alt_svc, main_config)
     }
 
-    pub fn handle_waf_decision_drop() -> Response<Full<Bytes>> {
+    pub fn handle_waf_decision_drop() -> Response<BoxBody<Bytes, Infallible>> {
         Response::builder()
             .status(StatusCode::NOT_FOUND)
-            .body(Full::new(Bytes::new()))
-            .unwrap_or_else(|_| crate::http::fallback_error_full())
+            .body(Full::new(Bytes::new()).boxed())
+            .unwrap_or_else(|_| crate::http::fallback_error_boxed())
     }
 }
 

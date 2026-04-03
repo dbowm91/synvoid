@@ -592,11 +592,14 @@ impl FileManager {
                 let entry_meta = entry.metadata().ok();
 
                 let modified = entry_meta
+                    .as_ref()
                     .and_then(|m| m.modified().ok())
                     .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
                     .map(|d| d.as_secs());
 
-                let permissions = entry_meta.as_ref().map(Self::get_permissions_string);
+                let permissions = entry_meta
+                    .as_ref()
+                    .and_then(|m| Self::get_permissions_string(m));
 
                 matches.push(FileEntry {
                     name: name.to_string(),

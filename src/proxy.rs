@@ -1375,7 +1375,7 @@ pub fn build_forward_headers(
                     .get("x-forwarded-for")
                     .and_then(|v| v.to_str().ok())
                     .unwrap_or("");
-                let new_value = validate_and_truncate_xff(existing, client_ip);
+                let new_value = validate_and_truncate_xff(existing, &client_ip.to_string());
                 forward_headers.push(("X-Forwarded-For".to_string(), new_value));
             }
             "X-Forwarded-Proto" => {

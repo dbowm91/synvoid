@@ -101,7 +101,6 @@ pub(super) fn create_waf(main_config: &crate::config::MainConfig) -> Arc<crate::
         },
         whitelist: Vec::new(),
         block_store: None,
-        threat_intel: None,
         attack_detection_config: Some(crate::waf::AttackDetectionConfig::default()),
         auth_manager: None,
         threat_level_config: Some(main_config.threat_level.clone()),

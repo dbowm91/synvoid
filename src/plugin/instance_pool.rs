@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use parking_lot::Mutex;
 use wasmtime::{Engine, Instance, Linker, Memory, Module, Store, TypedFunc};
 
-use crate::plugin::wasm_runtime::RequestContext;
+use crate::plugin::wasm_runtime::{GuestExports, RequestContext};
 
 pub struct WasmInstancePool {
     pool: Arc<Mutex<Vec<WasmPooledInstance>>>,
@@ -17,16 +17,6 @@ pub(crate) struct WasmPooledInstance {
     pub(crate) store: Store<RequestContext>,
     pub(crate) filter_name: String,
     pub(crate) max_cpu_fuel: u64,
-}
-
-pub(crate) struct PooledExports {
-    pub(crate) filter_request: Option<TypedFunc<(i32, i32, i32, i32, i32, i32, i32, i32), i32>>,
-    pub(crate) transform_response: Option<TypedFunc<(i32, i32, i32, i32, i32), i32>>,
-    pub(crate) handle_request:
-        Option<TypedFunc<(i32, i32, i32, i32, i32, i32, i32, i32, i32, i32, i32), i32>>,
-    pub(crate) guest_alloc: Option<TypedFunc<i32, i32>>,
-    pub(crate) guest_free: Option<TypedFunc<(i32, i32), ()>>,
-    pub(crate) memory: Option<Memory>,
 }
 
 impl WasmInstancePool {
@@ -57,7 +47,7 @@ impl WasmInstancePool {
     pub(crate) fn resolve_exports_from_instance(
         instance: &Instance,
         store: &mut Store<RequestContext>,
-    ) -> PooledExports {
+    ) -> GuestExports {
         let filter_request = instance
             .get_func(&mut *store, "filter_request")
             .and_then(|f| f.typed(&mut *store).ok());
@@ -77,7 +67,7 @@ impl WasmInstancePool {
             .get_export(&mut *store, "memory")
             .and_then(|ext| ext.into_memory());
 
-        PooledExports {
+        GuestExports {
             filter_request,
             transform_response,
             handle_request,

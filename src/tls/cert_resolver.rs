@@ -2,7 +2,6 @@ use metrics::counter;
 use notify::Watcher;
 use parking_lot::RwLock;
 use rustls::crypto::aws_lc_rs::default_provider;
-use rustls::crypto::CryptoProvider;
 use rustls::pki_types::CertificateDer;
 use rustls::pki_types::PrivateKeyDer;
 use rustls::version::{TLS12, TLS13};
@@ -259,9 +258,7 @@ impl CertResolver {
     ) -> Result<Arc<ServerConfig>, Box<dyn std::error::Error + Send + Sync>> {
         let provider = if self.config.prefer_post_quantum {
             counter!("maluwaf.tls.post_quantum").increment(1);
-            CryptoProvider::get_default().expect(
-                "No crypto provider installed - post-quantum requires provider setup at startup",
-            )
+            default_provider()
         } else {
             default_provider()
         };

@@ -15,7 +15,7 @@ pub trait AnycastSocketPlatform: Send + Sync {
 #[cfg(target_os = "linux")]
 mod linux {
     use super::*;
-    use nix::sys::socket::{setsockopt, sockopt, SockLevel};
+    use nix::sys::socket::{setsockopt, sockopt};
     use std::os::fd::AsRawFd;
 
     pub struct LinuxAnycastSocket;
@@ -34,13 +34,8 @@ mod linux {
 
     impl AnycastSocketPlatform for LinuxAnycastSocket {
         fn enable_pktinfo(&self, socket: &UdpSocket) -> Result<(), String> {
-            let fd = socket.as_raw_fd();
-
-            setsockopt(fd, sockopt::Ipv4PacketInfo, &true)
+            setsockopt(socket, sockopt::Ipv4PacketInfo, &true)
                 .map_err(|e| format!("IP_PKTINFO: {}", e))?;
-
-            let _ = setsockopt(fd, sockopt::Ipv6PacketInfo, &true)
-                .map_err(|e| format!("IPV6_PKTINFO: {}", e));
 
             tracing::debug!("Enabled IP_PKTINFO on socket");
             Ok(())
@@ -53,8 +48,9 @@ mod linux {
                 return None;
             }
 
-            let pktinfo =
-                nix::libc::in_pktinfo::from_bytes(&cmsg_data[..size_of::<nix::libc::in_pktinfo>()]);
+            let pktinfo_bytes = &cmsg_data[..size_of::<nix::libc::in_pktinfo>()];
+            let pktinfo: nix::libc::in_pktinfo =
+                unsafe { (pktinfo_bytes.as_ptr() as *const nix::libc::in_pktinfo).read() };
 
             let addr = std::net::IpAddr::from(std::net::Ipv4Addr::from(
                 pktinfo.ipi_addr.s_addr.to_ne_bytes(),
@@ -72,11 +68,21 @@ mod linux {
         }
 
         fn enable_tcp_pktinfo(&self, fd: std::os::fd::RawFd) -> Result<(), String> {
-            setsockopt(fd, sockopt::Ipv4PacketInfo, &true)
-                .map_err(|e| format!("IP_PKTINFO for TCP: {}", e))?;
-
-            let _ = setsockopt(fd, sockopt::Ipv6PacketInfo, &true)
-                .map_err(|e| format!("IPV6_PKTINFO for TCP: {}", e));
+            unsafe {
+                let ret = libc::setsockopt(
+                    fd,
+                    libc::IPPROTO_IP,
+                    libc::IP_PKTINFO,
+                    &1 as *const i32 as *const libc::c_void,
+                    std::mem::size_of::<libc::c_int>() as libc::socklen_t,
+                );
+                if ret != 0 {
+                    return Err(format!(
+                        "IP_PKTINFO for TCP: {}",
+                        std::io::Error::last_os_error()
+                    ));
+                }
+            }
 
             tracing::debug!("Enabled IP_PKTINFO on TCP socket");
             Ok(())

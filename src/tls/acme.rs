@@ -215,6 +215,7 @@ impl AcmeManager {
                     // Store key authorization for HTTP-01 challenge
                     // ChallengeHandle derefs to Challenge which has a `token` field
                     let token = challenge_handle.token.clone();
+                    let token_for_log = token.clone();
                     self.http_challenges
                         .insert(token.clone(), key_auth.as_str().to_string());
                     challenge_guard.add_token(token);
@@ -222,7 +223,7 @@ impl AcmeManager {
                     tracing::info!(
                         "HTTP-01 challenge ready for {} at /.well-known/acme-challenge/{}",
                         domain,
-                        token
+                        token_for_log
                     );
                 }
                 ChallengeType::Dns01 => {

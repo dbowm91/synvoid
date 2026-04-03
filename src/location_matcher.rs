@@ -113,6 +113,7 @@ impl LocationMatch {
     }
 }
 
+#[derive(Clone)]
 pub struct LocationMatcher {
     locations: Vec<LocationMatch>,
 }

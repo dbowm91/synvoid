@@ -994,14 +994,17 @@ impl ThreatIntelligenceManager {
                 .broadcast_to_random_peers(message, fanout_factor, None)
                 .await;
             tracing::debug!("Fanout threat announce: {} sent, {} failed", success, fail);
-        } else if let Some(sender) = self.mesh_sender.read().clone() {
-            if let Err(e) = sender.send(message).await {
-                tracing::warn!("Failed to broadcast threat announce: {}", e);
-            } else {
-                tracing::debug!("Broadcast threat announce to mesh");
-            }
         } else {
-            tracing::debug!("No transport or mesh_sender available for broadcast");
+            let sender = self.mesh_sender.read().clone();
+            if let Some(sender) = sender {
+                if let Err(e) = sender.send(message).await {
+                    tracing::warn!("Failed to broadcast threat announce: {}", e);
+                } else {
+                    tracing::debug!("Broadcast threat announce to mesh");
+                }
+            } else {
+                tracing::debug!("No transport or mesh_sender available for broadcast");
+            }
         }
     }
 

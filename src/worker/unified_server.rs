@@ -212,7 +212,7 @@ pub async fn run_unified_server_worker(
             }
 
             let mut granian_config = GranianConfig::from(&app_config);
-            granian_config = granian_config.with_site_info(site_id, worker_id_for_app);
+            granian_config = granian_config.with_site_info(site_id, worker_id_for_app.as_usize());
 
             tracing::info!(
                 "Initializing granian for site {} on unified server worker with socket: {}",

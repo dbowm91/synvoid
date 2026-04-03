@@ -809,7 +809,7 @@ impl GranianSupervisor {
         .await
         .map_err(|e| format!("Granian request failed: {}", e))?;
 
-        let mut builder = http::Response::builder().status(response.status_code);
+        let mut builder = http::Response::builder().status(response.status_code());
         for (name, value) in response.headers_iter() {
             if let Ok(value_str) = value.to_str() {
                 builder = builder.header(name, value_str);
