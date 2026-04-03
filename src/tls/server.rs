@@ -22,7 +22,8 @@ use crate::config::HttpConfig;
 use crate::config::MainConfig;
 use crate::http::headers::{generate_stealth_timestamp, inject_security_headers};
 use crate::http_client::{
-    create_upstream_client, send_request_with_timeout_and_headers, UpstreamTlsConfig,
+    create_upstream_client, send_request_with_body_headers_and_timeout,
+    send_request_with_timeout_and_headers, UpstreamTlsConfig,
 };
 use crate::metrics::bandwidth::{
     get_global_bandwidth_tracker_or_log, BandwidthProtocol, EgressDirection,
@@ -82,6 +83,7 @@ pub struct HttpsServer {
     flood_protector: Option<Arc<FloodProtector>>,
     metrics: Option<Arc<crate::metrics::WorkerMetrics>>,
     shutdown_rx: broadcast::Receiver<()>,
+    proxy_servers: Arc<tokio::sync::RwLock<std::collections::HashMap<String, Arc<ProxyServer>>>>,
 }
 
 impl HttpsServer {
@@ -106,6 +108,7 @@ impl HttpsServer {
             flood_protector: None,
             metrics: None,
             shutdown_rx,
+            proxy_servers: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
         }
     }
 
@@ -156,6 +159,7 @@ impl HttpsServer {
         let http_config = self.http_config.clone();
         let main_config = self.main_config.clone();
         let flood_protector = self.flood_protector.clone();
+        let proxy_servers = self.proxy_servers.clone();
 
         let _header_read_timeout = Duration::from_secs(self.http_config.header_read_timeout_secs);
         let max_headers = self.http_config.max_headers;
@@ -229,7 +233,6 @@ impl HttpsServer {
                                             let conn = http2_server::Builder::new(TokioExecutor::new())
                                                 .max_header_list_size(max_headers as u32)
                                                 .serve_connection(io, hyper::service::service_fn({
-                                                    let proxy_servers = Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
                                                     let ps = proxy_servers.clone();
                                                     move |req| {
                                                         let router = router.clone();
@@ -272,7 +275,6 @@ impl HttpsServer {
                                             let conn = http1_server::Builder::new()
                                                 .keep_alive(true)
                                                 .serve_connection(io, hyper::service::service_fn({
-                                                    let proxy_servers = Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
                                                     let ps = proxy_servers.clone();
                                                     move |req| {
                                                         let router = router.clone();
@@ -578,6 +580,68 @@ impl HttpsServer {
                 Ok(Self::build_response(200, html, "text/html"))
             }
             crate::proxy::WafDecision::Pass => {
+                let content_type = parts
+                    .headers
+                    .get("content-type")
+                    .and_then(|v| v.to_str().ok());
+                if let Some(ct) = content_type {
+                    if crate::upload::is_upload_content_type(ct) {
+                        if let Some(upload_validator) = crate::waf::get_upload_validator() {
+                            let effective_config = upload_validator.get_effective_config(&path);
+                            if effective_config.scan_with_yara
+                                || effective_config.max_size_bytes > 0
+                            {
+                                match upload_validator.validate_bytes(&body_bytes, &path) {
+                                    Ok(result) => {
+                                        if !result.is_clean() {
+                                            tracing::warn!(
+                                                path = %path,
+                                                mime_type = %result.mime_type,
+                                                matches = ?result.yara_matches,
+                                                "Upload blocked due to malware detection"
+                                            );
+                                            let body = waf.error_page_manager.render_page(
+                                                403,
+                                                Some("Upload blocked: malware detected"),
+                                            );
+                                            return Ok(Self::build_response(
+                                                403,
+                                                body,
+                                                "text/html",
+                                            ));
+                                        }
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            path = %path,
+                                            error = %e,
+                                            "Upload validation failed"
+                                        );
+                                        let (status, _message) = match &e {
+                                            crate::upload::UploadValidationError::SizeExceeded { .. } => (
+                                                413,
+                                                "Upload size exceeds maximum allowed",
+                                            ),
+                                            crate::upload::UploadValidationError::TypeNotAllowed { .. } => (
+                                                415,
+                                                "Upload file type not allowed",
+                                            ),
+                                            _ => (
+                                                400,
+                                                "Upload validation failed",
+                                            ),
+                                        };
+                                        let body = waf
+                                            .error_page_manager
+                                            .render_page(status, Some(&e.to_string()));
+                                        return Ok(Self::build_response(status, body, "text/html"));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 let cache_config = target.site_config.proxy.cache.as_ref();
                 let use_cache = cache_config
                     .map(|c| c.enable.unwrap_or(false))
@@ -643,7 +707,7 @@ impl HttpsServer {
                                     &host,
                                     &parts.headers,
                                     "https",
-                                    None,
+                                    Some(body_bytes.clone()),
                                 )
                                 .await
                             {
@@ -781,10 +845,11 @@ impl HttpsServer {
                     }
                 }
 
-                let resp = send_request_with_timeout_and_headers(
+                let resp = send_request_with_body_headers_and_timeout(
                     &client,
                     method.clone(),
                     &target_url,
+                    Some(body_bytes.clone()),
                     forward_header_map,
                     Some(std::time::Duration::from_secs(30)),
                 )

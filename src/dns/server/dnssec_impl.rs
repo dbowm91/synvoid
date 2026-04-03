@@ -559,25 +559,6 @@ impl DnsServer {
         rrsig
     }
 
-    #[allow(dead_code)]
-    pub(super) fn build_dnssec_response(
-        &self,
-        _id: u16,
-        qname: &str,
-        qtype: u16,
-        records: &[DnsZoneRecord],
-    ) -> Option<Vec<u8>> {
-        let zone = self.zones.get(qname)?;
-        let dnssec = self.dnssec.as_ref()?;
-        let manager = dnssec.read();
-        let zsk = manager.zone_signing_key.as_ref()?;
-        let signer_name = zone.origin.trim_end_matches('.');
-
-        let response =
-            Self::build_response(qname, qtype, records, true, None, Some(zsk), signer_name);
-        Some(response.to_vec())
-    }
-
     pub fn start_key_rotation_task(
         dnssec: Option<Arc<RwLock<DnsSecKeyManager>>>,
         interval_secs: u64,

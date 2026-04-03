@@ -19,6 +19,7 @@ use crate::static_files::{
     minifier::MinifierCache,
     StaticFileHandler,
 };
+use crate::theme::ThemeConfig;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -37,6 +38,7 @@ pub struct Router {
     default_servers: HashMap<SocketAddr, String>,
     plugin_manager: Option<Arc<PluginManager>>,
     cleaned_site_domains: HashMap<String, Vec<Arc<str>>>,
+    location_matchers: HashMap<String, LocationMatcher>,
 }
 
 #[derive(Clone)]
@@ -96,6 +98,8 @@ impl Router {
         let minifier_client = MinifierClient::new(static_worker_socket.clone());
         let async_minifier_client = AsyncMinifierClient::new(static_worker_socket);
 
+        let default_theme_config = ThemeConfig::from(main_config.defaults.theme.clone());
+
         for (_site_id, config) in sites {
             let config_arc = Arc::new(config);
             let site_id = config_arc.site_id();
@@ -139,6 +143,13 @@ impl Router {
                     None
                 };
 
+                let theme_config = config_arc
+                    .r#static
+                    .theme
+                    .as_ref()
+                    .map(|t| t.to_theme_config(&default_theme_config))
+                    .unwrap_or_else(|| default_theme_config.clone());
+
                 match StaticFileHandler::new_with_minifier(
                     config_arc.r#static.clone(),
                     site_id.clone(),
@@ -148,6 +159,7 @@ impl Router {
                     None,
                     None,
                     None,
+                    theme_config,
                 ) {
                     Ok(handler) => {
                         if handler.is_enabled() {
@@ -204,6 +216,19 @@ impl Router {
 
         suffix_domain_map.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
 
+        let mut location_matchers: HashMap<String, LocationMatcher> = HashMap::new();
+        for (site_id, config) in &sites {
+            if !config.proxy.locations.is_empty() {
+                let patterns: Vec<String> = config
+                    .proxy
+                    .locations
+                    .iter()
+                    .map(|loc| loc.path.clone())
+                    .collect();
+                location_matchers.insert(site_id.clone(), LocationMatcher::new(patterns));
+            }
+        }
+
         let router = Router {
             domain_map,
             suffix_domain_map,
@@ -216,6 +241,7 @@ impl Router {
             default_servers,
             plugin_manager: None,
             cleaned_site_domains,
+            location_matchers,
         };
 
         if !listen_map.is_empty() {
@@ -296,8 +322,11 @@ impl Router {
             return None;
         }
 
-        let patterns: Vec<String> = locations.iter().map(|loc| loc.path.clone()).collect();
-        let matcher = LocationMatcher::new(patterns);
+        let site_id = site_config.site_id();
+        let matcher = match self.location_matchers.get(&site_id) {
+            Some(m) => m,
+            None => return None,
+        };
 
         if let Some((idx, _match_type)) = matcher.match_uri(path) {
             let location = &locations[idx];

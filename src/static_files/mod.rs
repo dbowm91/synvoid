@@ -1,5 +1,6 @@
 pub mod client;
 pub mod directory;
+pub mod file_manager;
 pub mod minifier;
 
 use std::path::{Path, PathBuf};
@@ -8,14 +9,17 @@ use std::time::SystemTime;
 
 use bytes::Bytes;
 use http::{Method, Response, StatusCode};
+use http_body_util::BodyExt;
 use http_body_util::Full;
 use metrics::{counter, histogram};
+use tokio::io::AsyncReadExt;
 
 use crate::config::site::SiteStaticConfig;
 use crate::mesh::config::{
     MeshCompressionConfig, MeshImageProtectionConfig, MeshMinificationConfig,
 };
 use crate::mime::MIME_REGISTRY;
+use crate::theme::ThemeConfig;
 use minifier::MinifierCache;
 
 #[derive(Clone)]
@@ -47,6 +51,7 @@ pub struct StaticFileHandler {
     mesh_image_protection: Option<MeshImageProtectionConfig>,
     mesh_compression: Option<MeshCompressionConfig>,
     mesh_minification: Option<MeshMinificationConfig>,
+    theme_config: ThemeConfig,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -78,16 +83,41 @@ impl StaticError {
     }
 }
 
+pub enum StaticResponseBody {
+    InMemory(Bytes),
+    ZeroCopy(PathBuf),
+}
+
 pub struct StaticResponse {
     pub status: StatusCode,
     pub headers: Vec<(String, String)>,
-    pub body: Bytes,
-    pub zero_copy_path: Option<std::path::PathBuf>,
+    pub body: StaticResponseBody,
+}
+
+impl StaticResponse {
+    pub fn into_bytes(self) -> Bytes {
+        match self.body {
+            StaticResponseBody::InMemory(b) => b,
+            StaticResponseBody::ZeroCopy(path) => {
+                Bytes::from(std::fs::read(&path).unwrap_or_default())
+            }
+        }
+    }
 }
 
 impl StaticFileHandler {
-    pub fn new(config: SiteStaticConfig) -> Result<Self, String> {
-        Self::new_with_minifier(config, String::new(), None, None, None, None, None, None)
+    pub fn new(config: SiteStaticConfig, theme_config: ThemeConfig) -> Result<Self, String> {
+        Self::new_with_minifier(
+            config,
+            String::new(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            theme_config,
+        )
     }
 
     pub fn new_with_minifier(
@@ -99,6 +129,7 @@ impl StaticFileHandler {
         mesh_image_protection: Option<MeshImageProtectionConfig>,
         mesh_compression: Option<MeshCompressionConfig>,
         mesh_minification: Option<MeshMinificationConfig>,
+        theme_config: ThemeConfig,
     ) -> Result<Self, String> {
         let enabled = config.enabled.unwrap_or(false);
         let gzip_level = config.gzip_level.unwrap_or(5);
@@ -139,6 +170,7 @@ impl StaticFileHandler {
                 mesh_image_protection,
                 mesh_compression,
                 mesh_minification,
+                theme_config,
             });
         }
 
@@ -208,6 +240,7 @@ impl StaticFileHandler {
             mesh_image_protection,
             mesh_compression,
             mesh_minification,
+            theme_config,
         })
     }
 
@@ -357,7 +390,7 @@ impl StaticFileHandler {
         accept_encoding: Option<&str>,
         if_none_match: Option<&str>,
         if_modified_since: Option<&str>,
-        _range_header: Option<&str>,
+        range_header: Option<&str>,
     ) -> Result<StaticResponse, StaticError> {
         let mtime = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
         let etag = format!(
@@ -368,6 +401,7 @@ impl StaticFileHandler {
                 .map(|d| d.as_secs())
                 .unwrap_or(0)
         );
+        let file_size = metadata.len();
 
         if let Some(etag_header) = if_none_match {
             if etag_header.contains(&etag) || etag_header == "*" {
@@ -380,8 +414,7 @@ impl StaticFileHandler {
                             "public, max-age=31536000, immutable".to_string(),
                         ),
                     ],
-                    body: Bytes::new(),
-                    zero_copy_path: None,
+                    body: StaticResponseBody::InMemory(Bytes::new()),
                 });
             }
         }
@@ -404,10 +437,69 @@ impl StaticFileHandler {
                                 ),
                             ),
                         ],
-                        body: Bytes::new(),
-                        zero_copy_path: None,
+                        body: StaticResponseBody::InMemory(Bytes::new()),
                     });
                 }
+            }
+        }
+
+        if let Some(range_spec) = range_header {
+            if let Some((start, end)) = Self::parse_range(range_spec, file_size) {
+                let file = tokio::fs::File::open(path)
+                    .await
+                    .map_err(|e| StaticError::Internal(e.to_string()))?;
+
+                let mut file = tokio::io::BufReader::new(file);
+                let mut buffer = Vec::new();
+                let mut remaining = end - start + 1;
+                let mut to_skip = start;
+
+                while remaining > 0 {
+                    let buf_size = std::cmp::min(8192, remaining as usize);
+                    let mut buf = vec![0u8; buf_size];
+                    let n = file
+                        .read(&mut buf)
+                        .await
+                        .map_err(|e| StaticError::Internal(e.to_string()))?;
+                    if n == 0 {
+                        break;
+                    }
+                    if to_skip > 0 {
+                        let skip = std::cmp::min(to_skip as usize, n);
+                        buf = buf[skip..].to_vec();
+                        to_skip -= skip as u64;
+                        if buf.is_empty() {
+                            continue;
+                        }
+                    }
+                    let take = std::cmp::min(buf.len(), remaining as usize);
+                    buffer.extend_from_slice(&buf[..take]);
+                    remaining -= take as u64;
+                }
+
+                let body_len = buffer.len() as u64;
+                let mut headers = Vec::new();
+                headers.push((
+                    "Content-Type".to_string(),
+                    MIME_REGISTRY
+                        .read()
+                        .get_mime_for_extension(
+                            path.extension().and_then(|e| e.to_str()).unwrap_or(""),
+                        )
+                        .unwrap_or_else(|| "application/octet-stream".to_string()),
+                ));
+                headers.push(("Content-Length".to_string(), body_len.to_string()));
+                headers.push((
+                    "Content-Range".to_string(),
+                    format!("bytes {}-{}/{}", start, end, file_size),
+                ));
+                headers.push(("Accept-Ranges".to_string(), "bytes".to_string()));
+
+                return Ok(StaticResponse {
+                    status: StatusCode::PARTIAL_CONTENT,
+                    headers,
+                    body: StaticResponseBody::InMemory(Bytes::from(buffer)),
+                });
             }
         }
 
@@ -458,8 +550,7 @@ impl StaticFileHandler {
                     return Ok(StaticResponse {
                         status: StatusCode::OK,
                         headers,
-                        body: Bytes::from(compressed),
-                        zero_copy_path: None,
+                        body: StaticResponseBody::InMemory(Bytes::from(compressed)),
                     });
                 }
 
@@ -473,8 +564,7 @@ impl StaticFileHandler {
                     return Ok(StaticResponse {
                         status: StatusCode::OK,
                         headers,
-                        body: Bytes::from(compressed),
-                        zero_copy_path: None,
+                        body: StaticResponseBody::InMemory(Bytes::from(compressed)),
                     });
                 }
 
@@ -496,8 +586,7 @@ impl StaticFileHandler {
                         return Ok(StaticResponse {
                             status: StatusCode::OK,
                             headers,
-                            body: Bytes::from(compressed),
-                            zero_copy_path: None,
+                            body: StaticResponseBody::InMemory(Bytes::from(compressed)),
                         });
                     }
 
@@ -512,8 +601,7 @@ impl StaticFileHandler {
                         return Ok(StaticResponse {
                             status: StatusCode::OK,
                             headers,
-                            body: Bytes::from(compressed),
-                            zero_copy_path: None,
+                            body: StaticResponseBody::InMemory(Bytes::from(compressed)),
                         });
                     }
                 }
@@ -546,8 +634,7 @@ impl StaticFileHandler {
                     return Ok(StaticResponse {
                         status: StatusCode::OK,
                         headers,
-                        body: Bytes::from(compressed),
-                        zero_copy_path: None,
+                        body: StaticResponseBody::InMemory(Bytes::from(compressed)),
                     });
                 }
             }
@@ -555,18 +642,47 @@ impl StaticFileHandler {
 
         counter!("maluwaf.static.served").increment(1);
 
-        let zero_copy_path = if self.enable_zero_copy && body.len() > 4096 {
-            Some(path.to_path_buf())
+        let body = if self.enable_zero_copy && body.len() > 4096 {
+            StaticResponseBody::ZeroCopy(path.to_path_buf())
         } else {
-            None
+            StaticResponseBody::InMemory(Bytes::from(body))
         };
 
         Ok(StaticResponse {
             status: StatusCode::OK,
             headers,
-            body: Bytes::from(body),
-            zero_copy_path,
+            body,
         })
+    }
+
+    fn parse_range(header: &str, file_size: u64) -> Option<(u64, u64)> {
+        let prefix = "bytes=";
+        if !header.starts_with(prefix) {
+            return None;
+        }
+        let ranges = header[prefix.len()..].split(',').next()?;
+        let range = ranges.trim();
+        let parts: Vec<&str> = range.split('-').collect();
+        if parts.len() != 2 {
+            return None;
+        }
+        let start = if parts[0].is_empty() {
+            if parts[1].is_empty() {
+                return None;
+            }
+            file_size.saturating_sub(parts[1].parse().ok()?) - 1
+        } else {
+            parts[0].parse().ok()?
+        };
+        let end = if parts[1].is_empty() {
+            file_size - 1
+        } else {
+            parts[1].parse().ok()?
+        };
+        if start > end || end >= file_size {
+            return None;
+        }
+        Some((start, end))
     }
 
     async fn serve_directory(
@@ -633,15 +749,19 @@ impl StaticFileHandler {
                 .directory_listing_format
                 .as_deref()
                 .unwrap_or("html");
-            let body = directory::render_directory_listing(dir_path, url_path, format)?;
+            let body = directory::render_directory_listing(
+                dir_path,
+                url_path,
+                format,
+                &self.theme_config,
+            )?;
             return Ok(StaticResponse {
                 status: StatusCode::OK,
                 headers: vec![
                     ("Content-Type".to_string(), "text/html".to_string()),
                     ("Cache-Control".to_string(), "no-cache".to_string()),
                 ],
-                body: Bytes::from(body),
-                zero_copy_path: None,
+                body: StaticResponseBody::InMemory(Bytes::from(body)),
             });
         }
 
@@ -655,15 +775,18 @@ impl StaticFileHandler {
         match result {
             Ok(resp) => {
                 let mut builder = Response::builder().status(resp.status);
-                for (key, value) in resp.headers {
+                let headers: Vec<_> = resp.headers.into_iter().collect();
+                for (key, value) in headers {
                     builder = builder.header(&key, &value);
                 }
-                builder.body(Full::new(resp.body)).unwrap_or_else(|_| {
-                    Response::builder()
-                        .status(500)
-                        .body(Full::new(Bytes::from("Internal Server Error")))
-                        .unwrap()
-                })
+                builder
+                    .body(Full::new(resp.into_bytes()).boxed())
+                    .unwrap_or_else(|_| {
+                        Response::builder()
+                            .status(500)
+                            .body(Full::new(Bytes::from("Internal Server Error").boxed()))
+                            .unwrap()
+                    })
             }
             Err(e) => {
                 counter!("maluwaf.static.errors").increment(1);

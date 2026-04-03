@@ -11,6 +11,7 @@ pub struct HealthChecker {
     pools: Arc<tokio::sync::RwLock<Vec<Arc<crate::upstream::UpstreamPool>>>>,
     config: HealthCheckConfig,
     shutdown_tx: tokio::sync::broadcast::Sender<()>,
+    client: reqwest::Client,
 }
 
 #[derive(Clone)]
@@ -48,11 +49,17 @@ impl Default for HealthCheckConfig {
 impl HealthChecker {
     pub fn new(config: HealthCheckConfig) -> Self {
         let (shutdown_tx, _) = tokio::sync::broadcast::channel(1);
+        let client = create_http_client_with_config(
+            Duration::from_secs(config.timeout_secs),
+            10,
+            Duration::from_secs(30),
+        );
 
         Self {
             pools: Arc::new(tokio::sync::RwLock::new(Vec::new())),
             config,
             shutdown_tx,
+            client,
         }
     }
 
@@ -63,6 +70,7 @@ impl HealthChecker {
     pub async fn start(&self) {
         let pools = self.pools.clone();
         let config = self.config.clone();
+        let client = self.client.clone();
         let mut shutdown_rx = self.shutdown_tx.subscribe();
 
         tokio::spawn(async move {
@@ -71,7 +79,7 @@ impl HealthChecker {
             loop {
                 tokio::select! {
                     _ = timer.tick() => {
-                        Self::check_all_pools(&pools, &config).await;
+                        Self::check_all_pools(&pools, &config, &client).await;
                     }
                     _ = shutdown_rx.recv() => {
                         tracing::info!("Health checker shutting down");
@@ -90,6 +98,7 @@ impl HealthChecker {
     async fn check_all_pools(
         pools: &Arc<tokio::sync::RwLock<Vec<Arc<crate::upstream::UpstreamPool>>>>,
         config: &HealthCheckConfig,
+        client: &reqwest::Client,
     ) {
         let backends_to_check: Vec<Arc<Backend>> = {
             let pools_guard = pools.read().await;
@@ -112,8 +121,9 @@ impl HealthChecker {
             .map(|backend| {
                 let backend = backend.clone();
                 let config = config.clone();
+                let client = client.clone();
                 async move {
-                    let is_healthy = Self::check_backend(&backend, &config).await;
+                    let is_healthy = Self::check_backend(&backend, &config, &client).await;
                     (backend, is_healthy)
                 }
             })
@@ -162,22 +172,24 @@ impl HealthChecker {
         }
     }
 
-    async fn check_backend(backend: &Backend, config: &HealthCheckConfig) -> bool {
+    async fn check_backend(
+        backend: &Backend,
+        config: &HealthCheckConfig,
+        client: &reqwest::Client,
+    ) -> bool {
         match config.health_check_method {
             HealthCheckMethod::Head | HealthCheckMethod::Get => {
-                Self::http_health_check(backend, config).await
+                Self::http_health_check(backend, config, client).await
             }
             HealthCheckMethod::Tcp => Self::tcp_health_check(backend).await,
         }
     }
 
-    async fn http_health_check(backend: &Backend, config: &HealthCheckConfig) -> bool {
-        let client = create_http_client_with_config(
-            Duration::from_secs(config.timeout_secs),
-            10,
-            Duration::from_secs(30),
-        );
-
+    async fn http_health_check(
+        backend: &Backend,
+        config: &HealthCheckConfig,
+        client: &reqwest::Client,
+    ) -> bool {
         let url = format!(
             "{}{}",
             backend.url.trim_end_matches('/'),
@@ -191,7 +203,7 @@ impl HealthChecker {
         };
 
         match send_request_with_timeout(
-            &client,
+            client,
             method,
             &url,
             Some(Duration::from_secs(config.timeout_secs)),

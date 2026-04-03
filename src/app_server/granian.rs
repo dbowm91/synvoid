@@ -798,25 +798,21 @@ impl GranianSupervisor {
             std::time::Duration::from_secs(60),
         );
 
-        let mut builder = http::Request::builder().method(method.clone()).uri(&url);
+        let response = crate::http_client::send_request_with_body_headers_and_timeout(
+            &client,
+            method,
+            &url,
+            Some(body),
+            headers.clone(),
+            Some(std::time::Duration::from_secs(30)),
+        )
+        .await
+        .map_err(|e| format!("Granian request failed: {}", e))?;
 
-        for (name, value) in headers.iter() {
-            builder = builder.header(name, value);
-        }
-
-        builder
-            .body(body)
-            .map_err(|e| format!("Failed to build request: {}", e))?;
-
-        let response =
-            crate::http_client::get_with_timeout(&client, &url, std::time::Duration::from_secs(30))
-                .await
-                .map_err(|e| format!("Granian request failed: {}", e))?;
-
-        let mut builder = http::Response::builder().status(response.status);
-        for name in response.headers.keys() {
-            if let Some(value) = response.headers.get(name) {
-                builder = builder.header(name, value);
+        let mut builder = http::Response::builder().status(response.status_code);
+        for (name, value) in response.headers_iter() {
+            if let Ok(value_str) = value.to_str() {
+                builder = builder.header(name, value_str);
             }
         }
         builder

@@ -49,6 +49,7 @@ impl From<&MeshMessage> for proto::MeshMessage {
                 node_id,
                 role,
                 session_id,
+                capabilities,
                 upstreams,
                 auth_token,
                 network_id,
@@ -66,6 +67,7 @@ impl From<&MeshMessage> for proto::MeshMessage {
                     node_id: node_id.to_string(),
                     roles: role.bits() as u32,
                     session_id: session_id.to_string(),
+                    capabilities: Some(capabilities.into()),
                     upstreams: upstreams
                         .iter()
                         .map(|(k, v)| (k.clone(), v.into()))

@@ -103,7 +103,89 @@ impl MeshDiscovery {
                 }
             }
         }
+
+        tracing::warn!("All seeds failed, trying peer-to-peer bootstrap from cached peers");
+        self.bootstrap_from_cached_peers().await?;
+
         Err(MeshDiscoveryError::NoSeedsAvailable)
+    }
+
+    async fn bootstrap_from_cached_peers(&self) -> Result<(), MeshDiscoveryError> {
+        let peer_cache_path = self.config.persistence.peer_cache_path.as_ref();
+
+        let Some(path) = peer_cache_path else {
+            tracing::debug!("No peer cache path configured");
+            return Ok(());
+        };
+
+        if let Err(e) = self.topology.load_peers_from_file(path).await {
+            tracing::warn!("Failed to load peers from cache: {}", e);
+            return Ok(());
+        };
+
+        let peers = self.topology.get_all_peers().await;
+
+        if peers.is_empty() {
+            tracing::debug!("No cached peers to bootstrap from");
+            return Ok(());
+        }
+
+        tracing::info!("Trying to bootstrap from {} cached peers", peers.len());
+
+        let mut connected = false;
+        for peer in peers {
+            if peer.is_global {
+                continue;
+            }
+
+            tracing::debug!("Attempting to connect to cached peer: {}", peer.address);
+
+            match self.try_connect_peer(&peer.address).await {
+                Ok(_) => {
+                    tracing::info!("Connected to cached peer: {}", peer.address);
+                    connected = true;
+                    break;
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to connect to cached peer {}: {}", peer.address, e);
+                }
+            }
+        }
+
+        if connected {
+            return Ok(());
+        }
+
+        tracing::warn!("Failed to bootstrap from any cached peer");
+        Ok(())
+    }
+
+    async fn try_connect_peer(&self, address: &str) -> Result<(), MeshDiscoveryError> {
+        self.topology.add_peer(
+            crate::mesh::protocol::MeshPeerInfo {
+                node_id: address.to_string(),
+                address: address.to_string(),
+                role: crate::mesh::config::MeshNodeRole::Edge,
+                capabilities: MeshCapabilities {
+                    can_route: true,
+                    can_proxy: true,
+                    max_hops: self.config.routing.max_hops,
+                    supported_services: vec![],
+                    preferred_transport: Some(crate::mesh::transports::MeshTransportType::Quic),
+                },
+                is_global: false,
+                latency_ms: None,
+                upstreams: vec![],
+                is_trusted: false,
+                quic_port: None,
+                wireguard_port: None,
+                advertised_port: None,
+                dns_serving_healthy: false,
+            },
+            PeerStatus::Connecting,
+        ).await;
+
+        Ok(())
     }
 
     async fn connect_to_seed(&self, seed: &MeshSeedNode) -> Result<(), MeshDiscoveryError> {
@@ -167,9 +249,13 @@ impl MeshDiscovery {
 
         if !topology.is_global() {
             if let Some(global_id) = topology.get_closest_global_node().await {
+                topology.set_degraded(false);
                 Self::sync_with_global(topology, &global_id).await?;
-            } else if !config.seeds.is_empty() {
-                tracing::warn!("No global nodes available, attempting seed reconnection");
+            } else {
+                if !config.seeds.is_empty() {
+                    tracing::warn!("No global nodes available, attempting seed reconnection");
+                }
+                topology.set_degraded(true);
             }
         }
 
@@ -313,7 +399,8 @@ impl MeshDiscovery {
                         }
                     }
                 } else {
-                    tracing::warn!("Incoming connection from {} did not provide public key - NodeID verification skipped", node_id);
+                    tracing::warn!("Incoming connection from {} did not provide public key", node_id);
+                    return Err(MeshDiscoveryError::AuthFailed("Public key required for authentication".to_string()));
                 }
 
                 let is_edge = role == crate::mesh::config::MeshNodeRole::Edge;
@@ -368,6 +455,7 @@ impl MeshDiscovery {
                         node_id: self.topology.node_id().to_string(),
                         role: self.config.role,
                         session_id: format!("{}-{}", self.topology.node_id(), node_id),
+                        capabilities: crate::mesh::protocol::MeshCapabilities::from_config(&self.config, self.config.role),
                         upstreams,
                         auth_token: None,
                         network_id: self.config.network_id.clone().map(|s| s.into()),
@@ -386,6 +474,7 @@ impl MeshDiscovery {
                     node_id: self.topology.node_id().to_string(),
                     role: self.config.role,
                     session_id: format!("{}-{}", self.topology.node_id(), node_id),
+                    capabilities: crate::mesh::protocol::MeshCapabilities::from_config(&self.config, self.config.role),
                     upstreams: HashMap::new(),
                     auth_token: None,
                     network_id: self.config.network_id.clone().map(|s| s.into()),

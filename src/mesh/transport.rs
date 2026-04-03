@@ -221,6 +221,7 @@ pub struct DatagramMessage {
 pub(crate) struct PendingQueryManager {
     pub(crate) pending: HashMap<String, oneshot::Sender<RouteQueryResult>>,
     pub(crate) collected_providers: HashMap<String, Vec<ProviderInfo>>,
+    pub(crate) notify_complete: HashMap<String, tokio::sync::watch::Sender<()>>,
 }
 
 impl PendingQueryManager {
@@ -228,12 +229,16 @@ impl PendingQueryManager {
         Self {
             pending: HashMap::new(),
             collected_providers: HashMap::new(),
+            notify_complete: HashMap::new(),
         }
     }
 
     pub(crate) fn register(&mut self, query_id: String, sender: oneshot::Sender<RouteQueryResult>) {
         self.pending.insert(query_id.clone(), sender);
-        self.collected_providers.insert(query_id, Vec::new());
+        self.collected_providers
+            .insert(query_id.clone(), Vec::new());
+        let (tx, _) = tokio::sync::watch::channel(());
+        self.notify_complete.insert(query_id, tx);
     }
 
     pub(crate) fn add_provider(&mut self, query_id: &str, provider: ProviderInfo) {
@@ -242,12 +247,16 @@ impl PendingQueryManager {
                 providers.push(provider);
             }
         }
+        if let Some(tx) = self.notify_complete.get_mut(query_id) {
+            let _ = tx.send(());
+        }
     }
 
     pub(crate) fn complete(&mut self, query_id: &str, result: RouteQueryResult) -> bool {
         match self.pending.remove(query_id) {
             Some(sender) => {
                 self.collected_providers.remove(query_id);
+                self.notify_complete.remove(query_id);
                 sender.send(result).is_ok()
             }
             _ => false,
@@ -256,6 +265,7 @@ impl PendingQueryManager {
 
     pub(crate) fn take(&mut self, query_id: &str) -> Option<oneshot::Sender<RouteQueryResult>> {
         self.collected_providers.remove(query_id);
+        self.notify_complete.remove(query_id);
         self.pending.remove(query_id)
     }
 
@@ -640,43 +650,58 @@ impl MeshTransport {
         let mut success_count = 0;
         let mut fail_count = 0;
 
-        for origin_node_id in origins {
-            if origin_node_id == current_node_id {
-                continue;
-            }
+        let target_origins: Vec<String> = origins
+            .into_iter()
+            .filter(|id| id != &current_node_id)
+            .collect();
 
-            let request_id = MeshMessage::generate_nonce();
-            let timestamp = MeshMessage::generate_timestamp();
+        let mut futures = FuturesUnordered::new();
+        for origin_node_id in &target_origins {
+            let transport = self.clone();
+            let site_id = site_id.to_string();
+            let config_json = config_json.to_string();
+            let current_node_id = current_node_id.clone();
+            let node_id = origin_node_id.clone();
+            let signer = self.mesh_signer.clone();
+            let config_version = config_version;
+            futures.push(async move {
+                let request_id = MeshMessage::generate_nonce();
+                let timestamp = MeshMessage::generate_timestamp();
 
-            let (signature, signer_public_key) = if let Some(ref signer) = self.mesh_signer {
-                let msg = format!(
-                    "{}:{}:{}:{}",
-                    site_id,
+                let (signature, signer_public_key) = if let Some(ref signer) = signer {
+                    let msg = format!(
+                        "{}:{}:{}:{}",
+                        site_id,
+                        config_version,
+                        config_json.len(),
+                        timestamp
+                    );
+                    (signer.sign(&msg), Some(signer.get_public_key().into()))
+                } else {
+                    (Vec::new(), None)
+                };
+
+                let message = MeshMessage::SiteConfigSync {
+                    request_id,
+                    site_id: site_id.clone(),
                     config_version,
-                    config_json.len(),
-                    timestamp
-                );
-                (signer.sign(&msg), Some(signer.get_public_key().into()))
-            } else {
-                (Vec::new(), None)
-            };
+                    config_json: config_json.clone(),
+                    timestamp,
+                    source_node_id: current_node_id.clone().into(),
+                    signature,
+                    signer_public_key,
+                };
 
-            let message = MeshMessage::SiteConfigSync {
-                request_id: request_id,
-                site_id: site_id.into(),
-                config_version,
-                config_json: config_json.into(),
-                timestamp,
-                source_node_id: current_node_id.clone().into(),
-                signature,
-                signer_public_key,
-            };
-
-            match self.send_datagram_to_peer(&origin_node_id, &message).await {
+                let result = transport.send_datagram_to_peer(&node_id, &message).await;
+                (node_id, result)
+            });
+        }
+        while let Some((node_id, result)) = futures.next().await {
+            match result {
                 Ok(_) => {
                     tracing::info!(
                         "Sent site config sync to origin {} for site {}",
-                        origin_node_id,
+                        node_id,
                         site_id
                     );
                     success_count += 1;
@@ -684,7 +709,7 @@ impl MeshTransport {
                 Err(e) => {
                     tracing::warn!(
                         "Failed to send site config sync to origin {}: {}",
-                        origin_node_id,
+                        node_id,
                         e
                     );
                     fail_count += 1;
@@ -1196,13 +1221,10 @@ impl MeshTransport {
             version: MESH_MESSAGE_VERSION,
             node_id: node_id.clone().into(),
             role: self.config.role,
-            capabilities: crate::mesh::protocol::MeshCapabilities {
-                can_route: true,
-                can_proxy: true,
-                max_hops: self.config.routing.max_hops,
-                supported_services: self.config.local_upstreams.keys().cloned().collect(),
-                preferred_transport: Some(crate::mesh::transports::MeshTransportType::Quic),
-            },
+            capabilities: crate::mesh::protocol::MeshCapabilities::from_config(
+                &self.config,
+                self.config.role,
+            ),
             upstreams,
             auth_token: auth_token.clone().map(|s| s.into()),
             network_id: self.config.network_id.clone().map(|s| s.into()),
@@ -1258,6 +1280,7 @@ impl MeshTransport {
                 node_id,
                 role,
                 session_id,
+                capabilities: peer_capabilities,
                 upstreams,
                 auth_token: resp_token,
                 network_id: resp_network_id,
@@ -1377,30 +1400,29 @@ impl MeshTransport {
                 }
 
                 if role.is_global() {
-                    if let Some(ref expected_key) = self.config.global_node_key {
-                        if let Some(ref peer_key) = resp_global_key {
-                            if peer_key.as_str() != expected_key.as_str() {
-                                tracing::warn!(
-                                    "Global node key verification failed for {}",
-                                    node_id
-                                );
-                                return Err(MeshTransportError::AuthFailed(
-                                    "Invalid global node key".to_string(),
-                                ));
-                            }
-                        } else {
-                            tracing::warn!(
-                                "Global node {} did not provide key verification",
-                                node_id
-                            );
+                    let expected_key = self.config.global_node_key.as_ref().ok_or_else(|| {
+                        MeshTransportError::AuthFailed(
+                            "Cannot verify global node: local node has no global_node_key configured".to_string()
+                        )
+                    })?;
+                    if let Some(ref peer_key) = resp_global_key {
+                        if peer_key.as_str() != expected_key.as_str() {
+                            tracing::warn!("Global node key verification failed for {}", node_id);
                             return Err(MeshTransportError::AuthFailed(
-                                "Global node key required".to_string(),
+                                "Invalid global node key".to_string(),
                             ));
                         }
+                    } else {
+                        tracing::warn!("Global node {} did not provide key verification", node_id);
+                        return Err(MeshTransportError::AuthFailed(
+                            "Global node key required".to_string(),
+                        ));
                     }
                 }
 
                 let upstreams: Vec<String> = upstreams.keys().cloned().collect();
+
+                let peer_capabilities = peer_capabilities.unwrap_or_default();
 
                 let peer_connection = MeshPeerConnection {
                     node_id: node_id.to_string(),
@@ -1420,15 +1442,7 @@ impl MeshTransport {
                             node_id: node_id.to_string(),
                             address: peer_config.address.clone(),
                             role: role,
-                            capabilities: crate::mesh::protocol::MeshCapabilities {
-                                can_route: true,
-                                can_proxy: true,
-                                max_hops: self.config.routing.max_hops,
-                                supported_services: upstreams.clone(),
-                                preferred_transport: Some(
-                                    crate::mesh::transports::MeshTransportType::Quic,
-                                ),
-                            },
+                            capabilities: peer_capabilities,
                             is_global: role.is_global(),
                             latency_ms: None,
                             upstreams: upstreams.clone(),
@@ -1436,7 +1450,7 @@ impl MeshTransport {
                             quic_port: peer_quic_port,
                             wireguard_port: peer_wireguard_port,
                             advertised_port: peer_quic_port.or(peer_wireguard_port),
-                            dns_serving_healthy: false,
+                            dns_serving_healthy: peer_capabilities.can_serve_dns,
                         },
                         PeerStatus::Healthy,
                     )
@@ -1584,22 +1598,7 @@ impl MeshTransport {
 
             join_all(queries).await;
 
-            // Poll for early return: check every 100ms if providers are available
-            // Return early if we have results, otherwise wait up to collection_timeout
-            let poll_interval = Duration::from_millis(100);
-            let deadline = Instant::now() + collection_timeout;
-            loop {
-                {
-                    let pending = self.pending_queries.lock().await;
-                    if pending.collected_providers.contains_key(&query_id) {
-                        break;
-                    }
-                }
-                if Instant::now() >= deadline {
-                    break;
-                }
-                tokio::time::sleep(poll_interval).await;
-            }
+            tokio::time::sleep(collection_timeout).await;
 
             let providers = {
                 let mut pending = self.pending_queries.lock().await;
@@ -1897,6 +1896,62 @@ impl MeshTransport {
         (success_count, fail_count)
     }
 
+    pub async fn broadcast_to_all_peers(
+        &self,
+        message: MeshMessage,
+        role_filter: Option<crate::mesh::config::MeshNodeRole>,
+    ) -> (usize, usize, Vec<String>) {
+        let peer_count = self.topology.get_healthy_peer_count().await;
+
+        if peer_count == 0 {
+            return (0, 0, Vec::new());
+        }
+
+        let mut peers = self.topology.get_all_connected_peers().await;
+
+        if let Some(role) = role_filter {
+            peers.retain(|p| p.role == role);
+        }
+
+        if peers.is_empty() {
+            return (0, 0, Vec::new());
+        }
+
+        let mut success_count = 0;
+        let mut fail_count = 0;
+        let sent_node_ids: Vec<String> = peers.iter().map(|p| p.node_id.clone()).collect();
+
+        let mut futures = FuturesUnordered::new();
+        for peer in &peers {
+            let transport = self.clone();
+            let message = message.clone();
+            let node_id = peer.node_id.clone();
+            futures.push(async move {
+                let result = transport.send_datagram_to_peer(&node_id, &message).await;
+                (node_id, result)
+            });
+        }
+        while let Some((node_id, result)) = futures.next().await {
+            match result {
+                Ok(_) => success_count += 1,
+                Err(e) => {
+                    fail_count += 1;
+                    tracing::debug!("Broadcast to all peers {} failed: {}", node_id, e);
+                }
+            }
+        }
+
+        tracing::debug!(
+            "Broadcast to all peers: {} peers selected, {} sent, {} failed (mesh: {})",
+            peers.len(),
+            success_count,
+            fail_count,
+            peer_count
+        );
+
+        (success_count, fail_count, sent_node_ids)
+    }
+
     pub fn connected_peer_count(&self) -> usize {
         self.peer_connections.len()
     }
@@ -2064,16 +2119,30 @@ impl MeshTransport {
             let mut body = Vec::new();
             let mut buf = [0u8; 8192];
             loop {
+                if body.len() >= MAX_HTTP_BODY_SIZE {
+                    return Err(MeshTransportError::ReceiveFailed(format!(
+                        "Response body too large: exceeds {} bytes",
+                        MAX_HTTP_BODY_SIZE
+                    )));
+                }
                 match reader.read(&mut buf).await {
                     Ok(0) => break,
-                    Ok(n) => body.extend_from_slice(&buf[..n]),
+                    Ok(n) => {
+                        if body.len().saturating_add(n) > MAX_HTTP_BODY_SIZE {
+                            return Err(MeshTransportError::ReceiveFailed(format!(
+                                "Response body too large: exceeds {} bytes",
+                                MAX_HTTP_BODY_SIZE
+                            )));
+                        }
+                        body.extend_from_slice(&buf[..n]);
+                    }
                     Err(_) => break,
                 }
             }
             body
         };
 
-        let body = Bytes::from(body_bytes);
+        let body = Bytes::from(body);
         let full_body = http_body_util::Full::new(body);
         let boxed_body: BoxBody<Bytes, Infallible> = full_body.boxed();
         let response = response_builder

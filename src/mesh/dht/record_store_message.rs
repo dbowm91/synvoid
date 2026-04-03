@@ -4,12 +4,24 @@ impl RecordStoreManager {
     fn get_sender_reputation(
         &self,
         from_node: &str,
-        signer: Option<&Arc<crate::mesh::protocol::MeshMessageSigner>>,
+        _signer: Option<&Arc<crate::mesh::protocol::MeshMessageSigner>>,
     ) -> i64 {
-        if signer.is_some() {
-            return 75;
+        let routing = self.routing_state.read();
+
+        if let Some(ref topology) = routing.topology {
+            if let Some(peer) = topology.get_peer(from_node).await {
+                let reputation = peer.audit_reputation();
+                return (reputation * 100.0) as i64;
+            }
         }
-        0
+
+        if let Some(ref stake_mgr) = routing.stake_manager {
+            if let Some(stake) = stake_mgr.get_stake(from_node) {
+                return (stake * 100.0) as i64;
+            }
+        }
+
+        50
     }
 
     pub fn handle_mesh_message(

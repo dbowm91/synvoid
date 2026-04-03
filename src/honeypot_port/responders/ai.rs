@@ -246,7 +246,7 @@ impl AiResponder for OpenAIResponder {
             Err(_) => return Err("request timed out".into()),
         };
 
-        let http_response = crate::http_client::HttpResponse::from_hyper(response).await;
+        let http_response = crate::http_client::HttpResponse::from_hyper(response, None).await;
         let result: OpenAIResponse = serde_json::from_slice(&http_response.body)?;
 
         if let Some(choice) = result.choices.first() {
@@ -356,7 +356,7 @@ impl AiResponder for AnthropicResponder {
             Err(_) => return Err("request timed out".into()),
         };
 
-        let http_response = crate::http_client::HttpResponse::from_hyper(response).await;
+        let http_response = crate::http_client::HttpResponse::from_hyper(response, None).await;
         let result: AnthropicResponse = serde_json::from_slice(&http_response.body)?;
 
         if let Some(content) = result.content.first() {

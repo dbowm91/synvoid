@@ -20,6 +20,7 @@ pub struct PortHoneypotConfig {
     pub response_mode: ResponseModeConfig,
     pub stable_ports: Vec<StablePortConfig>,
     pub ai_config: Option<AiConfig>,
+    pub site_scope: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -92,6 +93,7 @@ impl Default for PortHoneypotConfig {
             },
             stable_ports: Vec::new(),
             ai_config: None,
+            site_scope: "global".to_string(),
         }
     }
 }

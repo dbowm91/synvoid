@@ -21,6 +21,36 @@ struct ManagedCert {
     expires_at: SystemTime,
 }
 
+struct ChallengeGuard {
+    http_challenges: Arc<DashMap<String, String>>,
+    tokens: Vec<String>,
+}
+
+impl ChallengeGuard {
+    fn new(http_challenges: Arc<DashMap<String, String>>) -> Self {
+        Self {
+            http_challenges,
+            tokens: Vec::new(),
+        }
+    }
+
+    fn add_token(&mut self, token: String) {
+        self.tokens.push(token);
+    }
+
+    fn clear_challenges(&self) {
+        for token in &self.tokens {
+            self.http_challenges.remove(token);
+        }
+    }
+}
+
+impl Drop for ChallengeGuard {
+    fn drop(&mut self) {
+        self.clear_challenges();
+    }
+}
+
 pub struct AcmeManager {
     config: InternalAcmeConfig,
     cert_resolver: Arc<CertResolver>,
@@ -158,6 +188,7 @@ impl AcmeManager {
 
         // Process authorizations and set up challenges
         let mut auths = order.authorizations();
+        let mut challenge_guard = ChallengeGuard::new(self.http_challenges.clone());
         while let Some(auth_result) = auths.next().await {
             let mut auth = auth_result
                 .map_err(|e| AcmeError::Protocol(format!("Failed to get authorization: {}", e)))?;
@@ -186,6 +217,7 @@ impl AcmeManager {
                     let token = challenge_handle.token.clone();
                     self.http_challenges
                         .insert(token.clone(), key_auth.as_str().to_string());
+                    challenge_guard.add_token(token);
 
                     tracing::info!(
                         "HTTP-01 challenge ready for {} at /.well-known/acme-challenge/{}",
@@ -216,6 +248,8 @@ impl AcmeManager {
                 AcmeError::Protocol(format!("Failed to set challenge ready: {}", e))
             })?;
         }
+        // challenge_guard is dropped here on early return, cleaning up challenges
+        // On success, explicit cleanup below also runs (may be redundant but harmless)
 
         // Poll for order readiness
         let retry = RetryPolicy::new().timeout(Duration::from_secs(120));
@@ -275,9 +309,7 @@ impl AcmeManager {
             },
         );
 
-        // Clear challenges for this domain only
-        self.http_challenges
-            .retain(|domain_key, _| domain_key != domain);
+        // Challenge cleanup is handled by ChallengeGuard drop on all code paths
 
         tracing::info!(
             "ACME certificate obtained for {} (expires: {:?}), written to {:?}",

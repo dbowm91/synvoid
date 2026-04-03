@@ -34,6 +34,10 @@ pub enum DhtKey {
     DnsDomainRegistration(String),
     AnycastNode(String),
     ThreatIndicator(String),
+    UpstreamImageProtection(String),
+    UpstreamMinification(String),
+    UpstreamCompression(String),
+    SiteImagePoisonConfig(String),
 }
 
 impl DhtKey {
@@ -109,6 +113,22 @@ impl DhtKey {
         DhtKey::ThreatIndicator(indicator_id.to_string())
     }
 
+    pub fn upstream_image_protection(site_id: &str) -> Self {
+        DhtKey::UpstreamImageProtection(site_id.to_string())
+    }
+
+    pub fn upstream_minification(site_id: &str) -> Self {
+        DhtKey::UpstreamMinification(site_id.to_string())
+    }
+
+    pub fn upstream_compression(site_id: &str) -> Self {
+        DhtKey::UpstreamCompression(site_id.to_string())
+    }
+
+    pub fn site_image_poison_config(site_id: &str) -> Self {
+        DhtKey::SiteImagePoisonConfig(site_id.to_string())
+    }
+
     pub fn as_str(&self) -> String {
         match self {
             DhtKey::Organization(org_id) => format!("org:{}", org_id),
@@ -133,6 +153,18 @@ impl DhtKey {
             DhtKey::DnsDomainRegistration(domain) => format!("dns_domain_reg:{}", domain),
             DhtKey::AnycastNode(node_id) => format!("anycast_node:{}", node_id),
             DhtKey::ThreatIndicator(indicator_id) => format!("threat_indicator:{}", indicator_id),
+            DhtKey::UpstreamImageProtection(site_id) => {
+                format!("upstream_image_protection:{}", site_id)
+            }
+            DhtKey::UpstreamMinification(site_id) => {
+                format!("upstream_minification:{}", site_id)
+            }
+            DhtKey::UpstreamCompression(site_id) => {
+                format!("upstream_compression:{}", site_id)
+            }
+            DhtKey::SiteImagePoisonConfig(site_id) => {
+                format!("site_image_poison_config:{}", site_id)
+            }
         }
     }
 
@@ -175,6 +207,18 @@ impl DhtKey {
             }
             "anycast_node" if parts.len() >= 2 => DhtKey::AnycastNode(parts[1..].join(":")),
             "threat_indicator" if parts.len() >= 2 => DhtKey::ThreatIndicator(parts[1..].join(":")),
+            "upstream_image_protection" if parts.len() >= 2 => {
+                DhtKey::UpstreamImageProtection(parts[1..].join(":"))
+            }
+            "upstream_minification" if parts.len() >= 2 => {
+                DhtKey::UpstreamMinification(parts[1..].join(":"))
+            }
+            "upstream_compression" if parts.len() >= 2 => {
+                DhtKey::UpstreamCompression(parts[1..].join(":"))
+            }
+            "site_image_poison_config" if parts.len() >= 2 => {
+                DhtKey::SiteImagePoisonConfig(parts[1..].join(":"))
+            }
             _ => DhtKey::NodeInfo(s.to_string()),
         }
     }
@@ -255,6 +299,10 @@ impl DhtKey {
             DhtKey::DnsDomainRegistration(_) => "dns_domain_registration",
             DhtKey::AnycastNode(_) => "anycast_node",
             DhtKey::ThreatIndicator(_) => "threat_indicator",
+            DhtKey::UpstreamImageProtection(_) => "upstream_image_protection",
+            DhtKey::UpstreamMinification(_) => "upstream_minification",
+            DhtKey::UpstreamCompression(_) => "upstream_compression",
+            DhtKey::SiteImagePoisonConfig(_) => "site_image_poison_config",
         }
     }
 
@@ -281,6 +329,10 @@ impl DhtKey {
             DhtKey::DnsDomainRegistration(_) => Some(SignedRecordType::DnsDomainRegistration),
             DhtKey::AnycastNode(_) => Some(SignedRecordType::AnycastNode),
             DhtKey::ThreatIndicator(_) => Some(SignedRecordType::ThreatIndicator),
+            DhtKey::UpstreamImageProtection(_) => Some(SignedRecordType::UpstreamImageProtection),
+            DhtKey::UpstreamMinification(_) => Some(SignedRecordType::UpstreamMinification),
+            DhtKey::UpstreamCompression(_) => Some(SignedRecordType::UpstreamCompression),
+            DhtKey::SiteImagePoisonConfig(_) => Some(SignedRecordType::SiteImagePoisonConfig),
         }
     }
 
@@ -307,6 +359,10 @@ impl DhtKey {
             DhtKey::TierClaim(id) => Some(id.clone()),
             DhtKey::DnsZone(zone) => Some(zone.clone()),
             DhtKey::DnsRecord(zone, _) => Some(zone.clone()),
+            DhtKey::UpstreamImageProtection(id) => Some(id.clone()),
+            DhtKey::UpstreamMinification(id) => Some(id.clone()),
+            DhtKey::UpstreamCompression(id) => Some(id.clone()),
+            DhtKey::SiteImagePoisonConfig(id) => Some(id.clone()),
             _ => None,
         }
     }

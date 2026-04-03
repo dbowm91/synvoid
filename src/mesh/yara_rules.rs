@@ -11,6 +11,126 @@ use crate::mesh::config::{MeshNodeRole, YaraRulesMeshConfig};
 use crate::mesh::protocol::MeshMessage;
 use crate::upload::yara_rule_feed::YaraRuleFeedManager;
 
+#[derive(Debug, Clone)]
+pub struct BroadcastAckTracker {
+    pub request_id: String,
+    pub sent_peers: Vec<String>,
+    pub acked_peers: Vec<String>,
+    pub failed_peers: Vec<String>,
+    pub sent_at: Instant,
+    pub completed_at: Option<Instant>,
+}
+
+impl BroadcastAckTracker {
+    pub fn new(request_id: String, sent_peers: Vec<String>) -> Self {
+        Self {
+            request_id,
+            sent_peers,
+            acked_peers: Vec::new(),
+            failed_peers: Vec::new(),
+            sent_at: Instant::now(),
+            completed_at: None,
+        }
+    }
+
+    pub fn record_ack(&mut self, node_id: &str) {
+        if !self.acked_peers.contains(&node_id.to_string()) {
+            self.acked_peers.push(node_id.to_string());
+        }
+        if self.is_complete() {
+            self.completed_at = Some(Instant::now());
+        }
+    }
+
+    pub fn record_failure(&mut self, node_id: &str) {
+        if !self.failed_peers.contains(&node_id.to_string()) {
+            self.failed_peers.push(node_id.to_string());
+        }
+    }
+
+    pub fn is_complete(&self) -> bool {
+        self.acked_peers.len() + self.failed_peers.len() >= self.sent_peers.len()
+    }
+
+    pub fn pending_count(&self) -> usize {
+        self.sent_peers.len() - self.acked_peers.len() - self.failed_peers.len()
+    }
+
+    pub fn ack_rate(&self) -> f64 {
+        if self.sent_peers.is_empty() {
+            return 1.0;
+        }
+        self.acked_peers.len() as f64 / self.sent_peers.len() as f64
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct BroadcastAckStatus {
+    pub request_id: String,
+    pub total_peers: usize,
+    pub acked_count: usize,
+    pub pending_count: usize,
+    pub failed_count: usize,
+    pub ack_rate: f64,
+    pub duration_secs: f64,
+    pub is_complete: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct RuleChangeTracker {
+    pub last_version: Option<String>,
+    pub last_full_sync: Option<Instant>,
+    pub changes_since_full: usize,
+    pub incremental_versions: Vec<String>,
+}
+
+impl Default for RuleChangeTracker {
+    fn default() -> Self {
+        Self {
+            last_version: None,
+            last_full_sync: Some(Instant::now()),
+            changes_since_full: 0,
+            incremental_versions: Vec::new(),
+        }
+    }
+}
+
+impl RuleChangeTracker {
+    pub fn record_change(&mut self, new_version: &str) {
+        if self.last_version.is_none() {
+            self.last_full_sync = Some(Instant::now());
+            self.changes_since_full = 0;
+        } else {
+            self.changes_since_full += 1;
+        }
+        self.last_version = Some(new_version.to_string());
+        self.incremental_versions.push(new_version.to_string());
+        if self.incremental_versions.len() > 100 {
+            self.incremental_versions.remove(0);
+        }
+    }
+
+    pub fn should_send_full(&self, current_rules_size: usize, delta_size: usize) -> bool {
+        if self.changes_since_full == 0 {
+            return true;
+        }
+        if delta_size == 0 {
+            return true;
+        }
+        let ratio = delta_size as f64 / current_rules_size as f64;
+        ratio > 0.5
+    }
+
+    pub fn get_incremental_versions(&self, count: usize) -> Vec<String> {
+        self.incremental_versions
+            .iter()
+            .rev()
+            .take(count)
+            .cloned()
+            .collect()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct YaraRuleSubmission {
     pub submission_id: String,
@@ -62,6 +182,8 @@ pub struct YaraRulesManager {
     feed_manager: Option<Arc<YaraRuleFeedManager>>,
     mesh_sender: Arc<RwLock<Option<mpsc::Sender<MeshMessage>>>>,
     data_dir: Option<std::path::PathBuf>,
+    broadcast_tracker: Arc<RwLock<Option<BroadcastAckTracker>>>,
+    rule_change_tracker: Arc<RwLock<RuleChangeTracker>>,
 }
 
 impl YaraRulesManager {
@@ -85,6 +207,8 @@ impl YaraRulesManager {
             feed_manager,
             mesh_sender: Arc::new(RwLock::new(None)),
             data_dir,
+            broadcast_tracker: Arc::new(RwLock::new(None)),
+            rule_change_tracker: Arc::new(RwLock::new(RuleChangeTracker::default())),
         };
 
         if manager.node_role.is_global() || manager.node_role.contains(MeshNodeRole::Global) {
@@ -148,6 +272,8 @@ impl YaraRulesManager {
             };
             fm.add_to_history_inline(version.clone(), rules, source_str.to_string());
         }
+
+        self.rule_change_tracker.write().record_change(&version);
 
         tracing::info!("Applied YARA rules version {} from {:?}", version, source);
         Ok(version)
@@ -313,11 +439,15 @@ impl YaraRulesManager {
             .collect()
     }
 
+    pub fn get_all_submissions(&self) -> Vec<YaraRuleSubmission> {
+        self.submissions.read().values().cloned().collect()
+    }
+
     pub fn get_submission(&self, submission_id: &str) -> Option<YaraRuleSubmission> {
         self.submissions.read().get(submission_id).cloned()
     }
 
-    fn broadcast_approved_rules(&self, version: &str) -> Result<(), String> {
+    pub fn broadcast_approved_rules(&self, version: &str) -> Result<(), String> {
         let sender = self.mesh_sender.read();
         if let Some(ref sender) = *sender {
             let rules = self.local_rules.read().clone().ok_or("No local rules")?;
@@ -353,6 +483,65 @@ impl YaraRulesManager {
             });
         }
         Ok(())
+    }
+
+    pub fn start_broadcast_tracking(&self, request_id: String, sent_peers: Vec<String>) {
+        let tracker = BroadcastAckTracker::new(request_id, sent_peers);
+        *self.broadcast_tracker.write() = Some(tracker);
+        tracing::debug!(
+            "Started broadcast tracking for {} with {} peers",
+            request_id,
+            sent_peers.len()
+        );
+    }
+
+    pub fn record_broadcast_ack(&self, node_id: &str) {
+        if let Some(ref mut tracker) = *self.broadcast_tracker.write() {
+            tracker.record_ack(node_id);
+            tracing::debug!(
+                "Recorded ACK from {} for broadcast {} ({}/{} acked)",
+                node_id,
+                tracker.request_id,
+                tracker.acked_peers.len(),
+                tracker.sent_peers.len()
+            );
+        }
+    }
+
+    pub fn record_broadcast_failure(&self, node_id: &str) {
+        if let Some(ref mut tracker) = *self.broadcast_tracker.write() {
+            tracker.record_failure(node_id);
+            tracing::debug!(
+                "Recorded failure for {} in broadcast {} ({}/{} acked)",
+                node_id,
+                tracker.request_id,
+                tracker.acked_peers.len(),
+                tracker.sent_peers.len()
+            );
+        }
+    }
+
+    pub fn get_broadcast_status(&self) -> Option<BroadcastAckStatus> {
+        self.broadcast_tracker.read().as_ref().map(|tracker| {
+            let duration = tracker
+                .completed_at
+                .map(|c| c.saturating_duration_since(tracker.sent_at))
+                .unwrap_or_else(|| tracker.sent_at.elapsed());
+            BroadcastAckStatus {
+                request_id: tracker.request_id.clone(),
+                total_peers: tracker.sent_peers.len(),
+                acked_count: tracker.acked_peers.len(),
+                pending_count: tracker.pending_count(),
+                failed_count: tracker.failed_peers.len(),
+                ack_rate: tracker.ack_rate(),
+                duration_secs: duration.as_secs_f64(),
+                is_complete: tracker.is_complete(),
+            }
+        })
+    }
+
+    pub fn clear_broadcast_tracker(&self) {
+        *self.broadcast_tracker.write() = None;
     }
 
     pub fn should_sync(&self) -> bool {
@@ -463,6 +652,22 @@ impl YaraRulesManager {
         })
     }
 
+    pub fn send_sync_request_to_global(&self) {
+        if !self.config.enabled {
+            return;
+        }
+
+        let sender = self.mesh_sender.read();
+        if let Some(ref sender) = *sender {
+            let msg = MeshMessage::YaraRuleSyncRequest {
+                request_id: uuid::Uuid::new_v4().to_string().into(),
+                node_id: self.node_id.clone().into(),
+                version: self.current_version.read().clone(),
+            };
+            let _ = sender.send(msg);
+        }
+    }
+
     pub fn handle_incoming_rules(
         &self,
         version: String,
@@ -529,10 +734,29 @@ impl YaraRulesManager {
                         tracing::debug!("YARA rule signature verified from {}", from_node);
                     } else {
                         tracing::warn!(
-                            "Received signed YARA rules from {} but no local signer configured, accepting anyway",
+                            "Received signed YARA rules from {} but no local signer configured, rejecting",
                             from_node
                         );
+                        return Some(MeshMessage::YaraRuleAcknowledgement {
+                            original_request_id: request_id.clone(),
+                            node_id: self.node_id.clone().into(),
+                            accepted: false,
+                            reason: "No local signer to verify signature".into(),
+                            timestamp: crate::mesh::protocol::MeshMessage::generate_timestamp(),
+                        });
                     }
+                } else if self.config.require_signature {
+                    tracing::warn!(
+                        "YARA rule announce from {} has no signature but require_signature is enabled, rejecting",
+                        from_node
+                    );
+                    return Some(MeshMessage::YaraRuleAcknowledgement {
+                        original_request_id: request_id.clone(),
+                        node_id: self.node_id.clone().into(),
+                        accepted: false,
+                        reason: "Signature required but not provided".into(),
+                        timestamp: crate::mesh::protocol::MeshMessage::generate_timestamp(),
+                    });
                 } else {
                     tracing::debug!(
                         "YARA rules from {} have no signature, accepting without verification",
@@ -572,13 +796,29 @@ impl YaraRulesManager {
                         .as_ref()
                         .map(|s| s.get_public_key())
                         .unwrap_or_default();
+
+                    let is_full = version
+                        .as_ref()
+                        .map(|v| {
+                            crate::utils::is_newer_version(&ver.clone().unwrap_or_default(), v)
+                        })
+                        .unwrap_or(true);
+
+                    let signature = if let Some(ref signer) = self.signer {
+                        let ver_for_sign = ver.clone().unwrap_or_default();
+                        let sign_content = format!("{}:{}", ver_for_sign, rules);
+                        signer.sign(&sign_content)
+                    } else {
+                        Vec::new()
+                    };
+
                     Some(MeshMessage::YaraRuleSyncResponse {
                         request_id: request_id.clone(),
                         version: ver.unwrap_or_default(),
                         rules,
-                        is_full: true,
+                        is_full,
                         timestamp: crate::mesh::protocol::MeshMessage::generate_timestamp(),
-                        signature: Vec::new(),
+                        signature,
                         signer_public_key,
                     })
                 } else {
@@ -591,14 +831,48 @@ impl YaraRulesManager {
                 rules,
                 is_full: _,
                 timestamp: _,
-                signature: _,
-                ..
+                signature,
+                signer_public_key,
             } => {
                 tracing::info!(
                     "Received YARA rule sync response from {}: version {}",
                     from_node,
                     version
                 );
+
+                if self.config.require_signature {
+                    if !signature.is_empty() && !signer_public_key.is_empty() {
+                        if let Some(ref signer) = self.signer {
+                            let sign_content = format!("{}:{}", version, rules);
+                            let pk_bytes = base64::engine::general_purpose::STANDARD
+                                .decode(signer_public_key)
+                                .unwrap_or_default();
+                            if !signer.verify(&sign_content, &signature, &pk_bytes) {
+                                tracing::warn!(
+                                    "YARA rule sync response signature verification failed from {}, rejecting rules",
+                                    from_node
+                                );
+                                return None;
+                            }
+                            tracing::debug!(
+                                "YARA rule sync response signature verified from {}",
+                                from_node
+                            );
+                        } else {
+                            tracing::warn!(
+                                "YARA rule sync response from {} has signature but no local signer configured, rejecting",
+                                from_node
+                            );
+                            return None;
+                        }
+                    } else {
+                        tracing::warn!(
+                            "YARA rule sync response from {} has no signature but require_signature is enabled, rejecting",
+                            from_node
+                        );
+                        return None;
+                    }
+                }
 
                 if let Err(e) =
                     self.handle_incoming_rules(version.clone(), rules.clone(), from_node)
@@ -665,7 +939,7 @@ impl YaraRulesManager {
             }
             MeshMessage::YaraRuleAcknowledgement {
                 original_request_id: _,
-                node_id: _,
+                node_id,
                 accepted,
                 reason,
                 timestamp: _,
@@ -676,6 +950,11 @@ impl YaraRulesManager {
                     accepted,
                     reason
                 );
+                if accepted {
+                    self.record_broadcast_ack(from_node);
+                } else {
+                    self.record_broadcast_failure(from_node);
+                }
                 None
             }
             MeshMessage::YaraRuleSubmissionResponse {
@@ -703,11 +982,12 @@ impl YaraRulesManager {
             total_submissions: self.submissions.read().len(),
             last_sync: *self.last_sync.read(),
             is_global: self.node_role.is_global() || self.node_role.contains(MeshNodeRole::Global),
+            broadcast_status: self.get_broadcast_status(),
         }
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct YaraRulesStats {
     pub node_id: String,
     pub node_role: MeshNodeRole,
@@ -716,6 +996,8 @@ pub struct YaraRulesStats {
     pub total_submissions: usize,
     pub last_sync: Instant,
     pub is_global: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub broadcast_status: Option<BroadcastAckStatus>,
 }
 
 impl Clone for YaraRulesManager {
@@ -732,6 +1014,8 @@ impl Clone for YaraRulesManager {
             feed_manager: self.feed_manager.clone(),
             mesh_sender: Arc::clone(&self.mesh_sender),
             data_dir: self.data_dir.clone(),
+            broadcast_tracker: Arc::clone(&self.broadcast_tracker),
+            rule_change_tracker: Arc::clone(&self.rule_change_tracker),
         }
     }
 }

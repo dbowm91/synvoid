@@ -77,9 +77,13 @@ impl From<&MeshCapabilities> for proto::MeshCapabilities {
         proto::MeshCapabilities {
             can_route: c.can_route,
             can_proxy: c.can_proxy,
+            can_serve_dns: c.can_serve_dns,
+            is_global: c.is_global,
+            waf_enabled: c.waf_enabled,
             max_hops: c.max_hops as u32,
             supported_services: c.supported_services.clone(),
             preferred_transport: c.preferred_transport.map(|t| t as u32).unwrap_or(0),
+            supported_protocols: c.supported_protocols.clone(),
         }
     }
 }
@@ -91,6 +95,9 @@ impl TryFrom<proto::MeshCapabilities> for MeshCapabilities {
         Ok(MeshCapabilities {
             can_route: pb.can_route,
             can_proxy: pb.can_proxy,
+            can_serve_dns: pb.can_serve_dns.unwrap_or(false),
+            is_global: pb.is_global.unwrap_or(false),
+            waf_enabled: pb.waf_enabled.unwrap_or(true),
             max_hops: pb.max_hops as u8,
             supported_services: pb.supported_services,
             preferred_transport: match pb.preferred_transport {
@@ -98,6 +105,7 @@ impl TryFrom<proto::MeshCapabilities> for MeshCapabilities {
                 2 => Some(MeshTransportType::Quic),
                 _ => None,
             },
+            supported_protocols: pb.supported_protocols,
         })
     }
 }
@@ -109,6 +117,9 @@ impl TryFrom<&proto::MeshCapabilities> for MeshCapabilities {
         Ok(MeshCapabilities {
             can_route: pb.can_route,
             can_proxy: pb.can_proxy,
+            can_serve_dns: pb.can_serve_dns.unwrap_or(false),
+            is_global: pb.is_global.unwrap_or(false),
+            waf_enabled: pb.waf_enabled.unwrap_or(true),
             max_hops: pb.max_hops as u8,
             supported_services: pb.supported_services.clone(),
             preferred_transport: match pb.preferred_transport {
@@ -116,6 +127,7 @@ impl TryFrom<&proto::MeshCapabilities> for MeshCapabilities {
                 2 => Some(MeshTransportType::Quic),
                 _ => None,
             },
+            supported_protocols: pb.supported_protocols.clone(),
         })
     }
 }
@@ -227,18 +239,6 @@ impl TryFrom<proto::UpstreamOwner> for UpstreamOwner {
             owner_node_id: pb.owner_node_id,
             peered_wafs: pb.peered_wafs,
         })
-    }
-}
-
-impl Default for MeshCapabilities {
-    fn default() -> Self {
-        Self {
-            can_route: true,
-            can_proxy: true,
-            max_hops: 3,
-            supported_services: Vec::new(),
-            preferred_transport: Some(MeshTransportType::WireGuard),
-        }
     }
 }
 
@@ -408,7 +408,7 @@ impl RouteQueryResult {
     pub fn is_expired(&self) -> bool {
         self.providers
             .iter()
-            .any(|p| Instant::now().duration_since(self.discovered_at) > p.ttl)
+            .all(|p| Instant::now().duration_since(self.discovered_at) > p.ttl)
     }
 
     pub fn remaining_ttl(&self) -> Duration {

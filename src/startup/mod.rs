@@ -11,7 +11,7 @@ use crate::block_store::BlockStore;
 use crate::config::ConfigManager;
 use crate::waf::{
     ProbeTracker, RuleFeedManagerForWaf, SuspiciousWordTracker, ThreatLevelManager,
-    UpstreamErrorTracker,
+    UpstreamErrorTracker, YaraRulesManager,
 };
 
 #[derive(Clone)]
@@ -23,6 +23,7 @@ pub struct MasterState {
     pub upstream_error_tracker: Option<Arc<UpstreamErrorTracker>>,
     pub threat_level_manager: Option<Arc<ThreatLevelManager>>,
     pub rule_feed_manager: Option<Arc<RuleFeedManagerForWaf>>,
+    pub yara_rules: Option<Arc<YaraRulesManager>>,
     pub block_store: Arc<BlockStore>,
     pub mesh_transport: Option<Arc<crate::mesh::transport::MeshTransport>>,
 }
@@ -34,6 +35,7 @@ pub struct MasterStateTrackers {
     pub upstream_error_tracker: Option<Arc<UpstreamErrorTracker>>,
     pub threat_level_manager: Option<Arc<ThreatLevelManager>>,
     pub rule_feed_manager: Option<Arc<RuleFeedManagerForWaf>>,
+    pub yara_rules: Option<Arc<YaraRulesManager>>,
 }
 
 impl MasterState {
@@ -53,6 +55,7 @@ impl MasterState {
             upstream_error_tracker: trackers.upstream_error_tracker,
             threat_level_manager: trackers.threat_level_manager,
             rule_feed_manager: trackers.rule_feed_manager,
+            yara_rules: trackers.yara_rules,
             block_store,
             mesh_transport,
         }

@@ -13,17 +13,19 @@ const AXUM_ABI_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub type AxumFactory = unsafe extern "C" fn() -> *mut Router<()>;
 
 fn validate_plugin_path(path: &Path) -> Result<(), AxumPluginError> {
+    if let Ok(metadata) = std::fs::symlink_metadata(path) {
+        if metadata.file_type().is_symlink() {
+            return Err(AxumPluginError::LoadFailed(
+                "Plugin symlinks are not allowed".to_string(),
+            ));
+        }
+    }
+
     let canonical_path = path
         .canonicalize()
         .map_err(|e| AxumPluginError::LoadFailed(format!("Cannot resolve plugin path: {}", e)))?;
 
     if let Ok(metadata) = std::fs::metadata(&canonical_path) {
-        if metadata.is_symlink() {
-            return Err(AxumPluginError::LoadFailed(
-                "Plugin symlinks are not allowed".to_string(),
-            ));
-        }
-
         let file_size = metadata.len();
         let max_plugin_size = 50 * 1024 * 1024; // 50MB limit
         if file_size > max_plugin_size {

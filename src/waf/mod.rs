@@ -59,12 +59,13 @@ pub use traffic_shaper::{
 };
 pub use violation_tracker::{ViolationStats, ViolationTracker};
 
+pub use crate::mesh::yara_rules::YaraRulesManager;
+
 use crate::auth::AuthManager;
 use crate::block_store::BlockStore;
 use crate::challenge::{ChallengeConfig, ChallengeManager, ChallengeResult};
 use crate::config::RateLimitMemoryConfig;
 use crate::mesh::threat_intel::ThreatIntelligenceManager;
-use crate::mesh::yara_rules::YaraRulesManager;
 use crate::proxy::WafDecision;
 use crate::theme::ThemeConfig;
 use crate::upload::UploadValidator;
@@ -143,7 +144,6 @@ pub struct WafCore {
     attack_detector: ArcSwapOption<AttackDetector>,
     attack_detection_config: Option<AttackDetectionConfig>,
     pub block_store: Option<Arc<BlockStore>>,
-    pub threat_intel: Option<Arc<ThreatIntelligenceManager>>,
     pub config: WafConfig,
     pub whitelist: Arc<HashSet<IpAddr>>,
     tarpit_generator: Option<Arc<crate::tarpit::generator::MarkovChain>>,
@@ -267,7 +267,6 @@ pub struct WafCoreConfig {
     pub waf_config: WafConfig,
     pub whitelist: Vec<String>,
     pub block_store: Option<Arc<BlockStore>>,
-    pub threat_intel: Option<Arc<ThreatIntelligenceManager>>,
     pub attack_detection_config: Option<AttackDetectionConfig>,
     pub auth_manager: Option<Arc<AuthManager>>,
     pub threat_level_config: Option<crate::config::ThreatLevelConfig>,
@@ -292,7 +291,6 @@ impl WafCore {
             waf_config,
             whitelist,
             block_store,
-            threat_intel,
             attack_detection_config,
             auth_manager,
             threat_level_config,
@@ -485,7 +483,6 @@ impl WafCore {
             attack_detector,
             attack_detection_config,
             block_store,
-            threat_intel,
             config: waf_config,
             whitelist: Arc::new(whitelist_set),
             tarpit_generator: Some(Arc::new(crate::tarpit::generator::MarkovChain::new())),
@@ -516,10 +513,6 @@ impl WafCore {
         }
     }
 
-    pub fn set_threat_intel(&mut self, threat_intel: Option<Arc<ThreatIntelligenceManager>>) {
-        self.threat_intel = threat_intel;
-    }
-
     fn block_ip_with_threat_intel(
         &self,
         client_ip: IpAddr,
@@ -529,14 +522,6 @@ impl WafCore {
     ) {
         if let Some(ref store) = self.block_store {
             store.block_ip(client_ip, reason, duration, scope);
-        }
-        if let Some(ref threat_intel) = self.threat_intel {
-            threat_intel.announce_local_block(
-                client_ip,
-                reason.to_string(),
-                duration,
-                scope.to_string(),
-            );
         }
         if let Some(ref threat_intel) = get_threat_intel() {
             threat_intel.announce_local_block(

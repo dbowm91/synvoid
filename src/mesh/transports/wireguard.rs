@@ -286,6 +286,10 @@ impl WireGuardMeshTransport {
                     node_id: config.node_id().into(),
                     role: config.role,
                     session_id: format!("{}-{}", config.node_id(), uuid::Uuid::new_v4()).into(),
+                    capabilities: crate::mesh::protocol::MeshCapabilities::from_config(
+                        &config,
+                        config.role,
+                    ),
                     upstreams: Default::default(),
                     auth_token: None,
                     network_id: config.network_id.clone().map(|s| s.into()),
@@ -432,15 +436,10 @@ impl WireGuardMeshTransport {
                     node_id: peer_id.clone(),
                     address: wireguard_ip,
                     role: MeshNodeRole::Edge,
-                    capabilities: crate::mesh::protocol::MeshCapabilities {
-                        can_route: true,
-                        can_proxy: true,
-                        max_hops: self.config.routing.max_hops,
-                        supported_services: Vec::new(),
-                        preferred_transport: Some(
-                            crate::mesh::transports::MeshTransportType::WireGuard,
-                        ),
-                    },
+                    capabilities: crate::mesh::protocol::MeshCapabilities::from_config(
+                        &self.config,
+                        MeshNodeRole::Edge,
+                    ),
                     is_global: false,
                     latency_ms: None,
                     upstreams: Vec::new(),

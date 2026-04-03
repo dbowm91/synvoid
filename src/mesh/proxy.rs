@@ -271,26 +271,23 @@ impl MeshProxy {
         self.config.tier_config.min_tier_threshold
     }
 
-    // Lock is held briefly for topology lookup, then dropped before network awaits.
-    // Refactoring to channel-based design tracked in Phase 4.5.
-    #[allow(clippy::await_holding_lock)]
     pub async fn block_and_broadcast_upstream(
         &self,
         upstream_id: &str,
         reason: &str,
         blocked_duration_secs: u64,
     ) {
-        if let Some(transport) = self.transport.read().as_ref() {
+        let transport = {
+            let guard = self.transport.read();
+            guard.clone()
+        };
+        if let Some(transport) = transport {
             transport
                 .broadcast_upstream_block(upstream_id, reason, blocked_duration_secs)
                 .await;
         }
     }
 
-    // Topology read lock held across policy resolution awaits; safe because
-    // topology is rarely mutated and lock contention is minimal.
-    // Refactoring to channel-based design tracked in Phase 4.5.
-    #[allow(clippy::await_holding_lock)]
     pub async fn resolve_upstream(
         &self,
         req: &Request<Incoming>,
@@ -333,7 +330,10 @@ impl MeshProxy {
         }
 
         let provider_info = {
-            let transport = self.transport.read();
+            let transport = {
+                let guard = self.transport.read();
+                guard.clone()
+            };
             match transport.as_ref() {
                 Some(t) => match t.send_route_query(&upstream_id).await {
                     Ok(result) => {
@@ -555,21 +555,34 @@ impl MeshProxy {
         result
     }
 
-    // Transport read lock held across route query await; bounded by network RTT.
-    #[allow(clippy::await_holding_lock)]
     async fn execute_route_query(&self, upstream_id: &str) -> Result<ProviderInfo, MeshProxyError> {
-        let transport = self.transport.read();
-        let transport = transport.as_ref().ok_or_else(|| {
+        let transport = {
+            let guard = self.transport.read();
+            guard.clone()
+        };
+        let transport = transport.ok_or_else(|| {
             MeshProxyError::ConnectionFailed("Transport not initialized".to_string())
         })?;
 
         match transport.send_route_query(upstream_id).await {
             Ok(result) => {
                 let providers = self.filter_failed_providers(&result.providers);
-                if providers.is_empty() {
+                let providers_with_capability: Vec<_> = providers
+                    .into_iter()
+                    .filter(|p| {
+                        if let Some(peer) =
+                            futures::executor::block_on(self.topology.get_peer(&p.node_id))
+                        {
+                            peer.capabilities.can_proxy
+                        } else {
+                            false
+                        }
+                    })
+                    .collect();
+                if providers_with_capability.is_empty() {
                     return Err(MeshProxyError::NoRouteToUpstream(upstream_id.to_string()));
                 }
-                Ok(providers.into_iter().next().unwrap())
+                Ok(providers_with_capability.into_iter().next().unwrap())
             }
             Err(e) => Err(MeshProxyError::ConnectionFailed(e.to_string())),
         }
@@ -637,6 +650,24 @@ impl MeshProxy {
             };
 
             if let Some(pi) = provider_info {
+                if self.config.require_tier_claim {
+                    if let Some(ref tc) = pi.tier_claim {
+                        if !self.validate_tier_claim(tc).await {
+                            tracing::warn!(
+                                "Tier claim validation failed for upstream {} provider {}",
+                                upstream_id,
+                                pi.node_id
+                            );
+                            return Err(MeshProxyError::NoRouteToUpstream(upstream_id.to_string()));
+                        }
+                    } else {
+                        tracing::warn!(
+                            "Tier claim required but not provided for upstream {}",
+                            upstream_id
+                        );
+                        return Err(MeshProxyError::NoRouteToUpstream(upstream_id.to_string()));
+                    }
+                }
                 return self
                     .proxy_to_peer_with_fallback(upstream_id, vec![pi], req)
                     .await;
@@ -894,8 +925,6 @@ impl MeshProxy {
         }
     }
 
-    // Transport read lock held across proxy await; bounded by upstream RTT.
-    #[allow(clippy::await_holding_lock)]
     async fn proxy_to_peer<B>(
         &self,
         peer_node_id: &str,
@@ -968,8 +997,11 @@ impl MeshProxy {
             target_url
         );
 
-        let transport = self.transport.read();
-        let transport = transport.as_ref().ok_or_else(|| {
+        let transport = {
+            let guard = self.transport.read();
+            guard.clone()
+        };
+        let transport = transport.ok_or_else(|| {
             MeshProxyError::ConnectionFailed("Transport not initialized".to_string())
         })?;
 
@@ -988,15 +1020,16 @@ impl MeshProxy {
         Ok(response)
     }
 
-    // Transport manager read lock held across response transform; low contention.
-    #[allow(clippy::await_holding_lock)]
     async fn transform_response(
         &self,
         mut response: Response<BoxBody<Bytes, Infallible>>,
         upstream_id: &str,
         request_path: &str,
     ) -> Response<BoxBody<Bytes, Infallible>> {
-        let tm = self.transport_manager.read();
+        let tm = {
+            let guard = self.transport_manager.read();
+            guard.clone()
+        };
         let tm = tm.as_ref();
 
         if tm.is_none() {
@@ -1092,7 +1125,7 @@ impl MeshProxy {
                         .map(|patterns| {
                             patterns.iter().any(|p| {
                                 get_cached_regex(p)
-                                    .map(|re| re.is_match(upstream_id))
+                                    .map(|re| re.is_match(request_path))
                                     .unwrap_or(false)
                             })
                         })

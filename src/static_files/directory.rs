@@ -1,10 +1,13 @@
 use std::fs;
 use std::path::Path;
 
+use crate::theme::{DirectoryEntry, DirectoryListingTemplate, ThemeConfig};
+
 pub fn render_directory_listing(
     dir_path: &Path,
     url_path: &str,
     format: &str,
+    theme_config: &ThemeConfig,
 ) -> Result<String, super::StaticError> {
     let entries =
         fs::read_dir(dir_path).map_err(|e| super::StaticError::Internal(e.to_string()))?;
@@ -45,7 +48,7 @@ pub fn render_directory_listing(
 
     match format {
         "json" => render_json(url_path, &items),
-        _ => render_html(url_path, &items),
+        _ => render_html(url_path, &items, theme_config),
     }
 }
 
@@ -57,153 +60,61 @@ struct DirEntry {
     size: u64,
 }
 
-fn render_html(url_path: &str, entries: &[DirEntry]) -> Result<String, super::StaticError> {
+fn render_html(
+    url_path: &str,
+    entries: &[DirEntry],
+    theme_config: &ThemeConfig,
+) -> Result<String, super::StaticError> {
+    let base_path = url_path.trim_end_matches('/');
     let parent_link = if url_path != "/" {
         let parent = Path::new(url_path)
             .parent()
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|| "/".to_string());
-        format!(
-            r#"<tr><td colspan="3"><a href="{}">..</a></td></tr>"#,
+        let parent_href = if parent.is_empty() || parent == "/" {
+            "/".to_string()
+        } else {
             parent
-        )
+        };
+        Some(DirectoryEntry {
+            name: "..".to_string(),
+            href: parent_href,
+            is_dir: true,
+            modified: "-".to_string(),
+            size: "-".to_string(),
+        })
     } else {
-        String::new()
+        None
     };
 
-    let mut rows = String::new();
-    for entry in entries {
-        let href = if entry.is_dir {
-            format!("{}/", url_path.trim_end_matches('/'))
-        } else {
-            entry.name.clone()
-        };
+    let template_entries: Vec<DirectoryEntry> = entries
+        .iter()
+        .map(|entry| {
+            let href = if entry.is_dir {
+                format!("{}/{}/", base_path, entry.name)
+            } else {
+                format!("{}/{}", base_path, entry.name)
+            };
 
-        let modified_str = format_modified(entry.modified);
-        let size_str = if entry.is_dir {
-            "-".to_string()
-        } else {
-            format_size(entry.size)
-        };
+            DirectoryEntry {
+                name: entry.name.clone(),
+                href,
+                is_dir: entry.is_dir,
+                modified: format_modified(entry.modified),
+                size: if entry.is_dir {
+                    "-".to_string()
+                } else {
+                    format_size(entry.size)
+                },
+            }
+        })
+        .collect();
 
-        rows.push_str(&format!(
-            r#"<tr>
-                <td><a href="{}">{}{}</a></td>
-                <td>{}</td>
-                <td class="size">{}</td>
-            </tr>"#,
-            href,
-            entry.name,
-            if entry.is_dir { "/" } else { "" },
-            modified_str,
-            size_str
-        ));
-    }
+    let template = DirectoryListingTemplate::new(theme_config.clone())
+        .url_path(url_path)
+        .entries(template_entries);
 
-    let html = format!(
-        r#"<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <title>Index of {url_path}</title>
-    <style>
-        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-        body {{
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-            min-height: 100vh;
-            color: #e0e0e0;
-        }}
-        .container {{
-            max-width: 900px;
-            margin: 0 auto;
-            padding: 2rem;
-        }}
-        h1 {{
-            color: #00d4ff;
-            border-bottom: 1px solid #333;
-            padding-bottom: 0.5rem;
-            margin-bottom: 1rem;
-            font-weight: 400;
-            font-size: 1.5rem;
-        }}
-        .breadcrumbs {{
-            color: #888;
-            margin-bottom: 1rem;
-            font-size: 0.875rem;
-        }}
-        table {{
-            width: 100%;
-            border-collapse: collapse;
-            background: rgba(255, 255, 255, 0.03);
-            border-radius: 8px;
-            overflow: hidden;
-        }}
-        th {{
-            text-align: left;
-            padding: 0.75rem 1rem;
-            background: rgba(0, 212, 255, 0.1);
-            color: #00d4ff;
-            font-weight: 500;
-            font-size: 0.875rem;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-        }}
-        td {{
-            padding: 0.75rem 1rem;
-            border-bottom: 1px solid #333;
-            font-size: 0.9375rem;
-        }}
-        tr:last-child td {{
-            border-bottom: none;
-        }}
-        tr:hover td {{
-            background: rgba(255, 255, 255, 0.03);
-        }}
-        a {{
-            color: #00d4ff;
-            text-decoration: none;
-            transition: color 0.2s;
-        }}
-        a:hover {{
-            color: #fff;
-            text-decoration: underline;
-        }}
-        .size {{
-            text-align: right;
-            color: #888;
-            font-family: 'SF Mono', Monaco, monospace;
-            font-size: 0.875rem;
-        }}
-        .icon {{
-            margin-right: 0.5rem;
-            opacity: 0.7;
-        }}
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>Index of {url_path}</h1>
-        <div class="breadcrumbs">{url_path}</div>
-        <table>
-            <thead>
-                <tr>
-                    <th>Name</th>
-                    <th>Modified</th>
-                    <th class="size">Size</th>
-                </tr>
-            </thead>
-            <tbody>
-                {parent_link}
-                {rows}
-            </tbody>
-        </table>
-    </div>
-</body>
-</html>"#
-    );
-
-    Ok(html)
+    Ok(template.render())
 }
 
 fn render_json(url_path: &str, entries: &[DirEntry]) -> Result<String, super::StaticError> {

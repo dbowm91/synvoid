@@ -77,6 +77,8 @@ pub struct SiteConfig {
     pub serverless: Option<super::serverless::ServerlessConfig>,
     #[serde(default)]
     pub image_poison: SiteImagePoisonConfig,
+    #[serde(default)]
+    pub file_manager: SiteFileManagerConfig,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
@@ -1096,6 +1098,7 @@ impl SiteConfig {
         self.app_server.validate()?;
         self.grpc.validate()?;
         self.websocket.validate()?;
+        self.file_manager.validate()?;
         Ok(())
     }
 
@@ -1300,6 +1303,8 @@ pub struct SiteStaticConfig {
     #[serde(default)]
     pub directory_listing_format: Option<String>,
     #[serde(default)]
+    pub theme: Option<SiteThemeConfig>,
+    #[serde(default)]
     pub locations: Vec<StaticLocation>,
     #[serde(default)]
     pub minified_dir: Option<String>,
@@ -1437,6 +1442,40 @@ pub struct StaticLocation {
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
+pub struct SiteFileManagerConfig {
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    #[serde(default)]
+    pub root_path: Option<String>,
+    #[serde(default)]
+    pub max_file_size: Option<String>,
+    #[serde(default)]
+    pub blocked_extensions: Vec<String>,
+    #[serde(default)]
+    pub allowed_extensions: Vec<String>,
+    #[serde(default)]
+    pub allow_hidden_files: Option<bool>,
+    #[serde(default)]
+    pub allow_symlinks: Option<bool>,
+    #[serde(default)]
+    pub require_auth: Option<bool>,
+}
+
+impl SiteFileManagerConfig {
+    pub fn validate(&self) -> Result<(), super::validation::ConfigValidationError> {
+        if let Some(ref max_size) = self.max_file_size {
+            if let Err(e) = super::validation::parse_size_string(max_size) {
+                return Err(super::validation::ConfigValidationError {
+                    field: "file_manager.max_file_size".to_string(),
+                    message: format!("Invalid size format: {}", e),
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
 pub struct SiteSecurityConfig {
     #[serde(default)]
     pub reject_unknown_hosts: Option<bool>,
@@ -1554,6 +1593,12 @@ pub struct SiteCorsConfig {
     pub max_age: Option<u64>,
     #[serde(default)]
     pub expose_headers: Option<Vec<String>>,
+    #[serde(default = "default_allow_wildcard_cors")]
+    pub allow_wildcard_cors: bool,
+}
+
+fn default_allow_wildcard_cors() -> bool {
+    false
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]

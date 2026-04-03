@@ -12,7 +12,7 @@ pub mod instance_pool;
 pub mod wasm_metrics;
 pub mod wasm_runtime;
 
-pub use wasm_runtime::{WasmPluginManager, WasmResourceLimits, WasmRuntime};
+pub use wasm_runtime::{PluginInfo, WasmPluginManager, WasmResourceLimits, WasmRuntime};
 
 pub enum WasmFilterResult {
     Pass,
@@ -60,6 +60,19 @@ impl PluginManager {
     }
 
     pub fn load_wasm_plugin(&self, path: &Path) -> Result<(), WasmPluginError> {
+        if let Some(name) = path.file_stem() {
+            if let Some(name_str) = name.to_str() {
+                if let Some(wasm_dist) = crate::mesh::get_global_wasm_dist_manager() {
+                    if let Some(data) = wasm_dist
+                        .get_module_data(name_str, crate::mesh::protocol::WasmModuleType::Plugin)
+                    {
+                        tracing::debug!("Loading plugin '{}' from mesh WASM store", name_str);
+                        self.wasm_manager.load_plugin_from_memory(name_str, &data)?;
+                        return Ok(());
+                    }
+                }
+            }
+        }
         self.wasm_manager.load_plugin(path)?;
         Ok(())
     }
@@ -105,33 +118,37 @@ impl PluginManager {
     pub fn apply_wasm_filters(
         &self,
         request: Request<Bytes>,
+        env: std::collections::HashMap<String, String>,
     ) -> Result<WasmFilterResult, WasmPluginError> {
-        self.wasm_manager.filter_request(request)
+        self.wasm_manager.filter_request(request, env)
     }
 
     pub fn apply_wasm_filters_with_plugins(
         &self,
         request: Request<Bytes>,
         plugin_names: &[String],
+        env: std::collections::HashMap<String, String>,
     ) -> Result<WasmFilterResult, WasmPluginError> {
         self.wasm_manager
-            .filter_request_with_plugins(request, plugin_names)
+            .filter_request_with_plugins(request, plugin_names, env)
     }
 
     pub fn apply_wasm_response_transforms(
         &self,
         response: Response<Bytes>,
+        env: std::collections::HashMap<String, String>,
     ) -> Result<Response<Bytes>, WasmPluginError> {
-        self.wasm_manager.transform_response(response)
+        self.wasm_manager.transform_response(response, env)
     }
 
     pub fn apply_wasm_response_transforms_with_plugins(
         &self,
         response: Response<Bytes>,
         plugin_names: &[String],
+        env: std::collections::HashMap<String, String>,
     ) -> Result<Response<Bytes>, WasmPluginError> {
         self.wasm_manager
-            .transform_response_with_plugins(response, plugin_names)
+            .transform_response_with_plugins(response, plugin_names, env)
     }
 
     /// Get the underlying WASM plugin manager

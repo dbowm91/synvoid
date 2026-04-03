@@ -4,7 +4,7 @@ use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-const MERKLE_TREE_DEGREE: usize = 16;
+const MERKLE_TREE_DEGREE: usize = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
 pub struct MerkleNode {
@@ -433,11 +433,30 @@ impl Serialize for MerkleTree {
 }
 
 impl<'de> Deserialize<'de> for MerkleTree {
-    fn deserialize<D>(_deserializer: D) -> Result<Self, D::Error>
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
-        Ok(MerkleTree::new())
+        #[derive(Deserialize)]
+        struct SerdeMerkleTree {
+            root: Option<MerkleNode>,
+            leaf_count: usize,
+            height: u32,
+        }
+
+        let SerdeMerkleTree {
+            root,
+            leaf_count: _,
+            height,
+        } = SerdeMerkleTree::deserialize(deserializer)?;
+
+        Ok(MerkleTree {
+            root,
+            leaf_map: HashMap::new(),
+            height,
+            node_map: HashMap::new(),
+            key_path_map: HashMap::new(),
+        })
     }
 }
 

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex, RwLock};
@@ -32,6 +33,7 @@ struct ServerSharedState {
     ipc: Option<Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>>,
     worker_id: Option<WorkerId>,
     serverless_manager: Option<Arc<crate::serverless::manager::ServerlessManager>>,
+    app_servers: Arc<RwLock<HashMap<String, Arc<crate::app_server::GranianSupervisor>>>>,
 }
 
 #[derive(Clone)]
@@ -62,6 +64,7 @@ pub struct UnifiedServer {
     ipc: Option<Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>>,
     worker_id: Option<WorkerId>,
     serverless_manager: Option<Arc<crate::serverless::manager::ServerlessManager>>,
+    app_servers: Arc<RwLock<HashMap<String, Arc<crate::app_server::GranianSupervisor>>>>,
 
     // DNS Server
     #[cfg(feature = "dns")]
@@ -78,6 +81,7 @@ impl UnifiedServer {
     pub async fn new(
         config: Arc<RwLock<ConfigManager>>,
         mesh_transport: Option<Arc<crate::mesh::transport::MeshTransportManager>>,
+        app_servers: Arc<RwLock<HashMap<String, Arc<crate::app_server::GranianSupervisor>>>>,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let (
             http_addr,
@@ -404,6 +408,7 @@ impl UnifiedServer {
             ipc: None,
             worker_id: None,
             serverless_manager: None,
+            app_servers: Arc::new(RwLock::new(HashMap::new())),
             #[cfg(feature = "dns")]
             _dns_config: dns_config,
             #[cfg(feature = "dns")]
@@ -489,6 +494,12 @@ impl UnifiedServer {
 
     pub fn get_tunnel_router(&self) -> Option<Arc<Mutex<TunnelRouter>>> {
         self.tunnel_router.clone()
+    }
+
+    pub fn get_app_servers(
+        &self,
+    ) -> Arc<RwLock<HashMap<String, Arc<crate::app_server::GranianSupervisor>>>> {
+        self.app_servers.clone()
     }
 
     fn create_waf(main_config: &crate::config::MainConfig) -> WafCore {
@@ -799,6 +810,7 @@ impl UnifiedServer {
             ipc: self.ipc.clone(),
             worker_id: self.worker_id,
             serverless_manager: self.serverless_manager.clone(),
+            app_servers: self.app_servers.clone(),
         });
 
         let http_jh = {
@@ -1064,6 +1076,10 @@ impl UnifiedServer {
 
         if let Some(sm) = state.serverless_manager.clone() {
             server = server.with_serverless_manager(sm);
+        }
+
+        if let Some(asrv) = state.app_servers.clone() {
+            server = server.with_app_servers(asrv);
         }
 
         server.serve().await

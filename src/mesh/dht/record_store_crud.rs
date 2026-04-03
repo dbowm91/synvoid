@@ -29,13 +29,14 @@ impl RecordStoreManager {
                 if let Ok(pk_bytes) =
                     base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(signer_pk)
                 {
-                    let signable = format!(
-                        "{}:{}:{}:{}",
-                        record.key,
-                        record.source_node_id,
-                        record.timestamp,
-                        serde_json::to_string(&record.value).unwrap_or_default()
-                    );
+                    let value_json = serde_json::to_string(&record.value).unwrap_or_default();
+                    let signable = serde_json::to_string(&serde_json::json!({
+                        "key": record.key,
+                        "source_node_id": record.source_node_id,
+                        "timestamp": record.timestamp,
+                        "value": record.value,
+                    }))
+                    .unwrap_or_default();
                     if !crate::mesh::cert::verify_ed25519(&signable, &record.signature, &pk_bytes) {
                         tracing::warn!(
                             "Record store: invalid signature for key {} from node {}",
@@ -432,11 +433,24 @@ impl RecordStoreManager {
             }
 
             let existing = rs.records.get(&record.key);
-            if existing.is_none()
-                || existing
-                    .map(|e| e.record.timestamp < record.timestamp)
-                    .unwrap_or(true)
-            {
+            let should_replace = match existing {
+                None => true,
+                Some(existing_entry) => {
+                    let existing_key = (
+                        existing_entry.record.timestamp,
+                        existing_entry.record.sequence_number,
+                        existing_entry.record.source_node_id.clone(),
+                    );
+                    let new_key = (
+                        record.timestamp,
+                        record.sequence_number,
+                        record.source_node_id.clone(),
+                    );
+                    new_key > existing_key
+                }
+            };
+
+            if should_replace {
                 changed = true;
                 let version = rs.local_version + 1;
                 rs.records.insert(
@@ -458,7 +472,6 @@ impl RecordStoreManager {
     }
 
     pub fn queue_for_announce(&self, record: DhtRecord) {
-        const MAX_PENDING_ANNOUNCES: usize = 1000;
         let mut rs = self.record_state.write();
         if rs.pending_announces.len() >= MAX_PENDING_ANNOUNCES {
             rs.pending_announces.remove(0);

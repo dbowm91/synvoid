@@ -110,14 +110,24 @@ pub struct YaraRulesMeshConfig {
     pub enabled: bool,
     #[serde(default = "default_yara_mesh_sync_interval")]
     pub sync_interval_secs: u64,
-    #[serde(default)]
+    #[serde(default = "default_allow_edge_submissions")]
     pub allow_edge_submissions: bool,
     #[serde(default)]
     pub require_global_approval: bool,
+    #[serde(default = "default_require_signature")]
+    pub require_signature: bool,
     #[serde(default)]
     pub trusted_signers: Vec<String>,
     #[serde(default = "default_yara_mesh_max_rules_size")]
     pub max_rules_size_kb: u32,
+}
+
+fn default_allow_edge_submissions() -> bool {
+    false
+}
+
+fn default_require_signature() -> bool {
+    true
 }
 
 fn default_yara_mesh_enabled() -> bool {
@@ -137,8 +147,9 @@ impl Default for YaraRulesMeshConfig {
         Self {
             enabled: true,
             sync_interval_secs: 3600,
-            allow_edge_submissions: true,
+            allow_edge_submissions: false,
             require_global_approval: true,
+            require_signature: true,
             trusted_signers: Vec::new(),
             max_rules_size_kb: 1024,
         }
@@ -377,6 +388,8 @@ impl MeshServicePolicy {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct MeshRoutingConfig {
+    #[serde(default = "default_routing_enabled")]
+    pub enabled: bool,
     #[serde(default = "default_max_hops")]
     pub max_hops: u8,
     #[serde(default = "default_query_timeout_ms")]
@@ -400,6 +413,7 @@ pub struct MeshRoutingConfig {
 impl Default for MeshRoutingConfig {
     fn default() -> Self {
         Self {
+            enabled: true,
             max_hops: 3,
             query_timeout_ms: 5000,
             retry_attempts: 2,
@@ -411,6 +425,10 @@ impl Default for MeshRoutingConfig {
             query_sequence: SequenceCounter::new(),
         }
     }
+}
+
+fn default_routing_enabled() -> bool {
+    true
 }
 
 fn default_max_hops() -> u8 {
@@ -737,6 +755,8 @@ pub struct MeshConfig {
     #[serde(default)]
     pub capabilities_enabled: bool,
     #[serde(default)]
+    pub require_tier_claim: bool,
+    #[serde(default)]
     pub stake: Option<crate::mesh::dht::stake::StakeConfig>,
     #[serde(default)]
     pub mlkem: Option<MeshMlKemConfig>,
@@ -1009,10 +1029,6 @@ fn default_health_ttl_secs() -> u64 {
 
 fn default_load_ttl_secs() -> u64 {
     60
-}
-
-fn default_routing_enabled() -> bool {
-    true
 }
 
 fn default_routing_full_network_view() -> bool {

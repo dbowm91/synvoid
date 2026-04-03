@@ -46,6 +46,7 @@ pub mod transport_rate_limit;
 #[cfg(feature = "mesh")]
 pub mod transport_routing;
 pub mod transports;
+pub mod wasm_dist;
 pub mod wireguard_mesh;
 pub mod yara_rules;
 
@@ -115,6 +116,10 @@ pub use transport_core::{
 pub use transports::{
     DatagramPacket, MeshDatagramHandler, MeshPeerConnectionTrait, MeshTransportManager,
     MeshTransportTrait, MeshTransportType, QuicMeshTransport, WireGuardMeshTransport,
+};
+pub use wasm_dist::{
+    get_global_wasm_dist_manager, set_global_wasm_dist_manager, WasmDistManager, WasmModuleStore,
+    WasmStoreError,
 };
 pub use yara_rules::{
     YaraRuleSource, YaraRuleSubmission, YaraRuleSubmissionStatus, YaraRuleVersionInfo,

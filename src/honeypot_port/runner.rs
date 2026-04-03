@@ -157,12 +157,17 @@ impl PortHoneypotRunner {
                         continue;
                     }
 
+                    let mut announced_ips: std::collections::HashSet<String> =
+                        std::collections::HashSet::new();
+                    let mut records_processed = 0i64;
+
                     for record in &records {
+                        records_processed += 1;
                         let indicators = HoneypotIntelExtractor::extract_indicators(record);
 
                         for indicator in indicators {
                             let threat_type = match indicator.indicator_type {
-                                crate::honeypot_port::threat_intel::IndicatorType::SourceIp => ThreatType::SuspiciousActivity,
+                                crate::honeypot_port::threat_intel::IndicatorType::SourceIp => ThreatType::IpBlock,
                                 crate::honeypot_port::threat_intel::IndicatorType::AttackPattern => ThreatType::SuspiciousActivity,
                                 crate::honeypot_port::threat_intel::IndicatorType::AttackVector => ThreatType::SuspiciousActivity,
                                 crate::honeypot_port::threat_intel::IndicatorType::Payload => ThreatType::SuspiciousActivity,
@@ -184,13 +189,19 @@ impl PortHoneypotRunner {
                             };
 
                             if let Ok(ip) = indicator.value.parse() {
+                                if announced_ips.contains(&ip.to_string()) {
+                                    continue;
+                                }
+                                announced_ips.insert(ip.to_string());
+
+                                let site_scope = self.config.site_scope.clone();
                                 threat_intel.announce_honeypot_indicator(
                                     ip,
                                     threat_type,
                                     severity,
                                     indicator.description,
                                     Some(3600 * 24),
-                                    "global",
+                                    &site_scope,
                                 );
                             }
                         }
@@ -198,7 +209,14 @@ impl PortHoneypotRunner {
                         last_timestamp = record.timestamp.max(last_timestamp);
                     }
 
-                    tracing::debug!("Published {} honeypot indicators to mesh", records.len());
+                    tracing::debug!(
+                        "Published honeypot indicators: {} unique IPs, {} records processed",
+                        announced_ips.len(),
+                        records_processed
+                    );
+
+                    crate::metrics::record_honeypot_indicators_published(announced_ips.len() as u64);
+                    crate::metrics::record_honeypot_records_processed(records_processed as u64);
                 }
             }
         });

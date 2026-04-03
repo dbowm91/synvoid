@@ -254,8 +254,6 @@ impl MeshTransportManager {
         self.preferred_transport()
     }
 
-    // Transport selection holds read lock across send await; low contention.
-    #[allow(clippy::await_holding_lock)]
     pub async fn send_message(
         &self,
         peer_id: &str,
@@ -291,8 +289,6 @@ impl MeshTransportManager {
         fallback_result
     }
 
-    // Transport read lock held across send await; low contention.
-    #[allow(clippy::await_holding_lock)]
     async fn try_send_primary(
         &self,
         peer_id: &str,
@@ -301,8 +297,8 @@ impl MeshTransportManager {
     ) -> Result<(), MeshTransportError> {
         match transport_type {
             MeshTransportType::WireGuard => {
-                let transport = self.wireguard_transport.read();
-                if let Some(ref t) = *transport {
+                let transport = self.wireguard_transport.read().clone();
+                if let Some(ref t) = transport {
                     if !t.is_connected(peer_id) {
                         return Err(MeshTransportError::PeerNotConnected(peer_id.to_string()));
                     }
@@ -310,8 +306,8 @@ impl MeshTransportManager {
                 }
             }
             MeshTransportType::Quic => {
-                let transport = self.quic_transport.read();
-                if let Some(ref t) = *transport {
+                let transport = self.quic_transport.read().clone();
+                if let Some(ref t) = transport {
                     if !t.is_connected(peer_id) {
                         return Err(MeshTransportError::PeerNotConnected(peer_id.to_string()));
                     }
@@ -390,8 +386,6 @@ impl MeshTransportManager {
         }
     }
 
-    // Transport selection holds read lock across send await; low contention.
-    #[allow(clippy::await_holding_lock)]
     pub async fn send_datagram(
         &self,
         peer_id: &str,
@@ -431,8 +425,6 @@ impl MeshTransportManager {
         fallback_result
     }
 
-    // Transport read lock held across datagram send await; low contention.
-    #[allow(clippy::await_holding_lock)]
     async fn try_send_datagram_primary(
         &self,
         peer_id: &str,
@@ -441,8 +433,8 @@ impl MeshTransportManager {
     ) -> Result<(), MeshTransportError> {
         match transport_type {
             MeshTransportType::WireGuard => {
-                let transport = self.wireguard_transport.read();
-                if let Some(ref t) = *transport {
+                let transport = self.wireguard_transport.read().clone();
+                if let Some(ref t) = transport {
                     if !t.is_connected(peer_id) {
                         return Err(MeshTransportError::PeerNotConnected(peer_id.to_string()));
                     }
@@ -450,8 +442,8 @@ impl MeshTransportManager {
                 }
             }
             MeshTransportType::Quic => {
-                let transport = self.quic_transport.read();
-                if let Some(ref t) = *transport {
+                let transport = self.quic_transport.read().clone();
+                if let Some(ref t) = transport {
                     if !t.is_connected(peer_id) {
                         return Err(MeshTransportError::PeerNotConnected(peer_id.to_string()));
                     }
@@ -518,8 +510,6 @@ impl MeshTransportManager {
         Err(MeshTransportError::PeerNotConnected(peer_id.to_string()))
     }
 
-    // Transport selection holds read lock across broadcast await; low contention.
-    #[allow(clippy::await_holding_lock)]
     pub async fn broadcast_datagram(
         &self,
         message: &MeshMessage,
@@ -543,16 +533,25 @@ impl MeshTransportManager {
             TransportHint::Default => self.preferred_transport(),
         };
 
+        let wireguard_transport = {
+            let guard = self.wireguard_transport.read();
+            guard.clone()
+        };
+        let quic_transport = {
+            let guard = self.quic_transport.read();
+            guard.clone()
+        };
+
         match preferred {
             MeshTransportType::WireGuard => {
-                if let Some(ref transport) = *self.wireguard_transport.read() {
+                if let Some(transport) = wireguard_transport {
                     if transport.is_available() {
                         return transport.broadcast_datagram(message).await;
                     }
                 }
             }
             MeshTransportType::Quic => {
-                if let Some(ref transport) = *self.quic_transport.read() {
+                if let Some(transport) = quic_transport {
                     if transport.is_available() {
                         return transport.broadcast_datagram(message).await;
                     }
@@ -1265,5 +1264,70 @@ impl MeshTransportManager {
                 "misses": self.minification_cache_misses.load(Ordering::Relaxed),
             },
         })
+    }
+
+    pub fn publish_upstream_transform_configs(
+        &self,
+        sites: &std::collections::HashMap<String, crate::config::site::SiteConfig>,
+    ) {
+        let Some(ref record_store) = self.record_store else {
+            tracing::warn!("Cannot publish transform configs: no record store");
+            return;
+        };
+
+        for (site_id, site_config) in sites.iter() {
+            let image_poison_config = &site_config.image_poison;
+            let static_config = &site_config.r#static;
+
+            let image_protection_json = serde_json::json!({
+                "enabled": image_poison_config.enabled,
+                "min_size_bytes": image_poison_config.max_dimension.map(|v| v as u64),
+                "whitelist_patterns": image_poison_config.whitelist_patterns,
+            });
+            let image_protection_key = format!("upstream_image_protection:{}", site_id);
+            if let Ok(bytes) = serde_json::to_vec(&image_protection_json) {
+                record_store.store_and_announce(image_protection_key, bytes, 3600);
+            }
+
+            let site_image_poison_json = serde_json::json!({
+                "enabled": image_poison_config.enabled,
+                "level": image_poison_config.level,
+                "intensity": image_poison_config.intensity,
+                "seed": image_poison_config.seed,
+                "max_dimension": image_poison_config.max_dimension,
+                "jpeg_quality": image_poison_config.jpeg_quality,
+            });
+            let site_image_poison_key = format!("site_image_poison_config:{}", site_id);
+            if let Ok(bytes) = serde_json::to_vec(&site_image_poison_json) {
+                record_store.store_and_announce(site_image_poison_key, bytes, 3600);
+            }
+
+            let minification_json = serde_json::json!({
+                "enabled": static_config.enable_minification,
+                "enable_html": static_config.enable_html_minification,
+                "enable_css": static_config.enable_css_minification,
+                "enable_js": static_config.enable_js_minification,
+            });
+            let minification_key = format!("upstream_minification:{}", site_id);
+            if let Ok(bytes) = serde_json::to_vec(&minification_json) {
+                record_store.store_and_announce(minification_key, bytes, 3600);
+            }
+
+            let compression_json = serde_json::json!({
+                "enabled": static_config.enable_compression,
+                "gzip_on_the_fly": static_config.gzip_on_the_fly,
+                "gzip_level": static_config.gzip_level,
+                "gzip_min_size": static_config.gzip_min_size,
+                "gzip_types": static_config.gzip_types,
+                "enable_brotli": static_config.enable_brotli,
+                "brotli_level": static_config.brotli_level,
+            });
+            let compression_key = format!("upstream_compression:{}", site_id);
+            if let Ok(bytes) = serde_json::to_vec(&compression_json) {
+                record_store.store_and_announce(compression_key, bytes, 3600);
+            }
+
+            tracing::debug!("Published transform configs for site {} to DHT", site_id);
+        }
     }
 }

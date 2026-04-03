@@ -224,8 +224,12 @@ impl ViolationTracker {
 
     fn schedule_persist(&self) {
         if let Some(ref tx) = self.persist_tx {
-            let entries = self.store.read().clone();
-            if let Err(e) = tx.try_send(PersistRequest { entries }) {
+            let mut empty = HashMap::new();
+            {
+                let mut store = self.store.write();
+                std::mem::swap(&mut *store, &mut empty);
+            }
+            if let Err(e) = tx.try_send(PersistRequest { entries: empty }) {
                 if matches!(e, tokio::sync::mpsc::error::TrySendError::Closed(_)) {
                     tracing::warn!("Violation tracker persist channel closed");
                 }

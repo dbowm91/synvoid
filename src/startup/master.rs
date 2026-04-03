@@ -317,6 +317,7 @@ async fn run_master(
             upstream_error_tracker: None,
             threat_level_manager: None,
             rule_feed_manager: rule_feed_manager.clone(),
+            yara_rules: None,
         },
         master_block_store,
         None,
@@ -595,8 +596,10 @@ async fn run_master(
             admin_state.upstream_error_tracker,
             admin_state.threat_level_manager,
             admin_state.rule_feed_manager,
+            admin_state.yara_rules,
             admin_state.mesh_transport,
             #[cfg(feature = "icmp-filter")]
+            None,
             None,
             None,
         )

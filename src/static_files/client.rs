@@ -464,6 +464,11 @@ impl PoisonImageClient {
         site_id: &str,
         body: Vec<u8>,
         last_modified: Option<String>,
+        level: Option<String>,
+        intensity: Option<f32>,
+        seed: Option<u64>,
+        max_dimension: Option<u32>,
+        jpeg_quality: Option<u8>,
     ) -> Result<Vec<u8>, PoisonImageClientError> {
         let socket_name = self
             .socket_path
@@ -485,6 +490,11 @@ impl PoisonImageClient {
             site_id: site_id.to_string(),
             body,
             last_modified,
+            level,
+            intensity,
+            seed,
+            max_dimension,
+            jpeg_quality,
         };
 
         ipc.send(&request)

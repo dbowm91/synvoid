@@ -328,9 +328,10 @@ impl YaraScanner {
             .map(|s| (*s).to_string())
             .collect();
 
-        let (tx, rx) = std::sync::mpsc::channel();
+        let runtime = tokio::runtime::Handle::current();
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
 
-        std::thread::spawn(move || {
+        runtime.spawn_blocking(move || {
             let rules_guard = rules.read();
             let mut scanner = Scanner::new(&rules_guard);
 
@@ -383,20 +384,18 @@ impl YaraScanner {
                 Err(e) => Err(YaraError::ScanError(e.to_string())),
             };
 
-            let _ = tx.send(result);
+            let _ = tx.blocking_send(result);
         });
 
-        match rx.recv_timeout(Duration::from_millis(timeout_ms)) {
-            Ok(result) => result,
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+        match tokio::time::timeout(Duration::from_millis(timeout_ms), rx.recv()).await {
+            Ok(Some(result)) => result,
+            Ok(None) => Err(YaraError::ScanError("scan task panicked".into())),
+            Err(_) => {
                 tracing::warn!(
                     timeout_ms,
-                    "YARA scan timed out; scan thread continues in background"
+                    "YARA scan timed out; scan task continues in background"
                 );
                 Err(YaraError::Timeout)
-            }
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                Err(YaraError::ScanError("scan thread panicked".into()))
             }
         }
     }

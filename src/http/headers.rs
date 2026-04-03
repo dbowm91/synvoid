@@ -71,16 +71,16 @@ pub fn inject_cors_headers(
 
     if let Some(ref origin) = config.allow_origin {
         if origin == "*" {
-            if cfg!(debug_assertions) {
+            if config.allow_wildcard_cors {
                 tracing::warn!(
-                    "Site CORS allow_origin='*' is insecure — only allowed in debug builds. \
+                    "Site CORS allow_origin='*' is insecure — only use for development. \
                      Specify exact origins."
                 );
                 builder = builder.header("Access-Control-Allow-Origin", origin);
             } else {
                 tracing::error!(
-                    "Site CORS allow_origin='*' is rejected in release builds for security. \
-                     Specify exact origins."
+                    "Site CORS allow_origin='*' is rejected for security. \
+                     Set allow_wildcard_cors = true to permit (development only)."
                 );
             }
         } else {

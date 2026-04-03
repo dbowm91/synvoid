@@ -1,5 +1,6 @@
+use std::collections::HashMap;
 use std::convert::TryInto;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -8,6 +9,7 @@ use http::{HeaderMap, Request, Response, StatusCode};
 use parking_lot::RwLock;
 use wasmtime::{Config, Engine, Instance, Linker, Memory, Module, OptLevel, Store, TypedFunc};
 
+use crate::plugin::instance_pool::WasmInstancePool;
 use crate::plugin::wasm_metrics::{
     record_wasm_decision_block, record_wasm_decision_challenge, record_wasm_decision_pass,
     record_wasm_duration, record_wasm_error, record_wasm_fuel_consumed, record_wasm_invocation,
@@ -74,11 +76,21 @@ pub struct WasmRuntime {
     module: Module,
     limits: WasmResourceLimits,
     name: String,
+    priority: i32,
+    pool: Arc<WasmInstancePool>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PluginInfo {
+    pub name: String,
+    pub path: Option<PathBuf>,
 }
 
 pub struct WasmPluginManager {
     runtimes: RwLock<Vec<Arc<WasmRuntime>>>,
     default_limits: WasmResourceLimits,
+    pool: Arc<WasmInstancePool>,
+    plugin_paths: RwLock<HashMap<String, PathBuf>>,
 }
 
 impl WasmPluginManager {
@@ -86,6 +98,8 @@ impl WasmPluginManager {
         Self {
             runtimes: RwLock::new(Vec::new()),
             default_limits: WasmResourceLimits::default(),
+            pool: Arc::new(WasmInstancePool::new(Arc::new(Engine::default()), 100)),
+            plugin_paths: RwLock::new(HashMap::new()),
         }
     }
 
@@ -94,10 +108,33 @@ impl WasmPluginManager {
         self
     }
 
+    fn sorted_runtimes(&self) -> Vec<Arc<WasmRuntime>> {
+        let mut runtimes: Vec<Arc<WasmRuntime>> = self.runtimes.read().iter().cloned().collect();
+        runtimes.sort_by_key(|r| r.priority());
+        runtimes
+    }
+
     pub fn load_plugin(&self, path: &Path) -> Result<Arc<WasmRuntime>, WasmPluginError> {
         let runtime = WasmRuntime::load(path, self.default_limits.clone())?;
         let arc = Arc::new(runtime);
+        let name = arc.name().to_string();
         self.runtimes.write().push(arc.clone());
+        self.plugin_paths.write().insert(name, path.to_path_buf());
+        Ok(arc)
+    }
+
+    pub fn load_plugin_from_memory(
+        &self,
+        name: &str,
+        data: &[u8],
+    ) -> Result<Arc<WasmRuntime>, WasmPluginError> {
+        let runtime = WasmRuntime::load_from_bytes(name, data, self.default_limits.clone())?;
+        let arc = Arc::new(runtime);
+        let runtime_name = arc.name().to_string();
+        self.runtimes.write().push(arc.clone());
+        self.plugin_paths
+            .write()
+            .insert(runtime_name, PathBuf::from(format!("mesh://{}", name)));
         Ok(arc)
     }
 
@@ -108,7 +145,9 @@ impl WasmPluginManager {
     ) -> Result<Arc<WasmRuntime>, WasmPluginError> {
         let runtime = WasmRuntime::load(path, limits)?;
         let arc = Arc::new(runtime);
+        let name = arc.name().to_string();
         self.runtimes.write().push(arc.clone());
+        self.plugin_paths.write().insert(name, path.to_path_buf());
         Ok(arc)
     }
 
@@ -116,6 +155,7 @@ impl WasmPluginManager {
         let mut runtimes = self.runtimes.write();
         let before = runtimes.len();
         runtimes.retain(|r| r.name() != name);
+        self.plugin_paths.write().remove(name);
         runtimes.len() < before
     }
 
@@ -126,11 +166,27 @@ impl WasmPluginManager {
             .unwrap_or("unknown")
             .to_string();
 
-        // Unload existing plugin with same name
-        self.unload_plugin(&name);
+        let priority = self
+            .runtimes
+            .read()
+            .iter()
+            .find(|r| r.name() == name)
+            .map(|r| r.priority())
+            .unwrap_or(0);
 
-        // Load fresh
-        self.load_plugin(path)
+        let new_runtime =
+            WasmRuntime::load_with_priority(path, self.default_limits.clone(), priority)?;
+        let new_arc = Arc::new(new_runtime);
+
+        {
+            let mut runtimes = self.runtimes.write();
+            runtimes.retain(|r| r.name() != name);
+            runtimes.push(new_arc.clone());
+        }
+
+        self.plugin_paths.write().insert(name, path.to_path_buf());
+
+        Ok(new_arc)
     }
 
     pub fn list_plugins(&self) -> Vec<String> {
@@ -141,12 +197,36 @@ impl WasmPluginManager {
             .collect()
     }
 
+    pub fn get_plugin_info(&self) -> Vec<PluginInfo> {
+        let runtimes = self.runtimes.read();
+        let paths = self.plugin_paths.read();
+        runtimes
+            .iter()
+            .map(|r| {
+                let name = r.name();
+                PluginInfo {
+                    name: name.to_string(),
+                    path: paths.get(name).cloned(),
+                }
+            })
+            .collect()
+    }
+
+    pub fn reload_plugin_by_name(&self, name: &str) -> Result<Arc<WasmRuntime>, WasmPluginError> {
+        let path =
+            self.plugin_paths.read().get(name).cloned().ok_or_else(|| {
+                WasmPluginError::LoadFailed(format!("plugin '{}' not found", name))
+            })?;
+        self.reload_plugin(&path)
+    }
+
     pub fn filter_request(
         &self,
         request: Request<Bytes>,
+        env: std::collections::HashMap<String, String>,
     ) -> Result<WasmFilterResult, WasmPluginError> {
-        for runtime in self.runtimes.read().iter() {
-            match runtime.filter_request(request.clone())? {
+        for runtime in self.sorted_runtimes().iter() {
+            match runtime.filter_request(request.clone(), env.clone())? {
                 WasmFilterResult::Pass => continue,
                 result => return Ok(result),
             }
@@ -158,11 +238,12 @@ impl WasmPluginManager {
         &self,
         request: Request<Bytes>,
         plugin_names: &[String],
+        env: std::collections::HashMap<String, String>,
     ) -> Result<WasmFilterResult, WasmPluginError> {
-        let runtimes = self.runtimes.read();
+        let runtimes = self.sorted_runtimes();
         for name in plugin_names {
             if let Some(runtime) = runtimes.iter().find(|r| r.name() == name) {
-                match runtime.filter_request(request.clone())? {
+                match runtime.filter_request(request.clone(), env.clone())? {
                     WasmFilterResult::Pass => continue,
                     result => return Ok(result),
                 }
@@ -174,10 +255,11 @@ impl WasmPluginManager {
     pub fn transform_response(
         &self,
         response: Response<Bytes>,
+        env: std::collections::HashMap<String, String>,
     ) -> Result<Response<Bytes>, WasmPluginError> {
         let mut result = response;
-        for runtime in self.runtimes.read().iter() {
-            result = runtime.transform_response(result)?;
+        for runtime in self.sorted_runtimes().iter() {
+            result = runtime.transform_response(result, env.clone())?;
         }
         Ok(result)
     }
@@ -186,12 +268,13 @@ impl WasmPluginManager {
         &self,
         response: Response<Bytes>,
         plugin_names: &[String],
+        env: std::collections::HashMap<String, String>,
     ) -> Result<Response<Bytes>, WasmPluginError> {
         let runtimes = self.runtimes.read();
         let mut result = response;
         for name in plugin_names {
             if let Some(runtime) = runtimes.iter().find(|r| r.name() == name) {
-                result = runtime.transform_response(result)?;
+                result = runtime.transform_response(result, env.clone())?;
             }
         }
         Ok(result)
@@ -208,10 +291,87 @@ impl Default for WasmPluginManager {
 pub(crate) struct RequestContext {
     pub(crate) start: Instant,
     pub(crate) timeout: Duration,
+    pub(crate) env: std::collections::HashMap<String, String>,
 }
 
 impl WasmRuntime {
     pub fn load(path: &Path, limits: WasmResourceLimits) -> Result<Self, WasmPluginError> {
+        Self::load_with_priority(path, limits, 0)
+    }
+
+    pub fn load_from_bytes(
+        name: &str,
+        bytes: &[u8],
+        limits: WasmResourceLimits,
+    ) -> Result<Self, WasmPluginError> {
+        Self::load_from_bytes_with_priority(name, bytes, limits, 0)
+    }
+
+    pub fn load_from_bytes_with_priority(
+        name: &str,
+        bytes: &[u8],
+        limits: WasmResourceLimits,
+        priority: i32,
+    ) -> Result<Self, WasmPluginError> {
+        let mut config = Config::new();
+        config
+            .cranelift_opt_level(OptLevel::SpeedAndSize)
+            .max_wasm_stack(1 << 20)
+            .memory_init_cow(true);
+
+        if limits.max_cpu_fuel > 0 {
+            config.consume_fuel(true);
+        }
+
+        let engine =
+            Engine::new(&config).map_err(|e| WasmPluginError::LoadFailed(e.to_string()))?;
+
+        let module = Module::from_binary(&engine, bytes)
+            .map_err(|e| WasmPluginError::LoadFailed(e.to_string()))?;
+
+        let has_filter = module.get_export("filter_request").is_some();
+        let has_transform = module.get_export("transform_response").is_some();
+        let has_handle = module.get_export("handle_request").is_some();
+        if !has_filter && !has_transform && !has_handle {
+            tracing::warn!(
+                "WASM plugin '{}' does not export filter_request, transform_response, or handle_request; will be a pass-through",
+                name
+            );
+        }
+
+        tracing::info!(
+            "Loaded WASM plugin '{}' from memory with limits: {}MB memory, {} fuel, {}s timeout, priority {} (filter={}, transform={}, handle={})",
+            name,
+            limits.max_memory_mb,
+            limits.max_cpu_fuel,
+            limits.timeout_seconds,
+            priority,
+            has_filter,
+            has_transform,
+            has_handle,
+        );
+
+        let max_instances = limits.max_instances.max(1);
+        let pool = Arc::new(WasmInstancePool::new(
+            Arc::new(engine.clone()),
+            max_instances,
+        ));
+
+        Ok(Self {
+            engine,
+            module,
+            limits,
+            name: name.to_string(),
+            priority,
+            pool,
+        })
+    }
+
+    pub fn load_with_priority(
+        path: &Path,
+        limits: WasmResourceLimits,
+        priority: i32,
+    ) -> Result<Self, WasmPluginError> {
         let mut config = Config::new();
         config
             .cranelift_opt_level(OptLevel::SpeedAndSize)
@@ -246,32 +406,45 @@ impl WasmRuntime {
         }
 
         tracing::info!(
-            "Loaded WASM plugin '{}' with limits: {}MB memory, {} fuel, {}s timeout (filter={}, transform={}, handle={})",
+            "Loaded WASM plugin '{}' with limits: {}MB memory, {} fuel, {}s timeout, priority {} (filter={}, transform={}, handle={})",
             name,
             limits.max_memory_mb,
             limits.max_cpu_fuel,
             limits.timeout_seconds,
+            priority,
             has_filter,
             has_transform,
             has_handle,
         );
+
+        let max_instances = limits.max_instances.max(1);
+        let pool = Arc::new(WasmInstancePool::new(
+            Arc::new(engine.clone()),
+            max_instances,
+        ));
 
         Ok(Self {
             engine,
             module,
             limits,
             name,
+            priority,
+            pool,
         })
     }
 
     /// Create a fresh Store with resource limits configured
-    fn create_store(&self) -> Store<RequestContext> {
+    fn create_store(
+        &self,
+        env: std::collections::HashMap<String, String>,
+    ) -> Store<RequestContext> {
         let timeout = Duration::from_secs(self.limits.timeout_seconds);
         let mut store = Store::new(
             &self.engine,
             RequestContext {
                 start: Instant::now(),
                 timeout,
+                env,
             },
         );
 
@@ -317,6 +490,53 @@ impl WasmRuntime {
             .map_err(|e| {
                 WasmPluginError::LoadFailed(format!("failed to link check_timeout: {}", e))
             })?;
+
+        // Provide env::get_env host function for accessing environment variables
+        linker
+            .func_wrap(
+                "env",
+                "get_env",
+                |caller: wasmtime::Caller<'_, RequestContext>,
+                 key_ptr: i32,
+                 key_len: i32,
+                 out_ptr: i32,
+                 out_max: i32|
+                 -> i32 {
+                    // Read the key from WASM memory
+                    let mem = caller
+                        .get_export("memory")
+                        .and_then(|e| e.into_memory())
+                        .unwrap();
+                    let mem_data = mem.data(&caller);
+
+                    let key_start = key_ptr as usize;
+                    let key_end = key_start.saturating_add(key_len as usize);
+                    if key_end > mem_data.len() {
+                        return -1; // invalid key pointer
+                    }
+
+                    let key = String::from_utf8_lossy(&mem_data[key_start..key_end]);
+
+                    // Look up env var
+                    let value = caller.data().env.get(key.as_ref());
+                    let value_str = value.unwrap_or(&String::new());
+                    let value_bytes = value_str.as_bytes();
+                    let value_len = value_bytes.len().min(out_max as usize);
+
+                    // Write to output buffer
+                    let out_start = out_ptr as usize;
+                    let out_end = out_start.saturating_add(value_len);
+                    if out_end > mem_data.len() {
+                        return -1; // invalid output pointer
+                    }
+
+                    mem.data_mut(&mut *caller)[out_start..out_end]
+                        .copy_from_slice(&value_bytes[..value_len]);
+
+                    value_len as i32
+                },
+            )
+            .map_err(|e| WasmPluginError::LoadFailed(format!("failed to link get_env: {}", e)))?;
 
         let instance = linker
             .instantiate(&mut *store, &self.module)
@@ -540,6 +760,7 @@ impl WasmRuntime {
     pub fn filter_request(
         &self,
         request: Request<Bytes>,
+        env: std::collections::HashMap<String, String>,
     ) -> Result<WasmFilterResult, WasmPluginError> {
         let start = Instant::now();
         let plugin_name = &self.name;
@@ -555,8 +776,31 @@ impl WasmRuntime {
             parts.uri
         );
 
-        let mut store = self.create_store();
+        let mut pooled_instance = self.pool.get(&self.name);
+
+        if let Some(mut inst) = pooled_instance {
+            inst.prepare_for_request(env, self.limits.timeout_seconds);
+            let exports =
+                WasmInstancePool::resolve_exports_from_instance(&inst.instance, &mut inst.store);
+            let result = self.do_filter_request_with_exports(parts, body, &mut inst.store, exports);
+            self.pool.return_instance(inst);
+            return result;
+        }
+
+        let mut store = self.create_store(env);
         let exports = self.instantiate(&mut store)?;
+        self.do_filter_request_with_exports(parts, body, &mut store, exports)
+    }
+
+    fn do_filter_request_with_exports(
+        &self,
+        parts: http::request::Parts,
+        body: Bytes,
+        store: &mut Store<RequestContext>,
+        exports: GuestExports,
+    ) -> Result<WasmFilterResult, WasmPluginError> {
+        let start = Instant::now();
+        let plugin_name = &self.name;
 
         let filter_fn = match exports.filter_request.as_ref() {
             Some(f) => f,
@@ -568,7 +812,7 @@ impl WasmRuntime {
             }
         };
 
-        Self::check_timeout(&store)?;
+        Self::check_timeout(&*store)?;
 
         let method_str = parts.method.as_str();
         let method_bytes = method_str.as_bytes();
@@ -668,6 +912,7 @@ impl WasmRuntime {
     pub fn transform_response(
         &self,
         response: Response<Bytes>,
+        env: std::collections::HashMap<String, String>,
     ) -> Result<Response<Bytes>, WasmPluginError> {
         let start = Instant::now();
         let plugin_name = &self.name;
@@ -682,7 +927,7 @@ impl WasmRuntime {
             parts.status
         );
 
-        let mut store = self.create_store();
+        let mut store = self.create_store(env);
         let exports = self.instantiate(&mut store)?;
 
         let transform_fn = match exports.transform_response.as_ref() {
@@ -759,6 +1004,10 @@ impl WasmRuntime {
         &self.name
     }
 
+    pub fn priority(&self) -> i32 {
+        self.priority
+    }
+
     pub fn engine(&self) -> &Engine {
         &self.engine
     }
@@ -773,6 +1022,7 @@ impl WasmRuntime {
         uri: &str,
         headers: &str,
         body: &[u8],
+        env: std::collections::HashMap<String, String>,
     ) -> Result<Response<Bytes>, WasmPluginError> {
         let start = Instant::now();
         let plugin_name = &self.name;
@@ -786,7 +1036,7 @@ impl WasmRuntime {
             uri
         );
 
-        let mut store = self.create_store();
+        let mut store = self.create_store(env);
         let exports = self.instantiate(&mut store)?;
 
         let handle_fn = match exports.handle_request.as_ref() {

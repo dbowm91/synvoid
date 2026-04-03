@@ -1,6 +1,7 @@
 #![allow(unused_variables, unused_mut)]
 
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -247,6 +248,7 @@ pub struct MeshTopology {
     upstream_versions: RwLock<HashMap<String, u64>>,
     blocked_upstreams: RwLock<HashMap<String, BlockedUpstream>>,
     bandwidth_trackers: RwLock<HashMap<String, BandwidthStats>>,
+    degraded_mode: AtomicBool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -489,6 +491,7 @@ impl MeshTopology {
             upstream_versions: RwLock::new(HashMap::new()),
             blocked_upstreams: RwLock::new(HashMap::new()),
             bandwidth_trackers: RwLock::new(HashMap::new()),
+            degraded_mode: AtomicBool::new(false),
         }
     }
 
@@ -506,6 +509,19 @@ impl MeshTopology {
 
     pub fn is_global(&self) -> bool {
         self.role.is_global()
+    }
+
+    pub fn is_degraded(&self) -> bool {
+        self.degraded_mode.load(Ordering::Relaxed)
+    }
+
+    pub fn set_degraded(&self, degraded: bool) {
+        self.degraded_mode.store(degraded, Ordering::Relaxed);
+        if degraded {
+            tracing::warn!("Mesh topology entering degraded mode - global nodes unavailable");
+        } else {
+            tracing::info!("Mesh topology exiting degraded mode - global nodes available");
+        }
     }
 
     pub async fn record_bandwidth(
@@ -676,6 +692,15 @@ impl MeshTopology {
     pub async fn get_all_peers(&self) -> Vec<PeerState> {
         let peers = self.peers.read().await;
         peers.values().cloned().collect()
+    }
+
+    pub async fn get_all_connected_peers(&self) -> Vec<PeerState> {
+        let peers = self.peers.read().await;
+        peers
+            .values()
+            .filter(|p| p.status == PeerStatus::Healthy)
+            .cloned()
+            .collect()
     }
 
     pub async fn get_random_peers(&self, count: usize, exclude: Option<&str>) -> Vec<PeerState> {
@@ -1095,6 +1120,7 @@ impl MeshTopology {
         let mut candidates: Vec<_> = peers
             .values()
             .filter(|p| p.is_healthy() && p.has_upstream(upstream_id))
+            .filter(|p| p.capabilities.can_route)
             .collect();
 
         candidates.sort_by(|a, b| {

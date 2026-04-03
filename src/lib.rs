@@ -57,6 +57,7 @@ pub mod mesh;
 pub mod metrics;
 pub mod mime;
 pub mod overseer;
+pub mod php;
 pub mod platform;
 pub mod plugin;
 pub mod process;

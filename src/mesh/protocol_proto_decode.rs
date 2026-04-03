@@ -53,6 +53,11 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                 node_id: h.node_id.into(),
                 role: MeshNodeRole::from_u8(h.roles as u8),
                 session_id: h.session_id.into(),
+                capabilities: h
+                    .capabilities
+                    .map(|c| c.try_into())
+                    .transpose()?
+                    .unwrap_or_default(),
                 upstreams: h
                     .upstreams
                     .into_iter()

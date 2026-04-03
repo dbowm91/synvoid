@@ -55,6 +55,10 @@ pub enum SignedRecordType {
     GlobalAiBotList,
     AnycastNode,
     ThreatIndicator,
+    UpstreamImageProtection,
+    UpstreamMinification,
+    UpstreamCompression,
+    SiteImagePoisonConfig,
 }
 
 impl SignedRecordType {
@@ -88,6 +92,10 @@ impl SignedRecordType {
                 | SignedRecordType::GlobalAiBotList
                 | SignedRecordType::AnycastNode
                 | SignedRecordType::ThreatIndicator
+                | SignedRecordType::UpstreamImageProtection
+                | SignedRecordType::UpstreamMinification
+                | SignedRecordType::UpstreamCompression
+                | SignedRecordType::SiteImagePoisonConfig
         )
     }
 
@@ -123,6 +131,10 @@ impl SignedRecordType {
             SignedRecordType::GlobalAiBotList => Some(Duration::from_secs(86400)),
             SignedRecordType::AnycastNode => Some(Duration::from_secs(600)),
             SignedRecordType::ThreatIndicator => Some(Duration::from_secs(3600)),
+            SignedRecordType::UpstreamImageProtection => Some(Duration::from_secs(3600)),
+            SignedRecordType::UpstreamMinification => Some(Duration::from_secs(3600)),
+            SignedRecordType::UpstreamCompression => Some(Duration::from_secs(3600)),
+            SignedRecordType::SiteImagePoisonConfig => Some(Duration::from_secs(3600)),
         }
     }
 
@@ -257,17 +269,18 @@ impl SignedDhtRecord {
     }
 
     /// Get signable content for signature verification
-    /// Format: key,value,publisher_id,sequence_number,created_at,source_node_id
+    /// Uses canonical JSON with sorted keys
     pub fn get_signable_content(&self) -> String {
-        format!(
-            "{},{},{},{},{},{}",
-            self.key,
-            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&self.value),
-            self.publisher_id,
-            self.sequence_number,
-            self.created_at,
-            self.source_node_id
-        )
+        let value_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&self.value);
+        serde_json::to_string(&serde_json::json!({
+            "created_at": self.created_at,
+            "key": self.key,
+            "publisher_id": self.publisher_id,
+            "sequence_number": self.sequence_number,
+            "source_node_id": self.source_node_id,
+            "value": value_b64,
+        }))
+        .unwrap_or_default()
     }
 }
 
@@ -357,6 +370,10 @@ pub struct TtlManager {
     verified_upstream_ttl: Duration,
     org_name_reservation_ttl: Duration,
     upstream_registration_request_ttl: Duration,
+    upstream_image_protection_ttl: Duration,
+    upstream_minification_ttl: Duration,
+    upstream_compression_ttl: Duration,
+    site_image_poison_config_ttl: Duration,
 }
 
 impl Default for TtlManager {
@@ -375,6 +392,10 @@ impl Default for TtlManager {
             verified_upstream_ttl: Duration::from_secs(300),
             org_name_reservation_ttl: Duration::from_secs(86400 * 7),
             upstream_registration_request_ttl: Duration::from_secs(3600),
+            upstream_image_protection_ttl: Duration::from_secs(3600),
+            upstream_minification_ttl: Duration::from_secs(3600),
+            upstream_compression_ttl: Duration::from_secs(3600),
+            site_image_poison_config_ttl: Duration::from_secs(3600),
         }
     }
 }
@@ -418,8 +439,12 @@ impl TtlManager {
             SignedRecordType::DnsRecord => self.upstream_ttl,
             SignedRecordType::DnsDomainRegistration => Duration::from_secs(600),
             SignedRecordType::GlobalAiBotList => Duration::from_secs(86400),
-            SignedRecordType::AnycastNode => Duration::from_secs(600),
-            SignedRecordType::ThreatIndicator => Duration::from_secs(3600),
+            SignedRecordType::AnycastNode => self.node_info_ttl,
+            SignedRecordType::ThreatIndicator => self.node_info_ttl,
+            SignedRecordType::UpstreamImageProtection => self.upstream_image_protection_ttl,
+            SignedRecordType::UpstreamMinification => self.upstream_minification_ttl,
+            SignedRecordType::UpstreamCompression => self.upstream_compression_ttl,
+            SignedRecordType::SiteImagePoisonConfig => self.site_image_poison_config_ttl,
         }
     }
 

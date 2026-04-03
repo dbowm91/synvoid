@@ -480,6 +480,11 @@ impl ThreatIntelligenceManager {
     }
 
     fn queue_for_push(&self, indicator: ThreatIndicator) {
+        if self.config.hub_only_mode && !self.node_role.is_global() {
+            tracing::debug!("Skipping push for non-global node in hub_only_mode");
+            return;
+        }
+
         let mut queue = self.pending_announces.write();
 
         if queue.len() >= self.config.max_indicators_per_message {
@@ -494,12 +499,19 @@ impl ThreatIntelligenceManager {
             return;
         }
 
+        if self.config.hub_only_mode && !self.node_role.is_global() {
+            tracing::debug!("Skipping DHT publish for non-global node in hub_only_mode");
+            return;
+        }
+
         let transport_opt = self.transport.read().clone();
         let Some(transport) = transport_opt else {
+            tracing::debug!("Transport not available for DHT publish");
             return;
         };
 
         let Some(record_store) = transport.get_record_store() else {
+            tracing::debug!("Record store not available for DHT publish");
             return;
         };
 
@@ -677,9 +689,6 @@ impl ThreatIntelligenceManager {
 
         *self.local_version.write() += 1;
         self.reputation.record_threat_accepted(from_node);
-
-        // Also publish accepted threat to DHT for broader distribution
-        self.publish_indicator_to_dht(&indicator);
 
         tracing::debug!(
             "Accepted threat from {} (score: {})",
@@ -991,6 +1000,8 @@ impl ThreatIntelligenceManager {
             } else {
                 tracing::debug!("Broadcast threat announce to mesh");
             }
+        } else {
+            tracing::debug!("No transport or mesh_sender available for broadcast");
         }
     }
 
@@ -1113,17 +1124,14 @@ impl ThreatIntelligenceManager {
     }
 
     pub fn start_background_tasks(&self) {
-        let transport = self.transport.read().clone();
-        let mesh_sender = self.mesh_sender.read().clone();
         let config = self.config.clone();
         let node_id = self.node_id.clone();
         let node_role = self.node_role;
         let initial_interval = config.sync_interval_secs;
-        let signer = self.signer.clone();
-        let reputation = self.reputation.clone();
-        let pending_announces = Arc::new(parking_lot::RwLock::new(
-            self.pending_announces.read().clone(),
-        ));
+        let sync_enabled = config.sync_enabled;
+        let fanout_factor = config.fanout_factor;
+
+        let threat_intel = Arc::new(self.clone());
 
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(60));
@@ -1136,72 +1144,24 @@ impl ThreatIntelligenceManager {
                     continue;
                 }
 
-                let message = {
-                    let queue = pending_announces.read();
-                    if queue.is_empty() {
-                        continue;
-                    }
+                threat_intel.broadcast_pending_threats().await;
 
-                    let indicators: Vec<ThreatIndicator> = queue.iter().cloned().collect();
-                    let highest_severity = indicators
-                        .iter()
-                        .map(|i| i.severity)
-                        .max_by_key(|s| *s as u32)
-                        .unwrap_or(ThreatSeverity::Unspecified);
+                if sync_enabled && last_sync.elapsed().as_secs() > initial_interval {
+                    tracing::debug!("Threat sync interval reached, sending sync request");
 
-                    let mut signature = Vec::new();
-                    let source_reputation = reputation
-                        .get_peer_reputation(&node_id)
-                        .map(|p| p.score)
-                        .unwrap_or(50);
-
-                    let mut signer_public_key = String::new();
-
-                    if let Some(ref signer) = signer {
-                        let request_id = uuid::Uuid::new_v4().to_string();
-                        let timestamp = MeshMessage::generate_timestamp();
-                        let content = format!(
-                            "{},{},{:?},{},{}",
-                            request_id,
-                            node_id,
-                            highest_severity,
-                            node_role.bits(),
-                            timestamp
-                        );
-                        signature = signer.sign(&content);
-                        signer_public_key = signer.get_public_key();
-                    }
-
-                    let request_id = uuid::Uuid::new_v4().to_string();
-
-                    MeshMessage::ThreatAnnounce {
-                        request_id: request_id.into(),
-                        indicators,
-                        highest_severity,
-                        timestamp: MeshMessage::generate_timestamp(),
-                        source_node_id: node_id.clone().into(),
-                        source_role: node_role,
-                        source_reputation: source_reputation as u64,
-                        signature,
-                        signer_public_key,
-                    }
-                };
-
-                if let Some(ref transport) = transport {
-                    let (success, fail) = transport
-                        .broadcast_to_random_peers(message, 0.5, None)
-                        .await;
-                    tracing::debug!("Fanout threat announce: {} sent, {} failed", success, fail);
-                } else if let Some(ref sender) = mesh_sender {
-                    if let Err(e) = sender.send(message).await {
-                        tracing::warn!("Failed to send threat announce via mesh_sender: {}", e);
+                    let transport_opt = threat_intel.transport.read().clone();
+                    if let Some(transport) = transport_opt {
+                        let message = threat_intel.create_sync_request();
+                        let (success, _) = transport
+                            .broadcast_to_random_peers(message, fanout_factor * 0.2, None)
+                            .await;
+                        if success > 0 {
+                            threat_intel.record_sync();
+                        }
                     } else {
-                        tracing::debug!("Sent threat announce via mesh_sender");
+                        tracing::debug!("No transport available for sync request");
                     }
-                }
 
-                if last_sync.elapsed().as_secs() > initial_interval {
-                    tracing::debug!("Threat sync interval reached");
                     last_sync = Instant::now();
                 }
             }

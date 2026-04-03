@@ -490,6 +490,11 @@ impl MeshTransport {
         previous_serial: u32,
         compressed: bool,
     ) {
+        if !self.config.role.is_global() {
+            tracing::debug!("Ignoring zone sync response on non-global node");
+            return;
+        }
+
         tracing::debug!("Received zone sync response for zone: {} (serial: {}, complete: {}, prev_serial: {}, compressed: {})", 
             zone_origin, serial, complete, previous_serial, compressed);
 
@@ -632,6 +637,11 @@ impl MeshTransport {
         zone_origin: &str,
         serial: u64,
     ) {
+        if !self.config.role.is_global() {
+            tracing::debug!("Ignoring zone sync ACK on non-global node");
+            return;
+        }
+
         tracing::debug!(
             "Received zone sync ACK for zone: {} serial: {}",
             zone_origin,
@@ -721,6 +731,11 @@ impl MeshTransport {
         shutdown_at: u64,
         timestamp: u64,
     ) {
+        if !self.config.role.is_global() {
+            tracing::debug!("Ignoring node shutdown on non-global node");
+            return;
+        }
+
         let now = chrono::Utc::now().timestamp() as u64;
         let time_until_shutdown = shutdown_at.saturating_sub(now);
 
@@ -869,6 +884,11 @@ impl MeshTransport {
         reason: &str,
         _timestamp: u64,
     ) {
+        if !self.config.role.is_global() {
+            tracing::debug!("Ignoring DNS domain register response on non-global node");
+            return;
+        }
+
         tracing::info!(
             "Received DNS domain register response for {}: verified={}, reason={}",
             domain,
@@ -953,6 +973,11 @@ impl MeshTransport {
         _registered_at: u64,
         _expires_at: u64,
     ) {
+        if !self.config.role.is_global() {
+            tracing::debug!("Ignoring DNS domain registered on non-global node");
+            return;
+        }
+
         tracing::info!(
             "Received DnsDomainRegistered: domain={} origin={} verified_by={}",
             domain,
@@ -1002,6 +1027,11 @@ impl MeshTransport {
         reason: &str,
         _deregistered_at: u64,
     ) {
+        if !self.config.role.is_global() {
+            tracing::debug!("Ignoring DNS domain deregistered on non-global node");
+            return;
+        }
+
         tracing::info!(
             "Received DnsDomainDeregistered: domain={} origin={} by={} reason={}",
             domain,
@@ -1009,14 +1039,6 @@ impl MeshTransport {
             deregistered_by_global_node,
             reason
         );
-
-        if !self
-            .config
-            .role
-            .contains(crate::mesh::config::MeshNodeRole::GLOBAL)
-        {
-            return;
-        }
 
         let dns_registry = match &self.dns_registry {
             Some(r) => r,

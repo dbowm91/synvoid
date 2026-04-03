@@ -384,18 +384,26 @@ impl ProbeTracker {
 
     fn trigger_persist(&self) {
         if let Some(ref tx) = self.persist_tx {
-            let store = self.store.read().clone();
-            if let Err(e) = tx.try_send(PersistRequest { entries: store }) {
+            let mut empty = HashMap::new();
+            {
+                let mut store = self.store.write();
+                std::mem::swap(&mut *store, &mut empty);
+            }
+            if let Err(e) = tx.try_send(PersistRequest { entries: empty }) {
                 if matches!(e, tokio::sync::mpsc::error::TrySendError::Closed(_)) {
                     tracing::warn!("Probe tracker persist channel closed");
                 }
             }
         } else if let Some(ref path) = self.persist_path {
-            let store = self.store.read().clone();
+            let mut empty = HashMap::new();
+            {
+                let mut store = self.store.write();
+                std::mem::swap(&mut *store, &mut empty);
+            }
             let path = path.clone();
             let max_records = self.config.max_records;
             tokio::spawn(async move {
-                Self::persist_to_disk(&path, store, max_records).await;
+                Self::persist_to_disk(&path, empty, max_records).await;
             });
         }
     }

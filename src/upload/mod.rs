@@ -1,6 +1,7 @@
 pub mod config;
 pub mod malware_scanner;
 pub mod sandbox;
+pub mod signature;
 pub mod yara_rule_feed;
 pub mod yara_scanner;
 
@@ -9,6 +10,7 @@ pub use config::{
 };
 pub use malware_scanner::MalwareMatch;
 pub use sandbox::{QuarantineEntry, Sandbox, SandboxConfig, SandboxError, SandboxHandle};
+pub use signature::{FileCategory, FileSignature, SignatureRegistry};
 pub use yara_rule_feed::{ParsedYaraRules, YaraRuleFeedManager, YaraRuleSource};
 pub use yara_scanner::{
     YaraError, YaraMatch, YaraRulesSource, YaraScanner, NO_EXCLUDED_CATEGORIES,
@@ -567,6 +569,149 @@ fn percent_decode(s: &str) -> String {
     }
     String::from_utf8(bytes.clone())
         .unwrap_or_else(|_| String::from_utf8_lossy(&bytes).into_owned())
+}
+
+pub struct MultipartPart {
+    pub filename: Option<String>,
+    pub content_type: Option<String>,
+    pub data: Vec<u8>,
+}
+
+pub fn parse_multipart(
+    body: &[u8],
+    content_type: &str,
+) -> Result<Vec<MultipartPart>, UploadValidationError> {
+    let boundary =
+        extract_multipart_boundary(content_type).ok_or(UploadValidationError::InvalidMultipart)?;
+
+    let delimiter = format!("--{}", boundary);
+    let delimiter_bytes = delimiter.as_bytes();
+    let end_delimiter = format!("--{}--", boundary);
+    let end_delimiter_bytes = end_delimiter.as_bytes();
+
+    let mut parts = Vec::new();
+    let mut current_part_data: Vec<u8> = Vec::new();
+    let mut in_part = false;
+    let mut part_headers: Vec<u8> = Vec::new();
+    let mut filename: Option<String> = None;
+    let mut content_type_header: Option<String> = None;
+
+    let body_parts = split_on_boundary(body, delimiter_bytes, end_delimiter_bytes);
+
+    for part in body_parts {
+        if part.is_empty() {
+            continue;
+        }
+
+        if part.starts_with(b"--")
+            && (part.starts_with(delimiter_bytes) || part.starts_with(end_delimiter_bytes))
+        {
+            if in_part && !current_part_data.is_empty() {
+                parts.push(MultipartPart {
+                    filename: filename.clone(),
+                    content_type: content_type_header.clone(),
+                    data: current_part_data,
+                });
+                current_part_data = Vec::new();
+            }
+            in_part = part.starts_with(delimiter_bytes) && !part.starts_with(end_delimiter_bytes);
+            if !in_part {
+                break;
+            }
+            filename = None;
+            content_type_header = None;
+            continue;
+        }
+
+        if in_part {
+            let header_end = part
+                .windows(2)
+                .position(|w| w == [b'\r', b'\n'] as &[u8])
+                .map(|p| p + 2);
+            let header_section = match header_end {
+                Some(pos) => &part[..pos],
+                None => &[],
+            };
+
+            if let Some(header_str) = std::str::from_utf8(header_section).ok() {
+                let header_lc = header_str.to_lowercase();
+                if header_lc.contains("content-disposition:") {
+                    if let Some(fname) = parse_content_disposition_filename(header_str) {
+                        filename = Some(fname);
+                    }
+                }
+                if header_lc.contains("content-type:") {
+                    for line in header_lc.lines() {
+                        if line.trim_start().starts_with("content-type:") {
+                            content_type_header =
+                                Some(line.split(':').nth(1).unwrap_or("").trim().to_string());
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if let Some(pos) = header_end {
+                current_part_data.extend_from_slice(&part[pos..]);
+            }
+        } else {
+            current_part_data.extend_from_slice(part);
+        }
+    }
+
+    Ok(parts)
+}
+
+fn split_on_boundary<'a>(body: &'a [u8], delimiter: &[u8], end_delimiter: &[u8]) -> Vec<&'a [u8]> {
+    let mut parts = Vec::new();
+    let mut start = 0;
+
+    let mut search_from = 0;
+    while let Some(pos) = find_bytes(&body[search_from..], delimiter) {
+        let actual_pos = search_from + pos;
+        if start < actual_pos {
+            parts.push(&body[start..actual_pos]);
+        }
+
+        let mut line_end = actual_pos + delimiter.len();
+        while line_end < body.len() && (body[line_end] == b'\r' || body[line_end] == b'\n') {
+            line_end += 1;
+        }
+        start = line_end;
+        search_from = start;
+
+        if body.len() >= actual_pos + delimiter.len() + 2
+            && &body[actual_pos + delimiter.len()..actual_pos + delimiter.len() + 2] == b"--"
+        {
+            break;
+        }
+    }
+
+    if start < body.len() {
+        parts.push(&body[start..]);
+    }
+
+    parts
+}
+
+fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() {
+        return Some(0);
+    }
+    haystack.windows(needle.len()).position(|w| w == needle)
+}
+
+fn extract_multipart_boundary(content_type: &str) -> Option<String> {
+    let parts: Vec<&str> = content_type.split(';').collect();
+    for part in parts {
+        let part = part.trim();
+        if part.to_lowercase().starts_with("boundary=") {
+            let boundary = &part["boundary=".len()..];
+            let boundary = boundary.trim_matches('"');
+            return Some(boundary.to_string());
+        }
+    }
+    None
 }
 
 #[cfg(test)]

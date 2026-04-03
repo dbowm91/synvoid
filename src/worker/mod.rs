@@ -518,8 +518,12 @@ pub async fn run_static_worker(
                     let ipc = crate::process::IpcStream::new(stream);
                     let state = socket_state.clone();
                     let counter = active_connections.clone();
-                    std::thread::spawn(move || {
-                        handle_minify_client_connection(ipc, state);
+                    tokio::spawn(async move {
+                        tokio::task::spawn_blocking(move || {
+                            handle_minify_client_connection(ipc, state);
+                        })
+                        .await
+                        .ok();
                         let _ = counter.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
                             v.checked_sub(1)
                         });
@@ -560,8 +564,12 @@ pub async fn run_static_worker(
                     let ipc = crate::process::IpcStream::new(stream);
                     let state = socket_state.clone();
                     let counter = active_connections.clone();
-                    std::thread::spawn(move || {
-                        handle_minify_client_connection(ipc, state);
+                    tokio::spawn(async move {
+                        tokio::task::spawn_blocking(move || {
+                            handle_minify_client_connection(ipc, state);
+                        })
+                        .await
+                        .ok();
                         let _ = counter.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
                             v.checked_sub(1)
                         });
@@ -896,9 +904,23 @@ fn handle_minify_client_connection(mut ipc: crate::process::IpcStream, state: St
                     site_id,
                     body,
                     last_modified,
+                    level,
+                    intensity,
+                    seed,
+                    max_dimension,
+                    jpeg_quality,
                 } => {
-                    let poisoned =
-                        image_poisoning::poison_image_sync(&state, &site_id, body, last_modified);
+                    let poisoned = image_poisoning::poison_image_sync(
+                        &state,
+                        &site_id,
+                        body,
+                        last_modified,
+                        level,
+                        intensity,
+                        seed,
+                        max_dimension,
+                        jpeg_quality,
+                    );
                     if let Err(e) = ipc.send(&crate::process::Message::PoisonImageResponse {
                         request_id,
                         poisoned_body: poisoned,

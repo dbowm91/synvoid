@@ -15,20 +15,24 @@ pub fn validate_peer_role(
     node_id: &str,
 ) -> Result<(), String> {
     if role.is_global() {
-        if let Some(expected) = global_node_key {
-            if let Some(provided) = peer_global_key {
-                if provided != expected {
-                    return Err(format!(
-                        "Global node key verification failed for {}: key mismatch",
-                        node_id
-                    ));
-                }
-            } else {
+        let expected_key = global_node_key.ok_or_else(|| {
+            format!(
+                "Cannot verify global node {}: local node has no global_node_key configured",
+                node_id
+            )
+        })?;
+        if let Some(provided) = peer_global_key {
+            if provided != expected_key {
                 return Err(format!(
-                    "Global node {} did not provide key verification",
+                    "Global node key verification failed for {}: key mismatch",
                     node_id
                 ));
             }
+        } else {
+            return Err(format!(
+                "Global node {} did not provide key verification",
+                node_id
+            ));
         }
     }
     Ok(())

@@ -2,6 +2,7 @@ use super::alerting::AlertManager;
 use super::ws::broadcaster::Broadcaster;
 use crate::config::ConfigManager;
 use crate::mesh::transport::MeshTransport;
+use crate::plugin::PluginManager;
 use crate::process::ProcessManager;
 use crate::process::SiteMetricsPayload;
 use crate::waf::{
@@ -14,6 +15,14 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::RwLock as TokioRwLock;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReloadEvent {
+    pub timestamp: String,
+    pub plugin_name: String,
+    pub success: bool,
+    pub error: Option<String>,
+}
 
 #[derive(Clone)]
 pub struct AdminRateLimiter {
@@ -111,6 +120,7 @@ pub struct WafTrackingState {
     pub upstream_error_tracker: Option<Arc<UpstreamErrorTracker>>,
     pub threat_level_manager: Option<Arc<ThreatLevelManager>>,
     pub rule_feed_manager: Option<Arc<RuleFeedManagerForWaf>>,
+    pub yara_rules: Option<Arc<crate::mesh::yara_rules::YaraRulesManager>>,
 }
 
 #[derive(Clone)]
@@ -139,6 +149,12 @@ pub struct ProcessState {
     pub config: Arc<TokioRwLock<ConfigManager>>,
     pub process_manager: Option<Arc<ProcessManager>>,
     pub alert_manager: Option<Arc<AlertManager>>,
+    pub plugin_manager: Option<Arc<PluginManager>>,
+}
+
+#[derive(Clone)]
+pub struct PluginsState {
+    pub reload_log: Arc<RwLock<VecDeque<ReloadEvent>>>,
 }
 
 #[derive(Clone)]
@@ -149,6 +165,7 @@ pub struct AdminState {
     pub mesh: MeshState,
     pub honeypot: HoneypotState,
     pub process: ProcessState,
+    pub plugins: PluginsState,
 }
 
 #[derive(Clone)]
@@ -217,6 +234,7 @@ impl AdminState {
                 upstream_error_tracker: None,
                 threat_level_manager: None,
                 rule_feed_manager: None,
+                yara_rules: None,
             },
             security: SecurityState {
                 admin_token,
@@ -237,6 +255,10 @@ impl AdminState {
                 config,
                 process_manager: None,
                 alert_manager: Some(Arc::new(AlertManager::new())),
+                plugin_manager: None,
+            },
+            plugins: PluginsState {
+                reload_log: Arc::new(RwLock::new(VecDeque::new())),
             },
         }
     }
@@ -277,8 +299,21 @@ impl AdminState {
         self
     }
 
+    pub fn with_yara_rules(
+        mut self,
+        manager: Option<Arc<crate::mesh::yara_rules::YaraRulesManager>>,
+    ) -> Self {
+        self.waf_tracking.yara_rules = manager;
+        self
+    }
+
     pub fn with_process_manager(mut self, manager: Option<Arc<ProcessManager>>) -> Self {
         self.process.process_manager = manager;
+        self
+    }
+
+    pub fn with_plugin_manager(mut self, manager: Option<Arc<PluginManager>>) -> Self {
+        self.process.plugin_manager = manager;
         self
     }
 

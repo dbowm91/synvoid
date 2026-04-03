@@ -23,7 +23,7 @@ impl Default for WasmPluginGlobalConfig {
     fn default() -> Self {
         Self {
             max_memory_mb: 64,
-            max_cpu_fuel: 0,
+            max_cpu_fuel: 1_000_000,
             timeout_seconds: 30,
             plugins: Vec::new(),
         }
@@ -40,13 +40,17 @@ pub struct WasmPluginInstanceConfig {
     pub max_cpu_fuel: Option<u64>,
     #[serde(default)]
     pub timeout_seconds: Option<u64>,
+    #[serde(default)]
+    pub priority: Option<i32>,
+    #[serde(default)]
+    pub on_error: Option<super::site::WasmOnError>,
 }
 
 fn default_max_memory_mb() -> usize {
     64
 }
 fn default_max_cpu_fuel() -> u64 {
-    0
+    1_000_000
 }
 fn default_timeout_seconds() -> u64 {
     30

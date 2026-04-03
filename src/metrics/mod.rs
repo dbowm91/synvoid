@@ -33,6 +33,9 @@ static DROPPED_THREAT_LEVEL_EVENTS: LazyLock<AtomicU64> = LazyLock::new(|| Atomi
 static DROPPED_PROCESS_EVENTS: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 static DROPPED_WORKER_EVENTS: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 
+static HONEYPOT_INDICATORS_PUBLISHED: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+static HONEYPOT_RECORDS_PROCESSED: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+
 #[derive(Debug, Clone)]
 pub struct CacheMetrics {
     pub proxy_cache_hits: u64,
@@ -123,6 +126,22 @@ pub fn record_dropped_worker_event() {
 
 pub fn get_dropped_worker_events() -> u64 {
     DROPPED_WORKER_EVENTS.load(Ordering::Relaxed)
+}
+
+pub fn record_honeypot_indicators_published(count: u64) {
+    HONEYPOT_INDICATORS_PUBLISHED.fetch_add(count, Ordering::Relaxed);
+}
+
+pub fn get_honeypot_indicators_published() -> u64 {
+    HONEYPOT_INDICATORS_PUBLISHED.load(Ordering::Relaxed)
+}
+
+pub fn record_honeypot_records_processed(count: u64) {
+    HONEYPOT_RECORDS_PROCESSED.fetch_add(count, Ordering::Relaxed);
+}
+
+pub fn get_honeypot_records_processed() -> u64 {
+    HONEYPOT_RECORDS_PROCESSED.load(Ordering::Relaxed)
 }
 
 pub fn total_dropped_events() -> u64 {

@@ -1,6 +1,9 @@
+use std::collections::HashSet;
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::Instant;
+
+use parking_lot::Mutex;
 
 use crate::utils::ip_to_slot;
 use crate::utils::ratelimit::{
@@ -388,7 +391,7 @@ impl Default for IpRateLimitConfig {
     }
 }
 
-pub const IP_RATE_LIMIT_SLOTS: usize = 65536;
+pub const IP_RATE_LIMIT_SLOTS: usize = 262144;
 
 pub struct SlottedIpRateLimiter {
     second_counters: Box<[AtomicU32; IP_RATE_LIMIT_SLOTS]>,
@@ -402,6 +405,8 @@ pub struct SlottedIpRateLimiter {
     current_five_min: AtomicU64,
 
     start_instant: Instant,
+
+    dirty_slots: Mutex<HashSet<usize>>,
 }
 
 impl SlottedIpRateLimiter {
@@ -415,6 +420,7 @@ impl SlottedIpRateLimiter {
             current_minute: AtomicU64::new(0),
             current_five_min: AtomicU64::new(0),
             start_instant: Instant::now(),
+            dirty_slots: Mutex::new(HashSet::new()),
         }
     }
 
@@ -423,6 +429,8 @@ impl SlottedIpRateLimiter {
         let now_secs = self.start_instant.elapsed().as_secs();
 
         self.rotate_windows(now_secs);
+
+        self.dirty_slots.lock().insert(slot);
 
         let second_count = self.second_counters[slot].fetch_add(1, Ordering::Relaxed) + 1;
         if second_count > self.config.per_second {
@@ -496,7 +504,12 @@ impl SlottedIpRateLimiter {
     }
 
     pub fn decay_all(&self, factor: u32) {
-        for i in 0..IP_RATE_LIMIT_SLOTS {
+        let slots: Vec<usize> = {
+            let mut dirty = self.dirty_slots.lock();
+            let slots: Vec<usize> = dirty.drain().collect();
+            slots
+        };
+        for i in slots {
             let second = self.second_counters[i].load(Ordering::Relaxed);
             let minute = self.minute_counters[i].load(Ordering::Relaxed);
             let five_min = self.five_min_counters[i].load(Ordering::Relaxed);

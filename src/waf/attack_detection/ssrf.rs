@@ -57,7 +57,9 @@ impl SsrfDetector {
             } else if s.chars().all(|c| c.is_ascii_digit()) {
                 return Self::parse_ipv4_decimal(s);
             } else if s.chars().all(|c| c.is_ascii_digit() || c == '.') {
-                return Self::parse_ipv4_octal(s);
+                if let Some(result) = Self::parse_ipv4_octal(s) {
+                    return Some(result);
+                }
             }
         }
 
@@ -93,7 +95,7 @@ impl SsrfDetector {
                 return None;
             }
             if part.len() > 1 && part.starts_with('0') {
-                let octal: u32 = part.parse().ok()?;
+                let octal: u32 = u32::from_str_radix(part, 8).ok()?;
                 if octal > 255 {
                     return None;
                 }
@@ -517,19 +519,19 @@ mod tests {
     }
 
     #[test]
-    fn test_ssrf_octal_ip_bypass_not_detected() {
+    fn test_ssrf_octal_ip_detected() {
         let detector = SsrfDetector::new(2, &[], true, vec![]);
         assert!(detector
             .detect("http://0177.0.0.1/admin", InputLocation::QueryString)
-            .is_none());
+            .is_some());
     }
 
     #[test]
-    fn test_ssrf_decimal_ip_bypass_not_detected() {
+    fn test_ssrf_decimal_ip_detected() {
         let detector = SsrfDetector::new(2, &[], true, vec![]);
         assert!(detector
             .detect("http://2130706433/admin", InputLocation::QueryString)
-            .is_none());
+            .is_some());
     }
 
     #[test]

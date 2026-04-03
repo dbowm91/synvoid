@@ -13,6 +13,7 @@ use dashmap::DashMap;
 use http::{header, Method, Request, Response, Uri};
 use http_body_util::BodyExt;
 use http_body_util::Full;
+use http_body_util::Limited;
 use hyper::body::Incoming;
 use hyper_rustls::HttpsConnector;
 use hyper_util::client::legacy::{connect::HttpConnector, Client};
@@ -468,7 +469,7 @@ pub async fn send_unix_request_with_body(
         client.request(req).await?
     };
 
-    Ok(HttpResponse::from_hyper(response).await)
+    Ok(HttpResponse::from_hyper(response, None).await)
 }
 
 pub async fn send_request(client: &HttpClient, method: Method, url: &str) -> Result<HttpResponse> {
@@ -511,7 +512,7 @@ pub async fn send_request_with_timeout_and_headers(
         client.request(req).await?
     };
 
-    Ok(HttpResponse::from_hyper(response).await)
+    Ok(HttpResponse::from_hyper(response, None).await)
 }
 
 pub async fn send_request_with_body_and_timeout(
@@ -520,6 +521,17 @@ pub async fn send_request_with_body_and_timeout(
     url: &str,
     body: Option<Bytes>,
     timeout: Option<Duration>,
+) -> Result<HttpResponse> {
+    send_request_with_body_and_timeout_with_limit(client, method, url, body, timeout, None).await
+}
+
+pub async fn send_request_with_body_and_timeout_with_limit(
+    client: &HttpClient,
+    method: Method,
+    url: &str,
+    body: Option<Bytes>,
+    timeout: Option<Duration>,
+    max_response_size: Option<usize>,
 ) -> Result<HttpResponse> {
     let uri: Uri = url.parse()?;
     let body = Full::new(body.unwrap_or_default());
@@ -535,7 +547,38 @@ pub async fn send_request_with_body_and_timeout(
         client.request(req).await?
     };
 
-    Ok(HttpResponse::from_hyper(response).await)
+    Ok(HttpResponse::from_hyper(response, max_response_size).await)
+}
+
+pub async fn send_request_with_body_headers_and_timeout(
+    client: &HttpClient,
+    method: Method,
+    url: &str,
+    body: Option<Bytes>,
+    headers: http::HeaderMap,
+    timeout: Option<Duration>,
+) -> Result<HttpResponse> {
+    let uri: Uri = url.parse()?;
+    let body = Full::new(body.unwrap_or_default());
+    let mut req_builder = Request::builder()
+        .method(method)
+        .uri(uri)
+        .body(body)
+        .map_err(|e| anyhow::anyhow!("Failed to build request: {}", e))?;
+    *req_builder.headers_mut() = headers;
+    let req = req_builder;
+
+    let response = if let Some(t) = timeout {
+        match tokio::time::timeout(t, client.request(req)).await {
+            Ok(Ok(resp)) => resp,
+            Ok(Err(e)) => return Err(e.into()),
+            Err(_) => return Err(anyhow::anyhow!("request timed out")),
+        }
+    } else {
+        client.request(req).await?
+    };
+
+    Ok(HttpResponse::from_hyper(response, None).await)
 }
 
 pub struct HttpResponse {
@@ -545,15 +588,29 @@ pub struct HttpResponse {
 }
 
 impl HttpResponse {
-    pub async fn from_hyper(response: Response<Incoming>) -> Self {
+    pub async fn from_hyper(response: Response<Incoming>, max_size: Option<usize>) -> Self {
         let status = response.status();
         let headers = response.headers().clone();
 
-        let body = response
-            .collect()
-            .await
-            .map(|collected| collected.to_bytes())
-            .unwrap_or_default();
+        let body = if let Some(limit) = max_size {
+            let limited_body = Limited::new(response.into_body(), limit);
+            match limited_body.collect().await {
+                Ok(collected) => collected.to_bytes(),
+                Err(_) => {
+                    return Self {
+                        status,
+                        headers,
+                        body: Bytes::new(),
+                    }
+                }
+            }
+        } else {
+            response
+                .collect()
+                .await
+                .map(|collected| collected.to_bytes())
+                .unwrap_or_default()
+        };
 
         Self {
             status,
@@ -796,7 +853,7 @@ pub async fn post_json<T: Serialize>(
 
     let response = client.request(req).await.map_err(|e| e.to_string())?;
 
-    Ok(HttpResponse::from_hyper(response).await)
+    Ok(HttpResponse::from_hyper(response, None).await)
 }
 
 pub async fn post_json_with_timeout<T: Serialize>(
@@ -823,7 +880,7 @@ pub async fn post_json_with_timeout<T: Serialize>(
         Err(_) => return Err("request timed out".to_string()),
     };
 
-    Ok(HttpResponse::from_hyper(response).await)
+    Ok(HttpResponse::from_hyper(response, None).await)
 }
 
 pub async fn post_json_response<T: Serialize, R: DeserializeOwned>(
@@ -880,7 +937,7 @@ pub async fn get_with_auth(
         Err(_) => return Err("request timed out".to_string()),
     };
 
-    Ok(HttpResponse::from_hyper(response).await)
+    Ok(HttpResponse::from_hyper(response, None).await)
 }
 
 pub async fn head_with_auth(
@@ -912,5 +969,5 @@ pub async fn head_with_auth(
         Err(_) => return Err("request timed out".to_string()),
     };
 
-    Ok(HttpResponse::from_hyper(response).await)
+    Ok(HttpResponse::from_hyper(response, None).await)
 }

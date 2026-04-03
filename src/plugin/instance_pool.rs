@@ -2,23 +2,31 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
-use wasmtime::{Engine, Instance, Linker, Module, Store};
+use wasmtime::{Engine, Instance, Linker, Memory, Module, Store, TypedFunc};
 
 use crate::plugin::wasm_runtime::RequestContext;
 
-#[allow(dead_code)]
 pub struct WasmInstancePool {
     pool: Arc<Mutex<Vec<WasmPooledInstance>>>,
     engine: Arc<Engine>,
     max_size: usize,
 }
 
-#[allow(dead_code)]
 pub(crate) struct WasmPooledInstance {
-    instance: Instance,
-    store: Store<RequestContext>,
-    filter_name: String,
-    max_cpu_fuel: u64,
+    pub(crate) instance: Instance,
+    pub(crate) store: Store<RequestContext>,
+    pub(crate) filter_name: String,
+    pub(crate) max_cpu_fuel: u64,
+}
+
+pub(crate) struct PooledExports {
+    pub(crate) filter_request: Option<TypedFunc<(i32, i32, i32, i32, i32, i32, i32, i32), i32>>,
+    pub(crate) transform_response: Option<TypedFunc<(i32, i32, i32, i32, i32), i32>>,
+    pub(crate) handle_request:
+        Option<TypedFunc<(i32, i32, i32, i32, i32, i32, i32, i32, i32, i32, i32), i32>>,
+    pub(crate) guest_alloc: Option<TypedFunc<i32, i32>>,
+    pub(crate) guest_free: Option<TypedFunc<(i32, i32), ()>>,
+    pub(crate) memory: Option<Memory>,
 }
 
 impl WasmInstancePool {
@@ -30,24 +38,52 @@ impl WasmInstancePool {
         }
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn get(&self, filter_name: &str, _module: &Module) -> Option<WasmPooledInstance> {
+    pub(crate) fn get(&self, filter_name: &str) -> Option<WasmPooledInstance> {
         let mut pool = self.pool.lock();
-        pool.pop().map(|mut inst| {
-            inst.filter_name = filter_name.to_string();
-            inst.store.data_mut().start = Instant::now();
-            if inst.max_cpu_fuel > 0 {
-                inst.store.set_fuel(inst.max_cpu_fuel).ok();
-            }
-            inst
-        })
+        let pos = pool
+            .iter()
+            .position(|inst| inst.filter_name == filter_name)?;
+        let inst = pool.remove(pos);
+        Some(inst)
     }
 
-    #[allow(dead_code)]
     pub(crate) fn return_instance(&self, instance: WasmPooledInstance) {
         let mut pool = self.pool.lock();
         if pool.len() < self.max_size {
             pool.push(instance);
+        }
+    }
+
+    pub(crate) fn resolve_exports_from_instance(
+        instance: &Instance,
+        store: &mut Store<RequestContext>,
+    ) -> PooledExports {
+        let filter_request = instance
+            .get_func(&mut *store, "filter_request")
+            .and_then(|f| f.typed(&mut *store).ok());
+        let transform_response = instance
+            .get_func(&mut *store, "transform_response")
+            .and_then(|f| f.typed(&mut *store).ok());
+        let handle_request = instance
+            .get_func(&mut *store, "handle_request")
+            .and_then(|f| f.typed(&mut *store).ok());
+        let guest_alloc = instance
+            .get_func(&mut *store, "guest_alloc")
+            .and_then(|f| f.typed(&mut *store).ok());
+        let guest_free = instance
+            .get_func(&mut *store, "guest_free")
+            .and_then(|f| f.typed(&mut *store).ok());
+        let memory = instance
+            .get_export(&mut *store, "memory")
+            .and_then(|ext| ext.into_memory());
+
+        PooledExports {
+            filter_request,
+            transform_response,
+            handle_request,
+            guest_alloc,
+            guest_free,
+            memory,
         }
     }
 
@@ -60,6 +96,7 @@ impl WasmInstancePool {
                 RequestContext {
                     start: Instant::now(),
                     timeout: Duration::from_secs(30),
+                    env: std::collections::HashMap::new(),
                 },
             );
 
@@ -113,6 +150,21 @@ impl WasmInstancePool {
                 count,
                 pool.len()
             );
+        }
+    }
+}
+
+impl WasmPooledInstance {
+    pub(crate) fn prepare_for_request(
+        &mut self,
+        env: std::collections::HashMap<String, String>,
+        timeout_seconds: u64,
+    ) {
+        self.store.data_mut().start = Instant::now();
+        self.store.data_mut().timeout = Duration::from_secs(timeout_seconds);
+        self.store.data_mut().env = env;
+        if self.max_cpu_fuel > 0 {
+            self.store.set_fuel(self.max_cpu_fuel).ok();
         }
     }
 }

@@ -3,7 +3,7 @@ use super::*;
 impl MeshConfig {
     pub fn with_defaults_if_enabled(mut self) -> Self {
         if self.enabled {
-            if self.seeds.is_empty() && self.role == MeshNodeRole::Edge {
+            if self.seeds.is_empty() && self.role.is_edge() && !self.role.is_global() {
                 self.seeds = config_defaults::default_global_seeds();
             }
             if self.connection.min_peer_connections == 0 {

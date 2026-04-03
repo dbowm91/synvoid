@@ -579,8 +579,6 @@ pub struct HoneypotPortConfig {
     pub enabled: bool,
     #[serde(default = "default_honeypot_ports")]
     pub ports: Vec<u16>,
-    #[serde(default)]
-    pub standalone_mode: bool,
 }
 
 impl Default for HoneypotPortConfig {
@@ -588,7 +586,6 @@ impl Default for HoneypotPortConfig {
         Self {
             enabled: false,
             ports: default_honeypot_ports(),
-            standalone_mode: false,
         }
     }
 }

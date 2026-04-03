@@ -3,7 +3,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use parking_lot::RwLock;
-use tokio::sync::mpsc;
 
 use crate::config::serverless::FunctionDefinition;
 
@@ -78,25 +77,6 @@ pub struct InstancePool {
     idle_instances: RwLock<Vec<Arc<ServerlessInstance>>>,
     last_scale_up: RwLock<Instant>,
     last_scale_down: RwLock<Instant>,
-    #[allow(dead_code)]
-    request_queue: mpsc::Sender<InstanceRequest>,
-}
-
-#[derive(Debug, Clone)]
-pub enum InstanceRequest {
-    GetInstance {
-        function_name: String,
-        response_tx: mpsc::Sender<Arc<ServerlessInstance>>,
-    },
-    ReturnInstance {
-        instance_id: String,
-    },
-    ScaleUp {
-        count: usize,
-    },
-    ScaleDown {
-        count: usize,
-    },
 }
 
 impl ServerlessInstance {
@@ -151,7 +131,6 @@ impl ServerlessInstance {
 
 impl InstancePool {
     pub fn new(config: InstancePoolConfig, function_definition: FunctionDefinition) -> Self {
-        let (request_queue, _) = mpsc::channel(100);
         Self {
             config,
             function_definition,
@@ -160,7 +139,6 @@ impl InstancePool {
             idle_instances: RwLock::new(Vec::new()),
             last_scale_up: RwLock::new(Instant::now()),
             last_scale_down: RwLock::new(Instant::now()),
-            request_queue,
         }
     }
 

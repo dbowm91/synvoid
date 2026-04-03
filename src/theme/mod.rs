@@ -8,5 +8,6 @@ pub use config::{
 };
 pub use renderer::ThemeRenderer;
 pub use template::{
-    CaptchaPageTemplate, ChallengePageTemplate, ErrorPageTemplate, LoginPageTemplate,
+    CaptchaPageTemplate, ChallengePageTemplate, DirectoryEntry, DirectoryListingTemplate,
+    ErrorPageTemplate, LoginPageTemplate,
 };

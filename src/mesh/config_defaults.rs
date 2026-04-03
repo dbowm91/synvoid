@@ -57,6 +57,7 @@ impl Default for MeshConfig {
             can_serve_origin_direct: true,
             disable_direct_origin: false,
             capabilities_enabled: true,
+            require_tier_claim: false,
             stake: None,
             cached_pow: Arc::new(RwLock::new(None)),
             mlkem: Some(MeshMlKemConfig::default()),

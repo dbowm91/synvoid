@@ -228,6 +228,7 @@ pub enum MeshMessage {
         node_id: ArcStr,
         role: MeshNodeRole,
         session_id: ArcStr,
+        capabilities: MeshCapabilities,
         upstreams: HashMap<String, UpstreamInfo>,
         auth_token: Option<ArcStr>,
         network_id: Option<ArcStr>,
@@ -922,6 +923,30 @@ pub enum MeshMessage {
         serial: u64,
         timestamp: u64,
     },
+    WasmModuleAnnounce {
+        request_id: ArcStr,
+        module_name: ArcStr,
+        module_type: WasmModuleType,
+        version: u64,
+        size_bytes: u64,
+        checksum: ArcStr,
+        timestamp: u64,
+        source_node_id: ArcStr,
+        signature: Vec<u8>,
+        signer_public_key: Option<ArcStr>,
+    },
+    WasmModuleSyncRequest {
+        request_id: ArcStr,
+        node_id: ArcStr,
+        module_names: Vec<ArcStr>,
+        timestamp: u64,
+    },
+    WasmModuleSyncResponse {
+        request_id: ArcStr,
+        node_id: ArcStr,
+        modules: Vec<WasmModuleInfo>,
+        timestamp: u64,
+    },
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -938,9 +963,36 @@ pub enum SignatureError {
 pub struct MeshCapabilities {
     pub can_route: bool,
     pub can_proxy: bool,
+    pub can_serve_dns: bool,
+    pub is_global: bool,
+    pub waf_enabled: bool,
     pub max_hops: u8,
     pub supported_services: Vec<String>,
     pub preferred_transport: Option<MeshTransportType>,
+    pub supported_protocols: Vec<String>,
+}
+
+impl MeshCapabilities {
+    pub fn from_config(config: &crate::mesh::config::MeshConfig, role: MeshNodeRole) -> Self {
+        use crate::mesh::transports::MeshTransportType;
+
+        let preferred = match config.transport_preference {
+            crate::mesh::config::MeshTransportPreference::WireGuard => MeshTransportType::WireGuard,
+            crate::mesh::config::MeshTransportPreference::Quic => MeshTransportType::Quic,
+        };
+
+        Self {
+            can_route: config.routing.enabled,
+            can_proxy: !config.disable_direct_origin,
+            can_serve_dns: config.dht.is_some() && role.is_global(),
+            is_global: role.is_global(),
+            waf_enabled: true,
+            max_hops: config.routing.max_hops,
+            supported_services: vec![],
+            preferred_transport: Some(preferred),
+            supported_protocols: vec!["http/1.1".to_string(), "h2".to_string(), "h3".to_string()],
+        }
+    }
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -1132,6 +1184,7 @@ pub struct DhtRecord {
     pub key: String,
     pub value: Vec<u8>,
     pub timestamp: u64,
+    pub sequence_number: u64,
     pub ttl_seconds: u64,
     pub source_node_id: String,
     pub signature: Vec<u8>,
@@ -1202,6 +1255,22 @@ pub enum AckStatus {
     NotFound,
     RateLimited,
     InternalError,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum WasmModuleType {
+    Plugin = 0,
+    Serverless = 1,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct WasmModuleInfo {
+    pub module_name: String,
+    pub module_type: WasmModuleType,
+    pub version: u64,
+    pub size_bytes: u64,
+    pub checksum: String,
+    pub data: Vec<u8>,
 }
 
 #[path = "protocol_message.rs"]

@@ -160,6 +160,10 @@ pub async fn run_unified_server_worker(
     let ipc_for_server = ipc.clone();
     let worker_id_for_server = worker_id;
 
+    // App servers (Granian supervisors) - initialized before UnifiedServer
+    let app_servers = Arc::new(RwLock::new(HashMap::new()));
+    let app_servers_init = app_servers.clone();
+
     // Initialize serverless manager if configured
     let serverless_manager = {
         let config = shared_config.read().await;
@@ -181,7 +185,7 @@ pub async fn run_unified_server_worker(
         }
     };
 
-    let unified_server = UnifiedServer::new(shared_config.clone(), None)
+    let unified_server = UnifiedServer::new(shared_config.clone(), None, app_servers.clone())
         .await?
         .with_drain_state(drain_state.clone())
         .with_metrics(metrics.clone())
@@ -193,6 +197,44 @@ pub async fn run_unified_server_worker(
 
     // Wrap in Arc immediately for easier sharing
     let unified_server: Arc<UnifiedServer> = Arc::new(unified_server);
+
+    // Initialize Granian supervisors for AppServer backends
+    let app_servers_for_init = app_servers_init.clone();
+    let worker_id_for_app = worker_id;
+    let config_for_app = shared_config.clone();
+    tokio::spawn(async move {
+        let config = config_for_app.read().await;
+
+        for (site_id, site_config) in config.sites.iter() {
+            let app_config = site_config.app_server_config();
+            if !app_config.is_valid() {
+                continue;
+            }
+
+            let mut granian_config = GranianConfig::from(&app_config);
+            granian_config = granian_config.with_site_info(site_id, worker_id_for_app);
+
+            tracing::info!(
+                "Initializing granian for site {} on unified server worker with socket: {}",
+                site_id,
+                granian_config.resolve_socket_path().display()
+            );
+
+            let supervisor = Arc::new(GranianSupervisor::new(granian_config));
+
+            if let Err(e) = supervisor.start().await {
+                tracing::error!("Failed to start granian for site {}: {}", site_id, e);
+                continue;
+            }
+
+            app_servers_for_init
+                .write()
+                .await
+                .insert(site_id.clone(), supervisor);
+        }
+    });
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
 
     // Start background tasks for WAF components (ASN cleanup, etc.)
     unified_server.get_waf().start_background_tasks();
@@ -262,6 +304,7 @@ pub async fn run_unified_server_worker(
                     .max()
                     .unwrap_or(60000),
                 num_honeypot_ports: honeypot_port_config.ports.len(),
+                site_scope: "global".to_string(),
                 ..Default::default()
             };
 
@@ -573,7 +616,7 @@ pub async fn run_unified_server_worker(
                         while let Some(msg) = mesh_broadcast_rx.recv().await {
                             let transport = mesh_transport.clone();
                             tokio::spawn(async move {
-                                transport.broadcast_to_random_peers(msg, 0.5, None).await;
+                                transport.broadcast_to_all_peers(msg, None).await;
                             });
                         }
                     });
@@ -676,11 +719,7 @@ pub async fn run_unified_server_worker(
                             let mut ticker = tokio::time::interval(sync_interval);
                             loop {
                                 ticker.tick().await;
-                                if let Some(msg) = sync_manager.request_sync_from_global() {
-                                    tracing::debug!("YARA periodic sync triggered");
-                                    // The message will be sent via mesh gossip
-                                    drop(msg);
-                                }
+                                sync_manager.send_sync_request_to_global();
                                 sync_manager.record_sync();
                             }
                         });
@@ -739,6 +778,18 @@ pub async fn run_unified_server_worker(
             None::<Arc<crate::mesh::protocol::MeshMessageSigner>>,
         )
     };
+
+    // Wire up port honeypot threat publishing to mesh network
+    // Only start if honeypot is enabled AND we have a real threat_intel manager (not dummy)
+    if let Some(ref runner) = port_honeypot_runner {
+        if let Some(ref threat_intel) = _threat_intel_manager {
+            runner.start_mesh_threat_publishing(
+                threat_intel.clone(),
+                30, // publish every 30 seconds
+            );
+            tracing::info!("Port honeypot threat publishing wired to mesh network");
+        }
+    }
 
     // Register this worker with Master for threat intelligence coordination
     // The Master orchestrates what intelligence is shared globally

@@ -401,6 +401,11 @@ pub enum Message {
         site_id: String,
         body: Vec<u8>,
         last_modified: Option<String>,
+        level: Option<String>,
+        intensity: Option<f32>,
+        seed: Option<u64>,
+        max_dimension: Option<u32>,
+        jpeg_quality: Option<u8>,
     },
     PoisonImageResponse {
         request_id: u64,

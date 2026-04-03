@@ -2,11 +2,13 @@ use bytes::Bytes;
 use dashmap::DashMap;
 use futures::{SinkExt, StreamExt};
 use http::Response;
+use http_body_util::combinators::BoxBody;
 use http_body_util::BodyExt;
 use http_body_util::Full;
 use hyper_util::rt::TokioIo;
 use metrics::counter;
 use std::collections::HashMap;
+use std::convert::Infallible;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock};
@@ -57,6 +59,7 @@ use crate::waf::{FloodDecision, FloodProtector, WafCore};
 use crate::worker::drain_state::WorkerDrainState;
 use crate::RunningFlag;
 use parking_lot::Mutex;
+use tokio::sync::RwLock;
 
 static REQUEST_LOG_RATE_LIMITER: AtomicU32 = AtomicU32::new(0);
 static REQUEST_LOG_RATE_LIMITER_RESET: AtomicU64 = AtomicU64::new(0);
@@ -131,6 +134,7 @@ pub struct HttpServer {
     worker_id: Option<crate::process::ipc::WorkerId>,
     serverless_manager: Option<Arc<crate::serverless::manager::ServerlessManager>>,
     connection_limit: Arc<Semaphore>,
+    app_servers: Option<Arc<RwLock<HashMap<String, Arc<crate::app_server::GranianSupervisor>>>>>,
 }
 
 impl HttpServer {
@@ -168,6 +172,7 @@ impl HttpServer {
             worker_id: None,
             serverless_manager: None,
             connection_limit: Arc::new(Semaphore::new(max_connections)),
+            app_servers: None,
         }
     }
 
@@ -219,6 +224,16 @@ impl HttpServer {
         self
     }
 
+    pub fn with_app_servers(
+        mut self,
+        app_servers: Option<
+            Arc<RwLock<HashMap<String, Arc<crate::app_server::GranianSupervisor>>>>,
+        >,
+    ) -> Self {
+        self.app_servers = app_servers;
+        self
+    }
+
     pub async fn serve(mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let listener = TcpListener::bind(self.addr).await?;
         tracing::info!("HTTP server listening on {} (HTTP/1.1 + HTTP/2)", self.addr);
@@ -237,6 +252,7 @@ impl HttpServer {
         let worker_id = self.worker_id;
         let serverless_manager = self.serverless_manager.clone();
         let connection_limit = self.connection_limit.clone();
+        let app_servers = self.app_servers.clone();
 
         let header_read_timeout = Duration::from_secs(self.http_config.header_read_timeout_secs);
         let max_headers = self.http_config.max_headers;
@@ -282,6 +298,7 @@ impl HttpServer {
                             let ipc = self.ipc.clone();
                             let serverless_manager = serverless_manager.clone();
                             let connection_limit = connection_limit.clone();
+                            let app_servers = app_servers.clone();
 
                             let http_conn = Arc::new(HttpConnection::new(stream));
                             let http_conn_clone = http_conn.clone();
@@ -315,8 +332,9 @@ impl HttpServer {
                                     let worker_id_for_request = worker_id;
                                     let serverless_manager = serverless_manager.clone();
                                     let connection_limit = connection_limit.clone();
+                                    let app_servers = app_servers.clone();
                                     async move {
-                                        Self::handle_request(req, client_addr, local_addr, router, waf, client, alt_svc, main_config, drain_state, http_config, mesh_config, mesh_transport, metrics, http_conn, ipc_for_request, worker_id_for_request, serverless_manager, connection_limit).await
+                                        Self::handle_request(req, client_addr, local_addr, router, waf, client, alt_svc, main_config, drain_state, http_config, mesh_config, mesh_transport, metrics, http_conn, ipc_for_request, worker_id_for_request, serverless_manager, connection_limit, app_servers).await
                                     }
                                 }))
                                 .with_upgrades();
@@ -364,7 +382,10 @@ impl HttpServer {
         worker_id: Option<crate::process::ipc::WorkerId>,
         serverless_manager: Option<Arc<crate::serverless::manager::ServerlessManager>>,
         connection_limit: Arc<Semaphore>,
-    ) -> Result<Response<Full<Bytes>>, hyper::Error> {
+        app_servers: Option<
+            Arc<RwLock<HashMap<String, Arc<crate::app_server::GranianSupervisor>>>>,
+        >,
+    ) -> Result<Response<BoxBody<Bytes, Infallible>>, hyper::Error> {
         let _permit = match connection_limit.clone().acquire_owned().await {
             Ok(p) => p,
             Err(_) => {
@@ -535,23 +556,20 @@ impl HttpServer {
 
         let mut request_body_size: u64 = 0;
         const MAX_WAF_BODY_SIZE: usize = 1024 * 1024; // 1MB limit for WAF inspection
-        let body_bytes: Bytes = match body.collect().await {
-            Ok(collected) => {
-                let bytes = collected.to_bytes();
-                request_body_size = bytes.len() as u64;
-                if bytes.len() > MAX_WAF_BODY_SIZE {
-                    bytes.slice(..MAX_WAF_BODY_SIZE)
-                } else {
-                    bytes
-                }
-            }
+        let full_body: Bytes = match body.collect().await {
+            Ok(collected) => collected.to_bytes(),
             Err(_) => Bytes::new(),
         };
-        let body_slice: Option<&[u8]> = if body_bytes.is_empty() {
+        request_body_size = full_body.len() as u64;
+        // Create TRUNCATED slice for WAF inspection only
+        let body_slice: Option<Bytes> = if full_body.is_empty() {
             None
+        } else if full_body.len() > MAX_WAF_BODY_SIZE {
+            Some(full_body.slice(..MAX_WAF_BODY_SIZE))
         } else {
-            Some(&body_bytes)
+            Some(full_body.clone())
         };
+        let body_slice_ref: Option<&[u8]> = body_slice.as_deref();
         if let Some(ref m) = metrics {
             if let Some(content_length) = parts.headers.get("content-length") {
                 if let Ok(len_str) = content_length.to_str() {
@@ -636,8 +654,10 @@ impl HttpServer {
                         user_agent.clone(),
                         true,
                     );
-                    let mut resp = Response::new(Full::new(Bytes::new()));
-                    *resp.status_mut() = http::StatusCode::NO_CONTENT;
+                    let mut resp = Response::builder()
+                        .status(http::StatusCode::NO_CONTENT)
+                        .body(Full::new(Bytes::new()).boxed())
+                        .unwrap();
                     resp.headers_mut().insert(
                         http::header::CONNECTION,
                         http::HeaderValue::from_static("close"),
@@ -701,8 +721,10 @@ impl HttpServer {
                         user_agent.clone(),
                         true,
                     );
-                    let mut resp = Response::new(Full::new(Bytes::new()));
-                    *resp.status_mut() = http::StatusCode::NO_CONTENT;
+                    let mut resp = Response::builder()
+                        .status(http::StatusCode::NO_CONTENT)
+                        .body(Full::new(Bytes::new()).boxed())
+                        .unwrap();
                     resp.headers_mut().insert(
                         http::header::CONNECTION,
                         http::HeaderValue::from_static("close"),
@@ -727,13 +749,20 @@ impl HttpServer {
                         .status(http::StatusCode::FOUND)
                         .header(http::header::LOCATION, "/")
                         .header(http::header::SET_COOKIE, cookie)
-                        .body(Full::new(Bytes::new()))
-                        .unwrap_or_else(|_| Response::new(Full::new(Bytes::new())));
+                        .body(Full::new(Bytes::new()).boxed())
+                        .unwrap_or_else(|_| {
+                            Response::builder()
+                                .status(http::StatusCode::FOUND)
+                                .body(Full::new(Bytes::new()).boxed())
+                                .unwrap()
+                        });
                     return Ok(response);
                 }
                 crate::challenge::CssAssetAction::DropConnection => {
-                    let mut resp = Response::new(Full::new(Bytes::new()));
-                    *resp.status_mut() = http::StatusCode::NO_CONTENT;
+                    let mut resp = Response::builder()
+                        .status(http::StatusCode::NO_CONTENT)
+                        .body(Full::new(Bytes::new()).boxed())
+                        .unwrap();
                     resp.headers_mut().insert(
                         http::header::CONNECTION,
                         http::HeaderValue::from_static("close"),
@@ -816,7 +845,7 @@ impl HttpServer {
                 &path,
                 query_string,
                 &parts.headers,
-                body_slice,
+                body_slice_ref,
                 user_agent.as_deref(),
             )
             .await;
@@ -840,7 +869,10 @@ impl HttpServer {
                     user_agent.clone(),
                     false,
                 );
-                let resp = Response::new(Full::new(Bytes::new()));
+                let resp = Response::builder()
+                    .status(http::StatusCode::NOT_FOUND)
+                    .body(Full::new(Bytes::new()).boxed())
+                    .unwrap();
                 return Ok(resp);
             }
             crate::proxy::WafDecision::Stall => {
@@ -1137,14 +1169,41 @@ impl HttpServer {
                                 for (name, value) in response.headers {
                                     builder = builder.header(&name, &value);
                                 }
-                                if let Some(zero_copy_path) = response.zero_copy_path {
-                                    tracing::debug!(
-                                        "Zero-copy serve for {} via {}",
-                                        path,
-                                        zero_copy_path.display()
-                                    );
+                                match response.body {
+                                    crate::static_files::StaticResponseBody::InMemory(body) => {
+                                        return Ok(builder.body(Full::new(body).boxed()).unwrap());
+                                    }
+                                    crate::static_files::StaticResponseBody::ZeroCopy(path) => {
+                                        tracing::debug!(
+                                            "Zero-copy streaming for {}",
+                                            path.display()
+                                        );
+                                        let file = match tokio::fs::File::open(&path).await {
+                                            Ok(f) => f,
+                                            Err(e) => {
+                                                tracing::warn!(
+                                                    "Failed to open {}: {}",
+                                                    path.display(),
+                                                    e
+                                                );
+                                                return Ok(Response::builder()
+                                                    .status(500)
+                                                    .body(
+                                                        Full::new(Bytes::from_static(
+                                                            b"Internal Server Error",
+                                                        ))
+                                                        .boxed(),
+                                                    )
+                                                    .unwrap());
+                                            }
+                                        };
+                                        use http_body_util::StreamBody;
+                                        use tokio_util::io::ReaderStream;
+                                        let stream = ReaderStream::new(file);
+                                        let body = StreamBody::new(stream);
+                                        return Ok(builder.body(body).unwrap());
+                                    }
                                 }
-                                return Ok(builder.body(Full::new(response.body)).unwrap());
                             }
                             Err(e) => {
                                 tracing::warn!("Static file error for {}: {}", path, e);
@@ -1156,8 +1215,7 @@ impl HttpServer {
                 // Serverless function dispatch
                 if matches!(target.backend_type, crate::router::BackendType::Serverless) {
                     if let Some(ref sm) = serverless_manager {
-                        let body_bytes_for_serverless: Bytes =
-                            body_slice.map(|b| b.to_vec().into()).unwrap_or_default();
+                        let body_bytes_for_serverless: Bytes = full_body.clone();
                         match crate::serverless::manager::handle_serverless_function(
                             sm,
                             &method,
@@ -1184,7 +1242,7 @@ impl HttpServer {
                                 );
                                 return Ok(Response::builder()
                                     .status(status)
-                                    .body(Full::new(response.into_body()))
+                                    .body(Full::new(response.into_body()).boxed())
                                     .unwrap());
                             }
                             Err(e) => {
@@ -1218,8 +1276,44 @@ impl HttpServer {
                     crate::router::BackendType::FastCgi | crate::router::BackendType::Php
                 ) {
                     if let Some(ref socket) = target.backend_socket {
-                        let body_bytes_for_fcgi: Bytes =
-                            body_slice.map(|b| b.to_vec().into()).unwrap_or_default();
+                        let body_bytes_for_fcgi: Bytes = full_body.clone();
+
+                        if matches!(target.backend_type, crate::router::BackendType::Php) {
+                            if let Some(php_client) =
+                                crate::php::create_php_client(&target.site_config)
+                            {
+                                match php_client
+                                    .execute(
+                                        &method,
+                                        &parts.uri,
+                                        &parts.headers,
+                                        body_bytes_for_fcgi,
+                                    )
+                                    .await
+                                {
+                                    Ok(response) => {
+                                        return Ok(response
+                                            .into_http_response()
+                                            .map(|b| Full::new(b).boxed()));
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            "PHP backend error for site {} path {}: {}",
+                                            site_id,
+                                            path,
+                                            e
+                                        );
+                                        return Ok(Self::build_response_with_alt_svc(
+                                            502,
+                                            format!("Backend Error: {}", e),
+                                            "text/plain",
+                                            &alt_svc,
+                                            &main_config,
+                                        ));
+                                    }
+                                }
+                            }
+                        }
 
                         let fcgi_config =
                             target.site_config.proxy.fastcgi.clone().unwrap_or_default();
@@ -1236,7 +1330,9 @@ impl HttpServer {
                             .await
                         {
                             Ok(response) => {
-                                return Ok(response.into_http_response().map(Full::new));
+                                return Ok(response
+                                    .into_http_response()
+                                    .map(|b| Full::new(b).boxed()));
                             }
                             Err(e) => {
                                 tracing::warn!(
@@ -1268,11 +1364,148 @@ impl HttpServer {
                     ));
                 }
 
+                // CGI backend dispatch
+                if matches!(target.backend_type, crate::router::BackendType::Cgi) {
+                    if let Some(ref cgi_config) = target.site_config.proxy.cgi {
+                        match crate::cgi::CgiHandler::new(cgi_config) {
+                            Ok(handler) => {
+                                let body_bytes_for_cgi: Bytes = full_body.clone();
+                                match handler
+                                    .execute(
+                                        &method,
+                                        &parts.uri,
+                                        &parts.headers,
+                                        body_bytes_for_cgi,
+                                        Some(client_ip),
+                                    )
+                                    .await
+                                {
+                                    Ok(response) => {
+                                        return Ok(response
+                                            .into_http_response()
+                                            .map(|b| Full::new(b).boxed()));
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            "CGI error for site {} path {}: {}",
+                                            site_id,
+                                            path,
+                                            e
+                                        );
+                                        let status = match &e {
+                                            crate::cgi::CgiError::NotFound(_) => 404,
+                                            crate::cgi::CgiError::Forbidden(_) => 403,
+                                            crate::cgi::CgiError::Timeout => 504,
+                                            _ => 502,
+                                        };
+                                        return Ok(Self::build_response_with_alt_svc(
+                                            status,
+                                            format!("CGI Error: {}", e),
+                                            "text/plain",
+                                            &alt_svc,
+                                            &main_config,
+                                        ));
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    "CGI handler creation failed for site {} path {}: {}",
+                                    site_id,
+                                    path,
+                                    e
+                                );
+                                return Ok(Self::build_response_with_alt_svc(
+                                    500,
+                                    format!("CGI Configuration Error: {}", e),
+                                    "text/plain",
+                                    &alt_svc,
+                                    &main_config,
+                                ));
+                            }
+                        }
+                    }
+                    tracing::warn!(
+                        "CGI backend for site {} but no CGI config configured",
+                        site_id
+                    );
+                    return Ok(Self::build_response_with_alt_svc(
+                        502,
+                        "Backend misconfigured: no CGI root configured".to_string(),
+                        "text/plain",
+                        &alt_svc,
+                        &main_config,
+                    ));
+                }
+
+                // AppServer (Granian) backend dispatch
+                if matches!(target.backend_type, crate::router::BackendType::AppServer) {
+                    if let Some(ref app_servers) = app_servers {
+                        let app_servers_read = app_servers.read().await;
+                        if let Some(supervisor) = app_servers_read.get(site_id.as_ref()) {
+                            let socket_path = supervisor.config().resolve_socket_path();
+                            let body_bytes_for_appserver: Bytes = full_body.clone();
+
+                            let fcgi_config =
+                                target.site_config.proxy.fastcgi.clone().unwrap_or_default();
+
+                            let client = crate::fastcgi::FastCgiClient::new(
+                                socket_path.to_string_lossy().to_string(),
+                            );
+                            match client
+                                .execute(
+                                    &method,
+                                    &parts.uri,
+                                    &parts.headers,
+                                    body_bytes_for_appserver,
+                                    &fcgi_config,
+                                )
+                                .await
+                            {
+                                Ok(response) => {
+                                    return Ok(response
+                                        .into_http_response()
+                                        .map(|b| Full::new(b).boxed()));
+                                }
+                                Err(e) => {
+                                    tracing::warn!(
+                                        "AppServer (Granian) error for site {} path {}: {}",
+                                        site_id,
+                                        path,
+                                        e
+                                    );
+                                    return Ok(Self::build_response_with_alt_svc(
+                                        502,
+                                        format!("Backend Error: {}", e),
+                                        "text/plain",
+                                        &alt_svc,
+                                        &main_config,
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                    tracing::warn!(
+                        "AppServer backend for site {} but no app server running",
+                        site_id
+                    );
+                    return Ok(Self::build_response_with_alt_svc(
+                        502,
+                        "Backend misconfigured: app server not available".to_string(),
+                        "text/plain",
+                        &alt_svc,
+                        &main_config,
+                    ));
+                }
+
                 // FastCGI, PHP, CGI, and AppServer backends fall through to upstream proxy
                 // The RouteTarget has the appropriate socket configured in backend_socket
                 if let Some(pm) = router.plugin_manager() {
-                    let body_bytes: Bytes =
-                        body_slice.map(|b| b.to_vec().into()).unwrap_or_default();
+                    // Use truncated body for WAF inspection (WASM filters)
+                    let body_bytes: Bytes = body_slice
+                        .as_ref()
+                        .map(|b| b.to_vec().into())
+                        .unwrap_or_default();
 
                     let mut filter_builder = http::Request::builder()
                         .method(method.clone())
@@ -1290,9 +1523,13 @@ impl HttpServer {
                     // Use per-site WASM plugins if configured, otherwise run all
                     let wasm_result =
                         if let Some(ref plugin_names) = target.site_config.proxy.wasm_plugins {
-                            pm.apply_wasm_filters_with_plugins(filter_req, plugin_names)
+                            pm.apply_wasm_filters_with_plugins(
+                                filter_req,
+                                plugin_names,
+                                std::collections::HashMap::new(),
+                            )
                         } else {
-                            pm.apply_wasm_filters(filter_req)
+                            pm.apply_wasm_filters(filter_req, std::collections::HashMap::new())
                         };
 
                     match wasm_result {
@@ -1400,7 +1637,7 @@ impl HttpServer {
                             if effective_config.scan_with_yara
                                 || effective_config.max_size_bytes > 0
                             {
-                                match upload_validator.validate_bytes(&body_bytes, &path) {
+                                match upload_validator.validate_bytes(&full_body, &path) {
                                     Ok(result) => {
                                         if !result.is_clean() {
                                             tracing::warn!(
@@ -1501,7 +1738,7 @@ impl HttpServer {
                         method,
                         &target_url,
                         Some(&parts.headers),
-                        Some(body_bytes.clone()),
+                        Some(full_body.clone()),
                         Some(std::time::Duration::from_secs(30)),
                     )
                     .await
@@ -1510,7 +1747,7 @@ impl HttpServer {
                         forwarding_client,
                         method,
                         &target_url,
-                        Some(body_bytes.clone()),
+                        Some(full_body.clone()),
                         Some(std::time::Duration::from_secs(30)),
                     )
                     .await
@@ -1560,9 +1797,13 @@ impl HttpServer {
                                 pm.apply_wasm_response_transforms_with_plugins(
                                     wasm_resp,
                                     plugin_names,
+                                    std::collections::HashMap::new(),
                                 )
                             } else {
-                                pm.apply_wasm_response_transforms(wasm_resp)
+                                pm.apply_wasm_response_transforms(
+                                    wasm_resp,
+                                    std::collections::HashMap::new(),
+                                )
                             };
                             match transform_result {
                                 Ok(transformed) => {
@@ -1715,6 +1956,139 @@ impl HttpServer {
                                     }
                                 }
                             }
+                        } else {
+                            let static_config = &target.site_config.r#static;
+                            let image_poison_config = &target.site_config.image_poison;
+
+                            if static_config.enable_minification.unwrap_or(false) {
+                                let ct = content_type.as_deref().unwrap_or("");
+                                if ct.contains("text/html")
+                                    || ct.contains("text/css")
+                                    || ct.contains("javascript")
+                                {
+                                    let generator =
+                                        crate::static_files::minifier::MinifierGenerator::new();
+
+                                    if ct.contains("text/html")
+                                        && static_config.enable_html_minification.unwrap_or(true)
+                                    {
+                                        if let Ok(text) = String::from_utf8(body.to_vec()) {
+                                            if let Ok(minified) = generator.minify_html(&text) {
+                                                body = Bytes::from(minified);
+                                                body_len = body.len() as u64;
+                                            }
+                                        }
+                                    } else if ct.contains("text/css")
+                                        && static_config.enable_css_minification.unwrap_or(true)
+                                    {
+                                        if let Ok(text) = String::from_utf8(body.to_vec()) {
+                                            if let Ok(minified) = generator.minify_css(&text) {
+                                                body = Bytes::from(minified);
+                                                body_len = body.len() as u64;
+                                            }
+                                        }
+                                    } else if ct.contains("javascript")
+                                        && static_config.enable_js_minification.unwrap_or(true)
+                                    {
+                                        if let Ok(text) = String::from_utf8(body.to_vec()) {
+                                            if let Ok(minified) = generator.minify_js(&text) {
+                                                body = Bytes::from(minified);
+                                                body_len = body.len() as u64;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            if image_poison_config.enabled.unwrap_or(false) {
+                                let mut is_image = content_type
+                                    .as_ref()
+                                    .map(|ct| ct.starts_with("image/"))
+                                    .unwrap_or(false);
+                                if !is_image {
+                                    let path_str = path.to_string();
+                                    is_image = IMAGE_PROTECTION_REGEX.is_match(&path_str);
+                                }
+                                let min_size =
+                                    image_poison_config.max_dimension.unwrap_or(100 * 1024) as u64;
+                                let in_range = body_len >= min_size;
+
+                                if is_image && in_range {
+                                    let path_str = path.to_string();
+                                    let whitelisted = image_poison_config
+                                        .whitelist_patterns
+                                        .as_ref()
+                                        .map_or(false, |patterns| {
+                                            patterns.iter().any(|p| {
+                                                if let Some(re) = get_cached_regex(p) {
+                                                    re.is_match(&path_str)
+                                                } else {
+                                                    false
+                                                }
+                                            })
+                                        });
+
+                                    if !whitelisted {
+                                        let site_id_for_poison = site_id.to_string();
+                                        body = Self::apply_image_poisoning(
+                                            body,
+                                            site_id_for_poison,
+                                            last_modified.clone(),
+                                        )
+                                        .await;
+                                        body_len = body.len() as u64;
+                                    }
+                                }
+                            }
+
+                            if static_config.enable_compression.unwrap_or(false) {
+                                let accept_encoding: &str = parts
+                                    .headers
+                                    .get("accept-encoding")
+                                    .and_then(|v: &http::HeaderValue| v.to_str().ok())
+                                    .unwrap_or("");
+
+                                let generator =
+                                    crate::static_files::minifier::MinifierGenerator::new();
+                                let gzip_level = static_config.gzip_level.unwrap_or(6);
+
+                                if accept_encoding.contains("br")
+                                    && static_config.enable_brotli.unwrap_or(true)
+                                {
+                                    if let Ok(compressed) = generator.compress_brotli(
+                                        &body,
+                                        static_config.brotli_level.unwrap_or(6),
+                                    ) {
+                                        body = Bytes::from(compressed);
+                                        body_len = body.len() as u64;
+                                        let mut headers_clone = headers.clone();
+                                        headers_clone.retain(|(k, _)| {
+                                            k.to_lowercase() != "content-encoding"
+                                        });
+                                        headers_clone.push((
+                                            "Content-Encoding".to_string(),
+                                            "br".to_string(),
+                                        ));
+                                        headers = headers_clone;
+                                    }
+                                } else if accept_encoding.contains("gzip") {
+                                    if let Ok(compressed) =
+                                        generator.compress_gzip(&body, gzip_level)
+                                    {
+                                        body = Bytes::from(compressed);
+                                        body_len = body.len() as u64;
+                                        let mut headers_clone = headers.clone();
+                                        headers_clone.retain(|(k, _)| {
+                                            k.to_lowercase() != "content-encoding"
+                                        });
+                                        headers_clone.push((
+                                            "Content-Encoding".to_string(),
+                                            "gzip".to_string(),
+                                        ));
+                                        headers = headers_clone;
+                                    }
+                                }
+                            }
                         }
 
                         if let Some(ref m) = metrics {
@@ -1769,7 +2143,7 @@ impl HttpServer {
                             builder = builder.header("Server", token.as_str());
                         }
 
-                        Ok(builder.body(Full::new(body)).unwrap_or_else(|_| {
+                        Ok(builder.body(Full::new(body).boxed()).unwrap_or_else(|_| {
                             Self::build_response_with_alt_svc(
                                 500,
                                 crate::http::reason_phrase(500).to_string(),
@@ -1843,7 +2217,7 @@ impl HttpServer {
         drain_state: &Arc<WorkerDrainState>,
         alt_svc: &Option<String>,
         main_config: &Arc<MainConfig>,
-    ) -> Result<Response<Full<Bytes>>, hyper::Error> {
+    ) -> Result<Response<BoxBody<Bytes, Infallible>>, hyper::Error> {
         let drain_id = crate::utils::safe_unix_duration().as_millis() as u64;
 
         let accepted = drain_state.start_drain(drain_id);
@@ -1867,7 +2241,7 @@ impl HttpServer {
         drain_state: &Arc<WorkerDrainState>,
         alt_svc: &Option<String>,
         main_config: &Arc<MainConfig>,
-    ) -> Result<Response<Full<Bytes>>, hyper::Error> {
+    ) -> Result<Response<BoxBody<Bytes, Infallible>>, hyper::Error> {
         let status = drain_state.get_status();
         let body = serde_json::to_string(&status).unwrap_or_else(|_| "{}".to_string());
 
@@ -1884,7 +2258,7 @@ impl HttpServer {
         drain_state: &Option<Arc<WorkerDrainState>>,
         alt_svc: &Option<String>,
         _main_config: &Arc<MainConfig>,
-    ) -> Result<Response<Full<Bytes>>, hyper::Error> {
+    ) -> Result<Response<BoxBody<Bytes, Infallible>>, hyper::Error> {
         let (status_code, body) = if let Some(state) = drain_state {
             let status = state.get_status();
             if status.is_draining {
@@ -1921,15 +2295,15 @@ impl HttpServer {
         }
 
         Ok(builder
-            .body(Full::new(Bytes::from(body)))
-            .unwrap_or_else(|_| crate::http::fallback_error_full()))
+            .body(Full::new(Bytes::from(body)).boxed())
+            .unwrap_or_else(|_| crate::http::fallback_error_boxed()))
     }
 
     fn handle_ready_request(
         drain_state: &Option<Arc<WorkerDrainState>>,
         alt_svc: &Option<String>,
         _main_config: &Arc<MainConfig>,
-    ) -> Result<Response<Full<Bytes>>, hyper::Error> {
+    ) -> Result<Response<BoxBody<Bytes, Infallible>>, hyper::Error> {
         let (status_code, body) = if let Some(state) = drain_state {
             let status = state.get_status();
             if status.is_draining || status.stopped_accepting {
@@ -1966,8 +2340,8 @@ impl HttpServer {
         }
 
         Ok(builder
-            .body(Full::new(Bytes::from(body)))
-            .unwrap_or_else(|_| crate::http::fallback_error_full()))
+            .body(Full::new(Bytes::from(body)).boxed())
+            .unwrap_or_else(|_| crate::http::fallback_error_boxed()))
     }
 
     fn build_response_with_alt_svc(
@@ -1996,8 +2370,8 @@ impl HttpServer {
         builder = builder.header("Date", generate_stealth_timestamp(5));
 
         builder
-            .body(Full::new(Bytes::from(body)))
-            .unwrap_or_else(|_| crate::http::fallback_error_full())
+            .body(Full::new(Bytes::from(body)).boxed())
+            .unwrap_or_else(|_| crate::http::fallback_error_boxed())
     }
 
     fn build_response_with_cookie(
@@ -2028,8 +2402,8 @@ impl HttpServer {
         builder = builder.header("Date", generate_stealth_timestamp(5));
 
         builder
-            .body(Full::new(Bytes::from(body)))
-            .unwrap_or_else(|_| crate::http::fallback_error_full())
+            .body(Full::new(Bytes::from(body)).boxed())
+            .unwrap_or_else(|_| crate::http::fallback_error_boxed())
     }
 
     async fn handle_websocket_tunnel(
@@ -2230,7 +2604,7 @@ impl HttpServer {
         }
 
         builder
-            .body(Full::new(Bytes::new()))
+            .body(Full::new(Bytes::new()).boxed())
             .unwrap_or_else(|_| crate::http::fallback_error_full())
     }
 
@@ -2240,7 +2614,7 @@ impl HttpServer {
         plugin_router: Arc<axum::Router<()>>,
         alt_svc: &Option<String>,
         main_config: &Arc<MainConfig>,
-    ) -> Result<Response<Full<Bytes>>, hyper::Error> {
+    ) -> Result<Response<BoxBody<Bytes, Infallible>>, hyper::Error> {
         use http_body_util::BodyExt;
         use tower::Service;
 
@@ -2257,7 +2631,10 @@ impl HttpServer {
                     Ok(c) => c.to_bytes(),
                     Err(_) => Bytes::new(),
                 };
-                Ok(Response::from_parts(resp_parts, Full::new(resp_bytes)))
+                Ok(Response::from_parts(
+                    resp_parts,
+                    Full::new(resp_bytes).boxed(),
+                ))
             }
             Err(e) => Ok(Self::build_response_with_alt_svc(
                 500,
@@ -2276,7 +2653,7 @@ impl HttpServer {
         main_config: &Arc<MainConfig>,
         client_ip: IpAddr,
         mesh_transport: Option<Arc<MeshTransportManager>>,
-    ) -> Result<Response<Full<Bytes>>, hyper::Error> {
+    ) -> Result<Response<BoxBody<Bytes, Infallible>>, hyper::Error> {
         use crate::mesh::passover_key_exchange::KeyConfirmHttp;
         use axum::Json;
         use http::StatusCode;

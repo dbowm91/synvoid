@@ -352,6 +352,28 @@ fn build_router_from_state(
         .route("/rules/check", post(handlers::rule_feed::check_for_updates))
         .route("/rules/apply", post(handlers::rule_feed::apply_pending))
         .route("/rules/discard", post(handlers::rule_feed::discard_pending))
+        .route("/yara/status", get(handlers::yara_rules::get_status))
+        .route(
+            "/yara/submissions",
+            get(handlers::yara_rules::list_submissions),
+        )
+        .route(
+            "/yara/submissions/{submission_id}",
+            get(handlers::yara_rules::get_submission),
+        )
+        .route(
+            "/yara/submissions/{submission_id}/approve",
+            post(handlers::yara_rules::approve_submission),
+        )
+        .route(
+            "/yara/submissions/{submission_id}/reject",
+            post(handlers::yara_rules::reject_submission),
+        )
+        .route(
+            "/yara/broadcast",
+            post(handlers::yara_rules::broadcast_rules),
+        )
+        .route("/yara/sync", post(handlers::yara_rules::sync_from_global))
         .route("/icmp/status", get(handlers::icmp::get_status))
         .route(
             "/icmp/config",
@@ -401,6 +423,26 @@ fn build_router_from_state(
         .route(
             "/mesh/report/signature-failure",
             post(handlers::mesh_admin::report_signature_failure),
+        )
+        .route(
+            "/mesh/wasm-modules",
+            get(handlers::plugins::get_mesh_wasm_modules),
+        )
+        .route(
+            "/plugins/metrics",
+            get(handlers::plugins::get_all_plugins_metrics),
+        )
+        .route(
+            "/plugins/metrics/{name}",
+            get(handlers::plugins::get_plugin_metrics),
+        )
+        .route(
+            "/plugins/status",
+            get(handlers::plugins::get_plugins_status),
+        )
+        .route(
+            "/plugins/{name}/reload",
+            post(handlers::plugins::reload_plugin),
         )
         .route(
             "/honeypot/status",
@@ -468,9 +510,11 @@ pub async fn start_admin_server(
     upstream_error_tracker: Option<Arc<UpstreamErrorTracker>>,
     threat_level_manager: Option<Arc<ThreatLevelManager>>,
     rule_feed_manager: Option<Arc<RuleFeedManagerForWaf>>,
+    yara_rules: Option<Arc<crate::mesh::yara_rules::YaraRulesManager>>,
     mesh_transport: Option<Arc<MeshTransport>>,
     #[cfg(feature = "icmp-filter")] icmp_filter: Option<Arc<TokioRwLock<IcmpFilterManager>>>,
     process_manager: Option<Arc<crate::process::ProcessManager>>,
+    plugin_manager: Option<Arc<crate::plugin::PluginManager>>,
 ) {
     let cfg = config.read().await.main.admin.clone();
     if !cfg.enabled {
@@ -524,7 +568,9 @@ pub async fn start_admin_server(
         .with_upstream_error_tracker(upstream_error_tracker)
         .with_threat_level_manager(threat_level_manager)
         .with_rule_feed_manager(rule_feed_manager)
+        .with_yara_rules(yara_rules)
         .with_process_manager(process_manager.clone())
+        .with_plugin_manager(plugin_manager)
         .with_mesh_transport(mesh_transport)
         .with_rate_limiter(rate_limiter);
 

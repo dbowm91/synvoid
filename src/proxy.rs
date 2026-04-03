@@ -8,13 +8,15 @@
 
 use ::metrics::{counter, histogram};
 use http::{header::HeaderName, Response};
+use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::config::site::{BufferingConfig, ProxyCacheConfig, ProxyHeadersConfig, RetryConfig};
 use crate::http_client::{
     create_http_client_with_config, create_upstream_client, send_request_with_body_and_timeout,
-    send_request_with_timeout, HttpClient, UpstreamTlsConfig,
+    send_request_with_body_and_timeout_with_limit, send_request_with_timeout, HttpClient,
+    UpstreamTlsConfig,
 };
 use crate::metrics::{record_proxy_cache_hit, record_proxy_cache_miss};
 use crate::proxy_cache::{
@@ -54,6 +56,8 @@ pub const HEADERS_TO_STRIP: &[&str] = &[
     "x-server",
 ];
 
+pub const MAX_XFF_CHAIN_LENGTH: usize = 10;
+
 static HOP_BY_HOP_HEADERS_SET: LazyLock<AHashSet<&'static str>> =
     LazyLock::new(|| HOP_BY_HOP_HEADERS.iter().copied().collect());
 
@@ -83,6 +87,23 @@ pub fn is_hop_by_hop_header(name: &str) -> bool {
 #[inline]
 pub fn is_hop_by_hop_header_name(name: &http::header::HeaderName) -> bool {
     HOP_BY_HOP_HEADER_NAMES.contains(name)
+}
+
+fn is_valid_ip(s: &str) -> bool {
+    s.parse::<IpAddr>().is_ok()
+}
+
+fn validate_and_truncate_xff(existing: &str, client_ip: &str) -> String {
+    let mut entries: Vec<&str> = existing.split(',').map(|s| s.trim()).collect();
+    entries.retain(|e| !e.is_empty() && is_valid_ip(e));
+    if entries.len() >= MAX_XFF_CHAIN_LENGTH {
+        entries = entries.split_off(entries.len() - MAX_XFF_CHAIN_LENGTH + 1);
+    }
+    if entries.is_empty() {
+        client_ip.to_string()
+    } else {
+        format!("{}, {}", entries.join(", "), client_ip)
+    }
 }
 
 pub fn build_headers_to_filter(
@@ -1216,31 +1237,17 @@ impl ProxyServer {
             return Ok(builder.body(body)?);
         }
 
-        let response = send_request_with_body_and_timeout(
+        let response = send_request_with_body_and_timeout_with_limit(
             &self.client,
             method,
             url,
             body,
             Some(std::time::Duration::from_secs(30)),
+            Some(self.max_response_size),
         )
         .await?;
 
         let status = response.status_code();
-
-        let content_length = response
-            .header("content-length")
-            .and_then(|s| s.parse::<usize>().ok());
-
-        if let Some(size) = content_length {
-            if size > self.max_response_size {
-                tracing::warn!(
-                    "Upstream response too large: {} bytes (limit: {})",
-                    size,
-                    self.max_response_size
-                );
-                return Err("Response too large".into());
-            }
-        }
 
         let headers: Vec<(String, String)> = response
             .headers_iter()
@@ -1249,15 +1256,6 @@ impl ProxyServer {
             .collect();
 
         let body = response.body;
-
-        if body.len() > self.max_response_size {
-            tracing::warn!(
-                "Upstream response body too large: {} bytes (limit: {})",
-                body.len(),
-                self.max_response_size
-            );
-            return Err("Response too large".into());
-        }
 
         let mut builder = Response::builder().status(status);
 
@@ -1377,11 +1375,7 @@ pub fn build_forward_headers(
                     .get("x-forwarded-for")
                     .and_then(|v| v.to_str().ok())
                     .unwrap_or("");
-                let new_value = if existing.is_empty() {
-                    client_ip.to_string()
-                } else {
-                    format!("{}, {}", existing, client_ip)
-                };
+                let new_value = validate_and_truncate_xff(existing, client_ip);
                 forward_headers.push(("X-Forwarded-For".to_string(), new_value));
             }
             "X-Forwarded-Proto" => {

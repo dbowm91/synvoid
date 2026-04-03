@@ -21,6 +21,11 @@ pub(super) fn poison_image_sync(
     site_id: &str,
     body: Vec<u8>,
     _last_modified: Option<String>,
+    level_override: Option<String>,
+    intensity_override: Option<f32>,
+    seed_override: Option<u64>,
+    max_dimension_override: Option<u32>,
+    jpeg_quality_override: Option<u8>,
 ) -> Vec<u8> {
     if body.is_empty() {
         return body;
@@ -37,18 +42,34 @@ pub(super) fn poison_image_sync(
         if let Some(site_config) = config_manager.sites.get(site_id) {
             let cfg = &site_config.image_poison;
             let enabled = cfg.enabled.unwrap_or(false);
-            let level = cfg
-                .level
+            let level = level_override
                 .as_deref()
                 .map(parse_protection_level)
-                .unwrap_or(ProtectionLevel::Standard);
-            let intensity = cfg.intensity.unwrap_or(0.5).clamp(0.0, 1.0);
-            let seed = cfg.seed;
-            let max_dimension = cfg.max_dimension;
-            let jpeg_quality = cfg.jpeg_quality;
+                .unwrap_or_else(|| {
+                    cfg.level
+                        .as_deref()
+                        .map(parse_protection_level)
+                        .unwrap_or(ProtectionLevel::Standard)
+                });
+            let intensity = intensity_override
+                .unwrap_or(cfg.intensity.unwrap_or(0.5))
+                .clamp(0.0, 1.0);
+            let seed = seed_override.or(cfg.seed);
+            let max_dimension = max_dimension_override.or(cfg.max_dimension);
+            let jpeg_quality = jpeg_quality_override.or(cfg.jpeg_quality);
             (enabled, level, intensity, seed, max_dimension, jpeg_quality)
         } else {
-            (false, ProtectionLevel::Standard, 0.5, None, None, None)
+            (
+                false,
+                level_override
+                    .as_deref()
+                    .map(parse_protection_level)
+                    .unwrap_or(ProtectionLevel::Standard),
+                intensity_override.unwrap_or(0.5).clamp(0.0, 1.0),
+                seed_override,
+                max_dimension_override,
+                jpeg_quality_override,
+            )
         }
     };
 

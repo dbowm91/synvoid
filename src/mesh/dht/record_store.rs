@@ -24,6 +24,7 @@ const DEFAULT_RECORD_TTL: u64 = 3600;
 const DEFAULT_EDGE_CACHE_TTL_SECS: u64 = 300;
 const DEFAULT_EDGE_CACHE_MAX_ENTRIES: usize = 1000;
 const DEFAULT_CONVERGENCE_THRESHOLD: usize = 3;
+pub const MAX_PENDING_ANNOUNCES: usize = 10000;
 
 #[derive(Debug, Clone)]
 pub struct RecordStoreConfig {
