@@ -117,15 +117,3 @@ pub(super) fn create_waf(main_config: &crate::config::MainConfig) -> Arc<crate::
 
     Arc::new(waf)
 }
-
-#[allow(dead_code)]
-pub(super) async fn send_compressed_error(
-    state: &super::StaticWorkerState,
-    request_id: u64,
-    error: String,
-) {
-    let mut ipc = state.ipc.lock().await;
-    let _ = ipc
-        .send(&crate::process::Message::MinifyError { request_id, error })
-        .await;
-}

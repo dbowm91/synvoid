@@ -9,8 +9,6 @@ pub use protocol::{UdpProtocol, UdpProtocolDetector, UdpProtocolResult};
 pub use crate::listener::ConnectionContext;
 
 pub struct UdpProxy {
-    #[allow(dead_code)]
-    config: UdpProxyConfig,
     protocol_detector: UdpProtocolDetector,
     protocol_filter: UdpProtocolFilter,
 }
@@ -33,9 +31,8 @@ impl Default for UdpProxyConfig {
 }
 
 impl UdpProxy {
-    pub fn new(config: UdpProxyConfig, filter_config: UdpFilterConfig) -> Self {
+    pub fn new(_config: UdpProxyConfig, filter_config: UdpFilterConfig) -> Self {
         Self {
-            config,
             protocol_detector: UdpProtocolDetector::new(),
             protocol_filter: UdpProtocolFilter::new(filter_config),
         }

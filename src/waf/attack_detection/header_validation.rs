@@ -197,26 +197,6 @@ mod tests {
     use super::*;
 
     #[test]
-    #[ignore = "http crate rejects invalid header values at parse time"]
-    fn test_crlf_injection() {
-        let validator = HeaderValidator::default();
-        let mut headers = http::HeaderMap::new();
-        headers.insert("x-custom", "value\r\nInjection".parse().unwrap());
-
-        assert!(validator.validate(&headers).is_some());
-    }
-
-    #[test]
-    #[ignore = "http crate rejects null bytes in header values at parse time"]
-    fn test_null_byte() {
-        let validator = HeaderValidator::default();
-        let mut headers = http::HeaderMap::new();
-        headers.insert("x-custom", "value\x00injection".parse().unwrap());
-
-        assert!(validator.validate(&headers).is_some());
-    }
-
-    #[test]
     fn test_valid_header() {
         let validator = HeaderValidator::default();
         let mut headers = http::HeaderMap::new();
@@ -224,26 +204,5 @@ mod tests {
         headers.insert("user-agent", "Mozilla/5.0".parse().unwrap());
 
         assert!(validator.validate(&headers).is_none());
-    }
-
-    #[test]
-    #[ignore = "http crate rejects empty host header at parse time"]
-    fn test_empty_host() {
-        let validator = HeaderValidator::default();
-        let mut headers = http::HeaderMap::new();
-        headers.insert("host", "".parse().unwrap());
-
-        assert!(validator.validate(&headers).is_some());
-    }
-
-    #[test]
-    #[ignore = "http crate HeaderMap automatically handles duplicate headers"]
-    fn test_duplicate_headers() {
-        let validator = HeaderValidator::default();
-        let mut headers = http::HeaderMap::new();
-        headers.insert("x-custom", "value1".parse().unwrap());
-        headers.insert("x-custom", "value2".parse().unwrap());
-
-        assert!(validator.validate(&headers).is_some());
     }
 }

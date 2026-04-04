@@ -54,8 +54,6 @@ struct InnerDnsCache {
     max_capacity: usize,
     serve_stale_enabled: bool,
     serve_stale_max_stale: Duration,
-    #[allow(dead_code)]
-    serve_stale_max_count: usize,
 }
 
 impl DnsCache {
@@ -76,7 +74,6 @@ impl DnsCache {
                 max_capacity: capacity,
                 serve_stale_enabled: false,
                 serve_stale_max_stale: Duration::from_secs(86400),
-                serve_stale_max_count: 100,
             }),
         }
     }
@@ -105,7 +102,6 @@ impl DnsCache {
                 max_capacity: capacity,
                 serve_stale_enabled: false,
                 serve_stale_max_stale: Duration::from_secs(86400),
-                serve_stale_max_count: 100,
             }),
         }
     }
@@ -116,7 +112,6 @@ impl DnsCache {
         min_ttl_secs: u64,
         serve_stale_enabled: bool,
         serve_stale_max_stale_secs: u64,
-        serve_stale_max_count: usize,
     ) -> Self {
         let cache = Cache::new(capacity as u64);
 
@@ -134,7 +129,6 @@ impl DnsCache {
                 max_capacity: capacity,
                 serve_stale_enabled,
                 serve_stale_max_stale: Duration::from_secs(serve_stale_max_stale_secs),
-                serve_stale_max_count,
             }),
         }
     }

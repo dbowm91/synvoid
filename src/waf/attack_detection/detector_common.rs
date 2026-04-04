@@ -497,9 +497,10 @@ pub fn build_pattern_automaton(
         patterns.extend(high_patterns.iter().map(|s| s.to_lowercase()));
     }
 
+    let mut seen: std::collections::HashSet<String> = patterns.iter().cloned().collect();
     for pattern in custom_patterns {
         let pattern_lower = pattern.to_lowercase();
-        if !patterns.contains(&pattern_lower) {
+        if seen.insert(pattern_lower.clone()) {
             patterns.push(pattern_lower);
         }
     }

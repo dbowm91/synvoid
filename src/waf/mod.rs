@@ -146,7 +146,7 @@ pub struct WafCore {
     pub block_store: Option<Arc<BlockStore>>,
     pub config: WafConfig,
     pub whitelist: Arc<HashSet<IpAddr>>,
-    tarpit_generator: Option<Arc<crate::tarpit::generator::MarkovChain>>,
+    tarpit_generator: Arc<crate::tarpit::generator::MarkovChain>,
     pub threat_level: Option<Arc<ThreatLevelManager>>,
     pub violation_tracker: Option<Arc<ViolationTracker>>,
     pub ip_feed: Option<Arc<IpFeedManager>>,
@@ -485,7 +485,7 @@ impl WafCore {
             block_store,
             config: waf_config,
             whitelist: Arc::new(whitelist_set),
-            tarpit_generator: Some(Arc::new(crate::tarpit::generator::MarkovChain::new())),
+            tarpit_generator: Arc::new(crate::tarpit::generator::MarkovChain::new()),
             threat_level,
             violation_tracker,
             ip_feed,
@@ -677,12 +677,23 @@ impl WafCore {
 
     fn parse_duration(s: &str) -> Option<u64> {
         let s = s.trim();
+        if s.is_empty() {
+            return None;
+        }
+        if s.starts_with('-') {
+            return None;
+        }
+
         let value: u64 = s
             .chars()
             .take_while(|c| c.is_ascii_digit())
             .collect::<String>()
             .parse()
             .ok()?;
+
+        if value == 0 {
+            return None;
+        }
 
         let unit = s
             .chars()
@@ -720,6 +731,10 @@ impl WafCore {
         path: &str,
         cookies: Option<&str>,
     ) -> WafDecision {
+        if self.whitelist.contains(&client_ip) {
+            return WafDecision::Pass;
+        }
+
         if let Some(ref store) = self.block_store {
             if store.is_blocked(&client_ip, "global").is_some() {
                 tracing::debug!("Early check: IP {} is blocked", client_ip);
@@ -1074,7 +1089,7 @@ impl WafCore {
 
     fn check_bot_protection(
         &self,
-        _client_ip: IpAddr,
+        client_ip: IpAddr,
         path: &str,
         user_agent: Option<&str>,
     ) -> Option<WafDecision> {
@@ -1086,12 +1101,12 @@ impl WafCore {
 
         match bot_result {
             BotDetectionResult::Blocked { reason, .. } => {
-                tracing::info!("Blocking bot: {} - UA: {:?}", reason, user_agent);
+                tracing::info!("Blocking bot from {}: {} - UA: {:?}", client_ip, reason, user_agent);
                 crate::metrics::record_attack_type("Bots");
                 Some(WafDecision::Stall)
             }
             BotDetectionResult::Tarpit { reason, .. } => {
-                tracing::info!("Tarpitting scraper: {} - UA: {:?}", reason, user_agent);
+                tracing::info!("Tarpitting scraper from {}: {} - UA: {:?}", client_ip, reason, user_agent);
                 Some(WafDecision::Tarpit(path.to_string()))
             }
             BotDetectionResult::Allowed { .. } => None,
@@ -1215,20 +1230,16 @@ impl WafCore {
     }
 
     pub fn generate_tarpit_response(&self, path: &str) -> String {
-        if let Some(ref generator) = self.tarpit_generator {
-            let mut rng = rand::rng();
-            let max_depth = 10;
-            let links_per_page = 50;
+        let mut rng = rand::rng();
+        let max_depth = 10;
+        let links_per_page = 50;
 
-            generator.generate_html_page(
-                rng.random_range(0..max_depth),
-                max_depth,
-                links_per_page,
-                path,
-            )
-        } else {
-            "<html><body>Please wait...</body></html>".to_string()
-        }
+        self.tarpit_generator.generate_html_page(
+            rng.random_range(0..max_depth),
+            max_depth,
+            links_per_page,
+            path,
+        )
     }
 }
 

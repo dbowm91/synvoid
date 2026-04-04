@@ -5,9 +5,7 @@ use std::sync::Arc;
 
 use parking_lot::RwLock;
 
-use crate::mesh::config::MeshConfig;
 use crate::mesh::protocol::MeshMessage;
-use crate::mesh::topology::MeshTopology;
 use crate::mesh::transports::{MeshTransportError, MeshTransportTrait, MeshTransportType};
 
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
@@ -27,13 +25,9 @@ impl TransportPeerId {
 
 #[derive(Clone)]
 pub struct MeshTransportStack {
-    #[allow(dead_code)]
-    config: Arc<MeshConfig>,
     quic_transport: Option<Arc<QuicTransportWrapper>>,
     wireguard_transport: Option<Arc<WireGuardTransportWrapper>>,
     active_transports: Arc<RwLock<HashMap<TransportPeerId, MeshTransportType>>>,
-    #[allow(dead_code)]
-    topology: Arc<MeshTopology>,
 }
 
 struct QuicTransportWrapper {
@@ -45,13 +39,11 @@ struct WireGuardTransportWrapper {
 }
 
 impl MeshTransportStack {
-    pub fn new(config: Arc<MeshConfig>, topology: Arc<MeshTopology>) -> Self {
+    pub fn new() -> Self {
         Self {
-            config: config.clone(),
             quic_transport: None,
             wireguard_transport: None,
             active_transports: Arc::new(RwLock::new(HashMap::new())),
-            topology,
         }
     }
 

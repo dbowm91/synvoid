@@ -243,14 +243,14 @@ impl ProbeTracker {
                     .filter(|e| e.timestamp >= window_start)
                     .collect();
 
-                let unique_recent: Vec<_> = recent_events
+                let mut unique_endpoints: Vec<&String> = recent_events
                     .iter()
                     .map(|e| &e.endpoint)
-                    .collect::<std::collections::HashSet<_>>()
-                    .into_iter()
                     .collect();
+                unique_endpoints.sort();
+                unique_endpoints.dedup();
 
-                probing_detected = unique_recent.len() >= self.config.max_endpoints_per_window;
+                probing_detected = unique_endpoints.len() >= self.config.max_endpoints_per_window;
             } else {
                 if *self.total_records.read() >= self.config.max_records {
                     tracing::warn!("Probe store at capacity, cannot add new probe record");
@@ -384,26 +384,24 @@ impl ProbeTracker {
 
     fn trigger_persist(&self) {
         if let Some(ref tx) = self.persist_tx {
-            let mut empty = HashMap::new();
-            {
+            let entries = {
                 let mut store = self.store.write();
-                std::mem::swap(&mut *store, &mut empty);
-            }
-            if let Err(e) = tx.try_send(PersistRequest { entries: empty }) {
+                std::mem::take(&mut *store)
+            };
+            if let Err(e) = tx.try_send(PersistRequest { entries }) {
                 if matches!(e, tokio::sync::mpsc::error::TrySendError::Closed(_)) {
                     tracing::warn!("Probe tracker persist channel closed");
                 }
             }
         } else if let Some(ref path) = self.persist_path {
-            let mut empty = HashMap::new();
-            {
+            let entries = {
                 let mut store = self.store.write();
-                std::mem::swap(&mut *store, &mut empty);
-            }
+                std::mem::take(&mut *store)
+            };
             let path = path.clone();
             let max_records = self.config.max_records;
             tokio::spawn(async move {
-                Self::persist_to_disk(&path, empty, max_records).await;
+                Self::persist_to_disk(&path, entries, max_records).await;
             });
         }
     }

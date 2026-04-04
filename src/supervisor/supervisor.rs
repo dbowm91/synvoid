@@ -7,15 +7,12 @@ use tokio::sync::{broadcast, RwLock};
 use tokio::time::interval;
 
 use crate::config::SupervisorConfig;
-use crate::supervisor::autoscaler::AutoScaler;
 use crate::supervisor::worker::{Worker, WorkerId, WorkerStatus};
 use crate::RunningFlag;
 
 pub struct Supervisor {
     config: SupervisorConfig,
     workers: Arc<PLRwLock<Vec<Arc<Worker>>>>,
-    #[allow(dead_code)]
-    auto_scaler: AutoScaler,
     event_tx: broadcast::Sender<SupervisorEvent>,
     shutdown_tx: Option<broadcast::Sender<()>>,
     metrics: Arc<SupervisorMetrics>,
@@ -57,7 +54,6 @@ impl Supervisor {
         Self {
             config: config.clone(),
             workers: Arc::new(PLRwLock::new(Vec::new())),
-            auto_scaler: AutoScaler::new(config.clone()),
             event_tx,
             shutdown_tx: Some(shutdown_tx),
             metrics: Arc::new(SupervisorMetrics {

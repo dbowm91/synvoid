@@ -9,8 +9,6 @@ pub struct IpcRateLimiter {
 
 struct IpcRateLimiterInner {
     max_messages_per_second: u64,
-    #[allow(dead_code)]
-    max_burst: u64,
     tokens: Mutex<TokenBucket>,
     worker_message_counts: Mutex<std::collections::HashMap<u64, WorkerMessageState>>,
     window_duration: Duration,
@@ -31,7 +29,6 @@ impl IpcRateLimiter {
         Self {
             inner: Arc::new(IpcRateLimiterInner {
                 max_messages_per_second,
-                max_burst: burst,
                 tokens: Mutex::new(TokenBucket::new(burst, max_messages_per_second)),
                 worker_message_counts: Mutex::new(std::collections::HashMap::new()),
                 window_duration: Duration::from_secs(1),

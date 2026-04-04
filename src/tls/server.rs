@@ -708,6 +708,7 @@ impl HttpsServer {
                                     &parts.headers,
                                     "https",
                                     Some(body_bytes.clone()),
+                                    client_ip,
                                 )
                                 .await
                             {

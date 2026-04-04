@@ -56,7 +56,7 @@ impl SyslogConfig {
 #[derive(Clone)]
 pub struct SyslogLogger {
     min_level: log::Level,
-    #[allow(dead_code)]
+    #[cfg(not(unix))]
     app_name: String,
     #[cfg(unix)]
     _backend: (),
@@ -109,7 +109,6 @@ impl SyslogLogger {
 
         Ok(Self {
             min_level,
-            app_name: config.app_name,
             _backend: (),
         })
     }

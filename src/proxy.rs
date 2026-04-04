@@ -8,6 +8,7 @@
 
 use ::metrics::{counter, histogram};
 use http::{header::HeaderName, Response};
+use std::collections::HashSet;
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -273,6 +274,8 @@ pub struct ProxyServer {
     cache: Option<Arc<ProxyCache>>,
     cache_key_builder: Option<CacheKeyBuilder>,
     skip_verify: bool,
+    cache_purge_token: Option<String>,
+    cache_purge_allowed_ips: Arc<HashSet<std::net::IpAddr>>,
 }
 
 impl ProxyServer {
@@ -347,6 +350,8 @@ impl ProxyServer {
             cache: None,
             cache_key_builder: None,
             skip_verify,
+            cache_purge_token: None,
+            cache_purge_allowed_ips: Arc::new(HashSet::new()),
         }
     }
 
@@ -445,6 +450,8 @@ impl ProxyServer {
             cache,
             cache_key_builder,
             skip_verify: false,
+            cache_purge_token: None,
+            cache_purge_allowed_ips: Arc::new(HashSet::new()),
         }
     }
 
@@ -667,9 +674,13 @@ impl ProxyServer {
         headers: &http::HeaderMap,
         scheme: &str,
         body: Option<bytes::Bytes>,
+        client_ip: std::net::IpAddr,
     ) -> Result<Response<bytes::Bytes>, String> {
+        let purge_token = headers
+            .get("x-cache-purge-token")
+            .and_then(|v| v.to_str().ok());
         if method.as_str() == "PURGE" {
-            return self.handle_cache_purge(path, host).await;
+            return self.handle_cache_purge(path, host, purge_token, client_ip).await;
         }
 
         if !self.is_cacheable_method(&method) {
@@ -812,7 +823,34 @@ impl ProxyServer {
         &self,
         path: &str,
         host: &str,
+        purge_token: Option<&str>,
+        client_ip: std::net::IpAddr,
     ) -> Result<Response<bytes::Bytes>, String> {
+        if let Some(ref required_token) = self.cache_purge_token {
+            match purge_token {
+                Some(token) if token == required_token.as_str() => {}
+                _ => {
+                    tracing::warn!("Unauthorized cache purge attempt from {} to {}", client_ip, host);
+                    return Ok(Response::builder()
+                        .status(403)
+                        .body(bytes::Bytes::from("Forbidden: authentication required\n"))
+                        .unwrap_or_else(|_| Response::new(bytes::Bytes::new())));
+                }
+            }
+        } else if !self.cache_purge_allowed_ips.is_empty()
+            && !self.cache_purge_allowed_ips.contains(&client_ip)
+        {
+            tracing::warn!(
+                "Unauthorized cache purge from {} (IP not in allowlist) to {}",
+                client_ip,
+                host
+            );
+            return Ok(Response::builder()
+                .status(403)
+                .body(bytes::Bytes::from("Forbidden: IP not allowed\n"))
+                .unwrap_or_else(|_| Response::new(bytes::Bytes::new())));
+        }
+
         let count = if path == "*" {
             if let Some(ref cache) = self.cache {
                 cache.clear();

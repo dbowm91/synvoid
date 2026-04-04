@@ -178,7 +178,9 @@ pub fn create_listening_socket_unix(
 
     socket::bind(fd.as_raw_fd(), &addr).map_err(|e| PlatformError::Socket(e.to_string()))?;
 
-    let backlog = Backlog::new(1024).unwrap_or_else(|_| Backlog::new(128).unwrap());
+    let backlog = Backlog::new(1024)
+        .or_else(|_| Backlog::new(128))
+        .unwrap_or(Backlog::new(64).expect("backlog of 64 should always be valid"));
     socket::listen(&fd, backlog).map_err(|e| PlatformError::Socket(e.to_string()))?;
 
     Ok(SocketInfo {
@@ -216,7 +218,9 @@ pub fn create_listening_socket_v6_unix(
 
     socket::bind(fd.as_raw_fd(), &addr).map_err(|e| PlatformError::Socket(e.to_string()))?;
 
-    let backlog = Backlog::new(1024).unwrap_or_else(|_| Backlog::new(128).unwrap());
+    let backlog = Backlog::new(1024)
+        .or_else(|_| Backlog::new(128))
+        .unwrap_or(Backlog::new(64).expect("backlog of 64 should always be valid"));
     socket::listen(&fd, backlog).map_err(|e| PlatformError::Socket(e.to_string()))?;
 
     Ok(SocketInfo {
@@ -419,13 +423,9 @@ pub fn close_socket_fd(fd: RawFd) -> io::Result<()> {
 /// # Safety
 /// The caller must not use the file descriptor after this call.
 pub unsafe fn raw_fd_to_tcp_listener(fd: RawFd) -> OwnedTcpListener {
-    unsafe { OwnedTcpListener::from_raw_fd(fd) }
+    OwnedTcpListener::from_raw_fd(fd)
 }
 
-/// Converts a raw file descriptor into an OwnedTcpStream, taking ownership.
-///
-/// # Safety
-/// The caller must not use the file descriptor after this call.
 pub unsafe fn raw_fd_to_tcp_stream(fd: RawFd) -> OwnedTcpStream {
-    unsafe { OwnedTcpStream::from_raw_fd(fd) }
+    OwnedTcpStream::from_raw_fd(fd)
 }

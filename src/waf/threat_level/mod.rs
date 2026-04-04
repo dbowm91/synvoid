@@ -453,14 +453,14 @@ impl ThreatLevelManager {
                 violation_window_secs: 300,
                 excluded_ips: vec!["127.0.0.1".to_string()],
             },
-            auto_scale: true,
+            auto_scale: self.config.learning_enabled,
             initial: 1,
             cooldown_secs: 60,
-            scale_up_window_secs: 60,
+            scale_up_window_secs: self.config.learning_duration_secs,
             scale_up_attacks_per_min: 50,
             scale_down_window_secs: 300,
             scale_down_attacks_per_min: 10,
-            persist_interval_normal_secs: 60,
+            persist_interval_normal_secs: self.config.history_flush_interval_secs,
             persist_interval_attack_secs: 15,
         }
     }

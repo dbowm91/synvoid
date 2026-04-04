@@ -40,23 +40,6 @@ impl AuthRateLimiter {
         }
     }
 
-    #[allow(dead_code)]
-    pub fn check(&self, identifier: &str) -> bool {
-        let attempts = self.attempts.read();
-        if let Some((times, locked)) = attempts.get(identifier) {
-            if *locked {
-                return false;
-            }
-            let recent: Vec<_> = times
-                .iter()
-                .filter(|t| t.elapsed() < AUTH_WINDOW_DURATION)
-                .collect();
-            recent.len() < MAX_AUTH_ATTEMPTS
-        } else {
-            true
-        }
-    }
-
     pub fn record_failure(&self, identifier: &str) {
         let mut attempts = self.attempts.write();
         let entry = attempts

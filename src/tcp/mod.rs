@@ -12,8 +12,6 @@ use tokio::net::TcpStream;
 pub use crate::listener::ConnectionContext;
 
 pub struct TcpProxy {
-    #[allow(dead_code)]
-    config: TcpProxyConfig,
     protocol_detector: ProtocolDetector,
     protocol_filter: ProtocolFilter,
 }
@@ -36,9 +34,8 @@ impl Default for TcpProxyConfig {
 }
 
 impl TcpProxy {
-    pub fn new(config: TcpProxyConfig, filter_config: FilterConfig) -> Self {
+    pub fn new(_config: TcpProxyConfig, filter_config: FilterConfig) -> Self {
         Self {
-            config,
             protocol_detector: ProtocolDetector::new(),
             protocol_filter: ProtocolFilter::new(filter_config),
         }

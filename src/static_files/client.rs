@@ -5,7 +5,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::Bytes;
-use parking_lot::RwLock;
 use tokio::sync::Mutex as TokioMutex;
 
 use crate::process::ipc_transport::IpcEndpoint;
@@ -51,8 +50,6 @@ fn connect_to_static_worker(_socket_path: &PathBuf) -> io::Result<IpcStream> {
 pub struct MinifierClient {
     socket_path: PathBuf,
     timeout_ms: u64,
-    #[allow(dead_code)]
-    pending_requests: Arc<RwLock<Vec<(u64, std::time::Instant)>>>,
 }
 
 impl MinifierClient {
@@ -60,7 +57,6 @@ impl MinifierClient {
         Self {
             socket_path,
             timeout_ms: 5000,
-            pending_requests: Arc::new(RwLock::new(Vec::new())),
         }
     }
 

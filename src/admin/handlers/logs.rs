@@ -10,16 +10,12 @@ use std::sync::Arc;
 use super::common::{ErrorPage, OptionalAuth};
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct LogsQuery {
-    #[allow(dead_code)]
     pub level: Option<String>,
-    #[allow(dead_code)]
     pub site_id: Option<String>,
-    #[allow(dead_code)]
     pub search: Option<String>,
-    #[allow(dead_code)]
     pub limit: Option<usize>,
-    #[allow(dead_code)]
     pub offset: Option<usize>,
 }
 

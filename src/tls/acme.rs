@@ -14,10 +14,6 @@ use super::config::InternalAcmeConfig;
 
 struct ManagedCert {
     domain: String,
-    #[allow(dead_code)]
-    cert_path: PathBuf,
-    #[allow(dead_code)]
-    key_path: PathBuf,
     expires_at: SystemTime,
 }
 
@@ -304,8 +300,6 @@ impl AcmeManager {
             domain.to_string(),
             ManagedCert {
                 domain: domain.to_string(),
-                cert_path: cert_path.clone(),
-                key_path,
                 expires_at,
             },
         );
