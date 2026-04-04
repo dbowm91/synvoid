@@ -1590,14 +1590,14 @@ Every item across all 8 waves was verified against the actual source code. The f
 | 6D | ✅ FIXED | Added `is_path_safe()` and `validate_config_paths()` for config import |
 | 6E | ✅ FIXED | Replaced `parking_lot::RwLock` with `tokio::sync::RwLock` in admin rate limiter |
 | 6G | ✅ FIXED | Populated `AcmeState` with actual pending orders data |
-| 6I | ❌ BROKEN | Still uses `.to_lowercase().contains()` for error classification |
+| 6I | ✅ FIXED | Uses error.downcast_ref::<io::Error>() to match on io::ErrorKind |
 | 6J | ✅ FIXED | Increased raw TCP proxy buffer from 8KB to 32KB |
 | 6K | ✅ FIXED | Added event coalescing with 500ms debounce for cert watcher |
 | 6N | ✅ FIXED | Changed `request_logs` from `Vec` to `VecDeque`, `logs.pop_front()` |
 | 6O | ✅ FIXED | Added `started_at: Instant` and populate `uptime_secs` |
 | 6P | ✅ FIXED | `drain_worker_async` now uses `timeout_secs` parameter |
 | 6R | ✅ FIXED | Removed duplicate AppServer initialization block |
-| 6U | ❌ BROKEN | `_dead_workers` still exists as unused variable |
+| 6U | ✅ FIXED | Removed dead _dead_workers code |
 
 #### Wave 7: YARA, Honeypot & Threat Intel
 | Item | Status | Fix Applied |
@@ -1632,13 +1632,9 @@ These items remain open and require substantial architectural work:
 - 5B: NXDOMAIN vs NODATA distinction (no SOA in NODATA responses)
 - 5L: `LookupResult` visibility (still `pub`, not `pub(crate)`)
 - 5M: `NormalizedInput` missing `lowercased` field
-- 6I: `is_connection_error` string matching (still uses `.to_lowercase().contains()`)
-- 6U: `_dead_workers` dead variable in `handle_unified_workers_restart`
 - 6V: Unify HTTPS server feature set with HTTP server
-- 8G: MeshTransport expensive clone (requires Arc wrapping at creation)
 - 8J: transport.rs module size (2,223 lines vs 1,000 target)
 - 8K: config.rs blanket suppression annotations
-- 8O: unwrap() in HTTP server (12 calls, 9 in core request path)
 
 ### Fixed in This Session
 - 3A: WireGuard transport removed (no longer needed — authentication via QUIC)
@@ -1648,6 +1644,10 @@ These items remain open and require substantial architectural work:
 - 3Y: Hierarchical routing infrastructure (bloom filter, RouteAdvertisement, HierarchicalRoutingManager)
 - 3Z: Global node HA foundation (GlobalNodeHAManager, leader election, heartbeat)
 - 5N: Rate limiter cleanup uses single retain with remove_older_than
+- 6I: is_connection_error uses io::ErrorKind matching instead of string contains
+- 6U: Removed dead _dead_workers code
+- 8G: MeshTransport wrapped in Arc at creation, uses clone_for_maintenance for background tasks
+- 8O: HTTP server has only 1 unwrap (LazyLock regex init, appropriate)
 
 ### Verification
 ```bash
