@@ -294,10 +294,9 @@ impl GlobalNodeHAManager {
     }
 
     fn random_election_timeout(&self) -> u64 {
-        use rand::Rng;
-        let mut rng = rand::thread_rng();
-        let base = rng.gen_range(self.config.election_timeout_min_ms..self.config.election_timeout_max_ms);
-        let jitter = rng.gen_range(0..self.config.election_timeout_jitter_ms);
+        let mut rng = rand::rng();
+        let base = rng.random_range(self.config.election_timeout_min_ms..self.config.election_timeout_max_ms);
+        let jitter = rng.random_range(0..self.config.election_timeout_jitter_ms);
         base + jitter
     }
 

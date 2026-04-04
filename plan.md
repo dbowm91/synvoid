@@ -685,12 +685,15 @@ After completing all 113 items from the previous remediation plan, **9 specializ
 **Problem:** Used standard base32 `ABCDEFGHIJKLMNOPQRSTUVWXYZ234567` instead of base32hex.
 **Fix:** Now uses correct base32hex alphabet `0123456789ABCDEFGHIJKLMNOPQRSTUV` per RFC 4648 Section 7.
 
-### 5B: Fix DNS Response NXDOMAIN for Non-Existent Types ❌ STILL BROKEN
+### 5B: Fix DNS Response NXDOMAIN for Non-Existent Types ✅ FIXED
 
 **Severity:** P1 — Protocol compliance
-**Files:** `src/dns/recursive.rs:669-681`
+**Files:** `src/dns/server/query.rs:930-1025`
 **Problem:** When domain exists but requested type doesn't (e.g., querying TXT for domain with only A records), returns `NXDOMAIN` (RCODE 3). Per RFC 1035, should return `NOERROR` (RCODE 0) with empty answer section (NODATA).
-**Fix:** Distinguish "name doesn't exist" (NXDOMAIN) vs "name exists but type doesn't" (NODATA). Include SOA in authority section.
+**Fix:** 
+1. Modified NODATA check to handle both `nsec_enabled` and `nsec3_enabled` zones (previously only checked `nsec3_enabled`)
+2. Returns NODATA when `is_nodata()` is true, even if NSEC proof records are empty (previously would fall through to NXDOMAIN)
+3. Added SOA record to NODATA response authority section per RFC 2308
 
 ### 5C: Fix CNAME/SOA/CAA/TLSA Wire Format Encoding ✅ FIXED
 
@@ -1520,11 +1523,11 @@ Every item across all 8 waves was verified against the actual source code. The f
 | 2 | Critical Security & Correctness | 20 | 20 | 0 | 0 | 100% ✅ |
 | 3 | Mesh & DHT Security/Correctness | 26 | 19 | 1 | 6 | 73% |
 | 4 | WAF Engine & Proxy Correctness | 24 | 20 | 2 | 2 | 83% |
-| 5 | DNS Protocol Correctness | 14 | 10 | 0 | 4 | 71% |
+| 5 | DNS Protocol Correctness | 14 | 11 | 0 | 3 | 78% |
 | 6 | Web App Stack & Admin Panel | 22 | 19 | 0 | 3 | 86% |
 | 7 | YARA, Honeypot & Threat Intel | 20 | 20 | 0 | 0 | 100% ✅ |
 | 8 | Code Quality, Safety & Performance | 22 | 18 | 0 | 4 | 82% |
-| **TOTAL** | | **158** | **136** | **3** | **19** | **86%** |
+| **TOTAL** | | **158** | **137** | **3** | **18** | **87%** |
 
 ---
 

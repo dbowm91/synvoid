@@ -934,7 +934,7 @@ impl DnsServer {
                 .find(|origin, zone| {
                     let origin_lower = origin.to_lowercase();
                     (qname_lower.ends_with(&origin_lower) || qname_lower == origin_lower)
-                        && zone.nsec3_enabled
+                        && (zone.nsec_enabled || zone.nsec3_enabled)
                         && Self::is_nodata(zone, &qname, record_type)
                 })
                 .map(|zone| {
@@ -942,8 +942,12 @@ impl DnsServer {
                     (origin, zone)
                 })
             {
-                let nsec3_records = Self::build_nsec3_nodata(&zone, &qname, record_type);
-                if !nsec3_records.is_empty() {
+                let soa_record = zone
+                    .records
+                    .get(&("@".to_string(), RecordType::SOA))
+                    .and_then(|records| records.first().cloned());
+                if zone.nsec3_enabled {
+                    let nsec3_records = Self::build_nsec3_nodata(&zone, &qname, record_type);
                     let zsk = zone.zsk_key.as_ref();
                     return Some(Self::build_nodata_response(
                         &qname,
@@ -954,6 +958,21 @@ impl DnsServer {
                         edns_options.as_ref(),
                         zsk,
                         origin.as_str(),
+                        soa_record.as_ref(),
+                    ));
+                } else if zone.nsec_enabled {
+                    let nsec_records = Self::build_nsec_records(&zone, &qname, record_type);
+                    let zsk = zone.zsk_key.as_ref();
+                    return Some(Self::build_nodata_response(
+                        &qname,
+                        qtype,
+                        &nsec_records,
+                        47,
+                        dnssec_ok,
+                        edns_options.as_ref(),
+                        zsk,
+                        origin.as_str(),
+                        soa_record.as_ref(),
                     ));
                 }
             }
@@ -1123,6 +1142,7 @@ impl DnsServer {
         edns_options: Option<&EdnsOptions>,
         zsk: Option<&crate::dns::dnssec::ZoneSigningKey>,
         signer_name: &str,
+        soa_record: Option<&DnsZoneRecord>,
     ) -> Arc<Vec<u8>> {
         let mut response = Vec::new();
 
@@ -1161,6 +1181,34 @@ impl DnsServer {
         response.extend_from_slice(&1u16.to_be_bytes());
 
         let mut nscount: u16 = 0;
+
+        // Add SOA record to authority section (RFC 2308)
+        if let Some(soa) = soa_record {
+            let soa_name_parts: Vec<&str> = if qname.is_empty() || qname == "@" {
+                vec![""]
+            } else {
+                qname.split('.').collect()
+            };
+
+            for part in &soa_name_parts {
+                if !part.is_empty() {
+                    response.push((*part).len() as u8);
+                    response.extend_from_slice(part.as_bytes());
+                }
+            }
+            response.push(0);
+
+            response.extend_from_slice(&RecordType::SOA.to_u16().to_be_bytes());
+            response.extend_from_slice(&1u16.to_be_bytes());
+            response.extend_from_slice(&soa.ttl.to_be_bytes());
+
+            // SOA record value as wire format
+            let soa_value = soa.value.as_bytes();
+            response.extend_from_slice(&(soa_value.len() as u16).to_be_bytes());
+            response.extend_from_slice(soa_value);
+            nscount += 1;
+        }
+
         for nsec_record in nsec_records {
             let nsec_name_parts: Vec<&str> = nsec_record.name.split('.').collect();
 

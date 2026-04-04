@@ -7,7 +7,6 @@ use metrics::{counter, histogram};
 use parking_lot::RwLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::Mutex;
-use tokio::time::sleep;
 
 use crate::mesh::config::MeshConfig;
 use crate::mesh::protocol::MeshMessage;
