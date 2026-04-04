@@ -2272,7 +2272,7 @@ mod yara_manager_lifecycle_tests {
             mesh_broadcast_enabled: true,
             ..Default::default()
         };
-        YaraRulesManager::new(config, "test-node".to_string(), role, None)
+        YaraRulesManager::new(config, "test-node".to_string(), role, None, None, None)
     }
 
     #[test]
@@ -2285,14 +2285,14 @@ mod yara_manager_lifecycle_tests {
     fn test_yara_manager_stats_default() {
         let manager = create_test_manager(MeshNodeRole::Global);
         let stats = manager.get_stats();
-        assert_eq!(stats.total_rules, 0);
-        assert_eq!(stats.active_rules, 0);
+        assert_eq!(stats.total_submissions, 0);
+        assert_eq!(stats.pending_submissions, 0);
     }
 
     #[test]
     fn test_yara_manager_local_rules_empty_initially() {
         let manager = create_test_manager(MeshNodeRole::Global);
-        let rules = manager.get_local_rules();
+        let rules = manager.get_current_rules();
         assert!(rules.is_none() || rules.as_ref().map_or(true, |r| r.is_empty()));
     }
 
@@ -2361,7 +2361,9 @@ mod yara_manager_lifecycle_tests {
         let manager = create_test_manager(MeshNodeRole::Global);
         let stats = manager.get_stats();
 
-        assert!(stats.compiler_version.is_some());
-        assert_eq!(stats.rule_count_by_category.len(), 0);
+        assert!(stats.current_version.is_none());
+        assert_eq!(stats.total_submissions, 0);
+        assert_eq!(stats.pending_submissions, 0);
+        assert!(stats.is_global);
     }
 }

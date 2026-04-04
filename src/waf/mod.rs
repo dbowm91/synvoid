@@ -875,6 +875,10 @@ impl WafCore {
             return decision;
         }
 
+        if let Some(decision) = self.check_dht_threat_lookup(client_ip) {
+            return decision;
+        }
+
         if let Some(decision) = self.check_endpoint_block(path, method) {
             return decision;
         }
@@ -980,6 +984,33 @@ impl WafCore {
                 return Some(WafDecision::Drop);
             }
         }
+        None
+    }
+
+    fn check_dht_threat_lookup(&self, client_ip: IpAddr) -> Option<WafDecision> {
+        if let Some(ref threat_intel) = get_threat_intel() {
+            if let Some(indicator) =
+                threat_intel.lookup_threat_indicator_in_dht(&client_ip.to_string())
+            {
+                tracing::info!(
+                    "DHT threat lookup hit for IP {}: type={:?}, severity={:?}, reason={}",
+                    client_ip,
+                    indicator.threat_type,
+                    indicator.severity,
+                    indicator.reason
+                );
+                crate::metrics::record_dht_threat_lookup_hit();
+                let ttl = indicator.ttl_seconds;
+                self.block_ip_with_threat_intel(
+                    client_ip,
+                    &indicator.reason,
+                    ttl,
+                    &indicator.site_scope,
+                );
+                return Some(WafDecision::Drop);
+            }
+        }
+        crate::metrics::record_dht_threat_lookup_miss();
         None
     }
 

@@ -23,10 +23,14 @@ pub struct YaraStatusResponse {
     pub has_feed_manager: bool,
 }
 
+const RULES_PREVIEW_LENGTH: usize = 500;
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct YaraSubmissionResponse {
     pub submission_id: String,
     pub rules: String,
+    pub rules_preview: Option<String>,
+    pub rules_length: usize,
     pub description: String,
     pub submitted_by: String,
     pub submitted_at: u64,
@@ -36,16 +40,32 @@ pub struct YaraSubmissionResponse {
     pub review_notes: Option<String>,
 }
 
-impl From<YaraRuleSubmission> for YaraSubmissionResponse {
-    fn from(s: YaraRuleSubmission) -> Self {
+impl YaraSubmissionResponse {
+    fn from_with_preview(s: YaraRuleSubmission, include_full_rules: bool) -> Self {
         let status = match s.status {
             YaraRuleSubmissionStatus::Pending => "pending".to_string(),
             YaraRuleSubmissionStatus::Approved => "approved".to_string(),
             YaraRuleSubmissionStatus::Rejected => "rejected".to_string(),
         };
+        let rules_length = s.rules.len();
+        let rules_preview = if s.rules.len() > RULES_PREVIEW_LENGTH {
+            Some(format!(
+                "{}...[truncated {} chars]",
+                &s.rules[..RULES_PREVIEW_LENGTH],
+                s.rules.len() - RULES_PREVIEW_LENGTH
+            ))
+        } else {
+            None
+        };
         Self {
             submission_id: s.submission_id,
-            rules: s.rules,
+            rules: if include_full_rules {
+                s.rules
+            } else {
+                String::new()
+            },
+            rules_preview,
+            rules_length,
             description: s.description,
             submitted_by: s.submitted_by,
             submitted_at: s.submitted_at,
@@ -54,6 +74,12 @@ impl From<YaraRuleSubmission> for YaraSubmissionResponse {
             reviewed_at: s.reviewed_at,
             review_notes: s.review_notes,
         }
+    }
+}
+
+impl From<YaraRuleSubmission> for YaraSubmissionResponse {
+    fn from(s: YaraRuleSubmission) -> Self {
+        Self::from_with_preview(s, true)
     }
 }
 
@@ -95,6 +121,38 @@ pub struct YaraBroadcastResponse {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct YaraSyncResponse {
+    pub success: bool,
+    pub message: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct YaraSubmitRequest {
+    pub rules: String,
+    pub description: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct YaraSubmitResponse {
+    pub success: bool,
+    pub submission_id: String,
+    pub message: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct YaraApplyRequest {
+    pub rules: String,
+    pub version: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct YaraApplyResponse {
+    pub success: bool,
+    pub version: String,
+    pub message: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct YaraDeleteResponse {
     pub success: bool,
     pub message: String,
 }
@@ -259,4 +317,84 @@ pub async fn sync_from_global(
         success: true,
         message: "Sync request sent to global nodes".to_string(),
     }))
+}
+
+pub async fn submit_rules(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Json(req): Json<YaraSubmitRequest>,
+) -> Result<Json<YaraSubmitResponse>, StatusCode> {
+    let yara_manager = state
+        .waf_tracking
+        .yara_rules
+        .as_ref()
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    match yara_manager.submit_rule_for_approval(req.rules, req.description) {
+        Ok(submission_id) => Ok(Json(YaraSubmitResponse {
+            success: true,
+            submission_id,
+            message: "Rules submitted for approval".to_string(),
+        })),
+        Err(e) => {
+            tracing::error!("Failed to submit rules: {}", e);
+            Err(StatusCode::BAD_REQUEST)
+        }
+    }
+}
+
+pub async fn apply_rules_direct(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Json(req): Json<YaraApplyRequest>,
+) -> Result<Json<YaraApplyResponse>, StatusCode> {
+    let yara_manager = state
+        .waf_tracking
+        .yara_rules
+        .as_ref()
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    if !yara_manager.is_global() {
+        return Err(StatusCode::FORBIDDEN);
+    }
+
+    match yara_manager.apply_rules_direct(req.rules, req.version) {
+        Ok(version) => {
+            if let Err(e) = yara_manager.broadcast_approved_rules(&version) {
+                tracing::warn!("Failed to broadcast applied rules: {}", e);
+            }
+            Ok(Json(YaraApplyResponse {
+                success: true,
+                version,
+                message: "Rules applied directly".to_string(),
+            }))
+        }
+        Err(e) => {
+            tracing::error!("Failed to apply rules directly: {}", e);
+            Err(StatusCode::BAD_REQUEST)
+        }
+    }
+}
+
+pub async fn delete_submission(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Path(submission_id): Path<String>,
+) -> Result<Json<YaraDeleteResponse>, StatusCode> {
+    let yara_manager = state
+        .waf_tracking
+        .yara_rules
+        .as_ref()
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    match yara_manager.delete_submission(&submission_id) {
+        Ok(()) => Ok(Json(YaraDeleteResponse {
+            success: true,
+            message: format!("Submission {} deleted", submission_id),
+        })),
+        Err(e) => {
+            tracing::error!("Failed to delete submission {}: {}", submission_id, e);
+            Err(StatusCode::BAD_REQUEST)
+        }
+    }
 }

@@ -374,6 +374,15 @@ fn build_router_from_state(
             post(handlers::yara_rules::broadcast_rules),
         )
         .route("/yara/sync", post(handlers::yara_rules::sync_from_global))
+        .route("/yara/submit", post(handlers::yara_rules::submit_rules))
+        .route(
+            "/yara/apply",
+            post(handlers::yara_rules::apply_rules_direct),
+        )
+        .route(
+            "/yara/submissions/{submission_id}",
+            delete(handlers::yara_rules::delete_submission),
+        )
         .route("/icmp/status", get(handlers::icmp::get_status))
         .route(
             "/icmp/config",
@@ -541,8 +550,8 @@ pub async fn start_admin_server(
 
     let rate_limiter = if rate_limit_config.requests_per_minute > 0 {
         Some(Arc::new(AdminRateLimiter::new(
-            rate_limit_config.requests_per_minute as u32,
-            rate_limit_config.burst as u32,
+            rate_limit_config.requests_per_minute,
+            rate_limit_config.burst,
         )))
     } else {
         None

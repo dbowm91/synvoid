@@ -96,6 +96,9 @@ pub struct UploadConfig {
 
     #[serde(default)]
     pub paths: Vec<PathUploadConfig>,
+
+    #[serde(default = "default_reject_mime_mismatch")]
+    pub reject_mime_mismatch: bool,
 }
 
 impl Default for UploadConfig {
@@ -119,6 +122,7 @@ impl Default for UploadConfig {
             burst_allowance: default_burst_allowance(),
             allowed_types: AllowedTypesConfig::default(),
             paths: Vec::new(),
+            reject_mime_mismatch: default_reject_mime_mismatch(),
         }
     }
 }
@@ -181,6 +185,10 @@ fn default_max_bytes_per_minute() -> String {
 
 fn default_burst_allowance() -> u32 {
     5
+}
+
+fn default_reject_mime_mismatch() -> bool {
+    false
 }
 
 impl UploadConfig {
@@ -263,6 +271,9 @@ impl UploadConfig {
                     .and_then(|s| parse_size(s))
                     .unwrap_or_else(|| self.max_size_bytes()),
                 burst_allowance: path_cfg.burst_allowance.unwrap_or(self.burst_allowance),
+                reject_mime_mismatch: path_cfg
+                    .reject_mime_mismatch
+                    .unwrap_or(self.reject_mime_mismatch),
             }
         } else {
             EffectiveUploadConfig {
@@ -280,6 +291,7 @@ impl UploadConfig {
                 max_bytes_per_minute: parse_size(&self.max_bytes_per_minute)
                     .unwrap_or(100 * 1024 * 1024),
                 burst_allowance: self.burst_allowance,
+                reject_mime_mismatch: self.reject_mime_mismatch,
             }
         }
     }
@@ -300,6 +312,7 @@ pub struct EffectiveUploadConfig {
     pub max_uploads_per_hour: u32,
     pub max_bytes_per_minute: u64,
     pub burst_allowance: u32,
+    pub reject_mime_mismatch: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -384,6 +397,9 @@ pub struct PathUploadConfig {
 
     #[serde(default)]
     pub allowed_types: AllowedTypesConfig,
+
+    #[serde(default)]
+    pub reject_mime_mismatch: Option<bool>,
 }
 
 fn parse_size(s: &str) -> Option<u64> {

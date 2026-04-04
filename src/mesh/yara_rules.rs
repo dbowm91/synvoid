@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 use base64::Engine;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tokio::sync::mpsc;
 
 use crate::mesh::config::{MeshNodeRole, YaraRulesMeshConfig};
@@ -178,6 +179,7 @@ pub struct YaraRulesManager {
     current_version: Arc<RwLock<Option<String>>>,
     local_rules: Arc<RwLock<Option<String>>>,
     submissions: Arc<RwLock<HashMap<String, YaraRuleSubmission>>>,
+    submission_hashes: Arc<RwLock<HashMap<String, String>>>,
     last_sync: RwLock<Instant>,
     feed_manager: Option<Arc<YaraRuleFeedManager>>,
     mesh_sender: Arc<RwLock<Option<mpsc::Sender<MeshMessage>>>>,
@@ -203,6 +205,7 @@ impl YaraRulesManager {
             current_version: Arc::new(RwLock::new(None)),
             local_rules: Arc::new(RwLock::new(None)),
             submissions: Arc::new(RwLock::new(HashMap::new())),
+            submission_hashes: Arc::new(RwLock::new(HashMap::new())),
             last_sync: RwLock::new(Instant::now()),
             feed_manager,
             mesh_sender: Arc::new(RwLock::new(None)),
@@ -239,6 +242,10 @@ impl YaraRulesManager {
         &self,
     ) -> Option<Arc<crate::upload::yara_rule_feed::YaraRuleFeedManager>> {
         self.feed_manager.clone()
+    }
+
+    pub fn is_global(&self) -> bool {
+        self.node_role.is_global() || self.node_role.contains(MeshNodeRole::Global)
     }
 
     pub fn apply_rules_from_feed(&self) -> Result<String, String> {
@@ -292,6 +299,20 @@ impl YaraRulesManager {
             return Err("Only edge nodes can submit rules".to_string());
         }
 
+        self.validate_rules_content(&rules)?;
+
+        let content_hash = self.compute_rules_hash(&rules);
+        if let Some(existing_id) = self.find_duplicate_submission(&content_hash) {
+            tracing::info!(
+                "Duplicate YARA submission detected: {} -> {}",
+                content_hash,
+                existing_id
+            );
+            return Ok(existing_id);
+        }
+
+        self.validate_rules_syntax(&rules)?;
+
         let submission_id = uuid::Uuid::new_v4().to_string();
         let submission_id_clone = submission_id.clone();
         let now = crate::mesh::safe_unix_timestamp();
@@ -320,6 +341,10 @@ impl YaraRulesManager {
             .write()
             .insert(submission_id.clone(), submission);
 
+        self.submission_hashes
+            .write()
+            .insert(content_hash, submission_id.clone());
+
         if let Err(e) = self.save_submission_to_disk(&submission_clone) {
             tracing::warn!("Failed to save submission to disk: {}", e);
         }
@@ -328,6 +353,55 @@ impl YaraRulesManager {
 
         tracing::info!("Submitted YARA rules for approval: {}", submission_id_clone);
         Ok(submission_id_clone)
+    }
+
+    fn compute_rules_hash(&self, rules: &str) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(rules.as_bytes());
+        let result = hasher.finalize();
+        hex::encode(result)
+    }
+
+    fn find_duplicate_submission(&self, content_hash: &str) -> Option<String> {
+        self.submission_hashes.read().get(content_hash).cloned()
+    }
+
+    fn validate_rules_content(&self, rules: &str) -> Result<(), String> {
+        let max_size = (self.config.max_rules_size_kb as usize) * 1024;
+        if rules.len() > max_size {
+            return Err(format!(
+                "Rules size {} exceeds maximum allowed size {}KB",
+                rules.len(),
+                self.config.max_rules_size_kb
+            ));
+        }
+
+        if !rules.contains("rule ") {
+            return Err("Rules must contain at least one 'rule' declaration".to_string());
+        }
+
+        let rule_count = rules.matches("rule ").count();
+        if rule_count > 100 {
+            tracing::warn!(
+                "Submission contains {} rules, which is unusually high",
+                rule_count
+            );
+        }
+
+        Ok(())
+    }
+
+    fn validate_rules_syntax(&self, rules: &str) -> Result<(), String> {
+        match yara_x::compile(rules) {
+            Ok(_) => {
+                tracing::debug!("YARA rules syntax validation passed");
+                Ok(())
+            }
+            Err(e) => {
+                tracing::warn!("YARA rules syntax validation failed: {}", e);
+                Err(format!("Invalid YARA syntax: {}", e))
+            }
+        }
     }
 
     fn broadcast_submission(&self, submission: &YaraRuleSubmission) -> Result<(), String> {
@@ -351,11 +425,50 @@ impl YaraRulesManager {
             };
 
             let sender_clone = sender.clone();
+            let request_id = submission.submission_id.clone();
             tokio::spawn(async move {
-                let _ = sender_clone.send(message).await;
+                Self::send_with_retry(sender_clone, message, 3, request_id).await;
             });
         }
         Ok(())
+    }
+
+    async fn send_with_retry(
+        sender: mpsc::Sender<MeshMessage>,
+        message: MeshMessage,
+        max_retries: u32,
+        request_id: String,
+    ) {
+        let mut attempt = 0;
+        loop {
+            match sender.send(message.clone()).await {
+                Ok(()) => {
+                    tracing::debug!("Broadcast sent successfully for request_id: {}", request_id);
+                    break;
+                }
+                Err(e) => {
+                    attempt += 1;
+                    if attempt >= max_retries {
+                        tracing::warn!(
+                            "Broadcast failed after {} attempts for request_id: {}: {}",
+                            max_retries,
+                            request_id,
+                            e
+                        );
+                        crate::metrics::record_dropped_yara_broadcast();
+                        break;
+                    }
+                    let backoff_ms = 100 * 2u64.pow(attempt - 1);
+                    tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
+                    tracing::debug!(
+                        "Broadcast attempt {} failed for request_id: {}, retrying in {}ms",
+                        attempt,
+                        request_id,
+                        backoff_ms
+                    );
+                }
+            }
+        }
     }
 
     pub fn approve_submission(
@@ -447,6 +560,33 @@ impl YaraRulesManager {
         self.submissions.read().get(submission_id).cloned()
     }
 
+    pub fn apply_rules_direct(&self, rules: String, version: String) -> Result<String, String> {
+        if !self.is_global() {
+            return Err("Only global nodes can apply rules directly".to_string());
+        }
+        self.apply_rules(rules, version, YaraRuleSource::Local)
+    }
+
+    pub fn delete_submission(&self, submission_id: &str) -> Result<(), String> {
+        let mut submissions = self.submissions.write();
+        let submission = submissions
+            .get(submission_id)
+            .ok_or("Submission not found")?;
+
+        if submission.status != YaraRuleSubmissionStatus::Pending
+            && submission.status != YaraRuleSubmissionStatus::Rejected
+        {
+            return Err("Can only delete Pending or Rejected submissions".to_string());
+        }
+
+        submissions.remove(submission_id);
+        drop(submissions);
+
+        self.delete_submission_from_disk(submission_id)?;
+        tracing::info!("Deleted YARA rule submission: {}", submission_id);
+        Ok(())
+    }
+
     pub fn broadcast_approved_rules(&self, version: &str) -> Result<(), String> {
         let sender = self.mesh_sender.read();
         if let Some(ref sender) = *sender {
@@ -458,7 +598,6 @@ impl YaraRulesManager {
                 .map(|s| s.get_public_key())
                 .unwrap_or_default();
 
-            // Sign the rules content (version||rules) for verification by peers
             let signature = if let Some(ref signer) = self.signer {
                 let sign_content = format!("{}:{}", version, rules);
                 signer.sign(&sign_content)
@@ -478,8 +617,9 @@ impl YaraRulesManager {
             };
 
             let sender_clone = sender.clone();
+            let request_id = version.to_string();
             tokio::spawn(async move {
-                let _ = sender_clone.send(message).await;
+                Self::send_with_retry(sender_clone, message, 3, request_id).await;
             });
         }
         Ok(())
@@ -661,7 +801,9 @@ impl YaraRulesManager {
                 node_id: self.node_id.clone().into(),
                 version: self.current_version.read().clone(),
             };
-            let _ = sender.send(msg);
+            if sender.try_send(msg).is_err() {
+                tracing::warn!("Failed to send YARA rules sync message");
+            }
         }
     }
 
@@ -678,6 +820,14 @@ impl YaraRulesManager {
         let current = self.current_version.read();
         if let Some(ref current_ver) = *current {
             if !crate::utils::is_newer_version(&version, current_ver) {
+                if let Some(ref current_rules) = *self.local_rules.read() {
+                    let incoming_hash = self.compute_rules_hash(&rules);
+                    let current_hash = self.compute_rules_hash(current_rules);
+                    if incoming_hash == current_hash {
+                        tracing::debug!("Received rules have same content as current (version {}), treating as idempotent", version);
+                        return Ok(current_ver.clone());
+                    }
+                }
                 return Err("Received rules are not newer".to_string());
             }
         }
@@ -844,7 +994,7 @@ impl YaraRulesManager {
                             let pk_bytes = base64::engine::general_purpose::STANDARD
                                 .decode(signer_public_key)
                                 .unwrap_or_default();
-                            if !signer.verify(&sign_content, &signature, &pk_bytes) {
+                            if !signer.verify(&sign_content, signature, &pk_bytes) {
                                 tracing::warn!(
                                     "YARA rule sync response signature verification failed from {}, rejecting rules",
                                     from_node
@@ -936,7 +1086,7 @@ impl YaraRulesManager {
             }
             MeshMessage::YaraRuleAcknowledgement {
                 original_request_id: _,
-                node_id,
+                node_id: _,
                 accepted,
                 reason,
                 timestamp: _,
@@ -1008,6 +1158,7 @@ impl Clone for YaraRulesManager {
             current_version: Arc::clone(&self.current_version),
             local_rules: Arc::clone(&self.local_rules),
             submissions: Arc::clone(&self.submissions),
+            submission_hashes: Arc::clone(&self.submission_hashes),
             last_sync: RwLock::new(*self.last_sync.read()),
             feed_manager: self.feed_manager.clone(),
             mesh_sender: Arc::clone(&self.mesh_sender),

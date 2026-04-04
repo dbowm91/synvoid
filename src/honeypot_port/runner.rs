@@ -148,7 +148,12 @@ impl PortHoneypotRunner {
 
         tokio::spawn(async move {
             let mut interval = time::interval(Duration::from_secs(publish_interval_secs));
-            let mut last_timestamp: i64 = 0;
+            let mut last_timestamp: i64 = storage
+                .get_metadata("mesh_publish_cursor")
+                .ok()
+                .flatten()
+                .and_then(|s| s.parse::<i64>().ok())
+                .unwrap_or(0);
 
             loop {
                 interval.tick().await;
@@ -207,6 +212,12 @@ impl PortHoneypotRunner {
                         }
 
                         last_timestamp = record.timestamp.max(last_timestamp);
+                    }
+
+                    if let Err(e) =
+                        storage.set_metadata("mesh_publish_cursor", &last_timestamp.to_string())
+                    {
+                        tracing::warn!("Failed to persist mesh publish cursor: {}", e);
                     }
 
                     tracing::debug!(

@@ -63,6 +63,9 @@ pub enum UploadValidationError {
 
     #[error("Empty filename")]
     EmptyFilename,
+
+    #[error("MIME type mismatch: declared '{declared}' but detected '{detected}'")]
+    MimeMismatch { declared: String, detected: String },
 }
 
 #[derive(Debug, Clone)]
@@ -240,6 +243,105 @@ impl UploadValidator {
         }
 
         self.validate_bytes(&data, request_path).await
+    }
+
+    pub async fn validate_bytes_with_declared_type(
+        &self,
+        data: &[u8],
+        request_path: &str,
+        declared_content_type: Option<&str>,
+    ) -> Result<ValidationResult, UploadValidationError> {
+        let effective_config = self.config.effective_config_for_path(request_path);
+
+        if data.len() as u64 > effective_config.max_size_bytes {
+            return Err(UploadValidationError::SizeExceeded {
+                max: effective_config.max_size_bytes,
+                actual: data.len() as u64,
+            });
+        }
+
+        if let Err(e) = self.reload_yara_rules_if_needed() {
+            tracing::warn!("Failed to reload YARA rules: {}", e);
+        }
+
+        let mime_info = crate::mime::detect_from_bytes_with_fallback(data, "bin");
+        let mime_type = mime_info.mime_type.clone();
+
+        if !crate::mime::global_registry()
+            .read()
+            .is_mime_allowed(&mime_type, &effective_config.allowed_mime_types)
+        {
+            return Err(UploadValidationError::TypeNotAllowed {
+                detected: mime_type.clone(),
+                allowed: effective_config.allowed_mime_types,
+            });
+        }
+
+        if effective_config.reject_mime_mismatch {
+            if let Some(declared) = declared_content_type {
+                let declared_lower = declared.to_lowercase();
+                let detected_lower = mime_type.to_lowercase();
+                let declared_base = declared_lower
+                    .split(';')
+                    .next()
+                    .unwrap_or(&declared_lower)
+                    .trim();
+                if !detected_lower.starts_with(declared_base)
+                    && declared_base != "application/octet-stream"
+                {
+                    tracing::warn!(
+                        "MIME mismatch detected: declared '{}', detected '{}'",
+                        declared,
+                        mime_type
+                    );
+                    return Err(UploadValidationError::MimeMismatch {
+                        declared: declared.to_string(),
+                        detected: mime_type.clone(),
+                    });
+                }
+            }
+        }
+
+        let (scanned, yara_matches) = if effective_config.scan_with_yara {
+            if let Some(scanner) = &self.malware_scanner {
+                match scanner.scan_bytes(data).await {
+                    Ok(scan_result) => {
+                        let matched_names: Vec<String> = scan_result
+                            .matches
+                            .iter()
+                            .map(|m| m.rule_name.clone())
+                            .collect();
+                        (true, matched_names)
+                    }
+                    Err(e) => {
+                        tracing::warn!("Malware scan error: {}", e);
+                        (true, Vec::new())
+                    }
+                }
+            } else {
+                (false, Vec::new())
+            }
+        } else {
+            (false, Vec::new())
+        };
+
+        if !yara_matches.is_empty() {
+            debug!(
+                mime_type = %mime_type,
+                matches = ?yara_matches,
+                "Malware detected in upload"
+            );
+            return Err(UploadValidationError::MalwareDetected {
+                matches: yara_matches,
+            });
+        }
+
+        Ok(ValidationResult {
+            mime_type,
+            size: data.len() as u64,
+            scanned,
+            yara_matches,
+        })
     }
 
     pub async fn validate_with_sandbox(
@@ -592,7 +694,7 @@ pub fn parse_multipart(
     let mut parts = Vec::new();
     let mut current_part_data: Vec<u8> = Vec::new();
     let mut in_part = false;
-    let mut part_headers: Vec<u8> = Vec::new();
+    let _part_headers: Vec<u8> = Vec::new();
     let mut filename: Option<String> = None;
     let mut content_type_header: Option<String> = None;
 
@@ -626,14 +728,14 @@ pub fn parse_multipart(
         if in_part {
             let header_end = part
                 .windows(2)
-                .position(|w| w == &[b'\r', b'\n'])
+                .position(|w| w == [b'\r', b'\n'])
                 .map(|p| p + 2);
             let header_section = match header_end {
                 Some(pos) => &part[..pos],
                 None => &[],
             };
 
-            if let Some(header_str) = std::str::from_utf8(header_section).ok() {
+            if let Ok(header_str) = std::str::from_utf8(header_section) {
                 let header_lc = header_str.to_lowercase();
                 if header_lc.contains("content-disposition:") {
                     if let Some(fname) = parse_content_disposition_filename(header_str) {
@@ -662,7 +764,7 @@ pub fn parse_multipart(
     Ok(parts)
 }
 
-fn split_on_boundary<'a>(body: &'a [u8], delimiter: &[u8], end_delimiter: &[u8]) -> Vec<&'a [u8]> {
+fn split_on_boundary<'a>(body: &'a [u8], delimiter: &[u8], _end_delimiter: &[u8]) -> Vec<&'a [u8]> {
     let mut parts = Vec::new();
     let mut start = 0;
 

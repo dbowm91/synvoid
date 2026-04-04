@@ -36,6 +36,11 @@ static DROPPED_WORKER_EVENTS: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::
 static HONEYPOT_INDICATORS_PUBLISHED: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 static HONEYPOT_RECORDS_PROCESSED: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 
+static DROPPED_YARA_BROADCASTS: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+
+static DHT_THREAT_LOOKUP_HITS: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+static DHT_THREAT_LOOKUP_MISSES: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+
 #[derive(Debug, Clone)]
 pub struct CacheMetrics {
     pub proxy_cache_hits: u64,
@@ -144,11 +149,36 @@ pub fn get_honeypot_records_processed() -> u64 {
     HONEYPOT_RECORDS_PROCESSED.load(Ordering::Relaxed)
 }
 
+pub fn record_dropped_yara_broadcast() {
+    DROPPED_YARA_BROADCASTS.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn get_dropped_yara_broadcasts() -> u64 {
+    DROPPED_YARA_BROADCASTS.load(Ordering::Relaxed)
+}
+
+pub fn record_dht_threat_lookup_hit() {
+    DHT_THREAT_LOOKUP_HITS.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_dht_threat_lookup_miss() {
+    DHT_THREAT_LOOKUP_MISSES.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn get_dht_threat_lookup_hits() -> u64 {
+    DHT_THREAT_LOOKUP_HITS.load(Ordering::Relaxed)
+}
+
+pub fn get_dht_threat_lookup_misses() -> u64 {
+    DHT_THREAT_LOOKUP_MISSES.load(Ordering::Relaxed)
+}
+
 pub fn total_dropped_events() -> u64 {
     DROPPED_TLS_RELOAD_EVENTS.load(Ordering::Relaxed)
         + DROPPED_THREAT_LEVEL_EVENTS.load(Ordering::Relaxed)
         + DROPPED_PROCESS_EVENTS.load(Ordering::Relaxed)
         + DROPPED_WORKER_EVENTS.load(Ordering::Relaxed)
+        + DROPPED_YARA_BROADCASTS.load(Ordering::Relaxed)
 }
 
 #[derive(Debug, Clone)]
@@ -157,6 +187,7 @@ pub struct DroppedEventCounts {
     pub threat_level: u64,
     pub process: u64,
     pub worker: u64,
+    pub yara_broadcast: u64,
     pub total: u64,
 }
 
@@ -166,6 +197,7 @@ pub fn get_dropped_event_counts() -> DroppedEventCounts {
         threat_level: DROPPED_THREAT_LEVEL_EVENTS.load(Ordering::Relaxed),
         process: DROPPED_PROCESS_EVENTS.load(Ordering::Relaxed),
         worker: DROPPED_WORKER_EVENTS.load(Ordering::Relaxed),
+        yara_broadcast: DROPPED_YARA_BROADCASTS.load(Ordering::Relaxed),
         total: total_dropped_events(),
     }
 }

@@ -48,13 +48,87 @@ async fn setup_worker_ipc(
     master_socket: &std::path::Path,
     worker_id: &WorkerId,
 ) -> Result<Arc<TokioMutex<AsyncIpcStream>>, Box<dyn std::error::Error + Send + Sync>> {
-    let mut stream = connect_to_master_async(
-        master_socket,
-        5,
-        std::time::Duration::from_secs(2),
-        "Unified server worker",
-    )
-    .await?;
+    // Read IPC session key from environment (passed via temp file by master)
+    let signer = if let Ok(key_file) = std::env::var("MALUWAF_IPC_KEY_FILE") {
+        match std::fs::read_to_string(&key_file) {
+            Ok(key_hex) => {
+                let key_hex = key_hex.trim();
+                if key_hex.len() == 64 {
+                    let mut key = [0u8; 32];
+                    let mut valid = true;
+                    for (i, chunk) in key_hex.as_bytes().chunks(2).enumerate() {
+                        if chunk.len() != 2 {
+                            valid = false;
+                            break;
+                        }
+                        let Ok(s) = std::str::from_utf8(chunk) else {
+                            valid = false;
+                            break;
+                        };
+                        match u8::from_str_radix(s, 16) {
+                            Ok(b) => key[i] = b,
+                            Err(_) => {
+                                valid = false;
+                                break;
+                            }
+                        }
+                    }
+                    if valid {
+                        let _ = std::fs::remove_file(&key_file);
+                        Some(std::sync::Arc::new(crate::process::IpcSigner::new(&key)))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }
+            Err(_) => None,
+        }
+    } else if let Ok(key_hex) = std::env::var("MALUWAF_IPC_KEY") {
+        if key_hex.len() == 64 {
+            let mut key = [0u8; 32];
+            let mut valid = true;
+            for (i, chunk) in key_hex.as_bytes().chunks(2).enumerate() {
+                if chunk.len() != 2 {
+                    valid = false;
+                    break;
+                }
+                let Ok(s) = std::str::from_utf8(chunk) else {
+                    valid = false;
+                    break;
+                };
+                match u8::from_str_radix(s, 16) {
+                    Ok(b) => key[i] = b,
+                    Err(_) => {
+                        valid = false;
+                        break;
+                    }
+                }
+            }
+            if valid {
+                Some(std::sync::Arc::new(crate::process::IpcSigner::new(&key)))
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let mut stream = if let Some(signer) = signer {
+        crate::process::connect_to_master_signed(signer).await?
+    } else {
+        connect_to_master_async(
+            master_socket,
+            5,
+            std::time::Duration::from_secs(2),
+            "Unified server worker",
+        )
+        .await?
+    };
 
     stream
         .send(&Message::UnifiedServerWorkerStarted {
@@ -266,6 +340,7 @@ pub async fn run_unified_server_worker(
                     mime_types: defaults.allowed_types.mime_types.clone(),
                 },
                 paths: Vec::new(),
+                reject_mime_mismatch: false,
             }
         };
 
