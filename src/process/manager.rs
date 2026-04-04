@@ -1462,30 +1462,62 @@ impl ProcessManager {
     }
 
     async fn handle_unified_workers_restart(&self) {
-        let _dead_workers: Vec<WorkerId> = {
-            let mut unified_workers = self.unified_server_workers.write();
-            let dead = Vec::new();
+        let mut unified_workers = self.unified_server_workers.write();
 
-            for (id, worker) in unified_workers.iter_mut() {
-                if let Some(child) = worker.child_mut() {
-                    if let Ok(Some(status)) = child.try_wait() {
-                        let exit_code = status.code();
-                        let is_resize_restart = exit_code == Some(100);
-                        let worker_id = WorkerId(*id);
+        for (id, worker) in unified_workers.iter_mut() {
+            if let Some(child) = worker.child_mut() {
+                if let Ok(Some(status)) = child.try_wait() {
+                    let exit_code = status.code();
+                    let is_resize_restart = exit_code == Some(100);
+                    let worker_id = WorkerId(*id);
 
-                        if is_resize_restart {
-                            tracing::info!(
-                                "UnifiedServerWorker {} (PID {:?}) exited for threadpool resize",
+                    if is_resize_restart {
+                        tracing::info!(
+                            "UnifiedServerWorker {} (PID {:?}) exited for threadpool resize",
+                            worker_id,
+                            worker.pid()
+                        );
+
+                        let pending = self.pending_thread_count.write();
+                        let new_threads = *pending;
+                        drop(pending);
+
+                        tracing::info!("Respawning UnifiedServerWorker {} for threadpool resize to {:?} threads", worker_id, new_threads);
+                        if let Err(e) = self.spawn_unified_server_worker_with_id(worker_id) {
+                            tracing::error!(
+                                "Failed to respawn UnifiedServerWorker {}: {}",
                                 worker_id,
-                                worker.pid()
+                                e
                             );
+                        } else {
+                            self.metrics.total_restarts.fetch_add(1, Ordering::Relaxed);
+                        }
+                    } else {
+                        let restart_count = worker.restart_count;
 
-                            let pending = self.pending_thread_count.write();
-                            let new_threads = *pending;
-                            drop(pending);
+                        tracing::error!(
+                            "UnifiedServerWorker {} (PID {:?}) exited unexpectedly with status: {} (restart {}/{})",
+                            worker_id,
+                            worker.pid(),
+                            status,
+                            restart_count,
+                            self.config.max_restart_attempts
+                        );
+                        *worker.status_mut() = WorkerStatus::Failed;
+                        *worker.child_mut() = None;
 
-                            tracing::info!("Respawning UnifiedServerWorker {} for threadpool resize to {:?} threads", worker_id, new_threads);
-                            if let Err(e) = self.spawn_unified_server_worker_with_id(worker_id) {
+                        if restart_count < self.config.max_restart_attempts {
+                            let new_count = restart_count + 1;
+                            worker.restart_count = new_count;
+                            worker.last_restart_at = Some(Instant::now());
+
+                            tracing::info!(
+                                "Respawning UnifiedServerWorker {} (attempt {})",
+                                worker_id,
+                                new_count
+                            );
+                            if let Err(e) = self.spawn_unified_server_worker_with_id(worker_id)
+                            {
                                 tracing::error!(
                                     "Failed to respawn UnifiedServerWorker {}: {}",
                                     worker_id,
@@ -1495,52 +1527,16 @@ impl ProcessManager {
                                 self.metrics.total_restarts.fetch_add(1, Ordering::Relaxed);
                             }
                         } else {
-                            let restart_count = worker.restart_count;
-
                             tracing::error!(
-                                "UnifiedServerWorker {} (PID {:?}) exited unexpectedly with status: {} (restart {}/{})",
+                                "UnifiedServerWorker {} exceeded max restart attempts ({}), not restarting",
                                 worker_id,
-                                worker.pid(),
-                                status,
-                                restart_count,
                                 self.config.max_restart_attempts
                             );
-                            *worker.status_mut() = WorkerStatus::Failed;
-                            *worker.child_mut() = None;
-
-                            if restart_count < self.config.max_restart_attempts {
-                                let new_count = restart_count + 1;
-                                worker.restart_count = new_count;
-                                worker.last_restart_at = Some(Instant::now());
-
-                                tracing::info!(
-                                    "Respawning UnifiedServerWorker {} (attempt {})",
-                                    worker_id,
-                                    new_count
-                                );
-                                if let Err(e) = self.spawn_unified_server_worker_with_id(worker_id)
-                                {
-                                    tracing::error!(
-                                        "Failed to respawn UnifiedServerWorker {}: {}",
-                                        worker_id,
-                                        e
-                                    );
-                                } else {
-                                    self.metrics.total_restarts.fetch_add(1, Ordering::Relaxed);
-                                }
-                            } else {
-                                tracing::error!(
-                                    "UnifiedServerWorker {} exceeded max restart attempts ({}), not restarting",
-                                    worker_id,
-                                    self.config.max_restart_attempts
-                                );
-                            }
                         }
                     }
                 }
             }
-            dead
-        };
+        }
     }
 
     fn restart_worker(&self, worker_id: WorkerId, port: u16, restart_count: u32) {

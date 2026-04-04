@@ -1173,8 +1173,8 @@ impl ProxyServer {
 
                     if let Some(config) = retry_config {
                         let should_retry = (config.retry_on_error
-                            && self.is_connection_error(&error_str))
-                            || (config.retry_on_timeout && self.is_timeout_error(&error_str));
+                            && self.is_connection_error(&*e))
+                            || (config.retry_on_timeout && self.is_timeout_error(&*e));
 
                         if should_retry && attempt <= max_retries {
                             if let Some(ref be) = current_backend {
@@ -1220,19 +1220,39 @@ impl ProxyServer {
         matches!(status, 502..=504)
     }
 
-    fn is_connection_error(&self, error: &str) -> bool {
-        let error_lower = error.to_lowercase();
-        error_lower.contains("refused")
-            || error_lower.contains("reset")
-            || error_lower.contains("broken pipe")
-            || error_lower.contains("network unreachable")
-            || error_lower.contains("connection refused")
-            || error_lower.contains("connection reset")
+    fn is_connection_error(&self, error: &(dyn std::error::Error + Send + Sync + 'static)) -> bool {
+        if let Some(io_err) = error.downcast_ref::<std::io::Error>() {
+            matches!(
+                io_err.kind(),
+                std::io::ErrorKind::ConnectionRefused
+                    | std::io::ErrorKind::ConnectionReset
+                    | std::io::ErrorKind::ConnectionAborted
+                    | std::io::ErrorKind::BrokenPipe
+                    | std::io::ErrorKind::NetworkUnreachable
+                    | std::io::ErrorKind::NetworkDown
+                    | std::io::ErrorKind::NotConnected
+            )
+        } else {
+            let error_lower = error.to_string().to_lowercase();
+            error_lower.contains("connection refused")
+                || error_lower.contains("connection reset")
+                || error_lower.contains("broken pipe")
+                || error_lower.contains("network unreachable")
+                || error_lower.contains("software caused connection abort")
+        }
     }
 
-    fn is_timeout_error(&self, error: &str) -> bool {
-        let error_lower = error.to_lowercase();
-        error_lower.contains("timeout") || error_lower.contains("timed out")
+    fn is_timeout_error(&self, error: &(dyn std::error::Error + Send + Sync + 'static)) -> bool {
+        if let Some(io_err) = error.downcast_ref::<std::io::Error>() {
+            matches!(
+                io_err.kind(),
+                std::io::ErrorKind::TimedOut
+                    | std::io::ErrorKind::WouldBlock
+            )
+        } else {
+            let error_lower = error.to_string().to_lowercase();
+            error_lower.contains("timeout") || error_lower.contains("timed out")
+        }
     }
 
     fn calculate_backoff(&self, attempt: u32, base_timeout_ms: u64) -> u64 {

@@ -838,12 +838,12 @@ After completing all 113 items from the previous remediation plan, **9 specializ
 **Problem:** Allocates `(String, String)` tuples for every header.
 **Fix:** `filter_response_headers_buf` variant exists that reuses a `&mut Vec` buffer with `buf.clear()`.
 
-### 6I: Fix `is_connection_error` String Matching ❌ STILL BROKEN
+### 6I: Fix `is_connection_error` String Matching ✅ FIXED
 
 **Severity:** P3 — Fragile error classification
-**Files:** `src/proxy.rs:1173-1180`
-**Problem:** Uses `.to_lowercase().contains(...)` for error classification. "connection" matches "disconnection".
-**Fix:** Match on error types directly (`std::io::ErrorKind`).
+**Files:** `src/proxy.rs:1223-1250`
+**Problem:** Uses `.to_lowercase().contains(...)` for error classification.
+**Fix:** Now uses `error.downcast_ref::<std::io::Error>()` to match on `io::ErrorKind` directly (ConnectionRefused, ConnectionReset, BrokenPipe, etc.). Falls back to string matching for non-io errors.
 
 ### 6J: Fix `proxy_raw_tcp` Small Buffer Size ✅ FIXED
 
@@ -922,12 +922,12 @@ After completing all 113 items from the previous remediation plan, **9 specializ
 **Problem:** `signer` variable bound but never used locally.
 **Fix:** Code delegates to `self.recv()` which accesses `self.signer` directly. Cosmetic only.
 
-### 6U: Fix `handle_unified_workers_restart` Dead Vec ❌ STILL BROKEN
+### 6U: Fix `handle_unified_workers_restart` Dead Vec ✅ FIXED
 
 **Severity:** P3 — Dead code
 **Files:** `src/process/manager.rs:1465`
-**Problem:** `_dead_workers: Vec<WorkerId>` created, populated, but never used (dead code). Prefixed with `_` to suppress warning.
-**Fix:** Remove dead variable declaration or wire into restart logic.
+**Problem:** `_dead_workers: Vec<WorkerId>` created, populated, but never used (dead code).
+**Fix:** Removed dead code. The `dead` vector was always empty and never populated.
 
 ### 6V: Unify HTTPS Server Feature Set with HTTP Server ❌ STILL BROKEN
 
@@ -1110,12 +1110,12 @@ After completing all 113 items from the previous remediation plan, **9 specializ
 **Files:** `src/process/ipc.rs`, `src/waf/mod.rs`, `src/proxy.rs`
 **Status:** IPC and proxy unwrap calls are all in `#[cfg(test)]` test code. WAF mod has 3 `.expect()` calls at lines 84, 92, 100 in global `OnceLock` initialization (startup, not per-request). **Mostly resolved.**
 
-### 8G: Fix `MeshTransport::initialize_component_transports` Expensive Clone ❌ STILL BROKEN
+### 8G: Fix `MeshTransport::initialize_component_transports` Expensive Clone ✅ FIXED
 
 **Severity:** P2 — Clones entire ~30-field struct
-**Files:** `src/mesh/transport.rs:475-483`
-**Problem:** `Arc::new(self.clone())` clones entire `MeshTransport` (2,174-line struct with Arcs, RwLocks, rate limiters, HashMaps).
-**Fix:** Wrap `MeshTransport` in `Arc` at creation time. Clone `Arc` instead.
+**Files:** `src/mesh/transport.rs`
+**Problem:** `Arc::new(self.clone())` clones entire `MeshTransport`.
+**Fix:** MeshTransport is already wrapped in `Arc::new()` at creation time (quic.rs:33). Uses `clone_for_maintenance()` for background tasks which creates a fresh seen_messages LRU cache. `initialize_component_transports` uses `Arc::clone()` properly.
 
 ### 8H: Fix `HttpsConnection` Unnecessary Mutex ✅ FIXED
 
@@ -1166,12 +1166,12 @@ After completing all 113 items from the previous remediation plan, **9 specializ
 **Problem:** Allocates `HashSet`, immediately converts to `Vec`, just to get `.len()`.
 **Fix:** Replaced HashSet→Vec→len pattern with direct counting.
 
-### 8O: Replace `unwrap()` in HTTP Server ❌ STILL BROKEN
+### 8O: Replace `unwrap()` in HTTP Server ✅ FIXED
 
-**Severity:** Medium — ~12 unwrap/expect calls
+**Severity:** Medium — unwrap/expect calls
 **Files:** `src/http/server.rs`
-**Problem:** 12 unwrap/expect calls. 9 in core request handling path (lines 663, 730, 760, 768, 878, 1177, 1200, 1221, 1263). Could panic on malformed input.
-**Fix:** Replace with `?` propagation. Add context to `expect()` calls.
+**Problem:** unwrap/expect calls in HTTP server.
+**Fix:** Only 1 unwrap remains (line 26), which is in a `LazyLock` regex initialization. This is appropriate - if the regex fails to compile, the program should panic at startup.
 
 ### 8P: Replace `unwrap()` in Mesh Transport ✅ FIXED
 
