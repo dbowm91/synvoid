@@ -101,8 +101,7 @@ impl TryFrom<proto::MeshCapabilities> for MeshCapabilities {
             max_hops: pb.max_hops as u8,
             supported_services: pb.supported_services,
             preferred_transport: match pb.preferred_transport {
-                1 => Some(MeshTransportType::WireGuard),
-                2 => Some(MeshTransportType::Quic),
+                1 | 2 => Some(MeshTransportType::Quic),
                 _ => None,
             },
             supported_protocols: pb.supported_protocols,
@@ -123,8 +122,7 @@ impl TryFrom<&proto::MeshCapabilities> for MeshCapabilities {
             max_hops: pb.max_hops as u8,
             supported_services: pb.supported_services.clone(),
             preferred_transport: match pb.preferred_transport {
-                1 => Some(MeshTransportType::WireGuard),
-                2 => Some(MeshTransportType::Quic),
+                1 | 2 => Some(MeshTransportType::Quic),
                 _ => None,
             },
             supported_protocols: pb.supported_protocols.clone(),

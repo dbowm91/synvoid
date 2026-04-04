@@ -11,15 +11,13 @@ use crate::mesh::protocol::MeshMessage;
 pub mod manager;
 pub mod quic;
 pub mod stack;
-pub mod wireguard;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 #[derive(Default)]
 pub enum MeshTransportType {
-    Quic,
     #[default]
-    WireGuard,
+    Quic,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -118,4 +116,3 @@ pub use manager::{
 };
 pub use quic::QuicMeshTransport;
 pub use stack::MeshTransportStack;
-pub use wireguard::WireGuardMeshTransport;

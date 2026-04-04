@@ -13,6 +13,8 @@ pub mod cli;
 pub mod client_audit;
 pub mod config;
 pub mod dht;
+pub mod global_node_ha;
+pub mod hierarchical_routing;
 pub mod kem;
 pub mod ml_kem_key_exchange;
 pub mod network_security;
@@ -47,7 +49,6 @@ pub mod transport_rate_limit;
 pub mod transport_routing;
 pub mod transports;
 pub mod wasm_dist;
-pub mod wireguard_mesh;
 pub mod yara_rules;
 
 pub use crate::utils::{safe_unix_duration, safe_unix_timestamp};
@@ -73,6 +74,14 @@ pub use dht::{
     DhtAccessControl, DhtConfig, DhtError, DhtKey, DhtRecordEntry, MerkleNode, MerkleProof,
     MerkleProofNode, MerkleTree, NodeInfo, ProofPosition, RecordStoreConfig, RecordStoreManager,
     RecordStoreStats, TierKeyStore, TierKeyStoreEntry,
+};
+pub use hierarchical_routing::{
+    MeshBloomFilter, DirectedRouteQuery, HierarchicalRoutingConfig, HierarchicalRoutingManager,
+    RegionalHubInfo, RouteAdvertisement,
+};
+pub use global_node_ha::{
+    GlobalNodeHAManager, GlobalNodeHAConfig, GlobalNodeRole, GlobalNodeState,
+    GlobalNodeLeaderTracker, HeartbeatMessage, LeaderInfo, VoteRequest, VoteResponse,
 };
 pub use kem::{KemSession, MlKem768, MlKem768PublicKey, MlKem768SecretKey, MlKem768SharedSecret};
 pub use ml_kem_key_exchange::MlKemKeyExchangeService;
@@ -115,7 +124,7 @@ pub use transport_core::{
 };
 pub use transports::{
     DatagramPacket, MeshDatagramHandler, MeshPeerConnectionTrait, MeshTransportManager,
-    MeshTransportTrait, MeshTransportType, QuicMeshTransport, WireGuardMeshTransport,
+    MeshTransportTrait, MeshTransportType, QuicMeshTransport,
 };
 pub use wasm_dist::{
     get_global_wasm_dist_manager, set_global_wasm_dist_manager, WasmDistManager, WasmModuleStore,

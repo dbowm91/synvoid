@@ -947,6 +947,20 @@ pub enum MeshMessage {
         modules: Vec<WasmModuleInfo>,
         timestamp: u64,
     },
+    SessionRotate {
+        session_id: ArcStr,
+        peer_id: ArcStr,
+        key_version: u64,
+        peer_entropy: Vec<u8>,
+        timestamp: u64,
+    },
+    SessionRotateAck {
+        session_id: ArcStr,
+        peer_id: ArcStr,
+        key_version: u64,
+        peer_entropy: Vec<u8>,
+        timestamp: u64,
+    },
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -977,8 +991,8 @@ impl MeshCapabilities {
         use crate::mesh::transports::MeshTransportType;
 
         let preferred = match config.transport_preference {
-            crate::mesh::config::MeshTransportPreference::WireGuard => MeshTransportType::WireGuard,
-            crate::mesh::config::MeshTransportPreference::Quic => MeshTransportType::Quic,
+            crate::mesh::config::MeshTransportPreference::WireGuard
+            | crate::mesh::config::MeshTransportPreference::Quic => MeshTransportType::Quic,
         };
 
         Self {

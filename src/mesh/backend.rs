@@ -11,7 +11,7 @@ use crate::mesh::dht::{DhtAccessControl, RecordStoreConfig, RecordStoreManager};
 use crate::mesh::proxy::{MeshProxy, MeshProxyError};
 use crate::mesh::topology::MeshTopology;
 use crate::mesh::transport::MeshTransport;
-use crate::mesh::transports::{MeshTransportManager, QuicMeshTransport, WireGuardMeshTransport};
+use crate::mesh::transports::{MeshTransportManager, QuicMeshTransport};
 
 pub fn create_record_store(
     config: &MeshConfig,
@@ -331,38 +331,10 @@ pub async fn initialize_mesh_transports(
     #[cfg(feature = "dns")] dns_registry: Option<Arc<crate::dns::MeshDnsRegistry>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let config = Arc::new(config.clone());
-    // Use the topology from the transport_manager (created in unified_server.rs)
-    // to ensure all components share the same peer topology
     let topology = transport_manager.get_topology();
 
-    match config.transport_preference {
-        crate::mesh::config::MeshTransportPreference::WireGuard => {
-            if config.wireguard.enabled {
-                tracing::info!("Initializing WireGuard mesh transport...");
-
-                let wg_transport = WireGuardMeshTransport::new(
-                    config.clone(),
-                    config.wireguard.clone(),
-                    topology.clone(),
-                );
-
-                match wg_transport.initialize().await {
-                    Err(e) => {
-                        tracing::warn!("WireGuard transport initialization failed: {}", e);
-                        tracing::info!("Falling back to QUIC transport");
-                    }
-                    _ => {
-                        if let Err(e) = wg_transport.start().await {
-                            tracing::warn!("WireGuard transport start failed: {}", e);
-                        } else {
-                            transport_manager.set_wireguard_transport(wg_transport);
-                            tracing::info!("WireGuard mesh transport started successfully");
-                        }
-                    }
-                }
-            }
-        }
-        crate::mesh::config::MeshTransportPreference::Quic => {}
+    if config.transport_preference == crate::mesh::config::MeshTransportPreference::WireGuard {
+        tracing::warn!("WireGuard transport preference ignored — WireGuard transport has been removed due to lack of authentication. Using QUIC transport instead.");
     }
 
     let routing_manager = if config
@@ -452,7 +424,7 @@ pub async fn initialize_mesh_transports(
     tracing::info!(
         "Mesh transports initialized: preferred={:?}, wireguard_available={}, quic_available={}",
         config.transport_preference,
-        transport_manager.is_wireguard_available(),
+        transport_manager.is_quic_available(),
         transport_manager.is_quic_available()
     );
 

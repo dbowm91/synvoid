@@ -1308,6 +1308,22 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                     timestamp: r.timestamp,
                 })
             }
+            proto::mesh_message::Payload::SessionRotate(r) => Ok(MeshMessage::SessionRotate {
+                session_id: r.session_id.into(),
+                peer_id: r.peer_id.into(),
+                key_version: r.key_version,
+                peer_entropy: r.peer_entropy,
+                timestamp: r.timestamp,
+            }),
+            proto::mesh_message::Payload::SessionRotateAck(r) => {
+                Ok(MeshMessage::SessionRotateAck {
+                    session_id: r.session_id.into(),
+                    peer_id: r.peer_id.into(),
+                    key_version: r.key_version,
+                    peer_entropy: r.peer_entropy,
+                    timestamp: r.timestamp,
+                })
+            }
         }
     }
 }

@@ -2091,6 +2091,42 @@ impl From<&MeshMessage> for proto::MeshMessage {
                     },
                 )),
             },
+            MeshMessage::SessionRotate {
+                session_id,
+                peer_id,
+                key_version,
+                peer_entropy,
+                timestamp,
+            } => proto::MeshMessage {
+                message_type: 130,
+                payload: Some(proto::mesh_message::Payload::SessionRotate(
+                    proto::SessionRotate {
+                        session_id: session_id.to_string(),
+                        peer_id: peer_id.to_string(),
+                        key_version: *key_version,
+                        peer_entropy: peer_entropy.clone(),
+                        timestamp: *timestamp,
+                    },
+                )),
+            },
+            MeshMessage::SessionRotateAck {
+                session_id,
+                peer_id,
+                key_version,
+                peer_entropy,
+                timestamp,
+            } => proto::MeshMessage {
+                message_type: 131,
+                payload: Some(proto::mesh_message::Payload::SessionRotateAck(
+                    proto::SessionRotateAck {
+                        session_id: session_id.to_string(),
+                        peer_id: peer_id.to_string(),
+                        key_version: *key_version,
+                        peer_entropy: peer_entropy.clone(),
+                        timestamp: *timestamp,
+                    },
+                )),
+            },
         }
     }
 }

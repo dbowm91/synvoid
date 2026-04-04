@@ -1655,6 +1655,51 @@ impl MeshTransport {
             MeshMessage::Hello { .. } | MeshMessage::HelloAck { .. } => {
                 tracing::warn!("Unexpected handshake message in peer loop");
             }
+            MeshMessage::SessionRotate {
+                session_id,
+                peer_id,
+                key_version,
+                peer_entropy,
+                timestamp: _,
+            } => {
+                tracing::debug!(
+                    "Received SessionRotate for session {} from peer {} (key_version={})",
+                    session_id,
+                    peer_id,
+                    key_version,
+                );
+                if let Some(ref session_mgr) = self.mlkem_session_manager {
+                    if let Err(e) = session_mgr.apply_peer_rotation(&session_id, key_version, &peer_entropy) {
+                        tracing::warn!("Failed to apply peer session rotation: {}", e);
+                    } else {
+                        let ack = MeshMessage::SessionRotateAck {
+                            session_id,
+                            peer_id: self.config.node_id().into(),
+                            key_version,
+                            peer_entropy: Vec::new(),
+                            timestamp: crate::utils::current_timestamp(),
+                        };
+                        let encoded = ack.encode().map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
+                        let len = (encoded.len() as u32).to_be_bytes();
+                        let _ = send_stream.write_all(&len).await;
+                        let _ = send_stream.write_all(&encoded).await;
+                    }
+                }
+            }
+            MeshMessage::SessionRotateAck {
+                session_id,
+                peer_id: _,
+                key_version: _,
+                peer_entropy,
+                timestamp: _,
+            } => {
+                tracing::debug!("Received SessionRotateAck for session {}", session_id);
+                if let Some(ref session_mgr) = self.mlkem_session_manager {
+                    if let Err(e) = session_mgr.finalize_rotation(&session_id, &peer_entropy) {
+                        tracing::warn!("Failed to finalize session rotation: {}", e);
+                    }
+                }
+            }
             _ => {
                 tracing::debug!("Unhandled mesh message type");
             }

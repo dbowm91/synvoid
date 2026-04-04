@@ -57,7 +57,6 @@ use crate::mesh::protocol::{
 };
 use crate::mesh::session::SessionManager;
 use crate::mesh::topology::{MeshTopology, PeerStatus};
-use crate::mesh::wireguard_mesh::WireGuardMeshRuntime;
 use crate::tunnel::quic::runtime::QuicRuntime;
 use crate::waf::ratelimit::core::AtomicSlidingWindow;
 
@@ -84,7 +83,6 @@ pub struct MeshTransport {
     pub(crate) topology: Arc<MeshTopology>,
     pub(crate) cert_manager: Arc<RwLock<MeshCertManager>>,
     pub(crate) runtime: Option<Arc<QuicRuntime>>,
-    pub(crate) wireguard_runtime: Option<Arc<WireGuardMeshRuntime>>,
     pub(crate) running: Arc<RwLock<bool>>,
     pub(crate) shutdown_tx: Arc<RwLock<Option<broadcast::Sender<()>>>>,
     pub(crate) peer_connections: Arc<DashMap<String, MeshPeerConnection>>,
@@ -122,7 +120,6 @@ impl Clone for MeshTransport {
             topology: self.topology.clone(),
             cert_manager: self.cert_manager.clone(),
             runtime: self.runtime.clone(),
-            wireguard_runtime: self.wireguard_runtime.clone(),
             running: self.running.clone(),
             shutdown_tx: self.shutdown_tx.clone(),
             peer_connections: self.peer_connections.clone(),
@@ -336,7 +333,6 @@ impl MeshTransport {
             topology,
             cert_manager,
             runtime: None,
-            wireguard_runtime: None,
             running: Arc::new(RwLock::new(false)),
             shutdown_tx: Arc::new(RwLock::new(None)),
             peer_connections: Arc::new(DashMap::new()),
@@ -529,10 +525,6 @@ impl MeshTransport {
         self.runtime = Some(runtime);
     }
 
-    pub fn set_wireguard_runtime(&mut self, runtime: Arc<WireGuardMeshRuntime>) {
-        self.wireguard_runtime = Some(runtime);
-    }
-
     pub(crate) async fn update_threat_intel_global_nodes(&self) {
         if let Some(ref threat_intel) = self.threat_intel {
             let global_nodes = self.topology.get_global_nodes_as_peer_info().await;
@@ -540,23 +532,11 @@ impl MeshTransport {
         }
     }
 
-    pub fn is_using_wireguard(&self) -> bool {
-        self.wireguard_runtime.is_some()
-    }
-
     pub fn get_quic_port(&self) -> Option<u16> {
         if let Some(ref runtime) = self.runtime {
             runtime.local_port()
         } else {
             Some(self.config.port)
-        }
-    }
-
-    pub fn get_wireguard_port(&self) -> Option<u16> {
-        if let Some(ref wg) = self.wireguard_runtime {
-            Some(wg.listen_port())
-        } else {
-            self.wireguard_port()
         }
     }
 
@@ -579,9 +559,6 @@ impl MeshTransport {
     }
 
     pub fn get_bind_addresses(&self) -> Vec<String> {
-        if let Some(ref wg) = self.wireguard_runtime {
-            return wg.local_addresses();
-        }
         if let Some(ref addr) = self.config.bind_address {
             vec![addr.clone()]
         } else {
@@ -927,6 +904,7 @@ impl MeshTransport {
         if let Some(ref mlkem_manager) = self.mlkem_session_manager {
             let mlkem_manager = mlkem_manager.clone();
             let rotation_interval = mlkem_manager.config().rotation_interval;
+            let session_rotation_transport = Arc::new(self.clone_for_maintenance());
             tokio::spawn(async move {
                 let mut interval = tokio::time::interval(rotation_interval);
                 loop {
@@ -935,6 +913,20 @@ impl MeshTransport {
                     let rotated = mlkem_manager.rotate_stale_sessions();
                     if !rotated.is_empty() {
                         tracing::info!("Rotated {} ML-KEM sessions", rotated.len());
+                        for session in &rotated {
+                            if let Some((sid, kv, entropy)) = mlkem_manager.prepare_session_rotation(&session.id) {
+                                let msg = MeshMessage::SessionRotate {
+                                    session_id: sid.clone().into(),
+                                    peer_id: session.peer_id.clone().into(),
+                                    key_version: kv,
+                                    peer_entropy: entropy,
+                                    timestamp: crate::utils::current_timestamp(),
+                                };
+                                if let Err(e) = session_rotation_transport.send_message_to_peer(&session.peer_id, &msg).await {
+                                    tracing::warn!("Failed to send SessionRotate to {}: {}", session.peer_id, e);
+                                }
+                            }
+                        }
                     }
                     let cleaned = mlkem_manager.cleanup_expired();
                     if cleaned > 0 {
@@ -1163,7 +1155,7 @@ impl MeshTransport {
         let auth_token = peer_config.auth_token.clone();
 
         let quic_port = self.get_actual_quic_port().await.map(|p| p as u32);
-        let wireguard_port = self.get_wireguard_port().map(|p| p as u32);
+        let wireguard_port = self.wireguard_port().map(|p| p as u32);
 
         let is_edge = self.config.role.is_edge();
 
@@ -1205,6 +1197,31 @@ impl MeshTransport {
             (None, None)
         };
 
+        // Generate Ed25519 signature for global node authentication
+        let global_node_auth_sig = if self.config.role.is_global() {
+            if let Some(sk) = self.config.signing_key() {
+                if sk.len() == 32 {
+                    let mut key_bytes = [0u8; 32];
+                    key_bytes.copy_from_slice(sk);
+                    match crate::mesh::peer_auth::generate_global_node_auth(&self.config.node_id(), &key_bytes) {
+                        Ok((sig, _ts)) => Some(sig.into()),
+                        Err(e) => {
+                            tracing::warn!("Failed to generate global node auth signature: {}", e);
+                            None
+                        }
+                    }
+                } else {
+                    tracing::warn!("Signing key has invalid length for Ed25519: {}", sk.len());
+                    None
+                }
+            } else {
+                tracing::warn!("No signing key available for global node authentication");
+                None
+            }
+        } else {
+            None
+        };
+
         let hello = MeshMessage::Hello {
             version: MESH_MESSAGE_VERSION,
             node_id: node_id.clone().into(),
@@ -1216,7 +1233,7 @@ impl MeshTransport {
             upstreams,
             auth_token: auth_token.clone().map(|s| s.into()),
             network_id: self.config.network_id.clone().map(|s| s.into()),
-            global_node_key: self.config.global_node_key.clone().map(|s| s.into()),
+            global_node_key: global_node_auth_sig,
             timestamp: Some(MeshMessage::generate_timestamp()),
             nonce: Some(MeshMessage::generate_nonce()),
             is_trusted: self.config.is_trusted_node(),
@@ -1273,7 +1290,7 @@ impl MeshTransport {
                 auth_token: resp_token,
                 network_id: resp_network_id,
                 global_node_key: resp_global_key,
-                timestamp: _,
+                timestamp: resp_timestamp,
                 nonce: _,
                 is_trusted: _,
                 quic_port: peer_quic_port,
@@ -1388,23 +1405,22 @@ impl MeshTransport {
                 }
 
                 if role.is_global() {
-                    let expected_key = self.config.global_node_key.as_ref().ok_or_else(|| {
-                        MeshTransportError::AuthFailed(
-                            "Cannot verify global node: local node has no global_node_key configured".to_string()
-                        )
-                    })?;
-                    if let Some(ref peer_key) = resp_global_key {
-                        if peer_key.as_str() != expected_key.as_str() {
-                            tracing::warn!("Global node key verification failed for {}", node_id);
-                            return Err(MeshTransportError::AuthFailed(
-                                "Invalid global node key".to_string(),
-                            ));
-                        }
-                    } else {
-                        tracing::warn!("Global node {} did not provide key verification", node_id);
-                        return Err(MeshTransportError::AuthFailed(
-                            "Global node key required".to_string(),
-                        ));
+                    let authorized_keys: Vec<String> = self.config.seeds.iter()
+                        .filter_map(|seed| seed.public_key.clone())
+                        .collect();
+                    let peer_pk = peer_public_key.as_ref().map(|pk| pk.as_str());
+                    let peer_sig = resp_global_key.as_ref().map(|sk| sk.as_str());
+                    if let Err(e) = crate::mesh::peer_auth::validate_peer_role(
+                        &role,
+                        &authorized_keys,
+                        &node_id,
+                        peer_pk,
+                        peer_sig,
+                        resp_timestamp.unwrap_or(0),
+                        300,
+                    ) {
+                        tracing::warn!("Global node Ed25519 verification failed for {}: {}", node_id, e);
+                        return Err(MeshTransportError::AuthFailed(e));
                     }
                 }
 

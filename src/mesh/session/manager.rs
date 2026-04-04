@@ -258,6 +258,92 @@ impl<K: KemSession + Clone> SessionManager<K> {
         self.sessions.get(session_id).map(|s| s.ciphertext.clone())
     }
 
+    /// Prepares session rotation data to send to a peer.
+    /// Returns (session_id, key_version, peer_entropy) for inclusion in a SessionRotate message.
+    pub fn prepare_session_rotation(&self, session_id: &str) -> Option<(String, u64, Vec<u8>)> {
+        let session = self.sessions.get(session_id)?;
+        if !session.should_rotate(&self.config) {
+            return None;
+        }
+
+        let new_version = session.key_version + 1;
+        let peer_entropy = derive_session_key(
+            &session.session_key,
+            &format!("entropy:{}:{}", session.id, new_version),
+            &session.peer_id,
+            new_version,
+        );
+
+        Some((session.id.clone(), new_version, peer_entropy))
+    }
+
+    /// Applies received peer entropy from a SessionRotate message.
+    /// Derives the new shared session key using both local and peer entropy.
+    pub fn apply_peer_rotation(
+        &self,
+        session_id: &str,
+        peer_key_version: u64,
+        peer_entropy: &[u8],
+    ) -> Result<(), SessionError> {
+        let session = self
+            .sessions
+            .get(session_id)
+            .map(|s| s.value().clone())
+            .ok_or_else(|| SessionError::SessionNotFound(session_id.to_string()))?;
+
+        if peer_key_version <= session.key_version {
+            return Ok(());
+        }
+
+        let new_key = derive_session_key_with_entropy(
+            &session.session_key,
+            &session.id,
+            &session.peer_id,
+            peer_key_version,
+            peer_entropy,
+        );
+
+        let mut session = session;
+        session.session_key = new_key;
+        session.key_version = peer_key_version;
+        session.last_rotated = Instant::now();
+
+        self.sessions.insert(session.id.clone(), session.clone());
+
+        Ok(())
+    }
+
+    /// Completes a local rotation by applying our own entropy after receiving peer acknowledgment.
+    pub fn finalize_rotation(
+        &self,
+        session_id: &str,
+        peer_entropy: &[u8],
+    ) -> Result<(), SessionError> {
+        let session = self
+            .sessions
+            .get(session_id)
+            .map(|s| s.value().clone())
+            .ok_or_else(|| SessionError::SessionNotFound(session_id.to_string()))?;
+
+        let new_version = session.key_version + 1;
+        let new_key = derive_session_key_with_entropy(
+            &session.session_key,
+            &session.id,
+            &session.peer_id,
+            new_version,
+            peer_entropy,
+        );
+
+        let mut session = session;
+        session.session_key = new_key;
+        session.key_version = new_version;
+        session.last_rotated = Instant::now();
+
+        self.sessions.insert(session.id.clone(), session.clone());
+
+        Ok(())
+    }
+
     pub fn session_count(&self) -> usize {
         self.sessions.len()
     }
@@ -282,6 +368,25 @@ fn derive_session_key(
     hasher.update(session_id.as_bytes());
     hasher.update(peer_id.as_bytes());
     hasher.update(version.to_le_bytes());
+
+    hasher.finalize().to_vec()
+}
+
+fn derive_session_key_with_entropy(
+    shared_secret: &[u8],
+    session_id: &str,
+    peer_id: &str,
+    version: u64,
+    peer_entropy: &[u8],
+) -> Vec<u8> {
+    use sha3::{Digest, Sha3_256};
+
+    let mut hasher = Sha3_256::new();
+    hasher.update(shared_secret);
+    hasher.update(session_id.as_bytes());
+    hasher.update(peer_id.as_bytes());
+    hasher.update(version.to_le_bytes());
+    hasher.update(peer_entropy);
 
     hasher.finalize().to_vec()
 }

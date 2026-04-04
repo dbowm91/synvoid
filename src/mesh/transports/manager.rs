@@ -14,7 +14,6 @@ use crate::mesh::protocol::MeshMessage;
 use crate::mesh::topology::MeshTopology;
 use crate::mesh::transports::{
     MeshTransportError, MeshTransportTrait, MeshTransportType, QuicMeshTransport, TransportHint,
-    WireGuardMeshTransport,
 };
 use crate::utils::current_timestamp;
 
@@ -74,7 +73,6 @@ pub struct MeshTransportManager {
     config: Arc<MeshConfig>,
     topology: Arc<MeshTopology>,
     quic_transport: Arc<RwLock<Option<Arc<QuicMeshTransport>>>>,
-    wireguard_transport: Arc<RwLock<Option<Arc<WireGuardMeshTransport>>>>,
     preferred_transport: Arc<RwLock<MeshTransportType>>,
     peer_states: Arc<RwLock<HashMap<String, PeerTransportState>>>,
     record_store: Option<Arc<crate::mesh::dht::RecordStoreManager>>,
@@ -116,7 +114,6 @@ impl MeshTransportManager {
             config,
             topology,
             quic_transport: Arc::new(RwLock::new(None)),
-            wireguard_transport: Arc::new(RwLock::new(None)),
             preferred_transport: Arc::new(RwLock::new(MeshTransportType::Quic)),
             peer_states: Arc::new(RwLock::new(HashMap::new())),
             record_store,
@@ -158,40 +155,14 @@ impl MeshTransportManager {
         self.update_preferred_transport();
     }
 
-    pub fn set_wireguard_transport(&self, transport: WireGuardMeshTransport) {
-        let mut t = self.wireguard_transport.write();
-        *t = Some(Arc::new(transport));
-        self.update_preferred_transport();
-    }
-
     fn update_preferred_transport(&self) {
         let mut preferred = self.preferred_transport.write();
-        let wg_available = self
-            .wireguard_transport
-            .read()
-            .as_ref()
-            .map(|t| t.is_available())
-            .unwrap_or(false);
-
-        if wg_available {
-            *preferred = MeshTransportType::WireGuard;
-            tracing::info!("Mesh transport preference updated: WireGuard (available)");
-        } else {
-            *preferred = MeshTransportType::Quic;
-            tracing::info!("Mesh transport preference updated: QUIC (fallback)");
-        }
+        *preferred = MeshTransportType::Quic;
+        tracing::info!("Mesh transport preference updated: QUIC");
     }
 
     pub fn preferred_transport(&self) -> MeshTransportType {
         *self.preferred_transport.read()
-    }
-
-    pub fn is_wireguard_available(&self) -> bool {
-        self.wireguard_transport
-            .read()
-            .as_ref()
-            .map(|t| t.is_available())
-            .unwrap_or(false)
     }
 
     pub fn is_quic_available(&self) -> bool {
@@ -233,17 +204,7 @@ impl MeshTransportManager {
         }
 
         match hint {
-            TransportHint::HighThroughput => {
-                if self.is_wireguard_available() {
-                    return MeshTransportType::WireGuard;
-                }
-            }
-            TransportHint::LowLatency => {
-                if self.is_wireguard_available() {
-                    return MeshTransportType::WireGuard;
-                }
-            }
-            TransportHint::Reliable => {
+            TransportHint::Reliable | TransportHint::LowLatency | TransportHint::HighThroughput => {
                 if self.is_quic_available() {
                     return MeshTransportType::Quic;
                 }
@@ -258,255 +219,29 @@ impl MeshTransportManager {
         &self,
         peer_id: &str,
         message: &MeshMessage,
-        hint: TransportHint,
+        _hint: TransportHint,
     ) -> Result<(), MeshTransportError> {
-        let effective = self.get_effective_transport(peer_id, hint);
-        let fallback = match effective {
-            MeshTransportType::WireGuard => MeshTransportType::Quic,
-            MeshTransportType::Quic => MeshTransportType::WireGuard,
-        };
-
-        let result = self.try_send_primary(peer_id, message, effective).await;
-
-        if result.is_ok() {
-            self.reset_peer_fallback(peer_id);
-            return result;
-        }
-
-        tracing::warn!(
-            "Primary transport {:?} failed for peer {}, trying fallback {:?}",
-            effective,
-            peer_id,
-            fallback
-        );
-
-        let fallback_result = self.try_send_with_retry(peer_id, message, fallback).await;
-
-        if fallback_result.is_ok() {
-            self.record_fallback(peer_id);
-        }
-
-        fallback_result
-    }
-
-    async fn try_send_primary(
-        &self,
-        peer_id: &str,
-        message: &MeshMessage,
-        transport_type: MeshTransportType,
-    ) -> Result<(), MeshTransportError> {
-        match transport_type {
-            MeshTransportType::WireGuard => {
-                let transport = self.wireguard_transport.read().clone();
-                if let Some(ref t) = transport {
-                    if !t.is_connected(peer_id) {
-                        return Err(MeshTransportError::PeerNotConnected(peer_id.to_string()));
-                    }
-                    return t.send_stream(peer_id, message).await;
-                }
-            }
-            MeshTransportType::Quic => {
-                let transport = self.quic_transport.read().clone();
-                if let Some(ref t) = transport {
-                    if !t.is_connected(peer_id) {
-                        return Err(MeshTransportError::PeerNotConnected(peer_id.to_string()));
-                    }
-                    return t.send_stream(peer_id, message).await;
-                }
+        let transport = self.quic_transport.read().clone();
+        if let Some(ref t) = transport {
+            if t.is_connected(peer_id) {
+                return t.send_stream(peer_id, message).await;
             }
         }
-        Err(MeshTransportError::NotAvailable)
-    }
-
-    async fn try_send_with_retry(
-        &self,
-        peer_id: &str,
-        message: &MeshMessage,
-        fallback: MeshTransportType,
-    ) -> Result<(), MeshTransportError> {
-        let mut retry_count = {
-            let states = self.peer_states.read();
-            states.get(peer_id).map(|s| s.fallback_count).unwrap_or(0)
-        };
-
-        let max_retries = DEFAULT_MAX_RETRIES;
-
-        loop {
-            let result = self.try_send_primary(peer_id, message, fallback).await;
-
-            if result.is_ok() {
-                return Ok(());
-            }
-
-            if retry_count >= max_retries {
-                tracing::warn!(
-                    "Max retries ({}) exceeded for peer {} fallback transport",
-                    max_retries,
-                    peer_id
-                );
-                break;
-            }
-
-            let backoff = RETRY_BACKOFF_BASE_MS * (2_u64.pow(retry_count.min(5)));
-            let backoff_duration = Duration::from_millis(backoff.min(RETRY_BACKOFF_MAX_MS));
-
-            tracing::debug!(
-                "Retry attempt {}/{} for peer {} after {:?}",
-                retry_count + 1,
-                max_retries,
-                peer_id,
-                backoff_duration
-            );
-
-            retry_count += 1;
-            {
-                let mut states = self.peer_states.write();
-                if let Some(state) = states.get_mut(peer_id) {
-                    state.record_fallback();
-                }
-            }
-
-            sleep(backoff_duration).await;
-        }
-
         Err(MeshTransportError::PeerNotConnected(peer_id.to_string()))
-    }
-
-    fn record_fallback(&self, peer_id: &str) {
-        let mut states = self.peer_states.write();
-        if let Some(state) = states.get_mut(peer_id) {
-            state.record_fallback();
-        }
-    }
-
-    fn reset_peer_fallback(&self, peer_id: &str) {
-        let mut states = self.peer_states.write();
-        if let Some(state) = states.get_mut(peer_id) {
-            state.reset_fallback();
-        }
     }
 
     pub async fn send_datagram(
         &self,
         peer_id: &str,
         message: &MeshMessage,
-        hint: TransportHint,
+        _hint: TransportHint,
     ) -> Result<(), MeshTransportError> {
-        let effective = self.get_effective_transport(peer_id, hint);
-        let fallback = match effective {
-            MeshTransportType::WireGuard => MeshTransportType::Quic,
-            MeshTransportType::Quic => MeshTransportType::WireGuard,
-        };
-
-        let result = self
-            .try_send_datagram_primary(peer_id, message, effective)
-            .await;
-
-        if result.is_ok() {
-            self.reset_peer_fallback(peer_id);
-            return result;
-        }
-
-        tracing::warn!(
-            "Primary datagram transport {:?} failed for peer {}, trying fallback {:?}",
-            effective,
-            peer_id,
-            fallback
-        );
-
-        let fallback_result = self
-            .try_send_datagram_with_retry(peer_id, message, fallback)
-            .await;
-
-        if fallback_result.is_ok() {
-            self.record_fallback(peer_id);
-        }
-
-        fallback_result
-    }
-
-    async fn try_send_datagram_primary(
-        &self,
-        peer_id: &str,
-        message: &MeshMessage,
-        transport_type: MeshTransportType,
-    ) -> Result<(), MeshTransportError> {
-        match transport_type {
-            MeshTransportType::WireGuard => {
-                let transport = self.wireguard_transport.read().clone();
-                if let Some(ref t) = transport {
-                    if !t.is_connected(peer_id) {
-                        return Err(MeshTransportError::PeerNotConnected(peer_id.to_string()));
-                    }
-                    return t.send_datagram(peer_id, message).await;
-                }
-            }
-            MeshTransportType::Quic => {
-                let transport = self.quic_transport.read().clone();
-                if let Some(ref t) = transport {
-                    if !t.is_connected(peer_id) {
-                        return Err(MeshTransportError::PeerNotConnected(peer_id.to_string()));
-                    }
-                    return t.send_datagram(peer_id, message).await;
-                }
+        let transport = self.quic_transport.read().clone();
+        if let Some(ref t) = transport {
+            if t.is_connected(peer_id) {
+                return t.send_datagram(peer_id, message).await;
             }
         }
-        Err(MeshTransportError::NotAvailable)
-    }
-
-    async fn try_send_datagram_with_retry(
-        &self,
-        peer_id: &str,
-        message: &MeshMessage,
-        fallback: MeshTransportType,
-    ) -> Result<(), MeshTransportError> {
-        let mut retry_count = {
-            let states = self.peer_states.read();
-            states.get(peer_id).map(|s| s.fallback_count).unwrap_or(0)
-        };
-
-        let max_retries = DEFAULT_MAX_RETRIES;
-
-        loop {
-            let result = self
-                .try_send_datagram_primary(peer_id, message, fallback)
-                .await;
-
-            if result.is_ok() {
-                return Ok(());
-            }
-
-            if retry_count >= max_retries {
-                tracing::warn!(
-                    "Max retries ({}) exceeded for peer {} datagram fallback",
-                    max_retries,
-                    peer_id
-                );
-                break;
-            }
-
-            let backoff = RETRY_BACKOFF_BASE_MS * (2_u64.pow(retry_count.min(5)));
-            let backoff_duration = Duration::from_millis(backoff.min(RETRY_BACKOFF_MAX_MS));
-
-            tracing::debug!(
-                "Datagram retry attempt {}/{} for peer {} after {:?}",
-                retry_count + 1,
-                max_retries,
-                peer_id,
-                backoff_duration
-            );
-
-            retry_count += 1;
-            {
-                let mut states = self.peer_states.write();
-                if let Some(state) = states.get_mut(peer_id) {
-                    state.record_fallback();
-                }
-            }
-
-            sleep(backoff_duration).await;
-        }
-
         Err(MeshTransportError::PeerNotConnected(peer_id.to_string()))
     }
 
@@ -516,40 +251,22 @@ impl MeshTransportManager {
         hint: TransportHint,
     ) -> Result<(), MeshTransportError> {
         let preferred = match hint {
-            TransportHint::HighThroughput | TransportHint::LowLatency => {
-                if self.is_wireguard_available() {
-                    MeshTransportType::WireGuard
-                } else {
-                    MeshTransportType::Quic
-                }
-            }
             TransportHint::Reliable => {
                 if self.is_quic_available() {
                     MeshTransportType::Quic
                 } else {
-                    MeshTransportType::WireGuard
+                    return Err(MeshTransportError::NotAvailable);
                 }
             }
-            TransportHint::Default => self.preferred_transport(),
+            _ => self.preferred_transport(),
         };
 
-        let wireguard_transport = {
-            let guard = self.wireguard_transport.read();
-            guard.clone()
-        };
         let quic_transport = {
             let guard = self.quic_transport.read();
             guard.clone()
         };
 
         match preferred {
-            MeshTransportType::WireGuard => {
-                if let Some(transport) = wireguard_transport {
-                    if transport.is_available() {
-                        return transport.broadcast_datagram(message).await;
-                    }
-                }
-            }
             MeshTransportType::Quic => {
                 if let Some(transport) = quic_transport {
                     if transport.is_available() {
@@ -607,12 +324,6 @@ impl MeshTransportManager {
     }
 
     pub fn get_connected_peers(&self) -> Vec<String> {
-        if self.is_wireguard_available() {
-            if let Some(ref transport) = *self.wireguard_transport.read() {
-                return transport.get_connected_peers();
-            }
-        }
-
         if self.is_quic_available() {
             if let Some(ref transport) = *self.quic_transport.read() {
                 return transport.get_connected_peers();
@@ -623,12 +334,6 @@ impl MeshTransportManager {
     }
 
     pub fn local_addresses(&self) -> Vec<String> {
-        if self.is_wireguard_available() {
-            if let Some(ref transport) = *self.wireguard_transport.read() {
-                return transport.local_addresses();
-            }
-        }
-
         if self.is_quic_available() {
             if let Some(ref transport) = *self.quic_transport.read() {
                 return transport.local_addresses();
@@ -644,10 +349,6 @@ impl MeshTransportManager {
 
     pub fn get_routing_manager(&self) -> Option<Arc<crate::mesh::dht::routing::DhtRoutingManager>> {
         self.routing_manager.read().clone()
-    }
-
-    pub fn get_wireguard_transport(&self) -> Option<Arc<WireGuardMeshTransport>> {
-        self.wireguard_transport.read().clone()
     }
 
     pub fn get_peer_fallback_count(&self, peer_id: &str) -> u32 {

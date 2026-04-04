@@ -422,11 +422,15 @@ impl MeshDiscovery {
                     }
                 }
 
+                // Ed25519 challenge-response authentication for global nodes
                 if let Err(e) = crate::mesh::peer_auth::validate_peer_role(
                     &role,
-                    self.config.global_node_key.as_deref(),
-                    global_node_key.as_deref(),
+                    &self.get_authorized_global_pubkeys(),
                     &node_id,
+                    public_key.as_ref().map(|pk| pk.as_str()),
+                    global_node_key.as_ref().map(|sk| sk.as_str()),
+                    timestamp.unwrap_or(0),
+                    300,
                 ) {
                     tracing::warn!("{}", e);
                     return Err(MeshDiscoveryError::AuthFailed(e));
@@ -450,6 +454,7 @@ impl MeshDiscovery {
                 self.topology.add_peer(peer_info, PeerStatus::Handshake);
 
                 if let Some(upstreams) = self.build_hello_upstreams() {
+                    let global_node_auth_sig = self.generate_global_node_auth_sig();
                     return Ok(MeshMessage::HelloAck {
                         version: MESH_MESSAGE_VERSION,
                         node_id: self.topology.node_id().to_string(),
@@ -459,7 +464,7 @@ impl MeshDiscovery {
                         upstreams,
                         auth_token: None,
                         network_id: self.config.network_id.clone().map(|s| s.into()),
-                        global_node_key: self.config.global_node_key.clone().map(|s| s.into()),
+                        global_node_key: global_node_auth_sig.map(|s| s.into()),
                         timestamp: Some(MeshMessage::generate_timestamp()),
                         nonce: Some(MeshMessage::generate_nonce()),
                         is_trusted: self.config.is_trusted_node(),
@@ -469,6 +474,7 @@ impl MeshDiscovery {
                     });
                 }
 
+                let global_node_auth_sig = self.generate_global_node_auth_sig();
                 Ok(MeshMessage::HelloAck {
                     version: MESH_MESSAGE_VERSION,
                     node_id: self.topology.node_id().to_string(),
@@ -478,7 +484,7 @@ impl MeshDiscovery {
                     upstreams: HashMap::new(),
                     auth_token: None,
                     network_id: self.config.network_id.clone().map(|s| s.into()),
-                    global_node_key: self.config.global_node_key.clone().map(|s| s.into()),
+                    global_node_key: global_node_auth_sig.map(|s| s.into()),
                     timestamp: Some(MeshMessage::generate_timestamp()),
                     nonce: Some(MeshMessage::generate_nonce()),
                     is_trusted: self.config.is_trusted_node(),
@@ -576,6 +582,37 @@ impl MeshDiscovery {
                 hops,
                 ttl_secs
             );
+        }
+    }
+
+    /// Collects authorized global node public keys from seed node configuration.
+    fn get_authorized_global_pubkeys(&self) -> Vec<String> {
+        self.config.seeds.iter()
+            .filter_map(|seed| seed.public_key.clone())
+            .collect()
+    }
+
+    /// Generates an Ed25519 signature for global node authentication in HelloAck responses.
+    fn generate_global_node_auth_sig(&self) -> Option<String> {
+        if !self.config.role.is_global() {
+            return None;
+        }
+        if let Some(sk) = self.config.signing_key() {
+            if sk.len() == 32 {
+                let mut key_bytes = [0u8; 32];
+                key_bytes.copy_from_slice(sk);
+                match crate::mesh::peer_auth::generate_global_node_auth(&self.topology.node_id(), &key_bytes) {
+                    Ok((sig, _ts)) => Some(sig),
+                    Err(e) => {
+                        tracing::warn!("Failed to generate global node auth signature: {}", e);
+                        None
+                    }
+                }
+            } else {
+                None
+            }
+        } else {
+            None
         }
     }
 }

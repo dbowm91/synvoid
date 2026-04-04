@@ -28,7 +28,7 @@ mod serde_secs {
         Ok(Instant::now() - std::time::Duration::from_secs(secs))
     }
 }
-use lru_time_cache::LruCache;
+use moka::future::Cache as MokaCache;
 
 use crate::mesh::config::{MeshConfig, MeshNodeRole};
 use crate::mesh::protocol::{MeshPeerInfo, UpstreamInfo, UpstreamOwner};
@@ -233,7 +233,7 @@ pub struct MeshTopology {
     role: MeshNodeRole,
     peers: RwLock<HashMap<String, PeerState>>,
     local_upstreams: RwLock<HashMap<String, UpstreamInfoInternal>>,
-    route_cache: RwLock<LruCache<String, CachedRoute>>,
+    route_cache: MokaCache<String, CachedRoute>,
     global_nodes: RwLock<HashSet<String>>,
     pending_queries: RwLock<HashMap<String, crate::mesh::protocol::PendingQuery>>,
     cache_metrics: RwLock<CacheMetrics>,
@@ -432,8 +432,10 @@ impl MeshTopology {
         let router_id = config.router_id();
         let role = config.role;
 
-        let route_cache =
-            LruCache::with_expiry_duration_and_capacity(Duration::from_secs(3600), 10000);
+        let route_cache = MokaCache::builder()
+            .time_to_live(Duration::from_secs(3600))
+            .max_capacity(10000)
+            .build();
 
         let local_upstreams: HashMap<String, UpstreamInfoInternal> = config
             .local_upstreams
@@ -476,7 +478,7 @@ impl MeshTopology {
             role,
             peers: RwLock::new(HashMap::new()),
             local_upstreams: RwLock::new(local_upstreams),
-            route_cache: RwLock::new(route_cache),
+            route_cache,
             global_nodes: RwLock::new(global_nodes),
             pending_queries: RwLock::new(HashMap::new()),
             cache_metrics: RwLock::new(CacheMetrics::default()),
@@ -1178,14 +1180,12 @@ impl MeshTopology {
             .await;
         let adaptive_ttl = self.calculate_adaptive_ttl(ttl, stability_score);
 
-        let mut cache = self.route_cache.write().await;
-        cache.insert(
-            upstream_id.to_string(),
-            CachedRoute {
+        self.route_cache
+            .insert(upstream_id.to_string(), CachedRoute {
                 provider_node_id,
                 hops,
-            },
-        );
+            })
+            .await;
     }
 
     async fn calculate_route_stability_internal(&self, upstream_id: &str, provider: &str) -> f64 {
@@ -1224,30 +1224,11 @@ impl MeshTopology {
     }
 
     pub async fn get_cached_route(&self, upstream_id: &str) -> Option<(String, u8)> {
-        let mut cache = self.route_cache.write().await;
-        let result = cache
-            .get(upstream_id)
-            .map(|route| (route.provider_node_id.clone(), route.hops));
-
-        drop(cache);
-
-        if result.is_some() {
-            self.record_cache_hit().await;
-        } else {
-            self.record_cache_miss().await;
-        }
-
-        result
+        self.route_cache.get(upstream_id).await.map(|route| (route.provider_node_id.clone(), route.hops))
     }
 
     pub async fn invalidate_cache(&self, upstream_id: &str) {
-        let mut cache = self.route_cache.write().await;
-        cache.remove(upstream_id);
-    }
-
-    pub async fn add_pending_query(&self, query: crate::mesh::protocol::PendingQuery) {
-        let mut pending = self.pending_queries.write().await;
-        pending.insert(query.query_id.clone(), query);
+        self.route_cache.remove(upstream_id).await;
     }
 
     pub async fn cleanup_expired_queries(&self, timeout: Duration) {
@@ -1257,8 +1238,12 @@ impl MeshTopology {
     }
 
     pub async fn cleanup_expired_cache(&self) {
-        let cache = self.route_cache.write().await;
-        let _ = cache.len();
+        self.route_cache.run_pending_tasks().await;
+    }
+
+    pub async fn add_pending_query(&self, query: crate::mesh::protocol::PendingQuery) {
+        let mut pending = self.pending_queries.write().await;
+        pending.insert(query.query_id.clone(), query);
     }
 
     pub fn can_forward_service(&self, service_id: &str) -> bool {
@@ -1469,12 +1454,47 @@ impl MeshTopology {
 
     pub async fn get_scored_peers(&self) -> Vec<(String, PeerScore)> {
         let peers = self.peers.read().await;
+        let peer_scores_map = self.peer_scores.read().await;
+        let latency_history_map = self.latency_history.read().await;
+        let connection_failures_map = self.connection_failures.read().await;
+        let connection_successes_map = self.connection_successes.read().await;
+
         let mut scored = Vec::new();
+        let weights = &self.config.connection.connection_score_weights;
 
         for node_id in peers.keys() {
-            let score = self.calculate_peer_score(node_id).await;
+            let mut score = peer_scores_map
+                .get(node_id)
+                .cloned()
+                .unwrap_or_else(|| PeerScore {
+                    node_id: node_id.to_string(),
+                    ..Default::default()
+                });
+
+            if let Some(history) = latency_history_map.get(node_id) {
+                let recent: Vec<_> = history.iter().rev().take(10).collect();
+                if !recent.is_empty() {
+                    let avg_latency: u64 =
+                        recent.iter().map(|(_, l)| *l as u64).sum::<u64>() / recent.len().max(1) as u64;
+                    score.latency_score = (1.0_f64 - (avg_latency as f64 / 1000.0).min(1.0)).max(0.0);
+                }
+            }
+
+            let failures = connection_failures_map.get(node_id).copied().unwrap_or(0);
+            let successes = connection_successes_map.get(node_id).copied().unwrap_or(0);
+            let total = failures + successes;
+            if total > 0 {
+                score.stability_score = (successes as f64 / total as f64).max(0.1);
+            }
+
+            score.calculate_total(weights);
             scored.push((node_id.clone(), score));
         }
+
+        drop(peer_scores_map);
+        drop(latency_history_map);
+        drop(connection_failures_map);
+        drop(connection_successes_map);
 
         scored.sort_by(|a, b| {
             b.1.total_score
@@ -1497,41 +1517,83 @@ impl MeshTopology {
     pub async fn get_prioritized_connection_targets(&self) -> Vec<(String, Priority)> {
         let mut targets = Vec::new();
 
-        let global_nodes = self.global_nodes.read().await;
-        for node_id in global_nodes.iter() {
-            if let Some(score) = self.peer_scores.read().await.get(node_id) {
+        let global_nodes = self.global_nodes.read().await.clone();
+        let peer_scores_map = self.peer_scores.read().await.clone();
+        let peers = self.peers.read().await;
+        let upstreams = {
+            let route_usage = self.route_usage.read().await;
+            route_usage.get_popular_upstreams(10)
+        };
+
+        for node_id in &global_nodes {
+            if let Some(score) = peer_scores_map.get(node_id) {
                 targets.push((node_id.clone(), Priority::Global(score.total_score)));
             } else {
                 targets.push((node_id.clone(), Priority::Global(0.5)));
             }
         }
 
-        let upstreams = self.route_usage.read().await.get_popular_upstreams(10);
         for upstream_id in upstreams {
-            let providers = self.get_peers_with_upstream(&upstream_id).await;
-            for provider in providers {
-                if !global_nodes.contains(&provider) {
-                    let score = self
-                        .peer_scores
-                        .read()
-                        .await
-                        .get(&provider)
+            for (provider, peer_state) in peers.iter().filter(|(_, p)| p.is_healthy() && p.has_upstream(&upstream_id)) {
+                if !global_nodes.contains(provider) && !targets.iter().any(|(id, _)| id == provider) {
+                    let score = peer_scores_map
+                        .get(provider)
                         .map(|s| s.total_score)
                         .unwrap_or(0.5);
-                    targets.push((provider, Priority::UpstreamProvider(score)));
+                    targets.push((provider.clone(), Priority::UpstreamProvider(score)));
                 }
             }
         }
 
-        let edge_peers = self
-            .get_top_peers_by_score(self.config.connection.reconnection_priority.frequent_routes)
-            .await;
+        let edge_peers = {
+            let peer_scores_snapshot = self.peer_scores.read().await;
+            let latency_history_map = self.latency_history.read().await;
+            let connection_failures_map = self.connection_failures.read().await;
+            let connection_successes_map = self.connection_successes.read().await;
+            let weights = &self.config.connection.connection_score_weights;
+
+            let mut scored: Vec<(String, f64)> = peers
+                .iter()
+                .map(|(node_id, _)| {
+                    let mut score = peer_scores_snapshot
+                        .get(node_id)
+                        .cloned()
+                        .unwrap_or_else(|| PeerScore {
+                            node_id: node_id.to_string(),
+                            ..Default::default()
+                        });
+
+                    if let Some(history) = latency_history_map.get(node_id) {
+                        let recent: Vec<_> = history.iter().rev().take(10).collect();
+                        if !recent.is_empty() {
+                            let avg_latency: u64 =
+                                recent.iter().map(|(_, l)| *l as u64).sum::<u64>() / recent.len().max(1) as u64;
+                            score.latency_score = (1.0_f64 - (avg_latency as f64 / 1000.0).min(1.0)).max(0.0);
+                        }
+                    }
+
+                    let failures = connection_failures_map.get(node_id).copied().unwrap_or(0);
+                    let successes = connection_successes_map.get(node_id).copied().unwrap_or(0);
+                    let total = failures + successes;
+                    if total > 0 {
+                        score.stability_score = (successes as f64 / total as f64).max(0.1);
+                    }
+
+                    score.calculate_total(weights);
+                    (node_id.clone(), score.total_score)
+                })
+                .collect();
+
+            scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+            scored.into_iter()
+                .take(self.config.connection.reconnection_priority.frequent_routes)
+                .map(|(id, _)| id)
+                .collect::<Vec<_>>()
+        };
+
         for node_id in edge_peers {
             if !global_nodes.contains(&node_id) && !targets.iter().any(|(id, _)| id == &node_id) {
-                let score = self
-                    .peer_scores
-                    .read()
-                    .await
+                let score = peer_scores_map
                     .get(&node_id)
                     .map(|s| s.total_score)
                     .unwrap_or(0.5);

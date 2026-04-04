@@ -21,7 +21,6 @@ impl MeshTransport {
             topology: self.topology.clone(),
             cert_manager: self.cert_manager.clone(),
             runtime: self.runtime.clone(),
-            wireguard_runtime: self.wireguard_runtime.clone(),
             running: self.running.clone(),
             shutdown_tx: self.shutdown_tx.clone(),
             peer_connections: self.peer_connections.clone(),

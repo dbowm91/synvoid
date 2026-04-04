@@ -262,6 +262,8 @@ message MeshMessage {
         WasmModuleAnnounce wasm_module_announce = 127;
         WasmModuleSyncRequest wasm_module_sync_request = 128;
         WasmModuleSyncResponse wasm_module_sync_response = 129;
+        SessionRotate session_rotate = 130;
+        SessionRotateAck session_rotate_ack = 131;
     }
 }
 
@@ -1287,4 +1289,20 @@ message WasmModuleSyncResponse {
     string node_id = 2;
     repeated WasmModuleInfo modules = 3;
     uint64 timestamp = 4;
+}
+
+message SessionRotate {
+    string session_id = 1;
+    string peer_id = 2;
+    uint64 key_version = 3;
+    bytes peer_entropy = 4;
+    uint64 timestamp = 5;
+}
+
+message SessionRotateAck {
+    string session_id = 1;
+    string peer_id = 2;
+    uint64 key_version = 3;
+    bytes peer_entropy = 4;
+    uint64 timestamp = 5;
 }
