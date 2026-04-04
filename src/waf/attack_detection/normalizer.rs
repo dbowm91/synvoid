@@ -60,6 +60,7 @@ impl InputNormalizer {
 
                 NormalizedInput {
                     normalized: buffer.clone(),
+                    lowercased: buffer.to_lowercase(),
                     passes,
                 }
             })
@@ -376,6 +377,7 @@ impl InputNormalizer {
 #[derive(Debug, Clone, Default)]
 pub struct NormalizedInput {
     pub normalized: String,
+    pub lowercased: String,
     pub passes: usize,
 }
 
@@ -394,6 +396,10 @@ impl AsRef<str> for NormalizedInput {
 impl NormalizedInput {
     pub fn as_str(&self) -> &str {
         &self.normalized
+    }
+
+    pub fn as_lowercased(&self) -> &str {
+        &self.lowercased
     }
 
     pub fn as_bytes(&self) -> &[u8] {

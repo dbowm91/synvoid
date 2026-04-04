@@ -1578,8 +1578,8 @@ Every item across all 8 waves was verified against the actual source code. The f
 | 5I | ✅ FIXED | Removed impossible `len > 65535` check |
 | 5J | ✅ FIXED | Deleted unused `TrustAnchorEvent` enum |
 | 5K | ✅ FIXED | Improved SOA serial parsing to find first parseable u32 |
-| 5L | ❌ BROKEN | Still `pub`, not `pub(crate)` |
-| 5M | ❌ BROKEN | No `lowercased` field exists on `NormalizedInput` |
+| 5L | ✅ FIXED | Changed to pub(crate) since only used within dns/resolver.rs |
+| 5M | ✅ FIXED | Added `lowercased: String` field computed at normalization time |
 
 #### Wave 6: Web App Stack & Admin Panel
 | Item | Status | Fix Applied |
@@ -1630,8 +1630,6 @@ These items remain open and require substantial architectural work:
 - 4T: Stream large request bodies (architectural change for chunk-based WAF)
 - 4W: Response streaming (architectural change to Body handling)
 - 5B: NXDOMAIN vs NODATA distinction (no SOA in NODATA responses)
-- 5L: `LookupResult` visibility (still `pub`, not `pub(crate)`)
-- 5M: `NormalizedInput` missing `lowercased` field
 - 6V: Unify HTTPS server feature set with HTTP server
 - 8J: transport.rs module size (2,223 lines vs 1,000 target)
 - 8K: config.rs blanket suppression annotations
@@ -1643,6 +1641,8 @@ These items remain open and require substantial architectural work:
 - 3R: route_cache optimized with MokaCache; get_scored_peers/get_prioritized_connection_targets snapshot
 - 3Y: Hierarchical routing infrastructure (bloom filter, RouteAdvertisement, HierarchicalRoutingManager)
 - 3Z: Global node HA foundation (GlobalNodeHAManager, leader election, heartbeat)
+- 5L: LookupResult changed to pub(crate) visibility
+- 5M: NormalizedInput now has lowercased field computed at normalization time
 - 5N: Rate limiter cleanup uses single retain with remove_older_than
 - 6I: is_connection_error uses io::ErrorKind matching instead of string contains
 - 6U: Removed dead _dead_workers code
