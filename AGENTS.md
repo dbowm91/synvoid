@@ -329,24 +329,31 @@ All duplicate `current_timestamp()` definitions have been consolidated into `src
 |-----|----------|--------|--------|
 | NSEC3 base32 encoding | `src/dns/dnssec_signing.rs:259-282` | Non-standard encoding (uses base32 instead of base32hex) | Open (SHA-1 only in practice) |
 | Forwarder no DNSSEC validation | `HickoryResolver` | Forwarder mode doesn't validate; AD bit not propagated | Limitation (documented) |
-| `pattern_detector!` macro infinite recursion | `src/waf/attack_detection/detector_common.rs:85-87` | Stack overflow when trait method called | Open |
-| WAF empty headers in proxy path | `src/proxy.rs:486` | Header-based WAF rules bypassed | Open |
-| SSRF substring matching bypass | `src/waf/attack_detection/ssrf.rs:278-285` | `evil-example.com` passes when `example.com` whitelisted | Open |
-| Dynamic worker server stub | `src/worker/mod.rs:261-343` | Placeholder code — drops connections | Open |
-| Duplicate AppServer init | `src/worker/unified_server.rs:205-235,858-888` | Second init shadows first | Open |
-| WireGuard transport unauthenticated | `src/mesh/transports/wireguard.rs` | Raw UDP with zero authentication | Open |
-| DHT query response non-functional | `src/mesh/dht/record_store_sync.rs:657-718` | Returns None immediately without awaiting responses | Open |
+| JA4 fingerprinting | `src/waf/bot.rs` | JA3 done; JA4 not implemented | Open |
+| Stream large request bodies | `src/http/server.rs:679` | Full buffering; needs chunk-based WAF | Open (architectural change needed) |
+| Response streaming | `src/http/server.rs` | Fully buffered responses | Open (architectural change needed) |
+| HTTPS feature parity | `src/tls/server.rs` | Missing WebSocket, WASM, FastCGI, PHP, etc. | Open (large refactoring) |
+| transport.rs module size | `src/mesh/transport.rs` | 2239 lines vs 1000 target | Open |
+| 5M: Repeated .to_lowercase() | `src/waf/attack_detection/*.rs` | Detectors call to_lowercase() instead of using pre-computed | Open (trait API change needed) |
 
 ### Fixed Issues (Wave 1-7 Complete)
 
 | Bug | Location | Fix |
 |-----|----------|-----|
-| HTTPS proxy body forwarding | `src/tls/server.rs` | Pass `body_bytes` to upstream; use `send_request_with_body_headers_and_timeout` |
-| YARA periodic sync | `src/worker/unified_server.rs` | Call `sync_manager.send_sync_request_to_global()` instead of `drop(msg)` |
-| Granian dispatch | `src/app_server/granian.rs` | `forward_request()` now uses built request; AppServer dispatch wired |
-| Honeypot mesh wiring | `src/worker/unified_server.rs` | `start_mesh_threat_publishing()` now called after mesh init |
-| HTTP body truncation | `src/http/server.rs` | Separated `full_body` from truncated `body_slice` for WAF inspection |
-| Dead `build_dnssec_response` | `src/dns/server/dnssec_impl.rs` | Removed dead function |
+| NSEC3 base32 encoding | `src/dns/dnssec_signing.rs:265` | Uses correct RFC 4648 base32hex alphabet |
+| `pattern_detector!` macro infinite recursion | `src/waf/attack_detection/detector_common.rs` | Fix applied to macro-generated impl |
+| WAF empty headers in proxy path | `src/proxy.rs:486` | Pass actual request headers to check_request_full |
+| SSRF substring matching bypass | `src/waf/attack_detection/ssrf.rs:278-285` | Exact domain match or proper suffix with preceding `.` |
+| Dynamic worker server stub | `src/worker/mod.rs` | Deprecated; unified server handles requests |
+| Duplicate AppServer init | `src/worker/unified_server.rs` | Duplicate block removed |
+| WireGuard transport unauthenticated | `src/mesh/transports/wireguard.rs` | WireGuard transport removed entirely |
+| DHT query response non-functional | `src/mesh/dht/record_store_sync.rs` | Uses oneshot channels, quorum-based reads |
+| HTTPS proxy body forwarding | `src/tls/server.rs` | Pass `body_bytes` to upstream |
+| YARA periodic sync | `src/worker/unified_server.rs` | Call `sync_manager.send_sync_request_to_global()` |
+| Granian dispatch | `src/app_server/granian.rs` | `forward_request()` uses built request |
+| Honeypot mesh wiring | `src/worker/unified_server.rs` | `start_mesh_threat_publishing()` after mesh init |
+| HTTP body truncation | `src/http/server.rs` | Separated `full_body` from `body_slice` |
+| NODATA vs NXDOMAIN | `src/dns/server/query.rs:930-1025` | Returns NOERROR with SOA when name exists but type doesn't |
 
 ## Performance Hot Paths
 

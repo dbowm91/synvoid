@@ -1354,6 +1354,13 @@ cargo build --features "dns,mesh,socket-handoff,post-quantum,wireguard"
 | Protocol enum size (60+ variants) | Generated from protobuf; splitting is complex | `src/mesh/protocol.rs` |
 | Shared request handler extraction | Large refactoring, low ROI | `src/http/server.rs`, `src/tls/server.rs`, `src/http3/server.rs` |
 | Dead code cleanup target <60 | Many reserved protocol modules added | Multiple files |
+| 5M: Repeated .to_lowercase() | Requires trait API change for PatternDetector | `src/waf/attack_detection/*.rs` |
+| 4T: Stream Large Request Bodies | Requires chunk-based WAF architecture | `src/http/server.rs`, `src/tls/server.rs` |
+| 4W: Response Streaming | Requires Body streaming architecture | `src/http/server.rs`, `src/tls/server.rs` |
+| 4P: JA4 fingerprinting | JA3 done; JA4 requires TLS handshake parsing | `src/waf/bot.rs` |
+| 6V: HTTPS Feature Parity | Large refactoring to shared RequestHandler | `src/http/server.rs`, `src/tls/server.rs` |
+| 8J: transport.rs module (2239 lines) | Split into submodules | `src/mesh/transport.rs` |
+| 3R: Full ShardedTopology (64 shards) | route_cache optimized; full sharding complex | `src/mesh/topology.rs` |
 
 ---
 
