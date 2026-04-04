@@ -1118,6 +1118,7 @@ version = "0.2.0"
 dependencies = [
  "base58",
  "crc32fast",
+ "criterion",
  "digest",
  "hex",
  "hmac",
@@ -1128,7 +1129,8 @@ dependencies = [
  "serde_json",
  "sha2",
  "subtle",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
+ "tokio",
  "uuid",
 ]
 
@@ -4276,6 +4278,7 @@ dependencies = [
  "tokio-dstip",
  "tokio-rustls",
  "tokio-tungstenite",
+ "tokio-util",
  "toml 0.8.23",
  "tonic",
  "tonic-build",

@@ -81,7 +81,7 @@ impl UnifiedServer {
     pub async fn new(
         config: Arc<RwLock<ConfigManager>>,
         mesh_transport: Option<Arc<crate::mesh::transport::MeshTransportManager>>,
-        app_servers: Arc<RwLock<HashMap<String, Arc<crate::app_server::GranianSupervisor>>>>,
+        _app_servers: Arc<RwLock<HashMap<String, Arc<crate::app_server::GranianSupervisor>>>>,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let (
             http_addr,

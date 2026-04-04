@@ -69,6 +69,48 @@ impl AdminRateLimiter {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum YaraRateLimitOp {
+    Submit,
+    BroadcastApply,
+    Approve,
+}
+
+#[derive(Clone)]
+pub struct YaraRateLimiter {
+    inner: Arc<YaraRateLimiterInner>,
+}
+
+struct YaraRateLimiterInner {
+    submit_limiter: AdminRateLimiter,
+    broadcast_apply_limiter: AdminRateLimiter,
+    approve_limiter: AdminRateLimiter,
+}
+
+impl YaraRateLimiter {
+    pub fn new(submit_limit: u32, broadcast_apply_limit: u32, approve_limit: u32) -> Self {
+        Self {
+            inner: Arc::new(YaraRateLimiterInner {
+                submit_limiter: AdminRateLimiter::new(submit_limit, 1),
+                broadcast_apply_limiter: AdminRateLimiter::new(broadcast_apply_limit, 1),
+                approve_limiter: AdminRateLimiter::new(approve_limit, 1),
+            }),
+        }
+    }
+
+    pub fn default_for_yara() -> Self {
+        Self::new(10, 5, 10)
+    }
+
+    pub fn check(&self, ip: &str, op: YaraRateLimitOp) -> bool {
+        match op {
+            YaraRateLimitOp::Submit => self.inner.submit_limiter.check(ip),
+            YaraRateLimitOp::BroadcastApply => self.inner.broadcast_apply_limiter.check(ip),
+            YaraRateLimitOp::Approve => self.inner.approve_limiter.check(ip),
+        }
+    }
+}
+
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct AggregatedMetrics {
     pub total_requests: u64,
@@ -128,6 +170,7 @@ pub struct SecurityState {
     pub admin_token: String,
     pub csrf_tokens: Arc<RwLock<std::collections::HashMap<String, CsrfTokenState>>>,
     pub rate_limiter: Option<Arc<AdminRateLimiter>>,
+    pub yara_rate_limiter: Option<Arc<YaraRateLimiter>>,
 }
 
 #[derive(Clone)]
@@ -240,6 +283,7 @@ impl AdminState {
                 admin_token,
                 csrf_tokens: Arc::new(RwLock::new(std::collections::HashMap::new())),
                 rate_limiter: None,
+                yara_rate_limiter: None,
             },
             mesh: MeshState {
                 mesh_transport: None,
@@ -265,6 +309,11 @@ impl AdminState {
 
     pub fn with_rate_limiter(mut self, rate_limiter: Option<Arc<AdminRateLimiter>>) -> Self {
         self.security.rate_limiter = rate_limiter;
+        self
+    }
+
+    pub fn with_yara_rate_limiter(mut self, rate_limiter: Option<Arc<YaraRateLimiter>>) -> Self {
+        self.security.yara_rate_limiter = rate_limiter;
         self
     }
 

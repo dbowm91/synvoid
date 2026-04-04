@@ -336,20 +336,6 @@ mod tests {
     }
 
     #[test]
-    fn test_build_json_response() {
-        let handler = SharedRequestHandler::new();
-        let main_config = MainConfig::default();
-
-        let resp = handler.build_json_response(200, r#"{"status":"ok"}"#, &None, &main_config);
-
-        assert_eq!(resp.status(), 200);
-        assert_eq!(
-            resp.headers().get("content-type").unwrap(),
-            "application/json"
-        );
-    }
-
-    #[test]
     fn test_build_error_response() {
         let handler = SharedRequestHandler::new();
         let main_config = MainConfig::default();

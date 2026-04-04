@@ -22,8 +22,7 @@ use crate::config::HttpConfig;
 use crate::config::MainConfig;
 use crate::http::headers::{generate_stealth_timestamp, inject_security_headers};
 use crate::http_client::{
-    create_upstream_client, send_request_with_body_headers_and_timeout,
-    send_request_with_timeout_and_headers, UpstreamTlsConfig,
+    create_upstream_client, send_request_with_body_headers_and_timeout, UpstreamTlsConfig,
 };
 use crate::metrics::bandwidth::{
     get_global_bandwidth_tracker_or_log, BandwidthProtocol, EgressDirection,

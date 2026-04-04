@@ -143,7 +143,7 @@ impl AttackDetector {
     #[inline]
     pub fn check_request(
         &self,
-        method: &http::Method,
+        _method: &http::Method,
         path: &str,
         query_string: Option<&str>,
         headers: &http::HeaderMap,

@@ -554,7 +554,7 @@ impl HttpServer {
             .and_then(|v| v.to_str().ok())
             .map(|s| s.to_string());
 
-        let mut request_body_size: u64 = 0;
+        let mut request_body_size: u64;
         const MAX_WAF_BODY_SIZE: usize = 1024 * 1024; // 1MB limit for WAF inspection
         let full_body: Bytes = match body.collect().await {
             Ok(collected) => collected.to_bytes(),

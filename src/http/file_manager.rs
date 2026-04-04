@@ -11,10 +11,7 @@ use tokio::sync::RwLock as TokioRwLock;
 
 use crate::admin::verify_admin_token;
 use crate::config::ConfigManager;
-use crate::static_files::file_manager::{
-    DirectoryListing, FileEntry, FileManager, FileManagerConfig, FileManagerError, Permissions,
-    SearchResult,
-};
+use crate::static_files::file_manager::FileManager;
 
 #[derive(Debug, Serialize)]
 struct ApiResponse<T> {

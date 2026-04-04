@@ -16,7 +16,6 @@ pub trait AnycastSocketPlatform: Send + Sync {
 mod linux {
     use super::*;
     use nix::sys::socket::{setsockopt, sockopt};
-    use std::os::fd::AsRawFd;
 
     pub struct LinuxAnycastSocket;
 

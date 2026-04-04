@@ -136,14 +136,21 @@ pub struct ThreatIntelligenceManager {
     transport: Arc<RwLock<Option<Arc<crate::mesh::transport::MeshTransport>>>>,
     last_sync: RwLock<Instant>,
     global_node_ips: RwLock<HashMap<String, IpAddr>>,
+    persistence_path: Option<std::path::PathBuf>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ThreatIndicatorEntry {
     pub indicator: ThreatIndicator,
     pub received_from: Option<String>,
     pub local_origin: bool,
     pub version: u64,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct PersistedThreatStore {
+    indicators: HashMap<String, ThreatIndicatorEntry>,
+    local_version: u64,
 }
 
 impl ThreatIntelligenceManager {
@@ -154,8 +161,37 @@ impl ThreatIntelligenceManager {
         node_role: MeshNodeRole,
         signer: Option<Arc<crate::mesh::protocol::MeshMessageSigner>>,
     ) -> Self {
+        Self::new_inner(config, block_store, node_id, node_role, signer, None)
+    }
+
+    pub fn new_for_standalone(
+        config: ThreatIntelligenceConfigInternal,
+        block_store: Arc<BlockStore>,
+        node_id: String,
+        node_role: MeshNodeRole,
+        signer: Option<Arc<crate::mesh::protocol::MeshMessageSigner>>,
+        persistence_path: std::path::PathBuf,
+    ) -> Self {
+        Self::new_inner(
+            config,
+            block_store,
+            node_id,
+            node_role,
+            signer,
+            Some(persistence_path),
+        )
+    }
+
+    fn new_inner(
+        config: ThreatIntelligenceConfigInternal,
+        block_store: Arc<BlockStore>,
+        node_id: String,
+        node_role: MeshNodeRole,
+        signer: Option<Arc<crate::mesh::protocol::MeshMessageSigner>>,
+        persistence_path: Option<std::path::PathBuf>,
+    ) -> Self {
         let reputation_config = config.reputation_config.clone();
-        Self {
+        let manager = Self {
             config: Arc::new(config),
             block_store,
             reputation: Arc::new(ReputationManager::new(reputation_config)),
@@ -169,6 +205,68 @@ impl ThreatIntelligenceManager {
             transport: Arc::new(RwLock::new(None)),
             last_sync: RwLock::new(Instant::now()),
             global_node_ips: RwLock::new(HashMap::new()),
+            persistence_path,
+        };
+
+        if let Some(ref path) = manager.persistence_path {
+            if let Err(e) = manager.load_from_file(path) {
+                tracing::debug!("No persisted threat intel found or failed to load: {}", e);
+            }
+        }
+
+        manager
+    }
+
+    fn load_from_file(&self, path: &std::path::Path) -> Result<(), String> {
+        if !path.exists() {
+            return Err("File does not exist".to_string());
+        }
+
+        let content =
+            std::fs::read_to_string(path).map_err(|e| format!("Failed to read file: {}", e))?;
+
+        let store: PersistedThreatStore =
+            serde_json::from_str(&content).map_err(|e| format!("Failed to parse JSON: {}", e))?;
+
+        let indicators_count = store.indicators.len();
+        let local_version = store.local_version;
+
+        let mut indicators = self.indicators.write();
+        *indicators = store.indicators;
+        drop(indicators);
+        *self.local_version.write() = local_version;
+
+        tracing::info!(
+            "Loaded {} threat indicators from persistence",
+            indicators_count
+        );
+        Ok(())
+    }
+
+    fn save_to_file(&self, path: &std::path::Path) -> Result<(), String> {
+        let store = PersistedThreatStore {
+            indicators: self.indicators.read().clone(),
+            local_version: *self.local_version.read(),
+        };
+
+        let content = serde_json::to_string_pretty(&store)
+            .map_err(|e| format!("Failed to serialize: {}", e))?;
+
+        let temp_path = path.with_extension("tmp");
+        std::fs::write(&temp_path, content)
+            .map_err(|e| format!("Failed to write temp file: {}", e))?;
+
+        std::fs::rename(&temp_path, path)
+            .map_err(|e| format!("Failed to rename temp file: {}", e))?;
+
+        Ok(())
+    }
+
+    fn persist_if_needed(&self) {
+        if let Some(ref path) = self.persistence_path {
+            if let Err(e) = self.save_to_file(path) {
+                tracing::warn!("Failed to persist threat intel: {}", e);
+            }
         }
     }
 
@@ -273,6 +371,7 @@ impl ThreatIntelligenceManager {
         }
 
         *self.local_version.write() += 1;
+        self.persist_if_needed();
 
         if self.config.push_enabled {
             let threshold = self.config.push_severity_threshold as u32;
@@ -343,6 +442,7 @@ impl ThreatIntelligenceManager {
         }
 
         *self.local_version.write() += 1;
+        self.persist_if_needed();
 
         let threshold = self.config.push_severity_threshold as u32;
         if self.config.push_enabled && (severity as u32) >= threshold {
@@ -398,6 +498,7 @@ impl ThreatIntelligenceManager {
         }
 
         *self.local_version.write() += 1;
+        self.persist_if_needed();
 
         self.publish_indicator_to_dht(&indicator);
         if self.config.push_enabled {
@@ -461,6 +562,7 @@ impl ThreatIntelligenceManager {
         }
 
         *self.local_version.write() += 1;
+        self.persist_if_needed();
 
         let indicator_reason = indicator.reason.clone();
 
@@ -706,6 +808,7 @@ impl ThreatIntelligenceManager {
         }
 
         *self.local_version.write() += 1;
+        self.persist_if_needed();
         self.reputation.record_threat_accepted(from_node);
 
         tracing::debug!(
@@ -1328,6 +1431,7 @@ impl ThreatIntelligenceManager {
             transport: self.transport.clone(),
             last_sync: RwLock::new(*self.last_sync.read()),
             global_node_ips: RwLock::new(self.global_node_ips.read().clone()),
+            persistence_path: self.persistence_path.clone(),
         }
     }
 }

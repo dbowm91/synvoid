@@ -18,7 +18,7 @@ pub use auth::{hash_admin_token, hash_admin_token_with_cost, verify_admin_token}
 pub use metrics::start_metrics_publisher;
 pub use state::{
     get_cpu_memory_usage, get_current_connections, set_current_connections, AdminRateLimiter,
-    AdminState, AggregatedMetrics, SystemResources,
+    AdminState, AggregatedMetrics, SystemResources, YaraRateLimiter,
 };
 pub use ws::broadcaster::Broadcaster;
 
@@ -557,6 +557,8 @@ pub async fn start_admin_server(
         None
     };
 
+    let yara_rate_limiter = Some(Arc::new(YaraRateLimiter::default_for_yara()));
+
     let addr: std::net::SocketAddr =
         format!("{}:{}", bind_addr, port)
             .parse()
@@ -581,7 +583,8 @@ pub async fn start_admin_server(
         .with_process_manager(process_manager.clone())
         .with_plugin_manager(plugin_manager)
         .with_mesh_transport(mesh_transport)
-        .with_rate_limiter(rate_limiter);
+        .with_rate_limiter(rate_limiter)
+        .with_yara_rate_limiter(yara_rate_limiter);
 
     #[cfg(feature = "icmp-filter")]
     {

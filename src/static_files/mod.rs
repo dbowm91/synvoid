@@ -9,7 +9,6 @@ use std::time::SystemTime;
 
 use bytes::Bytes;
 use http::{Method, Response, StatusCode};
-use http_body_util::BodyExt;
 use http_body_util::Full;
 use metrics::{counter, histogram};
 use tokio::io::AsyncReadExt;

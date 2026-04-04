@@ -44,6 +44,8 @@ pub struct RecordStoreConfig {
     pub max_sync_interval_secs: u64,
     pub fanout_factor: f64,
     pub convergence_threshold: usize,
+    pub manual_quorum_override: usize,
+    pub enable_degraded_quorum: bool,
 }
 
 impl Default for RecordStoreConfig {
@@ -65,7 +67,43 @@ impl Default for RecordStoreConfig {
             max_sync_interval_secs: 3600,
             fanout_factor: 0.5,
             convergence_threshold: DEFAULT_CONVERGENCE_THRESHOLD,
+            manual_quorum_override: 0,
+            enable_degraded_quorum: true,
         }
+    }
+}
+
+impl RecordStoreConfig {
+    pub fn calculate_write_quorum(&self, node_count: usize) -> u32 {
+        if node_count == 0 {
+            return 1;
+        }
+        let auto_quorum = std::cmp::max(3, (node_count / 2) + 1) as u32;
+        std::cmp::min(auto_quorum, node_count as u32)
+    }
+
+    pub fn calculate_read_quorum(&self, node_count: usize) -> u32 {
+        self.calculate_write_quorum(node_count)
+    }
+
+    pub fn effective_write_quorum(&self, node_count: usize) -> u32 {
+        if self.manual_quorum_override > 0 {
+            return self.manual_quorum_override as u32;
+        }
+        if self.enable_degraded_quorum && node_count < 5 {
+            return std::cmp::max(1, (node_count / 2) as u32);
+        }
+        self.calculate_write_quorum(node_count)
+    }
+
+    pub fn effective_read_quorum(&self, node_count: usize) -> u32 {
+        if self.manual_quorum_override > 0 {
+            return self.manual_quorum_override as u32;
+        }
+        if self.enable_degraded_quorum && node_count < 5 {
+            return std::cmp::max(1, (node_count / 2) as u32);
+        }
+        self.calculate_read_quorum(node_count)
     }
 }
 

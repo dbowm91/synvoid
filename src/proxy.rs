@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 use crate::config::site::{BufferingConfig, ProxyCacheConfig, ProxyHeadersConfig, RetryConfig};
 use crate::http_client::{
-    create_http_client_with_config, create_upstream_client, send_request_with_body_and_timeout,
+    create_http_client_with_config, create_upstream_client,
     send_request_with_body_and_timeout_with_limit, send_request_with_timeout, HttpClient,
     UpstreamTlsConfig,
 };

@@ -22,8 +22,6 @@ use super::config::{WireGuardConfig, WireGuardPeerConfig};
 use super::session::{WgConnectionStats, WgPeerSession, WgSessionManager};
 use super::stats::{WgInterfaceStats, WgStatsCollector};
 use super::tun::{is_tun_available, TunInterface};
-#[cfg(target_os = "linux")]
-use super::tun::{TunReader, TunWriter};
 use crate::tunnel::{PeerInfo, TunnelStats, TunnelTransport, TunnelType};
 
 pub struct KernelWireGuard {

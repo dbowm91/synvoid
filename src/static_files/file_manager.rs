@@ -1,8 +1,10 @@
+#![allow(unexpected_cfgs)]
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use tokio::fs;
 use walkdir::WalkDir;
@@ -221,7 +223,7 @@ impl FileManager {
         }
 
         let user_path_clean = user_path.trim_start_matches('/');
-        let mut full_path = self.config.root_path.join(user_path_clean);
+        let full_path = self.config.root_path.join(user_path_clean);
 
         let canonical = tokio::fs::canonicalize(&self.config.root_path)
             .await

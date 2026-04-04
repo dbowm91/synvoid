@@ -427,17 +427,36 @@ pub async fn run_unified_server_worker(
     {
         if !mesh_config.enabled {
             tracing::info!("Mesh is disabled in configuration");
-            let dummy_threat = Arc::new(ThreatIntelligenceManager::new(
-                crate::mesh::threat_intel::ThreatIntelligenceConfig::default().to_internal(),
-                Arc::new(crate::block_store::BlockStore::new(
-                    true,
+            let threat_persistence_path = args
+                .config_path
+                .parent()
+                .map(|p| p.join("threat_intel.json"));
+            let dummy_threat = if let Some(ref path) = threat_persistence_path {
+                Arc::new(ThreatIntelligenceManager::new_for_standalone(
+                    crate::mesh::threat_intel::ThreatIntelligenceConfig::default().to_internal(),
+                    Arc::new(crate::block_store::BlockStore::new(
+                        true,
+                        None,
+                        crate::config::DenyListLimitsConfig::default(),
+                    )),
+                    "dummy".to_string(),
+                    crate::mesh::config::MeshNodeRole::Edge,
                     None,
-                    crate::config::DenyListLimitsConfig::default(),
-                )),
-                "dummy".to_string(),
-                crate::mesh::config::MeshNodeRole::Edge,
-                None,
-            ));
+                    path.clone(),
+                ))
+            } else {
+                Arc::new(ThreatIntelligenceManager::new(
+                    crate::mesh::threat_intel::ThreatIntelligenceConfig::default().to_internal(),
+                    Arc::new(crate::block_store::BlockStore::new(
+                        true,
+                        None,
+                        crate::config::DenyListLimitsConfig::default(),
+                    )),
+                    "dummy".to_string(),
+                    crate::mesh::config::MeshNodeRole::Edge,
+                    None,
+                ))
+            };
             (
                 None::<Arc<MeshTransportManager>>,
                 Some(dummy_threat),
@@ -836,17 +855,36 @@ pub async fn run_unified_server_worker(
             )
         }
     } else {
-        let dummy_threat = Arc::new(ThreatIntelligenceManager::new(
-            crate::mesh::threat_intel::ThreatIntelligenceConfig::default().to_internal(),
-            Arc::new(crate::block_store::BlockStore::new(
-                true,
+        let threat_persistence_path = args
+            .config_path
+            .parent()
+            .map(|p| p.join("threat_intel.json"));
+        let dummy_threat = if let Some(ref path) = threat_persistence_path {
+            Arc::new(ThreatIntelligenceManager::new_for_standalone(
+                crate::mesh::threat_intel::ThreatIntelligenceConfig::default().to_internal(),
+                Arc::new(crate::block_store::BlockStore::new(
+                    true,
+                    None,
+                    crate::config::DenyListLimitsConfig::default(),
+                )),
+                "dummy".to_string(),
+                crate::mesh::config::MeshNodeRole::Edge,
                 None,
-                crate::config::DenyListLimitsConfig::default(),
-            )),
-            "dummy".to_string(),
-            crate::mesh::config::MeshNodeRole::Edge,
-            None,
-        ));
+                path.clone(),
+            ))
+        } else {
+            Arc::new(ThreatIntelligenceManager::new(
+                crate::mesh::threat_intel::ThreatIntelligenceConfig::default().to_internal(),
+                Arc::new(crate::block_store::BlockStore::new(
+                    true,
+                    None,
+                    crate::config::DenyListLimitsConfig::default(),
+                )),
+                "dummy".to_string(),
+                crate::mesh::config::MeshNodeRole::Edge,
+                None,
+            ))
+        };
         (
             None::<Arc<MeshTransportManager>>,
             Some(dummy_threat),

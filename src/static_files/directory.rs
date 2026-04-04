@@ -66,7 +66,7 @@ fn render_html(
     theme_config: &ThemeConfig,
 ) -> Result<String, super::StaticError> {
     let base_path = url_path.trim_end_matches('/');
-    let parent_link = if url_path != "/" {
+    let _parent_link = if url_path != "/" {
         let parent = Path::new(url_path)
             .parent()
             .map(|p| p.to_string_lossy().to_string())

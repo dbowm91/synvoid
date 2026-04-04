@@ -771,7 +771,6 @@ impl WasmRuntime {
         request: Request<Bytes>,
         env: std::collections::HashMap<String, String>,
     ) -> Result<WasmFilterResult, WasmPluginError> {
-        let start = Instant::now();
         let plugin_name = &self.name;
 
         record_wasm_invocation(plugin_name);
@@ -785,7 +784,7 @@ impl WasmRuntime {
             parts.uri
         );
 
-        let mut pooled_instance = self.pool.get(&self.name);
+        let pooled_instance = self.pool.get(&self.name);
 
         if let Some(mut inst) = pooled_instance {
             inst.prepare_for_request(env, self.limits.timeout_seconds);

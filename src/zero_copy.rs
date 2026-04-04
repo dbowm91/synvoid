@@ -14,7 +14,7 @@
 //! These operations are inherently low-level and require direct FFI to the kernel.
 
 use std::fs::File;
-use std::io::{Read, Result, Seek, SeekFrom, Write};
+use std::io::{Read, Result};
 use std::os::fd::AsRawFd;
 
 pub struct ZeroCopyReader {
@@ -134,6 +134,8 @@ pub fn copy_file_range(src: &File, dst: &File, count: usize) -> Result<usize> {
 
 #[cfg(not(target_os = "linux"))]
 pub fn copy_file_range(src: &File, dst: &File, count: usize) -> Result<usize> {
+    use std::io::SeekFrom;
+
     let mut src_file = File::open(src.path()?)?;
     let mut dst_file = File::open(dst.path()?)?;
 

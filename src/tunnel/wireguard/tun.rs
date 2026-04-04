@@ -230,10 +230,7 @@ mod platform {
 }
 
 #[cfg(target_os = "linux")]
-pub use platform::{
-    add_route, delete_interface, delete_route, set_interface_address, set_interface_mtu,
-    set_interface_up, AsyncTunDevice, LinuxTunDevice,
-};
+pub use platform::{add_route, delete_interface, delete_route, AsyncTunDevice, LinuxTunDevice};
 
 #[cfg(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"))]
 mod bsd_platform {

@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
-use wasmtime::{Engine, Instance, Linker, Memory, Module, Store, TypedFunc};
+use wasmtime::{Engine, Instance, Linker, Module, Store};
 
 use crate::plugin::wasm_runtime::{GuestExports, RequestContext};
 

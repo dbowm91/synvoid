@@ -1736,7 +1736,7 @@ impl MeshTransport {
             | crate::mesh::protocol::AnnounceAction::Update => {
                 self.topology
                     .add_local_upstream(
-                        full_upstream_id,
+                        full_upstream_id.clone(),
                         self.config
                             .local_upstreams
                             .get(upstream_id)
@@ -1757,11 +1757,48 @@ impl MeshTransport {
         for entry in self.peer_connections.iter() {
             let peer = entry.value();
             if peer.role.is_global() {
-                tracing::debug!(
-                    "Would announce upstream {} to global node {}",
-                    upstream_id,
-                    peer.node_id
-                );
+                let upstream_id_for_sig = full_upstream_id.clone();
+                let upstream_id_for_msg = full_upstream_id.clone();
+
+                let signature = if let Some(ref signer) = self.mesh_signer {
+                    let content = format!("{}:{:?}", upstream_id_for_sig, action);
+                    signer.sign(&content)
+                } else {
+                    Vec::new()
+                };
+
+                let announce_message = MeshMessage::UpstreamAnnounce {
+                    upstream_id: upstream_id_for_msg.into(),
+                    action,
+                    signature,
+                };
+
+                let encoded = match announce_message.encode() {
+                    Ok(encoded) => encoded,
+                    Err(e) => {
+                        tracing::warn!(
+                            "Failed to encode announce message for {}: {:?}",
+                            peer.node_id,
+                            e
+                        );
+                        continue;
+                    }
+                };
+
+                if let Err(e) = peer.connection.send_datagram(encoded.into()) {
+                    tracing::warn!(
+                        "Failed to announce upstream {} to global node {}: {}",
+                        upstream_id,
+                        peer.node_id,
+                        e
+                    );
+                } else {
+                    tracing::debug!(
+                        "Announced upstream {} to global node {}",
+                        upstream_id,
+                        peer.node_id
+                    );
+                }
             }
         }
 

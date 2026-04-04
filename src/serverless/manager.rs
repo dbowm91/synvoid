@@ -116,7 +116,7 @@ impl ServerlessManager {
                     "Loading serverless function '{}' from mesh WASM store",
                     func_def.name
                 );
-                let limits = WasmResourceLimits {
+                let _limits = WasmResourceLimits {
                     max_memory_mb: func_def.memory_mb.unwrap_or(64),
                     max_cpu_fuel: func_def.cpu_fuel.unwrap_or(1000000),
                     timeout_seconds: func_def.timeout_seconds.unwrap_or(30),

@@ -70,6 +70,20 @@ impl MeshNodeRole {
     }
 }
 
+impl std::ops::BitOr for MeshNodeRole {
+    type Output = Self;
+
+    fn bitor(self, rhs: Self) -> Self::Output {
+        MeshNodeRole(self.0 | rhs.0)
+    }
+}
+
+impl std::ops::BitOrAssign for MeshNodeRole {
+    fn bitor_assign(&mut self, rhs: Self) {
+        self.0 |= rhs.0;
+    }
+}
+
 impl fmt::Debug for MeshNodeRole {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut flags = Vec::new();

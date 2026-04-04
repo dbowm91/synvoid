@@ -43,6 +43,8 @@ pub fn create_record_store(
         max_sync_interval_secs: dht_config.max_sync_interval_secs,
         fanout_factor: dht_config.fanout_factor,
         convergence_threshold: dht_config.convergence_threshold,
+        manual_quorum_override: 0,
+        enable_degraded_quorum: true,
     };
 
     let access_control = DhtAccessControl::new(config);

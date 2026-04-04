@@ -250,3 +250,9 @@ impl MainConfig {
         }
     }
 }
+
+impl Default for MainConfig {
+    fn default() -> Self {
+        Self::default_config()
+    }
+}
