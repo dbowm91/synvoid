@@ -1172,8 +1172,7 @@ impl ProxyServer {
                     last_error = Some(error_str.clone());
 
                     if let Some(config) = retry_config {
-                        let should_retry = (config.retry_on_error
-                            && self.is_connection_error(&*e))
+                        let should_retry = (config.retry_on_error && self.is_connection_error(&*e))
                             || (config.retry_on_timeout && self.is_timeout_error(&*e));
 
                         if should_retry && attempt <= max_retries {
@@ -1246,8 +1245,7 @@ impl ProxyServer {
         if let Some(io_err) = error.downcast_ref::<std::io::Error>() {
             matches!(
                 io_err.kind(),
-                std::io::ErrorKind::TimedOut
-                    | std::io::ErrorKind::WouldBlock
+                std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
             )
         } else {
             let error_lower = error.to_string().to_lowercase();

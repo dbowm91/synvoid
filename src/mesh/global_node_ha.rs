@@ -213,7 +213,9 @@ impl GlobalNodeHAManager {
 
         let vote_granted = if request.term < state.term {
             false
-        } else if state.voted_for.is_none() || state.voted_for.as_ref() == Some(&request.candidate_id) {
+        } else if state.voted_for.is_none()
+            || state.voted_for.as_ref() == Some(&request.candidate_id)
+        {
             state.voted_for = Some(request.candidate_id.clone());
             true
         } else {
@@ -262,9 +264,8 @@ impl GlobalNodeHAManager {
 
         if heartbeat.term == state.term && state.role != GlobalNodeRole::Leader {
             state.last_heartbeat = crate::utils::current_timestamp();
-            state.election_timeout_expires = Some(
-                crate::utils::current_timestamp() + self.random_election_timeout()
-            );
+            state.election_timeout_expires =
+                Some(crate::utils::current_timestamp() + self.random_election_timeout());
         }
 
         heartbeat.term >= state.term
@@ -295,7 +296,8 @@ impl GlobalNodeHAManager {
 
     fn random_election_timeout(&self) -> u64 {
         let mut rng = rand::rng();
-        let base = rng.random_range(self.config.election_timeout_min_ms..self.config.election_timeout_max_ms);
+        let base = rng
+            .random_range(self.config.election_timeout_min_ms..self.config.election_timeout_max_ms);
         let jitter = rng.random_range(0..self.config.election_timeout_jitter_ms);
         base + jitter
     }
@@ -317,9 +319,8 @@ impl GlobalNodeHAManager {
 
     pub async fn reset_election_timeout(&self) {
         let mut state = self.state.write().await;
-        state.election_timeout_expires = Some(
-            crate::utils::current_timestamp() + self.random_election_timeout()
-        );
+        state.election_timeout_expires =
+            Some(crate::utils::current_timestamp() + self.random_election_timeout());
     }
 }
 
@@ -405,12 +406,14 @@ mod tests {
     async fn test_vote_request() {
         let manager = GlobalNodeHAManager::new("node1".to_string(), GlobalNodeHAConfig::default());
 
-        let response = manager.handle_vote_request(&VoteRequest {
-            term: 1,
-            candidate_id: "node2".to_string(),
-            last_log_index: 0,
-            last_log_term: 0,
-        }).await;
+        let response = manager
+            .handle_vote_request(&VoteRequest {
+                term: 1,
+                candidate_id: "node2".to_string(),
+                last_log_index: 0,
+                last_log_term: 0,
+            })
+            .await;
 
         assert!(response.vote_granted);
         assert_eq!(response.voter_id, "node1");
@@ -420,12 +423,14 @@ mod tests {
     async fn test_vote_request_stale_term() {
         let manager = GlobalNodeHAManager::new("node1".to_string(), GlobalNodeHAConfig::default());
 
-        let response = manager.handle_vote_request(&VoteRequest {
-            term: 0,
-            candidate_id: "node2".to_string(),
-            last_log_index: 0,
-            last_log_term: 0,
-        }).await;
+        let response = manager
+            .handle_vote_request(&VoteRequest {
+                term: 0,
+                candidate_id: "node2".to_string(),
+                last_log_index: 0,
+                last_log_term: 0,
+            })
+            .await;
 
         assert!(!response.vote_granted);
     }
@@ -440,19 +445,23 @@ mod tests {
 
         let _ = manager.start_election_if_needed().await;
 
-        let won = manager.handle_vote_response(&VoteResponse {
-            term: 1,
-            vote_granted: true,
-            voter_id: "node2".to_string(),
-        }).await;
+        let won = manager
+            .handle_vote_response(&VoteResponse {
+                term: 1,
+                vote_granted: true,
+                voter_id: "node2".to_string(),
+            })
+            .await;
 
         assert!(!won);
 
-        let won = manager.handle_vote_response(&VoteResponse {
-            term: 1,
-            vote_granted: true,
-            voter_id: "node3".to_string(),
-        }).await;
+        let won = manager
+            .handle_vote_response(&VoteResponse {
+                term: 1,
+                vote_granted: true,
+                voter_id: "node3".to_string(),
+            })
+            .await;
 
         assert!(won);
 
@@ -465,13 +474,15 @@ mod tests {
     async fn test_heartbeat() {
         let manager = GlobalNodeHAManager::new("node1".to_string(), GlobalNodeHAConfig::default());
 
-        let accepted = manager.handle_heartbeat(&HeartbeatMessage {
-            term: 1,
-            leader_id: "node2".to_string(),
-            commit_index: 0,
-            prev_log_index: 0,
-            prev_log_term: 0,
-        }).await;
+        let accepted = manager
+            .handle_heartbeat(&HeartbeatMessage {
+                term: 1,
+                leader_id: "node2".to_string(),
+                commit_index: 0,
+                prev_log_index: 0,
+                prev_log_term: 0,
+            })
+            .await;
 
         assert!(accepted);
 

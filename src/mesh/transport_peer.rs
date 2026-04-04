@@ -1669,7 +1669,9 @@ impl MeshTransport {
                     key_version,
                 );
                 if let Some(ref session_mgr) = self.mlkem_session_manager {
-                    if let Err(e) = session_mgr.apply_peer_rotation(&session_id, key_version, &peer_entropy) {
+                    if let Err(e) =
+                        session_mgr.apply_peer_rotation(&session_id, key_version, &peer_entropy)
+                    {
                         tracing::warn!("Failed to apply peer session rotation: {}", e);
                     } else {
                         let ack = MeshMessage::SessionRotateAck {
@@ -1679,7 +1681,9 @@ impl MeshTransport {
                             peer_entropy: Vec::new(),
                             timestamp: crate::utils::current_timestamp(),
                         };
-                        let encoded = ack.encode().map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
+                        let encoded = ack
+                            .encode()
+                            .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
                         let len = (encoded.len() as u32).to_be_bytes();
                         let _ = send_stream.write_all(&len).await;
                         let _ = send_stream.write_all(&encoded).await;

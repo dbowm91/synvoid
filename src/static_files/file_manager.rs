@@ -329,10 +329,7 @@ impl FileManager {
                 continue;
             }
 
-            let entry_meta = entry
-                .metadata()
-                .await
-                .map_err(FileManagerError::IoError)?;
+            let entry_meta = entry.metadata().await.map_err(FileManagerError::IoError)?;
 
             let is_symlink = entry_meta.is_symlink();
             let is_dir = entry_meta.is_dir();
@@ -599,9 +596,7 @@ impl FileManager {
                     .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
                     .map(|d| d.as_secs());
 
-                let permissions = entry_meta
-                    .as_ref()
-                    .and_then(Self::get_permissions_string);
+                let permissions = entry_meta.as_ref().and_then(Self::get_permissions_string);
 
                 matches.push(FileEntry {
                     name: name.to_string(),

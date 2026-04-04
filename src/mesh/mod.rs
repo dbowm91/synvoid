@@ -75,13 +75,13 @@ pub use dht::{
     MerkleProofNode, MerkleTree, NodeInfo, ProofPosition, RecordStoreConfig, RecordStoreManager,
     RecordStoreStats, TierKeyStore, TierKeyStoreEntry,
 };
-pub use hierarchical_routing::{
-    MeshBloomFilter, DirectedRouteQuery, HierarchicalRoutingConfig, HierarchicalRoutingManager,
-    RegionalHubInfo, RouteAdvertisement,
-};
 pub use global_node_ha::{
-    GlobalNodeHAManager, GlobalNodeHAConfig, GlobalNodeRole, GlobalNodeState,
-    GlobalNodeLeaderTracker, HeartbeatMessage, LeaderInfo, VoteRequest, VoteResponse,
+    GlobalNodeHAConfig, GlobalNodeHAManager, GlobalNodeLeaderTracker, GlobalNodeRole,
+    GlobalNodeState, HeartbeatMessage, LeaderInfo, VoteRequest, VoteResponse,
+};
+pub use hierarchical_routing::{
+    DirectedRouteQuery, HierarchicalRoutingConfig, HierarchicalRoutingManager, MeshBloomFilter,
+    RegionalHubInfo, RouteAdvertisement,
 };
 pub use kem::{KemSession, MlKem768, MlKem768PublicKey, MlKem768SecretKey, MlKem768SharedSecret};
 pub use ml_kem_key_exchange::MlKemKeyExchangeService;

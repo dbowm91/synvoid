@@ -1516,8 +1516,7 @@ impl ProcessManager {
                                 worker_id,
                                 new_count
                             );
-                            if let Err(e) = self.spawn_unified_server_worker_with_id(worker_id)
-                            {
+                            if let Err(e) = self.spawn_unified_server_worker_with_id(worker_id) {
                                 tracing::error!(
                                     "Failed to respawn UnifiedServerWorker {}: {}",
                                     worker_id,

@@ -1181,10 +1181,13 @@ impl MeshTopology {
         let adaptive_ttl = self.calculate_adaptive_ttl(ttl, stability_score);
 
         self.route_cache
-            .insert(upstream_id.to_string(), CachedRoute {
-                provider_node_id,
-                hops,
-            })
+            .insert(
+                upstream_id.to_string(),
+                CachedRoute {
+                    provider_node_id,
+                    hops,
+                },
+            )
             .await;
     }
 
@@ -1224,7 +1227,10 @@ impl MeshTopology {
     }
 
     pub async fn get_cached_route(&self, upstream_id: &str) -> Option<(String, u8)> {
-        self.route_cache.get(upstream_id).await.map(|route| (route.provider_node_id.clone(), route.hops))
+        self.route_cache
+            .get(upstream_id)
+            .await
+            .map(|route| (route.provider_node_id.clone(), route.hops))
     }
 
     pub async fn invalidate_cache(&self, upstream_id: &str) {
@@ -1474,9 +1480,10 @@ impl MeshTopology {
             if let Some(history) = latency_history_map.get(node_id) {
                 let recent: Vec<_> = history.iter().rev().take(10).collect();
                 if !recent.is_empty() {
-                    let avg_latency: u64 =
-                        recent.iter().map(|(_, l)| *l as u64).sum::<u64>() / recent.len().max(1) as u64;
-                    score.latency_score = (1.0_f64 - (avg_latency as f64 / 1000.0).min(1.0)).max(0.0);
+                    let avg_latency: u64 = recent.iter().map(|(_, l)| *l as u64).sum::<u64>()
+                        / recent.len().max(1) as u64;
+                    score.latency_score =
+                        (1.0_f64 - (avg_latency as f64 / 1000.0).min(1.0)).max(0.0);
                 }
             }
 
@@ -1534,8 +1541,12 @@ impl MeshTopology {
         }
 
         for upstream_id in upstreams {
-            for (provider, peer_state) in peers.iter().filter(|(_, p)| p.is_healthy() && p.has_upstream(&upstream_id)) {
-                if !global_nodes.contains(provider) && !targets.iter().any(|(id, _)| id == provider) {
+            for (provider, peer_state) in peers
+                .iter()
+                .filter(|(_, p)| p.is_healthy() && p.has_upstream(&upstream_id))
+            {
+                if !global_nodes.contains(provider) && !targets.iter().any(|(id, _)| id == provider)
+                {
                     let score = peer_scores_map
                         .get(provider)
                         .map(|s| s.total_score)
@@ -1555,20 +1566,23 @@ impl MeshTopology {
             let mut scored: Vec<(String, f64)> = peers
                 .iter()
                 .map(|(node_id, _)| {
-                    let mut score = peer_scores_snapshot
-                        .get(node_id)
-                        .cloned()
-                        .unwrap_or_else(|| PeerScore {
-                            node_id: node_id.to_string(),
-                            ..Default::default()
-                        });
+                    let mut score =
+                        peer_scores_snapshot
+                            .get(node_id)
+                            .cloned()
+                            .unwrap_or_else(|| PeerScore {
+                                node_id: node_id.to_string(),
+                                ..Default::default()
+                            });
 
                     if let Some(history) = latency_history_map.get(node_id) {
                         let recent: Vec<_> = history.iter().rev().take(10).collect();
                         if !recent.is_empty() {
                             let avg_latency: u64 =
-                                recent.iter().map(|(_, l)| *l as u64).sum::<u64>() / recent.len().max(1) as u64;
-                            score.latency_score = (1.0_f64 - (avg_latency as f64 / 1000.0).min(1.0)).max(0.0);
+                                recent.iter().map(|(_, l)| *l as u64).sum::<u64>()
+                                    / recent.len().max(1) as u64;
+                            score.latency_score =
+                                (1.0_f64 - (avg_latency as f64 / 1000.0).min(1.0)).max(0.0);
                         }
                     }
 
@@ -1585,7 +1599,8 @@ impl MeshTopology {
                 .collect();
 
             scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-            scored.into_iter()
+            scored
+                .into_iter()
                 .take(self.config.connection.reconnection_priority.frequent_routes)
                 .map(|(id, _)| id)
                 .collect::<Vec<_>>()

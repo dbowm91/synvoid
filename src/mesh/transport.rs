@@ -914,7 +914,9 @@ impl MeshTransport {
                     if !rotated.is_empty() {
                         tracing::info!("Rotated {} ML-KEM sessions", rotated.len());
                         for session in &rotated {
-                            if let Some((sid, kv, entropy)) = mlkem_manager.prepare_session_rotation(&session.id) {
+                            if let Some((sid, kv, entropy)) =
+                                mlkem_manager.prepare_session_rotation(&session.id)
+                            {
                                 let msg = MeshMessage::SessionRotate {
                                     session_id: sid.clone().into(),
                                     peer_id: session.peer_id.clone().into(),
@@ -922,8 +924,15 @@ impl MeshTransport {
                                     peer_entropy: entropy,
                                     timestamp: crate::utils::current_timestamp(),
                                 };
-                                if let Err(e) = session_rotation_transport.send_message_to_peer(&session.peer_id, &msg).await {
-                                    tracing::warn!("Failed to send SessionRotate to {}: {}", session.peer_id, e);
+                                if let Err(e) = session_rotation_transport
+                                    .send_message_to_peer(&session.peer_id, &msg)
+                                    .await
+                                {
+                                    tracing::warn!(
+                                        "Failed to send SessionRotate to {}: {}",
+                                        session.peer_id,
+                                        e
+                                    );
                                 }
                             }
                         }
@@ -1203,7 +1212,10 @@ impl MeshTransport {
                 if sk.len() == 32 {
                     let mut key_bytes = [0u8; 32];
                     key_bytes.copy_from_slice(sk);
-                    match crate::mesh::peer_auth::generate_global_node_auth(&self.config.node_id(), &key_bytes) {
+                    match crate::mesh::peer_auth::generate_global_node_auth(
+                        &self.config.node_id(),
+                        &key_bytes,
+                    ) {
                         Ok((sig, _ts)) => Some(sig.into()),
                         Err(e) => {
                             tracing::warn!("Failed to generate global node auth signature: {}", e);
@@ -1405,7 +1417,10 @@ impl MeshTransport {
                 }
 
                 if role.is_global() {
-                    let authorized_keys: Vec<String> = self.config.seeds.iter()
+                    let authorized_keys: Vec<String> = self
+                        .config
+                        .seeds
+                        .iter()
                         .filter_map(|seed| seed.public_key.clone())
                         .collect();
                     let peer_pk = peer_public_key.as_ref().map(|pk| pk.as_str());
@@ -1419,7 +1434,11 @@ impl MeshTransport {
                         resp_timestamp.unwrap_or(0),
                         300,
                     ) {
-                        tracing::warn!("Global node Ed25519 verification failed for {}: {}", node_id, e);
+                        tracing::warn!(
+                            "Global node Ed25519 verification failed for {}: {}",
+                            node_id,
+                            e
+                        );
                         return Err(MeshTransportError::AuthFailed(e));
                     }
                 }

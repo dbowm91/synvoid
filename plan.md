@@ -1515,12 +1515,12 @@ Every item across all 8 waves was verified against the actual source code. The f
 |------|-------------|--------------|
 | 4C | `get_legacy_config` hardcoded values | Partially fixed — mix of hardcoded and config fields |
 | 4P | JA3/JA4 fingerprinting | JA3 done, JA4 not implemented |
-| 5B | NXDOMAIN vs NODATA distinction | No SOA in NODATA responses |
-| 5L | `LookupResult` visibility | Still `pub`, not `pub(crate)` |
-| 5M | `NormalizedInput` missing `lowercased` | No `lowercased` field exists |
-| 5N | Rate limiter cleanup optimization | Still 6 sequential O(n) retain calls |
-| 6I | `is_connection_error` string matching | Still uses `.to_lowercase().contains()` |
-| 6U | `_dead_workers` dead variable | Still exists as unused variable |
+| 5L | `LookupResult` visibility | ✅ FIXED in Session 2 (was incorrectly marked) |
+| 5M | `NormalizedInput` missing `lowercased` | ✅ FIXED in Session 2 (was incorrectly marked) |
+| 5N | Rate limiter cleanup optimization | ✅ FIXED in Session 2 (single retain with remove_older_than) |
+| 6I | `is_connection_error` string matching | ✅ FIXED in Session 2 (io::ErrorKind matching) |
+| 6U | `_dead_workers` dead variable | ✅ FIXED in Session 2 (dead code removed) |
+| 5B | NXDOMAIN vs NODATA distinction | ✅ FIXED in this session (SOA in NODATA responses) |
 
 ### Corrected Totals
 

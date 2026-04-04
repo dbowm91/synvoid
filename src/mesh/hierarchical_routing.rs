@@ -94,7 +94,12 @@ impl MeshBloomFilter {
         self.sip_keys_val
     }
 
-    pub fn from_filter_data(bytes: &[u8], bitmap_bits: u64, k_num: u32, sip_keys: [(u64, u64); 2]) -> Option<Self> {
+    pub fn from_filter_data(
+        bytes: &[u8],
+        bitmap_bits: u64,
+        k_num: u32,
+        sip_keys: [(u64, u64); 2],
+    ) -> Option<Self> {
         let filter = Bloom::from_existing(bytes, bitmap_bits, k_num, sip_keys);
         Some(Self {
             filter,
@@ -168,14 +173,12 @@ impl HierarchicalRoutingManager {
 
         if self.config.use_bloom_filters {
             let mut filters = self.upstream_bloom_filters.write().await;
-            let filter = filters
-                .entry(upstream_id.to_string())
-                .or_insert_with(|| {
-                    MeshBloomFilter::new(
-                        self.config.bloom_expected_elements,
-                        self.config.bloom_false_positive_rate,
-                    )
-                });
+            let filter = filters.entry(upstream_id.to_string()).or_insert_with(|| {
+                MeshBloomFilter::new(
+                    self.config.bloom_expected_elements,
+                    self.config.bloom_false_positive_rate,
+                )
+            });
             filter.add(upstream_id);
         }
     }
@@ -195,7 +198,11 @@ impl HierarchicalRoutingManager {
         upstreams.keys().cloned().collect()
     }
 
-    pub async fn build_route_advertisement(&self, node_id: &str, region_id: Option<String>) -> RouteAdvertisement {
+    pub async fn build_route_advertisement(
+        &self,
+        node_id: &str,
+        region_id: Option<String>,
+    ) -> RouteAdvertisement {
         let upstreams = self.local_upstreams.read().await;
         let upstream_ids: Vec<String> = upstreams.keys().cloned().collect();
 
@@ -275,7 +282,12 @@ impl HierarchicalRoutingManager {
         hubs.insert(region_id.to_string(), info);
     }
 
-    pub async fn update_regional_bloom_filter(&self, region_id: &str, filter_bytes: Vec<u8>, known_upstreams: Vec<String>) {
+    pub async fn update_regional_bloom_filter(
+        &self,
+        region_id: &str,
+        filter_bytes: Vec<u8>,
+        known_upstreams: Vec<String>,
+    ) {
         let mut hubs = self.regional_hubs.write().await;
         if let Some(hub) = hubs.get_mut(region_id) {
             hub.aggregated_bloom_filter = Some(filter_bytes);
@@ -299,7 +311,8 @@ impl HierarchicalRoutingManager {
 
         let mut ads = self.route_advertisements.write().await;
         ads.retain(|_, ad| {
-            let age = Duration::from_secs(crate::utils::current_timestamp().saturating_sub(ad.timestamp));
+            let age =
+                Duration::from_secs(crate::utils::current_timestamp().saturating_sub(ad.timestamp));
             age < timeout
         });
     }
