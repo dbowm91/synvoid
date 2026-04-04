@@ -190,14 +190,48 @@ impl DnsServer {
                     }
                 }
                 RecordType::CAA => {
-                    let caa_value = record.value.as_bytes();
-                    response.extend_from_slice(&(caa_value.len() as u16).to_be_bytes());
-                    response.extend_from_slice(caa_value);
+                    // Wire format: flags (1 byte) | tag length (1 byte) | tag bytes | value bytes
+                    // Expected input format: "flags tag value" e.g. "0 issue \"letsencrypt.org\""
+                    let mut data = Vec::new();
+                    let parts: Vec<&str> = record.value.splitn(3, ' ').collect();
+                    if parts.len() >= 3 {
+                        let flags: u8 = parts[0].parse().unwrap_or(0);
+                        let tag = parts[1].as_bytes();
+                        let value = parts[2].trim_matches('"').as_bytes();
+                        data.push(flags);
+                        data.push(tag.len() as u8);
+                        data.extend_from_slice(tag);
+                        data.extend_from_slice(value);
+                    } else {
+                        // Fallback: treat entire value as raw data with flags=0
+                        data.push(0);
+                        data.push(record.value.len() as u8);
+                        data.extend_from_slice(record.value.as_bytes());
+                    }
+                    response.extend_from_slice(&(data.len() as u16).to_be_bytes());
+                    response.extend_from_slice(&data);
                 }
                 RecordType::TLSA => {
-                    let tlsa_value = record.value.as_bytes();
-                    response.extend_from_slice(&(tlsa_value.len() as u16).to_be_bytes());
-                    response.extend_from_slice(tlsa_value);
+                    // Wire format: usage (1) | selector (1) | matching type (1) | cert data bytes
+                    // Expected input format: "usage selector matching_type cert_data"
+                    let mut data = Vec::new();
+                    let parts: Vec<&str> = record.value.splitn(4, ' ').collect();
+                    if parts.len() >= 4 {
+                        let usage: u8 = parts[0].parse().unwrap_or(0);
+                        let selector: u8 = parts[1].parse().unwrap_or(0);
+                        let matching_type: u8 = parts[2].parse().unwrap_or(0);
+                        let cert_data =
+                            hex::decode(parts[3]).unwrap_or_else(|_| parts[3].as_bytes().to_vec());
+                        data.push(usage);
+                        data.push(selector);
+                        data.push(matching_type);
+                        data.extend_from_slice(&cert_data);
+                    } else {
+                        // Fallback: treat entire value as raw data
+                        data.extend_from_slice(record.value.as_bytes());
+                    }
+                    response.extend_from_slice(&(data.len() as u16).to_be_bytes());
+                    response.extend_from_slice(&data);
                 }
                 RecordType::SVCB | RecordType::HTTPS => {
                     if let Ok(svcb_data) = Self::parse_svcb_value(&record.value) {

@@ -22,8 +22,8 @@ use std::sync::Arc;
 
 pub use cmd_injection::CmdInjectionDetector;
 pub use config::{
-    AttackDetectionConfig, AttackDetectionResult, AttackType, DetectorConfig, InputLocation,
-    SimpleDetectorConfig,
+    AnomalyScoringConfig, AttackDetectionConfig, AttackDetectionResult, AttackType, DetectorConfig,
+    InputLocation, SimpleDetectorConfig,
 };
 pub use detector_common::{BasePatternDetector, PatternDetector};
 pub use header_validation::HeaderValidator;
@@ -760,6 +760,126 @@ impl AttackDetector {
         }
 
         None
+    }
+
+    pub fn check_request_anomaly_scoring(
+        &self,
+        _method: &http::Method,
+        path: &str,
+        query_string: Option<&str>,
+        headers: &http::HeaderMap,
+        body: Option<&[u8]>,
+    ) -> u32 {
+        let mut total_score: u32 = 0;
+
+        if let Some(max_size) = self.config.max_request_body_size {
+            if let Some(body) = body {
+                if body.len() > max_size {
+                    total_score += 50;
+                }
+            }
+        }
+
+        if let Some(header_result) = self.header_validator.validate(headers) {
+            total_score += match header_result.attack_type {
+                AttackType::Other => 30,
+                _ => 50,
+            };
+        }
+
+        if self.config.request_smuggling.enabled {
+            if let Some(_result) = self.check_request_smuggling(headers, body) {
+                total_score += 50;
+            }
+        }
+
+        if self.config.jwt.enabled {
+            if let Some(_result) = self.check_jwt(headers, query_string, body) {
+                total_score += 40;
+            }
+        }
+
+        if self.config.sqli.enabled {
+            if let Some(result) = self.check_sqli(Some(path), query_string, headers, body) {
+                total_score += match result.attack_type {
+                    AttackType::Sqli => 50,
+                    _ => 30,
+                };
+            }
+        }
+
+        if self.config.xss.enabled {
+            if let Some(result) = self.check_xss(Some(path), query_string, headers, body) {
+                total_score += match result.attack_type {
+                    AttackType::Xss => 50,
+                    _ => 30,
+                };
+            }
+        }
+
+        if self.config.ssti.enabled {
+            if let Some(_result) = self.check_ssti(Some(path), query_string, headers, body) {
+                total_score += 40;
+            }
+        }
+
+        let inputs = NormalizedInputs::normalize_all(
+            &self.normalizer,
+            Some(path),
+            query_string,
+            headers,
+            body,
+        );
+
+        if self.config.cmd_injection.enabled {
+            if let Some(_result) = self.check_cmd_injection(&inputs) {
+                total_score += 50;
+            }
+        }
+
+        if self.config.path_traversal.enabled {
+            if let Some(_result) = self.check_path_traversal(&inputs) {
+                total_score += 40;
+            }
+        }
+
+        if self.config.rfi.enabled {
+            if let Some(_result) = self.check_rfi(&inputs) {
+                total_score += 45;
+            }
+        }
+
+        if self.config.ssrf.enabled {
+            if let Some(_result) = self.check_ssrf(&inputs) {
+                total_score += 50;
+            }
+        }
+
+        if self.config.xxe.enabled {
+            if let Some(_result) = self.check_xxe(&inputs) {
+                total_score += 50;
+            }
+        }
+
+        if self.config.ldap_injection.enabled {
+            if let Some(_result) = self.check_ldap_injection(&inputs) {
+                total_score += 45;
+            }
+        }
+
+        if self.config.xpath_injection.enabled {
+            if let Some(_result) = self.check_xpath_injection(&inputs) {
+                total_score += 45;
+            }
+        }
+
+        if self.config.open_redirect.enabled {
+            if let Some(_result) = self.check_open_redirect(&inputs) {
+                total_score += 30;
+            }
+        }
+
+        total_score
     }
 }
 

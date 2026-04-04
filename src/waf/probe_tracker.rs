@@ -243,10 +243,8 @@ impl ProbeTracker {
                     .filter(|e| e.timestamp >= window_start)
                     .collect();
 
-                let mut unique_endpoints: Vec<&String> = recent_events
-                    .iter()
-                    .map(|e| &e.endpoint)
-                    .collect();
+                let mut unique_endpoints: Vec<&String> =
+                    recent_events.iter().map(|e| &e.endpoint).collect();
                 unique_endpoints.sort();
                 unique_endpoints.dedup();
 

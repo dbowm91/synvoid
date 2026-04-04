@@ -180,7 +180,8 @@ pub fn create_listening_socket_unix(
 
     let backlog = Backlog::new(1024)
         .or_else(|_| Backlog::new(128))
-        .unwrap_or(Backlog::new(64).expect("backlog of 64 should always be valid"));
+        .or_else(|_| Backlog::new(64))
+        .map_err(|e| PlatformError::Socket(format!("Failed to create backlog: {}", e)))?;
     socket::listen(&fd, backlog).map_err(|e| PlatformError::Socket(e.to_string()))?;
 
     Ok(SocketInfo {
@@ -220,7 +221,8 @@ pub fn create_listening_socket_v6_unix(
 
     let backlog = Backlog::new(1024)
         .or_else(|_| Backlog::new(128))
-        .unwrap_or(Backlog::new(64).expect("backlog of 64 should always be valid"));
+        .or_else(|_| Backlog::new(64))
+        .map_err(|e| PlatformError::Socket(format!("Failed to create backlog: {}", e)))?;
     socket::listen(&fd, backlog).map_err(|e| PlatformError::Socket(e.to_string()))?;
 
     Ok(SocketInfo {

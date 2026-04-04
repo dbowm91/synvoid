@@ -571,7 +571,7 @@ impl TunInterface {
 ))]
 impl Drop for TunInterface {
     fn drop(&mut self) {
-        delete_interface(&self.name);
+        let _ = delete_interface(&self.name);
         tracing::debug!("TUN interface {} deleted", self.name);
     }
 }

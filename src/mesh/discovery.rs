@@ -165,7 +165,7 @@ impl MeshDiscovery {
             crate::mesh::protocol::MeshPeerInfo {
                 node_id: address.to_string(),
                 address: address.to_string(),
-                role: crate::mesh::config::MeshNodeRole::Edge,
+                role: crate::mesh::config::MeshNodeRole::EDGE,
                 capabilities: MeshCapabilities {
                     can_route: true,
                     can_proxy: true,
@@ -209,7 +209,7 @@ impl MeshDiscovery {
             crate::mesh::protocol::MeshPeerInfo {
                 node_id: seed.address.clone(),
                 address: seed.address.clone(),
-                role: crate::mesh::config::MeshNodeRole::Global,
+                role: crate::mesh::config::MeshNodeRole::GLOBAL,
                 capabilities: MeshCapabilities {
                     can_route: true,
                     can_proxy: true,
@@ -403,7 +403,7 @@ impl MeshDiscovery {
                     return Err(MeshDiscoveryError::AuthFailed("Public key required for authentication".to_string()));
                 }
 
-                let is_edge = role == crate::mesh::config::MeshNodeRole::Edge;
+                let is_edge = role.is_edge();
                 if is_edge {
                     use base64::Engine;
                     if let (Some(nonce), Some(ref pk_str)) = (pow_nonce, pow_public_key) {

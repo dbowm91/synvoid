@@ -448,14 +448,14 @@ impl ThreatLevelManager {
     pub fn get_legacy_config(&self) -> LegacyThreatLevelConfig {
         LegacyThreatLevelConfig {
             escalation: LegacyEscalationConfig {
-                enabled: true,
+                enabled: self.config.learning_enabled,
                 violations_before_block: 3,
                 violation_window_secs: 300,
                 excluded_ips: vec!["127.0.0.1".to_string()],
             },
             auto_scale: self.config.learning_enabled,
             initial: 1,
-            cooldown_secs: 60,
+            cooldown_secs: self.cooldown_duration.as_secs() as u32,
             scale_up_window_secs: self.config.learning_duration_secs,
             scale_up_attacks_per_min: 50,
             scale_down_window_secs: 300,

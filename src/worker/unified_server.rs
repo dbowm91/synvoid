@@ -440,7 +440,7 @@ pub async fn run_unified_server_worker(
                         crate::config::DenyListLimitsConfig::default(),
                     )),
                     "dummy".to_string(),
-                    crate::mesh::config::MeshNodeRole::Edge,
+                    crate::mesh::config::MeshNodeRole::EDGE,
                     None,
                     path.clone(),
                 ))
@@ -453,7 +453,7 @@ pub async fn run_unified_server_worker(
                         crate::config::DenyListLimitsConfig::default(),
                     )),
                     "dummy".to_string(),
-                    crate::mesh::config::MeshNodeRole::Edge,
+                    crate::mesh::config::MeshNodeRole::EDGE,
                     None,
                 ))
             };
@@ -729,7 +729,7 @@ pub async fn run_unified_server_worker(
             }
 
             // Announce edge node key if edge with key exchange auth enabled
-            if mesh_config.role == crate::mesh::config::MeshNodeRole::Edge
+            if mesh_config.role == crate::mesh::config::MeshNodeRole::EDGE
                 && mesh_config.global_node.key_exchange_enabled
                 && mesh_config.global_node.key_exchange_require_edge_auth
             {
@@ -868,7 +868,7 @@ pub async fn run_unified_server_worker(
                     crate::config::DenyListLimitsConfig::default(),
                 )),
                 "dummy".to_string(),
-                crate::mesh::config::MeshNodeRole::Edge,
+                crate::mesh::config::MeshNodeRole::EDGE,
                 None,
                 path.clone(),
             ))
@@ -881,7 +881,7 @@ pub async fn run_unified_server_worker(
                     crate::config::DenyListLimitsConfig::default(),
                 )),
                 "dummy".to_string(),
-                crate::mesh::config::MeshNodeRole::Edge,
+                crate::mesh::config::MeshNodeRole::EDGE,
                 None,
             ))
         };
@@ -963,44 +963,6 @@ pub async fn run_unified_server_worker(
 
     let metrics = WorkerMetrics::shared();
     let running = RunningFlag::new();
-    let app_servers = Arc::new(RwLock::new(HashMap::new()));
-
-    let app_servers_init = app_servers.clone();
-    let worker_id_for_app = args.worker_id;
-    let config_for_app = shared_config.clone();
-    tokio::spawn(async move {
-        let config = config_for_app.read().await;
-
-        for (site_id, site_config) in config.sites.iter() {
-            let app_config = site_config.app_server_config();
-            if !app_config.is_valid() {
-                continue;
-            }
-
-            let mut granian_config = GranianConfig::from(&app_config);
-            granian_config = granian_config.with_site_info(site_id, worker_id_for_app);
-
-            tracing::info!(
-                "Initializing granian for site {} on unified server worker with socket: {}",
-                site_id,
-                granian_config.resolve_socket_path().display()
-            );
-
-            let supervisor = Arc::new(GranianSupervisor::new(granian_config));
-
-            if let Err(e) = supervisor.start().await {
-                tracing::error!("Failed to start granian for site {}: {}", site_id, e);
-                continue;
-            }
-
-            app_servers_init
-                .write()
-                .await
-                .insert(site_id.clone(), supervisor);
-        }
-    });
-
-    tokio::time::sleep(Duration::from_millis(500)).await;
 
     let draining = DrainFlag::new();
     let drain_id = Arc::new(std::sync::atomic::AtomicU64::new(0));

@@ -93,7 +93,12 @@ fn build_type_bitmap(type_codes: &[u16]) -> Vec<(u8, Vec<u8>)> {
     }
 
     if !block_bits.is_empty() {
-        window_blocks.push((current_window, block_bits));
+        while block_bits.last() == Some(&0) {
+            block_bits.pop();
+        }
+        if !block_bits.is_empty() {
+            window_blocks.push((current_window, block_bits));
+        }
     }
 
     window_blocks
@@ -257,7 +262,7 @@ pub fn create_nsec3_owner_name(base_name: &str, hash: &[u8]) -> String {
 }
 
 pub fn base32_encode(input: &[u8]) -> String {
-    const BASE32_ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+    const BASE32_ALPHABET: &[u8] = b"0123456789ABCDEFGHIJKLMNOPQRSTUV";
     let mut result = String::new();
 
     let mut buffer: u64 = 0;

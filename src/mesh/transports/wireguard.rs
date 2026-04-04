@@ -17,7 +17,6 @@ use crate::mesh::config::{MeshConfig, MeshNodeRole, MeshWireGuardConfig, MeshWir
 use crate::mesh::protocol::{MeshMessage, MESH_MESSAGE_VERSION};
 use crate::mesh::topology::{MeshTopology, PeerStatus};
 use crate::mesh::transports::{MeshTransportError, MeshTransportTrait, MeshTransportType};
-use crate::mesh::wireguard_mesh::WireGuardMeshRuntime;
 
 const MESH_HEADER_SIZE: usize = 4;
 
@@ -26,8 +25,6 @@ pub struct WireGuardMeshTransport {
     config: Arc<MeshConfig>,
     wireguard_config: Arc<MeshWireGuardConfig>,
     topology: Arc<MeshTopology>,
-    #[allow(dead_code)]
-    runtime: Option<Arc<WireGuardMeshRuntime>>,
     running: Arc<ParkingRwLock<bool>>,
     shutdown_tx: Arc<ParkingRwLock<Option<broadcast::Sender<()>>>>,
     peer_states: Arc<DashMap<String, WireGuardPeerState>>,
@@ -51,7 +48,6 @@ impl WireGuardMeshTransport {
             config: config.clone(),
             wireguard_config: Arc::new(wireguard_config),
             topology,
-            runtime: None,
             running: Arc::new(ParkingRwLock::new(false)),
             shutdown_tx: Arc::new(ParkingRwLock::new(None)),
             peer_states: Arc::new(DashMap::new()),
@@ -65,6 +61,11 @@ impl WireGuardMeshTransport {
             tracing::info!("WireGuard mesh transport disabled in config");
             return Ok(());
         }
+
+        tracing::warn!(
+            "DEPRECATED: WireGuard mesh transport uses raw UDP with zero authentication. \
+             It is not suitable for production use. Consider using QUIC transport instead."
+        );
 
         let private_key = self
             .wireguard_config
@@ -133,6 +134,12 @@ impl WireGuardMeshTransport {
         if !self.wireguard_config.enabled {
             return Ok(());
         }
+
+        tracing::warn!(
+            "DEPRECATED: WireGuard mesh transport started without authentication. \
+             All traffic is sent as raw UDP with no encryption or peer verification. \
+             This transport will be removed in a future release."
+        );
 
         {
             let mut running = self.running.write();
@@ -435,10 +442,10 @@ impl WireGuardMeshTransport {
                 crate::mesh::protocol::MeshPeerInfo {
                     node_id: peer_id.clone(),
                     address: wireguard_ip,
-                    role: MeshNodeRole::Edge,
+                    role: MeshNodeRole::EDGE,
                     capabilities: crate::mesh::protocol::MeshCapabilities::from_config(
                         &self.config,
-                        MeshNodeRole::Edge,
+                        MeshNodeRole::EDGE,
                     ),
                     is_global: false,
                     latency_ms: None,

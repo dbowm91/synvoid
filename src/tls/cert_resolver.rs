@@ -471,7 +471,8 @@ pub fn watch_for_cert_changes(
         loop {
             tokio::select! {
                 Some(_) = rx.recv() => {
-                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                    while rx.try_recv().is_ok() {}
                     tracing::info!("Certificate change detected, reloading...");
                     match resolver.load_certificates() { Err(e) => {
                         tracing::error!("Failed to reload certificates: {}", e);

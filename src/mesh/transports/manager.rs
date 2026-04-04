@@ -922,31 +922,39 @@ impl MeshTransportManager {
         None
     }
 
-    pub async fn get_image_protection_for_site(
+    async fn fetch_cached_config<T: Clone>(
         &self,
         upstream_id: &str,
-    ) -> Option<crate::mesh::config::MeshImageProtectionConfig> {
+        dht_key_prefix: &str,
+        parse_json: impl FnOnce(serde_json::Value) -> Option<T>,
+        cache: &Arc<RwLock<LruCache<String, (T, Instant)>>>,
+        inflight: &Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
+        cache_hits: &AtomicU64,
+        cache_misses: &AtomicU64,
+        metric_prefix: &str,
+    ) -> Option<T> {
         // Quick cache check
         {
-            let mut cache = self.image_protection_cache.write();
-            if let Some((config, cached_at)) = cache.get(upstream_id).cloned() {
+            let mut c = cache.write();
+            if let Some((config, cached_at)) = c.get(upstream_id).cloned() {
                 if cached_at.elapsed() < Duration::from_secs(300) {
-                    self.image_protection_cache_hits
-                        .fetch_add(1, Ordering::Relaxed);
-                    counter!("maluwaf.mesh.image_protection_cache_hits", "upstream" => upstream_id.to_string()).increment(1);
-                    tracing::debug!("Image protection cache hit for upstream: {}", upstream_id);
+                    cache_hits.fetch_add(1, Ordering::Relaxed);
+                    counter!(
+                        "maluwaf.mesh.{metric_prefix}_cache_hits",
+                        "upstream" => upstream_id.to_string()
+                    )
+                    .increment(1);
+                    tracing::debug!("{} cache hit for upstream: {}", metric_prefix, upstream_id);
                     return Some(config);
                 }
             }
-            self.image_protection_cache_misses
-                .fetch_add(1, Ordering::Relaxed);
+            cache_misses.fetch_add(1, Ordering::Relaxed);
         }
 
         // Get or create per-key mutex for stampede protection
         let key_lock = {
-            let mut inflight = self.image_protection_inflight.lock().await;
-            inflight
-                .entry(upstream_id.to_string())
+            let mut i = inflight.lock().await;
+            i.entry(upstream_id.to_string())
                 .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
                 .clone()
         };
@@ -955,11 +963,10 @@ impl MeshTransportManager {
 
         // Double-check cache
         {
-            let mut cache = self.image_protection_cache.write();
-            if let Some((config, cached_at)) = cache.get(upstream_id).cloned() {
+            let mut c = cache.write();
+            if let Some((config, cached_at)) = c.get(upstream_id).cloned() {
                 if cached_at.elapsed() < Duration::from_secs(300) {
-                    self.image_protection_cache_hits
-                        .fetch_add(1, Ordering::Relaxed);
+                    cache_hits.fetch_add(1, Ordering::Relaxed);
                     return Some(config);
                 }
             }
@@ -968,16 +975,26 @@ impl MeshTransportManager {
         // Fetch from DHT
         let fetch_start = Instant::now();
         let Some(ref record_store) = self.record_store else {
-            counter!("maluwaf.mesh.image_protection_dht_errors", "type" => "no_record_store", "upstream" => upstream_id.to_string()).increment(1);
+            counter!(
+                "maluwaf.mesh.{metric_prefix}_dht_errors",
+                "type" => "no_record_store",
+                "upstream" => upstream_id.to_string()
+            )
+            .increment(1);
             return None;
         };
 
-        let key = format!("upstream_image_protection:{}", upstream_id);
+        let key = format!("{}{}", dht_key_prefix, upstream_id);
 
         let record = match record_store.get_record(&key) {
             Some(r) => r,
             None => {
-                counter!("maluwaf.mesh.image_protection_dht_errors", "type" => "record_not_found", "upstream" => upstream_id.to_string()).increment(1);
+                counter!(
+                    "maluwaf.mesh.{metric_prefix}_dht_errors",
+                    "type" => "record_not_found",
+                    "upstream" => upstream_id.to_string()
+                )
+                .increment(1);
                 return None;
             }
         };
@@ -985,8 +1002,13 @@ impl MeshTransportManager {
         let value = match String::from_utf8(record.value.clone()) {
             Ok(v) => v,
             Err(e) => {
-                counter!("maluwaf.mesh.image_protection_dht_errors", "type" => "utf8_error", "upstream" => upstream_id.to_string()).increment(1);
-                tracing::warn!("Failed to parse image protection config: {}", e);
+                counter!(
+                    "maluwaf.mesh.{metric_prefix}_dht_errors",
+                    "type" => "utf8_error",
+                    "upstream" => upstream_id.to_string()
+                )
+                .increment(1);
+                tracing::warn!("Failed to parse {} config: {}", metric_prefix, e);
                 return None;
             }
         };
@@ -994,259 +1016,142 @@ impl MeshTransportManager {
         let parsed: serde_json::Value = match serde_json::from_str(&value) {
             Ok(v) => v,
             Err(e) => {
-                counter!("maluwaf.mesh.image_protection_dht_errors", "type" => "parse_error", "upstream" => upstream_id.to_string()).increment(1);
-                tracing::warn!("Failed to parse image protection JSON: {}", e);
+                counter!(
+                    "maluwaf.mesh.{metric_prefix}_dht_errors",
+                    "type" => "parse_error",
+                    "upstream" => upstream_id.to_string()
+                )
+                .increment(1);
+                tracing::warn!("Failed to parse {} JSON: {}", metric_prefix, e);
                 return None;
             }
         };
 
-        let config = crate::mesh::config::MeshImageProtectionConfig {
-            enabled: parsed.get("enabled").and_then(|v| v.as_bool()),
-            min_size_bytes: parsed
-                .get("min_size_bytes")
-                .and_then(|v| v.as_u64())
-                .map(|v| v as usize),
-            whitelist_patterns: parsed
-                .get("whitelist_patterns")
-                .and_then(|v| v.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|v| v.as_str().map(String::from))
-                        .collect()
-                }),
+        let Some(config) = parse_json(parsed) else {
+            return None;
         };
 
         // Cache the result
         {
-            let mut cache = self.image_protection_cache.write();
-            cache.insert(upstream_id.to_string(), (config.clone(), Instant::now()));
+            let mut c = cache.write();
+            c.insert(upstream_id.to_string(), (config.clone(), Instant::now()));
         }
 
-        counter!("maluwaf.mesh.image_protection_dht_fetches", "status" => "success", "upstream" => upstream_id.to_string()).increment(1);
-        histogram!("maluwaf.mesh.image_protection_dht_fetch_latency")
+        counter!(
+            "maluwaf.mesh.{metric_prefix}_dht_fetches",
+            "status" => "success",
+            "upstream" => upstream_id.to_string()
+        )
+        .increment(1);
+        histogram!("maluwaf.mesh.{metric_prefix}_dht_fetch_latency")
             .record(fetch_start.elapsed().as_secs_f64());
         tracing::debug!(
-            "Fetched image protection from DHT for upstream: {}",
+            "Fetched {} from DHT for upstream: {}",
+            metric_prefix,
             upstream_id
         );
 
         Some(config)
+    }
+
+    pub async fn get_image_protection_for_site(
+        &self,
+        upstream_id: &str,
+    ) -> Option<crate::mesh::config::MeshImageProtectionConfig> {
+        self.fetch_cached_config(
+            upstream_id,
+            "upstream_image_protection:",
+            |parsed| {
+                Some(crate::mesh::config::MeshImageProtectionConfig {
+                    enabled: parsed.get("enabled").and_then(|v| v.as_bool()),
+                    min_size_bytes: parsed
+                        .get("min_size_bytes")
+                        .and_then(|v| v.as_u64())
+                        .map(|v| v as usize),
+                    whitelist_patterns: parsed
+                        .get("whitelist_patterns")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|v| v.as_str().map(String::from))
+                                .collect()
+                        }),
+                })
+            },
+            &self.image_protection_cache,
+            &self.image_protection_inflight,
+            &self.image_protection_cache_hits,
+            &self.image_protection_cache_misses,
+            "image_protection",
+        )
+        .await
     }
 
     pub async fn get_compression_for_site(
         &self,
         upstream_id: &str,
     ) -> Option<crate::mesh::config::MeshCompressionConfig> {
-        // Quick cache check
-        {
-            let mut cache = self.compression_cache.write();
-            if let Some((config, cached_at)) = cache.get(upstream_id).cloned() {
-                if cached_at.elapsed() < Duration::from_secs(300) {
-                    self.compression_cache_hits.fetch_add(1, Ordering::Relaxed);
-                    counter!("maluwaf.mesh.compression_cache_hits", "upstream" => upstream_id.to_string()).increment(1);
-                    tracing::debug!("Compression cache hit for upstream: {}", upstream_id);
-                    return Some(config);
-                }
-            }
-            self.compression_cache_misses
-                .fetch_add(1, Ordering::Relaxed);
-        }
-
-        // Get or create per-key mutex
-        let key_lock = {
-            let mut inflight = self.compression_inflight.lock().await;
-            inflight
-                .entry(upstream_id.to_string())
-                .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
-                .clone()
-        };
-
-        let _guard = key_lock.lock().await;
-
-        // Double-check cache
-        {
-            let mut cache = self.compression_cache.write();
-            if let Some((config, cached_at)) = cache.get(upstream_id).cloned() {
-                if cached_at.elapsed() < Duration::from_secs(300) {
-                    self.compression_cache_hits.fetch_add(1, Ordering::Relaxed);
-                    return Some(config);
-                }
-            }
-        }
-
-        // Fetch from DHT
-        let fetch_start = Instant::now();
-        let Some(ref record_store) = self.record_store else {
-            counter!("maluwaf.mesh.compression_dht_errors", "type" => "no_record_store", "upstream" => upstream_id.to_string()).increment(1);
-            return None;
-        };
-
-        let key = format!("upstream_compression:{}", upstream_id);
-
-        let record = match record_store.get_record(&key) {
-            Some(r) => r,
-            None => {
-                counter!("maluwaf.mesh.compression_dht_errors", "type" => "record_not_found", "upstream" => upstream_id.to_string()).increment(1);
-                return None;
-            }
-        };
-
-        let value = match String::from_utf8(record.value.clone()) {
-            Ok(v) => v,
-            Err(e) => {
-                counter!("maluwaf.mesh.compression_dht_errors", "type" => "utf8_error", "upstream" => upstream_id.to_string()).increment(1);
-                tracing::warn!("Failed to parse compression config: {}", e);
-                return None;
-            }
-        };
-
-        let parsed: serde_json::Value = match serde_json::from_str(&value) {
-            Ok(v) => v,
-            Err(e) => {
-                counter!("maluwaf.mesh.compression_dht_errors", "type" => "parse_error", "upstream" => upstream_id.to_string()).increment(1);
-                tracing::warn!("Failed to parse compression JSON: {}", e);
-                return None;
-            }
-        };
-
-        let config = crate::mesh::config::MeshCompressionConfig {
-            enabled: parsed.get("enabled").and_then(|v| v.as_bool()),
-            gzip_on_the_fly: parsed.get("gzip_on_the_fly").and_then(|v| v.as_bool()),
-            gzip_level: parsed
-                .get("gzip_level")
-                .and_then(|v| v.as_u64())
-                .map(|v| v as u32),
-            gzip_min_size: parsed
-                .get("gzip_min_size")
-                .and_then(|v| v.as_u64())
-                .map(|v| v as usize),
-            gzip_types: parsed
-                .get("gzip_types")
-                .and_then(|v| v.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|v| v.as_str().map(String::from))
-                        .collect()
-                }),
-            enable_brotli: parsed.get("enable_brotli").and_then(|v| v.as_bool()),
-            brotli_level: parsed
-                .get("brotli_level")
-                .and_then(|v| v.as_u64())
-                .map(|v| v as u32),
-        };
-
-        // Cache the result
-        {
-            let mut cache = self.compression_cache.write();
-            cache.insert(upstream_id.to_string(), (config.clone(), Instant::now()));
-        }
-
-        counter!("maluwaf.mesh.compression_dht_fetches", "status" => "success", "upstream" => upstream_id.to_string()).increment(1);
-        histogram!("maluwaf.mesh.compression_dht_fetch_latency")
-            .record(fetch_start.elapsed().as_secs_f64());
-        tracing::debug!("Fetched compression from DHT for upstream: {}", upstream_id);
-
-        Some(config)
+        self.fetch_cached_config(
+            upstream_id,
+            "upstream_compression:",
+            |parsed| {
+                Some(crate::mesh::config::MeshCompressionConfig {
+                    enabled: parsed.get("enabled").and_then(|v| v.as_bool()),
+                    gzip_on_the_fly: parsed.get("gzip_on_the_fly").and_then(|v| v.as_bool()),
+                    gzip_level: parsed
+                        .get("gzip_level")
+                        .and_then(|v| v.as_u64())
+                        .map(|v| v as u32),
+                    gzip_min_size: parsed
+                        .get("gzip_min_size")
+                        .and_then(|v| v.as_u64())
+                        .map(|v| v as usize),
+                    gzip_types: parsed
+                        .get("gzip_types")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|v| v.as_str().map(String::from))
+                                .collect()
+                        }),
+                    enable_brotli: parsed.get("enable_brotli").and_then(|v| v.as_bool()),
+                    brotli_level: parsed
+                        .get("brotli_level")
+                        .and_then(|v| v.as_u64())
+                        .map(|v| v as u32),
+                })
+            },
+            &self.compression_cache,
+            &self.compression_inflight,
+            &self.compression_cache_hits,
+            &self.compression_cache_misses,
+            "compression",
+        )
+        .await
     }
 
     pub async fn get_minification_for_site(
         &self,
         upstream_id: &str,
     ) -> Option<crate::mesh::config::MeshMinificationConfig> {
-        // Quick cache check
-        {
-            let mut cache = self.minification_cache.write();
-            if let Some((config, cached_at)) = cache.get(upstream_id).cloned() {
-                if cached_at.elapsed() < Duration::from_secs(300) {
-                    self.minification_cache_hits.fetch_add(1, Ordering::Relaxed);
-                    counter!("maluwaf.mesh.minification_cache_hits", "upstream" => upstream_id.to_string()).increment(1);
-                    tracing::debug!("Minification cache hit for upstream: {}", upstream_id);
-                    return Some(config);
-                }
-            }
-            self.minification_cache_misses
-                .fetch_add(1, Ordering::Relaxed);
-        }
-
-        // Get or create per-key mutex
-        let key_lock = {
-            let mut inflight = self.minification_inflight.lock().await;
-            inflight
-                .entry(upstream_id.to_string())
-                .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
-                .clone()
-        };
-
-        let _guard = key_lock.lock().await;
-
-        // Double-check cache
-        {
-            let mut cache = self.minification_cache.write();
-            if let Some((config, cached_at)) = cache.get(upstream_id).cloned() {
-                if cached_at.elapsed() < Duration::from_secs(300) {
-                    self.minification_cache_hits.fetch_add(1, Ordering::Relaxed);
-                    return Some(config);
-                }
-            }
-        }
-
-        // Fetch from DHT
-        let fetch_start = Instant::now();
-        let Some(ref record_store) = self.record_store else {
-            counter!("maluwaf.mesh.minification_dht_errors", "type" => "no_record_store", "upstream" => upstream_id.to_string()).increment(1);
-            return None;
-        };
-
-        let key = format!("upstream_minification:{}", upstream_id);
-
-        let record = match record_store.get_record(&key) {
-            Some(r) => r,
-            None => {
-                counter!("maluwaf.mesh.minification_dht_errors", "type" => "record_not_found", "upstream" => upstream_id.to_string()).increment(1);
-                return None;
-            }
-        };
-
-        let value = match String::from_utf8(record.value.clone()) {
-            Ok(v) => v,
-            Err(e) => {
-                counter!("maluwaf.mesh.minification_dht_errors", "type" => "utf8_error", "upstream" => upstream_id.to_string()).increment(1);
-                tracing::warn!("Failed to parse minification config: {}", e);
-                return None;
-            }
-        };
-
-        let parsed: serde_json::Value = match serde_json::from_str(&value) {
-            Ok(v) => v,
-            Err(e) => {
-                counter!("maluwaf.mesh.minification_dht_errors", "type" => "parse_error", "upstream" => upstream_id.to_string()).increment(1);
-                tracing::warn!("Failed to parse minification JSON: {}", e);
-                return None;
-            }
-        };
-
-        let config = crate::mesh::config::MeshMinificationConfig {
-            enabled: parsed.get("enabled").and_then(|v| v.as_bool()),
-            enable_html: parsed.get("enable_html").and_then(|v| v.as_bool()),
-            enable_css: parsed.get("enable_css").and_then(|v| v.as_bool()),
-            enable_js: parsed.get("enable_js").and_then(|v| v.as_bool()),
-        };
-
-        // Cache the result
-        {
-            let mut cache = self.minification_cache.write();
-            cache.insert(upstream_id.to_string(), (config.clone(), Instant::now()));
-        }
-
-        counter!("maluwaf.mesh.minification_dht_fetches", "status" => "success", "upstream" => upstream_id.to_string()).increment(1);
-        histogram!("maluwaf.mesh.minification_dht_fetch_latency")
-            .record(fetch_start.elapsed().as_secs_f64());
-        tracing::debug!(
-            "Fetched minification from DHT for upstream: {}",
-            upstream_id
-        );
-
-        Some(config)
+        self.fetch_cached_config(
+            upstream_id,
+            "upstream_minification:",
+            |parsed| {
+                Some(crate::mesh::config::MeshMinificationConfig {
+                    enabled: parsed.get("enabled").and_then(|v| v.as_bool()),
+                    enable_html: parsed.get("enable_html").and_then(|v| v.as_bool()),
+                    enable_css: parsed.get("enable_css").and_then(|v| v.as_bool()),
+                    enable_js: parsed.get("enable_js").and_then(|v| v.as_bool()),
+                })
+            },
+            &self.minification_cache,
+            &self.minification_inflight,
+            &self.minification_cache_hits,
+            &self.minification_cache_misses,
+            "minification",
+        )
+        .await
     }
 
     pub fn get_cache_metrics(&self) -> serde_json::Value {

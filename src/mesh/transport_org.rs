@@ -393,7 +393,7 @@ impl MeshTransport {
             .broadcast_to_random_peers(
                 message,
                 0.3,
-                Some(crate::mesh::config::MeshNodeRole::Global),
+                Some(crate::mesh::config::MeshNodeRole::GLOBAL),
             )
             .await;
         tracing::info!("Broadcast unspent tier keys for org {}", org_id);

@@ -214,7 +214,7 @@ impl YaraRulesManager {
             rule_change_tracker: Arc::new(RwLock::new(RuleChangeTracker::default())),
         };
 
-        if manager.node_role.is_global() || manager.node_role.contains(MeshNodeRole::Global) {
+        if manager.node_role.is_global() || manager.node_role.contains(MeshNodeRole::GLOBAL) {
             let _ = manager.load_submissions_from_disk();
         }
 
@@ -245,7 +245,7 @@ impl YaraRulesManager {
     }
 
     pub fn is_global(&self) -> bool {
-        self.node_role.is_global() || self.node_role.contains(MeshNodeRole::Global)
+        self.node_role.is_global() || self.node_role.contains(MeshNodeRole::GLOBAL)
     }
 
     pub fn apply_rules_from_feed(&self) -> Result<String, String> {
@@ -476,7 +476,7 @@ impl YaraRulesManager {
         submission_id: &str,
         review_notes: Option<String>,
     ) -> Result<String, String> {
-        if !self.node_role.is_global() && !self.node_role.contains(MeshNodeRole::Global) {
+        if !self.node_role.is_global() && !self.node_role.contains(MeshNodeRole::GLOBAL) {
             return Err("Only global nodes can approve submissions".to_string());
         }
 
@@ -517,7 +517,7 @@ impl YaraRulesManager {
         submission_id: &str,
         review_notes: String,
     ) -> Result<(), String> {
-        if !self.node_role.is_global() && !self.node_role.contains(MeshNodeRole::Global) {
+        if !self.node_role.is_global() && !self.node_role.contains(MeshNodeRole::GLOBAL) {
             return Err("Only global nodes can reject submissions".to_string());
         }
 
@@ -1045,7 +1045,7 @@ impl YaraRulesManager {
                     submission_id
                 );
 
-                if self.node_role.is_global() || self.node_role.contains(MeshNodeRole::Global) {
+                if self.node_role.is_global() || self.node_role.contains(MeshNodeRole::GLOBAL) {
                     let submission = YaraRuleSubmission {
                         submission_id: submission_id.to_string(),
                         rules: rules.clone(),
@@ -1128,7 +1128,7 @@ impl YaraRulesManager {
                 .count(),
             total_submissions: self.submissions.read().len(),
             last_sync: *self.last_sync.read(),
-            is_global: self.node_role.is_global() || self.node_role.contains(MeshNodeRole::Global),
+            is_global: self.node_role.is_global() || self.node_role.contains(MeshNodeRole::GLOBAL),
             broadcast_status: self.get_broadcast_status(),
         }
     }

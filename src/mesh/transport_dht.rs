@@ -350,9 +350,9 @@ impl MeshTransport {
                     peer.address,
                     peer.port,
                     if peer.is_global {
-                        crate::mesh::config::MeshNodeRole::Global
+                        crate::mesh::config::MeshNodeRole::GLOBAL
                     } else {
-                        crate::mesh::config::MeshNodeRole::Edge
+                        crate::mesh::config::MeshNodeRole::EDGE
                     },
                     peer.latency_ms,
                     peer.is_trusted,

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::net::{SocketAddr, TcpListener};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -300,7 +300,8 @@ pub struct ProcessManager {
     ipc_rate_limiter: IpcRateLimiter,
     static_worker_cache_hits: Arc<AtomicU64>,
     static_worker_cache_misses: Arc<AtomicU64>,
-    request_logs: Arc<PLRwLock<Vec<RequestLogPayload>>>,
+    request_logs: Arc<PLRwLock<VecDeque<RequestLogPayload>>>,
+    started_at: Instant,
 }
 
 #[derive(Debug, Clone)]
@@ -380,7 +381,8 @@ impl ProcessManager {
                 ipc_rate_limiter,
                 static_worker_cache_hits: Arc::new(AtomicU64::new(0)),
                 static_worker_cache_misses: Arc::new(AtomicU64::new(0)),
-                request_logs: Arc::new(PLRwLock::new(Vec::with_capacity(10000))),
+                request_logs: Arc::new(PLRwLock::new(VecDeque::with_capacity(10000))),
+                started_at: Instant::now(),
             },
             event_rx,
         )
@@ -942,6 +944,7 @@ impl ProcessManager {
         self.drain_worker_async(
             ipc,
             "UnifiedServerWorker",
+            timeout_secs,
             |_, drain_id| Message::UnifiedServerWorkerDrain {
                 timeout_secs,
                 drain_id,
@@ -962,6 +965,7 @@ impl ProcessManager {
         &self,
         ipc: Option<SharedIpc>,
         worker_name: &str,
+        timeout_secs: u64,
         drain_msg_fn: impl FnOnce(u64, u64) -> Message,
         drain_response_fn: impl Fn(&Message, u64) -> Option<u64>,
     ) -> Result<u64, String> {
@@ -975,7 +979,7 @@ impl ProcessManager {
             }
 
             let start = std::time::Instant::now();
-            let timeout = std::time::Duration::from_secs(10);
+            let timeout = std::time::Duration::from_secs(timeout_secs);
 
             while start.elapsed() < timeout {
                 {
@@ -1093,6 +1097,7 @@ impl ProcessManager {
         self.drain_worker_async(
             ipc,
             "StaticWorker",
+            timeout_secs,
             |_, drain_id| Message::StaticWorkerDrain {
                 timeout_secs,
                 drain_id,
@@ -1157,13 +1162,13 @@ impl ProcessManager {
     pub fn handle_request_log(&self, _worker_id: WorkerId, log: RequestLogPayload) {
         let mut logs = self.request_logs.write();
         if logs.len() >= Self::MAX_REQUEST_LOGS {
-            logs.remove(0);
+            logs.pop_front();
         }
-        logs.push(log);
+        logs.push_back(log);
     }
 
     pub fn get_request_logs(&self) -> Vec<RequestLogPayload> {
-        self.request_logs.read().clone()
+        self.request_logs.read().iter().cloned().collect()
     }
 
     pub fn handle_worker_error(
@@ -1978,6 +1983,7 @@ impl ProcessManager {
 
         let total_requests: u64 = workers.values().map(|w| w.metrics.total_requests).sum();
         let total_blocked: u64 = workers.values().map(|w| w.metrics.blocked).sum();
+        let total_challenged_workers: u64 = workers.values().map(|w| w.metrics.challenged).sum();
 
         drop(workers);
 
@@ -2001,30 +2007,43 @@ impl ProcessManager {
             .values()
             .map(|w| w.metrics.blocked)
             .sum();
+        let total_challenged_unified: u64 = unified_server_workers
+            .values()
+            .map(|w| w.metrics.challenged)
+            .sum();
 
         drop(unified_server_workers);
 
         let total_requests = total_requests + unified_total_requests;
         let total_blocked = total_blocked + unified_total_blocked;
+        let total_challenged = total_challenged_workers + total_challenged_unified;
+
+        let active_blocks = self
+            .block_store
+            .as_ref()
+            .map(|s| s.get_stats().total_entries)
+            .unwrap_or(0);
+
+        let uptime = Instant::now().duration_since(self.started_at).as_secs();
 
         super::ipc::MasterStatus {
             master_pid: std::process::id(),
-            started_at: 0,
-            uptime_secs: 0,
+            started_at: crate::utils::current_timestamp().saturating_sub(uptime),
+            uptime_secs: uptime,
             version: env!("CARGO_PKG_VERSION").to_string(),
             workers: worker_infos,
             stats: super::ipc::StatusStats {
                 total_requests,
                 blocked_last_hour: total_blocked,
-                challenged_last_hour: 0,
+                challenged_last_hour: total_challenged,
                 proxied_last_hour: total_requests.saturating_sub(total_blocked),
-                active_blocks: 0,
+                active_blocks,
                 active_violations: 0,
             },
             threat_summary: super::ipc::ThreatSummary {
                 critical_ips: 0,
                 elevated_ips: 0,
-                total_blocked_ips: 0,
+                total_blocked_ips: active_blocks,
             },
         }
     }

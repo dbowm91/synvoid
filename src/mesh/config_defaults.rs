@@ -21,7 +21,7 @@ impl Default for MeshConfig {
         Self {
             enabled: false,
             node_id: None,
-            role: MeshNodeRole::Edge,
+            role: MeshNodeRole::EDGE,
             network_id: None,
             mesh_name: None,
             global_node_key: None,

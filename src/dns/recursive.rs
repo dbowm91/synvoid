@@ -23,8 +23,7 @@ use parking_lot::RwLock;
 use super::recursive_cache::{CachedRecord, RecursiveCacheKey, RecursiveDnsCache};
 use super::resolver::{MxRecord, SrvRecord};
 use super::wire::{
-    build_error_response, build_response_header, get_message_id, parse_dns_message, RCODE_NXDOMAIN,
-    RCODE_SERVFAIL,
+    build_error_response, build_response_header, get_message_id, parse_dns_message, RCODE_SERVFAIL,
 };
 use super::{
     server::DnsRateLimiter, DnsResolver, GlobalNodeResolver, HickoryRecursor, HickoryResolver,
@@ -291,12 +290,6 @@ impl RecursiveDnsServer {
         })?;
 
         let len = u16::from_be_bytes(length_buf) as usize;
-
-        if len > 65535 {
-            return Err(RecursiveDnsError::UpstreamFailed(
-                "TCP message too large".to_string(),
-            ));
-        }
 
         let mut query = vec![0u8; len];
         stream.read_exact(&mut query).await.map_err(|e| {
@@ -584,15 +577,12 @@ impl RecursiveDnsServer {
             },
             RecordType::CNAME => match self.resolver.lookup_cname(&domain).await {
                 Ok(Some(cname_record)) => {
-                    let mut cname_bytes = cname_record.cname.into_bytes();
-                    if !cname_bytes.is_empty() && cname_bytes.last() != Some(&b'.') {
-                        cname_bytes.push(b'.');
-                    }
+                    let cname_data = encode_domain_to_wire(&cname_record.cname);
                     vec![CachedRecord {
                         name: qname.to_vec(),
                         record_type: 5,
                         ttl: cname_record.ttl.unwrap_or(300),
-                        data: cname_bytes,
+                        data: cname_data,
                     }]
                 }
                 Ok(None) => Vec::new(),
@@ -602,10 +592,8 @@ impl RecursiveDnsServer {
                 Ok(Some(soa)) => {
                     let ttl = soa.ttl.unwrap_or(300);
                     let mut data = Vec::new();
-                    data.extend_from_slice(soa.mname.as_bytes());
-                    data.push(0);
-                    data.extend_from_slice(soa.rname.as_bytes());
-                    data.push(0);
+                    data.extend_from_slice(&encode_domain_to_wire(&soa.mname));
+                    data.extend_from_slice(&encode_domain_to_wire(&soa.rname));
                     data.extend_from_slice(&soa.serial.to_be_bytes());
                     data.extend_from_slice(&soa.refresh.to_be_bytes());
                     data.extend_from_slice(&soa.retry.to_be_bytes());
@@ -624,10 +612,7 @@ impl RecursiveDnsServer {
             RecordType::PTR => match self.resolver.lookup_ptr(&domain).await {
                 Ok(Some(ptr)) => {
                     let ttl = ptr.ttl.unwrap_or(300);
-                    let mut data = ptr.domain.into_bytes();
-                    if !data.is_empty() && data.last() != Some(&b'.') {
-                        data.push(b'.');
-                    }
+                    let data = encode_domain_to_wire(&ptr.domain);
                     vec![CachedRecord {
                         name: qname.to_vec(),
                         record_type: 12,
@@ -646,11 +631,7 @@ impl RecursiveDnsServer {
                         data.extend_from_slice(&srv.priority.to_be_bytes());
                         data.extend_from_slice(&srv.weight.to_be_bytes());
                         data.extend_from_slice(&srv.port.to_be_bytes());
-                        let mut target = srv.target.into_bytes();
-                        if !target.is_empty() && target.last() != Some(&b'.') {
-                            target.push(b'.');
-                        }
-                        data.extend_from_slice(&target);
+                        data.extend_from_slice(&encode_domain_to_wire(&srv.target));
                         CachedRecord {
                             name: qname.to_vec(),
                             record_type: 33,
@@ -671,13 +652,23 @@ impl RecursiveDnsServer {
             self.cache
                 .insert_negative(cache_key, true, self.config.cache.negative_ttl_secs as u32);
 
-            let mut full_query = Vec::new();
-            full_query.extend_from_slice(qname);
-            full_query.push(0);
-            full_query.extend_from_slice(&qtype_u16.to_be_bytes());
-            full_query.extend_from_slice(&1u16.to_be_bytes());
+            // NODATA: domain exists but requested type doesn't — return NOERROR with empty answer
+            let flags = crate::dns::wire::MessageFlags {
+                is_response: true,
+                opcode: 0,
+                authoritative: false,
+                truncated: false,
+                recursion_desired: true,
+                recursion_available: true,
+                authentic_data: is_dnssec_validated,
+                response_code: 0, // NOERROR, not NXDOMAIN
+            };
 
-            let response = build_error_response(&full_query, RCODE_NXDOMAIN).unwrap_or_default();
+            let question_section = self.build_question_section(qname, qtype_u16);
+            let header = build_response_header(message_id, flags, 1, 0, 0, 0);
+
+            let mut response = header;
+            response.extend_from_slice(&question_section);
             return Ok((response, is_dnssec_validated));
         }
 
@@ -844,6 +835,26 @@ impl Clone for RecursiveDnsServer {
             running: self.running.clone(),
         }
     }
+}
+
+/// Encode a dotted domain name to DNS wire format (length-prefixed labels, null-terminated).
+fn encode_domain_to_wire(domain: &str) -> Vec<u8> {
+    let mut result = Vec::new();
+    let domain = domain.trim_end_matches('.');
+    if domain.is_empty() {
+        result.push(0);
+        return result;
+    }
+    for label in domain.split('.') {
+        if label.is_empty() {
+            continue;
+        }
+        let len = label.len() as u8;
+        result.push(len);
+        result.extend_from_slice(label.as_bytes());
+    }
+    result.push(0);
+    result
 }
 
 #[cfg(test)]

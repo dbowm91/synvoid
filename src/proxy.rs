@@ -462,6 +462,7 @@ impl ProxyServer {
         path: String,
         user_agent: Option<String>,
         body: Option<bytes::Bytes>,
+        skip_waf_check: bool,
     ) -> Result<Response<bytes::Bytes>, String> {
         let start = Instant::now();
 
@@ -478,79 +479,81 @@ impl ProxyServer {
             }
         }
 
-        let drop = self.waf.config.drop_blocked_requests;
+        if !skip_waf_check {
+            let drop = self.waf.config.drop_blocked_requests;
 
-        let body_slice: Option<&[u8]> = body.as_deref();
-        let query_string = None;
+            let body_slice: Option<&[u8]> = body.as_deref();
+            let query_string = None;
 
-        let waf_decision = self
-            .waf
-            .check_request_full(
-                client_ip,
-                method.as_str(),
-                &path,
-                query_string,
-                &http::HeaderMap::new(),
-                body_slice,
-                user_agent.as_deref(),
-            )
-            .await;
+            let waf_decision = self
+                .waf
+                .check_request_full(
+                    client_ip,
+                    method.as_str(),
+                    &path,
+                    query_string,
+                    &http::HeaderMap::new(),
+                    body_slice,
+                    user_agent.as_deref(),
+                )
+                .await;
 
-        match waf_decision {
-            WafDecision::Drop => {
-                counter!("maluwaf.requests.dropped").increment(1);
-                return Err("blackholed".to_string());
-            }
-            WafDecision::Stall => {
-                counter!("maluwaf.requests.stalled").increment(1);
-                histogram!("maluwaf.request.duration").record(start.elapsed());
-                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
-                std::future::pending::<()>().await;
-                return Err("stalled".to_string());
-            }
-            WafDecision::Block(_status_code, _message) => {
-                counter!("maluwaf.requests.blocked").increment(1);
-                histogram!("maluwaf.request.duration").record(start.elapsed());
-                if drop {
-                    return Err("dropped".to_string());
+            match waf_decision {
+                WafDecision::Drop => {
+                    counter!("maluwaf.requests.dropped").increment(1);
+                    return Err("blackholed".to_string());
                 }
-                return Err("blocked".to_string());
+                WafDecision::Stall => {
+                    counter!("maluwaf.requests.stalled").increment(1);
+                    histogram!("maluwaf.request.duration").record(start.elapsed());
+                    tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                    std::future::pending::<()>().await;
+                    return Err("stalled".to_string());
+                }
+                WafDecision::Block(_status_code, _message) => {
+                    counter!("maluwaf.requests.blocked").increment(1);
+                    histogram!("maluwaf.request.duration").record(start.elapsed());
+                    if drop {
+                        return Err("dropped".to_string());
+                    }
+                    return Err("blocked".to_string());
+                }
+                WafDecision::Challenge(html) => {
+                    counter!("maluwaf.requests.challenged").increment(1);
+                    histogram!("maluwaf.request.duration").record(start.elapsed());
+                    return Ok(Response::builder()
+                        .status(200)
+                        .header("Content-Type", "text/html")
+                        .header("Cache-Control", "no-store, no-cache, must-revalidate")
+                        .body(bytes::Bytes::from(html))
+                        .unwrap_or_else(|_| crate::http::fallback_error_bytes()));
+                }
+                WafDecision::ChallengeWithCookie {
+                    html,
+                    session_cookie_name,
+                    session_cookie_value,
+                    session_cookie_max_age,
+                } => {
+                    counter!("maluwaf.requests.challenged").increment(1);
+                    histogram!("maluwaf.request.duration").record(start.elapsed());
+                    let cookie = format!(
+                        "{}={}; path=/; max-age={}; Secure; SameSite=Strict",
+                        session_cookie_name, session_cookie_value, session_cookie_max_age
+                    );
+                    return Ok(Response::builder()
+                        .status(200)
+                        .header("Content-Type", "text/html")
+                        .header("Cache-Control", "no-store, no-cache, must-revalidate")
+                        .header("Set-Cookie", cookie)
+                        .body(bytes::Bytes::from(html))
+                        .unwrap_or_else(|_| crate::http::fallback_error_bytes()));
+                }
+                WafDecision::Tarpit(_) => {
+                    counter!("maluwaf.requests.tarpitted").increment(1);
+                    histogram!("maluwaf.request.duration").record(start.elapsed());
+                }
+                WafDecision::Pass => {}
             }
-            WafDecision::Challenge(html) => {
-                counter!("maluwaf.requests.challenged").increment(1);
-                histogram!("maluwaf.request.duration").record(start.elapsed());
-                return Ok(Response::builder()
-                    .status(200)
-                    .header("Content-Type", "text/html")
-                    .header("Cache-Control", "no-store, no-cache, must-revalidate")
-                    .body(bytes::Bytes::from(html))
-                    .unwrap_or_else(|_| crate::http::fallback_error_bytes()));
-            }
-            WafDecision::ChallengeWithCookie {
-                html,
-                session_cookie_name,
-                session_cookie_value,
-                session_cookie_max_age,
-            } => {
-                counter!("maluwaf.requests.challenged").increment(1);
-                histogram!("maluwaf.request.duration").record(start.elapsed());
-                let cookie = format!(
-                    "{}={}; path=/; max-age={}; Secure; SameSite=Strict",
-                    session_cookie_name, session_cookie_value, session_cookie_max_age
-                );
-                return Ok(Response::builder()
-                    .status(200)
-                    .header("Content-Type", "text/html")
-                    .header("Cache-Control", "no-store, no-cache, must-revalidate")
-                    .header("Set-Cookie", cookie)
-                    .body(bytes::Bytes::from(html))
-                    .unwrap_or_else(|_| crate::http::fallback_error_bytes()));
-            }
-            WafDecision::Tarpit(_) => {
-                counter!("maluwaf.requests.tarpitted").increment(1);
-                histogram!("maluwaf.request.duration").record(start.elapsed());
-            }
-            WafDecision::Pass => {}
         }
 
         let forward_result = self.forward_request(method, &path, body).await;
@@ -680,7 +683,9 @@ impl ProxyServer {
             .get("x-cache-purge-token")
             .and_then(|v| v.to_str().ok());
         if method.as_str() == "PURGE" {
-            return self.handle_cache_purge(path, host, purge_token, client_ip).await;
+            return self
+                .handle_cache_purge(path, host, purge_token, client_ip)
+                .await;
         }
 
         if !self.is_cacheable_method(&method) {
@@ -830,7 +835,11 @@ impl ProxyServer {
             match purge_token {
                 Some(token) if token == required_token.as_str() => {}
                 _ => {
-                    tracing::warn!("Unauthorized cache purge attempt from {} to {}", client_ip, host);
+                    tracing::warn!(
+                        "Unauthorized cache purge attempt from {} to {}",
+                        client_ip,
+                        host
+                    );
                     return Ok(Response::builder()
                         .status(403)
                         .body(bytes::Bytes::from("Forbidden: authentication required\n"))
@@ -1213,11 +1222,12 @@ impl ProxyServer {
 
     fn is_connection_error(&self, error: &str) -> bool {
         let error_lower = error.to_lowercase();
-        error_lower.contains("connection")
-            || error_lower.contains("refused")
+        error_lower.contains("refused")
             || error_lower.contains("reset")
             || error_lower.contains("broken pipe")
-            || error_lower.contains("network")
+            || error_lower.contains("network unreachable")
+            || error_lower.contains("connection refused")
+            || error_lower.contains("connection reset")
     }
 
     fn is_timeout_error(&self, error: &str) -> bool {

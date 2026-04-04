@@ -108,10 +108,6 @@ impl DnsServer {
 
         let len = u16::from_be_bytes([length_buf[0], length_buf[1]]) as usize;
 
-        if len > 65535 {
-            return Err("DNS query too large".to_string());
-        }
-
         let mut query = vec![0u8; len];
 
         let read_result = timeout(idle_timeout, stream.read_exact(&mut query)).await;
@@ -365,7 +361,14 @@ impl DnsServer {
             if !qname.is_empty() {
                 qname.push('.');
             }
-            qname.push_str(&String::from_utf8_lossy(&query[pos + 1..pos + 1 + len]));
+            let label_bytes = &query[pos + 1..pos + 1 + len];
+            if !label_bytes
+                .iter()
+                .all(|&b| b.is_ascii_graphic() || b == b'-' || b == b'_')
+            {
+                return None;
+            }
+            qname.push_str(std::str::from_utf8(label_bytes).unwrap_or(""));
             pos += 1 + len;
         }
 
@@ -644,7 +647,14 @@ impl DnsServer {
             if !qname.is_empty() {
                 qname.push('.');
             }
-            qname.push_str(&String::from_utf8_lossy(&query[pos + 1..pos + 1 + len]));
+            let label_bytes = &query[pos + 1..pos + 1 + len];
+            if !label_bytes
+                .iter()
+                .all(|&b| b.is_ascii_graphic() || b == b'-' || b == b'_')
+            {
+                return None;
+            }
+            qname.push_str(std::str::from_utf8(label_bytes).unwrap_or(""));
             pos += 1 + len;
         }
 
@@ -662,8 +672,6 @@ impl DnsServer {
         let record_type = RecordType::from(qtype);
 
         let trie_guard = ctx.zone_trie.read();
-
-        let qname_lower = qname.to_lowercase();
 
         // Use the trie for efficient zone lookup
         let best_match = trie_guard.find_zone(&qname_lower);

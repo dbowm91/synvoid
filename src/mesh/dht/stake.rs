@@ -542,13 +542,13 @@ mod tests {
         config.stake_grace_period_secs = 0;
         let manager = StakeManager::new(config, "local-node".to_string(), true);
 
-        manager.register_node("global-1".to_string(), 80, MeshNodeRole::Global);
-        manager.register_node("origin-1".to_string(), 50, MeshNodeRole::Origin);
-        manager.register_node("edge-1".to_string(), 60, MeshNodeRole::Edge);
+        manager.register_node("global-1".to_string(), 80, MeshNodeRole::GLOBAL);
+        manager.register_node("origin-1".to_string(), 50, MeshNodeRole::ORIGIN);
+        manager.register_node("edge-1".to_string(), 60, MeshNodeRole::EDGE);
 
-        manager.update_reputation("global-1", 80, MeshNodeRole::Global);
-        manager.update_reputation("origin-1", 50, MeshNodeRole::Origin);
-        manager.update_reputation("edge-1", 60, MeshNodeRole::Edge);
+        manager.update_reputation("global-1", 80, MeshNodeRole::GLOBAL);
+        manager.update_reputation("origin-1", 50, MeshNodeRole::ORIGIN);
+        manager.update_reputation("edge-1", 60, MeshNodeRole::EDGE);
 
         assert!(manager.can_write_dht("global-1"));
         assert!(manager.can_write_dht("origin-1"));
@@ -563,8 +563,8 @@ mod tests {
         config.stake_grace_period_secs = 0;
         let manager = StakeManager::new(config, "global-1".to_string(), true);
 
-        manager.register_node("malicious".to_string(), 50, MeshNodeRole::Edge);
-        manager.update_reputation("malicious", 50, MeshNodeRole::Edge);
+        manager.register_node("malicious".to_string(), 50, MeshNodeRole::EDGE);
+        manager.update_reputation("malicious", 50, MeshNodeRole::EDGE);
 
         assert!(manager.can_write_dht("malicious"));
 

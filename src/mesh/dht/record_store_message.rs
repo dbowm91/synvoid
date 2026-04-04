@@ -6,16 +6,24 @@ impl RecordStoreManager {
         from_node: &str,
         _signer: Option<&Arc<crate::mesh::protocol::MeshMessageSigner>>,
     ) -> i64 {
-        let routing = self.routing_state.read();
+        let topology_opt = {
+            let routing = self.routing_state.read();
+            routing.topology.clone()
+        };
 
-        if let Some(ref topology) = routing.topology {
+        if let Some(ref topology) = topology_opt {
             if let Some(peer) = topology.get_peer(from_node).await {
                 let reputation = peer.audit_reputation();
                 return (reputation * 100.0) as i64;
             }
         }
 
-        if let Some(ref stake_mgr) = routing.stake_manager {
+        let stake_opt = {
+            let routing = self.routing_state.read();
+            routing.stake_manager.clone()
+        };
+
+        if let Some(ref stake_mgr) = stake_opt {
             let stake = stake_mgr.get_stake_weight(from_node);
             return (stake * 100.0) as i64;
         }
@@ -191,7 +199,7 @@ impl RecordStoreManager {
                     from_node,
                     missing_records.len()
                 );
-                self.handle_anti_entropy_response(message, from_node);
+                std::mem::drop(self.handle_anti_entropy_response(message, from_node));
                 None
             }
             MeshMessage::DhtRecordPush {

@@ -65,7 +65,6 @@ type HmacSha3_256 = Hmac<sha3::Sha3_256>;
 #[cfg(feature = "audit")]
 use chrono::Utc;
 
-#[cfg(feature = "verify-pq")]
 pub fn verify_post_quantum_tls() {
     use rustls::crypto::CryptoProvider;
 
@@ -207,14 +206,8 @@ impl MeshCertManager {
         &self.node_id
     }
 
-    #[cfg(feature = "verify-pq")]
     pub fn verify_post_quantum(&self) {
         verify_post_quantum_tls();
-    }
-
-    #[cfg(not(feature = "verify-pq"))]
-    pub fn verify_post_quantum(&self) {
-        // No-op when verify-pq feature is not enabled
     }
 
     pub fn ensure_certs(&mut self) -> Result<(), MeshCertError> {

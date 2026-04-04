@@ -9,6 +9,7 @@ pub struct BotDetector {
     known_bots_allow: Arc<HashSet<String>>,
     ai_crawlers_block: Arc<HashSet<String>>,
     scraper_patterns: Arc<HashSet<String>>,
+    known_bot_ja3_hashes: Arc<HashSet<String>>,
     block_ai_crawlers: bool,
     block_scrapers: bool,
 }
@@ -19,6 +20,22 @@ impl BotDetector {
         ai_crawlers_block: Vec<String>,
         scraper_patterns: Vec<String>,
         block_ai_crawlers: bool,
+    ) -> Self {
+        Self::with_ja3(
+            known_bots_allow,
+            ai_crawlers_block,
+            scraper_patterns,
+            block_ai_crawlers,
+            Vec::new(),
+        )
+    }
+
+    pub fn with_ja3(
+        known_bots_allow: Vec<String>,
+        ai_crawlers_block: Vec<String>,
+        scraper_patterns: Vec<String>,
+        block_ai_crawlers: bool,
+        known_bot_ja3_hashes: Vec<String>,
     ) -> Self {
         let known_bots_allow: HashSet<String> = known_bots_allow
             .into_iter()
@@ -35,20 +52,61 @@ impl BotDetector {
             .map(|s| s.to_lowercase())
             .collect();
 
+        let known_bot_ja3_hashes: HashSet<String> = known_bot_ja3_hashes
+            .into_iter()
+            .map(|s| s.to_lowercase())
+            .collect();
+
         BotDetector {
             known_bots_allow: Arc::new(known_bots_allow),
             ai_crawlers_block: Arc::new(ai_crawlers_block),
             scraper_patterns: Arc::new(scraper_patterns),
+            known_bot_ja3_hashes: Arc::new(known_bot_ja3_hashes),
             block_ai_crawlers,
             block_scrapers: true,
         }
     }
 
     pub fn check(&self, user_agent: Option<&str>) -> BotDetectionResult {
-        self.check_with_override(user_agent, None)
+        self.check_with_ja3(user_agent, None, None)
     }
 
     pub fn check_with_override(
+        &self,
+        user_agent: Option<&str>,
+        site_block_ai_crawlers: Option<bool>,
+    ) -> BotDetectionResult {
+        self.check_with_ja3(user_agent, site_block_ai_crawlers, None)
+    }
+
+    pub fn check_with_ja3(
+        &self,
+        user_agent: Option<&str>,
+        site_block_ai_crawlers: Option<bool>,
+        ja3_hash: Option<&str>,
+    ) -> BotDetectionResult {
+        if let Some(hash) = ja3_hash {
+            if let Some(result) = self.check_ja3(hash) {
+                return result;
+            }
+        }
+
+        self.check_user_agent(user_agent, site_block_ai_crawlers)
+    }
+
+    pub fn check_ja3(&self, ja3_hash: &str) -> Option<BotDetectionResult> {
+        let hash_lower = ja3_hash.to_lowercase();
+        if self.known_bot_ja3_hashes.contains(&hash_lower) {
+            Some(BotDetectionResult::Blocked {
+                reason: "ja3_bot_fingerprint_matched".to_string(),
+                bot_type: "ja3".to_string(),
+            })
+        } else {
+            None
+        }
+    }
+
+    fn check_user_agent(
         &self,
         user_agent: Option<&str>,
         site_block_ai_crawlers: Option<bool>,

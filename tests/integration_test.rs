@@ -724,19 +724,19 @@ mod tests {
 
             #[test]
             fn test_mesh_node_role_is_global() {
-                assert!(MeshNodeRole::Global.is_global());
-                assert!(!MeshNodeRole::Edge.is_global());
-                assert!(!MeshNodeRole::Origin.is_global());
+                assert!(MeshNodeRole::GLOBAL.is_global());
+                assert!(!MeshNodeRole::EDGE.is_global());
+                assert!(!MeshNodeRole::ORIGIN.is_global());
 
-                let global_edge = MeshNodeRole::Global | MeshNodeRole::Edge;
+                let global_edge = MeshNodeRole::GLOBAL | MeshNodeRole::EDGE;
                 assert!(global_edge.is_global());
             }
 
             #[test]
             fn test_mesh_node_role_combinations() {
-                let global_edge = MeshNodeRole::Global | MeshNodeRole::Edge;
-                assert!(global_edge.contains(MeshNodeRole::Global));
-                assert!(global_edge.contains(MeshNodeRole::Edge));
+                let global_edge = MeshNodeRole::GLOBAL | MeshNodeRole::EDGE;
+                assert!(global_edge.contains(MeshNodeRole::GLOBAL));
+                assert!(global_edge.contains(MeshNodeRole::EDGE));
             }
         }
 
@@ -2221,22 +2221,22 @@ mod hub_only_mode_tests {
 
     #[test]
     fn test_global_node_role_passes_hub_only() {
-        let role = MeshNodeRole::Global;
+        let role = MeshNodeRole::GLOBAL;
         assert!(role.is_global());
     }
 
     #[test]
     fn test_non_global_node_role_fails_hub_only() {
-        let edge_role = MeshNodeRole::Edge;
+        let edge_role = MeshNodeRole::EDGE;
         assert!(!edge_role.is_global());
 
-        let origin_role = MeshNodeRole::Origin;
+        let origin_role = MeshNodeRole::ORIGIN;
         assert!(!origin_role.is_global());
     }
 
     #[test]
     fn test_global_edge_combined_passes_hub_only() {
-        let combined = MeshNodeRole::Global | MeshNodeRole::Edge;
+        let combined = MeshNodeRole::GLOBAL | MeshNodeRole::EDGE;
         assert!(combined.is_global());
     }
 
@@ -2247,11 +2247,11 @@ mod hub_only_mode_tests {
             ..Default::default()
         };
 
-        let global_role = MeshNodeRole::Global;
+        let global_role = MeshNodeRole::GLOBAL;
         let should_push = !config.hub_only_mode || global_role.is_global();
         assert!(should_push);
 
-        let edge_role = MeshNodeRole::Edge;
+        let edge_role = MeshNodeRole::EDGE;
         let should_push_edge = !config.hub_only_mode || edge_role.is_global();
         assert!(!should_push_edge);
     }
@@ -2277,13 +2277,13 @@ mod yara_manager_lifecycle_tests {
 
     #[test]
     fn test_yara_manager_creation() {
-        let manager = create_test_manager(MeshNodeRole::Edge);
+        let manager = create_test_manager(MeshNodeRole::EDGE);
         assert!(manager.has_feed_manager());
     }
 
     #[test]
     fn test_yara_manager_stats_default() {
-        let manager = create_test_manager(MeshNodeRole::Global);
+        let manager = create_test_manager(MeshNodeRole::GLOBAL);
         let stats = manager.get_stats();
         assert_eq!(stats.total_submissions, 0);
         assert_eq!(stats.pending_submissions, 0);
@@ -2291,21 +2291,21 @@ mod yara_manager_lifecycle_tests {
 
     #[test]
     fn test_yara_manager_local_rules_empty_initially() {
-        let manager = create_test_manager(MeshNodeRole::Global);
+        let manager = create_test_manager(MeshNodeRole::GLOBAL);
         let rules = manager.get_current_rules();
         assert!(rules.is_none() || rules.as_ref().map_or(true, |r| r.is_empty()));
     }
 
     #[test]
     fn test_yara_manager_get_pending_submissions_empty() {
-        let manager = create_test_manager(MeshNodeRole::Global);
+        let manager = create_test_manager(MeshNodeRole::GLOBAL);
         let pending = manager.get_pending_submissions();
         assert!(pending.is_empty());
     }
 
     #[test]
     fn test_yara_manager_get_all_submissions_empty() {
-        let manager = create_test_manager(MeshNodeRole::Global);
+        let manager = create_test_manager(MeshNodeRole::GLOBAL);
         let all = manager.get_all_submissions();
         assert!(all.is_empty());
     }
@@ -2330,7 +2330,7 @@ mod yara_manager_lifecycle_tests {
 
     #[test]
     fn test_yara_manager_rejects_submission_non_global() {
-        let manager = create_test_manager(MeshNodeRole::Edge);
+        let manager = create_test_manager(MeshNodeRole::EDGE);
 
         let result = manager.reject_submission("nonexistent-id", "test rejection".to_string());
 
@@ -2340,7 +2340,7 @@ mod yara_manager_lifecycle_tests {
 
     #[test]
     fn test_yara_manager_rejects_nonexistent_submission() {
-        let manager = create_test_manager(MeshNodeRole::Global);
+        let manager = create_test_manager(MeshNodeRole::GLOBAL);
 
         let result = manager.reject_submission("nonexistent-id", "test rejection".to_string());
 
@@ -2350,7 +2350,7 @@ mod yara_manager_lifecycle_tests {
 
     #[test]
     fn test_yara_manager_accepts_approved_rules_broadcast() {
-        let manager = create_test_manager(MeshNodeRole::Global);
+        let manager = create_test_manager(MeshNodeRole::GLOBAL);
 
         let result = manager.broadcast_approved_rules("v1.0.0");
         assert!(result.is_ok());
@@ -2358,7 +2358,7 @@ mod yara_manager_lifecycle_tests {
 
     #[test]
     fn test_yara_manager_get_stats() {
-        let manager = create_test_manager(MeshNodeRole::Global);
+        let manager = create_test_manager(MeshNodeRole::GLOBAL);
         let stats = manager.get_stats();
 
         assert!(stats.current_version.is_none());

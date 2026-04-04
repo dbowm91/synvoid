@@ -2,6 +2,7 @@
 
 use bytes::Bytes;
 use http::Response;
+use http_body_util::combinators::BoxBody;
 use http_body_util::{BodyExt, Full};
 use hyper::server::conn::http1 as http1_server;
 use hyper::server::conn::http2 as http2_server;
@@ -9,6 +10,7 @@ use hyper_util::rt::TokioExecutor;
 use hyper_util::rt::TokioIo;
 use metrics::counter;
 use parking_lot::Mutex;
+use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -21,9 +23,7 @@ use crate::config::site::ProxyHeadersConfig;
 use crate::config::HttpConfig;
 use crate::config::MainConfig;
 use crate::http::headers::{generate_stealth_timestamp, inject_security_headers};
-use crate::http_client::{
-    create_upstream_client, send_request_with_body_headers_and_timeout, UpstreamTlsConfig,
-};
+use crate::http_client::{create_upstream_client, send_request_streaming, UpstreamTlsConfig};
 use crate::metrics::bandwidth::{
     get_global_bandwidth_tracker_or_log, BandwidthProtocol, EgressDirection,
 };
@@ -354,7 +354,7 @@ impl HttpsServer {
         proxy_servers: Arc<
             tokio::sync::RwLock<std::collections::HashMap<String, Arc<ProxyServer>>>,
         >,
-    ) -> Result<Response<Full<Bytes>>, hyper::Error> {
+    ) -> Result<Response<BoxBody<Bytes, Infallible>>, hyper::Error> {
         let client_ip = client_addr.ip();
         let path = req
             .uri()
@@ -395,6 +395,49 @@ impl HttpsServer {
             .get("user-agent")
             .and_then(|v| v.to_str().ok())
             .map(|s| s.to_string());
+
+        let cookies = parts.headers.get("cookie").and_then(|v| v.to_str().ok());
+
+        let early_decision = waf.check_early(client_ip, &path, cookies);
+        match early_decision {
+            crate::proxy::WafDecision::Drop => {
+                counter!("maluwaf.https.early_drop").increment(1);
+                http_conn.request_drop();
+                let resp = Response::new(Full::new(Bytes::new()).boxed());
+                return Ok(resp);
+            }
+            crate::proxy::WafDecision::ChallengeWithCookie {
+                html,
+                session_cookie_name,
+                session_cookie_value,
+                session_cookie_max_age,
+            } => {
+                let cookie = format!(
+                    "{}={}; path=/; max-age={}; Secure; SameSite=Strict",
+                    session_cookie_name, session_cookie_value, session_cookie_max_age
+                );
+                return Ok(Self::build_response_with_cookie(
+                    200,
+                    html,
+                    "text/html",
+                    &cookie,
+                ));
+            }
+            crate::proxy::WafDecision::Challenge(html) => {
+                return Ok(Self::build_response(200, html, "text/html"));
+            }
+            crate::proxy::WafDecision::Block(status, message) => {
+                let body =
+                    waf.error_page_manager
+                        .render_page_with_theme(status, Some(&message), None);
+                return Ok(Self::build_response(status, body, "text/html"));
+            }
+            crate::proxy::WafDecision::Pass
+            | crate::proxy::WafDecision::Stall
+            | crate::proxy::WafDecision::Tarpit(_) => {
+                // Proceed to full body collection and full WAF check
+            }
+        }
 
         let bandwidth = get_global_bandwidth_tracker_or_log();
 
@@ -498,7 +541,7 @@ impl HttpsServer {
             crate::proxy::WafDecision::Drop => {
                 counter!("maluwaf.https.blackhole_drop").increment(1);
                 http_conn.request_drop();
-                let resp = Response::new(Full::new(Bytes::new()));
+                let resp = Response::new(Full::new(Bytes::new()).boxed());
                 Ok(resp)
             }
             crate::proxy::WafDecision::Stall => {
@@ -765,15 +808,15 @@ impl HttpsServer {
                                             .header("Date", generate_stealth_timestamp(jitter));
                                     }
 
-                                    return Ok(builder.body(Full::new(body)).unwrap_or_else(
-                                        |_| {
+                                    return Ok(builder
+                                        .body(Full::new(body).boxed())
+                                        .unwrap_or_else(|_| {
                                             Self::build_response(
                                                 500,
                                                 "Internal Server Error".to_string(),
                                                 "text/plain",
                                             )
-                                        },
-                                    ));
+                                        }));
                                 }
                                 Err(e) => {
                                     tracing::error!("Proxy server error: {}", e);
@@ -846,7 +889,7 @@ impl HttpsServer {
                     }
                 }
 
-                let resp = send_request_with_body_headers_and_timeout(
+                let resp = send_request_streaming(
                     &client,
                     method.clone(),
                     &target_url,
@@ -857,11 +900,16 @@ impl HttpsServer {
                 .await;
 
                 match resp {
-                    Ok(resp) => {
-                        let status = resp.status;
-                        let headers = filter_response_headers(&resp.headers, &headers_to_filter);
-                        let body = resp.body;
-                        let body_len = body.len() as u64;
+                    Ok(upstream_resp) => {
+                        let (resp_parts, upstream_body) = upstream_resp.into_parts();
+                        let status = resp_parts.status.as_u16();
+
+                        let body_len = resp_parts
+                            .headers
+                            .get("content-length")
+                            .and_then(|v| v.to_str().ok())
+                            .and_then(|v| v.parse::<u64>().ok())
+                            .unwrap_or(0);
 
                         if let Some(ref bw) = bandwidth {
                             bw.record_proxied(request_body_size, body_len, &target.upstream);
@@ -873,6 +921,9 @@ impl HttpsServer {
                             );
                             bw.record_site_egress(&site_id, body_len);
                         }
+
+                        let headers =
+                            filter_response_headers(&resp_parts.headers, &headers_to_filter);
 
                         let mut builder = Response::builder().status(status);
                         for (key, value) in headers {
@@ -906,13 +957,22 @@ impl HttpsServer {
                             builder = builder.header("Server", token.as_str());
                         }
 
-                        Ok(builder.body(Full::new(body)).unwrap_or_else(|_| {
-                            Self::build_response(
-                                500,
-                                "Internal Server Error".to_string(),
-                                "text/plain",
+                        Ok(builder
+                            .body(
+                                upstream_body
+                                    .map_err(|e| {
+                                        tracing::warn!("Upstream body stream error: {}", e);
+                                        unreachable!()
+                                    })
+                                    .boxed(),
                             )
-                        }))
+                            .unwrap_or_else(|_| {
+                                Self::build_response(
+                                    500,
+                                    "Internal Server Error".to_string(),
+                                    "text/plain",
+                                )
+                            }))
                     }
                     Err(e) => {
                         tracing::error!("Upstream error: {}", e);
@@ -936,7 +996,7 @@ impl HttpsServer {
     fn handle_health_request(
         _path: &str,
         main_config: &Arc<MainConfig>,
-    ) -> Result<Response<Full<Bytes>>, hyper::Error> {
+    ) -> Result<Response<BoxBody<Bytes, Infallible>>, hyper::Error> {
         let body = serde_json::json!({
             "status": "healthy",
         })
@@ -956,27 +1016,31 @@ impl HttpsServer {
         }
 
         Ok(builder
-            .body(Full::new(Bytes::from(body)))
+            .body(Full::new(Bytes::from(body)).boxed())
             .unwrap_or_else(|_| {
                 Response::builder()
                     .status(500)
-                    .body(Full::new(Bytes::from("Internal Server Error")))
-                    .unwrap_or_else(|_| Response::new(Full::new(Bytes::new())))
+                    .body(Full::new(Bytes::from("Internal Server Error")).boxed())
+                    .unwrap_or_else(|_| Response::new(Full::new(Bytes::new()).boxed()))
             }))
     }
 
-    fn build_response(status: u16, body: String, content_type: &str) -> Response<Full<Bytes>> {
+    fn build_response(
+        status: u16,
+        body: String,
+        content_type: &str,
+    ) -> Response<BoxBody<Bytes, Infallible>> {
         Response::builder()
             .status(status)
             .header("Content-Type", content_type)
             .header("Content-Length", body.len())
             .header("Date", generate_stealth_timestamp(5))
-            .body(Full::new(Bytes::from(body)))
+            .body(Full::new(Bytes::from(body)).boxed())
             .unwrap_or_else(|_| {
                 Response::builder()
                     .status(500)
-                    .body(Full::new(Bytes::from("Internal Server Error")))
-                    .unwrap_or_else(|_| Response::new(Full::new(Bytes::new())))
+                    .body(Full::new(Bytes::from("Internal Server Error")).boxed())
+                    .unwrap_or_else(|_| Response::new(Full::new(Bytes::new()).boxed()))
             })
     }
 
@@ -985,7 +1049,7 @@ impl HttpsServer {
         body: String,
         content_type: &str,
         cookie: &str,
-    ) -> Response<Full<Bytes>> {
+    ) -> Response<BoxBody<Bytes, Infallible>> {
         let mut builder = Response::builder()
             .status(status)
             .header("Content-Type", content_type)
@@ -994,12 +1058,12 @@ impl HttpsServer {
             .header("Date", generate_stealth_timestamp(5));
 
         builder
-            .body(Full::new(Bytes::from(body)))
+            .body(Full::new(Bytes::from(body)).boxed())
             .unwrap_or_else(|_| {
                 Response::builder()
                     .status(500)
-                    .body(Full::new(Bytes::from("Internal Server Error")))
-                    .unwrap_or_else(|_| Response::new(Full::new(Bytes::new())))
+                    .body(Full::new(Bytes::from("Internal Server Error")).boxed())
+                    .unwrap_or_else(|_| Response::new(Full::new(Bytes::new()).boxed()))
             })
     }
 }
@@ -1032,7 +1096,7 @@ pub async fn proxy_raw_tcp(
 
     // Bidirectional copy
     let client_to_upstream = async {
-        let mut buf = vec![0u8; 8192];
+        let mut buf = vec![0u8; 65536];
         loop {
             let n = match client_read.read(&mut buf).await {
                 Ok(0) => return Ok::<_, std::io::Error>(()),
@@ -1044,7 +1108,7 @@ pub async fn proxy_raw_tcp(
     };
 
     let upstream_to_client = async {
-        let mut buf = vec![0u8; 8192];
+        let mut buf = vec![0u8; 65536];
         loop {
             let n = match upstream_read.read(&mut buf).await {
                 Ok(0) => return Ok::<_, std::io::Error>(()),

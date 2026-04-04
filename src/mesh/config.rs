@@ -1,5 +1,3 @@
-#![allow(unused_variables, non_snake_case, non_upper_case_globals)]
-
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use parking_lot::RwLock;
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
@@ -25,17 +23,13 @@ use crate::config::site::ProxyUpstreamConfig;
 pub struct MeshNodeRole(u8);
 
 impl MeshNodeRole {
-    pub const Global: MeshNodeRole = MeshNodeRole(0b010);
-    pub const Edge: MeshNodeRole = MeshNodeRole(0b001);
-    pub const Origin: MeshNodeRole = MeshNodeRole(0b100);
+    pub const GLOBAL: MeshNodeRole = MeshNodeRole(0b010);
+    pub const EDGE: MeshNodeRole = MeshNodeRole(0b001);
+    pub const ORIGIN: MeshNodeRole = MeshNodeRole(0b100);
     pub const GLOBAL_EDGE: MeshNodeRole = MeshNodeRole(0b011);
     pub const GLOBAL_ORIGIN: MeshNodeRole = MeshNodeRole(0b110);
     pub const EDGE_ORIGIN: MeshNodeRole = MeshNodeRole(0b101);
     pub const ALL: MeshNodeRole = MeshNodeRole(0b111);
-
-    pub const GLOBAL: MeshNodeRole = Self::Global;
-    pub const EDGE: MeshNodeRole = Self::Edge;
-    pub const ORIGIN: MeshNodeRole = Self::Origin;
 
     pub fn is_global(&self) -> bool {
         self.0 & 0b010 != 0
@@ -106,7 +100,7 @@ impl fmt::Debug for MeshNodeRole {
 
 impl Default for MeshNodeRole {
     fn default() -> Self {
-        Self::Edge
+        Self::EDGE
     }
 }
 use sha2::{Digest, Sha256};

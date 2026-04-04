@@ -49,7 +49,7 @@ impl GlobalNodeConfig {
         // Load ML-KEM-768 key - if private key is provided, derive public key
         if let Some(ref b64) = self.ml_kem_private_key_base64 {
             use pqc::MlKem768;
-            let sk = MlKem768::secret_key_from_base64(b64)
+            let _sk = MlKem768::secret_key_from_base64(b64)
                 .map_err(|e| format!("Invalid base64 ML-KEM key: {}", e))?;
 
             // Generate a temporary keypair to get the public key

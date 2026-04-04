@@ -10,6 +10,7 @@ use crate::mesh::config::MeshConfig;
 use crate::mesh::dht::{DhtAccessControl, RecordStoreConfig, RecordStoreManager};
 use crate::mesh::proxy::{MeshProxy, MeshProxyError};
 use crate::mesh::topology::MeshTopology;
+use crate::mesh::transport::MeshTransport;
 use crate::mesh::transports::{MeshTransportManager, QuicMeshTransport, WireGuardMeshTransport};
 
 pub fn create_record_store(
@@ -443,7 +444,8 @@ pub async fn initialize_mesh_transports(
         dns_registry,
     );
 
-    quic_transport.get_inner().initialize_component_transports();
+    let quic_transport_inner = quic_transport.get_inner();
+    MeshTransport::initialize_component_transports(quic_transport_inner);
 
     transport_manager.set_quic_transport(quic_transport);
 

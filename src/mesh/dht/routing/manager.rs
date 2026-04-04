@@ -468,7 +468,7 @@ impl DhtBootstrapper {
                     seed.node_id.clone(),
                     seed.address.clone(),
                     seed.port,
-                    MeshNodeRole::Global,
+                    MeshNodeRole::GLOBAL,
                     None,
                     true,
                     seed.geo.clone(),
@@ -516,9 +516,9 @@ impl DhtBootstrapper {
                         contact.address,
                         contact.port,
                         if contact.is_global {
-                            MeshNodeRole::Global
+                            MeshNodeRole::GLOBAL
                         } else {
-                            MeshNodeRole::Edge
+                            MeshNodeRole::EDGE
                         },
                         contact.latency_ms,
                         contact.is_trusted,

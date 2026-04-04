@@ -855,7 +855,7 @@ impl MeshTransport {
                         .get_peer(peer_id)
                         .await
                         .map(|p| p.role)
-                        .unwrap_or(crate::mesh::config::MeshNodeRole::Edge);
+                        .unwrap_or(crate::mesh::config::MeshNodeRole::EDGE);
                     if let Some(response) = threat_intel.handle_mesh_message(
                         &msg,
                         peer_id,

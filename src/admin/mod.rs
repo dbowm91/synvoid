@@ -476,6 +476,11 @@ fn build_router_from_state(
             requests_per_second: rate_limit_config.burst,
         });
 
+    let yara_rate_limit_layer = axum::middleware::from_fn_with_state(
+        state.clone(),
+        middleware::yara_rate_limit::yara_rate_limit_middleware,
+    );
+
     Router::new()
         .nest("/api", api_routes)
         .route(
@@ -499,6 +504,7 @@ fn build_router_from_state(
             state.clone(),
             middleware::csrf_middleware,
         ))
+        .layer(yara_rate_limit_layer)
         .layer(rate_limit_layer)
         .with_state(state)
 }

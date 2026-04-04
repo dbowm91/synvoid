@@ -314,13 +314,13 @@ fn test_stake_level_transitions() {
     };
     let manager = StakeManager::new(config, "local-node".to_string(), true);
 
-    manager.register_node("node-1".to_string(), 100, MeshNodeRole::Global);
-    manager.update_reputation("node-1", 100, MeshNodeRole::Global);
+    manager.register_node("node-1".to_string(), 100, MeshNodeRole::GLOBAL);
+    manager.update_reputation("node-1", 100, MeshNodeRole::GLOBAL);
 
     let level = manager.get_stake_level("node-1");
     assert_eq!(level, StakeLevel::Full);
 
-    manager.update_reputation("node-1", 20, MeshNodeRole::Edge);
+    manager.update_reputation("node-1", 20, MeshNodeRole::EDGE);
     let level_after = manager.get_stake_level("node-1");
     assert!(matches!(
         level_after,
@@ -337,8 +337,8 @@ fn test_stake_slash_event() {
     };
     let manager = StakeManager::new(config, "global-node".to_string(), true);
 
-    manager.register_node("malicious".to_string(), 50, MeshNodeRole::Edge);
-    manager.update_reputation("malicious", 50, MeshNodeRole::Edge);
+    manager.register_node("malicious".to_string(), 50, MeshNodeRole::EDGE);
+    manager.update_reputation("malicious", 50, MeshNodeRole::EDGE);
 
     assert!(manager.can_write_dht("malicious"));
 
@@ -557,9 +557,9 @@ fn test_stake_manager_get_all_active() {
     let config = StakeConfig::default();
     let manager = StakeManager::new(config, "local-node".to_string(), false);
 
-    manager.register_node("active-1".to_string(), 50, MeshNodeRole::Edge);
-    manager.register_node("active-2".to_string(), 100, MeshNodeRole::Global);
-    manager.register_node("inactive-1".to_string(), 30, MeshNodeRole::Edge);
+    manager.register_node("active-1".to_string(), 50, MeshNodeRole::EDGE);
+    manager.register_node("active-2".to_string(), 100, MeshNodeRole::GLOBAL);
+    manager.register_node("inactive-1".to_string(), 30, MeshNodeRole::EDGE);
 
     let active_stakes = manager.get_all_active_stakes();
     for stake in &active_stakes {

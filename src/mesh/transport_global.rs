@@ -146,7 +146,7 @@ impl MeshTransport {
                     .broadcast_to_random_peers(
                         msg,
                         0.5,
-                        Some(crate::mesh::config::MeshNodeRole::Global),
+                        Some(crate::mesh::config::MeshNodeRole::GLOBAL),
                     )
                     .await;
             }
@@ -216,7 +216,7 @@ impl MeshTransport {
         };
 
         let _ = self
-            .broadcast_to_random_peers(msg, 0.5, Some(crate::mesh::config::MeshNodeRole::Global))
+            .broadcast_to_random_peers(msg, 0.5, Some(crate::mesh::config::MeshNodeRole::GLOBAL))
             .await;
         tracing::info!("Added global node {} via genesis key", target_node_id);
     }
@@ -285,7 +285,7 @@ impl MeshTransport {
         };
 
         let _ = self
-            .broadcast_to_random_peers(msg, 0.5, Some(crate::mesh::config::MeshNodeRole::Global))
+            .broadcast_to_random_peers(msg, 0.5, Some(crate::mesh::config::MeshNodeRole::GLOBAL))
             .await;
         tracing::info!("Removed global node {} via genesis key", target_node_id);
     }

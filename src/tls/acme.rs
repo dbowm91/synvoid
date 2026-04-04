@@ -145,7 +145,7 @@ impl AcmeManager {
             .await
             .map_err(|e| AcmeError::Protocol(format!("Failed to create ACME account: {}", e)))?;
 
-        // Persist credentials
+        // Persist credentials with restrictive permissions (0600)
         if let Some(parent) = self.credentials_path.parent() {
             std::fs::create_dir_all(parent)
                 .map_err(|e| AcmeError::Io(format!("Failed to create cache dir: {}", e)))?;
@@ -153,8 +153,27 @@ impl AcmeManager {
 
         let creds_json = serde_json::to_string(&credentials)
             .map_err(|e| AcmeError::Config(format!("Failed to serialize credentials: {}", e)))?;
-        std::fs::write(&self.credentials_path, creds_json)
-            .map_err(|e| AcmeError::Io(format!("Failed to write credentials: {}", e)))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut file = std::fs::File::create(&self.credentials_path)
+                .map_err(|e| AcmeError::Io(format!("Failed to create credentials file: {}", e)))?;
+            let mut perms = file
+                .metadata()
+                .map(|m| m.permissions())
+                .unwrap_or_else(|_| std::fs::Permissions::from_mode(0o600));
+            perms.set_mode(0o600);
+            file.set_permissions(perms)
+                .map_err(|e| AcmeError::Io(format!("Failed to set permissions: {}", e)))?;
+            use std::io::Write;
+            file.write_all(creds_json.as_bytes())
+                .map_err(|e| AcmeError::Io(format!("Failed to write credentials: {}", e)))?;
+        }
+        #[cfg(not(unix))]
+        {
+            std::fs::write(&self.credentials_path, creds_json)
+                .map_err(|e| AcmeError::Io(format!("Failed to write credentials: {}", e)))?;
+        }
 
         tracing::info!("Created new ACME account for {}", email);
         *self.account.write() = Some(account);
@@ -456,6 +475,26 @@ pub struct AcmeState {
 
 impl AcmeClient {
     pub async fn get_state(&self) -> AcmeState {
-        AcmeState::default()
+        let certs = self.managed_certs.read();
+        let now = chrono::Utc::now();
+        let mut pending_orders = Vec::new();
+        let mut last_order: Option<chrono::DateTime<chrono::Utc>> = None;
+
+        for (domain, cert) in certs.iter() {
+            let expires_at = chrono::DateTime::<chrono::Utc>::from(cert.expires_at);
+            if expires_at > now {
+                if last_order.is_none() || expires_at > last_order.unwrap() {
+                    last_order = Some(expires_at);
+                }
+            } else {
+                pending_orders.push(domain.clone());
+            }
+        }
+
+        AcmeState {
+            last_order,
+            pending_orders,
+            errors: Vec::new(),
+        }
     }
 }

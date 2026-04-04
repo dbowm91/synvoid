@@ -1140,11 +1140,87 @@ pub struct ImportConfigRequest {
     pub config: String,
 }
 
+fn validate_config_paths(content: &str) -> Result<(), String> {
+    let parsed: toml::Value = toml::from_str(content)
+        .map_err(|e| format!("Failed to parse TOML for path validation: {}", e))?;
+
+    let sensitive_paths = [
+        "/etc/passwd",
+        "/etc/shadow",
+        "/etc/sudoers",
+        "/etc/ssh",
+        "/root/.ssh",
+        "/proc/",
+        "/sys/",
+        "/dev/",
+    ];
+
+    fn check_value(
+        value: &toml::Value,
+        key: &str,
+        sensitive: &[&str],
+        violations: &mut Vec<String>,
+    ) {
+        match value {
+            toml::Value::String(s) => {
+                let is_path_key = key.ends_with("_path")
+                    || key.ends_with("_dir")
+                    || key.ends_with("_file")
+                    || s.contains('/')
+                    || s.contains('\\');
+
+                if is_path_key {
+                    if s.contains("..") {
+                        violations.push(format!("Path traversal detected in '{}': '{}'", key, s));
+                    }
+                    let lower = s.to_lowercase();
+                    for sensitive_path in sensitive {
+                        if lower.starts_with(&sensitive_path.to_lowercase()) {
+                            violations
+                                .push(format!("Sensitive path reference in '{}': '{}'", key, s));
+                            break;
+                        }
+                    }
+                }
+            }
+            toml::Value::Array(arr) => {
+                for (i, item) in arr.iter().enumerate() {
+                    check_value(item, &format!("{}[{}]", key, i), sensitive, violations);
+                }
+            }
+            toml::Value::Table(table) => {
+                for (k, v) in table {
+                    check_value(v, &format!("{}.{}", key, k), sensitive, violations);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut violations = Vec::new();
+    if let toml::Value::Table(table) = &parsed {
+        for (k, v) in table {
+            check_value(v, k, &sensitive_paths, &mut violations);
+        }
+    }
+
+    if violations.is_empty() {
+        Ok(())
+    } else {
+        Err(violations.join("; "))
+    }
+}
+
 pub async fn import_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<ImportConfigRequest>,
 ) -> Result<Json<StatusResponse>, StatusCode> {
+    validate_config_paths(&req.config).map_err(|e| {
+        tracing::error!("Config path validation failed: {}", e);
+        StatusCode::BAD_REQUEST
+    })?;
+
     let parsed: crate::config::main::MainConfig = toml::from_str(&req.config).map_err(|e| {
         tracing::error!("Failed to parse config TOML: {}", e);
         StatusCode::BAD_REQUEST

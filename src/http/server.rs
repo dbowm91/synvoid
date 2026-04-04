@@ -34,7 +34,7 @@ fn get_cached_regex(pattern: &str) -> Option<regex::Regex> {
 }
 
 use crate::challenge::HONEYPOT_PREFIX;
-use crate::config::site::SiteWebSocketConfig;
+use crate::config::site::{ProxyHeadersConfig, SiteWebSocketConfig};
 use crate::config::HttpConfig;
 use crate::config::MainConfig;
 use crate::http::headers::{
@@ -42,8 +42,8 @@ use crate::http::headers::{
     is_websocket_upgrade,
 };
 use crate::http_client::{
-    create_http_client_with_config, create_upstream_client, send_request_with_body_and_timeout,
-    HttpClient, UpstreamTlsConfig,
+    create_http_client_with_config, create_upstream_client, send_request_streaming,
+    send_request_with_body_and_timeout, HttpClient, UpstreamTlsConfig,
 };
 use crate::mesh::config::MeshConfig;
 use crate::mesh::transports::MeshTransportManager;
@@ -53,7 +53,7 @@ use crate::process::{current_timestamp, RequestLogPayload};
 use crate::protocol::trait_def::{ProtocolHandler, WafAction};
 use crate::protocol::types::{ProtocolRequest, ProtocolType};
 use crate::protocol::websocket::WebSocketHandler;
-use crate::proxy::{build_headers_to_filter, filter_response_headers};
+use crate::proxy::{build_forward_headers, build_headers_to_filter, filter_response_headers};
 use crate::router::Router;
 use crate::waf::{FloodDecision, FloodProtector, WafCore};
 use crate::worker::drain_state::WorkerDrainState;
@@ -554,6 +554,126 @@ impl HttpServer {
             .and_then(|v| v.to_str().ok())
             .map(|s| s.to_string());
 
+        let cookies = parts.headers.get("cookie").and_then(|v| v.to_str().ok());
+
+        let early_decision = waf.check_early(client_ip, &path, cookies);
+        match early_decision {
+            crate::proxy::WafDecision::Drop => {
+                counter!("maluwaf.http.early_drop").increment(1);
+                http_conn.request_drop();
+                let ipc_clone = ipc.clone();
+                let worker_id_clone = worker_id;
+                Self::send_request_log_if_enabled(
+                    ipc_clone,
+                    worker_id_clone,
+                    &main_config,
+                    client_ip,
+                    method.to_string(),
+                    path.clone(),
+                    0,
+                    start.elapsed().as_millis() as u64,
+                    "unknown".to_string(),
+                    user_agent.clone(),
+                    false,
+                );
+                let resp = Response::builder()
+                    .status(http::StatusCode::NOT_FOUND)
+                    .body(Full::new(Bytes::new()).boxed())
+                    .unwrap_or_else(|_| crate::http::fallback_error_boxed());
+                return Ok(resp);
+            }
+            crate::proxy::WafDecision::ChallengeWithCookie {
+                html,
+                session_cookie_name,
+                session_cookie_value,
+                session_cookie_max_age,
+            } => {
+                let cookie = format!(
+                    "{}={}; path=/; max-age={}; Secure; SameSite=Strict",
+                    session_cookie_name, session_cookie_value, session_cookie_max_age
+                );
+                let ipc_clone = ipc.clone();
+                let worker_id_clone = worker_id;
+                Self::send_request_log_if_enabled(
+                    ipc_clone,
+                    worker_id_clone,
+                    &main_config,
+                    client_ip,
+                    method.to_string(),
+                    path.clone(),
+                    200,
+                    start.elapsed().as_millis() as u64,
+                    "unknown".to_string(),
+                    user_agent.clone(),
+                    false,
+                );
+                return Ok(Self::build_response_with_cookie(
+                    200,
+                    html,
+                    "text/html",
+                    &cookie,
+                    &alt_svc,
+                    &main_config,
+                ));
+            }
+            crate::proxy::WafDecision::Challenge(html) => {
+                let ipc_clone = ipc.clone();
+                let worker_id_clone = worker_id;
+                Self::send_request_log_if_enabled(
+                    ipc_clone,
+                    worker_id_clone,
+                    &main_config,
+                    client_ip,
+                    method.to_string(),
+                    path.clone(),
+                    200,
+                    start.elapsed().as_millis() as u64,
+                    "unknown".to_string(),
+                    user_agent.clone(),
+                    false,
+                );
+                return Ok(Self::build_response_with_alt_svc(
+                    200,
+                    html,
+                    "text/html",
+                    &alt_svc,
+                    &main_config,
+                ));
+            }
+            crate::proxy::WafDecision::Block(status, message) => {
+                let body =
+                    waf.error_page_manager
+                        .render_page_with_theme(status, Some(&message), None);
+                let ipc_clone = ipc.clone();
+                let worker_id_clone = worker_id;
+                Self::send_request_log_if_enabled(
+                    ipc_clone,
+                    worker_id_clone,
+                    &main_config,
+                    client_ip,
+                    method.to_string(),
+                    path.clone(),
+                    status,
+                    start.elapsed().as_millis() as u64,
+                    "unknown".to_string(),
+                    user_agent.clone(),
+                    false,
+                );
+                return Ok(Self::build_response_with_alt_svc(
+                    status,
+                    body,
+                    "text/html",
+                    &alt_svc,
+                    &main_config,
+                ));
+            }
+            crate::proxy::WafDecision::Pass
+            | crate::proxy::WafDecision::Stall
+            | crate::proxy::WafDecision::Tarpit(_) => {
+                // Proceed to full body collection and full WAF check
+            }
+        }
+
         let mut request_body_size: u64;
         const MAX_WAF_BODY_SIZE: usize = 1024 * 1024; // 1MB limit for WAF inspection
         let full_body: Bytes = match body.collect().await {
@@ -657,7 +777,7 @@ impl HttpServer {
                     let mut resp = Response::builder()
                         .status(http::StatusCode::NO_CONTENT)
                         .body(Full::new(Bytes::new()).boxed())
-                        .unwrap();
+                        .unwrap_or_else(|_| crate::http::fallback_error_boxed());
                     resp.headers_mut().insert(
                         http::header::CONNECTION,
                         http::HeaderValue::from_static("close"),
@@ -724,7 +844,7 @@ impl HttpServer {
                     let mut resp = Response::builder()
                         .status(http::StatusCode::NO_CONTENT)
                         .body(Full::new(Bytes::new()).boxed())
-                        .unwrap();
+                        .unwrap_or_else(|_| crate::http::fallback_error_boxed());
                     resp.headers_mut().insert(
                         http::header::CONNECTION,
                         http::HeaderValue::from_static("close"),
@@ -750,19 +870,14 @@ impl HttpServer {
                         .header(http::header::LOCATION, "/")
                         .header(http::header::SET_COOKIE, cookie)
                         .body(Full::new(Bytes::new()).boxed())
-                        .unwrap_or_else(|_| {
-                            Response::builder()
-                                .status(http::StatusCode::FOUND)
-                                .body(Full::new(Bytes::new()).boxed())
-                                .unwrap()
-                        });
+                        .unwrap_or_else(|_| crate::http::fallback_error_boxed());
                     return Ok(response);
                 }
                 crate::challenge::CssAssetAction::DropConnection => {
                     let mut resp = Response::builder()
                         .status(http::StatusCode::NO_CONTENT)
                         .body(Full::new(Bytes::new()).boxed())
-                        .unwrap();
+                        .unwrap_or_else(|_| crate::http::fallback_error_boxed());
                     resp.headers_mut().insert(
                         http::header::CONNECTION,
                         http::HeaderValue::from_static("close"),
@@ -872,7 +987,7 @@ impl HttpServer {
                 let resp = Response::builder()
                     .status(http::StatusCode::NOT_FOUND)
                     .body(Full::new(Bytes::new()).boxed())
-                    .unwrap();
+                    .unwrap_or_else(|_| crate::http::fallback_error_boxed());
                 return Ok(resp);
             }
             crate::proxy::WafDecision::Stall => {
@@ -1171,7 +1286,11 @@ impl HttpServer {
                                 }
                                 match response.body {
                                     crate::static_files::StaticResponseBody::InMemory(body) => {
-                                        return Ok(builder.body(Full::new(body).boxed()).unwrap());
+                                        return Ok(builder
+                                            .body(Full::new(body).boxed())
+                                            .unwrap_or_else(|_| {
+                                                crate::http::fallback_error_boxed()
+                                            }));
                                     }
                                     crate::static_files::StaticResponseBody::ZeroCopy(path) => {
                                         tracing::debug!(
@@ -1194,7 +1313,9 @@ impl HttpServer {
                                                         ))
                                                         .boxed(),
                                                     )
-                                                    .unwrap());
+                                                    .unwrap_or_else(|_| {
+                                                        crate::http::fallback_error_boxed()
+                                                    }));
                                             }
                                         };
                                         use http_body_util::StreamBody;
@@ -1215,7 +1336,11 @@ impl HttpServer {
                                             }
                                         }
                                         let body = Bytes::from(body_bytes);
-                                        return Ok(builder.body(Full::new(body).boxed()).unwrap());
+                                        return Ok(builder
+                                            .body(Full::new(body).boxed())
+                                            .unwrap_or_else(|_| {
+                                                crate::http::fallback_error_boxed()
+                                            }));
                                     }
                                 }
                             }
@@ -1257,7 +1382,7 @@ impl HttpServer {
                                 return Ok(Response::builder()
                                     .status(status)
                                     .body(Full::new(response.into_body()).boxed())
-                                    .unwrap());
+                                    .unwrap_or_else(|_| crate::http::fallback_error_boxed()));
                             }
                             Err(e) => {
                                 tracing::warn!("Serverless function error for {}: {}", path, e);
@@ -1531,7 +1656,7 @@ impl HttpServer {
                         http::Request::builder()
                             .method(method.clone())
                             .body(Bytes::new())
-                            .expect("fallback request body should be valid")
+                            .unwrap_or_else(|_| http::Request::new(Bytes::new()))
                     });
 
                     // Use per-site WASM plugins if configured, otherwise run all
@@ -1747,6 +1872,172 @@ impl HttpServer {
                 });
                 let forwarding_client = site_client.as_ref().unwrap_or(&client);
 
+                let needs_body_transform = router.plugin_manager().is_some()
+                    || mesh_transport.is_some()
+                    || target
+                        .site_config
+                        .r#static
+                        .enable_minification
+                        .unwrap_or(false)
+                    || target.site_config.image_poison.enabled.unwrap_or(false)
+                    || target
+                        .site_config
+                        .r#static
+                        .enable_compression
+                        .unwrap_or(false);
+
+                if !needs_body_transform && !crate::http_client::is_quictunnel_url(&target.upstream)
+                {
+                    let mut forward_header_map = http::HeaderMap::new();
+                    for (key, value) in &build_forward_headers(
+                        client_ip,
+                        &parts.headers,
+                        target
+                            .site_config
+                            .proxy
+                            .headers
+                            .as_ref()
+                            .unwrap_or(&ProxyHeadersConfig::default()),
+                        true,
+                    ) {
+                        if let (Ok(name), Ok(val)) = (
+                            key.parse::<http::HeaderName>(),
+                            value.parse::<http::HeaderValue>(),
+                        ) {
+                            forward_header_map.insert(name, val);
+                        }
+                    }
+
+                    match send_request_streaming(
+                        forwarding_client,
+                        method,
+                        &target_url,
+                        Some(full_body.clone()),
+                        forward_header_map,
+                        Some(std::time::Duration::from_secs(30)),
+                    )
+                    .await
+                    {
+                        Ok(upstream_resp) => {
+                            if let Some(ref metrics) = metrics {
+                                metrics.record_site_upstream_success(&site_id);
+                            }
+                            let (resp_parts, upstream_body) = upstream_resp.into_parts();
+                            let status = resp_parts.status.as_u16();
+
+                            let body_len = resp_parts
+                                .headers
+                                .get("content-length")
+                                .and_then(|v| v.to_str().ok())
+                                .and_then(|v| v.parse::<u64>().ok())
+                                .unwrap_or(0);
+
+                            if let Some(ref m) = metrics {
+                                m.bandwidth.record_proxied(
+                                    request_body_size,
+                                    body_len,
+                                    &target.upstream,
+                                );
+                                m.bandwidth.record_site_proxied(
+                                    &site_id,
+                                    request_body_size,
+                                    body_len,
+                                );
+                                m.bandwidth.record_egress(
+                                    body_len,
+                                    BandwidthProtocol::Http,
+                                    EgressDirection::Proxied,
+                                );
+                                m.bandwidth.record_site_egress(&site_id, body_len);
+                            }
+
+                            let filtered_headers =
+                                filter_response_headers(&resp_parts.headers, &headers_to_filter);
+
+                            let mut builder = Response::builder().status(status);
+                            for (key, value) in filtered_headers {
+                                builder = builder.header(&key, &value);
+                            }
+
+                            if let Some(ref alt_svc) = alt_svc {
+                                builder = builder.header("Alt-Svc", alt_svc.as_str());
+                            }
+
+                            if target.site_config.security_headers.enabled.unwrap_or(false)
+                                || main_config.security.global_security_headers
+                            {
+                                builder = Self::inject_security_headers(
+                                    builder,
+                                    &target.site_config.security_headers,
+                                );
+                            }
+
+                            if target
+                                .site_config
+                                .security_headers
+                                .date_header
+                                .unwrap_or(true)
+                            {
+                                let jitter = target
+                                    .site_config
+                                    .security_headers
+                                    .date_jitter_seconds
+                                    .unwrap_or(5);
+                                builder =
+                                    builder.header("Date", generate_stealth_timestamp(jitter));
+                            }
+
+                            if let Some(ref token) =
+                                target.site_config.security_headers.server_token
+                            {
+                                builder = builder.header("Server", token.as_str());
+                            }
+
+                            return Ok(builder
+                                .body(
+                                    upstream_body
+                                        .map_err(|e| {
+                                            tracing::warn!("Upstream body stream error: {}", e);
+                                            unreachable!()
+                                        })
+                                        .boxed(),
+                                )
+                                .unwrap_or_else(|_| {
+                                    Self::build_response_with_alt_svc(
+                                        500,
+                                        crate::http::reason_phrase(500).to_string(),
+                                        "text/plain",
+                                        &alt_svc,
+                                        &main_config,
+                                    )
+                                }));
+                        }
+                        Err(e) => {
+                            if let Some(ref metrics) = metrics {
+                                metrics.record_site_upstream_failure(&site_id);
+                            }
+                            tracing::error!("Upstream streaming error: {}", e);
+                            let error_body = "Bad Gateway".to_string();
+                            let error_len = error_body.len() as u64;
+                            if let Some(ref m) = metrics {
+                                m.bandwidth.record_egress(
+                                    error_len,
+                                    BandwidthProtocol::Http,
+                                    EgressDirection::Error,
+                                );
+                                m.bandwidth.record_site_egress(&site_id, error_len);
+                            }
+                            return Ok(Self::build_response_with_alt_svc(
+                                502,
+                                error_body,
+                                "text/plain",
+                                &alt_svc,
+                                &main_config,
+                            ));
+                        }
+                    }
+                }
+
                 let resp = if crate::http_client::is_quictunnel_url(&target.upstream) {
                     crate::http_client::send_request_via_quic_tunnel(
                         method,
@@ -1802,7 +2093,7 @@ impl HttpServer {
                                     http::Response::builder()
                                         .status(status)
                                         .body(Bytes::new())
-                                        .expect("fallback response body should be valid")
+                                        .unwrap_or_else(|_| http::Response::new(Bytes::new()))
                                 });
                             // Use per-site WASM plugins for response transforms if configured
                             let transform_result = if let Some(ref plugin_names) =

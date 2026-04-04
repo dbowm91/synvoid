@@ -117,8 +117,8 @@ impl AdminConfig {
                 });
             }
             tracing::warn!("Admin token is still set to default 'changeme'. Set admin.token or admin.token_env_var for production.");
-            let generated = Self::generate_token();
-            tracing::info!("Generated admin token: {}", generated);
+            let _generated = Self::generate_token();
+            tracing::info!("Generated new admin token (see documentation for retrieval)");
             return Err(ConfigValidationError {
                 field: "admin.token".to_string(),
                 message: format!(

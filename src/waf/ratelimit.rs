@@ -148,6 +148,33 @@ impl<T: Copy> RingBuffer<T> {
 
         self.len = write_idx;
     }
+
+    /// Remove all entries older than `cutoff`. Exploits the fact that entries
+    /// are pushed in chronological order — scans from the oldest entry forward
+    /// and stops at the first non-expired entry. O(k) where k = expired count.
+    fn remove_older_than(&mut self, cutoff: T)
+    where
+        T: PartialOrd + Copy,
+    {
+        if self.len == 0 {
+            return;
+        }
+
+        let mut expired = 0usize;
+        for i in 0..self.len {
+            let idx = (self.head + i) % self.capacity;
+            if self.data[idx] < cutoff {
+                expired += 1;
+            } else {
+                break;
+            }
+        }
+
+        if expired > 0 {
+            self.head = (self.head + expired) % self.capacity;
+            self.len -= expired;
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -243,24 +270,19 @@ impl RateLimiterManager {
                         }
                         let mut requests = shard.ip_requests.write();
                         requests.retain(|_ip, state| {
-                            state
-                                .per_second
-                                .retain(|t| now.duration_since(*t) < Duration::from_secs(1));
-                            state
-                                .per_minute
-                                .retain(|t| now.duration_since(*t) < Duration::from_secs(60));
-                            state
-                                .per_5min
-                                .retain(|t| now.duration_since(*t) < Duration::from_secs(300));
-                            state
-                                .per_10min
-                                .retain(|t| now.duration_since(*t) < Duration::from_secs(600));
-                            state
-                                .per_hour
-                                .retain(|t| now.duration_since(*t) < Duration::from_secs(3600));
-                            state
-                                .per_day
-                                .retain(|t| now.duration_since(*t) < Duration::from_secs(86400));
+                            let cutoff_1s = now - Duration::from_secs(1);
+                            let cutoff_60s = now - Duration::from_secs(60);
+                            let cutoff_300s = now - Duration::from_secs(300);
+                            let cutoff_600s = now - Duration::from_secs(600);
+                            let cutoff_3600s = now - Duration::from_secs(3600);
+                            let cutoff_86400s = now - Duration::from_secs(86400);
+
+                            state.per_second.remove_older_than(cutoff_1s);
+                            state.per_minute.remove_older_than(cutoff_60s);
+                            state.per_5min.remove_older_than(cutoff_300s);
+                            state.per_10min.remove_older_than(cutoff_600s);
+                            state.per_hour.remove_older_than(cutoff_3600s);
+                            state.per_day.remove_older_than(cutoff_86400s);
 
                             if state.is_empty() {
                                 false

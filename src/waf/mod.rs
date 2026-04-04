@@ -1101,12 +1101,22 @@ impl WafCore {
 
         match bot_result {
             BotDetectionResult::Blocked { reason, .. } => {
-                tracing::info!("Blocking bot from {}: {} - UA: {:?}", client_ip, reason, user_agent);
+                tracing::info!(
+                    "Blocking bot from {}: {} - UA: {:?}",
+                    client_ip,
+                    reason,
+                    user_agent
+                );
                 crate::metrics::record_attack_type("Bots");
                 Some(WafDecision::Stall)
             }
             BotDetectionResult::Tarpit { reason, .. } => {
-                tracing::info!("Tarpitting scraper from {}: {} - UA: {:?}", client_ip, reason, user_agent);
+                tracing::info!(
+                    "Tarpitting scraper from {}: {} - UA: {:?}",
+                    client_ip,
+                    reason,
+                    user_agent
+                );
                 Some(WafDecision::Tarpit(path.to_string()))
             }
             BotDetectionResult::Allowed { .. } => None,

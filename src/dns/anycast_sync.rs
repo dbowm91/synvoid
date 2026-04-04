@@ -159,7 +159,7 @@ impl AnycastZoneSync {
         };
 
         let _ = mesh_transport
-            .broadcast_to_random_peers(msg, 0.5, Some(crate::mesh::config::MeshNodeRole::Global))
+            .broadcast_to_random_peers(msg, 0.5, Some(crate::mesh::config::MeshNodeRole::GLOBAL))
             .await;
 
         Ok(())
@@ -219,7 +219,7 @@ impl AnycastZoneSync {
         };
 
         let _ = transport
-            .broadcast_to_random_peers(msg, 0.8, Some(crate::mesh::config::MeshNodeRole::Global))
+            .broadcast_to_random_peers(msg, 0.8, Some(crate::mesh::config::MeshNodeRole::GLOBAL))
             .await;
 
         Ok(())
@@ -265,7 +265,7 @@ impl AnycastZoneSync {
                 .broadcast_to_random_peers(
                     msg,
                     0.3,
-                    Some(crate::mesh::config::MeshNodeRole::Global),
+                    Some(crate::mesh::config::MeshNodeRole::GLOBAL),
                 )
                 .await;
         }
@@ -753,7 +753,7 @@ impl AnycastZoneSync {
             .broadcast_to_random_peers(
                 message,
                 0.3,
-                Some(crate::mesh::config::MeshNodeRole::Global),
+                Some(crate::mesh::config::MeshNodeRole::GLOBAL),
             )
             .await;
         if failed > 0 {

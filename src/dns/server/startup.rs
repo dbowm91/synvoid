@@ -398,14 +398,14 @@ impl DnsServer {
         tracing::info!("Anycast DNS UDP server started on {:?}", bound_addresses);
 
         let anycast_mgr_tcp = anycast_manager.clone();
-        let (shutdown_tx, _) = tokio::sync::broadcast::channel::<()>(1);
-        let mut shutdown_rx = shutdown_tx.subscribe();
 
         let tcp_state = state;
         let mesh_registry_tcp = mesh_registry;
         let geoip_lookup_tcp = geoip_lookup;
 
         tokio::spawn(async move {
+            let (shutdown_tx_tcp, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
+            let _shutdown_tx = shutdown_tx_tcp;
             let DnsHandlerState {
                 zones: zones_tcp,
                 zone_trie: zone_trie_tcp,

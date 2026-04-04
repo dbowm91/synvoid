@@ -97,7 +97,6 @@ pub struct MeshTransport {
     pub(crate) global_rate_limiter: Arc<MeshGlobalRateLimiter>,
     pub(crate) org_manager: Arc<RwLock<crate::mesh::organization::OrganizationManager>>,
     pub(crate) tier_key_store: Option<Arc<RwLock<crate::mesh::dht::TierKeyStore>>>,
-    pub(crate) datagram_tx: mpsc::Sender<DatagramMessage>,
     pub(crate) origin_ed25519_signer: Option<Arc<crate::integrity::Ed25519Signer>>,
     pub(crate) mesh_signer: Option<Arc<crate::mesh::protocol::MeshMessageSigner>>,
     pub(crate) record_store: Option<Arc<crate::mesh::dht::RecordStoreManager>>,
@@ -136,7 +135,6 @@ impl Clone for MeshTransport {
             global_rate_limiter: self.global_rate_limiter.clone(),
             org_manager: self.org_manager.clone(),
             tier_key_store: self.tier_key_store.clone(),
-            datagram_tx: self.datagram_tx.clone(),
             origin_ed25519_signer: self.origin_ed25519_signer.clone(),
             mesh_signer: self.mesh_signer.clone(),
             record_store: self.record_store.clone(),
@@ -211,13 +209,7 @@ pub(crate) enum MessagePriority {
     Low = 0,
 }
 
-#[derive(Debug, Clone)]
-pub struct DatagramMessage {
-    pub source_node: String,
-    pub data: Bytes,
-    pub received_at: Instant,
-}
-
+#[derive(Debug)]
 pub(crate) struct PendingQueryManager {
     pub(crate) pending: HashMap<String, oneshot::Sender<RouteQueryResult>>,
     pub(crate) collected_providers: HashMap<String, Vec<ProviderInfo>>,
@@ -309,8 +301,6 @@ impl MeshTransport {
             config.routing.route_queries_per_minute,
         ));
 
-        let (datagram_tx, _) = mpsc::channel(1024);
-
         let origin_ed25519_signer = config.origin_signing_key.as_ref().and_then(|key_cfg| {
             key_cfg
                 .private_key
@@ -368,7 +358,6 @@ impl MeshTransport {
                 Arc::new(RwLock::new(org_mgr))
             },
             tier_key_store,
-            datagram_tx,
             origin_ed25519_signer,
             mesh_signer,
             record_store,
@@ -477,13 +466,12 @@ impl MeshTransport {
         None
     }
 
-    pub fn initialize_component_transports(&self) {
-        let transport_arc = Arc::new(self.clone());
-        if let Some(ref rs) = self.record_store {
+    pub fn initialize_component_transports(transport_arc: Arc<Self>) {
+        if let Some(ref rs) = transport_arc.record_store {
             rs.set_transport(transport_arc.clone());
         }
-        if let Some(ref ti) = self.threat_intel {
-            ti.set_transport(transport_arc.clone());
+        if let Some(ref ti) = transport_arc.threat_intel {
+            ti.set_transport(Arc::clone(&transport_arc));
         }
     }
 
@@ -839,7 +827,7 @@ impl MeshTransport {
         };
 
         let _ = self
-            .broadcast_to_random_peers(msg, 0.5, Some(crate::mesh::config::MeshNodeRole::Global))
+            .broadcast_to_random_peers(msg, 0.5, Some(crate::mesh::config::MeshNodeRole::GLOBAL))
             .await;
         tracing::info!(
             "Updated key exchange endpoint for global node {}",
@@ -906,7 +894,7 @@ impl MeshTransport {
 
         // PoW refresh: periodically refresh the cached PoW nonce before TTL expires
         // Started early since config is moved later in this function
-        if self.config.role == crate::mesh::config::MeshNodeRole::Edge {
+        if self.config.role.is_edge() {
             let pow_config = self.config.clone();
             tokio::spawn(async move {
                 let refresh_interval = Duration::from_secs(2700); // 45 minutes (half of 1hr TTL)
@@ -1177,7 +1165,7 @@ impl MeshTransport {
         let quic_port = self.get_actual_quic_port().await.map(|p| p as u32);
         let wireguard_port = self.get_wireguard_port().map(|p| p as u32);
 
-        let is_edge = self.config.role == crate::mesh::config::MeshNodeRole::Edge;
+        let is_edge = self.config.role.is_edge();
 
         let (pow_nonce, pow_public_key) = if is_edge {
             if let Some(ref pk_hex) = self.config.signing_public_key() {
@@ -1860,7 +1848,7 @@ impl MeshTransport {
             .broadcast_to_random_peers(
                 block_message,
                 0.5,
-                Some(crate::mesh::config::MeshNodeRole::Global),
+                Some(crate::mesh::config::MeshNodeRole::GLOBAL),
             )
             .await;
 

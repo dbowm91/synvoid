@@ -32,6 +32,27 @@ impl Default for SimpleDetectorConfig {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct AnomalyScoringConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_anomaly_threshold")]
+    pub threshold: u32,
+}
+
+fn default_anomaly_threshold() -> u32 {
+    100
+}
+
+impl Default for AnomalyScoringConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            threshold: default_anomaly_threshold(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct AttackDetectionConfig {
     #[serde(default = "default_true")]
     pub enabled: bool,
@@ -45,6 +66,8 @@ pub struct AttackDetectionConfig {
     pub max_headers: usize,
     #[serde(default = "default_max_body_size")]
     pub max_request_body_size: Option<usize>,
+    #[serde(default)]
+    pub anomaly_scoring: AnomalyScoringConfig,
     #[serde(default)]
     pub sqli: SimpleDetectorConfig,
     #[serde(default)]
@@ -102,6 +125,7 @@ impl Default for AttackDetectionConfig {
             max_header_size: default_max_header_size(),
             max_headers: default_max_headers(),
             max_request_body_size: default_max_body_size(),
+            anomaly_scoring: AnomalyScoringConfig::default(),
             sqli: SimpleDetectorConfig::default(),
             xss: SimpleDetectorConfig::default(),
             path_traversal: DetectorConfig::default(),

@@ -227,7 +227,7 @@ impl FileManager {
 
         let canonical = tokio::fs::canonicalize(&self.config.root_path)
             .await
-            .map_err(|e| FileManagerError::IoError(e))?;
+            .map_err(FileManagerError::IoError)?;
 
         if user_path_clean.is_empty() {
             return Ok(canonical);
@@ -293,7 +293,7 @@ impl FileManager {
 
         let metadata = fs::metadata(&resolved)
             .await
-            .map_err(|e| FileManagerError::IoError(e))?;
+            .map_err(FileManagerError::IoError)?;
 
         if !metadata.is_dir() {
             return Err(FileManagerError::InvalidPath("not a directory".to_string()));
@@ -306,14 +306,14 @@ impl FileManager {
 
         let dir_stream = fs::read_dir(&resolved)
             .await
-            .map_err(|e| FileManagerError::IoError(e))?;
+            .map_err(FileManagerError::IoError)?;
 
         tokio::pin!(dir_stream);
 
         while let Some(entry) = dir_stream
             .next_entry()
             .await
-            .map_err(|e| FileManagerError::IoError(e))?
+            .map_err(FileManagerError::IoError)?
         {
             let entry_path = entry.path();
             let name = entry.file_name().to_string_lossy().to_string();
@@ -332,7 +332,7 @@ impl FileManager {
             let entry_meta = entry
                 .metadata()
                 .await
-                .map_err(|e| FileManagerError::IoError(e))?;
+                .map_err(FileManagerError::IoError)?;
 
             let is_symlink = entry_meta.is_symlink();
             let is_dir = entry_meta.is_dir();
@@ -395,7 +395,7 @@ impl FileManager {
 
         let metadata = fs::metadata(&resolved)
             .await
-            .map_err(|e| FileManagerError::IoError(e))?;
+            .map_err(FileManagerError::IoError)?;
 
         if metadata.is_dir() {
             return Err(FileManagerError::InvalidPath(
@@ -413,7 +413,7 @@ impl FileManager {
 
         let data = fs::read(&resolved)
             .await
-            .map_err(|e| FileManagerError::IoError(e))?;
+            .map_err(FileManagerError::IoError)?;
 
         Ok(data)
     }
@@ -435,7 +435,7 @@ impl FileManager {
 
         fs::write(&resolved, data)
             .await
-            .map_err(|e| FileManagerError::IoError(e))?;
+            .map_err(FileManagerError::IoError)?;
 
         Ok(())
     }
@@ -452,7 +452,7 @@ impl FileManager {
 
         fs::create_dir_all(&resolved)
             .await
-            .map_err(|e| FileManagerError::IoError(e))?;
+            .map_err(FileManagerError::IoError)?;
 
         Ok(())
     }
@@ -466,17 +466,17 @@ impl FileManager {
 
         let metadata = fs::metadata(&resolved)
             .await
-            .map_err(|e| FileManagerError::IoError(e))?;
+            .map_err(FileManagerError::IoError)?;
 
         if metadata.is_dir() {
             let mut entries = fs::read_dir(&resolved)
                 .await
-                .map_err(|e| FileManagerError::IoError(e))?;
+                .map_err(FileManagerError::IoError)?;
 
             if entries
                 .next_entry()
                 .await
-                .map_err(|e| FileManagerError::IoError(e))?
+                .map_err(FileManagerError::IoError)?
                 .is_some()
             {
                 return Err(FileManagerError::DirectoryNotEmpty(path.to_string()));
@@ -484,11 +484,11 @@ impl FileManager {
 
             fs::remove_dir(&resolved)
                 .await
-                .map_err(|e| FileManagerError::IoError(e))?;
+                .map_err(FileManagerError::IoError)?;
         } else {
             fs::remove_file(&resolved)
                 .await
-                .map_err(|e| FileManagerError::IoError(e))?;
+                .map_err(FileManagerError::IoError)?;
         }
 
         Ok(())
@@ -515,7 +515,7 @@ impl FileManager {
 
         fs::rename(&old_resolved, &new_resolved)
             .await
-            .map_err(|e| FileManagerError::IoError(e))?;
+            .map_err(FileManagerError::IoError)?;
 
         Ok(())
     }
@@ -525,7 +525,7 @@ impl FileManager {
 
         let metadata = fs::metadata(&resolved)
             .await
-            .map_err(|e| FileManagerError::IoError(e))?;
+            .map_err(FileManagerError::IoError)?;
 
         Ok(Self::get_permissions_from_metadata(&metadata))
     }
@@ -539,7 +539,7 @@ impl FileManager {
             let permissions = std::fs::Permissions::from_mode(mode as _);
             fs::set_permissions(&resolved, permissions)
                 .await
-                .map_err(|e| FileManagerError::IoError(e))?;
+                .map_err(FileManagerError::IoError)?;
         }
 
         #[cfg(not(unix))]
@@ -556,7 +556,7 @@ impl FileManager {
 
         let metadata = fs::metadata(&resolved)
             .await
-            .map_err(|e| FileManagerError::IoError(e))?;
+            .map_err(FileManagerError::IoError)?;
 
         if !metadata.is_dir() {
             return Err(FileManagerError::InvalidPath(
@@ -601,7 +601,7 @@ impl FileManager {
 
                 let permissions = entry_meta
                     .as_ref()
-                    .and_then(|m| Self::get_permissions_string(m));
+                    .and_then(Self::get_permissions_string);
 
                 matches.push(FileEntry {
                     name: name.to_string(),
@@ -644,9 +644,7 @@ impl FileManager {
         }
 
         let clean_filename = filename
-            .replace('/', "_")
-            .replace('\\', "_")
-            .replace('\0', "_")
+            .replace(['/', '\\', '\0'], "_")
             .replace("..", "_")
             .trim()
             .to_string();
@@ -669,11 +667,11 @@ impl FileManager {
 
         fs::write(&resolved, data)
             .await
-            .map_err(|e| FileManagerError::IoError(e))?;
+            .map_err(FileManagerError::IoError)?;
 
         let metadata = fs::metadata(&resolved)
             .await
-            .map_err(|e| FileManagerError::IoError(e))?;
+            .map_err(FileManagerError::IoError)?;
 
         let modified = metadata
             .modified()
@@ -718,12 +716,12 @@ impl FileManager {
         if !dest_resolved.exists() {
             fs::create_dir_all(&dest_resolved)
                 .await
-                .map_err(|e| FileManagerError::IoError(e))?;
+                .map_err(FileManagerError::IoError)?;
         }
 
         let archive_data = fs::read(&archive_resolved)
             .await
-            .map_err(|e| FileManagerError::IoError(e))?;
+            .map_err(FileManagerError::IoError)?;
 
         let mut extracted = Vec::new();
 
@@ -745,7 +743,7 @@ impl FileManager {
                     let output_path = dest_resolved.join(file_name);
                     fs::write(&output_path, &archive_data)
                         .await
-                        .map_err(|e| FileManagerError::IoError(e))?;
+                        .map_err(FileManagerError::IoError)?;
                     extracted.push(self.entry_from_path(&output_path, &dest_resolved).await?);
                 }
             }
@@ -757,7 +755,7 @@ impl FileManager {
                 let output_path = dest_resolved.join(file_name);
                 fs::write(&output_path, &archive_data)
                     .await
-                    .map_err(|e| FileManagerError::IoError(e))?;
+                    .map_err(FileManagerError::IoError)?;
                 extracted.push(self.entry_from_path(&output_path, &dest_resolved).await?);
             }
             _ => {
@@ -794,20 +792,20 @@ impl FileManager {
             if file.name().ends_with('/') {
                 fs::create_dir_all(&outpath)
                     .await
-                    .map_err(|e| FileManagerError::IoError(e))?;
+                    .map_err(FileManagerError::IoError)?;
             } else {
                 if let Some(parent) = outpath.parent() {
                     fs::create_dir_all(parent)
                         .await
-                        .map_err(|e| FileManagerError::IoError(e))?;
+                        .map_err(FileManagerError::IoError)?;
                 }
 
                 let mut outfile = fs::File::create(&outpath)
                     .await
-                    .map_err(|e| FileManagerError::IoError(e))?;
+                    .map_err(FileManagerError::IoError)?;
                 tokio::io::copy(&mut file, &mut outfile)
                     .await
-                    .map_err(|e| FileManagerError::IoError(e))?;
+                    .map_err(FileManagerError::IoError)?;
             }
 
             extracted.push(self.entry_from_path(&outpath, dest).await?);
@@ -841,13 +839,13 @@ impl FileManager {
             .entries()
             .map_err(|e| FileManagerError::InvalidPath(format!("invalid tar: {}", e)))?
         {
-            let mut entry = entry.map_err(|e| FileManagerError::IoError(e))?;
+            let mut entry = entry.map_err(FileManagerError::IoError)?;
             entry
                 .unpack_in(dest)
                 .await
-                .map_err(|e| FileManagerError::IoError(e))?;
+                .map_err(FileManagerError::IoError)?;
 
-            let path = dest.join(entry.path().map_err(|e| FileManagerError::IoError(e))?);
+            let path = dest.join(entry.path().map_err(FileManagerError::IoError)?);
             extracted.push(self.entry_from_path(&path, dest).await?);
         }
 
@@ -881,13 +879,13 @@ impl FileManager {
             .entries()
             .map_err(|e| FileManagerError::InvalidPath(format!("invalid tar.gz: {}", e)))?
         {
-            let mut entry = entry.map_err(|e| FileManagerError::IoError(e))?;
+            let mut entry = entry.map_err(FileManagerError::IoError)?;
             entry
                 .unpack_in(dest)
                 .await
-                .map_err(|e| FileManagerError::IoError(e))?;
+                .map_err(FileManagerError::IoError)?;
 
-            let path = dest.join(entry.path().map_err(|e| FileManagerError::IoError(e))?);
+            let path = dest.join(entry.path().map_err(FileManagerError::IoError)?);
             extracted.push(self.entry_from_path(&path, dest).await?);
         }
 
@@ -910,7 +908,7 @@ impl FileManager {
     ) -> Result<FileEntry, FileManagerError> {
         let metadata = fs::metadata(path)
             .await
-            .map_err(|e| FileManagerError::IoError(e))?;
+            .map_err(FileManagerError::IoError)?;
 
         let name = path
             .file_name()

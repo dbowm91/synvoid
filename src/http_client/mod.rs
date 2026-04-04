@@ -581,6 +581,39 @@ pub async fn send_request_with_body_headers_and_timeout(
     Ok(HttpResponse::from_hyper(response, None).await)
 }
 
+/// Send a request and return the raw hyper Response with streaming body intact.
+/// The caller is responsible for consuming the body stream.
+pub async fn send_request_streaming(
+    client: &HttpClient,
+    method: Method,
+    url: &str,
+    body: Option<Bytes>,
+    headers: http::HeaderMap,
+    timeout: Option<Duration>,
+) -> Result<Response<Incoming>> {
+    let uri: Uri = url.parse()?;
+    let body = Full::new(body.unwrap_or_default());
+    let mut req_builder = Request::builder()
+        .method(method)
+        .uri(uri)
+        .body(body)
+        .map_err(|e| anyhow::anyhow!("Failed to build request: {}", e))?;
+    *req_builder.headers_mut() = headers;
+    let req = req_builder;
+
+    let response = if let Some(t) = timeout {
+        match tokio::time::timeout(t, client.request(req)).await {
+            Ok(Ok(resp)) => resp,
+            Ok(Err(e)) => return Err(e.into()),
+            Err(_) => return Err(anyhow::anyhow!("request timed out")),
+        }
+    } else {
+        client.request(req).await?
+    };
+
+    Ok(response)
+}
+
 pub struct HttpResponse {
     pub status: http::StatusCode,
     pub headers: http::HeaderMap,

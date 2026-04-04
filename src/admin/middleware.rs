@@ -1,9 +1,13 @@
+pub mod yara_rate_limit;
+
 use axum::http::StatusCode;
 use axum::{
     extract::Request,
     middleware::Next,
     response::{IntoResponse, Response},
 };
+use parking_lot::RwLock;
+use std::sync::LazyLock;
 
 #[derive(Clone, Debug)]
 pub struct ClientIp(pub String);
@@ -14,12 +18,36 @@ pub async fn extract_client_ip_middleware(mut request: Request, next: Next) -> R
     next.run(request).await
 }
 
+static TRUSTED_PROXIES: LazyLock<RwLock<Vec<String>>> = LazyLock::new(|| RwLock::new(Vec::new()));
+
+pub fn configure_trusted_proxies(proxies: Vec<String>) {
+    let mut guard = TRUSTED_PROXIES.write();
+    *guard = proxies;
+}
+
+fn is_trusted_proxy(ip: &str) -> bool {
+    let guard = TRUSTED_PROXIES.read();
+    !guard.is_empty() && guard.iter().any(|p| p == ip)
+}
+
 fn extract_client_ip_from_request(request: &Request) -> String {
-    if let Some(connect_info) = request
+    let direct_ip = request
         .extensions()
         .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
-    {
-        return connect_info.0.ip().to_string();
+        .map(|c| c.0.ip().to_string());
+
+    if let Some(ref ip) = direct_ip {
+        if is_trusted_proxy(ip) {
+            return request
+                .headers()
+                .get("x-forwarded-for")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| s.split(',').next())
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| ip.clone());
+        }
+        return ip.clone();
     }
 
     request

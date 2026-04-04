@@ -73,7 +73,8 @@ impl AdminRateLimiter {
 pub enum YaraRateLimitOp {
     Submit,
     BroadcastApply,
-    Approve,
+    ApproveReject,
+    StatusList,
 }
 
 #[derive(Clone)]
@@ -84,29 +85,37 @@ pub struct YaraRateLimiter {
 struct YaraRateLimiterInner {
     submit_limiter: AdminRateLimiter,
     broadcast_apply_limiter: AdminRateLimiter,
-    approve_limiter: AdminRateLimiter,
+    approve_reject_limiter: AdminRateLimiter,
+    status_list_limiter: AdminRateLimiter,
 }
 
 impl YaraRateLimiter {
-    pub fn new(submit_limit: u32, broadcast_apply_limit: u32, approve_limit: u32) -> Self {
+    pub fn new(
+        submit_limit: u32,
+        broadcast_apply_limit: u32,
+        approve_reject_limit: u32,
+        status_list_limit: u32,
+    ) -> Self {
         Self {
             inner: Arc::new(YaraRateLimiterInner {
                 submit_limiter: AdminRateLimiter::new(submit_limit, 1),
                 broadcast_apply_limiter: AdminRateLimiter::new(broadcast_apply_limit, 1),
-                approve_limiter: AdminRateLimiter::new(approve_limit, 1),
+                approve_reject_limiter: AdminRateLimiter::new(approve_reject_limit, 1),
+                status_list_limiter: AdminRateLimiter::new(status_list_limit, 1),
             }),
         }
     }
 
     pub fn default_for_yara() -> Self {
-        Self::new(10, 5, 10)
+        Self::new(10, 5, 10, 30)
     }
 
     pub fn check(&self, ip: &str, op: YaraRateLimitOp) -> bool {
         match op {
             YaraRateLimitOp::Submit => self.inner.submit_limiter.check(ip),
             YaraRateLimitOp::BroadcastApply => self.inner.broadcast_apply_limiter.check(ip),
-            YaraRateLimitOp::Approve => self.inner.approve_limiter.check(ip),
+            YaraRateLimitOp::ApproveReject => self.inner.approve_reject_limiter.check(ip),
+            YaraRateLimitOp::StatusList => self.inner.status_list_limiter.check(ip),
         }
     }
 }

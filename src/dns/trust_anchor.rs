@@ -827,15 +827,6 @@ pub enum Rfc5011Event {
     KeyIgnored { key_tag: u16, reason: String },
 }
 
-#[derive(Debug, Clone)]
-pub enum TrustAnchorEvent {
-    KeySeen { key_tag: u16 },
-    NewKeyDetected { key_tag: u16 },
-    KeyPending { key_tag: u16 },
-    KeyPromoted { key_id: String },
-    KeyRevoked { key_tag: u16 },
-}
-
 pub struct TrustAnchorManagerFactory;
 
 impl TrustAnchorManagerFactory {

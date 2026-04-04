@@ -137,12 +137,12 @@ impl DnsServer {
     }
 
     fn parse_soa_serial(soa_value: &str) -> u32 {
-        let parts: Vec<&str> = soa_value.split_whitespace().collect();
-        if parts.len() >= 3 {
-            parts[2].parse::<u32>().unwrap_or(1)
-        } else {
-            1
+        for token in soa_value.split_whitespace() {
+            if let Ok(serial) = token.parse::<u32>() {
+                return serial;
+            }
         }
+        1
     }
 }
 

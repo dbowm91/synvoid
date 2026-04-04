@@ -324,10 +324,7 @@ impl Router {
         }
 
         let site_id = site_config.site_id();
-        let matcher = match self.location_matchers.get(&site_id) {
-            Some(m) => m,
-            None => return None,
-        };
+        let matcher = self.location_matchers.get(&site_id)?;
 
         if let Some((idx, _match_type)) = matcher.match_uri(path) {
             let location = &locations[idx];
