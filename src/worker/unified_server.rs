@@ -347,7 +347,7 @@ pub async fn run_unified_server_worker(
         match UploadValidator::new(upload_config) {
             Ok(validator) => {
                 let validator = Arc::new(validator);
-                crate::waf::set_upload_validator(Some(validator));
+                crate::waf::set_upload_validator(validator);
                 tracing::info!("UploadValidator initialized");
             }
             Err(e) => {
@@ -743,7 +743,7 @@ pub async fn run_unified_server_worker(
             threat_intel.start_background_tasks();
 
             // Set threat_intel in thread-local so it can be accessed by blocking code
-            crate::waf::set_threat_intel(Some(threat_intel.clone()));
+            crate::waf::set_threat_intel(threat_intel.clone());
 
             // Initialize YARA rules manager
             {
@@ -801,7 +801,7 @@ pub async fn run_unified_server_worker(
                     }
 
                     // Set in thread-local
-                    crate::waf::set_yara_rules(Some(yara_rules.clone()));
+                    crate::waf::set_yara_rules(yara_rules.clone());
 
                     // Start periodic YARA sync task
                     if mesh_config.yara_rules.sync_interval_secs > 0 {

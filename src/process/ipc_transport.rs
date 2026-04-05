@@ -388,7 +388,7 @@ impl IpcStream {
         &mut self,
         timeout_ms: u64,
     ) -> io::Result<Option<T>> {
-        if let Some(ref _signer) = self.signer {
+        if self.signer.is_some() {
             use tokio::time::{timeout, Duration};
 
             let result = timeout(Duration::from_millis(timeout_ms), self.recv::<T>()).await;

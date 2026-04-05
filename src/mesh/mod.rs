@@ -118,7 +118,6 @@ pub use threat_intel::{
 };
 pub use topology::{MeshTopology, NetworkPartitionState, PeerState};
 pub use transport::{MeshPeerConnection, MeshTransport};
-pub use transport_core::MeshTransportError as MeshTransportErrorV1;
 pub use transport_core::{
     get_time_validation_error_count, validate_system_time, MeshTransportError,
     MAX_REASONABLE_TIMESTAMP, MIN_REASONABLE_TIMESTAMP,

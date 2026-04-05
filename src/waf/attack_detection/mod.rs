@@ -804,6 +804,13 @@ impl AttackDetector {
             return Some(result);
         }
 
+        if let Some(result) = self
+            .request_smuggling_detector
+            .check_http2_smuggling(headers, body)
+        {
+            return Some(result);
+        }
+
         if let Some(body_bytes) = body {
             if let Some(result) = self.request_smuggling_detector.check_body(body_bytes) {
                 return Some(result);

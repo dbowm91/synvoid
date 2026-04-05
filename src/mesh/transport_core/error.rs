@@ -4,6 +4,10 @@ use thiserror::Error;
 pub enum MeshTransportError {
     #[error("No seed nodes available")]
     NoSeedsAvailable,
+    #[error("Transport not available")]
+    NotAvailable,
+    #[error("Peer not connected: {0}")]
+    PeerNotConnected(String),
     #[error("Connection failed: {0}")]
     ConnectionFailed(String),
     #[error("Send failed: {0}")]
@@ -30,6 +34,8 @@ pub enum MeshTransportError {
     RateLimited,
     #[error("Authentication failed: {0}")]
     AuthFailed(String),
+    #[error("Not implemented for this transport")]
+    NotImplemented,
 }
 
 impl From<quinn::ConnectionError> for MeshTransportError {

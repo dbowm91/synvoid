@@ -12,6 +12,8 @@ pub mod manager;
 pub mod quic;
 pub mod stack;
 
+pub use crate::mesh::transport_core::MeshTransportError;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 #[derive(Default)]
@@ -37,24 +39,6 @@ impl TransportHint {
     pub fn is_high_throughput(&self) -> bool {
         matches!(self, TransportHint::HighThroughput)
     }
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum MeshTransportError {
-    #[error("Transport not available")]
-    NotAvailable,
-    #[error("Peer not connected: {0}")]
-    PeerNotConnected(String),
-    #[error("Send failed: {0}")]
-    SendFailed(String),
-    #[error("Receive failed: {0}")]
-    ReceiveFailed(String),
-    #[error("Connection failed: {0}")]
-    ConnectionFailed(String),
-    #[error("Not implemented for this transport")]
-    NotImplemented,
-    #[error("Timeout")]
-    Timeout,
 }
 
 #[derive(Debug, Clone)]

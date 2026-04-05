@@ -424,6 +424,26 @@ impl RouteUsageTracker {
             .map(|u| u.popularity_score)
             .unwrap_or(0.0)
     }
+
+    pub fn prune_inactive(&mut self, active_ids: &HashSet<String>, max_entries: usize) {
+        self.usages.retain(|id, _| active_ids.contains(id));
+        if self.usages.len() > max_entries {
+            let mut sorted: Vec<_> = self.usages.iter().collect();
+            sorted.sort_by(|a, b| {
+                b.1.popularity_score
+                    .partial_cmp(&a.1.popularity_score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            let to_remove: Vec<_> = sorted
+                .iter()
+                .skip(max_entries)
+                .map(|(k, _)| (*k).clone())
+                .collect();
+            for key in to_remove {
+                self.usages.remove(&key);
+            }
+        }
+    }
 }
 
 impl MeshTopology {
@@ -1804,6 +1824,86 @@ impl MeshTopology {
         } else {
             None
         }
+    }
+
+    pub async fn prune_stale_peers(&self, stale_threshold_secs: u64) -> usize {
+        let now = Instant::now();
+        let threshold = Duration::from_secs(stale_threshold_secs);
+
+        let stale_peers: Vec<String> = {
+            let peers = self.peers.read().await;
+            peers
+                .iter()
+                .filter(|(_, state)| now.duration_since(state.last_seen) > threshold)
+                .map(|(id, _)| id.clone())
+                .collect()
+        };
+
+        if stale_peers.is_empty() {
+            return 0;
+        }
+
+        let mut peers = self.peers.write().await;
+        let mut global_nodes = self.global_nodes.write().await;
+        let mut peer_scores = self.peer_scores.write().await;
+        let mut route_stability = self.route_stability.write().await;
+
+        for peer_id in &stale_peers {
+            peers.remove(peer_id);
+            global_nodes.remove(peer_id);
+            peer_scores.remove(peer_id);
+            route_stability.remove(peer_id);
+        }
+
+        stale_peers.len()
+    }
+
+    pub async fn cleanup_stale_metrics(&self, max_entries: usize) -> usize {
+        let mut removed = 0;
+
+        let active_peer_ids: HashSet<String> = self.peers.read().await.keys().cloned().collect();
+
+        {
+            let mut failures = self.connection_failures.write().await;
+            let before = failures.len();
+            failures.retain(|id, _| active_peer_ids.contains(id));
+            removed += before.saturating_sub(failures.len());
+        }
+
+        {
+            let mut successes = self.connection_successes.write().await;
+            let before = successes.len();
+            successes.retain(|id, _| active_peer_ids.contains(id));
+            removed += before.saturating_sub(successes.len());
+        }
+
+        {
+            let mut latency = self.latency_history.write().await;
+            let before = latency.len();
+            latency.retain(|id, _| active_peer_ids.contains(id));
+            removed += before.saturating_sub(latency.len());
+        }
+
+        {
+            let mut peer_versions = self.peer_versions.write().await;
+            let before = peer_versions.len();
+            peer_versions.retain(|id, _| active_peer_ids.contains(id));
+            removed += before.saturating_sub(peer_versions.len());
+        }
+
+        {
+            let mut bandwidth = self.bandwidth_trackers.write().await;
+            let before = bandwidth.len();
+            bandwidth.retain(|id, _| active_peer_ids.contains(id));
+            removed += before.saturating_sub(bandwidth.len());
+        }
+
+        {
+            let mut route_usage = self.route_usage.write().await;
+            route_usage.prune_inactive(&active_peer_ids, max_entries);
+        }
+
+        removed
     }
 }
 

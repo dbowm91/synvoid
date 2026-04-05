@@ -80,24 +80,24 @@ static THREAT_INTEL: OnceLock<Arc<ThreatIntelligenceManager>> = OnceLock::new();
 static YARA_RULES: OnceLock<Arc<YaraRulesManager>> = OnceLock::new();
 static UPLOAD_VALIDATOR: OnceLock<Arc<UploadValidator>> = OnceLock::new();
 
-pub fn set_threat_intel(ti: Option<Arc<ThreatIntelligenceManager>>) {
-    let _ = THREAT_INTEL.set(ti.expect("THREAT_INTEL already initialized"));
+pub fn set_threat_intel(ti: Arc<ThreatIntelligenceManager>) {
+    let _ = THREAT_INTEL.set(ti);
 }
 
 pub fn get_threat_intel() -> Option<Arc<ThreatIntelligenceManager>> {
     THREAT_INTEL.get().cloned()
 }
 
-pub fn set_yara_rules(yr: Option<Arc<YaraRulesManager>>) {
-    let _ = YARA_RULES.set(yr.expect("YARA_RULES already initialized"));
+pub fn set_yara_rules(yr: Arc<YaraRulesManager>) {
+    let _ = YARA_RULES.set(yr);
 }
 
 pub fn get_yara_rules() -> Option<Arc<YaraRulesManager>> {
     YARA_RULES.get().cloned()
 }
 
-pub fn set_upload_validator(uv: Option<Arc<UploadValidator>>) {
-    let _ = UPLOAD_VALIDATOR.set(uv.expect("UPLOAD_VALIDATOR already initialized"));
+pub fn set_upload_validator(uv: Arc<UploadValidator>) {
+    let _ = UPLOAD_VALIDATOR.set(uv);
 }
 
 pub fn get_upload_validator() -> Option<Arc<UploadValidator>> {

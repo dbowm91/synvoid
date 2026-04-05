@@ -5,8 +5,7 @@ use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use http::{HeaderMap, StatusCode};
-use linked_hash_map::LinkedHashMap;
-use parking_lot::RwLock;
+use moka::sync::Cache;
 use thiserror::Error;
 
 use super::config::ProxyCacheSettings;
@@ -111,35 +110,6 @@ pub enum CacheHit {
     StaleWhileRevalidate,
 }
 
-pub struct ProxyCache {
-    state: RwLock<CacheState>,
-    settings: ProxyCacheSettings,
-    disk_path: PathBuf,
-    cache_hits: AtomicU64,
-    cache_misses: AtomicU64,
-}
-
-struct CacheState {
-    entries: LinkedHashMap<CacheKey, CacheEntryInner>,
-    current_memory_size: usize,
-}
-
-impl Clone for ProxyCache {
-    fn clone(&self) -> Self {
-        let state = self.state.read();
-        Self {
-            state: RwLock::new(CacheState {
-                entries: state.entries.clone(),
-                current_memory_size: state.current_memory_size,
-            }),
-            settings: self.settings.clone(),
-            disk_path: self.disk_path.clone(),
-            cache_hits: AtomicU64::new(self.cache_hits.load(Ordering::Relaxed)),
-            cache_misses: AtomicU64::new(self.cache_misses.load(Ordering::Relaxed)),
-        }
-    }
-}
-
 struct CacheEntryInner {
     entry: ProxyCacheEntry,
     size: usize,
@@ -175,9 +145,43 @@ impl CacheEntryInner {
     }
 }
 
+pub struct ProxyCache {
+    entries: Cache<CacheKey, CacheEntryInner>,
+    settings: ProxyCacheSettings,
+    disk_path: PathBuf,
+    cache_hits: AtomicU64,
+    cache_misses: AtomicU64,
+    current_memory_size: AtomicU64,
+}
+
+impl Clone for ProxyCache {
+    fn clone(&self) -> Self {
+        Self {
+            entries: self.entries.clone(),
+            settings: self.settings.clone(),
+            disk_path: self.disk_path.clone(),
+            cache_hits: AtomicU64::new(self.cache_hits.load(Ordering::Relaxed)),
+            cache_misses: AtomicU64::new(self.cache_misses.load(Ordering::Relaxed)),
+            current_memory_size: AtomicU64::new(self.current_memory_size.load(Ordering::Relaxed)),
+        }
+    }
+}
+
 impl ProxyCache {
     pub fn new(settings: ProxyCacheSettings) -> Self {
         let disk_path = settings.path.clone();
+        let max_memory = settings.max_memory_size as u64;
+
+        let cache: Cache<CacheKey, CacheEntryInner> = Cache::builder()
+            .weigher(|_, v: &CacheEntryInner| -> u32 {
+                if v.on_disk {
+                    1 // Disk-backed entries have minimal memory footprint
+                } else {
+                    v.size.min(u32::MAX as usize) as u32
+                }
+            })
+            .max_capacity(max_memory)
+            .build();
 
         if settings.enabled && settings.path.exists() {
             if let Err(e) = std::fs::create_dir_all(&settings.path) {
@@ -186,14 +190,12 @@ impl ProxyCache {
         }
 
         Self {
-            state: RwLock::new(CacheState {
-                entries: LinkedHashMap::new(),
-                current_memory_size: 0,
-            }),
+            entries: cache,
             settings,
             disk_path,
             cache_hits: AtomicU64::new(0),
             cache_misses: AtomicU64::new(0),
+            current_memory_size: AtomicU64::new(0),
         }
     }
 
@@ -226,13 +228,9 @@ impl ProxyCache {
             return None;
         }
 
-        // Phase 1: Get entry and update LRU (write lock held briefly)
-        let inner = {
-            let mut state = self.state.write();
-            state.entries.get_refresh(key)?.clone()
-        };
+        let inner = self.entries.get(key)?;
 
-        // Phase 2: Disk I/O WITHOUT holding the lock
+        // Disk I/O WITHOUT holding any lock (Moka handles concurrency internally)
         if inner.on_disk {
             if let Some(path) = &inner.disk_path {
                 if let Ok(content) = std::fs::read(path) {
@@ -249,7 +247,6 @@ impl ProxyCache {
             }
         }
 
-        // Phase 3: Check expiration and return
         let mut entry = inner.entry;
 
         if entry.is_expired() {
@@ -263,8 +260,7 @@ impl ProxyCache {
                 entry.update_access();
                 return Some(entry);
             }
-            let mut state = self.state.write();
-            state.entries.remove(key);
+            self.entries.invalidate(key);
             return None;
         }
 
@@ -278,8 +274,7 @@ impl ProxyCache {
             return None;
         }
 
-        let state = self.state.read();
-        let entry_inner = state.entries.get(key)?;
+        let entry_inner = self.entries.get(key)?;
 
         if entry_inner.entry.is_fresh {
             return Some(CacheHit::Hit);
@@ -380,115 +375,132 @@ impl ProxyCache {
             checksum,
         };
 
-        let mut state = self.state.write();
-
-        if let Some(old) = state.entries.insert(key, entry_inner) {
-            state.current_memory_size = state.current_memory_size.saturating_sub(old.size);
+        // Update memory size tracking atomically
+        if let Some(old) = self.entries.get(&key) {
+            if !old.on_disk {
+                self.current_memory_size
+                    .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+                        v.checked_sub(old.size as u64)
+                    })
+                    .ok();
+            }
         }
 
         if !should_store_disk {
-            state.current_memory_size = state.current_memory_size.saturating_add(size);
+            self.current_memory_size
+                .fetch_add(size as u64, Ordering::Relaxed);
         }
 
-        drop(state);
-
-        self.evict_if_needed();
+        self.entries.insert(key, entry_inner);
 
         Ok(())
     }
 
     pub fn invalidate(&self, key: &CacheKey) {
-        let mut state = self.state.write();
-
-        if let Some(entry) = state.entries.remove(key) {
+        if let Some(entry) = self.entries.get(key) {
             if entry.on_disk {
-                if let Some(path) = entry.disk_path {
+                if let Some(path) = &entry.disk_path {
                     let _ = std::fs::remove_file(path);
                 }
             }
-
-            state.current_memory_size = state.current_memory_size.saturating_sub(entry.size);
+            if !entry.on_disk {
+                self.current_memory_size
+                    .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+                        v.checked_sub(entry.size as u64)
+                    })
+                    .ok();
+            }
+            self.entries.invalidate(key);
         }
     }
 
     pub fn invalidate_by_pattern(&self, pattern: &str) -> usize {
-        let mut state = self.state.write();
-
-        let to_remove: Vec<CacheKey> = state
+        let to_remove: Vec<CacheKey> = self
             .entries
-            .keys()
-            .filter(|k| k.uri.contains(pattern))
-            .cloned()
+            .iter()
+            .filter(|(k, _)| k.uri.contains(pattern))
+            .map(|(k, _)| (*k).clone())
             .collect();
 
+        let count = to_remove.len();
+
         for key in &to_remove {
-            if let Some(entry) = state.entries.remove(key) {
+            if let Some(entry) = self.entries.get(key) {
                 if entry.on_disk {
-                    if let Some(path) = entry.disk_path {
+                    if let Some(path) = &entry.disk_path {
                         let _ = std::fs::remove_file(path);
                     }
                 }
-                state.current_memory_size = state.current_memory_size.saturating_sub(entry.size);
+                if !entry.on_disk {
+                    self.current_memory_size
+                        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+                            v.checked_sub(entry.size as u64)
+                        })
+                        .ok();
+                }
+                self.entries.invalidate(key);
             }
         }
 
-        to_remove.len()
+        count
     }
 
     pub fn invalidate_by_host(&self, host: &str) -> usize {
-        let mut state = self.state.write();
-
-        let to_remove: Vec<CacheKey> = state
+        let to_remove: Vec<CacheKey> = self
             .entries
-            .keys()
-            .filter(|k| k.host == host)
-            .cloned()
+            .iter()
+            .filter(|(k, _)| k.host == host)
+            .map(|(k, _)| (*k).clone())
             .collect();
 
+        let count = to_remove.len();
+
         for key in &to_remove {
-            if let Some(entry) = state.entries.remove(key) {
+            if let Some(entry) = self.entries.get(key) {
                 if entry.on_disk {
-                    if let Some(path) = entry.disk_path {
+                    if let Some(path) = &entry.disk_path {
                         let _ = std::fs::remove_file(path);
                     }
                 }
-                state.current_memory_size = state.current_memory_size.saturating_sub(entry.size);
+                if !entry.on_disk {
+                    self.current_memory_size
+                        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+                            v.checked_sub(entry.size as u64)
+                        })
+                        .ok();
+                }
+                self.entries.invalidate(key);
             }
         }
 
-        to_remove.len()
+        count
     }
 
     pub fn clear(&self) {
-        let mut state = self.state.write();
-
-        for (_, entry) in state.entries.drain() {
+        for (_, entry) in self.entries.iter() {
             if entry.on_disk {
-                if let Some(path) = entry.disk_path {
+                if let Some(path) = &entry.disk_path {
                     let _ = std::fs::remove_file(path);
                 }
             }
         }
-
-        state.current_memory_size = 0;
+        self.entries.invalidate_all();
+        self.current_memory_size.store(0, Ordering::Relaxed);
     }
 
     pub fn stats(&self) -> CacheStats {
-        let state = self.state.read();
+        let hit_count = self
+            .entries
+            .iter()
+            .filter(|(_, entry)| entry.entry.is_fresh)
+            .count() as u64;
 
-        let mut hit_count = 0u64;
-
-        for (_, entry) in state.entries.iter() {
-            if entry.entry.is_fresh {
-                hit_count += 1;
-            }
-        }
-
-        let miss_count = (state.entries.len() as u64).saturating_sub(hit_count);
+        let total = self.entries.entry_count();
+        let miss_count = total.saturating_sub(hit_count);
 
         CacheStats {
-            entries: state.entries.len(),
-            memory_size: state.current_memory_size,
+            entries: total as usize,
+            memory_size: self.current_memory_size.load(Ordering::Relaxed) as usize,
             disk_size: self.calculate_disk_size(),
             hits: hit_count,
             misses: miss_count,
@@ -526,25 +538,6 @@ impl ProxyCache {
         format!("{:x}", hasher.finish())
     }
 
-    fn evict_if_needed(&self) {
-        let mut state = self.state.write();
-
-        while state.current_memory_size > self.settings.max_memory_size {
-            let (_, entry) = match state.entries.pop_front() {
-                Some(e) => e,
-                None => break,
-            };
-
-            state.current_memory_size = state.current_memory_size.saturating_sub(entry.size);
-
-            if entry.on_disk {
-                if let Some(path) = entry.disk_path {
-                    let _ = std::fs::remove_file(path);
-                }
-            }
-        }
-    }
-
     fn calculate_disk_size(&self) -> usize {
         if !self.disk_path.exists() {
             return 0;
@@ -562,33 +555,40 @@ impl ProxyCache {
     }
 
     pub fn cleanup_expired(&self) -> usize {
-        let mut state = self.state.write();
-
         let now = Instant::now();
         let inactive = self.settings.inactive;
 
-        let to_remove: Vec<CacheKey> = state
+        let to_remove: Vec<CacheKey> = self
             .entries
             .iter()
             .filter(|(_, v)| {
                 let age = now.duration_since(v.entry.created_at);
                 age > inactive || v.entry.is_expired()
             })
-            .map(|(k, _)| k.clone())
+            .map(|(k, _)| (*k).clone())
             .collect();
 
+        let count = to_remove.len();
+
         for key in &to_remove {
-            if let Some(entry) = state.entries.remove(key) {
+            if let Some(entry) = self.entries.get(key) {
                 if entry.on_disk {
-                    if let Some(path) = entry.disk_path {
+                    if let Some(path) = &entry.disk_path {
                         let _ = std::fs::remove_file(path);
                     }
                 }
-                state.current_memory_size = state.current_memory_size.saturating_sub(entry.size);
+                if !entry.on_disk {
+                    self.current_memory_size
+                        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+                            v.checked_sub(entry.size as u64)
+                        })
+                        .ok();
+                }
+                self.entries.invalidate(key);
             }
         }
 
-        to_remove.len()
+        count
     }
 
     pub fn record_cache_hit(&self) {

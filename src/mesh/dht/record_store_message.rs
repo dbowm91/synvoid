@@ -463,10 +463,6 @@ impl RecordStoreManager {
                     last_sync = Instant::now();
 
                     if let Some(record_store) = merkle_self.upgrade() {
-                        if record_store.is_routing_enabled() {
-                            tracing::debug!("Skipping anti-entropy: Kademlia routing is enabled");
-                            continue;
-                        }
                         let _ =
                             Self::run_anti_entropy_cycle(&record_store, replication_factor).await;
                     }

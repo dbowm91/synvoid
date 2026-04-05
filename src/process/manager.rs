@@ -413,78 +413,87 @@ impl ProcessManager {
         &self,
         new_config: crate::config::ProcessManagerConfig,
     ) -> Result<bool, String> {
-        let mut dynamic = self.dynamic_config.write();
-
         if new_config.min_workers > new_config.max_workers {
             return Err("min_workers cannot exceed max_workers".to_string());
         }
 
-        if new_config.min_workers > dynamic.max_workers {
-            return Err("new min_workers cannot exceed current max_workers".to_string());
-        }
+        // Calculate spawn requirements while holding the lock
+        let (needed_min_workers, needs_warm_spawn, needs_restart) = {
+            let mut dynamic = self.dynamic_config.write();
 
-        let mut needs_restart = false;
+            if new_config.min_workers > dynamic.max_workers {
+                return Err("new min_workers cannot exceed current max_workers".to_string());
+            }
 
-        if new_config.worker_port_base != dynamic.worker_port_base {
-            tracing::info!("worker_port_base changed - requires restart");
-            needs_restart = true;
-        }
+            let mut needs_restart = false;
 
-        dynamic.max_workers = new_config.max_workers;
-        dynamic.max_restart_attempts = new_config.max_restart_attempts;
-        dynamic.restart_cooldown_secs = new_config.restart_cooldown_secs;
-        dynamic.restart_backoff_max_secs = new_config.restart_backoff_max_secs;
-        dynamic.heartbeat_timeout_secs = new_config.heartbeat_timeout_secs;
-        dynamic.graceful_shutdown_timeout_secs = new_config.graceful_shutdown_timeout_secs;
-        dynamic.pre_spawn_workers = new_config.pre_spawn_workers;
-        dynamic.warm_workers_target = new_config.warm_workers_target;
-        dynamic.health_check_interval_secs = new_config.health_check_interval_secs;
+            if new_config.worker_port_base != dynamic.worker_port_base {
+                tracing::info!("worker_port_base changed - requires restart");
+                needs_restart = true;
+            }
 
-        if new_config.min_workers != dynamic.min_workers {
-            let old_min = dynamic.min_workers;
-            dynamic.min_workers = new_config.min_workers;
+            dynamic.max_workers = new_config.max_workers;
+            dynamic.max_restart_attempts = new_config.max_restart_attempts;
+            dynamic.restart_cooldown_secs = new_config.restart_cooldown_secs;
+            dynamic.restart_backoff_max_secs = new_config.restart_backoff_max_secs;
+            dynamic.heartbeat_timeout_secs = new_config.heartbeat_timeout_secs;
+            dynamic.graceful_shutdown_timeout_secs = new_config.graceful_shutdown_timeout_secs;
+            dynamic.pre_spawn_workers = new_config.pre_spawn_workers;
+            dynamic.warm_workers_target = new_config.warm_workers_target;
+            dynamic.health_check_interval_secs = new_config.health_check_interval_secs;
 
-            if new_config.min_workers > old_min {
-                tracing::info!(
-                    "min_workers increased from {} to {} - spawning additional workers",
-                    old_min,
-                    new_config.min_workers
-                );
-                let current_count = self.get_running_worker_count();
-                let needed = new_config.min_workers.saturating_sub(current_count);
-                let mut spawned = 0;
-                for _ in 0..needed {
-                    drop(dynamic);
-                    match self.spawn_worker() {
-                        Ok(_) => spawned += 1,
-                        Err(e) => tracing::error!("Failed to spawn worker when scaling up: {}", e),
-                    }
-                    dynamic = self.dynamic_config.write();
-                }
-                if spawned < needed {
-                    tracing::warn!(
-                        "Requested {} workers but only spawned {} due to errors",
-                        needed,
-                        spawned
+            let needed = if new_config.min_workers != dynamic.min_workers {
+                let old_min = dynamic.min_workers;
+                dynamic.min_workers = new_config.min_workers;
+
+                if new_config.min_workers > old_min {
+                    let current_count = self.get_running_worker_count();
+                    new_config.min_workers.saturating_sub(current_count)
+                } else {
+                    tracing::info!(
+                        "min_workers decreased from {} to {} - will scale down on next worker exit",
+                        old_min,
+                        new_config.min_workers
                     );
+                    0
                 }
             } else {
-                tracing::info!(
-                    "min_workers decreased from {} to {} - will scale down on next worker exit",
-                    old_min,
-                    new_config.min_workers
+                0
+            };
+
+            let needs_warm = new_config.warm_workers_target > dynamic.warm_workers_target;
+
+            tracing::info!("ProcessManager config updated dynamically");
+
+            (needed, needs_warm, needs_restart)
+        };
+
+        // Spawn workers OUTSIDE the lock to avoid deadlock and race conditions
+        if needed_min_workers > 0 {
+            tracing::info!(
+                "min_workers increased - spawning {} additional workers",
+                needed_min_workers
+            );
+            let mut spawned = 0;
+            for _ in 0..needed_min_workers {
+                match self.spawn_worker() {
+                    Ok(_) => spawned += 1,
+                    Err(e) => tracing::error!("Failed to spawn worker when scaling up: {}", e),
+                }
+            }
+            if spawned < needed_min_workers {
+                tracing::warn!(
+                    "Requested {} workers but only spawned {} due to errors",
+                    needed_min_workers,
+                    spawned
                 );
             }
         }
 
-        tracing::info!("ProcessManager config updated dynamically");
-
-        if new_config.warm_workers_target > dynamic.warm_workers_target {
-            tracing::info!("Increasing warm workers target - spawning additional workers");
-            drop(dynamic);
-            match self.spawn_worker() {
-                Ok(_) => {}
-                Err(e) => tracing::error!("Failed to spawn warm worker: {}", e),
+        if needs_warm_spawn {
+            tracing::info!("Increasing warm workers target - spawning additional worker");
+            if let Err(e) = self.spawn_worker() {
+                tracing::error!("Failed to spawn warm worker: {}", e);
             }
         }
 
