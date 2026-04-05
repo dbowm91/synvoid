@@ -58,7 +58,6 @@ use crate::mesh::protocol::{
 use crate::mesh::session::SessionManager;
 use crate::mesh::topology::{MeshTopology, PeerStatus};
 use crate::tunnel::quic::runtime::QuicRuntime;
-use crate::waf::ratelimit::core::AtomicSlidingWindow;
 
 pub use crate::mesh::transports::MeshTransportManager;
 
@@ -66,6 +65,9 @@ pub use crate::mesh::transport_core::{
     get_time_validation_error_count, validate_system_time, MeshTransportError,
     MAX_REASONABLE_TIMESTAMP, MIN_REASONABLE_TIMESTAMP,
 };
+
+use crate::mesh::transport_types::GlobalRateLimitCheck;
+pub use crate::mesh::transport_types::{MeshGlobalRateLimiter, MeshPeerConnection};
 
 pub(crate) const MAX_PENDING_CONNECTIONS: usize = 100;
 pub(crate) const CONNECTION_RATE_LIMIT_WINDOW_SECS: u64 = 60;
@@ -156,41 +158,6 @@ impl Clone for MeshTransport {
     }
 }
 
-pub struct MeshGlobalRateLimiter {
-    per_second: AtomicSlidingWindow,
-    per_minute: AtomicSlidingWindow,
-}
-
-impl MeshGlobalRateLimiter {
-    pub fn new(messages_per_second: usize, messages_per_minute: usize) -> Self {
-        Self {
-            per_second: AtomicSlidingWindow::new(1, 10),
-            per_minute: AtomicSlidingWindow::new(60, 60),
-        }
-    }
-
-    pub(crate) fn check(&self) -> GlobalRateLimitCheck {
-        let now_ms = crate::utils::safe_unix_duration().as_millis() as u64;
-
-        GlobalRateLimitCheck {
-            current_per_second: self.per_second.get_count(now_ms),
-            current_per_minute: self.per_minute.get_count(now_ms),
-        }
-    }
-
-    pub fn record(&self) {
-        let now_ms = crate::utils::safe_unix_duration().as_millis() as u64;
-
-        self.per_second.increment(now_ms);
-        self.per_minute.increment(now_ms);
-    }
-}
-
-pub(crate) struct GlobalRateLimitCheck {
-    pub current_per_second: u64,
-    pub current_per_minute: u64,
-}
-
 #[derive(Clone)]
 pub(crate) struct QueuedMessage {
     target_node: String,
@@ -261,19 +228,6 @@ impl PendingQueryManager {
     pub(crate) fn cleanup(&mut self) {
         self.pending.retain(|_, sender| !sender.is_closed());
     }
-}
-
-#[derive(Clone)]
-pub struct MeshPeerConnection {
-    pub node_id: String,
-    pub address: String,
-    pub connection: Connection,
-    pub session_id: String,
-    pub connected_at: Instant,
-    pub last_seen: Instant,
-    pub role: crate::mesh::config::MeshNodeRole,
-    pub upstreams: Vec<String>,
-    pub is_trusted: bool,
 }
 
 impl MeshTransport {

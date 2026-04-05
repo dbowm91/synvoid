@@ -83,7 +83,7 @@ macro_rules! pattern_detector {
             }
 
             fn detect(&self, input: &str, location: InputLocation) -> Option<AttackDetectionResult> {
-                self.detect(input, location)
+                self.inner.detect_internal(input, location)
             }
         }
     };
@@ -197,7 +197,7 @@ macro_rules! url_decode_detector {
             }
 
             fn detect(&self, input: &str, location: InputLocation) -> Option<AttackDetectionResult> {
-                self.detect(input, location)
+                self.detect_with_url_decode(input, location)
             }
         }
     };
@@ -522,14 +522,20 @@ where
 {
     if let Some(p) = path {
         let normalized = normalizer.normalize(p);
-        if let Some(result) = detector.detect(normalized.as_str(), InputLocation::Path) {
+        if let Some(result) =
+            detect_with_pre_normalized(detector, normalized.as_lowercased(), InputLocation::Path)
+        {
             return Some(result);
         }
     }
 
     if let Some(qs) = query_string {
         let normalized = normalizer.normalize(qs);
-        if let Some(result) = detector.detect(normalized.as_str(), InputLocation::QueryString) {
+        if let Some(result) = detect_with_pre_normalized(
+            detector,
+            normalized.as_lowercased(),
+            InputLocation::QueryString,
+        ) {
             return Some(result);
         }
     }
@@ -541,11 +547,35 @@ where
     if let Some(body_bytes) = body {
         if let Ok(body_str) = std::str::from_utf8(body_bytes) {
             let normalized = normalizer.normalize(body_str);
-            if let Some(result) = detector.detect(normalized.as_str(), InputLocation::PostBody) {
+            if let Some(result) = detect_with_pre_normalized(
+                detector,
+                normalized.as_lowercased(),
+                InputLocation::PostBody,
+            ) {
                 return Some(result);
             }
         }
     }
 
+    None
+}
+
+fn detect_with_pre_normalized<D>(
+    detector: &D,
+    lowercased: &str,
+    location: InputLocation,
+) -> Option<AttackDetectionResult>
+where
+    D: PatternDetector,
+{
+    if let Some(mat) = detector.patterns().find(lowercased) {
+        let matched = lowercased[mat.start()..mat.end()].to_string();
+        return Some(AttackDetectionResult {
+            attack_type: AttackType::Other,
+            fingerprint: None,
+            matched_pattern: Some(matched),
+            input_location: location,
+        });
+    }
     None
 }

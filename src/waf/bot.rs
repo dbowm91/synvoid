@@ -10,6 +10,7 @@ pub struct BotDetector {
     ai_crawlers_block: Arc<HashSet<String>>,
     scraper_patterns: Arc<HashSet<String>>,
     known_bot_ja3_hashes: Arc<HashSet<String>>,
+    known_bot_ja4_hashes: Arc<HashSet<String>>,
     block_ai_crawlers: bool,
     block_scrapers: bool,
 }
@@ -37,6 +38,24 @@ impl BotDetector {
         block_ai_crawlers: bool,
         known_bot_ja3_hashes: Vec<String>,
     ) -> Self {
+        Self::with_ja4(
+            known_bots_allow,
+            ai_crawlers_block,
+            scraper_patterns,
+            block_ai_crawlers,
+            known_bot_ja3_hashes,
+            Vec::new(),
+        )
+    }
+
+    pub fn with_ja4(
+        known_bots_allow: Vec<String>,
+        ai_crawlers_block: Vec<String>,
+        scraper_patterns: Vec<String>,
+        block_ai_crawlers: bool,
+        known_bot_ja3_hashes: Vec<String>,
+        known_bot_ja4_hashes: Vec<String>,
+    ) -> Self {
         let known_bots_allow: HashSet<String> = known_bots_allow
             .into_iter()
             .map(|s| s.to_lowercase())
@@ -57,11 +76,17 @@ impl BotDetector {
             .map(|s| s.to_lowercase())
             .collect();
 
+        let known_bot_ja4_hashes: HashSet<String> = known_bot_ja4_hashes
+            .into_iter()
+            .map(|s| s.to_lowercase())
+            .collect();
+
         BotDetector {
             known_bots_allow: Arc::new(known_bots_allow),
             ai_crawlers_block: Arc::new(ai_crawlers_block),
             scraper_patterns: Arc::new(scraper_patterns),
             known_bot_ja3_hashes: Arc::new(known_bot_ja3_hashes),
+            known_bot_ja4_hashes: Arc::new(known_bot_ja4_hashes),
             block_ai_crawlers,
             block_scrapers: true,
         }
@@ -85,13 +110,43 @@ impl BotDetector {
         site_block_ai_crawlers: Option<bool>,
         ja3_hash: Option<&str>,
     ) -> BotDetectionResult {
-        if let Some(hash) = ja3_hash {
-            if let Some(result) = self.check_ja3(hash) {
-                return result;
-            }
+        if let Some(result) = self.check_fingerprints(ja3_hash, None) {
+            return result;
         }
 
         self.check_user_agent(user_agent, site_block_ai_crawlers)
+    }
+
+    pub fn check_with_fingerprints(
+        &self,
+        user_agent: Option<&str>,
+        site_block_ai_crawlers: Option<bool>,
+        ja3_hash: Option<&str>,
+        ja4_hash: Option<&str>,
+    ) -> BotDetectionResult {
+        if let Some(result) = self.check_fingerprints(ja3_hash, ja4_hash) {
+            return result;
+        }
+
+        self.check_user_agent(user_agent, site_block_ai_crawlers)
+    }
+
+    fn check_fingerprints(
+        &self,
+        ja3_hash: Option<&str>,
+        ja4_hash: Option<&str>,
+    ) -> Option<BotDetectionResult> {
+        if let Some(hash) = ja3_hash {
+            if let Some(result) = self.check_ja3(hash) {
+                return Some(result);
+            }
+        }
+        if let Some(hash) = ja4_hash {
+            if let Some(result) = self.check_ja4(hash) {
+                return Some(result);
+            }
+        }
+        None
     }
 
     pub fn check_ja3(&self, ja3_hash: &str) -> Option<BotDetectionResult> {
@@ -100,6 +155,18 @@ impl BotDetector {
             Some(BotDetectionResult::Blocked {
                 reason: "ja3_bot_fingerprint_matched".to_string(),
                 bot_type: "ja3".to_string(),
+            })
+        } else {
+            None
+        }
+    }
+
+    pub fn check_ja4(&self, ja4_hash: &str) -> Option<BotDetectionResult> {
+        let hash_lower = ja4_hash.to_lowercase();
+        if self.known_bot_ja4_hashes.contains(&hash_lower) {
+            Some(BotDetectionResult::Blocked {
+                reason: "ja4_bot_fingerprint_matched".to_string(),
+                bot_type: "ja4".to_string(),
             })
         } else {
             None

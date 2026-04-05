@@ -269,14 +269,13 @@ impl RateLimiterManager {
                             }
                         }
                         let mut requests = shard.ip_requests.write();
+                        let cutoff_1s = now - Duration::from_secs(1);
+                        let cutoff_60s = now - Duration::from_secs(60);
+                        let cutoff_300s = now - Duration::from_secs(300);
+                        let cutoff_600s = now - Duration::from_secs(600);
+                        let cutoff_3600s = now - Duration::from_secs(3600);
+                        let cutoff_86400s = now - Duration::from_secs(86400);
                         requests.retain(|_ip, state| {
-                            let cutoff_1s = now - Duration::from_secs(1);
-                            let cutoff_60s = now - Duration::from_secs(60);
-                            let cutoff_300s = now - Duration::from_secs(300);
-                            let cutoff_600s = now - Duration::from_secs(600);
-                            let cutoff_3600s = now - Duration::from_secs(3600);
-                            let cutoff_86400s = now - Duration::from_secs(86400);
-
                             state.per_second.remove_older_than(cutoff_1s);
                             state.per_minute.remove_older_than(cutoff_60s);
                             state.per_5min.remove_older_than(cutoff_300s);

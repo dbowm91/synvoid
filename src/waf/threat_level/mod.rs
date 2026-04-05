@@ -31,6 +31,14 @@ pub struct ThreatLevelConfigExtended {
     pub history_retention_days: u32,
     pub history_flush_interval_secs: u32,
     pub use_sqlite_history: bool,
+    pub violations_before_block: u32,
+    pub violation_window_secs: u32,
+    pub excluded_ips: Vec<String>,
+    pub initial_level: u8,
+    pub scale_up_attacks_per_min: u32,
+    pub scale_down_window_secs: u32,
+    pub scale_down_attacks_per_min: u32,
+    pub persist_interval_attack_secs: u32,
 }
 
 impl Default for ThreatLevelConfigExtended {
@@ -46,6 +54,14 @@ impl Default for ThreatLevelConfigExtended {
             history_retention_days: 365,
             history_flush_interval_secs: 60,
             use_sqlite_history: true,
+            violations_before_block: 3,
+            violation_window_secs: 300,
+            excluded_ips: vec!["127.0.0.1".to_string()],
+            initial_level: 1,
+            scale_up_attacks_per_min: 50,
+            scale_down_window_secs: 300,
+            scale_down_attacks_per_min: 10,
+            persist_interval_attack_secs: 15,
         }
     }
 }
@@ -85,6 +101,14 @@ impl From<&ThreatLevelConfig> for ThreatLevelConfigExtended {
             history_retention_days: 365,
             history_flush_interval_secs: 60,
             use_sqlite_history: true,
+            violations_before_block: 3,
+            violation_window_secs: 300,
+            excluded_ips: vec!["127.0.0.1".to_string()],
+            initial_level: 1,
+            scale_up_attacks_per_min: 50,
+            scale_down_window_secs: 300,
+            scale_down_attacks_per_min: 10,
+            persist_interval_attack_secs: 15,
         }
     }
 }
@@ -449,19 +473,19 @@ impl ThreatLevelManager {
         LegacyThreatLevelConfig {
             escalation: LegacyEscalationConfig {
                 enabled: self.config.learning_enabled,
-                violations_before_block: 3,
-                violation_window_secs: 300,
-                excluded_ips: vec!["127.0.0.1".to_string()],
+                violations_before_block: self.config.violations_before_block,
+                violation_window_secs: self.config.violation_window_secs,
+                excluded_ips: self.config.excluded_ips.clone(),
             },
             auto_scale: self.config.learning_enabled,
-            initial: 1,
+            initial: self.config.initial_level,
             cooldown_secs: self.cooldown_duration.as_secs() as u32,
             scale_up_window_secs: self.config.learning_duration_secs,
-            scale_up_attacks_per_min: 50,
-            scale_down_window_secs: 300,
-            scale_down_attacks_per_min: 10,
+            scale_up_attacks_per_min: self.config.scale_up_attacks_per_min,
+            scale_down_window_secs: self.config.scale_down_window_secs,
+            scale_down_attacks_per_min: self.config.scale_down_attacks_per_min,
             persist_interval_normal_secs: self.config.history_flush_interval_secs,
-            persist_interval_attack_secs: 15,
+            persist_interval_attack_secs: self.config.persist_interval_attack_secs,
         }
     }
 

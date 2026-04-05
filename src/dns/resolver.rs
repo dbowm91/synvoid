@@ -569,7 +569,7 @@ impl DnsResolver for HickoryResolver {
 }
 
 #[derive(Debug, Default)]
-pub(crate) struct LookupResult {
+struct LookupResult {
     pub ip_addrs: Vec<IpAddr>,
     pub txt_values: Vec<String>,
     pub ns_names: Vec<String>,

@@ -47,6 +47,7 @@ pub mod transport_peer;
 pub mod transport_rate_limit;
 #[cfg(feature = "mesh")]
 pub mod transport_routing;
+pub mod transport_types;
 pub mod transports;
 pub mod wasm_dist;
 pub mod yara_rules;
