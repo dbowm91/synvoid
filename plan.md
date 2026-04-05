@@ -11,6 +11,7 @@
 > **Updated: 2026-04-05 (session 5 — additional fixes, 6 items completed)**
 > **Updated: 2026-04-05 (session 6 — deferred items, 4T completed, 4W verified, 6V completed)**
 > **Updated: 2026-04-05 (session 7 — deferred items: config schema, dns.rs split)**
+> **Updated: 2026-04-05 (session 8 — deferred items: config/site.rs split)**
 > Status: **~94% COMPLETE**
 
 ---
@@ -1310,7 +1311,6 @@ cargo build --features "dns,mesh,socket-handoff,post-quantum,wireguard"
 |------|--------|-------|
 | Config Schema Generation (schemars) | ~918 lines of hardcoded schema, low urgency | `src/admin/handlers/config.rs` |
 | `http/server.rs` at 2,851 lines | Large but functional; split is non-trivial | `src/http/server.rs` |
-| `config/site.rs` at 1,910 lines | Large but functional; split is non-trivial | `src/config/site.rs` |
 | `config/dns.rs` at 1,838 lines | Large but functional; split is non-trivial | `src/config/dns.rs` |
 | 3W: Protocol enum size (74+ variants) | Generated from protobuf; splitting requires updating 479 usages | `src/mesh/protocol.rs` |
 | Shared request handler extraction | Large refactoring, low ROI | `src/http/server.rs`, `src/tls/server.rs`, `src/http3/server.rs` |
@@ -1756,6 +1756,26 @@ cargo check --lib
 
 ---
 
+## Session 8 Summary (2026-04-05)
+
+### Deferred Items Completed
+
+| Item | Description | Status | Fix Applied |
+|------|-------------|--------|-------------|
+| Config Schema Generation | Replace ~919 lines of hardcoded `ConfigFieldSchema` with schemars | ✅ FIXED | Added `JsonSchema` derive to 62 structs (61 in site.rs, 1 in geoip.rs). Replaced `get_config_schema()` with `schema_for!(MainConfig)` — 9 lines vs 919. Returns standard JSON Schema document. |
+| DNS Config Split | Split 1838-line `dns.rs` into submodules | ✅ FIXED | Created `src/config/dns/` directory with `mod.rs` (229 lines) + 9 submodules. All re-exported via `pub use` in `mod.rs`. |
+| Site Config Split | Split 1912-line `site.rs` into submodules | ✅ FIXED | Created `src/config/site/` directory with `mod.rs` (204 lines) + 16 submodules: `app_server.rs` (83L), `attack_detection.rs` (91L), `backend.rs` (206L), `defensive.rs` (70L), `error_pages.rs` (55L), `file_manager.rs` (38L), `listen.rs` (177L), `misc.rs` (52L), `network.rs` (68L), `protocol_features.rs` (74L), `proxy.rs` (310L), `ratelimit.rs` (67L), `security.rs` (216L), `static_files.rs` (173L), `traffic_shaping.rs` (43L), `upload.rs` (63L). All re-exported via `pub use` in `mod.rs`. Largest file is now 310 lines (proxy.rs), well within the 1000-line target. |
+
+### Still Deferred (Architectural Changes Required)
+
+| Item | Description | Reason |
+|------|-------------|--------|
+| 3W | Split MeshMessage enum | Protobuf codegen, 479+ usages across codebase, wire compatibility risk |
+| 3R | Full sharded topology | route_cache already optimized with Moka; 64-shard pattern requires updating all access patterns in 1840-line file |
+| Large file splits | http/server.rs (3249L) | server.rs has 2165-line handle_request() |
+
+---
+
 ## Session 7 Summary (2026-04-05)
 
 ### Deferred Items Completed
@@ -1771,4 +1791,4 @@ cargo check --lib
 |------|-------------|--------|
 | 3W | Split MeshMessage enum | Protobuf codegen, 479+ usages across codebase, wire compatibility risk |
 | 3R | Full sharded topology | route_cache already optimized with Moka; 64-shard pattern requires updating all access patterns in 1840-line file |
-| Large file splits | http/server.rs (3249L), config/site.rs (1912L) | server.rs has 2165-line handle_request(); site.rs has many external consumers |
+| Large file splits | http/server.rs (3249L) | server.rs has 2165-line handle_request() |
