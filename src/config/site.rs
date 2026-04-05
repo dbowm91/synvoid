@@ -21,7 +21,7 @@ fn default_wasm_on_error() -> WasmOnError {
     WasmOnError::FailOpen
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct SiteConfig {
     pub site: SiteInfo,
     #[serde(default)]
@@ -81,7 +81,7 @@ pub struct SiteConfig {
     pub file_manager: SiteFileManagerConfig,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct SiteProxyConfig {
     #[serde(default)]
     pub max_response_size: Option<usize>,
@@ -128,7 +128,7 @@ pub enum WasmOnError {
     FailClosed,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct ProxyHeadersConfig {
     #[serde(default)]
     pub clear: Vec<String>,
@@ -143,13 +143,13 @@ pub struct ProxyHeadersConfig {
     pub hide: Vec<String>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
 pub struct HeaderOverride {
     pub name: String,
     pub value: String,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct ProxyUpstreamConfig {
     #[serde(default)]
     pub keepalive: Option<usize>,
@@ -238,7 +238,7 @@ impl ProxyUpstreamConfig {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct RetryConfig {
     #[serde(default = "default_retry_enabled")]
     pub enabled: bool,
@@ -281,7 +281,7 @@ fn default_retry_non_idempotent() -> bool {
     false
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct BufferingConfig {
     #[serde(default)]
     pub enabled: Option<bool>,
@@ -363,7 +363,7 @@ fn default_cache_min_uses() -> u32 {
     1
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct UpstreamTlsConfig {
     #[serde(default)]
     pub enabled: Option<bool>,
@@ -384,7 +384,7 @@ pub struct UpstreamTlsConfig {
     pub skip_verify_reason: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct FastCgiConfig {
     #[serde(default)]
     pub socket: Option<String>,
@@ -414,7 +414,7 @@ pub struct FastCgiConfig {
     pub read_timeout: Option<u64>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct PhpConfig {
     #[serde(default)]
     pub socket: Option<String>,
@@ -471,7 +471,7 @@ pub struct PhpConfig {
     pub post_max_size: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct CgiConfig {
     #[serde(default)]
     pub root: Option<String>,
@@ -489,7 +489,7 @@ pub struct CgiConfig {
     pub stdout_stderr_merge: Option<bool>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
 pub struct LocationConfig {
     pub path: String,
     #[serde(default)]
@@ -519,7 +519,7 @@ impl LocationConfig {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct FastCgiLocationConfig {
     #[serde(default)]
     pub socket: Option<String>,
@@ -539,7 +539,7 @@ pub struct FastCgiLocationConfig {
     pub read_timeout: Option<u64>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct PhpLocationConfig {
     #[serde(default)]
     pub socket: Option<String>,
@@ -561,7 +561,7 @@ pub struct PhpLocationConfig {
     pub read_timeout: Option<u64>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct CgiLocationConfig {
     #[serde(default)]
     pub root: Option<String>,
@@ -571,13 +571,13 @@ pub struct CgiLocationConfig {
     pub timeout: Option<u64>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct LocationProxyConfig {
     #[serde(default)]
     pub url: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
 #[serde(tag = "type")]
 pub enum BackendConfig {
     #[serde(rename = "upstream")]
@@ -610,7 +610,7 @@ pub enum BackendConfig {
     },
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct SiteTcpConfig {
     #[serde(default)]
     pub enabled: Option<bool>,
@@ -620,7 +620,7 @@ pub struct SiteTcpConfig {
     pub filter: Option<SiteProtocolFilterConfig>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct SiteUdpConfig {
     #[serde(default)]
     pub enabled: Option<bool>,
@@ -630,7 +630,7 @@ pub struct SiteUdpConfig {
     pub filter: Option<SiteProtocolFilterConfig>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct SiteUdpPortConfig {
     #[serde(default)]
     pub port: Option<u16>,
@@ -642,7 +642,7 @@ pub struct SiteUdpPortConfig {
     pub filter: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct SitePortConfig {
     #[serde(default)]
     pub port: Option<u16>,
@@ -652,7 +652,7 @@ pub struct SitePortConfig {
     pub filter: Option<String>, // "allow", "drop", "challenge"
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct SiteProtocolFilterConfig {
     #[serde(default)]
     pub enabled: Option<bool>,
@@ -668,7 +668,7 @@ pub struct SiteProtocolFilterConfig {
     pub blocked: Option<Vec<String>>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct SiteGrpcConfig {
     #[serde(default)]
     pub enabled: Option<bool>,
@@ -692,7 +692,7 @@ pub struct SiteGrpcConfig {
     pub max_concurrent_streams: Option<u32>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct SiteWebSocketConfig {
     #[serde(default)]
     pub enabled: Option<bool>,
@@ -712,7 +712,7 @@ pub struct SiteWebSocketConfig {
     pub ping_timeout_secs: Option<u64>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct SiteTunnelConfig {
     #[serde(default)]
     pub enabled: Option<bool>,
@@ -720,7 +720,7 @@ pub struct SiteTunnelConfig {
     pub mappings: std::collections::HashMap<String, u16>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct SiteAppServerConfig {
     #[serde(default)]
     pub enabled: Option<bool>,
@@ -772,7 +772,7 @@ impl SiteAppServerConfig {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct SiteTarpitConfig {
     #[serde(default)]
     pub enabled: Option<bool>,
@@ -786,7 +786,7 @@ pub struct SiteTarpitConfig {
     pub response_delay_ms: Option<u64>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct SiteCssChallengeConfig {
     #[serde(default)]
     pub enabled: Option<bool>,
@@ -804,7 +804,7 @@ pub struct SiteCssChallengeConfig {
     pub block: Option<SiteCssBlockConfig>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct SiteCssBlockConfig {
     #[serde(default)]
     pub enabled: Option<bool>,
@@ -812,7 +812,7 @@ pub struct SiteCssBlockConfig {
     pub ban_duration: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct SiteListenConfig {
     #[serde(default)]
     pub address: Option<String>,
@@ -869,7 +869,7 @@ impl SiteListenConfig {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct SiteInfo {
     pub domains: Vec<String>,
     #[serde(default)]
@@ -877,7 +877,7 @@ pub struct SiteInfo {
     pub upstream: UpstreamConfig,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct UpstreamConfig {
     #[serde(default = "default_upstream")]
     pub default: String,
@@ -919,7 +919,7 @@ impl UpstreamConfig {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct SiteRateLimitConfig {
     #[serde(default)]
     pub mode: Option<String>,
@@ -931,7 +931,7 @@ pub struct SiteRateLimitConfig {
     pub endpoints: Vec<EndpointRateLimitConfig>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
 pub struct IpRateLimitOverride {
     pub per_second: Option<u32>,
     pub per_minute: Option<u32>,
@@ -941,7 +941,7 @@ pub struct IpRateLimitOverride {
     pub burst: Option<u32>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
 pub struct GlobalRateLimitOverride {
     pub per_second: Option<u32>,
     pub per_minute: Option<u32>,
@@ -949,7 +949,7 @@ pub struct GlobalRateLimitOverride {
     pub max_connections: Option<u32>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
 pub struct EndpointRateLimitConfig {
     pub path_pattern: String,
     pub per_minute: Option<u32>,
@@ -957,7 +957,7 @@ pub struct EndpointRateLimitConfig {
     pub burst: Option<u32>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct SiteBlockedConfig {
     #[serde(default)]
     pub paths: Option<Vec<String>>,
@@ -969,7 +969,7 @@ pub struct SiteBlockedConfig {
     pub block_response_code: Option<u16>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct SiteBotConfig {
     #[serde(default)]
     pub inherit: Option<bool>,
@@ -985,7 +985,7 @@ pub struct SiteBotConfig {
     pub challenge_type: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct SiteProbeConfig {
     #[serde(default)]
     pub inherit: Option<bool>,
@@ -999,7 +999,7 @@ pub struct SiteProbeConfig {
     pub upstream_errors_auto_ban: Option<bool>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct SiteErrorPagesConfig {
     #[serde(default)]
     pub inherit: Option<bool>,
@@ -1011,7 +1011,7 @@ pub struct SiteErrorPagesConfig {
     pub theme: Option<SiteThemeConfig>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct SiteThemeConfig {
     #[serde(default)]
     pub preset: Option<String>,
@@ -1052,7 +1052,7 @@ impl SiteThemeConfig {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct SiteWhitelistConfig {
     #[serde(default)]
     pub ips: Vec<String>,
@@ -1062,7 +1062,7 @@ pub struct SiteWhitelistConfig {
     pub user_agents: Vec<String>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct SiteWorkerPoolConfig {
     #[serde(default)]
     pub mode: Option<String>,
@@ -1149,7 +1149,7 @@ impl SiteConfig {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct SiteLoggingConfig {
     #[serde(default)]
     pub enabled: Option<bool>,
@@ -1157,7 +1157,7 @@ pub struct SiteLoggingConfig {
     pub format: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct SiteAttackDetectionConfig {
     #[serde(default = "default_attack_detection_enabled")]
     pub enabled: Option<bool>,
@@ -1181,19 +1181,19 @@ fn default_attack_detection_enabled() -> Option<bool> {
     Some(true)
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct SiteSqliConfig {
     #[serde(default)]
     pub enabled: Option<bool>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct SiteXssConfig {
     #[serde(default)]
     pub enabled: Option<bool>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct SitePathTraversalConfig {
     #[serde(default)]
     pub enabled: Option<bool>,
@@ -1201,7 +1201,7 @@ pub struct SitePathTraversalConfig {
     pub custom_patterns: Vec<String>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct SiteRfiConfig {
     #[serde(default)]
     pub enabled: Option<bool>,
@@ -1209,7 +1209,7 @@ pub struct SiteRfiConfig {
     pub custom_patterns: Vec<String>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct SiteSsrfConfig {
     #[serde(default)]
     pub enabled: Option<bool>,
@@ -1221,7 +1221,7 @@ pub struct SiteSsrfConfig {
     pub allowed_domains: Vec<String>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct SiteUploadConfig {
     #[serde(default)]
     pub enabled: Option<bool>,
@@ -1239,7 +1239,7 @@ pub struct SiteUploadConfig {
     pub paths: Vec<SitePathUploadConfig>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct SiteAllowedTypesConfig {
     #[serde(default)]
     pub mode: Option<String>,
@@ -1247,7 +1247,7 @@ pub struct SiteAllowedTypesConfig {
     pub mime_types: Vec<String>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct SitePathUploadConfig {
     pub pattern: String,
     #[serde(default)]
@@ -1258,7 +1258,7 @@ pub struct SitePathUploadConfig {
     pub allowed_types: SiteAllowedTypesConfig,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct SiteAuthConfig {
     #[serde(default)]
     pub enabled: Option<bool>,
@@ -1272,7 +1272,7 @@ pub struct SiteAuthConfig {
     pub lockout_duration_secs: Option<u64>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct SiteStaticConfig {
     #[serde(default)]
     pub enabled: Option<bool>,
@@ -1429,7 +1429,7 @@ fn default_preload_on_startup() -> Option<bool> {
     Some(true)
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
 pub struct StaticLocation {
     pub path: String,
     pub root: String,
@@ -1441,7 +1441,7 @@ pub struct StaticLocation {
     pub cache_ttl: Option<u64>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct SiteFileManagerConfig {
     #[serde(default)]
     pub enabled: Option<bool>,
@@ -1475,7 +1475,7 @@ impl SiteFileManagerConfig {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct SiteSecurityConfig {
     #[serde(default)]
     pub reject_unknown_hosts: Option<bool>,
@@ -1485,13 +1485,13 @@ pub struct SiteSecurityConfig {
     pub upstream: SiteUpstreamConfig,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct SiteUpstreamConfig {
     #[serde(default)]
     pub tls: Option<SiteUpstreamTlsConfig>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct SiteUpstreamTlsConfig {
     #[serde(default = "default_tls_verify")]
     pub verify: Option<bool>,
@@ -1509,7 +1509,7 @@ fn default_tls_verify() -> Option<bool> {
     Some(true)
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct SiteSecurityHeadersConfig {
     #[serde(default)]
     pub enabled: Option<bool>,
@@ -1577,7 +1577,7 @@ fn default_date_jitter() -> Option<u32> {
     Some(5)
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct SiteCorsConfig {
     #[serde(default)]
     pub enabled: Option<bool>,
@@ -1601,7 +1601,7 @@ fn default_allow_wildcard_cors() -> bool {
     false
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct SiteCookieConfig {
     #[serde(default)]
     pub secure: Option<bool>,
@@ -1611,7 +1611,7 @@ pub struct SiteCookieConfig {
     pub samesite: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
 pub struct SiteTrafficShapingConfig {
     #[serde(default)]
     pub enabled: Option<bool>,
@@ -1640,7 +1640,7 @@ impl Default for SiteTrafficShapingConfig {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct SiteTrafficConnectionConfig {
     #[serde(default)]
     pub max_connections: Option<u32>,
@@ -1652,7 +1652,7 @@ pub struct SiteTrafficConnectionConfig {
     pub connection_burst: Option<u32>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct SiteGeoipConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -1662,7 +1662,7 @@ pub struct SiteGeoipConfig {
     pub allowed_countries: Vec<String>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct SiteBasicAuthConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -1877,7 +1877,7 @@ impl SiteWebSocketConfig {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct SiteImagePoisonConfig {
     #[serde(default)]
     pub enabled: Option<bool>,

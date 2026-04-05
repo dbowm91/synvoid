@@ -90,7 +90,16 @@ pub struct HttpsServer {
     worker_id: Option<crate::process::ipc::WorkerId>,
     serverless_manager: Option<Arc<crate::serverless::manager::ServerlessManager>>,
     connection_limit: Arc<tokio::sync::Semaphore>,
-    app_servers: Option<Arc<tokio::sync::RwLock<std::collections::HashMap<String, Arc<crate::app_server::granian::GranianSupervisor>>>>>,
+    app_servers: Option<
+        Arc<
+            tokio::sync::RwLock<
+                std::collections::HashMap<
+                    String,
+                    Arc<crate::app_server::granian::GranianSupervisor>,
+                >,
+            >,
+        >,
+    >,
 }
 
 impl HttpsServer {
@@ -137,7 +146,10 @@ impl HttpsServer {
         self
     }
 
-    pub fn with_drain_state(mut self, drain_state: Arc<crate::worker::drain_state::WorkerDrainState>) -> Self {
+    pub fn with_drain_state(
+        mut self,
+        drain_state: Arc<crate::worker::drain_state::WorkerDrainState>,
+    ) -> Self {
         self.drain_state = Some(drain_state);
         self
     }
@@ -147,18 +159,28 @@ impl HttpsServer {
         self
     }
 
-    pub fn with_mesh_transport(mut self, mesh_transport: Arc<crate::mesh::transports::MeshTransportManager>) -> Self {
+    pub fn with_mesh_transport(
+        mut self,
+        mesh_transport: Arc<crate::mesh::transports::MeshTransportManager>,
+    ) -> Self {
         self.mesh_transport = Some(mesh_transport);
         self
     }
 
-    pub fn with_ipc(mut self, ipc: Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>, worker_id: crate::process::ipc::WorkerId) -> Self {
+    pub fn with_ipc(
+        mut self,
+        ipc: Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>,
+        worker_id: crate::process::ipc::WorkerId,
+    ) -> Self {
         self.ipc = Some(ipc);
         self.worker_id = Some(worker_id);
         self
     }
 
-    pub fn with_serverless_manager(mut self, serverless_manager: Arc<crate::serverless::manager::ServerlessManager>) -> Self {
+    pub fn with_serverless_manager(
+        mut self,
+        serverless_manager: Arc<crate::serverless::manager::ServerlessManager>,
+    ) -> Self {
         self.serverless_manager = Some(serverless_manager);
         self
     }
@@ -168,7 +190,17 @@ impl HttpsServer {
         self
     }
 
-    pub fn with_app_servers(mut self, app_servers: Arc<tokio::sync::RwLock<std::collections::HashMap<String, Arc<crate::app_server::granian::GranianSupervisor>>>>) -> Self {
+    pub fn with_app_servers(
+        mut self,
+        app_servers: Arc<
+            tokio::sync::RwLock<
+                std::collections::HashMap<
+                    String,
+                    Arc<crate::app_server::granian::GranianSupervisor>,
+                >,
+            >,
+        >,
+    ) -> Self {
         self.app_servers = Some(app_servers);
         self
     }
@@ -468,7 +500,16 @@ impl HttpsServer {
         ipc: Option<Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>>,
         worker_id: Option<crate::process::ipc::WorkerId>,
         serverless_manager: Option<Arc<crate::serverless::manager::ServerlessManager>>,
-        app_servers: Option<Arc<tokio::sync::RwLock<std::collections::HashMap<String, Arc<crate::app_server::granian::GranianSupervisor>>>>>,
+        app_servers: Option<
+            Arc<
+                tokio::sync::RwLock<
+                    std::collections::HashMap<
+                        String,
+                        Arc<crate::app_server::granian::GranianSupervisor>,
+                    >,
+                >,
+            >,
+        >,
     ) -> Result<Response<BoxBody<Bytes, Infallible>>, hyper::Error> {
         let client_ip = client_addr.ip();
         let path = req
@@ -878,7 +919,9 @@ impl HttpsServer {
                                                 )
                                             }));
                                     }
-                                    crate::static_files::StaticResponseBody::ZeroCopy(file_path) => {
+                                    crate::static_files::StaticResponseBody::ZeroCopy(
+                                        file_path,
+                                    ) => {
                                         let file = match tokio::fs::File::open(&file_path).await {
                                             Ok(f) => f,
                                             Err(e) => {
@@ -1588,17 +1631,21 @@ impl HttpsServer {
                         accumulated.extend_from_slice(&chunk);
 
                         if accumulated.len() - waf_checked_up_to >= CHUNK_SIZE {
-                            let check_end = accumulated.len().min(waf_checked_up_to + MAX_ACCUMULATED_WAF);
+                            let check_end = accumulated
+                                .len()
+                                .min(waf_checked_up_to + MAX_ACCUMULATED_WAF);
                             if check_end > waf_checked_up_to {
                                 let chunk_to_check = &accumulated[waf_checked_up_to..check_end];
                                 if let Some(decision) = waf.check_request_body(chunk_to_check) {
                                     match decision {
-                                        crate::proxy::WafDecision::Drop | crate::proxy::WafDecision::Block(_, _) => {
+                                        crate::proxy::WafDecision::Drop
+                                        | crate::proxy::WafDecision::Block(_, _) => {
                                             tracing::warn!(
                                                 client_ip = %client_ip,
                                                 "Request blocked during streaming body WAF check"
                                             );
-                                            counter!("maluwaf.https.streaming_body_blocked").increment(1);
+                                            counter!("maluwaf.https.streaming_body_blocked")
+                                                .increment(1);
                                             return Bytes::new();
                                         }
                                         _ => {}

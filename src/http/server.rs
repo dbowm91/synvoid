@@ -3126,17 +3126,21 @@ impl HttpServer {
                         accumulated.extend_from_slice(&chunk);
 
                         if accumulated.len() - waf_checked_up_to >= CHUNK_SIZE {
-                            let check_end = accumulated.len().min(waf_checked_up_to + MAX_ACCUMULATED_WAF);
+                            let check_end = accumulated
+                                .len()
+                                .min(waf_checked_up_to + MAX_ACCUMULATED_WAF);
                             if check_end > waf_checked_up_to {
                                 let chunk_to_check = &accumulated[waf_checked_up_to..check_end];
                                 if let Some(decision) = waf.check_request_body(chunk_to_check) {
                                     match decision {
-                                        crate::proxy::WafDecision::Drop | crate::proxy::WafDecision::Block(_, _) => {
+                                        crate::proxy::WafDecision::Drop
+                                        | crate::proxy::WafDecision::Block(_, _) => {
                                             tracing::warn!(
                                                 client_ip = %client_ip,
                                                 "Request blocked during streaming body WAF check"
                                             );
-                                            counter!("maluwaf.http.streaming_body_blocked").increment(1);
+                                            counter!("maluwaf.http.streaming_body_blocked")
+                                                .increment(1);
                                             return Bytes::new();
                                         }
                                         _ => {}

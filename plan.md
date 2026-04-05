@@ -10,7 +10,8 @@
 > **Verified: 2026-04-04 (session 4 — full codebase audit, every item verified against source)**
 > **Updated: 2026-04-05 (session 5 — additional fixes, 6 items completed)**
 > **Updated: 2026-04-05 (session 6 — deferred items, 4T completed, 4W verified, 6V completed)**
-> Status: **~92% COMPLETE**
+> **Updated: 2026-04-05 (session 7 — deferred items: config schema, dns.rs split)**
+> Status: **~94% COMPLETE**
 
 ---
 
@@ -1752,3 +1753,22 @@ cargo check --lib
 # Build passes with 0 errors
 cargo check --lib
 ```
+
+---
+
+## Session 7 Summary (2026-04-05)
+
+### Deferred Items Completed
+
+| Item | Description | Status | Fix Applied |
+|------|-------------|--------|-------------|
+| Config Schema Generation | Replace ~919 lines of hardcoded `ConfigFieldSchema` with schemars | ✅ FIXED | Added `JsonSchema` derive to 62 structs (61 in site.rs, 1 in geoip.rs). Replaced `get_config_schema()` with `schema_for!(MainConfig)` — 9 lines vs 919. Returns standard JSON Schema document. |
+| DNS Config Split | Split 1838-line `dns.rs` into submodules | ✅ FIXED | Created `src/config/dns/` directory with `mod.rs` (229 lines) + 9 submodules: `dns_rate_limit.rs` (124L), `dns_settings.rs` (391L), `dns_firewall.rs` (121L), `dns_encrypted.rs` (106L), `dns_dnssec.rs` (288L), `dns_zones.rs` (90L), `dns_mesh.rs` (91L), `dns_anycast.rs` (103L), `dns_misc.rs` (99L), `dns_recursive.rs` (259L). All re-exported via `pub use` in `mod.rs`. |
+
+### Still Deferred (Architectural Changes Required)
+
+| Item | Description | Reason |
+|------|-------------|--------|
+| 3W | Split MeshMessage enum | Protobuf codegen, 479+ usages across codebase, wire compatibility risk |
+| 3R | Full sharded topology | route_cache already optimized with Moka; 64-shard pattern requires updating all access patterns in 1840-line file |
+| Large file splits | http/server.rs (3249L), config/site.rs (1912L) | server.rs has 2165-line handle_request(); site.rs has many external consumers |
