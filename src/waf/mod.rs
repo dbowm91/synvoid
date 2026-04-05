@@ -921,6 +921,61 @@ impl WafCore {
         WafDecision::Pass
     }
 
+    pub fn check_request_body(&self, body: &[u8]) -> Option<WafDecision> {
+        if let Some(attack_detector) = self.attack_detector.load().as_ref() {
+            if self.test_mode.enabled && self.test_mode.attack_off {
+                return None;
+            }
+
+            if let Some(result) = attack_detector.check_body_only(body) {
+                metrics::counter!(
+                    "maluwaf.attack_detected",
+                    "type" => result.attack_type.to_string(),
+                    "location" => result.input_location.to_string(),
+                )
+                .increment(1);
+
+                crate::metrics::record_attack_type(&result.attack_type.to_string());
+
+                tracing::warn!(
+                    attack_type = %result.attack_type,
+                    location = %result.input_location,
+                    fingerprint = ?result.fingerprint,
+                    pattern = ?result.matched_pattern,
+                    "Streaming body attack detected"
+                );
+
+                let threat_level = self
+                    .threat_level
+                    .as_ref()
+                    .map(|tl| tl.get_level().as_u8())
+                    .unwrap_or(1);
+
+                if threat_level >= 3 {
+                    if let Some(decision) = self.maybe_escalate_and_block(
+                        std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
+                        "streaming_body_attack",
+                        threat_level,
+                        403,
+                        "Streaming body attack detected - IP blocked",
+                    ) {
+                        if let Some(ref tl) = self.threat_level {
+                            tl.record_blocked();
+                        }
+                        return Some(decision);
+                    }
+                }
+
+                if let Some(ref tl) = self.threat_level {
+                    tl.record_attack();
+                }
+
+                return Some(WafDecision::Stall);
+            }
+        }
+        None
+    }
+
     async fn check_rate_limit(&self, client_ip: IpAddr, path: &str) -> Option<WafDecision> {
         if !self.test_mode.enabled || !self.test_mode.ratelimit_off {
             if self.rate_limiter.is_in_blackhole() {

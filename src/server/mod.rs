@@ -1107,6 +1107,27 @@ impl UnifiedServer {
         if let Some(fp) = state.flood_protector.clone() {
             server = server.with_flood_protector(fp);
         }
+        if let Some(metrics) = state.metrics.clone() {
+            server = server.with_metrics(metrics);
+        }
+        if let Some(ds) = state.drain_state.clone() {
+            server = server.with_drain_state(ds);
+        }
+        if let Some(mt) = state.mesh_transport.clone() {
+            let config_guard = state.config.read().await;
+            if let Some(mesh_cfg) = config_guard.main.mesh.clone() {
+                server = server.with_mesh_config(Arc::new(mesh_cfg));
+            }
+            drop(config_guard);
+            server = server.with_mesh_transport(mt);
+        }
+        if let (Some(ipc), Some(worker_id)) = (state.ipc.clone(), state.worker_id) {
+            server = server.with_ipc(ipc, worker_id);
+        }
+        if let Some(sm) = state.serverless_manager.clone() {
+            server = server.with_serverless_manager(sm);
+        }
+        server = server.with_app_servers(state.app_servers.clone());
 
         server.serve().await
     }

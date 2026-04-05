@@ -83,6 +83,14 @@ pub struct HttpsServer {
     metrics: Option<Arc<crate::metrics::WorkerMetrics>>,
     shutdown_rx: broadcast::Receiver<()>,
     proxy_servers: Arc<tokio::sync::RwLock<std::collections::HashMap<String, Arc<ProxyServer>>>>,
+    drain_state: Option<Arc<crate::worker::drain_state::WorkerDrainState>>,
+    mesh_config: Option<Arc<crate::mesh::config::MeshConfig>>,
+    mesh_transport: Option<Arc<crate::mesh::transports::MeshTransportManager>>,
+    ipc: Option<Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>>,
+    worker_id: Option<crate::process::ipc::WorkerId>,
+    serverless_manager: Option<Arc<crate::serverless::manager::ServerlessManager>>,
+    connection_limit: Arc<tokio::sync::Semaphore>,
+    app_servers: Option<Arc<tokio::sync::RwLock<std::collections::HashMap<String, Arc<crate::app_server::granian::GranianSupervisor>>>>>,
 }
 
 impl HttpsServer {
@@ -108,6 +116,14 @@ impl HttpsServer {
             metrics: None,
             shutdown_rx,
             proxy_servers: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+            drain_state: None,
+            mesh_config: None,
+            mesh_transport: None,
+            ipc: None,
+            worker_id: None,
+            serverless_manager: None,
+            connection_limit: Arc::new(tokio::sync::Semaphore::new(10000)),
+            app_servers: None,
         }
     }
 
@@ -118,6 +134,42 @@ impl HttpsServer {
 
     pub fn with_metrics(mut self, metrics: Arc<crate::metrics::WorkerMetrics>) -> Self {
         self.metrics = Some(metrics);
+        self
+    }
+
+    pub fn with_drain_state(mut self, drain_state: Arc<crate::worker::drain_state::WorkerDrainState>) -> Self {
+        self.drain_state = Some(drain_state);
+        self
+    }
+
+    pub fn with_mesh_config(mut self, mesh_config: Arc<crate::mesh::config::MeshConfig>) -> Self {
+        self.mesh_config = Some(mesh_config);
+        self
+    }
+
+    pub fn with_mesh_transport(mut self, mesh_transport: Arc<crate::mesh::transports::MeshTransportManager>) -> Self {
+        self.mesh_transport = Some(mesh_transport);
+        self
+    }
+
+    pub fn with_ipc(mut self, ipc: Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>, worker_id: crate::process::ipc::WorkerId) -> Self {
+        self.ipc = Some(ipc);
+        self.worker_id = Some(worker_id);
+        self
+    }
+
+    pub fn with_serverless_manager(mut self, serverless_manager: Arc<crate::serverless::manager::ServerlessManager>) -> Self {
+        self.serverless_manager = Some(serverless_manager);
+        self
+    }
+
+    pub fn with_connection_limit(mut self, connection_limit: Arc<tokio::sync::Semaphore>) -> Self {
+        self.connection_limit = connection_limit;
+        self
+    }
+
+    pub fn with_app_servers(mut self, app_servers: Arc<tokio::sync::RwLock<std::collections::HashMap<String, Arc<crate::app_server::granian::GranianSupervisor>>>>) -> Self {
+        self.app_servers = Some(app_servers);
         self
     }
 
@@ -159,6 +211,14 @@ impl HttpsServer {
         let main_config = self.main_config.clone();
         let flood_protector = self.flood_protector.clone();
         let proxy_servers = self.proxy_servers.clone();
+        let metrics = self.metrics.clone();
+        let drain_state = self.drain_state.clone();
+        let mesh_config = self.mesh_config.clone();
+        let mesh_transport = self.mesh_transport.clone();
+        let ipc = self.ipc.clone();
+        let worker_id = self.worker_id;
+        let serverless_manager = self.serverless_manager.clone();
+        let app_servers = self.app_servers.clone();
 
         let _header_read_timeout = Duration::from_secs(self.http_config.header_read_timeout_secs);
         let max_headers = self.http_config.max_headers;
@@ -201,6 +261,22 @@ impl HttpsServer {
                             let http_config = http_config.clone();
                             let main_config = main_config.clone();
                             let proxy_servers = proxy_servers.clone();
+                            let metrics_h2 = metrics.clone();
+                            let metrics_h1 = metrics.clone();
+                            let drain_state_h2 = drain_state.clone();
+                            let drain_state_h1 = drain_state.clone();
+                            let mesh_config_h2 = mesh_config.clone();
+                            let mesh_config_h1 = mesh_config.clone();
+                            let mesh_transport_h2 = mesh_transport.clone();
+                            let mesh_transport_h1 = mesh_transport.clone();
+                            let ipc_h2 = ipc.clone();
+                            let ipc_h1 = ipc.clone();
+                            let worker_id_h2 = worker_id;
+                            let worker_id_h1 = worker_id;
+                            let serverless_manager_h2 = serverless_manager.clone();
+                            let serverless_manager_h1 = serverless_manager.clone();
+                            let app_servers_h2 = app_servers.clone();
+                            let app_servers_h1 = app_servers.clone();
 
                             tokio::spawn(async move {
                                 match acceptor.accept(stream).await {
@@ -234,6 +310,13 @@ impl HttpsServer {
                                                 .max_header_list_size(max_headers as u32)
                                                 .serve_connection(io, hyper::service::service_fn({
                                                     let ps = proxy_servers.clone();
+                                                    let metrics = metrics_h2.clone();
+                                                    let drain_state = drain_state_h2.clone();
+                                                    let mesh_config = mesh_config_h2.clone();
+                                                    let mesh_transport = mesh_transport_h2.clone();
+                                                    let ipc = ipc_h2.clone();
+                                                    let serverless_manager = serverless_manager_h2.clone();
+                                                    let app_servers = app_servers_h2.clone();
                                                     move |req| {
                                                         let router = router.clone();
                                                         let waf = waf.clone();
@@ -242,8 +325,16 @@ impl HttpsServer {
                                                         let client_addr = client_addr;
                                                         let https_conn = https_conn_clone.clone();
                                                         let ps = ps.clone();
+                                                        let metrics = metrics.clone();
+                                                        let drain_state = drain_state.clone();
+                                                        let mesh_config = mesh_config.clone();
+                                                        let mesh_transport = mesh_transport.clone();
+                                                        let ipc = ipc.clone();
+                                                        let worker_id = worker_id_h2;
+                                                        let serverless_manager = serverless_manager.clone();
+                                                        let app_servers = app_servers.clone();
                                                         async move {
-                                                            Self::handle_request_with_cache(req, client_addr, router, waf, http_config, main_config, https_conn, ps).await
+                                                            Self::handle_request_with_cache(req, client_addr, router, waf, http_config, main_config, https_conn, ps, metrics, drain_state, mesh_config, mesh_transport, ipc, worker_id, serverless_manager, app_servers).await
                                                         }
                                                     }
                                                 }));
@@ -276,6 +367,13 @@ impl HttpsServer {
                                                 .keep_alive(true)
                                                 .serve_connection(io, hyper::service::service_fn({
                                                     let ps = proxy_servers.clone();
+                                                    let metrics = metrics_h1.clone();
+                                                    let drain_state = drain_state_h1.clone();
+                                                    let mesh_config = mesh_config_h1.clone();
+                                                    let mesh_transport = mesh_transport_h1.clone();
+                                                    let ipc = ipc_h1.clone();
+                                                    let serverless_manager = serverless_manager_h1.clone();
+                                                    let app_servers = app_servers_h1.clone();
                                                     move |req| {
                                                         let router = router.clone();
                                                         let waf = waf.clone();
@@ -284,8 +382,16 @@ impl HttpsServer {
                                                         let client_addr = client_addr;
                                                         let https_conn = https_conn_clone.clone();
                                                         let ps = ps.clone();
+                                                        let metrics = metrics.clone();
+                                                        let drain_state = drain_state.clone();
+                                                        let mesh_config = mesh_config.clone();
+                                                        let mesh_transport = mesh_transport.clone();
+                                                        let ipc = ipc.clone();
+                                                        let worker_id = worker_id_h1;
+                                                        let serverless_manager = serverless_manager.clone();
+                                                        let app_servers = app_servers.clone();
                                                         async move {
-                                                            Self::handle_request_with_cache(req, client_addr, router, waf, http_config, main_config, https_conn, ps).await
+                                                            Self::handle_request_with_cache(req, client_addr, router, waf, http_config, main_config, https_conn, ps, metrics, drain_state, mesh_config, mesh_transport, ipc, worker_id, serverless_manager, app_servers).await
                                                         }
                                                     }
                                                 }))
@@ -343,6 +449,7 @@ impl HttpsServer {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn handle_request_with_cache(
         req: hyper::Request<hyper::body::Incoming>,
         client_addr: SocketAddr,
@@ -354,6 +461,14 @@ impl HttpsServer {
         proxy_servers: Arc<
             tokio::sync::RwLock<std::collections::HashMap<String, Arc<ProxyServer>>>,
         >,
+        metrics: Option<Arc<crate::metrics::WorkerMetrics>>,
+        drain_state: Option<Arc<crate::worker::drain_state::WorkerDrainState>>,
+        mesh_config: Option<Arc<crate::mesh::config::MeshConfig>>,
+        mesh_transport: Option<Arc<crate::mesh::transports::MeshTransportManager>>,
+        ipc: Option<Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>>,
+        worker_id: Option<crate::process::ipc::WorkerId>,
+        serverless_manager: Option<Arc<crate::serverless::manager::ServerlessManager>>,
+        app_servers: Option<Arc<tokio::sync::RwLock<std::collections::HashMap<String, Arc<crate::app_server::granian::GranianSupervisor>>>>>,
     ) -> Result<Response<BoxBody<Bytes, Infallible>>, hyper::Error> {
         let client_ip = client_addr.ip();
         let path = req
@@ -480,11 +595,33 @@ impl HttpsServer {
         let query_string = parts.uri.query();
 
         let max_body_size = http_config.max_request_size;
-        let body_bytes = match body.collect().await {
-            Ok(collected) => collected.to_bytes(),
-            Err(e) => {
-                tracing::warn!("Failed to collect request body: {}", e);
-                Bytes::new()
+        const CHUNK_WAF_THRESHOLD: usize = 256 * 1024; // 256KB
+
+        let content_length: Option<usize> = parts
+            .headers
+            .get("content-length")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.parse().ok());
+
+        let body_bytes = if let Some(cl) = content_length {
+            if cl > CHUNK_WAF_THRESHOLD {
+                Self::collect_body_with_chunk_waf(body, &waf, client_ip).await
+            } else {
+                match body.collect().await {
+                    Ok(collected) => collected.to_bytes(),
+                    Err(e) => {
+                        tracing::warn!("Failed to collect request body: {}", e);
+                        Bytes::new()
+                    }
+                }
+            }
+        } else {
+            match body.collect().await {
+                Ok(collected) => collected.to_bytes(),
+                Err(e) => {
+                    tracing::warn!("Failed to collect request body: {}", e);
+                    Bytes::new()
+                }
             }
         };
 
@@ -683,6 +820,368 @@ impl HttpsServer {
                             }
                         }
                     }
+                }
+
+                if let Some(ref m) = metrics {
+                    m.record_site_proxied(&site_id);
+                }
+
+                // Static file serving
+                if matches!(target.backend_type, crate::router::BackendType::Static) {
+                    if let Some(ref static_handler) = target.static_handler {
+                        let accept_encoding = parts
+                            .headers
+                            .get("accept-encoding")
+                            .and_then(|v| v.to_str().ok())
+                            .map(|s| s.to_string());
+                        let if_none_match = parts
+                            .headers
+                            .get("if-none-match")
+                            .and_then(|v| v.to_str().ok())
+                            .map(|s| s.to_string());
+                        let if_modified_since = parts
+                            .headers
+                            .get("if-modified-since")
+                            .and_then(|v| v.to_str().ok())
+                            .map(|s| s.to_string());
+                        let range_header = parts
+                            .headers
+                            .get("range")
+                            .and_then(|v| v.to_str().ok())
+                            .map(|s| s.to_string());
+
+                        match static_handler
+                            .serve(
+                                &path,
+                                &method,
+                                accept_encoding.as_deref(),
+                                if_none_match.as_deref(),
+                                if_modified_since.as_deref(),
+                                range_header.as_deref(),
+                            )
+                            .await
+                        {
+                            Ok(response) => {
+                                let mut builder = http::Response::builder().status(response.status);
+                                for (name, value) in response.headers {
+                                    builder = builder.header(&name, &value);
+                                }
+                                match response.body {
+                                    crate::static_files::StaticResponseBody::InMemory(body) => {
+                                        return Ok(builder
+                                            .body(Full::new(body).boxed())
+                                            .unwrap_or_else(|_| {
+                                                Self::build_response(
+                                                    500,
+                                                    "Internal Server Error".to_string(),
+                                                    "text/plain",
+                                                )
+                                            }));
+                                    }
+                                    crate::static_files::StaticResponseBody::ZeroCopy(file_path) => {
+                                        let file = match tokio::fs::File::open(&file_path).await {
+                                            Ok(f) => f,
+                                            Err(e) => {
+                                                tracing::warn!(
+                                                    "Failed to open {}: {}",
+                                                    file_path.display(),
+                                                    e
+                                                );
+                                                return Ok(Self::build_response(
+                                                    500,
+                                                    "Internal Server Error".to_string(),
+                                                    "text/plain",
+                                                ));
+                                            }
+                                        };
+                                        use http_body_util::StreamBody;
+                                        use tokio_util::io::ReaderStream;
+                                        let stream = ReaderStream::new(file);
+                                        let mut body = StreamBody::new(stream);
+                                        use futures::StreamExt;
+                                        let mut body_bytes = Vec::new();
+                                        while let Some(chunk) = body.next().await {
+                                            if let Ok(bytes) = chunk {
+                                                body_bytes.extend_from_slice(&bytes);
+                                            }
+                                        }
+                                        let body = Bytes::from(body_bytes);
+                                        return Ok(builder
+                                            .body(Full::new(body).boxed())
+                                            .unwrap_or_else(|_| {
+                                                Self::build_response(
+                                                    500,
+                                                    "Internal Server Error".to_string(),
+                                                    "text/plain",
+                                                )
+                                            }));
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                tracing::warn!("Static file error for {}: {}", path, e);
+                            }
+                        }
+                    }
+                }
+
+                // Serverless function dispatch
+                if matches!(target.backend_type, crate::router::BackendType::Serverless) {
+                    if let Some(ref sm) = serverless_manager {
+                        let body_bytes_for_serverless: Bytes = body_bytes.clone();
+                        match crate::serverless::manager::handle_serverless_function(
+                            sm,
+                            &method,
+                            &path,
+                            &parts.headers,
+                            Some(body_bytes_for_serverless),
+                        )
+                        .await
+                        {
+                            Ok(response) => {
+                                let status = response.status();
+                                return Ok(Response::builder()
+                                    .status(status)
+                                    .body(Full::new(response.into_body()).boxed())
+                                    .unwrap_or_else(|_| {
+                                        Self::build_response(
+                                            500,
+                                            "Internal Server Error".to_string(),
+                                            "text/plain",
+                                        )
+                                    }));
+                            }
+                            Err(e) => {
+                                tracing::warn!("Serverless function error for {}: {}", path, e);
+                                return Ok(Self::build_response(
+                                    502,
+                                    format!("Serverless Error: {}", e),
+                                    "text/plain",
+                                ));
+                            }
+                        }
+                    }
+                    tracing::warn!(
+                        "Serverless backend for site {} but no serverless manager",
+                        target.site_id
+                    );
+                    return Ok(Self::build_response(
+                        502,
+                        "Serverless backend misconfigured: no runtime available".to_string(),
+                        "text/plain",
+                    ));
+                }
+
+                // FastCGI and PHP backend dispatch
+                if matches!(
+                    target.backend_type,
+                    crate::router::BackendType::FastCgi | crate::router::BackendType::Php
+                ) {
+                    if let Some(ref socket) = target.backend_socket {
+                        let body_bytes_for_fcgi: Bytes = body_bytes.clone();
+
+                        if matches!(target.backend_type, crate::router::BackendType::Php) {
+                            if let Some(php_client) =
+                                crate::php::create_php_client(&target.site_config)
+                            {
+                                match php_client
+                                    .execute(
+                                        &method,
+                                        &parts.uri,
+                                        &parts.headers,
+                                        body_bytes_for_fcgi,
+                                    )
+                                    .await
+                                {
+                                    Ok(response) => {
+                                        return Ok(response
+                                            .into_http_response()
+                                            .map(|b| Full::new(b).boxed()));
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            "PHP backend error for site {} path {}: {}",
+                                            target.site_id,
+                                            path,
+                                            e
+                                        );
+                                        return Ok(Self::build_response(
+                                            502,
+                                            format!("Backend Error: {}", e),
+                                            "text/plain",
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+
+                        let fcgi_config =
+                            target.site_config.proxy.fastcgi.clone().unwrap_or_default();
+
+                        let client = crate::fastcgi::FastCgiClient::new(socket.to_string());
+                        match client
+                            .execute(
+                                &method,
+                                &parts.uri,
+                                &parts.headers,
+                                body_bytes_for_fcgi,
+                                &fcgi_config,
+                            )
+                            .await
+                        {
+                            Ok(response) => {
+                                return Ok(response
+                                    .into_http_response()
+                                    .map(|b| Full::new(b).boxed()));
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    "FastCGI error for site {} path {}: {}",
+                                    target.site_id,
+                                    path,
+                                    e
+                                );
+                                return Ok(Self::build_response(
+                                    502,
+                                    format!("Backend Error: {}", e),
+                                    "text/plain",
+                                ));
+                            }
+                        }
+                    }
+                    tracing::warn!(
+                        "FastCGI/PHP backend for site {} but no socket configured",
+                        target.site_id
+                    );
+                    return Ok(Self::build_response(
+                        502,
+                        "Backend misconfigured: no socket configured".to_string(),
+                        "text/plain",
+                    ));
+                }
+
+                // CGI backend dispatch
+                if matches!(target.backend_type, crate::router::BackendType::Cgi) {
+                    if let Some(ref cgi_config) = target.site_config.proxy.cgi {
+                        match crate::cgi::CgiHandler::new(cgi_config) {
+                            Ok(handler) => {
+                                let body_bytes_for_cgi: Bytes = body_bytes.clone();
+                                match handler
+                                    .execute(
+                                        &method,
+                                        &parts.uri,
+                                        &parts.headers,
+                                        body_bytes_for_cgi,
+                                        Some(client_ip),
+                                    )
+                                    .await
+                                {
+                                    Ok(response) => {
+                                        return Ok(response
+                                            .into_http_response()
+                                            .map(|b| Full::new(b).boxed()));
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            "CGI error for site {} path {}: {}",
+                                            target.site_id,
+                                            path,
+                                            e
+                                        );
+                                        let status = match &e {
+                                            crate::cgi::CgiError::NotFound(_) => 404,
+                                            crate::cgi::CgiError::Forbidden(_) => 403,
+                                            crate::cgi::CgiError::Timeout => 504,
+                                            _ => 502,
+                                        };
+                                        return Ok(Self::build_response(
+                                            status,
+                                            format!("CGI Error: {}", e),
+                                            "text/plain",
+                                        ));
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    "CGI handler creation failed for site {} path {}: {}",
+                                    target.site_id,
+                                    path,
+                                    e
+                                );
+                                return Ok(Self::build_response(
+                                    500,
+                                    format!("CGI Configuration Error: {}", e),
+                                    "text/plain",
+                                ));
+                            }
+                        }
+                    }
+                    tracing::warn!(
+                        "CGI backend for site {} but no CGI config configured",
+                        target.site_id
+                    );
+                    return Ok(Self::build_response(
+                        502,
+                        "Backend misconfigured: no CGI root configured".to_string(),
+                        "text/plain",
+                    ));
+                }
+
+                // AppServer (Granian) backend dispatch
+                if matches!(target.backend_type, crate::router::BackendType::AppServer) {
+                    if let Some(ref app_servers) = app_servers {
+                        let app_servers_read = app_servers.read().await;
+                        if let Some(supervisor) = app_servers_read.get(target.site_id.as_ref()) {
+                            let socket_path = supervisor.config().resolve_socket_path();
+                            let body_bytes_for_appserver: Bytes = body_bytes.clone();
+
+                            let fcgi_config =
+                                target.site_config.proxy.fastcgi.clone().unwrap_or_default();
+
+                            let client = crate::fastcgi::FastCgiClient::new(
+                                socket_path.to_string_lossy().to_string(),
+                            );
+                            match client
+                                .execute(
+                                    &method,
+                                    &parts.uri,
+                                    &parts.headers,
+                                    body_bytes_for_appserver,
+                                    &fcgi_config,
+                                )
+                                .await
+                            {
+                                Ok(response) => {
+                                    return Ok(response
+                                        .into_http_response()
+                                        .map(|b| Full::new(b).boxed()));
+                                }
+                                Err(e) => {
+                                    tracing::warn!(
+                                        "AppServer (Granian) error for site {} path {}: {}",
+                                        target.site_id,
+                                        path,
+                                        e
+                                    );
+                                    return Ok(Self::build_response(
+                                        502,
+                                        format!("Backend Error: {}", e),
+                                        "text/plain",
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                    tracing::warn!(
+                        "AppServer backend for site {} but no app server running",
+                        target.site_id
+                    );
+                    return Ok(Self::build_response(
+                        502,
+                        "Backend misconfigured: app server not available".to_string(),
+                        "text/plain",
+                    ));
                 }
 
                 let cache_config = target.site_config.proxy.cache.as_ref();
@@ -1065,6 +1564,69 @@ impl HttpsServer {
                     .body(Full::new(Bytes::from("Internal Server Error")).boxed())
                     .unwrap_or_else(|_| Response::new(Full::new(Bytes::new()).boxed()))
             })
+    }
+
+    async fn collect_body_with_chunk_waf<B>(
+        mut body: B,
+        waf: &Arc<crate::waf::WafCore>,
+        client_ip: std::net::IpAddr,
+    ) -> Bytes
+    where
+        B: http_body::Body<Data = Bytes> + Unpin,
+        B::Error: std::fmt::Debug,
+    {
+        const CHUNK_SIZE: usize = 64 * 1024;
+        const MAX_ACCUMULATED_WAF: usize = 512 * 1024;
+
+        let mut accumulated = Vec::new();
+        let mut waf_checked_up_to: usize = 0;
+
+        while let Some(frame_result) = body.frame().await {
+            match frame_result {
+                Ok(frame) => {
+                    if let Ok(chunk) = frame.into_data() {
+                        accumulated.extend_from_slice(&chunk);
+
+                        if accumulated.len() - waf_checked_up_to >= CHUNK_SIZE {
+                            let check_end = accumulated.len().min(waf_checked_up_to + MAX_ACCUMULATED_WAF);
+                            if check_end > waf_checked_up_to {
+                                let chunk_to_check = &accumulated[waf_checked_up_to..check_end];
+                                if let Some(decision) = waf.check_request_body(chunk_to_check) {
+                                    match decision {
+                                        crate::proxy::WafDecision::Drop | crate::proxy::WafDecision::Block(_, _) => {
+                                            tracing::warn!(
+                                                client_ip = %client_ip,
+                                                "Request blocked during streaming body WAF check"
+                                            );
+                                            counter!("maluwaf.https.streaming_body_blocked").increment(1);
+                                            return Bytes::new();
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                                waf_checked_up_to = check_end;
+                            }
+                        }
+
+                        if accumulated.len() > 100 * 1024 * 1024 {
+                            tracing::warn!(
+                                client_ip = %client_ip,
+                                size = accumulated.len(),
+                                "Request body exceeded 100MB limit during streaming"
+                            );
+                            counter!("maluwaf.https.streaming_body_too_large").increment(1);
+                            return Bytes::from(accumulated);
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::debug!("Error reading body frame: {:?}", e);
+                    break;
+                }
+            }
+        }
+
+        Bytes::from(accumulated)
     }
 }
 

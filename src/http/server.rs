@@ -674,14 +674,33 @@ impl HttpServer {
             }
         }
 
-        let mut request_body_size: u64;
+        let mut request_body_size: u64 = 0;
         const MAX_WAF_BODY_SIZE: usize = 1024 * 1024; // 1MB limit for WAF inspection
-        let full_body: Bytes = match body.collect().await {
-            Ok(collected) => collected.to_bytes(),
-            Err(_) => Bytes::new(),
+        const CHUNK_WAF_THRESHOLD: usize = 256 * 1024; // 256KB - run WAF on chunks above this size
+
+        let content_length: Option<usize> = parts
+            .headers
+            .get("content-length")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.parse().ok());
+
+        let full_body: Bytes = if let Some(cl) = content_length {
+            if cl > CHUNK_WAF_THRESHOLD {
+                Self::collect_body_with_chunk_waf(body, &waf, client_ip, &mut request_body_size)
+                    .await
+            } else {
+                match body.collect().await {
+                    Ok(collected) => collected.to_bytes(),
+                    Err(_) => Bytes::new(),
+                }
+            }
+        } else {
+            match body.collect().await {
+                Ok(collected) => collected.to_bytes(),
+                Err(_) => Bytes::new(),
+            }
         };
         request_body_size = full_body.len() as u64;
-        // Create TRUNCATED slice for WAF inspection only
         let body_slice: Option<Bytes> = if full_body.is_empty() {
             None
         } else if full_body.len() > MAX_WAF_BODY_SIZE {
@@ -3082,6 +3101,71 @@ impl HttpServer {
                 body
             }
         }
+    }
+
+    async fn collect_body_with_chunk_waf<B>(
+        mut body: B,
+        waf: &Arc<crate::waf::WafCore>,
+        client_ip: IpAddr,
+        request_body_size: &mut u64,
+    ) -> Bytes
+    where
+        B: http_body::Body<Data = Bytes> + Unpin,
+        B::Error: std::fmt::Debug,
+    {
+        const CHUNK_SIZE: usize = 64 * 1024; // 64KB chunks
+        const MAX_ACCUMULATED_WAF: usize = 512 * 1024; // Run WAF on accumulated body up to 512KB
+
+        let mut accumulated = Vec::new();
+        let mut waf_checked_up_to: usize = 0;
+
+        while let Some(frame_result) = body.frame().await {
+            match frame_result {
+                Ok(frame) => {
+                    if let Ok(chunk) = frame.into_data() {
+                        accumulated.extend_from_slice(&chunk);
+
+                        if accumulated.len() - waf_checked_up_to >= CHUNK_SIZE {
+                            let check_end = accumulated.len().min(waf_checked_up_to + MAX_ACCUMULATED_WAF);
+                            if check_end > waf_checked_up_to {
+                                let chunk_to_check = &accumulated[waf_checked_up_to..check_end];
+                                if let Some(decision) = waf.check_request_body(chunk_to_check) {
+                                    match decision {
+                                        crate::proxy::WafDecision::Drop | crate::proxy::WafDecision::Block(_, _) => {
+                                            tracing::warn!(
+                                                client_ip = %client_ip,
+                                                "Request blocked during streaming body WAF check"
+                                            );
+                                            counter!("maluwaf.http.streaming_body_blocked").increment(1);
+                                            return Bytes::new();
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                                waf_checked_up_to = check_end;
+                            }
+                        }
+
+                        if accumulated.len() > 100 * 1024 * 1024 {
+                            tracing::warn!(
+                                client_ip = %client_ip,
+                                size = accumulated.len(),
+                                "Request body exceeded 100MB limit during streaming"
+                            );
+                            counter!("maluwaf.http.streaming_body_too_large").increment(1);
+                            return Bytes::from(accumulated);
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::debug!("Error reading body frame: {:?}", e);
+                    break;
+                }
+            }
+        }
+
+        *request_body_size = accumulated.len() as u64;
+        Bytes::from(accumulated)
     }
 
     #[allow(clippy::too_many_arguments)]

@@ -598,6 +598,168 @@ impl AttackDetector {
         None
     }
 
+    pub fn check_body_only(&self, body: &[u8]) -> Option<AttackDetectionResult> {
+        if !self.config.enabled {
+            return None;
+        }
+
+        if let Some(max_size) = self.config.max_request_body_size {
+            if body.len() > max_size {
+                return Some(AttackDetectionResult {
+                    attack_type: AttackType::Other,
+                    input_location: InputLocation::PostBody,
+                    fingerprint: Some(format!("body_size:{}", body.len())),
+                    matched_pattern: Some(format!(
+                        "Request body {} bytes exceeds limit {} bytes",
+                        body.len(),
+                        max_size
+                    )),
+                });
+            }
+        }
+
+        if self.config.request_smuggling.enabled {
+            if let Some(result) = self.request_smuggling_detector.check_body(body) {
+                return Some(result);
+            }
+        }
+
+        if self.config.jwt.enabled {
+            if let Ok(s) = std::str::from_utf8(body) {
+                let normalized = self.normalizer.normalize(s);
+                if let Some(result) = self
+                    .jwt_detector
+                    .detect(normalized.as_str(), InputLocation::PostBody)
+                {
+                    return Some(result);
+                }
+            }
+        }
+
+        if self.config.sqli.enabled {
+            if let Ok(s) = std::str::from_utf8(body) {
+                let normalized = self.normalizer.normalize(s);
+                if let Some(result) =
+                    SqliDetector::detect(normalized.as_bytes(), InputLocation::PostBody)
+                {
+                    return Some(result);
+                }
+            }
+        }
+
+        if self.config.xss.enabled {
+            if let Ok(s) = std::str::from_utf8(body) {
+                let normalized = self.normalizer.normalize(s);
+                if let Some(result) =
+                    XssDetector::detect(normalized.as_bytes(), InputLocation::PostBody)
+                {
+                    return Some(result);
+                }
+            }
+        }
+
+        if self.config.ssti.enabled {
+            if let Ok(s) = std::str::from_utf8(body) {
+                let normalized = self.normalizer.normalize(s);
+                if let Some(result) = self
+                    .ssti_detector
+                    .detect(normalized.as_str(), InputLocation::PostBody)
+                {
+                    return Some(result);
+                }
+            }
+        }
+
+        if self.config.cmd_injection.enabled
+            || self.config.path_traversal.enabled
+            || self.config.rfi.enabled
+            || self.config.ssrf.enabled
+            || self.config.xxe.enabled
+            || self.config.ldap_injection.enabled
+            || self.config.xpath_injection.enabled
+            || self.config.open_redirect.enabled
+        {
+            if let Ok(s) = std::str::from_utf8(body) {
+                let normalized = self.normalizer.normalize(s);
+                let body_input = NormalizedInput::from(normalized);
+
+                if self.config.cmd_injection.enabled {
+                    if let Some(result) = self
+                        .cmd_injection_detector
+                        .detect(body_input.as_str(), InputLocation::PostBody)
+                    {
+                        return Some(result);
+                    }
+                }
+
+                if self.config.path_traversal.enabled {
+                    if let Some(result) = self
+                        .path_traversal_detector
+                        .detect(body_input.as_str(), InputLocation::PostBody)
+                    {
+                        return Some(result);
+                    }
+                }
+
+                if self.config.rfi.enabled {
+                    if let Some(result) = self
+                        .rfi_detector
+                        .detect(body_input.as_str(), InputLocation::PostBody)
+                    {
+                        return Some(result);
+                    }
+                }
+
+                if self.config.ssrf.enabled {
+                    if let Some(result) = self
+                        .ssrf_detector
+                        .detect(body_input.as_str(), InputLocation::PostBody)
+                    {
+                        return Some(result);
+                    }
+                }
+
+                if self.config.xxe.enabled {
+                    if let Some(result) = self
+                        .xxe_detector
+                        .detect(body_input.as_str(), InputLocation::PostBody)
+                    {
+                        return Some(result);
+                    }
+                }
+
+                if self.config.ldap_injection.enabled {
+                    if let Some(result) = self
+                        .ldap_injection_detector
+                        .detect(body_input.as_str(), InputLocation::PostBody)
+                    {
+                        return Some(result);
+                    }
+                }
+
+                if self.config.xpath_injection.enabled {
+                    if let Some(result) = self
+                        .xpath_injection_detector
+                        .detect(body_input.as_str(), InputLocation::PostBody)
+                    {
+                        return Some(result);
+                    }
+                }
+
+                if self.config.open_redirect.enabled {
+                    if let Some(result) = self
+                        .open_redirect_detector
+                        .detect(body_input.as_str(), InputLocation::PostBody)
+                    {
+                        return Some(result);
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
     fn check_jwt(
         &self,
         headers: &http::HeaderMap,
