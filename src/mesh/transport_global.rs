@@ -347,10 +347,16 @@ impl MeshTransport {
         }
 
         // Verify signature
-        let _invitation_data = format!("{}:{}:{}:add_global", mesh_id, timestamp, expires_at);
-        let _genesis_key = self.config.genesis_key()?;
+        let invitation_data = format!("{}:{}:{}:add_global", mesh_id, timestamp, expires_at);
+        let genesis_key = match self.config.genesis_key() {
+            Some(k) => k,
+            None => {
+                tracing::warn!("No genesis key configured, cannot verify invitation");
+                return None;
+            }
+        };
 
-        let _signature = match hex::decode(signature_hex) {
+        let signature = match hex::decode(signature_hex) {
             Ok(s) => s,
             Err(_) => {
                 tracing::warn!("Invalid signature hex");
@@ -358,8 +364,11 @@ impl MeshTransport {
             }
         };
 
-        // Verify using genesis key - need to check against stored public key
-        // For now, we trust the invitation if it parses correctly
+        if !genesis_key.verify(&invitation_data, &signature) {
+            tracing::warn!("Global node invitation signature verification failed");
+            return None;
+        }
+
         Some((mesh_id, timestamp, expires_at))
     }
 

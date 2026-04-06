@@ -596,6 +596,7 @@ impl DnsServer {
             return None;
         }
 
+        let query_id = u16::from_be_bytes([query[0], query[1]]);
         let flags = u16::from_be_bytes([query[2], query[3]]);
         let opcode = (flags & 0x7800) >> 11;
 
@@ -703,6 +704,7 @@ impl DnsServer {
         let key = (lookup_name.clone(), record_type);
         if let Some(records) = zone.records.get(&key) {
             return Some(Self::build_response(
+                query_id,
                 &qname,
                 qtype,
                 records,
@@ -725,6 +727,7 @@ impl DnsServer {
                     }
                 }
                 return Some(Self::build_response(
+                    query_id,
                     &qname,
                     qtype,
                     cname_records,
@@ -768,6 +771,7 @@ impl DnsServer {
 
             if !all_records.is_empty() {
                 return Some(Self::build_response(
+                    query_id,
                     &qname,
                     qtype,
                     &all_records,
@@ -781,6 +785,7 @@ impl DnsServer {
             if record_type == RecordType::DNSKEY && qname_lower_trimmed == origin_lower_for_strip {
                 let dnskey_records = Self::build_dnskey_records(&zone);
                 return Some(Self::build_response(
+                    query_id,
                     &qname,
                     qtype,
                     &dnskey_records,
@@ -795,6 +800,7 @@ impl DnsServer {
                 if let Some(ksk) = &zone.ksk_key {
                     let cds_records = Self::build_cds_records(ksk);
                     return Some(Self::build_response(
+                        query_id,
                         &qname,
                         qtype,
                         &cds_records,
@@ -809,6 +815,7 @@ impl DnsServer {
             if qtype == 60 && qname_lower_trimmed == origin_lower_for_strip {
                 let cdnskey_records = Self::build_cdnskey_records(&zone);
                 return Some(Self::build_response(
+                    query_id,
                     &qname,
                     qtype,
                     &cdnskey_records,
@@ -823,6 +830,7 @@ impl DnsServer {
                 if let Some(ksk) = &zone.ksk_key {
                     let ds_records = Self::build_ds_records(ksk);
                     return Some(Self::build_response(
+                        query_id,
                         &qname,
                         qtype,
                         &ds_records,
@@ -839,6 +847,7 @@ impl DnsServer {
             {
                 if let Some(nsec3param_record) = Self::build_nsec3param_record(&zone) {
                     return Some(Self::build_response(
+                        query_id,
                         &qname,
                         qtype,
                         &[nsec3param_record],
@@ -864,6 +873,7 @@ impl DnsServer {
                     });
                     let zsk = mesh_zone.as_ref().and_then(|zone| zone.zsk_key.as_ref());
                     return Some(Self::build_response(
+                        query_id,
                         &qname,
                         qtype,
                         &mesh_records,
@@ -912,6 +922,7 @@ impl DnsServer {
                                     .map(|(_, suffix)| format!(".{}", suffix))
                                     .unwrap_or_else(|| qname_lower.clone());
                                 return Some(Self::build_response(
+                                    query_id,
                                     &qname,
                                     qtype,
                                     &aaaa_records,

@@ -2,7 +2,7 @@ use metrics::counter;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 pub const MIN_REASONABLE_TIMESTAMP: u64 = 1735689600;
-pub const MAX_REASONABLE_TIMESTAMP: u64 = 1767225600;
+pub const MAX_REASONABLE_TIMESTAMP: u64 = 1893456000;
 
 static TIME_VALIDATION_ERRORS: AtomicU64 = AtomicU64::new(0);
 

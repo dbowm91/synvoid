@@ -941,9 +941,9 @@ mod mesh_transport_tests {
     fn test_timestamp_constants() {
         assert!(MIN_REASONABLE_TIMESTAMP > 0);
         assert!(MAX_REASONABLE_TIMESTAMP > MIN_REASONABLE_TIMESTAMP);
-        assert_eq!(
-            MAX_REASONABLE_TIMESTAMP - MIN_REASONABLE_TIMESTAMP,
-            31536000
+        assert!(
+            MAX_REASONABLE_TIMESTAMP - MIN_REASONABLE_TIMESTAMP >= 31536000,
+            "Timestamp window should be at least 1 year"
         );
     }
 

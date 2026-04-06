@@ -2,6 +2,7 @@ use super::*;
 
 impl DnsServer {
     pub(super) fn build_response(
+        query_id: u16,
         qname: &str,
         qtype: u16,
         records: &[DnsZoneRecord],
@@ -17,8 +18,7 @@ impl DnsServer {
         let mut response = Vec::new();
         let mut compressor = DnsMessageCompressor::new();
 
-        let response_id = Self::generate_random_id();
-        response.extend_from_slice(&response_id.to_be_bytes());
+        response.extend_from_slice(&query_id.to_be_bytes());
 
         let mut qr_aa = 0x8580u16;
         // AD flag: only set when records are actually DNSSEC-signed (not just when client requests it)
