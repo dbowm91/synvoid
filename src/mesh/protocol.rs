@@ -1162,9 +1162,13 @@ pub enum HealthStatus {
 pub enum ThreatType {
     Unspecified,
     IpBlock,
+    IpThrottle,
     RateLimitViolation,
     SuspiciousActivity,
     AsnBlock,
+    DomainBlock,
+    UrlBlock,
+    CertBlock,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

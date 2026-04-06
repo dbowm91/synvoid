@@ -681,7 +681,7 @@ impl AttackDetector {
         {
             if let Ok(s) = std::str::from_utf8(body) {
                 let normalized = self.normalizer.normalize(s);
-                let body_input = NormalizedInput::from(normalized);
+                let body_input = normalized;
 
                 if self.config.cmd_injection.enabled {
                     if let Some(result) = self

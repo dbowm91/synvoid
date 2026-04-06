@@ -94,7 +94,7 @@ fn is_valid_ip(s: &str) -> bool {
     s.parse::<IpAddr>().is_ok()
 }
 
-fn validate_and_truncate_xff(existing: &str, client_ip: &str) -> String {
+pub fn validate_and_truncate_xff(existing: &str, client_ip: &str) -> String {
     let mut entries: Vec<&str> = existing.split(',').map(|s| s.trim()).collect();
     entries.retain(|e| !e.is_empty() && is_valid_ip(e));
     if entries.len() >= MAX_XFF_CHAIN_LENGTH {

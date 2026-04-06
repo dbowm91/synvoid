@@ -41,11 +41,7 @@ fn generate_nonce() -> [u8; 16] {
 
 fn verify_timestamp(timestamp: u64) -> bool {
     let now = crate::utils::current_timestamp();
-    let diff = if now > timestamp {
-        now - timestamp
-    } else {
-        timestamp - now
-    };
+    let diff = now.abs_diff(timestamp);
     diff <= REPLAY_WINDOW_SECS
 }
 
@@ -166,7 +162,7 @@ impl<R: Read> SignedReader<R> {
         let total_len = u32::from_be_bytes(len_buf) as usize;
 
         const MAX_MESSAGE_SIZE: usize = 1024 * 1024;
-        if total_len > MAX_MESSAGE_SIZE || total_len < TIMESTAMP_SIZE + NONCE_SIZE + HMAC_SIZE {
+        if !(TIMESTAMP_SIZE + NONCE_SIZE + HMAC_SIZE..=MAX_MESSAGE_SIZE).contains(&total_len) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "signed message size invalid",
@@ -302,7 +298,7 @@ impl SignedIpcMessage {
         }
 
         let len = u32::from_be_bytes([data[0], data[1], data[2], data[3]]) as usize;
-        if len > MAX_MESSAGE_SIZE || len < TIMESTAMP_SIZE + NONCE_SIZE + HMAC_SIZE {
+        if !(TIMESTAMP_SIZE + NONCE_SIZE + HMAC_SIZE..=MAX_MESSAGE_SIZE).contains(&len) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "signed message size invalid",

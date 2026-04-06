@@ -771,7 +771,7 @@ pub async fn run_unified_server_worker(
                         )));
 
                     let yara_rules = Arc::new(YaraRulesManager::new(
-                        mesh_config.yara_rules.clone(),
+                        mesh_config.yara_rules.clone().into(),
                         node_id.clone(),
                         mesh_config.role,
                         signer_for_yara,

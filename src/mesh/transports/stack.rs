@@ -31,6 +31,12 @@ struct QuicTransportWrapper {
     inner: Arc<crate::mesh::transport::MeshTransport>,
 }
 
+impl Default for MeshTransportStack {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MeshTransportStack {
     pub fn new() -> Self {
         Self {

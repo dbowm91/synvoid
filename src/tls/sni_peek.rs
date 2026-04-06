@@ -404,7 +404,7 @@ fn parse_alpn_extension(data: &[u8]) -> Result<Vec<String>, SniError> {
     let mut values = Vec::new();
     let end = 2 + proto_list_len;
 
-    while pos + 1 <= end {
+    while pos < end {
         let proto_len = data[pos] as usize;
         pos += 1;
         if pos + proto_len > end {

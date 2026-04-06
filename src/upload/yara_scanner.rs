@@ -11,7 +11,7 @@ use yara_x::Scanner;
 /// (i.e., no categories should be filtered out).
 pub const NO_EXCLUDED_CATEGORIES: &[&str] = &[];
 
-static DEFAULT_MALWARE_RULES: &str = r#"
+pub static DEFAULT_MALWARE_RULES: &str = r#"
 rule executable_pe {
     meta:
         description = "PE executable header detected"

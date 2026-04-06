@@ -47,7 +47,6 @@ use parking_lot::RwLock;
 
 use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 
-use quinn::Connection;
 
 use crate::mesh::cert::MeshCertManager;
 use crate::mesh::config::{MeshConfig, MeshPeerConfig};
@@ -2157,7 +2156,7 @@ impl MeshTransport {
             body
         };
 
-        let body = Bytes::from(body);
+        let body = body;
         let full_body = http_body_util::Full::new(body);
         let boxed_body: BoxBody<Bytes, Infallible> = full_body.boxed();
         let response = response_builder

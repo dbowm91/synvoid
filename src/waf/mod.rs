@@ -61,6 +61,14 @@ pub use violation_tracker::{ViolationStats, ViolationTracker};
 
 pub use crate::mesh::yara_rules::YaraRulesManager;
 
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct WhitelistConfig {
+    #[serde(default)]
+    pub request_paths: Vec<String>,
+    #[serde(default)]
+    pub ips: Vec<IpAddr>,
+}
+
 use crate::auth::AuthManager;
 use crate::block_store::BlockStore;
 use crate::challenge::{ChallengeConfig, ChallengeManager, ChallengeResult};
@@ -438,7 +446,7 @@ impl WafCore {
         );
 
         let attack_detection_config =
-            ArcSwapOption::new(attack_detection_config.map(|c| Arc::new(c)));
+            ArcSwapOption::new(attack_detection_config.map(Arc::new));
 
         let (traffic_shaper, connection_limiter) = if let Some(config) = traffic_shaping_config {
             if config.enabled {

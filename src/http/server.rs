@@ -2342,7 +2342,7 @@ impl HttpServer {
                                     let whitelisted = image_poison_config
                                         .whitelist_patterns
                                         .as_ref()
-                                        .map_or(false, |patterns| {
+                                        .is_some_and(|patterns| {
                                             patterns.iter().any(|p| {
                                                 if let Some(re) = get_cached_regex(p) {
                                                     re.is_match(&path_str)

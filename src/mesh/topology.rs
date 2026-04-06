@@ -1583,9 +1583,7 @@ impl MeshTopology {
             let connection_successes_map = self.connection_successes.read().await;
             let weights = &self.config.connection.connection_score_weights;
 
-            let mut scored: Vec<(String, f64)> = peers
-                .iter()
-                .map(|(node_id, _)| {
+            let mut scored: Vec<(String, f64)> = peers.keys().map(|node_id| {
                     let mut score =
                         peer_scores_snapshot
                             .get(node_id)

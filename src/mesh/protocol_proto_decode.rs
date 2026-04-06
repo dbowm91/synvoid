@@ -1292,7 +1292,7 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                         .into_iter()
                         .map(|m| {
                             Ok(crate::mesh::protocol::WasmModuleInfo {
-                                module_name: m.module_name.into(),
+                                module_name: m.module_name,
                                 module_type: match m.module_type {
                                     0 => crate::mesh::protocol::WasmModuleType::Plugin,
                                     1 => crate::mesh::protocol::WasmModuleType::Serverless,
@@ -1300,7 +1300,7 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                                 },
                                 version: m.version,
                                 size_bytes: m.size_bytes,
-                                checksum: m.checksum.into(),
+                                checksum: m.checksum,
                                 data: m.data,
                             })
                         })

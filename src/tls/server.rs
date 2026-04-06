@@ -494,11 +494,11 @@ impl HttpsServer {
             tokio::sync::RwLock<std::collections::HashMap<String, Arc<ProxyServer>>>,
         >,
         metrics: Option<Arc<crate::metrics::WorkerMetrics>>,
-        drain_state: Option<Arc<crate::worker::drain_state::WorkerDrainState>>,
-        mesh_config: Option<Arc<crate::mesh::config::MeshConfig>>,
-        mesh_transport: Option<Arc<crate::mesh::transports::MeshTransportManager>>,
-        ipc: Option<Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>>,
-        worker_id: Option<crate::process::ipc::WorkerId>,
+        _drain_state: Option<Arc<crate::worker::drain_state::WorkerDrainState>>,
+        _mesh_config: Option<Arc<crate::mesh::config::MeshConfig>>,
+        _mesh_transport: Option<Arc<crate::mesh::transports::MeshTransportManager>>,
+        _ipc: Option<Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>>,
+        _worker_id: Option<crate::process::ipc::WorkerId>,
         serverless_manager: Option<Arc<crate::serverless::manager::ServerlessManager>>,
         app_servers: Option<
             Arc<

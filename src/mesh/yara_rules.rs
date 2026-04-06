@@ -171,6 +171,58 @@ pub enum YaraRuleSource {
     MeshEdgeApproved,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct YaraRulesManagerConfig {
+    #[serde(default = "default_yara_manager_enabled")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub rules_dir: Option<String>,
+    #[serde(default = "default_yara_mesh_broadcast_enabled")]
+    pub mesh_broadcast_enabled: bool,
+}
+
+fn default_yara_manager_enabled() -> bool {
+    true
+}
+
+fn default_yara_mesh_broadcast_enabled() -> bool {
+    true
+}
+
+impl Default for YaraRulesManagerConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_yara_manager_enabled(),
+            rules_dir: None,
+            mesh_broadcast_enabled: default_yara_mesh_broadcast_enabled(),
+        }
+    }
+}
+
+impl From<YaraRulesManagerConfig> for YaraRulesMeshConfig {
+    fn from(config: YaraRulesManagerConfig) -> Self {
+        YaraRulesMeshConfig {
+            enabled: config.enabled,
+            sync_interval_secs: 3600,
+            allow_edge_submissions: false,
+            require_global_approval: true,
+            require_signature: true,
+            trusted_signers: Vec::new(),
+            max_rules_size_kb: 1024,
+        }
+    }
+}
+
+impl From<YaraRulesMeshConfig> for YaraRulesManagerConfig {
+    fn from(config: YaraRulesMeshConfig) -> Self {
+        YaraRulesManagerConfig {
+            enabled: config.enabled,
+            rules_dir: None,
+            mesh_broadcast_enabled: true,
+        }
+    }
+}
+
 pub struct YaraRulesManager {
     config: Arc<YaraRulesMeshConfig>,
     node_id: String,
@@ -190,15 +242,16 @@ pub struct YaraRulesManager {
 
 impl YaraRulesManager {
     pub fn new(
-        config: YaraRulesMeshConfig,
+        config: YaraRulesManagerConfig,
         node_id: String,
         node_role: MeshNodeRole,
         signer: Option<Arc<crate::mesh::protocol::MeshMessageSigner>>,
         feed_manager: Option<Arc<YaraRuleFeedManager>>,
         data_dir: Option<std::path::PathBuf>,
     ) -> Self {
+        let mesh_config: YaraRulesMeshConfig = config.into();
         let manager = Self {
-            config: Arc::new(config),
+            config: Arc::new(mesh_config),
             node_id,
             node_role,
             signer,

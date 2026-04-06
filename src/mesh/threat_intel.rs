@@ -789,6 +789,16 @@ impl ThreatIntelligenceManager {
                     crate::metrics::record_attack_type("AsnScraping");
                 }
             }
+            ThreatType::IpThrottle
+            | ThreatType::DomainBlock
+            | ThreatType::UrlBlock
+            | ThreatType::CertBlock => {
+                tracing::debug!(
+                    "Received {} threat type from {}, not yet implemented for local application",
+                    format!("{:?}", indicator.threat_type).to_lowercase(),
+                    from_node
+                );
+            }
             ThreatType::Unspecified => {
                 tracing::warn!("Received threat with unspecified type from {}", from_node);
             }
