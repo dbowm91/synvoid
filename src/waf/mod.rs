@@ -142,7 +142,7 @@ pub struct WafCore {
     pub challenge_manager: ChallengeManager,
     pub auth_manager: Option<Arc<AuthManager>>,
     attack_detector: ArcSwapOption<AttackDetector>,
-    attack_detection_config: Option<AttackDetectionConfig>,
+    attack_detection_config: ArcSwapOption<AttackDetectionConfig>,
     pub block_store: Option<Arc<BlockStore>>,
     pub config: WafConfig,
     pub whitelist: Arc<HashSet<IpAddr>>,
@@ -437,6 +437,9 @@ impl WafCore {
                 .map(|config| Arc::new(AttackDetector::new(config.clone()))),
         );
 
+        let attack_detection_config =
+            ArcSwapOption::new(attack_detection_config.map(|c| Arc::new(c)));
+
         let (traffic_shaper, connection_limiter) = if let Some(config) = traffic_shaping_config {
             if config.enabled {
                 let shaper = Arc::new(GlobalTrafficShaper::new(
@@ -640,10 +643,9 @@ impl WafCore {
     }
 
     pub fn reload_attack_detector(&self) -> Result<(), String> {
-        let config = self
-            .attack_detection_config
-            .as_ref()
-            .ok_or("No attack detection config")?;
+        let loaded = self.attack_detection_config.load();
+        let config_arc = loaded.as_ref().ok_or("No attack detection config")?;
+        let config = (**config_arc).clone();
 
         let mut new_config = config.clone();
 
@@ -670,7 +672,10 @@ impl WafCore {
         merge_patterns!("open_redirect", open_redirect);
 
         self.attack_detector
-            .store(Some(Arc::new(AttackDetector::new(new_config))));
+            .store(Some(Arc::new(AttackDetector::new(new_config.clone()))));
+
+        self.attack_detection_config
+            .store(Some(Arc::new(new_config)));
 
         Ok(())
     }

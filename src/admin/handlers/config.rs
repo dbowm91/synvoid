@@ -40,6 +40,11 @@ pub async fn update_main_config(
     _auth: OptionalAuth,
     Json(req): Json<UpdateMainConfigRequest>,
 ) -> Result<Json<StatusResponse>, StatusCode> {
+    req.config.validate().map_err(|e| {
+        tracing::error!("Config validation failed: {}", e);
+        StatusCode::BAD_REQUEST
+    })?;
+
     let toml_content = toml::to_string_pretty(&req.config).map_err(|e| {
         tracing::error!("Failed to serialize config: {}", e);
         StatusCode::INTERNAL_SERVER_ERROR
@@ -302,6 +307,11 @@ pub async fn import_config(
         StatusCode::BAD_REQUEST
     })?;
 
+    parsed.validate().map_err(|e| {
+        tracing::error!("Config validation failed: {}", e);
+        StatusCode::BAD_REQUEST
+    })?;
+
     let toml_content = toml::to_string_pretty(&parsed).map_err(|e| {
         tracing::error!("Failed to serialize config: {}", e);
         StatusCode::INTERNAL_SERVER_ERROR
@@ -395,7 +405,11 @@ pub async fn update_overseer_config(
 
     let main_config_path = {
         let mut config = state.process.config.write().await;
-        config.main.overseer = req.config;
+        config.main.overseer = req.config.clone();
+        config.main.validate().map_err(|e| {
+            tracing::error!("Config validation failed: {}", e);
+            StatusCode::BAD_REQUEST
+        })?;
         config.config_dir.join("main.toml")
     };
 
@@ -484,6 +498,10 @@ pub async fn update_process_manager_config(
     let (main_config_path, toml_content) = {
         let mut config = state.process.config.write().await;
         config.main.process_manager = req.config;
+        config.main.validate().map_err(|e| {
+            tracing::error!("Config validation failed: {}", e);
+            StatusCode::BAD_REQUEST
+        })?;
         let path = config.config_dir.join("main.toml");
         let content = toml::to_string_pretty(&config.main).map_err(|e| {
             tracing::error!("Failed to serialize config: {}", e);
@@ -561,6 +579,11 @@ pub async fn update_supervisor_config(
         })?;
 
     main_config.supervisor = req.config;
+
+    main_config.validate().map_err(|e| {
+        tracing::error!("Config validation failed: {}", e);
+        StatusCode::BAD_REQUEST
+    })?;
 
     let toml_content = toml::to_string_pretty(&main_config).map_err(|e| {
         tracing::error!("Failed to serialize config: {}", e);
@@ -1137,6 +1160,10 @@ pub async fn validate_config(
 async fn persist_main_config_and_notify(state: &Arc<AdminState>) -> Result<(), StatusCode> {
     let (main_config_path, toml_content, config_dir) = {
         let config = state.process.config.read().await;
+        config.main.validate().map_err(|e| {
+            tracing::error!("Config validation failed: {}", e);
+            StatusCode::BAD_REQUEST
+        })?;
         let path = config.config_dir.join("main.toml");
         let content = toml::to_string_pretty(&config.main).map_err(|e| {
             tracing::error!("Failed to serialize config: {}", e);

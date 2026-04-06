@@ -159,6 +159,266 @@ pub struct SniPeekResult {
     pub client_hello_bytes: Vec<u8>,
 }
 
+/// Parsed TLS ClientHello data for JA4 fingerprinting.
+pub struct ClientHelloInfo {
+    pub tls_version: u16,
+    pub cipher_suites: Vec<u16>,
+    pub extensions: Vec<u16>,
+    pub alpn_values: Vec<String>,
+    pub has_sni: bool,
+}
+
+/// Compute a JA4 fingerprint from raw TLS ClientHello bytes.
+///
+/// JA4 format: {tls_version}_{cipher_count}_{sni_flag}_{first_alpn}_{cipher_hash}_{ext_hash}
+/// - tls_version: "13" for TLS 1.3, "12" for TLS 1.2, etc.
+/// - cipher_count: 2-digit zero-padded count of cipher suites
+/// - sni_flag: "d" if SNI present, "i" if not
+/// - first_alpn: first 2 chars of first ALPN value (e.g., "h2", "h1")
+/// - cipher_hash: first 12 chars of SHA256 hex of sorted cipher suites
+/// - ext_hash: first 12 chars of SHA256 hex of sorted extension types (excluding GREASE)
+pub fn compute_ja4(data: &[u8]) -> Option<String> {
+    let info = parse_client_hello_info(data).ok()??;
+
+    // TLS version
+    let tls_version = match info.tls_version {
+        0x0304 => "13",
+        0x0303 => "12",
+        0x0302 => "11",
+        0x0301 => "10",
+        _ => {
+            let major = (info.tls_version >> 8) & 0xFF;
+            let minor = info.tls_version & 0xFF;
+            return Some(format!("{major:02x}{minor:02x}_unknown"));
+        }
+    };
+
+    // Cipher count (2-digit zero-padded)
+    let cipher_count = info.cipher_suites.len().min(99);
+
+    // SNI flag
+    let sni_flag = if info.has_sni { "d" } else { "i" };
+
+    // First ALPN (first 2 characters)
+    let first_alpn = info
+        .alpn_values
+        .first()
+        .map(|v| &v[..v.len().min(2)])
+        .unwrap_or("");
+    let first_alpn = if first_alpn.is_empty() {
+        "00"
+    } else {
+        first_alpn
+    };
+
+    // Cipher hash: SHA256 of comma-separated sorted cipher suites (excluding GREASE)
+    let mut ciphers: Vec<u16> = info
+        .cipher_suites
+        .into_iter()
+        .filter(|c| !is_grease(*c))
+        .collect();
+    ciphers.sort();
+    let cipher_str: String = ciphers
+        .iter()
+        .map(|c| format!("{c:04x}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let cipher_hash = sha256_hex_first12(&cipher_str);
+
+    // Extension hash: SHA256 of comma-separated sorted extension types (excluding GREASE)
+    let mut exts: Vec<u16> = info
+        .extensions
+        .into_iter()
+        .filter(|e| !is_grease(*e))
+        .collect();
+    exts.sort();
+    let ext_str: String = exts
+        .iter()
+        .map(|e| format!("{e:04x}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let ext_hash = sha256_hex_first12(&ext_str);
+
+    Some(format!(
+        "{tls_version}_{cipher_count:02}_{sni_flag}_{first_alpn}_{cipher_hash}_{ext_hash}"
+    ))
+}
+
+fn is_grease(value: u16) -> bool {
+    value & 0x0F0F == 0x0A0A
+}
+
+fn sha256_hex_first12(input: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(input.as_bytes());
+    let result = hasher.finalize();
+    hex::encode(result)[..12].to_string()
+}
+
+fn parse_client_hello_info(data: &[u8]) -> Result<Option<ClientHelloInfo>, SniError> {
+    if data.len() < 5 {
+        return Err(SniError::TooShort);
+    }
+
+    let content_type = data[0];
+    if content_type != 0x16 {
+        return Err(SniError::NotHandshake(content_type));
+    }
+
+    let record_len = u16::from_be_bytes([data[3], data[4]]) as usize;
+    if data.len() < 5 + record_len {
+        return Err(SniError::Incomplete);
+    }
+
+    let handshake = &data[5..5 + record_len];
+
+    if handshake.len() < 4 {
+        return Err(SniError::TooShort);
+    }
+
+    let msg_type = handshake[0];
+    if msg_type != 0x01 {
+        return Err(SniError::NotClientHello(msg_type));
+    }
+
+    let msg_len =
+        ((handshake[1] as usize) << 16) | ((handshake[2] as usize) << 8) | (handshake[3] as usize);
+    if handshake.len() < 4 + msg_len {
+        return Err(SniError::Incomplete);
+    }
+
+    let hello = &handshake[4..4 + msg_len];
+    if hello.len() < 34 {
+        return Err(SniError::TooShort);
+    }
+
+    let tls_version = u16::from_be_bytes([hello[0], hello[1]]);
+    let mut pos = 34; // skip version (2) + random (32)
+
+    // Session ID
+    if pos >= hello.len() {
+        return Err(SniError::TooShort);
+    }
+    let session_id_len = hello[pos] as usize;
+    pos += 1 + session_id_len;
+
+    if pos + 2 > hello.len() {
+        return Err(SniError::TooShort);
+    }
+
+    // Cipher suites
+    let cipher_suites_len = ((hello[pos] as usize) << 8) | (hello[pos + 1] as usize);
+    pos += 2;
+    let mut cipher_suites = Vec::new();
+    let cipher_end = pos + cipher_suites_len;
+    while pos + 2 <= cipher_end && cipher_end <= hello.len() {
+        let cipher = ((hello[pos] as u16) << 8) | (hello[pos + 1] as u16);
+        cipher_suites.push(cipher);
+        pos += 2;
+    }
+    pos = cipher_end;
+
+    if pos >= hello.len() {
+        return Err(SniError::TooShort);
+    }
+
+    // Compression methods
+    let compression_len = hello[pos] as usize;
+    pos += 1 + compression_len;
+
+    if pos + 2 > hello.len() {
+        return Ok(Some(ClientHelloInfo {
+            tls_version,
+            cipher_suites,
+            extensions: Vec::new(),
+            alpn_values: Vec::new(),
+            has_sni: false,
+        }));
+    }
+
+    // Extensions
+    let extensions_len = ((hello[pos] as usize) << 8) | (hello[pos + 1] as usize);
+    pos += 2;
+
+    if pos + extensions_len > hello.len() {
+        return Err(SniError::Incomplete);
+    }
+
+    let extensions = &hello[pos..pos + extensions_len];
+    let (ext_types, alpn_values, has_sni) = parse_extensions_for_ja4(extensions)?;
+
+    Ok(Some(ClientHelloInfo {
+        tls_version,
+        cipher_suites,
+        extensions: ext_types,
+        alpn_values,
+        has_sni,
+    }))
+}
+
+fn parse_extensions_for_ja4(data: &[u8]) -> Result<(Vec<u16>, Vec<String>, bool), SniError> {
+    let mut pos = 0;
+    let mut ext_types = Vec::new();
+    let mut alpn_values = Vec::new();
+    let mut has_sni = false;
+
+    while pos + 4 <= data.len() {
+        let ext_type = ((data[pos] as u16) << 8) | (data[pos + 1] as u16);
+        let ext_len = ((data[pos + 2] as usize) << 8) | (data[pos + 3] as usize);
+        pos += 4;
+
+        if pos + ext_len > data.len() {
+            return Err(SniError::Incomplete);
+        }
+
+        ext_types.push(ext_type);
+
+        if ext_type == 0x0000 {
+            // SNI
+            has_sni = true;
+        } else if ext_type == 0x0010 {
+            // ALPN
+            if let Ok(alpns) = parse_alpn_extension(&data[pos..pos + ext_len]) {
+                alpn_values = alpns;
+            }
+        }
+
+        pos += ext_len;
+    }
+
+    Ok((ext_types, alpn_values, has_sni))
+}
+
+fn parse_alpn_extension(data: &[u8]) -> Result<Vec<String>, SniError> {
+    if data.len() < 2 {
+        return Ok(Vec::new());
+    }
+
+    let proto_list_len = ((data[0] as usize) << 8) | (data[1] as usize);
+    if data.len() < 2 + proto_list_len {
+        return Ok(Vec::new());
+    }
+
+    let mut pos = 2;
+    let mut values = Vec::new();
+    let end = 2 + proto_list_len;
+
+    while pos + 1 <= end {
+        let proto_len = data[pos] as usize;
+        pos += 1;
+        if pos + proto_len > end {
+            break;
+        }
+        if let Ok(proto) = std::str::from_utf8(&data[pos..pos + proto_len]) {
+            values.push(proto.to_string());
+        }
+        pos += proto_len;
+    }
+
+    Ok(values)
+}
+
 /// Peek at a TcpStream to extract SNI from the ClientHello.
 /// Returns the SNI hostname and the bytes read (to be forwarded in passthrough mode).
 pub async fn peek_sni(stream: &mut tokio::net::TcpStream) -> Result<SniPeekResult, SniError> {

@@ -38,6 +38,7 @@ pub fn build_static_worker_args(
         master_socket: master_socket.unwrap_or_else(|| paths.master_socket_path()),
         static_worker_socket: paths.static_worker_socket_path(),
         log_level,
+        ipc_key: None,
     }
 }
 

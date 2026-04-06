@@ -279,9 +279,9 @@ impl SsrfDetector {
         if self.allowed_domains_lower.is_empty() {
             return false;
         }
-        self.allowed_domains_lower
-            .iter()
-            .any(|domain| input_lower.contains(domain.as_str()))
+        self.allowed_domains_lower.iter().any(|domain| {
+            input_lower == domain.as_str() || input_lower.ends_with(&format!(".{}", domain))
+        })
     }
 
     fn detect_with_url_decode(

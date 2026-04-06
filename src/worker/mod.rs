@@ -366,6 +366,7 @@ pub struct StaticWorkerArgs {
     pub master_socket: PathBuf,
     pub static_worker_socket: PathBuf,
     pub log_level: Option<String>,
+    pub ipc_key: Option<String>,
 }
 
 #[derive(Clone)]

@@ -22,14 +22,6 @@ pub fn hash_admin_token(token: &str) -> Result<String, String> {
 }
 
 pub fn verify_admin_token(token: &str, hash: &str) -> bool {
-    // Migration: detect legacy plaintext hashes, compare directly, warn to re-hash
-    if let Some(plaintext) = hash.strip_prefix("__plaintext__:") {
-        tracing::warn!(
-            "Legacy plaintext admin token detected. This will stop working in a future release. \
-             Re-hash your token with: maluwaf admin hash-token"
-        );
-        return token == plaintext;
-    }
     bcrypt::verify(token, hash).unwrap_or(false)
 }
 

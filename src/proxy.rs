@@ -463,6 +463,7 @@ impl ProxyServer {
         user_agent: Option<String>,
         body: Option<bytes::Bytes>,
         skip_waf_check: bool,
+        headers: &http::HeaderMap,
     ) -> Result<Response<bytes::Bytes>, String> {
         let start = Instant::now();
 
@@ -492,7 +493,7 @@ impl ProxyServer {
                     method.as_str(),
                     &path,
                     query_string,
-                    &http::HeaderMap::new(),
+                    headers,
                     body_slice,
                     user_agent.as_deref(),
                 )

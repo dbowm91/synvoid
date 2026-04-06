@@ -1,6 +1,8 @@
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
 
+use crate::process::ipc_signed::IpcSigner;
 use crate::process::ipc_transport::IpcEndpoint;
 use crate::process::ipc_transport::IpcStream as AsyncIpcStream;
 use crate::process::{connect_to_master, IpcStream};
@@ -162,6 +164,68 @@ pub fn connect_to_master_with_retry(
     .into())
 }
 
+fn try_load_ipc_signer() -> Option<Arc<IpcSigner>> {
+    if let Ok(key_file) = std::env::var("MALUWAF_IPC_KEY_FILE") {
+        match std::fs::read_to_string(&key_file) {
+            Ok(key_hex) => {
+                let key_hex = key_hex.trim();
+                if key_hex.len() == 64 {
+                    let mut key = [0u8; 32];
+                    let mut valid = true;
+                    for (i, chunk) in key_hex.as_bytes().chunks(2).enumerate() {
+                        if chunk.len() != 2 {
+                            valid = false;
+                            break;
+                        }
+                        let Ok(s) = std::str::from_utf8(chunk) else {
+                            valid = false;
+                            break;
+                        };
+                        match u8::from_str_radix(s, 16) {
+                            Ok(b) => key[i] = b,
+                            Err(_) => {
+                                valid = false;
+                                break;
+                            }
+                        }
+                    }
+                    if valid {
+                        let _ = std::fs::remove_file(&key_file);
+                        return Some(Arc::new(IpcSigner::new(&key)));
+                    }
+                }
+            }
+            Err(_) => {}
+        }
+    } else if let Ok(key_hex) = std::env::var("MALUWAF_IPC_KEY") {
+        if key_hex.len() == 64 {
+            let mut key = [0u8; 32];
+            let mut valid = true;
+            for (i, chunk) in key_hex.as_bytes().chunks(2).enumerate() {
+                if chunk.len() != 2 {
+                    valid = false;
+                    break;
+                }
+                let Ok(s) = std::str::from_utf8(chunk) else {
+                    valid = false;
+                    break;
+                };
+                match u8::from_str_radix(s, 16) {
+                    Ok(b) => key[i] = b,
+                    Err(_) => {
+                        valid = false;
+                        break;
+                    }
+                }
+            }
+            if valid {
+                return Some(Arc::new(IpcSigner::new(&key)));
+            }
+        }
+    }
+    None
+}
+
 pub async fn connect_to_master_async(
     socket_path: &Path,
     max_retries: u32,
@@ -176,8 +240,95 @@ pub async fn connect_to_master_async(
     let endpoint = IpcEndpoint::new(socket_name);
     let mut last_error = None;
 
+    if let Some(signer) = try_load_ipc_signer() {
+        for attempt in 1..=max_retries {
+            match endpoint.connect_with_signer(Arc::clone(&signer)).await {
+                Ok(ipc) => {
+                    if attempt > 1 {
+                        tracing::info!(
+                            "{} connected to master on attempt {}",
+                            worker_name,
+                            attempt
+                        );
+                    }
+                    return Ok(ipc);
+                }
+                Err(e) => {
+                    let err_msg = e.to_string();
+                    last_error = Some(e);
+                    if attempt < max_retries {
+                        tracing::warn!(
+                            "{} failed to connect to master (attempt {}/{}): {}, retrying in {:?}",
+                            worker_name,
+                            attempt,
+                            max_retries,
+                            err_msg,
+                            retry_delay
+                        );
+                        tokio::time::sleep(retry_delay).await;
+                    }
+                }
+            }
+        }
+    } else {
+        for attempt in 1..=max_retries {
+            match endpoint.connect().await {
+                Ok(ipc) => {
+                    if attempt > 1 {
+                        tracing::info!(
+                            "{} connected to master on attempt {}",
+                            worker_name,
+                            attempt
+                        );
+                    }
+                    return Ok(ipc);
+                }
+                Err(e) => {
+                    let err_msg = e.to_string();
+                    last_error = Some(e);
+                    if attempt < max_retries {
+                        tracing::warn!(
+                            "{} failed to connect to master (attempt {}/{}): {}, retrying in {:?}",
+                            worker_name,
+                            attempt,
+                            max_retries,
+                            err_msg,
+                            retry_delay
+                        );
+                        tokio::time::sleep(retry_delay).await;
+                    }
+                }
+            }
+        }
+    }
+
+    let error_msg = last_error
+        .map(|e| e.to_string())
+        .unwrap_or_else(|| "unknown error".to_string());
+    Err(format!(
+        "{} failed to connect to master after {} attempts: {}",
+        worker_name, max_retries, error_msg
+    )
+    .into())
+}
+
+pub async fn connect_to_master_async_signed(
+    socket_path: &Path,
+    max_retries: u32,
+    retry_delay: Duration,
+    worker_name: &str,
+    signer: Arc<IpcSigner>,
+) -> Result<AsyncIpcStream, Box<dyn std::error::Error + Send + Sync>> {
+    let socket_name = socket_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("master");
+
+    let endpoint = IpcEndpoint::new(socket_name);
+    let mut last_error = None;
+
     for attempt in 1..=max_retries {
-        match endpoint.connect().await {
+        match endpoint.connect_with_signer(Arc::clone(&signer)).await {
             Ok(ipc) => {
                 if attempt > 1 {
                     tracing::info!("{} connected to master on attempt {}", worker_name, attempt);

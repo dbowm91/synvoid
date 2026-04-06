@@ -207,7 +207,7 @@ impl DnsServer {
         let config = self.config.clone();
 
         let (tx_udp, mut rx_udp) = tokio::sync::oneshot::channel::<()>();
-        let (tx_tcp, _rx_tcp) = tokio::sync::oneshot::channel::<()>();
+        let (tx_tcp, mut rx_tcp) = tokio::sync::oneshot::channel::<()>();
         let tx = tx_udp;
         self.shutdown_tx = Some(tx);
 
@@ -404,8 +404,6 @@ impl DnsServer {
         let geoip_lookup_tcp = geoip_lookup;
 
         tokio::spawn(async move {
-            let (shutdown_tx_tcp, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
-            let _shutdown_tx = shutdown_tx_tcp;
             let DnsHandlerState {
                 zones: zones_tcp,
                 zone_trie: zone_trie_tcp,
@@ -509,7 +507,7 @@ impl DnsServer {
                             }
                         }
                     }
-                    _ = shutdown_rx.recv() => {
+                    _ = &mut rx_tcp => {
                         tracing::info!("Anycast DNS TCP server shutting down");
                         break;
                     }
