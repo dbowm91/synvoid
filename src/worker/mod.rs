@@ -59,6 +59,10 @@ pub fn setup_worker_panic_handler() {
     setup_panic_handler("WORKER", Some(&worker_panic_log));
 }
 
+#[deprecated(
+    since = "0.2.0",
+    note = "Use run_static_worker or unified server instead - this stub drops all connections"
+)]
 pub async fn run_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let worker_id = WorkerId(args.worker_id);
 

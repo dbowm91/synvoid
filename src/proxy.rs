@@ -171,11 +171,7 @@ pub fn sanitize_request_path(path: &str) -> String {
                 }
             }
             b'.' => {
-                if !current_segment.is_empty() {
-                    segments.push(std::mem::take(&mut current_segment));
-                    current_segment = Vec::new();
-                }
-                continue;
+                current_segment.push(b'.');
             }
             b'/' => {
                 if !current_segment.is_empty() {
@@ -198,7 +194,7 @@ pub fn sanitize_request_path(path: &str) -> String {
     }
 
     for segment in segments.iter() {
-        if segment == b".." {
+        if segment.len() == 2 && segment.iter().all(|&b| b == b'.') {
             if let Some(pos) = result.iter().rposition(|&b| b == b'/') {
                 let before_slash = result[..pos]
                     .iter()
@@ -384,18 +380,39 @@ impl ProxyServer {
         max_response_size: usize,
         upstream_error_tracker: Option<Arc<UpstreamErrorTracker>>,
         site_id: String,
+        tls_config: Option<&UpstreamTlsConfig>,
     ) -> Self {
-        let client = create_http_client_with_config(
-            std::time::Duration::from_secs(5),
-            100,
-            std::time::Duration::from_secs(30),
-        );
-
-        let revalidation_client = create_http_client_with_config(
-            std::time::Duration::from_secs(5),
-            50,
-            std::time::Duration::from_secs(15),
-        );
+        let (client, revalidation_client, skip_verify) = if let Some(tls) = tls_config {
+            (
+                create_upstream_client(
+                    std::time::Duration::from_secs(5),
+                    100,
+                    std::time::Duration::from_secs(30),
+                    tls,
+                ),
+                create_upstream_client(
+                    std::time::Duration::from_secs(5),
+                    50,
+                    std::time::Duration::from_secs(15),
+                    tls,
+                ),
+                tls.skip_verify,
+            )
+        } else {
+            (
+                create_http_client_with_config(
+                    std::time::Duration::from_secs(5),
+                    100,
+                    std::time::Duration::from_secs(30),
+                ),
+                create_http_client_with_config(
+                    std::time::Duration::from_secs(5),
+                    50,
+                    std::time::Duration::from_secs(15),
+                ),
+                false,
+            )
+        };
 
         let upstream_pool = if !servers.is_empty() || !backup_servers.is_empty() {
             Some(Arc::new(UpstreamPool::new_with_backup(
@@ -449,7 +466,7 @@ impl ProxyServer {
             buffering_config,
             cache,
             cache_key_builder,
-            skip_verify: false,
+            skip_verify,
             cache_purge_token: None,
             cache_purge_allowed_ips: Arc::new(HashSet::new()),
         }

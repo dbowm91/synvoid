@@ -950,6 +950,7 @@ impl DnsServer {
                     let nsec3_records = Self::build_nsec3_nodata(&zone, &qname, record_type);
                     let zsk = zone.zsk_key.as_ref();
                     return Some(Self::build_nodata_response(
+                        query,
                         &qname,
                         qtype,
                         &nsec3_records,
@@ -964,6 +965,7 @@ impl DnsServer {
                     let nsec_records = Self::build_nsec_records(&zone, &qname, record_type);
                     let zsk = zone.zsk_key.as_ref();
                     return Some(Self::build_nodata_response(
+                        query,
                         &qname,
                         qtype,
                         &nsec_records,
@@ -995,6 +997,7 @@ impl DnsServer {
                     if !nsec_records.is_empty() {
                         let zsk = zone.zsk_key.as_ref();
                         return Some(Self::build_nxdomain_response(
+                            query,
                             &qname,
                             qtype,
                             &nsec_records,
@@ -1010,6 +1013,7 @@ impl DnsServer {
                     if !nsec3_records.is_empty() {
                         let zsk = zone.zsk_key.as_ref();
                         return Some(Self::build_nxdomain_response(
+                            query,
                             &qname,
                             qtype,
                             &nsec3_records,
@@ -1028,6 +1032,7 @@ impl DnsServer {
     }
 
     pub(super) fn build_nxdomain_response(
+        query: &[u8],
         qname: &str,
         qtype: u16,
         nsec_records: &[DnsZoneRecord],
@@ -1039,7 +1044,7 @@ impl DnsServer {
     ) -> Arc<Vec<u8>> {
         let mut response = Vec::new();
 
-        let response_id = Self::generate_random_id();
+        let response_id = wire::get_message_id(query).unwrap_or_else(|| Self::generate_random_id());
         response.extend_from_slice(&response_id.to_be_bytes());
 
         let mut flags = 0x8583u16;
@@ -1134,6 +1139,7 @@ impl DnsServer {
     }
 
     pub(super) fn build_nodata_response(
+        query: &[u8],
         qname: &str,
         qtype: u16,
         nsec_records: &[DnsZoneRecord],
@@ -1146,7 +1152,7 @@ impl DnsServer {
     ) -> Arc<Vec<u8>> {
         let mut response = Vec::new();
 
-        let response_id = Self::generate_random_id();
+        let response_id = wire::get_message_id(query).unwrap_or_else(|| Self::generate_random_id());
         response.extend_from_slice(&response_id.to_be_bytes());
 
         // NODATA: RCODE 0 (NOERROR), authoritative answer

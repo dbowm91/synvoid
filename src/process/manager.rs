@@ -575,26 +575,81 @@ impl ProcessManager {
         use std::io::Write;
 
         let temp_dir = std::env::temp_dir();
-        let file_path = temp_dir.join(format!("maluwaf_ipc_key_{}", std::process::id()));
+        let pid = std::process::id();
+        let file_path = temp_dir.join(format!("maluwaf_ipc_key_{}", pid));
 
         {
-            // Use create_new to prevent symlink attacks (TOCTOU fix)
-            let mut file = OpenOptions::new()
+            // Try to create the file with create_new to prevent symlink attacks
+            match OpenOptions::new()
                 .write(true)
                 .create_new(true)
-                .open(&file_path)?;
-
-            #[cfg(unix)]
+                .open(&file_path)
             {
-                use std::os::unix::fs::PermissionsExt;
-                file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+                Ok(mut file) => {
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
+                        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+                    }
+                    file.write_all(key_hex.as_bytes())?;
+                    file.flush()?;
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    // File exists - check if it's from a stale previous run
+                    if let Some(stale_pid) = Self::parse_ipc_key_pid(&file_path) {
+                        if !Self::is_pid_alive(stale_pid) {
+                            // Stale file from dead process - delete and retry
+                            tracing::debug!(
+                                "Removing stale IPC key temp file for dead PID {}",
+                                stale_pid
+                            );
+                            std::fs::remove_file(&file_path)?;
+                            let mut file = OpenOptions::new()
+                                .write(true)
+                                .create_new(true)
+                                .open(&file_path)?;
+                            #[cfg(unix)]
+                            {
+                                use std::os::unix::fs::PermissionsExt;
+                                file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+                            }
+                            file.write_all(key_hex.as_bytes())?;
+                            file.flush()?;
+                        } else {
+                            // Another process with same PID is alive - fail
+                            return Err(e);
+                        }
+                    } else {
+                        // Can't parse PID - fail
+                        return Err(e);
+                    }
+                }
+                Err(e) => return Err(e),
             }
-
-            file.write_all(key_hex.as_bytes())?;
-            file.flush()?;
         }
 
         Ok(file_path.to_string_lossy().into_owned())
+    }
+
+    fn parse_ipc_key_pid(file_path: &std::path::Path) -> Option<u32> {
+        file_path
+            .file_name()?
+            .to_str()?
+            .strip_prefix("maluwaf_ipc_key_")?
+            .parse()
+            .ok()
+    }
+
+    #[cfg(unix)]
+    fn is_pid_alive(pid: u32) -> bool {
+        // Send signal 0 to check if process exists (doesn't actually send signal)
+        nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), None).is_ok()
+    }
+
+    #[cfg(not(unix))]
+    fn is_pid_alive(_pid: u32) -> bool {
+        // On non-Unix, assume alive to be safe
+        true
     }
 
     fn record_spawn(&self, id: &WorkerId, pid: u32, port: Option<u16>, event: ProcessEvent) {

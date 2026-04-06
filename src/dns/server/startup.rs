@@ -316,17 +316,17 @@ impl DnsServer {
                                     }
                                 }
 
-                                let cache_key = CacheKey::new(
-                                    String::new(),
-                                    RecordType::NULL,
-                                    Some(client_ip),
-                                );
+                                let query_key = crate::dns::query_coalesce::QueryKey::from_query(&buf[..len], Some(client_ip));
+                                let cache_key = if let Some(ref key) = query_key {
+                                    CacheKey::new(key.name.clone(), RecordType::from(key.qtype), Some(client_ip))
+                                } else {
+                                    CacheKey::new(String::new(), RecordType::NULL, Some(client_ip))
+                                };
 
                                 let _dnssec = dnssec_udp.clone();
                                 let _signer_name = signer_name_udp.clone();
 
                                 let response = if let Some(coalescer) = &ctx.query_coalescer {
-                                    let query_key = crate::dns::query_coalesce::QueryKey::from_query(&buf[..len], Some(client_ip));
 
                                     if let Some(key) = query_key {
                                         match coalescer.get_or_wait(key.clone()) {
@@ -646,11 +646,12 @@ impl DnsServer {
                                     }
                                 }
 
-                                let cache_key = CacheKey::new(
-                                    String::new(),
-                                    RecordType::NULL,
-                                    Some(client_ip),
-                                );
+                                let query_key = crate::dns::query_coalesce::QueryKey::from_query(&buf[..len], Some(client_ip));
+                                let cache_key = if let Some(ref key) = query_key {
+                                    CacheKey::new(key.name.clone(), RecordType::from(key.qtype), Some(client_ip))
+                                } else {
+                                    CacheKey::new(String::new(), RecordType::NULL, Some(client_ip))
+                                };
 
                                 let _dnssec = dnssec_udp.clone();
                                 let _signer_name = signer_name_udp.clone();
@@ -658,7 +659,6 @@ impl DnsServer {
                                 let rrl_enabled = rrl_enabled_udp;
 
                                 let response = if let Some(coalescer) = &ctx.query_coalescer {
-                                    let query_key = crate::dns::query_coalesce::QueryKey::from_query(&buf[..len], Some(client_ip));
 
                                     if let Some(key) = query_key {
                                         match coalescer.get_or_wait(key.clone()) {
