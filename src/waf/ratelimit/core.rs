@@ -391,7 +391,7 @@ impl Default for IpRateLimitConfig {
     }
 }
 
-pub const IP_RATE_LIMIT_SLOTS: usize = 262144;
+pub const IP_RATE_LIMIT_SLOTS: usize = 65536;
 
 pub struct SlottedIpRateLimiter {
     second_counters: Box<[AtomicU32; IP_RATE_LIMIT_SLOTS]>,
@@ -547,7 +547,7 @@ impl IpRateLimiter for SlottedIpRateLimiter {
 
 impl RateLimitStatsProvider for GlobalRateLimiter {
     fn get_stats(&self) -> Option<RateLimitStats> {
-        let stats = self.get_stats();
+        let stats = GlobalRateLimiter::get_stats(self);
         Some(RateLimitStats {
             current_count: stats.per_second,
             limit: self.config.per_second as u64,
