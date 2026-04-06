@@ -783,6 +783,12 @@ impl Message {
             | Message::DrainStatusRequest { .. }
             | Message::DrainStatusResponse { .. }
             | Message::DrainComplete { .. }
+            | Message::StopAccepting { .. }
+            | Message::StopAcceptingAck { .. }
+            | Message::RestoreFromDrain
+            | Message::RestoreFromDrainAck { .. }
+            | Message::WorkerReadyForTraffic { .. }
+            | Message::MasterDrainStatus { .. }
             | Message::RestartWorkerRequest { .. }
             | Message::RestartWorkerResponse { .. } => Ok(()),
 
@@ -995,8 +1001,8 @@ impl Message {
                 check_str("socket_path", socket_path, MAX_PATH_LENGTH)
             }
             Message::SocketHandoffFailed { error } => check_str("error", error, MAX_STRING_LENGTH),
-            // Catch-all for any variants added in the future
-            _ => Ok(()),
+            // NOTE: Do NOT add a catch-all here. All variants must be explicitly handled
+            // so that adding a new Message variant causes a compile-time error.
         }
     }
 

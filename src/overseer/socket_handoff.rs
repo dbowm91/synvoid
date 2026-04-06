@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::io;
 #[cfg(unix)]
 use std::os::unix::net::{UnixListener, UnixStream};

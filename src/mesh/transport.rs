@@ -1,5 +1,3 @@
-#![allow(unused_variables, unused_mut, dead_code, clippy::redundant_field_names)]
-
 //! Mesh Transport Layer
 //!
 //! This module implements the QUIC-based mesh transport for inter-node communication.
@@ -234,7 +232,7 @@ impl MeshTransport {
         topology: Arc<MeshTopology>,
         cert_manager: Arc<RwLock<MeshCertManager>>,
         record_store: Option<Arc<crate::mesh::dht::RecordStoreManager>>,
-        routing_manager: Option<Arc<crate::mesh::dht::routing::DhtRoutingManager>>,
+        _routing_manager: Option<Arc<crate::mesh::dht::routing::DhtRoutingManager>>,
         threat_intel: Option<Arc<crate::mesh::threat_intel::ThreatIntelligenceManager>>,
         mesh_signer: Option<Arc<crate::mesh::protocol::MeshMessageSigner>>,
         stake_manager: Option<Arc<crate::mesh::dht::StakeManager>>,
@@ -788,23 +786,6 @@ impl MeshTransport {
         routing_manager.update_peer_latency(node_id, 0).await;
     }
 
-    #[cfg(feature = "dns")]
-    #[cfg(feature = "dns")]
-    #[cfg(feature = "dns")]
-    #[cfg(feature = "dns")]
-    #[cfg(feature = "dns")]
-    #[cfg(feature = "dns")]
-    #[cfg(feature = "dns")]
-    #[cfg(feature = "dns")]
-    #[cfg(feature = "dns")]
-    #[cfg(feature = "dns")]
-    #[cfg(feature = "dns")]
-    #[cfg(feature = "dns")]
-    #[cfg(feature = "dns")]
-    #[cfg(feature = "dns")]
-    #[cfg(feature = "dns")]
-    #[cfg(feature = "dns")]
-    #[cfg(feature = "dns")]
     #[cfg(feature = "dns")]
     pub async fn start(&self) -> Result<(), MeshTransportError> {
         {
@@ -1407,7 +1388,7 @@ impl MeshTransport {
                     session_id: session_id.to_string(),
                     connected_at: Instant::now(),
                     last_seen: Instant::now(),
-                    role: role,
+                    role,
                     upstreams: upstreams.clone(),
                     is_trusted: trusted_status,
                 };
@@ -1417,7 +1398,7 @@ impl MeshTransport {
                         MeshPeerInfo {
                             node_id: node_id.to_string(),
                             address: peer_config.address.clone(),
-                            role: role,
+                            role,
                             capabilities: peer_capabilities,
                             is_global: role.is_global(),
                             latency_ms: None,
@@ -1537,7 +1518,7 @@ impl MeshTransport {
         let query_id = format!("{}-{}", self.config.node_id(), uuid::Uuid::new_v4());
         let collection_timeout = Duration::from_millis(self.config.routing.query_timeout_ms);
 
-        let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+        let (response_tx, _response_rx) = tokio::sync::oneshot::channel();
 
         self.pending_queries
             .lock()
@@ -1604,7 +1585,7 @@ impl MeshTransport {
                         .unwrap_or(std::cmp::Ordering::Equal)
                 });
 
-                let best = providers_with_scores.first().cloned();
+                let _best = providers_with_scores.first().cloned();
 
                 return Ok(RouteQueryResult {
                     query_id,
@@ -1979,7 +1960,7 @@ impl MeshTransport {
     pub async fn proxy_http_request<B>(
         &self,
         peer_id: &str,
-        target_url: &str,
+        _target_url: &str,
         request: Request<B>,
     ) -> Result<Response<BoxBody<Bytes, Infallible>>, MeshTransportError>
     where
@@ -2084,7 +2065,7 @@ impl MeshTransport {
             }
         }
 
-        let body_bytes = if chunked {
+        let _body_bytes = if chunked {
             let mut body = Vec::new();
             loop {
                 let mut size_line = String::new();

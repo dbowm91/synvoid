@@ -66,11 +66,9 @@ pub fn validate_peer_role(
     }
 
     // Verify the public key is in the authorized list
-    if !authorized_global_pubkeys.is_empty()
-        && !authorized_global_pubkeys.contains(&pubkey.to_string())
-    {
+    if authorized_global_pubkeys.is_empty() {
         return Err(format!(
-            "Global node {} public key not in authorized list",
+            "Global node {} authentication failed: no authorized global node public keys configured",
             peer_node_id
         ));
     }
@@ -89,6 +87,15 @@ pub fn validate_peer_role(
             "Global node {} public key has invalid length: {} (expected 32)",
             peer_node_id,
             pk_bytes.len()
+        ));
+    }
+
+    // Check decoded pubkey is in authorized list
+    let pk_base64 = URL_SAFE_NO_PAD.encode(&pk_bytes);
+    if !authorized_global_pubkeys.iter().any(|k| k == &pk_base64) {
+        return Err(format!(
+            "Global node {} public key not in authorized list",
+            peer_node_id
         ));
     }
 
@@ -163,12 +170,22 @@ pub fn generate_global_node_auth(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    use base64::Engine;
 
     fn generate_test_keypair() -> ([u8; 32], String) {
         use ed25519_dalek::SigningKey;
-        use rand::rngs::OsRng;
-        let signing_key = SigningKey::generate(&mut OsRng);
-        let secret = signing_key.to_bytes();
+        let secret = [0x01; 32];
+        let signing_key = SigningKey::from_bytes(&secret);
+        let public = URL_SAFE_NO_PAD.encode(signing_key.verifying_key().as_bytes());
+        (secret, public)
+    }
+
+    fn generate_different_keypair(seed: u8) -> ([u8; 32], String) {
+        use ed25519_dalek::SigningKey;
+        let mut secret = [0u8; 32];
+        secret[0] = seed;
+        let signing_key = SigningKey::from_bytes(&secret);
         let public = URL_SAFE_NO_PAD.encode(signing_key.verifying_key().as_bytes());
         (secret, public)
     }
@@ -207,9 +224,10 @@ mod tests {
 
     #[test]
     fn test_missing_public_key_fails() {
+        let (_, public) = generate_test_keypair();
         let result = validate_peer_role(
             &crate::mesh::config::MeshNodeRole::GLOBAL,
-            &[],
+            &[public],
             "test-node",
             None,
             None,
@@ -256,24 +274,31 @@ mod tests {
 
     #[test]
     fn test_unauthorized_public_key_fails() {
-        let (secret, public) = generate_test_keypair();
-        let (_, other_public) = generate_test_keypair();
-        let (signature, timestamp) = generate_global_node_auth("test-node", &secret).unwrap();
+        let (_, public_a) = generate_test_keypair();
+        let (secret_b, public_b) = generate_different_keypair(0x02);
+        // Sign with secret_b, but authorized list has public_a
+        let (signature, timestamp) = generate_global_node_auth("test-node", &secret_b).unwrap();
 
+        // Node presents public_b but authorized list has public_a
         let result = validate_peer_role(
             &crate::mesh::config::MeshNodeRole::GLOBAL,
-            &[other_public],
+            &[public_a],
             "test-node",
-            Some(&public),
+            Some(&public_b),
             Some(&signature),
             timestamp,
             300,
         );
-        assert!(result.is_err());
+        // Should fail because public_b != public_a
+        assert!(
+            result.is_err(),
+            "Expected error for unauthorized key, got: {:?}",
+            result
+        );
     }
 
     #[test]
-    fn test_empty_authorized_list_accepts_any_valid_sig() {
+    fn test_empty_authorized_list_rejects_all() {
         let (secret, public) = generate_test_keypair();
         let (signature, timestamp) = generate_global_node_auth("test-node", &secret).unwrap();
 
@@ -286,23 +311,32 @@ mod tests {
             timestamp,
             300,
         );
-        assert!(result.is_ok());
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("no authorized global node public keys configured"));
     }
 
     #[test]
     fn test_invalid_signature_fails() {
-        let (_, public) = generate_test_keypair();
-        let timestamp = crate::utils::current_timestamp();
+        let (secret, public) = generate_test_keypair();
+        // Sign with same secret (valid), but then corrupt the signature
+        let (signature, timestamp) = generate_global_node_auth("test-node", &secret).unwrap();
+        let corrupted_sig = format!("{}corrupted", signature);
 
         let result = validate_peer_role(
             &crate::mesh::config::MeshNodeRole::GLOBAL,
-            &[],
+            &[public.clone()],
             "test-node",
             Some(&public),
-            Some("invalid_signature_here"),
+            Some(&corrupted_sig),
             timestamp,
             300,
         );
-        assert!(result.is_err());
+        assert!(
+            result.is_err(),
+            "Expected error for invalid signature encoding, got: {:?}",
+            result
+        );
     }
 }

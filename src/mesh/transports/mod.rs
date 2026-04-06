@@ -1,5 +1,3 @@
-#![allow(unused_variables, async_fn_in_trait)]
-
 use std::time::Instant;
 
 use async_trait::async_trait;

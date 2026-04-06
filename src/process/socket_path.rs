@@ -99,11 +99,11 @@ pub fn next_master_generation() -> u32 {
 
 pub fn resolve_master_socket_for_upgrade(upgrade_mode: bool, generation: Option<u32>) -> PathBuf {
     if upgrade_mode {
-        if let Some(r#gen) = generation {
-            get_versioned_master_socket_path(r#gen)
+        if let Some(gen) = generation {
+            get_versioned_master_socket_path(gen)
         } else {
-            let r#gen = next_master_generation();
-            get_versioned_master_socket_path(r#gen)
+            let gen = next_master_generation();
+            get_versioned_master_socket_path(gen)
         }
     } else {
         get_master_socket_path()
@@ -132,11 +132,11 @@ pub fn find_active_master_socket() -> Option<PathBuf> {
                 .filter_map(|e| e.ok())
                 .filter_map(|e| {
                     let name = e.file_name().to_string_lossy().to_string();
-                    parse_master_generation(&name).map(|r#gen| (r#gen, e.path()))
+                    parse_master_generation(&name).map(|gen| (gen, e.path()))
                 })
                 .collect();
 
-            sockets.sort_by_key(|(r#gen, _)| std::cmp::Reverse(*r#gen));
+            sockets.sort_by_key(|(gen, _)| std::cmp::Reverse(*gen));
             sockets.into_iter().map(|(_, path)| path).next()
         }
         _ => None,
@@ -149,8 +149,8 @@ pub fn cleanup_old_master_sockets(keep_generation: u32) {
         if let Ok(entries) = std::fs::read_dir(socket_dir) {
             for entry in entries.flatten() {
                 let name = entry.file_name().to_string_lossy().to_string();
-                if let Some(r#gen) = parse_master_generation(&name) {
-                    if r#gen < keep_generation {
+                if let Some(gen) = parse_master_generation(&name) {
+                    if gen < keep_generation {
                         let _ = std::fs::remove_file(entry.path());
                         tracing::debug!("Cleaned up old master socket: {}", name);
                     }

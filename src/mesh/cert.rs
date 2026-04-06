@@ -140,7 +140,7 @@ pub struct MeshCertManager {
     certificate_revocation_list: Arc<RwLock<std::collections::HashSet<String>>>,
     crl_entries: Arc<RwLock<std::collections::HashMap<String, CrlEntry>>>,
     seed_tofu_fingerprints: Arc<RwLock<std::collections::HashMap<String, String>>>,
-    tofu_enabled: bool,
+    tofu_enabled: Arc<RwLock<bool>>,
 }
 
 impl std::fmt::Debug for MeshCertManager {
@@ -198,7 +198,7 @@ impl MeshCertManager {
             certificate_revocation_list: Arc::new(RwLock::new(std::collections::HashSet::new())),
             crl_entries: Arc::new(RwLock::new(std::collections::HashMap::new())),
             seed_tofu_fingerprints: Arc::new(RwLock::new(std::collections::HashMap::new())),
-            tofu_enabled: true,
+            tofu_enabled: Arc::new(RwLock::new(true)),
         }
     }
 
@@ -449,14 +449,11 @@ impl MeshCertManager {
     }
 
     pub fn set_tofu_enabled(&self, enabled: bool) {
-        // tofu_enabled is a plain bool field; this setter allows runtime toggling
-        // Note: since self is &Arc<Self> in practice, this requires interior mutability
-        // For now, this is a no-op as tofu_enabled is set at construction and not mutated
-        let _ = enabled;
+        *self.tofu_enabled.write() = enabled;
     }
 
     pub fn is_tofu_enabled(&self) -> bool {
-        self.tofu_enabled
+        *self.tofu_enabled.read()
     }
 
     pub fn compute_cert_fingerprint(cert_der: &[u8]) -> String {

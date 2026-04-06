@@ -112,8 +112,8 @@ impl OverseerProcess {
 
     fn check_master_ipc_health(&self) -> IpcHealthResult {
         let socket_path = if self.dual_master_mode {
-            if let Some(r#gen) = self.upgrade_generation {
-                get_versioned_master_socket_path(r#gen)
+            if let Some(gen) = self.upgrade_generation {
+                get_versioned_master_socket_path(gen)
             } else {
                 get_master_socket_path()
             }
@@ -818,15 +818,15 @@ impl OverseerProcess {
         self.stable_since = Some(Instant::now());
         self.restart_count = 0;
 
-        if let Some(r#gen) = self.upgrade_generation {
-            set_master_generation(r#gen);
-            cleanup_old_master_sockets(r#gen);
+        if let Some(gen) = self.upgrade_generation {
+            set_master_generation(gen);
+            cleanup_old_master_sockets(gen);
             let _ = std::fs::remove_file(get_master_socket_path());
             let _ = std::fs::rename(
-                get_versioned_master_socket_path(r#gen),
+                get_versioned_master_socket_path(gen),
                 get_master_socket_path(),
             );
-            tracing::info!("Promoted socket generation {} to primary", r#gen);
+            tracing::info!("Promoted socket generation {} to primary", gen);
         }
         self.upgrade_generation = None;
 
@@ -1235,8 +1235,8 @@ impl OverseerProcess {
     async fn validate_upgraded_master_health(&mut self) -> bool {
         tokio::time::sleep(Duration::from_secs(1)).await;
 
-        let socket_path = if let Some(r#gen) = self.upgrade_generation {
-            get_versioned_master_socket_path(r#gen)
+        let socket_path = if let Some(gen) = self.upgrade_generation {
+            get_versioned_master_socket_path(gen)
         } else {
             get_master_socket_path()
         };
@@ -1405,8 +1405,8 @@ impl OverseerProcess {
         self.upgraded_master_child = None;
         self.dual_master_mode = false;
 
-        if let Some(r#gen) = self.upgrade_generation {
-            let versioned_socket = get_versioned_master_socket_path(r#gen);
+        if let Some(gen) = self.upgrade_generation {
+            let versioned_socket = get_versioned_master_socket_path(gen);
             if versioned_socket.exists() {
                 let _ = std::fs::remove_file(&versioned_socket);
             }
