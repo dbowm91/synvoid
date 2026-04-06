@@ -1579,11 +1579,7 @@ impl ProcessManager {
                 );
 
                 if let Err(e) = self.spawn_unified_server_worker_with_id(worker_id) {
-                    tracing::error!(
-                        "Failed to respawn UnifiedServerWorker {}: {}",
-                        worker_id,
-                        e
-                    );
+                    tracing::error!("Failed to respawn UnifiedServerWorker {}: {}", worker_id, e);
                 } else {
                     self.metrics.total_restarts.fetch_add(1, Ordering::Relaxed);
                 }
