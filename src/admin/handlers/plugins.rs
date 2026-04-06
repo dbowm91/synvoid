@@ -114,7 +114,8 @@ pub async fn get_plugins_status(
         .read()
         .iter()
         .rev()
-        .take(100).cloned()
+        .take(100)
+        .cloned()
         .collect();
 
     Ok(Json(PluginStatus {

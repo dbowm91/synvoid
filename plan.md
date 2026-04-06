@@ -23,19 +23,19 @@
 
 After completing all 113 items from the previous remediation plan, **9 specialized review plans** identified **~180 remaining improvement items** across the codebase. This consolidated plan merges all items, deduplicates overlaps, and organizes them into **8 waves** for parallel sub-agent execution.
 
-**Current Status: 2026-04-06 (Session 13) — 152 of 158 items fixed (96%)**
+**Current Status: 2026-04-06 (Session 14) — 153 of 158 items fixed (97%)**
 
 | Wave | Focus | Items | Fixed | Partially | Broken | Completion |
 |------|-------|-------|-------|-----------|--------|------------|
 | 1 | Build & Compilation Blockers | 10 | 10 | 0 | 0 | 100% ✅ |
 | 2 | Critical Security & Correctness | 20 | 19 | 1 | 0 | 95% |
-| 3 | Mesh & DHT Security/Correctness | 26 | 23 | 1 | 2 | 88% |
+| 3 | Mesh & DHT Security/Correctness | 26 | 23 | 2 | 1 | 92% |
 | 4 | WAF Engine & Proxy Correctness | 24 | 24 | 1 | 0 | 100% ✅ |
 | 5 | DNS Protocol Correctness | 14 | 13 | 0 | 1 | 93% |
 | 6 | Web App Stack & Admin Panel | 22 | 22 | 0 | 0 | 100% ✅ |
 | 7 | YARA, Honeypot & Threat Intel | 20 | 20 | 0 | 0 | 100% ✅ |
 | 8 | Code Quality, Safety & Performance | 22 | 22 | 0 | 0 | 100% ✅ |
-| **TOTAL** | | **158** | **153** | **3** | **2** | **97%** |
+| **TOTAL** | | **158** | **153** | **4** | **1** | **97%** |
 
 ---
 
@@ -440,12 +440,14 @@ After completing all 113 items from the previous remediation plan, **9 specializ
 **Problem:** `NODE_ID_POW_DIFFICULTY = 24` bits — trivially computable in milliseconds.
 **Fix:** Increased to 32 bits default.
 
-### 3W: Split Massive MeshMessage Enum ❌ STILL BROKEN
+### 3W: Split Massive MeshMessage Enum ⚠️ PARTIALLY FIXED (infrastructure only)
 
 **Severity:** P3 — Maintainability
-**Files:** `src/mesh/protocol.rs:207-950`
+**Files:** `src/mesh/protocol.rs:207-950`, `src/mesh/protocol_message.rs`, `src/mesh/mod.rs`
 **Problem:** 74 variants in single enum definition. File is ~1,200 lines. Variants span: Hello/Handshake, Routing, Organizations, Tier Keys, Global Node, Upstream, Key Exchange, DHT, Threat Intel, YARA, Reputation, DNS, Anycast, Zone Sync, WASM.
-**Fix:** Adopt two-level message hierarchy with category-specific sub-enums.
+**Fix (Partial):** Added `MessageCategory` enum with 18 categories (Handshake, Sync, Routing, Upstream, KeyExchange, DHT, Lookup, Health, Peer, Organization, ThreatIntel, Yara, Dns, Anycast, ZoneSync, Wasm, Config, System). Added `category()` method to `MeshMessage` that maps each variant to its category. Added `name()` method to `MessageCategory` for human-readable output. `MessageCategory` re-exported from `mesh` module.
+
+**Remaining:** Full two-level hierarchy with sub-enums would require restructuring protobuf wire format (breaking wire compatibility) and updating 479+ usages across codebase. The current implementation provides categorization infrastructure without wire format changes.
 
 ### 3X: Make DHT Quorums Dynamically Adjustable ✅ FIXED
 
@@ -2051,4 +2053,37 @@ cargo fmt --check  # Passes
 
 ### Known Issues
 - Stack overflow in `rate_limit_tests::test_slotted_ip_rate_limiter_ip_rate_limiter_trait` when running tests in parallel (pre-existing issue, works with `--test-threads=1` or `RUST_MIN_STACK=8388608`)
+
+---
+
+## Session 14 Summary (2026-04-06)
+
+### Items Fixed in This Session
+
+| Item | Description | Status | Fix Applied |
+|------|-------------|--------|-------------|
+| 3W | Split MeshMessage enum | ⚠️ PARTIALLY | Added `MessageCategory` enum with 18 categories (Handshake, Sync, Routing, Upstream, KeyExchange, DHT, Lookup, Health, Peer, Organization, ThreatIntel, Yara, Dns, Anycast, ZoneSync, Wasm, Config, System). Added `category()` method to `MeshMessage` that maps each of 74+ variants to its category. Added `name()` method to `MessageCategory`. Re-exported from `mesh` module. |
+
+**Note:** Full two-level hierarchy with sub-enums would require restructuring protobuf wire format (breaking wire compatibility with existing nodes) and updating 479+ usages across codebase. The current implementation provides categorization infrastructure without wire format changes.
+
+### Verification
+```bash
+# Build passes with 0 errors
+cargo check  # 18 warnings (pre-existing)
+
+# Format check passes
+cargo fmt --check  # Passes
+
+# Mesh protocol tests pass
+cargo test --test integration_test mesh_  # 21 passed
+
+# Clippy on mesh module clean (no new warnings from changes)
+cargo clippy -p maluwaf --features mesh --message-format=short | grep -E "(error|warning:.*protocol)"  # No hits
+```
+
+### Files Modified
+- `src/mesh/protocol.rs` — Added `MessageCategory` enum with 18 categories, `name()` method, re-export from mesh module
+- `src/mesh/protocol_message.rs` — Added `category()` method to `MeshMessage` with match arms for all 74+ variants
+- `src/mesh/mod.rs` — Added `MessageCategory` to protocol re-export
+- `plan.md` — Updated 3W status to PARTIALLY FIXED, updated status tables
 

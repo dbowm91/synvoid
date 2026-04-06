@@ -445,8 +445,7 @@ impl WafCore {
                 .map(|config| Arc::new(AttackDetector::new(config.clone()))),
         );
 
-        let attack_detection_config =
-            ArcSwapOption::new(attack_detection_config.map(Arc::new));
+        let attack_detection_config = ArcSwapOption::new(attack_detection_config.map(Arc::new));
 
         let (traffic_shaper, connection_limiter) = if let Some(config) = traffic_shaping_config {
             if config.enabled {

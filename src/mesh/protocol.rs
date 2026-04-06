@@ -1301,3 +1301,50 @@ mod protocol_proto_encode;
 mod protocol_types;
 
 pub use protocol_proto_decode::ProtocolError;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MessageCategory {
+    Handshake,
+    Sync,
+    Routing,
+    Upstream,
+    KeyExchange,
+    Dht,
+    Lookup,
+    Health,
+    Peer,
+    Organization,
+    ThreatIntel,
+    Yara,
+    Dns,
+    Anycast,
+    ZoneSync,
+    Wasm,
+    Config,
+    System,
+}
+
+impl MessageCategory {
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Handshake => "Handshake",
+            Self::Sync => "Sync",
+            Self::Routing => "Routing",
+            Self::Upstream => "Upstream",
+            Self::KeyExchange => "KeyExchange",
+            Self::Dht => "DHT",
+            Self::Lookup => "Lookup",
+            Self::Health => "Health",
+            Self::Peer => "Peer",
+            Self::Organization => "Organization",
+            Self::ThreatIntel => "ThreatIntel",
+            Self::Yara => "YARA",
+            Self::Dns => "DNS",
+            Self::Anycast => "Anycast",
+            Self::ZoneSync => "ZoneSync",
+            Self::Wasm => "WASM",
+            Self::Config => "Config",
+            Self::System => "System",
+        }
+    }
+}

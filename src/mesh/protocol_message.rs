@@ -11,6 +11,118 @@ impl MeshMessage {
         base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, bytes).into()
     }
 
+    pub fn category(&self) -> MessageCategory {
+        match self {
+            Self::Hello { .. } | Self::HelloAck { .. } => MessageCategory::Handshake,
+            Self::SyncRequest { .. } | Self::SyncResponse { .. } => MessageCategory::Sync,
+            Self::RouteQuery { .. }
+            | Self::RouteResponse { .. }
+            | Self::RouteResponseAck { .. }
+            | Self::RouteNotFound { .. }
+            | Self::RouteRejected { .. } => MessageCategory::Routing,
+            Self::UpstreamUrlRequest { .. }
+            | Self::UpstreamUrlResponse { .. }
+            | Self::UpstreamUrlDenied { .. }
+            | Self::UpstreamAnnounce { .. }
+            | Self::UpstreamUpdate { .. }
+            | Self::UpstreamBlocked { .. }
+            | Self::BandwidthReport { .. }
+            | Self::RouteUsageReport { .. }
+            | Self::UpstreamRegistrationRequest { .. }
+            | Self::UpstreamRegistrationResponse { .. }
+            | Self::UpstreamVerificationQuery { .. }
+            | Self::UpstreamVerificationResponse { .. } => MessageCategory::Upstream,
+            Self::KeyForward { .. }
+            | Self::KeySigned { .. }
+            | Self::SessionRotate { .. }
+            | Self::SessionRotateAck { .. } => MessageCategory::KeyExchange,
+            Self::DhtRecordAnnounce { .. }
+            | Self::DhtRecordQuery { .. }
+            | Self::DhtRecordResponse { .. }
+            | Self::DhtSyncRequest { .. }
+            | Self::DhtSyncResponse { .. }
+            | Self::DhtSnapshotRequest { .. }
+            | Self::DhtSnapshotResponse { .. }
+            | Self::DhtAntiEntropyRequest { .. }
+            | Self::DhtAntiEntropyResponse { .. }
+            | Self::DhtRecordPush { .. }
+            | Self::DhtRecordPushAck { .. }
+            | Self::FindNode { .. }
+            | Self::FindNodeResponse { .. }
+            | Self::Ping { .. }
+            | Self::Pong { .. } => MessageCategory::Dht,
+            Self::LookupRequest { .. }
+            | Self::LookupResponse { .. }
+            | Self::LookupBatchRequest { .. }
+            | Self::LookupBatchResponse { .. } => MessageCategory::Lookup,
+            Self::PeerHealthCheck { .. } | Self::PeerHealthResponse { .. } => {
+                MessageCategory::Health
+            }
+            Self::PeerAnnounce { .. }
+            | Self::PeerGone { .. }
+            | Self::PeerLoadReport { .. }
+            | Self::PeerLoadUpdate { .. }
+            | Self::TopologySyncRequest { .. }
+            | Self::TopologySyncResponse { .. }
+            | Self::SeedListRequest { .. }
+            | Self::SeedListResponse { .. }
+            | Self::MeshAck { .. } => MessageCategory::Peer,
+            Self::OrgRegistrationRequest { .. }
+            | Self::OrgRegistrationResponse { .. }
+            | Self::OrgInvitationRequest { .. }
+            | Self::OrgInvitationAccept { .. }
+            | Self::OrgInvitationResponse { .. }
+            | Self::OrgMemberAnnounce { .. }
+            | Self::TierKeyAnnounce { .. }
+            | Self::TierKeyRevoke { .. }
+            | Self::TierKeyQuery { .. }
+            | Self::TierKeyQueryResponse { .. }
+            | Self::UnspentTierKeyAnnounce { .. }
+            | Self::GlobalNodeAnnounce { .. } => MessageCategory::Organization,
+            Self::ThreatAnnounce { .. }
+            | Self::ThreatSyncRequest { .. }
+            | Self::ThreatSyncResponse { .. }
+            | Self::ThreatAcknowledgement { .. }
+            | Self::ReputationUpdate { .. } => MessageCategory::ThreatIntel,
+            Self::YaraRuleAnnounce { .. }
+            | Self::YaraRuleSyncRequest { .. }
+            | Self::YaraRuleSyncResponse { .. }
+            | Self::YaraRuleAcknowledgement { .. }
+            | Self::YaraRuleSubmission { .. }
+            | Self::YaraRuleSubmissionResponse { .. } => MessageCategory::Yara,
+            #[cfg(feature = "dns")]
+            Self::DnsRegistrationRequest { .. }
+            | Self::DnsRegistrationResponse { .. }
+            | Self::DnsVerificationUpdate { .. }
+            | Self::DnsDomainRegisterRequest { .. }
+            | Self::DnsDomainRegisterResponse { .. }
+            | Self::DnsDomainDeregisterRequest { .. }
+            | Self::DnsDomainRegistered { .. }
+            | Self::DnsDomainDeregistered { .. } => MessageCategory::Dns,
+            Self::AnycastNodeRegistration { .. } | Self::AnycastHealthUpdate { .. } => {
+                MessageCategory::Anycast
+            }
+            Self::ZoneSyncRequest { .. }
+            | Self::ZoneSyncResponse { .. }
+            | Self::ZoneSyncAck { .. } => MessageCategory::ZoneSync,
+            Self::WasmModuleAnnounce { .. }
+            | Self::WasmModuleSyncRequest { .. }
+            | Self::WasmModuleSyncResponse { .. } => MessageCategory::Wasm,
+            Self::SiteConfigSync { .. }
+            | Self::NetworkPolicyUpdate { .. }
+            | Self::GlobalNodeBlocklistUpdate { .. }
+            | Self::AiBotListUpdate { .. }
+            | Self::OriginKeyQuery { .. }
+            | Self::OriginKeyQueryResponse { .. }
+            | Self::NodeShutdown { .. } => MessageCategory::Config,
+            Self::KeepAlive { .. }
+            | Self::KeepAliveAck { .. }
+            | Self::Error { .. }
+            | Self::AuthChallenge { .. }
+            | Self::AuthResponse { .. } => MessageCategory::System,
+        }
+    }
+
     pub fn message_id(&self) -> Option<std::borrow::Cow<'_, str>> {
         match self {
             Self::RouteQuery { query_id, .. } => Some(query_id.as_str().into()),

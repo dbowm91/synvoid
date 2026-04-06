@@ -47,7 +47,6 @@ use parking_lot::RwLock;
 
 use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 
-
 use crate::mesh::cert::MeshCertManager;
 use crate::mesh::config::{MeshConfig, MeshPeerConfig};
 use crate::mesh::kem::MlKem768;
