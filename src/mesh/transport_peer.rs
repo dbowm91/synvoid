@@ -1135,63 +1135,63 @@ impl MeshTransport {
             return;
         }
 
-        let verified = if !signature.is_empty() {
-            let public_key = match signer_public_key {
-                Some(pk) => pk,
-                None => {
-                    tracing::warn!(
-                        "Site config sync from {} has signature but no public key - rejecting",
-                        source_node_id
-                    );
-                    return;
-                }
-            };
-
-            let sign_data = format!(
-                "{}:{}:{}:{}",
-                site_id,
-                config_version,
-                config_json.len(),
-                timestamp
-            );
-
-            match base64::Engine::decode(&base64::engine::general_purpose::STANDARD, public_key) {
-                Ok(pubkey_bytes) => {
-                    let result = crate::integrity::signing::verify_ed25519_raw(
-                        &pubkey_bytes,
-                        &sign_data,
-                        signature,
-                    );
-                    if result {
-                        tracing::info!(
-                            "Site config sync signature verified for site {} from {}",
-                            site_id,
-                            source_node_id
-                        );
-                    } else {
-                        tracing::warn!(
-                            "Site config sync signature verification FAILED for site {} from {}",
-                            site_id,
-                            source_node_id
-                        );
-                    }
-                    result
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "Failed to decode public key for site config sync from {}: {}",
-                        source_node_id,
-                        e
-                    );
-                    return;
-                }
-            }
-        } else {
-            tracing::debug!(
-                "Site config sync from {} has no signature - accepting (backward compatible)",
+        if signature.is_empty() {
+            tracing::warn!(
+                "Site config sync from {} has no signature - rejecting",
                 source_node_id
             );
-            true
+            return;
+        }
+
+        let public_key = match signer_public_key {
+            Some(pk) => pk,
+            None => {
+                tracing::warn!(
+                    "Site config sync from {} has signature but no public key - rejecting",
+                    source_node_id
+                );
+                return;
+            }
+        };
+
+        let sign_data = format!(
+            "{}:{}:{}:{}",
+            site_id,
+            config_version,
+            config_json.len(),
+            timestamp
+        );
+
+        let verified = match base64::Engine::decode(&base64::engine::general_purpose::STANDARD, public_key) {
+            Ok(pubkey_bytes) => {
+                let result = crate::integrity::signing::verify_ed25519_raw(
+                    &pubkey_bytes,
+                    &sign_data,
+                    signature,
+                );
+                if result {
+                    tracing::info!(
+                        "Site config sync signature verified for site {} from {}",
+                        site_id,
+                        source_node_id
+                    );
+                } else {
+                    tracing::warn!(
+                        "Site config sync signature verification FAILED for site {} from {}",
+                        site_id,
+                        source_node_id
+                    );
+                }
+                result
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to decode public key for site config sync from {}: {}",
+                    source_node_id,
+                    e
+                );
+                false
+            }
         };
 
         if !verified {

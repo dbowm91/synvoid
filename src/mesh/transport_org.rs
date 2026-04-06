@@ -209,7 +209,21 @@ impl MeshTransport {
     ) {
         let timestamp = crate::utils::safe_unix_timestamp();
 
-        let signature = Vec::new();
+        let sign_data = format!(
+            "{}:{}:{}:{}:{}",
+            request_id,
+            org_id,
+            org_name,
+            approved,
+            timestamp
+        );
+
+        let signature = if let Some(ref signer) = self.mesh_signer {
+            signer.sign(&sign_data).to_vec()
+        } else {
+            tracing::warn!("No mesh signer available for org registration response");
+            Vec::new()
+        };
 
         let response = crate::mesh::protocol::MeshMessage::OrgRegistrationResponse {
             request_id: request_id.into(),
@@ -382,10 +396,22 @@ impl MeshTransport {
             }
         };
 
+        let sign_data = tier_keys
+            .iter()
+            .map(|k| format!("{}:{}:{}", k.key_id, k.tier, k.valid_until))
+            .collect::<Vec<_>>()
+            .join(":");
+        let signature = if let Some(ref signer) = self.mesh_signer {
+            signer.sign(&sign_data).to_vec()
+        } else {
+            tracing::warn!("No mesh signer available for tier key announce");
+            Vec::new()
+        };
+
         let message = crate::mesh::protocol::MeshMessage::UnspentTierKeyAnnounce {
             org_id: org_id.into(),
             tier_keys,
-            signature: Vec::new(),
+            signature,
             timestamp,
         };
 

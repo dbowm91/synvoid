@@ -1129,7 +1129,7 @@ impl MeshTransport {
         &self,
         domain: &str,
         origin_node_id: &str,
-        _oauth_config: &str,
+        oauth_config: &str,
     ) -> bool {
         tracing::debug!(
             "Verifying OAuth/DNS-OAUTH challenge for {} with node {}",
@@ -1137,12 +1137,40 @@ impl MeshTransport {
             origin_node_id
         );
 
-        tracing::debug!(
-            "Would perform OAuth DNS challenge verification for {}",
-            domain
+        let challenge_record = format!(
+            "_oauth-challenge.{}",
+            domain.trim_start_matches('_')
         );
 
-        true
+        let records = self.resolve_txt_record(&challenge_record).await;
+        if records.is_empty() {
+            tracing::debug!(
+                "No OAuth challenge record found for {}",
+                challenge_record
+            );
+            return false;
+        }
+
+        for record in records {
+            if record.contains(oauth_config) {
+                tracing::info!(
+                    "OAuth challenge verified for {} using config {}",
+                    domain,
+                    oauth_config
+                );
+                return true;
+            }
+        }
+
+        tracing::warn!(
+            "OAuth challenge verification failed for {}: no matching config",
+            domain
+        );
+        false
+    }
+
+    async fn resolve_txt_record(&self, _name: &str) -> Vec<String> {
+        Vec::new()
     }
 
     pub(crate) async fn verify_signed_challenge(

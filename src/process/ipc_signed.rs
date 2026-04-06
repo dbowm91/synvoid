@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::io::{self, Read, Write};
 use std::sync::{Arc, LazyLock, Mutex};
 
@@ -12,23 +11,60 @@ pub const TIMESTAMP_SIZE: usize = 8;
 pub const NONCE_SIZE: usize = 16;
 pub const SIGNED_MESSAGE_OVERHEAD: usize = 4 + TIMESTAMP_SIZE + NONCE_SIZE + HMAC_SIZE;
 
-static NONCE_CACHE: LazyLock<Mutex<HashSet<[u8; 16]>>> =
-    LazyLock::new(|| Mutex::new(HashSet::new()));
+struct NonceEntry {
+    nonce: [u8; 16],
+    timestamp: u64,
+}
+
+struct NonceCache {
+    entries: Vec<NonceEntry>,
+}
+
+impl NonceCache {
+    fn new() -> Self {
+        Self {
+            entries: Vec::new(),
+        }
+    }
+
+    fn contains(&self, nonce: &[u8; 16]) -> bool {
+        self.entries.iter().any(|e| e.nonce == *nonce)
+    }
+
+    fn insert(&mut self, nonce: [u8; 16], timestamp: u64) {
+        self.entries.push(NonceEntry { nonce, timestamp });
+    }
+
+    fn evict_oldest(&mut self) {
+        if self.entries.is_empty() {
+            return;
+        }
+
+        let mut oldest_idx = 0;
+        let mut oldest_ts = u64::MAX;
+        for (i, entry) in self.entries.iter().enumerate() {
+            if entry.timestamp < oldest_ts {
+                oldest_ts = entry.timestamp;
+                oldest_idx = i;
+            }
+        }
+        self.entries.swap_remove(oldest_idx);
+    }
+}
+
+static NONCE_CACHE: LazyLock<Mutex<NonceCache>> = LazyLock::new(|| Mutex::new(NonceCache::new()));
 const MAX_NONCE_CACHE_SIZE: usize = 10000;
 const REPLAY_WINDOW_SECS: u64 = 300;
 
-fn check_and_insert_nonce(nonce: &[u8; 16]) -> bool {
+fn check_and_insert_nonce(nonce: &[u8; 16], timestamp: u64) -> bool {
     let mut cache = NONCE_CACHE.lock().unwrap();
+
     if cache.contains(nonce) {
         return false;
     }
-    if cache.len() >= MAX_NONCE_CACHE_SIZE {
-        let oldest = cache.iter().next().cloned();
-        if let Some(n) = oldest {
-            cache.remove(&n);
-        }
-    }
-    cache.insert(*nonce);
+
+    cache.evict_oldest();
+    cache.insert(*nonce, timestamp);
     true
 }
 
@@ -189,7 +225,7 @@ impl<R: Read> SignedReader<R> {
             .try_into()
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "bad nonce"))?;
 
-        if !check_and_insert_nonce(&nonce) {
+        if !check_and_insert_nonce(&nonce, timestamp) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "replay detected: duplicate nonce",
@@ -327,7 +363,7 @@ impl SignedIpcMessage {
             .try_into()
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "nonce extraction failed"))?;
 
-        if !check_and_insert_nonce(&nonce) {
+        if !check_and_insert_nonce(&nonce, timestamp) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "replay detected: duplicate nonce",
@@ -412,8 +448,9 @@ mod tests {
     #[test]
     fn test_nonce_cache_reject_duplicate() {
         let nonce = [0xABu8; 16];
-        assert!(check_and_insert_nonce(&nonce));
-        assert!(!check_and_insert_nonce(&nonce));
+        let timestamp = 1234567890u64;
+        assert!(check_and_insert_nonce(&nonce, timestamp));
+        assert!(!check_and_insert_nonce(&nonce, timestamp));
     }
 
     #[test]

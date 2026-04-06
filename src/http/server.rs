@@ -686,8 +686,20 @@ impl HttpServer {
 
         let full_body: Bytes = if let Some(cl) = content_length {
             if cl > CHUNK_WAF_THRESHOLD {
-                Self::collect_body_with_chunk_waf(body, &waf, client_ip, &mut request_body_size)
+                match Self::collect_body_with_chunk_waf(body, &waf, client_ip, &mut request_body_size)
                     .await
+                {
+                    Ok(body) => body,
+                    Err(()) => {
+                        return Ok(Self::build_response_with_alt_svc(
+                            403,
+                            "Request blocked by WAF".to_string(),
+                            "text/plain",
+                            &alt_svc,
+                            &main_config,
+                        ));
+                    }
+                }
             } else {
                 match body.collect().await {
                     Ok(collected) => collected.to_bytes(),
@@ -701,13 +713,55 @@ impl HttpServer {
             }
         };
         request_body_size = full_body.len() as u64;
-        let body_slice: Option<Bytes> = if full_body.is_empty() {
-            None
+        const CHUNK_WAF_SCAN_SIZE: usize = 64 * 1024; // 64KB chunks for full body scan
+
+        let (body_slice, needs_full_scan) = if full_body.is_empty() {
+            (None, false)
         } else if full_body.len() > MAX_WAF_BODY_SIZE {
-            Some(full_body.slice(..MAX_WAF_BODY_SIZE))
+            (Some(full_body.clone()), true)
         } else {
-            Some(full_body.clone())
+            (Some(full_body.clone()), false)
         };
+
+        if needs_full_scan && !full_body.is_empty() {
+            let body_len = full_body.len();
+            for offset in (0..body_len).step_by(CHUNK_WAF_SCAN_SIZE) {
+                let end = std::cmp::min(offset + CHUNK_WAF_SCAN_SIZE, body_len);
+                let chunk = &full_body[offset..end];
+                if let Some(decision) = waf.check_request_body(chunk) {
+                    match decision {
+                        crate::proxy::WafDecision::Drop
+                        | crate::proxy::WafDecision::Block(_, _) => {
+                            tracing::warn!(
+                                client_ip = %client_ip,
+                                offset = offset,
+                                size = body_len,
+                                "Large request body blocked by WAF at offset {}",
+                                offset
+                            );
+                            counter!("maluwaf.http.large_body_blocked").increment(1);
+                            let ipc_clone = ipc.clone();
+                            let worker_id_clone = worker_id;
+                            return Ok(Self::build_response_with_alt_svc(
+                                403,
+                                "Request blocked by WAF".to_string(),
+                                "text/plain",
+                                &alt_svc,
+                                &main_config,
+                            ));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            tracing::debug!(
+                client_ip = %client_ip,
+                size = body_len,
+                "Large request body scanned by WAF ({} chunks)",
+                (body_len + CHUNK_WAF_SCAN_SIZE - 1) / CHUNK_WAF_SCAN_SIZE
+            );
+        }
+
         let body_slice_ref: Option<&[u8]> = body_slice.as_deref();
         if let Some(ref m) = metrics {
             if let Some(content_length) = parts.headers.get("content-length") {
@@ -2014,12 +2068,7 @@ impl HttpServer {
 
                             return Ok(builder
                                 .body(
-                                    upstream_body
-                                        .map_err(|e| {
-                                            tracing::warn!("Upstream body stream error: {}", e);
-                                            unreachable!()
-                                        })
-                                        .boxed(),
+                                    http_body_util::Full::new(full_body).boxed()
                                 )
                                 .unwrap_or_else(|_| {
                                     Self::build_response_with_alt_svc(
@@ -3108,7 +3157,7 @@ impl HttpServer {
         waf: &Arc<crate::waf::WafCore>,
         client_ip: IpAddr,
         request_body_size: &mut u64,
-    ) -> Bytes
+    ) -> Result<Bytes, ()>
     where
         B: http_body::Body<Data = Bytes> + Unpin,
         B::Error: std::fmt::Debug,
@@ -3141,7 +3190,7 @@ impl HttpServer {
                                             );
                                             counter!("maluwaf.http.streaming_body_blocked")
                                                 .increment(1);
-                                            return Bytes::new();
+                                            return Err(());
                                         }
                                         _ => {}
                                     }
@@ -3157,7 +3206,8 @@ impl HttpServer {
                                 "Request body exceeded 100MB limit during streaming"
                             );
                             counter!("maluwaf.http.streaming_body_too_large").increment(1);
-                            return Bytes::from(accumulated);
+                            *request_body_size = accumulated.len() as u64;
+                            return Ok(Bytes::from(accumulated));
                         }
                     }
                 }
@@ -3169,7 +3219,7 @@ impl HttpServer {
         }
 
         *request_body_size = accumulated.len() as u64;
-        Bytes::from(accumulated)
+        Ok(Bytes::from(accumulated))
     }
 
     #[allow(clippy::too_many_arguments)]

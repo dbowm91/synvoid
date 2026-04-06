@@ -359,6 +359,11 @@ pub async fn handle_worker_connection(
     loop {
         match ipc.recv_with_timeout::<Message>(5000).await {
             Ok(Some(message)) => {
+                if let Err(e) = message.validate() {
+                    tracing::warn!("Invalid IPC message received: {}", e);
+                    continue;
+                }
+
                 let worker_id = match &message {
                     Message::WorkerStarted { id, .. } => Some(id.as_usize() as u64),
                     Message::WorkerReady { id } => Some(id.as_usize() as u64),

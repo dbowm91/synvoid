@@ -771,11 +771,17 @@ impl FileManager {
         dest: &Path,
     ) -> Result<Vec<FileEntry>, FileManagerError> {
         use std::io::Cursor;
+        use std::path::PathBuf;
+
         let reader = Cursor::new(data);
         let mut archive = zip::ZipArchive::new(reader)
             .map_err(|e| FileManagerError::InvalidPath(format!("invalid zip: {}", e)))?;
 
         let mut extracted = Vec::new();
+
+        let dest_canonical = dest
+            .canonicalize()
+            .unwrap_or_else(|_| PathBuf::from(dest));
 
         for i in 0..archive.len() {
             let mut file = archive
@@ -783,6 +789,29 @@ impl FileManager {
                 .map_err(|e| FileManagerError::InvalidPath(format!("zip error: {}", e)))?;
 
             let outpath = dest.join(file.name());
+
+            let outpath_canonical = outpath.canonicalize().unwrap_or_else(|_| {
+                outpath.components().fold(PathBuf::new(), |mut acc, c| {
+                    match c {
+                        std::path::Component::ParentDir => {
+                            if let Some(parent) = acc.parent() {
+                                acc = parent.to_path_buf();
+                            }
+                        }
+                        std::path::Component::Normal(s) => {
+                            acc.push(s);
+                        }
+                        _ => {}
+                    }
+                    acc
+                })
+            });
+
+            if !outpath_canonical.starts_with(&dest_canonical) {
+                return Err(FileManagerError::InvalidPath(
+                    "Path traversal attempt detected in ZIP archive".to_string(),
+                ));
+            }
 
             if file.name().ends_with('/') {
                 fs::create_dir_all(&outpath)

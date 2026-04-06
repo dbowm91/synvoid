@@ -2,6 +2,7 @@
 
 use crate::mesh::transport::MeshTransport;
 use base64::Engine;
+use ed25519_dalek::Verifier;
 
 use crate::mesh::protocol::MeshMessage;
 
@@ -603,9 +604,9 @@ impl MeshTransport {
         key_id: &str,
         mesh_id: &str,
         origin_mesh_id: &str,
-        _origin_ed25519_pubkey: &str,
-        _server_x25519_pubkey: &str,
-        _origin_signature: &[u8],
+        origin_ed25519_pubkey: &str,
+        server_x25519_pubkey: &str,
+        origin_signature: &[u8],
     ) {
         tracing::debug!(
             "Received key signed from {}: session={} key={} mesh={} origin={}",
@@ -616,11 +617,54 @@ impl MeshTransport {
             origin_mesh_id
         );
 
-        tracing::info!(
-            "Key exchange completed for session {}: origin={} verified",
-            session_id,
-            origin_mesh_id
-        );
+        let sign_data = format!("{}:{}:{}:{}", session_id, key_id, mesh_id, origin_mesh_id);
+
+        if let Some(pubkey_bytes) = hex::decode(origin_ed25519_pubkey)
+            .ok()
+            .filter(|b| b.len() == 32)
+        {
+            let signature_valid = if origin_signature.len() == 64 {
+                let mut sig_array = [0u8; 64];
+                sig_array.copy_from_slice(origin_signature);
+
+                let mut pk_array = [0u8; 32];
+                pk_array.copy_from_slice(&pubkey_bytes);
+
+                match ed25519_dalek::VerifyingKey::from_bytes(&pk_array) {
+                    Ok(pk) => pk
+                        .verify(
+                            sign_data.as_bytes(),
+                            &ed25519_dalek::Signature::from_bytes(&sig_array),
+                        )
+                        .is_ok(),
+                    Err(_) => false,
+                }
+            } else {
+                false
+            };
+
+            if signature_valid {
+                tracing::info!(
+                    "Key exchange completed for session {}: origin={} verified",
+                    session_id,
+                    origin_mesh_id
+                );
+            } else {
+                tracing::warn!(
+                    "Key exchange signature verification failed for session {} from {}",
+                    session_id,
+                    from_peer
+                );
+            }
+        } else {
+            tracing::warn!(
+                "Invalid origin public key for key exchange session {} from {}",
+                session_id,
+                from_peer
+            );
+        }
+
+        let _ = server_x25519_pubkey;
     }
 
     pub(crate) async fn handle_origin_key_query(

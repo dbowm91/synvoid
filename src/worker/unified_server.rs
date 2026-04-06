@@ -906,12 +906,7 @@ pub async fn run_unified_server_worker(
 
     // Register this worker with Master for threat intelligence coordination
     // The Master orchestrates what intelligence is shared globally
-    {
-        let mut ipc_guard = ipc.lock().await;
-        ipc_guard
-            .send(&Message::UnifiedServerWorkerReady { id: worker_id })
-            .await?;
-    }
+    // Note: UnifiedServerWorkerReady is sent after full state construction (see below)
 
     // Request blocklist from Master on startup
     let Some(block_store) = unified_server.get_block_store() else {
@@ -1118,8 +1113,23 @@ pub async fn run_unified_server_worker(
                     if cm.load_main(&main_path).is_ok() {
                         cm.discover_sites();
                         *shared_config.write().await = cm;
+
+                        let needs_full_restart = [
+                            "mesh",
+                            "yara_rules",
+                            "threat_intel",
+                            "upload_validator",
+                            "honeypot",
+                        ];
+
+                        if cfg!(feature = "mesh") {
+                            tracing::warn!(
+                                "Mesh config changes require full worker restart - config hot-reload not supported for mesh subsystem"
+                            );
+                        }
+
                         tracing::info!(
-                            "Unified Server Worker {} config reloaded successfully",
+                            "Unified Server Worker {} config reloaded. Note: mesh, YARA rules, threat intel, and honeypot changes require full restart",
                             ipc_state.worker_id
                         );
                     } else {
