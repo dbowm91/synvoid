@@ -779,9 +779,7 @@ impl FileManager {
 
         let mut extracted = Vec::new();
 
-        let dest_canonical = dest
-            .canonicalize()
-            .unwrap_or_else(|_| PathBuf::from(dest));
+        let dest_canonical = dest.canonicalize().unwrap_or_else(|_| PathBuf::from(dest));
 
         for i in 0..archive.len() {
             let mut file = archive

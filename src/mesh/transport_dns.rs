@@ -1137,17 +1137,11 @@ impl MeshTransport {
             origin_node_id
         );
 
-        let challenge_record = format!(
-            "_oauth-challenge.{}",
-            domain.trim_start_matches('_')
-        );
+        let challenge_record = format!("_oauth-challenge.{}", domain.trim_start_matches('_'));
 
         let records = self.resolve_txt_record(&challenge_record).await;
         if records.is_empty() {
-            tracing::debug!(
-                "No OAuth challenge record found for {}",
-                challenge_record
-            );
+            tracing::debug!("No OAuth challenge record found for {}", challenge_record);
             return false;
         }
 

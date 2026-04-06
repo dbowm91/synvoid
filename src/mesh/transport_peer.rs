@@ -1162,37 +1162,38 @@ impl MeshTransport {
             timestamp
         );
 
-        let verified = match base64::Engine::decode(&base64::engine::general_purpose::STANDARD, public_key) {
-            Ok(pubkey_bytes) => {
-                let result = crate::integrity::signing::verify_ed25519_raw(
-                    &pubkey_bytes,
-                    &sign_data,
-                    signature,
-                );
-                if result {
-                    tracing::info!(
-                        "Site config sync signature verified for site {} from {}",
-                        site_id,
-                        source_node_id
+        let verified =
+            match base64::Engine::decode(&base64::engine::general_purpose::STANDARD, public_key) {
+                Ok(pubkey_bytes) => {
+                    let result = crate::integrity::signing::verify_ed25519_raw(
+                        &pubkey_bytes,
+                        &sign_data,
+                        signature,
                     );
-                } else {
-                    tracing::warn!(
-                        "Site config sync signature verification FAILED for site {} from {}",
-                        site_id,
-                        source_node_id
-                    );
+                    if result {
+                        tracing::info!(
+                            "Site config sync signature verified for site {} from {}",
+                            site_id,
+                            source_node_id
+                        );
+                    } else {
+                        tracing::warn!(
+                            "Site config sync signature verification FAILED for site {} from {}",
+                            site_id,
+                            source_node_id
+                        );
+                    }
+                    result
                 }
-                result
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "Failed to decode public key for site config sync from {}: {}",
-                    source_node_id,
-                    e
-                );
-                false
-            }
-        };
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to decode public key for site config sync from {}: {}",
+                        source_node_id,
+                        e
+                    );
+                    false
+                }
+            };
 
         if !verified {
             tracing::warn!(

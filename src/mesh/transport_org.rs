@@ -211,11 +211,7 @@ impl MeshTransport {
 
         let sign_data = format!(
             "{}:{}:{}:{}:{}",
-            request_id,
-            org_id,
-            org_name,
-            approved,
-            timestamp
+            request_id, org_id, org_name, approved, timestamp
         );
 
         let signature = if let Some(ref signer) = self.mesh_signer {

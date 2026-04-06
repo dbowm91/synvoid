@@ -686,8 +686,13 @@ impl HttpServer {
 
         let full_body: Bytes = if let Some(cl) = content_length {
             if cl > CHUNK_WAF_THRESHOLD {
-                match Self::collect_body_with_chunk_waf(body, &waf, client_ip, &mut request_body_size)
-                    .await
+                match Self::collect_body_with_chunk_waf(
+                    body,
+                    &waf,
+                    client_ip,
+                    &mut request_body_size,
+                )
+                .await
                 {
                     Ok(body) => body,
                     Err(()) => {
@@ -2067,9 +2072,7 @@ impl HttpServer {
                             }
 
                             return Ok(builder
-                                .body(
-                                    http_body_util::Full::new(full_body).boxed()
-                                )
+                                .body(http_body_util::Full::new(full_body).boxed())
                                 .unwrap_or_else(|_| {
                                     Self::build_response_with_alt_svc(
                                         500,
