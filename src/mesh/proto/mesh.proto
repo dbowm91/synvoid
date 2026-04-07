@@ -1239,6 +1239,17 @@ message ZoneSyncAck {
     uint64 timestamp = 4;
 }
 
+message ProxyCachePreferences {
+    bool enable = 1;
+    uint64 inactive = 2;
+    repeated uint32 valid_status = 3;
+    repeated string methods = 4;
+    repeated string use_stale = 5;
+    uint32 min_uses = 6;
+    uint64 stale_while_revalidate = 7;
+    uint64 stale_if_error = 8;
+}
+
 message SiteConfigSync {
     string request_id = 1;
     string site_id = 2;
@@ -1248,6 +1259,7 @@ message SiteConfigSync {
     string source_node_id = 6;
     bytes signature = 7;
     optional string signer_public_key = 8;
+    optional ProxyCachePreferences proxy_cache_preferences = 9;
 }
 
 enum WasmModuleType {

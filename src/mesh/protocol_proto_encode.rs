@@ -2006,6 +2006,7 @@ impl From<&MeshMessage> for proto::MeshMessage {
                 source_node_id,
                 signature,
                 signer_public_key,
+                proxy_cache_preferences,
             } => proto::MeshMessage {
                 message_type: 125,
                 payload: Some(proto::mesh_message::Payload::SiteConfigSync(
@@ -2018,6 +2019,18 @@ impl From<&MeshMessage> for proto::MeshMessage {
                         source_node_id: source_node_id.to_string(),
                         signature: signature.clone(),
                         signer_public_key: signer_public_key.as_ref().map(|s| s.to_string()),
+                        proxy_cache_preferences: proxy_cache_preferences.as_ref().map(|p| {
+                            proto::ProxyCachePreferences {
+                                enable: p.enable,
+                                inactive: p.inactive,
+                                valid_status: p.valid_status.clone(),
+                                methods: p.methods.clone(),
+                                use_stale: p.use_stale.clone(),
+                                min_uses: p.min_uses,
+                                stale_while_revalidate: p.stale_while_revalidate,
+                                stale_if_error: p.stale_if_error,
+                            }
+                        }),
                     },
                 )),
             },

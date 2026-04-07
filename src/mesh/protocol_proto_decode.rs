@@ -1256,6 +1256,18 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                 source_node_id: r.source_node_id.into(),
                 signature: r.signature,
                 signer_public_key: r.signer_public_key.map(|s| s.into()),
+                proxy_cache_preferences: r.proxy_cache_preferences.as_ref().map(|p| {
+                    crate::mesh::protocol::ProxyCachePreferences {
+                        enable: p.enable,
+                        inactive: p.inactive,
+                        valid_status: p.valid_status.clone(),
+                        methods: p.methods.clone(),
+                        use_stale: p.use_stale.clone(),
+                        min_uses: p.min_uses,
+                        stale_while_revalidate: p.stale_while_revalidate,
+                        stale_if_error: p.stale_if_error,
+                    }
+                }),
             }),
             proto::mesh_message::Payload::WasmModuleAnnounce(r) => {
                 Ok(MeshMessage::WasmModuleAnnounce {

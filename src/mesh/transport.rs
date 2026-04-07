@@ -614,6 +614,7 @@ impl MeshTransport {
                     source_node_id: current_node_id.clone().into(),
                     signature,
                     signer_public_key,
+                    proxy_cache_preferences: None,
                 };
 
                 let result = transport.send_datagram_to_peer(&node_id, &message).await;

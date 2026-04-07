@@ -658,6 +658,7 @@ impl MeshTransport {
                 source_node_id,
                 signature,
                 signer_public_key,
+                proxy_cache_preferences,
             } => {
                 self.handle_site_config_sync(
                     peer_id,
@@ -669,6 +670,7 @@ impl MeshTransport {
                     &source_node_id,
                     signature.as_ref(),
                     signer_public_key.as_deref(),
+                    proxy_cache_preferences.as_ref(),
                 )
                 .await;
             }
@@ -1137,6 +1139,7 @@ impl MeshTransport {
         source_node_id: &str,
         signature: &[u8],
         signer_public_key: Option<&str>,
+        _proxy_cache_preferences: Option<&crate::mesh::protocol::ProxyCachePreferences>,
     ) {
         tracing::info!(
             "Received site config sync for site {} version {} from node {}",

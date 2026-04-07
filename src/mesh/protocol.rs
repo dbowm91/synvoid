@@ -759,6 +759,7 @@ pub enum MeshMessage {
         source_node_id: ArcStr,
         signature: Vec<u8>,
         signer_public_key: Option<ArcStr>,
+        proxy_cache_preferences: Option<ProxyCachePreferences>,
     },
     DnsDomainRegisterRequest {
         request_id: ArcStr,
@@ -971,6 +972,33 @@ pub enum SignatureError {
     NotSignable,
     #[error("Signature verification failed: {0}")]
     VerificationFailed(String),
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct ProxyCachePreferences {
+    pub enable: bool,
+    pub inactive: u64,
+    pub valid_status: Vec<u32>,
+    pub methods: Vec<String>,
+    pub use_stale: Vec<String>,
+    pub min_uses: u32,
+    pub stale_while_revalidate: u64,
+    pub stale_if_error: u64,
+}
+
+impl From<&crate::config::site::ProxyCacheConfig> for ProxyCachePreferences {
+    fn from(config: &crate::config::site::ProxyCacheConfig) -> Self {
+        Self {
+            enable: config.enable.unwrap_or(false),
+            inactive: config.inactive,
+            valid_status: config.valid_status.iter().map(|&v| v as u32).collect(),
+            methods: config.methods.clone(),
+            use_stale: config.use_stale.clone(),
+            min_uses: config.min_uses,
+            stale_while_revalidate: config.stale_while_revalidate.unwrap_or(0),
+            stale_if_error: config.stale_if_error.unwrap_or(0),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
