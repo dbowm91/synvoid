@@ -528,25 +528,21 @@ rrsig.extend_from_slice(&timestamp.to_be_bytes());
 
 When reviewing plan files against the codebase, always verify claims directly. Plans may reference items already fixed, use outdated line numbers, or describe bugs incorrectly. Run `grep`/search for the specific patterns described to confirm they still exist before implementing fixes.
 
-## Remediation Plan
+## Consolidated Improvement Plan
 
-The original remediation plan (Waves 0-6, 185 items) is **complete**. The consolidated improvement plan (`plan.md`) has been updated with ~180 items across 8 waves, organized for parallel sub-agent execution. See `plan.md` for full details.
+All individual improvement plans (plan2-plan9) have been consolidated into a single `plans/plan.md` file. The plan is organized into waves based on dependency chains and parallelization opportunities:
 
-### Partially Completed Items (from previous waves)
-- **Config Schema Generation**: Requires significant refactoring to use schemars derive-based generation (~918 lines of hardcoded schema)
-- **Dead Code Cleanup**: Target of <60 annotations not met (~72 current); many reserved protocol modules added
+| Wave | Focus Area |
+|------|------------|
+| Wave 1 | Critical Performance Fixes (blocking I/O, WAF parallelization, string allocation reduction) |
+| Wave 2 | Mesh & DHT Infrastructure (DNS capability, sharding, adaptive quorum) |
+| Wave 3 | WAF & Threat Intelligence (local indicator lookup, deduplication) |
+| Wave 4 | File Upload Security (magic bytes, malware scanning) |
+| Wave 5 | Edge Caching & Transform Sharing |
+| Wave 6 | Serverless Architecture (unified pool, routing, versioning) |
+| Wave 7 | Built-in Web App Stack (directory viewer, PHP, WASI) |
 
-### New Files Added
-- `src/admin/handlers/yara_rules.rs` - YARA submission management API
-- `src/admin/handlers/plugins.rs` - Plugin metrics and status API
-- `src/static_files/file_manager.rs` - File manager core
-- `src/http/file_manager.rs` - File manager HTTP handler
-- `src/php/mod.rs` - PHP backend support
-- `src/cgi/mod.rs` - CGI dispatch
-- `src/http/shared_handler.rs` - Shared request handler
-- `docs/WASM-ABI.md` - WASM ABI documentation
-- `benches/bench_wasm.rs` - WASM benchmarks
-- `benches/bench_broadcast.rs` - Broadcast benchmarks
+See `plans/plan.md` for full implementation details.
 
 ## Admin Panel Architecture Notes
 
