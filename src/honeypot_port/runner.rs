@@ -163,9 +163,8 @@ impl PortHoneypotRunner {
                         continue;
                     }
 
-                    let mut announced_ips: std::collections::HashSet<String> = storage
-                        .get_announced_indicator_keys()
-                        .unwrap_or_default();
+                    let mut announced_ips: std::collections::HashSet<String> =
+                        storage.get_announced_indicator_keys().unwrap_or_default();
                     let mut records_processed = 0i64;
 
                     for record in &records {

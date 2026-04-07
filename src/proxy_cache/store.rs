@@ -265,9 +265,10 @@ impl ProxyCache {
         let entry = inner.entry.clone();
         drop(inner);
 
-        let content = tokio::task::spawn_blocking(move || {
-            std::fs::read(&disk_path)
-        }).await.ok().and_then(|r| r.ok())?;
+        let content = tokio::task::spawn_blocking(move || std::fs::read(&disk_path))
+            .await
+            .ok()
+            .and_then(|r| r.ok())?;
 
         if checksum != CacheEntryInner::compute_checksum(&content) {
             tracing::warn!("Cache entry checksum mismatch, removing corrupted entry");

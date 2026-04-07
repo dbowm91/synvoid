@@ -111,7 +111,10 @@ pub fn build_headers_to_filter(
     global_headers: &[String],
     site_headers: &[String],
 ) -> AHashSet<String> {
-    let static_headers: AHashSet<String> = STATIC_HEADERS_TO_FILTER.iter().map(|s| s.to_string()).collect();
+    let static_headers: AHashSet<String> = STATIC_HEADERS_TO_FILTER
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
 
     if global_headers.is_empty() && site_headers.is_empty() {
         return static_headers;
@@ -1582,7 +1585,10 @@ mod tests {
         headers.insert("server", "nginx".parse().unwrap());
         headers.insert("content-length", "1234".parse().unwrap());
 
-        let static_filter: AHashSet<String> = STATIC_HEADERS_TO_FILTER.iter().map(|s| s.to_string()).collect();
+        let static_filter: AHashSet<String> = STATIC_HEADERS_TO_FILTER
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         let filtered = filter_response_headers(&headers, &static_filter);
         let names: Vec<&str> = filtered.iter().map(|(k, _)| k.as_str()).collect();
         assert!(names.contains(&"content-length"));

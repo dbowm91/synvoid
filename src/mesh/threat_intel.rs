@@ -895,7 +895,9 @@ impl ThreatIntelligenceManager {
 
     pub fn lookup_local_indicator(&self, indicator_value: &str) -> Option<ThreatIndicator> {
         let indicators = self.indicators.read();
-        indicators.get(indicator_value).map(|entry| entry.indicator.clone())
+        indicators
+            .get(indicator_value)
+            .map(|entry| entry.indicator.clone())
     }
 
     pub fn is_mesh_available(&self) -> bool {
