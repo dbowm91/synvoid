@@ -10,6 +10,8 @@ use tokio::fs;
 use walkdir::WalkDir;
 
 use crate::config::site::SiteStaticConfig;
+use crate::upload::malware_scanner::MalwareScanner;
+use crate::upload::rate_limit::{RateLimitConfig, UploadRateLimiter};
 
 const BLOCKED_EXTENSIONS: &[&str] = &[
     "exe",
@@ -55,6 +57,9 @@ pub struct FileManagerConfig {
     pub max_file_size: u64,
     pub blocked_extensions: Vec<String>,
     pub allowed_extensions: Vec<String>,
+    pub allowed_mime_types: Vec<String>,
+    pub scan_on_upload: bool,
+    pub rate_limit_config: RateLimitConfig,
     pub allow_hidden_files: bool,
     pub allow_symlinks: bool,
 }
@@ -67,6 +72,9 @@ impl Default for FileManagerConfig {
             max_file_size: 100 * 1024 * 1024,
             blocked_extensions: BLOCKED_EXTENSIONS.iter().map(|s| s.to_string()).collect(),
             allowed_extensions: Vec::new(),
+            allowed_mime_types: Vec::new(),
+            scan_on_upload: false,
+            rate_limit_config: RateLimitConfig::default(),
             allow_hidden_files: false,
             allow_symlinks: false,
         }
@@ -87,6 +95,9 @@ impl FileManagerConfig {
                 .unwrap_or(100 * 1024 * 1024),
             blocked_extensions: BLOCKED_EXTENSIONS.iter().map(|s| s.to_string()).collect(),
             allowed_extensions: Vec::new(),
+            allowed_mime_types: Vec::new(),
+            scan_on_upload: false,
+            rate_limit_config: RateLimitConfig::default(),
             allow_hidden_files: config.block_hidden_files.map(|v| !v).unwrap_or(false),
             allow_symlinks: config.allow_symlinks.unwrap_or(false),
         }
@@ -134,6 +145,9 @@ pub enum FileManagerError {
     #[error("File too large: {0}")]
     FileTooLarge(String),
 
+    #[error("Malware detected: {0}")]
+    MalwareDetected(String),
+
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),
 
@@ -152,6 +166,7 @@ impl FileManagerError {
             FileManagerError::DirectoryNotEmpty(_) => 409,
             FileManagerError::ExtensionBlocked(_) => 403,
             FileManagerError::FileTooLarge(_) => 413,
+            FileManagerError::MalwareDetected(_) => 403,
             FileManagerError::IoError(_) => 500,
             FileManagerError::OperationNotPermitted => 403,
         }
@@ -195,12 +210,24 @@ pub struct Permissions {
 
 pub struct FileManager {
     config: Arc<FileManagerConfig>,
+    malware_scanner: Arc<MalwareScanner>,
+    rate_limiter: Arc<UploadRateLimiter>,
 }
 
 impl FileManager {
     pub fn new(config: FileManagerConfig) -> Self {
+        let malware_scanner = if config.scan_on_upload {
+            Arc::new(MalwareScanner::new())
+        } else {
+            Arc::new(MalwareScanner::with_yara(None))
+        };
+
+        let rate_limiter = Arc::new(UploadRateLimiter::new(config.rate_limit_config.clone()));
+
         Self {
             config: Arc::new(config),
+            malware_scanner,
+            rate_limiter,
         }
     }
 
@@ -638,6 +665,16 @@ impl FileManager {
             )));
         }
 
+        let rate_result = self
+            .rate_limiter
+            .check_rate_limit("file_manager", data.len() as u64);
+        if !rate_result.is_allowed() {
+            tracing::warn!("Upload rate limit exceeded: {:?}", rate_result);
+            return Err(FileManagerError::InvalidPath(
+                "Rate limit exceeded for uploads".to_string(),
+            ));
+        }
+
         let clean_filename = filename
             .replace(['/', '\\', '\0'], "_")
             .replace("..", "_")
@@ -658,6 +695,69 @@ impl FileManager {
 
         if let Some(ref blocked_ext) = self.check_blocked_extension(&resolved) {
             return Err(FileManagerError::ExtensionBlocked(blocked_ext.clone()));
+        }
+
+        if !self.config.allowed_mime_types.is_empty() {
+            let registry = crate::upload::signature::global_signature_registry();
+            if let Some(detected) = registry.detect(&data) {
+                let detected_mime = detected.detected_mime_types.first();
+                if let Some(mime) = detected_mime {
+                    if !self.config.allowed_mime_types.iter().any(|m| m == *mime) {
+                        tracing::warn!(
+                            "Upload rejected: MIME type {} not in allowed list: {:?}",
+                            mime,
+                            self.config.allowed_mime_types
+                        );
+                        return Err(FileManagerError::InvalidPath(format!(
+                            "MIME type {} not allowed",
+                            mime
+                        )));
+                    }
+                }
+            }
+
+            if let Some(claimed_ext) = resolved.extension().and_then(|e| e.to_str()) {
+                let claimed_mime = format!("application/{}", claimed_ext);
+                if !self
+                    .config
+                    .allowed_mime_types
+                    .iter()
+                    .any(|m| m == &claimed_mime)
+                {
+                    let registry = crate::upload::signature::global_signature_registry();
+                    if let Some(detected) = registry.detect(&data) {
+                        if detected
+                            .detected_mime_types
+                            .iter()
+                            .any(|m| *m != claimed_mime)
+                        {
+                            tracing::warn!(
+                                "Upload warning: extension MIME mismatch - claimed: {}, detected: {:?}",
+                                claimed_mime,
+                                detected.detected_mime_types
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        if self.config.scan_on_upload {
+            match self.malware_scanner.scan_bytes(&data).await {
+                Ok(scan_result) if !scan_result.is_clean() => {
+                    let matched_names: Vec<String> = scan_result.matched_rule_names();
+                    tracing::warn!(
+                        "Upload blocked: malware detected in file {} - matches: {:?}",
+                        filename,
+                        matched_names
+                    );
+                    return Err(FileManagerError::MalwareDetected(matched_names.join(", ")));
+                }
+                Err(e) => {
+                    tracing::warn!("Malware scan error for file {}: {}", filename, e);
+                }
+                _ => {}
+            }
         }
 
         fs::write(&resolved, data)

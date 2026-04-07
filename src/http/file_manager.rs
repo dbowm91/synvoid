@@ -379,12 +379,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_file_manager_creation() {
+        use crate::upload::rate_limit::RateLimitConfig;
         let config = FileManagerConfig {
             enabled: true,
             root_path: PathBuf::from("/tmp"),
             max_file_size: 1024 * 1024,
             blocked_extensions: vec!["exe".to_string()],
             allowed_extensions: vec![],
+            allowed_mime_types: vec![],
+            scan_on_upload: false,
+            rate_limit_config: RateLimitConfig::default(),
             allow_hidden_files: false,
             allow_symlinks: false,
         };

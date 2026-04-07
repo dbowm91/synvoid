@@ -1,5 +1,6 @@
 pub mod config;
 pub mod malware_scanner;
+pub mod rate_limit;
 pub mod sandbox;
 pub mod signature;
 pub mod yara_rule_feed;

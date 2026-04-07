@@ -16,6 +16,10 @@ pub struct SiteFileManagerConfig {
     #[serde(default)]
     pub allowed_extensions: Vec<String>,
     #[serde(default)]
+    pub allowed_mime_types: Vec<String>,
+    #[serde(default)]
+    pub scan_on_upload: Option<bool>,
+    #[serde(default)]
     pub allow_hidden_files: Option<bool>,
     #[serde(default)]
     pub allow_symlinks: Option<bool>,

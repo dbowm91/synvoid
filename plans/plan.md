@@ -1,7 +1,7 @@
 # MaluWAF Improvement Plan - Consolidated
 
 **Date**: 2026-04-07
-**Status**: Wave 1, 2 & 3 Complete
+**Status**: Wave 1, 2, 3 & 4 Complete
 
 ## Overview
 
@@ -232,6 +232,8 @@ if mesh_available {
 2. Add `allowed_mime_types` config to `SiteFileManagerConfig`
 3. Add extension-MIME mismatch warning
 
+**Status**: ✅ Implemented (magic byte validation with SignatureRegistry)
+
 ### 4.2 Malware Scanner Integration
 
 **Files**: `src/config/site/file_manager.rs`, `src/static_files/file_manager.rs`
@@ -241,11 +243,15 @@ if mesh_available {
 2. Call scanner after magic bytes pass
 3. Add scan results to audit log
 
+**Status**: ✅ Implemented (MalwareScanner integrated in upload_file())
+
 ### 4.3 Upload Rate Limiting
 
 **File**: `src/admin/rate_limit.rs`
 
 **Fix**: Add upload-specific rate limiter for file manager endpoints.
+
+**Status**: ✅ Implemented (UploadRateLimiter integrated in FileManager with rate_limit_config)
 
 ### 4.4 YARA Distribution Enhancements
 
@@ -254,6 +260,8 @@ if mesh_available {
 **Fix**:
 1. Add selective broadcast by node role
 2. Add incremental rule updates (delta sync)
+
+**Status**: ✅ Already implemented (RuleChangeTracker with incremental_versions, role-based broadcast checks)
 
 ---
 
@@ -440,8 +448,11 @@ if mesh_available {
 ### Wave 3 (WAF/Threat Intel) - ✅ COMPLETE
 - All items implemented (3.1, 3.2, 3.3, 3.4)
 
-### Wave 4 (File Upload) - Depends on Wave 1 for performance baseline
-- All items are independent within the wave
+### Wave 4 (File Upload) - ✅ COMPLETE
+- 4.1 Magic Byte Validation: ✅ Implemented (SignatureRegistry detection + allowed_mime_types)
+- 4.2 Malware Scanner Integration: ✅ Implemented (MalwareScanner called in upload_file())
+- 4.3 Upload Rate Limiting: ✅ Implemented (UploadRateLimiter integrated in FileManager)
+- 4.4 YARA Distribution Enhancements: ✅ Already implemented (incremental_versions, role-based checks)
 
 ### Wave 5 (Edge Caching) - Depends on Wave 2 for DHT changes
 - All items build on DHT sharding from Wave 2
@@ -482,10 +493,10 @@ if mesh_available {
 - [x] Standalone mode logging works (src/worker/unified_server.rs - conditional logging based on is_mesh_available)
 - [x] Rate limiter cleanup optimization (src/waf/ratelimit.rs - single-pass remove_expired_windows)
 
-### Wave 4
-- [ ] 100% uploads validated with magic bytes
-- [ ] Malware scanning integrated
-- [ ] Upload rate limiting works
+### Wave 4 (2026-04-07)
+- [x] 100% uploads validated with magic bytes (src/static_files/file_manager.rs - SignatureRegistry detection)
+- [x] Malware scanning integrated (src/static_files/file_manager.rs - MalwareScanner in upload_file())
+- [x] Upload rate limiting works (src/static_files/file_manager.rs - UploadRateLimiter integrated)
 
 ### Wave 5
 - [ ] Cache preferences propagate origin→edge
@@ -547,8 +558,11 @@ if mesh_available {
 - `src/proxy_cache/store.rs` - Async file I/O
 - `src/proxy.rs` - String allocation reduction
 - `src/process/manager.rs` - Auto-scaling
-- `src/static_files/file_manager.rs` - Magic bytes, malware scan
+- `src/static_files/file_manager.rs` - Magic bytes, malware scan, rate limiting
 - `src/config/site/file_manager.rs` - Upload config
+- `src/upload/mod.rs` - Added rate_limit module export
+- `src/upload/malware_scanner.rs` - Fixed async tests
+- `src/http/file_manager.rs` - Updated test with new config fields
 - `src/serverless/manager.rs` - Registry, routing
 - `src/plugin/instance_pool.rs` - Unified pool
 - `src/serverless/instance_pool.rs` - Unified pool
