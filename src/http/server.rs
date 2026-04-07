@@ -2193,190 +2193,34 @@ impl HttpServer {
                             }
                         }
 
+                        let accept_encoding: Option<&str> = parts
+                            .headers
+                            .get("accept-encoding")
+                            .and_then(|v: &http::HeaderValue| v.to_str().ok());
+
                         if let Some(ref mt) = mesh_transport {
                             let (minification, image_protection, compression) = tokio::join!(
                                 mt.get_minification_for_site(&site_id),
                                 mt.get_image_protection_for_site(&site_id),
                                 mt.get_compression_for_site(&site_id),
                             );
-                            if let Some(ref min_config) = minification {
-                                if min_config.enabled.unwrap_or(false) {
-                                    let ct = content_type.as_deref().unwrap_or("");
-                                    if ct.contains("text/html")
-                                        || ct.contains("text/css")
-                                        || ct.contains("javascript")
-                                    {
-                                        let generator =
-                                            crate::static_files::minifier::MinifierGenerator::new();
 
-                                        if ct.contains("text/html") {
-                                            if let Ok(text) = String::from_utf8(body.to_vec()) {
-                                                if let Ok(minified) = generator.minify_html(&text) {
-                                                    body = Bytes::from(minified);
-                                                    body_len = body.len() as u64;
-                                                }
-                                            }
-                                        } else if ct.contains("text/css") {
-                                            if let Ok(text) = String::from_utf8(body.to_vec()) {
-                                                if let Ok(minified) = generator.minify_css(&text) {
-                                                    body = Bytes::from(minified);
-                                                    body_len = body.len() as u64;
-                                                }
-                                            }
-                                        } else if ct.contains("javascript") {
-                                            if let Ok(text) = String::from_utf8(body.to_vec()) {
-                                                if let Ok(minified) = generator.minify_js(&text) {
-                                                    body = Bytes::from(minified);
-                                                    body_len = body.len() as u64;
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
+                            let config = crate::http::response_transform::ResponseTransformConfig::from_mesh_config(
+                                minification.as_ref(),
+                                image_protection.as_ref(),
+                                compression.as_ref(),
+                            );
+
+                            if let Some(ref min_settings) = config.minification {
+                                body = crate::http::response_transform::apply_minification(
+                                    body,
+                                    content_type.as_deref(),
+                                    min_settings,
+                                );
+                                body_len = body.len() as u64;
                             }
 
-                            if let Some(ref config) = image_protection {
-                                if config.enabled.unwrap_or(false) {
-                                    let mut is_image = content_type
-                                        .as_ref()
-                                        .map(|ct| ct.starts_with("image/"))
-                                        .unwrap_or(false);
-                                    if !is_image {
-                                        let path_str = path.to_string();
-                                        is_image = IMAGE_PROTECTION_REGEX.is_match(&path_str);
-                                    }
-                                    let min_size =
-                                        config.min_size_bytes.unwrap_or(100 * 1024) as u64;
-                                    let in_range = body_len >= min_size;
-                                    let max_check = config
-                                        .whitelist_patterns
-                                        .as_ref()
-                                        .map(|p| p.is_empty())
-                                        .unwrap_or(true);
-
-                                    if is_image && in_range && max_check {
-                                        let path_str = path.to_string();
-                                        let whitelisted = config
-                                            .whitelist_patterns
-                                            .as_ref()
-                                            .map(|patterns| {
-                                                patterns.iter().any(|p| {
-                                                    if let Some(re) = get_cached_regex(p) {
-                                                        re.is_match(&path_str)
-                                                    } else {
-                                                        false
-                                                    }
-                                                })
-                                            })
-                                            .unwrap_or(false);
-
-                                        if !whitelisted {
-                                            let site_id_for_poison = site_id.to_string();
-                                            body = Self::apply_image_poisoning(
-                                                body,
-                                                site_id_for_poison,
-                                                last_modified.clone(),
-                                            )
-                                            .await;
-                                            body_len = body.len() as u64;
-                                        }
-                                    }
-                                }
-                            }
-
-                            if let Some(ref comp_config) = compression {
-                                if comp_config.enabled.unwrap_or(false) {
-                                    let accept_encoding: &str = parts
-                                        .headers
-                                        .get("accept-encoding")
-                                        .and_then(|v: &http::HeaderValue| v.to_str().ok())
-                                        .unwrap_or("");
-
-                                    let generator =
-                                        crate::static_files::minifier::MinifierGenerator::new();
-                                    let gzip_level = comp_config.gzip_level.unwrap_or(6);
-
-                                    if accept_encoding.contains("br") {
-                                        if let Ok(compressed) = generator.compress_brotli(
-                                            &body,
-                                            comp_config.brotli_level.unwrap_or(6),
-                                        ) {
-                                            body = Bytes::from(compressed);
-                                            body_len = body.len() as u64;
-                                            let mut headers_clone = headers.clone();
-                                            headers_clone.retain(|(k, _)| {
-                                                k.to_lowercase() != "content-encoding"
-                                            });
-                                            headers_clone.push((
-                                                "Content-Encoding".to_string(),
-                                                "br".to_string(),
-                                            ));
-                                            headers = headers_clone;
-                                        }
-                                    } else if accept_encoding.contains("gzip") {
-                                        if let Ok(compressed) =
-                                            generator.compress_gzip(&body, gzip_level)
-                                        {
-                                            body = Bytes::from(compressed);
-                                            body_len = body.len() as u64;
-                                            let mut headers_clone = headers.clone();
-                                            headers_clone.retain(|(k, _)| {
-                                                k.to_lowercase() != "content-encoding"
-                                            });
-                                            headers_clone.push((
-                                                "Content-Encoding".to_string(),
-                                                "gzip".to_string(),
-                                            ));
-                                            headers = headers_clone;
-                                        }
-                                    }
-                                }
-                            }
-                        } else {
-                            let static_config = &target.site_config.r#static;
-                            let image_poison_config = &target.site_config.image_poison;
-
-                            if static_config.enable_minification.unwrap_or(false) {
-                                let ct = content_type.as_deref().unwrap_or("");
-                                if ct.contains("text/html")
-                                    || ct.contains("text/css")
-                                    || ct.contains("javascript")
-                                {
-                                    let generator =
-                                        crate::static_files::minifier::MinifierGenerator::new();
-
-                                    if ct.contains("text/html")
-                                        && static_config.enable_html_minification.unwrap_or(true)
-                                    {
-                                        if let Ok(text) = String::from_utf8(body.to_vec()) {
-                                            if let Ok(minified) = generator.minify_html(&text) {
-                                                body = Bytes::from(minified);
-                                                body_len = body.len() as u64;
-                                            }
-                                        }
-                                    } else if ct.contains("text/css")
-                                        && static_config.enable_css_minification.unwrap_or(true)
-                                    {
-                                        if let Ok(text) = String::from_utf8(body.to_vec()) {
-                                            if let Ok(minified) = generator.minify_css(&text) {
-                                                body = Bytes::from(minified);
-                                                body_len = body.len() as u64;
-                                            }
-                                        }
-                                    } else if ct.contains("javascript")
-                                        && static_config.enable_js_minification.unwrap_or(true)
-                                    {
-                                        if let Ok(text) = String::from_utf8(body.to_vec()) {
-                                            if let Ok(minified) = generator.minify_js(&text) {
-                                                body = Bytes::from(minified);
-                                                body_len = body.len() as u64;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-
-                            if image_poison_config.enabled.unwrap_or(false) {
+                            if let Some(ref img_settings) = config.image_poisoning {
                                 let mut is_image = content_type
                                     .as_ref()
                                     .map(|ct| ct.starts_with("image/"))
@@ -2385,16 +2229,13 @@ impl HttpServer {
                                     let path_str = path.to_string();
                                     is_image = IMAGE_PROTECTION_REGEX.is_match(&path_str);
                                 }
-                                let min_size =
-                                    image_poison_config.max_dimension.unwrap_or(100 * 1024) as u64;
-                                let in_range = body_len >= min_size;
+                                let in_range = body_len >= img_settings.min_size;
 
                                 if is_image && in_range {
                                     let path_str = path.to_string();
-                                    let whitelisted = image_poison_config
+                                    let whitelisted = img_settings
                                         .whitelist_patterns
-                                        .as_ref()
-                                        .is_some_and(|patterns| {
+                                        .map(|patterns| {
                                             patterns.iter().any(|p| {
                                                 if let Some(re) = get_cached_regex(p) {
                                                     re.is_match(&path_str)
@@ -2402,7 +2243,8 @@ impl HttpServer {
                                                     false
                                                 }
                                             })
-                                        });
+                                        })
+                                        .unwrap_or(false);
 
                                     if !whitelisted {
                                         let site_id_for_poison = site_id.to_string();
@@ -2417,52 +2259,91 @@ impl HttpServer {
                                 }
                             }
 
-                            if static_config.enable_compression.unwrap_or(false) {
-                                let accept_encoding: &str = parts
-                                    .headers
-                                    .get("accept-encoding")
-                                    .and_then(|v: &http::HeaderValue| v.to_str().ok())
-                                    .unwrap_or("");
+                            if let Some(ref comp_settings) = config.compression {
+                                let (compressed_body, encoding) =
+                                    crate::http::response_transform::apply_compression(
+                                        body.clone(),
+                                        accept_encoding,
+                                        comp_settings,
+                                    );
 
-                                let generator =
-                                    crate::static_files::minifier::MinifierGenerator::new();
-                                let gzip_level = static_config.gzip_level.unwrap_or(6);
+                                if let Some(enc) = encoding {
+                                    body = compressed_body;
+                                    body_len = body.len() as u64;
+                                    headers.retain(|(k, _)| k.to_lowercase() != "content-encoding");
+                                    headers.push(("Content-Encoding".to_string(), enc));
+                                }
+                            }
+                        } else {
+                            let static_config = &target.site_config.r#static;
+                            let image_poison_config = &target.site_config.image_poison;
 
-                                if accept_encoding.contains("br")
-                                    && static_config.enable_brotli.unwrap_or(true)
-                                {
-                                    if let Ok(compressed) = generator.compress_brotli(
-                                        &body,
-                                        static_config.brotli_level.unwrap_or(6),
-                                    ) {
-                                        body = Bytes::from(compressed);
+                            let config = crate::http::response_transform::ResponseTransformConfig::from_static_config(
+                                static_config,
+                                image_poison_config,
+                            );
+
+                            if let Some(ref min_settings) = config.minification {
+                                body = crate::http::response_transform::apply_minification(
+                                    body,
+                                    content_type.as_deref(),
+                                    min_settings,
+                                );
+                                body_len = body.len() as u64;
+                            }
+
+                            if let Some(ref img_settings) = config.image_poisoning {
+                                let mut is_image = content_type
+                                    .as_ref()
+                                    .map(|ct| ct.starts_with("image/"))
+                                    .unwrap_or(false);
+                                if !is_image {
+                                    let path_str = path.to_string();
+                                    is_image = IMAGE_PROTECTION_REGEX.is_match(&path_str);
+                                }
+                                let in_range = body_len >= img_settings.min_size;
+
+                                if is_image && in_range {
+                                    let path_str = path.to_string();
+                                    let whitelisted = img_settings
+                                        .whitelist_patterns
+                                        .map(|patterns| {
+                                            patterns.iter().any(|p| {
+                                                if let Some(re) = get_cached_regex(p) {
+                                                    re.is_match(&path_str)
+                                                } else {
+                                                    false
+                                                }
+                                            })
+                                        })
+                                        .unwrap_or(false);
+
+                                    if !whitelisted {
+                                        let site_id_for_poison = site_id.to_string();
+                                        body = Self::apply_image_poisoning(
+                                            body,
+                                            site_id_for_poison,
+                                            last_modified.clone(),
+                                        )
+                                        .await;
                                         body_len = body.len() as u64;
-                                        let mut headers_clone = headers.clone();
-                                        headers_clone.retain(|(k, _)| {
-                                            k.to_lowercase() != "content-encoding"
-                                        });
-                                        headers_clone.push((
-                                            "Content-Encoding".to_string(),
-                                            "br".to_string(),
-                                        ));
-                                        headers = headers_clone;
                                     }
-                                } else if accept_encoding.contains("gzip") {
-                                    if let Ok(compressed) =
-                                        generator.compress_gzip(&body, gzip_level)
-                                    {
-                                        body = Bytes::from(compressed);
-                                        body_len = body.len() as u64;
-                                        let mut headers_clone = headers.clone();
-                                        headers_clone.retain(|(k, _)| {
-                                            k.to_lowercase() != "content-encoding"
-                                        });
-                                        headers_clone.push((
-                                            "Content-Encoding".to_string(),
-                                            "gzip".to_string(),
-                                        ));
-                                        headers = headers_clone;
-                                    }
+                                }
+                            }
+
+                            if let Some(ref comp_settings) = config.compression {
+                                let (compressed_body, encoding) =
+                                    crate::http::response_transform::apply_compression(
+                                        body.clone(),
+                                        accept_encoding,
+                                        comp_settings,
+                                    );
+
+                                if let Some(enc) = encoding {
+                                    body = compressed_body;
+                                    body_len = body.len() as u64;
+                                    headers.retain(|(k, _)| k.to_lowercase() != "content-encoding");
+                                    headers.push(("Content-Encoding".to_string(), enc));
                                 }
                             }
                         }

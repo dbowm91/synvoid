@@ -29,7 +29,7 @@ fn get_cached_regex(pattern: &str) -> Option<regex::Regex> {
         .clone()
 }
 
-use crate::mesh::config::{MeshConfig, MeshMinificationConfig};
+use crate::mesh::config::MeshConfig;
 use crate::mesh::organization::OrganizationManager;
 use crate::mesh::protocol::{ProviderInfo, UpstreamProtocol, WafPolicy};
 use crate::mesh::topology::MeshTopology;
@@ -71,7 +71,6 @@ pub struct MeshProxy {
     in_flight_queries: Cache<String, InFlightQuery>,
     provider_stats: Cache<String, ProviderStats>,
     org_manager: Arc<TokioRwLock<OrganizationManager>>,
-    minifier_generator: Arc<crate::static_files::minifier::MinifierGenerator>,
     transform_cache: Arc<Cache<String, TransformCacheEntry>>,
 }
 
@@ -220,7 +219,6 @@ impl MeshProxy {
             in_flight_queries,
             provider_stats,
             org_manager: Arc::new(TokioRwLock::new(OrganizationManager::new())),
-            minifier_generator: Arc::new(crate::static_files::minifier::MinifierGenerator::new()),
             transform_cache: Arc::new(transform_cache),
         }
     }
@@ -1111,7 +1109,18 @@ impl MeshProxy {
 
         if let Some(ref config) = minification {
             if config.enabled.unwrap_or(false) {
-                transformed = self.apply_minification(transformed, &content_type, config);
+                let settings = crate::http::response_transform::MinificationSettings {
+                    enabled: true,
+                    html: config.enable_html.unwrap_or(true),
+                    css: config.enable_css.unwrap_or(true),
+                    js: config.enable_js.unwrap_or(true),
+                    _marker: std::marker::PhantomData,
+                };
+                transformed = crate::http::response_transform::apply_minification(
+                    transformed,
+                    Some(&content_type),
+                    &settings,
+                );
             }
         }
 
@@ -1145,30 +1154,29 @@ impl MeshProxy {
                 let accept_encoding = response
                     .headers()
                     .get("accept-encoding")
-                    .and_then(|v| v.to_str().ok())
-                    .unwrap_or("");
+                    .and_then(|v: &http::HeaderValue| v.to_str().ok());
 
-                if accept_encoding.contains("br") {
-                    if let Ok(compressed) = self
-                        .minifier_generator
-                        .compress_brotli(&transformed, comp_config.brotli_level.unwrap_or(6))
-                    {
-                        transformed = Bytes::from(compressed);
-                        response
-                            .headers_mut()
-                            .insert("Content-Encoding", HeaderValue::from_static("br"));
-                    }
-                } else if accept_encoding.contains("gzip") {
-                    let gzip_level = comp_config.gzip_level.unwrap_or(6);
-                    if let Ok(compressed) = self
-                        .minifier_generator
-                        .compress_gzip(&transformed, gzip_level)
-                    {
-                        transformed = Bytes::from(compressed);
-                        response
-                            .headers_mut()
-                            .insert("Content-Encoding", HeaderValue::from_static("gzip"));
-                    }
+                let settings = crate::http::response_transform::CompressionSettings {
+                    enabled: true,
+                    brotli_level: comp_config.brotli_level.unwrap_or(6),
+                    gzip_level: comp_config.gzip_level.unwrap_or(6),
+                    _marker: std::marker::PhantomData,
+                };
+
+                let (compressed_body, encoding) =
+                    crate::http::response_transform::apply_compression(
+                        transformed.clone(),
+                        accept_encoding,
+                        &settings,
+                    );
+
+                if let Some(enc) = encoding {
+                    transformed = compressed_body;
+                    response.headers_mut().insert(
+                        "Content-Encoding",
+                        HeaderValue::from_str(&enc)
+                            .unwrap_or_else(|_| HeaderValue::from_static("identity")),
+                    );
                 }
             }
         }
@@ -1202,39 +1210,6 @@ impl MeshProxy {
         }
 
         response
-    }
-
-    fn apply_minification(
-        &self,
-        body: Bytes,
-        content_type: &str,
-        config: &MeshMinificationConfig,
-    ) -> Bytes {
-        let ct = content_type.to_lowercase();
-
-        if ct.contains("text/html") || ct.contains("text/css") || ct.contains("javascript") {
-            if ct.contains("text/html") {
-                if let Ok(text) = String::from_utf8(body.to_vec()) {
-                    if let Ok(minified) = self.minifier_generator.minify_html(&text) {
-                        return Bytes::from(minified);
-                    }
-                }
-            } else if ct.contains("text/css") {
-                if let Ok(text) = String::from_utf8(body.to_vec()) {
-                    if let Ok(minified) = self.minifier_generator.minify_css(&text) {
-                        return Bytes::from(minified);
-                    }
-                }
-            } else if ct.contains("javascript") {
-                if let Ok(text) = String::from_utf8(body.to_vec()) {
-                    if let Ok(minified) = self.minifier_generator.minify_js(&text) {
-                        return Bytes::from(minified);
-                    }
-                }
-            }
-        }
-
-        body
     }
 
     async fn apply_image_poisoning(

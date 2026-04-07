@@ -260,13 +260,20 @@ A full codebase review identified **42 new improvement items** across 6 waves, o
 **Fix:** ✅ Extracted shared response builders into `src/http/response_builder.rs`. Both `HttpServer` and `SharedRequestHandler` delegate to the shared module.
 **Verification:** ✅ `cargo check --lib` passes.
 
-### 4C: Eliminate Duplicated Minification/Compression Logic ⚠️ DEFERRED
+### 4C: Eliminate Duplicated Minification/Compression Logic ✅ DONE
 
 **Severity:** P2 — Copy-pasted between mesh and static config paths
-**Files:** `src/http/server.rs:2144-2416`
-**Problem:** Minification/compression/image poisoning logic is duplicated between the mesh-transport path (lines 2144-2281) and the static-config path (lines 2284-2416).
-**Fix:** **Deferred** - large refactoring (~140 lines of code) requires careful analysis to extract common patterns.
-**Verification:** Test minification and compression in both paths.
+**Files:** `src/http/server.rs`, `src/http/response_transform.rs` (new), `src/mesh/proxy.rs`
+**Problem:** Minification/compression/image poisoning logic was duplicated between the mesh-transport path and the static-config path.
+**Fix:** Extracted shared response transform logic into `src/http/response_transform.rs`:
+  - `ResponseTransformConfig` struct with `from_mesh_config()` and `from_static_config()` methods
+  - `MinificationSettings`, `ImagePoisonSettings`, `CompressionSettings` structs
+  - `apply_minification()` helper function
+  - `apply_compression()` helper function
+  - Both paths in `server.rs` now use the unified config and helpers
+  - `mesh/proxy.rs` now uses shared `apply_minification()` and `apply_compression()` functions
+  - Removed `minifier_generator` field from `MeshProxy` struct (no longer needed)
+**Verification:** ✅ `cargo check --lib` passes, 125 integration tests pass.
 
 ### 4D: Fix Zero-Copy Streaming Being Defeated ⚠️ REVERTED
 
