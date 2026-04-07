@@ -295,18 +295,6 @@ mod tests {
     }
 
     #[test]
-    fn test_worker_status_enum() {
-        use maluwaf::supervisor::worker::WorkerStatus;
-
-        assert_eq!(WorkerStatus::Starting, WorkerStatus::Starting);
-        assert_eq!(WorkerStatus::Running, WorkerStatus::Running);
-        assert_eq!(WorkerStatus::Ready, WorkerStatus::Ready);
-        assert_eq!(WorkerStatus::Stopping, WorkerStatus::Stopping);
-        assert_eq!(WorkerStatus::Stopped, WorkerStatus::Stopped);
-        assert_eq!(WorkerStatus::Failed, WorkerStatus::Failed);
-    }
-
-    #[test]
     fn test_overseer_config_defaults() {
         use maluwaf::overseer::process::OverseerConfig;
 

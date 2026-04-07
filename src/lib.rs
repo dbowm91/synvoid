@@ -72,7 +72,6 @@ pub mod serverless;
 pub mod startup;
 pub mod static_files;
 pub mod streaming;
-pub mod supervisor;
 pub mod tarpit;
 pub mod tcp;
 pub mod theme;

@@ -84,7 +84,7 @@ impl StaticError {
 
 pub enum StaticResponseBody {
     InMemory(Bytes),
-    ZeroCopy(PathBuf),
+    Buffered(PathBuf),
 }
 
 pub struct StaticResponse {
@@ -97,7 +97,7 @@ impl StaticResponse {
     pub fn into_bytes(self) -> Bytes {
         match self.body {
             StaticResponseBody::InMemory(b) => b,
-            StaticResponseBody::ZeroCopy(path) => {
+            StaticResponseBody::Buffered(path) => {
                 Bytes::from(std::fs::read(&path).unwrap_or_default())
             }
         }
@@ -642,7 +642,7 @@ impl StaticFileHandler {
         counter!("maluwaf.static.served").increment(1);
 
         let body = if self.enable_zero_copy && body.len() > 4096 {
-            StaticResponseBody::ZeroCopy(path.to_path_buf())
+            StaticResponseBody::Buffered(path.to_path_buf())
         } else {
             StaticResponseBody::InMemory(Bytes::from(body))
         };
@@ -777,7 +777,7 @@ impl StaticFileHandler {
                 let headers: Vec<_> = resp.headers.into_iter().collect();
                 let body_bytes = match resp.body {
                     StaticResponseBody::InMemory(b) => b,
-                    StaticResponseBody::ZeroCopy(path) => {
+                    StaticResponseBody::Buffered(path) => {
                         Bytes::from(std::fs::read(&path).unwrap_or_default())
                     }
                 };

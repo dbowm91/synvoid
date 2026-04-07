@@ -1370,7 +1370,7 @@ impl HttpServer {
                                                 crate::http::fallback_error_boxed()
                                             }));
                                     }
-                                    crate::static_files::StaticResponseBody::ZeroCopy(path) => {
+                                    crate::static_files::StaticResponseBody::Buffered(path) => {
                                         tracing::debug!(
                                             "Zero-copy streaming for {}",
                                             path.display()

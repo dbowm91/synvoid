@@ -7,16 +7,14 @@ use maluwaf::master::{
     handle_stop,
 };
 use maluwaf::worker::{
-    run_static_worker, run_unified_server_worker, run_worker, setup_unified_server_panic_handler,
+    run_static_worker, run_unified_server_worker, setup_unified_server_panic_handler,
     setup_worker_panic_handler,
 };
 
 use maluwaf::startup::bootstrap::{init_logging_simple, print_test_mode_warning};
 use maluwaf::startup::daemon::acquire_pid_file;
 use maluwaf::startup::master::{run_master_mode, run_overseer_mode};
-use maluwaf::startup::worker::{
-    build_static_worker_args, build_unified_server_worker_args, build_worker_args,
-};
+use maluwaf::startup::worker::{build_static_worker_args, build_unified_server_worker_args};
 
 #[derive(Parser, Debug)]
 #[command(name = "maluwaf")]
@@ -284,30 +282,7 @@ fn main() {
     }
 
     // Check for worker mode
-    if args.worker {
-        setup_worker_panic_handler();
-        init_logging_simple();
-
-        let worker_args = build_worker_args(
-            args.worker_id,
-            args.port,
-            args.config_path,
-            args.master_socket,
-            args.test,
-            args.log_level,
-        );
-
-        let rt = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(2)
-            .enable_all()
-            .build()
-            .expect("Failed to build Tokio runtime");
-
-        if let Err(e) = rt.block_on(run_worker(worker_args)) {
-            tracing::error!("Worker error: {}", e);
-            std::process::exit(1);
-        }
-    } else if args.static_worker {
+    if args.static_worker {
         setup_worker_panic_handler();
         init_logging_simple();
 

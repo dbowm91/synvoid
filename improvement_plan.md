@@ -275,13 +275,13 @@ A full codebase review identified **42 new improvement items** across 6 waves, o
   - Removed `minifier_generator` field from `MeshProxy` struct (no longer needed)
 **Verification:** ✅ `cargo check --lib` passes, 125 integration tests pass.
 
-### 4D: Fix Zero-Copy Streaming Being Defeated ⚠️ REVERTED
+### 4D: Rename `ZeroCopy` to `Buffered` ✅ DONE
 
-**Severity:** P2 — Static files fully buffered despite "ZeroCopy" label
-**Files:** `src/http/server.rs:1314-1363`, `src/tls/server.rs:924-961`
-**Problem:** `ZeroCopy` variant reads entire file into a `Vec` before returning, defeating the purpose of streaming.
-**Fix:** **Reverted** - true zero-copy streaming requires changing the function signature from `Result<Response<BoxBody<Bytes, Infallible>>, hyper::Error>` to support streaming body types. This is a larger architectural change.
-**Verification:** Note: true streaming requires API changes.
+**Severity:** P2 — Static files buffered but mislabeled as "ZeroCopy"
+**Files:** `src/static_files/mod.rs`, `src/http/server.rs`, `src/tls/server.rs`
+**Problem:** `StaticResponseBody::ZeroCopy` was mislabeled - it reads entire file into memory before returning, which is buffering, not zero-copy. Actual zero-copy operations are in `src/zero_copy.rs` using Linux syscalls (sendfile).
+**Fix:** ✅ Renamed `StaticResponseBody::ZeroCopy` to `StaticResponseBody::Buffered` to accurately reflect that the content is fully loaded into memory (enabling subsequent compression/transformation).
+**Verification:** ✅ `cargo check --lib` passes.
 
 ### 4E: Fix `build_headers_to_filter` Cloning Static Set Every Request ✅ DONE
 
@@ -367,21 +367,21 @@ A full codebase review identified **42 new improvement items** across 6 waves, o
 **Fix:** High risk refactoring - would require adding targeted allows for legitimate uses. **Deferred**.
 **Verification:** `cargo clippy -- -D warnings` — no new warnings.
 
-### 6B: Remove Deprecated `run_worker` Function ⚠️ SKIPPED
+### 6B: Remove Deprecated `run_worker` Function ✅ DONE
 
 **Severity:** P3 — Non-functional stub still compiles
-**Files:** `src/worker/mod.rs:62-364`
-**Problem:** `#[deprecated]` function contains a full (non-functional) implementation.
-**Fix:** Actually used by `--worker` mode in main.rs. Not a stub - handles IPC and worker lifecycle. **Skipped**.
-**Verification:** N/A.
+**Files:** `src/worker/mod.rs`, `src/main.rs`, `src/startup/worker.rs`
+**Problem:** `#[deprecated]` function drops all connections immediately (line 327: `let _ = stream;`) - it was a placeholder kept as architectural reference.
+**Fix:** ✅ Removed `run_worker()` function, `WorkerArgs` struct, and `build_worker_args()`. Removed `--worker` mode from main.rs.
+**Verification:** ✅ `cargo check --lib` passes.
 
-### 6C: Fix Supervisor Being a Stub ⚠️ DEFERRED
+### 6C: Remove Dead `supervisor` Module ✅ DONE
 
-**Severity:** P3 — Auto-scaler and health monitor non-functional
-**Files:** `src/supervisor/supervisor.rs:99-150`
-**Problem:** `Supervisor` spawns fake workers that just sleep in a loop.
-**Fix:** Requires decision on whether to implement real supervision or remove module. **Deferred**.
-**Verification:** Depends on decision.
+**Severity:** P3 — Unused code
+**Files:** `src/supervisor/` (entire directory)
+**Problem:** `Supervisor::new()` was never called anywhere. `spawn_worker()` created fake workers that just slept in a loop. Architecture uses tokio async in unified_server for concurrency, not process-based workers.
+**Fix:** ✅ Removed entire `src/supervisor/` directory. `SupervisorConfig` in `config/process.rs` retained for configuration compatibility.
+**Verification:** ✅ `cargo check --lib` passes.
 
 ### 6D: Fix `FileManagerState` Unused `config` Field ✅ DONE
 

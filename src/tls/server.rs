@@ -919,7 +919,7 @@ impl HttpsServer {
                                                 )
                                             }));
                                     }
-                                    crate::static_files::StaticResponseBody::ZeroCopy(
+                                    crate::static_files::StaticResponseBody::Buffered(
                                         file_path,
                                     ) => {
                                         let file = match tokio::fs::File::open(&file_path).await {
