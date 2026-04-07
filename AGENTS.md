@@ -367,6 +367,13 @@ The unified worker uses a single `tokio` async event loop which is far more effi
 
 **Do NOT increase `unified_server_workers` for scaling purposes.** Instead, tune `tcp.worker_pool_size` or use async primitives within the existing event loop.
 
+**Architecture Note - WAF Sequential Checks:**
+
+WAF checks run sequentially, not in parallel. This is intentional:
+- **Attack blocking**: Some checks should block subsequent checks when an attack is detected (e.g., SQL injection found → don't waste time on XSS checks)
+- **Fast checks**: WAF checks are fast hash lookups and string comparisons, not I/O-bound
+- **No lifetime issues**: Parallelizing with `tokio::spawn` would require `'static` lifetimes for closures, complicating the architecture
+
 Agents modifying these areas should be aware of performance characteristics:
 
 | Area | Concern | Location |

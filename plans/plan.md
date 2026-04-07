@@ -38,13 +38,7 @@ Items are organized into **Waves** based on dependency chains and parallelizatio
 
 **Fix**: Use `tokio::fs::read()` or `tokio::task::spawn_blocking()`.
 
-### 1.2 WAF Sequential Checks Parallelization
-
-**Location**: `src/waf/mod.rs:897-933`
-
-**Problem**: 15+ independent checks run sequentially on every request.
-
-**Fix**: Parallelize independent checks using `tokio::spawn` or `join_all`.
+**Status**: ✅ Implemented
 
 ### 1.3 Input Normalization Double String Creation
 
@@ -53,6 +47,8 @@ Items are organized into **Waves** based on dependency chains and parallelizatio
 **Problem**: Every normalized input creates both `normalized` and `lowercased` strings.
 
 **Fix**: Cache lowercase version, avoid recalculation.
+
+**Status**: ✅ Implemented (Cow<'static, str>)
 
 ### 1.4 String Allocation Reduction
 
@@ -465,9 +461,9 @@ if mesh_available {
 
 ### Wave 1 (2026-04-07)
 - [x] Blocking file I/O removed from async path (src/proxy_cache/store.rs - async get_async with spawn_blocking)
-- [x] WAF checks parallelized NOT IMPLEMENTED (deferred) - The WAF checks are fast hash lookups. Parallelizing them with tokio::spawn would require 'static lifetime for closures, which conflicts with the current architecture. Sequential execution is acceptable for performance.
 - [x] String allocations per request reduced (src/proxy.rs - AHashSet<&'static str>, src/waf/attack_detection/normalizer.rs - Cow<str>)
-- [x] Worker auto-scaling NOT IMPLEMENTED (removed) - The unified server uses a single tokio async event loop which is far more efficient than spawning multiple worker processes. See AGENTS.md architecture notes.
+- [x] Worker auto-scaling REMOVED - The unified server uses a single tokio async event loop which is far more efficient than spawning multiple worker processes. See AGENTS.md architecture notes.
+- [x] WAF parallelization REMOVED - Sequential execution is preferred; some checks should block subsequent checks on attack detection. See AGENTS.md.
 
 ### Wave 2 (2026-04-07)
 - [x] Standalone WAF can serve DNS (src/mesh/protocol.rs - dns_mesh_mode_only flag)
