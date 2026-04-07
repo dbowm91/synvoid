@@ -99,6 +99,14 @@ impl HoneypotStorage {
             [],
         )?;
 
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS honeypot_announced_indicators (
+                indicator_key TEXT PRIMARY KEY,
+                announced_at INTEGER NOT NULL
+            )",
+            [],
+        )?;
+
         let storage = Self {
             conn: Arc::new(Mutex::new(conn)),
             config: config.clone(),
@@ -280,5 +288,27 @@ impl HoneypotStorage {
             |row| row.get(0),
         )
         .optional()
+    }
+
+    pub fn get_announced_indicator_keys(
+        &self,
+    ) -> Result<std::collections::HashSet<String>, rusqlite::Error> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare("SELECT indicator_key FROM honeypot_announced_indicators")?;
+        let keys = stmt
+            .query_map([], |row| row.get(0))?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(keys)
+    }
+
+    pub fn mark_indicator_announced(&self, key: &str) -> Result<(), rusqlite::Error> {
+        let conn = self.conn.lock();
+        let now = crate::utils::safe_unix_timestamp() as i64;
+        conn.execute(
+            "INSERT OR IGNORE INTO honeypot_announced_indicators (indicator_key, announced_at) VALUES (?1, ?2)",
+            params![key, now],
+        )?;
+        Ok(())
     }
 }

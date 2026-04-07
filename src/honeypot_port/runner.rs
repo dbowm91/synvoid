@@ -163,8 +163,9 @@ impl PortHoneypotRunner {
                         continue;
                     }
 
-                    let mut announced_ips: std::collections::HashSet<String> =
-                        std::collections::HashSet::new();
+                    let mut announced_ips: std::collections::HashSet<String> = storage
+                        .get_announced_indicator_keys()
+                        .unwrap_or_default();
                     let mut records_processed = 0i64;
 
                     for record in &records {
@@ -195,10 +196,15 @@ impl PortHoneypotRunner {
                             };
 
                             if let Ok(ip) = indicator.value.parse::<std::net::IpAddr>() {
-                                if announced_ips.contains(&ip.to_string()) {
+                                let ip_str = ip.to_string();
+                                if announced_ips.contains(&ip_str) {
                                     continue;
                                 }
-                                announced_ips.insert(ip.to_string());
+                                announced_ips.insert(ip_str.clone());
+
+                                if let Err(e) = storage.mark_indicator_announced(&ip_str) {
+                                    tracing::warn!("Failed to persist announced indicator: {}", e);
+                                }
 
                                 threat_intel.announce_honeypot_indicator(
                                     ip,

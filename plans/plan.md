@@ -1,7 +1,7 @@
 # MaluWAF Improvement Plan - Consolidated
 
 **Date**: 2026-04-07
-**Status**: Wave 1 & 2 Complete
+**Status**: Wave 1, 2 & 3 Complete
 
 ## Overview
 
@@ -212,7 +212,9 @@ if mesh_available {
 
 **Problem**: 6 sequential `retain()` operations.
 
-**Fix**: Batch into single-pass cleanup.
+**Fix**: Batch into single-pass cleanup using `remove_expired_windows()` method.
+
+**Status**: ✅ Implemented
 
 ---
 
@@ -435,9 +437,8 @@ if mesh_available {
 - Items 2.1, 2.2, 2.3 implemented
 - Items 2.4-2.8 not implemented (existing functionality sufficient)
 
-### Wave 3 (WAF/Threat Intel) - Depends on Wave 2 for some config fields
-- 3.1 depends on Wave 2 for `is_mesh_available()` method
-- 3.2, 3.3 are independent
+### Wave 3 (WAF/Threat Intel) - ✅ COMPLETE
+- All items implemented (3.1, 3.2, 3.3, 3.4)
 
 ### Wave 4 (File Upload) - Depends on Wave 1 for performance baseline
 - All items are independent within the wave
@@ -475,10 +476,10 @@ if mesh_available {
 - [ ] Message signing verification (not implemented - existing verification is adequate)
 - [ ] Connection recovery with backoff (not implemented - can be added later)
 
-### Wave 3
-- [ ] Local threat indicators block before DHT lookup
-- [ ] No duplicate announcements across batches
-- [ ] Standalone mode logging works
+### Wave 3 (2026-04-07)
+- [x] Local threat indicators block before DHT lookup (src/waf/mod.rs - check local first, src/mesh/threat_intel.rs - add lookup_local_indicator, is_mesh_available, get_node_role)
+- [x] No duplicate announcements across batches (src/honeypot_port/storage.rs - persistent announced_indicators table, src/honeypot_port/runner.rs - use persistent tracking)
+- [x] Standalone mode logging works (src/worker/unified_server.rs - conditional logging based on is_mesh_available)
 
 ### Wave 4
 - [ ] 100% uploads validated with magic bytes
@@ -507,7 +508,8 @@ if mesh_available {
 | Wave | Dependencies |
 |------|-------------|
 | 1 | None ✅ |
-| 2 | None |
+| 2 | None ✅ |
+| 3 | Wave 2 (partial) ✅ |
 | 4 | Wave 1 |
 | 5 | Wave 2 |
 | 6 | Wave 1, 2 |

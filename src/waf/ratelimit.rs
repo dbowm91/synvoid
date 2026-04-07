@@ -75,6 +75,34 @@ impl IpRateLimitState {
             && self.per_day.is_empty()
     }
 
+    fn remove_expired_windows(&mut self, now: Instant) {
+        let cutoff_1s = now - Duration::from_secs(1);
+        let cutoff_60s = now - Duration::from_secs(60);
+        let cutoff_300s = now - Duration::from_secs(300);
+        let cutoff_600s = now - Duration::from_secs(600);
+        let cutoff_3600s = now - Duration::from_secs(3600);
+        let cutoff_86400s = now - Duration::from_secs(86400);
+
+        if !self.per_second.is_empty() {
+            self.per_second.remove_older_than(cutoff_1s);
+        }
+        if !self.per_minute.is_empty() {
+            self.per_minute.remove_older_than(cutoff_60s);
+        }
+        if !self.per_5min.is_empty() {
+            self.per_5min.remove_older_than(cutoff_300s);
+        }
+        if !self.per_10min.is_empty() {
+            self.per_10min.remove_older_than(cutoff_600s);
+        }
+        if !self.per_hour.is_empty() {
+            self.per_hour.remove_older_than(cutoff_3600s);
+        }
+        if !self.per_day.is_empty() {
+            self.per_day.remove_older_than(cutoff_86400s);
+        }
+    }
+
     fn touch(&mut self) {
         self.last_access = Some(Instant::now());
     }
@@ -273,19 +301,8 @@ impl RateLimiterManager {
                             }
                         }
                         let mut requests = shard.ip_requests.write();
-                        let cutoff_1s = now - Duration::from_secs(1);
-                        let cutoff_60s = now - Duration::from_secs(60);
-                        let cutoff_300s = now - Duration::from_secs(300);
-                        let cutoff_600s = now - Duration::from_secs(600);
-                        let cutoff_3600s = now - Duration::from_secs(3600);
-                        let cutoff_86400s = now - Duration::from_secs(86400);
                         requests.retain(|_ip, state| {
-                            state.per_second.remove_older_than(cutoff_1s);
-                            state.per_minute.remove_older_than(cutoff_60s);
-                            state.per_5min.remove_older_than(cutoff_300s);
-                            state.per_10min.remove_older_than(cutoff_600s);
-                            state.per_hour.remove_older_than(cutoff_3600s);
-                            state.per_day.remove_older_than(cutoff_86400s);
+                            state.remove_expired_windows(now);
 
                             if state.is_empty() {
                                 false

@@ -893,6 +893,19 @@ impl ThreatIntelligenceManager {
         })
     }
 
+    pub fn lookup_local_indicator(&self, indicator_value: &str) -> Option<ThreatIndicator> {
+        let indicators = self.indicators.read();
+        indicators.get(indicator_value).map(|entry| entry.indicator.clone())
+    }
+
+    pub fn is_mesh_available(&self) -> bool {
+        self.transport.read().is_some()
+    }
+
+    pub fn get_node_role(&self) -> MeshNodeRole {
+        self.node_role
+    }
+
     fn apply_rate_limit_mesh_action(&self, indicator: &ThreatIndicator, from_node: &str) {
         if let Ok(ip) = indicator.indicator_value.parse::<IpAddr>() {
             let reqs = indicator.rate_limit_requests.unwrap_or(100);
