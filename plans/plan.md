@@ -480,6 +480,7 @@ if mesh_available {
 - [x] Local threat indicators block before DHT lookup (src/waf/mod.rs - check local first, src/mesh/threat_intel.rs - add lookup_local_indicator, is_mesh_available, get_node_role)
 - [x] No duplicate announcements across batches (src/honeypot_port/storage.rs - persistent announced_indicators table, src/honeypot_port/runner.rs - use persistent tracking)
 - [x] Standalone mode logging works (src/worker/unified_server.rs - conditional logging based on is_mesh_available)
+- [x] Rate limiter cleanup optimization (src/waf/ratelimit.rs - single-pass remove_expired_windows)
 
 ### Wave 4
 - [ ] 100% uploads validated with magic bytes
