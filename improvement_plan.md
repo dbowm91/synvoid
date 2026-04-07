@@ -244,13 +244,14 @@ A full codebase review identified **42 new improvement items** across 6 waves, o
 
 *Can run in parallel with Waves 2, 3, 5, 6.*
 
-### 4A: Split Monolithic `handle_request` Function ⚠️ DEFERRED
+### 4A: Split Monolithic `handle_request` Function ⚠️ PARTIAL
 
-**Severity:** P2 — 2,165-line function is unmaintainable
-**Files:** `src/http/server.rs:366-2530`
+**Severity:** P2 — 2,190-line function is unmaintainable
+**Files:** `src/http/server.rs:366-3201`
 **Problem:** Single async function handles: connection limits, bandwidth checks, WAF, routing, WebSocket, static files, FastCGI, PHP, serverless, proxy, transforms, and logging. Impossible to test in isolation.
-**Fix:** Large architectural refactoring - extract into pipeline of middleware-like stages. **Deferred** due to scope and risk.
-**Verification:** Each stage should have unit tests.
+**Progress:** Extracted `check_bandwidth_limit()` helper function (lines ~2864-2926). Remaining stages: internal path handling, rate limiting, WAF evaluation, backend dispatch, proxy paths.
+**Fix:** Continue extracting stages into helper functions. Consider creating `RequestContext` struct for shared state. **In progress**.
+**Verification:** Each extracted stage should have unit tests.
 
 ### 4B: Eliminate Duplicated Response Builder Code ✅ DONE
 

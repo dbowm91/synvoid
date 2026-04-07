@@ -500,31 +500,17 @@ impl HttpServer {
 
         let _conn_token = connection_token;
 
-        if waf.is_over_bandwidth_limit() {
-            tracing::warn!("Monthly bandwidth limit exceeded - returning 503");
-            counter!("maluwaf.bandwidth.limit_exceeded").increment(1);
-            let ipc_clone = ipc.clone();
-            let worker_id_clone = worker_id;
-            Self::send_request_log_if_enabled(
-                ipc_clone,
-                worker_id_clone,
-                &main_config,
-                client_ip,
-                "UNKNOWN".to_string(),
-                path.to_string(),
-                503,
-                start.elapsed().as_millis() as u64,
-                "internal".to_string(),
-                None,
-                true,
-            );
-            return Ok(Self::build_response_with_alt_svc(
-                503,
-                "Monthly Bandwidth Limit Exceeded".to_string(),
-                "text/plain",
-                &alt_svc,
-                &main_config,
-            ));
+        if let Some(result) = Self::check_bandwidth_limit(
+            &waf,
+            client_ip,
+            path,
+            start,
+            ipc.clone(),
+            worker_id,
+            &main_config,
+            &alt_svc,
+        ) {
+            return result;
         }
 
         let is_ws_upgrade = Self::is_websocket_upgrade(req.headers());
@@ -2873,6 +2859,62 @@ impl HttpServer {
                 main_config,
             )),
         }
+    }
+
+    fn check_bandwidth_limit(
+        waf: &Arc<WafCore>,
+        client_ip: IpAddr,
+        path: &str,
+        start: std::time::Instant,
+        ipc: Option<Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>>,
+        worker_id: Option<crate::process::ipc::WorkerId>,
+        main_config: &Arc<MainConfig>,
+        alt_svc: &Option<String>,
+    ) -> Option<Result<Response<BoxBody<Bytes, Infallible>>, hyper::Error>> {
+        if !waf.is_over_bandwidth_limit() {
+            return None;
+        }
+
+        tracing::warn!("Monthly bandwidth limit exceeded - returning 503");
+        counter!("maluwaf.bandwidth.limit_exceeded").increment(1);
+
+        let path_owned = path.to_string();
+        let start_elapsed = start.elapsed().as_millis() as u64;
+        let client_ip_str = client_ip.to_string();
+
+        if let (Some(ref ipc_ref), Some(worker_id_value)) = (&ipc, worker_id) {
+            let ipc_clone = ipc_ref.clone();
+            tokio::spawn(async move {
+                let log = crate::process::RequestLogPayload {
+                    timestamp: current_timestamp(),
+                    client_ip: client_ip_str,
+                    method: "UNKNOWN".to_string(),
+                    path: path_owned,
+                    status: 503,
+                    response_time_ms: start_elapsed as u32,
+                    site_id: "internal".to_string(),
+                    user_agent: None,
+                    bytes_sent: 0,
+                    bytes_received: 0,
+                };
+                let mut ipc_guard = ipc_clone.lock().await;
+                let msg = crate::process::Message::WorkerRequestLog {
+                    id: worker_id_value,
+                    log,
+                };
+                if let Err(e) = ipc_guard.send(&msg).await {
+                    tracing::warn!("Failed to send request log: {}", e);
+                }
+            });
+        }
+
+        Some(Ok(Self::build_response_with_alt_svc(
+            503,
+            "Monthly Bandwidth Limit Exceeded".to_string(),
+            "text/plain",
+            alt_svc,
+            main_config,
+        )))
     }
 
     async fn handle_key_exchange_request(
