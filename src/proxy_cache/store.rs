@@ -223,28 +223,16 @@ impl ProxyCache {
     }
 
     #[inline]
-    pub fn get(&self, key: &CacheKey) -> Option<ProxyCacheEntry> {
+    pub async fn get(&self, key: &CacheKey) -> Option<ProxyCacheEntry> {
         if !self.settings.enabled {
             return None;
         }
 
         let inner = self.entries.get(key)?;
 
-        // Disk I/O WITHOUT holding any lock (Moka handles concurrency internally)
         if inner.on_disk {
-            if let Some(path) = &inner.disk_path {
-                if let Ok(content) = std::fs::read(path) {
-                    if inner.checksum != CacheEntryInner::compute_checksum(&content) {
-                        tracing::warn!("Cache entry checksum mismatch, removing corrupted entry");
-                        self.invalidate(key);
-                        return None;
-                    }
-                    let mut entry = inner.entry;
-                    entry.content = Bytes::from(content);
-                    entry.update_access();
-                    return Some(entry);
-                }
-            }
+            drop(inner);
+            return self.get_async(key).await;
         }
 
         let mut entry = inner.entry;
@@ -264,6 +252,31 @@ impl ProxyCache {
             return None;
         }
 
+        entry.update_access();
+        Some(entry)
+    }
+
+    #[inline]
+    async fn get_async(&self, key: &CacheKey) -> Option<ProxyCacheEntry> {
+        let inner = self.entries.get(key)?;
+
+        let disk_path = inner.disk_path.clone()?;
+        let checksum = inner.checksum;
+        let entry = inner.entry.clone();
+        drop(inner);
+
+        let content = tokio::task::spawn_blocking(move || {
+            std::fs::read(&disk_path)
+        }).await.ok().and_then(|r| r.ok())?;
+
+        if checksum != CacheEntryInner::compute_checksum(&content) {
+            tracing::warn!("Cache entry checksum mismatch, removing corrupted entry");
+            self.invalidate(key);
+            return None;
+        }
+
+        let mut entry = entry;
+        entry.content = Bytes::from(content);
         entry.update_access();
         Some(entry)
     }
@@ -300,7 +313,7 @@ impl ProxyCache {
         F: FnOnce() -> Fut,
         Fut: std::future::Future<Output = Option<(Bytes, StatusCode, HeaderMap, Option<Duration>)>>,
     {
-        if let Some(entry) = self.get(key) {
+        if let Some(entry) = self.get(key).await {
             return Some(entry);
         }
 
@@ -310,7 +323,7 @@ impl ProxyCache {
             .insert(key.clone(), content, status.as_u16(), headers, max_age)
             .is_ok()
         {
-            self.get(key)
+            self.get(key).await
         } else {
             None
         }

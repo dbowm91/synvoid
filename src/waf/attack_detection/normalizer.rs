@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::cell::RefCell;
 use unicode_normalization::UnicodeNormalization;
 
@@ -60,7 +61,7 @@ impl InputNormalizer {
 
                 NormalizedInput {
                     normalized: buffer.clone(),
-                    lowercased: buffer.to_lowercase(),
+                    lowercased: Cow::Owned(buffer.to_lowercase()),
                     passes,
                 }
             })
@@ -377,7 +378,7 @@ impl InputNormalizer {
 #[derive(Debug, Clone, Default)]
 pub struct NormalizedInput {
     pub normalized: String,
-    pub lowercased: String,
+    pub lowercased: Cow<'static, str>,
     pub passes: usize,
 }
 

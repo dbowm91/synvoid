@@ -62,12 +62,12 @@ pub const MAX_XFF_CHAIN_LENGTH: usize = 10;
 static HOP_BY_HOP_HEADERS_SET: LazyLock<AHashSet<&'static str>> =
     LazyLock::new(|| HOP_BY_HOP_HEADERS.iter().copied().collect());
 
-static STATIC_HEADERS_TO_FILTER: LazyLock<AHashSet<String>> = LazyLock::new(|| {
-    let mut set = AHashSet::with_capacity(HOP_BY_HOP_HEADERS.len() + HEADERS_TO_STRIP.len());
-    for h in HOP_BY_HOP_HEADERS.iter().chain(HEADERS_TO_STRIP.iter()) {
-        set.insert(h.to_string());
-    }
-    set
+static STATIC_HEADERS_TO_FILTER: LazyLock<AHashSet<&'static str>> = LazyLock::new(|| {
+    HOP_BY_HOP_HEADERS
+        .iter()
+        .chain(HEADERS_TO_STRIP.iter())
+        .copied()
+        .collect()
 });
 
 static HOP_BY_HOP_HEADER_NAMES: LazyLock<AHashSet<http::header::HeaderName>> =
@@ -111,7 +111,7 @@ pub fn build_headers_to_filter(
     global_headers: &[String],
     site_headers: &[String],
 ) -> AHashSet<String> {
-    let static_headers = STATIC_HEADERS_TO_FILTER.clone();
+    let static_headers: AHashSet<String> = STATIC_HEADERS_TO_FILTER.iter().map(|s| s.to_string()).collect();
 
     if global_headers.is_empty() && site_headers.is_empty() {
         return static_headers;
@@ -731,7 +731,7 @@ impl ProxyServer {
 
                     let hit_status = cache.get_hit_status(&cache_key);
 
-                    if let Some(cached) = cache.get(&cache_key) {
+                    if let Some(cached) = cache.get(&cache_key).await {
                         tracing::debug!("Cache HIT for {}", path);
                         counter!("maluwaf.proxy.cache.hit").increment(1);
                         cache.record_cache_hit();
@@ -1582,7 +1582,8 @@ mod tests {
         headers.insert("server", "nginx".parse().unwrap());
         headers.insert("content-length", "1234".parse().unwrap());
 
-        let filtered = filter_response_headers(&headers, &STATIC_HEADERS_TO_FILTER);
+        let static_filter: AHashSet<String> = STATIC_HEADERS_TO_FILTER.iter().map(|s| s.to_string()).collect();
+        let filtered = filter_response_headers(&headers, &static_filter);
         let names: Vec<&str> = filtered.iter().map(|(k, _)| k.as_str()).collect();
         assert!(names.contains(&"content-length"));
         assert!(!names.contains(&"x-powered-by"));
