@@ -730,13 +730,14 @@ impl TrustAnchorManager {
     fn parse_all_dnskey_records(content: &str) -> Vec<(u16, u8, Vec<u8>)> {
         let mut results = Vec::new();
 
-        let combined = content.replace('\n', " ");
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || !trimmed.contains("DNSKEY") {
+                continue;
+            }
 
-        if combined.contains("DNSKEY") {
-            if let Some((key_tag, algorithm, public_key)) =
-                Self::parse_dnskey_record_line(&combined)
-            {
-                results.push((key_tag, algorithm, public_key));
+            if let Some(record) = Self::parse_dnskey_record_line(trimmed) {
+                results.push(record);
             }
         }
 

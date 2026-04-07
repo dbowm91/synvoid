@@ -1,6 +1,11 @@
 use bytes::Bytes;
 use http::Response;
+use http_body_util::BodyExt;
 use http_body_util::Full;
+
+use crate::config::MainConfig;
+
+pub type BoxBody = http_body_util::combinators::BoxBody<Bytes, std::convert::Infallible>;
 
 pub fn reason_phrase(status: u16) -> &'static str {
     match status {
@@ -109,6 +114,77 @@ pub fn bad_gateway_full() -> Response<Full<Bytes>> {
     error_response_full(502)
 }
 
+pub fn build_response_with_alt_svc(
+    status: u16,
+    body: String,
+    content_type: &str,
+    alt_svc: &Option<String>,
+    main_config: &MainConfig,
+) -> Response<BoxBody> {
+    let mut builder = Response::builder()
+        .status(status)
+        .header("Content-Type", content_type)
+        .header("Content-Length", body.len());
+
+    if let Some(alt_svc) = alt_svc {
+        builder = builder.header("Alt-Svc", alt_svc.as_str());
+    }
+
+    if main_config.security.global_security_headers {
+        builder = builder
+            .header("Cache-Control", "no-store, no-cache, must-revalidate")
+            .header("X-Content-Type-Options", "nosniff")
+            .header("X-Frame-Options", "DENY");
+    }
+
+    builder = builder.header("Date", crate::http::headers::generate_stealth_timestamp(5));
+
+    builder
+        .body(Full::new(Bytes::from(body)).boxed())
+        .unwrap_or_else(|_| crate::http::fallback_error_boxed())
+}
+
+pub fn build_response_with_cookie(
+    status: u16,
+    body: String,
+    content_type: &str,
+    cookie: &str,
+    alt_svc: &Option<String>,
+    main_config: &MainConfig,
+) -> Response<BoxBody> {
+    let mut builder = Response::builder()
+        .status(status)
+        .header("Content-Type", content_type)
+        .header("Content-Length", body.len())
+        .header("Set-Cookie", cookie);
+
+    if let Some(alt_svc) = alt_svc {
+        builder = builder.header("Alt-Svc", alt_svc.as_str());
+    }
+
+    if main_config.security.global_security_headers {
+        builder = builder
+            .header("Cache-Control", "no-store, no-cache, must-revalidate")
+            .header("X-Content-Type-Options", "nosniff")
+            .header("X-Frame-Options", "DENY");
+    }
+
+    builder = builder.header("Date", crate::http::headers::generate_stealth_timestamp(5));
+
+    builder
+        .body(Full::new(Bytes::from(body)).boxed())
+        .unwrap_or_else(|_| crate::http::fallback_error_boxed())
+}
+
+pub fn build_json_response(
+    status: u16,
+    body: String,
+    alt_svc: &Option<String>,
+    main_config: &MainConfig,
+) -> Response<BoxBody> {
+    build_response_with_alt_svc(status, body, "application/json", alt_svc, main_config)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -198,5 +274,67 @@ mod tests {
 
         let resp = bad_gateway_full();
         assert_eq!(resp.status(), 502);
+    }
+
+    fn make_test_config() -> MainConfig {
+        MainConfig::default()
+    }
+
+    #[test]
+    fn test_build_response_with_alt_svc_basic() {
+        let config = make_test_config();
+        let resp =
+            build_response_with_alt_svc(200, "test body".to_string(), "text/plain", &None, &config);
+        assert_eq!(resp.status(), 200);
+        assert_eq!(
+            resp.headers().get("Content-Type"),
+            Some(&http::header::HeaderValue::from_static("text/plain"))
+        );
+    }
+
+    #[test]
+    fn test_build_response_with_alt_svc_with_alt_svc_header() {
+        let config = make_test_config();
+        let resp = build_response_with_alt_svc(
+            200,
+            "test body".to_string(),
+            "text/plain",
+            &Some("h2=\":8080\"".to_string()),
+            &config,
+        );
+        assert_eq!(resp.status(), 200);
+        assert_eq!(
+            resp.headers().get("Alt-Svc"),
+            Some(&http::header::HeaderValue::from_static("h2=\":8080\""))
+        );
+    }
+
+    #[test]
+    fn test_build_response_with_cookie() {
+        let config = make_test_config();
+        let resp = build_response_with_cookie(
+            200,
+            "test body".to_string(),
+            "text/plain",
+            "session=abc123",
+            &None,
+            &config,
+        );
+        assert_eq!(resp.status(), 200);
+        assert_eq!(
+            resp.headers().get("Set-Cookie"),
+            Some(&http::header::HeaderValue::from_static("session=abc123"))
+        );
+    }
+
+    #[test]
+    fn test_build_json_response() {
+        let config = make_test_config();
+        let resp = build_json_response(200, r#"{"key":"value"}"#.to_string(), &None, &config);
+        assert_eq!(resp.status(), 200);
+        assert_eq!(
+            resp.headers().get("Content-Type"),
+            Some(&http::header::HeaderValue::from_static("application/json"))
+        );
     }
 }

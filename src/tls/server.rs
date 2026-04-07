@@ -937,11 +937,11 @@ impl HttpsServer {
                                                 ));
                                             }
                                         };
+                                        use futures::StreamExt;
                                         use http_body_util::StreamBody;
                                         use tokio_util::io::ReaderStream;
                                         let stream = ReaderStream::new(file);
                                         let mut body = StreamBody::new(stream);
-                                        use futures::StreamExt;
                                         let mut body_bytes = Vec::new();
                                         while let Some(chunk) = body.next().await {
                                             if let Ok(bytes) = chunk {

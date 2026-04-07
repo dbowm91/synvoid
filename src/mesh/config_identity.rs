@@ -210,7 +210,7 @@ impl NodeIdentityConfig {
 
                 if key_data.len() == 32 + 12 + 16 {
                     let decrypted = self.decrypt_key(&key_data, passphrase)?;
-                    let pubkey = derive_public_key(&decrypted);
+                    let pubkey = derive_node_id_hash(&decrypted);
                     let node_id = derive_node_id(&decrypted);
                     self.private_key = Some(decrypted);
                     self.public_key = Some(pubkey);
@@ -218,7 +218,7 @@ impl NodeIdentityConfig {
                     return Ok(());
                 } else if key_data.len() == 32 {
                     self.private_key = Some(key_data.clone());
-                    self.public_key = Some(derive_public_key(&key_data));
+                    self.public_key = Some(derive_node_id_hash(&key_data));
                     self.node_id = Some(derive_node_id(&key_data));
                     return Ok(());
                 } else {
@@ -231,7 +231,7 @@ impl NodeIdentityConfig {
         use rand::RngCore;
         rand::rng().fill_bytes(&mut key);
         self.private_key = Some(key.to_vec());
-        self.public_key = Some(derive_public_key(&key));
+        self.public_key = Some(derive_node_id_hash(&key));
         self.node_id = Some(derive_node_id(&key));
 
         if let Some(ref path) = self.private_key_path {

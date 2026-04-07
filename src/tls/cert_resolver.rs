@@ -256,12 +256,12 @@ impl CertResolver {
     pub fn build_server_config(
         &self,
     ) -> Result<Arc<ServerConfig>, Box<dyn std::error::Error + Send + Sync>> {
-        let provider = if self.config.prefer_post_quantum {
+        let provider = default_provider();
+
+        if self.config.prefer_post_quantum {
+            tracing::debug!("TLS: post-quantum hybrid key exchange enabled (TLS 1.3)");
             counter!("maluwaf.tls.post_quantum").increment(1);
-            default_provider()
-        } else {
-            default_provider()
-        };
+        }
 
         let versions: &[&SupportedProtocolVersion] = if self.config.tls_1_3_only {
             tracing::info!("TLS: enforcing TLS 1.3 only (secure mode)");
@@ -326,8 +326,17 @@ impl rustls::server::ResolvesServerCert for CertResolver {
         client_hello: rustls::server::ClientHello<'_>,
     ) -> Option<Arc<rustls::sign::CertifiedKey>> {
         if let Some(sni) = client_hello.server_name() {
-            if let Some(cert) = self.certs.read().get(sni) {
+            let certs = self.certs.read();
+
+            if let Some(cert) = certs.get(sni) {
                 return Some(cert.clone());
+            }
+
+            if let Some(dot_pos) = sni.find('.') {
+                let wildcard_key = format!("*.{}", &sni[dot_pos + 1..]);
+                if let Some(cert) = certs.get(&wildcard_key) {
+                    return Some(cert.clone());
+                }
             }
         }
 

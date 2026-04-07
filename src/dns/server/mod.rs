@@ -714,6 +714,66 @@ impl DnsServer {
                     enabled: true,
                 };
                 let _ = fw.add_rule(rule3);
+
+                let rule4 = super::firewall::DnsFirewallRule {
+                    id: "block_loopback".to_string(),
+                    rule_type: super::firewall::DnsFirewallRuleType::Subnet,
+                    action: super::firewall::DnsFirewallAction::Block,
+                    target: "127.0.0.0/8".to_string(),
+                    ttl: 300,
+                    created_at: chrono::Utc::now().timestamp() as u64,
+                    expires_at: None,
+                    enabled: true,
+                };
+                let _ = fw.add_rule(rule4);
+
+                let rule5 = super::firewall::DnsFirewallRule {
+                    id: "block_linklocal".to_string(),
+                    rule_type: super::firewall::DnsFirewallRuleType::Subnet,
+                    action: super::firewall::DnsFirewallAction::Block,
+                    target: "169.254.0.0/16".to_string(),
+                    ttl: 300,
+                    created_at: chrono::Utc::now().timestamp() as u64,
+                    expires_at: None,
+                    enabled: true,
+                };
+                let _ = fw.add_rule(rule5);
+
+                let rule6 = super::firewall::DnsFirewallRule {
+                    id: "block_ipv6_loopback".to_string(),
+                    rule_type: super::firewall::DnsFirewallRuleType::Subnet,
+                    action: super::firewall::DnsFirewallAction::Block,
+                    target: "::1/128".to_string(),
+                    ttl: 300,
+                    created_at: chrono::Utc::now().timestamp() as u64,
+                    expires_at: None,
+                    enabled: true,
+                };
+                let _ = fw.add_rule(rule6);
+
+                let rule7 = super::firewall::DnsFirewallRule {
+                    id: "block_ipv6_ula".to_string(),
+                    rule_type: super::firewall::DnsFirewallRuleType::Subnet,
+                    action: super::firewall::DnsFirewallAction::Block,
+                    target: "fc00::/7".to_string(),
+                    ttl: 300,
+                    created_at: chrono::Utc::now().timestamp() as u64,
+                    expires_at: None,
+                    enabled: true,
+                };
+                let _ = fw.add_rule(rule7);
+
+                let rule8 = super::firewall::DnsFirewallRule {
+                    id: "block_ipv6_linklocal".to_string(),
+                    rule_type: super::firewall::DnsFirewallRuleType::Subnet,
+                    action: super::firewall::DnsFirewallAction::Block,
+                    target: "fe80::/10".to_string(),
+                    ttl: 300,
+                    created_at: chrono::Utc::now().timestamp() as u64,
+                    expires_at: None,
+                    enabled: true,
+                };
+                let _ = fw.add_rule(rule8);
             }
 
             if config.firewall.block_zone_transfers {

@@ -6,6 +6,9 @@ use http_body_util::Full;
 use std::convert::Infallible;
 
 use crate::config::MainConfig;
+use crate::http::response_builder::{
+    build_json_response, build_response_with_alt_svc, build_response_with_cookie,
+};
 
 pub struct SharedRequestHandler;
 
@@ -65,27 +68,7 @@ impl SharedRequestHandler {
         alt_svc: &Option<String>,
         main_config: &MainConfig,
     ) -> Response<BoxBody<Bytes, Infallible>> {
-        let mut builder = Response::builder()
-            .status(status)
-            .header("Content-Type", content_type)
-            .header("Content-Length", body.len());
-
-        if let Some(ref alt_svc) = alt_svc {
-            builder = builder.header("Alt-Svc", alt_svc.as_str());
-        }
-
-        if main_config.security.global_security_headers {
-            builder = builder
-                .header("Cache-Control", "no-store, no-cache, must-revalidate")
-                .header("X-Content-Type-Options", "nosniff")
-                .header("X-Frame-Options", "DENY");
-        }
-
-        builder = builder.header("Date", crate::http::headers::generate_stealth_timestamp(5));
-
-        builder
-            .body(Full::new(Bytes::from(body)).boxed())
-            .unwrap_or_else(|_| crate::http::fallback_error_boxed())
+        build_response_with_alt_svc(status, body, content_type, alt_svc, main_config)
     }
 
     pub fn build_response_with_cookie(
@@ -97,28 +80,7 @@ impl SharedRequestHandler {
         alt_svc: &Option<String>,
         main_config: &MainConfig,
     ) -> Response<BoxBody<Bytes, Infallible>> {
-        let mut builder = Response::builder()
-            .status(status)
-            .header("Content-Type", content_type)
-            .header("Content-Length", body.len())
-            .header("Set-Cookie", cookie);
-
-        if let Some(ref alt_svc) = alt_svc {
-            builder = builder.header("Alt-Svc", alt_svc.as_str());
-        }
-
-        if main_config.security.global_security_headers {
-            builder = builder
-                .header("Cache-Control", "no-store, no-cache, must-revalidate")
-                .header("X-Content-Type-Options", "nosniff")
-                .header("X-Frame-Options", "DENY");
-        }
-
-        builder = builder.header("Date", crate::http::headers::generate_stealth_timestamp(5));
-
-        builder
-            .body(Full::new(Bytes::from(body)).boxed())
-            .unwrap_or_else(|_| crate::http::fallback_error_boxed())
+        build_response_with_cookie(status, body, content_type, cookie, alt_svc, main_config)
     }
 
     pub fn build_json_response(
@@ -128,27 +90,7 @@ impl SharedRequestHandler {
         alt_svc: &Option<String>,
         main_config: &MainConfig,
     ) -> Response<BoxBody<Bytes, Infallible>> {
-        let mut builder = Response::builder()
-            .status(status)
-            .header("Content-Type", "application/json")
-            .header("Content-Length", body.len());
-
-        if let Some(ref alt_svc) = alt_svc {
-            builder = builder.header("Alt-Svc", alt_svc.as_str());
-        }
-
-        if main_config.security.global_security_headers {
-            builder = builder
-                .header("Cache-Control", "no-store, no-cache, must-revalidate")
-                .header("X-Content-Type-Options", "nosniff")
-                .header("X-Frame-Options", "DENY");
-        }
-
-        builder = builder.header("Date", crate::http::headers::generate_stealth_timestamp(5));
-
-        builder
-            .body(Full::new(Bytes::from(body)).boxed())
-            .unwrap_or_else(|_| crate::http::fallback_error_boxed())
+        build_json_response(status, body, alt_svc, main_config)
     }
 
     pub fn build_error_response(

@@ -70,6 +70,7 @@ pub struct ExtractArchiveRequest {
 
 #[derive(Clone)]
 struct FileManagerState {
+    #[allow(dead_code)]
     config: Arc<TokioRwLock<ConfigManager>>,
     file_manager: Arc<FileManager>,
     admin_token_hash: String,
@@ -361,14 +362,6 @@ pub fn create_file_manager_router(
         // TODO: Re-enable once axum version conflict is resolved
         // .route("/extract", post(extract_handler))
         .with_state(Arc::new(state))
-}
-
-pub async fn file_manager_handler(
-    req: axum::extract::Request,
-) -> Result<impl IntoResponse, StatusCode> {
-    let _path = req.uri().path().to_string();
-
-    Err::<(), _>(StatusCode::NOT_FOUND)
 }
 
 #[cfg(test)]

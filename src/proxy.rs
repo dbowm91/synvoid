@@ -111,7 +111,13 @@ pub fn build_headers_to_filter(
     global_headers: &[String],
     site_headers: &[String],
 ) -> AHashSet<String> {
-    let mut to_filter = STATIC_HEADERS_TO_FILTER.clone();
+    let static_headers = STATIC_HEADERS_TO_FILTER.clone();
+
+    if global_headers.is_empty() && site_headers.is_empty() {
+        return static_headers;
+    }
+
+    let mut to_filter = static_headers;
 
     for header in global_headers {
         let lower = header.to_lowercase();

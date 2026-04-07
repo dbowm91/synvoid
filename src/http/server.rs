@@ -1396,12 +1396,12 @@ impl HttpServer {
                                                     }));
                                             }
                                         };
+                                        use futures::StreamExt;
                                         use http_body_util::StreamBody;
                                         use tokio_util::io::ReaderStream;
                                         let stream = ReaderStream::new(file);
                                         let mut body = StreamBody::new(stream);
                                         let mut body_bytes = Vec::new();
-                                        use futures::StreamExt;
                                         while let Some(chunk) = body.next().await {
                                             match chunk {
                                                 Ok(bytes) => body_bytes.extend_from_slice(&bytes),
@@ -2727,27 +2727,13 @@ impl HttpServer {
         alt_svc: &Option<String>,
         main_config: &Arc<MainConfig>,
     ) -> Response<BoxBody<Bytes, Infallible>> {
-        let mut builder = Response::builder()
-            .status(status)
-            .header("Content-Type", content_type)
-            .header("Content-Length", body.len());
-
-        if let Some(alt_svc) = alt_svc {
-            builder = builder.header("Alt-Svc", alt_svc.as_str());
-        }
-
-        if main_config.security.global_security_headers {
-            builder = builder
-                .header("Cache-Control", "no-store, no-cache, must-revalidate")
-                .header("X-Content-Type-Options", "nosniff")
-                .header("X-Frame-Options", "DENY");
-        }
-
-        builder = builder.header("Date", generate_stealth_timestamp(5));
-
-        builder
-            .body(Full::new(Bytes::from(body)).boxed())
-            .unwrap_or_else(|_| crate::http::fallback_error_boxed())
+        crate::http::response_builder::build_response_with_alt_svc(
+            status,
+            body,
+            content_type,
+            alt_svc,
+            main_config,
+        )
     }
 
     fn build_response_with_cookie(
@@ -2758,28 +2744,14 @@ impl HttpServer {
         alt_svc: &Option<String>,
         main_config: &Arc<MainConfig>,
     ) -> Response<BoxBody<Bytes, Infallible>> {
-        let mut builder = Response::builder()
-            .status(status)
-            .header("Content-Type", content_type)
-            .header("Content-Length", body.len())
-            .header("Set-Cookie", cookie);
-
-        if let Some(alt_svc) = alt_svc {
-            builder = builder.header("Alt-Svc", alt_svc.as_str());
-        }
-
-        if main_config.security.global_security_headers {
-            builder = builder
-                .header("Cache-Control", "no-store, no-cache, must-revalidate")
-                .header("X-Content-Type-Options", "nosniff")
-                .header("X-Frame-Options", "DENY");
-        }
-
-        builder = builder.header("Date", generate_stealth_timestamp(5));
-
-        builder
-            .body(Full::new(Bytes::from(body)).boxed())
-            .unwrap_or_else(|_| crate::http::fallback_error_boxed())
+        crate::http::response_builder::build_response_with_cookie(
+            status,
+            body,
+            content_type,
+            cookie,
+            alt_svc,
+            main_config,
+        )
     }
 
     async fn handle_websocket_tunnel(

@@ -199,11 +199,11 @@ pub fn hash_name_nsec3(name: &str, config: &Nsec3Config) -> Vec<u8> {
                 hasher.update(&hash);
                 hash = hasher.finalize().to_vec();
             }
-            // Non-SHA1 algorithms (e.g., SHA-256) fall back to SHA-1 here.
-            // The base32_encode function also produces non-standard output for
-            // non-20-byte hash lengths. In practice only algorithm 1 (SHA-1)
-            // is deployed; SHA-256 (algorithm 2) would need a corrected encoder.
             _ => {
+                tracing::warn!(
+                    "Unsupported NSEC3 algorithm {}, falling back to SHA-1",
+                    config.algorithm
+                );
                 let mut hasher = Sha1::new();
                 hasher.update(&hash);
                 hash = hasher.finalize().to_vec();

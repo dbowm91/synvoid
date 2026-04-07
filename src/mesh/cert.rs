@@ -128,6 +128,7 @@ pub struct MeshCertManager {
     auto_generate: bool,
     is_global: bool,
     ca_mode: bool,
+    enforce_mutual_tls: bool,
     ca_key_pair: Arc<RwLock<Option<rcgen::KeyPair>>>,
     ca_certificate: Arc<RwLock<Option<rcgen::Certificate>>>,
     ca_cert_der: Arc<RwLock<Option<CertificateDer<'static>>>>,
@@ -186,6 +187,7 @@ impl MeshCertManager {
             auto_generate: config.tls.auto_generate_certs && !is_global,
             is_global,
             ca_mode,
+            enforce_mutual_tls: config.tls.enforce_mutual_tls,
             ca_key_pair: Arc::new(RwLock::new(None)),
             ca_certificate: Arc::new(RwLock::new(None)),
             ca_cert_der: Arc::new(RwLock::new(None)),
@@ -368,14 +370,29 @@ impl MeshCertManager {
     }
 
     pub fn build_client_config(&self, peer_node_id: &str) -> Result<ClientConfig, MeshCertError> {
-        let (Some(cert_path), Some(key_path)) = (&self.cert_path, &self.key_path) else {
+        let enforce_mutual_tls = self.enforce_mutual_tls;
+
+        if !enforce_mutual_tls {
             let client_config = ClientConfig::try_with_platform_verifier().map_err(|e| {
                 MeshCertError::ConfigError(format!("Failed to create client config: {}", e))
             })?;
             tracing::debug!(
-                "Mesh TLS client configured (no client cert) for node {}",
+                "Mesh TLS client configured (no client cert, mTLS not enforced) for node {}",
                 self.node_id
             );
+            return Ok(client_config);
+        }
+
+        let (Some(cert_path), Some(key_path)) = (&self.cert_path, &self.key_path) else {
+            if enforce_mutual_tls {
+                tracing::warn!(
+                    "mTLS enforced but no client cert configured for node {}",
+                    self.node_id
+                );
+            }
+            let client_config = ClientConfig::try_with_platform_verifier().map_err(|e| {
+                MeshCertError::ConfigError(format!("Failed to create client config: {}", e))
+            })?;
             return Ok(client_config);
         };
 
@@ -400,7 +417,15 @@ impl MeshCertManager {
                 }
                 root_store
             })
-            .with_no_client_auth();
+            .with_client_auth_cert(cert_chain, private_key)
+            .map_err(|e| {
+                MeshCertError::ConfigError(format!("Failed to configure client cert: {}", e))
+            })?;
+
+        tracing::info!(
+            "Mesh TLS client configured with client cert for node {}",
+            self.node_id
+        );
 
         let quic_client_config = QuicClientConfig::try_from(std::sync::Arc::new(client_config))
             .map_err(|e| {
@@ -410,7 +435,6 @@ impl MeshCertManager {
                 ))
             })?;
 
-        // Quinn 0.11 with rustls automatically supports 0-RTT when available
         let quic_config = quinn::ClientConfig::new(std::sync::Arc::new(quic_client_config));
 
         Ok(quic_config)
@@ -478,25 +502,26 @@ impl MeshCertManager {
         seed_address: &str,
         fingerprint: &str,
     ) -> Result<(), String> {
-        let fingerprints = self.seed_tofu_fingerprints.read();
-        match fingerprints.get(seed_address) {
-            Some(pinned) => {
-                if pinned == fingerprint {
+        let mut fingerprints = self.seed_tofu_fingerprints.write();
+        match fingerprints.entry(seed_address.to_string()) {
+            std::collections::hash_map::Entry::Occupied(entry) => {
+                if entry.get() == fingerprint {
                     Ok(())
                 } else {
                     Err(format!(
                         "TOFU: Fingerprint mismatch for seed {}. Expected: {}, Got: {}",
-                        seed_address, pinned, fingerprint
+                        seed_address,
+                        entry.get(),
+                        fingerprint
                     ))
                 }
             }
-            None => {
+            std::collections::hash_map::Entry::Vacant(entry) => {
                 tracing::info!(
                     "TOFU: No pinned fingerprint for seed {}, accepting on first use",
                     seed_address
                 );
-                drop(fingerprints);
-                self.pin_seed_fingerprint(seed_address, fingerprint);
+                entry.insert(fingerprint.to_string());
                 Ok(())
             }
         }

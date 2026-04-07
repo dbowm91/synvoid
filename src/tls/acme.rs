@@ -146,6 +146,7 @@ impl AcmeManager {
             .map_err(|e| AcmeError::Protocol(format!("Failed to create ACME account: {}", e)))?;
 
         // Persist credentials with restrictive permissions (0600)
+        // Write to temp file first to avoid race condition where file exists with default permissions
         if let Some(parent) = self.credentials_path.parent() {
             std::fs::create_dir_all(parent)
                 .map_err(|e| AcmeError::Io(format!("Failed to create cache dir: {}", e)))?;
@@ -156,18 +157,21 @@ impl AcmeManager {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let mut file = std::fs::File::create(&self.credentials_path)
-                .map_err(|e| AcmeError::Io(format!("Failed to create credentials file: {}", e)))?;
-            let mut perms = file
-                .metadata()
-                .map(|m| m.permissions())
-                .unwrap_or_else(|_| std::fs::Permissions::from_mode(0o600));
-            perms.set_mode(0o600);
-            file.set_permissions(perms)
-                .map_err(|e| AcmeError::Io(format!("Failed to set permissions: {}", e)))?;
+            let temp_path = self.credentials_path.with_extension("tmp");
+            let mut file = std::fs::File::create(&temp_path).map_err(|e| {
+                AcmeError::Io(format!("Failed to create temp credentials file: {}", e))
+            })?;
+            let mut perms = std::fs::Permissions::from_mode(0o600);
+            file.set_permissions(perms).map_err(|e| {
+                AcmeError::Io(format!("Failed to set permissions on temp file: {}", e))
+            })?;
             use std::io::Write;
             file.write_all(creds_json.as_bytes())
                 .map_err(|e| AcmeError::Io(format!("Failed to write credentials: {}", e)))?;
+            drop(file);
+            std::fs::rename(&temp_path, &self.credentials_path).map_err(|e| {
+                AcmeError::Io(format!("Failed to rename temp credentials file: {}", e))
+            })?;
         }
         #[cfg(not(unix))]
         {

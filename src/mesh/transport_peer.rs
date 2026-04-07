@@ -11,7 +11,7 @@ use bytes::Bytes;
 use quinn::{Connection, RecvStream, SendStream};
 use tokio::sync::broadcast;
 
-use crate::mesh::protocol::MeshMessage;
+use crate::mesh::protocol::{HealthStatus, MeshMessage};
 use crate::mesh::topology::{MeshTopology, PeerStatus};
 
 impl MeshTransport {
@@ -48,26 +48,50 @@ impl MeshTransport {
     }
 
     pub(crate) async fn wait_for_peer_datagrams(&self) -> Option<(String, Bytes)> {
-        for entry in self.peer_connections.iter() {
-            let peer_id = entry.key().clone();
-            let connection = &entry.value().connection;
+        use futures::future;
+        use tokio::time::{timeout, Duration};
 
-            match connection.read_datagram().await {
-                Ok(data) => return Some((peer_id, data)),
-                Err(e) => {
+        const POLL_TIMEOUT_MS: u64 = 100;
+
+        let peers: Vec<(String, quinn::Connection)> = self
+            .peer_connections
+            .iter()
+            .map(|e| (e.key().clone(), e.value().connection.clone()))
+            .collect();
+
+        if peers.is_empty() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            return None;
+        }
+
+        let futures = peers.iter().map(|(peer_id, connection)| async move {
+            match timeout(
+                Duration::from_millis(POLL_TIMEOUT_MS),
+                connection.read_datagram(),
+            )
+            .await
+            {
+                Ok(Ok(data)) => Some((peer_id.clone(), data)),
+                Ok(Err(e)) => {
                     let err_str = e.to_string();
                     if err_str.contains("unsupported") {
                         tracing::debug!("Peer {} does not support datagrams", peer_id);
                     } else if err_str.contains("finished") || err_str.contains("FinRead") {
-                        // Peer disconnected, continue
                     } else {
                         tracing::trace!("Datagram read error from {}: {}", peer_id, e);
                     }
+                    None
                 }
+                Err(_) => None,
             }
+        });
+
+        let results = future::join_all(futures).await;
+
+        for result in results.into_iter().flatten() {
+            return Some(result);
         }
 
-        tokio::time::sleep(Duration::from_millis(1)).await;
         None
     }
 
@@ -1705,8 +1729,91 @@ impl MeshTransport {
                     }
                 }
             }
+            MeshMessage::Ping {
+                request_id,
+                node_id,
+                timestamp: _,
+            } => {
+                let response = MeshMessage::Pong {
+                    request_id,
+                    node_id: self.config.node_id().into(),
+                    timestamp: crate::utils::safe_unix_timestamp(),
+                };
+                let encoded = response
+                    .encode()
+                    .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
+                let len = (encoded.len() as u32).to_be_bytes();
+                let _ = send_stream.write_all(&len).await;
+                let _ = send_stream.write_all(&encoded).await;
+            }
+            MeshMessage::Pong {
+                request_id: _,
+                node_id: _,
+                timestamp: _,
+            } => {
+                tracing::trace!("Received Pong via stream");
+            }
+            MeshMessage::PeerHealthResponse {
+                peer_id: _,
+                status: _,
+                latency_ms,
+                timestamp: _,
+            } => {
+                if let Some(latency) = latency_ms {
+                    tracing::trace!("Peer health response: latency={}ms", latency);
+                }
+            }
+            MeshMessage::MeshAck {
+                original_message_id: _,
+                status: _,
+                timestamp: _,
+            } => {
+                tracing::trace!("Received MeshAck via stream");
+            }
+            MeshMessage::RouteResponseAck {
+                query_id,
+                upstream_id: _,
+                provider_node_id: _,
+            } => {
+                tracing::debug!("Route response ack for query {}", query_id);
+            }
+            MeshMessage::RouteRejected {
+                query_id,
+                upstream_id: _,
+                reason: _,
+                alternatives: _,
+            } => {
+                tracing::debug!("Route rejected for query {}", query_id);
+            }
+            MeshMessage::PeerHealthCheck {
+                peer_id: _,
+                timestamp: _,
+            } => {
+                let response = MeshMessage::PeerHealthResponse {
+                    peer_id: self.config.node_id().into(),
+                    status: HealthStatus::Healthy,
+                    latency_ms: None,
+                    timestamp: crate::utils::safe_unix_timestamp(),
+                };
+                let encoded = response
+                    .encode()
+                    .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
+                let len = (encoded.len() as u32).to_be_bytes();
+                let _ = send_stream.write_all(&len).await;
+                let _ = send_stream.write_all(&encoded).await;
+            }
+            MeshMessage::PeerHealthResponse {
+                peer_id: _,
+                status: _,
+                latency_ms,
+                timestamp: _,
+            } => {
+                if let Some(latency) = latency_ms {
+                    tracing::trace!("Peer health response: latency={}ms", latency);
+                }
+            }
             _ => {
-                tracing::debug!("Unhandled mesh message type");
+                tracing::trace!("Stream peer handler: unhandled message type received via stream");
             }
         }
 

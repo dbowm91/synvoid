@@ -3,6 +3,9 @@ use std::process::Child;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use nix::sys::signal::{kill, Signal};
+use nix::unistd::Pid;
+
 use super::drain_manager::DrainManager;
 use super::socket_handoff::DualMasterHandoff;
 use super::spawn::{spawn_and_log, ProcessMode, SpawnConfig};
@@ -365,12 +368,7 @@ impl OverseerProcess {
         let state = self.persistence.load().unwrap_or_default();
 
         if let Some(ref new_pid) = state.new_master_pid {
-            let check = std::process::Command::new("kill")
-                .arg("-0")
-                .arg(new_pid.to_string())
-                .output();
-
-            let new_master_alive = check.map(|o| o.status.success()).unwrap_or(false);
+            let new_master_alive = kill(Pid::from_raw(*new_pid as i32), None).is_ok();
 
             if new_master_alive {
                 tracing::info!(
@@ -409,12 +407,9 @@ impl OverseerProcess {
         }
 
         if let Some(ref old_pid) = state.old_master_pid {
-            let check = std::process::Command::new("kill")
-                .arg("-0")
-                .arg(old_pid.to_string())
-                .output();
+            let old_master_alive = kill(Pid::from_raw(*old_pid as i32), None).is_ok();
 
-            if check.map(|o| o.status.success()).unwrap_or(false) {
+            if old_master_alive {
                 tracing::info!(
                     "Old master (PID {}) is still running, attempting to restore",
                     old_pid

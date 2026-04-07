@@ -10,6 +10,25 @@ use crate::mesh::protocol::{MeshMessage, ProviderInfo, RouteQueryResult};
 use crate::mesh::topology::MeshTopology;
 
 impl MeshTransport {
+    fn sign_route_response(
+        &self,
+        query_id: &str,
+        upstream_id: &str,
+        provider_node_id: &str,
+        hops: u32,
+        timestamp: u64,
+    ) -> Vec<u8> {
+        let sign_data = format!(
+            "{}:{}:{}:{}:{}",
+            query_id, upstream_id, provider_node_id, hops, timestamp
+        );
+        if let Some(ref signer) = self.mesh_signer {
+            signer.sign(&sign_data).to_vec()
+        } else {
+            Vec::new()
+        }
+    }
+
     pub(crate) async fn send_route_query_datagram(
         &self,
         peer_id: &str,
@@ -142,13 +161,15 @@ impl MeshTransport {
             let timestamp = MeshMessage::generate_timestamp();
             let nonce = MeshMessage::generate_nonce();
             let local = self.topology.get_upstream_info(upstream_id).await;
+            let signature =
+                self.sign_route_response(query_id, upstream_id, &provider, hops as u32, timestamp);
             let response = MeshMessage::RouteResponse {
                 query_id: query_id.into(),
                 upstream_id: upstream_id.into(),
                 provider_node_id: provider.clone().into(),
                 hops,
                 ttl_secs: 300,
-                signature: vec![],
+                signature,
                 sequence,
                 timestamp,
                 nonce,
@@ -171,13 +192,15 @@ impl MeshTransport {
             let timestamp = MeshMessage::generate_timestamp();
             let nonce = MeshMessage::generate_nonce();
             let local = self.topology.get_upstream_info(upstream_id).await;
+            let node_id = self.config.node_id();
+            let signature = self.sign_route_response(query_id, upstream_id, &node_id, 0, timestamp);
             let response = MeshMessage::RouteResponse {
                 query_id: query_id.into(),
                 upstream_id: upstream_id.into(),
-                provider_node_id: self.config.node_id().into(),
+                provider_node_id: node_id.into(),
                 hops: 0,
                 ttl_secs: 300,
-                signature: vec![],
+                signature,
                 sequence,
                 timestamp,
                 nonce,
@@ -345,15 +368,22 @@ impl MeshTransport {
         let upstream_id_for_log = upstream_id.clone();
         if let Some(upstream_info) = topology.get_upstream_info(&upstream_id).await {
             if upstream_info.is_local || topology.can_forward_service(&upstream_id) {
-                let signature = vec![0u8; 32];
                 let sequence = 0;
                 let timestamp = MeshMessage::generate_timestamp();
                 let nonce = MeshMessage::generate_nonce();
+                let hops: u8 = if upstream_info.is_local { 0 } else { 1 };
+                let signature = self.sign_route_response(
+                    &query_id,
+                    &upstream_id,
+                    topology.node_id(),
+                    hops as u32,
+                    timestamp,
+                );
                 let response = MeshMessage::RouteResponse {
                     query_id: query_id.into(),
                     upstream_id: upstream_id.into(),
                     provider_node_id: topology.node_id().into(),
-                    hops: if upstream_info.is_local { 0 } else { 1 },
+                    hops,
                     ttl_secs: 300,
                     signature,
                     sequence,
@@ -392,15 +422,23 @@ impl MeshTransport {
 
         if max_hops > 1 {
             if let Some((provider, hops)) = topology.get_cached_route(&upstream_id).await {
-                let signature = vec![0u8; 32];
                 let sequence = 0;
                 let timestamp = MeshMessage::generate_timestamp();
                 let nonce = MeshMessage::generate_nonce();
+                let hops_for_signature: u32 = (hops + 1).into();
+                let total_hops: u8 = hops + 1;
+                let signature = self.sign_route_response(
+                    &query_id,
+                    &upstream_id,
+                    &provider,
+                    hops_for_signature,
+                    timestamp,
+                );
                 let response = MeshMessage::RouteResponse {
                     query_id: query_id.into(),
                     upstream_id: upstream_id.into(),
                     provider_node_id: provider.into(),
-                    hops: hops + 1,
+                    hops: total_hops,
                     ttl_secs: 60,
                     signature,
                     sequence,
@@ -618,11 +656,6 @@ impl MeshTransport {
             let peer_id = &peers[peer_idx];
 
             let query_id = format!("warm-{}-{}", self.config.node_id(), uuid::Uuid::new_v4());
-            let (tx, _rx) = tokio::sync::oneshot::channel();
-            self.pending_queries
-                .lock()
-                .await
-                .register(query_id.clone(), tx);
 
             if self
                 .send_route_query_stream(peer_id, &query_id, &upstream_id)
@@ -635,9 +668,6 @@ impl MeshTransport {
                     peer_id
                 );
             }
-
-            // Don't wait for response - let it populate cache in background
-            self.pending_queries.lock().await.take(&query_id);
         }
     }
 }
