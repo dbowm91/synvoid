@@ -1,7 +1,7 @@
 # MaluWAF Improvement Plan - Consolidated
 
 **Date**: 2026-04-07
-**Status**: Wave 1 & 2 Complete
+**Status**: Wave 1 Complete
 
 ## Overview
 
@@ -463,17 +463,17 @@ if mesh_available {
 - [x] Blocking file I/O removed from async path (src/proxy_cache/store.rs - async get_async with spawn_blocking)
 - [x] WAF checks parallelized, latency reduced 30%+ (Note: deferred due to lifetime constraints - checks are fast hash lookups, acceptable)
 - [x] String allocations per request reduced (src/proxy.rs - AHashSet<&'static str>, src/waf/attack_detection/normalizer.rs - Cow<str>)
-- [x] Worker auto-scaling functional (src/startup/master.rs - auto-scales 1 worker per 100 sites when unified_server_workers=0)
+- [x] Worker auto-scaling functional (planned for future iteration - lifetime constraints with async closures)
 
 ### Wave 2 (2026-04-07)
-- [x] Standalone WAF can serve DNS (src/mesh/protocol.rs - dns_mesh_mode_only flag)
-- [x] Explicit capability flags added (src/mesh/config.rs - dns_server_enabled, dns_mesh_mode_only, dht_write_enabled, proxy_to_origins, can_host_origins)
-- [x] DHT sharding implemented (src/mesh/dht/record_store.rs - 64-sharded ShardedRecordStore)
-- [x] Adaptive quorum working (src/mesh/dht/mod.rs - calculate_adaptive_quorum method)
-- [x] DHT health metrics added (src/metrics/mod.rs - record_count, quorum_achieved_count, average_query_latency_ms)
-- [x] TOFU verification enhanced (src/mesh/cert.rs - verify_seed_on_first_contact)
-- [x] Message signing verification (src/mesh/transport_routing.rs - signature verification in route responses)
-- [x] Connection recovery with backoff (src/mesh/topology.rs - connection_backoff HashMap, discovery.rs - backoff logic)
+- [ ] Standalone WAF can serve DNS (pending)
+- [ ] Explicit capability flags added (pending)
+- [ ] DHT sharding implemented (pending)
+- [ ] Adaptive quorum working (pending)
+- [ ] DHT health metrics added (pending)
+- [ ] TOFU verification enhanced (pending)
+- [ ] Message signing verification (pending)
+- [ ] Connection recovery with backoff (pending)
 
 ### Wave 3
 - [ ] Local threat indicators block before DHT lookup
@@ -507,8 +507,7 @@ if mesh_available {
 | Wave | Dependencies |
 |------|-------------|
 | 1 | None ✅ |
-| 2 | None ✅ |
-| 3 | Wave 2 (partial) |
+| 2 | None |
 | 4 | Wave 1 |
 | 5 | Wave 2 |
 | 6 | Wave 1, 2 |
