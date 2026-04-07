@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use dashmap::DashMap;
+use digest::Digest;
 use http::header::HeaderValue;
 use http_body::Body as HttpBody;
 use http_body_util::combinators::BoxBody;
@@ -30,6 +31,7 @@ fn get_cached_regex(pattern: &str) -> Option<regex::Regex> {
 }
 
 use crate::mesh::config::MeshConfig;
+use crate::mesh::dht::RecordStoreManager;
 use crate::mesh::organization::OrganizationManager;
 use crate::mesh::protocol::{ProviderInfo, UpstreamProtocol, WafPolicy};
 use crate::mesh::topology::MeshTopology;
@@ -65,6 +67,7 @@ pub struct MeshProxy {
     transport: Arc<RwLock<Option<Arc<MeshTransport>>>>,
     transport_manager:
         Arc<RwLock<Option<Arc<crate::mesh::transports::manager::MeshTransportManager>>>>,
+    record_store: Arc<RwLock<Option<Arc<RecordStoreManager>>>>,
     active_connections: Arc<RwLock<HashMap<String, MeshConnection>>>,
     policy_cache: Cache<String, CachedPolicy>,
     failed_providers: Cache<String, Instant>,
@@ -173,6 +176,31 @@ struct TransformCacheEntry {
     content_type: Option<String>,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
+struct DhtTransformEntry {
+    body: Vec<u8>,
+    content_encoding: Option<String>,
+    content_type: Option<String>,
+}
+
+impl DhtTransformEntry {
+    fn from_cache_entry(entry: &TransformCacheEntry) -> Self {
+        Self {
+            body: entry.body.to_vec(),
+            content_encoding: entry.content_encoding.clone(),
+            content_type: entry.content_type.clone(),
+        }
+    }
+
+    fn into_cache_entry(self) -> TransformCacheEntry {
+        TransformCacheEntry {
+            body: Bytes::from(self.body),
+            content_encoding: self.content_encoding,
+            content_type: self.content_type,
+        }
+    }
+}
+
 const DEFAULT_TRANSFORM_CACHE_TTL_SECS: u64 = 300;
 const DEFAULT_TRANSFORM_CACHE_SIZE: usize = 1000;
 
@@ -213,6 +241,7 @@ impl MeshProxy {
             topology,
             transport: Arc::new(RwLock::new(None)),
             transport_manager: Arc::new(RwLock::new(None)),
+            record_store: Arc::new(RwLock::new(None)),
             active_connections: Arc::new(RwLock::new(HashMap::new())),
             policy_cache,
             failed_providers,
@@ -221,6 +250,11 @@ impl MeshProxy {
             org_manager: Arc::new(TokioRwLock::new(OrganizationManager::new())),
             transform_cache: Arc::new(transform_cache),
         }
+    }
+
+    pub fn set_record_store(&self, record_store: Arc<RecordStoreManager>) {
+        let mut rs = self.record_store.write();
+        *rs = Some(record_store);
     }
 
     pub fn set_transport(&self, transport: Arc<MeshTransport>) {
@@ -1044,13 +1078,37 @@ impl MeshProxy {
             return response;
         }
 
-        let cache_key = format!(
-            "{}:{}:{:?}:{:?}",
-            upstream_id,
-            request_path,
-            minification.as_ref().and_then(|c| c.enabled),
-            image_protection.as_ref().and_then(|c| c.enabled),
+        let body = std::mem::replace(
+            response.body_mut(),
+            http_body_util::Full::new(Bytes::new()).boxed(),
         );
+
+        let body = match body.collect().await {
+            Ok(collected) => collected.to_bytes(),
+            Err(_) => return response,
+        };
+
+        if body.is_empty() {
+            return response;
+        }
+
+        let content_hash = {
+            let mut hasher = sha2::Sha256::new();
+            hasher.update(&body);
+            hex::encode(hasher.finalize())
+        };
+
+        let transform_flags = format!(
+            "min:{}:{}:{}:{},img:{}:{}",
+            minification.as_ref().and_then(|c| c.enabled).unwrap_or(false),
+            minification.as_ref().and_then(|c| c.enable_html).unwrap_or(true),
+            minification.as_ref().and_then(|c| c.enable_css).unwrap_or(true),
+            minification.as_ref().and_then(|c| c.enable_js).unwrap_or(true),
+            image_protection.as_ref().and_then(|c| c.enabled).unwrap_or(false),
+            image_protection.as_ref().and_then(|c| c.min_size_bytes).unwrap_or(102400) as u64,
+        );
+
+        let cache_key = format!("{}:{}:{}", upstream_id, content_hash, transform_flags);
 
         {
             if let Some(entry) = self.transform_cache.get(&cache_key) {
@@ -1078,6 +1136,48 @@ impl MeshProxy {
             }
         }
 
+        {
+            let rs = self.record_store.read();
+            if let Some(ref record_store) = *rs {
+                let dht_key = crate::mesh::dht::keys::DhtKey::transformed_content(
+                    upstream_id,
+                    &content_hash,
+                    &transform_flags,
+                );
+                if let Some(record) = record_store.get_record(&dht_key.as_str()) {
+                    tracing::debug!("DHT transform cache hit for {}", cache_key);
+                    let entry: Option<DhtTransformEntry> =
+                        serde_json::from_slice(&record.value).ok();
+                    if let Some(entry) = entry {
+                        let entry = entry.into_cache_entry();
+                        let mut new_response = Response::builder().status(200);
+
+                        if let Some(ref enc) = entry.content_encoding {
+                            new_response = new_response.header("Content-Encoding", enc.as_str());
+                        }
+                        if let Some(ref ct) = entry.content_type {
+                            new_response = new_response.header("Content-Type", ct.as_str());
+                        }
+
+                        let body = http_body_util::Full::new(entry.body.clone()).boxed();
+                        return new_response.body(body).unwrap_or_else(|_| {
+                            Response::builder()
+                                .status(500)
+                                .body(
+                                    http_body_util::Full::new(Bytes::from("Internal Server Error"))
+                                        .boxed(),
+                                )
+                                .unwrap_or_else(|_| {
+                                    Response::new(http_body_util::Full::new(Bytes::new()).boxed())
+                                })
+                        });
+                    }
+                }
+            }
+        }
+
+        let mut transformed = body;
+
         let content_type = response
             .headers()
             .get("content-type")
@@ -1090,22 +1190,6 @@ impl MeshProxy {
             .get("last-modified")
             .and_then(|v| v.to_str().ok())
             .map(|s| s.to_string());
-
-        let body = std::mem::replace(
-            response.body_mut(),
-            http_body_util::Full::new(Bytes::new()).boxed(),
-        );
-
-        let body = match body.collect().await {
-            Ok(collected) => collected.to_bytes(),
-            Err(_) => return response,
-        };
-
-        if body.is_empty() {
-            return response;
-        }
-
-        let mut transformed = body;
 
         if let Some(ref config) = minification {
             if config.enabled.unwrap_or(false) {
@@ -1200,13 +1284,33 @@ impl MeshProxy {
 
         {
             self.transform_cache.insert(
-                cache_key,
+                cache_key.clone(),
                 TransformCacheEntry {
+                    body: transformed.clone(),
+                    content_encoding: cached_content_encoding.clone(),
+                    content_type: content_type_header.clone(),
+                },
+            );
+        }
+
+        {
+            let rs = self.record_store.read();
+            if let Some(ref record_store) = *rs {
+                let dht_key = crate::mesh::dht::keys::DhtKey::transformed_content(
+                    upstream_id,
+                    &content_hash,
+                    &transform_flags,
+                );
+                let cache_entry = DhtTransformEntry::from_cache_entry(&TransformCacheEntry {
                     body: transformed,
                     content_encoding: cached_content_encoding,
                     content_type: content_type_header,
-                },
-            );
+                });
+                if let Ok(bytes) = serde_json::to_vec(&cache_entry) {
+                    record_store.store_and_announce(dht_key.as_str().to_string(), bytes, 3600);
+                    tracing::debug!("Stored transformed content in DHT: {}", dht_key.as_str());
+                }
+            }
         }
 
         response

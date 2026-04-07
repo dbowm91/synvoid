@@ -1,7 +1,7 @@
 # MaluWAF Improvement Plan - Consolidated
 
 **Date**: 2026-04-07
-**Status**: Wave 1, 2, 3, 4 Complete; Wave 5 Partial (5.1 done)
+**Status**: Wave 1, 2, 3, 4, 5 Complete; Wave 6, 7 Pending
 
 ## Overview
 
@@ -507,8 +507,8 @@ if mesh_available {
 - [x] Upload rate limiting works (src/static_files/file_manager.rs - UploadRateLimiter integrated)
 
 ### Wave 5
-- [ ] Cache preferences propagate origin→edge
-- [ ] Transform cache shared via DHT
+- [x] Cache preferences propagate origin→edge (src/mesh/proto/mesh.proto - ProxyCachePreferences in SiteConfigSync)
+- [x] Transform cache shared via DHT (src/mesh/proxy.rs - TransformedContent DhtKey, DHT store/fetch in transform_response)
 
 ### Wave 6
 - [ ] Unified pool trait working
@@ -561,6 +561,9 @@ if mesh_available {
 - `src/mesh/protocol.rs` - DNS capability, serverless messages
 - `src/mesh/config.rs` - Capability config fields
 - `src/mesh/dht/record_store.rs` - Sharding
+- `src/mesh/dht/keys.rs` - TransformedContent, PoisonedImage DhtKey variants
+- `src/mesh/proxy.rs` - DHT transform cache integration, record_store field
+- `src/mesh/backend.rs` - create_mesh_backend integration
 - `src/waf/mod.rs` - Local lookup, parallelization
 - `src/waf/attack_detection/normalizer.rs` - String optimization
 - `src/proxy_cache/store.rs` - Async file I/O

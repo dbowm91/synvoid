@@ -38,6 +38,15 @@ pub enum DhtKey {
     UpstreamMinification(String),
     UpstreamCompression(String),
     SiteImagePoisonConfig(String),
+    TransformedContent {
+        site_id: String,
+        content_hash: String,
+        transform_flags: String,
+    },
+    PoisonedImage {
+        site_id: String,
+        original_hash: String,
+    },
 }
 
 impl DhtKey {
@@ -129,6 +138,21 @@ impl DhtKey {
         DhtKey::SiteImagePoisonConfig(site_id.to_string())
     }
 
+    pub fn transformed_content(site_id: &str, content_hash: &str, transform_flags: &str) -> Self {
+        DhtKey::TransformedContent {
+            site_id: site_id.to_string(),
+            content_hash: content_hash.to_string(),
+            transform_flags: transform_flags.to_string(),
+        }
+    }
+
+    pub fn poisoned_image(site_id: &str, original_hash: &str) -> Self {
+        DhtKey::PoisonedImage {
+            site_id: site_id.to_string(),
+            original_hash: original_hash.to_string(),
+        }
+    }
+
     pub fn as_str(&self) -> String {
         match self {
             DhtKey::Organization(org_id) => format!("org:{}", org_id),
@@ -164,6 +188,22 @@ impl DhtKey {
             }
             DhtKey::SiteImagePoisonConfig(site_id) => {
                 format!("site_image_poison_config:{}", site_id)
+            }
+            DhtKey::TransformedContent {
+                site_id,
+                content_hash,
+                transform_flags,
+            } => {
+                format!(
+                    "transformed:{}:{}:{}",
+                    site_id, content_hash, transform_flags
+                )
+            }
+            DhtKey::PoisonedImage {
+                site_id,
+                original_hash,
+            } => {
+                format!("poisoned_image:{}:{}", site_id, original_hash)
             }
         }
     }
@@ -219,6 +259,15 @@ impl DhtKey {
             "site_image_poison_config" if parts.len() >= 2 => {
                 DhtKey::SiteImagePoisonConfig(parts[1..].join(":"))
             }
+            "transformed" if parts.len() >= 4 => DhtKey::TransformedContent {
+                site_id: parts[1].to_string(),
+                content_hash: parts[2].to_string(),
+                transform_flags: parts[3].to_string(),
+            },
+            "poisoned_image" if parts.len() >= 3 => DhtKey::PoisonedImage {
+                site_id: parts[1].to_string(),
+                original_hash: parts[2].to_string(),
+            },
             _ => DhtKey::NodeInfo(s.to_string()),
         }
     }
@@ -252,6 +301,8 @@ impl DhtKey {
                 | DhtKey::DnsRecord(_, _)
                 | DhtKey::AnycastNode(_)
                 | DhtKey::ThreatIndicator(_)
+                | DhtKey::TransformedContent { .. }
+                | DhtKey::PoisonedImage { .. }
         )
     }
 
@@ -303,6 +354,8 @@ impl DhtKey {
             DhtKey::UpstreamMinification(_) => "upstream_minification",
             DhtKey::UpstreamCompression(_) => "upstream_compression",
             DhtKey::SiteImagePoisonConfig(_) => "site_image_poison_config",
+            DhtKey::TransformedContent { .. } => "transformed_content",
+            DhtKey::PoisonedImage { .. } => "poisoned_image",
         }
     }
 
@@ -333,6 +386,8 @@ impl DhtKey {
             DhtKey::UpstreamMinification(_) => Some(SignedRecordType::UpstreamMinification),
             DhtKey::UpstreamCompression(_) => Some(SignedRecordType::UpstreamCompression),
             DhtKey::SiteImagePoisonConfig(_) => Some(SignedRecordType::SiteImagePoisonConfig),
+            DhtKey::TransformedContent { .. } => None,
+            DhtKey::PoisonedImage { .. } => None,
         }
     }
 
@@ -363,6 +418,8 @@ impl DhtKey {
             DhtKey::UpstreamMinification(id) => Some(id.clone()),
             DhtKey::UpstreamCompression(id) => Some(id.clone()),
             DhtKey::SiteImagePoisonConfig(id) => Some(id.clone()),
+            DhtKey::TransformedContent { site_id, .. } => Some(site_id.clone()),
+            DhtKey::PoisonedImage { site_id, .. } => Some(site_id.clone()),
             _ => None,
         }
     }
