@@ -173,6 +173,7 @@ impl InstancePool {
                     max_cpu_fuel: self.function_definition.cpu_fuel.unwrap_or(0),
                     timeout_seconds: self.function_definition.timeout_seconds.unwrap_or(30),
                     max_instances: 1,
+                    memory_budget_mb: None,
                 },
             )
             .map_err(InstancePoolError::InstanceCreationFailed)?;

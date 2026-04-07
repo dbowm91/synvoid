@@ -8,10 +8,14 @@ use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use parking_lot::RwLock;
 
 pub mod axum_loader;
+pub mod global;
 pub mod instance_pool;
+pub mod pool;
 pub mod wasm_metrics;
 pub mod wasm_runtime;
 
+pub use global::{get_global_plugin_manager, GlobalPluginManager};
+pub use pool::{PooledInstance, WasmPool};
 pub use wasm_runtime::{PluginInfo, WasmPluginManager, WasmResourceLimits, WasmRuntime};
 
 pub enum WasmFilterResult {

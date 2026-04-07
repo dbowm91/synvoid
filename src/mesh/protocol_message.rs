@@ -108,6 +108,7 @@ impl MeshMessage {
             Self::WasmModuleAnnounce { .. }
             | Self::WasmModuleSyncRequest { .. }
             | Self::WasmModuleSyncResponse { .. } => MessageCategory::Wasm,
+            Self::ServerlessFunctionAnnounce(_) => MessageCategory::Serverless,
             Self::SiteConfigSync { .. }
             | Self::NetworkPolicyUpdate { .. }
             | Self::GlobalNodeBlocklistUpdate { .. }

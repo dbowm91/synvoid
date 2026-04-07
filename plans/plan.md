@@ -1,7 +1,7 @@
 # MaluWAF Improvement Plan - Consolidated
 
 **Date**: 2026-04-07
-**Status**: Wave 1, 2, 3, 4, 5 Complete; Wave 6, 7 Pending
+**Status**: Wave 1, 2, 3, 4, 5, 6 Complete; Wave 7 Pending
 
 ## Overview
 
@@ -465,11 +465,16 @@ if mesh_available {
 - 5.2 Transform Cache Sharing: Pending (requires DHT integration)
 - 5.3 Image Poison Enhancement: Pending (requires DHT integration)
 
-### Wave 6 (Serverless) - Large refactoring, parallelizable internally
-- 6.1 (unified pool) independent
-- 6.2 (routing) independent
-- 6.3 (versioning) independent
-- 6.4-6.7 depend on 6.1-6.3
+### Wave 6 (Serverless) - ✅ COMPLETE
+- 6.1 (unified pool) ✅ Implemented (WasmPool trait in src/plugin/pool.rs)
+- 6.2 (routing) ✅ Implemented (RouteMatch, MethodMatch, ServerlessRoute in src/serverless/routing.rs)
+- 6.3 (versioning) ✅ Implemented (versioned storage in WasmModuleStore)
+- 6.4 (config schema) ✅ Implemented (routes, description, allowed_methods in FunctionDefinition)
+- 6.5 (registry) ✅ Implemented (ServerlessRegistry in src/serverless/registry.rs)
+- 6.6 (mesh protocol) ✅ Implemented (ServerlessFunctionAnnounce message)
+- 6.7 (metrics) ✅ Implemented (serverless metrics in src/metrics/mod.rs)
+- 6.8 (shared plugin state) ✅ Implemented (GlobalPluginManager in src/plugin/global.rs)
+- 6.9 (memory consolidation) ✅ Implemented (GlobalWasmMemoryBudget)
 
 ### Wave 7 (Web App Stack) - Later phase
 - 7.1-7.2 can run in parallel
@@ -510,11 +515,15 @@ if mesh_available {
 - [x] Cache preferences propagate origin→edge (src/mesh/proto/mesh.proto - ProxyCachePreferences in SiteConfigSync)
 - [x] Transform cache shared via DHT (src/mesh/proxy.rs - TransformedContent DhtKey, DHT store/fetch in transform_response)
 
-### Wave 6
-- [ ] Unified pool trait working
-- [ ] Route matching supports wildcards/regex
-- [ ] Module versioning functional
-- [ ] Per-function metrics available
+### Wave 6 (2026-04-07)
+- [x] Unified pool trait working (src/plugin/pool.rs - WasmPool trait)
+- [x] Route matching supports wildcards/regex (src/serverless/routing.rs - RouteMatch, MethodMatch)
+- [x] Module versioning functional (src/mesh/wasm_dist.rs - store_versioned, gc_old_versions)
+- [x] Per-function metrics available (src/metrics/mod.rs - serverless_invocations, serverless_duration)
+- [x] Serverless registry working (src/serverless/registry.rs - FunctionMetadata tracking)
+- [x] Mesh protocol extended (ServerlessFunctionAnnounce message)
+- [x] Global plugin manager working (src/plugin/global.rs - GlobalPluginManager)
+- [x] Memory budget consolidation (GlobalWasmMemoryBudget)
 
 ### Wave 7
 - [ ] Directory viewer working with theming
@@ -551,32 +560,40 @@ if mesh_available {
 - `src/http/directory_viewer.rs` - Directory viewer handler
 - `src/http/file_manager_ui.rs` - File manager UI handler
 - `src/http/webdav.rs` - WebDAV handler
-- `src/serverless/registry.rs` - Function registry
-- `src/plugin/global.rs` - Global plugin manager
-- `src/plugin/pool.rs` - Unified pool trait
+- `src/serverless/registry.rs` - Function registry ✅ NEW in Wave 6
+- `src/serverless/routing.rs` - Route matching types ✅ NEW in Wave 6
+- `src/plugin/global.rs` - Global plugin manager ✅ NEW in Wave 6
+- `src/plugin/pool.rs` - Unified pool trait ✅ NEW in Wave 6
 - `src/fastcgi/pool.rs` - FastCGI connection pool
 - `src/php/health.rs` - PHP-FPM health check
 
 ### Modified Files
-- `src/mesh/protocol.rs` - DNS capability, serverless messages
+- `src/mesh/protocol.rs` - DNS capability, serverless messages ✅ Wave 6
 - `src/mesh/config.rs` - Capability config fields
 - `src/mesh/dht/record_store.rs` - Sharding
 - `src/mesh/dht/keys.rs` - TransformedContent, PoisonedImage DhtKey variants
 - `src/mesh/proxy.rs` - DHT transform cache integration, record_store field
 - `src/mesh/backend.rs` - create_mesh_backend integration
+- `src/mesh/proto/mesh.proto` - ServerlessFunctionAnnounce message ✅ Wave 6
+- `src/mesh/protocol_proto_encode.rs` - ServerlessFunctionAnnounce encoding ✅ Wave 6
+- `src/mesh/protocol_proto_decode.rs` - ServerlessFunctionAnnounce decoding ✅ Wave 6
+- `src/mesh/wasm_dist.rs` - Versioning ✅ Wave 6
 - `src/waf/mod.rs` - Local lookup, parallelization
 - `src/waf/attack_detection/normalizer.rs` - String optimization
 - `src/proxy_cache/store.rs` - Async file I/O
 - `src/proxy.rs` - String allocation reduction
 - `src/process/manager.rs` - Auto-scaling
+- `src/process/ipc.rs` - PluginStateSync message ✅ Wave 6
 - `src/static_files/file_manager.rs` - Magic bytes, malware scan, rate limiting
 - `src/config/site/file_manager.rs` - Upload config
 - `src/upload/mod.rs` - Added rate_limit module export
 - `src/upload/malware_scanner.rs` - Fixed async tests
 - `src/http/file_manager.rs` - Updated test with new config fields
-- `src/serverless/manager.rs` - Registry, routing
-- `src/plugin/instance_pool.rs` - Unified pool
+- `src/serverless/manager.rs` - Registry, routing ✅ Wave 6
+- `src/serverless/mod.rs` - Registry, routing exports ✅ Wave 6
 - `src/serverless/instance_pool.rs` - Unified pool
-- `src/mesh/wasm_dist.rs` - Versioning
-- `src/config/serverless.rs` - Route config
-- `src/metrics/mod.rs` - DHT metrics, serverless metrics
+- `src/plugin/instance_pool.rs` - Unified pool ✅ Wave 6
+- `src/plugin/mod.rs` - Pool, global exports ✅ Wave 6
+- `src/plugin/wasm_runtime.rs` - Memory budget field ✅ Wave 6
+- `src/config/serverless.rs` - Route config ✅ Wave 6
+- `src/metrics/mod.rs` - DHT metrics, serverless metrics ✅ Wave 6

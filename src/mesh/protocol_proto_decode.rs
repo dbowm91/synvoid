@@ -1336,6 +1336,28 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                     timestamp: r.timestamp,
                 })
             }
+            proto::mesh_message::Payload::ServerlessFunctionAnnounce(r) => {
+                Ok(MeshMessage::ServerlessFunctionAnnounce(
+                    crate::mesh::protocol::ServerlessFunctionAnnounce {
+                        function_name: r.function_name.clone(),
+                        version: r.version,
+                        checksum: r.checksum.clone(),
+                        routes: r.routes.clone(),
+                        allowed_methods: r.allowed_methods.clone(),
+                        memory_mb: if r.memory_mb > 0 {
+                            Some(r.memory_mb as usize)
+                        } else {
+                            None
+                        },
+                        timeout_seconds: if r.timeout_seconds > 0 {
+                            Some(r.timeout_seconds as u64)
+                        } else {
+                            None
+                        },
+                        priority: r.priority,
+                    },
+                ))
+            }
         }
     }
 }

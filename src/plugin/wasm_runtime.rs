@@ -48,6 +48,7 @@ pub struct WasmResourceLimits {
     pub max_cpu_fuel: u64,
     pub timeout_seconds: u64,
     pub max_instances: usize,
+    pub memory_budget_mb: Option<usize>,
 }
 
 impl Default for WasmResourceLimits {
@@ -57,6 +58,7 @@ impl Default for WasmResourceLimits {
             max_cpu_fuel: 1000000,
             timeout_seconds: 30,
             max_instances: 1,
+            memory_budget_mb: None,
         }
     }
 }

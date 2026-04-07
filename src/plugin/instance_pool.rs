@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 use parking_lot::Mutex;
 use wasmtime::{Engine, Instance, Linker, Module, Store};
 
+use crate::plugin::pool::{PooledInstance, WasmPool};
 use crate::plugin::wasm_runtime::{GuestExports, RequestContext};
 
 pub struct WasmInstancePool {
@@ -156,6 +157,30 @@ impl WasmPooledInstance {
         if self.max_cpu_fuel > 0 {
             self.store.set_fuel(self.max_cpu_fuel).ok();
         }
+    }
+}
+
+impl WasmPool for WasmInstancePool {
+    fn get(&self, filter_name: &str) -> Option<PooledInstance> {
+        self.get(filter_name).map(|inst| PooledInstance {
+            instance: inst.instance,
+            store: inst.store,
+            filter_name: inst.filter_name,
+            max_cpu_fuel: inst.max_cpu_fuel,
+        })
+    }
+
+    fn return_instance(&self, instance: PooledInstance) {
+        self.return_instance(WasmPooledInstance {
+            instance: instance.instance,
+            store: instance.store,
+            filter_name: instance.filter_name,
+            max_cpu_fuel: instance.max_cpu_fuel,
+        })
+    }
+
+    fn max_size(&self) -> usize {
+        self.max_size
     }
 }
 

@@ -962,6 +962,7 @@ pub enum MeshMessage {
         peer_entropy: Vec<u8>,
         timestamp: u64,
     },
+    ServerlessFunctionAnnounce(ServerlessFunctionAnnounce),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -1324,6 +1325,18 @@ pub struct WasmModuleInfo {
     pub data: Vec<u8>,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ServerlessFunctionAnnounce {
+    pub function_name: String,
+    pub version: u64,
+    pub checksum: String,
+    pub routes: Vec<String>,
+    pub allowed_methods: Vec<String>,
+    pub memory_mb: Option<usize>,
+    pub timeout_seconds: Option<u64>,
+    pub priority: i32,
+}
+
 #[path = "protocol_message.rs"]
 mod protocol_message;
 #[path = "protocol_proto_decode.rs"]
@@ -1355,6 +1368,7 @@ pub enum MessageCategory {
     Wasm,
     Config,
     System,
+    Serverless,
 }
 
 impl MessageCategory {
@@ -1378,6 +1392,7 @@ impl MessageCategory {
             Self::Wasm => "WASM",
             Self::Config => "Config",
             Self::System => "System",
+            Self::Serverless => "Serverless",
         }
     }
 }

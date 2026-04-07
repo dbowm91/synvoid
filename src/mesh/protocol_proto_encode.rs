@@ -2140,6 +2140,21 @@ impl From<&MeshMessage> for proto::MeshMessage {
                     },
                 )),
             },
+            MeshMessage::ServerlessFunctionAnnounce(msg) => proto::MeshMessage {
+                message_type: 132,
+                payload: Some(proto::mesh_message::Payload::ServerlessFunctionAnnounce(
+                    proto::ServerlessFunctionAnnounce {
+                        function_name: msg.function_name.clone(),
+                        version: msg.version,
+                        checksum: msg.checksum.clone(),
+                        routes: msg.routes.clone(),
+                        allowed_methods: msg.allowed_methods.clone(),
+                        memory_mb: msg.memory_mb.unwrap_or(0) as u32,
+                        timeout_seconds: msg.timeout_seconds.unwrap_or(0) as u32,
+                        priority: msg.priority,
+                    },
+                )),
+            },
         }
     }
 }

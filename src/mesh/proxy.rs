@@ -1100,12 +1100,30 @@ impl MeshProxy {
 
         let transform_flags = format!(
             "min:{}:{}:{}:{},img:{}:{}",
-            minification.as_ref().and_then(|c| c.enabled).unwrap_or(false),
-            minification.as_ref().and_then(|c| c.enable_html).unwrap_or(true),
-            minification.as_ref().and_then(|c| c.enable_css).unwrap_or(true),
-            minification.as_ref().and_then(|c| c.enable_js).unwrap_or(true),
-            image_protection.as_ref().and_then(|c| c.enabled).unwrap_or(false),
-            image_protection.as_ref().and_then(|c| c.min_size_bytes).unwrap_or(102400) as u64,
+            minification
+                .as_ref()
+                .and_then(|c| c.enabled)
+                .unwrap_or(false),
+            minification
+                .as_ref()
+                .and_then(|c| c.enable_html)
+                .unwrap_or(true),
+            minification
+                .as_ref()
+                .and_then(|c| c.enable_css)
+                .unwrap_or(true),
+            minification
+                .as_ref()
+                .and_then(|c| c.enable_js)
+                .unwrap_or(true),
+            image_protection
+                .as_ref()
+                .and_then(|c| c.enabled)
+                .unwrap_or(false),
+            image_protection
+                .as_ref()
+                .and_then(|c| c.min_size_bytes)
+                .unwrap_or(102400) as u64,
         );
 
         let cache_key = format!("{}:{}:{}", upstream_id, content_hash, transform_flags);

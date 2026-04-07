@@ -220,6 +220,7 @@ impl std::fmt::Display for ErrorCode {
 /// - **Socket Handoff**: SocketHandoffRequest, SocketHandoffReady,
 ///   SocketHandoffComplete, SocketHandoffFailed, WindowsSocketInfo
 /// - **Worker Restart**: RestartWorkerRequest, RestartWorkerResponse
+/// - **Plugin**: PluginStateSync
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Message {
     WorkerStarted {
@@ -656,6 +657,10 @@ pub enum Message {
         success: bool,
         error: Option<String>,
     },
+    PluginStateSync {
+        plugin_name: String,
+        wasm_module_data: Vec<u8>,
+    },
 }
 
 const MAX_STRING_LENGTH: usize = 64 * 1024;
@@ -1001,8 +1006,12 @@ impl Message {
                 check_str("socket_path", socket_path, MAX_PATH_LENGTH)
             }
             Message::SocketHandoffFailed { error } => check_str("error", error, MAX_STRING_LENGTH),
-            // NOTE: Do NOT add a catch-all here. All variants must be explicitly handled
-            // so that adding a new Message variant causes a compile-time error.
+            Message::PluginStateSync { plugin_name, .. } => check_str(
+                "PluginStateSync.plugin_name",
+                plugin_name,
+                MAX_STRING_LENGTH,
+            ), // NOTE: Do NOT add a catch-all here. All variants must be explicitly handled
+               // so that adding a new Message variant causes a compile-time error.
         }
     }
 
@@ -1125,6 +1134,8 @@ impl Message {
             Message::RestartWorkerRequest { .. } | Message::RestartWorkerResponse { .. } => {
                 MessageCategory::WorkerRestart
             }
+
+            Message::PluginStateSync { .. } => MessageCategory::Plugin,
         }
     }
 
@@ -1168,6 +1179,7 @@ pub enum MessageCategory {
     DrainProtocol,
     SocketHandoff,
     WorkerRestart,
+    Plugin,
 }
 
 impl std::fmt::Display for MessageCategory {
@@ -1188,6 +1200,7 @@ impl std::fmt::Display for MessageCategory {
             MessageCategory::DrainProtocol => write!(f, "DrainProtocol"),
             MessageCategory::SocketHandoff => write!(f, "SocketHandoff"),
             MessageCategory::WorkerRestart => write!(f, "WorkerRestart"),
+            MessageCategory::Plugin => write!(f, "Plugin"),
         }
     }
 }
@@ -1260,6 +1273,7 @@ pub struct WorkerMetricsPayload {
     pub static_cache_hits: u64,
     pub static_cache_misses: u64,
     pub bandwidth: crate::metrics::bandwidth::BandwidthPayload,
+    pub serverless_metrics: Vec<crate::metrics::ServerlessMetrics>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1805,6 +1819,7 @@ mod tests {
             static_cache_hits: 500,
             static_cache_misses: 50,
             bandwidth: crate::metrics::bandwidth::BandwidthPayload::default(),
+            serverless_metrics: Vec::new(),
         };
         let msg = Message::WorkerHeartbeat {
             id: WorkerId(1),

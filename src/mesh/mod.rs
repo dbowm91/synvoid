@@ -97,7 +97,7 @@ pub use organization::{
     TierKeyQueryResponse, TierKeyRevoke, UnspentTierKeyAnnounce, ADMIN_ORG_ID, GENESIS_ORG_ID,
 };
 pub use passover_key_exchange::KeyExchangeService;
-pub use protocol::{MeshMessage, MessageCategory};
+pub use protocol::{MeshMessage, MessageCategory, ServerlessFunctionAnnounce};
 pub use proxy::MeshProxy;
 pub use reputation::{
     PeerReputation, PeerReputationStats, ReputationConfig, ReputationEventType, ReputationManager,

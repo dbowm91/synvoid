@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use parking_lot::Mutex;
+use serde::{Deserialize, Serialize};
 
 use crate::process::{SiteMetricsPayload, WorkerMetricsPayload};
 use crate::waf::attack_detection::config::AttackType;
@@ -16,6 +17,7 @@ pub use bandwidth::{
 use std::sync::LazyLock;
 
 const LATENCY_SAMPLE_SIZE: usize = 1000;
+const SERVERLESS_DURATION_SAMPLE_SIZE: usize = 100;
 
 static ATTACK_TYPE_COUNTER: LazyLock<Mutex<HashMap<String, AtomicU64>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
@@ -40,6 +42,18 @@ static DROPPED_YARA_BROADCASTS: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64
 
 static DHT_THREAT_LOOKUP_HITS: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 static DHT_THREAT_LOOKUP_MISSES: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+
+static SERVERLESS_INVOCATIONS: LazyLock<Mutex<HashMap<String, AtomicU64>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+static SERVERLESS_ERRORS: LazyLock<Mutex<HashMap<String, AtomicU64>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+static SERVERLESS_DURATIONS: LazyLock<Mutex<HashMap<String, Mutex<Vec<u64>>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+static SERVERLESS_ACTIVE_INSTANCES: LazyLock<Mutex<HashMap<String, AtomicU64>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 #[derive(Debug, Clone)]
 pub struct CacheMetrics {
@@ -443,6 +457,151 @@ pub fn reset_attack_type_counts() {
     attacks.clear();
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServerlessMetrics {
+    pub function_name: String,
+    pub invocations_total: u64,
+    pub errors_total: u64,
+    pub avg_duration_ms: f64,
+    pub active_instances: usize,
+}
+
+pub fn record_serverless_invocation(function: &str, status: &str) {
+    let mut invocations = SERVERLESS_INVOCATIONS.lock();
+    let counter = invocations
+        .entry(function.to_string())
+        .or_insert_with(|| AtomicU64::new(0));
+    counter.fetch_add(1, Ordering::Relaxed);
+    drop(invocations);
+
+    if status == "error" {
+        let mut errors = SERVERLESS_ERRORS.lock();
+        let error_counter = errors
+            .entry(function.to_string())
+            .or_insert_with(|| AtomicU64::new(0));
+        error_counter.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+pub fn record_serverless_duration(function: &str, duration_ms: u64) {
+    let mut durations = SERVERLESS_DURATIONS.lock();
+    let samples = durations
+        .entry(function.to_string())
+        .or_insert_with(|| Mutex::new(Vec::with_capacity(SERVERLESS_DURATION_SAMPLE_SIZE)));
+    let mut samples_guard = samples.lock();
+    if samples_guard.len() < SERVERLESS_DURATION_SAMPLE_SIZE {
+        samples_guard.push(duration_ms);
+    } else {
+        let idx = samples_guard.len() % SERVERLESS_DURATION_SAMPLE_SIZE;
+        samples_guard[idx] = duration_ms;
+    }
+}
+
+pub fn record_serverless_active_instances(function: &str, count: usize) {
+    let mut instances = SERVERLESS_ACTIVE_INSTANCES.lock();
+    let counter = instances
+        .entry(function.to_string())
+        .or_insert_with(|| AtomicU64::new(0));
+    counter.store(count as u64, Ordering::Relaxed);
+}
+
+pub fn get_serverless_invocation_count(function: &str) -> u64 {
+    let invocations = SERVERLESS_INVOCATIONS.lock();
+    invocations
+        .get(function)
+        .map(|c| c.load(Ordering::Relaxed))
+        .unwrap_or(0)
+}
+
+pub fn get_serverless_error_count(function: &str) -> u64 {
+    let errors = SERVERLESS_ERRORS.lock();
+    errors
+        .get(function)
+        .map(|c| c.load(Ordering::Relaxed))
+        .unwrap_or(0)
+}
+
+pub fn get_serverless_duration_avg(function: &str) -> f64 {
+    let durations = SERVERLESS_DURATIONS.lock();
+    if let Some(samples) = durations.get(function) {
+        let samples_guard = samples.lock();
+        if !samples_guard.is_empty() {
+            let sum: u64 = samples_guard.iter().sum();
+            return sum as f64 / samples_guard.len() as f64;
+        }
+    }
+    0.0
+}
+
+pub fn get_serverless_active_instances(function: &str) -> usize {
+    let instances = SERVERLESS_ACTIVE_INSTANCES.lock();
+    instances
+        .get(function)
+        .map(|c| c.load(Ordering::Relaxed) as usize)
+        .unwrap_or(0)
+}
+
+pub fn get_all_serverless_metrics() -> Vec<ServerlessMetrics> {
+    let invocations = SERVERLESS_INVOCATIONS.lock();
+    let errors = SERVERLESS_ERRORS.lock();
+    let durations = SERVERLESS_DURATIONS.lock();
+    let instances = SERVERLESS_ACTIVE_INSTANCES.lock();
+
+    let mut functions: Vec<String> = invocations.keys().cloned().collect();
+    for func in errors.keys() {
+        if !functions.contains(func) {
+            functions.push(func.clone());
+        }
+    }
+    for func in durations.keys() {
+        if !functions.contains(func) {
+            functions.push(func.clone());
+        }
+    }
+    for func in instances.keys() {
+        if !functions.contains(func) {
+            functions.push(func.clone());
+        }
+    }
+
+    functions
+        .into_iter()
+        .map(|func| {
+            let invocations_total = invocations
+                .get(&func)
+                .map(|c| c.load(Ordering::Relaxed))
+                .unwrap_or(0);
+            let errors_total = errors
+                .get(&func)
+                .map(|c| c.load(Ordering::Relaxed))
+                .unwrap_or(0);
+            let avg_duration_ms = if let Some(samples) = durations.get(&func) {
+                let samples_guard = samples.lock();
+                if !samples_guard.is_empty() {
+                    let sum: u64 = samples_guard.iter().sum();
+                    sum as f64 / samples_guard.len() as f64
+                } else {
+                    0.0
+                }
+            } else {
+                0.0
+            };
+            let active_instances = instances
+                .get(&func)
+                .map(|c| c.load(Ordering::Relaxed) as usize)
+                .unwrap_or(0);
+
+            ServerlessMetrics {
+                function_name: func,
+                invocations_total,
+                errors_total,
+                avg_duration_ms,
+                active_instances,
+            }
+        })
+        .collect()
+}
+
 #[derive(Debug)]
 pub struct WorkerMetrics {
     pub total_requests: AtomicU64,
@@ -458,6 +617,7 @@ pub struct WorkerMetrics {
     blocked_by_type: Mutex<HashMap<AttackType, AtomicU64>>,
     pub per_site: Mutex<HashMap<String, SiteMetrics>>,
     pub bandwidth: Arc<BandwidthTracker>,
+    pub per_serverless: Mutex<HashMap<String, ServerlessMetrics>>,
 }
 
 impl Clone for WorkerMetrics {
@@ -483,6 +643,7 @@ impl Clone for WorkerMetrics {
             blocked_by_type: Mutex::new(blocked_by_type),
             per_site: Mutex::new(HashMap::new()),
             bandwidth: self.bandwidth.clone(),
+            per_serverless: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -503,6 +664,7 @@ impl Default for WorkerMetrics {
             blocked_by_type: Mutex::new(HashMap::new()),
             per_site: Mutex::new(HashMap::new()),
             bandwidth: Arc::new(BandwidthTracker::default()),
+            per_serverless: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -635,6 +797,7 @@ impl WorkerMetrics {
             static_cache_hits: get_static_cache_hits(),
             static_cache_misses: get_static_cache_misses(),
             bandwidth: self.bandwidth.to_payload(),
+            serverless_metrics: get_all_serverless_metrics(),
         }
     }
 

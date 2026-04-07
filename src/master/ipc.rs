@@ -86,6 +86,7 @@ mod tests {
             static_cache_hits: 0,
             static_cache_misses: 0,
             bandwidth: crate::metrics::bandwidth::BandwidthPayload::default(),
+            serverless_metrics: Vec::new(),
         };
         let message = Message::WorkerHeartbeat {
             id: WorkerId(3),

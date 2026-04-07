@@ -31,6 +31,12 @@ pub struct FunctionDefinition {
     pub max_instances: Option<usize>,
     #[serde(default)]
     pub idle_timeout_seconds: Option<u64>,
+    #[serde(default)]
+    pub routes: Option<Vec<String>>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub allowed_methods: Option<Vec<String>>,
 }
 
 fn default_handler_name() -> String {
