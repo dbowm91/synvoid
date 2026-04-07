@@ -25,6 +25,90 @@ const DEFAULT_EDGE_CACHE_TTL_SECS: u64 = 300;
 const DEFAULT_EDGE_CACHE_MAX_ENTRIES: usize = 1000;
 const DEFAULT_CONVERGENCE_THRESHOLD: usize = 3;
 pub const MAX_PENDING_ANNOUNCES: usize = 10000;
+const NUM_RECORD_SHARDS: usize = 64;
+
+#[inline]
+fn record_shard_index(key: &str) -> usize {
+    let mut hash: u64 = 5381;
+    for byte in key.as_bytes() {
+        hash = hash.wrapping_mul(33).wrapping_add(*byte as u64);
+    }
+    (hash as usize) % NUM_RECORD_SHARDS
+}
+
+pub struct ShardedRecordStore {
+    shards: Vec<RwLock<LinkedHashMap<String, DhtRecordEntry>>>,
+}
+
+impl ShardedRecordStore {
+    pub fn new() -> Self {
+        Self {
+            shards: (0..NUM_RECORD_SHARDS)
+                .map(|_| RwLock::new(LinkedHashMap::new()))
+                .collect(),
+        }
+    }
+
+    pub fn get(&self, key: &str) -> Option<DhtRecordEntry> {
+        let shard = &self.shards[record_shard_index(key)];
+        shard.read().get(key).cloned()
+    }
+
+    pub fn insert(&self, key: String, value: DhtRecordEntry) -> Option<DhtRecordEntry> {
+        let shard = &self.shards[record_shard_index(&key)];
+        shard.write().insert(key, value)
+    }
+
+    pub fn remove(&self, key: &str) -> Option<DhtRecordEntry> {
+        let shard = &self.shards[record_shard_index(key)];
+        shard.write().remove(key)
+    }
+
+    pub fn len(&self) -> usize {
+        self.shards.iter().map(|s| s.read().len()).sum()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.shards.iter().all(|s| s.read().is_empty())
+    }
+
+    pub fn front(&self) -> Option<(String, DhtRecordEntry)> {
+        for shard in &self.shards {
+            if let Some((k, v)) = shard.read().front() {
+                return Some((k.clone(), v.clone()));
+            }
+        }
+        None
+    }
+
+    pub fn values(&self) -> Vec<DhtRecordEntry> {
+        let mut result = Vec::new();
+        for shard in &self.shards {
+            let guard = shard.read();
+            for v in guard.values() {
+                result.push(v.clone());
+            }
+        }
+        result
+    }
+
+    pub fn iter(&self) -> Vec<(String, DhtRecordEntry)> {
+        let mut result = Vec::new();
+        for shard in &self.shards {
+            let guard = shard.read();
+            for (k, v) in guard.iter() {
+                result.push((k.clone(), v.clone()));
+            }
+        }
+        result
+    }
+}
+
+impl Default for ShardedRecordStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct RecordStoreConfig {
@@ -111,7 +195,7 @@ pub struct RecordStoreState {
     pub mesh_signer: Option<crate::mesh::protocol::MeshMessageSigner>,
     pub record_signer: Option<crate::mesh::dht::RecordSigner>,
     pub local_version: u64,
-    pub records: LinkedHashMap<String, DhtRecordEntry>,
+    pub records: ShardedRecordStore,
     pub pending_announces: Vec<DhtRecord>,
     pub last_snapshot_version: u64,
     pub merkle_tree: Option<MerkleTree>,
@@ -187,7 +271,7 @@ impl RecordStoreManager {
                 mesh_signer,
                 record_signer: None,
                 local_version: 1,
-                records: LinkedHashMap::new(),
+                records: ShardedRecordStore::new(),
                 pending_announces: Vec::new(),
                 last_snapshot_version: 0,
                 merkle_tree: None,
@@ -310,7 +394,7 @@ impl Clone for RecordStoreManager {
             mesh_signer: rs.mesh_signer.clone(),
             record_signer: rs.record_signer.clone(),
             local_version: rs.local_version,
-            records: rs.records.clone(),
+            records: ShardedRecordStore::new(),
             pending_announces: rs.pending_announces.clone(),
             last_snapshot_version: rs.last_snapshot_version,
             merkle_tree: rs.merkle_tree.clone(),

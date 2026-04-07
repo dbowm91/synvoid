@@ -357,6 +357,16 @@ All duplicate `current_timestamp()` definitions have been consolidated into `src
 
 ## Performance Hot Paths
 
+**Architecture Note - Worker Process Scaling:**
+
+The unified worker uses a single `tokio` async event loop which is far more efficient than spawning multiple worker processes:
+- **Single async process**: A single `UnifiedServer` with one tokio runtime handles thousands of sites concurrently via cooperative scheduling
+- **Internal parallelism**: Use `tokio::spawn()` and async concurrency primitives (semaphores, channels) within the worker, NOT process-level parallelism
+- **Why NOT multi-process scaling**: Multiple worker processes compete for CPU cores, increase context switching, and add IPC overhead
+- **TcpListenerPool**: The worker uses an internal thread pool (`worker_pool_size: 4`) for accepting connections, but this runs within the single async context
+
+**Do NOT increase `unified_server_workers` for scaling purposes.** Instead, tune `tcp.worker_pool_size` or use async primitives within the existing event loop.
+
 Agents modifying these areas should be aware of performance characteristics:
 
 | Area | Concern | Location |

@@ -305,14 +305,14 @@ impl RecordStoreManager {
             if !is_expired {
                 if !self.is_global_node() {
                     self.metrics_state.write().cache_hits += 1;
-                    let mut rs = self.record_state.write();
+                    let rs = self.record_state.write();
                     if let Some(entry) = rs.records.remove(key) {
                         rs.records.insert(key.to_string(), entry);
                     }
                 }
                 return Some(record);
             } else {
-                let mut rs = self.record_state.write();
+                let rs = self.record_state.write();
                 rs.records.remove(key);
             }
         }
@@ -353,6 +353,7 @@ impl RecordStoreManager {
         let rs = self.record_state.read();
         rs.records
             .values()
+            .into_iter()
             .filter(|entry| {
                 let now = crate::mesh::safe_unix_timestamp();
                 let expires_at = entry.record.timestamp + entry.record.ttl_seconds;
@@ -411,6 +412,7 @@ impl RecordStoreManager {
 
         rs.records
             .values()
+            .into_iter()
             .filter(|entry| entry.version > from_version)
             .filter(|entry| {
                 let now = crate::mesh::safe_unix_timestamp();
@@ -485,10 +487,11 @@ impl RecordStoreManager {
 
         let count_before = self.record_state.read().records.len();
 
-        let mut rs = self.record_state.write();
+        let rs = self.record_state.write();
         let keys_to_remove: Vec<String> = rs
             .records
             .iter()
+            .into_iter()
             .filter(|(_, entry)| {
                 let expires_at = entry.record.timestamp + entry.record.ttl_seconds;
                 now >= expires_at
@@ -628,7 +631,7 @@ impl RecordStoreManager {
             return false;
         }
 
-        let mut rs = self.record_state.write();
+        let rs = self.record_state.write();
         if rs.records.remove(key).is_some() {
             tracing::debug!("Removed record from DHT: {}", key);
             drop(rs);

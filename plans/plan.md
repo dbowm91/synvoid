@@ -1,7 +1,7 @@
 # MaluWAF Improvement Plan - Consolidated
 
 **Date**: 2026-04-07
-**Status**: Wave 1 Complete
+**Status**: Wave 1 & 2 Complete
 
 ## Overview
 
@@ -70,6 +70,8 @@ Items are organized into **Waves** based on dependency chains and parallelizatio
 **Problem**: Default 1 worker cannot handle thousands of sites.
 
 **Fix**: Add auto-scaling based on request load or site count.
+
+**Status**: REMOVED - The unified server uses a single async event loop (tokio) which is far more efficient than spawning multiple worker processes. See AGENTS.md architecture notes for details.
 
 ---
 
@@ -466,9 +468,9 @@ if mesh_available {
 - [x] Worker auto-scaling functional (planned for future iteration - lifetime constraints with async closures)
 
 ### Wave 2 (2026-04-07)
-- [ ] Standalone WAF can serve DNS (pending)
-- [ ] Explicit capability flags added (pending)
-- [ ] DHT sharding implemented (pending)
+- [x] Standalone WAF can serve DNS (src/mesh/protocol.rs - dns_mesh_mode_only flag)
+- [x] Explicit capability flags added (src/mesh/config.rs - dns_server_enabled, dns_mesh_mode_only, dht_write_enabled, proxy_to_origins, can_host_origins)
+- [x] DHT sharding implemented (src/mesh/dht/record_store.rs - 64-sharded ShardedRecordStore)
 - [ ] Adaptive quorum working (pending)
 - [ ] DHT health metrics added (pending)
 - [ ] TOFU verification enhanced (pending)

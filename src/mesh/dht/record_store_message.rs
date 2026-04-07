@@ -517,7 +517,8 @@ impl RecordStoreManager {
                     let mut entries: Vec<_> = rs
                         .records
                         .iter()
-                        .map(|(k, v)| (k.clone(), v.version))
+                        .into_iter()
+                        .map(|(k, v)| (k, v.version))
                         .collect();
                     entries.sort_by(|a, b| b.1.cmp(&a.1));
                     entries.into_iter().take(100).map(|(k, _)| k).collect()

@@ -961,6 +961,16 @@ pub struct MeshDhtConfig {
     pub geo_routing: Option<crate::mesh::dht::routing::GeoRoutingConfig>,
     #[serde(default)]
     pub regional_hubs: Option<crate::mesh::dht::routing::RegionalHubConfig>,
+    #[serde(default = "default_dns_server_enabled")]
+    pub dns_server_enabled: bool,
+    #[serde(default = "default_dns_mesh_mode_only")]
+    pub dns_mesh_mode_only: bool,
+    #[serde(default = "default_dht_write_enabled")]
+    pub dht_write_enabled: bool,
+    #[serde(default = "default_proxy_to_origins")]
+    pub proxy_to_origins: bool,
+    #[serde(default = "default_can_host_origins")]
+    pub can_host_origins: bool,
 }
 
 fn default_convergence_threshold() -> usize {
@@ -1071,6 +1081,26 @@ fn default_manual_threshold_override() -> Option<i64> {
     None
 }
 
+fn default_dns_server_enabled() -> bool {
+    true
+}
+
+fn default_dns_mesh_mode_only() -> bool {
+    true
+}
+
+fn default_dht_write_enabled() -> bool {
+    true
+}
+
+fn default_proxy_to_origins() -> bool {
+    true
+}
+
+fn default_can_host_origins() -> bool {
+    false
+}
+
 impl Default for MeshDhtConfig {
     fn default() -> Self {
         Self {
@@ -1112,6 +1142,11 @@ impl Default for MeshDhtConfig {
             manual_threshold_override: None,
             geo_routing: Some(crate::mesh::dht::routing::GeoRoutingConfig::default()),
             regional_hubs: Some(crate::mesh::dht::routing::RegionalHubConfig::default()),
+            dns_server_enabled: true,
+            dns_mesh_mode_only: true,
+            dht_write_enabled: true,
+            proxy_to_origins: true,
+            can_host_origins: false,
         }
     }
 }

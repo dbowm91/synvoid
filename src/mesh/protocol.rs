@@ -998,7 +998,12 @@ impl MeshCapabilities {
         Self {
             can_route: config.routing.enabled,
             can_proxy: !config.disable_direct_origin,
-            can_serve_dns: config.dht.is_some() && role.is_global(),
+            can_serve_dns: !config
+                .dht
+                .as_ref()
+                .map(|c| c.dns_mesh_mode_only)
+                .unwrap_or(true)
+                || (config.dht.is_some() && role.is_global()),
             is_global: role.is_global(),
             waf_enabled: true,
             max_hops: config.routing.max_hops,
