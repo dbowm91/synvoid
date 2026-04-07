@@ -1,3 +1,5 @@
+#![allow(clippy::type_complexity, clippy::manual_let_else)]
+
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};

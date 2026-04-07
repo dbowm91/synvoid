@@ -23,6 +23,7 @@ pub struct WasmModuleStore {
 
 struct WasmModuleEntry {
     info: WasmModuleInfo,
+    #[allow(dead_code)]
     stored_at: std::time::Instant,
 }
 

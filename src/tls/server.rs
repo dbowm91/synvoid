@@ -1,4 +1,9 @@
-#![allow(dead_code, unused_mut)]
+#![allow(
+    dead_code,
+    unused_mut,
+    clippy::type_complexity,
+    clippy::collapsible_match
+)]
 
 use bytes::Bytes;
 use http::Response;

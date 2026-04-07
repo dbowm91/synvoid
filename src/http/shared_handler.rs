@@ -122,6 +122,7 @@ impl Default for SharedRequestHandler {
     }
 }
 
+#[allow(dead_code)]
 pub trait RequestContext: Send + Sync {
     type Response;
 
@@ -289,6 +290,7 @@ mod tests {
 }
 
 impl SharedRequestHandler {
+    #[allow(dead_code)]
     fn protocol_name(&self) -> &'static str {
         ""
     }

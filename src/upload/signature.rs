@@ -30,6 +30,7 @@ impl FileCategory {
 
 pub struct SignatureRegistry {
     signatures: Vec<FileSignature>,
+    #[allow(dead_code)]
     magic_to_mime: HashMap<Vec<u8>, Vec<&'static str>>,
 }
 

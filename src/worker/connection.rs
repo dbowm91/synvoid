@@ -12,6 +12,7 @@ use crate::process::WorkerId;
 use crate::{DrainFlag, RunningFlag};
 
 #[derive(Clone)]
+#[allow(dead_code)]
 pub(super) struct WorkerState {
     pub(super) worker_id: WorkerId,
     pub(super) metrics: Arc<WorkerMetrics>,
@@ -25,6 +26,7 @@ pub(super) struct WorkerState {
     pub(super) shutdown_rx: watch::Receiver<bool>,
 }
 
+#[allow(dead_code)]
 pub(super) fn create_waf(main_config: &crate::config::MainConfig) -> Arc<crate::waf::WafCore> {
     let data_dir = main_config
         .persistence

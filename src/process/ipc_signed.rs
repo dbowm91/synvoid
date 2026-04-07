@@ -53,6 +53,7 @@ impl NonceCache {
 }
 
 static NONCE_CACHE: LazyLock<Mutex<NonceCache>> = LazyLock::new(|| Mutex::new(NonceCache::new()));
+#[allow(dead_code)]
 const MAX_NONCE_CACHE_SIZE: usize = 10000;
 const REPLAY_WINDOW_SECS: u64 = 300;
 

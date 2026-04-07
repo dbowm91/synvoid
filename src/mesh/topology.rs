@@ -1,4 +1,9 @@
-#![allow(unused_variables, unused_mut)]
+#![allow(
+    unused_variables,
+    unused_mut,
+    clippy::type_complexity,
+    clippy::redundant_locals
+)]
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -276,6 +281,7 @@ impl ShardedPeerStore {
         f(rs);
     }
 
+    #[allow(dead_code)]
     fn update_peer_score<F: FnOnce(&mut PeerScore)>(&self, node_id: &str, f: F) {
         let mut shard = self.shard(node_id).write();
         if let Some(score) = shard.peer_scores.get_mut(node_id) {
@@ -325,6 +331,7 @@ impl ShardedPeerStore {
         }
     }
 
+    #[allow(dead_code)]
     fn retain_peers<F: FnMut(&String, &PeerState) -> bool>(&self, mut f: F) {
         for shard in &self.shards {
             shard.write().peers.retain(|k, v| f(k, v));

@@ -1,3 +1,12 @@
+#![allow(
+    clippy::type_complexity,
+    clippy::collapsible_match,
+    clippy::manual_div_ceil,
+    clippy::unnecessary_to_owned,
+    clippy::field_reassign_with_default,
+    clippy::collapsible_if
+)]
+
 use bytes::Bytes;
 use dashmap::DashMap;
 use futures::{SinkExt, StreamExt};
@@ -719,30 +728,25 @@ impl HttpServer {
             for offset in (0..body_len).step_by(CHUNK_WAF_SCAN_SIZE) {
                 let end = std::cmp::min(offset + CHUNK_WAF_SCAN_SIZE, body_len);
                 let chunk = &full_body[offset..end];
-                if let Some(decision) = waf.check_request_body(chunk) {
-                    match decision {
-                        crate::proxy::WafDecision::Drop
-                        | crate::proxy::WafDecision::Block(_, _) => {
-                            tracing::warn!(
-                                client_ip = %client_ip,
-                                offset = offset,
-                                size = body_len,
-                                "Large request body blocked by WAF at offset {}",
-                                offset
-                            );
-                            counter!("maluwaf.http.large_body_blocked").increment(1);
-                            let ipc_clone = ipc.clone();
-                            let worker_id_clone = worker_id;
-                            return Ok(Self::build_response_with_alt_svc(
-                                403,
-                                "Request blocked by WAF".to_string(),
-                                "text/plain",
-                                &alt_svc,
-                                &main_config,
-                            ));
-                        }
-                        _ => {}
-                    }
+                if let Some(
+                    crate::proxy::WafDecision::Drop | crate::proxy::WafDecision::Block(_, _),
+                ) = waf.check_request_body(chunk)
+                {
+                    tracing::warn!(
+                        client_ip = %client_ip,
+                        offset = offset,
+                        size = body_len,
+                        "Large request body blocked by WAF at offset {}",
+                        offset
+                    );
+                    counter!("maluwaf.http.large_body_blocked").increment(1);
+                    return Ok(Self::build_response_with_alt_svc(
+                        403,
+                        "Request blocked by WAF".to_string(),
+                        "text/plain",
+                        &alt_svc,
+                        &main_config,
+                    ));
                 }
             }
             tracing::debug!(
@@ -1986,7 +1990,7 @@ impl HttpServer {
                             if let Some(ref metrics) = metrics {
                                 metrics.record_site_upstream_success(&site_id);
                             }
-                            let (resp_parts, upstream_body) = upstream_resp.into_parts();
+                            let (resp_parts, _upstream_body) = upstream_resp.into_parts();
                             let status = resp_parts.status.as_u16();
 
                             let body_len = resp_parts
@@ -3078,20 +3082,17 @@ impl HttpServer {
                                 .min(waf_checked_up_to + MAX_ACCUMULATED_WAF);
                             if check_end > waf_checked_up_to {
                                 let chunk_to_check = &accumulated[waf_checked_up_to..check_end];
-                                if let Some(decision) = waf.check_request_body(chunk_to_check) {
-                                    match decision {
-                                        crate::proxy::WafDecision::Drop
-                                        | crate::proxy::WafDecision::Block(_, _) => {
-                                            tracing::warn!(
-                                                client_ip = %client_ip,
-                                                "Request blocked during streaming body WAF check"
-                                            );
-                                            counter!("maluwaf.http.streaming_body_blocked")
-                                                .increment(1);
-                                            return Err(());
-                                        }
-                                        _ => {}
-                                    }
+                                if let Some(
+                                    crate::proxy::WafDecision::Drop
+                                    | crate::proxy::WafDecision::Block(_, _),
+                                ) = waf.check_request_body(chunk_to_check)
+                                {
+                                    tracing::warn!(
+                                        client_ip = %client_ip,
+                                        "Request blocked during streaming body WAF check"
+                                    );
+                                    counter!("maluwaf.http.streaming_body_blocked").increment(1);
+                                    return Err(());
                                 }
                                 waf_checked_up_to = check_end;
                             }

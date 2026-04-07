@@ -26,7 +26,16 @@
 #![allow(
     elided_lifetimes_in_paths,
     mismatched_lifetime_syntaxes,
-    clippy::too_many_arguments,       // Phase 6: refactor with builder/config structs
+    clippy::too_many_arguments,
+    clippy::field_reassign_with_default,
+    clippy::unwrap_or_default,
+    clippy::collapsible_if,
+    clippy::unnecessary_map_or,
+    clippy::redundant_locals,
+    clippy::never_loop,
+    clippy::question_mark,
+    clippy::missing_safety_doc,
+    clippy::unnecessary_cast
 )]
 
 pub mod admin;

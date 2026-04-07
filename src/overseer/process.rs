@@ -3,7 +3,7 @@ use std::process::Child;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use nix::sys::signal::{kill, Signal};
+use nix::sys::signal::kill;
 use nix::unistd::Pid;
 
 use super::drain_manager::DrainManager;

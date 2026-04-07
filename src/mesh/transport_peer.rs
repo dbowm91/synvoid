@@ -1,4 +1,4 @@
-#![allow(dead_code)] // Reserved for future peer communication handling
+#![allow(dead_code, clippy::redundant_locals)] // Reserved for future peer communication handling
 
 use crate::mesh::transport::{
     MeshTransport, MeshTransportError, MAX_BATCH_KEYS, MAX_BLOCK_DURATION_SECS, MAX_MESSAGE_SIZE,
@@ -1731,7 +1731,7 @@ impl MeshTransport {
             }
             MeshMessage::Ping {
                 request_id,
-                node_id,
+                node_id: _,
                 timestamp: _,
             } => {
                 let response = MeshMessage::Pong {
@@ -1801,16 +1801,6 @@ impl MeshTransport {
                 let len = (encoded.len() as u32).to_be_bytes();
                 let _ = send_stream.write_all(&len).await;
                 let _ = send_stream.write_all(&encoded).await;
-            }
-            MeshMessage::PeerHealthResponse {
-                peer_id: _,
-                status: _,
-                latency_ms,
-                timestamp: _,
-            } => {
-                if let Some(latency) = latency_ms {
-                    tracing::trace!("Peer health response: latency={}ms", latency);
-                }
             }
             _ => {
                 tracing::trace!("Stream peer handler: unhandled message type received via stream");

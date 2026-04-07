@@ -1,5 +1,7 @@
 //! Mesh Transport Layer
 //!
+#![allow(clippy::type_complexity)]
+
 //! This module implements the QUIC-based mesh transport for inter-node communication.
 //!
 //! # Architecture
@@ -67,7 +69,9 @@ pub use crate::mesh::transport_types::{MeshGlobalRateLimiter, MeshPeerConnection
 
 pub(crate) const MAX_PENDING_CONNECTIONS: usize = 100;
 pub(crate) const CONNECTION_RATE_LIMIT_WINDOW_SECS: u64 = 60;
+#[allow(dead_code)]
 pub(crate) const MAX_MESSAGE_QUEUE_SIZE: usize = 1000;
+#[allow(dead_code)]
 pub(crate) const DEFAULT_MAX_PEER_MESSAGE_RATE: usize = 1000;
 pub(crate) const MAX_MESSAGE_SIZE: usize = 10 * 1024 * 1024;
 pub(crate) const MAX_BATCH_KEYS: usize = 10000;
@@ -155,6 +159,7 @@ impl Clone for MeshTransport {
 }
 
 #[derive(Clone)]
+#[allow(dead_code)]
 pub(crate) struct QueuedMessage {
     target_node: String,
     message: Arc<MeshMessage>,
@@ -163,6 +168,7 @@ pub(crate) struct QueuedMessage {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[allow(dead_code)]
 pub(crate) enum MessagePriority {
     High = 2,
     Normal = 1,
@@ -204,6 +210,7 @@ impl PendingQueryManager {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn complete(&mut self, query_id: &str, result: RouteQueryResult) -> bool {
         match self.pending.remove(query_id) {
             Some(sender) => {
@@ -221,6 +228,7 @@ impl PendingQueryManager {
         self.pending.remove(query_id)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn cleanup(&mut self) {
         self.pending.retain(|_, sender| !sender.is_closed());
     }
@@ -378,6 +386,7 @@ impl MeshTransport {
         self.mlkem_session_manager = Some(manager);
     }
 
+    #[allow(dead_code)]
     pub(crate) fn get_global_rate_limit_status(&self) -> GlobalRateLimitCheck {
         self.global_rate_limiter.check()
     }

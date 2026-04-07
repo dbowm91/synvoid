@@ -1114,7 +1114,7 @@ pub async fn run_unified_server_worker(
                         cm.discover_sites();
                         *shared_config.write().await = cm;
 
-                        let needs_full_restart = [
+                        let _needs_full_restart = [
                             "mesh",
                             "yara_rules",
                             "threat_intel",

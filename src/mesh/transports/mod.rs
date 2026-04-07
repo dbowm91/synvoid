@@ -54,18 +54,21 @@ pub trait MeshTransportTrait: Send + Sync {
 
     fn get_peer_address(&self, peer_id: &str) -> Option<String>;
 
+    #[allow(async_fn_in_trait)]
     async fn send_stream(
         &self,
         peer_id: &str,
         message: &MeshMessage,
     ) -> Result<(), MeshTransportError>;
 
+    #[allow(async_fn_in_trait)]
     async fn send_datagram(
         &self,
         peer_id: &str,
         message: &MeshMessage,
     ) -> Result<(), MeshTransportError>;
 
+    #[allow(async_fn_in_trait)]
     async fn broadcast_datagram(&self, message: &MeshMessage) -> Result<(), MeshTransportError>;
 
     fn get_connected_peers(&self) -> Vec<String>;

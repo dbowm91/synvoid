@@ -161,7 +161,7 @@ impl AcmeManager {
             let mut file = std::fs::File::create(&temp_path).map_err(|e| {
                 AcmeError::Io(format!("Failed to create temp credentials file: {}", e))
             })?;
-            let mut perms = std::fs::Permissions::from_mode(0o600);
+            let perms = std::fs::Permissions::from_mode(0o600);
             file.set_permissions(perms).map_err(|e| {
                 AcmeError::Io(format!("Failed to set permissions on temp file: {}", e))
             })?;

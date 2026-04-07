@@ -109,6 +109,7 @@ impl<T: Copy> RingBuffer<T> {
         }
     }
 
+    #[allow(dead_code)]
     fn push(&mut self, value: T) {
         if self.len < self.capacity {
             self.data.push(value);
@@ -119,15 +120,18 @@ impl<T: Copy> RingBuffer<T> {
         }
     }
 
+    #[allow(dead_code)]
     fn len(&self) -> usize {
         self.len
     }
 
+    #[allow(dead_code)]
     fn is_empty(&self) -> bool {
         self.len == 0
     }
 
     #[inline]
+    #[allow(dead_code)]
     fn retain<F: FnMut(&T) -> bool>(&mut self, mut f: F) {
         if self.len == 0 {
             return;
@@ -373,6 +377,7 @@ impl RateLimiterManager {
         }
     }
 
+    #[allow(dead_code)]
     fn get_shard(&self, ip: IpAddr) -> &RateLimiterShard {
         let hash = match ip {
             IpAddr::V4(ipv4) => {

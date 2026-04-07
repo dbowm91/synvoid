@@ -438,6 +438,7 @@ impl<'de> Deserialize<'de> for MerkleTree {
         D: serde::Deserializer<'de>,
     {
         #[derive(Deserialize)]
+        #[allow(dead_code)]
         struct SerdeMerkleTree {
             root: Option<MerkleNode>,
             leaf_count: usize,

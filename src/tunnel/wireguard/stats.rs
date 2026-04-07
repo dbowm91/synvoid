@@ -252,6 +252,7 @@ pub async fn get_interface_stats(interface: &str) -> Result<WgInterfaceStats, Wg
 }
 
 #[cfg(target_os = "linux")]
+#[allow(dead_code)]
 pub async fn get_all_stats() -> Result<Vec<WgInterfaceStats>, WgStatsError> {
     use tokio::process::Command;
 
@@ -273,6 +274,7 @@ pub async fn get_all_stats() -> Result<Vec<WgInterfaceStats>, WgStatsError> {
 }
 
 #[cfg(target_os = "linux")]
+#[allow(dead_code)]
 pub async fn get_peer_stats(
     interface: &str,
     public_key: &str,

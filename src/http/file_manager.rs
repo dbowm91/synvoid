@@ -29,6 +29,7 @@ impl<T> ApiResponse<T> {
         }
     }
 
+    #[allow(dead_code)]
     fn error(message: String) -> Self {
         Self {
             success: false,
@@ -79,6 +80,7 @@ struct FileManagerState {
 unsafe impl Send for FileManagerState {}
 unsafe impl Sync for FileManagerState {}
 
+#[allow(dead_code)]
 fn get_admin_auth(req: &axum::extract::Request) -> Option<String> {
     req.headers()
         .get("Authorization")
@@ -187,6 +189,7 @@ async fn delete_handler(
     )))
 }
 
+#[allow(dead_code)]
 async fn mkdir_handler(
     State(state): State<Arc<FileManagerState>>,
     Json(payload): Json<CreateDirectoryRequest>,
@@ -207,6 +210,7 @@ async fn mkdir_handler(
     )))
 }
 
+#[allow(dead_code)]
 async fn rename_handler(
     State(state): State<Arc<FileManagerState>>,
     Json(payload): Json<RenameRequest>,
@@ -228,6 +232,7 @@ async fn rename_handler(
     }))))
 }
 
+#[allow(dead_code)]
 async fn get_permissions_handler(
     State(state): State<Arc<FileManagerState>>,
     AxumPath(path): AxumPath<String>,
@@ -248,6 +253,7 @@ async fn get_permissions_handler(
     Ok(Json(ApiResponse::success(permissions)))
 }
 
+#[allow(dead_code)]
 async fn set_permissions_handler(
     State(state): State<Arc<FileManagerState>>,
     Json(payload): Json<SetPermissionsRequest>,
@@ -315,6 +321,7 @@ async fn upload_handler(
     Ok(Json(ApiResponse::success(entry)))
 }
 
+#[allow(dead_code)]
 async fn extract_handler(
     State(state): State<Arc<FileManagerState>>,
     Json(payload): Json<ExtractArchiveRequest>,
