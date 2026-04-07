@@ -1,7 +1,7 @@
 # MaluWAF Improvement Plan - Consolidated
 
 **Date**: 2026-04-07
-**Status**: Wave 1, 2, 3 & 4 Complete
+**Status**: Wave 1, 2, 3, 4 Complete; Wave 5 Partial (5.1 done)
 
 ## Overview
 
@@ -279,6 +279,8 @@ if mesh_available {
 2. Serialize `site.proxy.cache` from origin config
 3. Apply received settings on edge
 
+**Status**: ✅ Implemented (ProxyCachePreferences struct and field added)
+
 ### 5.2 Transform Cache Sharing via DHT
 
 **Files**: `src/mesh/dht/keys.rs`, `src/mesh/proxy.rs`
@@ -288,11 +290,15 @@ if mesh_available {
 2. Store transformed content in DHT after transformation
 3. Fetch from DHT before transforming
 
+**Status**: Pending (requires DHT integration work)
+
 ### 5.3 Image Poison Enhancement
 
 **Files**: `src/mesh/proxy.rs`
 
 **Fix**: Store poisoned images in DHT, edge fetches from DHT before applying poison.
+
+**Status**: Pending (requires DHT integration work)
 
 ---
 
@@ -454,8 +460,10 @@ if mesh_available {
 - 4.3 Upload Rate Limiting: ✅ Implemented (UploadRateLimiter integrated in FileManager)
 - 4.4 YARA Distribution Enhancements: ✅ Already implemented (incremental_versions, role-based checks)
 
-### Wave 5 (Edge Caching) - Depends on Wave 2 for DHT changes
-- All items build on DHT sharding from Wave 2
+### Wave 5 (Edge Caching) - PARTIAL (5.1 done)
+- 5.1 Cache Preference Propagation: ✅ Implemented
+- 5.2 Transform Cache Sharing: Pending (requires DHT integration)
+- 5.3 Image Poison Enhancement: Pending (requires DHT integration)
 
 ### Wave 6 (Serverless) - Large refactoring, parallelizable internally
 - 6.1 (unified pool) independent
