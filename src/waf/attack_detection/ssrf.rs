@@ -289,8 +289,7 @@ impl SsrfDetector {
         input: &str,
         location: InputLocation,
     ) -> Option<AttackDetectionResult> {
-        let input_lower = input.to_lowercase();
-        let decoded = url_decode_all(&input_lower);
+        let decoded = url_decode_all(input);
 
         if self.is_allowed_domain(&decoded) {
             return None;

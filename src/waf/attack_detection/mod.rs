@@ -540,17 +540,17 @@ impl AttackDetector {
         if let Some(ref qs) = inputs.query_string {
             if let Some(result) = self
                 .ssrf_detector
-                .detect(qs.as_str(), InputLocation::QueryString)
+                .detect(qs.as_lowercased(), InputLocation::QueryString)
             {
                 return Some(result);
             }
         }
 
         for (name, value) in &inputs.headers {
-            if let Some(result) = self
-                .ssrf_detector
-                .detect(value.as_str(), InputLocation::Header(name.clone().into()))
-            {
+            if let Some(result) = self.ssrf_detector.detect(
+                value.as_lowercased(),
+                InputLocation::Header(name.clone().into()),
+            ) {
                 return Some(result);
             }
         }
@@ -558,7 +558,7 @@ impl AttackDetector {
         if let Some(ref body) = inputs.body {
             if let Some(result) = self
                 .ssrf_detector
-                .detect(body.as_str(), InputLocation::PostBody)
+                .detect(body.as_lowercased(), InputLocation::PostBody)
             {
                 return Some(result);
             }
