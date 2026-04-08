@@ -343,7 +343,7 @@ All duplicate `current_timestamp()` definitions have been consolidated into `src
 | NSEC3 base32 encoding | `src/dns/dnssec_signing.rs:265` | Uses correct RFC 4648 base32hex alphabet |
 | `pattern_detector!` macro infinite recursion | `src/waf/attack_detection/detector_common.rs` | Fix applied to macro-generated impl |
 | WAF empty headers in proxy path | `src/proxy.rs:486` | Pass actual request headers to check_request_full |
-| SSRF substring matching bypass | `src/waf/attack_detection/ssrf.rs:278-285` | Exact domain match or proper suffix with preceding `.` |
+| SSRF substring matching bypass | `src/waf/attack_detection/ssrf.rs:278-285` | ✅ Fixed: Check for `.` boundary before domain |
 | Dynamic worker server stub | `src/worker/mod.rs` | Deprecated; unified server handles requests |
 | Duplicate AppServer init | `src/worker/unified_server.rs` | Duplicate block removed |
 | WireGuard transport unauthenticated | `src/mesh/transports/wireguard.rs` | WireGuard transport removed entirely |
