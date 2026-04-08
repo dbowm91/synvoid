@@ -1,628 +1,489 @@
-# MaluWAF Improvement Plan - Consolidated
+# MaluWAF Consolidated Improvement Plan
 
-**Date**: 2026-04-07
-**Status**: Wave 1 ✅, Wave 2 ✅, Wave 3 ✅, Wave 4 ✅, Wave 5 ✅, Wave 6 ✅, Wave 7 ✅ (All items complete as of 2026-04-08)
+This document consolidates all individual improvement plans (plan2-plan9) into a single roadmap with parallelizable waves.
 
-## Overview
+## Quick Reference
 
-This is the consolidated improvement plan combining all individual plan files (plan2-plan9). The plan addresses performance, scalability, and security improvements across the MaluWAF codebase.
-
----
-
-## Plan Organization
-
-Items are organized into **Waves** based on dependency chains and parallelization opportunities:
-
-| Wave | Focus Area | Source Plans |
-|------|------------|--------------|
-| Wave 1 | Critical Performance Fixes | Plan 9 |
-| Wave 2 | Mesh & DHT Infrastructure | Plan 8 |
-| Wave 3 | WAF & Threat Intelligence | Plan 2, Plan 9 |
-| Wave 4 | File Upload Security | Plan 3 |
-| Wave 5 | Edge Caching & Transform Sharing | Plan 4 |
-| Wave 6 | Serverless Architecture | Plan 5, Plan 7 |
-| Wave 7 | Built-in Web App Stack | Plan 6 |
+| Wave | Focus Area | Priority |
+|------|------------|----------|
+| 1 | Critical Performance Fixes (to_lowercase, allocations) | Critical |
+| 2 | Mesh & DHT Infrastructure | High |
+| 3 | WAF & Threat Intelligence | High |
+| 4 | File Upload Security | High |
+| 5 | Edge Caching & Transform Sharing | Medium |
+| 6 | Serverless Architecture | Future |
+| 7 | Security Audit Remediation | High |
+| 8 | Code Quality & Technical Debt | Medium |
+| 9 | Data Tech Stack Optimization | Low |
 
 ---
 
 ## Wave 1: Critical Performance Fixes
 
-**Priority**: HIGH
-**Source**: Plan 9
+**Focus**: Eliminate blocking I/O, WAF parallelization, string allocation reduction
 
-### 1.1 Blocking File I/O in Proxy Cache
+### 1.1 Eliminate Repeated `.to_lowercase()` Calls
 
-**Location**: `src/proxy_cache/store.rs:234-247`
+**Problem**: Detectors call `.to_lowercase()` multiple times on the same input instead of using pre-computed `NormalizedInput.lowercased` field.
 
-**Problem**: Uses synchronous `std::fs::read()` inside async context, blocking tokio runtime threads.
+**Affected Files**:
+- `src/waf/attack_detection/ssrf.rs:147,292` - Double allocation
+- `src/waf/attack_detection/detector_common.rs:438,450` - Pattern matching ignores pre-normalized
 
-**Fix**: Use `tokio::fs::read()` or `tokio::task::spawn_blocking()`.
+**Solution**:
+1. Modify detectors to accept and use pre-normalized input's `lowercased` field
+2. Update all pattern matching closures to use `NormalizedInput.lowercased`
 
-**Status**: ✅ Implemented
-
-### 1.3 Input Normalization Double String Creation
-
-**Location**: `src/waf/attack_detection/normalizer.rs:61-65`
-
-**Problem**: Every normalized input creates both `normalized` and `lowercased` strings.
-
-**Fix**: Cache lowercase version, avoid recalculation.
-
-**Status**: ✅ Implemented (Cow<'static, str>)
-
-### 1.4 String Allocation Reduction
+### 1.2 Reduce Memory Allocations in Hot Paths
 
 **Locations**:
-- `src/proxy.rs:68,123,128` - `header.to_lowercase()` on every response
-- `src/proxy.rs:104,145,221,243,260` - unnecessary `to_string()` calls
-- `src/waf/attack_detection/normalizer.rs` - double string creation
+- `src/http/server.rs:718-724` - Body cloning (always clones even for small bodies)
+- `src/proxy.rs:246,263,1482,1489` - Header string allocations
+- `src/waf/attack_detection/normalizer.rs:63-64` - Always clones and allocates
 
-**Fix**: Use `&str` borrows, `Cow<str>`, or static sets.
+**Solution**:
+- Use `Arc<Bytes>` or borrow from full_body to avoid small-body clone
+- Use `Cow<str>` for normalized when input doesn't need transformation
 
-### 1.5 Worker Auto-Scaling
+### 1.3 Rate Limiter Retention Optimization
 
-**Location**: `src/process/manager.rs:264-265`
+**Location**: `src/waf/ratelimit.rs:78-104`
 
-**Problem**: Default 1 worker cannot handle thousands of sites.
+**Problem**: 6 sequential O(n) operations during cleanup
 
-**Fix**: Add auto-scaling based on request load or site count.
+**Solution**: Combine timestamp checks into single pass
 
-**Status**: REMOVED - The unified server uses a single async event loop (tokio) which is far more efficient than spawning multiple worker processes. See AGENTS.md architecture notes for details.
+### 1.4 Regex DoS Protection
+
+**Location**: `src/mesh/security_challenge.rs:287`
+
+**Fix** (already documented as FIXED):
+```rust
+regex::Regex::new(&format!("(?{{max=10000}}){}", pattern))
+```
 
 ---
 
 ## Wave 2: Mesh & DHT Infrastructure
 
-**Priority**: HIGH
-**Source**: Plan 8
+**Focus**: DNS capability, sharding, adaptive quorum, mesh distribution
 
-### 2.1 DNS Capability Fix for Standalone WAF
+### 2.1 Edge Node Image Poisoning & Caching
 
-**Location**: `src/mesh/protocol.rs:1001`
+**Problem**: Edge nodes don't fetch full image poison config; no DHT caching in standalone mode
 
-**Problem**: `can_serve_dns: config.dht.is_some() && role.is_global()` prevents standalone WAF from serving DNS.
+**Phases**:
+1. Add `SiteImagePoisonConfig` to `is_public()` in `src/mesh/dht/keys.rs`
+2. Add `get_image_poison_config_for_site()` method to `src/mesh/transports/manager.rs`
+3. Update mesh proxy to fetch and use full config
+4. Add DHT caching to standalone server in `src/http/server.rs`
 
-**Fix**: Add `dns_mesh_mode_only: bool` to `MeshDhtConfig` (default: `true`). Modify capability:
+**Files Modified**:
+- `src/mesh/dht/keys.rs`
+- `src/mesh/config.rs`
+- `src/mesh/transports/manager.rs`
+- `src/mesh/proxy.rs`
+- `src/http/server.rs`
+
+### 2.2 YARA Rules Mesh Distribution
+
+**Problems**:
+1. Broadcast uses simple sender instead of mesh transport
+2. No role filtering on broadcast
+3. No auto-broadcast after feed fetch
+4. Pull-only distribution (no push to edges)
+5. No broadcast acknowledgment tracking
+6. Delta sync not implemented
+
+**Phases**:
+1. Fix mesh broadcast transport - use `transport.broadcast_to_random_peers()` with role filtering
+2. Auto-broadcast after `apply_rules_from_feed()` on global nodes
+3. Add `BroadcastAckTracker` for delivery tracking
+4. Implement delta sync based on client version
+
+**Files Modified**:
+- `src/mesh/yara_rules.rs`
+- `src/mesh/transport.rs`
+
+### 2.3 Mesh & DHT Security Improvements
+
+**Phases**:
+| Phase | Description | Status |
+|-------|-------------|--------|
+| 1 | DNS Server Role Enforcement | COMPLETED |
+| 2 | Integrate Raft HA for global node coordination | TODO |
+| 3 | DHT Data Encryption (sensitive records) | TODO |
+| 4 | IXFR Incremental Zone Sync | COMPLETED |
+| 5 | TOFU Expiration (90-day max) | TODO |
+| 6 | Role Check Centralization | TODO |
+| 7 | Configurable Timeouts | TODO |
+| 8 | Connection Pool Limits | TODO |
+
+**Files Modified**:
+- `src/mesh/global_node_ha.rs`
+- `src/mesh/transport.rs`
+- `src/mesh/dht/record_store.rs`
+- `src/mesh/cert.rs`
+- `src/mesh/config.rs`
+
+### 2.4 Threat Intelligence & Honeypot
+
+**Bugs to Fix**:
+1. **DHT Key Prefix Mismatch** - `src/mesh/threat_intel.rs:1040` reads `threat:` but publishes `threat_indicator:`
+2. **ThreatSyncResponse Not Processed** - No handler exists for this message type
+
+**Fix 1**:
 ```rust
-can_serve_dns: !config.dht.as_ref().map(|c| c.dns_mesh_mode_only).unwrap_or(true) 
-    || (config.dht.is_some() && role.is_global())
+// Change from:
+if r.key.starts_with("threat:") {
+// To:
+if r.key.starts_with("threat_indicator:") {
 ```
 
-### 2.2 Add Explicit Capability Flags
-
-**Location**: `src/mesh/config.rs:897-964` (MeshDhtConfig)
-
-**Fix**: Add explicit capability config fields:
-- `dns_server_enabled: bool`
-- `dns_mesh_mode_only: bool`
-- `dht_write_enabled: bool`
-- `proxy_to_origins: bool`
-- `can_host_origins: bool`
-
-### 2.3 DHT Sharded Record Storage
-
-**Location**: `src/mesh/dht/record_store.rs:114`
-
-**Problem**: Single `LinkedHashMap` with `RwLock` for all records.
-
-**Fix**: Implement 64-sharded record store (matching `ShardedPeerStore` pattern):
+**Fix 2**: Add handler in `handle_mesh_message()`:
 ```rust
-pub struct ShardedRecordStore {
-    shards: Vec<RwLock<LinkedHashMap<String, DhtRecordEntry>>>,
+MeshMessage::ThreatSyncResponse { indicators, ... } => {
+    for indicator in indicators {
+        self.handle_incoming_threat(indicator, from_node, from_role, signer);
+    }
+    None
 }
 ```
 
-### 2.4 Adaptive Quorum
-
-**Location**: `src/mesh/dht/mod.rs:183-184`
-
-**Problem**: Fixed quorum of 11 may be too high for small networks.
-
-**Fix**: Implement adaptive quorum:
-```rust
-pub fn calculate_adaptive_quorum(&self, live_global_count: usize) -> u32 {
-    let min_quorum = 3;
-    let target = (live_global_count * 2) / 3;
-    std::cmp::max(min_quorum, std::cmp::min(target, self.fixed_quorum as usize)) as u32
-}
-```
-
-### 2.5 DHT Health Metrics
-
-**Location**: `src/metrics/mod.rs`
-
-**Fix**: Add DHT health metrics:
-- `record_count`, `replica_count`
-- `quorum_achieved_count`, `quorum_failed_count`
-- `average_query_latency_ms`
-
-### 2.6 Enhance TOFU Verification
-
-**Location**: `src/mesh/cert.rs`
-
-**Fix**: Add fingerprint verification on first connection:
-```rust
-pub fn verify_seed_on_first_contact(&mut self, node_id: &str, fingerprint: &str) -> bool
-```
-
-### 2.7 Message Signing Verification
-
-**Location**: `src/mesh/transport_routing.rs`
-
-**Fix**: Enforce signature verification in route response handling.
-
-### 2.8 Connection Recovery with Backoff
-
-**Location**: `src/mesh/topology.rs`, `src/mesh/discovery.rs`
-
-**Fix**: Add exponential backoff for failed peer connections.
+**Verification**: HTTP honeypot sharing already works via `block_ip_with_threat_intel()`
 
 ---
 
 ## Wave 3: WAF & Threat Intelligence
 
-**Priority**: HIGH
-**Source**: Plan 2, Plan 9
+### 3.1 Local Indicator Lookup Optimization
 
-### 3.1 Add Local Indicator Lookup to WAF
+Focus on efficient local lookup patterns in WAF for common threats.
 
-**Location**: `src/waf/mod.rs:1072-1097`
+### 3.2 Threat Deduplication
 
-**Problem**: WAF only queries DHT, ignoring local `indicators` HashMap.
-
-**Fix**: Add methods to `ThreatIntelligenceManager`:
-```rust
-pub fn lookup_local_indicator(&self, indicator_value: &str) -> Option<ThreatIndicator>
-pub fn is_mesh_available(&self) -> bool
-pub fn get_node_role(&self) -> MeshNodeRole
-```
-
-Update `check_dht_threat_lookup()` to check local cache first.
-
-### 3.2 Fix Deduplication Across Batches
-
-**Location**: `src/honeypot_port/runner.rs:166-201`
-
-**Problem**: `announced_ips` HashSet recreated each interval.
-
-**Fix**: Add persistent tracking to `HoneypotStorage`:
-```rust
-pub fn get_announced_indicator_keys(&self) -> HashSet<String>
-pub fn mark_indicator_announced(&self, key: &str)
-```
-
-### 3.3 Add Standalone Mode Logging
-
-**Location**: `src/worker/unified_server.rs:897-904`
-
-**Problem**: No indication when honeypot runs in standalone mode.
-
-**Fix**: Add conditional logging using `is_mesh_available()`:
-```rust
-if mesh_available {
-    tracing::info!("Port honeypot threat publishing wired to mesh network");
-} else {
-    tracing::warn!("Honeypot threat publishing running in standalone mode...");
-}
-```
-
-### 3.4 Rate Limiter Cleanup Optimization
-
-**Location**: `src/waf/ratelimit.rs:282-296`
-
-**Problem**: 6 sequential `retain()` operations.
-
-**Fix**: Batch into single-pass cleanup using `remove_expired_windows()` method.
-
-**Status**: ✅ Implemented
+Reduce duplicate threat processing in `ThreatIntelligenceManager`.
 
 ---
 
 ## Wave 4: File Upload Security
 
-**Priority**: HIGH
-**Source**: Plan 3
+### 4.1 Archive Depth Limits
 
-### 4.1 Magic Byte Validation
+**File**: `src/upload/yara_scanner.rs`
 
-**Files**: `src/static_files/file_manager.rs`, `src/http/file_manager.rs`
+**Improvements**:
+- Add `archive_max_depth` config (default: 3)
+- Add `archive_max_size` config (default: 100MB)
 
-**Fix**:
-1. Call `crate::upload::signature::detect_mime()` before writing
-2. Add `allowed_mime_types` config to `SiteFileManagerConfig`
-3. Add extension-MIME mismatch warning
+### 4.2 Scanner-Local Version Caching
 
-**Status**: ✅ Implemented (magic byte validation with SignatureRegistry)
+Reduce IPC overhead by caching YARA version locally in scanner.
 
-### 4.2 Malware Scanner Integration
+### 4.3 Path-Specific Allowlist Integration
 
-**Files**: `src/config/site/file_manager.rs`, `src/static_files/file_manager.rs`
+Integrate `AllowedTypesConfig` with path-specific rules.
 
-**Fix**:
-1. Add `scan_on_upload: bool` config field (default: `false`)
-2. Call scanner after magic bytes pass
-3. Add scan results to audit log
+### 4.4 TAR Extraction Path Traversal Fix
 
-**Status**: ✅ Implemented (MalwareScanner integrated in upload_file())
+**Location**: `src/static_files/file_manager.rs:948-969`
 
-### 4.3 Upload Rate Limiting
+**Issue**: TAR extraction lacks explicit path traversal protection (ZIP has it)
 
-**File**: `src/admin/rate_limit.rs`
-
-**Fix**: Add upload-specific rate limiter for file manager endpoints.
-
-**Status**: ✅ Implemented (UploadRateLimiter integrated in FileManager with rate_limit_config)
-
-### 4.4 YARA Distribution Enhancements
-
-**Files**: `src/mesh/yara_rules.rs`
-
-**Fix**:
-1. Add selective broadcast by node role
-2. Add incremental rule updates (delta sync)
-
-**Status**: ✅ Already implemented (RuleChangeTracker with incremental_versions, role-based broadcast checks)
+**Fix**: Add canonical path validation similar to ZIP extraction
 
 ---
 
 ## Wave 5: Edge Caching & Transform Sharing
 
-**Priority**: MEDIUM
-**Source**: Plan 4
-
-### 5.1 Cache Preference Propagation (Origin → Edge)
-
-**Files**: `src/mesh/proto/mesh.proto`, `src/mesh/transport_peer.rs`
-
-**Fix**:
-1. Add `ProxyCachePreferences` to `SiteConfigSync` message
-2. Serialize `site.proxy.cache` from origin config
-3. Apply received settings on edge
-
-**Status**: ✅ Implemented (ProxyCachePreferences struct and field added)
-
-### 5.2 Transform Cache Sharing via DHT
-
-**Files**: `src/mesh/dht/keys.rs`, `src/mesh/proxy.rs`
-
-**Fix**:
-1. Add `TransformedResponse` key type: `transformed:{site_id}:{content_hash}:{transform_flags}`
-2. Store transformed content in DHT after transformation
-3. Fetch from DHT before transforming
-
-**Status**: ✅ Implemented (DHT store/fetch in transform_response, lines 1157-1195, 1314-1332)
-
-### 5.3 Image Poison Enhancement
-
-**Files**: `src/mesh/proxy.rs`
-
-**Fix**: Store poisoned images in DHT, edge fetches from DHT before applying poison.
-
-**Status**: ✅ Implemented (PoisonedImage DHT caching in apply_image_poisoning)
+Builds on Wave 2.1 (Image Poisoning).
 
 ---
 
 ## Wave 6: Serverless Architecture
 
-**Priority**: MEDIUM
-**Source**: Plan 5, Plan 7
-
-### 6.1 Unified Instance Pool
-
-**Files**: `src/plugin/instance_pool.rs`, `src/serverless/instance_pool.rs`
-
-**Problem**: Duplicate pool implementations with different APIs.
-
-**Fix**: Create unified pool trait supporting both basic and autoscaling modes.
-
-### 6.2 Enhanced Serverless Function Routing
-
-**Files**: `src/serverless/manager.rs:162-172`
-
-**Problem**: Naive path matching (prefix only), no wildcards, no method matching.
-
-**Fix**:
-1. Add `RouteMatch` enum: Exact, Prefix, Suffix, Regex, Glob
-2. Add `MethodMatch`: Any, Specific, Multiple
-3. Add priority-based ordering
-
-### 6.3 Module Versioning
-
-**Files**: `src/mesh/wasm_dist.rs:20-55`
-
-**Problem**: Version announcements ignored, no GC of old versions.
-
-**Fix**:
-1. Add version tracking per module in `WasmModuleStore`
-2. Add versioned store methods: `store_versioned()`, `get_by_version()`, `gc_old_versions()`
-
-### 6.4 Configuration Schema Extensions
-
-**Files**: `src/config/serverless.rs`
-
-**Fix**: Add route configuration to `FunctionDefinition`:
-- `routes: Option<Vec<String>>`
-- `description: Option<String>`
-- `allowed_methods: Option<Vec<String>>`
-
-### 6.5 Serverless Registry
-
-**Files**: `src/serverless/registry.rs` (new), `src/serverless/manager.rs`
-
-**Fix**: Create registry to track registered functions and metadata.
-
-### 6.6 Mesh Protocol Extensions
-
-**Files**: `src/mesh/proto/mesh.proto`, `src/mesh/protocol.rs`
-
-**Fix**: Add `ServerlessFunctionAnnounce` message for mesh discovery.
-
-### 6.7 Per-Function Metrics
-
-**Files**: `src/metrics/mod.rs`, `src/serverless/manager.rs`
-
-**Fix**: Add serverless-specific metrics:
-- `serverless_invocations_total{function, status}`
-- `serverless_duration_seconds{function}`
-- `serverless_instances_active{function}`
-
-### 6.8 Shared Plugin State Across Workers
-
-**Files**: `src/plugin/global.rs` (new), `src/worker/unified_server.rs`
-
-**Problem**: Each worker loads WASM independently.
-
-**Fix**: Create `GlobalPluginManager` shared across workers via IPC.
-
-### 6.9 Memory Limit Consolidation
-
-**Files**: `src/plugin/wasm_runtime.rs`, `src/serverless/instance_pool.rs`
-
-**Problem**: Memory limit multiplication with multiple plugins.
-
-**Fix**: Add global memory budget and shared instance pool.
+_Placeholder for future work - unified pool, routing, versioning_
 
 ---
 
-## Wave 7: Built-in Web App Stack
+## Wave 7: Security Audit Remediation
 
-**Priority**: MEDIUM
-**Source**: Plan 6
+### 7.1 Critical & High Severity
 
-### 7.1 Directory Viewer for Public Static Sites
+| Priority | Issue | Location | Fix |
+|----------|-------|----------|-----|
+| HIGH | SSRF Allowlist Domain Bypass | `src/waf/attack_detection/ssrf.rs:278-285` | Check for `.` boundary before domain |
+| HIGH | Non-Crypto RNG for Key Material | Multiple files in `src/mesh/` | Use `OsRng` instead of `rand::random()` |
+| CRITICAL | NSEC3 Base32hex Encoding | `src/dns/dnssec_signing.rs:264-288` | Use proper base32hex per RFC 5155 |
 
-**Files**: `src/config/site/static_files.rs`, `src/http/directory_viewer.rs` (new)
+**Files Requiring OsRng Fix**:
+- `src/mesh/passover_key_exchange.rs:1186,1191,1264,1313,1316,1342,1347`
+- `src/mesh/config_identity.rs:134,232,272,279`
+- `src/mesh/network_security.rs:319,339`
+- `src/mesh/organization.rs:23,584`
+- `src/tunnel/wireguard/config.rs:320`
 
-**Fix**:
-1. Add `DirectoryViewerConfig` to `SiteStaticConfig`
-2. Create handler for directory listing with site-specific branding
-3. Support optional token/auth
+### 7.2 Medium Severity
 
-**Status**: ✅ Implemented (DirectoryViewerConfig and handler created)
+| Category | Issue | Fix |
+|----------|-------|-----|
+| WAF | X-Forwarded-For Single IP | Validate all IPs in chain |
+| WAF | Open Redirect Path Check Missing | Add path to check_request_full |
+| WAF | Domain Check Before URL Decode | Decode input first, then check allowlist |
+| TLS | skip_verify Hostname Bypass | Document clearly, require explicit flag |
+| TLS | allow_plaintext HTTP Upstream | Warn on startup |
+| IPC | No Mutual Authentication | Use `UnixStream::peer_credentials()` |
+| IPC | No Connection Source Validation | Add peer credential validation |
+| Mesh | No node_id to Public Key Binding | Include hash of pubkey in node_id |
+| Mesh | TOFU Accepts First Certificate | Add out-of-band verification option |
+| DNS | DNSSEC Not Validated for Recursive | Implement chain-of-trust validation |
+| DNS | RRL Only TCP | Add UDP rate limiting |
 
-### 7.2 File Manager UI
+### 7.3 Low Severity
 
-**Files**: `src/http/file_manager.rs`, `src/http/file_manager_ui.rs` (new)
-
-**Fix**:
-1. Enable disabled routes (tonic upgrade)
-2. Create standalone file manager frontend
-3. Add theme hybrid support
-
-**Status**: ✅ Implemented (file_manager_ui.rs with standalone frontend created; disabled routes remain due to axum version conflict)
-
-### 7.3 PHP-FPM Enhancement
-
-**Files**: `src/php/mod.rs`, `src/fastcgi/pool.rs` (new)
-
-**Fix**:
-1. Add FastCGI connection pool
-2. Add PHP-FPM health monitoring
-3. Add pool configuration
-
-**Status**: ✅ Implemented (FastCgiPool and FastCgiPoolManager with health checking)
-
-### 7.4 WASI Support for Serverless
-
-**Files**: `src/plugin/wasm_runtime.rs`
-
-**Fix**:
-1. Add WASI link with `wasmtime_wasi`
-2. Add WASI config to site config
-
-**Status**: ✅ Implemented (wasi_enabled flag in WasmResourceLimits)
-
-### 7.5 Granian/Python Enhancement
-
-**Files**: `src/app_server/granian.rs`
-
-**Fix**:
-1. Add requirements.txt auto-install
-2. Support multiple workers per site
-
-**Status**: ✅ Implemented (auto_install_requirements field and ensure_requirements_installed method)
-
-### 7.6 WebDAV Support
-
-**Files**: `src/http/webdav.rs` (new)
-
-**Fix**: Support PROPFIND, MKCOL, MOVE, COPY methods.
-
-**Status**: ✅ Implemented (WebDAV handler with PROPFIND, MKCOL, MOVE, COPY, GET, PUT, DELETE, OPTIONS)
+- Timing attack on bcrypt (low risk)
+- Linear rate limiter cleanup
+- QUIC self-signed cert auto-generation
+- No explicit cipher suite config
+- SHA-1 as default NSEC3 algorithm
+- YARA scan errors treated as clean
+- Cache fingerprint race condition
 
 ---
 
-## Implementation Order & Parallelization
+## Wave 8: Code Quality & Technical Debt
 
-### Wave 1 (Critical Performance) - ✅ COMPLETE
-- Items 1.1, 1.3, 1.4 implemented
-- Item 1.2 deferred (not needed - fast hash lookups acceptable)
-- Item 1.5 removed (architecture - single tokio loop more efficient)
+### 8.1 Test Compilation Errors (BLOCKING)
 
-### Wave 2 (Mesh/DHT) - ✅ COMPLETE
-- Items 2.1, 2.2, 2.3 implemented ✅
-- Item 2.4 IMPLEMENTED ✅ (calculate_adaptive_quorum in record_store.rs)
-- Item 2.5 IMPLEMENTED ✅ (DHT health metrics in metrics/mod.rs)
-- Item 2.6 IMPLEMENTED ✅ (verify_seed_fingerprint handles first-contact automatically by accepting and pinning new fingerprints when none exist)
-- Item 2.7 IMPLEMENTED ✅ (signature verification in handle_route_response using provider public key from cert_manager)
-- Item 2.8 IMPLEMENTED ✅ (exponential backoff exists in topology, discovery, yara_rules)
+**Location**: `src/dns/platform.rs:193,206,219,232,245,258,309,332`
 
-### Wave 3 (WAF/Threat Intel) - ✅ COMPLETE
-- All items implemented (3.1, 3.2, 3.3, 3.4)
+**Issue**: `in_pktinfo::from_bytes_mut` not found - nix API version mismatch
 
-### Wave 4 (File Upload) - ✅ COMPLETE
-- 4.1 Magic Byte Validation: ✅ Implemented (SignatureRegistry detection + allowed_mime_types)
-- 4.2 Malware Scanner Integration: ✅ Implemented (MalwareScanner called in upload_file())
-- 4.3 Upload Rate Limiting: ✅ Implemented (UploadRateLimiter integrated in FileManager)
-- 4.4 YARA Distribution Enhancements: ✅ Already implemented (incremental_versions, role-based checks)
+**Fix**:
+```rust
+// Use std::ptr for byte-level casting
+let pktinfo = &mut *(pktinfo_bytes.as_ptr() as *mut nix::libc::in_pktinfo);
+```
 
-### Wave 5 (Edge Caching) - ✅ COMPLETE
-- 5.1 Cache Preference Propagation: ✅ Implemented
-- 5.2 Transform Cache Sharing: ✅ IMPLEMENTED (DHT store/fetch in transform_response, lines 1157-1195, 1314-1332)
-- 5.3 Image Poison Enhancement: ✅ IMPLEMENTED (PoisonedImage DHT caching in apply_image_poisoning)
+**Verification**: `cargo test --lib --no-run` must pass
 
-### Wave 6 (Serverless) - ✅ COMPLETE
-- 6.1 (unified pool) ✅ Implemented (WasmPool trait in src/plugin/pool.rs)
-- 6.2 (routing) ✅ Implemented (RouteMatch, MethodMatch, ServerlessRoute in src/serverless/routing.rs)
-- 6.3 (versioning) ✅ Implemented (versioned storage in WasmModuleStore)
-- 6.4 (config schema) ✅ Implemented (routes, description, allowed_methods in FunctionDefinition)
-- 6.5 (registry) ✅ Implemented (ServerlessRegistry in src/serverless/registry.rs)
-- 6.6 (mesh protocol) ✅ Implemented (ServerlessFunctionAnnounce message)
-- 6.7 (metrics) ✅ Implemented (serverless metrics in src/metrics/mod.rs)
-- 6.8 (shared plugin state) ✅ Implemented (GlobalPluginManager in src/plugin/global.rs)
-- 6.9 (memory consolidation) ✅ Implemented (GlobalWasmMemoryBudget)
+### 8.2 Replace .unwrap() in Security-Critical Paths
 
-### Wave 7 (Web App Stack) - ✅ COMPLETE
-- 7.1 (directory viewer) ✅ Implemented (DirectoryViewerConfig, src/http/directory_viewer.rs)
-- 7.2 (file manager UI) ✅ Implemented (src/http/file_manager_ui.rs, src/http/file_manager_ui.js)
-- 7.3 (PHP-FPM pool) ✅ Implemented (FastCgiPool, FastCgiPoolManager in src/fastcgi/pool.rs)
-- 7.4 (WASI support) ✅ Implemented (wasi_enabled in WasmResourceLimits)
-- 7.5 (Granian enhancement) ✅ Implemented (auto_install_requirements, ensure_requirements_installed)
-- 7.6 (WebDAV) ✅ Implemented (src/http/webdav.rs with PROPFIND, MKCOL, MOVE, COPY)
+| File | Count | Priority |
+|------|-------|----------|
+| `src/process/ipc.rs` | 22 | High |
+| `src/proxy.rs` | 12+ | High |
+| `src/tls/` | 8+ | Medium |
+| `src/waf/mod.rs` | 10+ | Medium |
 
----
+### 8.3 Document Unsafe Blocks
 
-## Success Criteria
+Priority files:
+- `src/platform/unix.rs:45-51,350,427-432` - FD handling
+- `src/process/socket_fd.rs:368-400` - Socket transfer
+- `src/tunnel/wireguard/tun.rs:181-361` - TUN device
 
-### Wave 1 (2026-04-07)
-- [x] Blocking file I/O removed from async path (src/proxy_cache/store.rs - async get_async with spawn_blocking)
-- [x] String allocations per request reduced (src/proxy.rs - AHashSet<&'static str>, src/waf/attack_detection/normalizer.rs - Cow<str>)
-- [x] Worker auto-scaling REMOVED - The unified server uses a single tokio async event loop which is far more efficient than spawning multiple worker processes. See AGENTS.md architecture notes.
-- [x] WAF parallelization REMOVED - Sequential execution is preferred; some checks should block subsequent checks on attack detection. See AGENTS.md.
+### 8.4 Private Key Encryption at Rest
 
-### Wave 2 (2026-04-07)
-- [x] Standalone WAF can serve DNS (src/mesh/protocol.rs - dns_mesh_mode_only flag)
-- [x] Explicit capability flags added (src/mesh/config.rs - dns_server_enabled, dns_mesh_mode_only, dht_write_enabled, proxy_to_origins, can_host_origins)
-- [x] DHT sharding implemented (src/mesh/dht/record_store.rs - 64-sharded ShardedRecordStore)
-- [x] Connection recovery with backoff (src/mesh/topology.rs, src/mesh/discovery.rs, src/mesh/yara_rules.rs - exponential backoff implemented)
-- [x] Adaptive quorum implemented (src/mesh/dht/record_store.rs - calculate_adaptive_quorum)
-- [x] DHT health metrics implemented (src/metrics/mod.rs - record_dht_quorum_*, get_dht_*_count functions)
-- [x] TOFU enhancement IMPLEMENTED (verify_seed_fingerprint handles first-contact automatically by accepting and pinning new fingerprints when none exist)
-- [x] Message signing verification IMPLEMENTED (src/mesh/transport_routing.rs - handle_route_response verifies Ed25519 signatures using provider public key)
+**Location**: `src/mesh/config.rs:781-847`
 
-### Wave 3 (2026-04-07)
-- [x] Local threat indicators block before DHT lookup (src/waf/mod.rs - check local first, src/mesh/threat_intel.rs - add lookup_local_indicator, is_mesh_available, get_node_role)
-- [x] No duplicate announcements across batches (src/honeypot_port/storage.rs - persistent announced_indicators table, src/honeypot_port/runner.rs - use persistent tracking)
-- [x] Standalone mode logging works (src/worker/unified_server.rs - conditional logging based on is_mesh_available)
-- [x] Rate limiter cleanup optimization (src/waf/ratelimit.rs - single-pass remove_expired_windows)
+**Fix**: Add optional encrypted private key:
+```rust
+pub encrypted_private_key: Option<EncryptedKey>,
+```
 
-### Wave 4 (2026-04-07)
-- [x] 100% uploads validated with magic bytes (src/static_files/file_manager.rs - SignatureRegistry detection)
-- [x] Malware scanning integrated (src/static_files/file_manager.rs - MalwareScanner in upload_file())
-- [x] Upload rate limiting works (src/static_files/file_manager.rs - UploadRateLimiter integrated)
+### 8.5 Large File Splitting
 
-### Wave 5
-- [x] Cache preferences propagate origin→edge (src/mesh/proto/mesh.proto - ProxyCachePreferences in SiteConfigSync)
-- [x] Transform cache shared via DHT (src/mesh/proxy.rs - DHT fetch at lines 1157-1195, store at lines 1314-1332)
-- [x] Image poison enhancement (src/mesh/proxy.rs - apply_image_poisoning DHT caching)
-
-### Wave 6 (2026-04-07)
-- [x] Unified pool trait working (src/plugin/pool.rs - WasmPool trait)
-- [x] Route matching supports wildcards/regex (src/serverless/routing.rs - RouteMatch, MethodMatch)
-- [x] Module versioning functional (src/mesh/wasm_dist.rs - store_versioned, gc_old_versions)
-- [x] Per-function metrics available (src/metrics/mod.rs - serverless_invocations, serverless_duration)
-- [x] Serverless registry working (src/serverless/registry.rs - FunctionMetadata tracking)
-- [x] Mesh protocol extended (ServerlessFunctionAnnounce message)
-- [x] Global plugin manager working (src/plugin/global.rs - GlobalPluginManager)
-- [x] Memory budget consolidation (GlobalWasmMemoryBudget)
-
-### Wave 7 (2026-04-07)
-- [x] Directory viewer working with theming (src/http/directory_viewer.rs - DirectoryViewerConfig, theme support)
-- [x] File manager UI functional (src/http/file_manager_ui.rs, src/http/file_manager_ui.js - standalone frontend)
-- [x] PHP/WASI enhancements integrated (FastCgiPool, wasi_enabled in WasmResourceLimits)
+| File | Lines | Split Strategy |
+|------|-------|---------------|
+| `src/http/server.rs` | 3,202 | Separate: WebSocket, file serving, request handling |
+| `src/process/manager.rs` | 2,281 | Separate: worker lifecycle, IPC pool |
+| `src/mesh/topology.rs` | 2,256 | Separate: peer scoring, bandwidth |
+| `src/process/ipc.rs` | 1,835 | Separate: Message handling from socket I/O |
 
 ---
 
-## Dependencies Summary
+## Wave 9: Data Tech Stack Optimization
 
-| Wave | Dependencies | Status |
-|------|-------------|--------|
-| 1 | None | ✅ Complete |
-| 2 | None | ✅ Complete (2.6, 2.7 remain partial) |
-| 3 | Wave 2 (partial) | ✅ Complete |
-| 4 | Wave 1 | ✅ Complete |
-| 5 | Wave 2 | ✅ Complete |
-| 6 | Wave 1, 2 | ✅ Complete |
-| 7 | None (independent) | ✅ Complete |
+### 9.1 Cache TTL Configuration
+
+**Files**:
+- `src/dns/recursive_cache.rs` - Add TTL to positive/negative caches
+- `src/dns/cache.rs` - Add TTL to three cache instances
+
+### 9.2 Memory-Aware Eviction
+
+Add weigher to DNS caches:
+```rust
+.weigher(|_key, value: &CachedRecord| {
+    u32::try_from(value.data.len()).unwrap_or(u32::MAX)
+})
+```
+
+### 9.3 rkyv Zero-Copy for IPC
+
+**File**: `src/process/ipc.rs`
+
+Add rkyv derives to Message enum:
+```rust
+#[cfg_attr(feature = "rkyv", derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize))]
+```
+
+### 9.4 Metrics Lock Optimization
+
+Replace global mutex with per-key atomics or dashmap.
 
 ---
 
-## Notes
+## Implementation Dependencies
 
-- **Backward compatibility**: All features default to disabled
-- **Testing**: Integration tests required for each wave
-- **Risk assessment**: See individual plans for detailed risk analysis
+```
+Wave 1 (Performance)
+    │
+    ├── 1.1-1.3: Independent
+    │
+Wave 2 (Mesh/DHT)
+    │
+    ├── 2.1: Depends on Wave 1
+    ├── 2.2: Independent
+    ├── 2.3: Independent (Ra HA depends on 2.2 for coordination)
+    └── 2.4: Independent
+
+Wave 3 (WAF/TI)
+    └── Depends on Wave 2.4
+
+Wave 4 (File Upload)
+    └── Independent
+
+Wave 5 (Caching)
+    └── Depends on Wave 2.1
+
+Wave 7 (Security)
+    ├── 7.1: Independent
+    └── 7.2: Independent
+
+Wave 8 (Code Quality)
+    └── 8.1: BLOCKING (test compilation must pass first)
+
+Wave 9 (Data Stack)
+    └── Independent
+```
 
 ---
 
-## File Changes Summary
+## Parallelization Guide
 
-### New Files
-- `src/http/directory_viewer.rs` - Directory viewer handler ✅ NEW in Wave 7
-- `src/http/file_manager_ui.rs` - File manager UI handler ✅ NEW in Wave 7
-- `src/http/file_manager_ui.js` - File manager UI JavaScript ✅ NEW in Wave 7
-- `src/http/webdav.rs` - WebDAV handler ✅ NEW in Wave 7
-- `src/serverless/registry.rs` - Function registry ✅ NEW in Wave 6
-- `src/serverless/routing.rs` - Route matching types ✅ NEW in Wave 6
-- `src/plugin/global.rs` - Global plugin manager ✅ NEW in Wave 6
-- `src/plugin/pool.rs` - Unified pool trait ✅ NEW in Wave 6
-- `src/fastcgi/pool.rs` - FastCGI connection pool ✅ NEW in Wave 7
-- `src/php/health.rs` - PHP-FPM health check
+### Can Run in Parallel
 
-### Modified Files
-- `src/mesh/protocol.rs` - DNS capability, serverless messages ✅ Wave 6
-- `src/mesh/config.rs` - Capability config fields
-- `src/mesh/dht/record_store.rs` - Sharding
-- `src/mesh/dht/keys.rs` - TransformedContent, PoisonedImage DhtKey variants
-- `src/mesh/proxy.rs` - DHT transform cache integration, record_store field
-- `src/mesh/backend.rs` - create_mesh_backend integration
-- `src/mesh/proto/mesh.proto` - ServerlessFunctionAnnounce message ✅ Wave 6
-- `src/mesh/protocol_proto_encode.rs` - ServerlessFunctionAnnounce encoding ✅ Wave 6
-- `src/mesh/protocol_proto_decode.rs` - ServerlessFunctionAnnounce decoding ✅ Wave 6
-- `src/mesh/wasm_dist.rs` - Versioning ✅ Wave 6
-- `src/waf/mod.rs` - Local lookup, parallelization
-- `src/waf/attack_detection/normalizer.rs` - String optimization
-- `src/proxy_cache/store.rs` - Async file I/O
-- `src/proxy.rs` - String allocation reduction
-- `src/process/manager.rs` - Auto-scaling
-- `src/process/ipc.rs` - PluginStateSync message ✅ Wave 6
-- `src/static_files/file_manager.rs` - Magic bytes, malware scan, rate limiting
-- `src/config/site/file_manager.rs` - Upload config
-- `src/upload/mod.rs` - Added rate_limit module export
-- `src/upload/malware_scanner.rs` - Fixed async tests
-- `src/http/file_manager.rs` - Updated test with new config fields
-- `src/serverless/manager.rs` - Registry, routing ✅ Wave 6
-- `src/serverless/mod.rs` - Registry, routing exports ✅ Wave 6
-- `src/serverless/instance_pool.rs` - Unified pool
-- `src/plugin/instance_pool.rs` - Unified pool ✅ Wave 6
-- `src/plugin/mod.rs` - Pool, global exports ✅ Wave 6
-- `src/plugin/wasm_runtime.rs` - Memory budget field, wasi_enabled ✅ Wave 6, 7
-- `src/config/serverless.rs` - Route config ✅ Wave 6
-- `src/metrics/mod.rs` - DHT metrics, serverless metrics ✅ Wave 6
-- `src/http/mod.rs` - Added directory_viewer, file_manager_ui, webdav modules ✅ Wave 7
-- `src/http/directory_viewer.rs` - Directory viewer HTTP handler ✅ Wave 7
-- `src/http/file_manager_ui.rs` - File manager UI handler ✅ Wave 7
-- `src/fastcgi/mod.rs` - Added pool module export ✅ Wave 7
-- `src/fastcgi/pool.rs` - FastCGI connection pool ✅ Wave 7
-- `src/app_server/granian.rs` - requirements.txt auto-install ✅ Wave 7
-- `src/config/site/app_server.rs` - auto_install_requirements field ✅ Wave 7
+| Group | Items |
+|-------|-------|
+| A | Wave 1.1, Wave 1.2, Wave 1.3, Wave 1.4 |
+| B | Wave 2.2, Wave 2.3, Wave 2.4 |
+| C | Wave 4 (File Upload) |
+| D | Wave 7 (Security) - all items independent |
+| E | Wave 9 (Data Stack) |
+| F | Wave 8.2, Wave 8.3, Wave 8.4, Wave 8.5 |
+
+### Must Run Sequentially
+
+| Sequence | Reason |
+|----------|--------|
+| Wave 8.1 → All other waves | Test compilation must pass |
+| Wave 2.1 → Wave 5 | Cache builds on poisoning |
+| Wave 2.4 → Wave 3 | Threat intel fixes needed first |
+
+---
+
+## Verification Commands
+
+```bash
+# Quick test (5 seconds)
+cargo test --test integration_test
+
+# Test compilation (CRITICAL - must pass)
+cargo test --lib --no-run
+
+# DNS tests
+cargo test --test dns_recursive_test
+cargo test --test dns_server_test
+
+# IPC tests
+cargo test --test ipc_test
+
+# All tests
+cargo test
+
+# Clippy
+cargo clippy -- -D warnings
+
+# Format
+cargo fmt
+```
+
+---
+
+## Success Metrics
+
+| Metric | Baseline | Target |
+|--------|----------|--------|
+| `.unwrap()` count | 553+ | < 100 |
+| Unsafe blocks documented | 0% | 100% |
+| to_lowercase() in hot paths | Unknown | < 10 |
+| Test compilation | FAIL | PASS |
+| Cache TTL configured | Partial | 100% |
+| DHT records encrypted | 0% | 100% |
+
+---
+
+## Files Reference
+
+### Plan 2 - Image Poisoning
+- `src/mesh/dht/keys.rs`
+- `src/mesh/config.rs`
+- `src/mesh/transports/manager.rs`
+- `src/mesh/proxy.rs`
+- `src/http/server.rs`
+
+### Plan 3 - YARA Distribution
+- `src/mesh/yara_rules.rs`
+- `src/mesh/transport.rs`
+- `src/upload/yara_scanner.rs`
+- `src/upload/mod.rs`
+
+### Plan 4 - Mesh/DHT Security
+- `src/mesh/global_node_ha.rs`
+- `src/mesh/transport.rs`
+- `src/mesh/dht/record_store.rs`
+- `src/mesh/cert.rs`
+- `src/mesh/config.rs`
+
+### Plan 5 - Performance
+- `src/waf/attack_detection/ssrf.rs`
+- `src/waf/attack_detection/detector_common.rs`
+- `src/waf/attack_detection/normalizer.rs`
+- `src/http/server.rs`
+- `src/proxy.rs`
+- `src/waf/ratelimit.rs`
+
+### Plan 6 - Security Audit
+- `src/waf/attack_detection/ssrf.rs`
+- `src/mesh/passover_key_exchange.rs`
+- `src/mesh/config_identity.rs`
+- `src/dns/dnssec_signing.rs`
+- `src/tls/`
+
+### Plan 7 - Code Quality
+- `src/dns/platform.rs`
+- `src/process/ipc.rs`
+- `src/proxy.rs`
+- `src/platform/unix.rs`
+
+### Plan 8 - Data Stack
+- `src/dns/recursive_cache.rs`
+- `src/dns/cache.rs`
+- `src/serialization.rs`
+- `src/metrics/mod.rs`
+
+### Plan 9 - Threat Intelligence
+- `src/mesh/threat_intel.rs`
+- `src/static_files/file_manager.rs`

@@ -547,19 +547,31 @@ When reviewing plan files against the codebase, always verify claims directly. P
 
 ## Consolidated Improvement Plan
 
-All individual improvement plans (plan2-plan9) have been consolidated into a single `plans/plan.md` file. The plan is organized into waves based on dependency chains and parallelization opportunities:
+All individual improvement plans have been consolidated into a single `plans/plan.md` file. The plan is organized into waves based on dependency chains and parallelization opportunities:
 
 | Wave | Focus Area |
 |------|------------|
-| Wave 1 | Critical Performance Fixes (blocking I/O, WAF parallelization, string allocation reduction) |
-| Wave 2 | Mesh & DHT Infrastructure (DNS capability, sharding, adaptive quorum) |
-| Wave 3 | WAF & Threat Intelligence (local indicator lookup, deduplication) |
-| Wave 4 | File Upload Security (magic bytes, malware scanning) |
+| Wave 1 | Critical Performance Fixes (to_lowercase, allocations, rate limiting) |
+| Wave 2 | Mesh & DHT Infrastructure (image poisoning, YARA distribution, security) |
+| Wave 3 | WAF & Threat Intelligence (local lookup, deduplication) |
+| Wave 4 | File Upload Security (archive depth, path traversal fixes) |
 | Wave 5 | Edge Caching & Transform Sharing |
-| Wave 6 | Serverless Architecture (unified pool, routing, versioning) |
-| Wave 7 | Built-in Web App Stack (directory viewer, PHP, WASI) |
+| Wave 6 | Serverless Architecture (future) |
+| Wave 7 | Security Audit Remediation (SSRF, OsRng, NSEC3) |
+| Wave 8 | Code Quality & Technical Debt (test compilation, .unwrap(), unsafe docs) |
+| Wave 9 | Data Tech Stack Optimization (cache TTL, memory-aware eviction, rkyv) |
 
 See `plans/plan.md` for full implementation details.
+
+## Known Critical Issues (Blocking Implementation)
+
+The following issues MUST be fixed before other improvements can be tested:
+
+| Issue | Location | Impact |
+|-------|----------|--------|
+| Test compilation fails | `src/dns/platform.rs:193,206,219,232,245,258,309,332` | `in_pktinfo::from_bytes_mut` not found - nix API mismatch |
+| DHT key prefix mismatch | `src/mesh/threat_intel.rs:1040` | Reads `threat:` but publishes `threat_indicator:` - sync broken |
+| ThreatSyncResponse not processed | `src/mesh/threat_intel.rs:1281-1396` | No handler for this message type - received threats ignored |
 
 ## Admin Panel Architecture Notes
 
