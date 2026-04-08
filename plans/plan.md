@@ -352,6 +352,8 @@ Create `VerifiedUpstream` record when origin registers:
 2. Store in DHT with key `verified_upstream:{upstream_id}`
 3. Include global node signature for verification
 
+**Status**: 🔄 DEFERRED - Requires deeper architectural review of UpstreamUpdate flow and global node signing
+
 #### Phase 6: Multi-Origin Discovery
 
 **Files to modify**: `src/mesh/topology.rs`, `src/mesh/proxy.rs`
@@ -359,6 +361,8 @@ Create `VerifiedUpstream` record when origin registers:
 1. Enable `find_all_origins_for_site()` to be called
 2. Implement round-robin or weighted load balancing across origins
 3. Use capability info to filter origins by supported service
+
+**Status**: 🔄 DEFERRED - Requires Phase 5 completion and load balancing architecture decision
 
 #### Phase 7: Encrypt TierKey for DHT Storage
 
@@ -370,6 +374,8 @@ let tier_key_json = serde_json::to_vec(tier_key)?;
 let encrypted_key = encrypt_tier_key(&tier_key_json, mesh_session_key)?;
 record_store.store_and_announce(key, encrypted_key, ttl);
 ```
+
+**Status**: 🔄 DEFERRED - Requires architectural work: mesh_session_key not available in transport_org, needs refactoring to pass encryption context
 
 #### Phase 8: Encrypt TierKey for Transmission
 
@@ -386,28 +392,39 @@ proto::TierKey {
 }
 ```
 
+**Status**: 🔄 DEFERRED - Requires Phase 7 completion (encryption context)
+
+#### Completed Phases Summary
+
+| Phase | Description | Status |
+|-------|-------------|--------|
+| 1 | NodeCapability DHT key | ✅ COMPLETED |
+| 2 | Wire MeshCapabilities.supported_services | ✅ COMPLETED |
+| 3 | Capability announcement on startup | ✅ COMPLETED |
+| 4 | Fix UpstreamAnnounce processing | ✅ COMPLETED |
+| 5 | VerifiedUpstream DHT storage | 🔄 DEFERRED |
+| 6 | Multi-origin discovery | 🔄 DEFERRED |
+| 7 | TierKey DHT encryption | 🔄 DEFERRED |
+| 8 | TierKey transmission encryption | 🔄 DEFERRED |
+
 #### Success Metrics
 
 | Metric | Before | After |
 |--------|--------|-------|
-| Capabilities advertised per node | 0 | 3-8 |
-| Origin announcements processed | 0% | 100% |
-| VerifiedUpstream records created | 0 | All origins |
-| TierKey encrypted at rest | 0% | 100% |
-| TierKey encrypted in transit | 0% | 100% |
-| Multi-origin routing | Broken | Working |
+| Capabilities advertised per node | 0 | 3-8 (Phase 2-3) |
+| Origin announcements processed | 0% | 100% (Phase 4) |
+| TierKey encrypted at rest | 0% | 🔄 DEFERRED |
+| TierKey encrypted in transit | 0% | 🔄 DEFERRED |
+| Multi-origin routing | Broken | 🔄 DEFERRED |
 
-#### Files to Modify
+#### Files Modified (Completed Phases)
 
-- `src/mesh/dht/keys.rs` (add NodeCapability key type)
-- `src/mesh/protocol.rs` (wire MeshCapabilities.from_config)
-- `src/mesh/transport.rs` (capability announcement, UpstreamAnnounce processing)
-- `src/mesh/transport_peer.rs` (handle UpstreamAnnounce)
-- `src/mesh/topology.rs` (multi-origin discovery)
-- `src/mesh/proxy.rs` (use multi-origin routing)
-- `src/mesh/transport_org.rs` (encrypt TierKey)
-- `src/mesh/protocol_proto_encode.rs` (encrypt TierKey in messages)
-- `src/worker/unified_server.rs` (wire capability announcement)
+- `src/mesh/dht/keys.rs` (Phase 1: add NodeCapability key type)
+- `src/mesh/protocol.rs` (Phase 2: wire MeshCapabilities.from_config)
+- `src/mesh/transport.rs` (Phase 3: add announce_capabilities)
+- `src/mesh/transports/manager.rs` (Phase 3: add announce_capabilities to manager)
+- `src/mesh/transport_peer.rs` (Phase 4: fix UpstreamAnnounce processing)
+- `src/worker/unified_server.rs` (Phase 3: wire capability announcement)
 - `plans/plan.md` (this document)
 
 ### 2.4 Threat Intelligence & Honeypot ✅ COMPLETED

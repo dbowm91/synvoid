@@ -1658,10 +1658,35 @@ impl MeshTransport {
             }
             MeshMessage::UpstreamAnnounce {
                 upstream_id,
-                action: _,
+                action,
                 signature: _,
             } => {
-                tracing::debug!("Upstream announcement: {}", upstream_id);
+                use crate::mesh::protocol::AnnounceAction;
+                use crate::mesh::dht::keys::DhtKey;
+
+                let upstream_id = upstream_id.to_string();
+                let key = DhtKey::upstream(&upstream_id);
+                let key_str = key.as_str();
+
+                match action {
+                    AnnounceAction::Add | AnnounceAction::Update => {
+                        if let Some(ref record_store) = self.record_store {
+                            let value = serde_json::json!({
+                                "upstream_id": upstream_id,
+                                "announced_at": crate::mesh::safe_unix_timestamp(),
+                            });
+                            if let Ok(bytes) = serde_json::to_vec(&value) {
+                                let ttl = 300; // 5 minute TTL
+                                record_store.store_and_announce(key_str.to_string(), bytes, ttl);
+                                tracing::debug!("Stored upstream {} in DHT (action: {:?})", upstream_id, action);
+                            }
+                        }
+                    }
+                    AnnounceAction::Remove => {
+                        // Record will expire via TTL - no explicit removal needed
+                        tracing::debug!("Upstream {} announced removed (expires via TTL)", upstream_id);
+                    }
+                }
             }
             MeshMessage::UpstreamUpdate {
                 upstream_id,
