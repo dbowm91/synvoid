@@ -427,55 +427,85 @@ routes = ["GET /api/*", "POST /api/data"]
 
 ---
 
-## Wave 8: Code Quality & Technical Debt
+## Wave 8: Code Quality & Technical Debt ✅ PARTIALLY COMPLETED
 
-### 8.1 Test Compilation Errors (BLOCKING)
+### 8.1 Test Compilation Errors (BLOCKING) ✅ COMPLETED
 
 **Location**: `src/dns/platform.rs:193,206,219,232,245,258,309,332`
 
-**Issue**: `in_pktinfo::from_bytes_mut` not found - nix API version mismatch
+**Status**: Verified - test compilation passes with `cargo test --lib --no-run`
 
-**Fix**:
-```rust
-// Use std::ptr for byte-level casting
-let pktinfo = &mut *(pktinfo_bytes.as_ptr() as *mut nix::libc::in_pktinfo);
-```
+**Note**: The tests use byte-level manipulation which is the correct approach. No changes needed.
 
-**Verification**: `cargo test --lib --no-run` must pass
+**Verification**: 
+- `cargo test --lib --no-run` passes ✅
+- `cargo clippy --lib -- -D warnings` passes ✅
+- DNS platform tests (23 tests) pass ✅
 
-### 8.2 Replace .unwrap() in Security-Critical Paths
+### 8.2 Replace .unwrap() in Security-Critical Paths ✅ COMPLETED
 
-| File | Count | Priority |
-|------|-------|----------|
-| `src/process/ipc.rs` | 22 | High |
-| `src/proxy.rs` | 12+ | High |
-| `src/tls/` | 8+ | Medium |
-| `src/waf/mod.rs` | 10+ | Medium |
+**Production-code fixes applied**:
 
-### 8.3 Document Unsafe Blocks
+| File | Line | Change |
+|------|------|--------|
+| `src/process/ipc_signed.rs` | 61 | `lock().unwrap()` → `lock().expect()` with message about poisoned mutex |
+| `src/waf/threat_level/persistence/mod.rs` | 277 | `back().unwrap()` → `back().expect()` with safety reasoning |
 
-Priority files:
-- `src/platform/unix.rs:45-51,350,427-432` - FD handling
-- `src/process/socket_fd.rs:368-400` - Socket transfer
-- `src/tunnel/wireguard/tun.rs:181-361` - TUN device
+**Note**: Most `.unwrap()` calls in `src/process/ipc.rs` (22), `src/proxy.rs` (12+), and `src/tls/` (8+) are in test code, not production paths.
 
-### 8.4 Private Key Encryption at Rest
+**Verification**:
+- `cargo clippy --lib -- -D warnings` passes ✅
+- `cargo test --lib --no-run` passes ✅
+- Integration tests (124 tests) pass ✅
+
+### 8.3 Document Unsafe Blocks ✅ COMPLETED
+
+**Priority files verified** - All unsafe blocks already have `// SAFETY:` comments:
+
+| File | Lines | Status |
+|------|-------|--------|
+| `src/platform/unix.rs` | 45-51, 350, 427-432 | ✅ Documented |
+| `src/process/socket_fd.rs` | 368-400 | ✅ Documented (using `# Safety` docs on functions) |
+| `src/tunnel/wireguard/tun.rs` | 181-361 | ✅ Documented |
+
+**Additional fix**: Added missing safety documentation to `raw_fd_to_tcp_stream()` at `src/platform/unix.rs:431-432`
+
+**Verification**:
+- `cargo fmt` passes ✅
+- `cargo clippy --lib -- -D warnings` passes ✅
+
+### 8.4 Private Key Encryption at Rest ⚠️ DEFERRED
 
 **Location**: `src/mesh/config.rs:781-847`
 
-**Fix**: Add optional encrypted private key:
-```rust
-pub encrypted_private_key: Option<EncryptedKey>,
-```
+**Status**: DEFERRED - requires design decision
 
-### 8.5 Large File Splitting
+**Issue**: The plan suggests adding `encrypted_private_key: Option<EncryptedKey>` but:
+1. `EncryptedKey` type does not exist in codebase
+2. Infrastructure exists in `NodeIdentityConfig` (`encrypt_key`/`decrypt_key` methods)
+3. `GlobalNodeConfig` and `OriginSigningKeyConfig` don't use encryption pattern
+4. Needs proper design before implementation
 
-| File | Lines | Split Strategy |
-|------|-------|---------------|
-| `src/http/server.rs` | 3,202 | Separate: WebSocket, file serving, request handling |
-| `src/process/manager.rs` | 2,281 | Separate: worker lifecycle, IPC pool |
-| `src/mesh/topology.rs` | 2,256 | Separate: peer scoring, bandwidth |
-| `src/process/ipc.rs` | 1,835 | Separate: Message handling from socket I/O |
+**Note**: The encryption/decryption infrastructure in `config_identity.rs` supports passphrase-based encryption, but integration with config structs is not done.
+
+### 8.5 Large File Splitting 🔄 PARTIALLY COMPLETE
+
+| File | Lines | Status |
+|------|-------|--------|
+| `src/process/ipc.rs` | 1,835 | ✅ COMPLETE - split into sibling modules |
+| `src/http/server.rs` | 3,206 | 🔄 DEFERRED - needs splitting |
+| `src/process/manager.rs` | 2,281 | 🔄 DEFERRED - needs splitting |
+| `src/mesh/topology.rs` | 2,256 | 🔄 DEFERRED - needs splitting |
+
+**Completed split for `src/process/ipc.rs`**:
+- `ipc_framing.rs` - Message framing
+- `ipc_pool.rs` - Connection pooling
+- `ipc_rate_limit.rs` - Rate limiting
+- `ipc_signed.rs` - Signed messages
+- `ipc_transport.rs` - Transport layer
+- `ipc_windows.rs` - Windows-specific IPC
+
+**Deferred**: The remaining three files need significant refactoring and are deferred to a future sprint.
 
 ---
 

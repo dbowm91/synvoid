@@ -58,7 +58,9 @@ const MAX_NONCE_CACHE_SIZE: usize = 10000;
 const REPLAY_WINDOW_SECS: u64 = 300;
 
 fn check_and_insert_nonce(nonce: &[u8; 16], timestamp: u64) -> bool {
-    let mut cache = NONCE_CACHE.lock().unwrap();
+    let mut cache = NONCE_CACHE
+        .lock()
+        .expect("NONCE_CACHE lock poisoned - previous holder panicked");
 
     if cache.contains(nonce) {
         return false;

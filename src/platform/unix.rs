@@ -428,6 +428,10 @@ pub unsafe fn raw_fd_to_tcp_listener(fd: RawFd) -> OwnedTcpListener {
     OwnedTcpListener::from_raw_fd(fd)
 }
 
+/// Converts a raw file descriptor into an OwnedTcpStream, taking ownership.
+///
+/// # Safety
+/// The caller must not use the file descriptor after this call.
 pub unsafe fn raw_fd_to_tcp_stream(fd: RawFd) -> OwnedTcpStream {
     OwnedTcpStream::from_raw_fd(fd)
 }

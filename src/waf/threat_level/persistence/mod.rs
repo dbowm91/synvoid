@@ -274,7 +274,9 @@ mod persistence {
                 .map(|s| s.score)
                 .fold(0.0_f64, |a, b| a.max(b));
 
-            let last_sample = from_queue.back().unwrap();
+            let last_sample = from_queue
+                .back()
+                .expect("from_queue is non-empty due to preceding is_empty check");
 
             let aggregated = ThreatHistorySample {
                 timestamp: last_sample.timestamp,
