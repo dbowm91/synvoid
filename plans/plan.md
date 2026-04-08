@@ -78,19 +78,22 @@ This document consolidates all individual improvement plans (plan2-plan9) into a
 1. ✅ Add `SiteImagePoisonConfig` to `is_public()` in `src/mesh/dht/keys.rs`
 2. ✅ Add `get_image_poison_config_for_site()` method to `src/mesh/transports/manager.rs`
 3. ✅ Update mesh proxy to fetch and use full config
-4. 🔄 DEFERRED: Add DHT caching to standalone server in `src/http/server.rs` - requires further architecture review
+4. ✅ Add local cache for standalone server (Phase 4 COMPLETED)
 
-**Phase 4 Details** (why deferred):
-- Mesh mode (`src/mesh/proxy.rs`) has DHT caching for transforms and poisoned images
-- Standalone mode (`src/http/server.rs`) uses static config with no DHT lookup
-- `apply_image_poisoning()` in standalone mode does NOT check DHT or store results
-- Would require architectural decision: standalone servers running lightweight DHT nodes vs. separate local cache
+**Phase 4 Implementation**:
+- Decision: Use local cache for standalone (no DHT in standalone mode)
+- Added `IMAGE_POISON_CACHE` static cache using moka::sync::Cache
+- Cache key: `site_id:body_sha256_hash`
+- Cache settings: max 1000 entries, 1 hour TTL
+- `apply_image_poisoning()` now checks cache before processing
+- Cache hit returns immediately; miss processes and stores result
 
 **Files Modified**:
 - `src/mesh/dht/keys.rs`
 - `src/mesh/config.rs`
 - `src/mesh/transports/manager.rs`
 - `src/mesh/proxy.rs`
+- `src/http/server.rs` (NEW: added local image poison cache)
 
 ### 2.2 YARA Rules Mesh Distribution ✅ COMPLETED (Phases 1-2)
 

@@ -10,12 +10,14 @@
 use bytes::Bytes;
 use dashmap::DashMap;
 use futures::{SinkExt, StreamExt};
+use hex;
 use http::Response;
 use http_body_util::combinators::BoxBody;
 use http_body_util::BodyExt;
 use http_body_util::Full;
 use hyper_util::rt::TokioIo;
 use metrics::counter;
+use sha2::Digest;
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::net::{IpAddr, SocketAddr};
@@ -42,6 +44,16 @@ fn get_cached_regex(pattern: &str) -> Option<regex::Regex> {
         .clone()
 }
 
+const IMAGE_POISON_CACHE_MAX_CAPACITY: u64 = 1000;
+const IMAGE_POISON_CACHE_TTL_SECS: u64 = 3600;
+
+static IMAGE_POISON_CACHE: LazyLock<Cache<String, Vec<u8>>> = LazyLock::new(|| {
+    Cache::builder()
+        .max_capacity(IMAGE_POISON_CACHE_MAX_CAPACITY)
+        .time_to_live(Duration::from_secs(IMAGE_POISON_CACHE_TTL_SECS))
+        .build()
+});
+
 use crate::challenge::HONEYPOT_PREFIX;
 use crate::config::site::{ProxyHeadersConfig, SiteWebSocketConfig};
 use crate::config::HttpConfig;
@@ -67,6 +79,7 @@ use crate::router::Router;
 use crate::waf::{FloodDecision, FloodProtector, WafCore};
 use crate::worker::drain_state::WorkerDrainState;
 use crate::RunningFlag;
+use moka::sync::Cache;
 use parking_lot::Mutex;
 use tokio::sync::RwLock;
 
@@ -3026,6 +3039,19 @@ impl HttpServer {
             return body;
         }
 
+        let original_hash = {
+            let mut hasher = sha2::Sha256::new();
+            hasher.update(&body);
+            hex::encode(hasher.finalize())
+        };
+
+        let cache_key = format!("{}:{}", site_id, original_hash);
+
+        if let Some(cached) = IMAGE_POISON_CACHE.get(&cache_key) {
+            tracing::debug!("Image poison cache hit for {}", cache_key);
+            return Bytes::from(cached.clone());
+        }
+
         let static_worker_socket = std::env::var("STATIC_WORKER_SOCKET")
             .unwrap_or_else(|_| "/var/run/maluwaf-static-worker.sock".to_string());
 
@@ -3050,7 +3076,10 @@ impl HttpServer {
             )
             .await
         {
-            Ok(poisoned) => Bytes::from(poisoned),
+            Ok(poisoned) => {
+                IMAGE_POISON_CACHE.insert(cache_key, poisoned.clone());
+                Bytes::from(poisoned)
+            }
             Err(e) => {
                 tracing::debug!("Image poisoning failed: {}", e);
                 body
