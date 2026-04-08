@@ -84,6 +84,7 @@ pub struct GranianConfig {
     pub auto_install_granian: bool,
     pub auto_detect_venv: bool,
     pub auto_detect_app: bool,
+    pub auto_install_requirements: bool,
     pub site_id: String,
     pub worker_id: usize,
 }
@@ -109,6 +110,7 @@ impl From<&AppServerConfig> for GranianConfig {
             auto_install_granian: config.auto_install_granian,
             auto_detect_venv: config.auto_detect_venv,
             auto_detect_app: config.auto_detect_app,
+            auto_install_requirements: config.auto_install_requirements,
             site_id: String::new(),
             worker_id: 0,
         }
@@ -399,6 +401,73 @@ impl GranianSupervisor {
         Ok(())
     }
 
+    async fn ensure_requirements_installed(&self, python_binary: &PathBuf) -> Result<(), String> {
+        let working_dir = match &self.config.working_directory {
+            Some(d) => d,
+            None => {
+                tracing::debug!("No working_directory set, skipping requirements.txt check");
+                return Ok(());
+            }
+        };
+
+        let requirements_path = working_dir.join("requirements.txt");
+
+        if !requirements_path.exists() {
+            tracing::debug!(
+                "No requirements.txt found at {}, skipping dependency installation",
+                requirements_path.display()
+            );
+            return Ok(());
+        }
+
+        if !self.config.auto_install_requirements {
+            tracing::info!(
+                "requirements.txt found at {} but auto_install_requirements is disabled",
+                requirements_path.display()
+            );
+            return Ok(());
+        }
+
+        tracing::info!(
+            "Installing dependencies from requirements.txt at {}",
+            requirements_path.display()
+        );
+
+        let install_output = Command::new(python_binary)
+            .args([
+                "-m",
+                "pip",
+                "install",
+                "-r",
+                requirements_path.to_str().unwrap_or(""),
+            ])
+            .current_dir(working_dir)
+            .output()
+            .await
+            .map_err(|e| format!("Failed to run pip install: {}", e))?;
+
+        if !install_output.status.success() {
+            let stderr = String::from_utf8_lossy(&install_output.stderr);
+            let stdout = String::from_utf8_lossy(&install_output.stdout);
+            return Err(format!(
+                "Failed to install requirements:\n{}\n{}\n\
+                \nPlease install dependencies manually: {} -m pip install -r {}",
+                stdout,
+                stderr,
+                python_binary.display(),
+                requirements_path.display()
+            ));
+        }
+
+        let stdout = String::from_utf8_lossy(&install_output.stdout);
+        tracing::info!(
+            "Requirements installed successfully:\n{}",
+            stdout.lines().take(5).collect::<Vec<_>>().join("\n")
+        );
+
+        Ok(())
+    }
+
     pub async fn spawn_process(&self) -> Result<(), String> {
         let python_binary = self
             .config
@@ -418,6 +487,8 @@ impl GranianSupervisor {
         if self.config.auto_install_granian {
             self.ensure_granian_installed(&python_binary).await?;
         }
+
+        self.ensure_requirements_installed(&python_binary).await?;
 
         let mut cmd = self.build_command();
 

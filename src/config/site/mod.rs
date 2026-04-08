@@ -199,6 +199,7 @@ impl SiteConfig {
             auto_install_granian: site_config.auto_install_granian.unwrap_or(true),
             auto_detect_venv: site_config.auto_detect_venv.unwrap_or(true),
             auto_detect_app: site_config.auto_detect_app.unwrap_or(true),
+            auto_install_requirements: site_config.auto_install_requirements.unwrap_or(true),
         }
     }
 }

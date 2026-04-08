@@ -41,6 +41,8 @@ pub struct SiteAppServerConfig {
     pub auto_detect_venv: Option<bool>,
     #[serde(default = "default_some_true")]
     pub auto_detect_app: Option<bool>,
+    #[serde(default = "default_some_true")]
+    pub auto_install_requirements: Option<bool>,
 }
 
 fn default_some_true() -> Option<bool> {

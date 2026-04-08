@@ -1,3 +1,5 @@
+pub mod pool;
+
 use std::borrow::Cow;
 use std::collections::HashMap;
 

@@ -142,6 +142,7 @@ impl ServerlessManager {
                     timeout_seconds: func_def.timeout_seconds.unwrap_or(30),
                     max_instances: 1,
                     memory_budget_mb: None,
+                    wasi_enabled: false,
                 };
                 return self
                     .runtime
@@ -166,6 +167,7 @@ impl ServerlessManager {
             timeout_seconds: func_def.timeout_seconds.unwrap_or(30),
             max_instances: 1,
             memory_budget_mb: None,
+            wasi_enabled: false,
         };
 
         self.runtime

@@ -1,0 +1,297 @@
+use std::collections::VecDeque;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use bytes::Bytes;
+use http::{Method, Uri};
+use parking_lot::RwLock;
+use tokio::time::timeout;
+
+use crate::config::site::FastCgiConfig;
+use crate::fastcgi::{FastCgiClient, FastCgiError, FastCgiResponse};
+
+#[derive(Debug, Clone)]
+pub struct FastCgiPoolConfig {
+    pub max_connections: usize,
+    pub connection_timeout: Duration,
+    pub health_check_interval: Duration,
+    pub health_check_timeout: Duration,
+    pub max_idle_time: Duration,
+    pub socket: String,
+}
+
+impl Default for FastCgiPoolConfig {
+    fn default() -> Self {
+        Self {
+            max_connections: 10,
+            connection_timeout: Duration::from_secs(5),
+            health_check_interval: Duration::from_secs(30),
+            health_check_timeout: Duration::from_secs(3),
+            max_idle_time: Duration::from_secs(300),
+            socket: String::new(),
+        }
+    }
+}
+
+struct PooledConnection {
+    client: FastCgiClient,
+    last_used: Instant,
+    in_use: bool,
+}
+
+pub struct FastCgiPool {
+    config: FastCgiPoolConfig,
+    connections: RwLock<VecDeque<PooledConnection>>,
+    semaphore: tokio::sync::Semaphore,
+    health_check_task: RwLock<Option<tokio::task::JoinHandle<()>>>,
+    closed: RwLock<bool>,
+}
+
+impl FastCgiPool {
+    pub fn new(config: FastCgiPoolConfig) -> Arc<Self> {
+        let max_connections = config.max_connections;
+        let health_check_interval = config.health_check_interval;
+
+        let pool = Arc::new(Self {
+            config,
+            connections: RwLock::new(VecDeque::new()),
+            semaphore: tokio::sync::Semaphore::new(max_connections),
+            health_check_task: RwLock::new(None),
+            closed: RwLock::new(false),
+        });
+
+        Self::start_health_check(Arc::clone(&pool), health_check_interval);
+        pool
+    }
+
+    pub fn from_config(fcgi_config: &FastCgiConfig, socket: String) -> Arc<Self> {
+        let config = FastCgiPoolConfig {
+            max_connections: 10,
+            connection_timeout: Duration::from_secs(fcgi_config.connect_timeout.unwrap_or(5)),
+            health_check_interval: Duration::from_secs(30),
+            health_check_timeout: Duration::from_secs(3),
+            max_idle_time: Duration::from_secs(300),
+            socket,
+        };
+
+        Self::new(config)
+    }
+
+    fn start_health_check(pool: Arc<Self>, interval: Duration) {
+        let task_pool = Arc::clone(&pool);
+        let handle = tokio::spawn(async move {
+            let mut interval = tokio::time::interval(interval);
+            loop {
+                interval.tick().await;
+                task_pool.check_connections();
+            }
+        });
+
+        *pool.health_check_task.write() = Some(handle);
+    }
+
+    fn check_connections(&self) {
+        let mut connections = self.connections.write();
+        let now = Instant::now();
+        let max_idle = self.config.max_idle_time;
+
+        connections.retain(|conn| {
+            if conn.in_use {
+                return true;
+            }
+            if now.duration_since(conn.last_used) > max_idle {
+                tracing::debug!("Removing idle FastCGI connection");
+                return false;
+            }
+            true
+        });
+    }
+
+    pub async fn execute(
+        &self,
+        method: &Method,
+        uri: &Uri,
+        headers: &http::HeaderMap,
+        body: Bytes,
+        config: &FastCgiConfig,
+    ) -> Result<FastCgiResponse, FastCgiError> {
+        if *self.closed.read() {
+            return Err(FastCgiError::ConnectionFailed("Pool is closed".to_string()));
+        }
+
+        let permit = timeout(self.config.connection_timeout, self.semaphore.acquire())
+            .await
+            .map_err(|_| FastCgiError::ConnectionFailed("Timeout acquiring permit".to_string()))?
+            .map_err(|_| FastCgiError::ConnectionFailed("Semaphore closed".to_string()))?;
+
+        let _permit = permit;
+
+        let connection = self.get_connection().await?;
+
+        let result = connection
+            .client
+            .execute(method, uri, headers, body, config)
+            .await;
+
+        self.release_connection(connection);
+
+        result
+    }
+
+    async fn get_connection(&self) -> Result<PooledConnection, FastCgiError> {
+        let socket = self.config.socket.clone();
+
+        {
+            let mut connections = self.connections.write();
+
+            if let Some(mut conn) = connections.pop_front() {
+                if !conn.in_use {
+                    conn.in_use = true;
+                    return Ok(conn);
+                }
+            }
+        }
+
+        let client = FastCgiClient::new(socket);
+        Ok(PooledConnection {
+            client,
+            last_used: Instant::now(),
+            in_use: true,
+        })
+    }
+
+    fn release_connection(&self, mut connection: PooledConnection) {
+        connection.in_use = false;
+        connection.last_used = Instant::now();
+
+        let mut connections = self.connections.write();
+        if connections.len() < self.config.max_connections {
+            connections.push_back(connection);
+        }
+    }
+
+    pub fn close(&self) {
+        *self.closed.write() = true;
+
+        if let Some(handle) = self.health_check_task.write().take() {
+            handle.abort();
+        }
+
+        self.connections.write().clear();
+        self.semaphore.close();
+    }
+
+    pub fn health_check(&self) -> bool {
+        if *self.closed.read() {
+            return false;
+        }
+
+        let socket = &self.config.socket;
+        if socket.starts_with('/') || socket.starts_with("unix:") {
+            std::path::Path::new(socket).exists()
+        } else {
+            socket.contains(':')
+        }
+    }
+
+    pub fn connection_count(&self) -> usize {
+        self.connections.read().len()
+    }
+
+    pub fn available_connections(&self) -> usize {
+        self.semaphore.available_permits()
+    }
+}
+
+impl Drop for FastCgiPool {
+    fn drop(&mut self) {
+        self.close();
+    }
+}
+
+pub struct FastCgiPoolManager {
+    pools: RwLock<HashMap<String, Arc<FastCgiPool>>>,
+}
+
+type HashMap<K, V> = std::collections::HashMap<K, V>;
+
+impl FastCgiPoolManager {
+    pub fn new() -> Self {
+        Self {
+            pools: RwLock::new(HashMap::new()),
+        }
+    }
+
+    pub fn get_or_create_pool(&self, socket: &str, config: &FastCgiConfig) -> Arc<FastCgiPool> {
+        let key = socket.to_string();
+
+        if let Some(pool) = self.pools.read().get(&key) {
+            return Arc::clone(pool);
+        }
+
+        let pool = FastCgiPool::from_config(config, socket.to_string());
+
+        let existing = self.pools.write().insert(key, Arc::clone(&pool));
+        if existing.is_some() {
+            pool.close();
+        }
+
+        Arc::clone(&pool)
+    }
+
+    pub fn remove_pool(&self, socket: &str) {
+        if let Some(pool) = self.pools.write().remove(&socket.to_string()) {
+            pool.close();
+        }
+    }
+
+    pub fn close_all(&self) {
+        let pools: Vec<_> = self.pools.write().drain().collect();
+        for (_, pool) in pools {
+            pool.close();
+        }
+    }
+}
+
+impl Default for FastCgiPoolManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_pool_config_defaults() {
+        let config = FastCgiPoolConfig::default();
+        assert_eq!(config.max_connections, 10);
+        assert_eq!(config.connection_timeout, Duration::from_secs(5));
+        assert_eq!(config.max_idle_time, Duration::from_secs(300));
+    }
+
+    #[tokio::test]
+    async fn test_pool_creation() {
+        let config = FastCgiPoolConfig {
+            socket: "/tmp/test.sock".to_string(),
+            ..Default::default()
+        };
+        let pool = FastCgiPool::new(config);
+        assert!(pool.health_check());
+        pool.close();
+    }
+
+    #[tokio::test]
+    async fn test_pool_manager() {
+        let manager = FastCgiPoolManager::new();
+        let config = crate::config::site::FastCgiConfig::default();
+
+        let pool1 = manager.get_or_create_pool("/tmp/test.sock", &config);
+        let pool2 = manager.get_or_create_pool("/tmp/test.sock", &config);
+
+        assert!(Arc::ptr_eq(&pool1, &pool2));
+
+        manager.close_all();
+    }
+}

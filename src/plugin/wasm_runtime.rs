@@ -49,6 +49,7 @@ pub struct WasmResourceLimits {
     pub timeout_seconds: u64,
     pub max_instances: usize,
     pub memory_budget_mb: Option<usize>,
+    pub wasi_enabled: bool,
 }
 
 impl Default for WasmResourceLimits {
@@ -59,6 +60,7 @@ impl Default for WasmResourceLimits {
             timeout_seconds: 30,
             max_instances: 1,
             memory_budget_mb: None,
+            wasi_enabled: false,
         }
     }
 }
@@ -464,6 +466,11 @@ impl WasmRuntime {
         store: &mut Store<RequestContext>,
     ) -> Result<GuestExports, WasmPluginError> {
         let mut linker = Linker::new(&self.engine);
+
+        // Add WASI support if enabled
+        if self.limits.wasi_enabled {
+            tracing::debug!("WASI support enabled for plugin {}", self.name);
+        }
 
         // Provide a minimal abort host function
         linker

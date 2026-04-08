@@ -27,6 +27,7 @@ pub struct AppServerConfig {
     pub auto_install_granian: bool,
     pub auto_detect_venv: bool,
     pub auto_detect_app: bool,
+    pub auto_install_requirements: bool,
 }
 
 impl Default for AppServerConfig {
@@ -51,6 +52,7 @@ impl Default for AppServerConfig {
             auto_install_granian: true,
             auto_detect_venv: true,
             auto_detect_app: true,
+            auto_install_requirements: true,
         }
     }
 }

@@ -174,6 +174,7 @@ impl InstancePool {
                     timeout_seconds: self.function_definition.timeout_seconds.unwrap_or(30),
                     max_instances: 1,
                     memory_budget_mb: None,
+                    wasi_enabled: false,
                 },
             )
             .map_err(InstancePoolError::InstanceCreationFailed)?;
