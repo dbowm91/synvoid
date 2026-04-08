@@ -315,8 +315,10 @@ impl MeshDataEncryption {
     }
 
     pub fn generate_key(&self) -> [u8; 32] {
+        use rand::{RngCore, SeedableRng};
         let mut key = [0u8; 32];
-        rand::fill(&mut key);
+        let mut rng = rand::rngs::StdRng::from_os_rng();
+        rng.fill_bytes(&mut key);
 
         let mut encryption_key = self.encryption_key.write();
         *encryption_key = Some(key);
@@ -325,6 +327,7 @@ impl MeshDataEncryption {
     }
 
     pub fn encrypt(&self, plaintext: &[u8]) -> Option<Vec<u8>> {
+        use rand::{RngCore, SeedableRng};
         let key = self.encryption_key.read();
         let key = key.as_ref()?;
 
@@ -336,7 +339,8 @@ impl MeshDataEncryption {
         let cipher = Aes256Gcm::new_from_slice(key).ok()?;
 
         let mut nonce_bytes = [0u8; 12];
-        rand::fill(&mut nonce_bytes);
+        let mut rng = rand::rngs::StdRng::from_os_rng();
+        rng.fill_bytes(&mut nonce_bytes);
         let nonce = Nonce::from_slice(&nonce_bytes);
 
         let ciphertext = cipher.encrypt(nonce, plaintext).ok()?;

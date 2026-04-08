@@ -989,7 +989,10 @@ impl FileManager {
         {
             let mut entry = entry.map_err(FileManagerError::IoError)?;
 
-            let entry_path = entry.path().map_err(FileManagerError::IoError)?.into_owned();
+            let entry_path = entry
+                .path()
+                .map_err(FileManagerError::IoError)?
+                .into_owned();
             let outpath = dest.join(&entry_path);
 
             let outpath_canonical = outpath.canonicalize().unwrap_or_else(|_| {
@@ -1073,7 +1076,10 @@ impl FileManager {
         {
             let mut entry = entry.map_err(FileManagerError::IoError)?;
 
-            let entry_path = entry.path().map_err(FileManagerError::IoError)?.into_owned();
+            let entry_path = entry
+                .path()
+                .map_err(FileManagerError::IoError)?
+                .into_owned();
             let outpath = dest.join(&entry_path);
 
             let outpath_canonical = outpath.canonicalize().unwrap_or_else(|_| {

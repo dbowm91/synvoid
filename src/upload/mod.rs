@@ -109,7 +109,8 @@ impl UploadValidator {
                 true,
             )
             .unwrap_or(YaraRulesSource::Bundled);
-            let scanner = YaraScanner::with_timeout(source, config.yara_timeout_ms, 3, 100 * 1024 * 1024)?;
+            let scanner =
+                YaraScanner::with_timeout(source, config.yara_timeout_ms, 3, 100 * 1024 * 1024)?;
             Some(Arc::new(MalwareScanner::with_yara(Some(scanner))))
         } else {
             Some(Arc::new(MalwareScanner::with_yara(None)))

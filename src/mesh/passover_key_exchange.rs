@@ -1182,13 +1182,19 @@ mod tests {
 
     #[test]
     fn test_x25519_key_derivation() {
-        // Client generates key pair using rand::random
-        let client_secret_bytes: [u8; 32] = rand::random();
+        use rand::TryRngCore;
+        let mut rng = rand::rngs::OsRng;
+        // Client generates key pair using OsRng
+        let mut client_secret_bytes = [0u8; 32];
+        rng.try_fill_bytes(&mut client_secret_bytes)
+            .expect("RNG failure");
         let client_secret = StaticSecret::from(client_secret_bytes);
         let client_public = X25519PublicKey::from(&client_secret);
 
         // Server generates key pair
-        let server_secret_bytes: [u8; 32] = rand::random();
+        let mut server_secret_bytes = [0u8; 32];
+        rng.try_fill_bytes(&mut server_secret_bytes)
+            .expect("RNG failure");
         let server_secret = StaticSecret::from(server_secret_bytes);
         let server_public = X25519PublicKey::from(&server_secret);
 
@@ -1260,8 +1266,11 @@ mod tests {
 
     #[test]
     fn test_ed25519_signing_and_verification() {
-        // Generate key pair using rand::random
-        let secret_bytes: [u8; 32] = rand::random();
+        use rand::TryRngCore;
+        let mut rng = rand::rngs::OsRng;
+        // Generate key pair using OsRng
+        let mut secret_bytes = [0u8; 32];
+        rng.try_fill_bytes(&mut secret_bytes).expect("RNG failure");
         let signing_key = SigningKey::from_bytes(&secret_bytes);
         let verifying_key = signing_key.verifying_key();
 
@@ -1310,10 +1319,15 @@ mod tests {
         use crate::mesh::config::GlobalNodeConfig;
 
         // Generate test keys
-        let x25519_secret: [u8; 32] = rand::random();
+        use rand::TryRngCore;
+        let mut rng = rand::rngs::OsRng;
+        let mut x25519_secret = [0u8; 32];
+        rng.try_fill_bytes(&mut x25519_secret).expect("RNG failure");
         let x25519_secret_b64 = URL_SAFE_NO_PAD.encode(x25519_secret);
 
-        let ed25519_secret: [u8; 32] = rand::random();
+        let mut ed25519_secret = [0u8; 32];
+        rng.try_fill_bytes(&mut ed25519_secret)
+            .expect("RNG failure");
         let ed25519_secret_b64 = URL_SAFE_NO_PAD.encode(ed25519_secret);
 
         let mut config = GlobalNodeConfig {
@@ -1336,15 +1350,19 @@ mod tests {
 
     #[test]
     fn test_full_key_exchange_signing_flow() {
+        use rand::TryRngCore;
         // Simulate the full flow: client signs, server verifies
 
         // Generate client keys
-        let client_secret: [u8; 32] = rand::random();
+        let mut rng = rand::rngs::OsRng;
+        let mut client_secret = [0u8; 32];
+        rng.try_fill_bytes(&mut client_secret).expect("RNG failure");
         let client_signing_key = SigningKey::from_bytes(&client_secret);
         let client_verifying_key = client_signing_key.verifying_key();
 
         // Generate server keys
-        let server_secret: [u8; 32] = rand::random();
+        let mut server_secret = [0u8; 32];
+        rng.try_fill_bytes(&mut server_secret).expect("RNG failure");
         let server_signing_key = SigningKey::from_bytes(&server_secret);
         let server_verifying_key = server_signing_key.verifying_key();
 

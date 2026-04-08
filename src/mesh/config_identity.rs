@@ -129,9 +129,10 @@ impl GlobalNodeConfig {
 
 impl GenesisKeyConfig {
     pub fn generate() -> Self {
-        use rand::RngCore;
+        use rand::{RngCore, SeedableRng};
         let mut key = [0u8; 32];
-        rand::rng().fill_bytes(&mut key);
+        let mut rng = rand::rngs::StdRng::from_os_rng();
+        rng.fill_bytes(&mut key);
         let public_key = Self::derive_public_key(&key);
 
         Self {

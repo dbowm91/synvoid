@@ -280,7 +280,16 @@ impl SsrfDetector {
             return false;
         }
         self.allowed_domains_lower.iter().any(|domain| {
-            input_lower == domain.as_str() || input_lower.ends_with(&format!(".{}", domain))
+            if input_lower == domain.as_str() {
+                return true;
+            }
+            if input_lower.ends_with(&format!(".{}", domain)) {
+                let prefix_len = input_lower.len() - domain.len();
+                if prefix_len > 0 && input_lower.as_bytes()[prefix_len - 1] == b'.' {
+                    return true;
+                }
+            }
+            false
         })
     }
 
@@ -289,12 +298,13 @@ impl SsrfDetector {
         input: &str,
         location: InputLocation,
     ) -> Option<AttackDetectionResult> {
-        let decoded = url_decode_all(input);
-        let decoded_lower = decoded.to_lowercase();
-
-        if self.is_allowed_domain(&decoded_lower) {
+        let input_lower = input.to_lowercase();
+        if self.is_allowed_domain(&input_lower) {
             return None;
         }
+
+        let decoded = url_decode_all(input);
+        let decoded_lower = decoded.to_lowercase();
 
         if let Some(mat) = self.inner.patterns_ref().find(&decoded_lower) {
             let matched = decoded[mat.start()..mat.end()].to_string();

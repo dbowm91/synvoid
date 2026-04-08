@@ -18,9 +18,11 @@ pub struct OrgKey {
 
 impl OrgKey {
     pub fn generate(issued_by: Option<String>) -> Self {
-        use rand::RngCore;
+        use rand::TryRngCore;
         let mut private_key = vec![0u8; 32];
-        rand::rng().fill_bytes(&mut private_key);
+        rand::rngs::OsRng
+            .try_fill_bytes(&mut private_key)
+            .expect("RNG failure");
         let public_key = derive_org_public_key(&private_key);
 
         Self {
@@ -579,9 +581,11 @@ pub fn is_mesh_name_allowed(name: &str) -> bool {
 }
 
 pub fn generate_invitation_token() -> String {
-    use rand::RngCore;
+    use rand::TryRngCore;
     let mut bytes = [0u8; 32];
-    rand::rng().fill_bytes(&mut bytes);
+    rand::rngs::OsRng
+        .try_fill_bytes(&mut bytes)
+        .expect("RNG failure");
     hex::encode(bytes)
 }
 

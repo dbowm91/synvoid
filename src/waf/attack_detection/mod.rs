@@ -901,6 +901,15 @@ impl AttackDetector {
     }
 
     fn check_open_redirect(&self, inputs: &NormalizedInputs) -> Option<AttackDetectionResult> {
+        if let Some(ref path) = inputs.path {
+            if let Some(result) = self
+                .open_redirect_detector
+                .detect(path.as_str(), InputLocation::Path)
+            {
+                return Some(result);
+            }
+        }
+
         if let Some(ref qs) = inputs.query_string {
             if let Some(result) = self
                 .open_redirect_detector

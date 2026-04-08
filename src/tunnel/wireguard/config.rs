@@ -1,7 +1,6 @@
 use std::net::SocketAddr;
 
 use ipnetwork::IpNetwork;
-use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -314,10 +313,11 @@ pub fn base64_decode_key(key: &str) -> Option<[u8; 32]> {
 }
 
 pub fn generate_keypair() -> (String, String) {
-    use rand::RngCore;
+    use rand::{RngCore, SeedableRng};
 
     let mut private_key = [0u8; 32];
-    rand::rng().fill_bytes(&mut private_key);
+    let mut rng = rand::rngs::StdRng::from_os_rng();
+    rng.fill_bytes(&mut private_key);
 
     let public_key = x25519_public_from_private(&private_key);
 
@@ -337,9 +337,10 @@ pub fn x25519_public_from_private(private_key: &[u8; 32]) -> [u8; 32] {
 
     #[cfg(not(feature = "wireguard"))]
     {
+        use rand::{RngCore, SeedableRng};
         let _private_key = private_key;
-        let mut rng = rand::rng();
         let mut pk = [0u8; 32];
+        let mut rng = rand::rngs::StdRng::from_os_rng();
         rng.fill_bytes(&mut pk);
         pk
     }

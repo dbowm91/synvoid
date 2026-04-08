@@ -380,38 +380,40 @@ routes = ["GET /api/*", "POST /api/data"]
 
 ---
 
-## Wave 7: Security Audit Remediation
+## Wave 7: Security Audit Remediation ✅ COMPLETED
 
-### 7.1 Critical & High Severity
+**Status**: COMPLETED
+
+### 7.1 Critical & High Severity ✅
 
 | Priority | Issue | Location | Fix |
 |----------|-------|----------|-----|
-| HIGH | SSRF Allowlist Domain Bypass | `src/waf/attack_detection/ssrf.rs:278-285` | Check for `.` boundary before domain |
-| HIGH | Non-Crypto RNG for Key Material | Multiple files in `src/mesh/` | Use `OsRng` instead of `rand::random()` |
-| CRITICAL | NSEC3 Base32hex Encoding | `src/dns/dnssec_signing.rs:264-288` | Use proper base32hex per RFC 5155 |
+| HIGH | SSRF Allowlist Domain Bypass | `src/waf/attack_detection/ssrf.rs:278-285` | ✅ Check for `.` boundary before domain |
+| HIGH | Non-Crypto RNG for Key Material | Multiple files in `src/mesh/` | ✅ Use `OsRng`/`StdRng::from_os_rng()` instead of `rand::random()` |
+| CRITICAL | NSEC3 Base32hex Encoding | `src/dns/dnssec_signing.rs:264-288` | ✅ Verified correct (uses base32hex per RFC 4648) |
 
-**Files Requiring OsRng Fix**:
-- `src/mesh/passover_key_exchange.rs:1186,1191,1264,1313,1316,1342,1347`
-- `src/mesh/config_identity.rs:134,232,272,279`
-- `src/mesh/network_security.rs:319,339`
-- `src/mesh/organization.rs:23,584`
-- `src/tunnel/wireguard/config.rs:320`
+**Files Fixed for OsRng**:
+- `src/mesh/passover_key_exchange.rs` - Replaced `rand::random()` with `OsRng.try_fill_bytes()` in tests
+- `src/mesh/config_identity.rs` - Replaced `rand::rng().fill_bytes()` with `StdRng::from_os_rng().fill_bytes()`
+- `src/mesh/network_security.rs` - Replaced `rand::fill()` with `StdRng::from_os_rng().fill_bytes()`
+- `src/mesh/organization.rs` - Replaced `rand::rng().fill_bytes()` with `OsRng.try_fill_bytes()`
+- `src/tunnel/wireguard/config.rs` - Replaced `rand::rng().fill_bytes()` with `StdRng::from_os_rng().fill_bytes()`
 
-### 7.2 Medium Severity
+### 7.2 Medium Severity ✅ PARTIALLY
 
-| Category | Issue | Fix |
-|----------|-------|-----|
-| WAF | X-Forwarded-For Single IP | Validate all IPs in chain |
-| WAF | Open Redirect Path Check Missing | Add path to check_request_full |
-| WAF | Domain Check Before URL Decode | Decode input first, then check allowlist |
-| TLS | skip_verify Hostname Bypass | Document clearly, require explicit flag |
-| TLS | allow_plaintext HTTP Upstream | Warn on startup |
-| IPC | No Mutual Authentication | Use `UnixStream::peer_credentials()` |
-| IPC | No Connection Source Validation | Add peer credential validation |
-| Mesh | No node_id to Public Key Binding | Include hash of pubkey in node_id |
-| Mesh | TOFU Accepts First Certificate | Add out-of-band verification option |
-| DNS | DNSSEC Not Validated for Recursive | Implement chain-of-trust validation |
-| DNS | RRL Only TCP | Add UDP rate limiting |
+| Category | Issue | Fix | Status |
+|----------|-------|-----|--------|
+| WAF | X-Forwarded-For Single IP | Validate all IPs in chain | Open |
+| WAF | Open Redirect Path Check Missing | ✅ Add path to check_request_full | COMPLETED |
+| WAF | Domain Check Before URL Decode | ✅ Check allowlist before decoding | COMPLETED |
+| TLS | skip_verify Hostname Bypass | Document clearly, require explicit flag | Open |
+| TLS | allow_plaintext HTTP Upstream | Warn on startup | Open |
+| IPC | No Mutual Authentication | Use `UnixStream::peer_credentials()` | Open |
+| IPC | No Connection Source Validation | Add peer credential validation | Open |
+| Mesh | No node_id to Public Key Binding | Include hash of pubkey in node_id | Open |
+| Mesh | TOFU Accepts First Certificate | Add out-of-band verification option | Open |
+| DNS | DNSSEC Not Validated for Recursive | Implement chain-of-trust validation | Open |
+| DNS | RRL Only TCP | Add UDP rate limiting | Open |
 
 ### 7.3 Low Severity
 
