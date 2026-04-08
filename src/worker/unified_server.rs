@@ -744,6 +744,20 @@ pub async fn run_unified_server_worker(
                 }
             }
 
+            // Announce node capabilities to DHT for discovery
+            {
+                let capabilities = crate::mesh::protocol::MeshCapabilities::from_config(
+                    mesh_config,
+                    mesh_config.role,
+                );
+                if !capabilities.supported_services.is_empty() {
+                    transport_manager.announce_capabilities(
+                        &mesh_config.node_id(),
+                        &capabilities.supported_services,
+                    );
+                }
+            }
+
             // Start background tasks for threat intel (periodic sync, cleanup)
             threat_intel.start_background_tasks();
 

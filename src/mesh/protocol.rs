@@ -1024,19 +1024,45 @@ impl MeshCapabilities {
             | crate::mesh::config::MeshTransportPreference::Quic => MeshTransportType::Quic,
         };
 
+        let dht_config = config.dht.as_ref();
+
+        let dns_mesh_mode_only = dht_config.map(|c| c.dns_mesh_mode_only).unwrap_or(true);
+
+        let dns_server_enabled = dht_config.map(|c| c.dns_server_enabled).unwrap_or(false);
+
+        let proxy_to_origins = dht_config.map(|c| c.proxy_to_origins).unwrap_or(false);
+
+        let can_host_origins = dht_config.map(|c| c.can_host_origins).unwrap_or(false);
+
+        let mut supported_services = Vec::new();
+
+        if role.is_global() {
+            supported_services.push("global".to_string());
+        }
+        if role.is_edge() || role.contains(MeshNodeRole::EDGE) {
+            supported_services.push("edge".to_string());
+        }
+        if role.contains(MeshNodeRole::ORIGIN) || can_host_origins {
+            supported_services.push("origin".to_string());
+        }
+        if dns_server_enabled && !dns_mesh_mode_only {
+            supported_services.push("dnsRecursive".to_string());
+        }
+        if dns_mesh_mode_only && dns_server_enabled {
+            supported_services.push("dnsAuthority".to_string());
+        }
+        if proxy_to_origins {
+            supported_services.push("proxyOrigin".to_string());
+        }
+
         Self {
             can_route: config.routing.enabled,
             can_proxy: !config.disable_direct_origin,
-            can_serve_dns: !config
-                .dht
-                .as_ref()
-                .map(|c| c.dns_mesh_mode_only)
-                .unwrap_or(true)
-                || (config.dht.is_some() && role.is_global()),
+            can_serve_dns: !dns_mesh_mode_only || (config.dht.is_some() && role.is_global()),
             is_global: role.is_global(),
             waf_enabled: true,
             max_hops: config.routing.max_hops,
-            supported_services: vec![],
+            supported_services,
             preferred_transport: Some(preferred),
             supported_protocols: vec!["http/1.1".to_string(), "h2".to_string(), "h3".to_string()],
         }

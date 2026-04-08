@@ -53,6 +53,10 @@ pub enum DhtKey {
     YaraRulesManifest {
         node_id: String,
     },
+    NodeCapability {
+        node_id: String,
+        capability: String,
+    },
 }
 
 impl DhtKey {
@@ -171,6 +175,13 @@ impl DhtKey {
         }
     }
 
+    pub fn node_capability(node_id: &str, capability: &str) -> Self {
+        DhtKey::NodeCapability {
+            node_id: node_id.to_string(),
+            capability: capability.to_string(),
+        }
+    }
+
     pub fn as_str(&self) -> String {
         match self {
             DhtKey::Organization(org_id) => format!("org:{}", org_id),
@@ -228,6 +239,12 @@ impl DhtKey {
             }
             DhtKey::YaraRulesManifest { node_id } => {
                 format!("yara_rules_manifest:{}", node_id)
+            }
+            DhtKey::NodeCapability {
+                node_id,
+                capability,
+            } => {
+                format!("node_capability:{}:{}", node_id, capability)
             }
         }
     }
@@ -298,6 +315,10 @@ impl DhtKey {
             "yara_rules_manifest" if parts.len() >= 2 => DhtKey::YaraRulesManifest {
                 node_id: parts[1].to_string(),
             },
+            "node_capability" if parts.len() >= 3 => DhtKey::NodeCapability {
+                node_id: parts[1].to_string(),
+                capability: parts[2].to_string(),
+            },
             _ => DhtKey::NodeInfo(s.to_string()),
         }
     }
@@ -336,6 +357,7 @@ impl DhtKey {
                 | DhtKey::SiteImagePoisonConfig(_)
                 | DhtKey::YaraRuleContent { .. }
                 | DhtKey::YaraRulesManifest { .. }
+                | DhtKey::NodeCapability { .. }
         )
     }
 
@@ -391,6 +413,7 @@ impl DhtKey {
             DhtKey::PoisonedImage { .. } => "poisoned_image",
             DhtKey::YaraRuleContent { .. } => "yara_rule_content",
             DhtKey::YaraRulesManifest { .. } => "yara_rules_manifest",
+            DhtKey::NodeCapability { .. } => "node_capability",
         }
     }
 
@@ -425,6 +448,7 @@ impl DhtKey {
             DhtKey::PoisonedImage { .. } => None,
             DhtKey::YaraRuleContent { .. } => None,
             DhtKey::YaraRulesManifest { .. } => None,
+            DhtKey::NodeCapability { .. } => None,
         }
     }
 

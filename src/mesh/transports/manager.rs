@@ -367,6 +367,25 @@ impl MeshTransportManager {
         self.record_store.clone()
     }
 
+    pub fn announce_capabilities(&self, node_id: &str, capabilities: &[String]) {
+        if let Some(ref record_store) = self.record_store {
+            let ttl = 3600; // 1 hour TTL for capabilities
+            for capability in capabilities {
+                let key = crate::mesh::dht::keys::DhtKey::node_capability(node_id, capability);
+                let key_str = key.as_str();
+                let value = serde_json::json!({
+                    "node_id": node_id,
+                    "capability": capability,
+                    "announced_at": crate::mesh::safe_unix_timestamp(),
+                });
+                if let Ok(bytes) = serde_json::to_vec(&value) {
+                    record_store.store_and_announce(key_str.to_string(), bytes, ttl);
+                }
+            }
+            tracing::debug!("Announced {} capabilities for {} to DHT", capabilities.len(), node_id);
+        }
+    }
+
     pub fn get_peer_fallback_count(&self, peer_id: &str) -> u32 {
         let states = self.peer_states.read();
         states.get(peer_id).map(|s| s.fallback_count).unwrap_or(0)
