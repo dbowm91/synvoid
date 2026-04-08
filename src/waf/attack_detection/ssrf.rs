@@ -142,9 +142,8 @@ impl SsrfDetector {
         })
     }
 
-    fn extract_ips_from_url(input: &str) -> Vec<String> {
+    fn extract_ips_from_url(input_lower: &str) -> Vec<String> {
         let mut ips = Vec::new();
-        let input_lower = input.to_lowercase();
 
         let mut in_url = false;
         let mut url_start = 0;
@@ -239,12 +238,13 @@ impl SsrfDetector {
         is_ipv4 || is_ipv6
     }
 
-    fn contains_private_ip_or_localhost(input_lower: &str) -> bool {
+    fn contains_private_ip_or_localhost(input: &str) -> bool {
+        let input_lower = input.to_lowercase();
         if input_lower.contains("localhost") || input_lower.contains(".local") {
             return true;
         }
 
-        for ip in Self::extract_ips_from_url(input_lower) {
+        for ip in Self::extract_ips_from_url(&input_lower) {
             let normalized = Self::normalize_ip_for_parse(&ip);
             if Self::is_private_ip(&normalized) {
                 return true;
@@ -290,12 +290,13 @@ impl SsrfDetector {
         location: InputLocation,
     ) -> Option<AttackDetectionResult> {
         let decoded = url_decode_all(input);
+        let decoded_lower = decoded.to_lowercase();
 
-        if self.is_allowed_domain(&decoded) {
+        if self.is_allowed_domain(&decoded_lower) {
             return None;
         }
 
-        if let Some(mat) = self.inner.patterns_ref().find(&decoded) {
+        if let Some(mat) = self.inner.patterns_ref().find(&decoded_lower) {
             let matched = decoded[mat.start()..mat.end()].to_string();
             tracing::warn!(
                 attack_type = "ssrf",
@@ -311,7 +312,7 @@ impl SsrfDetector {
             });
         }
 
-        if self.block_private_ips && Self::contains_private_ip_or_localhost(&decoded) {
+        if self.block_private_ips && Self::contains_private_ip_or_localhost(&decoded_lower) {
             tracing::warn!(
                 attack_type = "ssrf",
                 location = %location,

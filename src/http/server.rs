@@ -715,19 +715,20 @@ impl HttpServer {
         request_body_size = full_body.len() as u64;
         const CHUNK_WAF_SCAN_SIZE: usize = 64 * 1024; // 64KB chunks for full body scan
 
-        let (body_slice, needs_full_scan) = if full_body.is_empty() {
+        let full_body_arc = Arc::new(full_body);
+        let (body_slice, needs_full_scan) = if full_body_arc.is_empty() {
             (None, false)
-        } else if full_body.len() > MAX_WAF_BODY_SIZE {
-            (Some(full_body.clone()), true)
+        } else if full_body_arc.len() > MAX_WAF_BODY_SIZE {
+            (Some(full_body_arc.clone()), true)
         } else {
-            (Some(full_body.clone()), false)
+            (Some(full_body_arc.clone()), false)
         };
 
-        if needs_full_scan && !full_body.is_empty() {
-            let body_len = full_body.len();
+        if needs_full_scan && !full_body_arc.is_empty() {
+            let body_len = full_body_arc.len();
             for offset in (0..body_len).step_by(CHUNK_WAF_SCAN_SIZE) {
                 let end = std::cmp::min(offset + CHUNK_WAF_SCAN_SIZE, body_len);
-                let chunk = &full_body[offset..end];
+                let chunk = &full_body_arc[offset..end];
                 if let Some(
                     crate::proxy::WafDecision::Drop | crate::proxy::WafDecision::Block(_, _),
                 ) = waf.check_request_body(chunk)
@@ -757,7 +758,7 @@ impl HttpServer {
             );
         }
 
-        let body_slice_ref: Option<&[u8]> = body_slice.as_deref();
+        let body_slice_ref: Option<&[u8]> = body_slice.as_ref().map(|v| v.as_ref() as &[u8]);
         if let Some(ref m) = metrics {
             if let Some(content_length) = parts.headers.get("content-length") {
                 if let Ok(len_str) = content_length.to_str() {
@@ -1422,7 +1423,7 @@ impl HttpServer {
                 // Serverless function dispatch
                 if matches!(target.backend_type, crate::router::BackendType::Serverless) {
                     if let Some(ref sm) = serverless_manager {
-                        let body_bytes_for_serverless: Bytes = full_body.clone();
+                        let body_bytes_for_serverless: Bytes = full_body_arc.as_ref().clone();
                         match crate::serverless::manager::handle_serverless_function(
                             sm,
                             &method,
@@ -1483,7 +1484,7 @@ impl HttpServer {
                     crate::router::BackendType::FastCgi | crate::router::BackendType::Php
                 ) {
                     if let Some(ref socket) = target.backend_socket {
-                        let body_bytes_for_fcgi: Bytes = full_body.clone();
+                        let body_bytes_for_fcgi: Bytes = full_body_arc.as_ref().clone();
 
                         if matches!(target.backend_type, crate::router::BackendType::Php) {
                             if let Some(php_client) =
@@ -1576,7 +1577,7 @@ impl HttpServer {
                     if let Some(ref cgi_config) = target.site_config.proxy.cgi {
                         match crate::cgi::CgiHandler::new(cgi_config) {
                             Ok(handler) => {
-                                let body_bytes_for_cgi: Bytes = full_body.clone();
+                                let body_bytes_for_cgi: Bytes = full_body_arc.as_ref().clone();
                                 match handler
                                     .execute(
                                         &method,
@@ -1651,7 +1652,7 @@ impl HttpServer {
                         let app_servers_read = app_servers.read().await;
                         if let Some(supervisor) = app_servers_read.get(site_id.as_ref()) {
                             let socket_path = supervisor.config().resolve_socket_path();
-                            let body_bytes_for_appserver: Bytes = full_body.clone();
+                            let body_bytes_for_appserver: Bytes = full_body_arc.as_ref().clone();
 
                             let fcgi_config =
                                 target.site_config.proxy.fastcgi.clone().unwrap_or_default();
@@ -1844,7 +1845,7 @@ impl HttpServer {
                             if effective_config.scan_with_yara
                                 || effective_config.max_size_bytes > 0
                             {
-                                match upload_validator.validate_bytes(&full_body, &path).await {
+                                match upload_validator.validate_bytes(&full_body_arc, &path).await {
                                     Ok(result) => {
                                         if !result.is_clean() {
                                             tracing::warn!(
@@ -1980,7 +1981,7 @@ impl HttpServer {
                         forwarding_client,
                         method,
                         &target_url,
-                        Some(full_body.clone()),
+                        Some(full_body_arc.as_ref().clone()),
                         forward_header_map,
                         Some(std::time::Duration::from_secs(30)),
                     )
@@ -2062,7 +2063,7 @@ impl HttpServer {
                             }
 
                             return Ok(builder
-                                .body(http_body_util::Full::new(full_body).boxed())
+                                .body(http_body_util::Full::new(full_body_arc.as_ref().clone()).boxed())
                                 .unwrap_or_else(|_| {
                                     Self::build_response_with_alt_svc(
                                         500,
@@ -2104,7 +2105,7 @@ impl HttpServer {
                         method,
                         &target_url,
                         Some(&parts.headers),
-                        Some(full_body.clone()),
+                        Some(full_body_arc.as_ref().clone()),
                         Some(std::time::Duration::from_secs(30)),
                     )
                     .await
@@ -2113,7 +2114,7 @@ impl HttpServer {
                         forwarding_client,
                         method,
                         &target_url,
-                        Some(full_body.clone()),
+                        Some(full_body_arc.as_ref().clone()),
                         Some(std::time::Duration::from_secs(30)),
                     )
                     .await

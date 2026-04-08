@@ -83,24 +83,12 @@ impl IpRateLimitState {
         let cutoff_3600s = now - Duration::from_secs(3600);
         let cutoff_86400s = now - Duration::from_secs(86400);
 
-        if !self.per_second.is_empty() {
-            self.per_second.remove_older_than(cutoff_1s);
-        }
-        if !self.per_minute.is_empty() {
-            self.per_minute.remove_older_than(cutoff_60s);
-        }
-        if !self.per_5min.is_empty() {
-            self.per_5min.remove_older_than(cutoff_300s);
-        }
-        if !self.per_10min.is_empty() {
-            self.per_10min.remove_older_than(cutoff_600s);
-        }
-        if !self.per_hour.is_empty() {
-            self.per_hour.remove_older_than(cutoff_3600s);
-        }
-        if !self.per_day.is_empty() {
-            self.per_day.remove_older_than(cutoff_86400s);
-        }
+        self.per_second.remove_older_than(cutoff_1s);
+        self.per_minute.remove_older_than(cutoff_60s);
+        self.per_5min.remove_older_than(cutoff_300s);
+        self.per_10min.remove_older_than(cutoff_600s);
+        self.per_hour.remove_older_than(cutoff_3600s);
+        self.per_day.remove_older_than(cutoff_86400s);
     }
 
     fn touch(&mut self) {

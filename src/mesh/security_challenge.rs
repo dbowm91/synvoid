@@ -284,7 +284,9 @@ impl SuspiciousPattern {
         description: String,
     ) -> Self {
         let compiled_regex = if pattern_type == PatternType::Regex {
-            regex::Regex::new(&pattern).ok().map(Arc::new)
+            regex::Regex::new(&format!("(?{{max=10000}}){}", pattern))
+                .ok()
+                .map(Arc::new)
         } else {
             None
         };
