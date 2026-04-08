@@ -43,6 +43,13 @@ static DROPPED_YARA_BROADCASTS: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64
 static DHT_THREAT_LOOKUP_HITS: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 static DHT_THREAT_LOOKUP_MISSES: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 
+static DHT_RECORD_COUNT: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+static DHT_REPLICA_COUNT: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+static DHT_QUORUM_ACHIEVED_COUNT: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+static DHT_QUORUM_FAILED_COUNT: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+
+static DHT_QUERY_LATENCIES: LazyLock<Mutex<Vec<u64>>> = LazyLock::new(|| Mutex::new(Vec::new()));
+
 static SERVERLESS_INVOCATIONS: LazyLock<Mutex<HashMap<String, AtomicU64>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
@@ -185,6 +192,55 @@ pub fn get_dht_threat_lookup_hits() -> u64 {
 
 pub fn get_dht_threat_lookup_misses() -> u64 {
     DHT_THREAT_LOOKUP_MISSES.load(Ordering::Relaxed)
+}
+
+pub fn record_dht_quorum_success() {
+    DHT_QUORUM_ACHIEVED_COUNT.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_dht_quorum_failure() {
+    DHT_QUORUM_FAILED_COUNT.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn get_dht_quorum_achieved_count() -> u64 {
+    DHT_QUORUM_ACHIEVED_COUNT.load(Ordering::Relaxed)
+}
+
+pub fn get_dht_quorum_failed_count() -> u64 {
+    DHT_QUORUM_FAILED_COUNT.load(Ordering::Relaxed)
+}
+
+pub fn record_dht_query_latency(latency_ms: u64) {
+    let mut latencies = DHT_QUERY_LATENCIES.lock();
+    latencies.push(latency_ms);
+    if latencies.len() > LATENCY_SAMPLE_SIZE {
+        latencies.remove(0);
+    }
+}
+
+pub fn get_dht_average_query_latency_ms() -> f64 {
+    let latencies = DHT_QUERY_LATENCIES.lock();
+    if latencies.is_empty() {
+        return 0.0;
+    }
+    let sum: u64 = latencies.iter().sum();
+    sum as f64 / latencies.len() as f64
+}
+
+pub fn record_dht_record_count(count: u64) {
+    DHT_RECORD_COUNT.store(count, Ordering::Relaxed);
+}
+
+pub fn get_dht_record_count() -> u64 {
+    DHT_RECORD_COUNT.load(Ordering::Relaxed)
+}
+
+pub fn record_dht_replica_count(count: u64) {
+    DHT_REPLICA_COUNT.store(count, Ordering::Relaxed);
+}
+
+pub fn get_dht_replica_count() -> u64 {
+    DHT_REPLICA_COUNT.load(Ordering::Relaxed)
 }
 
 pub fn total_dropped_events() -> u64 {

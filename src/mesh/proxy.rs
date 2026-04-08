@@ -1344,6 +1344,24 @@ impl MeshProxy {
             return body;
         }
 
+        let original_hash = {
+            let mut hasher = sha2::Sha256::new();
+            hasher.update(&body);
+            hex::encode(hasher.finalize())
+        };
+
+        {
+            let rs = self.record_store.read();
+            if let Some(ref record_store) = *rs {
+                let dht_key =
+                    crate::mesh::dht::keys::DhtKey::poisoned_image(site_id, &original_hash);
+                if let Some(record) = record_store.get_record(&dht_key.as_str()) {
+                    tracing::debug!("DHT poisoned image cache hit for {}", dht_key.as_str());
+                    return Bytes::from(record.value.clone());
+                }
+            }
+        }
+
         let static_worker_socket = std::env::var("STATIC_WORKER_SOCKET")
             .unwrap_or_else(|_| "/var/run/maluwaf-static-worker.sock".to_string());
 
@@ -1368,7 +1386,23 @@ impl MeshProxy {
             )
             .await
         {
-            Ok(poisoned) => Bytes::from(poisoned),
+            Ok(poisoned) => {
+                let dht_key =
+                    crate::mesh::dht::keys::DhtKey::poisoned_image(site_id, &original_hash);
+                let dht_key_str = dht_key.as_str().to_string();
+                {
+                    let rs = self.record_store.read();
+                    if let Some(ref record_store) = *rs {
+                        record_store.store_and_announce(
+                            dht_key_str.clone(),
+                            poisoned.clone(),
+                            3600,
+                        );
+                        tracing::debug!("Stored poisoned image in DHT: {}", dht_key_str);
+                    }
+                }
+                Bytes::from(poisoned)
+            }
             Err(e) => {
                 tracing::debug!("Image poisoning failed: {}", e);
                 body

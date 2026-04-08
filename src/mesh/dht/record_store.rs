@@ -189,6 +189,15 @@ impl RecordStoreConfig {
         }
         self.calculate_read_quorum(node_count)
     }
+
+    pub fn calculate_adaptive_quorum(&self, live_global_count: usize) -> u32 {
+        let min_quorum = 3;
+        let target = (live_global_count * 2) / 3;
+        std::cmp::max(
+            min_quorum,
+            std::cmp::min(target, self.write_quorum as usize),
+        ) as u32
+    }
 }
 
 pub struct RecordStoreState {
