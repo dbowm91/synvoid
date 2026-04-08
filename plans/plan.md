@@ -352,17 +352,24 @@ Create `VerifiedUpstream` record when origin registers:
 2. Store in DHT with key `verified_upstream:{upstream_id}`
 3. Include global node signature for verification
 
-**Status**: 🔄 DEFERRED - Requires deeper architectural review of UpstreamUpdate flow and global node signing
+**Status**: ✅ COMPLETED - Modified `handle_upstream_registration_request` in `transport_org.rs` to:
+- Use the `upstream_url` and `org_id` parameters (were previously unused with underscore prefix)
+- Create `VerifiedUpstream` struct with upstream details and global node signature
+- Store in DHT with 30-day TTL
 
 #### Phase 6: Multi-Origin Discovery
 
 **Files to modify**: `src/mesh/topology.rs`, `src/mesh/proxy.rs`
 
-1. Enable `find_all_origins_for_site()` to be called
+1. Enable `find_all_origins_for_site()` to query DHT for verified upstreams from other global nodes
 2. Implement round-robin or weighted load balancing across origins
 3. Use capability info to filter origins by supported service
 
-**Status**: 🔄 DEFERRED - Requires Phase 5 completion and load balancing architecture decision
+**Status**: 🔄 DEFERRED - Requires deeper architectural changes:
+- `find_all_origins_for_site` currently only queries `local_upstreams` (configured locally)
+- Needs to also query DHT for `verified_upstream:{upstream_id}` records
+- Would require DHT query capability in topology module
+- Load balancing strategy needs architectural decision
 
 #### Phase 7: Encrypt TierKey for DHT Storage
 

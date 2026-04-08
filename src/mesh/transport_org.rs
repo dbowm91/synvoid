@@ -427,20 +427,65 @@ impl MeshTransport {
         from_peer: &str,
         request_id: &str,
         upstream_id: &str,
-        _upstream_url: &str,
-        _org_id: Option<&str>,
+        upstream_url: &str,
+        org_id: Option<&str>,
         requesting_node_id: &str,
     ) {
         tracing::info!(
-            "Received upstream registration request: {} from node {} for upstream {}",
+            "Received upstream registration request: {} from node {} for upstream {} ({})",
             request_id,
             requesting_node_id,
-            upstream_id
+            upstream_id,
+            upstream_url
         );
 
         if !self.config.role.is_global() {
             tracing::warn!("Received upstream registration request on non-global node");
             return;
+        }
+
+        let now = crate::mesh::safe_unix_timestamp();
+        let expires_at = now + (86400 * 30); // 30 days
+
+        let verified_upstream = crate::mesh::dht::VerifiedUpstream {
+            upstream_id: upstream_id.to_string(),
+            upstream_url: upstream_url.to_string(),
+            org_id: org_id.map(|s| s.to_string()),
+            global_node_id: self.config.node_id().to_string(),
+            global_node_signature: Vec::new(),
+            registered_at: now,
+            expires_at,
+        };
+
+        let signature = if let Some(ref signer) = self.origin_ed25519_signer {
+            let sign_data = format!(
+                "{}:{}:{}:{}",
+                upstream_id, upstream_url, org_id.unwrap_or(""), self.config.node_id()
+            );
+            signer.sign(&sign_data).into_bytes()
+        } else {
+            Vec::new()
+        };
+
+        let mut verified_upstream = verified_upstream;
+        verified_upstream.global_node_signature = signature;
+
+        if let Some(ref record_store) = self.record_store {
+            let key = crate::mesh::dht::keys::DhtKey::VerifiedUpstream(upstream_id.to_string());
+            let key_str = key.as_str();
+
+            if let Ok(value) = serde_json::to_vec(&verified_upstream) {
+                let ttl = 86400 * 30; // 30 days
+                if record_store.store_and_announce(key_str.to_string(), value, ttl) {
+                    tracing::info!(
+                        "Stored VerifiedUpstream in DHT: {} verified by {}",
+                        upstream_id,
+                        self.config.node_id()
+                    );
+                } else {
+                    tracing::warn!("Failed to store VerifiedUpstream in DHT: {}", upstream_id);
+                }
+            }
         }
 
         let response = MeshMessage::UpstreamRegistrationResponse {
@@ -449,7 +494,7 @@ impl MeshTransport {
             approved: true,
             rejection_reason: None,
             global_node_id: self.config.node_id().into(),
-            global_node_signature: None,
+            global_node_signature: Some(verified_upstream.global_node_signature),
             timestamp: MeshMessage::generate_timestamp(),
         };
 
@@ -458,7 +503,7 @@ impl MeshTransport {
         }
 
         tracing::info!(
-            "Approved upstream registration: {} from node {}",
+            "Approved and verified upstream registration: {} from node {}",
             upstream_id,
             requesting_node_id
         );
