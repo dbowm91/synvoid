@@ -363,6 +363,10 @@ impl MeshTransportManager {
         self.routing_manager.read().clone()
     }
 
+    pub fn get_record_store(&self) -> Option<Arc<crate::mesh::dht::RecordStoreManager>> {
+        self.record_store.clone()
+    }
+
     pub fn get_peer_fallback_count(&self, peer_id: &str) -> u32 {
         let states = self.peer_states.read();
         states.get(peer_id).map(|s| s.fallback_count).unwrap_or(0)

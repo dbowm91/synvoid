@@ -1075,6 +1075,15 @@ impl MeshProxy {
         let compression = tm.get_compression_for_site(upstream_id).await;
         let minification = tm.get_minification_for_site(upstream_id).await;
 
+        {
+            let mut rs = self.record_store.write();
+            if rs.is_none() {
+                if let Some(record_store) = tm.get_record_store() {
+                    *rs = Some(record_store);
+                }
+            }
+        }
+
         if image_protection.is_none()
             && image_poison_config.is_none()
             && compression.is_none()

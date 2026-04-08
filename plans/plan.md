@@ -265,9 +265,59 @@ archive_max_size = "100MB"  # Max total extracted size from archives
 
 ---
 
-## Wave 5: Edge Caching & Transform Sharing
+## Wave 5: Edge Caching & Transform Sharing ✅ COMPLETED
 
-Builds on Wave 2.1 (Image Poisoning).
+**Status**: COMPLETED
+
+**Builds on**: Wave 2.1 (Image Poisoning)
+
+**Overview**: Implements DHT-based caching for transformed content and poisoned images, enabling edge nodes to share transformed content.
+
+### 5.1 DHT Key Types for Transform Caching ✅ COMPLETED
+
+**Changes**:
+- `src/mesh/dht/keys.rs`:
+  - Added `TransformedContent { site_id, content_hash, transform_flags }` DhtKey variant
+  - Added `PoisonedImage { site_id, original_hash }` DhtKey variant
+  - Added `transformed_content()` and `poisoned_image()` helper methods
+  - Added `is_public()` implementation for both new key types (allows edge caching)
+  - Added `site_scope()` implementation for both (used for content-based routing)
+
+### 5.2 DHT Store/Fetch in Transform Response ✅ COMPLETED
+
+**Changes**:
+- `src/mesh/proxy.rs`:
+  - Added `record_store` field to `MeshProxy` struct
+  - Added `set_record_store()` method for dependency injection
+  - Added `DhtTransformEntry` type for serde serialization of cache entries
+  - Implemented DHT store in `transform_response()` - stores transformed content with 3600s TTL
+  - Implemented DHT fetch in `transform_response()` - checks DHT before applying transforms
+  - Implemented DHT store/fetch for poisoned images - caches poisoning results by original hash
+
+**Key Implementation**:
+- Content-addressed keys format: `transformed:{site_id}:{content_hash}:{transform_flags}`
+- Poisoned image keys format: `poisoned_image:{site_id}:{original_hash}`
+- Local transform cache (LruCache) + DHT for distributed sharing
+
+### 5.3 record_store Wiring Fix ✅ COMPLETED
+
+**Bug Fixed**: `MeshProxy` had `set_record_store()` method but it was never called, leaving `record_store` as `None`.
+
+**Solution**:
+- Added `get_record_store()` method to `MeshTransportManager` in `src/mesh/transports/manager.rs`
+- Modified `MeshProxy::transform_response()` to lazily fetch `record_store` from `transport_manager` if not already set
+
+**Files Modified**:
+- `src/mesh/transports/manager.rs`: Added `get_record_store()` method
+- `src/mesh/proxy.rs`: Added lazy initialization of `record_store` from `transport_manager`
+
+### 5.4 Image Poisoning DHT Caching ✅ COMPLETED
+
+**Changes**:
+- `src/mesh/proxy.rs:1364-1420`:
+  - `apply_image_poisoning()` now checks DHT for cached poisoned images
+  - Stores newly poisoned images in DHT with key `poisoned_image:{site_id}:{original_hash}`
+  - Uses `store_and_announce()` for DHT distribution with 3600s TTL
 
 ---
 
