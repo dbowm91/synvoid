@@ -562,12 +562,21 @@ impl MeshDiscovery {
             provider_node_id,
             hops,
             ttl_secs,
+            signature,
+            timestamp,
             upstream_url,
             waf_policy,
             priority_tier,
             ..
         } = msg
         {
+            if !signature.is_empty() {
+                tracing::warn!(
+                    "Route response from {} has signature but MeshDiscovery has no signer for verification",
+                    provider_node_id
+                );
+            }
+
             self.topology.cache_route(
                 &upstream_id,
                 provider_node_id.clone(),

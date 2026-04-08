@@ -269,6 +269,8 @@ impl MeshTransport {
         provider_node_id: &str,
         hops: u32,
         ttl_secs: u32,
+        timestamp: u64,
+        signature: Vec<u8>,
         upstream_url: Option<crate::mesh::protocol::ArcStr>,
         waf_policy: Option<crate::mesh::protocol::WafPolicy>,
         priority_tier: u32,
@@ -282,6 +284,37 @@ impl MeshTransport {
             provider_node_id,
             hops
         );
+
+        if !signature.is_empty() {
+            let sign_data = format!(
+                "{}:{}:{}:{}:{}",
+                query_id, upstream_id, provider_node_id, hops, timestamp
+            );
+
+            let cert_manager = self.cert_manager.read();
+            if let Some(pubkey) = cert_manager.get_global_node_key(provider_node_id) {
+                if let Some(ref signer) = self.mesh_signer {
+                    if !signer.verify(&sign_data, &signature, &pubkey) {
+                        tracing::warn!(
+                            "Route response signature verification failed for {} from provider {}",
+                            upstream_id,
+                            provider_node_id
+                        );
+                        return;
+                    }
+                    tracing::trace!(
+                        "Route response signature verified for {} from provider {}",
+                        upstream_id,
+                        provider_node_id
+                    );
+                }
+            } else {
+                tracing::warn!(
+                    "No public key found for provider {}, cannot verify route response signature",
+                    provider_node_id
+                );
+            }
+        }
 
         self.topology
             .cache_route(

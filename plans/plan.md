@@ -464,7 +464,7 @@ if mesh_available {
 - Item 2.4 IMPLEMENTED ✅ (calculate_adaptive_quorum in record_store.rs)
 - Item 2.5 IMPLEMENTED ✅ (DHT health metrics in metrics/mod.rs)
 - Item 2.6 PARTIALLY IMPLEMENTED (TOFU fingerprint verification on connect exists, but verify_seed_on_first_contact not implemented)
-- Item 2.7 PARTIALLY IMPLEMENTED (route responses are signed, but signature verification on receipt is not enforced)
+- Item 2.7 IMPLEMENTED ✅ (signature verification in handle_route_response using provider public key from cert_manager)
 - Item 2.8 IMPLEMENTED ✅ (exponential backoff exists in topology, discovery, yara_rules)
 
 ### Wave 3 (WAF/Threat Intel) - ✅ COMPLETE
@@ -518,7 +518,7 @@ if mesh_available {
 - [x] Adaptive quorum implemented (src/mesh/dht/record_store.rs - calculate_adaptive_quorum)
 - [x] DHT health metrics implemented (src/metrics/mod.rs - record_dht_quorum_*, get_dht_*_count functions)
 - [ ] TOFU enhancement NOT FULLY IMPLEMENTED (verify_seed_on_first_contact not added)
-- [ ] Message signing verification PARTIALLY IMPLEMENTED (signatures created but not verified on receipt)
+- [x] Message signing verification IMPLEMENTED (src/mesh/transport_routing.rs - handle_route_response verifies Ed25519 signatures using provider public key)
 
 ### Wave 3 (2026-04-07)
 - [x] Local threat indicators block before DHT lookup (src/waf/mod.rs - check local first, src/mesh/threat_intel.rs - add lookup_local_indicator, is_mesh_available, get_node_role)
