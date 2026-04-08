@@ -952,22 +952,53 @@ impl FileManager {
         dest: &Path,
     ) -> Result<Vec<FileEntry>, FileManagerError> {
         use std::io::Cursor;
+        use std::path::PathBuf;
+
         let reader = Cursor::new(data);
         let mut archive = tar::Archive::new(reader);
 
         let mut extracted = Vec::new();
+
+        let dest_canonical = dest.canonicalize().unwrap_or_else(|_| PathBuf::from(dest));
 
         for entry in archive
             .entries()
             .map_err(|e| FileManagerError::InvalidPath(format!("invalid tar: {}", e)))?
         {
             let mut entry = entry.map_err(FileManagerError::IoError)?;
+
+            let entry_path = entry.path().map_err(FileManagerError::IoError)?.into_owned();
+            let outpath = dest.join(&entry_path);
+
+            let outpath_canonical = outpath.canonicalize().unwrap_or_else(|_| {
+                outpath.components().fold(PathBuf::new(), |mut acc, c| {
+                    match c {
+                        std::path::Component::ParentDir => {
+                            if let Some(parent) = acc.parent() {
+                                acc = parent.to_path_buf();
+                            }
+                        }
+                        std::path::Component::Normal(s) => {
+                            acc.push(s);
+                        }
+                        _ => {}
+                    }
+                    acc
+                })
+            });
+
+            if !outpath_canonical.starts_with(&dest_canonical) {
+                return Err(FileManagerError::InvalidPath(
+                    "Path traversal attempt detected in TAR archive".to_string(),
+                ));
+            }
+
             entry
                 .unpack_in(dest)
                 .await
                 .map_err(FileManagerError::IoError)?;
 
-            let path = dest.join(entry.path().map_err(FileManagerError::IoError)?);
+            let path = dest.join(&entry_path);
             extracted.push(self.entry_from_path(&path, dest).await?);
         }
 
@@ -990,6 +1021,8 @@ impl FileManager {
         dest: &Path,
     ) -> Result<Vec<FileEntry>, FileManagerError> {
         use std::io::Cursor;
+        use std::path::PathBuf;
+
         let decoder = Cursor::new(data);
         let mut decoder = flate2::read::GzDecoder::new(decoder);
 
@@ -997,17 +1030,46 @@ impl FileManager {
 
         let mut extracted = Vec::new();
 
+        let dest_canonical = dest.canonicalize().unwrap_or_else(|_| PathBuf::from(dest));
+
         for entry in archive
             .entries()
             .map_err(|e| FileManagerError::InvalidPath(format!("invalid tar.gz: {}", e)))?
         {
             let mut entry = entry.map_err(FileManagerError::IoError)?;
+
+            let entry_path = entry.path().map_err(FileManagerError::IoError)?.into_owned();
+            let outpath = dest.join(&entry_path);
+
+            let outpath_canonical = outpath.canonicalize().unwrap_or_else(|_| {
+                outpath.components().fold(PathBuf::new(), |mut acc, c| {
+                    match c {
+                        std::path::Component::ParentDir => {
+                            if let Some(parent) = acc.parent() {
+                                acc = parent.to_path_buf();
+                            }
+                        }
+                        std::path::Component::Normal(s) => {
+                            acc.push(s);
+                        }
+                        _ => {}
+                    }
+                    acc
+                })
+            });
+
+            if !outpath_canonical.starts_with(&dest_canonical) {
+                return Err(FileManagerError::InvalidPath(
+                    "Path traversal attempt detected in TAR.GZ archive".to_string(),
+                ));
+            }
+
             entry
                 .unpack_in(dest)
                 .await
                 .map_err(FileManagerError::IoError)?;
 
-            let path = dest.join(entry.path().map_err(FileManagerError::IoError)?);
+            let path = dest.join(&entry_path);
             extracted.push(self.entry_from_path(&path, dest).await?);
         }
 

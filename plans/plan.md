@@ -242,11 +242,21 @@ archive_max_size = "100MB"  # Max total extracted size from archives
 
 ### 4.4 TAR Extraction Path Traversal Fix
 
-**Location**: `src/static_files/file_manager.rs:948-969`
+**Location**: `src/static_files/file_manager.rs:948-1006` (extract_tar), `src/static_files/file_manager.rs:1017-1085` (extract_tar_gz)
 
-**Issue**: TAR extraction lacks explicit path traversal protection (ZIP has it)
+**Status**: ✅ Completed
 
-**Fix**: Add canonical path validation similar to ZIP extraction
+**Issue**: TAR extraction lacked explicit path traversal protection (ZIP had it)
+
+**Fix**: Added canonical path validation to both `extract_tar()` and `extract_tar_gz()`:
+- Added `dest_canonical` computation before entry iteration
+- For each entry, computed `outpath_canonical` with fallback manual path resolution (same pattern as ZIP)
+- Added traversal check: `if !outpath_canonical.starts_with(&dest_canonical)` returns `FileManagerError::InvalidPath`
+- Error messages: "Path traversal attempt detected in TAR archive" and "Path traversal attempt detected in TAR.GZ archive"
+
+**Verification**:
+- `cargo check --lib` passes
+- `cargo clippy --lib -- -D warnings` passes
 
 ---
 
