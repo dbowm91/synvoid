@@ -190,8 +190,8 @@ mod tests {
             let platform = crate::dns::platform::linux::LinuxAnycastSocket::new();
 
             let mut pktinfo_bytes = vec![0u8; std::mem::size_of::<nix::libc::in_pktinfo>()];
-            let pktinfo = nix::libc::in_pktinfo::from_bytes_mut(&mut pktinfo_bytes);
-            pktinfo.ipi_addr.s_addr = u32::to_ne_bytes(0x7F000001);
+            // Write s_addr directly at byte offset 8 (ipi_addr.s_addr within in_pktinfo on 64-bit)
+            pktinfo_bytes[8..12].copy_from_slice(&[127u8, 0, 0, 1]);
 
             let result = platform.get_destination_ip(&pktinfo_bytes);
             assert!(result.is_some());
@@ -203,8 +203,7 @@ mod tests {
             let platform = crate::dns::platform::linux::LinuxAnycastSocket::new();
 
             let mut pktinfo_bytes = vec![0u8; std::mem::size_of::<nix::libc::in_pktinfo>()];
-            let pktinfo = nix::libc::in_pktinfo::from_bytes_mut(&mut pktinfo_bytes);
-            pktinfo.ipi_addr.s_addr = u32::to_ne_bytes(0x0A000001);
+            pktinfo_bytes[8..12].copy_from_slice(&[10u8, 0, 0, 1]);
 
             let result = platform.get_destination_ip(&pktinfo_bytes);
             assert!(result.is_some());
@@ -216,8 +215,7 @@ mod tests {
             let platform = crate::dns::platform::linux::LinuxAnycastSocket::new();
 
             let mut pktinfo_bytes = vec![0u8; std::mem::size_of::<nix::libc::in_pktinfo>()];
-            let pktinfo = nix::libc::in_pktinfo::from_bytes_mut(&mut pktinfo_bytes);
-            pktinfo.ipi_addr.s_addr = u32::to_ne_bytes(0xAC100001);
+            pktinfo_bytes[8..12].copy_from_slice(&[172u8, 16, 0, 1]);
 
             let result = platform.get_destination_ip(&pktinfo_bytes);
             assert!(result.is_some());
@@ -229,8 +227,7 @@ mod tests {
             let platform = crate::dns::platform::linux::LinuxAnycastSocket::new();
 
             let mut pktinfo_bytes = vec![0u8; std::mem::size_of::<nix::libc::in_pktinfo>()];
-            let pktinfo = nix::libc::in_pktinfo::from_bytes_mut(&mut pktinfo_bytes);
-            pktinfo.ipi_addr.s_addr = u32::to_ne_bytes(0xC0A80001);
+            pktinfo_bytes[8..12].copy_from_slice(&[192u8, 168, 0, 1]);
 
             let result = platform.get_destination_ip(&pktinfo_bytes);
             assert!(result.is_some());
@@ -242,8 +239,7 @@ mod tests {
             let platform = crate::dns::platform::linux::LinuxAnycastSocket::new();
 
             let mut pktinfo_bytes = vec![0u8; std::mem::size_of::<nix::libc::in_pktinfo>()];
-            let pktinfo = nix::libc::in_pktinfo::from_bytes_mut(&mut pktinfo_bytes);
-            pktinfo.ipi_addr.s_addr = u32::to_ne_bytes(0xFFFFFFFF);
+            pktinfo_bytes[8..12].copy_from_slice(&[255u8, 255, 255, 255]);
 
             let result = platform.get_destination_ip(&pktinfo_bytes);
             assert!(result.is_some());
@@ -255,8 +251,7 @@ mod tests {
             let platform = crate::dns::platform::linux::LinuxAnycastSocket::new();
 
             let mut pktinfo_bytes = vec![0u8; std::mem::size_of::<nix::libc::in_pktinfo>()];
-            let pktinfo = nix::libc::in_pktinfo::from_bytes_mut(&mut pktinfo_bytes);
-            pktinfo.ipi_addr.s_addr = u32::to_ne_bytes(0x00000000);
+            pktinfo_bytes[8..12].copy_from_slice(&[0u8, 0, 0, 0]);
 
             let result = platform.get_destination_ip(&pktinfo_bytes);
             assert!(result.is_some());
@@ -306,8 +301,7 @@ mod tests {
 
             let size = std::mem::size_of::<nix::libc::in_pktinfo>();
             let mut pktinfo_bytes = vec![0u8; size + 1];
-            let pktinfo = nix::libc::in_pktinfo::from_bytes_mut(&mut pktinfo_bytes);
-            pktinfo.ipi_addr.s_addr = u32::to_ne_bytes(0xC0A80001);
+            pktinfo_bytes[8..12].copy_from_slice(&[192u8, 168, 0, 1]);
 
             let result = platform.get_destination_ip(&pktinfo_bytes);
             assert!(result.is_some());
@@ -329,8 +323,7 @@ mod tests {
             let platform = crate::dns::platform::linux::LinuxAnycastSocket::new();
 
             let mut pktinfo_bytes = vec![0u8; std::mem::size_of::<nix::libc::in_pktinfo>()];
-            let pktinfo = nix::libc::in_pktinfo::from_bytes_mut(&mut pktinfo_bytes);
-            pktinfo.ipi_addr.s_addr = u32::MAX;
+            pktinfo_bytes[8..12].copy_from_slice(&[255u8, 255, 255, 255]);
 
             let result = platform.get_destination_ip(&pktinfo_bytes);
             assert!(result.is_some());
