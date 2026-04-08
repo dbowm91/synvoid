@@ -107,8 +107,8 @@ This document consolidates all individual improvement plans (plan2-plan9) into a
 **Phases**:
 1. ✅ Fix mesh broadcast transport - use `broadcast_to_all_peers()` with `Some(GLOBAL)` role filtering
 2. ✅ Auto-broadcast after `apply_rules_from_feed()` on global nodes
-3. 🔄 DEFERRED: Broadcast ack tracking - infrastructure exists, integration requires architectural changes
-4. 🔄 DEFERRED: Delta sync based on client version
+3. 🔄 DEFERRED: Broadcast ack tracking - for monitoring/debugging only, not critical path
+4. ✅ IMPLEMENTED: DHT-based global-to-global sync with content-addressed delta sync
 
 **Phase 3 Details** (Broadcast ack tracking - why deferred):
 - Infrastructure EXISTS: `BroadcastAckTracker` struct, `start_broadcast_tracking()`, `record_broadcast_ack()`, `record_broadcast_failure()`
@@ -117,17 +117,21 @@ This document consolidates all individual improvement plans (plan2-plan9) into a
 - Root cause: `broadcast_approved_rules()` sends via `mesh_sender` channel but doesn't know which peers received it (this knowledge is inside mesh transport)
 - Would need: `YaraRulesManager` to have reference to `MeshTransportManager` to query connected peers before broadcast, OR mesh transport to report back peer list
 - This is an architectural change to wire up existing infrastructure
+- NOT CRITICAL: Global nodes are trusted CA, rules are cryptographically signed, edges use pull-based sync
 
-**Phase 4 Details** (Delta sync - why deferred):
-- Infrastructure partially exists: version tracking, `RuleChangeTracker`, `is_full` flag
-- `request_sync_from_global()` sends client version, server responds with full ruleset
-- Server always sends FULL rules - no delta/diff computation
-- `RuleChangeTracker.should_send_full()` exists but is never called in sync code path
-- Would need: version-to-diff mapping, diff generation, delta transmission logic
-- Compare: `threat_intel.rs`, `topology.rs`, `dht/record_store_sync.rs` all have true delta sync
+**Phase 4 Implementation** (DHT-based delta sync - COMPLETED):
+- Decision: Use DHT for global-to-global sync + content-addressed approach
+- Added DHT key types: `YaraRuleContent { content_hash }` and `YaraRulesManifest { node_id }`
+- `publish_rules_to_dht()`: On rule apply (Local/Feed/MeshEdgeApproved), publishes to DHT:
+  - Stores rules content with key `yara_rule:<content_hash>` (content-addressed)
+  - Stores manifest with key `yara_rules_manifest:<node_id>` pointing to current hash
+- `sync_from_dht()`: Compares local content hash with peer manifests, fetches only if different
+- Content-addressed storage: Same rules content = same DHT key, enabling deduplication
+- DHT propagation handles mesh routing automatically (like threat indicators)
 
 **Files Modified**:
 - `src/mesh/yara_rules.rs`
+- `src/mesh/dht/keys.rs` (added YaraRuleContent and YaraRulesManifest variants)
 - `src/mesh/transport.rs`
 - `src/worker/unified_server.rs`
 

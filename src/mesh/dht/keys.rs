@@ -47,6 +47,12 @@ pub enum DhtKey {
         site_id: String,
         original_hash: String,
     },
+    YaraRuleContent {
+        content_hash: String,
+    },
+    YaraRulesManifest {
+        node_id: String,
+    },
 }
 
 impl DhtKey {
@@ -153,6 +159,18 @@ impl DhtKey {
         }
     }
 
+    pub fn yara_rule_content(content_hash: &str) -> Self {
+        DhtKey::YaraRuleContent {
+            content_hash: content_hash.to_string(),
+        }
+    }
+
+    pub fn yara_rules_manifest(node_id: &str) -> Self {
+        DhtKey::YaraRulesManifest {
+            node_id: node_id.to_string(),
+        }
+    }
+
     pub fn as_str(&self) -> String {
         match self {
             DhtKey::Organization(org_id) => format!("org:{}", org_id),
@@ -204,6 +222,12 @@ impl DhtKey {
                 original_hash,
             } => {
                 format!("poisoned_image:{}:{}", site_id, original_hash)
+            }
+            DhtKey::YaraRuleContent { content_hash } => {
+                format!("yara_rule:{}", content_hash)
+            }
+            DhtKey::YaraRulesManifest { node_id } => {
+                format!("yara_rules_manifest:{}", node_id)
             }
         }
     }
@@ -268,6 +292,12 @@ impl DhtKey {
                 site_id: parts[1].to_string(),
                 original_hash: parts[2].to_string(),
             },
+            "yara_rule" if parts.len() >= 2 => DhtKey::YaraRuleContent {
+                content_hash: parts[1].to_string(),
+            },
+            "yara_rules_manifest" if parts.len() >= 2 => DhtKey::YaraRulesManifest {
+                node_id: parts[1].to_string(),
+            },
             _ => DhtKey::NodeInfo(s.to_string()),
         }
     }
@@ -304,6 +334,8 @@ impl DhtKey {
                 | DhtKey::TransformedContent { .. }
                 | DhtKey::PoisonedImage { .. }
                 | DhtKey::SiteImagePoisonConfig(_)
+                | DhtKey::YaraRuleContent { .. }
+                | DhtKey::YaraRulesManifest { .. }
         )
     }
 
@@ -357,6 +389,8 @@ impl DhtKey {
             DhtKey::SiteImagePoisonConfig(_) => "site_image_poison_config",
             DhtKey::TransformedContent { .. } => "transformed_content",
             DhtKey::PoisonedImage { .. } => "poisoned_image",
+            DhtKey::YaraRuleContent { .. } => "yara_rule_content",
+            DhtKey::YaraRulesManifest { .. } => "yara_rules_manifest",
         }
     }
 
@@ -389,6 +423,8 @@ impl DhtKey {
             DhtKey::SiteImagePoisonConfig(_) => Some(SignedRecordType::SiteImagePoisonConfig),
             DhtKey::TransformedContent { .. } => None,
             DhtKey::PoisonedImage { .. } => None,
+            DhtKey::YaraRuleContent { .. } => None,
+            DhtKey::YaraRulesManifest { .. } => None,
         }
     }
 

@@ -9,6 +9,7 @@ use sha2::{Digest, Sha256};
 use tokio::sync::mpsc;
 
 use crate::mesh::config::{MeshNodeRole, YaraRulesMeshConfig};
+use crate::mesh::dht::keys::DhtKey;
 use crate::mesh::protocol::MeshMessage;
 use crate::upload::yara_rule_feed::YaraRuleFeedManager;
 
@@ -238,6 +239,7 @@ pub struct YaraRulesManager {
     data_dir: Option<std::path::PathBuf>,
     broadcast_tracker: Arc<RwLock<Option<BroadcastAckTracker>>>,
     rule_change_tracker: Arc<RwLock<RuleChangeTracker>>,
+    record_store: Arc<RwLock<Option<Arc<crate::mesh::dht::RecordStoreManager>>>>,
 }
 
 impl YaraRulesManager {
@@ -265,6 +267,7 @@ impl YaraRulesManager {
             data_dir,
             broadcast_tracker: Arc::new(RwLock::new(None)),
             rule_change_tracker: Arc::new(RwLock::new(RuleChangeTracker::default())),
+            record_store: Arc::new(RwLock::new(None)),
         };
 
         if manager.node_role.is_global() || manager.node_role.contains(MeshNodeRole::GLOBAL) {
@@ -277,6 +280,175 @@ impl YaraRulesManager {
     pub fn set_mesh_sender(&self, sender: mpsc::Sender<MeshMessage>) {
         let mut sender_guard = self.mesh_sender.write();
         *sender_guard = Some(sender);
+    }
+
+    pub fn set_record_store(&self, record_store: Arc<crate::mesh::dht::RecordStoreManager>) {
+        let mut rs = self.record_store.write();
+        *rs = Some(record_store);
+    }
+
+    pub fn publish_rules_to_dht(&self) {
+        if !self.config.enabled {
+            return;
+        }
+
+        if !self.is_global() {
+            tracing::debug!("Skipping DHT publish for non-global node");
+            return;
+        }
+
+        let record_store_opt = self.record_store.read().clone();
+        let Some(record_store) = record_store_opt else {
+            tracing::debug!("Record store not available for DHT publish");
+            return;
+        };
+
+        let rules = match self.local_rules.read().clone() {
+            Some(r) => r,
+            None => {
+                tracing::debug!("No local rules to publish to DHT");
+                return;
+            }
+        };
+
+        let version = match self.current_version.read().clone() {
+            Some(v) => v,
+            None => {
+                tracing::debug!("No version to publish to DHT");
+                return;
+            }
+        };
+
+        let content_hash = self.compute_rules_hash(&rules);
+        let rule_key = DhtKey::yara_rule_content(&content_hash);
+        let rule_key_str = rule_key.as_str();
+
+        let manifest_key = DhtKey::yara_rules_manifest(&self.node_id);
+        let manifest_key_str = manifest_key.as_str();
+
+        let manifest_value = serde_json::json!({
+            "version": version,
+            "content_hash": content_hash,
+            "node_id": self.node_id,
+            "timestamp": crate::mesh::safe_unix_timestamp(),
+        });
+
+        if let Ok(bytes) = serde_json::to_vec(&manifest_value) {
+            if record_store.store_and_announce(manifest_key_str.to_string(), bytes, 86400) {
+                tracing::debug!("Published YARA manifest to DHT: {} -> {}", manifest_key_str, version);
+            } else {
+                tracing::warn!("Failed to store YARA manifest in DHT");
+            }
+        }
+
+        if let Some(_existing) = record_store.get(&rule_key_str) {
+            tracing::debug!("YARA rule content already in DHT: {}", rule_key_str);
+            return;
+        }
+
+        let rule_value = serde_json::json!({
+            "version": version,
+            "rules": rules,
+            "content_hash": content_hash,
+            "node_id": self.node_id,
+            "timestamp": crate::mesh::safe_unix_timestamp(),
+        });
+
+        if let Ok(bytes) = serde_json::to_vec(&rule_value) {
+            if record_store.store_and_announce(rule_key_str.to_string(), bytes, 86400) {
+                tracing::info!("Published YARA rules to DHT: {} (version: {})", rule_key_str, version);
+            } else {
+                tracing::warn!("Failed to store YARA rules in DHT");
+            }
+        }
+    }
+
+    pub fn sync_from_dht(&self) -> Result<(), String> {
+        if !self.config.enabled {
+            return Ok(());
+        }
+
+        let record_store_opt = self.record_store.read().clone();
+        let Some(record_store) = record_store_opt else {
+            return Err("Record store not set".to_string());
+        };
+
+        let dht_records = record_store.get_all_records();
+        let local_rules = self.local_rules.read().clone();
+        let local_hash = local_rules.as_ref().map(|r| self.compute_rules_hash(r));
+
+        let mut best_version: Option<String> = None;
+        let mut best_rules: Option<String> = None;
+        let mut best_hash: Option<String> = None;
+
+        for record in &dht_records {
+            if record.key.starts_with("yara_rules_manifest:") {
+                if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&record.value) {
+                    let manifest_node_id = value.get("node_id").and_then(|v| v.as_str()).unwrap_or("");
+                    if manifest_node_id == self.node_id {
+                        continue;
+                    }
+
+                    let peer_hash = value.get("content_hash").and_then(|v| v.as_str()).unwrap_or("");
+
+                    if let Some(ref local_h) = local_hash {
+                        if local_h == peer_hash {
+                            tracing::debug!("DHT sync: peer {} has same rules hash {}", manifest_node_id, peer_hash);
+                            continue;
+                        }
+                    }
+
+                    let rule_key = DhtKey::yara_rule_content(peer_hash);
+                    if let Some(rule_record) = record_store.get(&rule_key.as_str()) {
+                        if let Ok(rule_value) = serde_json::from_slice::<serde_json::Value>(&rule_record.value) {
+                            let rules_str = rule_value.get("rules").and_then(|v| v.as_str()).unwrap_or("");
+                            let version_str = rule_value.get("version").and_then(|v| v.as_str()).unwrap_or("");
+
+                            if rules_str.is_empty() {
+                                continue;
+                            }
+
+                            match &best_version {
+                                None => {
+                                    best_version = Some(version_str.to_string());
+                                    best_rules = Some(rules_str.to_string());
+                                    best_hash = Some(peer_hash.to_string());
+                                }
+                                Some(current_best) => {
+                                    if version_str > current_best.as_str() {
+                                        best_version = Some(version_str.to_string());
+                                        best_rules = Some(rules_str.to_string());
+                                        best_hash = Some(peer_hash.to_string());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Some(new_version) = best_version {
+            if let Some(new_rules) = best_rules {
+                if let Some(new_hash) = best_hash {
+                    let current_rules = self.local_rules.read().clone();
+                    let should_apply = match &current_rules {
+                        Some(r) => {
+                            let current_hash = self.compute_rules_hash(r);
+                            current_hash != new_hash
+                        }
+                        None => true,
+                    };
+
+                    if should_apply {
+                        tracing::info!("DHT sync: applying newer rules version {} from peer", new_version);
+                        self.apply_rules(new_rules, new_version.clone(), YaraRuleSource::MeshGlobal)?;
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 
     pub fn get_current_version(&self) -> Option<String> {
@@ -339,6 +511,13 @@ impl YaraRulesManager {
         }
 
         self.rule_change_tracker.write().record_change(&version);
+
+        match source {
+            YaraRuleSource::Local | YaraRuleSource::Feed | YaraRuleSource::MeshEdgeApproved => {
+                self.publish_rules_to_dht();
+            }
+            YaraRuleSource::MeshGlobal => {}
+        }
 
         tracing::info!("Applied YARA rules version {} from {:?}", version, source);
         Ok(version)
@@ -1223,6 +1402,7 @@ impl Clone for YaraRulesManager {
             data_dir: self.data_dir.clone(),
             broadcast_tracker: Arc::clone(&self.broadcast_tracker),
             rule_change_tracker: Arc::clone(&self.rule_change_tracker),
+            record_store: Arc::clone(&self.record_store),
         }
     }
 }
