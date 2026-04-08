@@ -368,6 +368,56 @@ pub struct VerifiedUpstream {
     pub expires_at: u64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum ReachabilityStatus {
+    #[default]
+    Good,
+    Degraded,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OriginReachability {
+    pub upstream_id: String,
+    pub provider_node_id: String,
+    pub status: ReachabilityStatus,
+    pub latency_ms: u32,
+    pub error_rate: f32,
+    pub consecutive_failures: u32,
+    pub timestamp: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VerificationTask {
+    pub upstream_id: String,
+    pub provider_node_id: String,
+    pub status: VerificationStatus,
+    pub reporting_node_id: String,
+    pub created_at: u64,
+    pub expires_at: u64,
+    pub verification_node_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum VerificationStatus {
+    #[default]
+    Pending,
+    InProgress,
+    Completed,
+    Expired,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OriginPenalty {
+    pub upstream_id: String,
+    pub provider_node_id: String,
+    pub penalty_score: i32,
+    pub created_at: u64,
+    pub last_updated: u64,
+    pub expires_at: u64,
+    pub applied_by: String,
+}
+
 #[derive(Debug, Clone)]
 pub enum DhtEvent {
     PeerDiscovered(String),

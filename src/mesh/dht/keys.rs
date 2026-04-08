@@ -57,6 +57,18 @@ pub enum DhtKey {
         node_id: String,
         capability: String,
     },
+    OriginReachability {
+        upstream_id: String,
+        provider_node_id: String,
+    },
+    VerificationTask {
+        upstream_id: String,
+        provider_node_id: String,
+    },
+    OriginPenalty {
+        upstream_id: String,
+        provider_node_id: String,
+    },
 }
 
 impl DhtKey {
@@ -182,6 +194,27 @@ impl DhtKey {
         }
     }
 
+    pub fn origin_reachability(upstream_id: &str, provider_node_id: &str) -> Self {
+        DhtKey::OriginReachability {
+            upstream_id: upstream_id.to_string(),
+            provider_node_id: provider_node_id.to_string(),
+        }
+    }
+
+    pub fn verification_task(upstream_id: &str, provider_node_id: &str) -> Self {
+        DhtKey::VerificationTask {
+            upstream_id: upstream_id.to_string(),
+            provider_node_id: provider_node_id.to_string(),
+        }
+    }
+
+    pub fn origin_penalty(upstream_id: &str, provider_node_id: &str) -> Self {
+        DhtKey::OriginPenalty {
+            upstream_id: upstream_id.to_string(),
+            provider_node_id: provider_node_id.to_string(),
+        }
+    }
+
     pub fn as_str(&self) -> String {
         match self {
             DhtKey::Organization(org_id) => format!("org:{}", org_id),
@@ -245,6 +278,24 @@ impl DhtKey {
                 capability,
             } => {
                 format!("node_capability:{}:{}", node_id, capability)
+            }
+            DhtKey::OriginReachability {
+                upstream_id,
+                provider_node_id,
+            } => {
+                format!("origin_reachability:{}:{}", upstream_id, provider_node_id)
+            }
+            DhtKey::VerificationTask {
+                upstream_id,
+                provider_node_id,
+            } => {
+                format!("verification_task:{}:{}", upstream_id, provider_node_id)
+            }
+            DhtKey::OriginPenalty {
+                upstream_id,
+                provider_node_id,
+            } => {
+                format!("origin_penalty:{}:{}", upstream_id, provider_node_id)
             }
         }
     }
@@ -319,6 +370,18 @@ impl DhtKey {
                 node_id: parts[1].to_string(),
                 capability: parts[2].to_string(),
             },
+            "origin_reachability" if parts.len() >= 3 => DhtKey::OriginReachability {
+                upstream_id: parts[1].to_string(),
+                provider_node_id: parts[2].to_string(),
+            },
+            "verification_task" if parts.len() >= 3 => DhtKey::VerificationTask {
+                upstream_id: parts[1].to_string(),
+                provider_node_id: parts[2].to_string(),
+            },
+            "origin_penalty" if parts.len() >= 3 => DhtKey::OriginPenalty {
+                upstream_id: parts[1].to_string(),
+                provider_node_id: parts[2].to_string(),
+            },
             _ => DhtKey::NodeInfo(s.to_string()),
         }
     }
@@ -358,6 +421,8 @@ impl DhtKey {
                 | DhtKey::YaraRuleContent { .. }
                 | DhtKey::YaraRulesManifest { .. }
                 | DhtKey::NodeCapability { .. }
+                | DhtKey::OriginReachability { .. }
+                | DhtKey::OriginPenalty { .. }
         )
     }
 
@@ -414,6 +479,9 @@ impl DhtKey {
             DhtKey::YaraRuleContent { .. } => "yara_rule_content",
             DhtKey::YaraRulesManifest { .. } => "yara_rules_manifest",
             DhtKey::NodeCapability { .. } => "node_capability",
+            DhtKey::OriginReachability { .. } => "origin_reachability",
+            DhtKey::VerificationTask { .. } => "verification_task",
+            DhtKey::OriginPenalty { .. } => "origin_penalty",
         }
     }
 
@@ -449,6 +517,9 @@ impl DhtKey {
             DhtKey::YaraRuleContent { .. } => None,
             DhtKey::YaraRulesManifest { .. } => None,
             DhtKey::NodeCapability { .. } => None,
+            DhtKey::OriginReachability { .. } => None,
+            DhtKey::VerificationTask { .. } => None,
+            DhtKey::OriginPenalty { .. } => None,
         }
     }
 

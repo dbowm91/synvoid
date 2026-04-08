@@ -49,6 +49,7 @@ pub mod transport_rate_limit;
 pub mod transport_routing;
 pub mod transport_types;
 pub mod transports;
+pub mod verification;
 pub mod wasm_dist;
 pub mod yara_rules;
 

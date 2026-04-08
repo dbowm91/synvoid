@@ -1,0 +1,274 @@
+use parking_lot::RwLock;
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use crate::mesh::dht::keys::DhtKey;
+use crate::mesh::dht::{
+    OriginPenalty, OriginReachability, ReachabilityStatus, VerificationStatus, VerificationTask,
+};
+use crate::mesh::safe_unix_timestamp;
+
+const DEFAULT_REACHABILITY_TTL_SECS: u64 = 60;
+const DEFAULT_PENALTY_TTL_SECS: u64 = 600;
+const DEFAULT_PENALTY_INITIAL: i32 = -20;
+const DEFAULT_PENALTY_RECOVERY_RATE: i32 = 5;
+const DEFAULT_PENALTY_RECOVERY_INTERVAL_SECS: u64 = 600;
+const DEFAULT_MAX_PENALTIES_PER_TTL: usize = 1;
+
+#[derive(Clone)]
+pub struct VerificationTaskManager {
+    record_store: Arc<RwLock<Option<Arc<crate::mesh::dht::RecordStoreManager>>>>,
+    node_id: String,
+    config: VerificationConfig,
+    pending_tasks: Arc<RwLock<HashMap<String, Instant>>>,
+}
+
+#[derive(Clone)]
+pub struct VerificationConfig {
+    pub reachability_ttl_secs: u64,
+    pub penalty_ttl_secs: u64,
+    pub penalty_initial: i32,
+    pub penalty_recovery_rate: i32,
+    pub penalty_recovery_interval_secs: u64,
+    pub max_penalties_per_ttl: usize,
+    pub verification_nodes_count: usize,
+}
+
+impl Default for VerificationConfig {
+    fn default() -> Self {
+        Self {
+            reachability_ttl_secs: DEFAULT_REACHABILITY_TTL_SECS,
+            penalty_ttl_secs: DEFAULT_PENALTY_TTL_SECS,
+            penalty_initial: DEFAULT_PENALTY_INITIAL,
+            penalty_recovery_rate: DEFAULT_PENALTY_RECOVERY_RATE,
+            penalty_recovery_interval_secs: DEFAULT_PENALTY_RECOVERY_INTERVAL_SECS,
+            max_penalties_per_ttl: DEFAULT_MAX_PENALTIES_PER_TTL,
+            verification_nodes_count: 3,
+        }
+    }
+}
+
+impl VerificationTaskManager {
+    pub fn new(node_id: String, config: VerificationConfig) -> Self {
+        Self {
+            record_store: Arc::new(RwLock::new(None)),
+            node_id,
+            config,
+            pending_tasks: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    pub fn set_record_store(&self, record_store: Arc<crate::mesh::dht::RecordStoreManager>) {
+        let mut rs = self.record_store.write();
+        *rs = Some(record_store);
+    }
+
+    pub fn report_reachability(
+        &self,
+        upstream_id: &str,
+        provider_node_id: &str,
+        status: ReachabilityStatus,
+        latency_ms: u32,
+        error_rate: f32,
+        consecutive_failures: u32,
+    ) {
+        let record_store_opt = self.record_store.read().clone();
+        let Some(record_store) = record_store_opt else {
+            tracing::debug!("Record store not available for reachability report");
+            return;
+        };
+
+        let reachability = OriginReachability {
+            upstream_id: upstream_id.to_string(),
+            provider_node_id: provider_node_id.to_string(),
+            status,
+            latency_ms,
+            error_rate,
+            consecutive_failures,
+            timestamp: safe_unix_timestamp(),
+        };
+
+        let key = DhtKey::origin_reachability(upstream_id, provider_node_id);
+        let key_str = key.as_str();
+
+        if let Ok(value) = serde_json::to_vec(&reachability) {
+            if record_store.store_and_announce(
+                key_str.to_string(),
+                value,
+                self.config.reachability_ttl_secs,
+            ) {
+                tracing::debug!(
+                    "Stored reachability for {}:{} - status: {:?}",
+                    upstream_id,
+                    provider_node_id,
+                    status
+                );
+            }
+        }
+
+        if status == ReachabilityStatus::Failed || consecutive_failures >= 3 {
+            self.initiate_verification_if_needed(upstream_id, provider_node_id);
+        }
+    }
+
+    fn initiate_verification_if_needed(&self, upstream_id: &str, provider_node_id: &str) {
+        let task_key = format!("{}:{}", upstream_id, provider_node_id);
+
+        {
+            let pending = self.pending_tasks.read();
+            if pending.contains_key(&task_key) {
+                tracing::debug!("Verification already pending for {}", task_key);
+                return;
+            }
+        }
+
+        let record_store_opt = self.record_store.read().clone();
+        let Some(record_store) = record_store_opt else {
+            return;
+        };
+
+        let key = DhtKey::verification_task(upstream_id, provider_node_id);
+        let key_str = key.as_str();
+
+        if let Some(existing) = record_store.get(&key_str) {
+            if let Ok(task) = serde_json::from_slice::<VerificationTask>(&existing.value) {
+                if task.status == VerificationStatus::InProgress
+                    || task.status == VerificationStatus::Pending
+                {
+                    tracing::debug!("Verification task already exists for {}", task_key);
+                    return;
+                }
+            }
+        }
+
+        let now = safe_unix_timestamp();
+        let task = VerificationTask {
+            upstream_id: upstream_id.to_string(),
+            provider_node_id: provider_node_id.to_string(),
+            status: VerificationStatus::Pending,
+            reporting_node_id: self.node_id.clone(),
+            created_at: now,
+            expires_at: now + self.config.penalty_ttl_secs,
+            verification_node_ids: Vec::new(),
+        };
+
+        if let Ok(value) = serde_json::to_vec(&task) {
+            if record_store.store_and_announce(
+                key_str.to_string(),
+                value,
+                self.config.penalty_ttl_secs,
+            ) {
+                tracing::info!(
+                    "Created verification task for {}:{}",
+                    upstream_id,
+                    provider_node_id
+                );
+                let mut pending = self.pending_tasks.write();
+                pending.insert(task_key, Instant::now());
+            }
+        }
+    }
+
+    pub fn apply_penalty(
+        &self,
+        upstream_id: &str,
+        provider_node_id: &str,
+    ) -> Option<OriginPenalty> {
+        let record_store_opt = self.record_store.read().clone();
+        let Some(record_store) = record_store_opt else {
+            return None;
+        };
+
+        let key = DhtKey::origin_penalty(upstream_id, provider_node_id);
+        let key_str = key.as_str();
+
+        let existing_penalty = record_store.get(&key_str);
+
+        let current_penalty = if let Some(record) = existing_penalty {
+            if let Ok(penalty) = serde_json::from_slice::<OriginPenalty>(&record.value) {
+                let now = safe_unix_timestamp();
+                let recovery_intervals =
+                    (now - penalty.last_updated) / self.config.penalty_recovery_interval_secs;
+                let recovery =
+                    (recovery_intervals as i32 * self.config.penalty_recovery_rate).min(0);
+
+                let new_penalty = (penalty.penalty_score + recovery)
+                    .max(penalty.penalty_score + self.config.penalty_initial);
+                Some((penalty, new_penalty, now))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        let (penalty_score, last_updated) = match current_penalty {
+            Some((_, new_score, time)) => (new_score, time),
+            None => (self.config.penalty_initial, safe_unix_timestamp()),
+        };
+
+        let now = safe_unix_timestamp();
+        let penalty = OriginPenalty {
+            upstream_id: upstream_id.to_string(),
+            provider_node_id: provider_node_id.to_string(),
+            penalty_score,
+            created_at: current_penalty.map(|(p, _, _)| p.created_at).unwrap_or(now),
+            last_updated,
+            expires_at: now + self.config.penalty_ttl_secs,
+            applied_by: self.node_id.clone(),
+        };
+
+        if let Ok(value) = serde_json::to_vec(&penalty) {
+            if record_store.store_and_announce(
+                key_str.to_string(),
+                value,
+                self.config.penalty_ttl_secs,
+            ) {
+                tracing::info!(
+                    "Applied penalty {} to {}:{}",
+                    penalty_score,
+                    upstream_id,
+                    provider_node_id
+                );
+                return Some(penalty);
+            }
+        }
+
+        None
+    }
+
+    pub fn get_penalty(&self, upstream_id: &str, provider_node_id: &str) -> Option<OriginPenalty> {
+        let record_store_opt = self.record_store.read().clone();
+        let Some(record_store) = record_store_opt else {
+            return None;
+        };
+
+        let key = DhtKey::origin_penalty(upstream_id, provider_node_id);
+        let key_str = key.as_str();
+
+        if let Some(record) = record_store.get(&key_str) {
+            if let Ok(penalty) = serde_json::from_slice::<OriginPenalty>(&record.value) {
+                let now = safe_unix_timestamp();
+                if penalty.expires_at > now {
+                    return Some(penalty);
+                }
+            }
+        }
+
+        None
+    }
+
+    pub fn cleanup_expired_tasks(&self) {
+        let mut pending = self.pending_tasks.write();
+        pending.retain(|_, instant| {
+            instant.elapsed() < Duration::from_secs(self.config.penalty_ttl_secs)
+        });
+    }
+}
+
+impl Default for VerificationTaskManager {
+    fn default() -> Self {
+        Self::new(String::new(), VerificationConfig::default())
+    }
+}

@@ -66,7 +66,7 @@ This document consolidates all individual improvement plans (plan2-plan9) into a
 
 ---
 
-## Wave 2: Mesh & DHT Infrastructure 🔶 PARTIALLY COMPLETED
+## Wave 2: Mesh & DHT Infrastructure 🔶 PARTIALLY COMPLETED (2.5 IN PROGRESS)
 
 **Focus**: DNS capability, sharding, adaptive quorum, mesh distribution
 
@@ -236,14 +236,15 @@ node_capability:yaraDistributor - Node distributes YARA rules
 
 | Phase | Description | Status |
 |-------|-------------|--------|
-| 1 | Add NodeCapability DHT key type | 🔄 IN PROGRESS |
-| 2 | Wire MeshCapabilities.supported_services from config | 🔄 IN PROGRESS |
-| 3 | Add capability announcement on node startup/capability change | 🔄 IN PROGRESS |
-| 4 | Fix UpstreamAnnounce processing | 🔄 IN PROGRESS |
-| 5 | Implement VerifiedUpstream DHT storage | 🔄 IN PROGRESS |
-| 6 | Enable multi-origin discovery | 🔄 IN PROGRESS |
-| 7 | Encrypt TierKey before DHT storage | 🔄 IN PROGRESS |
-| 8 | Encrypt TierKey before transmission | 🔄 IN PROGRESS |
+| 1 | Add NodeCapability DHT key type | ✅ COMPLETED |
+| 2 | Wire MeshCapabilities.supported_services from config | ✅ COMPLETED |
+| 3 | Add capability announcement on node startup/capability change | ✅ COMPLETED |
+| 4 | Fix UpstreamAnnounce processing | ✅ COMPLETED |
+| 5 | Implement VerifiedUpstream DHT storage | ✅ COMPLETED |
+| 6 | Origin Reachability System (DHT keys + VerificationTaskManager) | 🔶 PARTIAL |
+| 7 | Enable multi-origin discovery | 🔄 DEFERRED |
+| 8 | Encrypt TierKey before DHT storage | 🔄 DEFERRED |
+| 9 | Encrypt TierKey before transmission | 🔄 DEFERRED |
 
 #### Phase 1: NodeCapability DHT Key Type
 
@@ -357,7 +358,48 @@ Create `VerifiedUpstream` record when origin registers:
 - Create `VerifiedUpstream` struct with upstream details and global node signature
 - Store in DHT with 30-day TTL
 
-#### Phase 6: Multi-Origin Discovery
+#### Phase 6: Origin Reachability System 🔶 PARTIAL
+
+**Overview**: Edge nodes report route failures, global nodes coordinate verification, penalties applied to unreliable origins.
+
+**Architecture Flow**:
+```
+Client requests example.com
+    ├── Global DNS authority → selects nearest edge to client
+    └── Edge must select best performing origin (geo-relative)
+            ├── Edge reports: "example.com from node_id X is slow/offline"
+            ├── Global node coordinates verification task
+            │       (avoid race conditions via global task queue)
+            ├── Work order → 3-5 random non-global nodes verify claim
+            └── If verified:
+                    ├── Apply route PENALTY (score reduction in DHT)
+                    └── If multiple nodes can't reach → remove from DHT
+```
+
+**Penalty Mechanism**:
+- Initial penalty: -20
+- Recovery: +5 every TTL*2 (10 minutes)
+- Self-healing after 40 minutes
+- Only 1 penalty per TTL per origin to avoid excess
+
+**Implementation Status**: 🔶 PARTIAL
+- ✅ Added DHT key types: `OriginReachability`, `VerificationTask`, `OriginPenalty`
+- ✅ Added `VerificationTaskManager` struct in `src/mesh/verification.rs`
+- ❌ NOT wired into MeshTransport yet
+- ❌ `OriginReachabilityReport` handler not implemented (requires protobuf changes)
+
+**Files Modified**:
+- `src/mesh/dht/keys.rs` - Added DHT key variants
+- `src/mesh/dht/mod.rs` - Added struct definitions
+- `src/mesh/verification.rs` - New file with VerificationTaskManager
+- `src/mesh/mod.rs` - Added verification module
+
+**Remaining Work**:
+1. Wire `VerificationTaskManager` into `MeshTransport`
+2. Implement reachability reporting from edge proxy
+3. Implement handler for `OriginReachabilityReport` (requires protobuf)
+
+#### Phase 7: Multi-Origin Discovery
 
 **Files to modify**: `src/mesh/topology.rs`, `src/mesh/proxy.rs`
 
@@ -371,7 +413,7 @@ Create `VerifiedUpstream` record when origin registers:
 - Would require DHT query capability in topology module
 - Load balancing strategy needs architectural decision
 
-#### Phase 7: Encrypt TierKey for DHT Storage
+#### Phase 8: Encrypt TierKey for DHT Storage
 
 **Files to modify**: `src/mesh/transport_org.rs`, `src/mesh/cert_dist.rs` (reuse encryption)
 
@@ -384,7 +426,7 @@ record_store.store_and_announce(key, encrypted_key, ttl);
 
 **Status**: 🔄 DEFERRED - Requires architectural work: mesh_session_key not available in transport_org, needs refactoring to pass encryption context
 
-#### Phase 8: Encrypt TierKey for Transmission
+#### Phase 9: Encrypt TierKey for Transmission
 
 **Files to modify**: `src/mesh/protocol_proto_encode.rs`
 
@@ -399,7 +441,7 @@ proto::TierKey {
 }
 ```
 
-**Status**: 🔄 DEFERRED - Requires Phase 7 completion (encryption context)
+**Status**: 🔄 DEFERRED - Requires Phase 8 completion (encryption context)
 
 #### Completed Phases Summary
 
@@ -410,9 +452,10 @@ proto::TierKey {
 | 3 | Capability announcement on startup | ✅ COMPLETED |
 | 4 | Fix UpstreamAnnounce processing | ✅ COMPLETED |
 | 5 | VerifiedUpstream DHT storage | ✅ COMPLETED |
-| 6 | Multi-origin discovery | 🔄 DEFERRED |
-| 7 | TierKey DHT encryption | 🔄 DEFERRED |
-| 8 | TierKey transmission encryption | 🔄 DEFERRED |
+| 6 | Origin Reachability System | 🔶 PARTIAL |
+| 7 | Multi-origin discovery | 🔄 DEFERRED |
+| 8 | TierKey DHT encryption | 🔄 DEFERRED |
+| 9 | TierKey transmission encryption | 🔄 DEFERRED |
 
 #### Success Metrics
 
