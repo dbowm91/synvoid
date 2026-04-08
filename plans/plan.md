@@ -132,13 +132,35 @@ This document consolidates all individual improvement plans (plan2-plan9) into a
 
 ## Wave 3: WAF & Threat Intelligence
 
-### 3.1 Local Indicator Lookup Optimization
+### 3.1 Local Indicator Lookup Optimization ✅ COMPLETED
 
-Focus on efficient local lookup patterns in WAF for common threats.
+**Status**: COMPLETED
 
-### 3.2 Threat Deduplication
+**Critical Bug Fixed**: `ThreatIntelligenceManager.lookup_local_indicator()` was completely broken due to key format mismatch:
 
-Reduce duplicate threat processing in `ThreatIntelligenceManager`.
+| Location | Issue |
+|----------|-------|
+| `threat_intel.rs:714` | `handle_incoming_threat` stored with key `"{site_scope}:{indicator_value}"` |
+| `threat_intel.rs:1058` | `sync_from_dht` stored with key `"threat_indicator:{indicator_value}"` |
+| `threat_intel.rs:896` | `lookup_local_indicator` looked up by bare `indicator_value` |
+
+**Fix Applied**:
+- Changed `handle_incoming_threat` to use `indicator.indicator_value.clone()` as key
+- Changed `sync_from_dht` to extract `indicator_value` from DHT key and use as local key
+- Updated `apply_sync` to use consistent key format
+- Fixed `retain` logic to properly compare keys (converted DHT keys to indicator_values)
+
+**Files Modified**: `src/mesh/threat_intel.rs`
+
+### 3.2 Threat Deduplication ✅ COMPLETED
+
+**Status**: COMPLETED
+
+**Changes**:
+- Added deduplication check in `handle_incoming_threat()` (lines 724-731) - skips processing if same indicator_value and threat_type already exists
+- Deduplication now works correctly due to fixed key format
+
+**Files Modified**: `src/mesh/threat_intel.rs`
 
 ---
 

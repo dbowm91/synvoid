@@ -711,7 +711,7 @@ impl ThreatIntelligenceManager {
             return false;
         }
 
-        let key = format!("{}:{}", indicator.site_scope, indicator.indicator_value);
+        let key = indicator.indicator_value.clone();
 
         let now = crate::mesh::safe_unix_timestamp();
 
@@ -719,6 +719,15 @@ impl ThreatIntelligenceManager {
         if now > expires_at {
             tracing::warn!("Received expired threat indicator: {}", key);
             return false;
+        }
+
+        if let Some(existing) = self.indicators.read().get(&key) {
+            if existing.indicator.indicator_value == indicator.indicator_value
+                && existing.indicator.threat_type == indicator.threat_type
+            {
+                tracing::debug!("Duplicate threat indicator received, skipping: {}", key);
+                return true;
+            }
         }
 
         match indicator.threat_type {
@@ -990,7 +999,7 @@ impl ThreatIntelligenceManager {
         let mut removed_keys = Vec::new();
 
         for indicator in indicators {
-            let key = format!("{}:{}", indicator.site_scope, indicator.indicator_value);
+            let key = indicator.indicator_value.clone();
 
             let accepted = self.handle_incoming_threat(indicator, from_node, from_role, signer);
 
@@ -1049,14 +1058,15 @@ impl ThreatIntelligenceManager {
         let mut removed = 0;
 
         for key in &dht_keys {
-            if !local_indicators.contains_key(key) {
+            let indicator_value = key.strip_prefix("threat_indicator:").unwrap_or(key);
+            if !local_indicators.contains_key(indicator_value) {
                 if let Some(record) = record_store.get(key) {
                     if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&record.value) {
                         let indicator = self
                             .parse_dht_record_value(&value)
                             .ok_or_else(|| "Failed to parse DHT record".to_string())?;
                         local_indicators.insert(
-                            key.clone(),
+                            indicator_value.to_string(),
                             ThreatIndicatorEntry {
                                 indicator,
                                 received_from: Some("dht_sync".to_string()),
@@ -1070,11 +1080,16 @@ impl ThreatIntelligenceManager {
             }
         }
 
+        let dht_indicator_values: Vec<&str> = dht_keys
+            .iter()
+            .filter_map(|k| k.strip_prefix("threat_indicator:"))
+            .collect();
+
         local_indicators.retain(|key, entry| {
             if entry.local_origin {
                 return true;
             }
-            if !dht_keys.contains(key) {
+            if !dht_indicator_values.contains(&key.as_str()) {
                 removed += 1;
                 return false;
             }
