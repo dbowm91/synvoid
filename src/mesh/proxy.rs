@@ -851,6 +851,21 @@ impl MeshProxy {
                 Err(e) => {
                     let failure_count = self.record_provider_failure(&provider.node_id);
 
+                    let tm = {
+                        let guard = self.transport_manager.read();
+                        guard.clone()
+                    };
+                    if let Some(ref tm) = tm {
+                        tm.report_reachability(
+                            upstream_id,
+                            &provider.node_id,
+                            crate::mesh::dht::ReachabilityStatus::Failed,
+                            0,
+                            0.0,
+                            failure_count,
+                        );
+                    }
+
                     if failure_count >= BLOCK_BROADCAST_FAILURE_THRESHOLD
                         && !self.topology.is_upstream_blocked(upstream_id).await
                     {
@@ -945,7 +960,23 @@ impl MeshProxy {
                 Ok((resp, provider_info.waf_policy))
             }
             Err(e) => {
-                let _failure_count = self.record_provider_failure(&provider_info.node_id);
+                let failure_count = self.record_provider_failure(&provider_info.node_id);
+
+                let tm = {
+                    let guard = self.transport_manager.read();
+                    guard.clone()
+                };
+                if let Some(ref tm) = tm {
+                    tm.report_reachability(
+                        upstream_id,
+                        &provider_info.node_id,
+                        crate::mesh::dht::ReachabilityStatus::Failed,
+                        0,
+                        0.0,
+                        failure_count,
+                    );
+                }
+
                 tracing::warn!(
                     "Provider {} failed for {}: {}",
                     provider_info.node_id,

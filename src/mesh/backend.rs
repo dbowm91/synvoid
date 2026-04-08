@@ -403,6 +403,10 @@ pub async fn initialize_mesh_transports(
         transport_manager.set_routing_manager(rm);
     }
 
+    if let Some(ref rs) = record_store {
+        transport_manager.set_verification_record_store(rs.clone());
+    }
+
     let quic_transport = QuicMeshTransport::new(
         config.clone(),
         topology.clone(),

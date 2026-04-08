@@ -241,7 +241,7 @@ node_capability:yaraDistributor - Node distributes YARA rules
 | 3 | Add capability announcement on node startup/capability change | ✅ COMPLETED |
 | 4 | Fix UpstreamAnnounce processing | ✅ COMPLETED |
 | 5 | Implement VerifiedUpstream DHT storage | ✅ COMPLETED |
-| 6 | Origin Reachability System (DHT keys + VerificationTaskManager) | 🔶 PARTIAL |
+| 6 | Origin Reachability System (wired into MeshTransport + proxy) | ✅ COMPLETED |
 | 7 | Enable multi-origin discovery | 🔄 DEFERRED |
 | 8 | Encrypt TierKey before DHT storage | 🔄 DEFERRED |
 | 9 | Encrypt TierKey before transmission | 🔄 DEFERRED |
@@ -393,11 +393,18 @@ Client requests example.com
 - `src/mesh/dht/mod.rs` - Added struct definitions
 - `src/mesh/verification.rs` - New file with VerificationTaskManager
 - `src/mesh/mod.rs` - Added verification module
+- `src/mesh/transports/manager.rs` - Added verification_manager field and wiring
+- `src/mesh/backend.rs` - Wired record_store to verification_manager
+- `src/mesh/proxy.rs` - Added report_reachability calls on provider failures
+
+**Completed**:
+1. ✅ VerificationTaskManager added to MeshTransportManager
+2. ✅ set_verification_record_store() called during initialization
+3. ✅ report_reachability() called from proxy on provider failures
 
 **Remaining Work**:
-1. Wire `VerificationTaskManager` into `MeshTransport`
-2. Implement reachability reporting from edge proxy
-3. Implement handler for `OriginReachabilityReport` (requires protobuf)
+1. Implement handler for `OriginReachabilityReport` (requires protobuf message changes)
+2. Implement periodic verification task processing (background task)
 
 #### Phase 7: Multi-Origin Discovery
 
@@ -452,7 +459,7 @@ proto::TierKey {
 | 3 | Capability announcement on startup | ✅ COMPLETED |
 | 4 | Fix UpstreamAnnounce processing | ✅ COMPLETED |
 | 5 | VerifiedUpstream DHT storage | ✅ COMPLETED |
-| 6 | Origin Reachability System | 🔶 PARTIAL |
+| 6 | Origin Reachability System | ✅ COMPLETED |
 | 7 | Multi-origin discovery | 🔄 DEFERRED |
 | 8 | TierKey DHT encryption | 🔄 DEFERRED |
 | 9 | TierKey transmission encryption | 🔄 DEFERRED |

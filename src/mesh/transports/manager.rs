@@ -16,6 +16,7 @@ use crate::mesh::topology::MeshTopology;
 use crate::mesh::transports::{
     MeshTransportError, MeshTransportTrait, MeshTransportType, QuicMeshTransport, TransportHint,
 };
+use crate::mesh::verification::{VerificationConfig, VerificationTaskManager};
 use crate::utils::current_timestamp;
 
 pub const DEFAULT_MAX_RETRIES: u32 = 5;
@@ -78,6 +79,7 @@ pub struct MeshTransportManager {
     peer_states: Arc<RwLock<HashMap<String, PeerTransportState>>>,
     record_store: Option<Arc<crate::mesh::dht::RecordStoreManager>>,
     routing_manager: Arc<RwLock<Option<Arc<crate::mesh::dht::routing::DhtRoutingManager>>>>,
+    verification_manager: Arc<VerificationTaskManager>,
     // Config caches with metrics
     image_protection_cache:
         Arc<RwLock<LruCache<String, (crate::mesh::config::MeshImageProtectionConfig, Instant)>>>,
@@ -118,6 +120,10 @@ impl MeshTransportManager {
         let image_poison_cache =
             LruCache::with_expiry_duration_and_capacity(Duration::from_secs(300), 1000);
 
+        let node_id = config.node_id.clone().unwrap_or_else(|| "unknown".to_string());
+        let verification_config = VerificationConfig::default();
+        let verification_manager = Arc::new(VerificationTaskManager::new(node_id, verification_config));
+
         Self {
             config,
             topology,
@@ -126,6 +132,7 @@ impl MeshTransportManager {
             peer_states: Arc::new(RwLock::new(HashMap::new())),
             record_store,
             routing_manager: Arc::new(RwLock::new(None)),
+            verification_manager,
             image_protection_cache: Arc::new(RwLock::new(image_protection_cache)),
             compression_cache: Arc::new(RwLock::new(compression_cache)),
             minification_cache: Arc::new(RwLock::new(minification_cache)),
@@ -147,6 +154,33 @@ impl MeshTransportManager {
 
     pub fn set_routing_manager(&self, manager: Arc<crate::mesh::dht::routing::DhtRoutingManager>) {
         *self.routing_manager.write() = Some(manager);
+    }
+
+    pub fn get_verification_manager(&self) -> Arc<VerificationTaskManager> {
+        self.verification_manager.clone()
+    }
+
+    pub fn set_verification_record_store(&self, record_store: Arc<crate::mesh::dht::RecordStoreManager>) {
+        self.verification_manager.set_record_store(record_store);
+    }
+
+    pub fn report_reachability(
+        &self,
+        upstream_id: &str,
+        provider_node_id: &str,
+        status: crate::mesh::dht::ReachabilityStatus,
+        latency_ms: u32,
+        error_rate: f32,
+        consecutive_failures: u32,
+    ) {
+        self.verification_manager.report_reachability(
+            upstream_id,
+            provider_node_id,
+            status,
+            latency_ms,
+            error_rate,
+            consecutive_failures,
+        );
     }
 
     pub fn get_topology(&self) -> Arc<MeshTopology> {
