@@ -11,7 +11,7 @@ This document consolidates all individual improvement plans (plan2-plan9) into a
 | 3 | WAF & Threat Intelligence | High |
 | 4 | File Upload Security | High |
 | 5 | Edge Caching & Transform Sharing | Medium |
-| 6 | Serverless Architecture | Future |
+| 6 | Serverless Architecture | ✅ Completed |
 | 7 | Security Audit Remediation | High |
 | 8 | Code Quality & Technical Debt | Medium |
 | 9 | Data Tech Stack Optimization | Low |
@@ -321,9 +321,62 @@ archive_max_size = "100MB"  # Max total extracted size from archives
 
 ---
 
-## Wave 6: Serverless Architecture
+## Wave 6: Serverless Architecture ✅ COMPLETED
 
-_Placeholder for future work - unified pool, routing, versioning_
+**Status**: COMPLETED
+
+**Overview**: WASM-based serverless function execution with instance pooling, routing, and auto-scaling.
+
+### Implementation Details
+
+**Files**:
+| File | Description |
+|------|-------------|
+| `src/serverless/mod.rs` | Module exports |
+| `src/serverless/manager.rs` | `ServerlessManager` with routing and invocation handling (332 lines) |
+| `src/serverless/instance_pool.rs` | WASM instance pooling with auto-scaling (430 lines) |
+| `src/serverless/registry.rs` | Global function registry and metrics (108 lines) |
+| `src/serverless/routing.rs` | Route matching with tests (301 lines) |
+| `src/config/serverless.rs` | Configuration structures (44 lines) |
+
+### Features Implemented
+
+1. **WASM-based execution** - Functions run in Wasmtime via `WasmPluginManager`
+2. **Instance pooling** - Pre-warmed instances with min/max scaling and idle eviction
+3. **Auto-scaling** - Built-in autoscaler with scale-up/down thresholds and cooldown periods
+4. **Route-based routing** - `ServerlessRoute` supports exact, prefix, suffix, regex, and glob patterns
+5. **Method matching** - GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS with ANY support
+6. **Function registry** - Global `ServerlessRegistry` tracking invocation counts, errors, last invoked
+7. **Metrics integration** - Full metrics support (`record_serverless_invocation`, `record_serverless_duration`, etc.)
+8. **Configuration** - `memory_mb`, `cpu_fuel`, `timeout_seconds`, `env` vars, `idle_timeout_seconds`, `pre_warm_instances`, `min_instances`, `max_instances`
+
+### Integration Points
+
+- HTTP server (`src/http/server.rs`) checks `serverless_manager` for route matching
+- HTTPS server (`src/tls/server.rs`) has `with_serverless_manager()` builder method
+- Unified worker server initializes serverless manager from config
+- IPC messages include `serverless_metrics` field
+- Mesh subsystem distributes WASM modules for serverless functions (`WasmModuleType::Serverless`)
+
+### Configuration Example
+
+```toml
+[serverless]
+enabled = true
+
+[[serverless.functions]]
+name = "my_function"
+path = "/functions/my_function.wasm"
+handler = "handle_request"
+memory_mb = 128
+timeout_seconds = 30
+routes = ["GET /api/*", "POST /api/data"]
+```
+
+### Tests
+
+- 10 unit tests in `src/serverless/routing.rs` all passing
+- Integration tests pass (124 tests)
 
 ---
 
