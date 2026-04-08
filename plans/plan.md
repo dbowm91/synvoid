@@ -409,7 +409,7 @@ proto::TierKey {
 | 2 | Wire MeshCapabilities.supported_services | ✅ COMPLETED |
 | 3 | Capability announcement on startup | ✅ COMPLETED |
 | 4 | Fix UpstreamAnnounce processing | ✅ COMPLETED |
-| 5 | VerifiedUpstream DHT storage | 🔄 DEFERRED |
+| 5 | VerifiedUpstream DHT storage | ✅ COMPLETED |
 | 6 | Multi-origin discovery | 🔄 DEFERRED |
 | 7 | TierKey DHT encryption | 🔄 DEFERRED |
 | 8 | TierKey transmission encryption | 🔄 DEFERRED |
@@ -431,6 +431,7 @@ proto::TierKey {
 - `src/mesh/transport.rs` (Phase 3: add announce_capabilities)
 - `src/mesh/transports/manager.rs` (Phase 3: add announce_capabilities to manager)
 - `src/mesh/transport_peer.rs` (Phase 4: fix UpstreamAnnounce processing)
+- `src/mesh/transport_org.rs` (Phase 5: VerifiedUpstream DHT storage)
 - `src/worker/unified_server.rs` (Phase 3: wire capability announcement)
 - `plans/plan.md` (this document)
 
