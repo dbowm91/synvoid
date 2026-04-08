@@ -173,6 +173,243 @@ This document consolidates all individual improvement plans (plan2-plan9) into a
 - `src/mesh/cert.rs`
 - `src/mesh/config.rs`
 
+### 2.5 Node Capability Signaling & Origin Routing 🔄 IN PROGRESS
+
+**Overview**: Comprehensive fix for capability signaling, origin routing, and sensitive data protection.
+
+#### Problem Statement
+
+**1. Capability Signaling Missing/Broken**:
+- `MeshCapabilities.supported_services` is always empty
+- `NodeInfo.capabilities` is always empty  
+- Config flags (`dns_server_enabled`, `can_host_origins`, etc.) exist but never wired into capability signaling
+- No DHT-based capability discovery mechanism
+- Nodes cannot discover what services other nodes offer
+
+**2. Origin Routing Broken**:
+- `UpstreamAnnounce` message received but not processed (handler only logs)
+- `VerifiedUpstream` DHT key defined but never created/stored
+- `proxy_to_origins` config option never checked
+- `find_all_origins_for_site()` exists but never called
+- Multi-origin routing (load balancing) not implemented
+
+**3. TierKey Private Key Exposure**:
+- `TierKey.key` (symmetric secret) transmitted in plaintext in `OrgInvitationResponse`
+- `TierKey.key` stored in DHT without encryption or signature
+- Any compromised node can read sensitive key material from DHT
+
+#### Design Decisions
+
+**1. Capability Signaling Approach**:
+
+- Use DHT for capability discovery (like threat indicators)
+- Add `NodeCapability` DHT key for explicit capability announcements
+- All nodes advertise capabilities, not just global nodes
+- Capabilities indicate what services a node can provide
+
+**Capability Types**:
+```
+node_capability:global          - Node is a global node
+node_capability:edge            - Node is an edge node  
+node_capability:origin          - Node can host origins
+node_capability:dnsRecursive     - Node offers DNS recursive resolver
+node_capability:dnsAuthority    - Node offers authoritative DNS
+node_capability:honeypot        - Node runs honeypot service
+node_capability:threatReceiver  - Node receives threat intel from honeypots
+node_capability:yaraDistributor - Node distributes YARA rules
+```
+
+**2. Origin Routing Approach**:
+
+- Fix `UpstreamAnnounce` processing to store in DHT
+- Implement `VerifiedUpstream` creation on global node signature
+- Add DHT key for origin registration: `origin:{node_id}:{domain}`
+- Enable multi-origin discovery and load balancing
+
+**3. TierKey Encryption Approach**:
+
+- Encrypt `TierKey.key` using mesh session key before DHT storage
+- Encrypt before transmission in `OrgInvitationResponse`
+- Use AES-256-GCM with HKDF-derived per-tier keys (similar to cert_dist.rs)
+
+#### Implementation Phases
+
+| Phase | Description | Status |
+|-------|-------------|--------|
+| 1 | Add NodeCapability DHT key type | 🔄 IN PROGRESS |
+| 2 | Wire MeshCapabilities.supported_services from config | 🔄 IN PROGRESS |
+| 3 | Add capability announcement on node startup/capability change | 🔄 IN PROGRESS |
+| 4 | Fix UpstreamAnnounce processing | 🔄 IN PROGRESS |
+| 5 | Implement VerifiedUpstream DHT storage | 🔄 IN PROGRESS |
+| 6 | Enable multi-origin discovery | 🔄 IN PROGRESS |
+| 7 | Encrypt TierKey before DHT storage | 🔄 IN PROGRESS |
+| 8 | Encrypt TierKey before transmission | 🔄 IN PROGRESS |
+
+#### Phase 1: NodeCapability DHT Key Type
+
+**Files to modify**: `src/mesh/dht/keys.rs`
+
+```rust
+// Add to DhtKey enum:
+NodeCapability {
+    node_id: String,
+    capability: String,  // e.g., "global", "edge", "dnsRecursive"
+}
+
+// Add helper:
+pub fn node_capability(node_id: &str, capability: &str) -> Self {
+    DhtKey::NodeCapability {
+        node_id: node_id.to_string(),
+        capability: capability.to_string(),
+    }
+}
+
+// String format: "node_capability:{node_id}:{capability}"
+// e.g., "node_capability:node-abc:global"
+
+// Add to is_public() - capabilities should be public for discovery
+// Add to from_str() parser
+```
+
+#### Phase 2: Wire MeshCapabilities from Config
+
+**Files to modify**: `src/mesh/protocol.rs`
+
+In `MeshCapabilities::from_config()`:
+```rust
+// Current: supported_services: vec![]
+// Change to populate from config flags:
+
+let mut services = vec![];
+if role.is_global() {
+    services.push("global".to_string());
+}
+if role.is_edge() || role.contains(EDGE) {
+    services.push("edge".to_string());
+}
+if config.proxy_to_origins {
+    services.push("origin".to_string());
+}
+if config.dns_server_enabled && !config.dns_mesh_mode_only {
+    services.push("dnsRecursive".to_string());
+}
+if config.dns_mesh_mode_only {
+    services.push("dnsAuthority".to_string());
+}
+if config.honeypot_enabled {
+    services.push("honeypot".to_string());
+}
+if config.threat_receiver_enabled {
+    services.push("threatReceiver".to_string());
+}
+
+supported_services: services,
+```
+
+#### Phase 3: Capability Announcement
+
+**Files to modify**: `src/mesh/transport.rs`, `src/worker/unified_server.rs`
+
+On node startup:
+1. Call `MeshTransportManager::announce_capabilities()`
+2. For each capability, store `NodeCapability:{node_id}:{capability}` in DHT
+3. Use TTL of 3600 (1 hour), refresh on startup
+
+When capabilities change:
+1. Update DHT with new capability records
+2. Broadcast update to peers
+
+#### Phase 4: Fix UpstreamAnnounce Processing
+
+**Files to modify**: `src/mesh/transport_peer.rs`, `src/mesh/topology.rs`
+
+Current issue (`transport_peer.rs:1659-1665`):
+```rust
+// Handler only logs, does nothing else
+tracing::debug!("Received UpstreamAnnounce from {}: {:?}", peer_id, action);
+```
+
+Fix: Process announcement and store in DHT:
+```rust
+MeshMessage::UpstreamAnnounce { upstream_id, action, signature } => {
+    if validate_signature(&upstream_id, signature) {
+        match action {
+            0 => { /* ADD */ store_upstream_in_dht(upstream_id); }
+            1 => { /* REMOVE */ remove_upstream_from_dht(upstream_id); }
+            _ => {}
+        }
+    }
+    None
+}
+```
+
+#### Phase 5: Implement VerifiedUpstream DHT Storage
+
+**Files to modify**: `src/mesh/transport.rs`, `src/mesh/dht/keys.rs`
+
+Create `VerifiedUpstream` record when origin registers:
+1. Sign upstream info with global node's Ed25519 key
+2. Store in DHT with key `verified_upstream:{upstream_id}`
+3. Include global node signature for verification
+
+#### Phase 6: Multi-Origin Discovery
+
+**Files to modify**: `src/mesh/topology.rs`, `src/mesh/proxy.rs`
+
+1. Enable `find_all_origins_for_site()` to be called
+2. Implement round-robin or weighted load balancing across origins
+3. Use capability info to filter origins by supported service
+
+#### Phase 7: Encrypt TierKey for DHT Storage
+
+**Files to modify**: `src/mesh/transport_org.rs`, `src/mesh/cert_dist.rs` (reuse encryption)
+
+```rust
+// In transport_org.rs, before store_and_announce():
+let tier_key_json = serde_json::to_vec(tier_key)?;
+let encrypted_key = encrypt_tier_key(&tier_key_json, mesh_session_key)?;
+record_store.store_and_announce(key, encrypted_key, ttl);
+```
+
+#### Phase 8: Encrypt TierKey for Transmission
+
+**Files to modify**: `src/mesh/protocol_proto_encode.rs`
+
+In `OrgInvitationResponse` encoding:
+```rust
+// Instead of: key: tier_key.key.clone()
+// Encrypt the key field before including in message
+let encrypted_key = encrypt_tier_key(&tier_key.key, derived_key)?;
+proto::TierKey {
+    key: encrypted_key,
+    // ...
+}
+```
+
+#### Success Metrics
+
+| Metric | Before | After |
+|--------|--------|-------|
+| Capabilities advertised per node | 0 | 3-8 |
+| Origin announcements processed | 0% | 100% |
+| VerifiedUpstream records created | 0 | All origins |
+| TierKey encrypted at rest | 0% | 100% |
+| TierKey encrypted in transit | 0% | 100% |
+| Multi-origin routing | Broken | Working |
+
+#### Files to Modify
+
+- `src/mesh/dht/keys.rs` (add NodeCapability key type)
+- `src/mesh/protocol.rs` (wire MeshCapabilities.from_config)
+- `src/mesh/transport.rs` (capability announcement, UpstreamAnnounce processing)
+- `src/mesh/transport_peer.rs` (handle UpstreamAnnounce)
+- `src/mesh/topology.rs` (multi-origin discovery)
+- `src/mesh/proxy.rs` (use multi-origin routing)
+- `src/mesh/transport_org.rs` (encrypt TierKey)
+- `src/mesh/protocol_proto_encode.rs` (encrypt TierKey in messages)
+- `src/worker/unified_server.rs` (wire capability announcement)
+- `plans/plan.md` (this document)
+
 ### 2.4 Threat Intelligence & Honeypot ✅ COMPLETED
 
 **Bugs Fixed**:
