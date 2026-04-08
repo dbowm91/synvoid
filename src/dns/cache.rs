@@ -58,7 +58,13 @@ struct InnerDnsCache {
 
 impl DnsCache {
     pub fn new(capacity: usize, max_ttl_secs: u64, min_ttl_secs: u64) -> Self {
-        let cache = Cache::new(capacity as u64);
+        let cache = Cache::builder()
+            .max_capacity(capacity as u64)
+            .time_to_live(Duration::from_secs(max_ttl_secs))
+            .weigher(|_key: &CacheKey, value: &CachedResponse| {
+                u32::try_from(value.data.len()).unwrap_or(u32::MAX)
+            })
+            .build();
 
         Self {
             inner: Arc::new(InnerDnsCache {
@@ -86,7 +92,13 @@ impl DnsCache {
         enable_source_validation: bool,
         enable_fingerprinting: bool,
     ) -> Self {
-        let cache = Cache::new(capacity as u64);
+        let cache = Cache::builder()
+            .max_capacity(capacity as u64)
+            .time_to_live(Duration::from_secs(max_ttl_secs))
+            .weigher(|_key: &CacheKey, value: &CachedResponse| {
+                u32::try_from(value.data.len()).unwrap_or(u32::MAX)
+            })
+            .build();
 
         Self {
             inner: Arc::new(InnerDnsCache {
@@ -113,7 +125,13 @@ impl DnsCache {
         serve_stale_enabled: bool,
         serve_stale_max_stale_secs: u64,
     ) -> Self {
-        let cache = Cache::new(capacity as u64);
+        let cache = Cache::builder()
+            .max_capacity(capacity as u64)
+            .time_to_live(Duration::from_secs(max_ttl_secs))
+            .weigher(|_key: &CacheKey, value: &CachedResponse| {
+                u32::try_from(value.data.len()).unwrap_or(u32::MAX)
+            })
+            .build();
 
         Self {
             inner: Arc::new(InnerDnsCache {

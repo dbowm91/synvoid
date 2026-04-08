@@ -222,6 +222,10 @@ impl std::fmt::Display for ErrorCode {
 /// - **Worker Restart**: RestartWorkerRequest, RestartWorkerResponse
 /// - **Plugin**: PluginStateSync
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(
+    feature = "rkyv",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub enum Message {
     WorkerStarted {
         id: WorkerId,

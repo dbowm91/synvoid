@@ -14,7 +14,7 @@ This document consolidates all individual improvement plans (plan2-plan9) into a
 | 6 | Serverless Architecture | ✅ Completed |
 | 7 | Security Audit Remediation | High |
 | 8 | Code Quality & Technical Debt | Medium |
-| 9 | Data Tech Stack Optimization | Low |
+| 9 | Data Tech Stack Optimization | ✅ Completed |
 
 ---
 
@@ -509,35 +509,51 @@ routes = ["GET /api/*", "POST /api/data"]
 
 ---
 
-## Wave 9: Data Tech Stack Optimization
+## Wave 9: Data Tech Stack Optimization ✅ COMPLETED
 
-### 9.1 Cache TTL Configuration
+**Status**: COMPLETED
 
-**Files**:
-- `src/dns/recursive_cache.rs` - Add TTL to positive/negative caches
-- `src/dns/cache.rs` - Add TTL to three cache instances
+### 9.1 Cache TTL Configuration ✅ COMPLETED
 
-### 9.2 Memory-Aware Eviction
+**Changes**:
+- `src/dns/recursive_cache.rs`:
+  - `positive_cache`: Uses `Cache::builder()` with `max_capacity` and `time_to_live(Duration::from_secs(cache_config.max_ttl_secs))`
+  - `negative_cache`: Uses `Cache::builder()` with `max_capacity` and `time_to_live(Duration::from_secs(cache_config.negative_ttl_secs))`
+- `src/dns/cache.rs`:
+  - All three constructors (`new`, `with_security`, `with_serve_stale`) now use `Cache::builder()` with `max_capacity` and `time_to_live(Duration::from_secs(max_ttl_secs))`
 
-Add weigher to DNS caches:
-```rust
-.weigher(|_key, value: &CachedRecord| {
-    u32::try_from(value.data.len()).unwrap_or(u32::MAX)
-})
-```
+### 9.2 Memory-Aware Eviction ✅ COMPLETED
 
-### 9.3 rkyv Zero-Copy for IPC
+**Changes**:
+- `src/dns/recursive_cache.rs`:
+  - `positive_cache` weigher: Calculates total size of all record data in `PositiveCacheEntry`
+  - `negative_cache` weigher: Fixed weight of 1 (negative cache entries are small)
+- `src/dns/cache.rs`:
+  - All cache instances use weigher based on `value.data.len()` (size of cached response data)
 
-**File**: `src/process/ipc.rs`
+### 9.3 rkyv Zero-Copy for IPC ✅ COMPLETED
 
-Add rkyv derives to Message enum:
-```rust
-#[cfg_attr(feature = "rkyv", derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize))]
-```
+**Changes**:
+- `src/process/ipc.rs`:
+  - Added `#[cfg_attr(feature = "rkyv", derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize))]` to Message enum
+  - Note: Full rkyv integration requires adding derives to dependent types (e.g., `UpgradeModePayload`, `ThreatSeverityLevel`, etc.) - this is a larger effort for future waves
 
-### 9.4 Metrics Lock Optimization
+### 9.4 Metrics Lock Optimization ✅ COMPLETED
 
-Replace global mutex with per-key atomics or dashmap.
+**Changes**:
+- `src/metrics/mod.rs`:
+  - `ATTACK_TYPE_COUNTER`: Changed from `Mutex<HashMap<String, AtomicU64>>` to `DashMap<String, AtomicU64>`
+  - `SERVERLESS_INVOCATIONS`: Changed from `Mutex<HashMap<String, AtomicU64>>` to `DashMap<String, AtomicU64>`
+  - `SERVERLESS_ERRORS`: Changed from `Mutex<HashMap<String, AtomicU64>>` to `DashMap<String, AtomicU64>`
+  - `SERVERLESS_ACTIVE_INSTANCES`: Changed from `Mutex<HashMap<String, AtomicU64>>` to `DashMap<String, AtomicU64>>`
+  - `SERVERLESS_DURATIONS`: Remains `Mutex<HashMap<String, Mutex<Vec<u64>>>>` (complex nested structure)
+  - Updated `record_attack_type()`, `get_attack_type_counts()`, and `reset_attack_type_counts()` to use DashMap API
+
+**Files Modified**:
+- `src/dns/recursive_cache.rs`
+- `src/dns/cache.rs`
+- `src/process/ipc.rs`
+- `src/metrics/mod.rs`
 
 ---
 

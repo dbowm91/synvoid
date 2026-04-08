@@ -165,8 +165,20 @@ struct CacheConfig {
 
 impl RecursiveDnsCache {
     pub fn new(capacity: usize, cache_config: &crate::config::dns::RecursiveCacheConfig) -> Self {
-        let positive_cache = Cache::new(capacity as u64);
-        let negative_cache = Cache::new((capacity / 10) as u64);
+        let positive_cache = Cache::builder()
+            .max_capacity(capacity as u64)
+            .time_to_live(Duration::from_secs(cache_config.max_ttl_secs))
+            .weigher(|_key: &RecursiveCacheKey, value: &PositiveCacheEntry| {
+                u32::try_from(value.records.iter().map(|r| r.data.len()).sum::<usize>())
+                    .unwrap_or(u32::MAX)
+            })
+            .build();
+
+        let negative_cache = Cache::builder()
+            .max_capacity((capacity / 10) as u64)
+            .time_to_live(Duration::from_secs(cache_config.negative_ttl_secs))
+            .weigher(|_key: &RecursiveCacheKey, _value: &NegativeCacheEntry| 1)
+            .build();
 
         Self {
             inner: Arc::new(InnerRecursiveCache {
