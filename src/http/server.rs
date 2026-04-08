@@ -2063,7 +2063,10 @@ impl HttpServer {
                             }
 
                             return Ok(builder
-                                .body(http_body_util::Full::new(full_body_arc.as_ref().clone()).boxed())
+                                .body(
+                                    http_body_util::Full::new(full_body_arc.as_ref().clone())
+                                        .boxed(),
+                                )
                                 .unwrap_or_else(|_| {
                                     Self::build_response_with_alt_svc(
                                         500,

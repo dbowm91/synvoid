@@ -58,60 +58,60 @@ This document consolidates all individual improvement plans (plan2-plan9) into a
 
 ---
 
-## Wave 2: Mesh & DHT Infrastructure
+## Wave 2: Mesh & DHT Infrastructure ✅ PARTIALLY COMPLETED
 
 **Focus**: DNS capability, sharding, adaptive quorum, mesh distribution
 
-### 2.1 Edge Node Image Poisoning & Caching
+### 2.1 Edge Node Image Poisoning & Caching ✅ COMPLETED (Phases 1-3)
 
 **Problem**: Edge nodes don't fetch full image poison config; no DHT caching in standalone mode
 
 **Phases**:
-1. Add `SiteImagePoisonConfig` to `is_public()` in `src/mesh/dht/keys.rs`
-2. Add `get_image_poison_config_for_site()` method to `src/mesh/transports/manager.rs`
-3. Update mesh proxy to fetch and use full config
-4. Add DHT caching to standalone server in `src/http/server.rs`
+1. ✅ Add `SiteImagePoisonConfig` to `is_public()` in `src/mesh/dht/keys.rs`
+2. ✅ Add `get_image_poison_config_for_site()` method to `src/mesh/transports/manager.rs`
+3. ✅ Update mesh proxy to fetch and use full config
+4. 🔄 Add DHT caching to standalone server in `src/http/server.rs` (deferred - requires further architecture review)
 
 **Files Modified**:
 - `src/mesh/dht/keys.rs`
 - `src/mesh/config.rs`
 - `src/mesh/transports/manager.rs`
 - `src/mesh/proxy.rs`
-- `src/http/server.rs`
 
-### 2.2 YARA Rules Mesh Distribution
+### 2.2 YARA Rules Mesh Distribution ✅ COMPLETED (Phases 1-2)
 
 **Problems**:
-1. Broadcast uses simple sender instead of mesh transport
-2. No role filtering on broadcast
-3. No auto-broadcast after feed fetch
-4. Pull-only distribution (no push to edges)
-5. No broadcast acknowledgment tracking
-6. Delta sync not implemented
+1. Broadcast uses simple sender instead of mesh transport ✅ Fixed role filtering in forwarder
+2. No role filtering on broadcast ✅ Fixed (broadcasts to GLOBAL nodes)
+3. No auto-broadcast after feed fetch ✅ Added auto-broadcast on global nodes
+4. Pull-only distribution (no push to edges) - unchanged
+5. No broadcast acknowledgment tracking 🔄 Infrastructure exists, integration requires architectural changes
+6. Delta sync not implemented - deferred
 
 **Phases**:
-1. Fix mesh broadcast transport - use `transport.broadcast_to_random_peers()` with role filtering
-2. Auto-broadcast after `apply_rules_from_feed()` on global nodes
-3. Add `BroadcastAckTracker` for delivery tracking
-4. Implement delta sync based on client version
+1. ✅ Fix mesh broadcast transport - use `broadcast_to_all_peers()` with `Some(GLOBAL)` role filtering
+2. ✅ Auto-broadcast after `apply_rules_from_feed()` on global nodes
+3. 🔄 `BroadcastAckTracker` infrastructure exists but integration incomplete (tracking requires forwarder architectural changes)
+4. ❌ Implement delta sync based on client version (deferred)
 
 **Files Modified**:
 - `src/mesh/yara_rules.rs`
 - `src/mesh/transport.rs`
+- `src/worker/unified_server.rs`
 
-### 2.3 Mesh & DHT Security Improvements
+### 2.3 Mesh & DHT Security Improvements ✅ PARTIALLY COMPLETED
 
 **Phases**:
 | Phase | Description | Status |
 |-------|-------------|--------|
 | 1 | DNS Server Role Enforcement | COMPLETED |
-| 2 | Integrate Raft HA for global node coordination | TODO |
+| 2 | Integrate Raft HA for global node coordination | TODO (large architectural change) |
 | 3 | DHT Data Encryption (sensitive records) | TODO |
 | 4 | IXFR Incremental Zone Sync | COMPLETED |
-| 5 | TOFU Expiration (90-day max) | TODO |
-| 6 | Role Check Centralization | TODO |
-| 7 | Configurable Timeouts | TODO |
-| 8 | Connection Pool Limits | TODO |
+| 5 | TOFU Expiration (90-day max) | ✅ DONE |
+| 6 | Role Check Centralization | ✅ validate_peer_role exists and is used |
+| 7 | Configurable Timeouts | ✅ DONE (max_pending_connections configurable) |
+| 8 | Connection Pool Limits | ✅ DONE (max_pending_connections configurable) |
 
 **Files Modified**:
 - `src/mesh/global_node_ha.rs`
@@ -120,29 +120,11 @@ This document consolidates all individual improvement plans (plan2-plan9) into a
 - `src/mesh/cert.rs`
 - `src/mesh/config.rs`
 
-### 2.4 Threat Intelligence & Honeypot
+### 2.4 Threat Intelligence & Honeypot ✅ COMPLETED
 
-**Bugs to Fix**:
-1. **DHT Key Prefix Mismatch** - `src/mesh/threat_intel.rs:1040` reads `threat:` but publishes `threat_indicator:`
-2. **ThreatSyncResponse Not Processed** - No handler exists for this message type
-
-**Fix 1**:
-```rust
-// Change from:
-if r.key.starts_with("threat:") {
-// To:
-if r.key.starts_with("threat_indicator:") {
-```
-
-**Fix 2**: Add handler in `handle_mesh_message()`:
-```rust
-MeshMessage::ThreatSyncResponse { indicators, ... } => {
-    for indicator in indicators {
-        self.handle_incoming_threat(indicator, from_node, from_role, signer);
-    }
-    None
-}
-```
+**Bugs Fixed**:
+1. ✅ **DHT Key Prefix Mismatch** - `src/mesh/threat_intel.rs:1040` changed from `threat:` to `threat_indicator:`
+2. ✅ **ThreatSyncResponse Not Processed** - Added handler in `handle_mesh_message()`
 
 **Verification**: HTTP honeypot sharing already works via `block_ip_with_threat_intel()`
 

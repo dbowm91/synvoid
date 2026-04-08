@@ -1071,10 +1071,15 @@ impl MeshProxy {
         let tm = tm.unwrap();
 
         let image_protection = tm.get_image_protection_for_site(upstream_id).await;
+        let image_poison_config = tm.get_image_poison_config_for_site(upstream_id).await;
         let compression = tm.get_compression_for_site(upstream_id).await;
         let minification = tm.get_minification_for_site(upstream_id).await;
 
-        if image_protection.is_none() && compression.is_none() && minification.is_none() {
+        if image_protection.is_none()
+            && image_poison_config.is_none()
+            && compression.is_none()
+            && minification.is_none()
+        {
             return response;
         }
 
@@ -1244,7 +1249,12 @@ impl MeshProxy {
 
                     if !whitelisted {
                         transformed = self
-                            .apply_image_poisoning(transformed, upstream_id, last_modified.clone())
+                            .apply_image_poisoning(
+                                transformed,
+                                upstream_id,
+                                last_modified.clone(),
+                                image_poison_config.as_ref(),
+                            )
                             .await;
                     }
                 }
@@ -1339,6 +1349,7 @@ impl MeshProxy {
         body: Bytes,
         site_id: &str,
         last_modified: Option<String>,
+        poison_config: Option<&crate::config::site::SiteImagePoisonConfig>,
     ) -> Bytes {
         if body.is_empty() {
             return body;
@@ -1378,11 +1389,11 @@ impl MeshProxy {
                 site_id,
                 body.to_vec(),
                 last_modified,
-                None,
-                None,
-                None,
-                None,
-                None,
+                poison_config.and_then(|c| c.level.clone()),
+                poison_config.and_then(|c| c.intensity),
+                poison_config.and_then(|c| c.seed),
+                poison_config.and_then(|c| c.max_dimension),
+                poison_config.and_then(|c| c.jpeg_quality),
             )
             .await
         {

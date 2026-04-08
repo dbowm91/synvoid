@@ -67,6 +67,7 @@ pub use crate::mesh::transport_core::{
 use crate::mesh::transport_types::GlobalRateLimitCheck;
 pub use crate::mesh::transport_types::{MeshGlobalRateLimiter, MeshPeerConnection};
 
+#[allow(dead_code)]
 pub(crate) const MAX_PENDING_CONNECTIONS: usize = 100;
 pub(crate) const CONNECTION_RATE_LIMIT_WINDOW_SECS: u64 = 60;
 #[allow(dead_code)]
@@ -2163,7 +2164,7 @@ impl MeshTransport {
         let mut times = self.connection_times.write();
         times.retain(|t| now.duration_since(*t) < window);
 
-        if times.len() >= MAX_PENDING_CONNECTIONS {
+        if times.len() >= self.config.connection.max_pending_connections {
             tracing::warn!(
                 "Connection rate limit exceeded: {} connections in {}s",
                 times.len(),

@@ -308,6 +308,11 @@ impl YaraRulesManager {
                 *self.local_rules.write() = Some(rules.clone());
                 *self.current_version.write() = Some(version.clone());
                 tracing::info!("Applied YARA rules from feed, version: {}", version);
+
+                if self.node_role.is_global() {
+                    let _ = self.broadcast_approved_rules(&version);
+                }
+
                 return Ok(version);
             }
         }

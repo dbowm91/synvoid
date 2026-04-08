@@ -303,6 +303,7 @@ impl DhtKey {
                 | DhtKey::ThreatIndicator(_)
                 | DhtKey::TransformedContent { .. }
                 | DhtKey::PoisonedImage { .. }
+                | DhtKey::SiteImagePoisonConfig(_)
         )
     }
 

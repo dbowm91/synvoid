@@ -62,6 +62,14 @@ fn load_private_key(
 
 type HmacSha3_256 = Hmac<sha3::Sha3_256>;
 
+struct PinnedFingerprint {
+    fingerprint: String,
+    pinned_at: std::time::Instant,
+}
+
+const MAX_TOOF_FINGERPRINT_AGE_DAYS: u64 = 90;
+const MAX_TOOF_FINGERPRINT_AGE_SECS: u64 = 90 * 24 * 60 * 60;
+
 #[cfg(feature = "audit")]
 use chrono::Utc;
 
@@ -140,7 +148,7 @@ pub struct MeshCertManager {
     cert_expiration_monitor: Arc<RwLock<Option<std::time::Instant>>>,
     certificate_revocation_list: Arc<RwLock<std::collections::HashSet<String>>>,
     crl_entries: Arc<RwLock<std::collections::HashMap<String, CrlEntry>>>,
-    seed_tofu_fingerprints: Arc<RwLock<std::collections::HashMap<String, String>>>,
+    seed_tofu_fingerprints: Arc<RwLock<std::collections::HashMap<String, PinnedFingerprint>>>,
     tofu_enabled: Arc<RwLock<bool>>,
 }
 
@@ -489,7 +497,13 @@ impl MeshCertManager {
 
     pub fn pin_seed_fingerprint(&self, seed_address: &str, fingerprint: &str) {
         let mut fingerprints = self.seed_tofu_fingerprints.write();
-        let old = fingerprints.insert(seed_address.to_string(), fingerprint.to_string());
+        let old = fingerprints.insert(
+            seed_address.to_string(),
+            PinnedFingerprint {
+                fingerprint: fingerprint.to_string(),
+                pinned_at: std::time::Instant::now(),
+            },
+        );
         if old.is_none() {
             tracing::info!("TOFU: Pinned new fingerprint for seed {}", seed_address);
         } else {
@@ -505,14 +519,20 @@ impl MeshCertManager {
         let mut fingerprints = self.seed_tofu_fingerprints.write();
         match fingerprints.entry(seed_address.to_string()) {
             std::collections::hash_map::Entry::Occupied(entry) => {
-                if entry.get() == fingerprint {
+                let pinned = entry.get();
+                if pinned.fingerprint == fingerprint {
+                    if pinned.pinned_at.elapsed().as_secs() > MAX_TOOF_FINGERPRINT_AGE_SECS {
+                        entry.remove();
+                        return Err(format!(
+                            "TOFU: Fingerprint expired for seed {} (older than {} days)",
+                            seed_address, MAX_TOOF_FINGERPRINT_AGE_DAYS
+                        ));
+                    }
                     Ok(())
                 } else {
                     Err(format!(
                         "TOFU: Fingerprint mismatch for seed {}. Expected: {}, Got: {}",
-                        seed_address,
-                        entry.get(),
-                        fingerprint
+                        seed_address, pinned.fingerprint, fingerprint
                     ))
                 }
             }
@@ -521,14 +541,34 @@ impl MeshCertManager {
                     "TOFU: No pinned fingerprint for seed {}, accepting on first use",
                     seed_address
                 );
-                entry.insert(fingerprint.to_string());
+                entry.insert(PinnedFingerprint {
+                    fingerprint: fingerprint.to_string(),
+                    pinned_at: std::time::Instant::now(),
+                });
                 Ok(())
             }
         }
     }
 
     pub fn get_pinned_fingerprints(&self) -> std::collections::HashMap<String, String> {
-        self.seed_tofu_fingerprints.read().clone()
+        self.seed_tofu_fingerprints
+            .read()
+            .iter()
+            .map(|(k, v)| (k.clone(), v.fingerprint.clone()))
+            .collect()
+    }
+
+    pub fn cleanup_expired_tofu_fingerprints(&self) -> usize {
+        let mut fingerprints = self.seed_tofu_fingerprints.write();
+        let before = fingerprints.len();
+        fingerprints
+            .retain(|_, v| v.pinned_at.elapsed().as_secs() <= MAX_TOOF_FINGERPRINT_AGE_SECS);
+        let after = fingerprints.len();
+        let removed = before.saturating_sub(after);
+        if removed > 0 {
+            tracing::info!("TOFU: Cleaned up {} expired fingerprints", removed);
+        }
+        removed
     }
 
     pub fn remove_pinned_fingerprint(&self, seed_address: &str) -> Option<String> {
@@ -537,7 +577,7 @@ impl MeshCertManager {
         if removed.is_some() {
             tracing::info!("TOFU: Removed pinned fingerprint for seed {}", seed_address);
         }
-        removed
+        removed.map(|p| p.fingerprint)
     }
 
     pub fn should_rotate_cert(&self) -> bool {

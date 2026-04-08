@@ -710,7 +710,12 @@ pub async fn run_unified_server_worker(
                         while let Some(msg) = mesh_broadcast_rx.recv().await {
                             let transport = mesh_transport.clone();
                             tokio::spawn(async move {
-                                transport.broadcast_to_all_peers(msg, None).await;
+                                transport
+                                    .broadcast_to_all_peers(
+                                        msg,
+                                        Some(crate::mesh::config::MeshNodeRole::GLOBAL),
+                                    )
+                                    .await;
                             });
                         }
                     });

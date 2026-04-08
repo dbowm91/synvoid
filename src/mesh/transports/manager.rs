@@ -85,10 +85,13 @@ pub struct MeshTransportManager {
         Arc<RwLock<LruCache<String, (crate::mesh::config::MeshCompressionConfig, Instant)>>>,
     minification_cache:
         Arc<RwLock<LruCache<String, (crate::mesh::config::MeshMinificationConfig, Instant)>>>,
+    image_poison_cache:
+        Arc<RwLock<LruCache<String, (crate::config::site::SiteImagePoisonConfig, Instant)>>>,
     // Inflight tracking for stampede prevention
     image_protection_inflight: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
     compression_inflight: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
     minification_inflight: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
+    image_poison_inflight: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
     // Metrics counters
     image_protection_cache_hits: AtomicU64,
     image_protection_cache_misses: AtomicU64,
@@ -96,6 +99,8 @@ pub struct MeshTransportManager {
     compression_cache_misses: AtomicU64,
     minification_cache_hits: AtomicU64,
     minification_cache_misses: AtomicU64,
+    image_poison_cache_hits: AtomicU64,
+    image_poison_cache_misses: AtomicU64,
 }
 
 impl MeshTransportManager {
@@ -110,6 +115,8 @@ impl MeshTransportManager {
             LruCache::with_expiry_duration_and_capacity(Duration::from_secs(300), 1000);
         let minification_cache =
             LruCache::with_expiry_duration_and_capacity(Duration::from_secs(300), 1000);
+        let image_poison_cache =
+            LruCache::with_expiry_duration_and_capacity(Duration::from_secs(300), 1000);
 
         Self {
             config,
@@ -122,15 +129,19 @@ impl MeshTransportManager {
             image_protection_cache: Arc::new(RwLock::new(image_protection_cache)),
             compression_cache: Arc::new(RwLock::new(compression_cache)),
             minification_cache: Arc::new(RwLock::new(minification_cache)),
+            image_poison_cache: Arc::new(RwLock::new(image_poison_cache)),
             image_protection_inflight: Arc::new(Mutex::new(HashMap::new())),
             compression_inflight: Arc::new(Mutex::new(HashMap::new())),
             minification_inflight: Arc::new(Mutex::new(HashMap::new())),
+            image_poison_inflight: Arc::new(Mutex::new(HashMap::new())),
             image_protection_cache_hits: AtomicU64::new(0),
             image_protection_cache_misses: AtomicU64::new(0),
             compression_cache_hits: AtomicU64::new(0),
             compression_cache_misses: AtomicU64::new(0),
             minification_cache_hits: AtomicU64::new(0),
             minification_cache_misses: AtomicU64::new(0),
+            image_poison_cache_hits: AtomicU64::new(0),
+            image_poison_cache_misses: AtomicU64::new(0),
         }
     }
 
@@ -785,6 +796,51 @@ impl MeshTransportManager {
             &self.image_protection_cache_hits,
             &self.image_protection_cache_misses,
             "image_protection",
+        )
+        .await
+    }
+
+    pub async fn get_image_poison_config_for_site(
+        &self,
+        upstream_id: &str,
+    ) -> Option<crate::config::site::SiteImagePoisonConfig> {
+        self.fetch_cached_config(
+            upstream_id,
+            "site_image_poison_config:",
+            |parsed| {
+                Some(crate::config::site::SiteImagePoisonConfig {
+                    enabled: parsed.get("enabled").and_then(|v| v.as_bool()),
+                    level: parsed
+                        .get("level")
+                        .and_then(|v| v.as_str().map(String::from)),
+                    intensity: parsed
+                        .get("intensity")
+                        .and_then(|v| v.as_f64())
+                        .map(|v| v as f32),
+                    seed: parsed.get("seed").and_then(|v| v.as_u64()),
+                    max_dimension: parsed
+                        .get("max_dimension")
+                        .and_then(|v| v.as_u64())
+                        .map(|v| v as u32),
+                    jpeg_quality: parsed
+                        .get("jpeg_quality")
+                        .and_then(|v| v.as_u64())
+                        .map(|v| v as u8),
+                    whitelist_patterns: parsed
+                        .get("whitelist_patterns")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|v| v.as_str().map(String::from))
+                                .collect()
+                        }),
+                })
+            },
+            &self.image_poison_cache,
+            &self.image_poison_inflight,
+            &self.image_poison_cache_hits,
+            &self.image_poison_cache_misses,
+            "image_poison",
         )
         .await
     }

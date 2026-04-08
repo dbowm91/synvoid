@@ -1037,7 +1037,7 @@ impl ThreatIntelligenceManager {
         let dht_keys: std::collections::HashSet<String> = dht_records
             .iter()
             .filter_map(|r| {
-                if r.key.starts_with("threat:") {
+                if r.key.starts_with("threat_indicator:") {
                     Some(r.key.clone())
                 } else {
                     None
@@ -1390,6 +1390,12 @@ impl ThreatIntelligenceManager {
                     accepted,
                     reason
                 );
+                None
+            }
+            MeshMessage::ThreatSyncResponse { indicators, .. } => {
+                for indicator in indicators {
+                    self.handle_incoming_threat(indicator.clone(), from_node, from_role, signer);
+                }
                 None
             }
             _ => None,

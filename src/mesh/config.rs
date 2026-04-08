@@ -487,6 +487,8 @@ pub struct MeshConnectionConfig {
     pub max_auth_failures: usize,
     #[serde(default = "default_auth_failure_window_secs")]
     pub auth_failure_window_secs: u64,
+    #[serde(default = "default_max_pending_connections")]
+    pub max_pending_connections: usize,
 }
 
 fn default_min_peers() -> usize {
@@ -517,6 +519,10 @@ fn default_auth_failure_window_secs() -> u64 {
     300
 }
 
+fn default_max_pending_connections() -> usize {
+    100
+}
+
 impl Default for MeshConnectionConfig {
     fn default() -> Self {
         Self {
@@ -529,6 +535,7 @@ impl Default for MeshConnectionConfig {
             keepalive_interval_secs: 10,
             max_auth_failures: 5,
             auth_failure_window_secs: 300,
+            max_pending_connections: 100,
         }
     }
 }
