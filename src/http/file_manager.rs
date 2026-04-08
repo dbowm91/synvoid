@@ -391,6 +391,8 @@ mod tests {
             rate_limit_config: RateLimitConfig::default(),
             allow_hidden_files: false,
             allow_symlinks: false,
+            archive_max_depth: 3,
+            archive_max_size: 100 * 1024 * 1024,
         };
 
         let fm = FileManager::new(config);

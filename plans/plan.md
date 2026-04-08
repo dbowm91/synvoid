@@ -186,6 +186,11 @@ This document consolidates all individual improvement plans (plan2-plan9) into a
   - Added default functions for both fields
 - `src/worker/unified_server.rs`:
   - Updated `UploadConfig` initialization to include new fields
+- `src/static_files/file_manager.rs`:
+  - Added `archive_max_depth` (default: 3) and `archive_max_size` (default: 100MB) to `FileManagerConfig`
+  - Added `DEFAULT_ARCHIVE_MAX_DEPTH` and `DEFAULT_ARCHIVE_MAX_SIZE` constants
+  - Updated `extract_zip()`, `extract_tar()`, and `extract_tar_gz()` to track cumulative extracted size
+  - Added size limit check before extraction to prevent archive bombs
 
 **Configuration**:
 ```toml

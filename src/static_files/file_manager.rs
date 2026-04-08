@@ -49,6 +49,8 @@ const BLOCKED_EXTENSIONS: &[&str] = &[
 ];
 
 const MAX_PATH_DEPTH: usize = 50;
+const DEFAULT_ARCHIVE_MAX_DEPTH: u32 = 3;
+const DEFAULT_ARCHIVE_MAX_SIZE: u64 = 100 * 1024 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct FileManagerConfig {
@@ -62,6 +64,8 @@ pub struct FileManagerConfig {
     pub rate_limit_config: RateLimitConfig,
     pub allow_hidden_files: bool,
     pub allow_symlinks: bool,
+    pub archive_max_depth: u32,
+    pub archive_max_size: u64,
 }
 
 impl Default for FileManagerConfig {
@@ -77,6 +81,8 @@ impl Default for FileManagerConfig {
             rate_limit_config: RateLimitConfig::default(),
             allow_hidden_files: false,
             allow_symlinks: false,
+            archive_max_depth: DEFAULT_ARCHIVE_MAX_DEPTH,
+            archive_max_size: DEFAULT_ARCHIVE_MAX_SIZE,
         }
     }
 }
@@ -100,6 +106,8 @@ impl FileManagerConfig {
             rate_limit_config: RateLimitConfig::default(),
             allow_hidden_files: config.block_hidden_files.map(|v| !v).unwrap_or(false),
             allow_symlinks: config.allow_symlinks.unwrap_or(false),
+            archive_max_depth: DEFAULT_ARCHIVE_MAX_DEPTH,
+            archive_max_size: DEFAULT_ARCHIVE_MAX_SIZE,
         }
     }
 
@@ -878,6 +886,8 @@ impl FileManager {
             .map_err(|e| FileManagerError::InvalidPath(format!("invalid zip: {}", e)))?;
 
         let mut extracted = Vec::new();
+        let mut total_extracted_size: u64 = 0;
+        let max_size = self.config.archive_max_size;
 
         let dest_canonical = dest.canonicalize().unwrap_or_else(|_| PathBuf::from(dest));
 
@@ -911,6 +921,15 @@ impl FileManager {
                 ));
             }
 
+            let file_size = file.size();
+
+            if total_extracted_size.saturating_add(file_size) > max_size {
+                return Err(FileManagerError::InvalidPath(format!(
+                    "archive extraction would exceed maximum size limit of {} bytes",
+                    max_size
+                )));
+            }
+
             if file.name().ends_with('/') {
                 fs::create_dir_all(&outpath)
                     .await
@@ -925,9 +944,10 @@ impl FileManager {
                 let mut outfile = fs::File::create(&outpath)
                     .await
                     .map_err(FileManagerError::IoError)?;
-                tokio::io::copy(&mut file, &mut outfile)
+                let bytes_copied = tokio::io::copy(&mut file, &mut outfile)
                     .await
                     .map_err(FileManagerError::IoError)?;
+                total_extracted_size += bytes_copied;
             }
 
             extracted.push(self.entry_from_path(&outpath, dest).await?);
@@ -958,6 +978,8 @@ impl FileManager {
         let mut archive = tar::Archive::new(reader);
 
         let mut extracted = Vec::new();
+        let mut total_extracted_size: u64 = 0;
+        let max_size = self.config.archive_max_size;
 
         let dest_canonical = dest.canonicalize().unwrap_or_else(|_| PathBuf::from(dest));
 
@@ -993,10 +1015,21 @@ impl FileManager {
                 ));
             }
 
+            let entry_size = entry.header().size().unwrap_or(0);
+
+            if total_extracted_size.saturating_add(entry_size) > max_size {
+                return Err(FileManagerError::InvalidPath(format!(
+                    "archive extraction would exceed maximum size limit of {} bytes",
+                    max_size
+                )));
+            }
+
             entry
                 .unpack_in(dest)
                 .await
                 .map_err(FileManagerError::IoError)?;
+
+            total_extracted_size += entry_size;
 
             let path = dest.join(&entry_path);
             extracted.push(self.entry_from_path(&path, dest).await?);
@@ -1029,6 +1062,8 @@ impl FileManager {
         let mut archive = tar::Archive::new(&mut decoder);
 
         let mut extracted = Vec::new();
+        let mut total_extracted_size: u64 = 0;
+        let max_size = self.config.archive_max_size;
 
         let dest_canonical = dest.canonicalize().unwrap_or_else(|_| PathBuf::from(dest));
 
@@ -1064,10 +1099,21 @@ impl FileManager {
                 ));
             }
 
+            let entry_size = entry.header().size().unwrap_or(0);
+
+            if total_extracted_size.saturating_add(entry_size) > max_size {
+                return Err(FileManagerError::InvalidPath(format!(
+                    "archive extraction would exceed maximum size limit of {} bytes",
+                    max_size
+                )));
+            }
+
             entry
                 .unpack_in(dest)
                 .await
                 .map_err(FileManagerError::IoError)?;
+
+            total_extracted_size += entry_size;
 
             let path = dest.join(&entry_path);
             extracted.push(self.entry_from_path(&path, dest).await?);
