@@ -4,47 +4,55 @@ This document consolidates all individual improvement plans (plan2-plan9) into a
 
 ## Quick Reference
 
-| Wave | Focus Area | Priority |
-|------|------------|----------|
-| 1 | Critical Performance Fixes (to_lowercase, allocations) | Critical |
-| 2 | Mesh & DHT Infrastructure | High |
-| 3 | WAF & Threat Intelligence | High |
-| 4 | File Upload Security | High |
-| 5 | Edge Caching & Transform Sharing | Medium |
-| 6 | Serverless Architecture | ✅ Completed |
-| 7 | Security Audit Remediation | High |
-| 8 | Code Quality & Technical Debt | Medium |
-| 9 | Data Tech Stack Optimization | ✅ Completed |
+| Wave | Focus Area | Priority | Status |
+|------|------------|----------|--------|
+| 1 | Critical Performance Fixes (to_lowercase, allocations) | Critical | 🔶 Partial |
+| 2 | Mesh & DHT Infrastructure | High | 🔶 Partial |
+| 3 | WAF & Threat Intelligence | High | ✅ Completed |
+| 4 | File Upload Security | High | ✅ Completed |
+| 5 | Edge Caching & Transform Sharing | Medium | ✅ Completed |
+| 6 | Serverless Architecture | Medium | ✅ Completed |
+| 7 | Security Audit Remediation | High | 🔶 Partial |
+| 8 | Code Quality & Technical Debt | Medium | 🔶 Partial |
+| 9 | Data Tech Stack Optimization | Low | ✅ Completed |
+
+**Legend**:
+- ✅ COMPLETED = Fully implemented
+- 🔶 PARTIALLY COMPLETED = Some items complete, some deferred/open
+- 🔄 DEFERRED = Intentionally deferred to future sprint
+- ❌ NOT IMPLEMENTED = Not yet worked on
 
 ---
 
-## Wave 1: Critical Performance Fixes ✅ COMPLETED
+## Wave 1: Critical Performance Fixes 🔶 PARTIALLY COMPLETED
 
 **Focus**: Eliminate blocking I/O, WAF parallelization, string allocation reduction
 
-### 1.1 Eliminate Repeated `.to_lowercase()` Calls ✅
+### 1.1 Eliminate Repeated `.to_lowercase()` Calls 🔶 PARTIALLY COMPLETED
 
-**Status**: COMPLETED
+**Status**: PARTIALLY COMPLETED - SSRF detector fixed, other detectors still have improvements pending
 
 **Changes**:
 - `src/waf/attack_detection/ssrf.rs`:
   - Modified `extract_ips_from_url` to take pre-lowercased `&str` parameter
   - Modified `contains_private_ip_or_localhost` to lowercase once and reuse
   - Modified `detect_with_url_decode` to lowercase `decoded` once and use for all checks (`is_allowed_domain`, pattern matching, private IP detection)
-- `src/waf/attack_detection/detector_common.rs`: No changes needed (lines 438,450 represent `detect_internal` which uses `detect_with_pre_normalized` pattern correctly in actual call paths)
 
-### 1.2 Reduce Memory Allocations in Hot Paths ✅
+**Remaining** (26 calls across other detectors):
+- `request_smuggling.rs`: 9 calls
+- `detector_common.rs`: 3 calls
+- `jwt.rs`: 3 calls
+- `path_traversal.rs`, `rfi.rs`, `xxe.rs`, `open_redirect.rs`, `header_validation.rs`: remaining calls
+- See Wave 1 Item 5 (not yet implemented) for full optimization
 
-**Status**: PARTIALLY COMPLETED
+### 1.2 Reduce Memory Allocations in Hot Paths 🔶 PARTIALLY COMPLETED
 
 **Changes**:
 - `src/http/server.rs:718-724` - Fixed: Changed from `full_body.clone()` to `Arc::new(full_body)` with `Arc::clone()` for slices. Eliminates unnecessary allocation for small bodies.
 - `src/proxy.rs:246,263,1482,1489` - No changes (API signature would need breaking changes to use `Cow<str>`)
 - `src/waf/attack_detection/normalizer.rs:63-64` - No changes (allocation necessary for owned `NormalizedInput`)
 
-### 1.3 Rate Limiter Retention Optimization ✅
-
-**Status**: COMPLETED
+### 1.3 Rate Limiter Retention Optimization ✅ COMPLETED
 
 **Changes**:
 - `src/waf/ratelimit.rs:78-104` - Removed redundant `is_empty()` checks before each `remove_older_than()` call. Each `remove_older_than()` already has internal empty check.
@@ -58,7 +66,7 @@ This document consolidates all individual improvement plans (plan2-plan9) into a
 
 ---
 
-## Wave 2: Mesh & DHT Infrastructure ✅ PARTIALLY COMPLETED
+## Wave 2: Mesh & DHT Infrastructure 🔶 PARTIALLY COMPLETED
 
 **Focus**: DNS capability, sharding, adaptive quorum, mesh distribution
 
@@ -70,7 +78,13 @@ This document consolidates all individual improvement plans (plan2-plan9) into a
 1. ✅ Add `SiteImagePoisonConfig` to `is_public()` in `src/mesh/dht/keys.rs`
 2. ✅ Add `get_image_poison_config_for_site()` method to `src/mesh/transports/manager.rs`
 3. ✅ Update mesh proxy to fetch and use full config
-4. 🔄 Add DHT caching to standalone server in `src/http/server.rs` (deferred - requires further architecture review)
+4. 🔄 DEFERRED: Add DHT caching to standalone server in `src/http/server.rs` - requires further architecture review
+
+**Phase 4 Details** (why deferred):
+- Mesh mode (`src/mesh/proxy.rs`) has DHT caching for transforms and poisoned images
+- Standalone mode (`src/http/server.rs`) uses static config with no DHT lookup
+- `apply_image_poisoning()` in standalone mode does NOT check DHT or store results
+- Would require architectural decision: standalone servers running lightweight DHT nodes vs. separate local cache
 
 **Files Modified**:
 - `src/mesh/dht/keys.rs`
@@ -85,33 +99,65 @@ This document consolidates all individual improvement plans (plan2-plan9) into a
 2. No role filtering on broadcast ✅ Fixed (broadcasts to GLOBAL nodes)
 3. No auto-broadcast after feed fetch ✅ Added auto-broadcast on global nodes
 4. Pull-only distribution (no push to edges) - unchanged
-5. No broadcast acknowledgment tracking 🔄 Infrastructure exists, integration requires architectural changes
-6. Delta sync not implemented - deferred
+5. No broadcast acknowledgment tracking 🔄 DEFERRED - infrastructure exists, integration requires architectural changes
 
 **Phases**:
 1. ✅ Fix mesh broadcast transport - use `broadcast_to_all_peers()` with `Some(GLOBAL)` role filtering
 2. ✅ Auto-broadcast after `apply_rules_from_feed()` on global nodes
-3. 🔄 `BroadcastAckTracker` infrastructure exists but integration incomplete (tracking requires forwarder architectural changes)
-4. ❌ Implement delta sync based on client version (deferred)
+3. 🔄 DEFERRED: Broadcast ack tracking - infrastructure exists, integration requires architectural changes
+4. 🔄 DEFERRED: Delta sync based on client version
+
+**Phase 3 Details** (Broadcast ack tracking - why deferred):
+- Infrastructure EXISTS: `BroadcastAckTracker` struct, `start_broadcast_tracking()`, `record_broadcast_ack()`, `record_broadcast_failure()`
+- `YaraRulesManager` has `broadcast_tracker` field
+- However: `start_broadcast_tracking()` is NEVER called - integration point missing
+- Root cause: `broadcast_approved_rules()` sends via `mesh_sender` channel but doesn't know which peers received it (this knowledge is inside mesh transport)
+- Would need: `YaraRulesManager` to have reference to `MeshTransportManager` to query connected peers before broadcast, OR mesh transport to report back peer list
+- This is an architectural change to wire up existing infrastructure
+
+**Phase 4 Details** (Delta sync - why deferred):
+- Infrastructure partially exists: version tracking, `RuleChangeTracker`, `is_full` flag
+- `request_sync_from_global()` sends client version, server responds with full ruleset
+- Server always sends FULL rules - no delta/diff computation
+- `RuleChangeTracker.should_send_full()` exists but is never called in sync code path
+- Would need: version-to-diff mapping, diff generation, delta transmission logic
+- Compare: `threat_intel.rs`, `topology.rs`, `dht/record_store_sync.rs` all have true delta sync
 
 **Files Modified**:
 - `src/mesh/yara_rules.rs`
 - `src/mesh/transport.rs`
 - `src/worker/unified_server.rs`
 
-### 2.3 Mesh & DHT Security Improvements ✅ PARTIALLY COMPLETED
+### 2.3 Mesh & DHT Security Improvements 🔶 PARTIALLY COMPLETED
 
 **Phases**:
 | Phase | Description | Status |
 |-------|-------------|--------|
-| 1 | DNS Server Role Enforcement | COMPLETED |
-| 2 | Integrate Raft HA for global node coordination | TODO (large architectural change) |
-| 3 | DHT Data Encryption (sensitive records) | TODO |
-| 4 | IXFR Incremental Zone Sync | COMPLETED |
-| 5 | TOFU Expiration (90-day max) | ✅ DONE |
-| 6 | Role Check Centralization | ✅ validate_peer_role exists and is used |
-| 7 | Configurable Timeouts | ✅ DONE (max_pending_connections configurable) |
-| 8 | Connection Pool Limits | ✅ DONE (max_pending_connections configurable) |
+| 1 | DNS Server Role Enforcement | ✅ COMPLETED |
+| 2 | Integrate Raft HA for global node coordination | 🔄 DEFERRED (large architectural change) |
+| 3 | DHT Data Encryption (sensitive records) | 🔄 DEFERRED |
+| 4 | IXFR Incremental Zone Sync | ✅ COMPLETED |
+| 5 | TOFU Expiration (90-day max) | ✅ COMPLETED |
+| 6 | Role Check Centralization | ✅ COMPLETED |
+| 7 | Configurable Timeouts | ✅ COMPLETED (max_pending_connections configurable) |
+| 8 | Connection Pool Limits | ✅ COMPLETED (max_pending_connections configurable) |
+
+**Phase 2 Details** (Raft HA - why deferred):
+- `src/mesh/global_node_ha.rs` exists with 504 lines of custom Raft-like implementation
+- `GlobalNodeHAManager` struct with election logic, vote handling, heartbeat processing
+- HOWEVER: File has `#![allow(dead_code)]` - code is NEVER used in production (only in tests)
+- No external `raft` crate dependency - pure custom implementation
+- `GlobalNodeHAConfig` exists but never referenced from `config.rs`
+- Would need: wire `GlobalNodeHAManager` into production mesh lifecycle, add config options, integrate with leader election for global node coordination
+- Documentation claims Raft consensus but feature is not implemented
+
+**Phase 3 Details** (DHT encryption - why deferred):
+- DHT records stored with PLAINTEXT `value: Vec<u8>` in `DhtRecord`
+- `SignedDhtRecord` provides Ed25519 SIGNING (authenticity/integrity) but NOT encryption (confidentiality)
+- Certificate distribution (`cert_dist.rs`) uses AES-256-GCM for TLS certs, but this is separate from DHT
+- `SignedRecordType.is_public()` indicates many records are intentionally public
+- Would need: add encryption layer to DHT store/fetch, key management for record encryption
+- Current: 0% of DHT records encrypted (per Success Metrics)
 
 **Files Modified**:
 - `src/mesh/global_node_ha.rs`
@@ -125,12 +171,13 @@ This document consolidates all individual improvement plans (plan2-plan9) into a
 **Bugs Fixed**:
 1. ✅ **DHT Key Prefix Mismatch** - `src/mesh/threat_intel.rs:1040` changed from `threat:` to `threat_indicator:`
 2. ✅ **ThreatSyncResponse Not Processed** - Added handler in `handle_mesh_message()`
+3. ✅ **Wave 3** - Local indicator lookup bug fixed (depends on 2.4)
 
 **Verification**: HTTP honeypot sharing already works via `block_ip_with_threat_intel()`
 
 ---
 
-## Wave 3: WAF & Threat Intelligence
+## Wave 3: WAF & Threat Intelligence ✅ COMPLETED
 
 ### 3.1 Local Indicator Lookup Optimization ✅ COMPLETED
 
@@ -380,11 +427,11 @@ routes = ["GET /api/*", "POST /api/data"]
 
 ---
 
-## Wave 7: Security Audit Remediation ✅ COMPLETED
+## Wave 7: Security Audit Remediation 🔶 PARTIALLY COMPLETED
 
-**Status**: COMPLETED
+**Status**: CRITICAL items done; MEDIUM items mostly deferred
 
-### 7.1 Critical & High Severity ✅
+### 7.1 Critical & High Severity ✅ COMPLETED
 
 | Priority | Issue | Location | Fix |
 |----------|-------|----------|-----|
@@ -399,21 +446,21 @@ routes = ["GET /api/*", "POST /api/data"]
 - `src/mesh/organization.rs` - Replaced `rand::rng().fill_bytes()` with `OsRng.try_fill_bytes()`
 - `src/tunnel/wireguard/config.rs` - Replaced `rand::rng().fill_bytes()` with `StdRng::from_os_rng().fill_bytes()`
 
-### 7.2 Medium Severity ✅ PARTIALLY
+### 7.2 Medium Severity 🔶 PARTIALLY COMPLETED
 
 | Category | Issue | Fix | Status |
 |----------|-------|-----|--------|
-| WAF | X-Forwarded-For Single IP | Validate all IPs in chain | Open |
-| WAF | Open Redirect Path Check Missing | ✅ Add path to check_request_full | COMPLETED |
-| WAF | Domain Check Before URL Decode | ✅ Check allowlist before decoding | COMPLETED |
-| TLS | skip_verify Hostname Bypass | Document clearly, require explicit flag | Open |
-| TLS | allow_plaintext HTTP Upstream | Warn on startup | Open |
-| IPC | No Mutual Authentication | Use `UnixStream::peer_credentials()` | Open |
-| IPC | No Connection Source Validation | Add peer credential validation | Open |
-| Mesh | No node_id to Public Key Binding | Include hash of pubkey in node_id | Open |
-| Mesh | TOFU Accepts First Certificate | Add out-of-band verification option | Open |
-| DNS | DNSSEC Not Validated for Recursive | Implement chain-of-trust validation | Open |
-| DNS | RRL Only TCP | Add UDP rate limiting | Open |
+| WAF | X-Forwarded-For Single IP | Validate all IPs in chain | 🔄 DEFERRED |
+| WAF | Open Redirect Path Check Missing | ✅ COMPLETED |
+| WAF | Domain Check Before URL Decode | ✅ COMPLETED |
+| TLS | skip_verify Hostname Bypass | Document clearly, require explicit flag | 🔄 DEFERRED |
+| TLS | allow_plaintext HTTP Upstream | Warn on startup | 🔄 DEFERRED |
+| IPC | No Mutual Authentication | Use `UnixStream::peer_credentials()` | 🔄 DEFERRED |
+| IPC | No Connection Source Validation | Add peer credential validation | 🔄 DEFERRED |
+| Mesh | No node_id to Public Key Binding | Include hash of pubkey in node_id | 🔄 DEFERRED |
+| Mesh | TOFU Accepts First Certificate | Add out-of-band verification option | 🔄 DEFERRED |
+| DNS | DNSSEC Not Validated for Recursive | Implement chain-of-trust validation | 🔄 DEFERRED |
+| DNS | RRL Only TCP | Add UDP rate limiting | 🔄 DEFERRED |
 
 ### 7.3 Low Severity
 
@@ -427,7 +474,7 @@ routes = ["GET /api/*", "POST /api/data"]
 
 ---
 
-## Wave 8: Code Quality & Technical Debt ✅ PARTIALLY COMPLETED
+## Wave 8: Code Quality & Technical Debt 🔶 PARTIALLY COMPLETED
 
 ### 8.1 Test Compilation Errors (BLOCKING) ✅ COMPLETED
 
@@ -474,7 +521,7 @@ routes = ["GET /api/*", "POST /api/data"]
 - `cargo fmt` passes ✅
 - `cargo clippy --lib -- -D warnings` passes ✅
 
-### 8.4 Private Key Encryption at Rest ⚠️ DEFERRED
+### 8.4 Private Key Encryption at Rest 🔄 DEFERRED
 
 **Location**: `src/mesh/config.rs:781-847`
 
@@ -488,11 +535,11 @@ routes = ["GET /api/*", "POST /api/data"]
 
 **Note**: The encryption/decryption infrastructure in `config_identity.rs` supports passphrase-based encryption, but integration with config structs is not done.
 
-### 8.5 Large File Splitting 🔄 PARTIALLY COMPLETE
+### 8.5 Large File Splitting 🔶 PARTIALLY COMPLETED
 
 | File | Lines | Status |
 |------|-------|--------|
-| `src/process/ipc.rs` | 1,835 | ✅ COMPLETE - split into sibling modules |
+| `src/process/ipc.rs` | 1,835 | ✅ COMPLETED - split into 6 sibling modules |
 | `src/http/server.rs` | 3,206 | 🔄 DEFERRED - needs splitting |
 | `src/process/manager.rs` | 2,281 | 🔄 DEFERRED - needs splitting |
 | `src/mesh/topology.rs` | 2,256 | 🔄 DEFERRED - needs splitting |
