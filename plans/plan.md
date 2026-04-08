@@ -290,7 +290,7 @@ if mesh_available {
 2. Store transformed content in DHT after transformation
 3. Fetch from DHT before transforming
 
-**Status**: Pending (requires DHT integration work)
+**Status**: ✅ Implemented (DHT store/fetch in transform_response, lines 1157-1195, 1314-1332)
 
 ### 5.3 Image Poison Enhancement
 
@@ -298,7 +298,7 @@ if mesh_available {
 
 **Fix**: Store poisoned images in DHT, edge fetches from DHT before applying poison.
 
-**Status**: Pending (requires DHT integration work)
+**Status**: ✅ Implemented (PoisonedImage DHT caching in apply_image_poisoning)
 
 ---
 
@@ -463,7 +463,7 @@ if mesh_available {
 - Items 2.1, 2.2, 2.3 implemented ✅
 - Item 2.4 IMPLEMENTED ✅ (calculate_adaptive_quorum in record_store.rs)
 - Item 2.5 IMPLEMENTED ✅ (DHT health metrics in metrics/mod.rs)
-- Item 2.6 PARTIALLY IMPLEMENTED (TOFU fingerprint verification on connect exists, but verify_seed_on_first_contact not implemented)
+- Item 2.6 IMPLEMENTED ✅ (verify_seed_fingerprint handles first-contact automatically by accepting and pinning new fingerprints when none exist)
 - Item 2.7 IMPLEMENTED ✅ (signature verification in handle_route_response using provider public key from cert_manager)
 - Item 2.8 IMPLEMENTED ✅ (exponential backoff exists in topology, discovery, yara_rules)
 
@@ -517,7 +517,7 @@ if mesh_available {
 - [x] Connection recovery with backoff (src/mesh/topology.rs, src/mesh/discovery.rs, src/mesh/yara_rules.rs - exponential backoff implemented)
 - [x] Adaptive quorum implemented (src/mesh/dht/record_store.rs - calculate_adaptive_quorum)
 - [x] DHT health metrics implemented (src/metrics/mod.rs - record_dht_quorum_*, get_dht_*_count functions)
-- [ ] TOFU enhancement NOT FULLY IMPLEMENTED (verify_seed_on_first_contact not added)
+- [x] TOFU enhancement IMPLEMENTED (verify_seed_fingerprint handles first-contact automatically by accepting and pinning new fingerprints when none exist)
 - [x] Message signing verification IMPLEMENTED (src/mesh/transport_routing.rs - handle_route_response verifies Ed25519 signatures using provider public key)
 
 ### Wave 3 (2026-04-07)
