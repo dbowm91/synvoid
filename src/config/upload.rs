@@ -23,6 +23,10 @@ pub struct UploadDefaults {
     pub yara_rules_dir: Option<String>,
     #[serde(default = "default_yara_timeout_ms")]
     pub yara_timeout_ms: u64,
+    #[serde(default = "default_archive_max_depth")]
+    pub archive_max_depth: u32,
+    #[serde(default = "default_archive_max_size")]
+    pub archive_max_size: u64,
     #[serde(default)]
     pub allowed_types: UploadAllowedTypesDefaults,
 }
@@ -39,6 +43,8 @@ impl Default for UploadDefaults {
             quarantine_dir: "/var/lib/maluwaf/quarantine".to_string(),
             yara_rules_dir: None,
             yara_timeout_ms: 30000,
+            archive_max_depth: 3,
+            archive_max_size: 100 * 1024 * 1024,
             allowed_types: UploadAllowedTypesDefaults::default(),
         }
     }
@@ -97,6 +103,14 @@ fn default_quarantine_dir() -> String {
 }
 fn default_yara_timeout_ms() -> u64 {
     30000
+}
+
+fn default_archive_max_depth() -> u32 {
+    3
+}
+
+fn default_archive_max_size() -> u64 {
+    100 * 1024 * 1024
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]

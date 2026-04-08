@@ -233,6 +233,9 @@ impl UploadConfig {
 
     pub fn effective_config_for_path(&self, request_path: &str) -> EffectiveUploadConfig {
         if let Some(path_cfg) = self.get_path_config(request_path) {
+            let path_has_explicit_allowed_types = !path_cfg.allowed_types.mime_types.is_empty()
+                || path_cfg.allowed_types.mode != AllowedTypesMode::Allowlist;
+
             EffectiveUploadConfig {
                 max_size_bytes: path_cfg
                     .max_size
@@ -243,6 +246,11 @@ impl UploadConfig {
                     self.allowed_types.effective_mime_types()
                 } else {
                     path_cfg.allowed_types.mime_types.clone()
+                },
+                allowed_types_mode: if path_has_explicit_allowed_types {
+                    path_cfg.allowed_types.mode.clone()
+                } else {
+                    self.allowed_types.mode.clone()
                 },
                 scan_with_yara: path_cfg.scan_with_yara.unwrap_or(self.scan_with_yara),
                 yara_rules_dir: path_cfg
@@ -279,6 +287,7 @@ impl UploadConfig {
             EffectiveUploadConfig {
                 max_size_bytes: self.max_size_bytes(),
                 allowed_mime_types: self.allowed_types.effective_mime_types(),
+                allowed_types_mode: self.allowed_types.mode.clone(),
                 scan_with_yara: self.scan_with_yara,
                 yara_rules_dir: self.yara_rules_dir.clone().map(std::path::PathBuf::from),
                 yara_timeout_ms: self.yara_timeout_ms,
@@ -301,6 +310,7 @@ impl UploadConfig {
 pub struct EffectiveUploadConfig {
     pub max_size_bytes: u64,
     pub allowed_mime_types: Vec<String>,
+    pub allowed_types_mode: AllowedTypesMode,
     pub scan_with_yara: bool,
     pub yara_rules_dir: Option<std::path::PathBuf>,
     pub yara_timeout_ms: u64,
@@ -315,6 +325,28 @@ pub struct EffectiveUploadConfig {
     pub reject_mime_mismatch: bool,
 }
 
+impl EffectiveUploadConfig {
+    pub fn is_mime_allowed(&self, mime_type: &str) -> bool {
+        let registry = crate::mime::global_registry().read();
+        let normalized = registry.normalize_mime(mime_type);
+
+        match self.allowed_types_mode {
+            AllowedTypesMode::Allowlist => {
+                if self.allowed_mime_types.is_empty() {
+                    return true;
+                }
+                registry.is_mime_allowed(&normalized, &self.allowed_mime_types)
+            }
+            AllowedTypesMode::Blocklist => {
+                if self.allowed_mime_types.is_empty() {
+                    return true;
+                }
+                !registry.is_mime_allowed(&normalized, &self.allowed_mime_types)
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct AllowedTypesConfig {
     #[serde(default)]
@@ -324,7 +356,7 @@ pub struct AllowedTypesConfig {
     pub mime_types: Vec<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Default, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum AllowedTypesMode {
     #[default]

@@ -109,7 +109,7 @@ impl UploadValidator {
                 true,
             )
             .unwrap_or(YaraRulesSource::Bundled);
-            let scanner = YaraScanner::with_timeout(source, config.yara_timeout_ms)?;
+            let scanner = YaraScanner::with_timeout(source, config.yara_timeout_ms, 3, 100 * 1024 * 1024)?;
             Some(Arc::new(MalwareScanner::with_yara(Some(scanner))))
         } else {
             Some(Arc::new(MalwareScanner::with_yara(None)))
@@ -177,13 +177,10 @@ impl UploadValidator {
         let mime_info = crate::mime::detect_from_bytes_with_fallback(data, "bin");
         let mime_type = mime_info.mime_type.clone();
 
-        if !crate::mime::global_registry()
-            .read()
-            .is_mime_allowed(&mime_type, &effective_config.allowed_mime_types)
-        {
+        if !effective_config.is_mime_allowed(&mime_type) {
             return Err(UploadValidationError::TypeNotAllowed {
                 detected: mime_type.clone(),
-                allowed: effective_config.allowed_mime_types,
+                allowed: effective_config.allowed_mime_types.clone(),
             });
         }
 
@@ -268,13 +265,10 @@ impl UploadValidator {
         let mime_info = crate::mime::detect_from_bytes_with_fallback(data, "bin");
         let mime_type = mime_info.mime_type.clone();
 
-        if !crate::mime::global_registry()
-            .read()
-            .is_mime_allowed(&mime_type, &effective_config.allowed_mime_types)
-        {
+        if !effective_config.is_mime_allowed(&mime_type) {
             return Err(UploadValidationError::TypeNotAllowed {
                 detected: mime_type.clone(),
-                allowed: effective_config.allowed_mime_types,
+                allowed: effective_config.allowed_mime_types.clone(),
             });
         }
 
@@ -367,13 +361,10 @@ impl UploadValidator {
         let mime_info = crate::mime::detect_from_bytes_with_fallback(data, "bin");
         let mime_type = mime_info.mime_type.clone();
 
-        if !crate::mime::global_registry()
-            .read()
-            .is_mime_allowed(&mime_type, &effective_config.allowed_mime_types)
-        {
+        if !effective_config.is_mime_allowed(&mime_type) {
             return Err(UploadValidationError::TypeNotAllowed {
                 detected: mime_type.clone(),
-                allowed: effective_config.allowed_mime_types,
+                allowed: effective_config.allowed_mime_types.clone(),
             });
         }
 
@@ -478,13 +469,10 @@ impl UploadValidator {
         let mime_info = crate::mime::detect_from_bytes_with_fallback(&header, "bin");
         let mime_type = mime_info.mime_type.clone();
 
-        if !crate::mime::global_registry()
-            .read()
-            .is_mime_allowed(&mime_type, &effective_config.allowed_mime_types)
-        {
+        if !effective_config.is_mime_allowed(&mime_type) {
             return Err(UploadValidationError::TypeNotAllowed {
                 detected: mime_type.clone(),
-                allowed: effective_config.allowed_mime_types,
+                allowed: effective_config.allowed_mime_types.clone(),
             });
         }
 

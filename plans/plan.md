@@ -166,21 +166,79 @@ This document consolidates all individual improvement plans (plan2-plan9) into a
 
 ## Wave 4: File Upload Security
 
-### 4.1 Archive Depth Limits
+### 4.1 Archive Depth Limits ✅ COMPLETED
 
-**File**: `src/upload/yara_scanner.rs`
+**Status**: COMPLETED
 
-**Improvements**:
-- Add `archive_max_depth` config (default: 3)
-- Add `archive_max_size` config (default: 100MB)
+**Files Modified**:
+- `src/upload/yara_scanner.rs`:
+  - Added `archive_max_depth` (default: 3) and `archive_max_size` (default: 100MB) fields to `YaraScanner` struct
+  - Updated `YaraScanner::with_timeout()` to accept new parameters
+  - Added helper methods: `archive_max_depth()`, `archive_max_size()`, `check_depth_limit()`, `check_size_limit()`, `would_exceed_depth_limit()`, `would_exceed_size_limit()`
+  - Updated `create_yara_scanner()` to accept new parameters
+- `src/upload/config.rs`:
+  - Added `archive_max_depth` and `archive_max_size` fields to `UploadConfig`
+  - Added default functions for both fields
+  - Fixed `AllowedTypesMode` missing `PartialEq` derive
+  - Added `allowed_types_mode` field to `EffectiveUploadConfig` (was missing from initializers)
+- `src/config/upload.rs`:
+  - Added `archive_max_depth` and `archive_max_size` fields to `UploadDefaults`
+  - Added default functions for both fields
+- `src/worker/unified_server.rs`:
+  - Updated `UploadConfig` initialization to include new fields
 
-### 4.2 Scanner-Local Version Caching
+**Configuration**:
+```toml
+[upload]
+archive_max_depth = 3      # Max nested archive extraction depth
+archive_max_size = "100MB"  # Max total extracted size from archives
+```
 
-Reduce IPC overhead by caching YARA version locally in scanner.
+### 4.2 Scanner-Local Version Caching ✅ COMPLETED
 
-### 4.3 Path-Specific Allowlist Integration
+**Status**: COMPLETED
 
-Integrate `AllowedTypesConfig` with path-specific rules.
+**Problem**: The YARA scanner's `current_version` was set to `None` when first created. This caused unnecessary IPC calls when `reload_yara_rules_if_needed()` was called before the `YaraRulesManager` was set, and the scanner would never get synchronized properly.
+
+**Solution**: Set an initial version hash when the scanner is first created in `with_timeout()`. The version is computed as a SHA256 hash of the initial rules content, prefixed with "init-".
+
+**Files Modified**:
+- `src/upload/yara_scanner.rs`:
+  - Added `sha2::{Digest, Sha256}` import
+  - In `with_timeout()`: After compiling rules, compute `SHA256` hash of rules content and set as initial `current_version` (format: `init-{first_16_chars_of_hash}`)
+  - This ensures the scanner always has a version, even before `YaraRulesManager` is set
+
+**Benefits**:
+- Scanner version is no longer `None` after initial creation
+- When `reload_yara_rules_if_needed()` compares scanner version with manager version, it correctly detects when reload is needed
+- Reduces IPC overhead by ensuring version comparison works correctly from the start
+
+### 4.3 Path-Specific Allowlist Integration ✅ COMPLETED
+
+**Status**: COMPLETED
+
+**Problem**: `EffectiveUploadConfig` did not preserve the `mode` (Allowlist/Blocklist) from path-specific `AllowedTypesConfig`. The MIME type validation code directly called `is_mime_allowed()` which only implements allowlist semantics, ignoring the blocklist mode entirely.
+
+**Solution**: 
+1. Added `allowed_types_mode: AllowedTypesMode` field to `EffectiveUploadConfig`
+2. Updated `effective_config_for_path()` to detect when path has explicit `allowed_types` config (non-empty mime_types OR non-default mode) and use path's mode instead of global mode
+3. Added `is_mime_allowed()` method to `EffectiveUploadConfig` that respects the mode
+4. Updated all MIME type validation call sites to use `effective_config.is_mime_allowed()` instead of directly calling `is_mime_allowed()` with just the mime_types list
+5. Added `PartialEq` derive to `AllowedTypesMode` for comparison
+
+**Files Modified**:
+- `src/upload/config.rs`:
+  - Added `allowed_types_mode: AllowedTypesMode` field to `EffectiveUploadConfig`
+  - Added `is_mime_allowed(&self, mime_type: &str) -> bool` method to `EffectiveUploadConfig`
+  - Added `PartialEq` derive to `AllowedTypesMode`
+  - Updated `effective_config_for_path()` to properly track and use path-specific mode
+- `src/upload/mod.rs`:
+  - Updated 4 MIME type validation call sites to use `effective_config.is_mime_allowed()`
+
+**Benefits**:
+- Path-specific allow/block lists now work correctly with both Allowlist and Blocklist modes
+- When a path specifies `allowed_types { mode: Blocklist, mime_types: ["application/pdf"] }`, PDF files are blocked while all other types are allowed
+- Backward compatible: paths without explicit `allowed_types` config inherit global mode
 
 ### 4.4 TAR Extraction Path Traversal Fix
 

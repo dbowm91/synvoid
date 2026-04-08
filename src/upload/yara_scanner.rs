@@ -1,10 +1,14 @@
 use parking_lot::RwLock;
+use sha2::{Digest, Sha256};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
 use yara_x::Rules;
 use yara_x::Scanner;
+
+const DEFAULT_ARCHIVE_MAX_DEPTH: u32 = 3;
+const DEFAULT_ARCHIVE_MAX_SIZE: u64 = 100 * 1024 * 1024; // 100MB
 
 /// Empty slice of category names to exclude from YARA scan results.
 /// Pass this to scan functions when you want to include all rule matches
@@ -210,25 +214,71 @@ pub struct YaraScanner {
     rules_source: YaraRulesSource,
     current_version: Arc<RwLock<Option<String>>>,
     timeout_ms: u64,
+    archive_max_depth: u32,
+    archive_max_size: u64,
 }
 
 impl YaraScanner {
     pub fn new(rules_source: YaraRulesSource) -> Result<Self, YaraError> {
-        Self::with_timeout(rules_source, 30000)
+        Self::with_timeout(
+            rules_source,
+            30000,
+            DEFAULT_ARCHIVE_MAX_DEPTH,
+            DEFAULT_ARCHIVE_MAX_SIZE,
+        )
     }
 
-    pub fn with_timeout(rules_source: YaraRulesSource, timeout_ms: u64) -> Result<Self, YaraError> {
+    pub fn with_timeout(
+        rules_source: YaraRulesSource,
+        timeout_ms: u64,
+        archive_max_depth: u32,
+        archive_max_size: u64,
+    ) -> Result<Self, YaraError> {
         let rules_content = Self::compile_rules(&rules_source)?;
 
         let rules = yara_x::compile(rules_content.as_str())
             .map_err(|e| YaraError::CompilationError(e.to_string()))?;
 
+        let mut hasher = Sha256::new();
+        hasher.update(rules_content.as_bytes());
+        let hash = format!("{:x}", hasher.finalize());
+        let initial_version = Some(format!("init-{}", &hash[..16]));
+
         Ok(Self {
             rules: Arc::new(RwLock::new(rules)),
             rules_source,
-            current_version: Arc::new(RwLock::new(None)),
+            current_version: Arc::new(RwLock::new(initial_version)),
             timeout_ms,
+            archive_max_depth,
+            archive_max_size,
         })
+    }
+
+    pub fn archive_max_depth(&self) -> u32 {
+        self.archive_max_depth
+    }
+
+    pub fn archive_max_size(&self) -> u64 {
+        self.archive_max_size
+    }
+
+    pub fn check_depth_limit(&self, current_depth: u32) -> bool {
+        current_depth >= self.archive_max_depth
+    }
+
+    pub fn check_size_limit(&self, current_size: u64, additional_size: u64) -> bool {
+        current_size.saturating_add(additional_size) > self.archive_max_size
+    }
+
+    pub fn would_exceed_depth_limit(&self, depth: u32) -> bool {
+        depth > self.archive_max_depth
+    }
+
+    pub fn would_exceed_size_limit(&self, current_extracted: u64, new_size: u64) -> bool {
+        current_extracted
+            .checked_add(new_size)
+            .map(|total| total > self.archive_max_size)
+            .unwrap_or(true)
     }
 
     fn compile_rules(source: &YaraRulesSource) -> Result<String, YaraError> {
@@ -478,12 +528,15 @@ impl YaraRulesSource {
 pub fn create_yara_scanner(
     yara_rules_dir: Option<std::path::PathBuf>,
     scan_with_yara: bool,
+    archive_max_depth: u32,
+    archive_max_size: u64,
 ) -> Result<Option<YaraScanner>, YaraError> {
     let source = YaraRulesSource::from_config(yara_rules_dir, scan_with_yara);
 
     match source {
         Some(source) => {
-            let scanner = YaraScanner::new(source)?;
+            let scanner =
+                YaraScanner::with_timeout(source, 30000, archive_max_depth, archive_max_size)?;
             tracing::info!("YARA-X malware scanner initialized");
             Ok(Some(scanner))
         }
