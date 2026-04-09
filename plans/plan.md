@@ -448,6 +448,54 @@ Client requests example.com
 
 **Note**: Origins must send domain-based `upstream_id` (e.g., `http://example.com:80`) in `UpstreamRegistrationRequest`. This is a deployment configuration concern, not code.
 
+#### Phase 7b: Nginx-like Domain Routing (Domain-based Upstream IDs)
+
+**Completed**: ✅ Fix multi-origin discovery routing flow for nginx-like model.
+
+**Problem**: Upstream IDs were router-based (`origin-1.shop-api`) instead of domain-based (`http://example.com:80`).
+
+**Changes Made**:
+
+1. **`extract_upstream_id`** (`proxy.rs:428-446`):
+   - Now produces `http://host:port` format
+   - Port derived from URI or scheme default (80=http, 443=https)
+   - Removed incorrect path segment inclusion
+
+2. **`MeshUpstreamConfig.supported_ports`** (`config.rs`):
+   - Added optional `supported_ports: Option<Vec<u16>>` field
+   - Allows origin to advertise which ports it supports per domain
+
+3. **`announce_upstream`** (`transport.rs:1705-1789`):
+   - Removed `make_mesh_upstream_id()` call
+   - upstream_id now used directly (domain-based)
+
+4. **local_upstreams initialization** (`topology.rs:841-865`):
+   - Removed `make_mesh_upstream_id()` transformation
+   - Config keys used directly as domain-based IDs
+
+**Config Format** (updated for domain-based keys):
+```toml
+[mesh.local_upstreams]
+"http://example.com:80" = { 
+    upstream_url = "http://127.0.0.1:5001",
+    supported_ports = [80, 443],
+    geo = "us-east"
+}
+```
+
+**Routing Flow** (now working):
+1. Edge receives request for `http://example.com/api`
+2. `extract_upstream_id` → `http://example.com:80`
+3. Edge queries DHT: `verified_upstream:http://example.com:80`
+4. DHT returns origins that registered this domain+port
+5. Edge selects via weighted random, routes to origin
+
+**Remaining Architecture Issue**:
+- Origin local backend selection requires separate work
+- `proxy_http_request` sends raw HTTP to origin
+- Origin has no handler to route based on Host header to local backend
+- Needs: Host header parsing → local_upstreams lookup → backend forward
+
 #### Phase 8: Encrypt TierKey for DHT Storage
 
 **Files to modify**: `src/mesh/transport_org.rs`, `src/mesh/cert_dist.rs` (reuse encryption)
