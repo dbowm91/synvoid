@@ -215,7 +215,7 @@ RUST_LOG=debug cargo run -- --mesh-id node-1
 | 2.5.7 | Multi-Origin Discovery & Load Balancing | ✅ Complete |
 | 2.5.7b | Nginx-like Domain Routing | ✅ Complete |
 | 2.6 | TierKey Encryption for DHT | ✅ Complete |
-| 2.7 | TierKey Encryption for Transmission | 🔄 Deferred |
+| 2.7 | TierKey Encryption for Transmission | ✅ Complete |
 
 ## TierKey Encryption (Phase 2.6/2.7)
 
@@ -228,7 +228,54 @@ RUST_LOG=debug cargo run -- --mesh-id node-1
 **Phase 2.7 (Transmission) - Complete**:
 - Session key from ML-KEM session used to derive transmission key via HKDF("maluwaf-tier-key-transmit")
 - `encrypt_for_transmission()` / `decrypt_for_transmission()` methods added
-- Both send and receive paths handle encrypted tier keys with fallback to plaintext |
+- Both send and receive paths handle encrypted tier keys with fallback to plaintext
+
+## Origin Reachability System (Phase 2.5.6)
+
+**Purpose**: Edge nodes report route failures, global nodes coordinate verification, penalties applied to unreliable origins.
+
+**Key Components**:
+
+1. **VerificationTaskManager** (`src/mesh/verification.rs`):
+   - `report_reachability()` - Called when edge detects failure
+   - `initiate_verification_if_needed()` - Creates verification task
+   - `process_pending_tasks()` - Background task processing
+   - `get_pending_dispatch_tasks()` - Returns tasks needing queries
+   - `mark_task_in_progress()` - Updates task with selected node IDs
+   - `record_verification_result()` - Records verification response
+
+2. **Handlers** (`src/mesh/transport_peer.rs`):
+   - `handle_upstream_verification_query()` - Receives query, verifies TCP reachability, responds
+   - `handle_upstream_verification_response()` - Receives response, calls record_verification_result()
+
+3. **Query Dispatching** (`src/mesh/transports/manager.rs`):
+   - `start_verification_processing()` - Background task on global nodes
+   - Runs every 30 seconds
+   - Selects 3 random peers (config.verification_nodes_count)
+   - Dispatches UpstreamVerificationQuery to selected peers
+
+**Verification Flow**:
+```
+Edge reports failure → report_reachability()
+    → Global creates VerificationTask (status=Pending)
+        → Background task finds pending tasks
+            → Selects 3 random peers
+                → Dispatches UpstreamVerificationQuery
+                    → Nodes verify TCP reachability
+                        → Respond with UpstreamVerificationResponse
+                            → Global records result
+                                → Penalty applied if multiple failures
+```
+
+**DHT Keys**:
+- `origin_reachability:{upstream_id}:{provider_node_id}` - Reachability status
+- `verification_task:{upstream_id}:{provider_node_id}` - Verification task
+- `origin_penalty:{upstream_id}:{provider_node_id}` - Penalty record
+
+**Penalty Mechanism**:
+- Initial penalty: -20
+- Recovery: +5 every 10 minutes
+- Self-healing after ~40 minutes |
 
 ## Origin Local Backend Selection (IMPLEMENTED)
 
