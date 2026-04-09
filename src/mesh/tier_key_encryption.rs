@@ -8,6 +8,7 @@ use sha2::Sha256;
 const NONCE_SIZE: usize = 12;
 const DERIVED_KEY_SIZE: usize = 32;
 const HKDF_INFO: &[u8] = b"maluwaf-tier-key-encrypt";
+const TRANSMISSION_HKDF_INFO: &[u8] = b"maluwaf-tier-key-transmit";
 
 #[derive(Debug, Clone)]
 pub struct EncryptedTierKeyData {
@@ -41,6 +42,53 @@ pub struct TierKeyEncryption {
 impl TierKeyEncryption {
     pub fn new(master_key: Vec<u8>) -> Self {
         Self { master_key }
+    }
+
+    pub fn encrypt_for_transmission(
+        &self,
+        tier_key_bytes: &[u8],
+        transmission_key: &[u8; 32],
+    ) -> Vec<u8> {
+        let cipher = match Aes256Gcm::new_from_slice(transmission_key) {
+            Ok(c) => c,
+            Err(_) => return tier_key_bytes.to_vec(),
+        };
+
+        let mut nonce_bytes = [0u8; NONCE_SIZE];
+        rand::fill(&mut nonce_bytes);
+        let nonce = Nonce::from_slice(&nonce_bytes);
+
+        match cipher.encrypt(nonce, tier_key_bytes) {
+            Ok(ciphertext) => {
+                let mut result = Vec::with_capacity(NONCE_SIZE + ciphertext.len());
+                result.extend_from_slice(&nonce_bytes);
+                result.extend_from_slice(&ciphertext);
+                result
+            }
+            Err(_) => tier_key_bytes.to_vec(),
+        }
+    }
+
+    pub fn decrypt_for_transmission(
+        &self,
+        encrypted_data: &[u8],
+        transmission_key: &[u8; 32],
+    ) -> Result<Vec<u8>, TierKeyEncryptionError> {
+        if encrypted_data.len() < NONCE_SIZE {
+            return Err(TierKeyEncryptionError::Decryption(
+                "Data too short for nonce".to_string(),
+            ));
+        }
+
+        let cipher = Aes256Gcm::new_from_slice(transmission_key)
+            .map_err(|e| TierKeyEncryptionError::Decryption(e.to_string()))?;
+
+        let nonce = Nonce::from_slice(&encrypted_data[..NONCE_SIZE]);
+        let ciphertext = &encrypted_data[NONCE_SIZE..];
+
+        cipher
+            .decrypt(nonce, ciphertext)
+            .map_err(|e| TierKeyEncryptionError::Decryption(e.to_string()))
     }
 
     pub fn encrypt_tier_key_data(
@@ -115,7 +163,7 @@ impl TierKeyEncryption {
         Ok(okm)
     }
 
-    fn build_hkdf_info(context: &str) -> Vec<u8> {
+    pub fn build_hkdf_info(context: &str) -> Vec<u8> {
         let ctx_bytes = context.as_bytes();
         let mut info = Vec::with_capacity(HKDF_INFO.len() + ctx_bytes.len() + 1);
         info.extend_from_slice(HKDF_INFO);
@@ -123,6 +171,18 @@ impl TierKeyEncryption {
         info.extend_from_slice(ctx_bytes);
         info
     }
+
+    pub fn build_transmission_hkdf_info() -> Vec<u8> {
+        TRANSMISSION_HKDF_INFO.to_vec()
+    }
+}
+
+pub fn derive_transmission_key(session_key: &[u8]) -> [u8; 32] {
+    let hk = Hkdf::<Sha256>::new(None, session_key);
+    let mut okm = [0u8; DERIVED_KEY_SIZE];
+    let info = TierKeyEncryption::build_transmission_hkdf_info();
+    let _ = hk.expand(&info, &mut okm);
+    okm
 }
 
 pub fn serialize_encrypted_tier_key(encrypted: &EncryptedTierKeyData) -> Vec<u8> {

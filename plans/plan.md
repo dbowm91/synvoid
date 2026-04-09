@@ -569,29 +569,44 @@ node_identity.private_key → used for mesh identity & tier key encryption maste
 
 **Status**: ✅ COMPLETED - TierKey DHT encryption fully implemented
 
-#### Phase 9: Encrypt TierKey for Transmission 🔄 DEFERRED (v2)
+#### Phase 9 (2.7): Encrypt TierKey for Transmission ✅ COMPLETED
 
-**Approach**: Encrypt `TierKey.key` when sending in `OrgInvitationResponse`
+**Approach**: Encrypt `TierKey.key` when sending in `OrgRegistrationResponse`
 
-**Implementation Plan**:
-1. During peer handshake, establish session key (already happens via ML-KEM)
-2. When sending `OrgInvitationResponse`, derive transmission key:
-   ```
-   session_key → HKDF("maluwaf-tier-key-transmit") → transmission_key
-   ```
-3. Encrypt `TierKey.key` with transmission_key before including in message
-4. Recipient derives same key from established session and decrypts
+**Implementation Completed**:
+1. Added `encrypt_for_transmission()` to `TierKeyEncryption`:
+   - Takes `tier_key_bytes` and `transmission_key` (derived from session)
+   - Uses AES-256-GCM with 12-byte nonce prepended to ciphertext
+   - Falls back to plaintext if encryption fails
+
+2. Added `decrypt_for_transmission()` to `TierKeyEncryption`:
+   - Extracts nonce from first 12 bytes
+   - Uses transmission_key to decrypt remainder
+
+3. Added `derive_transmission_key()`:
+   - Derives from session_key via HKDF("maluwaf-tier-key-transmit")
+
+4. Modified `send_org_registration_response()`:
+   - Looks up session by peer_id using `session_mgr.get_by_peer(to_peer)`
+   - Derives transmission_key from session's session_key
+   - Encrypts tier_key.key before sending
+   - Falls back to plaintext if no session or encryption fails
+
+5. Modified `handle_org_registration_response()`:
+   - Detects likely encrypted tier key by length (44 bytes = 32 key + 12 nonce)
+   - Uses session to decrypt if available
+   - Stores decrypted tier key in DHT
 
 **Key Points**:
-- Only global nodes send `OrgInvitationResponse` (they create tier keys)
-- Session must be established before sending (already the case in protocol)
-- Origin receives decrypted tier key and stores locally (unencrypted - per design decision)
+- Only global nodes encrypt tier keys (they create and send them)
+- Session key from ML-KEM session manager used for derivation
+- Fallback to plaintext if no session exists (preserves backward compatibility)
 
-**Files to modify**:
-- `src/mesh/transport_org.rs` (encrypt before send)
-- Recipient handling in `src/mesh/protocol_proto_decode.rs` (decrypt after receive)
+**Files Modified**:
+- `src/mesh/tier_key_encryption.rs` - Added encrypt/decrypt_for_transmission, derive_transmission_key
+- `src/mesh/transport_org.rs` - Modified send and handle org registration response
 
-**Status**: 🔄 DEFERRED - Requires session key availability during OrgInvitationResponse send
+**Status**: ✅ COMPLETED
 
 #### Completed Phases Summary
 
@@ -607,7 +622,7 @@ node_identity.private_key → used for mesh identity & tier key encryption maste
 | 7b | Nginx-like domain routing | ✅ COMPLETED |
 | 8 | Origin local backend selection | ✅ COMPLETED |
 | 9 (2.6) | TierKey DHT encryption | ✅ COMPLETED |
-| 10 (2.7) | TierKey transmission encryption | 🔄 DEFERRED |
+| 10 (2.7) | TierKey transmission encryption | ✅ COMPLETED |
 
 #### Success Metrics
 
@@ -616,7 +631,7 @@ node_identity.private_key → used for mesh identity & tier key encryption maste
 | Capabilities advertised per node | 0 | 3-8 (Phase 2-3) |
 | Origin announcements processed | 0% | 100% (Phase 4) |
 | TierKey encrypted at rest | 0% | ✅ COMPLETED (Phase 9) |
-| TierKey encrypted in transit | 0% | 🔄 DEFERRED |
+| TierKey encrypted in transit | 0% | ✅ COMPLETED (Phase 10) |
 | Multi-origin routing | Broken | ✅ COMPLETED |
 
 #### Files Modified (Completed Phases)

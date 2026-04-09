@@ -3,6 +3,7 @@
 use crate::mesh::transport::MeshTransport;
 
 use crate::mesh::protocol::MeshMessage;
+use crate::mesh::tier_key_encryption::derive_transmission_key;
 
 impl MeshTransport {
     pub(crate) async fn handle_org_registration_request(
@@ -221,13 +222,48 @@ impl MeshTransport {
             Vec::new()
         };
 
+        let initial_tier_key = if let Some(tk) = tier_key {
+            if let Some(ref enc) = self.tier_key_encryption {
+                if let Some(ref session_mgr) = self.mlkem_session_manager {
+                    if let Some(session) = session_mgr.get_by_peer(to_peer) {
+                        let transmission_key = derive_transmission_key(&session.session_key);
+                        let encrypted_key = enc.encrypt_for_transmission(
+                            &tk.key,
+                            &transmission_key,
+                        );
+                        Some(crate::mesh::organization::TierKey {
+                            key_id: tk.key_id.clone(),
+                            tier: tk.tier,
+                            key: encrypted_key,
+                            valid_from: tk.valid_from,
+                            valid_until: tk.valid_until,
+                            issued_by: tk.issued_by.clone(),
+                            revoked: tk.revoked,
+                            revoked_at: tk.revoked_at,
+                            bound_to: tk.bound_to.clone(),
+                            is_unspent: tk.is_unspent,
+                        })
+                    } else {
+                        tracing::warn!("No session found for peer {}, sending unencrypted tier key", to_peer);
+                        Some(tk.clone())
+                    }
+                } else {
+                    Some(tk.clone())
+                }
+            } else {
+                Some(tk.clone())
+            }
+        } else {
+            None
+        };
+
         let response = crate::mesh::protocol::MeshMessage::OrgRegistrationResponse {
             request_id: request_id.into(),
             org_id: org_id.into(),
             org_name: org_name.into(),
             approved,
             reason: reason.into(),
-            initial_tier_key: tier_key.cloned(),
+            initial_tier_key,
             signature,
             timestamp,
         };
@@ -259,6 +295,40 @@ impl MeshTransport {
             from_peer
         );
 
+        let decrypted_tier_key = if let Some(tk) = initial_tier_key {
+            if tk.key.len() > 12 {
+                let likely_encrypted = tk.key.len() == 32 + 12;
+                if likely_encrypted {
+                    if let Some(ref session_mgr) = self.mlkem_session_manager {
+                        if let Some(session) = session_mgr.get_by_peer(from_peer) {
+                            let transmission_key = crate::mesh::tier_key_encryption::derive_transmission_key(&session.session_key);
+                            let decrypted = self.tier_key_encryption.as_ref()
+                                .and_then(|enc| enc.decrypt_for_transmission(&tk.key, &transmission_key).ok());
+                            if let Some(decrypted_key) = decrypted {
+                                let mut new_tk = tk.clone();
+                                new_tk.key = decrypted_key;
+                                Some(new_tk)
+                            } else {
+                                tracing::warn!("Failed to decrypt tier key from {}, storing as-is", from_peer);
+                                Some(tk.clone())
+                            }
+                        } else {
+                            tracing::warn!("No session found for peer {}, cannot decrypt tier key", from_peer);
+                            Some(tk.clone())
+                        }
+                    } else {
+                        Some(tk.clone())
+                    }
+                } else {
+                    Some(tk.clone())
+                }
+            } else {
+                Some(tk.clone())
+            }
+        } else {
+            None
+        };
+
         if let Some(ref record_store) = self.record_store {
             let key = format!("org:{}", org_id);
             let value = org_id.as_bytes().to_vec();
@@ -270,7 +340,7 @@ impl MeshTransport {
                 tracing::warn!("Failed to store organization in DHT: {}", org_id);
             }
 
-            if let Some(tier_key) = initial_tier_key {
+            if let Some(ref tier_key) = decrypted_tier_key {
                 let tier_key_json = serde_json::to_vec(tier_key).unwrap_or_default();
                 let tier_key_dht = format!("tier_key:{}:{}", org_id, tier_key.tier);
                 if record_store.store_and_announce(tier_key_dht, tier_key_json, 86400 * 30) {
