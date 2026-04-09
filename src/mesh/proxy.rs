@@ -45,8 +45,6 @@ const DEFAULT_POLICY_CACHE_TTL_SECS: u64 = 3600;
 const FAILED_PROVIDER_COOLDOWN_SECS: u64 = 10;
 /// TTL for stale cache entries before forcing refresh (60 seconds)
 const STALE_CACHE_TTL_SECS: u64 = 60;
-/// Maximum number of concurrent route queries
-const MAX_IN_FLIGHT_QUERIES: usize = 100;
 /// Maximum exponential backoff delay (120 seconds)
 const MAX_EXPONENTIAL_BACKOFF_SECS: u64 = 120;
 /// Window for health metrics calculation (5 minutes)
@@ -71,7 +69,6 @@ pub struct MeshProxy {
     active_connections: Arc<RwLock<HashMap<String, MeshConnection>>>,
     policy_cache: Cache<String, CachedPolicy>,
     failed_providers: Cache<String, Instant>,
-    in_flight_queries: Cache<String, InFlightQuery>,
     provider_stats: Cache<String, ProviderStats>,
     org_manager: Arc<TokioRwLock<OrganizationManager>>,
     transform_cache: Arc<Cache<String, TransformCacheEntry>>,
@@ -93,16 +90,6 @@ pub struct CachedPolicy {
     pub protocol: UpstreamProtocol,
     pub priority_tier: u32,
     pub expires_at: Instant,
-}
-
-#[derive(Clone)]
-struct InFlightQuery {
-    #[allow(dead_code)]
-    provider: Option<ProviderInfo>,
-    #[allow(dead_code)]
-    completed: bool,
-    #[allow(dead_code)]
-    failed: bool,
 }
 
 #[derive(Clone)]
@@ -219,10 +206,6 @@ impl MeshProxy {
             .max_capacity(cache_size as u64)
             .time_to_live(Duration::from_secs(FAILED_PROVIDER_COOLDOWN_SECS * 2))
             .build();
-        let in_flight_queries = Cache::builder()
-            .max_capacity(MAX_IN_FLIGHT_QUERIES as u64)
-            .time_to_live(Duration::from_secs(30))
-            .build();
         let provider_stats = Cache::builder()
             .max_capacity(cache_size as u64)
             .time_to_live(Duration::from_secs(HEALTH_METRICS_WINDOW_SECS))
@@ -245,7 +228,6 @@ impl MeshProxy {
             active_connections: Arc::new(RwLock::new(HashMap::new())),
             policy_cache,
             failed_providers,
-            in_flight_queries,
             provider_stats,
             org_manager: Arc::new(TokioRwLock::new(OrganizationManager::new())),
             transform_cache: Arc::new(transform_cache),
@@ -553,71 +535,6 @@ impl MeshProxy {
             .insert(provider_node_id.to_string(), stats);
         self.mark_provider_failed(provider_node_id);
         failure_count
-    }
-
-    async fn get_or_initiate_route_query(
-        &self,
-        upstream_id: &str,
-    ) -> Result<ProviderInfo, MeshProxyError> {
-        let should_initiate = {
-            if self.in_flight_queries.get(upstream_id).is_some() {
-                false
-            } else {
-                self.in_flight_queries.insert(
-                    upstream_id.to_string(),
-                    InFlightQuery {
-                        provider: None,
-                        completed: false,
-                        failed: false,
-                    },
-                );
-                true
-            }
-        };
-
-        if !should_initiate {
-            tokio::time::sleep(Duration::from_millis(50)).await;
-            return self.execute_route_query(upstream_id).await;
-        }
-
-        let result = self.execute_route_query(upstream_id).await;
-
-        self.in_flight_queries.remove(upstream_id);
-
-        result
-    }
-
-    async fn execute_route_query(&self, upstream_id: &str) -> Result<ProviderInfo, MeshProxyError> {
-        let transport = {
-            let guard = self.transport.read();
-            guard.clone()
-        };
-        let transport = transport.ok_or_else(|| {
-            MeshProxyError::ConnectionFailed("Transport not initialized".to_string())
-        })?;
-
-        match transport.send_route_query(upstream_id).await {
-            Ok(result) => {
-                let providers = self.filter_failed_providers(&result.providers);
-                let providers_with_capability: Vec<_> = providers
-                    .into_iter()
-                    .filter(|p| {
-                        if let Some(peer) =
-                            futures::executor::block_on(self.topology.get_peer(&p.node_id))
-                        {
-                            peer.capabilities.can_proxy
-                        } else {
-                            false
-                        }
-                    })
-                    .collect();
-                if providers_with_capability.is_empty() {
-                    return Err(MeshProxyError::NoRouteToUpstream(upstream_id.to_string()));
-                }
-                Ok(providers_with_capability.into_iter().next().unwrap())
-            }
-            Err(e) => Err(MeshProxyError::ConnectionFailed(e.to_string())),
-        }
     }
 
     async fn get_providers_for_upstream(
@@ -959,7 +876,7 @@ impl MeshProxy {
         upstream_id: &str,
         req: Request<Incoming>,
     ) -> Result<(Response<BoxBody<Bytes, Infallible>>, Option<WafPolicy>), MeshProxyError> {
-        let provider_info = match self.get_or_initiate_route_query(upstream_id).await {
+        let providers = match self.get_providers_for_upstream(upstream_id).await {
             Ok(p) => p,
             Err(e) => {
                 if let Some(cached) = self.get_cached_policy(upstream_id) {
@@ -982,46 +899,16 @@ impl MeshProxy {
             }
         };
 
+        let first_provider = &providers[0];
+        let waf_policy = first_provider.waf_policy.clone();
+
         let response = self
-            .proxy_to_peer(
-                &provider_info.node_id,
-                upstream_id,
-                provider_info.upstream_url.clone(),
-                req,
-            )
+            .proxy_to_peer_with_fallback(upstream_id, providers, req)
             .await;
 
         match response {
-            Ok(resp) => {
-                self.record_provider_success(&provider_info.node_id);
-                Ok((resp, provider_info.waf_policy))
-            }
-            Err(e) => {
-                let failure_count = self.record_provider_failure(&provider_info.node_id);
-
-                let tm = {
-                    let guard = self.transport_manager.read();
-                    guard.clone()
-                };
-                if let Some(ref tm) = tm {
-                    tm.report_reachability(
-                        upstream_id,
-                        &provider_info.node_id,
-                        crate::mesh::dht::ReachabilityStatus::Failed,
-                        0,
-                        0.0,
-                        failure_count,
-                    );
-                }
-
-                tracing::warn!(
-                    "Provider {} failed for {}: {}",
-                    provider_info.node_id,
-                    upstream_id,
-                    e
-                );
-                Err(e)
-            }
+            Ok(resp) => Ok((resp, waf_policy)),
+            Err(e) => Err(e),
         }
     }
 
