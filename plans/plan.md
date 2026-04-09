@@ -441,10 +441,12 @@ Client requests example.com
 
 **Phase 7 Status: ✅ COMPLETED**
 
-**Remaining Work** (deferred to Phase 9 - Performance):
-- DHT caching for `get_all_records()` queries - `get_all_records()` is O(n) and called on every query
-- Origins must send domain-based `upstream_id` in `UpstreamRegistrationRequest` (deployment configuration)
-- True round-robin or weighted selection strategy (currently sequential failover only)
+**Completed Work**:
+- ✅ DHT caching for `find_verified_upstreams_for_site()` - 30 second TTL, 1000 max entries
+- ✅ Weighted random provider selection via `weighted_shuffle_providers()`
+- ✅ Cache invalidation when new VerifiedUpstream is registered
+
+**Note**: Origins must send domain-based `upstream_id` (e.g., `http://example.com:80`) in `UpstreamRegistrationRequest`. This is a deployment configuration concern, not code.
 
 #### Phase 8: Encrypt TierKey for DHT Storage
 
