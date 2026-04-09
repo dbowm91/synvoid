@@ -163,16 +163,14 @@ This document consolidates all individual improvement plans (plan2-plan9) into a
 - `handle_tier_key_announce`: Now refuses to store unencrypted if encryption unavailable
 - If `tier_key_encryption` is not available, tier keys are NOT stored (error logged)
 - This ensures no sensitive key material is ever stored in plaintext in DHT
-- `SignedRecordType.is_public()` indicates many records are intentionally public
-- Would need: add encryption layer to DHT store/fetch, key management for record encryption
-- Current: 0% of DHT records encrypted (per Success Metrics)
+- Note: Encryption requires global node role AND signing_key configured
+- Edge/Origin nodes cannot store tier keys (they don't have encryption)
+- This is intentional - sensitive key material stays only on secure global nodes
 
 **Files Modified**:
-- `src/mesh/global_node_ha.rs`
-- `src/mesh/transport.rs`
-- `src/mesh/dht/record_store.rs`
-- `src/mesh/cert.rs`
-- `src/mesh/config.rs`
+- `src/mesh/global_node_ha.rs` (deleted)
+- `src/mesh/mod.rs` (removed module)
+- `src/mesh/transport_org.rs` (enforce encryption)
 
 ### 2.5 Node Capability Signaling & Origin Routing 🔄 IN PROGRESS
 
