@@ -483,7 +483,7 @@ Client requests example.com
 }
 ```
 
-**Routing Flow** (now working):
+**Routing Flow** (now working at edge):
 1. Edge receives request for `http://example.com/api`
 2. `extract_upstream_id` → `http://example.com:80`
 3. Edge queries DHT: `verified_upstream:http://example.com:80`
@@ -491,10 +491,30 @@ Client requests example.com
 5. Edge selects via weighted random, routes to origin
 
 **Remaining Architecture Issue**:
-- Origin local backend selection requires separate work
-- `proxy_http_request` sends raw HTTP to origin
-- Origin has no handler to route based on Host header to local backend
-- Needs: Host header parsing → local_upstreams lookup → backend forward
+- **CRITICAL GAP**: Mesh QUIC transport does NOT have a server that accepts incoming connections
+- `proxy_http_request` opens bidirectional QUIC stream to origin
+- Origin has no `accept_loop` to handle incoming streams from peers
+- This requires significant architectural work (see Phase 7b below)
+
+#### Phase 7b: Origin Local Backend Selection 🔄 ARCHITECTURAL GAP
+
+**Problem**: When origin receives proxied HTTP request from edge via QUIC stream, there is no handler to route based on Host header to the correct local backend.
+
+**Root Cause**: Mesh QUIC transport only connects to peers via `connect_to_peer()`, but does NOT accept incoming connections. Compare to `tunnel/quic/runtime.rs` which has an `accept_loop()` handling `endpoint.accept()`.
+
+**What's needed**:
+1. Add QUIC server endpoint that accepts incoming connections from mesh peers
+2. Add `accept_loop` to handle incoming bidirectional streams
+3. Parse Host header from raw HTTP bytes
+4. Look up `mesh.local_upstreams` for matching domain
+5. Forward to appropriate local backend (e.g., `http://127.0.0.1:5001`)
+
+**Files to create/modify**:
+- `src/mesh/transports/mesh_quic_server.rs` - New QUIC server for incoming streams
+- `src/mesh/transport.rs` - Add server endpoint setup
+- `src/mesh/proxy.rs` - Add Host header extraction for local routing
+
+**Status**: 🔄 DEFERRED - Requires significant architectural work to add QUIC server for stream handling
 
 #### Phase 8: Encrypt TierKey for DHT Storage
 
@@ -536,9 +556,11 @@ proto::TierKey {
 | 4 | Fix UpstreamAnnounce processing | ✅ COMPLETED |
 | 5 | VerifiedUpstream DHT storage | ✅ COMPLETED |
 | 6 | Origin Reachability System | ✅ COMPLETED |
-| 7 | Multi-origin discovery | 🔄 DEFERRED |
-| 8 | TierKey DHT encryption | 🔄 DEFERRED |
-| 9 | TierKey transmission encryption | 🔄 DEFERRED |
+| 7 | Multi-origin discovery & load balancing | ✅ COMPLETED |
+| 7b | Nginx-like domain routing | ✅ COMPLETED |
+| 8 | Origin local backend selection | 🔄 DEFERRED |
+| 9 | TierKey DHT encryption | 🔄 DEFERRED |
+| 10 | TierKey transmission encryption | 🔄 DEFERRED |
 
 #### Success Metrics
 
