@@ -290,6 +290,30 @@ impl MeshTransport {
             None
         };
 
+        let tier_key_encryption = if config.role.is_global() {
+            if let Some(signing_key) = config.signing_key() {
+                use hkdf::Hkdf;
+                use sha2::Sha256;
+                const HKDF_INFO: &[u8] = b"maluwaf-tier-key-master";
+                let hk = Hkdf::<Sha256>::new(None, signing_key);
+                let mut okm = [0u8; 32];
+                if hk.expand(HKDF_INFO, &mut okm).is_ok() {
+                    tracing::info!("TierKey DHT encryption enabled for global node");
+                    Some(Arc::new(crate::mesh::tier_key_encryption::TierKeyEncryption::new(
+                        okm.to_vec(),
+                    )))
+                } else {
+                    tracing::warn!("Failed to derive tier key encryption master key");
+                    None
+                }
+            } else {
+                tracing::warn!("Global node has no signing key - tier key DHT encryption disabled");
+                None
+            }
+        } else {
+            None
+        };
+
         Self {
             config,
             topology,
@@ -316,7 +340,7 @@ impl MeshTransport {
                 Arc::new(RwLock::new(org_mgr))
             },
             tier_key_store,
-            tier_key_encryption: None,
+            tier_key_encryption,
             origin_ed25519_signer,
             mesh_signer,
             record_store,

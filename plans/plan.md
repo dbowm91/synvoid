@@ -530,9 +530,9 @@ Client requests example.com
 
 **Status**: ✅ COMPLETED - Origin nodes now accept incoming HTTP streams and route to local backends
 
-#### Phase 8: Encrypt TierKey for DHT Storage 🔶 PARTIALLY COMPLETED
+#### Phase 8: Encrypt TierKey for DHT Storage ✅ COMPLETED
 
-**Files Modified**: `src/mesh/transport_org.rs`, `src/mesh/tier_key_encryption.rs` (NEW)
+**Files Modified**: `src/mesh/transport_org.rs`, `src/mesh/tier_key_encryption.rs` (NEW), `src/mesh/transport.rs`
 
 **Implementation Completed**:
 1. Added `TierKeyEncryption` struct in `src/mesh/tier_key_encryption.rs`:
@@ -555,29 +555,43 @@ Client requests example.com
    - `set_tier_key_encryption()` - Initialize encryption with master key
    - `get_tier_key_encryption()` - Access encryption for other uses
 
-**Remaining Issue**:
-- `mesh_session_key` not directly available in `MeshTransport`
-- Currently tier_key_encryption must be set via `set_tier_key_encryption()`
-- Master key must be provided from external source (config, startup, etc.)
+5. **Master Key Derivation** (Phase 2.6 complete):
+   - For global nodes, master key derived from `node_identity.private_key` via HKDF
+   - HKDF info: "maluwaf-tier-key-master"
+   - Initialized automatically in `MeshTransport::new()` for global nodes
+   - Non-global nodes do not encrypt tier keys (they don't create/store them)
 
-**Status**: 🔶 PARTIALLY COMPLETED - Encryption infrastructure exists, but master key source needs to be determined
-
-#### Phase 9: Encrypt TierKey for Transmission 🔄 DEFERRED
-
-**Files to modify**: `src/mesh/protocol_proto_encode.rs`
-
-In `OrgInvitationResponse` encoding:
-```rust
-// Instead of: key: tier_key.key.clone()
-// Encrypt the key field before including in message
-let encrypted_key = encrypt_tier_key(&tier_key.key, derived_key)?;
-proto::TierKey {
-    key: encrypted_key,
-    // ...
-}
+**Key Hierarchy**:
+```
+genesis_key.private_key → used for signing global node invitations
+node_identity.private_key → used for mesh identity & tier key encryption master
 ```
 
-**Status**: 🔄 DEFERRED - Requires Phase 8 completion (encryption context) and master key source
+**Status**: ✅ COMPLETED - TierKey DHT encryption fully implemented
+
+#### Phase 9: Encrypt TierKey for Transmission 🔄 DEFERRED (v2)
+
+**Approach**: Encrypt `TierKey.key` when sending in `OrgInvitationResponse`
+
+**Implementation Plan**:
+1. During peer handshake, establish session key (already happens via ML-KEM)
+2. When sending `OrgInvitationResponse`, derive transmission key:
+   ```
+   session_key → HKDF("maluwaf-tier-key-transmit") → transmission_key
+   ```
+3. Encrypt `TierKey.key` with transmission_key before including in message
+4. Recipient derives same key from established session and decrypts
+
+**Key Points**:
+- Only global nodes send `OrgInvitationResponse` (they create tier keys)
+- Session must be established before sending (already the case in protocol)
+- Origin receives decrypted tier key and stores locally (unencrypted - per design decision)
+
+**Files to modify**:
+- `src/mesh/transport_org.rs` (encrypt before send)
+- Recipient handling in `src/mesh/protocol_proto_decode.rs` (decrypt after receive)
+
+**Status**: 🔄 DEFERRED - Requires session key availability during OrgInvitationResponse send
 
 #### Completed Phases Summary
 
@@ -592,8 +606,8 @@ proto::TierKey {
 | 7 | Multi-origin discovery & load balancing | ✅ COMPLETED |
 | 7b | Nginx-like domain routing | ✅ COMPLETED |
 | 8 | Origin local backend selection | ✅ COMPLETED |
-| 9 | TierKey DHT encryption | 🔶 PARTIAL |
-| 10 | TierKey transmission encryption | 🔄 DEFERRED |
+| 9 (2.6) | TierKey DHT encryption | ✅ COMPLETED |
+| 10 (2.7) | TierKey transmission encryption | 🔄 DEFERRED |
 
 #### Success Metrics
 
@@ -601,7 +615,7 @@ proto::TierKey {
 |--------|--------|-------|
 | Capabilities advertised per node | 0 | 3-8 (Phase 2-3) |
 | Origin announcements processed | 0% | 100% (Phase 4) |
-| TierKey encrypted at rest | 0% | 🔶 PARTIAL (Phase 9) |
+| TierKey encrypted at rest | 0% | ✅ COMPLETED (Phase 9) |
 | TierKey encrypted in transit | 0% | 🔄 DEFERRED |
 | Multi-origin routing | Broken | ✅ COMPLETED |
 
