@@ -627,3 +627,38 @@ These admin UI files were previously orphaned but are now reachable:
 
 Still orphaned (not declared as module):
 - `admin-ui/src/config_docs.rs` (538 lines — field documentation)
+
+## Skills and Knowledge Base
+
+For complex subsystems, specialized skill files provide detailed architecture guidance:
+
+### Mesh & DHT Architecture
+
+**Location**: `skills/malu_mesh.md` (in-repository copy)
+
+This skill file documents the mesh networking and DHT system, which is complex and has many interdependent components:
+
+- **Node Roles**: Global (CA/signer), Edge (proxy), Origin (host sites)
+- **Upstream ID Format**: `http://host:port` (domain-based keys)
+- **DHT Key Types**: `verified_upstream:`, `upstream:`, `node_capability:`, etc.
+- **Routing Flow**: Edge → extract upstream_id → DHT query → weighted random → origin
+- **Phase Status**: Tracks completion of mesh/DHT improvements (2.5-2.7, 7, 7b, 8, 9, 10)
+
+**Key files referenced**:
+- `src/mesh/proxy.rs` - Route requests, extract upstream_id
+- `src/mesh/transport.rs` - Announce upstreams, proxy HTTP
+- `src/mesh/topology.rs` - Local upstream storage, DHT queries
+- `src/mesh/dht/keys.rs` - DHT key type definitions
+- `src/mesh/transport_peer.rs` - Peer message handling
+
+### Using the Skill File
+
+When working on mesh or DHT components, read `skills/malu_mesh.md` for context. The skill file contains:
+
+1. **Architecture diagrams** (via text descriptions)
+2. **Key derivation chains** (genesis → global_node_key → tier_key_master)
+3. **Phase status tracking** - what's completed vs deferred
+4. **Common issues** - known gaps and debug patterns
+5. **File reference table** - purpose of each mesh-related file
+
+The skill file was originally maintained at `~/.config/opencode/skills/malu_mesh/SKILL.md` but a copy is kept in-repository for reliability.
