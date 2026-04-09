@@ -155,6 +155,7 @@ impl VerificationTaskManager {
             created_at: now,
             expires_at: now + self.config.penalty_ttl_secs,
             verification_node_ids: Vec::new(),
+            verification_results: Vec::new(),
         };
 
         if let Ok(value) = serde_json::to_vec(&task) {
@@ -273,35 +274,125 @@ impl VerificationTaskManager {
     pub fn record_verification_result(
         &self,
         upstream_id: &str,
+        provider_node_id: &str,
         verifying_node_id: &str,
         verified: bool,
     ) {
         tracing::info!(
-            "Verification result for {} from node {}: verified={}",
+            "Verification result for {} (provider: {}) from node {}: verified={}",
             upstream_id,
+            provider_node_id,
             verifying_node_id,
             verified
         );
 
-        let _record_store_opt = self.record_store.read().clone();
-        let Some(_record_store) = _record_store_opt else {
+        let record_store_opt = self.record_store.read().clone();
+        let Some(record_store) = record_store_opt else {
             tracing::debug!("Record store not available for verification result");
             return;
         };
 
-        if verified {
+        let key = DhtKey::verification_task(upstream_id, provider_node_id);
+        let key_str = key.as_str();
+
+        let task_opt = record_store.get(&key_str);
+
+        let Some(task_record) = task_opt else {
             tracing::debug!(
-                "Upstream {} verified reachable by node {}",
+                "No verification task found for {}:{}",
                 upstream_id,
-                verifying_node_id
+                provider_node_id
             );
-        } else {
-            tracing::warn!(
-                "Upstream {} reported unreachable by node {}",
-                upstream_id,
-                verifying_node_id
+            return;
+        };
+
+        let mut task = match serde_json::from_slice::<crate::mesh::dht::VerificationTask>(
+            &task_record.value,
+        ) {
+            Ok(t) => t,
+            Err(e) => {
+                tracing::warn!("Failed to deserialize verification task: {}", e);
+                return;
+            }
+        };
+
+        let task_key = format!("{}:{}", upstream_id, provider_node_id);
+
+        if task.status != crate::mesh::dht::VerificationStatus::InProgress {
+            tracing::debug!("Verification task not in progress, ignoring result");
+            return;
+        }
+
+        if task
+            .verification_results
+            .iter()
+            .any(|r| r.node_id == verifying_node_id)
+        {
+            tracing::debug!("Already received result from node {}", verifying_node_id);
+            return;
+        }
+
+        task.verification_results
+            .push(crate::mesh::dht::VerificationResult {
+                node_id: verifying_node_id.to_string(),
+                verified,
+                timestamp: safe_unix_timestamp(),
+            });
+
+        let total_responses = task.verification_results.len();
+        let total_expected = task.verification_node_ids.len();
+        let failure_count = task
+            .verification_results
+            .iter()
+            .filter(|r| !r.verified)
+            .count();
+        let success_count = task
+            .verification_results
+            .iter()
+            .filter(|r| r.verified)
+            .count();
+
+        let threshold = std::cmp::min(self.config.verification_nodes_count, total_expected.max(1));
+
+        tracing::info!(
+            "Verification progress for {}: {}/{} responses, {} failures, {} successes (threshold: {})",
+            task_key,
+            total_responses,
+            total_expected,
+            failure_count,
+            success_count,
+            threshold
+        );
+
+        if total_responses >= total_expected {
+            task.status = crate::mesh::dht::VerificationStatus::Completed;
+
+            if failure_count >= threshold {
+                tracing::warn!(
+                    "Applying penalty to {}: {} out of {} nodes reported failure (threshold: {})",
+                    task_key,
+                    failure_count,
+                    total_responses,
+                    threshold
+                );
+                self.apply_penalty(upstream_id, provider_node_id);
+            } else {
+                tracing::info!(
+                    "Not applying penalty to {}: only {} failures out of {} (threshold: {})",
+                    task_key,
+                    failure_count,
+                    total_responses,
+                    threshold
+                );
+            }
+        }
+
+        if let Ok(value) = serde_json::to_vec(&task) {
+            let _ = record_store.store_and_announce(
+                key_str.to_string(),
+                value,
+                self.config.penalty_ttl_secs,
             );
-            self.apply_penalty(upstream_id, verifying_node_id);
         }
     }
 

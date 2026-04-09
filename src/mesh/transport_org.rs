@@ -227,10 +227,8 @@ impl MeshTransport {
                 if let Some(ref session_mgr) = self.mlkem_session_manager {
                     if let Some(session) = session_mgr.get_by_peer(to_peer) {
                         let transmission_key = derive_transmission_key(&session.session_key);
-                        let encrypted_key = enc.encrypt_for_transmission(
-                            &tk.key,
-                            &transmission_key,
-                        );
+                        let encrypted_key =
+                            enc.encrypt_for_transmission(&tk.key, &transmission_key);
                         Some(crate::mesh::organization::TierKey {
                             key_id: tk.key_id.clone(),
                             tier: tk.tier,
@@ -244,7 +242,10 @@ impl MeshTransport {
                             is_unspent: tk.is_unspent,
                         })
                     } else {
-                        tracing::warn!("No session found for peer {}, sending unencrypted tier key", to_peer);
+                        tracing::warn!(
+                            "No session found for peer {}, sending unencrypted tier key",
+                            to_peer
+                        );
                         Some(tk.clone())
                     }
                 } else {
@@ -301,19 +302,30 @@ impl MeshTransport {
                 if likely_encrypted {
                     if let Some(ref session_mgr) = self.mlkem_session_manager {
                         if let Some(session) = session_mgr.get_by_peer(from_peer) {
-                            let transmission_key = crate::mesh::tier_key_encryption::derive_transmission_key(&session.session_key);
-                            let decrypted = self.tier_key_encryption.as_ref()
-                                .and_then(|enc| enc.decrypt_for_transmission(&tk.key, &transmission_key).ok());
+                            let transmission_key =
+                                crate::mesh::tier_key_encryption::derive_transmission_key(
+                                    &session.session_key,
+                                );
+                            let decrypted = self.tier_key_encryption.as_ref().and_then(|enc| {
+                                enc.decrypt_for_transmission(&tk.key, &transmission_key)
+                                    .ok()
+                            });
                             if let Some(decrypted_key) = decrypted {
                                 let mut new_tk = tk.clone();
                                 new_tk.key = decrypted_key;
                                 Some(new_tk)
                             } else {
-                                tracing::warn!("Failed to decrypt tier key from {}, storing as-is", from_peer);
+                                tracing::warn!(
+                                    "Failed to decrypt tier key from {}, storing as-is",
+                                    from_peer
+                                );
                                 Some(tk.clone())
                             }
                         } else {
-                            tracing::warn!("No session found for peer {}, cannot decrypt tier key", from_peer);
+                            tracing::warn!(
+                                "No session found for peer {}, cannot decrypt tier key",
+                                from_peer
+                            );
                             Some(tk.clone())
                         }
                     } else {

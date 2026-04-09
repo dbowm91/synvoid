@@ -783,6 +783,7 @@ message UpstreamVerificationQuery {
     string upstream_id = 2;
     string querying_node_id = 3;
     uint64 timestamp = 4;
+    string provider_node_id = 5;
 }
 
 message UpstreamVerificationResponse {
@@ -794,6 +795,7 @@ message UpstreamVerificationResponse {
     string upstream_url = 6;
     optional string org_id = 7;
     uint64 timestamp = 8;
+    string provider_node_id = 9;
 }
 
 message ReputationUpdate {

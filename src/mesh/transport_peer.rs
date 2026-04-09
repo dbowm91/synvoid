@@ -394,12 +394,14 @@ impl MeshTransport {
                 upstream_id,
                 querying_node_id,
                 timestamp: _,
+                provider_node_id,
             } => {
                 self.handle_upstream_verification_query(
                     peer_id,
                     &request_id,
                     &upstream_id,
                     &querying_node_id,
+                    &provider_node_id,
                 )
                 .await;
             }
@@ -412,6 +414,7 @@ impl MeshTransport {
                 upstream_url: _,
                 org_id: _,
                 timestamp: _,
+                provider_node_id,
             } => {
                 self.handle_upstream_verification_response(
                     peer_id,
@@ -419,6 +422,7 @@ impl MeshTransport {
                     &upstream_id,
                     verified,
                     &global_node_id,
+                    &provider_node_id,
                 )
                 .await;
             }
@@ -1539,10 +1543,12 @@ impl MeshTransport {
         request_id: &str,
         upstream_id: &str,
         querying_node_id: &str,
+        provider_node_id: &str,
     ) {
         tracing::info!(
-            "Received upstream verification query for {} from node {} (request_id: {})",
+            "Received upstream verification query for {} (provider: {}) from node {} (request_id: {})",
             upstream_id,
+            provider_node_id,
             querying_node_id,
             request_id
         );
@@ -1555,11 +1561,7 @@ impl MeshTransport {
                 match self.verify_upstream_reachability(&url).await {
                     Ok(_) => (true, url),
                     Err(e) => {
-                        tracing::warn!(
-                            "Upstream {} verification failed: {}",
-                            upstream_id,
-                            e
-                        );
+                        tracing::warn!("Upstream {} verification failed: {}", upstream_id, e);
                         (false, url)
                     }
                 }
@@ -1579,22 +1581,18 @@ impl MeshTransport {
             upstream_url: upstream_url.into(),
             org_id: None,
             timestamp: crate::utils::safe_unix_timestamp(),
+            provider_node_id: provider_node_id.into(),
         };
 
         if let Err(e) = self.send_message_to_peer(peer_id, &response).await {
-            tracing::warn!(
-                "Failed to send verification response to {}: {}",
-                peer_id,
-                e
-            );
+            tracing::warn!("Failed to send verification response to {}: {}", peer_id, e);
         }
     }
 
     async fn verify_upstream_reachability(&self, upstream_url: &str) -> Result<(), String> {
         use std::time::Duration;
 
-        let url = url::Url::parse(upstream_url)
-            .map_err(|e| format!("Invalid URL: {}", e))?;
+        let url = url::Url::parse(upstream_url).map_err(|e| format!("Invalid URL: {}", e))?;
 
         let host = url.host_str().ok_or("No host in URL")?;
         let port = url.port().unwrap_or(80);
@@ -1603,12 +1601,7 @@ impl MeshTransport {
         let connect_timeout = Duration::from_secs(5);
         let _read_timeout = Duration::from_secs(5);
 
-        match tokio::time::timeout(
-            connect_timeout,
-            tokio::net::TcpStream::connect(&addr),
-        )
-        .await
-        {
+        match tokio::time::timeout(connect_timeout, tokio::net::TcpStream::connect(&addr)).await {
             Ok(Ok(_)) => Ok(()),
             Ok(Err(e)) => Err(format!("Connection failed: {}", e)),
             Err(_) => Err("Connection timed out".to_string()),
@@ -1622,10 +1615,12 @@ impl MeshTransport {
         upstream_id: &str,
         verified: bool,
         _global_node_id: &str,
+        provider_node_id: &str,
     ) {
         tracing::info!(
-            "Received verification response for {} from node {}: verified={} (request_id: {})",
+            "Received verification response for {} (provider: {}) from node {}: verified={} (request_id: {})",
             upstream_id,
+            provider_node_id,
             peer_id,
             verified,
             request_id
@@ -1634,6 +1629,7 @@ impl MeshTransport {
         if let Some(ref verification_mgr) = self.get_verification_manager() {
             verification_mgr.record_verification_result(
                 upstream_id,
+                provider_node_id,
                 peer_id,
                 verified,
             );

@@ -299,9 +299,9 @@ impl MeshTransport {
                 let mut okm = [0u8; 32];
                 if hk.expand(HKDF_INFO, &mut okm).is_ok() {
                     tracing::info!("TierKey DHT encryption enabled for global node");
-                    Some(Arc::new(crate::mesh::tier_key_encryption::TierKeyEncryption::new(
-                        okm.to_vec(),
-                    )))
+                    Some(Arc::new(
+                        crate::mesh::tier_key_encryption::TierKeyEncryption::new(okm.to_vec()),
+                    ))
                 } else {
                     tracing::warn!("Failed to derive tier key encryption master key");
                     None

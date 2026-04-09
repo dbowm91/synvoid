@@ -231,8 +231,8 @@ impl MeshTransportManager {
                         peer_ids.len(),
                     );
 
-                    use rand::seq::IteratorRandom;
                     use rand::rngs::StdRng;
+                    use rand::seq::IteratorRandom;
                     use rand::SeedableRng;
                     let mut rng = StdRng::from_os_rng();
                     let selected_peers: Vec<String> = peer_ids
@@ -261,10 +261,14 @@ impl MeshTransportManager {
                         upstream_id: task.upstream_id.clone().into(),
                         querying_node_id: node_id.clone().into(),
                         timestamp: crate::utils::safe_unix_timestamp(),
+                        provider_node_id: task.provider_node_id.clone().into(),
                     };
 
                     for peer_id in &selected_peers {
-                        match manager.send_message(peer_id, &query, TransportHint::Default).await {
+                        match manager
+                            .send_message(peer_id, &query, TransportHint::Default)
+                            .await
+                        {
                             Ok(_) => {
                                 tracing::debug!("Sent verification query to {}", peer_id);
                             }
@@ -278,7 +282,9 @@ impl MeshTransportManager {
                         }
                     }
 
-                    manager.verification_manager.mark_task_in_progress(&task_key, selected_peers);
+                    manager
+                        .verification_manager
+                        .mark_task_in_progress(&task_key, selected_peers);
                 }
             }
         });

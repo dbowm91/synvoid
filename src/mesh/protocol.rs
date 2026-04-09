@@ -852,6 +852,7 @@ pub enum MeshMessage {
         upstream_id: ArcStr,
         querying_node_id: ArcStr,
         timestamp: u64,
+        provider_node_id: ArcStr,
     },
     UpstreamVerificationResponse {
         request_id: ArcStr,
@@ -862,6 +863,7 @@ pub enum MeshMessage {
         upstream_url: ArcStr,
         org_id: Option<ArcStr>,
         timestamp: u64,
+        provider_node_id: ArcStr,
     },
     #[cfg(feature = "dns")]
     DnsRegistrationRequest {

@@ -1704,6 +1704,7 @@ impl From<&MeshMessage> for proto::MeshMessage {
                 upstream_id,
                 querying_node_id,
                 timestamp,
+                provider_node_id,
             } => proto::MeshMessage {
                 message_type: 98,
                 payload: Some(proto::mesh_message::Payload::UpstreamVerificationQuery(
@@ -1712,6 +1713,7 @@ impl From<&MeshMessage> for proto::MeshMessage {
                         upstream_id: upstream_id.to_string(),
                         querying_node_id: querying_node_id.to_string(),
                         timestamp: *timestamp,
+                        provider_node_id: provider_node_id.to_string(),
                     },
                 )),
             },
@@ -1724,6 +1726,7 @@ impl From<&MeshMessage> for proto::MeshMessage {
                 upstream_url,
                 org_id,
                 timestamp,
+                provider_node_id,
             } => proto::MeshMessage {
                 message_type: 99,
                 payload: Some(proto::mesh_message::Payload::UpstreamVerificationResponse(
@@ -1736,6 +1739,7 @@ impl From<&MeshMessage> for proto::MeshMessage {
                         upstream_url: upstream_url.to_string(),
                         org_id: org_id.as_ref().map(|s| s.to_string()),
                         timestamp: *timestamp,
+                        provider_node_id: provider_node_id.to_string(),
                     },
                 )),
             },

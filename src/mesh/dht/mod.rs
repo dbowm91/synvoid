@@ -397,6 +397,14 @@ pub struct VerificationTask {
     pub created_at: u64,
     pub expires_at: u64,
     pub verification_node_ids: Vec<String>,
+    pub verification_results: Vec<VerificationResult>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VerificationResult {
+    pub node_id: String,
+    pub verified: bool,
+    pub timestamp: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]

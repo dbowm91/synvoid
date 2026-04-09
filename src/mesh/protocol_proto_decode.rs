@@ -1067,6 +1067,7 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                     upstream_id: r.upstream_id.into(),
                     querying_node_id: r.querying_node_id.into(),
                     timestamp: r.timestamp,
+                    provider_node_id: r.provider_node_id.into(),
                 })
             }
             proto::mesh_message::Payload::UpstreamVerificationResponse(r) => {
@@ -1083,6 +1084,7 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                     upstream_url: r.upstream_url.into(),
                     org_id: r.org_id.map(|s| s.into()),
                     timestamp: r.timestamp,
+                    provider_node_id: r.provider_node_id.into(),
                 })
             }
             proto::mesh_message::Payload::KeyForward(k) => Ok(MeshMessage::KeyForward {
