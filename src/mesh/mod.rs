@@ -13,7 +13,6 @@ pub mod cli;
 pub mod client_audit;
 pub mod config;
 pub mod dht;
-pub mod global_node_ha;
 pub mod hierarchical_routing;
 pub mod kem;
 pub mod ml_kem_key_exchange;
@@ -77,10 +76,6 @@ pub use dht::{
     DhtAccessControl, DhtConfig, DhtError, DhtKey, DhtRecordEntry, MerkleNode, MerkleProof,
     MerkleProofNode, MerkleTree, NodeInfo, ProofPosition, RecordStoreConfig, RecordStoreManager,
     RecordStoreStats, TierKeyStore, TierKeyStoreEntry,
-};
-pub use global_node_ha::{
-    GlobalNodeHAConfig, GlobalNodeHAManager, GlobalNodeLeaderTracker, GlobalNodeRole,
-    GlobalNodeState, HeartbeatMessage, LeaderInfo, VoteRequest, VoteResponse,
 };
 pub use hierarchical_routing::{
     DirectedRouteQuery, HierarchicalRoutingConfig, HierarchicalRoutingManager, MeshBloomFilter,

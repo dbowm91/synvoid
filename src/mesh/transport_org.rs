@@ -166,20 +166,26 @@ impl MeshTransport {
                 tracing::debug!("Announced org {} to DHT", org_id);
             }
 
-            // Announce tier keys
+            // Announce tier keys (ONLY if encryption is available)
             if let Some(ref tier_key) = initial_tier_key {
-                let tier_key_data = serde_json::json!({
-                    "key_id": tier_key.key_id,
-                    "tier": tier_key.tier,
-                    "valid_from": tier_key.valid_from,
-                    "valid_until": tier_key.valid_until,
-                    "issued_by": tier_key.issued_by,
-                    "is_unspent": tier_key.is_unspent,
-                });
-                let tier_key_dht = format!("tier_key:{}:{}", org_id, tier_key.tier);
-                if let Ok(value) = serde_json::to_vec(&tier_key_data) {
-                    record_store.store_and_announce(tier_key_dht, value, 86400 * 30);
-                    tracing::debug!("Announced tier key for org {} to DHT", org_id);
+                if let Some(ref enc) = self.tier_key_encryption {
+                    if let Ok(encrypted) = enc.encrypt_tier_key_data(
+                        &org_id,
+                        tier_key.tier,
+                        &tier_key.key_id,
+                        &tier_key.key,
+                    ) {
+                        let serialized = crate::mesh::serialize_encrypted_tier_key(&encrypted);
+                        let tier_key_dht =
+                            format!("encrypted_tier_key:{}:{}", org_id, tier_key.tier);
+                        record_store.store_and_announce(tier_key_dht, serialized, 86400 * 30);
+                        tracing::debug!("Announced encrypted tier key for org {} to DHT", org_id);
+                    }
+                } else {
+                    tracing::error!(
+                        "Cannot announce tier key for org {} - tier key encryption not available",
+                        org_id
+                    );
                 }
             }
         }
@@ -353,13 +359,28 @@ impl MeshTransport {
             }
 
             if let Some(ref tier_key) = decrypted_tier_key {
-                let tier_key_json = serde_json::to_vec(tier_key).unwrap_or_default();
-                let tier_key_dht = format!("tier_key:{}:{}", org_id, tier_key.tier);
-                if record_store.store_and_announce(tier_key_dht, tier_key_json, 86400 * 30) {
-                    tracing::info!(
-                        "Stored initial tier key in DHT: {}/{}",
+                if let Some(ref enc) = self.tier_key_encryption {
+                    if let Ok(encrypted) = enc.encrypt_tier_key_data(
                         org_id,
-                        tier_key.tier
+                        tier_key.tier,
+                        &tier_key.key_id,
+                        &tier_key.key,
+                    ) {
+                        let serialized = crate::mesh::serialize_encrypted_tier_key(&encrypted);
+                        let tier_key_dht =
+                            format!("encrypted_tier_key:{}:{}", org_id, tier_key.tier);
+                        if record_store.store_and_announce(tier_key_dht, serialized, 86400 * 30) {
+                            tracing::info!(
+                                "Stored encrypted initial tier key in DHT: {}/{}",
+                                org_id,
+                                tier_key.tier
+                            );
+                        }
+                    }
+                } else {
+                    tracing::error!(
+                        "Cannot store tier key for org {} - tier key encryption not available",
+                        org_id
                     );
                 }
             }
@@ -410,17 +431,11 @@ impl MeshTransport {
                     );
                 }
             } else {
-                let tier_key_json = serde_json::to_vec(tier_key).unwrap_or_default();
-                let key = format!("tier_key:{}:{}", org_id, tier_key.tier);
-                let ttl = 86400 * 30;
-
-                if record_store.store_and_announce(key, tier_key_json, ttl) {
-                    tracing::info!(
-                        "Stored tier key in DHT (unencrypted): {}/{}",
-                        org_id,
-                        tier_key.tier
-                    );
-                }
+                tracing::error!(
+                    "Cannot store tier key for org {} tier {} - tier key encryption not available",
+                    org_id,
+                    tier_key.tier
+                );
             }
         }
     }

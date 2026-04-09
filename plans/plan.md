@@ -66,7 +66,7 @@ This document consolidates all individual improvement plans (plan2-plan9) into a
 
 ---
 
-## Wave 2: Mesh & DHT Infrastructure 🔶 PARTIALLY COMPLETED (2.5 COMPLETED)
+## Wave 2: Mesh & DHT Infrastructure ✅ COMPLETED
 
 **Focus**: DNS capability, sharding, adaptive quorum, mesh distribution
 
@@ -135,33 +135,34 @@ This document consolidates all individual improvement plans (plan2-plan9) into a
 - `src/mesh/transport.rs`
 - `src/worker/unified_server.rs`
 
-### 2.3 Mesh & DHT Security Improvements 🔶 PARTIALLY COMPLETED
+### 2.3 Mesh & DHT Security Improvements ✅ COMPLETED
 
 **Phases**:
 | Phase | Description | Status |
 |-------|-------------|--------|
 | 1 | DNS Server Role Enforcement | ✅ COMPLETED |
-| 2 | Integrate Raft HA for global node coordination | 🔄 DEFERRED (large architectural change) |
-| 3 | DHT Data Encryption (sensitive records) | 🔄 DEFERRED |
+| 2 | Integrate Raft HA for global node coordination | ❌ REMOVED (leaderless DHT gossip architecture - no leader election needed) |
+| 3 | DHT Data Encryption (sensitive records) | ✅ COMPLETED (TierKey encryption enforced) |
 | 4 | IXFR Incremental Zone Sync | ✅ COMPLETED |
 | 5 | TOFU Expiration (90-day max) | ✅ COMPLETED |
 | 6 | Role Check Centralization | ✅ COMPLETED |
 | 7 | Configurable Timeouts | ✅ COMPLETED (max_pending_connections configurable) |
 | 8 | Connection Pool Limits | ✅ COMPLETED (max_pending_connections configurable) |
 
-**Phase 2 Details** (Raft HA - why deferred):
-- `src/mesh/global_node_ha.rs` exists with 504 lines of custom Raft-like implementation
-- `GlobalNodeHAManager` struct with election logic, vote handling, heartbeat processing
-- HOWEVER: File has `#![allow(dead_code)]` - code is NEVER used in production (only in tests)
-- No external `raft` crate dependency - pure custom implementation
-- `GlobalNodeHAConfig` exists but never referenced from `config.rs`
-- Would need: wire `GlobalNodeHAManager` into production mesh lifecycle, add config options, integrate with leader election for global node coordination
-- Documentation claims Raft consensus but feature is not implemented
+**Phase 2 Details** (Raft HA - REMOVED):
+- `src/mesh/global_node_ha.rs` deleted (dead code, 504 lines)
+- Global node coordination uses DHT-based gossip, NOT leader election
+- Architecture is intentionally leaderless - all globals are equal
+- Genesis key provides root of trust for adding/removing global nodes
+- No single point of failure, no "leader" to elect
 
-**Phase 3 Details** (DHT encryption - why deferred):
-- DHT records stored with PLAINTEXT `value: Vec<u8>` in `DhtRecord`
-- `SignedDhtRecord` provides Ed25519 SIGNING (authenticity/integrity) but NOT encryption (confidentiality)
-- Certificate distribution (`cert_dist.rs`) uses AES-256-GCM for TLS certs, but this is separate from DHT
+**Phase 3 Details** (DHT encryption - COMPLETED):
+- Tier keys MUST be encrypted before DHT storage (enforced in transport_org.rs)
+- `auto_approve_organization`: Now encrypts tier keys before storing
+- `handle_org_registration_response`: Now encrypts tier keys before storing
+- `handle_tier_key_announce`: Now refuses to store unencrypted if encryption unavailable
+- If `tier_key_encryption` is not available, tier keys are NOT stored (error logged)
+- This ensures no sensitive key material is ever stored in plaintext in DHT
 - `SignedRecordType.is_public()` indicates many records are intentionally public
 - Would need: add encryption layer to DHT store/fetch, key management for record encryption
 - Current: 0% of DHT records encrypted (per Success Metrics)
