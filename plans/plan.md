@@ -317,7 +317,7 @@ $ maluwaf
 - `admin-ui/src/services/api.rs` - Added get_mesh_status(), derive_signing_key()
 - `admin-ui/src/pages/system_status.rs` - Added mesh status section, genesis modal
 
-### 2.5 Node Capability Signaling & Origin Routing 🔄 IN PROGRESS
+### 2.5 Node Capability Signaling & Origin Routing ✅ COMPLETED
 
 **Overview**: Comprehensive fix for capability signaling, origin routing, and sensitive data protection.
 
@@ -387,8 +387,8 @@ node_capability:yaraDistributor - Node distributes YARA rules
 | 5 | Implement VerifiedUpstream DHT storage | ✅ COMPLETED |
 | 6 | Origin Reachability System (wired into MeshTransport + proxy) | ✅ COMPLETED |
 | 7 | Enable multi-origin discovery & load balancing | ✅ COMPLETED |
-| 8 | Encrypt TierKey before DHT storage | 🔄 DEFERRED |
-| 9 | Encrypt TierKey before transmission | 🔄 DEFERRED |
+| 8 | Encrypt TierKey before DHT storage | ✅ COMPLETED |
+| 9 | Encrypt TierKey before transmission | ✅ COMPLETED |
 
 #### Phase 1: NodeCapability DHT Key Type
 
