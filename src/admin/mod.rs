@@ -416,6 +416,10 @@ fn build_router_from_state(
             post(handlers::alerting::test_webhook),
         )
         .route("/mesh/status", get(handlers::mesh_admin::get_mesh_status))
+        .route(
+            "/mesh/derive-signing-key",
+            post(handlers::mesh_admin::derive_signing_key),
+        )
         .route("/mesh/nodes", get(handlers::mesh_admin::list_mesh_nodes))
         .route(
             "/mesh/nodes/{node_id}",

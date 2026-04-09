@@ -7,6 +7,8 @@ use axum::{
     Json,
 };
 use serde::{Deserialize, Serialize};
+use sha2::Sha256;
+use sha2::Digest;
 use std::net::IpAddr;
 use std::sync::Arc;
 
@@ -149,6 +151,23 @@ pub struct MeshAdminStatusResponse {
     pub connected_peers: usize,
     pub global_nodes: usize,
     pub edge_nodes: usize,
+    pub genesis_key_configured: bool,
+    pub genesis_public_key_fingerprint: Option<String>,
+    pub signing_key_derived: bool,
+    pub signing_public_key: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DeriveSigningKeyRequest {
+    pub genesis_key_base64: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DeriveSigningKeyResponse {
+    pub success: bool,
+    pub signing_public_key: Option<String>,
+    pub node_id: Option<String>,
+    pub message: String,
 }
 
 fn extract_ip_from_address(address: &str) -> Option<String> {
@@ -501,6 +520,10 @@ pub async fn get_mesh_status(
     let mut connected_peers = 0;
     let mut global_nodes = 0;
     let mut edge_nodes = 0;
+    let mut genesis_key_configured = false;
+    let mut genesis_public_key_fingerprint = None;
+    let mut signing_key_derived = false;
+    let mut signing_public_key = None;
 
     if let Some(transport) = &state.mesh.mesh_transport {
         is_global_node = transport.is_global_node();
@@ -517,6 +540,26 @@ pub async fn get_mesh_status(
                 edge_nodes += 1;
             }
         }
+
+        let config = transport.get_mesh_config();
+        genesis_key_configured = config.has_genesis_key();
+        signing_key_derived = config.has_signing_key();
+
+        if let Some(ref pk) = config.signing_public_key() {
+            signing_public_key = Some(format!("{}...", &pk[..16.min(pk.len())]));
+        }
+
+        if let Some(genesis) = config.genesis_key() {
+            if let Some(ref genesis_pk) = genesis.get_public_key() {
+                let mut hasher = Sha256::new();
+                hasher.update(genesis_pk.as_bytes());
+                let result = hasher.finalize();
+                genesis_public_key_fingerprint = Some(format!(
+                    "sha256:{}...",
+                    &hex::encode(&result[..8])
+                ));
+            }
+        }
     }
 
     Ok(Json(MeshAdminStatusResponse {
@@ -525,6 +568,70 @@ pub async fn get_mesh_status(
         connected_peers,
         global_nodes,
         edge_nodes,
+        genesis_key_configured,
+        genesis_public_key_fingerprint,
+        signing_key_derived,
+        signing_public_key,
+    }))
+}
+
+pub async fn derive_signing_key(
+    State(_state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Json(req): Json<DeriveSigningKeyRequest>,
+) -> Result<Json<DeriveSigningKeyResponse>, StatusCode> {
+    use base64::Engine;
+
+    let genesis_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(&req.genesis_key_base64)
+        .map_err(|e| {
+            tracing::warn!("Invalid genesis key base64: {}", e);
+            StatusCode::BAD_REQUEST
+        })?;
+
+    if genesis_bytes.len() != 32 {
+        return Ok(Json(DeriveSigningKeyResponse {
+            success: false,
+            signing_public_key: None,
+            node_id: None,
+            message: "Genesis key must be 32 bytes".to_string(),
+        }));
+    }
+
+    let mut genesis_key = [0u8; 32];
+    genesis_key.copy_from_slice(&genesis_bytes);
+
+    let public_key = crate::mesh::cert::get_ed25519_public_key(&genesis_key)
+        .ok_or_else(|| {
+            tracing::warn!("Failed to derive public key from genesis key");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    let mut node_identity = crate::mesh::NodeIdentityConfig::default();
+    if let Err(e) = node_identity.derive_signing_key_from_genesis(&genesis_key, &public_key) {
+        return Ok(Json(DeriveSigningKeyResponse {
+            success: false,
+            signing_public_key: None,
+            node_id: None,
+            message: format!("Failed to derive signing key: {}", e),
+        }));
+    }
+
+    let signing_public_key = node_identity.public_key_hex();
+    let node_id = node_identity.node_id.clone();
+
+    Ok(Json(DeriveSigningKeyResponse {
+        success: true,
+        signing_public_key: signing_public_key.map(|pk| format!("{}...", &pk[..16.min(pk.len())])),
+        node_id,
+        message: format!(
+            "Signing key derived successfully.\n\
+             Add the following to your config/main.toml to use this genesis key:\n\n\
+             [mesh.node_identity]\n\
+             genesis_key_base64 = \"{}\"\n\n\
+             Then restart the node to start as a global node.",
+            req.genesis_key_base64
+        ),
     }))
 }
 

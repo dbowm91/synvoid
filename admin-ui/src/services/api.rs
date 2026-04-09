@@ -616,6 +616,23 @@ impl ApiService {
         self.get("/config/mesh").await
     }
 
+    pub async fn get_mesh_status(&self) -> Result<crate::types::MeshAdminStatus, String> {
+        self.get("/mesh/status").await
+    }
+
+    pub async fn derive_signing_key(
+        &self,
+        genesis_key_base64: &str,
+    ) -> Result<crate::types::DeriveSigningKeyResponse, String> {
+        self.post(
+            "/mesh/derive-signing-key",
+            &crate::types::DeriveSigningKeyRequest {
+                genesis_key_base64: genesis_key_base64.to_string(),
+            },
+        )
+        .await
+    }
+
     pub async fn update_mesh_config(
         &self,
         config: &serde_json::Value,

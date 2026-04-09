@@ -770,3 +770,29 @@ pub struct IcmpConfig {
     #[serde(rename = "backend_selection")]
     pub backend_selection: Option<String>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MeshAdminStatus {
+    pub is_global_node: bool,
+    pub node_id: Option<String>,
+    pub connected_peers: usize,
+    pub global_nodes: usize,
+    pub edge_nodes: usize,
+    pub genesis_key_configured: bool,
+    pub genesis_public_key_fingerprint: Option<String>,
+    pub signing_key_derived: bool,
+    pub signing_public_key: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeriveSigningKeyRequest {
+    pub genesis_key_base64: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeriveSigningKeyResponse {
+    pub success: bool,
+    pub signing_public_key: Option<String>,
+    pub node_id: Option<String>,
+    pub message: String,
+}

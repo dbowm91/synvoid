@@ -628,6 +628,27 @@ These admin UI files were previously orphaned but are now reachable:
 Still orphaned (not declared as module):
 - `admin-ui/src/config_docs.rs` (538 lines — field documentation)
 
+### Genesis Key Handling (Phase 2.7)
+
+The Admin UI System Status page now includes mesh status and genesis key management:
+
+**Backend API**:
+- `GET /mesh/status` - Returns `MeshAdminStatusResponse` with:
+  - `is_global_node`, `node_id`, `connected_peers`, `global_nodes`, `edge_nodes`
+  - `genesis_key_configured`, `genesis_public_key_fingerprint`
+  - `signing_key_derived`, `signing_public_key`
+- `POST /mesh/derive-signing-key` - Accepts `DeriveSigningKeyRequest { genesis_key_base64 }`, derives signing key
+
+**Frontend Types** (`admin-ui/src/types/mod.rs`):
+- `MeshAdminStatus` - matches backend response
+- `DeriveSigningKeyRequest` / `DeriveSigningKeyResponse`
+
+**Frontend API** (`admin-ui/src/services/api.rs`):
+- `get_mesh_status()` - fetches mesh status
+- `derive_signing_key(genesis_key_base64)` - derives signing key
+
+**UI Flow**: System Status page shows mesh section with genesis status. Edge nodes without signing key see "Provide Genesis Key" button that opens a modal for entering the genesis key.
+
 ## Skills and Knowledge Base
 
 For complex subsystems, specialized skill files provide detailed architecture guidance:

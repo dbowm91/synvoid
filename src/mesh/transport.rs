@@ -2563,4 +2563,8 @@ impl MeshTransport {
     pub fn get_origin_signer(&self) -> Option<Arc<crate::integrity::Ed25519Signer>> {
         self.origin_ed25519_signer.clone()
     }
+
+    pub fn get_mesh_config(&self) -> Arc<MeshConfig> {
+        self.config.clone()
+    }
 }

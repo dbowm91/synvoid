@@ -1,20 +1,28 @@
 use crate::services::api::ApiService;
-use crate::types::{MasterStatus, SystemInfo};
+use crate::types::{MasterStatus, MeshAdminStatus, SystemInfo};
 use yew::prelude::*;
 
 #[function_component]
 pub fn SystemStatus() -> Html {
     let system_info = use_state(|| None as Option<SystemInfo>);
     let master_status = use_state(|| None as Option<MasterStatus>);
+    let mesh_status = use_state(|| None as Option<MeshAdminStatus>);
     let error = use_state(|| None as Option<String>);
+    let show_genesis_modal = use_state(|| false);
+    let genesis_key_input = use_state(|| String::new());
+    let deriving_key = use_state(|| false);
+    let derive_error = use_state(|| None as Option<String>);
+    let derive_success = use_state(|| None as Option<String>);
 
     {
         let system_info = system_info.clone();
         let master_status = master_status.clone();
+        let mesh_status = mesh_status.clone();
         let error = error.clone();
         use_effect_with((), move |_| {
             let system_info = system_info.clone();
             let master_status = master_status.clone();
+            let mesh_status = mesh_status.clone();
             let error = error.clone();
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
@@ -26,9 +34,56 @@ pub fn SystemStatus() -> Html {
                     Ok(status) => master_status.set(Some(status)),
                     Err(e) => error.set(Some(e)),
                 }
+                match api.get_mesh_status().await {
+                    Ok(status) => mesh_status.set(Some(status)),
+                    Err(_) => {}
+                }
             });
         });
     }
+
+    let on_provide_genesis_key = {
+        let genesis_key_input = genesis_key_input.clone();
+        let deriving_key = deriving_key.clone();
+        let derive_error = derive_error.clone();
+        let derive_success = derive_success.clone();
+        let show_genesis_modal = show_genesis_modal.clone();
+        let mesh_status = mesh_status.clone();
+        Callback::from(move |e: MouseEvent| {
+            e.prevent_default();
+            let genesis_key_input = genesis_key_input.clone();
+            let deriving_key = deriving_key.clone();
+            let derive_error = derive_error.clone();
+            let derive_success = derive_success.clone();
+            let show_genesis_modal = show_genesis_modal.clone();
+            let mesh_status = mesh_status.clone();
+            deriving_key.set(true);
+            derive_error.set(None);
+            derive_success.set(None);
+            wasm_bindgen_futures::spawn_local(async move {
+                let api = ApiService::new();
+                match api.derive_signing_key(&genesis_key_input).await {
+                    Ok(response) => {
+                        if response.success {
+                            derive_success.set(Some(response.message));
+                            genesis_key_input.set(String::new());
+                            show_genesis_modal.set(false);
+                            match api.get_mesh_status().await {
+                                Ok(status) => mesh_status.set(Some(status)),
+                                Err(_) => {}
+                            }
+                        } else {
+                            derive_error.set(Some(response.message));
+                        }
+                    }
+                    Err(e) => {
+                        derive_error.set(Some(e));
+                    }
+                }
+                deriving_key.set(false);
+            });
+        })
+    };
 
     let format_uptime = |secs: Option<u64>| -> String {
         match secs {
@@ -212,6 +267,131 @@ pub fn SystemStatus() -> Html {
                     { "Overseer monitors Master, Master manages Workers, Workers handle requests" }
                 </p>
             </div>
+
+            <div class="bg-secondary rounded-lg border border-default p-6">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-lg font-semibold">{ "Mesh Status" }</h2>
+                </div>
+                if let Some(status) = &*mesh_status {
+                    <div class="space-y-3">
+                        <div class="flex justify-between">
+                            <span class="text-secondary">{ "Node Type" }</span>
+                            <span class={if status.is_global_node { "text-green-500 font-medium" } else { "text-yellow-500 font-medium" }}>
+                                { if status.is_global_node { "Global Node" } else { "Edge Node" } }
+                            </span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-secondary">{ "Node ID" }</span>
+                            <span class="text-primary font-medium">
+                                { status.node_id.as_deref().unwrap_or("N/A") }
+                            </span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-secondary">{ "Connected Peers" }</span>
+                            <span class="text-primary font-medium">{ status.connected_peers }</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-secondary">{ "Global Nodes" }</span>
+                            <span class="text-primary font-medium">{ status.global_nodes }</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-secondary">{ "Edge Nodes" }</span>
+                            <span class="text-primary font-medium">{ status.edge_nodes }</span>
+                        </div>
+                        <div class="border-t border-default pt-3 mt-3">
+                            <h3 class="text-md font-semibold mb-2">{ "Genesis Key Status" }</h3>
+                            <div class="flex justify-between">
+                                <span class="text-secondary">{ "Genesis Key Configured" }</span>
+                                <span class={if status.genesis_key_configured { "text-green-500 font-medium" } else { "text-red-500 font-medium" }}>
+                                    { if status.genesis_key_configured { "Yes" } else { "No" } }
+                                </span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-secondary">{ "Signing Key Derived" }</span>
+                                <span class={if status.signing_key_derived { "text-green-500 font-medium" } else { "text-red-500 font-medium" }}>
+                                    { if status.signing_key_derived { "Yes" } else { "No" } }
+                                </span>
+                            </div>
+                            if let Some(ref fp) = status.genesis_public_key_fingerprint {
+                                <div class="flex justify-between">
+                                    <span class="text-secondary">{ "Genesis Public Key" }</span>
+                                    <span class="text-primary font-mono text-sm">{ fp }</span>
+                                </div>
+                            }
+                            if let Some(ref pk) = status.signing_public_key {
+                                <div class="flex justify-between">
+                                    <span class="text-secondary">{ "Signing Public Key" }</span>
+                                    <span class="text-primary font-mono text-sm truncate max-w-xs">{ pk }</span>
+                                </div>
+                            }
+                        </div>
+                        if !status.is_global_node && !status.signing_key_derived {
+                            <div class="mt-4 pt-3 border-t border-default">
+                                <button
+                                    onclick={Callback::from(move |_| show_genesis_modal.set(true))}
+                                    class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
+                                >
+                                    { "Provide Genesis Key" }
+                                </button>
+                                <p class="text-sm text-secondary mt-2">
+                                    { "Provide a genesis key to become a global node and enable tier key encryption." }
+                                </p>
+                            </div>
+                        }
+                    </div>
+                } else {
+                    <div class="animate-pulse">
+                        <div class="h-4 bg-tertiary rounded w-3/4 mb-2"></div>
+                        <div class="h-4 bg-tertiary rounded w-1/2"></div>
+                    </div>
+                }
+            </div>
+
+            if *show_genesis_modal {
+                <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                    <div class="bg-secondary rounded-lg border border-default p-6 max-w-md w-full mx-4">
+                        <h3 class="text-lg font-semibold mb-4">{ "Provide Genesis Key" }</h3>
+                        <p class="text-sm text-secondary mb-4">
+                            { "Enter the genesis key (base64 encoded) to derive your node's signing key and become a global node." }
+                        </p>
+                        <textarea
+                            class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary font-mono text-sm resize-none"
+                            rows="3"
+                            placeholder="Enter genesis key (base64)"
+                            value={(*genesis_key_input).clone()}
+                            oninput={Callback::from(move |e: InputEvent| {
+                                let input = e.target_unchecked_into::<web_sys::HtmlTextAreaElement>();
+                                genesis_key_input.set(input.value());
+                            })}
+                        />
+                        if let Some(err) = &*derive_error {
+                            <div class="mt-2 text-red-500 text-sm">{ err }</div>
+                        }
+                        if let Some(ref msg) = *derive_success {
+                            <div class="mt-2 text-green-500 text-sm">{ msg }</div>
+                        }
+                        <div class="flex justify-end gap-3 mt-4">
+                            <button
+                                onclick={Callback::from(move |_| {
+                                    show_genesis_modal.set(false);
+                                    genesis_key_input.set(String::new());
+                                    derive_error.set(None);
+                                })}
+                                class="px-4 py-2 bg-tertiary hover:bg-tertiary/80 text-primary rounded-lg transition-colors"
+                            >
+                                { "Cancel" }
+                            </button>
+                            <button
+                                onclick={on_provide_genesis_key}
+                                disabled={*deriving_key || genesis_key_input.is_empty()}
+                                class="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-600/50 text-white rounded-lg transition-colors"
+                            >
+                                { if *deriving_key { "Deriving..." } else { "Derive Signing Key" } }
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            }
         </div>
     }
 }

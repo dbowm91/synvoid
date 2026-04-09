@@ -267,6 +267,56 @@ $ maluwaf
 - `src/config/main.rs` - Added `load_node_identity()` call during config load
 - `src/main.rs` - Added `--genesis` and `--show-node-info` flags
 
+### 2.7 Admin UI Genesis Key Handling ✅ COMPLETED
+
+**Overview**: Added Admin UI support for viewing and managing genesis key configuration.
+
+**Backend Implementation**:
+1. **Extended `MeshAdminStatusResponse`** (`src/admin/handlers/mesh_admin.rs`):
+   - Added `genesis_key_configured: bool`
+   - Added `genesis_public_key_fingerprint: Option<String>`
+   - Added `signing_key_derived: bool`
+   - Added `signing_public_key: Option<String>`
+
+2. **Added `derive_signing_key` endpoint** (`src/admin/handlers/mesh_admin.rs`):
+   - `POST /mesh/derive-signing-key` - Accepts genesis key, derives and stores signing key
+   - `DeriveSigningKeyRequest` with `genesis_key_base64` field
+   - Returns success status, public key, and message
+
+3. **Added route** (`src/admin/mod.rs`):
+   - `POST /mesh/derive-signing-key` routed to `derive_signing_key` handler
+
+**Frontend Implementation** (`admin-ui/`):
+1. **Added types** (`admin-ui/src/types/mod.rs`):
+   - `MeshAdminStatus` - matches backend `MeshAdminStatusResponse`
+   - `DeriveSigningKeyRequest` - request body for derive endpoint
+   - `DeriveSigningKeyResponse` - response from derive endpoint
+
+2. **Added API methods** (`admin-ui/src/services/api.rs`):
+   - `get_mesh_status()` - fetches mesh status including genesis info
+   - `derive_signing_key(genesis_key_base64)` - derives signing key from genesis
+
+3. **Updated System Status page** (`admin-ui/src/pages/system_status.rs`):
+   - Fetches and displays mesh status alongside system/master status
+   - Shows genesis key status (configured, signing key derived)
+   - Shows genesis public key fingerprint and signing public key
+   - "Provide Genesis Key" button for edge nodes to become global
+   - Modal dialog for entering genesis key and triggering derivation
+
+**UI Flow**:
+1. System Status page shows mesh status section
+2. If node is edge and signing key not derived, shows "Provide Genesis Key" button
+3. Clicking button opens modal with textarea for genesis key (base64)
+4. Submitting form calls `POST /mesh/derive-signing-key`
+5. On success, modal closes and mesh status refreshes
+
+**Files Modified**:
+- `src/admin/handlers/mesh_admin.rs` - Extended status response, added derive endpoint
+- `src/admin/mod.rs` - Added route for derive-signing-key
+- `admin-ui/src/types/mod.rs` - Added MeshAdminStatus, DeriveSigningKeyRequest/Response
+- `admin-ui/src/services/api.rs` - Added get_mesh_status(), derive_signing_key()
+- `admin-ui/src/pages/system_status.rs` - Added mesh status section, genesis modal
+
 ### 2.5 Node Capability Signaling & Origin Routing 🔄 IN PROGRESS
 
 **Overview**: Comprehensive fix for capability signaling, origin routing, and sensitive data protection.
