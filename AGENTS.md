@@ -541,6 +541,43 @@ rrsig.extend_from_slice(&(timestamp as u32).to_be_bytes());
 rrsig.extend_from_slice(&timestamp.to_be_bytes());
 ```
 
+### Mesh Upstream Routing Architecture
+
+**Nginx-like Domain Routing Model** (Phase 7b implemented):
+
+| Component | Format | Example |
+|-----------|--------|---------|
+| Upstream ID | `http://host:port` | `http://example.com:80` |
+| mesh.local_upstreams key | Domain-based | `"http://example.com:80"` |
+| Local backend | Private URL | `http://127.0.0.1:5001` |
+
+**Key files**:
+- `src/mesh/proxy.rs:extract_upstream_id()` — produces `http://host:port`
+- `src/mesh/topology.rs` — stores local_upstreams with domain-based keys
+- `src/mesh/transport.rs:announce_upstream()` — announces using domain-based ID
+- `src/mesh/dht/keys.rs` — DHT key types including `VerifiedUpstream`
+
+**Routing flow**:
+1. Edge receives request → `extract_upstream_id()` → `http://example.com:80`
+2. Query DHT for `verified_upstream:http://example.com:80`
+3. Get origins that registered this domain+port
+4. Weighted random selection → route to selected origin
+
+**Config format** (breaking change):
+```toml
+[mesh.local_upstreams]
+# Old: shop-api = { upstream_url = "..." }
+# New (domain-based):
+"http://example.com:80" = {
+    upstream_url = "http://127.0.0.1:5001",
+    supported_ports = [80, 443],  # Optional
+}
+```
+
+**Critical insight**: `make_mesh_upstream_id()` was removed from routing flow. It still exists in `config_mesh.rs` for potential other uses but should NOT be used for upstream routing.
+
+**Known gap**: Origin local backend selection (routing from Host header to local backend) requires separate work. `proxy_http_request` sends raw HTTP but origin has no handler to parse Host header and select appropriate local upstream.
+
 ### Plan Verification
 
 When reviewing plan files against the codebase, always verify claims directly. Plans may reference items already fixed, use outdated line numbers, or describe bugs incorrectly. Run `grep`/search for the specific patterns described to confirm they still exist before implementing fixes.
