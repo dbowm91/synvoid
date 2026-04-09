@@ -202,18 +202,84 @@ impl MeshTransportManager {
         self.topology.find_origin_by_mesh_id(mesh_id).await
     }
 
-    pub fn start_verification_processing(&self) {
+    pub fn start_verification_processing(self: &Arc<Self>) {
         if !self.config.role.is_global() {
             tracing::debug!("Verification processing only runs on global nodes");
             return;
         }
 
-        let verification_manager = self.verification_manager.clone();
+        let manager = self.clone();
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
             loop {
                 interval.tick().await;
-                verification_manager.process_pending_tasks();
+
+                manager.verification_manager.process_pending_tasks();
+
+                let tasks_to_dispatch = manager.verification_manager.get_pending_dispatch_tasks();
+                for (task_key, _task_id, task) in tasks_to_dispatch {
+                    let peer_ids = manager.topology.get_peer_ids().await;
+                    let node_id = manager.config.node_id().to_string();
+
+                    if peer_ids.is_empty() {
+                        tracing::warn!("No peers available for verification dispatch");
+                        continue;
+                    }
+
+                    let nodes_to_query = std::cmp::min(
+                        manager.verification_manager.get_verification_nodes_count(),
+                        peer_ids.len(),
+                    );
+
+                    use rand::seq::IteratorRandom;
+                    use rand::rngs::StdRng;
+                    use rand::SeedableRng;
+                    let mut rng = StdRng::from_os_rng();
+                    let selected_peers: Vec<String> = peer_ids
+                        .iter()
+                        .filter(|p| *p != &node_id)
+                        .choose_multiple(&mut rng, nodes_to_query)
+                        .into_iter()
+                        .map(|s| s.to_string())
+                        .collect();
+
+                    if selected_peers.is_empty() {
+                        tracing::warn!("No suitable peers for verification dispatch");
+                        continue;
+                    }
+
+                    tracing::info!(
+                        "Dispatching verification query for {} to {} nodes: {:?}",
+                        task.upstream_id,
+                        selected_peers.len(),
+                        selected_peers
+                    );
+
+                    let request_id = uuid::Uuid::new_v4().to_string();
+                    let query = crate::mesh::protocol::MeshMessage::UpstreamVerificationQuery {
+                        request_id: request_id.clone().into(),
+                        upstream_id: task.upstream_id.clone().into(),
+                        querying_node_id: node_id.clone().into(),
+                        timestamp: crate::utils::safe_unix_timestamp(),
+                    };
+
+                    for peer_id in &selected_peers {
+                        match manager.send_message(peer_id, &query, TransportHint::Default).await {
+                            Ok(_) => {
+                                tracing::debug!("Sent verification query to {}", peer_id);
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    "Failed to send verification query to {}: {}",
+                                    peer_id,
+                                    e
+                                );
+                            }
+                        }
+                    }
+
+                    manager.verification_manager.mark_task_in_progress(&task_key, selected_peers);
+                }
             }
         });
         tracing::info!("Verification task processing started");

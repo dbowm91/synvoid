@@ -415,9 +415,15 @@ Client requests example.com
    - Calls `record_verification_result()` on VerificationTaskManager
 8. ✅ Add `record_verification_result()` to VerificationTaskManager
    - Records verification result and applies penalty if failed
+9. ✅ Implement query dispatching in MeshTransportManager
+   - Background task runs every 30 seconds on global nodes
+   - Selects 3 random peers (config.verification_nodes_count) from peer list
+   - Dispatches UpstreamVerificationQuery to selected peers
+   - Tracks which nodes were queried in verification_node_ids field
+10. ✅ Add `get_peer_ids()` to MeshTopology
+    - Returns list of all known peer node IDs
 
-**Remaining Work**:
-1. Implement query dispatching - when verification task is created, dispatch queries to random nodes (3)
+**Phase 6 Status**: ✅ COMPLETED
 
 #### Phase 7: Multi-Origin Discovery & Load Balancing ✅ COMPLETED
 

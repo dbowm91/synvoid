@@ -59,6 +59,10 @@ impl VerificationTaskManager {
         }
     }
 
+    pub fn get_verification_nodes_count(&self) -> usize {
+        self.config.verification_nodes_count
+    }
+
     pub fn set_record_store(&self, record_store: Arc<crate::mesh::dht::RecordStoreManager>) {
         let mut rs = self.record_store.write();
         *rs = Some(record_store);
@@ -337,17 +341,14 @@ impl VerificationTaskManager {
                             );
                             let mut pending = self.pending_tasks.write();
                             pending.remove(&task_key);
-                        } else if task.status == VerificationStatus::Pending {
+                        } else if task.status == VerificationStatus::Pending
+                            && task.verification_node_ids.is_empty()
+                        {
                             tracing::info!(
-                                "Processing pending verification task for {}:{}",
+                                "Verification task {}:{} needs dispatch",
                                 upstream_id,
                                 provider_node_id
                             );
-                            let mut pending = self.pending_tasks.write();
-                            pending.remove(&task_key);
-                            drop(pending);
-
-                            self.apply_penalty(upstream_id, provider_node_id);
                         }
                     }
                 }
@@ -358,6 +359,80 @@ impl VerificationTaskManager {
         }
 
         self.cleanup_expired_tasks();
+    }
+
+    pub fn get_pending_dispatch_tasks(&self) -> Vec<(String, String, VerificationTask)> {
+        let mut result = Vec::new();
+
+        let pending = self.pending_tasks.read();
+        let task_keys: Vec<String> = pending.keys().cloned().collect();
+        drop(pending);
+
+        let record_store_opt = self.record_store.read().clone();
+        let Some(record_store) = record_store_opt else {
+            return result;
+        };
+
+        for task_key in task_keys {
+            let parts: Vec<&str> = task_key.split(':').collect();
+            if parts.len() != 2 {
+                continue;
+            }
+            let upstream_id = parts[0];
+            let provider_node_id = parts[1];
+
+            let key = DhtKey::verification_task(upstream_id, provider_node_id);
+            let key_str = key.as_str();
+
+            if let Some(record) = record_store.get(&key_str) {
+                if let Ok(task) = serde_json::from_slice::<VerificationTask>(&record.value) {
+                    if task.status == VerificationStatus::Pending
+                        && task.verification_node_ids.is_empty()
+                        && task.expires_at > safe_unix_timestamp()
+                    {
+                        result.push((
+                            task_key.clone(),
+                            format!("{}:{}", upstream_id, provider_node_id),
+                            task,
+                        ));
+                    }
+                }
+            }
+        }
+
+        result
+    }
+
+    pub fn mark_task_in_progress(&self, task_key: &str, verification_node_ids: Vec<String>) {
+        let parts: Vec<&str> = task_key.split(':').collect();
+        if parts.len() != 2 {
+            return;
+        }
+        let upstream_id = parts[0];
+        let provider_node_id = parts[1];
+
+        let record_store_opt = self.record_store.read().clone();
+        let Some(record_store) = record_store_opt else {
+            return;
+        };
+
+        let key = DhtKey::verification_task(upstream_id, provider_node_id);
+        let key_str = key.as_str();
+
+        if let Some(record) = record_store.get(&key_str) {
+            if let Ok(mut task) = serde_json::from_slice::<VerificationTask>(&record.value) {
+                task.status = VerificationStatus::InProgress;
+                task.verification_node_ids = verification_node_ids;
+
+                if let Ok(value) = serde_json::to_vec(&task) {
+                    let _ = record_store.store_and_announce(
+                        key_str.to_string(),
+                        value,
+                        self.config.penalty_ttl_secs,
+                    );
+                }
+            }
+        }
     }
 }
 

@@ -1089,6 +1089,14 @@ impl MeshTopology {
         self.peer_store.collect_all_peers()
     }
 
+    pub async fn get_peer_ids(&self) -> Vec<String> {
+        let mut peer_ids = Vec::new();
+        self.peer_store.for_each_peer(|node_id, _| {
+            peer_ids.push(node_id.to_string());
+        });
+        peer_ids
+    }
+
     pub async fn get_all_connected_peers(&self) -> Vec<PeerState> {
         let mut result = Vec::new();
         self.peer_store.for_each_peer(|_, peer| {
