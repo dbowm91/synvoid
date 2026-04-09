@@ -592,7 +592,7 @@ proto::TierKey {
 | 7 | Multi-origin discovery & load balancing | ✅ COMPLETED |
 | 7b | Nginx-like domain routing | ✅ COMPLETED |
 | 8 | Origin local backend selection | ✅ COMPLETED |
-| 9 | TierKey DHT encryption | 🔄 DEFERRED |
+| 9 | TierKey DHT encryption | 🔶 PARTIAL |
 | 10 | TierKey transmission encryption | 🔄 DEFERRED |
 
 #### Success Metrics
@@ -601,9 +601,9 @@ proto::TierKey {
 |--------|--------|-------|
 | Capabilities advertised per node | 0 | 3-8 (Phase 2-3) |
 | Origin announcements processed | 0% | 100% (Phase 4) |
-| TierKey encrypted at rest | 0% | 🔄 DEFERRED |
+| TierKey encrypted at rest | 0% | 🔶 PARTIAL (Phase 9) |
 | TierKey encrypted in transit | 0% | 🔄 DEFERRED |
-| Multi-origin routing | Broken | 🔄 DEFERRED |
+| Multi-origin routing | Broken | ✅ COMPLETED |
 
 #### Files Modified (Completed Phases)
 
