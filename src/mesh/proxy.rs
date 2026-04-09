@@ -427,21 +427,20 @@ impl MeshProxy {
 
     fn extract_upstream_id(&self, req: &Request<Incoming>) -> Result<String, MeshProxyError> {
         let uri = req.uri();
+
         let host = uri
             .host()
             .or_else(|| req.headers().get("host").and_then(|h| h.to_str().ok()))
             .ok_or_else(|| MeshProxyError::UpstreamNotFound("No host found".to_string()))?;
 
-        let path = uri.path();
-        let first_segment = path
-            .split('/')
-            .find(|s| !s.is_empty())
-            .map(|s| s.to_string());
+        let port = uri.port_u16().unwrap_or_else(|| {
+            match uri.scheme_str() {
+                Some("https") => 443,
+                _ => 80,
+            }
+        });
 
-        let upstream_id = match first_segment {
-            Some(seg) => format!("{}:{}", host, seg),
-            None => host.to_string(),
-        };
+        let upstream_id = format!("http://{}:{}", host, port);
 
         Ok(upstream_id)
     }

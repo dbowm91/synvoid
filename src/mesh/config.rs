@@ -616,6 +616,8 @@ impl Default for ReconnectionPriority {
 pub struct MeshUpstreamConfig {
     pub upstream_url: String,
     #[serde(default)]
+    pub supported_ports: Option<Vec<u16>>,
+    #[serde(default)]
     pub geo: Option<String>,
     #[serde(default)]
     pub peered_wafs: Vec<MeshUpstreamPeer>,

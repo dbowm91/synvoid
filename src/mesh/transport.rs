@@ -1715,14 +1715,12 @@ impl MeshTransport {
             return Ok(());
         }
 
-        let full_upstream_id = self.config.make_mesh_upstream_id(upstream_id);
-
         match action {
             crate::mesh::protocol::AnnounceAction::Add
             | crate::mesh::protocol::AnnounceAction::Update => {
                 self.topology
                     .add_local_upstream(
-                        full_upstream_id.clone(),
+                        upstream_id.to_string(),
                         self.config
                             .local_upstreams
                             .get(upstream_id)
@@ -1736,15 +1734,15 @@ impl MeshTransport {
                     .await;
             }
             crate::mesh::protocol::AnnounceAction::Remove => {
-                self.topology.remove_local_upstream(&full_upstream_id).await;
+                self.topology.remove_local_upstream(upstream_id).await;
             }
         }
 
         for entry in self.peer_connections.iter() {
             let peer = entry.value();
             if peer.role.is_global() {
-                let upstream_id_for_sig = full_upstream_id.clone();
-                let upstream_id_for_msg = full_upstream_id.clone();
+                let upstream_id_for_sig = upstream_id.to_string();
+                let upstream_id_for_msg = upstream_id.to_string();
 
                 let signature = if let Some(ref signer) = self.mesh_signer {
                     let content = format!("{}:{:?}", upstream_id_for_sig, action);

@@ -842,7 +842,6 @@ impl MeshTopology {
             .local_upstreams
             .iter()
             .map(|(id, upstream)| {
-                let full_upstream_id = config.make_mesh_upstream_id(id);
                 let peered_wafs: HashSet<String> = upstream
                     .peered_wafs
                     .iter()
@@ -850,9 +849,9 @@ impl MeshTopology {
                     .map(|p| p.node_id.clone())
                     .collect();
                 (
-                    full_upstream_id.clone(),
+                    id.clone(),
                     UpstreamInfoInternal {
-                        upstream_id: full_upstream_id,
+                        upstream_id: id.clone(),
                         upstream_url: upstream.upstream_url.clone(),
                         geo: upstream.geo.clone(),
                         is_local: true,
