@@ -405,8 +405,10 @@ Client requests example.com
 5. ✅ start_verification_processing() in MeshTransportManager - spawns background task to call process_pending_tasks every 60 seconds
 
 **Remaining Work**:
-1. Implement handler for `OriginReachabilityReport` (requires protobuf message changes) - needed for cross-node reachability reports
-2. Implement UpstreamVerificationQuery/Response handlers - needed for coordinated verification between nodes
+1. ~~Implement handler for `OriginReachabilityReport` (requires protobuf message changes)~~ - protobuf messages `UpstreamVerificationQuery`/`Response` already exist, just need handlers
+2. Implement `UpstreamVerificationQuery` handler - receive verification requests from global nodes, attempt to reach upstream, respond with result
+3. Implement `UpstreamVerificationResponse` handler - receive verification results from nodes, update verification task status
+4. Implement query dispatching - when verification task is created, dispatch queries to random nodes (3-5)
 
 #### Phase 7: Multi-Origin Discovery & Load Balancing ✅ COMPLETED
 
