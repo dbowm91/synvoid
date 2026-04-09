@@ -242,7 +242,7 @@ node_capability:yaraDistributor - Node distributes YARA rules
 | 4 | Fix UpstreamAnnounce processing | ✅ COMPLETED |
 | 5 | Implement VerifiedUpstream DHT storage | ✅ COMPLETED |
 | 6 | Origin Reachability System (wired into MeshTransport + proxy) | ✅ COMPLETED |
-| 7 | Enable multi-origin discovery & load balancing | 🔶 IN PROGRESS |
+| 7 | Enable multi-origin discovery & load balancing | ✅ COMPLETED |
 | 8 | Encrypt TierKey before DHT storage | 🔄 DEFERRED |
 | 9 | Encrypt TierKey before transmission | 🔄 DEFERRED |
 
@@ -436,13 +436,15 @@ Client requests example.com
 - `src/mesh/transport_org.rs` - Populate `origin_node_id` from `requesting_node_id`
 - `src/mesh/topology.rs` - Added `record_store` field, `set_record_store()`, `find_verified_upstreams_for_site()`, merged `find_all_origins_for_site()`
 - `src/mesh/backend.rs` - Wire `record_store` to `MeshTopology`
-- `src/mesh/proxy.rs` - Added `get_providers_for_upstream()`, modified `route_request()` to use multiple providers
+- `src/mesh/proxy.rs` - Added `get_providers_for_upstream()`, modified `route_request()` and `route_request_with_policy()` to use multiple providers, removed unused `in_flight_queries` mechanism
 - `src/mesh/proto/mesh.proto` - Added optional `mesh_upstream_id` field 8
 
-**Remaining Work**:
-- Origins must be updated to send `UpstreamRegistrationRequest` with domain-based `upstream_id` (e.g., `http://example.com:80`)
-- DHT caching for `get_all_records()` queries (performance optimization, deferred)
-- True round-robin or weighted selection strategy (currently uses sequential failover)
+**Phase 7 Status: ✅ COMPLETED**
+
+**Remaining Work** (deferred to Phase 9 - Performance):
+- DHT caching for `get_all_records()` queries - `get_all_records()` is O(n) and called on every query
+- Origins must send domain-based `upstream_id` in `UpstreamRegistrationRequest` (deployment configuration)
+- True round-robin or weighted selection strategy (currently sequential failover only)
 
 #### Phase 8: Encrypt TierKey for DHT Storage
 
