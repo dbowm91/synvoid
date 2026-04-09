@@ -530,20 +530,39 @@ Client requests example.com
 
 **Status**: ✅ COMPLETED - Origin nodes now accept incoming HTTP streams and route to local backends
 
-#### Phase 8: Encrypt TierKey for DHT Storage
+#### Phase 8: Encrypt TierKey for DHT Storage 🔶 PARTIALLY COMPLETED
 
-**Files to modify**: `src/mesh/transport_org.rs`, `src/mesh/cert_dist.rs` (reuse encryption)
+**Files Modified**: `src/mesh/transport_org.rs`, `src/mesh/tier_key_encryption.rs` (NEW)
 
-```rust
-// In transport_org.rs, before store_and_announce():
-let tier_key_json = serde_json::to_vec(tier_key)?;
-let encrypted_key = encrypt_tier_key(&tier_key_json, mesh_session_key)?;
-record_store.store_and_announce(key, encrypted_key, ttl);
-```
+**Implementation Completed**:
+1. Added `TierKeyEncryption` struct in `src/mesh/tier_key_encryption.rs`:
+   - `encrypt_tier_key_data()` - Encrypts tier key using HKDF-derived per-key encryption
+   - `decrypt_tier_key_data()` - Decrypts encrypted tier key
+   - Uses AES-256-GCM with 12-byte nonces
+   - HKDF info prefix: "maluwaf-tier-key-encrypt"
+   - Per-key derivation includes org_id, tier, and key_id for isolation
 
-**Status**: 🔄 DEFERRED - Requires architectural work: mesh_session_key not available in transport_org, needs refactoring to pass encryption context
+2. Added `EncryptedTierKeyData` struct with serialization:
+   - `serialize_encrypted_tier_key()` - Binary serialization for DHT storage
+   - `deserialize_encrypted_tier_key()` - Binary deserialization from DHT
 
-#### Phase 9: Encrypt TierKey for Transmission
+3. Modified `handle_tier_key_announce` in `transport_org.rs`:
+   - If `tier_key_encryption` is set, encrypts tier key before DHT storage
+   - Stores with key prefix `encrypted_tier_key:{org_id}:{tier}`
+   - Falls back to plaintext storage if encryption not configured
+
+4. Added `tier_key_encryption` field to `MeshTransport`:
+   - `set_tier_key_encryption()` - Initialize encryption with master key
+   - `get_tier_key_encryption()` - Access encryption for other uses
+
+**Remaining Issue**:
+- `mesh_session_key` not directly available in `MeshTransport`
+- Currently tier_key_encryption must be set via `set_tier_key_encryption()`
+- Master key must be provided from external source (config, startup, etc.)
+
+**Status**: 🔶 PARTIALLY COMPLETED - Encryption infrastructure exists, but master key source needs to be determined
+
+#### Phase 9: Encrypt TierKey for Transmission 🔄 DEFERRED
 
 **Files to modify**: `src/mesh/protocol_proto_encode.rs`
 
@@ -558,7 +577,7 @@ proto::TierKey {
 }
 ```
 
-**Status**: 🔄 DEFERRED - Requires Phase 8 completion (encryption context)
+**Status**: 🔄 DEFERRED - Requires Phase 8 completion (encryption context) and master key source
 
 #### Completed Phases Summary
 

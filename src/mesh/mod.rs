@@ -28,6 +28,7 @@ pub mod security;
 pub mod security_challenge;
 pub mod session;
 pub mod threat_intel;
+pub mod tier_key_encryption;
 pub mod topology;
 pub mod transport;
 #[cfg(feature = "mesh")]
@@ -116,6 +117,10 @@ pub use session::{Session, SessionConfig, SessionError, SessionManager};
 pub use threat_intel::{
     ThreatIndicatorEntry, ThreatIntelligenceConfig, ThreatIntelligenceManager,
     ThreatIntelligenceStats,
+};
+pub use tier_key_encryption::{
+    deserialize_encrypted_tier_key, serialize_encrypted_tier_key, EncryptedTierKeyData,
+    TierKeyEncryption, TierKeyEncryptionError,
 };
 pub use topology::{MeshTopology, NetworkPartitionState, PeerState};
 pub use transport::{MeshPeerConnection, MeshTransport};

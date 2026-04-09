@@ -1,0 +1,288 @@
+use aes_gcm::{
+    aead::{Aead, KeyInit},
+    Aes256Gcm, Nonce,
+};
+use hkdf::Hkdf;
+use sha2::Sha256;
+
+const NONCE_SIZE: usize = 12;
+const DERIVED_KEY_SIZE: usize = 32;
+const HKDF_INFO: &[u8] = b"maluwaf-tier-key-encrypt";
+
+#[derive(Debug, Clone)]
+pub struct EncryptedTierKeyData {
+    pub org_id: String,
+    pub tier: u32,
+    pub key_id: String,
+    pub encrypted_key: Vec<u8>,
+    pub nonce: Vec<u8>,
+}
+
+impl EncryptedTierKeyData {
+    pub fn key_id(&self) -> &str {
+        &self.key_id
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum TierKeyEncryptionError {
+    #[error("Encryption error: {0}")]
+    Encryption(String),
+    #[error("Decryption error: {0}")]
+    Decryption(String),
+    #[error("Key derivation error: {0}")]
+    KeyDerivation(String),
+}
+
+pub struct TierKeyEncryption {
+    master_key: Vec<u8>,
+}
+
+impl TierKeyEncryption {
+    pub fn new(master_key: Vec<u8>) -> Self {
+        Self { master_key }
+    }
+
+    pub fn encrypt_tier_key_data(
+        &self,
+        org_id: &str,
+        tier: u32,
+        key_id: &str,
+        tier_key_bytes: &[u8],
+    ) -> Result<EncryptedTierKeyData, TierKeyEncryptionError> {
+        let context = format!("{}:{}:{}", org_id, tier, key_id);
+        let per_key = self.derive_encryption_key(&context)?;
+
+        let cipher = Aes256Gcm::new_from_slice(&per_key)
+            .map_err(|e| TierKeyEncryptionError::Encryption(e.to_string()))?;
+
+        let mut nonce_bytes = [0u8; NONCE_SIZE];
+        rand::fill(&mut nonce_bytes);
+        let nonce = Nonce::from_slice(&nonce_bytes);
+
+        let ciphertext = cipher
+            .encrypt(nonce, tier_key_bytes)
+            .map_err(|e| TierKeyEncryptionError::Encryption(e.to_string()))?;
+
+        Ok(EncryptedTierKeyData {
+            org_id: org_id.to_string(),
+            tier,
+            key_id: key_id.to_string(),
+            encrypted_key: ciphertext,
+            nonce: nonce_bytes.to_vec(),
+        })
+    }
+
+    pub fn decrypt_tier_key_data(
+        &self,
+        encrypted: &EncryptedTierKeyData,
+    ) -> Result<Vec<u8>, TierKeyEncryptionError> {
+        let context = format!(
+            "{}:{}:{}",
+            encrypted.org_id, encrypted.tier, encrypted.key_id
+        );
+        let per_key = self.derive_encryption_key(&context)?;
+
+        let cipher = Aes256Gcm::new_from_slice(&per_key)
+            .map_err(|e| TierKeyEncryptionError::Decryption(e.to_string()))?;
+
+        if encrypted.nonce.len() != NONCE_SIZE {
+            return Err(TierKeyEncryptionError::Decryption(format!(
+                "Invalid nonce length: expected {}, got {}",
+                NONCE_SIZE,
+                encrypted.nonce.len()
+            )));
+        }
+
+        let nonce = Nonce::from_slice(&encrypted.nonce);
+
+        cipher
+            .decrypt(nonce, encrypted.encrypted_key.as_ref())
+            .map_err(|e| TierKeyEncryptionError::Decryption(e.to_string()))
+    }
+
+    fn derive_encryption_key(
+        &self,
+        context: &str,
+    ) -> Result<[u8; DERIVED_KEY_SIZE], TierKeyEncryptionError> {
+        let hk = Hkdf::<Sha256>::new(None, &self.master_key);
+
+        let mut okm = [0u8; DERIVED_KEY_SIZE];
+        let info = Self::build_hkdf_info(context);
+        hk.expand(&info, &mut okm)
+            .map_err(|e| TierKeyEncryptionError::KeyDerivation(e.to_string()))?;
+
+        Ok(okm)
+    }
+
+    fn build_hkdf_info(context: &str) -> Vec<u8> {
+        let ctx_bytes = context.as_bytes();
+        let mut info = Vec::with_capacity(HKDF_INFO.len() + ctx_bytes.len() + 1);
+        info.extend_from_slice(HKDF_INFO);
+        info.push(0);
+        info.extend_from_slice(ctx_bytes);
+        info
+    }
+}
+
+pub fn serialize_encrypted_tier_key(encrypted: &EncryptedTierKeyData) -> Vec<u8> {
+    let mut result = Vec::new();
+    result.extend_from_slice(&[0u8; 4]); // placeholder for total length
+    result.extend_from_slice(&(encrypted.org_id.len() as u32).to_be_bytes());
+    result.extend_from_slice(encrypted.org_id.as_bytes());
+    result.extend_from_slice(&encrypted.tier.to_be_bytes());
+    result.extend_from_slice(&(encrypted.key_id.len() as u32).to_be_bytes());
+    result.extend_from_slice(encrypted.key_id.as_bytes());
+    result.extend_from_slice(&(encrypted.nonce.len() as u32).to_be_bytes());
+    result.extend_from_slice(&encrypted.nonce);
+    result.extend_from_slice(&(encrypted.encrypted_key.len() as u32).to_be_bytes());
+    result.extend_from_slice(&encrypted.encrypted_key);
+
+    let total_len = (result.len() - 4) as u32;
+    result[..4].copy_from_slice(&total_len.to_be_bytes());
+    result
+}
+
+pub fn deserialize_encrypted_tier_key(
+    data: &[u8],
+) -> Result<EncryptedTierKeyData, TierKeyEncryptionError> {
+    let mut offset = 4; // Skip total length prefix
+
+    if data.len() < offset + 4 {
+        return Err(TierKeyEncryptionError::Decryption(
+            "Data too short".to_string(),
+        ));
+    }
+
+    let org_id_len = u32::from_be_bytes([
+        data[offset],
+        data[offset + 1],
+        data[offset + 2],
+        data[offset + 3],
+    ]) as usize;
+    offset += 4;
+    let org_id = String::from_utf8_lossy(&data[offset..offset + org_id_len]).to_string();
+    offset += org_id_len;
+
+    let tier = u32::from_be_bytes([
+        data[offset],
+        data[offset + 1],
+        data[offset + 2],
+        data[offset + 3],
+    ]);
+    offset += 4;
+
+    let key_id_len = u32::from_be_bytes([
+        data[offset],
+        data[offset + 1],
+        data[offset + 2],
+        data[offset + 3],
+    ]) as usize;
+    offset += 4;
+    let key_id = String::from_utf8_lossy(&data[offset..offset + key_id_len]).to_string();
+    offset += key_id_len;
+
+    let nonce_len = u32::from_be_bytes([
+        data[offset],
+        data[offset + 1],
+        data[offset + 2],
+        data[offset + 3],
+    ]) as usize;
+    offset += 4;
+    let nonce = data[offset..offset + nonce_len].to_vec();
+    offset += nonce_len;
+
+    let encrypted_key_len = u32::from_be_bytes([
+        data[offset],
+        data[offset + 1],
+        data[offset + 2],
+        data[offset + 3],
+    ]) as usize;
+    offset += 4;
+    let encrypted_key = data[offset..offset + encrypted_key_len].to_vec();
+
+    Ok(EncryptedTierKeyData {
+        org_id,
+        tier,
+        key_id,
+        encrypted_key,
+        nonce,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_encrypter() -> TierKeyEncryption {
+        let mut key = [0u8; 32];
+        rand::fill(&mut key);
+        TierKeyEncryption::new(key.to_vec())
+    }
+
+    #[test]
+    fn test_encrypt_decrypt_roundtrip() {
+        let encrypter = make_encrypter();
+        let tier_key = b"my_super_secret_tier_key_data_32bytes!";
+
+        let encrypted = encrypter
+            .encrypt_tier_key_data("org-123", 1, "key-abc", tier_key)
+            .unwrap();
+
+        assert_eq!(encrypted.org_id, "org-123");
+        assert_eq!(encrypted.tier, 1);
+        assert_eq!(encrypted.key_id, "key-abc");
+        assert_ne!(encrypted.encrypted_key, tier_key.to_vec());
+
+        let decrypted = encrypter.decrypt_tier_key_data(&encrypted).unwrap();
+        assert_eq!(decrypted, tier_key.to_vec());
+    }
+
+    #[test]
+    fn test_serialize_deserialize_roundtrip() {
+        let encrypter = make_encrypter();
+        let tier_key = b"test_key_16_bytes!";
+
+        let encrypted = encrypter
+            .encrypt_tier_key_data("org-1", 2, "key-xyz", tier_key)
+            .unwrap();
+
+        let serialized = serialize_encrypted_tier_key(&encrypted);
+        let deserialized = deserialize_encrypted_tier_key(&serialized).unwrap();
+
+        assert_eq!(deserialized.org_id, encrypted.org_id);
+        assert_eq!(deserialized.tier, encrypted.tier);
+        assert_eq!(deserialized.key_id, encrypted.key_id);
+
+        let decrypted = encrypter.decrypt_tier_key_data(&deserialized).unwrap();
+        assert_eq!(decrypted, tier_key.to_vec());
+    }
+
+    #[test]
+    fn test_different_contexts_different_keys() {
+        let encrypter = make_encrypter();
+        let tier_key = b"test_key";
+
+        let enc1 = encrypter
+            .encrypt_tier_key_data("org-1", 1, "key-1", tier_key)
+            .unwrap();
+        let enc2 = encrypter
+            .encrypt_tier_key_data("org-2", 1, "key-1", tier_key)
+            .unwrap();
+
+        assert_ne!(enc1.encrypted_key, enc2.encrypted_key);
+    }
+
+    #[test]
+    fn test_wrong_key_cannot_decrypt() {
+        let encrypter1 = make_encrypter();
+        let encrypter2 = make_encrypter();
+        let tier_key = b"test_key";
+
+        let encrypted = encrypter1
+            .encrypt_tier_key_data("org-1", 1, "key-1", tier_key)
+            .unwrap();
+
+        assert!(encrypter2.decrypt_tier_key_data(&encrypted).is_err());
+    }
+}

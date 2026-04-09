@@ -98,6 +98,8 @@ pub struct MeshTransport {
     pub(crate) global_rate_limiter: Arc<MeshGlobalRateLimiter>,
     pub(crate) org_manager: Arc<RwLock<crate::mesh::organization::OrganizationManager>>,
     pub(crate) tier_key_store: Option<Arc<RwLock<crate::mesh::dht::TierKeyStore>>>,
+    pub(crate) tier_key_encryption:
+        Option<Arc<crate::mesh::tier_key_encryption::TierKeyEncryption>>,
     pub(crate) origin_ed25519_signer: Option<Arc<crate::integrity::Ed25519Signer>>,
     pub(crate) mesh_signer: Option<Arc<crate::mesh::protocol::MeshMessageSigner>>,
     pub(crate) record_store: Option<Arc<crate::mesh::dht::RecordStoreManager>>,
@@ -135,6 +137,7 @@ impl Clone for MeshTransport {
             global_rate_limiter: self.global_rate_limiter.clone(),
             org_manager: self.org_manager.clone(),
             tier_key_store: self.tier_key_store.clone(),
+            tier_key_encryption: self.tier_key_encryption.clone(),
             origin_ed25519_signer: self.origin_ed25519_signer.clone(),
             mesh_signer: self.mesh_signer.clone(),
             record_store: self.record_store.clone(),
@@ -313,6 +316,7 @@ impl MeshTransport {
                 Arc::new(RwLock::new(org_mgr))
             },
             tier_key_store,
+            tier_key_encryption: None,
             origin_ed25519_signer,
             mesh_signer,
             record_store,
@@ -363,6 +367,19 @@ impl MeshTransport {
 
     pub fn get_tier_key_store(&self) -> Option<Arc<RwLock<crate::mesh::dht::TierKeyStore>>> {
         self.tier_key_store.clone()
+    }
+
+    pub fn set_tier_key_encryption(
+        &mut self,
+        enc: Arc<crate::mesh::tier_key_encryption::TierKeyEncryption>,
+    ) {
+        self.tier_key_encryption = Some(enc);
+    }
+
+    pub fn get_tier_key_encryption(
+        &self,
+    ) -> Option<Arc<crate::mesh::tier_key_encryption::TierKeyEncryption>> {
+        self.tier_key_encryption.clone()
     }
 
     pub fn get_topology(&self) -> Arc<MeshTopology> {

@@ -296,18 +296,49 @@ impl MeshTransport {
         );
 
         if let Some(ref record_store) = self.record_store {
-            let tier_key_json = serde_json::to_vec(tier_key).unwrap_or_default();
-            let key = format!("tier_key:{}:{}", org_id, tier_key.tier);
-            let ttl = 86400 * 30;
-
-            if record_store.store_and_announce(key, tier_key_json, ttl) {
-                tracing::info!("Stored tier key in DHT: {}/{}", org_id, tier_key.tier);
-            } else {
-                tracing::warn!(
-                    "Failed to store tier key in DHT: {}/{}",
+            if let Some(ref enc) = self.tier_key_encryption {
+                if let Ok(encrypted) = enc.encrypt_tier_key_data(
                     org_id,
-                    tier_key.tier
-                );
+                    tier_key.tier,
+                    &tier_key.key_id,
+                    &tier_key.key,
+                ) {
+                    let serialized = crate::mesh::serialize_encrypted_tier_key(&encrypted);
+                    let key = format!("encrypted_tier_key:{}:{}", org_id, tier_key.tier);
+                    let ttl = 86400 * 30;
+
+                    if record_store.store_and_announce(key, serialized, ttl) {
+                        tracing::info!(
+                            "Stored encrypted tier key in DHT: {}/{}",
+                            org_id,
+                            tier_key.tier
+                        );
+                    } else {
+                        tracing::warn!(
+                            "Failed to store encrypted tier key in DHT: {}/{}",
+                            org_id,
+                            tier_key.tier
+                        );
+                    }
+                } else {
+                    tracing::warn!(
+                        "Failed to encrypt tier key for org {} tier {}",
+                        org_id,
+                        tier_key.tier
+                    );
+                }
+            } else {
+                let tier_key_json = serde_json::to_vec(tier_key).unwrap_or_default();
+                let key = format!("tier_key:{}:{}", org_id, tier_key.tier);
+                let ttl = 86400 * 30;
+
+                if record_store.store_and_announce(key, tier_key_json, ttl) {
+                    tracing::info!(
+                        "Stored tier key in DHT (unencrypted): {}/{}",
+                        org_id,
+                        tier_key.tier
+                    );
+                }
             }
         }
     }
