@@ -573,6 +573,40 @@ impl MeshProxy {
         }
     }
 
+    fn weighted_shuffle_providers(&self, providers: Vec<crate::mesh::protocol::ProviderInfo>) -> Vec<crate::mesh::protocol::ProviderInfo> {
+        if providers.len() <= 1 {
+            return providers;
+        }
+
+        let total_score: f64 = providers.iter().map(|p| p.score.max(0.01)).sum();
+        let weighted: Vec<(usize, f64)> = providers.iter()
+            .enumerate()
+            .map(|(i, p)| (i, p.score.max(0.01)))
+            .collect();
+
+        let mut result = Vec::with_capacity(providers.len());
+        let mut remaining: Vec<usize> = (0..providers.len()).collect();
+
+        while !remaining.is_empty() {
+            let r: f64 = rand::rng().random_range(0.0..total_score);
+            let mut cumulative = 0.0;
+            let mut selected_idx = 0;
+
+            for &idx in &remaining {
+                cumulative += weighted[idx].1;
+                if cumulative >= r {
+                    selected_idx = idx;
+                    break;
+                }
+            }
+
+            result.push(providers[selected_idx].clone());
+            remaining.retain(|&x| x != selected_idx);
+        }
+
+        result
+    }
+
     // Response transform holds a cache lock across an await; low contention expected.
     #[allow(clippy::await_holding_lock)]
     pub async fn route_request(
@@ -713,6 +747,8 @@ impl MeshProxy {
         if providers.is_empty() {
             return Err(MeshProxyError::NoRouteToUpstream(upstream_id.to_string()));
         }
+
+        let providers = self.weighted_shuffle_providers(providers);
 
         // Extract method, uri, and headers before consuming the body
         let method = req.method().clone();

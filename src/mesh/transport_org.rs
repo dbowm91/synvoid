@@ -487,6 +487,7 @@ impl MeshTransport {
                         upstream_id,
                         self.config.node_id()
                     );
+                    self.topology.invalidate_verified_upstream_cache(upstream_id).await;
                 } else {
                     tracing::warn!("Failed to store VerifiedUpstream in DHT: {}", upstream_id);
                 }

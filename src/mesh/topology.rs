@@ -614,6 +614,7 @@ pub struct MeshTopology {
     peer_store: ShardedPeerStore,
     local_upstreams: RwLock<HashMap<String, UpstreamInfoInternal>>,
     route_cache: MokaCache<String, CachedRoute>,
+    verified_upstream_cache: MokaCache<String, Vec<crate::mesh::dht::VerifiedUpstream>>,
     global_nodes: RwLock<HashSet<String>>,
     pending_queries: RwLock<HashMap<String, crate::mesh::protocol::PendingQuery>>,
     cache_metrics: RwLock<CacheMetrics>,
@@ -832,6 +833,11 @@ impl MeshTopology {
             .max_capacity(10000)
             .build();
 
+        let verified_upstream_cache = MokaCache::builder()
+            .time_to_live(Duration::from_secs(30))
+            .max_capacity(1000)
+            .build();
+
         let local_upstreams: HashMap<String, UpstreamInfoInternal> = config
             .local_upstreams
             .iter()
@@ -874,6 +880,7 @@ impl MeshTopology {
             peer_store: ShardedPeerStore::new(),
             local_upstreams: RwLock::new(local_upstreams),
             route_cache,
+            verified_upstream_cache,
             global_nodes: RwLock::new(global_nodes),
             pending_queries: RwLock::new(HashMap::new()),
             cache_metrics: RwLock::new(CacheMetrics::default()),
@@ -1495,12 +1502,18 @@ impl MeshTopology {
     }
 
     pub async fn find_verified_upstreams_for_site(&self, site: &str) -> Vec<crate::mesh::dht::VerifiedUpstream> {
-        let record_store = self.record_store.read();
-        let Some(ref rs) = *record_store else {
-            return Vec::new();
+        if let Some(cached) = self.verified_upstream_cache.get(site).await {
+            return cached.clone();
+        }
+
+        let records = {
+            let record_store = self.record_store.read();
+            let Some(ref rs) = *record_store else {
+                return Vec::new();
+            };
+            rs.get_all_records()
         };
 
-        let records = rs.get_all_records();
         let mut results: Vec<crate::mesh::dht::VerifiedUpstream> = Vec::new();
 
         for record in records {
@@ -1513,7 +1526,13 @@ impl MeshTopology {
             }
         }
 
+        self.verified_upstream_cache.insert(site.to_string(), results.clone()).await;
+
         results
+    }
+
+    pub async fn invalidate_verified_upstream_cache(&self, site: &str) {
+        self.verified_upstream_cache.invalidate(site).await;
     }
 
     pub async fn get_upstream_for_peer(
