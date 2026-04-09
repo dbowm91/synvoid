@@ -360,6 +360,7 @@ impl MeshTransport {
                 requesting_node_id,
                 timestamp: _,
                 signature: _,
+                mesh_upstream_id: _,
             } => {
                 self.handle_upstream_registration_request(
                     peer_id,

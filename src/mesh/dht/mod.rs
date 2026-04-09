@@ -360,6 +360,7 @@ impl GlobalNodeEntry {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VerifiedUpstream {
     pub upstream_id: String,
+    pub origin_node_id: String,
     pub upstream_url: String,
     pub org_id: Option<String>,
     pub global_node_id: String,

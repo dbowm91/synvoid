@@ -1043,6 +1043,7 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                     requesting_node_id: r.requesting_node_id.into(),
                     timestamp: r.timestamp,
                     signature: r.signature,
+                    mesh_upstream_id: r.mesh_upstream_id.map(|s| s.into()),
                 })
             }
             proto::mesh_message::Payload::UpstreamRegistrationResponse(r) => {

@@ -620,6 +620,42 @@ impl MeshProxy {
         }
     }
 
+    async fn get_providers_for_upstream(
+        &self,
+        upstream_id: &str,
+    ) -> Result<Vec<ProviderInfo>, MeshProxyError> {
+        let transport = {
+            let guard = self.transport.read();
+            guard.clone()
+        };
+        let transport = transport.ok_or_else(|| {
+            MeshProxyError::ConnectionFailed("Transport not initialized".to_string())
+        })?;
+
+        match transport.send_route_query(upstream_id).await {
+            Ok(result) => {
+                let providers = self.filter_failed_providers(&result.providers);
+                let providers_with_capability: Vec<_> = providers
+                    .into_iter()
+                    .filter(|p| {
+                        if let Some(peer) =
+                            futures::executor::block_on(self.topology.get_peer(&p.node_id))
+                        {
+                            peer.capabilities.can_proxy
+                        } else {
+                            false
+                        }
+                    })
+                    .collect();
+                if providers_with_capability.is_empty() {
+                    return Err(MeshProxyError::NoRouteToUpstream(upstream_id.to_string()));
+                }
+                Ok(providers_with_capability)
+            }
+            Err(e) => Err(MeshProxyError::ConnectionFailed(e.to_string())),
+        }
+    }
+
     // Response transform holds a cache lock across an await; low contention expected.
     #[allow(clippy::await_holding_lock)]
     pub async fn route_request(
@@ -712,7 +748,7 @@ impl MeshProxy {
                 }
             }
 
-            let provider = match self.get_or_initiate_route_query(upstream_id).await {
+            let providers = match self.get_providers_for_upstream(upstream_id).await {
                 Ok(p) => p,
                 Err(e) => {
                     if let Some(cached) = self.get_cached_policy(upstream_id) {
@@ -734,18 +770,19 @@ impl MeshProxy {
                 }
             };
 
+            let first_provider = &providers[0];
             let cached = CachedPolicy {
-                provider_node_id: provider.node_id.clone(),
-                upstream_url: provider.upstream_url.clone(),
-                waf_policy: provider.waf_policy.clone(),
+                provider_node_id: first_provider.node_id.clone(),
+                upstream_url: first_provider.upstream_url.clone(),
+                waf_policy: first_provider.waf_policy.clone(),
                 protocol: UpstreamProtocol::Http,
-                priority_tier: provider.priority_tier,
+                priority_tier: first_provider.priority_tier,
                 expires_at: Instant::now() + Duration::from_secs(DEFAULT_POLICY_CACHE_TTL_SECS),
             };
             self.cache_policy(upstream_id, cached);
 
             return self
-                .proxy_to_peer_with_fallback(upstream_id, vec![provider], req)
+                .proxy_to_peer_with_fallback(upstream_id, providers, req)
                 .await;
         }
     }

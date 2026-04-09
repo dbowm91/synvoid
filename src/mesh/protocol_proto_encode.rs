@@ -1661,6 +1661,7 @@ impl From<&MeshMessage> for proto::MeshMessage {
                 requesting_node_id,
                 timestamp,
                 signature,
+                mesh_upstream_id,
             } => proto::MeshMessage {
                 message_type: 96,
                 payload: Some(proto::mesh_message::Payload::UpstreamRegistrationRequest(
@@ -1672,6 +1673,7 @@ impl From<&MeshMessage> for proto::MeshMessage {
                         requesting_node_id: requesting_node_id.to_string(),
                         timestamp: *timestamp,
                         signature: signature.clone(),
+                        mesh_upstream_id: mesh_upstream_id.as_ref().map(|s| s.to_string()),
                     },
                 )),
             },

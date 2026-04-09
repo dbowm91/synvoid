@@ -37,6 +37,7 @@ mod serde_secs {
 use moka::future::Cache as MokaCache;
 
 use crate::mesh::config::{MeshConfig, MeshNodeRole};
+use crate::mesh::dht::RecordStoreManager;
 use crate::mesh::protocol::{MeshPeerInfo, UpstreamInfo, UpstreamOwner};
 
 const NUM_SHARDS: usize = 64;
@@ -622,6 +623,7 @@ pub struct MeshTopology {
     blocked_upstreams: RwLock<HashMap<String, BlockedUpstream>>,
     degraded_mode: AtomicBool,
     peer_scores_compat: RwLock<HashMap<String, PeerScore>>,
+    record_store: ParkingLotRwLock<Option<Arc<RecordStoreManager>>>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -881,7 +883,12 @@ impl MeshTopology {
             blocked_upstreams: RwLock::new(HashMap::new()),
             degraded_mode: AtomicBool::new(false),
             peer_scores_compat: RwLock::new(HashMap::new()),
+            record_store: ParkingLotRwLock::new(None),
         }
+    }
+
+    pub fn set_record_store(&self, record_store: Arc<RecordStoreManager>) {
+        *self.record_store.write() = Some(record_store);
     }
 
     pub fn node_id(&self) -> &str {
@@ -1466,16 +1473,47 @@ impl MeshTopology {
     }
 
     pub async fn find_all_origins_for_site(&self, site: &str) -> Vec<String> {
+        use std::collections::HashSet;
+
         let upstreams = self.local_upstreams.read().await;
-        let mut origins = Vec::new();
+        let mut origins: HashSet<String> = HashSet::new();
 
         for (upstream_id, info) in upstreams.iter() {
             if upstream_id == site && info.is_local {
-                origins.push(info.owner_node_id.clone());
+                origins.insert(info.owner_node_id.clone());
             }
         }
 
-        origins
+        drop(upstreams);
+
+        let verified = self.find_verified_upstreams_for_site(site).await;
+        for vu in verified {
+            origins.insert(vu.origin_node_id);
+        }
+
+        origins.into_iter().collect()
+    }
+
+    pub async fn find_verified_upstreams_for_site(&self, site: &str) -> Vec<crate::mesh::dht::VerifiedUpstream> {
+        let record_store = self.record_store.read();
+        let Some(ref rs) = *record_store else {
+            return Vec::new();
+        };
+
+        let records = rs.get_all_records();
+        let mut results: Vec<crate::mesh::dht::VerifiedUpstream> = Vec::new();
+
+        for record in records {
+            if record.key.starts_with("verified_upstream:") {
+                if let Ok(verified) = serde_json::from_slice::<crate::mesh::dht::VerifiedUpstream>(&record.value) {
+                    if verified.upstream_id == site {
+                        results.push(verified);
+                    }
+                }
+            }
+        }
+
+        results
     }
 
     pub async fn get_upstream_for_peer(

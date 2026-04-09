@@ -449,6 +449,7 @@ impl MeshTransport {
 
         let verified_upstream = crate::mesh::dht::VerifiedUpstream {
             upstream_id: upstream_id.to_string(),
+            origin_node_id: requesting_node_id.to_string(),
             upstream_url: upstream_url.to_string(),
             org_id: org_id.map(|s| s.to_string()),
             global_node_id: self.config.node_id().to_string(),
@@ -459,8 +460,12 @@ impl MeshTransport {
 
         let signature = if let Some(ref signer) = self.origin_ed25519_signer {
             let sign_data = format!(
-                "{}:{}:{}:{}",
-                upstream_id, upstream_url, org_id.unwrap_or(""), self.config.node_id()
+                "{}:{}:{}:{}:{}",
+                upstream_id,
+                requesting_node_id,
+                upstream_url,
+                org_id.unwrap_or(""),
+                self.config.node_id()
             );
             signer.sign(&sign_data).into_bytes()
         } else {

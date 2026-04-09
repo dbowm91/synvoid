@@ -765,6 +765,7 @@ message UpstreamRegistrationRequest {
     string requesting_node_id = 5;
     uint64 timestamp = 6;
     bytes signature = 7;
+    optional string mesh_upstream_id = 8;
 }
 
 message UpstreamRegistrationResponse {

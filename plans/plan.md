@@ -242,7 +242,7 @@ node_capability:yaraDistributor - Node distributes YARA rules
 | 4 | Fix UpstreamAnnounce processing | ✅ COMPLETED |
 | 5 | Implement VerifiedUpstream DHT storage | ✅ COMPLETED |
 | 6 | Origin Reachability System (wired into MeshTransport + proxy) | ✅ COMPLETED |
-| 7 | Enable multi-origin discovery | 🔄 DEFERRED |
+| 7 | Enable multi-origin discovery & load balancing | 🔶 IN PROGRESS |
 | 8 | Encrypt TierKey before DHT storage | 🔄 DEFERRED |
 | 9 | Encrypt TierKey before transmission | 🔄 DEFERRED |
 
@@ -406,19 +406,43 @@ Client requests example.com
 1. Implement handler for `OriginReachabilityReport` (requires protobuf message changes)
 2. Implement periodic verification task processing (background task)
 
-#### Phase 7: Multi-Origin Discovery
+#### Phase 7: Multi-Origin Discovery & Load Balancing 🔶 IN PROGRESS
 
-**Files to modify**: `src/mesh/topology.rs`, `src/mesh/proxy.rs`
+**Files Modified**: `src/mesh/topology.rs`, `src/mesh/proxy.rs`, `src/mesh/dht/mod.rs`, `src/mesh/transport_org.rs`, `src/mesh/backend.rs`
 
-1. Enable `find_all_origins_for_site()` to query DHT for verified upstreams from other global nodes
-2. Implement round-robin or weighted load balancing across origins
-3. Use capability info to filter origins by supported service
+**Architecture Changes:**
 
-**Status**: 🔄 DEFERRED - Requires deeper architectural changes:
-- `find_all_origins_for_site` currently only queries `local_upstreams` (configured locally)
-- Needs to also query DHT for `verified_upstream:{upstream_id}` records
-- Would require DHT query capability in topology module
-- Load balancing strategy needs architectural decision
+1. **VerifiedUpstream now includes origin_node_id**:
+   - `origin_node_id` field added - populated from `requesting_node_id` in registration request
+   - This identifies which origin node has the upstream (not just which global verified it)
+   - DHT key: `verified_upstream:{upstream_id}` where upstream_id is full domain-based (e.g., `http://example.com:80`)
+
+2. **DHT Query Capability Added to MeshTopology**:
+   - `record_store` field added to `MeshTopology` struct
+   - `find_verified_upstreams_for_site(site)` method queries DHT for matching records
+   - `find_all_origins_for_site(site)` now merges local + DHT results
+
+3. **Load Balancing Enabled**:
+   - Added `get_providers_for_upstream()` method returning `Vec<ProviderInfo>`
+   - `route_request()` now passes multiple providers to `proxy_to_peer_with_fallback()`
+   - Proxy will try multiple providers sequentially for failover/load balancing
+
+**Proto Changes** (backward compatible):
+- Added optional `mesh_upstream_id` field to `UpstreamRegistrationRequest` (field 8)
+- Not currently used - `origin_node_id` serves as unique identifier per origin
+
+**Files Modified**:
+- `src/mesh/dht/mod.rs` - Added `origin_node_id` to `VerifiedUpstream`
+- `src/mesh/transport_org.rs` - Populate `origin_node_id` from `requesting_node_id`
+- `src/mesh/topology.rs` - Added `record_store` field, `set_record_store()`, `find_verified_upstreams_for_site()`, merged `find_all_origins_for_site()`
+- `src/mesh/backend.rs` - Wire `record_store` to `MeshTopology`
+- `src/mesh/proxy.rs` - Added `get_providers_for_upstream()`, modified `route_request()` to use multiple providers
+- `src/mesh/proto/mesh.proto` - Added optional `mesh_upstream_id` field 8
+
+**Remaining Work**:
+- Origins must be updated to send `UpstreamRegistrationRequest` with domain-based `upstream_id` (e.g., `http://example.com:80`)
+- DHT caching for `get_all_records()` queries (performance optimization, deferred)
+- True round-robin or weighted selection strategy (currently uses sequential failover)
 
 #### Phase 8: Encrypt TierKey for DHT Storage
 

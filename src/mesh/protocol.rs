@@ -836,6 +836,7 @@ pub enum MeshMessage {
         requesting_node_id: ArcStr,
         timestamp: u64,
         signature: Vec<u8>,
+        mesh_upstream_id: Option<ArcStr>,
     },
     UpstreamRegistrationResponse {
         request_id: ArcStr,

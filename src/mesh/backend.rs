@@ -405,6 +405,7 @@ pub async fn initialize_mesh_transports(
 
     if let Some(ref rs) = record_store {
         transport_manager.set_verification_record_store(rs.clone());
+        topology.set_record_store(rs.clone());
     }
 
     let quic_transport = QuicMeshTransport::new(
