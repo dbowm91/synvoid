@@ -172,6 +172,101 @@ This document consolidates all individual improvement plans (plan2-plan9) into a
 - `src/mesh/mod.rs` (removed module)
 - `src/mesh/transport_org.rs` (enforce encryption)
 
+### 2.6 Global Node Bootstrap & Key Derivation ✅ COMPLETED
+
+**Overview**: Global nodes derive their signing key from a shared genesis key, enabling secure bootstrap without manual key distribution.
+
+**Architecture**:
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     GLOBAL NODE BOOTSTRAP                         │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  Node starts with --genesis flag?                                │
+│         │                                                        │
+│         ├── YES ──► Generate genesis_key (32 bytes random)        │
+│         │              Print: "Genesis key created. Add to       │
+│         │              config at [mesh.node_identity]            │
+│         │              genesis_key_base64 = '...'"               │
+│         │              Exit                                       │
+│         │                                                        │
+│         └── NO ──► Has genesis_key_base64 in config?             │
+│                        │                                         │
+│                        ├── NO ──► Start as EDGE (non-global)     │
+│                        │     (tier key encryption disabled)      │
+│                        │                                         │
+│                        └── YES ──► Derive signing_key via:        │
+│                                      HKDF-SHA256(               │
+│                                        ikm=genesis_key,          │
+│                                        info="maluwaf-global-      │
+│                                              node-signing-key",  │
+│                                        salt=public_key)          │
+│                                      Start as GLOBAL             │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Key Derivation Formula**:
+```rust
+signing_key = HKDF-SHA256(
+    IKM = genesis_key (32 bytes),
+    info = "maluwaf-global-node-signing-key",
+    salt = node's public_key (32 bytes)
+)
+```
+
+**Why salt with public_key?** Ensures two nodes derive different signing keys even if they share the same identity name.
+
+**Verification on Global Node Announce**:
+- `GlobalNodeAnnounce(Add/Remove)` - verified with genesis signature
+- `GlobalNodeAnnounce(UpdateKeyExchange)` - verified with node's own public key (self-signed)
+
+**Startup Behavior**:
+| Config | Result |
+|--------|--------|
+| No genesis_key_base64 | Start as EDGE, warning logged |
+| genesis_key_base64 set | Derive signing key, start as GLOBAL |
+| signing_key unavailable | Tier key encryption disabled, warning logged |
+
+**CLI Commands**:
+| Command | Description |
+|---------|-------------|
+| `--genesis` | Generate genesis key, print config snippet |
+| `--show-node-info` | Show node ID, role, genesis status, signing key |
+
+**Usage**:
+```bash
+# First node - generate genesis key
+$ maluwaf --genesis
+Genesis key generated.
+Genesis key (base64): VGhpcyBpcyBhIDMyLWJ5dGUgZ2VuZXNpcyBrZXkuLg==
+Add to config:
+  [mesh.node_identity]
+  genesis_key_base64 = "VGhpcyBpcyBhIDMyLWJ5dGUgZ2VuZXNpcyBrZXkuLg=="
+
+# Start first node (derives signing key, starts as global)
+$ maluwaf
+
+# Show node info
+$ maluwaf --show-node-info
+Node Information:
+================
+Mesh Role: GLOBAL
+Node ID: node-a1b2c3d4
+Signing Public Key: ABC123...
+
+# Second node - copy genesis from first node, add to config, start
+$ maluwaf
+```
+
+**Files Modified**:
+- `src/mesh/config_identity.rs` - Added `derive_signing_key_from_genesis()`
+- `src/mesh/config.rs` - Added `genesis_key_base64` field to `NodeIdentityConfig`
+- `src/mesh/config_mesh.rs` - Updated `load_node_identity()` to derive from genesis
+- `src/mesh/transport.rs` - Improved warning message when signing key unavailable
+- `src/config/main.rs` - Added `load_node_identity()` call during config load
+- `src/main.rs` - Added `--genesis` and `--show-node-info` flags
+
 ### 2.5 Node Capability Signaling & Origin Routing 🔄 IN PROGRESS
 
 **Overview**: Comprehensive fix for capability signaling, origin routing, and sensitive data protection.

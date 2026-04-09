@@ -216,6 +216,7 @@ RUST_LOG=debug cargo run -- --mesh-id node-1
 | 2.5.7b | Nginx-like Domain Routing | ✅ Complete |
 | 2.6 | TierKey Encryption for DHT | ✅ Complete |
 | 2.7 | TierKey Encryption for Transmission | ✅ Complete |
+| 2.8 | Global Node Bootstrap & Key Derivation | ✅ Complete |
 
 ## TierKey Encryption (Phase 2.6/2.7)
 
@@ -229,6 +230,60 @@ RUST_LOG=debug cargo run -- --mesh-id node-1
 - Session key from ML-KEM session used to derive transmission key via HKDF("maluwaf-tier-key-transmit")
 - `encrypt_for_transmission()` / `decrypt_for_transmission()` methods added
 - Both send and receive paths handle encrypted tier keys with fallback to plaintext
+
+## Global Node Bootstrap (Phase 2.8)
+
+**Purpose**: Global nodes derive their signing key from a shared genesis key, enabling secure bootstrap without manual key distribution.
+
+**Key Derivation**:
+```rust
+signing_key = HKDF-SHA256(
+    IKM = genesis_key (32 bytes),
+    info = "maluwaf-global-node-signing-key",
+    salt = node's public_key (32 bytes)
+)
+```
+
+**Why salt with public_key?** Ensures two nodes derive different signing keys even if they share the same identity.
+
+**Startup Behavior**:
+| Config | Result |
+|--------|--------|
+| No `genesis_key_base64` | Start as EDGE, warning logged |
+| `genesis_key_base64` set | Derive signing key, start as GLOBAL |
+| signing_key unavailable | Tier key encryption disabled, warning logged |
+
+**CLI Commands**:
+| Command | Description |
+|---------|-------------|
+| `--genesis` | Generate genesis key, print config snippet |
+| `--show-node-info` | Show node ID, role, genesis status, signing key |
+
+**Usage**:
+```bash
+# First node - generate genesis key
+$ maluwaf --genesis
+Genesis key generated. Add to config:
+  [mesh.node_identity]
+  genesis_key_base64 = "..."
+
+# Start first node (derives signing key, starts as global)
+$ maluwaf
+
+# Second node - copy genesis from first node, add to config, start
+$ maluwaf
+```
+
+**Verification on Global Node Announce**:
+- `GlobalNodeAnnounce(Add/Remove)` - verified with genesis signature
+- `GlobalNodeAnnounce(UpdateKeyExchange)` - verified with node's own public key (self-signed)
+
+**Files**:
+- `src/mesh/config_identity.rs` - `derive_signing_key_from_genesis()`
+- `src/mesh/config.rs` - `genesis_key_base64` field
+- `src/mesh/config_mesh.rs` - `load_node_identity()` derives from genesis
+- `src/config/main.rs` - calls `load_node_identity()` during config load
+- `src/main.rs` - `--genesis` and `--show-node-info` flags
 
 ## Origin Reachability System (Phase 2.5.6)
 

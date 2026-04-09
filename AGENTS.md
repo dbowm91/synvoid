@@ -656,7 +656,7 @@ This skill file documents the mesh networking and DHT system, which is complex a
 When working on mesh or DHT components, read `skills/malu_mesh.md` for context. The skill file contains:
 
 1. **Architecture diagrams** (via text descriptions)
-2. **Key derivation chains** (genesis → global_node_key → tier_key_master)
+2. **Key derivation chains** (genesis → signing_key → tier_key_master)
 3. **Phase status tracking** - what's completed vs deferred
 4. **Common issues** - known gaps and debug patterns
 5. **File reference table** - purpose of each mesh-related file
