@@ -265,6 +265,65 @@ impl VerificationTaskManager {
             instant.elapsed() < Duration::from_secs(self.config.penalty_ttl_secs)
         });
     }
+
+    pub fn process_pending_tasks(&self) {
+        let record_store_opt = self.record_store.read().clone();
+        let Some(record_store) = record_store_opt else {
+            return;
+        };
+
+        let pending = self.pending_tasks.read();
+        let task_keys: Vec<String> = pending.keys().cloned().collect();
+        drop(pending);
+
+        let now = safe_unix_timestamp();
+
+        for task_key in task_keys {
+            let parts: Vec<&str> = task_key.split(':').collect();
+            if parts.len() != 2 {
+                continue;
+            }
+            let upstream_id = parts[0];
+            let provider_node_id = parts[1];
+
+            let key = DhtKey::verification_task(upstream_id, provider_node_id);
+            let key_str = key.as_str();
+
+            if let Some(record) = record_store.get(&key_str) {
+                if let Ok(task) = serde_json::from_slice::<VerificationTask>(&record.value) {
+                    if task.status == VerificationStatus::Pending
+                        || task.status == VerificationStatus::InProgress
+                    {
+                        if task.expires_at < now {
+                            tracing::debug!(
+                                "Verification task expired for {}:{}",
+                                upstream_id,
+                                provider_node_id
+                            );
+                            let mut pending = self.pending_tasks.write();
+                            pending.remove(&task_key);
+                        } else if task.status == VerificationStatus::Pending {
+                            tracing::info!(
+                                "Processing pending verification task for {}:{}",
+                                upstream_id,
+                                provider_node_id
+                            );
+                            let mut pending = self.pending_tasks.write();
+                            pending.remove(&task_key);
+                            drop(pending);
+
+                            self.apply_penalty(upstream_id, provider_node_id);
+                        }
+                    }
+                }
+            } else {
+                let mut pending = self.pending_tasks.write();
+                pending.remove(&task_key);
+            }
+        }
+
+        self.cleanup_expired_tasks();
+    }
 }
 
 impl Default for VerificationTaskManager {

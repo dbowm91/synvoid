@@ -202,6 +202,23 @@ impl MeshTransportManager {
         self.topology.find_origin_by_mesh_id(mesh_id).await
     }
 
+    pub fn start_verification_processing(&self) {
+        if !self.config.role.is_global() {
+            tracing::debug!("Verification processing only runs on global nodes");
+            return;
+        }
+
+        let verification_manager = self.verification_manager.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                verification_manager.process_pending_tasks();
+            }
+        });
+        tracing::info!("Verification task processing started");
+    }
+
     pub fn set_quic_transport(&self, transport: QuicMeshTransport) {
         let mut t = self.quic_transport.write();
         *t = Some(Arc::new(transport));
