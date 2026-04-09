@@ -335,7 +335,11 @@ impl YaraRulesManager {
 
         if let Ok(bytes) = serde_json::to_vec(&manifest_value) {
             if record_store.store_and_announce(manifest_key_str.to_string(), bytes, 86400) {
-                tracing::debug!("Published YARA manifest to DHT: {} -> {}", manifest_key_str, version);
+                tracing::debug!(
+                    "Published YARA manifest to DHT: {} -> {}",
+                    manifest_key_str,
+                    version
+                );
             } else {
                 tracing::warn!("Failed to store YARA manifest in DHT");
             }
@@ -356,7 +360,11 @@ impl YaraRulesManager {
 
         if let Ok(bytes) = serde_json::to_vec(&rule_value) {
             if record_store.store_and_announce(rule_key_str.to_string(), bytes, 86400) {
-                tracing::info!("Published YARA rules to DHT: {} (version: {})", rule_key_str, version);
+                tracing::info!(
+                    "Published YARA rules to DHT: {} (version: {})",
+                    rule_key_str,
+                    version
+                );
             } else {
                 tracing::warn!("Failed to store YARA rules in DHT");
             }
@@ -384,25 +392,41 @@ impl YaraRulesManager {
         for record in &dht_records {
             if record.key.starts_with("yara_rules_manifest:") {
                 if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&record.value) {
-                    let manifest_node_id = value.get("node_id").and_then(|v| v.as_str()).unwrap_or("");
+                    let manifest_node_id =
+                        value.get("node_id").and_then(|v| v.as_str()).unwrap_or("");
                     if manifest_node_id == self.node_id {
                         continue;
                     }
 
-                    let peer_hash = value.get("content_hash").and_then(|v| v.as_str()).unwrap_or("");
+                    let peer_hash = value
+                        .get("content_hash")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
 
                     if let Some(ref local_h) = local_hash {
                         if local_h == peer_hash {
-                            tracing::debug!("DHT sync: peer {} has same rules hash {}", manifest_node_id, peer_hash);
+                            tracing::debug!(
+                                "DHT sync: peer {} has same rules hash {}",
+                                manifest_node_id,
+                                peer_hash
+                            );
                             continue;
                         }
                     }
 
                     let rule_key = DhtKey::yara_rule_content(peer_hash);
                     if let Some(rule_record) = record_store.get(&rule_key.as_str()) {
-                        if let Ok(rule_value) = serde_json::from_slice::<serde_json::Value>(&rule_record.value) {
-                            let rules_str = rule_value.get("rules").and_then(|v| v.as_str()).unwrap_or("");
-                            let version_str = rule_value.get("version").and_then(|v| v.as_str()).unwrap_or("");
+                        if let Ok(rule_value) =
+                            serde_json::from_slice::<serde_json::Value>(&rule_record.value)
+                        {
+                            let rules_str = rule_value
+                                .get("rules")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            let version_str = rule_value
+                                .get("version")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
 
                             if rules_str.is_empty() {
                                 continue;
@@ -441,8 +465,15 @@ impl YaraRulesManager {
                     };
 
                     if should_apply {
-                        tracing::info!("DHT sync: applying newer rules version {} from peer", new_version);
-                        self.apply_rules(new_rules, new_version.clone(), YaraRuleSource::MeshGlobal)?;
+                        tracing::info!(
+                            "DHT sync: applying newer rules version {} from peer",
+                            new_version
+                        );
+                        self.apply_rules(
+                            new_rules,
+                            new_version.clone(),
+                            YaraRuleSource::MeshGlobal,
+                        )?;
                     }
                 }
             }

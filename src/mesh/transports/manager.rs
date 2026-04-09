@@ -120,9 +120,13 @@ impl MeshTransportManager {
         let image_poison_cache =
             LruCache::with_expiry_duration_and_capacity(Duration::from_secs(300), 1000);
 
-        let node_id = config.node_id.clone().unwrap_or_else(|| "unknown".to_string());
+        let node_id = config
+            .node_id
+            .clone()
+            .unwrap_or_else(|| "unknown".to_string());
         let verification_config = VerificationConfig::default();
-        let verification_manager = Arc::new(VerificationTaskManager::new(node_id, verification_config));
+        let verification_manager =
+            Arc::new(VerificationTaskManager::new(node_id, verification_config));
 
         Self {
             config,
@@ -160,7 +164,10 @@ impl MeshTransportManager {
         self.verification_manager.clone()
     }
 
-    pub fn set_verification_record_store(&self, record_store: Arc<crate::mesh::dht::RecordStoreManager>) {
+    pub fn set_verification_record_store(
+        &self,
+        record_store: Arc<crate::mesh::dht::RecordStoreManager>,
+    ) {
         self.verification_manager.set_record_store(record_store);
     }
 
@@ -416,7 +423,11 @@ impl MeshTransportManager {
                     record_store.store_and_announce(key_str.to_string(), bytes, ttl);
                 }
             }
-            tracing::debug!("Announced {} capabilities for {} to DHT", capabilities.len(), node_id);
+            tracing::debug!(
+                "Announced {} capabilities for {} to DHT",
+                capabilities.len(),
+                node_id
+            );
         }
     }
 

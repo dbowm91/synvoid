@@ -406,7 +406,7 @@ Client requests example.com
 1. Implement handler for `OriginReachabilityReport` (requires protobuf message changes)
 2. Implement periodic verification task processing (background task)
 
-#### Phase 7: Multi-Origin Discovery & Load Balancing 🔶 IN PROGRESS
+#### Phase 7: Multi-Origin Discovery & Load Balancing ✅ COMPLETED
 
 **Files Modified**: `src/mesh/topology.rs`, `src/mesh/proxy.rs`, `src/mesh/dht/mod.rs`, `src/mesh/transport_org.rs`, `src/mesh/backend.rs`
 
@@ -496,25 +496,39 @@ Client requests example.com
 - Origin has no `accept_loop` to handle incoming streams from peers
 - This requires significant architectural work (see Phase 7b below)
 
-#### Phase 7b: Origin Local Backend Selection 🔄 ARCHITECTURAL GAP
+#### Phase 7b: Origin Local Backend Selection ✅ COMPLETED
 
-**Problem**: When origin receives proxied HTTP request from edge via QUIC stream, there is no handler to route based on Host header to the correct local backend.
+**Problem**: When origin receives proxied HTTP request from edge via QUIC stream, there was no handler to route based on Host header to the correct local backend.
 
-**Root Cause**: Mesh QUIC transport only connects to peers via `connect_to_peer()`, but does NOT accept incoming connections. Compare to `tunnel/quic/runtime.rs` which has an `accept_loop()` handling `endpoint.accept()`.
+**Root Cause**: Mesh QUIC transport only connected to peers via `connect_to_peer()`, but did NOT accept incoming connections. Compare to `tunnel/quic/runtime.rs` which has an `accept_loop()` handling `endpoint.accept()`.
 
-**What's needed**:
-1. Add QUIC server endpoint that accepts incoming connections from mesh peers
-2. Add `accept_loop` to handle incoming bidirectional streams
-3. Parse Host header from raw HTTP bytes
-4. Look up `mesh.local_upstreams` for matching domain
-5. Forward to appropriate local backend (e.g., `http://127.0.0.1:5001`)
+**Implementation Completed**:
 
-**Files to create/modify**:
-- `src/mesh/transports/mesh_quic_server.rs` - New QUIC server for incoming streams
-- `src/mesh/transport.rs` - Add server endpoint setup
-- `src/mesh/proxy.rs` - Add Host header extraction for local routing
+1. **Added QUIC server accept loop** (`src/mesh/transport.rs:1008-1035`):
+   - `MeshTransport::start()` now calls `runtime.start_server()` if a runtime is configured
+   - Spawns `mesh_accept_loop` to handle incoming peer connections
+   - `handle_incoming_peer_connection` performs the Hello/HelloAck handshake with incoming peers
 
-**Status**: 🔄 DEFERRED - Requires significant architectural work to add QUIC server for stream handling
+2. **Implemented HTTP stream detection** (`src/mesh/transport_peer.rs:1600-1631`):
+   - Modified `handle_peer_message` to detect HTTP vs mesh protocol
+   - Checks first byte for HTTP method indicators ('G', 'P', 'H', 'D', 'O', 'T', 'C')
+   - If HTTP detected, routes to `handle_http_proxy_stream`
+   - Otherwise treats as mesh protocol with 4-byte length prefix
+
+3. **Implemented HTTP stream forwarding to local backends** (`src/mesh/transport_peer.rs:1943-2051`):
+   - `handle_http_proxy_stream` parses Host header, looks up backend via `local_upstreams`
+   - Connects to backend via TCP and forwards raw HTTP bytes
+   - Streams response back on the QUIC send_stream
+
+4. **Added on-demand connection** (`src/mesh/transport.rs:2249-2270`):
+   - `proxy_http_request` now attempts on-demand connection if peer not in `peer_connections`
+   - Looks up peer address from topology and calls `connect_to_peer`
+
+**Files Modified**:
+- `src/mesh/transport.rs` - Added server accept loop, on-demand connection
+- `src/mesh/transport_peer.rs` - Added HTTP stream detection and forwarding
+
+**Status**: ✅ COMPLETED - Origin nodes now accept incoming HTTP streams and route to local backends
 
 #### Phase 8: Encrypt TierKey for DHT Storage
 
@@ -558,7 +572,7 @@ proto::TierKey {
 | 6 | Origin Reachability System | ✅ COMPLETED |
 | 7 | Multi-origin discovery & load balancing | ✅ COMPLETED |
 | 7b | Nginx-like domain routing | ✅ COMPLETED |
-| 8 | Origin local backend selection | 🔄 DEFERRED |
+| 8 | Origin local backend selection | ✅ COMPLETED |
 | 9 | TierKey DHT encryption | 🔄 DEFERRED |
 | 10 | TierKey transmission encryption | 🔄 DEFERRED |
 

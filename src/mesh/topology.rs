@@ -1500,7 +1500,10 @@ impl MeshTopology {
         origins.into_iter().collect()
     }
 
-    pub async fn find_verified_upstreams_for_site(&self, site: &str) -> Vec<crate::mesh::dht::VerifiedUpstream> {
+    pub async fn find_verified_upstreams_for_site(
+        &self,
+        site: &str,
+    ) -> Vec<crate::mesh::dht::VerifiedUpstream> {
         if let Some(cached) = self.verified_upstream_cache.get(site).await {
             return cached.clone();
         }
@@ -1517,7 +1520,9 @@ impl MeshTopology {
 
         for record in records {
             if record.key.starts_with("verified_upstream:") {
-                if let Ok(verified) = serde_json::from_slice::<crate::mesh::dht::VerifiedUpstream>(&record.value) {
+                if let Ok(verified) =
+                    serde_json::from_slice::<crate::mesh::dht::VerifiedUpstream>(&record.value)
+                {
                     if verified.upstream_id == site {
                         results.push(verified);
                     }
@@ -1525,7 +1530,9 @@ impl MeshTopology {
             }
         }
 
-        self.verified_upstream_cache.insert(site.to_string(), results.clone()).await;
+        self.verified_upstream_cache
+            .insert(site.to_string(), results.clone())
+            .await;
 
         results
     }

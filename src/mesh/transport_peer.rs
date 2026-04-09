@@ -1581,12 +1581,50 @@ impl MeshTransport {
         recv_stream: &mut RecvStream,
         topology: &MeshTopology,
     ) -> Result<(), MeshTransportError> {
-        let mut len_buf = [0u8; 4];
+        let mut first_byte = [0u8; 1];
+        recv_stream
+            .read_exact(&mut first_byte)
+            .await
+            .map_err(|e| MeshTransportError::ReceiveFailed(e.to_string()))?;
+
+        let http_methods = [
+            b'G', // GET
+            b'P', // POST, PUT, PATCH
+            b'H', // HTTP/
+            b'D', // DELETE
+            b'O', // OPTIONS
+            b'T', // TRACE
+            b'C', // CONNECT
+        ];
+
+        if http_methods.contains(&first_byte[0]) {
+            let mut remainder = String::new();
+            let mut total_header_buf = vec![first_byte[0]];
+
+            let mut reader = tokio::io::BufReader::with_capacity(4096, recv_stream);
+            use tokio::io::AsyncReadExt;
+            reader
+                .read_to_string(&mut remainder)
+                .await
+                .map_err(|e| MeshTransportError::ReceiveFailed(e.to_string()))?;
+            total_header_buf.extend_from_slice(remainder.as_bytes());
+
+            let http_data = total_header_buf.clone();
+            let header_str = String::from_utf8_lossy(&total_header_buf);
+
+            return self
+                .handle_http_proxy_stream(&header_str, http_data, send_stream, topology)
+                .await;
+        }
+
+        let mut len_buf = [0u8; 3];
         recv_stream
             .read_exact(&mut len_buf)
             .await
             .map_err(|e| MeshTransportError::ReceiveFailed(e.to_string()))?;
-        let len = u32::from_be_bytes(len_buf) as usize;
+
+        let full_len_buf = [first_byte[0], len_buf[0], len_buf[1], len_buf[2]];
+        let len = u32::from_be_bytes(full_len_buf) as usize;
         if len > MAX_MESSAGE_SIZE {
             return Err(MeshTransportError::ReceiveFailed(format!(
                 "Message too large: {} bytes (max {})",
@@ -1662,8 +1700,8 @@ impl MeshTransport {
                 action,
                 signature: _,
             } => {
-                use crate::mesh::protocol::AnnounceAction;
                 use crate::mesh::dht::keys::DhtKey;
+                use crate::mesh::protocol::AnnounceAction;
 
                 let upstream_id = upstream_id.to_string();
                 let key = DhtKey::upstream(&upstream_id);
@@ -1679,13 +1717,20 @@ impl MeshTransport {
                             if let Ok(bytes) = serde_json::to_vec(&value) {
                                 let ttl = 300; // 5 minute TTL
                                 record_store.store_and_announce(key_str.to_string(), bytes, ttl);
-                                tracing::debug!("Stored upstream {} in DHT (action: {:?})", upstream_id, action);
+                                tracing::debug!(
+                                    "Stored upstream {} in DHT (action: {:?})",
+                                    upstream_id,
+                                    action
+                                );
                             }
                         }
                     }
                     AnnounceAction::Remove => {
                         // Record will expire via TTL - no explicit removal needed
-                        tracing::debug!("Upstream {} announced removed (expires via TTL)", upstream_id);
+                        tracing::debug!(
+                            "Upstream {} announced removed (expires via TTL)",
+                            upstream_id
+                        );
                     }
                 }
             }
@@ -1899,6 +1944,118 @@ impl MeshTransport {
             }
         }
 
+        None
+    }
+
+    async fn handle_http_proxy_stream(
+        &self,
+        _header_str: &str,
+        http_data: Vec<u8>,
+        send_stream: &mut SendStream,
+        topology: &MeshTopology,
+    ) -> Result<(), MeshTransportError> {
+        let host = self.extract_host_from_http(&http_data);
+        let upstream_id = match host {
+            Some(h) => format!("http://{}", h),
+            None => {
+                return Err(MeshTransportError::ReceiveFailed(
+                    "No Host header found in HTTP request".to_string(),
+                ));
+            }
+        };
+
+        let upstream_info = topology.get_upstream_info(&upstream_id).await;
+        let backend_url = match upstream_info {
+            Some(info) => info.upstream_url,
+            None => {
+                tracing::debug!("No local backend found for {}", upstream_id);
+                let not_found = b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n";
+                send_stream
+                    .write_all(not_found)
+                    .await
+                    .map_err(|e| MeshTransportError::SendFailed(e.to_string()))?;
+                let _ = send_stream.finish();
+                return Ok(());
+            }
+        };
+
+        let parsed_url = match url::Url::parse(&backend_url) {
+            Ok(u) => u,
+            Err(e) => {
+                tracing::warn!("Failed to parse backend URL {}: {}", backend_url, e);
+                let error_resp = b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n";
+                send_stream
+                    .write_all(error_resp)
+                    .await
+                    .map_err(|e| MeshTransportError::SendFailed(e.to_string()))?;
+                let _ = send_stream.finish();
+                return Ok(());
+            }
+        };
+
+        let host_str = parsed_url.host_str().unwrap_or("127.0.0.1");
+        let port = parsed_url.port().unwrap_or(80);
+        let addr = format!("{}:{}", host_str, port);
+
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpStream;
+
+        let mut backend_conn = match TcpStream::connect(&addr).await {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!("Failed to connect to backend {}: {}", addr, e);
+                let bad_gateway = b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n";
+                send_stream
+                    .write_all(bad_gateway)
+                    .await
+                    .map_err(|e| MeshTransportError::SendFailed(e.to_string()))?;
+                let _ = send_stream.finish();
+                return Ok(());
+            }
+        };
+
+        backend_conn
+            .write_all(&http_data)
+            .await
+            .map_err(|e| MeshTransportError::SendFailed(format!("Backend write failed: {}", e)))?;
+
+        let mut resp_buf = vec![0u8; 65536];
+        loop {
+            let n = backend_conn.read(&mut resp_buf).await.map_err(|e| {
+                MeshTransportError::ReceiveFailed(format!("Backend read failed: {}", e))
+            })?;
+            if n == 0 {
+                break;
+            }
+            send_stream
+                .write_all(&resp_buf[..n])
+                .await
+                .map_err(|e| MeshTransportError::SendFailed(e.to_string()))?;
+        }
+
+        let _ = send_stream.finish();
+
+        Ok(())
+    }
+
+    fn extract_host_from_http(&self, http_data: &[u8]) -> Option<String> {
+        let header_str = match String::from_utf8(http_data.to_vec()) {
+            Ok(s) => s,
+            Err(_) => return None,
+        };
+
+        for line in header_str.lines() {
+            let line_lower = line.to_lowercase();
+            if line_lower.starts_with("host:") {
+                let host_part = line
+                    .split(':')
+                    .skip(1)
+                    .collect::<String>()
+                    .trim()
+                    .to_string();
+                return Some(host_part);
+            }
+        }
         None
     }
 }

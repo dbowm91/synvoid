@@ -433,11 +433,9 @@ impl MeshProxy {
             .or_else(|| req.headers().get("host").and_then(|h| h.to_str().ok()))
             .ok_or_else(|| MeshProxyError::UpstreamNotFound("No host found".to_string()))?;
 
-        let port = uri.port_u16().unwrap_or_else(|| {
-            match uri.scheme_str() {
-                Some("https") => 443,
-                _ => 80,
-            }
+        let port = uri.port_u16().unwrap_or_else(|| match uri.scheme_str() {
+            Some("https") => 443,
+            _ => 80,
         });
 
         let upstream_id = format!("http://{}:{}", host, port);
@@ -572,13 +570,17 @@ impl MeshProxy {
         }
     }
 
-    fn weighted_shuffle_providers(&self, providers: Vec<crate::mesh::protocol::ProviderInfo>) -> Vec<crate::mesh::protocol::ProviderInfo> {
+    fn weighted_shuffle_providers(
+        &self,
+        providers: Vec<crate::mesh::protocol::ProviderInfo>,
+    ) -> Vec<crate::mesh::protocol::ProviderInfo> {
         if providers.len() <= 1 {
             return providers;
         }
 
         let total_score: f64 = providers.iter().map(|p| p.score.max(0.01)).sum();
-        let weighted: Vec<(usize, f64)> = providers.iter()
+        let weighted: Vec<(usize, f64)> = providers
+            .iter()
             .enumerate()
             .map(|(i, p)| (i, p.score.max(0.01)))
             .collect();

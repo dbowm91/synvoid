@@ -576,7 +576,7 @@ rrsig.extend_from_slice(&timestamp.to_be_bytes());
 
 **Critical insight**: `make_mesh_upstream_id()` was removed from routing flow. It still exists in `config_mesh.rs` for potential other uses but should NOT be used for upstream routing.
 
-**Known gap**: Origin local backend selection (routing from Host header to local backend) requires separate work (Phase 8). `proxy_http_request` sends raw HTTP via QUIC bidirectional stream but origin has no `accept_loop` to handle incoming streams. See `tunnel/quic/runtime.rs` for the pattern of how QUIC servers handle incoming connections and streams.
+**Fixed**: Origin local backend selection is now implemented. Origin nodes accept incoming QUIC streams and route HTTP requests to local backends based on Host header. See `src/mesh/transport.rs:mesh_accept_loop` and `src/mesh/transport_peer.rs:handle_http_proxy_stream`.
 
 ### Plan Verification
 

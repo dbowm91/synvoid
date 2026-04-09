@@ -422,7 +422,11 @@ impl MeshTransport {
                     record_store.store_and_announce(key_str.to_string(), bytes, ttl);
                 }
             }
-            tracing::debug!("Announced {} capabilities for {} to DHT", capabilities.len(), node_id);
+            tracing::debug!(
+                "Announced {} capabilities for {} to DHT",
+                capabilities.len(),
+                node_id
+            );
         }
     }
 
@@ -1003,7 +1007,284 @@ impl MeshTransport {
             });
         }
 
+        if let Some(ref runtime) = self.runtime {
+            let incoming = runtime
+                .start_server()
+                .await
+                .map_err(|e| MeshTransportError::ConnectionFailed(e.to_string()))?;
+            let transport = Arc::new(self.clone_for_maintenance());
+            let shutdown_rx = shutdown_tx.subscribe();
+            tokio::spawn(async move {
+                Self::mesh_accept_loop(transport, incoming, shutdown_rx).await;
+            });
+        }
+
         tracing::info!("Mesh transport started");
+        Ok(())
+    }
+
+    async fn mesh_accept_loop(
+        self: Arc<MeshTransport>,
+        mut incoming: mpsc::Receiver<crate::tunnel::quic::runtime::IncomingConnection>,
+        mut shutdown_rx: broadcast::Receiver<()>,
+    ) {
+        loop {
+            tokio::select! {
+                Some(incoming_conn) = incoming.recv() => {
+                    let transport = self.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = transport.handle_incoming_peer_connection(incoming_conn).await {
+                            tracing::warn!("Failed to handle incoming peer connection: {}", e);
+                        }
+                    });
+                }
+                _ = shutdown_rx.recv() => {
+                    tracing::info!("Mesh accept loop shutting down");
+                    break;
+                }
+            }
+        }
+    }
+
+    async fn handle_incoming_peer_connection(
+        &self,
+        incoming: crate::tunnel::quic::runtime::IncomingConnection,
+    ) -> Result<(), MeshTransportError> {
+        let remote_addr = incoming.remote_addr;
+        let connection = incoming.connection;
+
+        tracing::debug!("Accepted incoming connection from {}", remote_addr);
+
+        let (mut send_stream, mut recv_stream) = connection
+            .accept_bi()
+            .await
+            .map_err(|e| MeshTransportError::ReceiveFailed(format!("Accept bi failed: {}", e)))?;
+
+        let mut len_buf = [0u8; 4];
+        recv_stream
+            .read_exact(&mut len_buf)
+            .await
+            .map_err(|e| MeshTransportError::ReceiveFailed(format!("Read length failed: {}", e)))?;
+        let len = u32::from_be_bytes(len_buf) as usize;
+        if len > MAX_MESSAGE_SIZE || len == 0 {
+            return Err(MeshTransportError::ReceiveFailed(format!(
+                "Invalid message length: {} (max {})",
+                len, MAX_MESSAGE_SIZE
+            )));
+        }
+        let mut hello_buf = vec![0u8; len];
+        recv_stream
+            .read_exact(&mut hello_buf)
+            .await
+            .map_err(|e| MeshTransportError::ReceiveFailed(format!("Read hello failed: {}", e)))?;
+
+        let hello_msg = MeshMessage::decode(&hello_buf).ok_or_else(|| {
+            MeshTransportError::ReceiveFailed("Failed to decode Hello message".to_string())
+        })?;
+
+        let (
+            peer_node_id,
+            peer_role,
+            peer_capabilities,
+            peer_upstreams,
+            peer_quic_port,
+            peer_wireguard_port,
+            trusted_status,
+        ) = match hello_msg {
+            MeshMessage::Hello {
+                version,
+                node_id,
+                role,
+                capabilities,
+                upstreams,
+                auth_token,
+                network_id,
+                global_node_key,
+                timestamp,
+                nonce: _,
+                is_trusted,
+                quic_port,
+                wireguard_port,
+                public_key,
+                pow_nonce: _,
+                pow_public_key: _,
+            } => {
+                if version != MESH_MESSAGE_VERSION {
+                    return Err(MeshTransportError::VersionMismatch {
+                        expected: MESH_MESSAGE_VERSION,
+                        got: version,
+                    });
+                }
+
+                if let Some(ref expected_token) = auth_token {
+                    if !self
+                        .auth_keys
+                        .read()
+                        .values()
+                        .any(|k| k.as_slice() == expected_token.as_bytes())
+                    {
+                        tracing::warn!(
+                            "Authentication failed for node {}: invalid auth token",
+                            node_id
+                        );
+                        return Err(MeshTransportError::AuthFailed(
+                            "Invalid auth token".to_string(),
+                        ));
+                    }
+                }
+
+                if let Some(ref our_network) = self.config.network_id {
+                    if let Some(ref peer_network) = network_id {
+                        if peer_network.as_str() != our_network.as_str() {
+                            tracing::warn!("Network ID mismatch from {}", node_id);
+                            return Err(MeshTransportError::AuthFailed(
+                                "Network ID mismatch".to_string(),
+                            ));
+                        }
+                    }
+                }
+
+                if role.is_global() {
+                    let authorized_keys: Vec<String> = self
+                        .config
+                        .seeds
+                        .iter()
+                        .filter_map(|seed| seed.public_key.clone())
+                        .collect();
+                    let peer_pk = public_key.as_ref().map(|pk| pk.as_str());
+                    let peer_sig = global_node_key.as_ref().map(|sk| sk.as_str());
+                    if let Err(e) = crate::mesh::peer_auth::validate_peer_role(
+                        &role,
+                        &authorized_keys,
+                        &node_id,
+                        peer_pk,
+                        peer_sig,
+                        timestamp.unwrap_or(0),
+                        300,
+                    ) {
+                        tracing::warn!("Global node verification failed for {}: {}", node_id, e);
+                        return Err(MeshTransportError::AuthFailed(e));
+                    }
+                }
+
+                let upstreams_map: HashMap<String, crate::mesh::protocol::UpstreamInfo> =
+                    upstreams.into_iter().collect();
+
+                (
+                    node_id.to_string(),
+                    role,
+                    capabilities,
+                    upstreams_map,
+                    quic_port,
+                    wireguard_port,
+                    is_trusted,
+                )
+            }
+            _ => {
+                return Err(MeshTransportError::UnexpectedMessage);
+            }
+        };
+
+        let session_id = uuid::Uuid::new_v4().to_string();
+        let quic_port = self.get_quic_port().map(|p| p as u32);
+        let wireguard_port = self.wireguard_port().map(|p| p as u32);
+        let upstreams = self.topology.get_local_upstreams().await;
+        let upstreams_internal: HashMap<String, crate::mesh::protocol::UpstreamInfo> = upstreams
+            .into_iter()
+            .map(|u| (u.upstream_id.clone(), u))
+            .collect();
+
+        let hello_ack = MeshMessage::HelloAck {
+            version: MESH_MESSAGE_VERSION,
+            node_id: self.config.node_id().into(),
+            role: self.config.role,
+            session_id: session_id.clone().into(),
+            capabilities: crate::mesh::protocol::MeshCapabilities::from_config(
+                &self.config,
+                self.config.role,
+            ),
+            upstreams: upstreams_internal.clone(),
+            auth_token: None,
+            network_id: self.config.network_id.clone().map(|s| s.into()),
+            global_node_key: None,
+            timestamp: Some(MeshMessage::generate_timestamp()),
+            nonce: None,
+            is_trusted: self.config.is_trusted_node(),
+            quic_port,
+            wireguard_port,
+            public_key: self.config.signing_public_key().map(|s| s.into()),
+        };
+
+        let encoded = hello_ack
+            .encode()
+            .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
+        let len = (encoded.len() as u32).to_be_bytes();
+        send_stream
+            .write_all(&len)
+            .await
+            .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
+        send_stream
+            .write_all(&encoded)
+            .await
+            .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
+
+        let peer_info = crate::mesh::protocol::MeshPeerInfo {
+            node_id: peer_node_id.clone(),
+            address: remote_addr.to_string(),
+            role: peer_role,
+            capabilities: peer_capabilities.clone(),
+            is_global: peer_role.is_global(),
+            latency_ms: None,
+            upstreams: peer_upstreams.keys().cloned().collect(),
+            is_trusted: trusted_status,
+            quic_port: peer_quic_port,
+            wireguard_port: peer_wireguard_port,
+            advertised_port: peer_quic_port.or(peer_wireguard_port),
+            dns_serving_healthy: peer_capabilities.can_serve_dns,
+        };
+
+        let peer_connection = crate::mesh::transport_types::MeshPeerConnection {
+            node_id: peer_node_id.clone(),
+            address: remote_addr.to_string(),
+            connection: connection.clone(),
+            session_id: session_id.clone(),
+            connected_at: Instant::now(),
+            last_seen: Instant::now(),
+            role: peer_role,
+            upstreams: peer_upstreams.keys().cloned().collect(),
+            is_trusted: trusted_status,
+        };
+
+        self.topology
+            .add_peer(
+                peer_info.clone(),
+                crate::mesh::topology::PeerStatus::Healthy,
+            )
+            .await;
+        self.peer_connections
+            .insert(session_id.clone(), peer_connection);
+
+        if let Some(ref rm) = self.routing_manager {
+            if rm.is_enabled() {
+                self.dht_on_peer_connected(&peer_node_id, &remote_addr.to_string(), peer_role)
+                    .await;
+            }
+        }
+
+        tracing::info!(
+            "Accepted mesh peer connection: {} ({})",
+            peer_node_id,
+            remote_addr
+        );
+
+        let transport = self.clone();
+        let topo = self.topology.clone();
+        tokio::spawn(async move {
+            transport
+                .peer_message_loop(session_id, peer_node_id, connection, topo)
+                .await;
+        });
+
         Ok(())
     }
 
@@ -1998,10 +2279,32 @@ impl MeshTransport {
     {
         use http_body_util::BodyExt;
 
-        let peer = self
-            .peer_connections
-            .get(peer_id)
-            .ok_or_else(|| MeshTransportError::PeerNotFound(peer_id.to_string()))?;
+        let peer = match self.peer_connections.get(peer_id) {
+            Some(p) => p,
+            None => {
+                if let Some(peer_state) = self.topology.get_peer(peer_id).await {
+                    tracing::debug!(
+                        "Peer {} not connected, attempting on-demand connection to {}",
+                        peer_id,
+                        peer_state.address
+                    );
+                    let peer_config = MeshPeerConfig {
+                        address: peer_state.address.clone(),
+                        auth_token: None,
+                    };
+                    if self.connect_to_peer(&peer_config).await.is_ok() {
+                        tracing::info!(
+                            "On-demand connection established to peer {} at {}",
+                            peer_id,
+                            peer_state.address
+                        );
+                    }
+                }
+                self.peer_connections
+                    .get(peer_id)
+                    .ok_or_else(|| MeshTransportError::PeerNotFound(peer_id.to_string()))?
+            }
+        };
 
         let (mut send_stream, mut recv_stream) = peer
             .connection
