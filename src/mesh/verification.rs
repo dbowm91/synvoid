@@ -266,6 +266,41 @@ impl VerificationTaskManager {
         });
     }
 
+    pub fn record_verification_result(
+        &self,
+        upstream_id: &str,
+        verifying_node_id: &str,
+        verified: bool,
+    ) {
+        tracing::info!(
+            "Verification result for {} from node {}: verified={}",
+            upstream_id,
+            verifying_node_id,
+            verified
+        );
+
+        let _record_store_opt = self.record_store.read().clone();
+        let Some(_record_store) = _record_store_opt else {
+            tracing::debug!("Record store not available for verification result");
+            return;
+        };
+
+        if verified {
+            tracing::debug!(
+                "Upstream {} verified reachable by node {}",
+                upstream_id,
+                verifying_node_id
+            );
+        } else {
+            tracing::warn!(
+                "Upstream {} reported unreachable by node {}",
+                upstream_id,
+                verifying_node_id
+            );
+            self.apply_penalty(upstream_id, verifying_node_id);
+        }
+    }
+
     pub fn process_pending_tasks(&self) {
         let record_store_opt = self.record_store.read().clone();
         let Some(record_store) = record_store_opt else {

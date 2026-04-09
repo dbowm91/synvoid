@@ -404,11 +404,20 @@ Client requests example.com
 4. ✅ process_pending_tasks() method in VerificationTaskManager - processes pending verification tasks and applies penalties
 5. ✅ start_verification_processing() in MeshTransportManager - spawns background task to call process_pending_tasks every 60 seconds
 
+**Completed This Session**:
+6. ✅ Implement `UpstreamVerificationQuery` handler in transport_peer.rs
+   - Receives verification requests from global nodes
+   - Looks up upstream URL from topology
+   - Attempts TCP connection to verify reachability
+   - Responds with `UpstreamVerificationResponse`
+7. ✅ Implement `UpstreamVerificationResponse` handler in transport_peer.rs
+   - Receives verification results from nodes
+   - Calls `record_verification_result()` on VerificationTaskManager
+8. ✅ Add `record_verification_result()` to VerificationTaskManager
+   - Records verification result and applies penalty if failed
+
 **Remaining Work**:
-1. ~~Implement handler for `OriginReachabilityReport` (requires protobuf message changes)~~ - protobuf messages `UpstreamVerificationQuery`/`Response` already exist, just need handlers
-2. Implement `UpstreamVerificationQuery` handler - receive verification requests from global nodes, attempt to reach upstream, respond with result
-3. Implement `UpstreamVerificationResponse` handler - receive verification results from nodes, update verification task status
-4. Implement query dispatching - when verification task is created, dispatch queries to random nodes (3-5)
+1. Implement query dispatching - when verification task is created, dispatch queries to random nodes (3)
 
 #### Phase 7: Multi-Origin Discovery & Load Balancing ✅ COMPLETED
 

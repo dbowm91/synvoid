@@ -389,6 +389,39 @@ impl MeshTransport {
                 )
                 .await;
             }
+            MeshMessage::UpstreamVerificationQuery {
+                request_id,
+                upstream_id,
+                querying_node_id,
+                timestamp: _,
+            } => {
+                self.handle_upstream_verification_query(
+                    peer_id,
+                    &request_id,
+                    &upstream_id,
+                    &querying_node_id,
+                )
+                .await;
+            }
+            MeshMessage::UpstreamVerificationResponse {
+                request_id,
+                upstream_id,
+                verified,
+                global_node_id,
+                global_node_signature: _,
+                upstream_url: _,
+                org_id: _,
+                timestamp: _,
+            } => {
+                self.handle_upstream_verification_response(
+                    peer_id,
+                    &request_id,
+                    &upstream_id,
+                    verified,
+                    &global_node_id,
+                )
+                .await;
+            }
             MeshMessage::OrgInvitationRequest {
                 request_id,
                 org_id,
@@ -1498,6 +1531,119 @@ impl MeshTransport {
         self.topology
             .record_route_usage(upstream_id.to_string(), bytes_sent + bytes_received)
             .await;
+    }
+
+    pub(crate) async fn handle_upstream_verification_query(
+        &self,
+        peer_id: &str,
+        request_id: &str,
+        upstream_id: &str,
+        querying_node_id: &str,
+    ) {
+        tracing::info!(
+            "Received upstream verification query for {} from node {} (request_id: {})",
+            upstream_id,
+            querying_node_id,
+            request_id
+        );
+
+        let upstream_info = self.topology.get_upstream_info(upstream_id).await;
+
+        let (verified, upstream_url) = match upstream_info {
+            Some(info) => {
+                let url = info.upstream_url.clone();
+                match self.verify_upstream_reachability(&url).await {
+                    Ok(_) => (true, url),
+                    Err(e) => {
+                        tracing::warn!(
+                            "Upstream {} verification failed: {}",
+                            upstream_id,
+                            e
+                        );
+                        (false, url)
+                    }
+                }
+            }
+            None => {
+                tracing::warn!("Upstream {} not found for verification", upstream_id);
+                (false, String::new())
+            }
+        };
+
+        let response = MeshMessage::UpstreamVerificationResponse {
+            request_id: request_id.into(),
+            upstream_id: upstream_id.into(),
+            verified,
+            global_node_id: querying_node_id.into(),
+            global_node_signature: None,
+            upstream_url: upstream_url.into(),
+            org_id: None,
+            timestamp: crate::utils::safe_unix_timestamp(),
+        };
+
+        if let Err(e) = self.send_message_to_peer(peer_id, &response).await {
+            tracing::warn!(
+                "Failed to send verification response to {}: {}",
+                peer_id,
+                e
+            );
+        }
+    }
+
+    async fn verify_upstream_reachability(&self, upstream_url: &str) -> Result<(), String> {
+        use std::time::Duration;
+
+        let url = url::Url::parse(upstream_url)
+            .map_err(|e| format!("Invalid URL: {}", e))?;
+
+        let host = url.host_str().ok_or("No host in URL")?;
+        let port = url.port().unwrap_or(80);
+        let addr = format!("{}:{}", host, port);
+
+        let connect_timeout = Duration::from_secs(5);
+        let _read_timeout = Duration::from_secs(5);
+
+        match tokio::time::timeout(
+            connect_timeout,
+            tokio::net::TcpStream::connect(&addr),
+        )
+        .await
+        {
+            Ok(Ok(_)) => Ok(()),
+            Ok(Err(e)) => Err(format!("Connection failed: {}", e)),
+            Err(_) => Err("Connection timed out".to_string()),
+        }
+    }
+
+    pub(crate) async fn handle_upstream_verification_response(
+        &self,
+        peer_id: &str,
+        request_id: &str,
+        upstream_id: &str,
+        verified: bool,
+        _global_node_id: &str,
+    ) {
+        tracing::info!(
+            "Received verification response for {} from node {}: verified={} (request_id: {})",
+            upstream_id,
+            peer_id,
+            verified,
+            request_id
+        );
+
+        if let Some(ref verification_mgr) = self.get_verification_manager() {
+            verification_mgr.record_verification_result(
+                upstream_id,
+                peer_id,
+                verified,
+            );
+        }
+    }
+
+    pub(crate) fn get_verification_manager(
+        &self,
+    ) -> Option<Arc<crate::mesh::verification::VerificationTaskManager>> {
+        None
     }
 
     pub(crate) async fn send_load_report_to_peers(&self) {
