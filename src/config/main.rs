@@ -163,10 +163,13 @@ impl MainConfig {
             }
         }
 
-        // Load global node keys if mesh is configured
+        // Load global node keys and node identity if mesh is configured
         if let Some(ref mut mesh_config) = config.tunnel.mesh {
             if let Err(e) = mesh_config.load_global_node_keys() {
                 tracing::warn!("Failed to load global node keys: {}", e);
+            }
+            if let Err(e) = mesh_config.load_node_identity() {
+                tracing::warn!("Failed to load node identity: {}", e);
             }
         }
 

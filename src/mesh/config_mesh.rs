@@ -77,7 +77,35 @@ impl MeshConfig {
     }
 
     pub fn load_node_identity(&mut self) -> Result<(), String> {
-        self.node_identity.load_or_generate()
+        if let Some(ref genesis_b64) = self.node_identity.genesis_key_base64 {
+            use base64::Engine;
+            let genesis_bytes = URL_SAFE_NO_PAD
+                .decode(genesis_b64)
+                .map_err(|e| format!("Invalid genesis key base64: {}", e))?;
+
+            if genesis_bytes.len() != 32 {
+                return Err("Genesis key must be 32 bytes".to_string());
+            }
+
+            let mut genesis_key = [0u8; 32];
+            genesis_key.copy_from_slice(&genesis_bytes);
+
+            let public_key = crate::mesh::cert::get_ed25519_public_key(&genesis_key)
+                .ok_or("Failed to derive public key from genesis key")?;
+
+            self.node_identity
+                .derive_signing_key_from_genesis(&genesis_key, &public_key)
+        } else {
+            self.node_identity.load_or_generate()
+        }
+    }
+
+    pub fn has_genesis_key(&self) -> bool {
+        self.node_identity.genesis_key_base64.is_some()
+    }
+
+    pub fn set_genesis_key(&mut self, genesis_key_base64: String) {
+        self.node_identity.genesis_key_base64 = Some(genesis_key_base64);
     }
 
     pub fn load_global_node_keys(&mut self) -> Result<(), String> {

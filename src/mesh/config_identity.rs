@@ -196,6 +196,44 @@ impl NodeIdentityConfig {
             .unwrap_or_else(|| ADMIN_ORG_ID.to_string())
     }
 
+    pub fn derive_signing_key_from_genesis(
+        &mut self,
+        genesis_key: &[u8; 32],
+        public_key: &[u8],
+    ) -> Result<(), String> {
+        use hkdf::Hkdf;
+        use sha2::Sha256;
+
+        const INFO: &[u8] = b"maluwaf-global-node-signing-key";
+
+        let hk = Hkdf::<Sha256>::new(Some(genesis_key), INFO);
+        let mut okm = [0u8; 32];
+
+        hk.expand(public_key, &mut okm)
+            .map_err(|e| format!("HKDF expand failed: {}", e))?;
+
+        self.private_key = Some(okm.to_vec());
+        self.public_key = Some(derive_node_id_hash(&okm));
+        self.node_id = Some(derive_node_id(&okm));
+
+        if let Some(ref path) = self.private_key_path {
+            if let Some(ref key) = self.private_key {
+                if let Some(parent) = std::path::Path::new(path).parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                std::fs::write(path, key)
+                    .map_err(|e| format!("Failed to write signing key: {}", e))?;
+            }
+        }
+
+        tracing::info!(
+            "Derived signing key from genesis key. Node ID: {:?}",
+            self.node_id
+        );
+
+        Ok(())
+    }
+
     pub fn load_or_generate(&mut self) -> Result<(), String> {
         self.load_or_generate_with_passphrase(None)
     }

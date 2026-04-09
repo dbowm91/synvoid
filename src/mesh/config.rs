@@ -1234,6 +1234,8 @@ pub struct NodeIdentityConfig {
     pub is_trusted: bool,
     #[serde(default)]
     pub genesis_org_id: Option<String>,
+    #[serde(default)]
+    pub genesis_key_base64: Option<String>,
 }
 
 fn derive_node_id_hash(private_key: &[u8]) -> Vec<u8> {

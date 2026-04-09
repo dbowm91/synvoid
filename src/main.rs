@@ -141,6 +141,15 @@ struct Args {
 
     #[arg(long, help = "Export OpenAPI spec as JSON and exit")]
     export_openapi: bool,
+
+    #[arg(long, help = "Generate a new genesis key for first global node setup")]
+    genesis: bool,
+
+    #[arg(
+        long,
+        help = "Show current node information (node ID, public key, genesis status)"
+    )]
+    show_node_info: bool,
 }
 
 fn main() {
@@ -162,6 +171,92 @@ fn main() {
             "{}",
             serde_json::to_string_pretty(&schema).unwrap_or_default()
         );
+        std::process::exit(0);
+    }
+
+    if args.genesis {
+        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        use base64::Engine;
+        use maluwaf::mesh::config::GenesisKeyConfig;
+
+        let genesis = GenesisKeyConfig::generate();
+        let genesis_b64 = URL_SAFE_NO_PAD.encode(genesis.private_key.unwrap());
+
+        println!("Genesis key generated successfully.");
+        println!();
+        println!("IMPORTANT: This genesis key is the root of trust for your mesh network.");
+        println!("          Store it securely - it will be needed to add additional global nodes.");
+        println!();
+        println!("Genesis key (base64): {}", genesis_b64);
+        println!();
+        println!("To use this genesis key, add the following to your config/main.toml:");
+        println!();
+        println!("  [mesh.node_identity]");
+        println!("  genesis_key_base64 = \"{}\"", genesis_b64);
+        println!();
+
+        std::process::exit(0);
+    }
+
+    if args.show_node_info {
+        use maluwaf::config::MainConfig;
+
+        let config_path = args
+            .config_path
+            .unwrap_or_else(|| std::path::PathBuf::from("config"));
+        let main_config_path = config_path.join("main.toml");
+
+        if !main_config_path.exists() {
+            println!(
+                "No config found at {}. Run with --genesis first to generate genesis key.",
+                main_config_path.display()
+            );
+            std::process::exit(1);
+        }
+
+        match MainConfig::from_file(&main_config_path) {
+            Ok(config) => {
+                println!("Node Information:");
+                println!("================");
+                println!();
+
+                if let Some(ref mesh) = config.tunnel.mesh {
+                    println!("Mesh Role: {:?}", mesh.role);
+                    println!("Node ID: {}", mesh.node_id());
+                    println!("Router ID: {}", mesh.router_id());
+
+                    if let Some(ref genesis) = mesh.genesis_key {
+                        println!(
+                            "Genesis Key: configured (public: {:?})",
+                            genesis
+                                .get_public_key()
+                                .map(|pk| format!("{}...", &pk[..16.min(pk.len())]))
+                        );
+                    } else {
+                        println!("Genesis Key: NOT configured");
+                    }
+
+                    if mesh.node_identity.genesis_key_base64.is_some() {
+                        println!("Genesis Key Base64: configured in node_identity");
+                    }
+
+                    if mesh.has_signing_key() {
+                        if let Some(ref pk) = mesh.signing_public_key() {
+                            println!("Signing Public Key: {}...", &pk[..16.min(pk.len())]);
+                        }
+                    } else {
+                        println!("Signing Key: NOT configured (edge/origin node without genesis)");
+                    }
+                } else {
+                    println!("Mesh: NOT enabled");
+                }
+            }
+            Err(e) => {
+                eprintln!("Error loading config: {}", e);
+                std::process::exit(1);
+            }
+        }
+
         std::process::exit(0);
     }
 

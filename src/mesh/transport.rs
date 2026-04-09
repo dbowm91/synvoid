@@ -307,7 +307,10 @@ impl MeshTransport {
                     None
                 }
             } else {
-                tracing::warn!("Global node has no signing key - tier key DHT encryption disabled");
+                tracing::warn!(
+                    "Global node has no signing key - tier key DHT encryption disabled. \
+                     Provide genesis_key_base64 in config to enable global node features."
+                );
                 None
             }
         } else {
