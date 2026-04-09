@@ -275,7 +275,14 @@ Edge reports failure → report_reachability()
 **Penalty Mechanism**:
 - Initial penalty: -20
 - Recovery: +5 every 10 minutes
-- Self-healing after ~40 minutes |
+- Self-healing after ~40 minutes
+
+**Threshold Logic** (2026-04-09):
+- `record_verification_result()` tracks results per task, not immediate penalty
+- `threshold = min(verification_nodes_count, total_expected)`
+- Penalty only applied when `failure_count >= threshold`
+- Handles small networks (1 global + 1 non-global) by adjusting threshold to number of queried nodes
+- `MAX_PENALTIES_PER_TTL` constant defined but not yet enforced |
 
 ## Origin Local Backend Selection (IMPLEMENTED)
 

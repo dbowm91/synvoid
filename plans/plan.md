@@ -66,7 +66,7 @@ This document consolidates all individual improvement plans (plan2-plan9) into a
 
 ---
 
-## Wave 2: Mesh & DHT Infrastructure 🔶 PARTIALLY COMPLETED (2.5 IN PROGRESS)
+## Wave 2: Mesh & DHT Infrastructure 🔶 PARTIALLY COMPLETED (2.5 COMPLETED)
 
 **Focus**: DNS capability, sharding, adaptive quorum, mesh distribution
 
@@ -358,7 +358,7 @@ Create `VerifiedUpstream` record when origin registers:
 - Create `VerifiedUpstream` struct with upstream details and global node signature
 - Store in DHT with 30-day TTL
 
-#### Phase 6: Origin Reachability System 🔶 PARTIAL
+#### Phase 6: Origin Reachability System ✅ COMPLETED
 
 **Overview**: Edge nodes report route failures, global nodes coordinate verification, penalties applied to unreliable origins.
 
@@ -382,11 +382,14 @@ Client requests example.com
 - Self-healing after 40 minutes
 - Only 1 penalty per TTL per origin to avoid excess
 
-**Implementation Status**: 🔶 PARTIAL
+**Implementation Status**: ✅ COMPLETED
 - ✅ Added DHT key types: `OriginReachability`, `VerificationTask`, `OriginPenalty`
 - ✅ Added `VerificationTaskManager` struct in `src/mesh/verification.rs`
-- ❌ NOT wired into MeshTransport yet
-- ❌ `OriginReachabilityReport` handler not implemented (requires protobuf changes)
+- ✅ Wired into MeshTransportManager
+- ✅ `UpstreamVerificationQuery`/`UpstreamVerificationResponse` handlers implemented
+- ✅ Query dispatching to random peers (3 by default)
+- ✅ Threshold-based penalty logic (only penalize if N/K nodes report failure)
+- ✅ VerificationResult struct tracks per-node results
 
 **Files Modified**:
 - `src/mesh/dht/keys.rs` - Added DHT key variants
