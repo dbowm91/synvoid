@@ -69,7 +69,7 @@ Files with remaining calls:
 
 ---
 
-## Wave 2: Mesh & DHT Infrastructure ✅ COMPLETED
+## Wave 2: Mesh & DHT Infrastructure 🔶 PARTIALLY COMPLETED
 
 **Focus**: DNS capability, sharding, adaptive quorum, mesh distribution
 
@@ -98,7 +98,7 @@ Files with remaining calls:
 - `src/mesh/proxy.rs`
 - `src/http/server.rs` (NEW: added local image poison cache)
 
-### 2.2 YARA Rules Mesh Distribution ✅ COMPLETED (Phases 1-2)
+### 2.2 YARA Rules Mesh Distribution 🔶 PARTIALLY COMPLETED (Phases 1-2, 2.8 adds Phase 4-5)
 
 **Problems**:
 1. Broadcast uses simple sender instead of mesh transport ✅ Fixed role filtering in forwarder
@@ -137,6 +137,119 @@ Files with remaining calls:
 - `src/mesh/dht/keys.rs` (added YaraRuleContent and YaraRulesManifest variants)
 - `src/mesh/transport.rs`
 - `src/worker/unified_server.rs`
+
+### 2.8 DHT-Primary YARA & ThreatIntel Propagation 🔶 IN PROGRESS
+
+**Problem**: 
+- YARA and ThreatIntel both have `sync_from_dht()` methods that are NEVER called
+- Both use mesh-based sync (broadcast/request-response) as primary mechanism
+- DHT is only used as "backup" despite being designed for efficient propagation
+- This creates competing/duplicate mechanisms for the same purpose
+
+**Goal**: Make DHT the primary propagation mechanism for both YARA and ThreatIntel, with mesh broadcast as fallback (to be removed later).
+
+**Architecture Summary**:
+
+```
+GLOBAL NODE updates rules
+         │
+         ▼
+   apply_rules() via Local/Feed/AdminAPI
+         │
+         ├──▶ publish_rules_to_dht() ──▶ store rule content + manifest
+         │
+         └──▶ broadcast_pending_records() ──▶ DhtRecordAnnounce to k closest peers
+                           │
+                           ▼
+              PEERS receive and store in local DHT cache
+                           │
+                           ▼
+   NON-GLOBAL: sync_from_dht() iterates local cache, applies newest version
+```
+
+**Key Findings from Research**:
+| Aspect | Finding |
+|--------|---------|
+| DHT announce | One-hop broadcast to k closest peers (NOT recursive Kademlia) |
+| Who announces | Global nodes only |
+| Who receives | All node types (global, edge, origin) |
+| Re-announce | Disabled - peers store but don't propagate further |
+| Peer selection | k closest peers by XOR distance (any role) |
+| Transport | Both DHT and mesh use same QUIC transport via `send_datagram_to_peer()` |
+
+**Implementation Phases**:
+
+| Phase | Description | Status |
+|-------|-------------|--------|
+| 1 | Update YARA sync task to use `sync_from_dht()` | 🔄 PENDING |
+| 2 | Ensure `publish_rules_to_dht()` called for all rule sources | 🔄 PENDING |
+| 3 | Update ThreatIntel sync task to use `sync_from_dht()` | 🔄 PENDING |
+| 4 | Mark mesh broadcast as fallback (to be removed later) | 🔄 PENDING |
+
+**Phase 1: Wire YARA sync_from_dht()**
+
+**File**: `src/worker/unified_server.rs`
+
+**Current** (lines ~830-848):
+```rust
+// Every sync_interval_secs
+sync_manager.send_sync_request_to_global();  // Sends YaraRuleSyncRequest via mesh
+```
+
+**Change to**:
+```rust
+// Every sync_interval_secs
+sync_manager.sync_from_dht();  // Queries local DHT cache for newer rules
+```
+
+**Why this works**:
+- `sync_from_dht()` iterates all `yara_rules_manifest:*` records from local DHT cache
+- Global nodes publish to DHT via `publish_rules_to_dht()` when rules change
+- DHT announce propagates to all peers (one-hop to k closest)
+- Non-global nodes periodically query their local DHT cache (populated by announces)
+- No mesh messages needed for regular sync
+
+**Phase 2: Ensure publish_rules_to_dht() for MeshGlobal source**
+
+**File**: `src/mesh/yara_rules.rs` (apply_rules method)
+
+**Current** (line ~548):
+```rust
+Local | Feed | MeshEdgeApproved => self.publish_rules_to_dht(),
+MeshGlobal => { /* no publish */ }
+```
+
+**Change to**:
+```rust
+Local | Feed | MeshEdgeApproved | MeshGlobal => self.publish_rules_to_dht(),
+```
+
+**Why**: When global node receives rules from another global (via mesh), it should still publish to DHT so others can query via DHT.
+
+**Phase 3: Wire ThreatIntel sync_from_dht()**
+
+**File**: `src/worker/unified_server.rs` (ThreatIntel initialization)
+
+**Similar pattern**: Change `threat_intel.send_sync_request_to_global()` or `threat_intel.broadcast_pending_threats()` to use `sync_from_dht()` instead.
+
+**Phase 4: Mark mesh broadcast as fallback**
+
+After Phases 1-3 are working:
+- Add comment that mesh broadcast is fallback only
+- Future work: remove mesh broadcast for YARA/ThreatIntel, rely purely on DHT
+
+**Files to Modify**:
+- `src/worker/unified_server.rs` - Change sync tasks
+- `src/mesh/yara_rules.rs` - Fix publish_rules_to_dht() for MeshGlobal
+- `src/mesh/threat_intel.rs` - Verify/fix sync_from_dht() wiring
+
+**Testing Approach**:
+1. Verify compilation with `cargo check --lib`
+2. Run integration tests
+3. Manual verification (if possible):
+   - Start global node with YARA rules
+   - Check DHT contains yara_rules_manifest and yara_rule content
+   - Start edge node, verify it syncs from DHT (not mesh request)
 
 ### 2.3 Mesh & DHT Security Improvements ✅ COMPLETED
 

@@ -837,12 +837,12 @@ pub async fn run_unified_server_worker(
                             let mut ticker = tokio::time::interval(sync_interval);
                             loop {
                                 ticker.tick().await;
-                                sync_manager.send_sync_request_to_global();
+                                let _ = sync_manager.sync_from_dht();
                                 sync_manager.record_sync();
                             }
                         });
                         tracing::info!(
-                            "YARA periodic sync task started (interval: {}s)",
+                            "YARA DHT sync task started (interval: {}s)",
                             mesh_config.yara_rules.sync_interval_secs
                         );
                     }

@@ -1441,19 +1441,12 @@ impl ThreatIntelligenceManager {
                 threat_intel.broadcast_pending_threats().await;
 
                 if sync_enabled && last_sync.elapsed().as_secs() > initial_interval {
-                    tracing::debug!("Threat sync interval reached, sending sync request");
+                    tracing::debug!("Threat sync interval reached, syncing from DHT");
 
-                    let transport_opt = threat_intel.transport.read().clone();
-                    if let Some(transport) = transport_opt {
-                        let message = threat_intel.create_sync_request();
-                        let (success, _) = transport
-                            .broadcast_to_random_peers(message, fanout_factor * 0.2, None)
-                            .await;
-                        if success > 0 {
-                            threat_intel.record_sync();
-                        }
+                    if let Err(e) = threat_intel.sync_from_dht() {
+                        tracing::debug!("DHT sync failed: {}", e);
                     } else {
-                        tracing::debug!("No transport available for sync request");
+                        threat_intel.record_sync();
                     }
 
                     last_sync = Instant::now();

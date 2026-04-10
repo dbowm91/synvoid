@@ -544,10 +544,12 @@ impl YaraRulesManager {
         self.rule_change_tracker.write().record_change(&version);
 
         match source {
-            YaraRuleSource::Local | YaraRuleSource::Feed | YaraRuleSource::MeshEdgeApproved => {
+            YaraRuleSource::Local
+            | YaraRuleSource::Feed
+            | YaraRuleSource::MeshEdgeApproved
+            | YaraRuleSource::MeshGlobal => {
                 self.publish_rules_to_dht();
             }
-            YaraRuleSource::MeshGlobal => {}
         }
 
         tracing::info!("Applied YARA rules version {} from {:?}", version, source);
