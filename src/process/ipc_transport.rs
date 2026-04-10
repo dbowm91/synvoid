@@ -425,6 +425,49 @@ impl IpcStream {
     pub fn is_signed(&self) -> bool {
         self.signer.is_some()
     }
+
+    #[cfg(unix)]
+    pub fn peer_pid(&self) -> Option<u32> {
+        use socket2::SockRef;
+        use std::os::unix::io::AsRawFd;
+        use std::mem::size_of;
+
+        let sock_ref = SockRef::from(&self.inner);
+        let raw_fd = sock_ref.as_raw_fd();
+
+        // Use libc's getsockopt with SO_PEERCRED to get peer PID
+        // On Linux, struct ucred has pid, uid, gid
+        #[repr(C)]
+        struct UCred {
+            pid: libc::pid_t,
+            uid: libc::uid_t,
+            gid: libc::gid_t,
+        }
+
+        let mut cred: UCred = unsafe { std::mem::zeroed() };
+        let mut cred_len = size_of::<UCred>() as libc::socklen_t;
+
+        let result = unsafe {
+            libc::getsockopt(
+                raw_fd,
+                libc::SOL_SOCKET,
+                libc::SO_PEERCRED,
+                &mut cred as *mut _ as *mut libc::c_void,
+                &mut cred_len,
+            )
+        };
+
+        if result == 0 && cred.pid > 0 {
+            Some(cred.pid as u32)
+        } else {
+            None
+        }
+    }
+
+    #[cfg(not(unix))]
+    pub fn peer_pid(&self) -> Option<u32> {
+        None
+    }
 }
 
 pub struct IpcStreamInner {

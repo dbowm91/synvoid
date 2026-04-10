@@ -356,6 +356,12 @@ pub async fn handle_worker_connection(
         });
     }
 
+    // Validate peer credentials if available (Unix only)
+    let peer_pid = ipc.peer_pid();
+    if let Some(actual_pid) = peer_pid {
+        tracing::debug!("Worker IPC connection from peer PID: {}", actual_pid);
+    }
+
     let rate_limiter = process_manager.get_ipc_rate_limiter();
     loop {
         match ipc.recv_with_timeout::<Message>(5000).await {
@@ -363,6 +369,20 @@ pub async fn handle_worker_connection(
                 if let Err(e) = message.validate() {
                     tracing::warn!("Invalid IPC message received: {}", e);
                     continue;
+                }
+
+                // Validate claimed PID matches peer credentials
+                if let Message::WorkerStarted { id, pid: claimed_pid, .. } = &message {
+                    if let Some(actual_pid) = peer_pid {
+                        if *claimed_pid as u32 != actual_pid {
+                            tracing::warn!(
+                                "IPC security: worker {} claims PID {} but socket peer PID is {}",
+                                id,
+                                claimed_pid,
+                                actual_pid
+                            );
+                        }
+                    }
                 }
 
                 let worker_id = match &message {
