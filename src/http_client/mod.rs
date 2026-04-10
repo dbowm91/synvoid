@@ -108,7 +108,10 @@ impl UpstreamTlsConfig {
         }
         let skip_verify = config.skip_verify.unwrap_or(false);
         if skip_verify {
-            let reason = config.skip_verify_reason.as_deref().unwrap_or("none provided");
+            let reason = config
+                .skip_verify_reason
+                .as_deref()
+                .unwrap_or("none provided");
             tracing::warn!(
                 reason,
                 "Upstream TLS: skip_verify is ENABLED \u{2014} hostname verification is BYPASSED but chain validation still occurs. Configure skip_verify_reason to document why this is needed."

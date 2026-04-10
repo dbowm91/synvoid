@@ -49,10 +49,6 @@ pub use manager::{
     check_port_available, check_ports_available, start_health_monitor, ProcessEvent,
     ProcessManager, ProcessManagerConfig, WorkerConfig,
 };
-pub use worker::{
-    BaseWorkerProcess, StaticWorkerProcess, UnifiedServerWorkerProcess, WorkerProcess,
-    WorkerProcessBase,
-};
 pub use pidfile::{OverseerLockError, OverseerLockFile, PidFileManager};
 pub use socket_fd::{
     close_fd, create_listening_socket, create_listening_socket_v6, is_reuse_port_supported,
@@ -64,6 +60,10 @@ pub use socket_path::{
     get_master_socket_path, get_secure_socket_path, get_versioned_master_socket_path,
     next_master_generation, resolve_master_socket_for_upgrade, set_master_generation,
     set_socket_permissions,
+};
+pub use worker::{
+    BaseWorkerProcess, StaticWorkerProcess, UnifiedServerWorkerProcess, WorkerProcess,
+    WorkerProcessBase,
 };
 
 pub use crate::platform::{is_socket_fd_passing_supported, platform, Platform};

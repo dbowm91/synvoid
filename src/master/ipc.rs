@@ -372,7 +372,12 @@ pub async fn handle_worker_connection(
                 }
 
                 // Validate claimed PID matches peer credentials
-                if let Message::WorkerStarted { id, pid: claimed_pid, .. } = &message {
+                if let Message::WorkerStarted {
+                    id,
+                    pid: claimed_pid,
+                    ..
+                } = &message
+                {
                     if let Some(actual_pid) = peer_pid {
                         if *claimed_pid as u32 != actual_pid {
                             tracing::warn!(

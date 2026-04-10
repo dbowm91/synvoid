@@ -7,8 +7,8 @@ use axum::{
     Json,
 };
 use serde::{Deserialize, Serialize};
-use sha2::Sha256;
 use sha2::Digest;
+use sha2::Sha256;
 use std::net::IpAddr;
 use std::sync::Arc;
 
@@ -554,10 +554,8 @@ pub async fn get_mesh_status(
                 let mut hasher = Sha256::new();
                 hasher.update(genesis_pk.as_bytes());
                 let result = hasher.finalize();
-                genesis_public_key_fingerprint = Some(format!(
-                    "sha256:{}...",
-                    &hex::encode(&result[..8])
-                ));
+                genesis_public_key_fingerprint =
+                    Some(format!("sha256:{}...", &hex::encode(&result[..8])));
             }
         }
     }
@@ -601,11 +599,10 @@ pub async fn derive_signing_key(
     let mut genesis_key = [0u8; 32];
     genesis_key.copy_from_slice(&genesis_bytes);
 
-    let public_key = crate::mesh::cert::get_ed25519_public_key(&genesis_key)
-        .ok_or_else(|| {
-            tracing::warn!("Failed to derive public key from genesis key");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+    let public_key = crate::mesh::cert::get_ed25519_public_key(&genesis_key).ok_or_else(|| {
+        tracing::warn!("Failed to derive public key from genesis key");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     let mut node_identity = crate::mesh::NodeIdentityConfig::default();
     if let Err(e) = node_identity.derive_signing_key_from_genesis(&genesis_key, &public_key) {

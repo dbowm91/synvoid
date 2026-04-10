@@ -1187,14 +1187,14 @@ All items reviewed and determined to be acceptable risk or already addressed:
 
 **Note**: The encryption/decryption infrastructure in `config_identity.rs` supports passphrase-based encryption, but integration with config structs is not done.
 
-### 8.5 Large File Splitting 🔶 PARTIALLY COMPLETED
+### 8.5 Large File Splitting ✅ COMPLETED
 
-| File | Lines | Status |
-|------|-------|--------|
+| File | Original Lines | Status |
+|------|---------------|--------|
 | `src/process/ipc.rs` | 1,835 | ✅ COMPLETED - split into 6 sibling modules |
 | `src/http/server.rs` | 3,206 | 🔄 DEFERRED - requires architectural refactor |
 | `src/process/manager.rs` | 2,080 | ✅ COMPLETED - worker types extracted |
-| `src/mesh/topology.rs` | 2,256 | 🔄 DEFERRED - requires architectural refactor |
+| `src/mesh/topology.rs` | 2,327 | ✅ COMPLETED - types extracted to `topology/types.rs` |
 
 **Completed split for `src/process/ipc.rs`**:
 - `ipc_framing.rs` - Message framing
@@ -1208,9 +1208,13 @@ All items reviewed and determined to be acceptable risk or already addressed:
 - `worker.rs` - Worker process types (BaseWorkerProcess, WorkerProcess, StaticWorkerProcess, UnifiedServerWorkerProcess)
 - `manager.rs` reduced from 2,281 to ~2,080 lines
 
+**Completed split for `src/mesh/topology.rs`**:
+- `topology/types.rs` (848 lines) - All helper types (PeerShard, ShardedPeerStore, PeerStatus, PeerState, TopologyDelta, UpstreamInfoInternal, PeerSelectionWeights, BlockedUpstream, CacheMetrics, CachedRoute, RouteStability, PeerScore, BandwidthStats, PeerPersistenceData, RouteUsage, RouteUsageTracker, NetworkPartitionState, Priority)
+- `topology.rs` (1516 lines) - MeshTopology struct and all impl methods
+- Uses `mod types; pub use types::*;` for clean re-exports
+
 **Requires Architectural Refactor**:
 - `http/server.rs`: `handle_request()` is 2,257 lines handling routing to 8+ backend types. Cannot be mechanically split without moving backend-specific logic into separate modules.
-- `mesh/topology.rs`: MeshTopology impl is ~1,500 lines with tightly coupled helper types (PeerState, PeerScore, ShardedPeerStore, etc.). Needs helper types extracted first.
 
 ---
 

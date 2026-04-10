@@ -429,8 +429,8 @@ impl IpcStream {
     #[cfg(unix)]
     pub fn peer_pid(&self) -> Option<u32> {
         use socket2::SockRef;
-        use std::os::unix::io::AsRawFd;
         use std::mem::size_of;
+        use std::os::unix::io::AsRawFd;
 
         let sock_ref = SockRef::from(&self.inner);
         let raw_fd = sock_ref.as_raw_fd();
