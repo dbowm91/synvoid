@@ -654,7 +654,7 @@ impl RecordStoreManager {
         );
     }
 
-    pub async fn query_record_iterative(&self, key: &str) -> Option<DhtRecord> {
+    pub async fn query_record_iterative(&self, key: &str) -> Option<crate::mesh::protocol::DhtRecord> {
         if !self.config.enabled {
             return None;
         }
@@ -681,7 +681,9 @@ impl RecordStoreManager {
             return None;
         }
 
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<crate::mesh::protocol::DhtRecord>(1);
         let mut queried_peers: Vec<String> = Vec::new();
+        let mut request_ids: Vec<String> = Vec::new();
 
         for peer in closest_peers {
             if peer.node_id_string == self.node_id {
@@ -694,14 +696,22 @@ impl RecordStoreManager {
             queried_peers.push(peer.node_id_string.clone());
 
             let request_id = format!("query-{}-{}", key, uuid::Uuid::new_v4());
+            request_ids.push(request_id.clone());
+            let (tx_oneshot, rx_oneshot) = tokio::sync::oneshot::channel();
+            let transport_clone = transport.clone();
+
+            transport_clone
+                .register_dht_query(request_id.clone(), tx_oneshot)
+                .await;
+
             let query = MeshMessage::DhtRecordQuery {
-                request_id: request_id.into(),
+                request_id: request_id.clone().into(),
                 key: key.into(),
                 timestamp: MeshMessage::generate_timestamp(),
                 source_node_id: self.node_id.clone().into(),
             };
 
-            if transport
+            if transport_clone
                 .send_datagram_to_peer(&peer.node_id_string, &query)
                 .await
                 .is_ok()
@@ -711,10 +721,40 @@ impl RecordStoreManager {
                     key,
                     peer.node_id_string
                 );
+
+                let tx = tx.clone();
+                tokio::spawn(async move {
+                    if let Ok(record) = rx_oneshot.await {
+                        let _ = tx.send(record).await;
+                    }
+                    let _ = transport_clone.take_dht_query(&request_id).await;
+                });
+            } else {
+                let _ = transport_clone.take_dht_query(&request_id).await;
             }
         }
 
-        None
+        drop(tx);
+
+        if request_ids.is_empty() {
+            return None;
+        }
+
+        let timeout = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            rx.recv().await
+        })
+        .await;
+
+        match timeout {
+            Ok(Some(record)) => {
+                tracing::debug!("DHT record query for {} returned a record", key);
+                Some(record)
+            }
+            _ => {
+                tracing::debug!("DHT record query for {} timed out or failed", key);
+                None
+            }
+        }
     }
 
     pub async fn announce_record_to_closest(

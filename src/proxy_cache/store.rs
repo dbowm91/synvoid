@@ -235,24 +235,29 @@ impl ProxyCache {
             return self.get_async(key).await;
         }
 
-        let mut entry = inner.entry;
-
-        if entry.is_expired() {
-            if entry.is_stale_while_revalidate() {
+        if inner.entry.is_expired() {
+            if inner.entry.is_stale_while_revalidate() {
+                let mut entry = inner.entry.clone();
                 entry.is_fresh = false;
                 entry.update_access();
+                self.entries.insert(key.clone(), inner);
                 return Some(entry);
             }
-            if entry.is_stale_if_error() {
+            if inner.entry.is_stale_if_error() {
+                let mut entry = inner.entry.clone();
                 entry.is_fresh = false;
                 entry.update_access();
+                self.entries.insert(key.clone(), inner);
                 return Some(entry);
             }
+            drop(inner);
             self.entries.invalidate(key);
             return None;
         }
 
+        let mut entry = inner.entry.clone();
         entry.update_access();
+        self.entries.insert(key.clone(), inner);
         Some(entry)
     }
 

@@ -573,6 +573,44 @@ impl MeshTransport {
                 self.handle_dht_record_announce(peer_id, &source_node_id, records)
                     .await;
             }
+            MeshMessage::DhtRecordQuery {
+                request_id,
+                key,
+                timestamp: _,
+                source_node_id: _,
+            } => {
+                if let Some(ref record_store) = self.record_store {
+                    if let Some(response) =
+                        record_store.handle_record_query(&request_id, &key, peer_id)
+                    {
+                        let _ = self.send_datagram_to_peer(peer_id, &response).await;
+                    }
+                }
+            }
+            MeshMessage::DhtRecordResponse {
+                request_id,
+                key,
+                value,
+                found,
+                timestamp,
+                source_node_id,
+                signature,
+                signer_public_key,
+            } => {
+                if found {
+                    let record = crate::mesh::protocol::DhtRecord {
+                        key: key.to_string(),
+                        value,
+                        timestamp,
+                        sequence_number: 0,
+                        ttl_seconds: 0,
+                        source_node_id: source_node_id.to_string(),
+                        signature,
+                        signer_public_key: Some(signer_public_key),
+                    };
+                    let _ = self.complete_dht_query(&request_id, record).await;
+                }
+            }
             MeshMessage::DhtSyncRequest {
                 request_id,
                 node_id,

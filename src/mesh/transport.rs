@@ -51,7 +51,7 @@ use crate::mesh::cert::MeshCertManager;
 use crate::mesh::config::{MeshConfig, MeshPeerConfig};
 use crate::mesh::kem::MlKem768;
 use crate::mesh::protocol::{
-    MeshMessage, MeshPeerInfo, ProviderInfo, RouteQueryResult, UpstreamInfo, MESH_MESSAGE_VERSION,
+    DhtRecord, MeshMessage, MeshPeerInfo, ProviderInfo, RouteQueryResult, UpstreamInfo, MESH_MESSAGE_VERSION,
 };
 use crate::mesh::session::SessionManager;
 use crate::mesh::topology::{MeshTopology, PeerStatus};
@@ -93,6 +93,7 @@ pub struct MeshTransport {
     pub(crate) connection_times: Arc<RwLock<Vec<Instant>>>,
     pub(crate) query_dedup: Arc<Mutex<HashMap<String, oneshot::Sender<RouteQueryResult>>>>,
     pub(crate) pending_queries: Arc<Mutex<PendingQueryManager>>,
+    pub(crate) pending_dht_queries: Arc<Mutex<HashMap<String, oneshot::Sender<DhtRecord>>>>,
     pub(crate) auth_failures: Arc<RwLock<HashMap<String, Vec<Instant>>>>,
     pub(crate) peer_message_times: Arc<RwLock<HashMap<String, Vec<Instant>>>>,
     pub(crate) global_rate_limiter: Arc<MeshGlobalRateLimiter>,
@@ -134,6 +135,7 @@ impl Clone for MeshTransport {
             connection_times: self.connection_times.clone(),
             query_dedup: self.query_dedup.clone(),
             pending_queries: self.pending_queries.clone(),
+            pending_dht_queries: self.pending_dht_queries.clone(),
             auth_failures: self.auth_failures.clone(),
             peer_message_times: self.peer_message_times.clone(),
             global_rate_limiter: self.global_rate_limiter.clone(),
@@ -332,6 +334,7 @@ impl MeshTransport {
             connection_times: Arc::new(RwLock::new(Vec::new())),
             query_dedup: Arc::new(Mutex::new(HashMap::new())),
             pending_queries: Arc::new(Mutex::new(PendingQueryManager::new())),
+            pending_dht_queries: Arc::new(Mutex::new(HashMap::new())),
             auth_failures: Arc::new(RwLock::new(HashMap::new())),
             peer_message_times: Arc::new(RwLock::new(HashMap::new())),
             global_rate_limiter,
@@ -2577,5 +2580,30 @@ impl MeshTransport {
 
     pub fn get_mesh_config(&self) -> Arc<MeshConfig> {
         self.config.clone()
+    }
+
+    pub(crate) async fn register_dht_query(
+        &self,
+        request_id: String,
+        sender: oneshot::Sender<DhtRecord>,
+    ) {
+        let mut pending = self.pending_dht_queries.lock().await;
+        pending.insert(request_id, sender);
+    }
+
+    pub(crate) async fn complete_dht_query(&self, request_id: &str, record: DhtRecord) -> bool {
+        let mut pending = self.pending_dht_queries.lock().await;
+        if let Some(sender) = pending.remove(request_id) {
+            return sender.send(record).is_ok();
+        }
+        false
+    }
+
+    pub(crate) async fn take_dht_query(
+        &self,
+        request_id: &str,
+    ) -> Option<oneshot::Sender<DhtRecord>> {
+        let mut pending = self.pending_dht_queries.lock().await;
+        pending.remove(request_id)
     }
 }

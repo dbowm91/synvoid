@@ -28,6 +28,7 @@ impl MeshTransport {
             connection_times: self.connection_times.clone(),
             query_dedup: self.query_dedup.clone(),
             pending_queries: self.pending_queries.clone(),
+            pending_dht_queries: self.pending_dht_queries.clone(),
             auth_failures: self.auth_failures.clone(),
             peer_message_times: self.peer_message_times.clone(),
             global_rate_limiter: self.global_rate_limiter.clone(),
