@@ -1098,7 +1098,7 @@ routes = ["GET /api/*", "POST /api/data"]
 | WAF | X-Forwarded-For Single IP | Validate all IPs in chain | ✅ COMPLETED |
 | WAF | Open Redirect Path Check Missing | ✅ COMPLETED |
 | WAF | Domain Check Before URL Decode | ✅ COMPLETED |
-| TLS | skip_verify Hostname Bypass | Document clearly, require explicit flag | 🔄 DEFERRED |
+| TLS | skip_verify Hostname Bypass | Improved warning message | ✅ COMPLETED |
 | TLS | allow_plaintext HTTP Upstream | Warn on startup | ✅ COMPLETED |
 | IPC | No Mutual Authentication | Use `UnixStream::peer_credentials()` | ✅ COMPLETED |
 | IPC | No Connection Source Validation | Add peer credential validation | ✅ COMPLETED |

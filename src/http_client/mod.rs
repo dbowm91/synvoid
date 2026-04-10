@@ -108,9 +108,10 @@ impl UpstreamTlsConfig {
         }
         let skip_verify = config.skip_verify.unwrap_or(false);
         if skip_verify {
+            let reason = config.skip_verify_reason.as_deref().unwrap_or("none provided");
             tracing::warn!(
-                reason = config.skip_verify_reason.as_deref().unwrap_or("none provided"),
-                "Upstream TLS: skip_verify is ENABLED \u{2014} certificate verification is disabled"
+                reason,
+                "Upstream TLS: skip_verify is ENABLED \u{2014} hostname verification is BYPASSED but chain validation still occurs. Configure skip_verify_reason to document why this is needed."
             );
         }
         Some(Self {
@@ -254,8 +255,7 @@ fn build_tls_config(
         let reason = skip_verify_reason.unwrap_or("not specified");
         tracing::warn!(
             reason,
-            "TLS hostname verification skipped for upstream connections — \
-             chain validation is still performed"
+            "TLS hostname verification BYPASSED for upstream — chain validation still occurs. Connection is secure against eavesdropping but NOT against impersonation."
         );
 
         let mut root_store = rustls::RootCertStore::empty();
@@ -296,7 +296,8 @@ fn build_tls_config(
         let inner = WebPkiServerVerifier::builder(Arc::new(root_store))
             .build()
             .expect("failed to build WebPkiServerVerifier");
-        let verifier = HostnameSkippingVerifier::new(inner, reason.to_string());
+        let verifier_reason = skip_verify_reason.unwrap_or("not specified");
+        let verifier = HostnameSkippingVerifier::new(inner, verifier_reason.to_string());
 
         let mut config = builder
             .dangerous()
