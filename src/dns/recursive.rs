@@ -123,14 +123,26 @@ impl RecursiveDnsServer {
                         .map_err(|e| RecursiveDnsError::UpstreamFailed(e.to_string()))?,
                 )
             }
-            crate::config::dns::RecursiveUpstreamProvider::Google => Arc::new(
-                HickoryResolver::with_google()
-                    .map_err(|e| RecursiveDnsError::UpstreamFailed(e.to_string()))?,
-            ),
-            crate::config::dns::RecursiveUpstreamProvider::Cloudflare => Arc::new(
-                HickoryResolver::with_cloudflare()
-                    .map_err(|e| RecursiveDnsError::UpstreamFailed(e.to_string()))?,
-            ),
+            crate::config::dns::RecursiveUpstreamProvider::Google => {
+                tracing::warn!(
+                    "Using Google DNS as upstream provider - DNSSEC validation is NOT performed. \
+                     Set upstream_provider='Recursive' to enable DNSSEC validation."
+                );
+                Arc::new(
+                    HickoryResolver::with_google()
+                        .map_err(|e| RecursiveDnsError::UpstreamFailed(e.to_string()))?,
+                )
+            }
+            crate::config::dns::RecursiveUpstreamProvider::Cloudflare => {
+                tracing::warn!(
+                    "Using Cloudflare DNS as upstream provider - DNSSEC validation is NOT performed. \
+                     Set upstream_provider='Recursive' to enable DNSSEC validation."
+                );
+                Arc::new(
+                    HickoryResolver::with_cloudflare()
+                        .map_err(|e| RecursiveDnsError::UpstreamFailed(e.to_string()))?,
+                )
+            }
             crate::config::dns::RecursiveUpstreamProvider::System
             | crate::config::dns::RecursiveUpstreamProvider::Custom => {
                 let upstream_ips = config.upstream_ips();

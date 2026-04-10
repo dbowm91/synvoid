@@ -649,6 +649,33 @@ The Admin UI System Status page now includes mesh status and genesis key managem
 
 **UI Flow**: System Status page shows mesh section with genesis status. Edge nodes without signing key see "Provide Genesis Key" button that opens a modal for entering the genesis key.
 
+## DNS & DNSSEC Architecture
+
+**DNSSEC validation is by design limited to the `Recursive` provider.**
+
+The following providers do NOT perform DNSSEC validation (they are stub/forwarding resolvers):
+- `Google` - forwards to Google's DNS, we don't re-validate
+- `Cloudflare` - forwards to Cloudflare's DNS, we don't re-validate
+- `System` - uses system resolver, no validation
+- `Custom` - uses custom upstream IPs, no validation
+
+**To enable DNSSEC validation**, use the `Recursive` provider:
+
+```toml
+[dns.recursive]
+upstream_provider = "Recursive"  # Required for DNSSEC
+dnssec_validation = true       # Enable validation
+trust_anchors.enabled = true   # Enable RFC 5011
+trust_anchor_path = "trusted-key.key"  # Root DNSKEY file
+```
+
+**Implementation details**:
+- `HickoryRecursor` performs full DNSSEC chain-of-trust validation
+- `TrustAnchorManager` handles RFC 5011 key rotation
+- `is_dnssec_validated` flag propagates to AD bit in responses
+
+**Skill file**: `skills/dns_dnssec.md` contains detailed architecture documentation.
+
 ## Skills and Knowledge Base
 
 For complex subsystems, specialized skill files provide detailed architecture guidance:

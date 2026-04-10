@@ -1104,7 +1104,7 @@ routes = ["GET /api/*", "POST /api/data"]
 | IPC | No Connection Source Validation | Add peer credential validation | ✅ COMPLETED |
 | Mesh | No node_id to Public Key Binding | Include hash of pubkey in node_id | 🔄 DEFERRED |
 | Mesh | TOFU Accepts First Certificate | Add out-of-band verification option | 🔄 DEFERRED |
-| DNS | DNSSEC Not Validated for Recursive | Implement chain-of-trust validation | 🔄 DEFERRED |
+| DNS | DNSSEC Not Validated for Recursive | Implemented for Recursive provider; warnings added for Google/Cloudflare | ✅ COMPLETED |
 | DNS | RRL Only TCP | Add UDP rate limiting | 🔄 DEFERRED |
 
 ### 7.3 Low Severity ✅ REVIEWED
