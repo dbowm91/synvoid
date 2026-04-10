@@ -1,20 +1,40 @@
 pub mod broadcaster;
 
+use super::auth::verify_admin_token;
 use super::state::AdminState;
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
         State,
     },
-    response::Response,
+    http::{HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
 };
 use futures::{SinkExt, StreamExt};
 use std::sync::Arc;
 
+fn validate_bearer_token(headers: &HeaderMap, admin_token: &str) -> Result<(), StatusCode> {
+    let bearer_token = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+
+    if verify_admin_token(bearer_token, admin_token) {
+        Ok(())
+    } else {
+        Err(StatusCode::UNAUTHORIZED)
+    }
+}
+
 pub async fn ws_metrics_handler(
     ws: WebSocketUpgrade,
     State(state): State<Arc<AdminState>>,
+    headers: HeaderMap,
 ) -> Response {
+    if let Err(status) = validate_bearer_token(&headers, &state.security.admin_token) {
+        return status.into_response();
+    }
     ws.on_upgrade(move |socket| {
         handle_metrics_socket(socket, state.metrics.metrics_broadcaster.clone())
     })
@@ -23,7 +43,11 @@ pub async fn ws_metrics_handler(
 pub async fn ws_logs_handler(
     ws: WebSocketUpgrade,
     State(state): State<Arc<AdminState>>,
+    headers: HeaderMap,
 ) -> Response {
+    if let Err(status) = validate_bearer_token(&headers, &state.security.admin_token) {
+        return status.into_response();
+    }
     ws.on_upgrade(move |socket| handle_logs_socket(socket, state.metrics.logs_broadcaster.clone()))
 }
 

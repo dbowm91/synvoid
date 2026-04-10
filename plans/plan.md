@@ -23,7 +23,7 @@ This document consolidates all improvement plans into a single roadmap, organize
 
 ### 1.1 DNS Dynamic Updates - Client IP Not Validated
 
-**Status**: 🔶 Future Work
+**Status**: ✅ Completed (2026-04-10)
 
 **Severity**: CRITICAL
 
@@ -42,7 +42,7 @@ The `_client_ip` parameter in `handle_update()` is unused. Dynamic updates (RFC 
 
 ### 1.2 TSIG Verification Uses Wrong Message Data
 
-**Status**: 🔶 Future Work
+**Status**: ✅ Completed (2026-04-10)
 
 **Severity**: CRITICAL
 
@@ -56,7 +56,7 @@ TSIG MAC is computed over just the query name, but RFC 2845 Section 2.4 requires
 
 ### 1.3 NSEC3 Owner Name Hash Length Bug
 
-**Status**: 🔶 Future Work
+**Status**: ✅ Completed (2026-04-10)
 
 **Severity**: CRITICAL
 
@@ -76,7 +76,7 @@ format!("{}.{}.{}", hash_b32.len(), hash_b32, base_name)
 
 ### 1.4 WebSocket Authentication Not Enforced
 
-**Status**: 🔶 Future Work
+**Status**: ✅ Completed (2026-04-10)
 
 **Severity**: CRITICAL
 
@@ -93,7 +93,7 @@ WebSocket handlers accept connections without authentication. The `OptionalAuth`
 
 ### 1.5 Upstream Verification System Broken
 
-**Status**: 🔶 Future Work
+**Status**: ✅ Completed (2026-04-10)
 
 **Severity**: CRITICAL
 
@@ -117,7 +117,7 @@ pub(crate) fn get_verification_manager(&self) -> Option<Arc<...>> {
 
 ### 1.6 Verification Response Has No Signature
 
-**Status**: 🔶 Future Work
+**Status**: ✅ Completed (2026-04-10)
 
 **Severity**: CRITICAL
 
@@ -134,7 +134,7 @@ pub(crate) fn get_verification_manager(&self) -> Option<Arc<...>> {
 
 ### 1.7 SSRF Domain Substring Bypass
 
-**Status**: 🔶 Future Work
+**Status**: ✅ Completed (2026-04-10)
 
 **Severity**: CRITICAL
 

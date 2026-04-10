@@ -241,6 +241,7 @@ impl DnsServer {
                         client_ip,
                         tsig.as_ref(),
                         message_id,
+                        &query,
                     ) {
                         Ok(messages) => {
                             for msg in messages {
@@ -269,6 +270,7 @@ impl DnsServer {
                         serial,
                         tsig.as_ref(),
                         message_id,
+                        &query,
                     ) {
                         Ok(messages) => {
                             for msg in messages {
@@ -382,7 +384,7 @@ impl DnsServer {
             if let (Some(zt), Some(ip)) = (ctx.zone_transfer, client_ip) {
                 let tsig = crate::dns::tsig::parse_tsig_from_query(query, pos + 4);
                 let message_id = u16::from_be_bytes([query[0], query[1]]);
-                match zt.handle_axfr_request(&qname, ip, tsig.as_ref(), message_id) {
+                match zt.handle_axfr_request(&qname, ip, tsig.as_ref(), message_id, query) {
                     Ok(response) => return Some(Arc::new(response)),
                     Err(e) => {
                         tracing::warn!("AXFR failed: {}", e);
@@ -398,7 +400,7 @@ impl DnsServer {
                 let serial = Self::extract_ixfr_serial(query);
                 let tsig = crate::dns::tsig::parse_tsig_from_query(query, pos + 4);
                 let message_id = u16::from_be_bytes([query[0], query[1]]);
-                match zt.handle_ixfr_request(&qname, ip, serial, tsig.as_ref(), message_id) {
+                match zt.handle_ixfr_request(&qname, ip, serial, tsig.as_ref(), message_id, query) {
                     Ok(response) => return Some(Arc::new(response)),
                     Err(e) => {
                         tracing::warn!("IXFR failed: {}", e);

@@ -1572,15 +1572,25 @@ impl MeshTransport {
             }
         };
 
+        let timestamp = crate::utils::safe_unix_timestamp();
+        let signable_content = format!(
+            "{}:{}:{}:{}:{}:{}",
+            request_id, upstream_id, verified, querying_node_id, timestamp, provider_node_id
+        );
+        let global_node_signature = self
+            .mesh_signer
+            .as_ref()
+            .map(|signer| signer.sign(&signable_content));
+
         let response = MeshMessage::UpstreamVerificationResponse {
             request_id: request_id.into(),
             upstream_id: upstream_id.into(),
             verified,
             global_node_id: querying_node_id.into(),
-            global_node_signature: None,
+            global_node_signature,
             upstream_url: upstream_url.into(),
             org_id: None,
-            timestamp: crate::utils::safe_unix_timestamp(),
+            timestamp,
             provider_node_id: provider_node_id.into(),
         };
 
@@ -1639,7 +1649,7 @@ impl MeshTransport {
     pub(crate) fn get_verification_manager(
         &self,
     ) -> Option<Arc<crate::mesh::verification::VerificationTaskManager>> {
-        None
+        self.verification_manager.read().clone()
     }
 
     pub(crate) async fn send_load_report_to_peers(&self) {

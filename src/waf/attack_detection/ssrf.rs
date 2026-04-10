@@ -240,7 +240,11 @@ impl SsrfDetector {
 
     fn contains_private_ip_or_localhost(input: &str) -> bool {
         let input_lower = input.to_lowercase();
-        if input_lower.contains("localhost") || input_lower.contains(".local") {
+        if input_lower.contains(".localhost")
+            || input_lower.contains("localhost.")
+            || input_lower.contains(".local")
+            || input_lower.ends_with(".local")
+        {
             return true;
         }
 

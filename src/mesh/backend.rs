@@ -422,7 +422,9 @@ pub async fn initialize_mesh_transports(
     );
 
     let quic_transport_inner = quic_transport.get_inner();
-    MeshTransport::initialize_component_transports(quic_transport_inner);
+    MeshTransport::initialize_component_transports(quic_transport_inner.clone());
+
+    quic_transport_inner.set_verification_manager(transport_manager.get_verification_manager());
 
     transport_manager.set_quic_transport(quic_transport);
 

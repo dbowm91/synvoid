@@ -116,6 +116,8 @@ pub struct MeshTransport {
     pub(crate) dns_zones: Arc<RwLock<Option<Arc<crate::dns::server::ShardedZoneStore>>>>,
     #[allow(clippy::type_complexity)]
     pub(crate) site_config_sync_tx: Arc<RwLock<Option<mpsc::Sender<(String, String)>>>>,
+    pub(crate) verification_manager:
+        Arc<RwLock<Option<Arc<crate::mesh::verification::VerificationTaskManager>>>>,
 }
 
 impl Clone for MeshTransport {
@@ -158,6 +160,7 @@ impl Clone for MeshTransport {
             #[cfg(feature = "dns")]
             dns_zones: self.dns_zones.clone(),
             site_config_sync_tx: self.site_config_sync_tx.clone(),
+            verification_manager: self.verification_manager.clone(),
         }
     }
 }
@@ -359,6 +362,7 @@ impl MeshTransport {
             #[cfg(feature = "dns")]
             dns_zones: Arc::new(RwLock::new(None)),
             site_config_sync_tx: Arc::new(RwLock::new(None)),
+            verification_manager: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -371,6 +375,13 @@ impl MeshTransport {
     pub fn set_dns_zones(&self, zones: Arc<crate::dns::server::ShardedZoneStore>) {
         let mut lock = self.dns_zones.write();
         *lock = Some(zones);
+    }
+
+    pub fn set_verification_manager(
+        &self,
+        manager: Arc<crate::mesh::verification::VerificationTaskManager>,
+    ) {
+        *self.verification_manager.write() = Some(manager);
     }
 
     pub fn get_org_manager(&self) -> Arc<RwLock<crate::mesh::organization::OrganizationManager>> {

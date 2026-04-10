@@ -258,7 +258,7 @@ pub fn get_nsec3_type_bitmap() -> Vec<u16> {
 
 pub fn create_nsec3_owner_name(base_name: &str, hash: &[u8]) -> String {
     let hash_b32 = base32_encode(hash);
-    format!("{}.{}.{}", hash.len(), hash_b32, base_name)
+    format!("{}.{}.{}", hash_b32.len(), hash_b32, base_name)
 }
 
 pub fn base32_encode(input: &[u8]) -> String {

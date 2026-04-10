@@ -185,8 +185,10 @@ impl ZoneTransfer {
         client_ip: IpAddr,
         tsig: Option<&TsigParseResult>,
         message_id: u16,
+        message: &[u8],
     ) -> Result<Vec<u8>, String> {
-        let messages = self.handle_axfr_request_impl(qname, client_ip, tsig, message_id)?;
+        let messages =
+            self.handle_axfr_request_impl(qname, client_ip, tsig, message_id, message)?;
 
         let mut combined = Vec::new();
         for resp in messages {
@@ -202,8 +204,9 @@ impl ZoneTransfer {
         client_ip: IpAddr,
         tsig: Option<&TsigParseResult>,
         message_id: u16,
+        message: &[u8],
     ) -> Result<Vec<Vec<u8>>, String> {
-        self.handle_axfr_request_impl(qname, client_ip, tsig, message_id)
+        self.handle_axfr_request_impl(qname, client_ip, tsig, message_id, message)
     }
 
     fn handle_axfr_request_impl(
@@ -212,6 +215,7 @@ impl ZoneTransfer {
         client_ip: IpAddr,
         tsig: Option<&TsigParseResult>,
         message_id: u16,
+        message: &[u8],
     ) -> Result<Vec<Vec<u8>>, String> {
         let origin = qname.trim_end_matches('.');
 
@@ -261,7 +265,7 @@ impl ZoneTransfer {
             if let Some(verifier) = &self.tsig_verifier {
                 if let Err(e) = verifier.verify(
                     &[],
-                    qname.as_bytes(),
+                    message,
                     &tsig.mac,
                     &tsig.key_name,
                     tsig.algorithm,
@@ -350,8 +354,10 @@ impl ZoneTransfer {
         serial: Option<u32>,
         tsig: Option<&TsigParseResult>,
         message_id: u16,
+        message: &[u8],
     ) -> Result<Vec<u8>, String> {
-        let messages = self.handle_ixfr_request_impl(qname, client_ip, serial, tsig, message_id)?;
+        let messages =
+            self.handle_ixfr_request_impl(qname, client_ip, serial, tsig, message_id, message)?;
 
         let mut combined = Vec::new();
         for resp in messages {
@@ -368,8 +374,9 @@ impl ZoneTransfer {
         serial: Option<u32>,
         tsig: Option<&TsigParseResult>,
         message_id: u16,
+        message: &[u8],
     ) -> Result<Vec<Vec<u8>>, String> {
-        self.handle_ixfr_request_impl(qname, client_ip, serial, tsig, message_id)
+        self.handle_ixfr_request_impl(qname, client_ip, serial, tsig, message_id, message)
     }
 
     fn handle_ixfr_request_impl(
@@ -379,6 +386,7 @@ impl ZoneTransfer {
         serial: Option<u32>,
         tsig: Option<&TsigParseResult>,
         message_id: u16,
+        message: &[u8],
     ) -> Result<Vec<Vec<u8>>, String> {
         if !self.ixfr_enabled {
             tracing::debug!("IXFR disabled, returning error");
@@ -434,7 +442,7 @@ impl ZoneTransfer {
             if let Some(verifier) = &self.tsig_verifier {
                 if let Err(e) = verifier.verify(
                     &[],
-                    qname.as_bytes(),
+                    message,
                     &tsig.mac,
                     &tsig.key_name,
                     tsig.algorithm,

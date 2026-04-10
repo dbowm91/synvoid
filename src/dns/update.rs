@@ -229,6 +229,7 @@ pub struct DynamicUpdateHandler {
     enabled: bool,
     allow_any: bool,
     require_tsig: bool,
+    allowed_ips: Vec<String>,
     zone_sync: Option<Arc<super::anycast_sync::AnycastZoneSync>>,
 }
 
@@ -238,7 +239,8 @@ impl DynamicUpdateHandler {
             zones,
             enabled: false,
             allow_any: false,
-            require_tsig: false,
+            require_tsig: true,
+            allowed_ips: Vec::new(),
             zone_sync: None,
         }
     }
@@ -247,6 +249,11 @@ impl DynamicUpdateHandler {
         self.enabled = enabled;
         self.allow_any = allow_any;
         self.require_tsig = require_tsig;
+        self
+    }
+
+    pub fn with_allowed_ips(mut self, allowed_ips: Vec<String>) -> Self {
+        self.allowed_ips = allowed_ips;
         self
     }
 
@@ -259,13 +266,40 @@ impl DynamicUpdateHandler {
         self.enabled
     }
 
+    fn is_ip_allowed(&self, client_ip: std::net::IpAddr) -> bool {
+        if self.allowed_ips.is_empty() {
+            return false;
+        }
+
+        for allowed in &self.allowed_ips {
+            if allowed == "*" {
+                return true;
+            }
+            if let Ok(cidr) = allowed.parse::<ipnetwork::IpNetwork>() {
+                if cidr.contains(client_ip) {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
     pub fn handle_update(
         &self,
         query: &[u8],
-        _client_ip: std::net::IpAddr,
+        client_ip: std::net::IpAddr,
     ) -> Result<Vec<u8>, String> {
         if !self.enabled {
             return Err("Dynamic updates not enabled".to_string());
+        }
+
+        if !self.allow_any && !self.is_ip_allowed(client_ip) {
+            tracing::warn!(
+                "SECURITY: Dynamic update DENIED for zone update from {} - client IP not in allowed list",
+                client_ip
+            );
+            return Err("Dynamic updates not allowed from this IP".to_string());
         }
 
         let update = DynamicUpdate::parse(query)?;
@@ -279,6 +313,14 @@ impl DynamicUpdateHandler {
         };
 
         let mut updated_zone: Zone = self.zones.get(&zone_origin).ok_or("Zone not found")?;
+
+        tracing::info!(
+            "Dynamic update request from {} for zone={} ({} prerequisites, {} updates)",
+            client_ip,
+            zone_origin,
+            update.prerequisites.len(),
+            update.updates.len()
+        );
 
         for prereq in &update.prerequisites {
             if !self.check_prerequisite(&updated_zone, prereq)? {
