@@ -170,6 +170,11 @@ impl RequestMetrics {
         self.metrics.record_site_upstream_failure(&self.site_id);
     }
 
+    fn record_request_end(&self, latency_ms: u64) {
+        self.metrics
+            .record_site_request_end(&self.site_id, latency_ms);
+    }
+
     fn record_egress(&self, bytes: u64, direction: EgressDirection) {
         self.metrics
             .bandwidth
@@ -1071,9 +1076,13 @@ impl HttpServer {
             }
         };
 
-        let site_id = target.site_id.clone();
-        if let Some(ref metrics) = metrics {
-            metrics.record_site_request_start(&site_id);
+        let site_id = target.site_id.to_string();
+        let req_metrics = metrics.as_ref().map(|m| RequestMetrics {
+            site_id: site_id.clone(),
+            metrics: Arc::clone(m),
+        });
+        if let Some(ref rm) = req_metrics {
+            rm.record_start();
         }
 
         let method_str = method.to_string();
@@ -1133,8 +1142,8 @@ impl HttpServer {
                 }
             }
             crate::proxy::WafDecision::Block(status, message) => {
-                if let Some(ref metrics) = metrics {
-                    metrics.record_site_blocked(&site_id);
+                if let Some(ref rm) = req_metrics {
+                    rm.record_blocked();
                 }
                 let site_theme =
                     target
@@ -1183,17 +1192,12 @@ impl HttpServer {
                 ))
             }
             crate::proxy::WafDecision::Challenge(html) => {
-                if let Some(ref metrics) = metrics {
-                    metrics.record_site_challenged(&site_id);
+                if let Some(ref rm) = req_metrics {
+                    rm.record_challenged();
                 }
                 let body_len = html.len() as u64;
-                if let Some(ref m) = metrics {
-                    m.bandwidth.record_egress(
-                        body_len,
-                        BandwidthProtocol::Http,
-                        EgressDirection::Challenged,
-                    );
-                    m.bandwidth.record_site_egress(&site_id, body_len);
+                if let Some(ref rm) = req_metrics {
+                    rm.record_egress(body_len, EgressDirection::Challenged);
                 }
                 let ipc_clone = ipc.clone();
                 let worker_id_clone = worker_id;
@@ -1224,17 +1228,12 @@ impl HttpServer {
                 session_cookie_value,
                 session_cookie_max_age,
             } => {
-                if let Some(ref metrics) = metrics {
-                    metrics.record_site_challenged(&site_id);
+                if let Some(ref rm) = req_metrics {
+                    rm.record_challenged();
                 }
                 let body_len = html.len() as u64;
-                if let Some(ref m) = metrics {
-                    m.bandwidth.record_egress(
-                        body_len,
-                        BandwidthProtocol::Http,
-                        EgressDirection::Challenged,
-                    );
-                    m.bandwidth.record_site_egress(&site_id, body_len);
+                if let Some(ref rm) = req_metrics {
+                    rm.record_egress(body_len, EgressDirection::Challenged);
                 }
                 let cookie = format!(
                     "{}={}; path=/; max-age={}; Secure; SameSite=Strict",
@@ -1265,18 +1264,13 @@ impl HttpServer {
                 ))
             }
             crate::proxy::WafDecision::Tarpit(tar_path) => {
-                if let Some(ref metrics) = metrics {
-                    metrics.record_site_blocked(&site_id);
+                if let Some(ref rm) = req_metrics {
+                    rm.record_blocked();
                 }
                 let html = waf.generate_tarpit_response(&tar_path);
                 let body_len = html.len() as u64;
-                if let Some(ref m) = metrics {
-                    m.bandwidth.record_egress(
-                        body_len,
-                        BandwidthProtocol::Http,
-                        EgressDirection::Blocked,
-                    );
-                    m.bandwidth.record_site_egress(&site_id, body_len);
+                if let Some(ref rm) = req_metrics {
+                    rm.record_egress(body_len, EgressDirection::Blocked);
                 }
                 let ipc_clone = ipc.clone();
                 let worker_id_clone = worker_id;
@@ -1302,8 +1296,8 @@ impl HttpServer {
                 ))
             }
             crate::proxy::WafDecision::Pass => {
-                if let Some(ref metrics) = metrics {
-                    metrics.record_site_proxied(&site_id);
+                if let Some(ref rm) = req_metrics {
+                    rm.record_proxied();
                 }
                 if let Some(upgraded) = on_upgrade {
                     let ws_config = target.site_config.websocket.clone();
@@ -1705,7 +1699,7 @@ impl HttpServer {
                 if matches!(target.backend_type, crate::router::BackendType::AppServer) {
                     if let Some(ref app_servers) = app_servers {
                         let app_servers_read = app_servers.read().await;
-                        if let Some(supervisor) = app_servers_read.get(site_id.as_ref()) {
+                        if let Some(supervisor) = app_servers_read.get(&site_id) {
                             let socket_path = supervisor.config().resolve_socket_path();
                             let body_bytes_for_appserver: Bytes = full_body_arc.as_ref().clone();
 
@@ -2043,8 +2037,8 @@ impl HttpServer {
                     .await
                     {
                         Ok(upstream_resp) => {
-                            if let Some(ref metrics) = metrics {
-                                metrics.record_site_upstream_success(&site_id);
+                            if let Some(ref rm) = req_metrics {
+                                rm.record_upstream_success();
                             }
                             let (resp_parts, _upstream_body) = upstream_resp.into_parts();
                             let status = resp_parts.status.as_u16();
@@ -2105,19 +2099,14 @@ impl HttpServer {
                                 }));
                         }
                         Err(e) => {
-                            if let Some(ref metrics) = metrics {
-                                metrics.record_site_upstream_failure(&site_id);
+                            if let Some(ref rm) = req_metrics {
+                                rm.record_upstream_failure();
                             }
                             tracing::error!("Upstream streaming error: {}", e);
                             let error_body = "Bad Gateway".to_string();
                             let error_len = error_body.len() as u64;
-                            if let Some(ref m) = metrics {
-                                m.bandwidth.record_egress(
-                                    error_len,
-                                    BandwidthProtocol::Http,
-                                    EgressDirection::Error,
-                                );
-                                m.bandwidth.record_site_egress(&site_id, error_len);
+                            if let Some(ref rm) = req_metrics {
+                                rm.record_egress(error_len, EgressDirection::Error);
                             }
                             return Ok(Self::build_response_with_alt_svc(
                                 502,
@@ -2152,8 +2141,8 @@ impl HttpServer {
 
                 match resp {
                     Ok(resp) => {
-                        if let Some(ref metrics) = metrics {
-                            metrics.record_site_upstream_success(&site_id);
+                        if let Some(ref rm) = req_metrics {
+                            rm.record_upstream_success();
                         }
                         let status = resp.status_code();
 
@@ -2407,19 +2396,14 @@ impl HttpServer {
                         }))
                     }
                     Err(e) => {
-                        if let Some(ref metrics) = metrics {
-                            metrics.record_site_upstream_failure(&site_id);
+                        if let Some(ref rm) = req_metrics {
+                            rm.record_upstream_failure();
                         }
                         tracing::error!("Upstream error: {}", e);
                         let error_body = "Bad Gateway".to_string();
                         let error_len = error_body.len() as u64;
-                        if let Some(ref m) = metrics {
-                            m.bandwidth.record_egress(
-                                error_len,
-                                BandwidthProtocol::Http,
-                                EgressDirection::Error,
-                            );
-                            m.bandwidth.record_site_egress(&site_id, error_len);
+                        if let Some(ref rm) = req_metrics {
+                            rm.record_egress(error_len, EgressDirection::Error);
                         }
                         Ok(Self::build_response_with_alt_svc(
                             502,
@@ -2434,8 +2418,8 @@ impl HttpServer {
         };
 
         let latency_ms = start.elapsed().as_millis() as u64;
-        if let Some(ref metrics) = metrics {
-            metrics.record_site_request_end(&site_id, latency_ms);
+        if let Some(ref rm) = req_metrics {
+            rm.record_request_end(latency_ms);
         }
 
         let status = response.as_ref().map(|r| r.status().as_u16()).unwrap_or(0);
