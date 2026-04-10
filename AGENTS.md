@@ -263,7 +263,7 @@ Crate-level suppressions in `src/lib.rs`:
 - `elided_lifetimes_in_paths` — compiler style preference
 - `mismatched_lifetime_syntaxes` — compiler style preference
 
-`#[allow(dead_code)]` annotations: **~72 across ~48 files**. Notable per-module breakdown:
+`#[allow(dead_code)]` annotations: **~116 across ~48 files**. Notable per-module breakdown:
 - `src/mesh/transport_*.rs` — ~6 items (reserved protocol handlers)
 - `src/mesh/` — ~14 items
 - `src/dns/server/` — ~4 items
@@ -280,9 +280,9 @@ Note: Many `#[allow(dead_code)]` annotations are on reserved/future-use code pat
 
 `Cargo.toml` uses relaxed version pins (e.g., `"0.11"`).
 
-### Dependency Cleanup (Phase 1 Complete)
+### Dependency Cleanup
 
-The following dead dependencies were removed in Phase 1:
+The following dead dependencies were removed:
 - `bincode` — never imported; `serialize_bincode`/`deserialize_bincode` shims use `postcard` internally
 - `wasmtime-wasi` — unused (only `wasmtime` core needed)
 - `ab_glyph`, `flare`, `memmap2` — zero imports anywhere
@@ -327,33 +327,33 @@ All duplicate `current_timestamp()` definitions have been consolidated into `src
 
 | Bug | Location | Impact | Status |
 |-----|----------|--------|--------|
-| NSEC3 base32 encoding | `src/dns/dnssec_signing.rs:259-282` | Non-standard encoding (uses base32 instead of base32hex) | Open (SHA-1 only in practice) |
+| NSEC3 hash length encoding | `src/dns/dnssec_signing.rs:261` | Uses `hash.len()` (20) instead of `hash_b32.len()` (32) for NSEC3 owner name | Open (CRITICAL - see plan.md Wave 1) |
+| SSRF domain substring check | `src/waf/attack_detection/ssrf.rs:243` | `contains("localhost")` without word boundaries | Open (CRITICAL - see plan.md Wave 1) |
+| DHT query response collection | `src/mesh/dht/record_store_sync.rs:717` | `query_record_iterative()` always returns `None` | Open (CRITICAL - see plan.md Wave 3) |
 | Forwarder no DNSSEC validation | `HickoryResolver` | Forwarder mode doesn't validate; AD bit not propagated | Limitation (documented) |
 | JA4 fingerprinting | `src/waf/bot.rs` | JA3 done; JA4 not implemented | Open |
-| Stream large request bodies | `src/http/server.rs:679` | Full buffering; needs chunk-based WAF | Open (architectural change needed) |
+| Stream large request bodies | `src/http/server.rs` | Full buffering; needs chunk-based WAF | Open (architectural change needed) |
 | Response streaming | `src/http/server.rs` | Fully buffered responses | Open (architectural change needed) |
 | HTTPS feature parity | `src/tls/server.rs` | Missing WebSocket, WASM, FastCGI, PHP, etc. | Open (large refactoring) |
-| transport.rs module size | `src/mesh/transport.rs` | 2239 lines vs 1000 target | Open |
-| 5M: Repeated .to_lowercase() | `src/waf/attack_detection/*.rs` | Detectors call to_lowercase() instead of using pre-computed | Open (trait API change needed) |
+| transport.rs module size | `src/mesh/transport.rs` | 2570 lines vs 1000 target | Open (see plan.md Wave 5) |
+| Repeated .to_lowercase() | `src/waf/attack_detection/*.rs` | Detectors call to_lowercase() instead of using pre-computed | Open (see plan.md Wave 2) |
 
-### Fixed Issues (Wave 1-7 Complete)
+### Fixed Issues
 
 | Bug | Location | Fix |
 |-----|----------|-----|
-| NSEC3 base32 encoding | `src/dns/dnssec_signing.rs:265` | Uses correct RFC 4648 base32hex alphabet |
 | `pattern_detector!` macro infinite recursion | `src/waf/attack_detection/detector_common.rs` | Fix applied to macro-generated impl |
 | WAF empty headers in proxy path | `src/proxy.rs:486` | Pass actual request headers to check_request_full |
-| SSRF substring matching bypass | `src/waf/attack_detection/ssrf.rs:278-285` | ✅ Fixed: Check for `.` boundary before domain |
 | Dynamic worker server stub | `src/worker/mod.rs` | Deprecated; unified server handles requests |
 | Duplicate AppServer init | `src/worker/unified_server.rs` | Duplicate block removed |
 | WireGuard transport unauthenticated | `src/mesh/transports/wireguard.rs` | WireGuard transport removed entirely |
-| DHT query response non-functional | `src/mesh/dht/record_store_sync.rs` | Uses oneshot channels, quorum-based reads |
 | HTTPS proxy body forwarding | `src/tls/server.rs` | Pass `body_bytes` to upstream |
 | YARA periodic sync | `src/worker/unified_server.rs` | Call `sync_manager.sync_from_dht()` (DHT-primary) |
 | Granian dispatch | `src/app_server/granian.rs` | `forward_request()` uses built request |
 | Honeypot mesh wiring | `src/worker/unified_server.rs` | `start_mesh_threat_publishing()` after mesh init |
 | HTTP body truncation | `src/http/server.rs` | Separated `full_body` from `body_slice` |
-| NODATA vs NXDOMAIN | `src/dns/server/query.rs:930-1025` | Returns NOERROR with SOA when name exists but type doesn't |
+| NODATA vs NXDOMAIN | `src/dns/server/query.rs` | Returns NOERROR with SOA when name exists but type doesn't |
+| HTTP server.rs | - | Ergonomics improved with helper functions and RequestMetrics |
 
 ## Performance Hot Paths
 
@@ -578,9 +578,22 @@ rrsig.extend_from_slice(&timestamp.to_be_bytes());
 
 **Fixed**: Origin local backend selection is now implemented. Origin nodes accept incoming QUIC streams and route HTTP requests to local backends based on Host header. See `src/mesh/transport.rs:mesh_accept_loop` and `src/mesh/transport_peer.rs:handle_http_proxy_stream`.
 
-### Plan Verification
+### Implementation Plan
 
-When reviewing plan files against the codebase, always verify claims directly. Plans may reference items already fixed, use outdated line numbers, or describe bugs incorrectly. Run `grep`/search for the specific patterns described to confirm they still exist before implementing fixes.
+The consolidated implementation plan is located at `plans/plan.md`. This plan organizes all improvements into 8 waves for parallelization:
+
+| Wave | Focus |
+|------|-------|
+| 1 | Critical Security (DNS, Auth, SSRF) |
+| 2 | High Security (TLS, RFC5011, Mesh, WAF) |
+| 3 | Critical Correctness (Cache LRU, DHT Query) |
+| 4 | Mesh & DHT Infrastructure |
+| 5 | Code Quality (Large File Splitting) |
+| 6 | WAF Improvements |
+| 7 | Medium Priority Issues |
+| 8 | Low Priority / Cleanup |
+
+When reviewing the plan against the codebase, always verify claims directly. Plans may reference items already fixed, use outdated line numbers, or describe bugs incorrectly. Run `grep`/search for the specific patterns described to confirm they still exist before implementing fixes.
 
 ## Admin Panel Architecture Notes
 
@@ -721,7 +734,7 @@ This skill file documents the mesh networking and DHT system, which is complex a
 - **Upstream ID Format**: `http://host:port` (domain-based keys)
 - **DHT Key Types**: `verified_upstream:`, `upstream:`, `node_capability:`, etc.
 - **Routing Flow**: Edge → extract upstream_id → DHT query → weighted random → origin
-- **Phase Status**: Tracks completion of mesh/DHT improvements (2.5-2.7, 7, 7b, 8, 9, 10)
+- **Wave Status**: See `plans/plan.md` Wave 4 for mesh/DHT improvement status
 
 **Key files referenced**:
 - `src/mesh/proxy.rs` - Route requests, extract upstream_id
