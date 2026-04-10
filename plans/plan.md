@@ -1095,13 +1095,13 @@ routes = ["GET /api/*", "POST /api/data"]
 
 | Category | Issue | Fix | Status |
 |----------|-------|-----|--------|
-| WAF | X-Forwarded-For Single IP | Validate all IPs in chain | 🔄 DEFERRED |
+| WAF | X-Forwarded-For Single IP | Validate all IPs in chain | ✅ COMPLETED |
 | WAF | Open Redirect Path Check Missing | ✅ COMPLETED |
 | WAF | Domain Check Before URL Decode | ✅ COMPLETED |
 | TLS | skip_verify Hostname Bypass | Document clearly, require explicit flag | 🔄 DEFERRED |
 | TLS | allow_plaintext HTTP Upstream | Warn on startup | 🔄 DEFERRED |
-| IPC | No Mutual Authentication | Use `UnixStream::peer_credentials()` | 🔄 DEFERRED |
-| IPC | No Connection Source Validation | Add peer credential validation | 🔄 DEFERRED |
+| IPC | No Mutual Authentication | Use `UnixStream::peer_credentials()` | ✅ COMPLETED |
+| IPC | No Connection Source Validation | Add peer credential validation | ✅ COMPLETED |
 | Mesh | No node_id to Public Key Binding | Include hash of pubkey in node_id | 🔄 DEFERRED |
 | Mesh | TOFU Accepts First Certificate | Add out-of-band verification option | 🔄 DEFERRED |
 | DNS | DNSSEC Not Validated for Recursive | Implement chain-of-trust validation | 🔄 DEFERRED |
