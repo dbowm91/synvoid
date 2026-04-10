@@ -143,11 +143,21 @@ impl RequestSanitizer {
         if self.sanitize_forwarded && self.is_trusted_proxy(client_ip) {
             if let Some(forwarded_for) = headers.get("x-forwarded-for") {
                 if let Ok(value) = forwarded_for.to_str() {
-                    if let Some(first_ip) = value.split(',').next() {
-                        if let Ok(ip) = first_ip.trim().parse::<IpAddr>() {
-                            if !self.is_private_ip(&ip) {
-                                return Some(ip);
+                    let ips: Vec<&str> = value.split(',').map(|s| s.trim()).collect();
+                    if !ips.is_empty() {
+                        // Validate the X-Forwarded-For chain:
+                        // - All IPs except the LAST should be from trusted proxies
+                        // - The LAST IP (original client) should not be a trusted proxy
+                        let chain_valid = self.validate_forwarded_chain(&ips);
+                        if chain_valid {
+                            // Return the first IP (original client) if chain is valid
+                            if let Ok(ip) = ips[0].parse::<IpAddr>() {
+                                if !self.is_private_ip(&ip) {
+                                    return Some(ip);
+                                }
                             }
+                        } else {
+                            tracing::debug!("X-Forwarded-For chain validation failed: {:?}", ips);
                         }
                     }
                 }
@@ -172,6 +182,36 @@ impl RequestSanitizer {
         }
 
         Some(client_ip)
+    }
+
+    fn validate_forwarded_chain(&self, ips: &[&str]) -> bool {
+        if ips.is_empty() {
+            return false;
+        }
+
+        // All IPs except the last one should be trusted proxies
+        for &ip_str in &ips[..ips.len().saturating_sub(1)] {
+            if let Ok(ip) = ip_str.parse::<IpAddr>() {
+                if !self.is_trusted_proxy(ip) {
+                    return false;
+                }
+            } else {
+                // Invalid IP format in chain - treat as suspicious
+                return false;
+            }
+        }
+
+        // The last IP (original client) should NOT be a trusted proxy
+        if let Some(&last_ip) = ips.last() {
+            if let Ok(ip) = last_ip.parse::<IpAddr>() {
+                if self.is_trusted_proxy(ip) {
+                    // Original client IP cannot be a trusted proxy
+                    return false;
+                }
+            }
+        }
+
+        true
     }
 
     fn is_private_ip(&self, ip: &IpAddr) -> bool {
