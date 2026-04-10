@@ -30,7 +30,7 @@ This document consolidates all individual improvement plans (plan2-plan9) into a
 
 ### 1.1 Eliminate Repeated `.to_lowercase()` Calls 🔶 PARTIALLY COMPLETED
 
-**Status**: PARTIALLY COMPLETED - SSRF detector fixed, other detectors still have improvements pending
+**Status**: PARTIALLY COMPLETED - SSRF detector fixed, other detectors acceptable limitation
 
 **Changes**:
 - `src/waf/attack_detection/ssrf.rs`:
@@ -38,12 +38,15 @@ This document consolidates all individual improvement plans (plan2-plan9) into a
   - Modified `contains_private_ip_or_localhost` to lowercase once and reuse
   - Modified `detect_with_url_decode` to lowercase `decoded` once and use for all checks (`is_allowed_domain`, pattern matching, private IP detection)
 
-**Remaining** (26 calls across other detectors):
-- `request_smuggling.rs`: 9 calls
-- `detector_common.rs`: 3 calls
-- `jwt.rs`: 3 calls
-- `path_traversal.rs`, `rfi.rs`, `xxe.rs`, `open_redirect.rs`, `header_validation.rs`: remaining calls
-- See Wave 1 Item 5 (not yet implemented) for full optimization
+**Remaining - Architectural Limitation**:
+The `BasePatternDetector` uses AhoCorasick with pre-lowercased patterns. Since AhoCorasick performs exact matching, input strings MUST be lowercased before pattern matching. This allocation is unavoidable without a different detection approach (e.g., case-insensitive matching).
+
+Files with remaining calls:
+- `request_smuggling.rs`: 9 calls (input must be lowercased for pattern matching)
+- `detector_common.rs`: 3 calls (calls detect_internal which lowercases)
+- `jwt.rs`, `path_traversal.rs`, `rfi.rs`, `xxe.rs`, `open_redirect.rs`, `header_validation.rs`: pattern matching requires lowercased input
+
+**Decision**: Accept as architectural limitation. Each detection is a single allocation that is freed after detection completes.
 
 ### 1.2 Reduce Memory Allocations in Hot Paths 🔶 PARTIALLY COMPLETED
 
@@ -1105,7 +1108,7 @@ routes = ["GET /api/*", "POST /api/data"]
 | Mesh | No node_id to Public Key Binding | Include hash of pubkey in node_id | 🔄 DEFERRED |
 | Mesh | TOFU Accepts First Certificate | Add out-of-band verification option | 🔄 DEFERRED |
 | DNS | DNSSEC Not Validated for Recursive | Implemented for Recursive provider; warnings added for Google/Cloudflare | ✅ COMPLETED |
-| DNS | RRL Only TCP | Add UDP rate limiting | 🔄 DEFERRED |
+| DNS | RRL Only TCP | RRL implemented for UDP responses | ✅ COMPLETED |
 
 ### 7.3 Low Severity ✅ REVIEWED
 
