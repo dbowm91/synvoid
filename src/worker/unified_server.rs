@@ -209,6 +209,22 @@ pub async fn run_unified_server_worker(
 
     let shared_config = setup_config(&args.config_path).await;
 
+    {
+        let config = shared_config.read().await;
+        let passthrough_sites: Vec<_> = config
+            .sites
+            .iter()
+            .filter(|(_, site)| site.proxy.tls_passthrough == Some(true))
+            .map(|(id, _)| id.clone())
+            .collect();
+        if !passthrough_sites.is_empty() {
+            tracing::warn!(
+                "TLS passthrough is enabled for sites: {:?}. WAF inspection is BYPASSED for these sites - L7 attacks will not be blocked.",
+                passthrough_sites
+            );
+        }
+    }
+
     let (
         bandwidth_data_dir,
         bandwidth_retention_days,

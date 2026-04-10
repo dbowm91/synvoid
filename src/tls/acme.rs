@@ -133,7 +133,7 @@ impl AcmeManager {
         let contact = &[contact_str.as_str()];
         let new_account = NewAccount {
             contact,
-            terms_of_service_agreed: true,
+            terms_of_service_agreed: self.config.terms_of_service_agreed,
             only_return_existing: false,
         };
 

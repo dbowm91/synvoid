@@ -401,7 +401,7 @@ mod dns_config_tests {
 
         let digest = compute_ds_digest(2, 257, 3, 8, &public_key)
             .expect("digest computation should succeed");
-        let event = manager.trust_anchor_check(20326, 8, 2, &digest);
+        let event = manager.trust_anchor_check(20326, 8, 2, &digest, None);
         assert!(matches!(event, Rfc5011Event::KeyPending { key_tag: 20326 }));
 
         let event = manager.process_rfc5011_updates();
@@ -616,7 +616,7 @@ mod dns_config_tests {
         let digest = maluwaf::dns::dnssec::compute_ds_digest(2, 257, 3, 8, &public_key)
             .expect("digest computation should succeed");
 
-        let event3 = manager.trust_anchor_check(key_tag, 8, 2, &digest);
+        let event3 = manager.trust_anchor_check(key_tag, 8, 2, &digest, None);
         assert!(matches!(event3, Rfc5011Event::KeyPending { key_tag: kt } if kt == key_tag));
 
         let events = manager.process_rfc5011_updates();

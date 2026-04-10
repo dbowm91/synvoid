@@ -1186,7 +1186,7 @@ impl HickoryRecursor {
                 let digest = cds.digest();
 
                 if let Some(manager) = &self.trust_anchor_manager {
-                    let _ = manager.trust_anchor_check(key_tag, algorithm_u8, digest_type, digest);
+                    let _ = manager.trust_anchor_check(key_tag, algorithm_u8, digest_type, digest, None);
                 }
 
                 records.push(CdsRecord {
@@ -1215,6 +1215,8 @@ impl HickoryRecursor {
         let dnskey_records = self.lookup_dnskey(zone).await?;
         let cds_records = self.lookup_cds(zone).await?;
 
+        let dnskey_keytags: Vec<u16> = dnskey_records.iter().map(|r| r.key_tag).collect();
+
         for record in &dnskey_records {
             if record.is_revoked {
                 keys_revoked += 1;
@@ -1228,6 +1230,7 @@ impl HickoryRecursor {
                     record.algorithm,
                     record.digest_type,
                     &record.digest,
+                    Some(&dnskey_keytags),
                 );
                 match &event {
                     crate::dns::trust_anchor::Rfc5011Event::NewKeySeen { .. } => new_keys_seen += 1,

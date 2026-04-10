@@ -169,6 +169,12 @@ impl AuthManager {
         let mut merged = stores.last().unwrap().clone();
         for store in stores.iter().take(stores.len() - 1) {
             merged.login_logs.extend(store.login_logs.iter().cloned());
+            for (k, v) in store.users.iter() {
+                merged.users.insert(k.clone(), v.clone());
+            }
+            for (k, v) in store.sessions.iter() {
+                merged.sessions.insert(k.clone(), v.clone());
+            }
         }
         let mut seen = std::collections::HashSet::new();
         merged.login_logs.retain(|log| seen.insert(log.id.clone()));

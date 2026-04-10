@@ -39,26 +39,21 @@ fn extract_client_ip_from_request(request: &Request) -> String {
 
     if let Some(ref ip) = direct_ip {
         if is_trusted_proxy(ip) {
-            return request
-                .headers()
-                .get("x-forwarded-for")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|s| s.split(',').next())
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| ip.clone());
+            if let Some(header) = request.headers().get("x-forwarded-for") {
+                if let Ok(s) = header.to_str() {
+                    if let Some(client_ip) = s.split(',').next() {
+                        let ip = client_ip.trim();
+                        if !ip.is_empty() && ip.parse::<std::net::IpAddr>().is_ok() {
+                            return ip.to_string();
+                        }
+                    }
+                }
+            }
         }
         return ip.clone();
     }
 
-    request
-        .headers()
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.split(',').next())
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "unknown".to_string())
+    direct_ip.unwrap_or_else(|| "unknown".to_string())
 }
 
 pub async fn auth_middleware_with_state(
@@ -120,9 +115,18 @@ pub async fn csrf_middleware(
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
 
+    let bearer_token: Option<String> = request
+        .headers()
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .map(|t| t.to_string());
+
     if let Some(token) = csrf_token {
-        if state.validate_csrf(&token) {
-            return next.run(request).await;
+        if let Some(session_id) = bearer_token {
+            if state.validate_csrf(&token, &session_id) {
+                return next.run(request).await;
+            }
         }
     }
 

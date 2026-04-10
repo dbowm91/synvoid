@@ -1,3 +1,4 @@
+use crate::utils::url_decode_all;
 use aho_corasick::AhoCorasick;
 use std::sync::Arc;
 
@@ -145,23 +146,25 @@ impl OpenRedirectDetector {
         location: InputLocation,
     ) -> Option<AttackDetectionResult> {
         let input_lower = input.to_lowercase();
+        let decoded = url_decode_all(&input_lower);
+        let decoded_lower = decoded.to_lowercase();
 
-        if !self.is_external_redirect(&input_lower) {
+        if !self.is_external_redirect(&decoded_lower) {
+            if decoded != input_lower {
+                return self.detect_internal(input, location);
+            }
             return None;
         }
 
-        let is_redirect_param = self.is_redirect_param(&input_lower);
-        let matched_pattern = self.inner.patterns_ref().find(&input_lower);
+        let is_redirect_param = self.is_redirect_param(&decoded_lower);
 
-        if is_redirect_param {
-            let matched = matched_pattern
-                .map(|m| input_lower[m.start()..m.end()].to_string())
-                .unwrap_or_else(|| "redirect_param_external_url".to_string());
+        if let Some(mat) = self.inner.patterns_ref().find(&decoded_lower) {
+            let matched = decoded_lower[mat.start()..mat.end()].to_string();
             tracing::warn!(
                 attack_type = "open_redirect",
                 matched_pattern = %matched,
                 location = %location,
-                "Open redirect detected: redirect param with external URL"
+                "Open redirect detected"
             );
             return Some(AttackDetectionResult {
                 attack_type: AttackType::OpenRedirect,
@@ -171,18 +174,35 @@ impl OpenRedirectDetector {
             });
         }
 
-        if let Some(matched) = matched_pattern {
-            let matched_str = input_lower[matched.start()..matched.end()].to_string();
+        if decoded != input_lower && is_redirect_param {
+            if let Some(mat) = self.inner.patterns_ref().find(&input_lower) {
+                let matched = input_lower[mat.start()..mat.end()].to_string();
+                tracing::warn!(
+                    attack_type = "open_redirect",
+                    matched_pattern = %matched,
+                    location = %location,
+                    "Open redirect detected (encoded)"
+                );
+                return Some(AttackDetectionResult {
+                    attack_type: AttackType::OpenRedirect,
+                    fingerprint: None,
+                    matched_pattern: Some(matched),
+                    input_location: location,
+                });
+            }
+        }
+
+        if is_redirect_param {
             tracing::warn!(
                 attack_type = "open_redirect",
-                matched_pattern = %matched_str,
+                matched_pattern = "redirect_param_external_url",
                 location = %location,
-                "Open redirect detected"
+                "Open redirect detected: redirect param with external URL"
             );
             return Some(AttackDetectionResult {
                 attack_type: AttackType::OpenRedirect,
                 fingerprint: None,
-                matched_pattern: Some(matched_str),
+                matched_pattern: Some("redirect_param_external_url".to_string()),
                 input_location: location,
             });
         }

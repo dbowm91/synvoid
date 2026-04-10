@@ -223,8 +223,25 @@ impl StakeManager {
         self.config.clone()
     }
 
-    pub fn register_node(&self, node_id: String, reputation: i64, role: MeshNodeRole) {
+    pub fn register_node(
+        &self,
+        node_id: String,
+        reputation: i64,
+        role: MeshNodeRole,
+        caller_verified_id: Option<&str>,
+    ) {
         let mut stakes = self.stakes.write();
+
+        if let Some(caller) = caller_verified_id {
+            if node_id != caller {
+                tracing::warn!(
+                    "Node {} rejected: node_id does not match verified caller identity {}",
+                    node_id,
+                    caller
+                );
+                return;
+            }
+        }
 
         if let Some(existing) = stakes.get_mut(&node_id) {
             existing.update(reputation, role);
@@ -274,10 +291,10 @@ impl StakeManager {
 
     pub fn can_write_dht(&self, node_id: &str) -> bool {
         let stakes = self.stakes.read();
-        stakes
-            .get(node_id)
-            .map(|s| s.can_write_to_dht(self.config.min_stake_for_dht_write))
-            .unwrap_or(false)
+        match stakes.get(node_id) {
+            Some(s) => s.can_write_to_dht(self.config.min_stake_for_dht_write),
+            None => false,
+        }
     }
 
     pub fn can_read_dht(&self, node_id: &str) -> bool {
@@ -542,9 +559,9 @@ mod tests {
         config.stake_grace_period_secs = 0;
         let manager = StakeManager::new(config, "local-node".to_string(), true);
 
-        manager.register_node("global-1".to_string(), 80, MeshNodeRole::GLOBAL);
-        manager.register_node("origin-1".to_string(), 50, MeshNodeRole::ORIGIN);
-        manager.register_node("edge-1".to_string(), 60, MeshNodeRole::EDGE);
+        manager.register_node("global-1".to_string(), 80, MeshNodeRole::GLOBAL, None);
+        manager.register_node("origin-1".to_string(), 50, MeshNodeRole::ORIGIN, None);
+        manager.register_node("edge-1".to_string(), 60, MeshNodeRole::EDGE, None);
 
         manager.update_reputation("global-1", 80, MeshNodeRole::GLOBAL);
         manager.update_reputation("origin-1", 50, MeshNodeRole::ORIGIN);
@@ -563,7 +580,7 @@ mod tests {
         config.stake_grace_period_secs = 0;
         let manager = StakeManager::new(config, "global-1".to_string(), true);
 
-        manager.register_node("malicious".to_string(), 50, MeshNodeRole::EDGE);
+        manager.register_node("malicious".to_string(), 50, MeshNodeRole::EDGE, None);
         manager.update_reputation("malicious", 50, MeshNodeRole::EDGE);
 
         assert!(manager.can_write_dht("malicious"));

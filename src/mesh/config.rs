@@ -1368,6 +1368,8 @@ pub struct MeshTlsConfig {
     pub min_tls_version: String,
     #[serde(default)]
     pub certificate_pin_public_keys: Vec<String>,
+    #[serde(default = "default_quic_enable_0rtt")]
+    pub quic_enable_0rtt: bool,
 }
 
 fn default_auto_generate() -> bool {
@@ -1384,6 +1386,10 @@ fn default_auto_monitor_expiration() -> bool {
 
 fn default_min_tls_version() -> String {
     "1.3".to_string()
+}
+
+fn default_quic_enable_0rtt() -> bool {
+    false
 }
 
 impl MeshWireGuardConfig {

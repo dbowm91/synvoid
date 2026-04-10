@@ -177,7 +177,7 @@ pub struct WafTrackingState {
 #[derive(Clone)]
 pub struct SecurityState {
     pub admin_token: String,
-    pub csrf_tokens: Arc<RwLock<std::collections::HashMap<String, CsrfTokenState>>>,
+    pub csrf_tokens: Arc<RwLock<std::collections::HashMap<String, CsrfTokenData>>>,
     pub rate_limiter: Option<Arc<AdminRateLimiter>>,
     pub yara_rate_limiter: Option<Arc<YaraRateLimiter>>,
 }
@@ -588,14 +588,16 @@ impl AdminState {
         self.metrics.start_time.elapsed().as_secs()
     }
 
-    pub fn validate_csrf(&self, token: &str) -> bool {
+    pub fn validate_csrf(&self, token: &str, session_id: &str) -> bool {
         use std::time::Duration;
 
         let now = Instant::now();
         let csrf_tokens = self.security.csrf_tokens.read();
 
         if let Some(valid_token) = csrf_tokens.get(token) {
-            if now.duration_since(valid_token.created) < Duration::from_secs(3600) {
+            if now.duration_since(valid_token.created) < Duration::from_secs(3600)
+                && valid_token.session_id == session_id
+            {
                 return true;
             }
         }
@@ -603,18 +605,22 @@ impl AdminState {
         false
     }
 
-    pub fn generate_csrf_token(&self) -> String {
+    pub fn generate_csrf_token(&self, session_id: String) -> String {
         use uuid::Uuid;
 
         let token = Uuid::new_v4().to_string();
-        let now = Instant::now();
 
         self.security
             .csrf_tokens
             .write()
-            .insert(token.clone(), CsrfTokenState { created: now });
+            .insert(token.clone(), CsrfTokenData::new(session_id));
 
         token
+    }
+
+    pub fn invalidate_csrf_tokens_for_session(&self, session_id: &str) {
+        let mut tokens = self.security.csrf_tokens.write();
+        tokens.retain(|_, v| v.session_id != session_id);
     }
 
     pub fn cleanup_expired_csrf_tokens(&self) {
@@ -627,8 +633,18 @@ impl AdminState {
     }
 }
 
-pub struct CsrfTokenState {
+pub struct CsrfTokenData {
     pub created: Instant,
+    pub session_id: String,
+}
+
+impl CsrfTokenData {
+    fn new(session_id: String) -> Self {
+        Self {
+            created: Instant::now(),
+            session_id,
+        }
+    }
 }
 
 static CURRENT_CONNECTIONS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);

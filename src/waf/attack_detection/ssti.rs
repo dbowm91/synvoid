@@ -1,3 +1,4 @@
+use crate::utils::url_decode_all;
 use crate::waf::attack_detection::config::{AttackType, InputLocation};
 use crate::waf::attack_detection::detector_common::{BasePatternDetector, PatternDetector};
 use crate::waf::attack_detection::patterns::DefaultPatterns;
@@ -20,6 +21,55 @@ impl SstiDetector {
         );
         Self { inner }
     }
+
+    fn detect_with_url_decode(
+        &self,
+        input: &str,
+        location: InputLocation,
+    ) -> Option<crate::waf::attack_detection::config::AttackDetectionResult> {
+        let input_lower = input.to_lowercase();
+        let decoded = url_decode_all(&input_lower);
+
+        if let Some(mat) = self.inner.patterns_ref().find(&decoded) {
+            let matched = decoded[mat.start()..mat.end()].to_string();
+            tracing::warn!(
+                attack_type = "ssti",
+                matched_pattern = %matched,
+                location = %location,
+                "SSTI detected"
+            );
+            return Some(
+                crate::waf::attack_detection::config::AttackDetectionResult {
+                    attack_type: AttackType::Ssti,
+                    fingerprint: None,
+                    matched_pattern: Some(matched),
+                    input_location: location,
+                },
+            );
+        }
+
+        if decoded != input_lower {
+            if let Some(mat) = self.inner.patterns_ref().find(&input_lower) {
+                let matched = input_lower[mat.start()..mat.end()].to_string();
+                tracing::warn!(
+                    attack_type = "ssti",
+                    matched_pattern = %matched,
+                    location = %location,
+                    "SSTI detected (encoded)"
+                );
+                return Some(
+                    crate::waf::attack_detection::config::AttackDetectionResult {
+                        attack_type: AttackType::Ssti,
+                        fingerprint: None,
+                        matched_pattern: Some(matched),
+                        input_location: location,
+                    },
+                );
+            }
+        }
+
+        None
+    }
 }
 
 impl PatternDetector for SstiDetector {
@@ -32,7 +82,7 @@ impl PatternDetector for SstiDetector {
         input: &str,
         location: InputLocation,
     ) -> Option<crate::waf::attack_detection::config::AttackDetectionResult> {
-        self.inner.detect(input, location)
+        self.detect_with_url_decode(input, location)
     }
 }
 

@@ -126,6 +126,8 @@ pub struct AcmeConfig {
     pub domains: Vec<String>,
     #[serde(default)]
     pub challenge_type: AcmeChallengeType,
+    #[serde(default)]
+    pub terms_of_service_agreed: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Default, JsonSchema)]

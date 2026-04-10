@@ -24,6 +24,7 @@ pub struct InternalAcmeConfig {
     pub staging: bool,
     pub domains: Vec<String>,
     pub challenge_type: InternalAcmeChallengeType,
+    pub terms_of_service_agreed: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -98,6 +99,7 @@ impl From<crate::config::AcmeConfig> for InternalAcmeConfig {
                 crate::config::AcmeChallengeType::Http01 => InternalAcmeChallengeType::Http01,
                 crate::config::AcmeChallengeType::Dns01 => InternalAcmeChallengeType::Dns01,
             },
+            terms_of_service_agreed: config.terms_of_service_agreed,
         }
     }
 }

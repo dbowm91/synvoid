@@ -1,3 +1,4 @@
+use crate::utils::url_decode_all;
 use aho_corasick::AhoCorasick;
 use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
 use std::sync::Arc;
@@ -250,18 +251,21 @@ impl JwtDetector {
 }
 
 fn extract_jwt_token(input: &str) -> Option<String> {
-    if input.contains('.') && input.matches('.').count() == 2 {
-        let parts: Vec<&str> = input.split('.').collect();
+    let decoded = url_decode_all(input);
+    let input_to_check = decoded.as_str();
+
+    if input_to_check.contains('.') && input_to_check.matches('.').count() == 2 {
+        let parts: Vec<&str> = input_to_check.split('.').collect();
         if parts.len() == 3 && !parts[0].is_empty() && !parts[1].is_empty() {
-            return Some(input.to_string());
+            return Some(decoded);
         }
     }
 
     let patterns = ["jwt=", "token=", "bearer ", "Bearer "];
     for pattern in patterns {
-        if let Some(pos) = input.to_lowercase().find(&pattern.to_lowercase()) {
+        if let Some(pos) = input_to_check.to_lowercase().find(&pattern.to_lowercase()) {
             let start = pos + pattern.len();
-            let rest = &input[start..];
+            let rest = &input_to_check[start..];
             if let Some(end) =
                 rest.find(|c: char| c.is_whitespace() || c == '&' || c == ';' || c == ',')
             {

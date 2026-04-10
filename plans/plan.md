@@ -158,7 +158,7 @@ if input_lower.contains(".localhost") || input_lower.contains("localhost.")
 
 ### 2.1 TLS Passthrough Bypasses WAF
 
-**Status**: 🔶 Future Work
+**Status**: ✅ Completed (2026-04-10)
 
 **Severity**: HIGH
 
@@ -175,7 +175,7 @@ When `tls_passthrough = true`, raw TLS bytes forward directly to upstream. All L
 
 ### 2.2 0-RTT Enabled By Default (Replay Risk)
 
-**Status**: 🔶 Future Work
+**Status**: ✅ Completed (2026-04-10)
 
 **Severity**: HIGH
 
@@ -192,7 +192,7 @@ QUIC 0-RTT connections are susceptible to replay attacks. No configuration optio
 
 ### 2.3 RFC 5011 State Machine Bypasses
 
-**Status**: 🔶 Future Work
+**Status**: ✅ Completed (2026-04-10)
 
 **Severity**: HIGH
 
@@ -210,7 +210,7 @@ Two RFC 5011 bypasses:
 
 ### 2.4 Mesh Node Identity Not Verified
 
-**Status**: 🔶 Future Work
+**Status**: ✅ Completed (2026-04-10)
 
 **Severity**: HIGH
 
@@ -227,7 +227,7 @@ Two RFC 5011 bypasses:
 
 ### 2.5 IP Extraction Spoofing via X-Forwarded-For
 
-**Status**: 🔶 Future Work
+**Status**: ✅ Completed (2026-04-10)
 
 **Severity**: HIGH
 
@@ -244,7 +244,7 @@ Two RFC 5011 bypasses:
 
 ### 2.6 Rate Limiter Race Condition
 
-**Status**: 🔶 Future Work
+**Status**: ✅ Completed (2026-04-10)
 
 **Severity**: HIGH
 
@@ -272,7 +272,7 @@ pub fn record_failure(&self, identifier: &str) {
 
 ### 2.7 AuthStore Merge Loses Data
 
-**Status**: 🔶 Future Work
+**Status**: ✅ Completed (2026-04-10)
 
 **Severity**: HIGH
 
@@ -297,7 +297,7 @@ fn merge_stores(stores: &[AuthStore]) -> AuthStore {
 
 ### 2.8 CSRF Tokens Not Bound to Session
 
-**Status**: 🔶 Future Work
+**Status**: ✅ Completed (2026-04-10)
 
 **Severity**: HIGH
 
@@ -314,7 +314,7 @@ fn merge_stores(stores: &[AuthStore]) -> AuthStore {
 
 ### 2.9 WAF Detection Bypasses (URL Decoding)
 
-**Status**: 🔶 Future Work
+**Status**: ✅ Completed (2026-04-10)
 
 **Severity**: HIGH
 
@@ -336,7 +336,7 @@ Several detectors don't URL-decode input before pattern matching:
 
 ### 2.10 Private Keys Not Zeroized
 
-**Status**: 🔶 Future Work
+**Status**: ✅ Completed (2026-04-10)
 
 **Severity**: MEDIUM
 
@@ -350,7 +350,7 @@ Mesh node private keys stored in memory without `zeroize` for secure clearing.
 
 ### 2.11 ACME ToS Auto-Accepted
 
-**Status**: 🔶 Future Work
+**Status**: ✅ Completed (2026-04-10)
 
 **Severity**: MEDIUM
 

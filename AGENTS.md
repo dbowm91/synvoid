@@ -334,7 +334,6 @@ All duplicate `current_timestamp()` definitions have been consolidated into `src
 | Response streaming | `src/http/server.rs` | Fully buffered responses | Open (architectural change needed) |
 | HTTPS feature parity | `src/tls/server.rs` | Missing WebSocket, WASM, FastCGI, PHP, etc. | Open (large refactoring) |
 | transport.rs module size | `src/mesh/transport.rs` | 2570 lines vs 1000 target | Open (see plan.md Wave 5) |
-| Repeated .to_lowercase() | `src/waf/attack_detection/*.rs` | Detectors call to_lowercase() instead of using pre-computed | Open (see plan.md Wave 2) |
 
 ### Fixed Issues
 
@@ -347,6 +346,17 @@ All duplicate `current_timestamp()` definitions have been consolidated into `src
 | WebSocket authentication | `src/admin/ws/mod.rs` | Bearer token validation required; 401 on failure |
 | Upstream verification system | `src/mesh/transport_peer.rs:1639-1643` | `get_verification_manager()` returns actual manager |
 | Verification response signatures | `src/mesh/transport_peer.rs:1575-1585` | Responses signed with global node signing key |
+| TLS passthrough startup warning | `src/config/site/proxy.rs` | Added `tls_passthrough_warn_only` config and startup warning |
+| 0-RTT disabled by default | `src/mesh/cert.rs` | Added `quic_enable_0rtt` config (default: false) |
+| RFC 5011 state machine | `src/dns/trust_anchor.rs` | Fixed Missing→Valid and Pending→Valid bypasses |
+| Mesh node identity verification | `src/mesh/dht/stake.rs` | `register_node()` now verifies caller identity |
+| X-Forwarded-For trusted proxy | `src/admin/middleware.rs` | Only uses XFF when from trusted proxy; validates IP format |
+| Rate limiter race condition | `src/admin/auth.rs` | Check-before-add pattern prevents burst past limit |
+| AuthStore merge | `src/auth/mod.rs` | Merges users and sessions collections |
+| CSRF session binding | `src/admin/state.rs` | CSRF tokens now validated against session ID |
+| WAF URL decoding | `src/waf/attack_detection/*.rs` | SSTI, LDAP, XPath, Open Redirect, JWT detectors decode URLs |
+| Private key zeroization | `src/mesh/cert.rs` | Uses `ZeroizeOnDrop` for private key storage |
+| ACME ToS agreement | `src/tls/acme.rs` | `terms_of_service_agreed` now configurable |
 | `pattern_detector!` macro infinite recursion | `src/waf/attack_detection/detector_common.rs` | Fix applied to macro-generated impl |
 | WAF empty headers in proxy path | `src/proxy.rs:486` | Pass actual request headers to check_request_full |
 | Dynamic worker server stub | `src/worker/mod.rs` | Deprecated; unified server handles requests |

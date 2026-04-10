@@ -17,8 +17,19 @@ use rustls_pki_types::pem::{self, PemObject};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::mesh::config::MeshConfig;
+
+#[derive(Zeroize, ZeroizeOnDrop)]
+struct ZeroizingPrivateKeyDer(PrivateKeyDer<'static>);
+
+impl std::ops::Deref for ZeroizingPrivateKeyDer {
+    type Target = PrivateKeyDer<'static>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
 fn load_certs(
     path: &PathBuf,
@@ -137,13 +148,14 @@ pub struct MeshCertManager {
     is_global: bool,
     ca_mode: bool,
     enforce_mutual_tls: bool,
+    quic_enable_0rtt: bool,
     ca_key_pair: Arc<RwLock<Option<rcgen::KeyPair>>>,
     ca_certificate: Arc<RwLock<Option<rcgen::Certificate>>>,
     ca_cert_der: Arc<RwLock<Option<CertificateDer<'static>>>>,
     verified_nodes: Arc<RwLock<std::collections::HashSet<String>>>,
     global_node_public_keys: Arc<RwLock<std::collections::HashMap<String, Vec<u8>>>>,
     trusted_ca_certs: Arc<RwLock<std::collections::HashMap<String, CertificateDer<'static>>>>,
-    node_private_key: Arc<RwLock<Option<PrivateKeyDer<'static>>>>,
+    node_private_key: Arc<RwLock<Option<ZeroizingPrivateKeyDer>>>,
     cert_rotation_interval: Arc<RwLock<Option<std::time::Duration>>>,
     cert_expiration_monitor: Arc<RwLock<Option<std::time::Instant>>>,
     certificate_revocation_list: Arc<RwLock<std::collections::HashSet<String>>>,
@@ -196,6 +208,7 @@ impl MeshCertManager {
             is_global,
             ca_mode,
             enforce_mutual_tls: config.tls.enforce_mutual_tls,
+            quic_enable_0rtt: config.tls.quic_enable_0rtt,
             ca_key_pair: Arc::new(RwLock::new(None)),
             ca_certificate: Arc::new(RwLock::new(None)),
             ca_cert_der: Arc::new(RwLock::new(None)),
@@ -242,7 +255,7 @@ impl MeshCertManager {
         if let (Some(cert_path), Some(key_path)) = (&self.cert_path, &self.key_path) {
             let key = load_private_key(key_path)
                 .map_err(|e| MeshCertError::ConfigError(e.to_string()))?;
-            *self.node_private_key.write() = Some(key);
+            *self.node_private_key.write() = Some(ZeroizingPrivateKeyDer(key));
         }
 
         if let Some(ref ca_path) = self.ca_path {
@@ -321,7 +334,7 @@ impl MeshCertManager {
 
         let (cert_chain, private_key) = Self::load_cert_chain_and_key(cert_path, key_path)?;
 
-        let server_config = if enforce_mutual_tls {
+        let mut server_config = if enforce_mutual_tls {
             let mut root_store = rustls::RootCertStore::empty();
             if let Some(ref ca_path) = self.ca_path {
                 if let Ok(ca_file) = File::open(ca_path) {
@@ -362,6 +375,10 @@ impl MeshCertManager {
                 })?
         };
 
+        if !self.quic_enable_0rtt {
+            server_config.max_early_data_size = 0;
+        }
+
         let quic_server_config = QuicServerConfig::try_from(std::sync::Arc::new(server_config))
             .map_err(|e| {
                 MeshCertError::ConfigError(format!(
@@ -370,9 +387,13 @@ impl MeshCertManager {
                 ))
             })?;
 
-        // Quinn 0.11 with rustls automatically supports 0-RTT when the server accepts it
-        // No explicit configuration needed - 0-RTT is enabled by default
         let quic_config = quinn::ServerConfig::with_crypto(std::sync::Arc::new(quic_server_config));
+
+        if !self.quic_enable_0rtt {
+            tracing::info!("QUIC 0-RTT disabled");
+        } else {
+            tracing::warn!("QUIC 0-RTT enabled - warning: 0-RTT is susceptible to replay attacks");
+        }
 
         Ok(quic_config)
     }
@@ -625,7 +646,7 @@ impl MeshCertManager {
         if let (Some(cert_path), Some(key_path)) = (&self.cert_path, &self.key_path) {
             let key = load_private_key(key_path)
                 .map_err(|e| MeshCertError::ConfigError(e.to_string()))?;
-            *self.node_private_key.write() = Some(key);
+            *self.node_private_key.write() = Some(ZeroizingPrivateKeyDer(key));
         }
 
         *self.cert_expiration_monitor.write() = Some(std::time::Instant::now());

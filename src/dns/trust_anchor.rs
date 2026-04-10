@@ -448,10 +448,10 @@ impl TrustAnchorManager {
                 anchor.removed_at = Some(now);
                 return Rfc5011Event::KeyRemoved { key_tag };
             } else if anchor.state == TrustAnchorState::Missing {
-                anchor.state = TrustAnchorState::Valid;
-                anchor.trust_point = now;
-                tracing::info!("RFC 5011: Key {} reappeared, restored to Valid", key_tag);
-                return Rfc5011Event::KeyPromoted { key_tag };
+                anchor.state = TrustAnchorState::Seen;
+                anchor.first_seen_at = Some(now);
+                tracing::info!("RFC 5011: Key {} reappeared, entering Seen state", key_tag);
+                return Rfc5011Event::KeySeen { key_tag };
             }
             return Rfc5011Event::KeySeen { key_tag };
         }
@@ -490,6 +490,7 @@ impl TrustAnchorManager {
         algorithm: u8,
         digest_type: u8,
         digest: &[u8],
+        current_dnskey_keytags: Option<&[u16]>,
     ) -> Rfc5011Event {
         let mut anchors = self.anchors.write();
         let now = crate::utils::safe_unix_timestamp();
@@ -547,6 +548,18 @@ impl TrustAnchorManager {
                     let required_secs = self.config.pending_observation_days * 86400;
 
                     if pending_secs >= required_secs {
+                        if let Some(keytags) = current_dnskey_keytags {
+                            if !keytags.contains(&key_tag) {
+                                tracing::warn!(
+                                    "RFC 5011: Key {} no longer in DNSKEY RRset, not promoting to Valid",
+                                    key_tag
+                                );
+                                return Rfc5011Event::KeyWaiting {
+                                    key_tag,
+                                    remaining_secs: 0,
+                                };
+                            }
+                        }
                         anchor.state = TrustAnchorState::Valid;
                         anchor.trust_point = now;
                         tracing::info!("RFC 5011: Key {} promoted to Valid", key_tag);
@@ -1031,7 +1044,7 @@ mod tests {
         let digest = crate::dns::dnssec::compute_ds_digest(2, 257, 3, 8, &public_key)
             .expect("digest computation should succeed");
 
-        let event = manager.trust_anchor_check(key_tag, 8, 2, &digest);
+        let event = manager.trust_anchor_check(key_tag, 8, 2, &digest, None);
         assert!(matches!(event, Rfc5011Event::KeyPending { .. }));
     }
 
@@ -1050,7 +1063,7 @@ mod tests {
 
         let wrong_digest = vec![0xFF, 0xFE, 0xFD, 0xFC];
 
-        let event = manager.trust_anchor_check(key_tag, 8, 2, &wrong_digest);
+        let event = manager.trust_anchor_check(key_tag, 8, 2, &wrong_digest, None);
         match event {
             Rfc5011Event::KeyIgnored { reason, .. } => {
                 assert!(reason.contains("mismatch"));
@@ -1072,7 +1085,7 @@ mod tests {
 
         let digest = vec![0xAA, 0xBB, 0xCC, 0xDD];
 
-        let event = manager.trust_anchor_check(key_tag, 8, 2, &digest);
+        let event = manager.trust_anchor_check(key_tag, 8, 2, &digest, None);
         assert!(matches!(event, Rfc5011Event::KeyIgnored { .. }));
     }
 
@@ -1095,7 +1108,7 @@ mod tests {
 
         let digest = crate::dns::dnssec::compute_ds_digest(2, 257, 3, 8, &public_key)
             .expect("digest computation should succeed");
-        manager.trust_anchor_check(key_tag, 8, 2, &digest);
+        manager.trust_anchor_check(key_tag, 8, 2, &digest, None);
 
         let trusted = manager.get_trusted_anchors();
         assert_eq!(trusted.len(), 1);
@@ -1302,7 +1315,7 @@ mod tests {
 
         let digest = crate::dns::dnssec::compute_ds_digest(2, 257, 3, 8, &public_key)
             .expect("digest should compute");
-        manager.trust_anchor_check(key_tag, 8, 2, &digest);
+        manager.trust_anchor_check(key_tag, 8, 2, &digest, None);
 
         assert!(manager.get_anchors().is_empty());
 
