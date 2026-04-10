@@ -1185,9 +1185,9 @@ routes = ["GET /api/*", "POST /api/data"]
 | File | Lines | Status |
 |------|-------|--------|
 | `src/process/ipc.rs` | 1,835 | ✅ COMPLETED - split into 6 sibling modules |
-| `src/http/server.rs` | 3,206 | 🔄 DEFERRED - needs splitting |
-| `src/process/manager.rs` | 2,080 | 🔄 IN PROGRESS - worker types extracted |
-| `src/mesh/topology.rs` | 2,256 | 🔄 DEFERRED - needs splitting |
+| `src/http/server.rs` | 3,206 | 🔄 DEFERRED - requires architectural refactor |
+| `src/process/manager.rs` | 2,080 | ✅ COMPLETED - worker types extracted |
+| `src/mesh/topology.rs` | 2,256 | 🔄 DEFERRED - requires architectural refactor |
 
 **Completed split for `src/process/ipc.rs`**:
 - `ipc_framing.rs` - Message framing
@@ -1201,7 +1201,9 @@ routes = ["GET /api/*", "POST /api/data"]
 - `worker.rs` - Worker process types (BaseWorkerProcess, WorkerProcess, StaticWorkerProcess, UnifiedServerWorkerProcess)
 - `manager.rs` reduced from 2,281 to ~2,080 lines
 
-**Deferred**: http/server.rs and mesh/topology.rs need significant refactoring.
+**Requires Architectural Refactor**:
+- `http/server.rs`: `handle_request()` is 2,257 lines handling routing to 8+ backend types. Cannot be mechanically split without moving backend-specific logic into separate modules.
+- `mesh/topology.rs`: MeshTopology impl is ~1,500 lines with tightly coupled helper types (PeerState, PeerScore, ShardedPeerStore, etc.). Needs helper types extracted first.
 
 ---
 
