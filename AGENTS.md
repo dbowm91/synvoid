@@ -349,7 +349,7 @@ All duplicate `current_timestamp()` definitions have been consolidated into `src
 | WireGuard transport unauthenticated | `src/mesh/transports/wireguard.rs` | WireGuard transport removed entirely |
 | DHT query response non-functional | `src/mesh/dht/record_store_sync.rs` | Uses oneshot channels, quorum-based reads |
 | HTTPS proxy body forwarding | `src/tls/server.rs` | Pass `body_bytes` to upstream |
-| YARA periodic sync | `src/worker/unified_server.rs` | Call `sync_manager.send_sync_request_to_global()` |
+| YARA periodic sync | `src/worker/unified_server.rs` | Call `sync_manager.sync_from_dht()` (DHT-primary) |
 | Granian dispatch | `src/app_server/granian.rs` | `forward_request()` uses built request |
 | Honeypot mesh wiring | `src/worker/unified_server.rs` | `start_mesh_threat_publishing()` after mesh init |
 | HTTP body truncation | `src/http/server.rs` | Separated `full_body` from `body_slice` |
@@ -675,6 +675,65 @@ trust_anchor_path = "trusted-key.key"  # Root DNSKEY file
 - `is_dnssec_validated` flag propagates to AD bit in responses
 
 **Skill file**: `skills/dns_dnssec.md` contains detailed architecture documentation.
+
+## YARA & ThreatIntel Rule Distribution
+
+**Architecture**: Both YARA rules and ThreatIntel use DHT as the primary propagation mechanism. Mesh broadcast is retained as fallback only (to be removed in future).
+
+### Propagation Flow
+
+```
+GLOBAL NODE updates rules
+         │
+         ▼
+   apply_rules() via Local/Feed/AdminAPI
+         │
+         ├──▶ publish_rules_to_dht() ──▶ store rule content + manifest
+         │
+         └──▶ broadcast_pending_records() ──▶ DhtRecordAnnounce to k closest peers
+                           │
+                           ▼
+              PEERS receive and store in local DHT cache
+                           │
+                           ▼
+   NON-GLOBAL: sync_from_dht() iterates local cache, applies newest version
+```
+
+### Key Characteristics
+
+| Aspect | Finding |
+|--------|---------|
+| DHT announce | One-hop broadcast to k closest peers (NOT recursive Kademlia) |
+| Who announces | Global nodes only |
+| Who receives | All node types (global, edge, origin) |
+| Re-announce | Disabled - peers store but don't propagate further |
+| Transport | Both DHT and mesh use same QUIC transport |
+
+### YARA DHT Keys
+
+| Key Pattern | Purpose | TTL |
+|-------------|---------|-----|
+| `yara_rule:{content_hash}` | Actual rule content (content-addressed) | 24 hours |
+| `yara_rules_manifest:{node_id}` | Global node's current ruleset metadata | 24 hours |
+
+### ThreatIntel DHT Keys
+
+| Key Pattern | Purpose |
+|-------------|---------|
+| `threat_indicator:{indicator_value}` | Individual threat indicator |
+
+### Implementation Files
+
+| File | Purpose |
+|------|---------|
+| `src/mesh/yara_rules.rs` | `publish_rules_to_dht()`, `sync_from_dht()` |
+| `src/mesh/threat_intel.rs` | `sync_from_dht()` |
+| `src/mesh/dht/keys.rs` | `YaraRuleContent`, `YaraRulesManifest`, `ThreatIndicator` key types |
+
+### Historical Context
+
+- **Before**: YARA used mesh broadcast (`YaraRuleAnnounce`) + sync request/response. ThreatIntel used mesh broadcast sync.
+- **After**: Both use DHT as primary. Global nodes publish to DHT, non-global nodes query local DHT cache.
 
 ## Skills and Knowledge Base
 

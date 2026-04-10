@@ -365,3 +365,93 @@ Edge reports failure → report_reachability()
 4. **On-demand connection** (`src/mesh/transport.rs`):
    - `proxy_http_request` attempts connection if peer not in `peer_connections`
    - Looks up peer address from topology
+
+## Rule Distribution (YARA & ThreatIntel) - DHT Primary
+
+**Architecture**: Both YARA rules and ThreatIntel use DHT as the primary propagation mechanism. Mesh broadcast is retained as fallback only (to be removed in future).
+
+### DHT-Based Propagation Flow
+
+```
+GLOBAL NODE updates rules
+         │
+         ▼
+   apply_rules() via Local/Feed/AdminAPI
+         │
+         ├──▶ publish_rules_to_dht() ──▶ store rule content + manifest
+         │
+         └──▶ broadcast_pending_records() ──▶ DhtRecordAnnounce to k closest peers
+                           │
+                           ▼
+              PEERS receive and store in local DHT cache
+                           │
+                           ▼
+   NON-GLOBAL: sync_from_dht() iterates local cache, applies newest version
+```
+
+### Key Characteristics
+
+| Aspect | Finding |
+|--------|---------|
+| DHT announce | One-hop broadcast to k closest peers (NOT recursive Kademlia) |
+| Who announces | Global nodes only |
+| Who receives | All node types (global, edge, origin) |
+| Re-announce | Disabled - peers store but don't propagate further |
+| Peer selection | k closest peers by XOR distance (any role) |
+| Transport | Both DHT and mesh use same QUIC transport via `send_datagram_to_peer()` |
+
+### YARA Rules
+
+**DHT Keys**:
+| Key Pattern | Purpose | TTL |
+|-------------|---------|-----|
+| `yara_rule:{content_hash}` | Actual rule content (content-addressed) | 24 hours |
+| `yara_rules_manifest:{node_id}` | Global node's current ruleset metadata | 24 hours |
+
+**Files**:
+| File | Purpose |
+|------|---------|
+| `src/mesh/yara_rules.rs` | `publish_rules_to_dht()`, `sync_from_dht()` |
+| `src/mesh/dht/keys.rs` | `YaraRuleContent`, `YaraRulesManifest` key types |
+
+**Sync Mechanism**:
+- `sync_from_dht()` replaces `send_sync_request_to_global()`
+- Queries local DHT cache (populated by DHT announces)
+- Compares content hash with peer manifests, fetches if different
+
+### ThreatIntel
+
+**DHT Keys**:
+| Key Pattern | Purpose |
+|-------------|---------|
+| `threat_indicator:{indicator_value}` | Individual threat indicator |
+
+**Sync Mechanism**:
+- `sync_from_dht()` replaces mesh broadcast sync
+- Gets all `threat_indicator:*` records from local cache
+- Imports indicators not already present locally
+
+### Historical Context
+
+**Before (mesh-based)**: 
+- YARA used `YaraRuleAnnounce` broadcast + `YaraRuleSyncRequest/Response` 
+- ThreatIntel used `ThreatSyncRequest` broadcast
+- DHT was "backup only"
+
+**After (DHT-primary)**:
+- Global nodes publish to DHT on rule changes
+- Non-global nodes query local DHT cache (populated by announces)
+- Mesh broadcast kept as fallback only
+
+### Testing Verification
+
+```bash
+# Verify YARA rules in DHT
+curl -s http://localhost:8080/api/mesh/dht/records | jq '.[] | select(.key | startswith("yara_rule"))'
+
+# Verify YARA manifests
+curl -s http://localhost:8080/api/mesh/dht/records | jq '.[] | select(.key | startswith("yara_rules_manifest"))'
+
+# Verify ThreatIntel in DHT
+curl -s http://localhost:8080/api/mesh/dht/records | jq '.[] | select(.key | startswith("threat_indicator"))'
+```
