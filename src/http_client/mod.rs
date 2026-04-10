@@ -185,6 +185,13 @@ pub fn create_upstream_client(
     let builder = hyper_rustls::HttpsConnectorBuilder::new().with_tls_config(rustls_config);
 
     let builder = if tls_config.allow_plaintext {
+        static WARNED_PLAINTEXT: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+        WARNED_PLAINTEXT.get_or_init(|| {
+            tracing::warn!(
+                "HTTP upstream allow_plaintext is enabled - HTTP connections will be allowed. \
+                This is insecure for production deployments."
+            );
+        });
         builder.https_or_http()
     } else {
         builder.https_only()

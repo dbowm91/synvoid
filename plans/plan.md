@@ -1099,7 +1099,7 @@ routes = ["GET /api/*", "POST /api/data"]
 | WAF | Open Redirect Path Check Missing | ✅ COMPLETED |
 | WAF | Domain Check Before URL Decode | ✅ COMPLETED |
 | TLS | skip_verify Hostname Bypass | Document clearly, require explicit flag | 🔄 DEFERRED |
-| TLS | allow_plaintext HTTP Upstream | Warn on startup | 🔄 DEFERRED |
+| TLS | allow_plaintext HTTP Upstream | Warn on startup | ✅ COMPLETED |
 | IPC | No Mutual Authentication | Use `UnixStream::peer_credentials()` | ✅ COMPLETED |
 | IPC | No Connection Source Validation | Add peer credential validation | ✅ COMPLETED |
 | Mesh | No node_id to Public Key Binding | Include hash of pubkey in node_id | 🔄 DEFERRED |
