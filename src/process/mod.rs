@@ -14,6 +14,7 @@ pub mod manager;
 pub mod pidfile;
 pub mod socket_fd;
 pub mod socket_path;
+pub mod worker;
 
 pub use ipc_pool::config::IpcConnectionPoolConfig;
 pub use ipc_pool::{ConnectionPoolStats, IpcConnectionPool, PoolError};
@@ -47,6 +48,10 @@ pub use ipc_transport::{
 pub use manager::{
     check_port_available, check_ports_available, start_health_monitor, ProcessEvent,
     ProcessManager, ProcessManagerConfig, WorkerConfig,
+};
+pub use worker::{
+    BaseWorkerProcess, StaticWorkerProcess, UnifiedServerWorkerProcess, WorkerProcess,
+    WorkerProcessBase,
 };
 pub use pidfile::{OverseerLockError, OverseerLockFile, PidFileManager};
 pub use socket_fd::{

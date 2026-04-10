@@ -1,7 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::net::{SocketAddr, TcpListener};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -9,6 +9,11 @@ use std::time::{Duration, Instant};
 use parking_lot::RwLock as PLRwLock;
 use tokio::sync::{broadcast, mpsc};
 use tokio::time::interval;
+
+pub use super::worker::{
+    BaseWorkerProcess, StaticWorkerProcess, UnifiedServerWorkerProcess, WorkerProcess,
+    WorkerProcessBase,
+};
 
 use super::ipc::{
     ErrorCode, ErrorSeverity, IpcStream, Message, RequestLogPayload, WorkerId,
@@ -18,37 +23,6 @@ use super::ipc::{
 pub type SharedIpc = Arc<tokio::sync::Mutex<IpcStream>>;
 use super::ipc_rate_limit::IpcRateLimiter;
 
-macro_rules! delegate_to_base {
-    ($ty:ty) => {
-        impl $ty {
-            pub fn pid(&self) -> Option<u32> {
-                self.base.pid()
-            }
-            pub fn status(&self) -> &WorkerStatus {
-                self.base.status()
-            }
-            pub fn status_mut(&mut self) -> &mut WorkerStatus {
-                self.base.status_mut()
-            }
-            pub fn child_ref(&self) -> &Option<Child> {
-                self.base.child_ref()
-            }
-            pub fn child_mut(&mut self) -> &mut Option<Child> {
-                self.base.child_mut()
-            }
-            pub fn started_at(&self) -> Instant {
-                self.base.started_at()
-            }
-            pub fn last_heartbeat(&self) -> Instant {
-                self.base.last_heartbeat()
-            }
-            pub fn last_heartbeat_mut(&mut self) -> &mut Instant {
-                self.base.last_heartbeat_mut()
-            }
-        }
-    };
-}
-
 #[derive(Debug, Clone)]
 pub struct WorkerConfig {
     pub id: WorkerId,
@@ -57,182 +31,7 @@ pub struct WorkerConfig {
     pub master_socket: PathBuf,
 }
 
-#[derive(Debug)]
-pub struct BaseWorkerProcess {
-    pub pid: Option<u32>,
-    pub status: WorkerStatus,
-    pub child: Option<Child>,
-    pub started_at: Instant,
-    pub last_heartbeat: Instant,
-}
-
-impl BaseWorkerProcess {
-    pub fn new(pid: u32, child: Child) -> Self {
-        Self {
-            pid: Some(pid),
-            status: WorkerStatus::Starting,
-            child: Some(child),
-            started_at: Instant::now(),
-            last_heartbeat: Instant::now(),
-        }
-    }
-
-    pub fn pid(&self) -> Option<u32> {
-        self.pid
-    }
-    pub fn status(&self) -> &WorkerStatus {
-        &self.status
-    }
-    pub fn status_mut(&mut self) -> &mut WorkerStatus {
-        &mut self.status
-    }
-    pub fn child_ref(&self) -> &Option<Child> {
-        &self.child
-    }
-    pub fn child_mut(&mut self) -> &mut Option<Child> {
-        &mut self.child
-    }
-    pub fn started_at(&self) -> Instant {
-        self.started_at
-    }
-    pub fn last_heartbeat(&self) -> Instant {
-        self.last_heartbeat
-    }
-    pub fn last_heartbeat_mut(&mut self) -> &mut Instant {
-        &mut self.last_heartbeat
-    }
-}
-
-pub trait WorkerProcessBase {
-    fn base(&self) -> &BaseWorkerProcess;
-    fn base_mut(&mut self) -> &mut BaseWorkerProcess;
-}
-
-impl WorkerProcessBase for WorkerProcess {
-    fn base(&self) -> &BaseWorkerProcess {
-        &self.base
-    }
-    fn base_mut(&mut self) -> &mut BaseWorkerProcess {
-        &mut self.base
-    }
-}
-
-impl WorkerProcessBase for StaticWorkerProcess {
-    fn base(&self) -> &BaseWorkerProcess {
-        &self.base
-    }
-    fn base_mut(&mut self) -> &mut BaseWorkerProcess {
-        &mut self.base
-    }
-}
-
-impl WorkerProcessBase for UnifiedServerWorkerProcess {
-    fn base(&self) -> &BaseWorkerProcess {
-        &self.base
-    }
-    fn base_mut(&mut self) -> &mut BaseWorkerProcess {
-        &mut self.base
-    }
-}
-
-#[derive(Debug)]
-pub struct WorkerProcess {
-    pub id: WorkerId,
-    pub base: BaseWorkerProcess,
-    pub port: u16,
-    pub metrics: WorkerMetricsPayload,
-    pub restart_count: u32,
-    pub last_restart_at: Option<Instant>,
-}
-
-impl WorkerProcess {
-    pub fn new(id: WorkerId, pid: u32, port: u16, child: Child, restart_count: u32) -> Self {
-        Self {
-            id,
-            base: BaseWorkerProcess::new(pid, child),
-            port,
-            metrics: WorkerMetricsPayload::default(),
-            restart_count,
-            last_restart_at: if restart_count > 0 {
-                Some(Instant::now())
-            } else {
-                None
-            },
-        }
-    }
-
-    pub fn new_placeholder(id: WorkerId, port: u16, restart_count: u32) -> Self {
-        Self {
-            id,
-            base: BaseWorkerProcess {
-                pid: None,
-                status: WorkerStatus::Starting,
-                child: None,
-                started_at: Instant::now(),
-                last_heartbeat: Instant::now(),
-            },
-            port,
-            metrics: WorkerMetricsPayload::default(),
-            restart_count,
-            last_restart_at: if restart_count > 0 {
-                Some(Instant::now())
-            } else {
-                None
-            },
-        }
-    }
-
-    pub fn set_child(&mut self, child: Child) {
-        let pid = child.id();
-        self.base.pid = Some(pid);
-        self.base.child = Some(child);
-    }
-}
-
-delegate_to_base!(WorkerProcess);
-
-pub struct StaticWorkerProcess {
-    pub worker_id: usize,
-    pub base: BaseWorkerProcess,
-    pub ipc: Option<Arc<tokio::sync::Mutex<IpcStream>>>,
-}
-
-impl StaticWorkerProcess {
-    pub fn new(worker_id: usize, pid: u32, child: Child) -> Self {
-        Self {
-            worker_id,
-            base: BaseWorkerProcess::new(pid, child),
-            ipc: None,
-        }
-    }
-}
-
-delegate_to_base!(StaticWorkerProcess);
-
-pub struct UnifiedServerWorkerProcess {
-    pub id: WorkerId,
-    pub base: BaseWorkerProcess,
-    pub metrics: WorkerMetricsPayload,
-    pub restart_count: u32,
-    pub last_restart_at: Option<Instant>,
-    pub ipc: Option<Arc<tokio::sync::Mutex<IpcStream>>>,
-}
-
-impl UnifiedServerWorkerProcess {
-    pub fn new(id: WorkerId, pid: u32, child: Child) -> Self {
-        Self {
-            id,
-            base: BaseWorkerProcess::new(pid, child),
-            metrics: WorkerMetricsPayload::default(),
-            restart_count: 0,
-            last_restart_at: None,
-            ipc: None,
-        }
-    }
-}
-
-delegate_to_base!(UnifiedServerWorkerProcess);
-
+#[derive(Debug, Clone)]
 pub struct ProcessManagerConfig {
     pub min_workers: usize,
     pub max_workers: usize,

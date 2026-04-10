@@ -1186,7 +1186,7 @@ routes = ["GET /api/*", "POST /api/data"]
 |------|-------|--------|
 | `src/process/ipc.rs` | 1,835 | ✅ COMPLETED - split into 6 sibling modules |
 | `src/http/server.rs` | 3,206 | 🔄 DEFERRED - needs splitting |
-| `src/process/manager.rs` | 2,281 | 🔄 DEFERRED - needs splitting |
+| `src/process/manager.rs` | 2,080 | 🔄 IN PROGRESS - worker types extracted |
 | `src/mesh/topology.rs` | 2,256 | 🔄 DEFERRED - needs splitting |
 
 **Completed split for `src/process/ipc.rs`**:
@@ -1197,7 +1197,11 @@ routes = ["GET /api/*", "POST /api/data"]
 - `ipc_transport.rs` - Transport layer
 - `ipc_windows.rs` - Windows-specific IPC
 
-**Deferred**: The remaining three files need significant refactoring and are deferred to a future sprint.
+**Completed split for `src/process/manager.rs`** (Phase 1):
+- `worker.rs` - Worker process types (BaseWorkerProcess, WorkerProcess, StaticWorkerProcess, UnifiedServerWorkerProcess)
+- `manager.rs` reduced from 2,281 to ~2,080 lines
+
+**Deferred**: http/server.rs and mesh/topology.rs need significant refactoring.
 
 ---
 
