@@ -138,6 +138,48 @@ const INTERNAL_DRAIN_STATUS_PATH: &str = "/__internal__/drain-status";
 const INTERNAL_HEALTH_PATH: &str = "/__internal__/health";
 const INTERNAL_READY_PATH: &str = "/__internal__/ready";
 
+#[allow(dead_code)]
+struct RequestMetrics {
+    site_id: String,
+    metrics: Arc<WorkerMetrics>,
+}
+
+#[allow(dead_code)]
+impl RequestMetrics {
+    fn record_start(&self) {
+        self.metrics.record_site_request_start(&self.site_id);
+    }
+
+    fn record_blocked(&self) {
+        self.metrics.record_site_blocked(&self.site_id);
+    }
+
+    fn record_challenged(&self) {
+        self.metrics.record_site_challenged(&self.site_id);
+    }
+
+    fn record_proxied(&self) {
+        self.metrics.record_site_proxied(&self.site_id);
+    }
+
+    fn record_upstream_success(&self) {
+        self.metrics.record_site_upstream_success(&self.site_id);
+    }
+
+    fn record_upstream_failure(&self) {
+        self.metrics.record_site_upstream_failure(&self.site_id);
+    }
+
+    fn record_egress(&self, bytes: u64, direction: EgressDirection) {
+        self.metrics
+            .bandwidth
+            .record_egress(bytes, BandwidthProtocol::Http, direction);
+        self.metrics
+            .bandwidth
+            .record_site_egress(&self.site_id, bytes);
+    }
+}
+
 pub struct HttpServer {
     addr: SocketAddr,
     router: Arc<Router>,
@@ -2045,35 +2087,7 @@ impl HttpServer {
                                 builder = builder.header("Alt-Svc", alt_svc.as_str());
                             }
 
-                            if target.site_config.security_headers.enabled.unwrap_or(false)
-                                || main_config.security.global_security_headers
-                            {
-                                builder = Self::inject_security_headers(
-                                    builder,
-                                    &target.site_config.security_headers,
-                                );
-                            }
-
-                            if target
-                                .site_config
-                                .security_headers
-                                .date_header
-                                .unwrap_or(true)
-                            {
-                                let jitter = target
-                                    .site_config
-                                    .security_headers
-                                    .date_jitter_seconds
-                                    .unwrap_or(5);
-                                builder =
-                                    builder.header("Date", generate_stealth_timestamp(jitter));
-                            }
-
-                            if let Some(ref token) =
-                                target.site_config.security_headers.server_token
-                            {
-                                builder = builder.header("Server", token.as_str());
-                            }
+                            builder = Self::apply_security_headers(builder, &target, &main_config);
 
                             return Ok(builder
                                 .body(
@@ -2380,32 +2394,7 @@ impl HttpServer {
                             builder = builder.header("Alt-Svc", alt_svc.as_str());
                         }
 
-                        if target.site_config.security_headers.enabled.unwrap_or(false)
-                            || main_config.security.global_security_headers
-                        {
-                            builder = Self::inject_security_headers(
-                                builder,
-                                &target.site_config.security_headers,
-                            );
-                        }
-
-                        if target
-                            .site_config
-                            .security_headers
-                            .date_header
-                            .unwrap_or(true)
-                        {
-                            let jitter = target
-                                .site_config
-                                .security_headers
-                                .date_jitter_seconds
-                                .unwrap_or(5);
-                            builder = builder.header("Date", generate_stealth_timestamp(jitter));
-                        }
-
-                        if let Some(ref token) = target.site_config.security_headers.server_token {
-                            builder = builder.header("Server", token.as_str());
-                        }
+                        builder = Self::apply_security_headers(builder, &target, &main_config);
 
                         Ok(builder.body(Full::new(body).boxed()).unwrap_or_else(|_| {
                             Self::build_response_with_alt_svc(
@@ -2474,6 +2463,36 @@ impl HttpServer {
         config: &crate::config::SiteSecurityHeadersConfig,
     ) -> http::response::Builder {
         inject_security_headers(builder, config)
+    }
+
+    fn apply_security_headers(
+        builder: http::response::Builder,
+        target: &crate::router::RouteTarget,
+        main_config: &Arc<MainConfig>,
+    ) -> http::response::Builder {
+        let mut builder = builder;
+        if target.site_config.security_headers.enabled.unwrap_or(false)
+            || main_config.security.global_security_headers
+        {
+            builder = Self::inject_security_headers(builder, &target.site_config.security_headers);
+        }
+        if target
+            .site_config
+            .security_headers
+            .date_header
+            .unwrap_or(true)
+        {
+            let jitter = target
+                .site_config
+                .security_headers
+                .date_jitter_seconds
+                .unwrap_or(5);
+            builder = builder.header("Date", generate_stealth_timestamp(jitter));
+        }
+        if let Some(ref token) = target.site_config.security_headers.server_token {
+            builder = builder.header("Server", token.as_str());
+        }
+        builder
     }
 
     fn handle_drain_request(
