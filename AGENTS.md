@@ -327,8 +327,6 @@ All duplicate `current_timestamp()` definitions have been consolidated into `src
 
 | Bug | Location | Impact | Status |
 |-----|----------|--------|--------|
-| NSEC3 hash length encoding | `src/dns/dnssec_signing.rs:261` | Uses `hash.len()` (20) instead of `hash_b32.len()` (32) for NSEC3 owner name | Open (CRITICAL - see plan.md Wave 1) |
-| SSRF domain substring check | `src/waf/attack_detection/ssrf.rs:243` | `contains("localhost")` without word boundaries | Open (CRITICAL - see plan.md Wave 1) |
 | DHT query response collection | `src/mesh/dht/record_store_sync.rs:717` | `query_record_iterative()` always returns `None` | Open (CRITICAL - see plan.md Wave 3) |
 | Forwarder no DNSSEC validation | `HickoryResolver` | Forwarder mode doesn't validate; AD bit not propagated | Limitation (documented) |
 | JA4 fingerprinting | `src/waf/bot.rs` | JA3 done; JA4 not implemented | Open |
@@ -342,6 +340,13 @@ All duplicate `current_timestamp()` definitions have been consolidated into `src
 
 | Bug | Location | Fix |
 |-----|----------|-----|
+| NSEC3 hash length encoding | `src/dns/dnssec_signing.rs:261` | Uses `hash_b32.len()` (32) instead of `hash.len()` (20) per RFC 5155 |
+| SSRF domain substring check | `src/waf/attack_detection/ssrf.rs:243` | Uses proper word boundaries for localhost/.local checks |
+| DNS dynamic update IP validation | `src/dns/update.rs` | Client IP validated against ACLs; require_tsig=true by default |
+| TSIG verification message data | `src/dns/transfer.rs:262-281` | TSIG MAC computed over full DNS message, not just qname |
+| WebSocket authentication | `src/admin/ws/mod.rs` | Bearer token validation required; 401 on failure |
+| Upstream verification system | `src/mesh/transport_peer.rs:1639-1643` | `get_verification_manager()` returns actual manager |
+| Verification response signatures | `src/mesh/transport_peer.rs:1575-1585` | Responses signed with global node signing key |
 | `pattern_detector!` macro infinite recursion | `src/waf/attack_detection/detector_common.rs` | Fix applied to macro-generated impl |
 | WAF empty headers in proxy path | `src/proxy.rs:486` | Pass actual request headers to check_request_full |
 | Dynamic worker server stub | `src/worker/mod.rs` | Deprecated; unified server handles requests |
