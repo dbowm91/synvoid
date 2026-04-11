@@ -566,6 +566,21 @@ YARA rules logs startup but threat intel has no equivalent logging.
 
 ## Wave 5: Code Quality (Large File Splitting)
 
+**⚠️ FAILED ATTEMPT - 2026-04-11**: Wave 5 was attempted but implementation was incomplete/broken and reverted to clean baseline.
+
+**Lessons Learned**:
+1. **Subagent limitations**: Large module splits require careful incremental work; subagents created files but didn't properly wire them
+2. **Tonic 0.14 API incompatibility**: `tonic_build::configure()` API removed - requires separate `prost` crate and different build approach
+3. **Module conflict**: Creating `mesh/config/mod.rs` conflicted with existing `mesh/config.rs`
+4. **topology.rs rewrite failure**: Attempting to rewrite from scratch lost structure - must preserve impl blocks with their structs
+
+**Status**: 🔶 Future Work (reset after failed attempt)
+
+**Prior Attempt** (2026-04-11 - REVERTED):
+- Commit `0665297` created 22 new files but none compiled correctly
+- Module conflicts and type errors introduced
+- Reset to `c46f63f` to restore working state
+
 ### 5.1 Tonic/Axum Version Conflict
 
 **Status**: 🔶 Future Work
@@ -576,12 +591,15 @@ YARA rules logs startup but threat intel has no equivalent logging.
 
 `tonic 0.12.3` pulls `axum 0.7.9`, but main project uses `axum 0.8.8`. 4 file manager routes disabled.
 
-**Fix**: Upgrade tonic to 0.14+:
+**Fix**: Upgrade tonic to 0.14+ **with proper API migration**:
 ```toml
-tonic = { version = "0.14", features = ["gzip", "prost"] }
-tonic-reflection = "0.14"
-tonic-build = "0.14"
+# Note: Requires separate prost dependency and build.rs update
+tonic = { version = "0.14", features = ["gzip", "codegen"] }
+prost = "0.14"
+tonic-build = { version = "0.14", default-features = false, features = ["prost"] }
 ```
+
+**Prerequisite**: Update `build.rs` to use `prost::Message` build approach instead of `tonic_build::configure()`
 
 ---
 
@@ -602,6 +620,8 @@ tonic-build = "0.14"
 | `http/websocket_handler.rs` | WebSocket tunnel handling |
 | `http/waf_decision.rs` | WAF check integration and decision handling |
 | `http/routing.rs` | Routing logic extraction |
+
+**Note**: Prior attempt created files but didn't update server.rs to use them. Must preserve original function structure and update incrementally.
 
 ---
 
