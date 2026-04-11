@@ -680,19 +680,11 @@ Types already extracted to `topology/types.rs`. Remaining issues:
 
 ## Wave 6: WAF Improvements
 
-### 6.1 Fix SSRF Domain Substring Bypass
+**Status**: ✅ Completed (See Waves 1.7 and 2.9)
 
-**Status**: 🔶 Future Work (Also in Wave 1)
-
-See Wave 1.7.
-
----
-
-### 6.2 Add URL Decoding to WAF Detectors
-
-**Status**: 🔶 Future Work (Also in Wave 2)
-
-See Wave 2.9.
+Both items were completed as part of earlier waves:
+- 6.1 (SSRF Domain Substring Bypass): Completed as Wave 1.7
+- 6.2 (URL Decoding to WAF Detectors): Completed as Wave 2.9
 
 ---
 
