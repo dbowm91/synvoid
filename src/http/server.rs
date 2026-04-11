@@ -455,6 +455,9 @@ impl HttpServer {
             Arc<RwLock<HashMap<String, Arc<crate::app_server::GranianSupervisor>>>>,
         >,
     ) -> Result<Response<BoxBody<Bytes, Infallible>>, hyper::Error> {
+        // ============================================================================
+        // SECTION 1: Connection Management
+        // ============================================================================
         let _permit = match connection_limit.clone().acquire_owned().await {
             Ok(p) => p,
             Err(_) => {
@@ -469,6 +472,9 @@ impl HttpServer {
             }
         };
 
+        // ============================================================================
+        // SECTION 2: IP Extraction & Sanitization
+        // ============================================================================
         let start = std::time::Instant::now();
         let client_ip = client_addr.ip();
 
@@ -488,6 +494,9 @@ impl HttpServer {
             .map(|pq| pq.path())
             .unwrap_or("/");
 
+        // ============================================================================
+        // SECTION 3: Internal Endpoint Handling (drain, health, ready)
+        // ============================================================================
         if let Some(ref state) = drain_state {
             let is_localhost = matches!(client_ip, IpAddr::V4(ip) if ip.is_loopback())
                 || matches!(client_ip, IpAddr::V6(ip) if ip.is_loopback());
@@ -513,6 +522,9 @@ impl HttpServer {
             return Self::handle_health_request(&drain_state, &alt_svc, &main_config);
         }
 
+        // ============================================================================
+        // SECTION 4: Key Exchange Request Handling (global nodes)
+        // ============================================================================
         // Handle key exchange requests for global nodes
         if path.starts_with("/key-") || path == "/health" {
             if let Some(ref mesh_cfg) = mesh_config {
@@ -533,6 +545,9 @@ impl HttpServer {
             }
         }
 
+        // ============================================================================
+        // SECTION 5: Connection Limiting
+        // ============================================================================
         let connection_token = if let Some(ref conn_limiter) = waf.connection_limiter {
             match conn_limiter.try_acquire("_http_", client_ip).await {
                 Ok(token) => Some(token),
@@ -569,6 +584,9 @@ impl HttpServer {
 
         let _conn_token = connection_token;
 
+        // ============================================================================
+        // SECTION 6: Bandwidth Limiting
+        // ============================================================================
         if let Some(result) = Self::check_bandwidth_limit(
             &waf,
             client_ip,
@@ -582,6 +600,9 @@ impl HttpServer {
             return result;
         }
 
+        // ============================================================================
+        // SECTION 7: WebSocket Upgrade Detection & Request Parsing
+        // ============================================================================
         let is_ws_upgrade = Self::is_websocket_upgrade(req.headers());
         let on_upgrade = if is_ws_upgrade {
             Some(hyper::upgrade::on(&mut req))
@@ -589,6 +610,9 @@ impl HttpServer {
             None
         };
 
+        // ============================================================================
+        // SECTION 8: Request Parsing (headers, body extraction)
+        // ============================================================================
         let (parts, body) = req.into_parts();
         let method = parts.method.clone();
         let path = parts
@@ -611,6 +635,9 @@ impl HttpServer {
 
         let cookies = parts.headers.get("cookie").and_then(|v| v.to_str().ok());
 
+        // ============================================================================
+        // SECTION 9: WAF Early Decision Checks
+        // ============================================================================
         let early_decision = waf.check_early(client_ip, &path, cookies);
         match early_decision {
             crate::proxy::WafDecision::Drop => {
@@ -729,6 +756,9 @@ impl HttpServer {
             }
         }
 
+        // ============================================================================
+        // SECTION 10: Body Collection (with chunk-based WAF for large bodies)
+        // ============================================================================
         let mut request_body_size: u64 = 0;
         const MAX_WAF_BODY_SIZE: usize = 1024 * 1024; // 1MB limit for WAF inspection
         const CHUNK_WAF_THRESHOLD: usize = 256 * 1024; // 256KB - run WAF on chunks above this size
@@ -831,6 +861,9 @@ impl HttpServer {
             }
         }
 
+        // ============================================================================
+        // SECTION 11: Honeypot & Challenge Asset Handling
+        // ============================================================================
         if path.starts_with(HONEYPOT_PREFIX) {
             counter!("maluwaf.honeypot.hit").increment(1);
             tracing::info!("HTTP honeypot accessed: {} by {}", path, client_ip);
@@ -1018,6 +1051,9 @@ impl HttpServer {
 
         let _drain_guard = DrainGuard::new(drain_state.clone());
 
+        // ============================================================================
+        // SECTION 12: Routing & Site Resolution
+        // ============================================================================
         let query_string = parts.uri.query();
 
         let route = router.route_with_local_addr(&host, &path, local_addr);
@@ -1086,6 +1122,10 @@ impl HttpServer {
         }
 
         let method_str = method.to_string();
+
+        // ============================================================================
+        // SECTION 13: WAF Full Request Check
+        // ============================================================================
         let waf_decision = waf
             .check_request_full(
                 client_ip,
@@ -1099,6 +1139,9 @@ impl HttpServer {
             .await;
 
         let response = match waf_decision {
+            // ============================================================================
+            // SECTION 14: WAF Decision Handling (drop, stall, block, challenge, pass)
+            // ============================================================================
             crate::proxy::WafDecision::Drop => {
                 counter!("maluwaf.http.blackhole_drop").increment(1);
                 http_conn.request_drop();
@@ -1296,6 +1339,9 @@ impl HttpServer {
                 ))
             }
             crate::proxy::WafDecision::Pass => {
+                // ============================================================================
+                // SECTION 15: Backend Dispatch (WebSocket, AxumDynamic, Static, Upstream)
+                // ============================================================================
                 if let Some(ref rm) = req_metrics {
                     rm.record_proxied();
                 }
