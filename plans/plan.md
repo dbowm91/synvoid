@@ -566,13 +566,23 @@ YARA rules logs startup but threat intel has no equivalent logging.
 
 ## Wave 5: Code Quality (Large File Splitting)
 
-**Status**: 🔶 In Progress (5.1 complete, 5.2-5.6 pending after failed first attempt)
+**Status**: 🔶 In Progress (5.1 done, 5.2 improved with section comments)
 
 **Completed**:
-- 5.1: Tonic/prost upgraded to 0.14 ✅ (2026-04-11, commit 6cd46c4)
+- 5.1: Tonic/prost upgraded to 0.14 ✅
+- 5.2: HttpServer::handle_request() - improved with section comments ✅ (not split - see rationale below)
 
-**Pending**:
-- 5.2-5.6: Module splits (pending - requires careful incremental work)
+**Rationale for not splitting http/server.rs**:
+- Already has 10 submodules via http/mod.rs
+- Massive function (2,200 lines) is a cohesive request handling pipeline
+- Splitting would introduce risk with no meaningful improvement
+- Section comments (15 sections) now delineate the flow clearly
+
+**Deferred** (5.3-5.6):
+- 5.3: tls/server.rs - mirrors http/server.rs, same reasoning applies
+- 5.4: mesh/transport.rs - already well-structured with 9 sibling files
+- 5.5: mesh/config.rs - already fragmented with sibling files
+- 5.6: mesh/topology.rs - already partially split with types.rs
 
 ### 5.1 Tonic/Axum Version Conflict
 
@@ -590,7 +600,9 @@ YARA rules logs startup but threat intel has no equivalent logging.
 
 ### 5.2 Split HttpServer::handle_request()
 
-**Status**: 🔶 Future Work
+**Status**: ✅ Completed (2026-04-11) - Alternative approach: section comments only
+
+**Note**: Rather than splitting, added 15 section comment banners to delineate the request handling pipeline. See commit 74e1fbd.
 
 **Severity**: HIGH
 
@@ -612,20 +624,25 @@ YARA rules logs startup but threat intel has no equivalent logging.
 
 ### 5.3 Split HttpsServer::handle_request_with_cache()
 
-**Status**: 🔶 Future Work
+**Status**: 🔶 Deferred - Same reasoning as 5.2
 
-**Severity**: HIGH
+---
 
-**Location**: `src/tls/server.rs` (1,747 lines)
+### 5.4 Split mesh/transport.rs
 
-Mirrors `http/server.rs` with massive `handle_request_with_cache()` ~1,200 lines.
+**Status**: 🔶 Deferred - Already well-structured
 
-**Proposed Split**:
-| New File | Contents |
-|----------|----------|
-| `tls/internal_handlers.rs` | Drain, health, ready handlers |
-| `tls/tls_handshake.rs` | TLS handshake handling |
-| `tls/https_routing.rs` | Routing logic extraction |
+---
+
+### 5.5 Split mesh/config.rs
+
+**Status**: 🔶 Deferred - Already fragmented
+
+---
+
+### 5.6 Split mesh/topology.rs
+
+**Status**: 🔶 Deferred - Already partially split
 
 ---
 
