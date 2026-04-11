@@ -255,6 +255,33 @@ Keys transition through these states:
 4. **Platform-specific tests** - Use `#[cfg(unix)]` or `#[cfg(windows)]`
 5. **Key tag calculation** - Use `crate::dns::dnssec::calculate_key_tag` for RFC 4034 compliant key tags
 
+## Session Lessons Learned (2026-04-11)
+
+### Subagent Verification Required
+
+When using subagents to make code changes:
+1. **Always verify the actual code** — subagents may claim a fix was applied but the code still shows the old version
+2. **Run compilation checks** — `cargo clippy --lib -- -D warnings` to catch type errors
+3. **Run tests** — `cargo test --test integration_test` to verify runtime behavior
+4. **Run format check** — `cargo fmt` then `cargo fmt --check` to catch drift
+
+Common failure mode: subagent reports success but code wasn't actually modified, or was modified incorrectly. Always read the actual file content to confirm.
+
+### Module Splitting Decisions
+
+Large file splits (Wave 5) require careful consideration:
+- **Do NOT split cohesive request pipelines** like `http/server.rs` and `tls/server.rs` - these handle a single logical flow
+- **Do NOT rewrite files from scratch** - incremental changes are safer
+- **Prefer section comments** over refactoring for readability
+- **Verify each subagent change compiles** before moving to the next
+
+### Tonic Upgrade Gotchas
+
+When upgrading tonic from 0.12 to 0.14:
+- `tonic_build::configure()` API removed - use `tonic-prost-build` crate instead
+- Add `tonic-prost` dependency for generated code codec
+- Update `build.rs` to use `tonic_prost_build::configure()`
+
 ## Known Code Quality Context
 
 ### Clippy and Dead Code Suppressions
@@ -299,18 +326,15 @@ Feature flags trimmed: `tower` removed `"timeout"`, `tower-http` removed `"trace
 
 **Note**: `once_cell` and `bincode` still appear in `Cargo.lock` as transitive dependencies (via tracing-core, gloo-worker, etc.). This is expected.
 
-### Dependency Conflict (2026-04-03)
+### Dependency Conflict (2026-04-03) - RESOLVED
 
-**Problem**: `tonic 0.12.3` pulls `axum 0.7.9`, but main project uses `axum 0.8.8`. This causes Handler trait mismatches for certain file manager routes.
-
-**Impact**: 4 file manager routes disabled (mkdir, rename, permissions, extract) in `src/http/file_manager.rs`
-
-**Solution**: Upgrade tonic to 0.14+ which uses `axum ^0.8`:
+**Resolved**: tonic upgraded to 0.14.5 in commit `6cd46c4`. The version conflict is now fixed:
 ```toml
 # In Cargo.toml
-tonic = { version = "0.14", features = ["gzip", "prost"] }
+tonic = { version = "0.14", features = ["gzip", "transport"] }
 tonic-reflection = "0.14"
-tonic-build = "0.14"
+tonic-prost = "0.14"
+prost = "0.14"
 ```
 
 ### Error Handling Status
@@ -333,7 +357,6 @@ All duplicate `current_timestamp()` definitions have been consolidated into `src
 | Stream large request bodies | `src/http/server.rs` | Full buffering; needs chunk-based WAF | Open (architectural change needed) |
 | Response streaming | `src/http/server.rs` | Fully buffered responses | Open (architectural change needed) |
 | HTTPS feature parity | `src/tls/server.rs` | Missing WebSocket, WASM, FastCGI, PHP, etc. | Open (large refactoring) |
-| transport.rs module size | `src/mesh/transport.rs` | 2570 lines vs 1000 target | Open (see plan.md Wave 5) |
 
 ### Fixed Issues
 
@@ -406,13 +429,18 @@ Agents modifying these areas should be aware of performance characteristics:
 
 | Module | Lines | Status |
 |--------|-------|--------|
-| `src/mesh/transport.rs` | ~2,086 | Already split into 11 submodules |
+| `src/mesh/transport.rs` | ~2,609 | Already split into 9 submodules |
 | `src/mesh/protocol_proto_encode.rs` | ~2,024 | Generated protobuf pattern — acceptable |
-| `src/mesh/config.rs` | ~1,450 | Split into submodules |
+| `src/http/server.rs` | ~3,238 | **Exception**: Cohesive request pipeline with section comments |
+| `src/tls/server.rs` | ~1,747 | **Exception**: Mirrors http/server.rs, same reasoning |
+| `src/mesh/config.rs` | ~1,545 | Already fragmented with sibling files |
+| `src/mesh/topology.rs` | ~1,516 | Already split with types.rs |
 | `src/mesh/protocol.rs` | ~1,196 | Split into submodules |
 | `src/dns/server/mod.rs` | ~763 | Split into submodules |
 | `src/worker/mod.rs` | ~786 | Split into submodules |
 | `src/admin/state.rs` | ~561 | Split into submodules |
+
+**Note on large files**: `http/server.rs` and `tls/server.rs` are exceptions to the size guidelines. They contain cohesive request handling pipelines where splitting would introduce risk without meaningful benefit. Section comments delineate the 15 distinct phases within `handle_request()`.
 
 ## Key Implementation Details
 
