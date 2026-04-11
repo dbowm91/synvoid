@@ -240,14 +240,28 @@ impl ProxyCache {
                 let mut entry = inner.entry.clone();
                 entry.is_fresh = false;
                 entry.update_access();
-                self.entries.insert(key.clone(), inner);
+                let updated_inner = CacheEntryInner {
+                    entry: entry.clone(),
+                    size: inner.size,
+                    on_disk: inner.on_disk,
+                    disk_path: inner.disk_path.clone(),
+                    checksum: inner.checksum,
+                };
+                self.entries.insert(key.clone(), updated_inner);
                 return Some(entry);
             }
             if inner.entry.is_stale_if_error() {
                 let mut entry = inner.entry.clone();
                 entry.is_fresh = false;
                 entry.update_access();
-                self.entries.insert(key.clone(), inner);
+                let updated_inner = CacheEntryInner {
+                    entry: entry.clone(),
+                    size: inner.size,
+                    on_disk: inner.on_disk,
+                    disk_path: inner.disk_path.clone(),
+                    checksum: inner.checksum,
+                };
+                self.entries.insert(key.clone(), updated_inner);
                 return Some(entry);
             }
             drop(inner);
@@ -257,7 +271,14 @@ impl ProxyCache {
 
         let mut entry = inner.entry.clone();
         entry.update_access();
-        self.entries.insert(key.clone(), inner);
+        let updated_inner = CacheEntryInner {
+            entry: entry.clone(),
+            size: inner.size,
+            on_disk: inner.on_disk,
+            disk_path: inner.disk_path.clone(),
+            checksum: inner.checksum,
+        };
+        self.entries.insert(key.clone(), updated_inner);
         Some(entry)
     }
 

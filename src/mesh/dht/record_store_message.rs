@@ -458,6 +458,10 @@ impl RecordStoreManager {
                     continue;
                 }
 
+                if let Some(record_store) = merkle_self.upgrade() {
+                    record_store.cleanup_expired();
+                }
+
                 if last_sync.elapsed().as_secs() > initial_interval {
                     tracing::debug!("DHT sync interval reached");
                     last_sync = Instant::now();

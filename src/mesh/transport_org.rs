@@ -572,6 +572,30 @@ impl MeshTransport {
             return;
         }
 
+        if let Some(ref dht_config) = self.config.dht {
+            let upstream_url_lower = upstream_url.to_lowercase();
+            for term in &dht_config.illegal_upstream_terms {
+                if upstream_url_lower.contains(&term.to_lowercase()) {
+                    tracing::warn!(
+                        "Upstream registration rejected: upstream_url '{}' contains illegal term '{}'",
+                        upstream_url,
+                        term
+                    );
+                    let response = MeshMessage::UpstreamRegistrationResponse {
+                        request_id: request_id.into(),
+                        upstream_id: upstream_id.into(),
+                        approved: false,
+                        rejection_reason: Some("upstream_url contains illegal term".into()),
+                        global_node_id: self.config.node_id().into(),
+                        global_node_signature: None,
+                        timestamp: MeshMessage::generate_timestamp(),
+                    };
+                    let _ = self.send_datagram_to_peer(from_peer, &response).await;
+                    return;
+                }
+            }
+        }
+
         let now = crate::mesh::safe_unix_timestamp();
         let expires_at = now + (86400 * 30); // 30 days
 
