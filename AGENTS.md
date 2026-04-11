@@ -351,12 +351,12 @@ All duplicate `current_timestamp()` definitions have been consolidated into `src
 
 | Bug | Location | Impact | Status |
 |-----|----------|--------|--------|
-| DHT query response collection | `src/mesh/dht/record_store_sync.rs:717` | `query_record_iterative()` always returns `None` | Open (CRITICAL - see plan.md Wave 3) |
+| DHT query response collection | `src/mesh/dht/record_store_sync.rs:717` | `query_record_iterative()` always returns `None` | Open (CRITICAL - see plan.md 3.1) |
 | Forwarder no DNSSEC validation | `HickoryResolver` | Forwarder mode doesn't validate; AD bit not propagated | Limitation (documented) |
-| JA4 fingerprinting | `src/waf/bot.rs` | JA3 done; JA4 not implemented | Open |
+| JA4 fingerprinting | `src/waf/bot.rs` | JA3 done; JA4 not wired up | Open (see plan.md 4.2) |
 | Stream large request bodies | `src/http/server.rs` | Full buffering; needs chunk-based WAF | Open (architectural change needed) |
 | Response streaming | `src/http/server.rs` | Fully buffered responses | Open (architectural change needed) |
-| HTTPS feature parity | `src/tls/server.rs` | Missing WebSocket, WASM, FastCGI, PHP, etc. | Open (large refactoring) |
+| HTTPS feature parity | `src/tls/server.rs` | Missing WebSocket, WASM, FastCGI, PHP, etc. | Open (see plan.md 3.14) |
 
 ### Fixed Issues
 
@@ -623,18 +623,15 @@ rrsig.extend_from_slice(&timestamp.to_be_bytes());
 
 ### Implementation Plan
 
-The consolidated implementation plan is located at `plans/plan.md`. This plan organizes all improvements into 8 waves for parallelization:
+The consolidated implementation plan is located at `plans/plan.md`. This plan organizes all improvements into 5 waves for parallelization:
 
 | Wave | Focus |
 |------|-------|
-| 1 | Critical Security (DNS, Auth, SSRF) |
-| 2 | High Security (TLS, RFC5011, Mesh, WAF) |
-| 3 | Critical Correctness (Cache LRU, DHT Query) |
-| 4 | Mesh & DHT Infrastructure |
-| 5 | Code Quality (Large File Splitting) |
-| 6 | WAF Improvements |
-| 7 | Medium Priority Issues |
-| 8 | Low Priority / Cleanup |
+| 1 | Critical Security (WAF, Auth, Mesh) |
+| 2 | High Security (TLS, DNS, Mesh) |
+| 3 | Core Functionality (Web Stack, Caching, Honeypot) |
+| 4 | Code Quality (Performance, Quality) |
+| 5 | Polish & Cleanup |
 
 When reviewing the plan against the codebase, always verify claims directly. Plans may reference items already fixed, use outdated line numbers, or describe bugs incorrectly. Run `grep`/search for the specific patterns described to confirm they still exist before implementing fixes.
 
@@ -777,7 +774,7 @@ This skill file documents the mesh networking and DHT system, which is complex a
 - **Upstream ID Format**: `http://host:port` (domain-based keys)
 - **DHT Key Types**: `verified_upstream:`, `upstream:`, `node_capability:`, etc.
 - **Routing Flow**: Edge → extract upstream_id → DHT query → weighted random → origin
-- **Wave Status**: See `plans/plan.md` Wave 4 for mesh/DHT improvement status
+- **Wave Status**: See `plans/plan.md` for all improvement status
 
 **Key files referenced**:
 - `src/mesh/proxy.rs` - Route requests, extract upstream_id

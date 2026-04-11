@@ -36,13 +36,19 @@ impl AuthRateLimiter {
         let mut attempts = self.attempts.write();
         if attempts
             .get(identifier)
-            .map(|e| e.0.iter().filter(|t| t.elapsed() < AUTH_WINDOW_DURATION).count())
+            .map(|e| {
+                e.0.iter()
+                    .filter(|t| t.elapsed() < AUTH_WINDOW_DURATION)
+                    .count()
+            })
             .unwrap_or(0)
             >= MAX_AUTH_ATTEMPTS
         {
             return;
         }
-        let entry = attempts.entry(identifier.to_string()).or_insert((Vec::new(), false));
+        let entry = attempts
+            .entry(identifier.to_string())
+            .or_insert((Vec::new(), false));
         entry.0.push(Instant::now());
 
         let recent: Vec<_> = entry

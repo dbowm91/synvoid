@@ -1186,7 +1186,13 @@ impl HickoryRecursor {
                 let digest = cds.digest();
 
                 if let Some(manager) = &self.trust_anchor_manager {
-                    let _ = manager.trust_anchor_check(key_tag, algorithm_u8, digest_type, digest, None);
+                    let _ = manager.trust_anchor_check(
+                        key_tag,
+                        algorithm_u8,
+                        digest_type,
+                        digest,
+                        None,
+                    );
                 }
 
                 records.push(CdsRecord {

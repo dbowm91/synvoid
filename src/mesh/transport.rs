@@ -51,7 +51,8 @@ use crate::mesh::cert::MeshCertManager;
 use crate::mesh::config::{MeshConfig, MeshPeerConfig};
 use crate::mesh::kem::MlKem768;
 use crate::mesh::protocol::{
-    DhtRecord, MeshMessage, MeshPeerInfo, ProviderInfo, RouteQueryResult, UpstreamInfo, MESH_MESSAGE_VERSION,
+    DhtRecord, MeshMessage, MeshPeerInfo, ProviderInfo, RouteQueryResult, UpstreamInfo,
+    MESH_MESSAGE_VERSION,
 };
 use crate::mesh::session::SessionManager;
 use crate::mesh::topology::{MeshTopology, PeerStatus};
@@ -1666,7 +1667,12 @@ impl MeshTransport {
                             }
 
                             tracing::info!("Auto-registering new node {} with base reputation for grace period (non-strict mode)", node_id_str);
-                            stake_mgr.register_node(node_id_str.clone(), 50, role, Some(&node_id_str));
+                            stake_mgr.register_node(
+                                node_id_str.clone(),
+                                50,
+                                role,
+                                Some(&node_id_str),
+                            );
 
                             tracing::info!(
                                 "Node {} registered with base reputation 50 (grace period active)",

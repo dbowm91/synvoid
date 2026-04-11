@@ -654,7 +654,10 @@ impl RecordStoreManager {
         );
     }
 
-    pub async fn query_record_iterative(&self, key: &str) -> Option<crate::mesh::protocol::DhtRecord> {
+    pub async fn query_record_iterative(
+        &self,
+        key: &str,
+    ) -> Option<crate::mesh::protocol::DhtRecord> {
         if !self.config.enabled {
             return None;
         }
@@ -740,10 +743,9 @@ impl RecordStoreManager {
             return None;
         }
 
-        let timeout = tokio::time::timeout(std::time::Duration::from_secs(5), async {
-            rx.recv().await
-        })
-        .await;
+        let timeout =
+            tokio::time::timeout(std::time::Duration::from_secs(5), async { rx.recv().await })
+                .await;
 
         match timeout {
             Ok(Some(record)) => {
