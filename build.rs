@@ -2,9 +2,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let proto_files = &["src/mesh/proto/mesh.proto"];
     let out_dir = std::env::var("OUT_DIR")?;
 
-    tonic_build::configure()
+    tonic_prost_build::configure()
         .type_attribute(".", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .out_dir(&out_dir)
+        .out_dir(out_dir)
         .build_server(true)
         .compile_protos(proto_files, &["src/"])?;
 

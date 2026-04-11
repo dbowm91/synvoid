@@ -196,8 +196,8 @@ log = "0.4"
 
 # OpenAPI / Swagger UI
 schemars = "0.8"
-prost = "0.13"
-prost-build = "0.13"
+prost = "0.14"
+prost-build = "0.14"
 lru_time_cache = "0.11"
 linked-hash-map = "0.5"
 ahash = "0.8"
@@ -219,11 +219,12 @@ x25519-dalek = { version = "2", features = ["static_secrets"] }
 base32 = "0.5"
 libc = "0.2"
 windows-sys = { version = "0.59", features = ["Win32_System_LibraryLoader"] }
-tonic = { version = "0.12", features = ["gzip", "prost"] }
-tonic-reflection = "0.12"
+tonic = { version = "0.14", features = ["gzip", "transport"] }
+tonic-reflection = "0.14"
+tonic-prost = "0.14"
 
 [build-dependencies]
-tonic-build = "0.12"
+tonic-prost-build = "0.14"
 chrono = "0.4"
 
 # Fuzzing
