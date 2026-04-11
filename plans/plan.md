@@ -8,8 +8,8 @@ This document consolidates all improvement plans into a single roadmap, organize
 |------|-------|-------|----------|--------|
 | 1 | Critical Security | 7 | CRITICAL | ✅ Complete |
 | 2 | High Security | 11 | HIGH | ✅ Complete |
-| 3 | Critical Correctness | 2 | CRITICAL | ✅ Complete |
-| 4 | Mesh & DHT Infrastructure | 10 | HIGH | ✅ Complete |
+| 3 | Critical Correctness | 2 | CRITICAL | 🔶 Partial (3.1 done, 3.2 deferred) |
+| 4 | Mesh & DHT Infrastructure | 10 | HIGH | 🔶 Partial (4.3, 4.4 done) |
 | 5 | Code Quality (Large Files) | 6 | HIGH | 🔶 Partial (5.1 done) |
 | 6 | WAF Improvements | 2 | HIGH | ✅ Complete |
 | 7 | Medium Priority | 21 | MEDIUM | 🔶 Deferred (design decisions) |
@@ -366,7 +366,7 @@ ACME client automatically agrees to Let's Encrypt ToS without explicit user opt-
 
 ### 3.1 Proxy Cache LRU Bug - Access Time Never Updated
 
-**Status**: 🔶 Future Work
+**Status**: ✅ Completed (2026-04-11)
 
 **Severity**: CRITICAL
 
@@ -374,21 +374,21 @@ ACME client automatically agrees to Let's Encrypt ToS without explicit user opt-
 
 `ProxyCacheEntry` is cloned on every cache hit, but `update_access()` only modifies the clone. LRU eviction never tracks access patterns.
 
-**Fix**: Modify `get()` to update the cached entry directly, or use moka's built-in notification mechanism.
+**Fix**: Modify `get()` to update the cached entry directly by constructing a new `CacheEntryInner` with the modified entry.
 
 ---
 
 ### 3.2 DHT Query Response Collection Missing
 
-**Status**: 🔶 Future Work
+**Status**: 🔶 Deferred - Implementation appears functional; function defined but never called
 
 **Severity**: CRITICAL
 
 **Location**: `src/mesh/dht/record_store_sync.rs:657-718`
 
-`query_record_iterative()` sends DHT record queries but always returns `None`. No mechanism to receive responses.
+`query_record_iterative()` has response collection code using oneshot channels, but the function itself is never called anywhere in the codebase (dead code). The response collection mechanism appears correct when examined in isolation.
 
-**Fix**: Implement response tracking using oneshot channels (similar to `pending_queries` pattern in `transport.rs`).
+**Fix**: Either wire up `query_record_iterative` to actual DHT lookup paths, or remove as dead code.
 
 ---
 
@@ -428,7 +428,7 @@ If the genesis key is compromised, all derived signing keys are compromised. No 
 
 ### 4.3 DHT Record Expiration Cleanup
 
-**Status**: 🔶 Future Work
+**Status**: ✅ Completed (2026-04-11)
 
 **Severity**: HIGH
 
@@ -437,15 +437,15 @@ If the genesis key is compromised, all derived signing keys are compromised. No 
 Records stored with TTL but no background task purges expired records. Storage grows indefinitely.
 
 **Fix**:
-1. Add `prune_expired()` method to `ShardedRecordStore`
-2. Add expiration sweep background task
-3. Enforce TTL on read
+1. `cleanup_expired()` method already exists in `record_store_crud.rs`
+2. Added call to `cleanup_expired()` in `start_background_tasks()` (every 60 seconds)
+3. TTL is already enforced on read in `get_record()`
 
 ---
 
 ### 4.4 Illegal Upstream Terms Enforcement
 
-**Status**: 🔶 Future Work
+**Status**: ✅ Completed (2026-04-11)
 
 **Severity**: HIGH
 
@@ -453,7 +453,7 @@ Records stored with TTL but no background task purges expired records. Storage g
 
 `illegal_upstream_terms` config exists but is never enforced when storing `verified_upstream` records.
 
-**Fix**: Validate `upstream_url` against `illegal_upstream_terms` before creating `VerifiedUpstream`.
+**Fix**: Added check in `handle_upstream_registration_request()` that validates `upstream_url` against `illegal_upstream_terms` before creating `VerifiedUpstream`. Rejects with `UpstreamRegistrationResponse{approved: false}` if violation found.
 
 ---
 
