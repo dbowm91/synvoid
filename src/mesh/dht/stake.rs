@@ -144,6 +144,14 @@ impl NodeStake {
     pub fn can_be_in_routing_table(&self, min_stake: i64) -> bool {
         !self.is_slashed && (self.effective_stake as i64) >= min_stake
     }
+
+    pub fn is_in_grace_period(&self) -> bool {
+        if let Some(ends_at) = self.grace_period_ends_at {
+            current_timestamp() < ends_at
+        } else {
+            false
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
@@ -309,7 +317,10 @@ impl StakeManager {
         let stakes = self.stakes.read();
         stakes
             .get(node_id)
-            .map(|s| s.can_be_in_routing_table(self.config.min_stake_for_routing))
+            .map(|s| {
+                s.can_be_in_routing_table(self.config.min_stake_for_routing)
+                    && !s.is_in_grace_period()
+            })
             .unwrap_or(false)
     }
 
