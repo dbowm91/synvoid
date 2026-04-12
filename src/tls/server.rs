@@ -1699,6 +1699,8 @@ fn extract_client_hello_bytes_from_stream(
 
     let tcp_stream = &stream.get_ref().0;
     let fd = tcp_stream.as_raw_fd();
+    // SAFETY: fd is a valid TCP socket owned by the caller. The stream is used read-only for
+    // peek() and is dropped immediately after. The original TlsStream is not consumed.
     let mut tcp_stream = unsafe { std::net::TcpStream::from_raw_fd(fd) };
     let mut peek_buf = vec![0u8; 4096];
     match tcp_stream.peek(&mut peek_buf) {

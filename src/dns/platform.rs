@@ -48,6 +48,8 @@ mod linux {
             }
 
             let pktinfo_bytes = &cmsg_data[..size_of::<nix::libc::in_pktinfo>()];
+            // SAFETY: cmsg_data is guaranteed by the kernel to contain at least size_of::<in_pktinfo>() bytes
+            // at the position we're reading from. The pointer is valid for reading that many bytes.
             let pktinfo: nix::libc::in_pktinfo =
                 unsafe { (pktinfo_bytes.as_ptr() as *const nix::libc::in_pktinfo).read() };
 
@@ -67,6 +69,8 @@ mod linux {
         }
 
         fn enable_tcp_pktinfo(&self, fd: std::os::fd::RawFd) -> Result<(), String> {
+            // SAFETY: fd is a valid TCP socket file descriptor owned by the caller.
+            // setsockopt syscall is always safe if the fd is valid.
             unsafe {
                 let ret = libc::setsockopt(
                     fd,

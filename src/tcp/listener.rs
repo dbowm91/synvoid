@@ -60,6 +60,8 @@ fn apply_tcp_socket_options(stream: &TcpStream, options: &TcpSocketOptions) -> s
             {
                 use std::os::fd::AsRawFd;
                 let fd = stream.as_raw_fd();
+                // SAFETY: fd must be a valid TCP socket. The result is explicitly ignored
+                // (let _) because setsockopt failure is non-fatal for TCP_QUICKACK.
                 let _ = unsafe {
                     libc::setsockopt(
                         fd,
