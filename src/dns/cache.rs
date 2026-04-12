@@ -192,21 +192,25 @@ impl DnsCache {
                         .count();
                     if confirmations < 2 {
                         tracing::warn!(
-                            "Potential cache poisoning attempt detected for {} (unconfirmed fingerprint: {})",
+                            "Cache poisoning detected for {} (unconfirmed fingerprint: {}) - blocking response",
                             qname,
                             fingerprint
                         );
+                        return Err(CachePoisoningError::PotentialPoisoning {
+                            qname: qname.clone(),
+                            new_fingerprint: fingerprint,
+                        });
                     } else {
                         tracing::warn!(
-                            "Potential cache poisoning attempt detected for {} (new fingerprint: {})",
+                            "Cache poisoning detected for {} (new fingerprint: {}) - blocking response",
                             qname,
                             fingerprint
                         );
+                        return Err(CachePoisoningError::PotentialPoisoning {
+                            qname: qname.clone(),
+                            new_fingerprint: fingerprint,
+                        });
                     }
-                    return Err(CachePoisoningError::PotentialPoisoning {
-                        qname: qname.clone(),
-                        new_fingerprint: fingerprint,
-                    });
                 }
             }
         }
