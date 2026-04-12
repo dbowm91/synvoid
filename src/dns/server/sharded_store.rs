@@ -76,6 +76,11 @@ impl ShardedZoneStore {
         self.shards.iter().map(|s| s.read().len()).sum()
     }
 
+    /// Returns the number of shards.
+    pub fn num_shards(&self) -> usize {
+        NUM_SHARDS
+    }
+
     /// Check if the store is empty.
     pub fn is_empty(&self) -> bool {
         self.len() == 0

@@ -2,6 +2,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
+use tokio::sync::Mutex;
+
 use crate::DrainFlag;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -17,7 +19,7 @@ pub struct WorkerDrainState {
     active_connections: Arc<AtomicU64>,
     idle_connections: Arc<AtomicU64>,
     connections_drained: Arc<AtomicU64>,
-    drain_start: Arc<std::sync::Mutex<Option<Instant>>>,
+    drain_start: Arc<Mutex<Option<Instant>>>,
     stopped_accepting: DrainFlag,
     short_requests: Arc<AtomicU64>,
     long_requests: Arc<AtomicU64>,
@@ -38,7 +40,7 @@ impl WorkerDrainState {
             active_connections: Arc::new(AtomicU64::new(0)),
             idle_connections: Arc::new(AtomicU64::new(0)),
             connections_drained: Arc::new(AtomicU64::new(0)),
-            drain_start: Arc::new(std::sync::Mutex::new(None)),
+            drain_start: Arc::new(Mutex::new(None)),
             stopped_accepting: DrainFlag::new(),
             short_requests: Arc::new(AtomicU64::new(0)),
             long_requests: Arc::new(AtomicU64::new(0)),
@@ -50,7 +52,7 @@ impl WorkerDrainState {
         Arc::new(Self::new())
     }
 
-    pub fn start_drain(&self, drain_id: u64) -> bool {
+    pub async fn start_drain(&self, drain_id: u64) -> bool {
         if self.draining.is_draining() {
             let current_id = self.drain_id.load(Ordering::SeqCst);
             if current_id > 0 && current_id != drain_id {
@@ -67,7 +69,7 @@ impl WorkerDrainState {
         self.draining.start_drain();
         self.stopped_accepting.end_drain();
 
-        let mut start = self.drain_start.lock().unwrap();
+        let mut start = self.drain_start.lock().await;
         *start = Some(Instant::now());
 
         tracing::info!(
@@ -187,8 +189,8 @@ impl WorkerDrainState {
         tracing::info!("Drain complete, total connections drained: {}", drained);
     }
 
-    pub fn get_status(&self) -> DrainStatusResponse {
-        let drain_start = self.drain_start.lock().unwrap();
+    pub async fn get_status(&self) -> DrainStatusResponse {
+        let drain_start = self.drain_start.lock().await;
         let elapsed_secs = drain_start.map(|s| s.elapsed().as_secs()).unwrap_or(0);
 
         let active = self.active_connections.load(Ordering::SeqCst);
@@ -212,13 +214,13 @@ impl WorkerDrainState {
         }
     }
 
-    pub fn reset(&self) {
+    pub async fn reset(&self) {
         self.draining.end_drain();
         self.drain_id.store(0, Ordering::SeqCst);
         self.stopped_accepting.end_drain();
         self.connections_drained.store(0, Ordering::SeqCst);
 
-        let mut start = self.drain_start.lock().unwrap();
+        let mut start = self.drain_start.lock().await;
         *start = None;
     }
 }
@@ -248,13 +250,13 @@ pub struct DrainRequest {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_drain_state() {
+    #[tokio::test]
+    async fn test_drain_state() {
         let state = WorkerDrainState::new();
 
         assert!(!state.is_draining());
 
-        state.start_drain(1);
+        state.start_drain(1).await;
         assert!(state.is_draining());
         assert_eq!(state.get_drain_id(), 1);
 
@@ -264,7 +266,7 @@ mod tests {
         state.decrement_active();
         assert_eq!(state.get_active_connections(), 0);
 
-        let status = state.get_status();
+        let status = state.get_status().await;
         assert!(status.is_draining);
     }
 
@@ -288,10 +290,10 @@ mod tests {
         assert_eq!(streaming, 0);
     }
 
-    #[test]
-    fn test_drain_completes_on_last_connection_decrement() {
+    #[tokio::test]
+    async fn test_drain_completes_on_last_connection_decrement() {
         let state = WorkerDrainState::new();
-        state.start_drain(1);
+        state.start_drain(1).await;
         state.increment_active();
         assert_eq!(state.get_active_connections(), 1);
 
@@ -299,29 +301,29 @@ mod tests {
         state.decrement_active();
         assert_eq!(state.get_active_connections(), 0);
 
-        let status = state.get_status();
+        let status = state.get_status().await;
         assert!(status.drain_complete);
         assert!(status.stopped_accepting || status.active_connections == 0);
     }
 
-    #[test]
-    fn test_stop_accepting_completes_drain_when_no_connections() {
+    #[tokio::test]
+    async fn test_stop_accepting_completes_drain_when_no_connections() {
         let state = WorkerDrainState::new();
-        state.start_drain(42);
+        state.start_drain(42).await;
         // No active connections
         assert_eq!(state.get_active_connections(), 0);
 
         state.stop_accepting();
         assert!(state.is_stopped_accepting());
 
-        let status = state.get_status();
+        let status = state.get_status().await;
         assert!(status.drain_complete);
     }
 
-    #[test]
-    fn test_stop_accepting_does_not_complete_with_active_connections() {
+    #[tokio::test]
+    async fn test_stop_accepting_does_not_complete_with_active_connections() {
         let state = WorkerDrainState::new();
-        state.start_drain(1);
+        state.start_drain(1).await;
         state.increment_active();
         state.increment_active();
         assert_eq!(state.get_active_connections(), 2);
@@ -329,39 +331,39 @@ mod tests {
         state.stop_accepting();
         assert!(state.is_stopped_accepting());
 
-        let status = state.get_status();
+        let status = state.get_status().await;
         assert!(!status.drain_complete);
     }
 
-    #[test]
-    fn test_duplicate_drain_id_rejected() {
+    #[tokio::test]
+    async fn test_duplicate_drain_id_rejected() {
         let state = WorkerDrainState::new();
-        assert!(state.start_drain(1));
+        assert!(state.start_drain(1).await);
 
         // Different drain ID should be rejected
-        assert!(!state.start_drain(2));
+        assert!(!state.start_drain(2).await);
         assert_eq!(state.get_drain_id(), 1);
     }
 
-    #[test]
-    fn test_same_drain_id_reentry_allowed() {
+    #[tokio::test]
+    async fn test_same_drain_id_reentry_allowed() {
         let state = WorkerDrainState::new();
-        assert!(state.start_drain(1));
+        assert!(state.start_drain(1).await);
 
         // Same drain ID should be allowed
-        assert!(state.start_drain(1));
+        assert!(state.start_drain(1).await);
         assert_eq!(state.get_drain_id(), 1);
     }
 
-    #[test]
-    fn test_reset_clears_all_state() {
+    #[tokio::test]
+    async fn test_reset_clears_all_state() {
         let state = WorkerDrainState::new();
-        state.start_drain(99);
+        state.start_drain(99).await;
         state.increment_active();
         state.increment_active();
         state.stop_accepting();
 
-        state.reset();
+        state.reset().await;
 
         assert!(!state.is_draining());
         assert_eq!(state.get_drain_id(), 0);

@@ -146,7 +146,7 @@ impl VpnClient {
     }
 
     pub async fn connect(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        self.stats.reset();
+        self.stats.reset().await;
         match self.config.transport {
             TransportType::Quic => self.connect_quic().await,
             TransportType::WireGuard => self.connect_wireguard().await,
@@ -234,7 +234,7 @@ impl VpnClient {
 
                 counter!("maluwaf.vpn.client.connected").increment(1);
                 gauge!("maluwaf.vpn.client.sessions").set(1.0);
-                self.stats.connected();
+                self.stats.connected().await;
 
                 tracing::info!("VPN session established");
 
@@ -302,7 +302,7 @@ impl VpnClient {
             });
         }
 
-        self.stats.disconnected();
+        self.stats.disconnected().await;
         self.stop_all_listeners();
     }
 

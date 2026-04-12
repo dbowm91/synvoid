@@ -1,8 +1,8 @@
 pub mod core;
 pub mod sliding;
 
-use metrics::{counter, gauge};
 use indexmap::IndexMap;
+use metrics::{counter, gauge};
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::net::IpAddr;

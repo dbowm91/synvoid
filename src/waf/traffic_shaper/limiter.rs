@@ -81,7 +81,8 @@ impl ConnectionLimiter {
         if can_burst > 0 {
             let burst_tokens = self.ip_burst_tokens.write();
             if let Some(tokens) = burst_tokens.get(&client_ip) {
-                let _ = tokens.fetch_update(Ordering::Release, Ordering::Relaxed, |v| v.checked_sub(1));
+                let _ =
+                    tokens.fetch_update(Ordering::Release, Ordering::Relaxed, |v| v.checked_sub(1));
             }
         }
 
@@ -132,12 +133,14 @@ impl ConnectionLimiter {
     }
 
     pub fn release(&self, token: ConnectionToken) {
-        let _ = self.total_connections
+        let _ = self
+            .total_connections
             .fetch_update(Ordering::Release, Ordering::Relaxed, |v| v.checked_sub(1));
 
         let mut ips = self.ip_connections.write();
         if let Some(counter) = ips.get(&token.client_ip) {
-            let prev = counter.fetch_update(Ordering::Release, Ordering::Relaxed, |v| v.checked_sub(1));
+            let prev =
+                counter.fetch_update(Ordering::Release, Ordering::Relaxed, |v| v.checked_sub(1));
             if prev == Ok(1) {
                 ips.remove(&token.client_ip);
                 let mut burst_tokens = self.ip_burst_tokens.write();

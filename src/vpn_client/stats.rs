@@ -1,6 +1,8 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
+use tokio::sync::Mutex;
+
 #[derive(Debug, Clone, Default)]
 pub struct VpnStats {
     pub bytes_sent: u64,
@@ -16,8 +18,8 @@ pub struct VpnStatsTracker {
     bytes_received: AtomicU64,
     packets_sent: AtomicU64,
     packets_received: AtomicU64,
-    connected_at: std::sync::Mutex<Option<Instant>>,
-    last_message_at: std::sync::Mutex<Option<Instant>>,
+    connected_at: Mutex<Option<Instant>>,
+    last_message_at: Mutex<Option<Instant>>,
 }
 
 impl Default for VpnStatsTracker {
@@ -33,42 +35,38 @@ impl VpnStatsTracker {
             bytes_received: AtomicU64::new(0),
             packets_sent: AtomicU64::new(0),
             packets_received: AtomicU64::new(0),
-            connected_at: std::sync::Mutex::new(None),
-            last_message_at: std::sync::Mutex::new(None),
+            connected_at: Mutex::new(None),
+            last_message_at: Mutex::new(None),
         }
     }
 
-    pub fn connected(&self) {
-        if let Ok(mut guard) = self.connected_at.lock() {
-            *guard = Some(Instant::now());
-        }
+    pub async fn connected(&self) {
+        let mut guard = self.connected_at.lock().await;
+        *guard = Some(Instant::now());
     }
 
-    pub fn disconnected(&self) {
-        if let Ok(mut guard) = self.connected_at.lock() {
-            *guard = None;
-        }
+    pub async fn disconnected(&self) {
+        let mut guard = self.connected_at.lock().await;
+        *guard = None;
     }
 
-    pub fn add_sent(&self, bytes: u64, packets: u64) {
+    pub async fn add_sent(&self, bytes: u64, packets: u64) {
         self.bytes_sent.fetch_add(bytes, Ordering::Relaxed);
         self.packets_sent.fetch_add(packets, Ordering::Relaxed);
-        if let Ok(mut guard) = self.last_message_at.lock() {
-            *guard = Some(Instant::now());
-        }
+        let mut guard = self.last_message_at.lock().await;
+        *guard = Some(Instant::now());
     }
 
-    pub fn add_received(&self, bytes: u64, packets: u64) {
+    pub async fn add_received(&self, bytes: u64, packets: u64) {
         self.bytes_received.fetch_add(bytes, Ordering::Relaxed);
         self.packets_received.fetch_add(packets, Ordering::Relaxed);
-        if let Ok(mut guard) = self.last_message_at.lock() {
-            *guard = Some(Instant::now());
-        }
+        let mut guard = self.last_message_at.lock().await;
+        *guard = Some(Instant::now());
     }
 
     pub fn get_stats(&self) -> VpnStats {
-        let connected_at = self.connected_at.lock().ok().and_then(|g| *g);
-        let last_message_at = self.last_message_at.lock().ok().and_then(|g| *g);
+        let connected_at = self.connected_at.try_lock().ok().and_then(|g| *g);
+        let last_message_at = self.last_message_at.try_lock().ok().and_then(|g| *g);
 
         VpnStats {
             bytes_sent: self.bytes_sent.load(Ordering::Relaxed),
@@ -80,16 +78,14 @@ impl VpnStatsTracker {
         }
     }
 
-    pub fn reset(&self) {
+    pub async fn reset(&self) {
         self.bytes_sent.store(0, Ordering::Relaxed);
         self.bytes_received.store(0, Ordering::Relaxed);
         self.packets_sent.store(0, Ordering::Relaxed);
         self.packets_received.store(0, Ordering::Relaxed);
-        if let Ok(mut guard) = self.connected_at.lock() {
-            *guard = None;
-        }
-        if let Ok(mut guard) = self.last_message_at.lock() {
-            *guard = None;
-        }
+        let mut guard = self.connected_at.lock().await;
+        *guard = None;
+        let mut guard = self.last_message_at.lock().await;
+        *guard = None;
     }
 }

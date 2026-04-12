@@ -771,7 +771,7 @@ impl ProxyServer {
                             counter!("maluwaf.proxy.cache.stale_while_revalidate").increment(1);
                         }
 
-                        let response = self.build_cached_response(cached);
+                        let response = self.build_cached_response(&cached);
                         return Ok(response);
                     }
 
@@ -995,7 +995,7 @@ impl ProxyServer {
         Self::get_cache_max_age_static(headers)
     }
 
-    fn build_cached_response(&self, entry: ProxyCacheEntry) -> Response<bytes::Bytes> {
+    fn build_cached_response(&self, entry: &ProxyCacheEntry) -> Response<bytes::Bytes> {
         let mut builder = Response::builder().status(entry.status);
 
         for (name, value) in entry.headers.iter() {
@@ -1039,7 +1039,7 @@ impl ProxyServer {
         }
 
         builder
-            .body(entry.content)
+            .body(entry.content.clone())
             .unwrap_or_else(|_| crate::http::fallback_error_bytes())
     }
 

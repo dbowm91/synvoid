@@ -1290,7 +1290,7 @@ pub async fn run_unified_server_worker(
                         .store(request_drain_id, std::sync::atomic::Ordering::SeqCst);
                     ipc_state.draining.start_drain();
 
-                    ipc_state.drain_state.start_drain(request_drain_id);
+                    ipc_state.drain_state.start_drain(request_drain_id).await;
 
                     let tx_guard = ipc_state.stop_accepting_tx.lock().await;
                     if let Some(tx) = tx_guard.as_ref() {

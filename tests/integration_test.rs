@@ -62,15 +62,15 @@ mod tests {
         assert_eq!(config.max_restart_attempts, 3);
     }
 
-    #[test]
-    fn test_drain_state_transitions() {
+    #[tokio::test]
+    async fn test_drain_state_transitions() {
         use maluwaf::worker::drain_state::WorkerDrainState;
 
         let state = WorkerDrainState::new();
 
         assert!(!state.is_draining());
 
-        state.start_drain(1);
+        state.start_drain(1).await;
         assert!(state.is_draining());
 
         let drain_id_value = state.get_drain_id();

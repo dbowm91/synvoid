@@ -505,23 +505,23 @@ impl HttpServer {
 
             if is_localhost {
                 if path == INTERNAL_DRAIN_PATH {
-                    return Self::handle_drain_request(req, state, &alt_svc, &main_config);
+                    return Self::handle_drain_request(req, state, &alt_svc, &main_config).await;
                 }
 
                 if path == INTERNAL_DRAIN_STATUS_PATH {
-                    return Self::handle_drain_status_request(req, state, &alt_svc, &main_config);
+                    return Self::handle_drain_status_request(req, state, &alt_svc, &main_config).await;
                 }
             }
 
             if path == INTERNAL_HEALTH_PATH {
-                return Self::handle_health_request(&drain_state, &alt_svc, &main_config);
+                return Self::handle_health_request(&drain_state, &alt_svc, &main_config).await;
             }
 
             if path == INTERNAL_READY_PATH {
-                return Self::handle_ready_request(&drain_state, &alt_svc, &main_config);
+                return Self::handle_ready_request(&drain_state, &alt_svc, &main_config).await;
             }
         } else if path == INTERNAL_HEALTH_PATH || path == INTERNAL_READY_PATH {
-            return Self::handle_health_request(&drain_state, &alt_svc, &main_config);
+            return Self::handle_health_request(&drain_state, &alt_svc, &main_config).await;
         }
 
         // ============================================================================
@@ -1485,11 +1485,35 @@ impl HttpServer {
                                             "Zero-copy streaming for {}",
                                             path.display()
                                         );
-                                        let file = match tokio::fs::File::open(&path).await {
-                                            Ok(f) => f,
+                                        let path = path.clone();
+                                        let body_bytes = match tokio::task::spawn_blocking({
+                                            let path = path.clone();
+                                            move || std::fs::read(&path)
+                                        })
+                                        .await
+                                        {
+                                            Ok(Ok(data)) => data,
+                                            Ok(Err(e)) => {
+                                                tracing::warn!(
+                                                    "Failed to read {}: {}",
+                                                    path.display(),
+                                                    e
+                                                );
+                                                return Ok(Response::builder()
+                                                    .status(500)
+                                                    .body(
+                                                        Full::new(Bytes::from_static(
+                                                            b"Internal Server Error",
+                                                        ))
+                                                        .boxed(),
+                                                    )
+                                                    .unwrap_or_else(|_| {
+                                                        crate::http::fallback_error_boxed()
+                                                    }));
+                                            }
                                             Err(e) => {
                                                 tracing::warn!(
-                                                    "Failed to open {}: {}",
+                                                    "Task failed to read {}: {}",
                                                     path.display(),
                                                     e
                                                 );
@@ -1506,26 +1530,8 @@ impl HttpServer {
                                                     }));
                                             }
                                         };
-                                        use futures::StreamExt;
-                                        use http_body_util::StreamBody;
-                                        use tokio_util::io::ReaderStream;
-                                        let stream = ReaderStream::new(file);
-                                        let mut body = StreamBody::new(stream);
-                                        let mut body_bytes = Vec::new();
-                                        while let Some(chunk) = body.next().await {
-                                            match chunk {
-                                                Ok(bytes) => body_bytes.extend_from_slice(&bytes),
-                                                Err(e) => {
-                                                    tracing::warn!(
-                                                        "Failed to read body chunk: {}",
-                                                        e
-                                                    );
-                                                }
-                                            }
-                                        }
-                                        let body = Bytes::from(body_bytes);
                                         return Ok(builder
-                                            .body(Full::new(body).boxed())
+                                            .body(Full::new(Bytes::from(body_bytes)).boxed())
                                             .unwrap_or_else(|_| {
                                                 crate::http::fallback_error_boxed()
                                             }));
@@ -2657,7 +2663,7 @@ impl HttpServer {
         builder
     }
 
-    fn handle_drain_request(
+    async fn handle_drain_request(
         _req: hyper::Request<hyper::body::Incoming>,
         drain_state: &Arc<WorkerDrainState>,
         alt_svc: &Option<String>,
@@ -2665,10 +2671,10 @@ impl HttpServer {
     ) -> Result<Response<BoxBody<Bytes, Infallible>>, hyper::Error> {
         let drain_id = crate::utils::safe_unix_duration().as_millis() as u64;
 
-        let accepted = drain_state.start_drain(drain_id);
+        let accepted = drain_state.start_drain(drain_id).await;
         drain_state.stop_accepting();
 
-        let status = drain_state.get_status();
+        let status = drain_state.get_status().await;
         let body = serde_json::to_string(&status).unwrap_or_else(|_| "{}".to_string());
 
         let status_code = if accepted { 200 } else { 409 };
@@ -2681,13 +2687,13 @@ impl HttpServer {
         ))
     }
 
-    fn handle_drain_status_request(
+    async fn handle_drain_status_request(
         _req: hyper::Request<hyper::body::Incoming>,
         drain_state: &Arc<WorkerDrainState>,
         alt_svc: &Option<String>,
         main_config: &Arc<MainConfig>,
     ) -> Result<Response<BoxBody<Bytes, Infallible>>, hyper::Error> {
-        let status = drain_state.get_status();
+        let status = drain_state.get_status().await;
         let body = serde_json::to_string(&status).unwrap_or_else(|_| "{}".to_string());
 
         Ok(Self::build_response_with_alt_svc(
@@ -2699,13 +2705,13 @@ impl HttpServer {
         ))
     }
 
-    fn handle_health_request(
+    async fn handle_health_request(
         drain_state: &Option<Arc<WorkerDrainState>>,
         alt_svc: &Option<String>,
         _main_config: &Arc<MainConfig>,
     ) -> Result<Response<BoxBody<Bytes, Infallible>>, hyper::Error> {
         let (status_code, body) = if let Some(state) = drain_state {
-            let status = state.get_status();
+            let status = state.get_status().await;
             if status.is_draining {
                 let body = serde_json::json!({
                     "status": "draining",
@@ -2744,13 +2750,13 @@ impl HttpServer {
             .unwrap_or_else(|_| crate::http::fallback_error_boxed()))
     }
 
-    fn handle_ready_request(
+    async fn handle_ready_request(
         drain_state: &Option<Arc<WorkerDrainState>>,
         alt_svc: &Option<String>,
         _main_config: &Arc<MainConfig>,
     ) -> Result<Response<BoxBody<Bytes, Infallible>>, hyper::Error> {
         let (status_code, body) = if let Some(state) = drain_state {
-            let status = state.get_status();
+            let status = state.get_status().await;
             if status.is_draining || status.stopped_accepting {
                 let body = serde_json::json!({
                     "ready": false,

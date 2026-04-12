@@ -110,24 +110,13 @@ pub enum CacheHit {
     StaleWhileRevalidate,
 }
 
+#[derive(Clone)]
 struct CacheEntryInner {
-    entry: ProxyCacheEntry,
+    entry: Arc<ProxyCacheEntry>,
     size: usize,
     on_disk: bool,
     disk_path: Option<PathBuf>,
     checksum: u64,
-}
-
-impl Clone for CacheEntryInner {
-    fn clone(&self) -> Self {
-        Self {
-            entry: self.entry.clone(),
-            size: self.size,
-            on_disk: self.on_disk,
-            disk_path: self.disk_path.clone(),
-            checksum: self.checksum,
-        }
-    }
 }
 
 impl CacheEntryInner {
@@ -223,7 +212,7 @@ impl ProxyCache {
     }
 
     #[inline]
-    pub async fn get(&self, key: &CacheKey) -> Option<ProxyCacheEntry> {
+    pub async fn get(&self, key: &CacheKey) -> Option<Arc<ProxyCacheEntry>> {
         if !self.settings.enabled {
             return None;
         }
@@ -237,58 +226,58 @@ impl ProxyCache {
 
         if inner.entry.is_expired() {
             if inner.entry.is_stale_while_revalidate() {
-                let mut entry = inner.entry.clone();
+                let mut entry = (*inner.entry).clone();
                 entry.is_fresh = false;
                 entry.update_access();
                 let updated_inner = CacheEntryInner {
-                    entry: entry.clone(),
+                    entry: Arc::new(entry),
                     size: inner.size,
                     on_disk: inner.on_disk,
                     disk_path: inner.disk_path.clone(),
                     checksum: inner.checksum,
                 };
                 self.entries.insert(key.clone(), updated_inner);
-                return Some(entry);
+                return Some(inner.entry);
             }
             if inner.entry.is_stale_if_error() {
-                let mut entry = inner.entry.clone();
+                let mut entry = (*inner.entry).clone();
                 entry.is_fresh = false;
                 entry.update_access();
                 let updated_inner = CacheEntryInner {
-                    entry: entry.clone(),
+                    entry: Arc::new(entry),
                     size: inner.size,
                     on_disk: inner.on_disk,
                     disk_path: inner.disk_path.clone(),
                     checksum: inner.checksum,
                 };
                 self.entries.insert(key.clone(), updated_inner);
-                return Some(entry);
+                return Some(inner.entry);
             }
             drop(inner);
             self.entries.invalidate(key);
             return None;
         }
 
-        let mut entry = inner.entry.clone();
+        let mut entry = (*inner.entry).clone();
         entry.update_access();
         let updated_inner = CacheEntryInner {
-            entry: entry.clone(),
+            entry: Arc::new(entry),
             size: inner.size,
             on_disk: inner.on_disk,
             disk_path: inner.disk_path.clone(),
             checksum: inner.checksum,
         };
         self.entries.insert(key.clone(), updated_inner);
-        Some(entry)
+        Some(inner.entry)
     }
 
     #[inline]
-    async fn get_async(&self, key: &CacheKey) -> Option<ProxyCacheEntry> {
+    async fn get_async(&self, key: &CacheKey) -> Option<Arc<ProxyCacheEntry>> {
         let inner = self.entries.get(key)?;
 
         let disk_path = inner.disk_path.clone()?;
         let checksum = inner.checksum;
-        let entry = inner.entry.clone();
+        let entry = (*inner.entry).clone();
         drop(inner);
 
         let content = tokio::task::spawn_blocking(move || std::fs::read(&disk_path))
@@ -305,7 +294,7 @@ impl ProxyCache {
         let mut entry = entry;
         entry.content = Bytes::from(content);
         entry.update_access();
-        Some(entry)
+        Some(Arc::new(entry))
     }
 
     #[inline]
@@ -335,7 +324,7 @@ impl ProxyCache {
         None
     }
 
-    pub async fn get_or_fetch<F, Fut>(&self, key: &CacheKey, fetch: F) -> Option<ProxyCacheEntry>
+    pub async fn get_or_fetch<F, Fut>(&self, key: &CacheKey, fetch: F) -> Option<Arc<ProxyCacheEntry>>
     where
         F: FnOnce() -> Fut,
         Fut: std::future::Future<Output = Option<(Bytes, StatusCode, HeaderMap, Option<Duration>)>>,
@@ -408,7 +397,7 @@ impl ProxyCache {
         let checksum = CacheEntryInner::compute_checksum(&content);
 
         let entry_inner = CacheEntryInner {
-            entry,
+            entry: Arc::new(entry),
             size,
             on_disk: should_store_disk,
             disk_path,
