@@ -1,3 +1,4 @@
+use super::super::audit::AuditLog;
 use super::super::state::AdminState;
 use crate::log_controller;
 use axum::{extract::State, http::StatusCode, Json};
@@ -79,6 +80,17 @@ pub async fn update_main_config(
     if let Some(ref pm) = state.process.process_manager {
         pm.broadcast_config_reload(config_dir).await;
     }
+
+    state.audit.log(AuditLog::new(
+        None,
+        Some("admin".to_string()),
+        "update_main_config".to_string(),
+        "config/main".to_string(),
+        "unknown".to_string(),
+        None,
+        Some("Main configuration updated".to_string()),
+        true,
+    ));
 
     Ok(Json(StatusResponse::success(
         "Configuration updated and reloaded to workers.",

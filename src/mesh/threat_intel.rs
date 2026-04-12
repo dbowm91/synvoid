@@ -423,10 +423,7 @@ impl ThreatIntelligenceManager {
             signer_public_key,
         };
 
-        let key = format!(
-            "honeypot:{}:{}:{}",
-            site_scope, threat_type as u8 as char, ip
-        );
+        let key = ip.to_string();
 
         {
             let mut indicators = self.indicators.write();
@@ -450,6 +447,16 @@ impl ThreatIntelligenceManager {
             self.queue_for_push(indicator);
         } else {
             self.publish_indicator_to_dht(&indicator);
+        }
+
+        if severity == ThreatSeverity::High || severity == ThreatSeverity::Critical {
+            let ttl = ttl_seconds.unwrap_or(self.config.min_ttl_seconds * 6);
+            self.block_store.block_ip(ip, &reason, ttl, site_scope);
+            tracing::info!(
+                "Honeypot detected high/critical threat from {}, blocking locally for {} seconds",
+                ip,
+                ttl
+            );
         }
 
         tracing::debug!("Announced honeypot indicator: {} from {}", reason, ip);

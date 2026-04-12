@@ -6,7 +6,7 @@ This document consolidates all improvement work from the planning phase. Items a
 
 | Wave | Focus | Items | Priority | Status |
 |------|-------|-------|----------|--------|
-| 1 | Critical Security (WAF, Auth, Mesh) | 12 | CRITICAL | 🔶 All future |
+| 1 | Critical Security (WAF, Auth, Mesh) | 12 | CRITICAL | ✅ Completed |
 | 2 | High Security (TLS, DNS, Mesh) | 14 | HIGH | 🔶 All future |
 | 3 | Core Functionality (Web Stack, Caching, Honeypot) | 18 | HIGH | 🔶 All future |
 | 4 | Code Quality (Performance, Quality) | 15 | MEDIUM | 🔶 All future |
@@ -20,7 +20,7 @@ This document consolidates all improvement work from the planning phase. Items a
 
 ### 1.1 WAF XSS Detection Bypass via URL Encoding
 
-**Status**: 🔶 Future Work
+**Status**: ✅ Completed
 
 **Severity**: CRITICAL
 
@@ -41,7 +41,7 @@ fn test_xss_encoded_script_tags_not_detected() {
 
 ### 1.2 WAF libinjection Receives Pre-Normalized Input
 
-**Status**: 🔶 Future Work
+**Status**: ✅ Completed
 
 **Severity**: CRITICAL
 
@@ -55,7 +55,7 @@ fn test_xss_encoded_script_tags_not_detected() {
 
 ### 1.3 TOFU First-Connection MITM Vulnerability
 
-**Status**: 🔶 Future Work
+**Status**: ✅ Completed
 
 **Severity**: CRITICAL
 
@@ -73,7 +73,7 @@ fn test_xss_encoded_script_tags_not_detected() {
 
 ### 1.4 Empty CA Store = Permissive Trust
 
-**Status**: 🔶 Future Work
+**Status**: ✅ Completed
 
 **Severity**: CRITICAL
 
@@ -90,7 +90,7 @@ fn test_xss_encoded_script_tags_not_detected() {
 
 ### 1.5 Honeypot Local Blocking Key Mismatch
 
-**Status**: 🔶 Future Work
+**Status**: ✅ Completed
 
 **Severity**: CRITICAL
 
@@ -104,7 +104,7 @@ fn test_xss_encoded_script_tags_not_detected() {
 
 ### 1.6 Standalone Mode - Local Blocking Gap
 
-**Status**: 🔶 Future Work
+**Status**: ✅ Completed
 
 **Severity**: CRITICAL
 
@@ -118,7 +118,7 @@ fn test_xss_encoded_script_tags_not_detected() {
 
 ### 1.7 No RBAC Enforcement
 
-**Status**: 🔶 Future Work
+**Status**: ✅ Completed
 
 **Severity**: HIGH
 
@@ -135,7 +135,7 @@ fn test_xss_encoded_script_tags_not_detected() {
 
 ### 1.8 User Enumeration via Timing
 
-**Status**: 🔶 Future Work
+**Status**: ✅ Completed
 
 **Severity**: MEDIUM
 
@@ -152,7 +152,7 @@ fn test_xss_encoded_script_tags_not_detected() {
 
 ### 1.9 No Audit Logging for Admin Actions
 
-**Status**: 🔶 Future Work
+**Status**: ✅ Completed
 
 **Severity**: MEDIUM
 
@@ -170,7 +170,7 @@ fn test_xss_encoded_script_tags_not_detected() {
 
 ### 1.10 Non-Global Nodes Auto-Registered with Default Reputation
 
-**Status**: 🔶 Future Work
+**Status**: ✅ Completed
 
 **Severity**: HIGH
 
@@ -187,7 +187,7 @@ fn test_xss_encoded_script_tags_not_detected() {
 
 ### 1.11 SSRF Allowlist Subdomain Bypass
 
-**Status**: 🔶 Future Work
+**Status**: ✅ Completed
 
 **Severity**: MEDIUM
 
@@ -204,7 +204,7 @@ fn test_xss_encoded_script_tags_not_detected() {
 
 ### 1.12 Regex Not Complexity-Checked in RFI Detector
 
-**Status**: 🔶 Future Work
+**Status**: ✅ Completed
 
 **Severity**: MEDIUM
 

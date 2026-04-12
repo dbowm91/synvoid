@@ -11,6 +11,7 @@ pub struct SsrfDetector {
     inner: BasePatternDetector,
     block_private_ips: bool,
     allowed_domains_lower: Vec<String>,
+    allowlist_only_mode: bool,
 }
 
 impl SsrfDetector {
@@ -19,6 +20,7 @@ impl SsrfDetector {
         custom_patterns: &[String],
         block_private_ips: bool,
         allowed_domains: Vec<String>,
+        allowlist_only_mode: bool,
     ) -> Self {
         let inner = BasePatternDetector::new(
             DefaultPatterns::ssrf().as_slice(),
@@ -35,6 +37,7 @@ impl SsrfDetector {
                 .into_iter()
                 .map(|d| d.to_lowercase())
                 .collect(),
+            allowlist_only_mode,
         }
     }
 
@@ -281,7 +284,7 @@ impl SsrfDetector {
 
     fn is_allowed_domain(&self, input_lower: &str) -> bool {
         if self.allowed_domains_lower.is_empty() {
-            return false;
+            return self.allowlist_only_mode;
         }
         self.allowed_domains_lower.iter().any(|domain| {
             if input_lower == domain.as_str() {
@@ -292,6 +295,9 @@ impl SsrfDetector {
                 if prefix_len > 0 && input_lower.as_bytes()[prefix_len - 1] == b'.' {
                     return true;
                 }
+            }
+            if self.allowlist_only_mode && input_lower.contains(domain.as_str()) {
+                return true;
             }
             false
         })
@@ -360,7 +366,7 @@ mod tests {
 
     #[test]
     fn test_ssrf_localhost() {
-        let detector = SsrfDetector::new(2, &[], true, vec![]);
+        let detector = SsrfDetector::new(2, &[], true, vec![], false);
         assert!(detector
             .detect("http://localhost/admin", InputLocation::QueryString)
             .is_some());
@@ -368,7 +374,7 @@ mod tests {
 
     #[test]
     fn test_ssrf_metadata() {
-        let detector = SsrfDetector::new(2, &[], true, vec![]);
+        let detector = SsrfDetector::new(2, &[], true, vec![], false);
         assert!(detector
             .detect(
                 "http://169.254.169.254/latest/meta-data",
@@ -379,7 +385,7 @@ mod tests {
 
     #[test]
     fn test_ssrf_private_ip() {
-        let detector = SsrfDetector::new(2, &[], true, vec![]);
+        let detector = SsrfDetector::new(2, &[], true, vec![], false);
         assert!(detector
             .detect("http://192.168.1.1/secret", InputLocation::QueryString)
             .is_some());
@@ -387,7 +393,7 @@ mod tests {
 
     #[test]
     fn test_ssrf_benign() {
-        let detector = SsrfDetector::new(2, &[], true, vec![]);
+        let detector = SsrfDetector::new(2, &[], true, vec![], false);
         assert!(detector
             .detect("https://api.example.com/data", InputLocation::QueryString)
             .is_none());
@@ -395,7 +401,7 @@ mod tests {
 
     #[test]
     fn test_ssrf_10_network() {
-        let detector = SsrfDetector::new(2, &[], true, vec![]);
+        let detector = SsrfDetector::new(2, &[], true, vec![], false);
         assert!(detector
             .detect("http://10.0.0.1/admin", InputLocation::QueryString)
             .is_some());
@@ -403,7 +409,7 @@ mod tests {
 
     #[test]
     fn test_ssrf_172_network() {
-        let detector = SsrfDetector::new(2, &[], true, vec![]);
+        let detector = SsrfDetector::new(2, &[], true, vec![], false);
         assert!(detector
             .detect("http://172.16.0.1/admin", InputLocation::QueryString)
             .is_some());
@@ -411,7 +417,7 @@ mod tests {
 
     #[test]
     fn test_ssrf_localdomain() {
-        let detector = SsrfDetector::new(2, &[], true, vec![]);
+        let detector = SsrfDetector::new(2, &[], true, vec![], false);
         assert!(detector
             .detect("http://server.local/internal", InputLocation::QueryString)
             .is_some());
@@ -419,7 +425,7 @@ mod tests {
 
     #[test]
     fn test_ssrf_ipv6_localhost() {
-        let detector = SsrfDetector::new(2, &[], true, vec![]);
+        let detector = SsrfDetector::new(2, &[], true, vec![], false);
         assert!(detector
             .detect("http://[::1]:8080/admin", InputLocation::QueryString)
             .is_some());
@@ -427,7 +433,7 @@ mod tests {
 
     #[test]
     fn test_ssrf_url_encoded() {
-        let detector = SsrfDetector::new(2, &[], true, vec![]);
+        let detector = SsrfDetector::new(2, &[], true, vec![], false);
         assert!(detector
             .detect("http%3A%2F%2Flocalhost%2Fadmin", InputLocation::QueryString)
             .is_some());
@@ -435,7 +441,7 @@ mod tests {
 
     #[test]
     fn test_ssrf_no_block() {
-        let detector = SsrfDetector::new(2, &[], false, vec![]);
+        let detector = SsrfDetector::new(2, &[], false, vec![], false);
         assert!(detector
             .detect("http://192.168.1.1/secret", InputLocation::QueryString)
             .is_none());
@@ -443,7 +449,7 @@ mod tests {
 
     #[test]
     fn test_ssrf_127_loopback() {
-        let detector = SsrfDetector::new(2, &[], true, vec![]);
+        let detector = SsrfDetector::new(2, &[], true, vec![], false);
         assert!(detector
             .detect("http://127.0.0.1:8080/admin", InputLocation::QueryString)
             .is_some());
@@ -451,7 +457,7 @@ mod tests {
 
     #[test]
     fn test_ssrf_attack_type_field() {
-        let detector = SsrfDetector::new(2, &[], true, vec![]);
+        let detector = SsrfDetector::new(2, &[], true, vec![], false);
         let result = detector
             .detect("http://localhost/admin", InputLocation::QueryString)
             .unwrap();
@@ -460,7 +466,7 @@ mod tests {
 
     #[test]
     fn test_ssrf_attack_type_metadata() {
-        let detector = SsrfDetector::new(2, &[], true, vec![]);
+        let detector = SsrfDetector::new(2, &[], true, vec![], false);
         let result = detector
             .detect(
                 "http://169.254.169.254/latest/meta-data",
@@ -473,7 +479,7 @@ mod tests {
 
     #[test]
     fn test_ssrf_url_encoded_ip() {
-        let detector = SsrfDetector::new(2, &[], true, vec![]);
+        let detector = SsrfDetector::new(2, &[], true, vec![], false);
         assert!(detector
             .detect("http://%3127.0.0.1/admin", InputLocation::QueryString)
             .is_some());
@@ -481,7 +487,7 @@ mod tests {
 
     #[test]
     fn test_ssrf_case_insensitive_localhost_uppercase() {
-        let detector = SsrfDetector::new(2, &[], true, vec![]);
+        let detector = SsrfDetector::new(2, &[], true, vec![], false);
         assert!(detector
             .detect("http://LOCALHOST/admin", InputLocation::QueryString)
             .is_some());
@@ -489,7 +495,7 @@ mod tests {
 
     #[test]
     fn test_ssrf_case_insensitive_localhost_mixed() {
-        let detector = SsrfDetector::new(2, &[], true, vec![]);
+        let detector = SsrfDetector::new(2, &[], true, vec![], false);
         assert!(detector
             .detect("http://LocalHost/admin", InputLocation::QueryString)
             .is_some());
@@ -497,7 +503,7 @@ mod tests {
 
     #[test]
     fn test_ssrf_case_insensitive_localhost_alternating() {
-        let detector = SsrfDetector::new(2, &[], true, vec![]);
+        let detector = SsrfDetector::new(2, &[], true, vec![], false);
         assert!(detector
             .detect("http://lOcAlHoSt/admin", InputLocation::QueryString)
             .is_some());
@@ -505,7 +511,7 @@ mod tests {
 
     #[test]
     fn test_ssrf_ipv6_loopback_bare() {
-        let detector = SsrfDetector::new(2, &[], true, vec![]);
+        let detector = SsrfDetector::new(2, &[], true, vec![], false);
         assert!(detector
             .detect("http://::1/admin", InputLocation::QueryString)
             .is_some());
@@ -513,7 +519,7 @@ mod tests {
 
     #[test]
     fn test_ssrf_ipv6_loopback_bracketed() {
-        let detector = SsrfDetector::new(2, &[], true, vec![]);
+        let detector = SsrfDetector::new(2, &[], true, vec![], false);
         assert!(detector
             .detect("http://[::1]/admin", InputLocation::QueryString)
             .is_some());
@@ -521,7 +527,7 @@ mod tests {
 
     #[test]
     fn test_ssrf_cloud_metadata_path() {
-        let detector = SsrfDetector::new(2, &[], true, vec![]);
+        let detector = SsrfDetector::new(2, &[], true, vec![], false);
         let result = detector
             .detect(
                 "http://169.254.169.254/computeMetadata/v1/",
@@ -534,7 +540,7 @@ mod tests {
 
     #[test]
     fn test_ssrf_octal_ip_detected() {
-        let detector = SsrfDetector::new(2, &[], true, vec![]);
+        let detector = SsrfDetector::new(2, &[], true, vec![], false);
         assert!(detector
             .detect("http://0177.0.0.1/admin", InputLocation::QueryString)
             .is_some());
@@ -542,7 +548,7 @@ mod tests {
 
     #[test]
     fn test_ssrf_decimal_ip_detected() {
-        let detector = SsrfDetector::new(2, &[], true, vec![]);
+        let detector = SsrfDetector::new(2, &[], true, vec![], false);
         assert!(detector
             .detect("http://2130706433/admin", InputLocation::QueryString)
             .is_some());
@@ -550,7 +556,7 @@ mod tests {
 
     #[test]
     fn test_ssrf_input_location_preserved() {
-        let detector = SsrfDetector::new(2, &[], true, vec![]);
+        let detector = SsrfDetector::new(2, &[], true, vec![], false);
         let result = detector
             .detect("http://192.168.1.1/secret", InputLocation::Path)
             .unwrap();
@@ -559,7 +565,7 @@ mod tests {
 
     #[test]
     fn test_ssrf_matched_pattern_present() {
-        let detector = SsrfDetector::new(2, &[], true, vec![]);
+        let detector = SsrfDetector::new(2, &[], true, vec![], false);
         let result = detector
             .detect("http://localhost/admin", InputLocation::QueryString)
             .unwrap();
@@ -568,7 +574,7 @@ mod tests {
 
     #[test]
     fn test_ssrf_no_block_private_allows_private() {
-        let detector = SsrfDetector::new(2, &[], false, vec![]);
+        let detector = SsrfDetector::new(2, &[], false, vec![], false);
         assert!(detector
             .detect("http://10.0.0.1/admin", InputLocation::QueryString)
             .is_none());
@@ -576,7 +582,7 @@ mod tests {
 
     #[test]
     fn test_ssrf_no_block_private_still_detects_pattern_ips() {
-        let detector = SsrfDetector::new(2, &[], false, vec![]);
+        let detector = SsrfDetector::new(2, &[], false, vec![], false);
         assert!(detector
             .detect(
                 "http://169.254.169.254/latest/meta-data",

@@ -153,6 +153,8 @@ pub struct SsrfConfig {
     pub block_private_ips: bool,
     #[serde(default)]
     pub allowed_domains: Vec<String>,
+    #[serde(default)]
+    pub allowlist_only_mode: bool,
 }
 
 fn default_block_private_ips() -> bool {

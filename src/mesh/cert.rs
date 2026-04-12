@@ -149,6 +149,7 @@ pub struct MeshCertManager {
     ca_mode: bool,
     enforce_mutual_tls: bool,
     quic_enable_0rtt: bool,
+    strict_certificate_validation: bool,
     ca_key_pair: Arc<RwLock<Option<rcgen::KeyPair>>>,
     ca_certificate: Arc<RwLock<Option<rcgen::Certificate>>>,
     ca_cert_der: Arc<RwLock<Option<CertificateDer<'static>>>>,
@@ -209,6 +210,7 @@ impl MeshCertManager {
             ca_mode,
             enforce_mutual_tls: config.tls.enforce_mutual_tls,
             quic_enable_0rtt: config.tls.quic_enable_0rtt,
+            strict_certificate_validation: config.tls.strict_certificate_validation,
             ca_key_pair: Arc::new(RwLock::new(None)),
             ca_certificate: Arc::new(RwLock::new(None)),
             ca_cert_der: Arc::new(RwLock::new(None)),
@@ -558,8 +560,10 @@ impl MeshCertManager {
                 }
             }
             std::collections::hash_map::Entry::Vacant(entry) => {
-                tracing::info!(
-                    "TOFU: No pinned fingerprint for seed {}, accepting on first use",
+                tracing::warn!(
+                    "CRITICAL SECURITY: First connection to seed {} - fingerprint accepted without verification. \
+                    An active attacker could intercept this connection. Configure pinned_cert_fingerprint \
+                    in your mesh seed configuration for production deployments.",
                     seed_address
                 );
                 entry.insert(PinnedFingerprint {
@@ -750,8 +754,18 @@ impl MeshCertManager {
 
         let trusted = self.trusted_ca_certs.read();
         if trusted.is_empty() {
-            tracing::debug!(
-                "No CA certificates configured, accepting peer {} certificate",
+            if self.strict_certificate_validation {
+                tracing::warn!(
+                    "CRITICAL SECURITY: No CA certificates configured but strict_certificate_validation=true. \
+                    Rejecting peer {} certificate. Configure ca_path in mesh.tls or set strict_certificate_validation=false",
+                    peer_node_id
+                );
+                return Err(MeshCertError::ConfigError(
+                    "No CA certificates configured with strict validation enabled".to_string(),
+                ));
+            }
+            tracing::warn!(
+                "SECURITY WARNING: No CA certificates configured, accepting peer {} certificate without validation",
                 peer_node_id
             );
             return Ok(true);

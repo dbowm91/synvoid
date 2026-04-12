@@ -3,17 +3,27 @@ use regex::Regex;
 use std::sync::Arc;
 use std::sync::LazyLock;
 
-use crate::utils::url_decode_all;
+use crate::utils::{check_regex_complexity, url_decode_all};
 use crate::waf::attack_detection::config::{AttackDetectionResult, AttackType, InputLocation};
 use crate::waf::attack_detection::detector_common::{BasePatternDetector, PatternDetector};
 use crate::waf::attack_detection::patterns::DefaultPatterns;
 
-static IP_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"https?://(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})").unwrap());
+const IP_REGEX_PATTERN: &str = r"https?://(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})";
+
+static IP_REGEX: LazyLock<Option<Regex>> = LazyLock::new(|| {
+    let result = check_regex_complexity(IP_REGEX_PATTERN);
+    if !result.safe {
+        tracing::warn!(
+            reason = ?result.reason,
+            "RFI IP regex pattern failed complexity check"
+        );
+        return None;
+    }
+    Regex::new(IP_REGEX_PATTERN).ok()
+});
 
 pub struct RfiDetector {
     inner: BasePatternDetector,
-    ip_pattern: &'static Regex,
 }
 
 impl RfiDetector {
@@ -26,10 +36,7 @@ impl RfiDetector {
             AttackType::Rfi,
             "rfi",
         );
-        Self {
-            inner,
-            ip_pattern: &*IP_REGEX,
-        }
+        Self { inner }
     }
 
     fn detect_with_url_decode(
@@ -56,18 +63,20 @@ impl RfiDetector {
             });
         }
 
-        if self.ip_pattern.is_match(&decoded) {
-            tracing::warn!(
-                attack_type = "rfi",
-                location = %location,
-                "RFI with IP address detected"
-            );
-            return Some(AttackDetectionResult {
-                attack_type: AttackType::Rfi,
-                fingerprint: None,
-                matched_pattern: Some("ip_in_url".to_string()),
-                input_location: location,
-            });
+        if let Some(ip_regex) = IP_REGEX.as_ref() {
+            if ip_regex.is_match(&decoded) {
+                tracing::warn!(
+                    attack_type = "rfi",
+                    location = %location,
+                    "RFI with IP address detected"
+                );
+                return Some(AttackDetectionResult {
+                    attack_type: AttackType::Rfi,
+                    fingerprint: None,
+                    matched_pattern: Some("ip_in_url".to_string()),
+                    input_location: location,
+                });
+            }
         }
 
         None

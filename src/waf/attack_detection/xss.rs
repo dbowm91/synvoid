@@ -1,3 +1,4 @@
+use crate::utils::url_decode_all;
 use crate::waf::attack_detection::config::{AttackDetectionResult, AttackType, InputLocation};
 use crate::waf::attack_detection::detector_common::detect_in_headers;
 
@@ -5,7 +6,8 @@ pub struct XssDetector;
 
 impl XssDetector {
     pub fn detect(input: &[u8], location: InputLocation) -> Option<AttackDetectionResult> {
-        let result = libinjectionrs::detect_xss(input);
+        let decoded = url_decode_all(std::str::from_utf8(input).unwrap_or(""));
+        let result = libinjectionrs::detect_xss(decoded.as_bytes());
 
         if result.is_injection() {
             tracing::warn!(
@@ -85,9 +87,9 @@ mod tests {
     }
 
     #[test]
-    fn test_xss_encoded_script_tags_not_detected() {
+    fn test_xss_encoded_script_tags_detected() {
         let input = b"%3Cscript%3Ealert(1)%3C/script%3E";
-        assert!(XssDetector::detect(input, InputLocation::QueryString).is_none());
+        assert!(XssDetector::detect(input, InputLocation::QueryString).is_some());
     }
 
     #[test]

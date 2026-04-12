@@ -1,3 +1,4 @@
+use super::super::audit::AuditLog;
 use super::super::state::AdminState;
 use super::common::OptionalAuth;
 use axum::{
@@ -331,13 +332,35 @@ pub async fn submit_rules(
         .ok_or(StatusCode::NOT_FOUND)?;
 
     match yara_manager.submit_rule_for_approval(req.rules, req.description) {
-        Ok(submission_id) => Ok(Json(YaraSubmitResponse {
-            success: true,
-            submission_id,
-            message: "Rules submitted for approval".to_string(),
-        })),
+        Ok(submission_id) => {
+            state.audit.log(AuditLog::new(
+                None,
+                Some("admin".to_string()),
+                "submit_yara_rules".to_string(),
+                "yara/rules".to_string(),
+                "unknown".to_string(),
+                None,
+                Some(format!("Rules submitted for approval: {}", submission_id)),
+                true,
+            ));
+            Ok(Json(YaraSubmitResponse {
+                success: true,
+                submission_id,
+                message: "Rules submitted for approval".to_string(),
+            }))
+        }
         Err(e) => {
             tracing::error!("Failed to submit rules: {}", e);
+            state.audit.log(AuditLog::new(
+                None,
+                Some("admin".to_string()),
+                "submit_yara_rules".to_string(),
+                "yara/rules".to_string(),
+                "unknown".to_string(),
+                None,
+                Some(format!("Failed to submit rules: {}", e)),
+                false,
+            ));
             Err(StatusCode::BAD_REQUEST)
         }
     }

@@ -1,6 +1,10 @@
 #![allow(dead_code)]
 
-use axum::http::StatusCode;
+use axum::{
+    extract::Request,
+    http::StatusCode,
+    response::{IntoResponse, Response},
+};
 use axum_extra::{
     headers::{authorization::Bearer, Authorization},
     TypedHeader,
@@ -9,6 +13,51 @@ use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 
 pub type OptionalAuth = Option<TypedHeader<Authorization<Bearer>>>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RequiredRole {
+    Admin,
+    User,
+}
+
+#[derive(Debug, Clone)]
+pub struct AuthenticatedUser {
+    pub username: String,
+    pub role: RequiredRole,
+}
+
+impl RequiredRole {
+    pub fn is_admin(&self) -> bool {
+        matches!(self, RequiredRole::Admin)
+    }
+}
+
+pub async fn require_role(
+    request: Request,
+    required_role: RequiredRole,
+    next: axum::middleware::Next,
+) -> Response {
+    let authenticated_user = request.extensions().get::<AuthenticatedUser>();
+
+    let user = match authenticated_user {
+        Some(user) => user,
+        None => {
+            tracing::warn!("RBAC: No authenticated user found in request");
+            return StatusCode::UNAUTHORIZED.into_response();
+        }
+    };
+
+    if required_role == RequiredRole::Admin && user.role != RequiredRole::Admin {
+        tracing::warn!(
+            "RBAC: User {} with role {:?} attempted to access Admin-only endpoint",
+            user.username,
+            user.role
+        );
+        return StatusCode::FORBIDDEN.into_response();
+    }
+
+    next.run(request).await
+}
 
 pub fn check_rate_limit(
     state: &super::super::state::AdminState,

@@ -150,3 +150,44 @@ pub async fn update_error_page(
         html_preview: Some(html_content),
     }))
 }
+
+#[derive(Debug, Deserialize)]
+pub struct AuditLogsQuery {
+    pub limit: Option<usize>,
+    pub offset: Option<usize>,
+    pub username: Option<String>,
+    pub resource: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AuditLogsResponse {
+    pub logs: Vec<super::super::audit::AuditLog>,
+    pub total: usize,
+    pub has_more: bool,
+}
+
+pub async fn get_audit_logs(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Query(query): Query<AuditLogsQuery>,
+) -> Result<Json<AuditLogsResponse>, StatusCode> {
+    let limit = query.limit.unwrap_or(50).min(1000);
+    let offset = query.offset.unwrap_or(0);
+
+    let logs = if let Some(ref username) = query.username {
+        state.audit.get_logs_for_user(username, limit)
+    } else if let Some(ref resource) = query.resource {
+        state.audit.get_logs_for_resource(resource, limit)
+    } else {
+        state.audit.get_logs(limit, offset)
+    };
+
+    let total = state.audit.count();
+    let has_more = offset + limit < total;
+
+    Ok(Json(AuditLogsResponse {
+        logs,
+        total,
+        has_more,
+    }))
+}

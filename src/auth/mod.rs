@@ -32,6 +32,8 @@ async fn verify_dummy_password(password: &str) {
     }
 }
 
+const DUMMY_PASSWORD_HASH: &str = "$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5GyYzS.xJ5mW6";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct User {
     pub id: String,
@@ -396,92 +398,114 @@ impl AuthManager {
 
         let mut store = self.store.write().await;
 
-        let user = match store.users.get_mut(&username_key) {
-            Some(user) => user,
-            None => {
-                drop(store);
-                verify_dummy_password(password).await;
-                return Err(AuthError::InvalidCredentials);
-            }
+        let (user_exists, stored_hash) = match store.users.get_mut(&username_key) {
+            Some(user) => (true, user.password_hash.clone()),
+            None => (false, DUMMY_PASSWORD_HASH.to_string()),
         };
-
-        if let Some(locked_until) = user.locked_until {
-            if locked_until > Utc::now() {
-                drop(store);
-                verify_dummy_password(password).await;
-                return Err(AuthError::AccountLocked(locked_until));
-            } else {
-                user.locked_until = None;
-                user.failed_attempts = 0;
-            }
-        }
-
-        let stored_hash = user.password_hash.clone();
-        let user_id = user.id.clone();
-
-        let password_valid = verify(password, &stored_hash).unwrap_or(false);
 
         let ip_str = ip_address.map(|s| s.to_string());
         let ua_str = user_agent.map(|s| s.to_string());
 
+        let password_valid = verify(password, &stored_hash).unwrap_or(false);
+
         if !password_valid {
-            user.failed_attempts += 1;
+            if user_exists {
+                if let Some(user) = store.users.get_mut(&username_key) {
+                    if let Some(locked_until) = user.locked_until {
+                        if locked_until > Utc::now() {
+                            self.save_store(&store).await;
+                            return Err(AuthError::AccountLocked(locked_until));
+                        } else {
+                            user.locked_until = None;
+                            user.failed_attempts = 0;
+                        }
+                    }
 
-            let lock_user = user.failed_attempts >= self.max_failed_attempts;
-            let reason = if lock_user {
-                user.locked_until =
-                    Some(Utc::now() + chrono::Duration::seconds(self.lockout_duration_secs as i64));
-                Some("Too many failed attempts".to_string())
+                    user.failed_attempts += 1;
+
+                    let lock_user = user.failed_attempts >= self.max_failed_attempts;
+                    let reason = if lock_user {
+                        user.locked_until = Some(
+                            Utc::now()
+                                + chrono::Duration::seconds(self.lockout_duration_secs as i64),
+                        );
+                        Some("Too many failed attempts".to_string())
+                    } else {
+                        None
+                    };
+
+                    store.login_logs.push(LoginLog {
+                        id: Uuid::new_v4().to_string(),
+                        username: username.to_string(),
+                        success: false,
+                        ip_address: ip_str.clone(),
+                        user_agent: ua_str.clone(),
+                        timestamp: Utc::now(),
+                        reason,
+                    });
+                    self.save_store(&store).await;
+                }
             } else {
-                None
-            };
+                store.login_logs.push(LoginLog {
+                    id: Uuid::new_v4().to_string(),
+                    username: username.to_string(),
+                    success: false,
+                    ip_address: ip_str.clone(),
+                    user_agent: ua_str.clone(),
+                    timestamp: Utc::now(),
+                    reason: Some("User does not exist".to_string()),
+                });
+                self.save_store(&store).await;
+            }
 
-            store.login_logs.push(LoginLog {
-                id: Uuid::new_v4().to_string(),
-                username: username.to_string(),
-                success: false,
-                ip_address: ip_str,
-                user_agent: ua_str,
-                timestamp: Utc::now(),
-                reason,
-            });
-            self.save_store(&store).await;
-
-            drop(store);
             verify_dummy_password(password).await;
             return Err(AuthError::InvalidCredentials);
         }
 
-        user.last_login = Some(Utc::now());
-        user.failed_attempts = 0;
-        user.locked_until = None;
+        if let Some(user) = store.users.get_mut(&username_key) {
+            if let Some(locked_until) = user.locked_until {
+                if locked_until > Utc::now() {
+                    self.save_store(&store).await;
+                    return Err(AuthError::AccountLocked(locked_until));
+                }
+            }
 
-        let session = Session {
-            id: Uuid::new_v4().to_string(),
-            user_id,
-            username: username.to_string(),
-            created_at: Utc::now(),
-            expires_at: Utc::now() + chrono::Duration::seconds(self.session_duration_secs as i64),
-            ip_address: ip_str.clone(),
-            user_agent: ua_str.clone(),
-            csrf_token: Some(Uuid::new_v4().to_string()),
-        };
+            user.last_login = Some(Utc::now());
+            user.failed_attempts = 0;
+            user.locked_until = None;
 
-        store.sessions.insert(session.id.clone(), session.clone());
+            let user_id = user.id.clone();
+            let session = Session {
+                id: Uuid::new_v4().to_string(),
+                user_id: user_id.clone(),
+                username: username.to_string(),
+                created_at: Utc::now(),
+                expires_at: Utc::now()
+                    + chrono::Duration::seconds(self.session_duration_secs as i64),
+                ip_address: ip_str.clone(),
+                user_agent: ua_str.clone(),
+                csrf_token: Some(Uuid::new_v4().to_string()),
+            };
 
-        store.login_logs.push(LoginLog {
-            id: Uuid::new_v4().to_string(),
-            username: username.to_string(),
-            success: true,
-            ip_address: ip_str,
-            user_agent: ua_str,
-            timestamp: Utc::now(),
-            reason: None,
-        });
+            store.sessions.insert(session.id.clone(), session.clone());
 
-        self.save_store(&store).await;
+            store.login_logs.push(LoginLog {
+                id: Uuid::new_v4().to_string(),
+                username: username.to_string(),
+                success: true,
+                ip_address: ip_str,
+                user_agent: ua_str,
+                timestamp: Utc::now(),
+                reason: None,
+            });
 
-        Ok(session)
+            self.save_store(&store).await;
+            Ok(session)
+        } else {
+            drop(store);
+            verify_dummy_password(password).await;
+            Err(AuthError::InvalidCredentials)
+        }
     }
 
     pub async fn validate_session(&self, session_id: &str) -> Option<SessionInfo> {

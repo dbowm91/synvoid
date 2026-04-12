@@ -6,6 +6,7 @@
 //! rate limiting, CSRF protection, and CORS via middleware layers.
 
 pub mod alerting;
+mod audit;
 mod auth;
 mod handlers;
 mod metrics;
@@ -14,6 +15,7 @@ mod rate_limit;
 mod state;
 mod ws;
 
+pub use audit::{AuditLog, AuditState};
 pub use auth::{hash_admin_token, hash_admin_token_with_cost, verify_admin_token};
 pub use metrics::start_metrics_publisher;
 pub use state::{
@@ -174,6 +176,7 @@ fn build_router_from_state(
             post(handlers::upstreams::trigger_health_check),
         )
         .route("/logs", get(handlers::logs::get_logs))
+        .route("/audit-logs", get(handlers::logs::get_audit_logs))
         .route("/error-pages", get(handlers::logs::list_error_pages))
         .route(
             "/error-pages/{code}",

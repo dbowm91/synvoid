@@ -1666,16 +1666,11 @@ impl MeshTransport {
                                 ));
                             }
 
-                            tracing::info!("Auto-registering new node {} with base reputation for grace period (non-strict mode)", node_id_str);
-                            stake_mgr.register_node(
-                                node_id_str.clone(),
-                                50,
-                                role,
-                                Some(&node_id_str),
-                            );
+                            tracing::warn!("Auto-registering new node {} with zero reputation for grace period (non-strict mode). Node has NO routing privileges until stake verified.", node_id_str);
+                            stake_mgr.register_node(node_id_str.clone(), 0, role, None);
 
-                            tracing::info!(
-                                "Node {} registered with base reputation 50 (grace period active)",
+                            tracing::warn!(
+                                "Node {} registered with zero reputation - routing access disabled until stake verification",
                                 node_id_str
                             );
                         }

@@ -1,4 +1,5 @@
 use super::alerting::AlertManager;
+use super::audit::AuditState;
 use super::ws::broadcaster::Broadcaster;
 use crate::config::ConfigManager;
 use crate::mesh::transport::MeshTransport;
@@ -218,6 +219,7 @@ pub struct AdminState {
     pub honeypot: HoneypotState,
     pub process: ProcessState,
     pub plugins: PluginsState,
+    pub audit: AuditState,
 }
 
 #[derive(Clone)]
@@ -313,6 +315,7 @@ impl AdminState {
             plugins: PluginsState {
                 reload_log: Arc::new(RwLock::new(VecDeque::new())),
             },
+            audit: AuditState::new(),
         }
     }
 

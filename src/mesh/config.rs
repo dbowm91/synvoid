@@ -1370,6 +1370,8 @@ pub struct MeshTlsConfig {
     pub certificate_pin_public_keys: Vec<String>,
     #[serde(default = "default_quic_enable_0rtt")]
     pub quic_enable_0rtt: bool,
+    #[serde(default = "default_strict_certificate_validation")]
+    pub strict_certificate_validation: bool,
 }
 
 fn default_auto_generate() -> bool {
@@ -1390,6 +1392,10 @@ fn default_min_tls_version() -> String {
 
 fn default_quic_enable_0rtt() -> bool {
     false
+}
+
+fn default_strict_certificate_validation() -> bool {
+    true
 }
 
 impl MeshWireGuardConfig {

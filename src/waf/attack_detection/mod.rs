@@ -76,6 +76,7 @@ impl AttackDetector {
             &config.ssrf.custom_patterns,
             config.ssrf.block_private_ips,
             config.ssrf.allowed_domains.clone(),
+            config.ssrf.allowlist_only_mode,
         ));
 
         let ssti_detector = Arc::new(SstiDetector::new(
@@ -281,6 +282,9 @@ impl AttackDetector {
         body: Option<&[u8]>,
     ) -> Option<AttackDetectionResult> {
         if let Some(p) = path {
+            if let Some(result) = SqliDetector::detect(p.as_bytes(), InputLocation::Path) {
+                return Some(result);
+            }
             let normalized = self.normalizer.normalize(p);
             if let Some(result) = SqliDetector::detect(normalized.as_bytes(), InputLocation::Path) {
                 return Some(result);
@@ -288,6 +292,9 @@ impl AttackDetector {
         }
 
         if let Some(qs) = query_string {
+            if let Some(result) = SqliDetector::detect(qs.as_bytes(), InputLocation::QueryString) {
+                return Some(result);
+            }
             let normalized = self.normalizer.normalize(qs);
             if let Some(result) =
                 SqliDetector::detect(normalized.as_bytes(), InputLocation::QueryString)
@@ -298,6 +305,12 @@ impl AttackDetector {
 
         for (name, value) in headers.iter() {
             if let Ok(value_str) = value.to_str() {
+                if let Some(result) = SqliDetector::detect(
+                    value_str.as_bytes(),
+                    InputLocation::Header(name.as_str().into()),
+                ) {
+                    return Some(result);
+                }
                 let normalized = self.normalizer.normalize(value_str);
                 if let Some(result) = SqliDetector::detect(
                     normalized.as_bytes(),
@@ -310,6 +323,9 @@ impl AttackDetector {
 
         if let Some(b) = body {
             if let Ok(s) = std::str::from_utf8(b) {
+                if let Some(result) = SqliDetector::detect(s.as_bytes(), InputLocation::PostBody) {
+                    return Some(result);
+                }
                 let normalized = self.normalizer.normalize(s);
                 if let Some(result) =
                     SqliDetector::detect(normalized.as_bytes(), InputLocation::PostBody)
@@ -330,6 +346,9 @@ impl AttackDetector {
         body: Option<&[u8]>,
     ) -> Option<AttackDetectionResult> {
         if let Some(p) = path {
+            if let Some(result) = XssDetector::detect(p.as_bytes(), InputLocation::Path) {
+                return Some(result);
+            }
             let normalized = self.normalizer.normalize(p);
             if let Some(result) = XssDetector::detect(normalized.as_bytes(), InputLocation::Path) {
                 return Some(result);
@@ -337,6 +356,9 @@ impl AttackDetector {
         }
 
         if let Some(qs) = query_string {
+            if let Some(result) = XssDetector::detect(qs.as_bytes(), InputLocation::QueryString) {
+                return Some(result);
+            }
             let normalized = self.normalizer.normalize(qs);
             if let Some(result) =
                 XssDetector::detect(normalized.as_bytes(), InputLocation::QueryString)
@@ -347,6 +369,12 @@ impl AttackDetector {
 
         for (name, value) in headers.iter() {
             if let Ok(value_str) = value.to_str() {
+                if let Some(result) = XssDetector::detect(
+                    value_str.as_bytes(),
+                    InputLocation::Header(name.as_str().into()),
+                ) {
+                    return Some(result);
+                }
                 let normalized = self.normalizer.normalize(value_str);
                 if let Some(result) = XssDetector::detect(
                     normalized.as_bytes(),
@@ -359,6 +387,9 @@ impl AttackDetector {
 
         if let Some(b) = body {
             if let Ok(s) = std::str::from_utf8(b) {
+                if let Some(result) = XssDetector::detect(s.as_bytes(), InputLocation::PostBody) {
+                    return Some(result);
+                }
                 let normalized = self.normalizer.normalize(s);
                 if let Some(result) =
                     XssDetector::detect(normalized.as_bytes(), InputLocation::PostBody)
