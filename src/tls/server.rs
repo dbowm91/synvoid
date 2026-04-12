@@ -45,16 +45,22 @@ use super::config::InternalTlsConfig;
 
 const ALPN_HTTP2: &[u8] = b"h2";
 
+use crate::tls::sni_peek::compute_ja4;
+
 struct HttpsConnection {
     io: Mutex<Option<TokioIo<tokio_rustls::server::TlsStream<tokio::net::TcpStream>>>>,
     drop_requested: RunningFlag,
+    ja4_hash: Mutex<Option<String>>,
 }
 
 impl HttpsConnection {
     fn new(stream: tokio_rustls::server::TlsStream<tokio::net::TcpStream>) -> Self {
+        let client_hello_bytes = extract_client_hello_bytes_from_stream(&stream);
+        let ja4_hash = client_hello_bytes.and_then(|bytes| compute_ja4(&bytes));
         Self {
             io: Mutex::new(Some(TokioIo::new(stream))),
             drop_requested: RunningFlag::new(),
+            ja4_hash: Mutex::new(ja4_hash),
         }
     }
 
@@ -70,6 +76,10 @@ impl HttpsConnection {
         &self,
     ) -> Option<TokioIo<tokio_rustls::server::TlsStream<tokio::net::TcpStream>>> {
         self.io.lock().take()
+    }
+
+    fn get_ja4(&self) -> Option<String> {
+        self.ja4_hash.lock().clone()
     }
 }
 
@@ -1679,6 +1689,21 @@ impl HttpsServer {
         }
 
         Bytes::from(accumulated)
+    }
+}
+
+fn extract_client_hello_bytes_from_stream(
+    stream: &tokio_rustls::server::TlsStream<tokio::net::TcpStream>,
+) -> Option<Vec<u8>> {
+    use std::os::fd::{AsRawFd, FromRawFd};
+
+    let tcp_stream = &stream.get_ref().0;
+    let fd = tcp_stream.as_raw_fd();
+    let mut tcp_stream = unsafe { std::net::TcpStream::from_raw_fd(fd) };
+    let mut peek_buf = vec![0u8; 4096];
+    match tcp_stream.peek(&mut peek_buf) {
+        Ok(n) if n > 5 => Some(peek_buf[..n].to_vec()),
+        _ => None,
     }
 }
 
