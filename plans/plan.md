@@ -1,15 +1,15 @@
 # MaluWAF Implementation Plan
 
-This document tracks deferred and remaining work. Waves 1-4 (Critical Security, High Security, Core Functionality, Code Quality) have been completed.
+This document tracks deferred and remaining work. Waves 1-5 and all Deferred Items have been completed.
 
 ## Quick Reference
 
 | Category | Items | Status |
 |----------|-------|--------|
 | Completed Wave 5 Items | 8 | ✅ Done |
-| Deferred Work | 12 | 🔶 Future Work |
+| Deferred Work | 12 | ✅ All Complete |
 
-**Legend**: 🔶 = Future Work | ✅ = Completed
+**Legend**: ✅ = Completed
 
 ---
 
@@ -114,219 +114,138 @@ Kept: Most other dead_code suppressions are for reserved/future functionality.
 
 ---
 
-## Deferred Items
+## Deferred Items - All Completed
 
-The following items require additional work and are not yet implemented:
+All 12 deferred items have been implemented:
 
 ---
 
-### D.1 ShardedZoneStore Full-Shard Iteration
+### D.1 ShardedZoneStore is_empty() Short-Circuit
 
-**Status**: 🔶 Deferred
-
-**Severity**: LOW
+**Status**: ✅ Completed
 
 **Location**: `src/dns/server/sharded_store.rs`
 
-**Issue**: `is_empty()` calls `len()` which iterates all 64 shards sequentially. No short-circuit on first non-empty shard.
-
-**Analysis**:
-- `is_empty()` can short-circuit on first non-empty shard (O(1) vs O(n))
-- `len()` and `for_each()` inherently need all shards but parallelization with rayon is possible
-- Requires rayon dependency or explicit parallelization
+**Fix**: `is_empty()` now short-circuits on first non-empty shard (O(1) vs O(n)).
 
 ---
 
 ### D.2 DHT Metrics and Observability
 
-**Status**: 🔶 Deferred
+**Status**: ✅ Completed
 
-**Severity**: LOW
+**Location**: `src/mesh/dht/`, `src/metrics/mod.rs`
 
-**Location**: `src/mesh/dht/`
-
-**Issue**: No metrics for DHT operations beyond basic counters.
-
-**Analysis**:
-- Existing metrics: DHT_QUERY_LATENCIES, DHT_THREAT_LOOKUP_HITS/MISSES, DHT_QUORUM counters
-- Could add: per-bucket peer counts, record count by type, announce queue depth, query latency histograms
-- Would require extending MeshAdminStatusResponse or creating new /mesh/dht/stats endpoint
+**Fix**: Added per-bucket peer counts, record count by type, announce queue depth, store/get operations, peer discovery metrics, propagation hop tracking.
 
 ---
 
-### D.3 Configuration Documentation
+### D.3 Configuration Documentation for DhtConfig
 
-**Status**: 🔶 Deferred
+**Status**: ✅ Completed
 
-**Severity**: LOW
+**Location**: `src/mesh/dht/mod.rs`
 
-**Location**: `src/mesh/dht/config.rs`
-
-**Issue**: Many config fields lack documentation.
-
-**Analysis**: DhtConfig has 27 undocumented fields. All can be documented with straightforward research, but requires significant effort to write proper documentation for each field.
+**Fix**: Added doc comments to all 27 DhtConfig fields explaining purpose, valid values, and defaults.
 
 ---
 
-### D.4 CSS Honeypot Enhancement
+### D.4 CSS Honeypot Enhancement - Path Tracking
 
-**Status**: 🔶 Deferred
-
-**Severity**: MEDIUM
+**Status**: ✅ Completed
 
 **Location**: `src/challenge/honeypot.rs`, `src/admin/handlers/honeypot.rs`
 
-**Issue**: CSS honeypot generates invisible trap URLs but has limited path-specific tracking.
-
-**Analysis**:
-- Current: Tracks IP → honeypot paths, detects hits, no path context
-- Would add: Which application page served which trap URL, per-path hit statistics
-- Feasibility: Medium - requires struct changes and new tracking logic
-- Implementation would extend HoneypotEntry, modify generate_html(), add stats tracking
+**Fix**: Added `HoneypotTrapPath` struct tracking trap_path and app_path. Extended `HoneypotEntry` with per-path tracking. Added `get_path_stats()` for per-path hit statistics. `is_honeypot_hit()` now returns which app path served the trap.
 
 ---
 
-### D.5 Add Metrics for Threat Intel DHT Operations
+### D.5 Metrics for Threat Intel DHT Operations
 
-**Status**: 🔶 Deferred
-
-**Severity**: LOW
+**Status**: ✅ Completed
 
 **Location**: `src/metrics/mod.rs`, `src/mesh/threat_intel.rs`
 
-**Issue**: No metrics for DHT operations. Hard to diagnose sync issues.
-
-**Analysis**: Recommended metrics include THREAT_INTEL_DHT_PUBLISH_TOTAL/FAILED, LOOKUP_HITS/MISSES, SYNC_TOTAL/SUCCESS/FAILED/ADDED/REMOVED. Pattern exists in metrics module, would require instrumentation at each DHT operation call site.
+**Fix**: Added THREAT_INTEL_DHT_PUBLISH_TOTAL/FAILED, LOOKUP_HITS/MISSES, SYNC_TOTAL/SUCCESS/FAILED/ADDED/REMOVED metrics. Instrumented publish_indicator_to_dht, lookup_threat_indicator_in_dht, and sync_from_dht.
 
 ---
 
-### D.6 Unified Announcement Mechanism
+### D.6 Unified Announcement Mechanism Cleanup
 
-**Status**: 🔶 Deferred
-
-**Severity**: MEDIUM
+**Status**: ✅ Completed
 
 **Location**: `src/mesh/`
 
-**Issue**: Two mechanisms exist (`UpstreamAnnounce` vs `UpstreamRegistrationRequest`). Deprecation decision needed.
-
-**Analysis**:
-- `UpstreamAnnounce`: Lightweight presence announcement, 5-min TTL, no verification - **ACTIVE**
-- `UpstreamRegistrationRequest`: Heavyweight ownership verification via DNS-01/HTTP-01 challenge - **DEAD CODE** (never sent)
-- Recommendation: Remove dead `UpstreamRegistrationRequest` code
+**Fix**: Removed dead `UpstreamRegistrationRequest` code (message type, handlers, protobuf, encoding/decoding). `UpstreamAnnounce` continues to work as the active mechanism.
 
 ---
 
-### D.7 DHT Key Type Consistency
+### D.7 DHT Key Type Consistency - Remove is_global_signature_required()
 
-**Status**: 🔶 Deferred
-
-**Severity**: MEDIUM
+**Status**: ✅ Completed
 
 **Location**: `src/mesh/dht/keys.rs`
 
-**Issue**: `is_global_signature_required()` is dead code (never called in codebase).
-
-**Analysis**:
-- `is_privileged()` is called in routing/manager.rs (active)
-- `is_global_signature_required()` is defined but never called (orphaned)
-- Bug: `VerifiedUpstream` appears in both is_public() and is_global_signature_required() - logical conflict
-- Recommendation: Remove `is_global_signature_required()`
+**Fix**: Removed orphaned `is_global_signature_required()` function which was never called anywhere in the codebase.
 
 ---
 
-### D.8 Reputation System Bug
+### D.8 Reputation System Bug - Hardcoded 50
 
-**Status**: 🔶 Deferred
+**Status**: ✅ Completed
 
-**Severity**: MEDIUM
+**Location**: `src/mesh/transport_dht.rs`
 
-**Location**: `src/mesh/transport_dht.rs:99`
-
-**Issue**: `min_reputation_for_dht_write` defaults to 30 but hardcoded `50` bypasses it.
-
-**Analysis**:
-- `transport_dht.rs:99` passes hardcoded `50` instead of actual peer reputation
-- This bypasses min_reputation_for_dht_write since 50 >= 30 always
-- Correct implementation exists in `record_store_message.rs:109-110` using `get_sender_reputation()`
-- Fix needed: Replace hardcoded 50 with actual reputation value
+**Fix**: Replaced hardcoded `50` reputation threshold with actual `rep_score` value, matching the pattern in `record_store_message.rs:109-110`.
 
 ---
 
 ### D.9 Global Node Liveness and Quorum Monitoring
 
-**Status**: 🔶 Deferred
+**Status**: ✅ Completed
 
-**Severity**: MEDIUM
+**Location**: `src/mesh/dht/`, `src/mesh/transport_global.rs`, `src/mesh/transport.rs`
 
-**Location**: `src/mesh/dht/`
-
-**Issue**: Would add `GlobalNodeHeartbeat` DHT record with short TTL.
-
-**Analysis**:
-- Infrastructure already exists: NodeHealth, NodeLoad patterns, SignedRecordType, TTL management
-- Implementation would require: GlobalNodeHeartbeat DHT key, struct, publishing method, consuming logic
-- Feasibility: HIGH - follow existing NodeHealth/NodeLoad patterns
-- Publishing interval: 30s, TTL: 90s (3x interval)
+**Fix**: Added `GlobalNodeHeartbeat` DHT key type, struct, publishing method (30s interval, 90s TTL), and consuming logic. Heartbeat includes node_id, timestamp, and version.
 
 ---
 
 ### D.10 IPv6 Zone ID SSRF Bypass
 
-**Status**: 🔶 Deferred
+**Status**: ✅ Completed
 
-**Severity**: LOW
+**Location**: `src/waf/attack_detection/ssrf.rs`
 
-**Location**: `src/waf/attack_detection/ssrf.rs:213-239`
-
-**Issue**: IPv6 detection misses zone IDs (e.g., `%eth0`) which could be used for SSRF bypass.
-
-**Analysis**:
-- `looks_like_ip()` allows `%` character - zone IDs slip through
-- `normalize_ip_for_parse()` doesn't strip zone ID before parsing
-- `is_private_ip()` only tries IPv4 parsing - IPv6 private check never reached
-- Fix needed: Strip zone IDs in looks_like_ip() and normalize_ip_for_parse(), add IPv6 parsing path
+**Fix**: `looks_like_ip()` now strips zone IDs before parsing. `normalize_ip_for_parse()` strips zone ID. Added IPv6 parsing path in `is_private_ip()` via `parse::<IpAddr>()` fallback.
 
 ---
 
 ### D.11 Homoglyph Normalization Gaps
 
-**Status**: 🔶 Deferred
+**Status**: ✅ Completed
 
-**Severity**: LOW
+**Location**: `src/waf/attack_detection/normalizer.rs`
 
-**Location**: `src/waf/attack_detection/normalizer.rs:283-311`
-
-**Issue**: Not all Unicode letter homoglyphs are normalized.
-
-**Analysis**:
-- Cyrillic: Missing Т (U+0422); bugs in В→B (should be V) and Н→H (should be N)
-- Greek: NOT normalized at all (alpha, tau, omicron, iota, etc. look identical to Latin)
-- Fix needed: Fix 2 bugs, add missing Cyrillic T, add Greek letter normalization
+**Fix**:
+- Fixed Cyrillic В→V (not B), Н→N (not H)
+- Added missing Cyrillic Т (U+0422) → T
+- Added Greek letter normalization: α→a, Α→A, τ→t, Τ→T, ο→o, Ο→O, ι→i, Ι→I, ν→v, Ν→N
 
 ---
 
 ### D.12 TODO Comments - File Manager
 
-**Status**: 🔶 Deferred (partial completion)
+**Status**: ✅ Completed
 
-**Severity**: LOW
+**Location**: `src/http/file_manager.rs`
 
-**Location**: `src/http/file_manager.rs:362, 369`
-
-**Issue**: Two `TODO: Re-enable once axum version conflict is resolved` comments.
-
-**Analysis**:
-- axum version conflict is RESOLVED (tonic 0.14.5 now depends on axum 0.8.8)
-- Handler functions compile but don't satisfy axum Handler trait due to missing async trait impls
-- Routes remain commented out with updated TODO noting trait resolution needed
-- Handlers retain #[allow(dead_code)] for now
+**Fix**: Reordered handler parameters (HeaderMap before Json) to satisfy axum Handler trait. Added `#[axum::debug_handler]` to all 4 handlers. Uncommented routes and removed TODO comments.
 
 ---
 
 ## Completed Waves Reference
 
-Waves 1-4 (Critical Security, High Security, Core Functionality, Code Quality) have been fully implemented. The following items were completed:
+Waves 1-4 (Critical Security, High Security, Core Functionality, Code Quality) have been fully implemented. Wave 5 (Polish & Cleanup) and all Deferred Items are now complete:
 
 ### Wave 1: Critical Security (12 items)
 1.1 WAF XSS Detection Bypass via URL Encoding - ✅
@@ -394,5 +313,15 @@ Waves 1-4 (Critical Security, High Security, Core Functionality, Code Quality) h
 4.13 Response Header Filtering Vector Allocation - ✅
 4.14 Unsafe Code Missing Safety Comments - ✅
 4.15 Missing Error Context in thiserror Types - ✅
+
+### Wave 5: Polish & Cleanup (8 items)
+5.1 Update dead_code Count in AGENTS.md - ✅
+5.2 Audit Module-Level allow Attributes - ✅
+5.3 Complete Admin UI Orphaned Files - ✅
+5.4 Add Architecture Decision Records - ✅
+5.5 Dead Code Annotations Audit - ✅
+5.6 Unsafe Code Audit - ✅
+5.7 Documentation Gaps - ✅
+5.11 Add Sync Startup Logging to Threat Intel - ✅
 
 (End of file)
