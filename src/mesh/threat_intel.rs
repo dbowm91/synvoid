@@ -18,6 +18,7 @@ use crate::mesh::protocol::{
     MeshMessage, MeshPeerInfo, ThreatIndicator, ThreatSeverity, ThreatType,
 };
 use crate::mesh::reputation::{ReputationConfig, ReputationManager};
+use crate::metrics;
 
 const DEFAULT_SYNC_INTERVAL_SECS: u64 = 300;
 
@@ -670,12 +671,17 @@ impl ThreatIntelligenceManager {
         if let Ok(bytes) = serde_json::to_vec(&value) {
             let ttl = indicator.ttl_seconds.max(self.config.min_ttl_seconds);
             if record_store.store_and_announce(key_str.to_string(), bytes, ttl) {
+                metrics::record_threat_intel_dht_publish();
                 tracing::debug!(
                     "Published threat indicator to DHT: {} ({})",
                     indicator.indicator_value,
                     indicator.threat_type as u8
                 );
+            } else {
+                metrics::record_threat_intel_dht_publish_failed();
             }
+        } else {
+            metrics::record_threat_intel_dht_publish_failed();
         }
     }
 
@@ -860,8 +866,23 @@ impl ThreatIntelligenceManager {
         let key = DhtKey::threat_indicator(indicator_value);
         let key_str = key.as_str();
 
-        let record = record_store.get(&key_str)?;
-        let value: serde_json::Value = serde_json::from_slice(&record.value).ok()?;
+        let record = match record_store.get(&key_str) {
+            Some(r) => r,
+            None => {
+                metrics::record_threat_intel_dht_lookup_miss();
+                return None;
+            }
+        };
+
+        let value: serde_json::Value = match serde_json::from_slice(&record.value) {
+            Ok(v) => v,
+            Err(_) => {
+                metrics::record_threat_intel_dht_lookup_miss();
+                return None;
+            }
+        };
+
+        metrics::record_threat_intel_dht_lookup_hit();
 
         let threat_type = match value.get("threat_type")?.as_u64()? {
             0 => ThreatType::IpBlock,
@@ -1049,11 +1070,24 @@ impl ThreatIntelligenceManager {
     }
 
     pub fn sync_from_dht(&self) -> Result<(), String> {
+        metrics::record_threat_intel_dht_sync();
+
         let transport = self.transport.read().clone();
-        let record_store = transport
-            .ok_or("Transport not set")?
-            .get_record_store()
-            .ok_or("Record store not available")?;
+        let record_store = match transport {
+            Some(t) => t,
+            None => {
+                metrics::record_threat_intel_dht_sync_failed();
+                return Err("Transport not set".to_string());
+            }
+        };
+
+        let record_store = match record_store.get_record_store() {
+            Some(rs) => rs,
+            None => {
+                metrics::record_threat_intel_dht_sync_failed();
+                return Err("Record store not available".to_string());
+            }
+        };
 
         let dht_records = record_store.get_all_records();
         let mut local_indicators = self.indicators.write();
@@ -1124,6 +1158,10 @@ impl ThreatIntelligenceManager {
         });
 
         *self.local_version.write() += 1;
+
+        metrics::record_threat_intel_dht_sync_added(added as u64);
+        metrics::record_threat_intel_dht_sync_removed(removed as u64);
+        metrics::record_threat_intel_dht_sync_success();
 
         tracing::info!(
             "Synced threat indicators from DHT: {} added, {} removed, {} total",

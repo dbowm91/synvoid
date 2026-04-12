@@ -161,6 +161,10 @@ impl DhtRoutingManager {
                 if !stats.is_empty() {
                     let non_empty: usize = stats.iter().filter(|(_, c)| *c > 0).count();
                     tracing::debug!("DHT bucket stats: {} non-empty buckets", non_empty);
+
+                    for (bucket_idx, count) in &stats {
+                        crate::metrics::record_dht_bucket_peers(*bucket_idx, *count as u64);
+                    }
                 }
 
                 // Refresh regional hubs periodically
@@ -256,6 +260,7 @@ impl DhtRoutingManager {
         contact.public_key = public_key;
 
         table.try_insert(contact);
+        crate::metrics::record_dht_peer_discovered();
     }
 
     pub async fn remove_peer(&self, peer_node_id: &str) {
@@ -266,7 +271,9 @@ impl DhtRoutingManager {
         };
 
         let node_id = NodeId::from_node_id_string(peer_node_id);
-        table.remove(&node_id);
+        if table.remove(&node_id).is_some() {
+            crate::metrics::record_dht_peer_removed();
+        }
     }
 
     pub async fn update_peer_latency(&self, peer_node_id: &str, latency_ms: u32) {

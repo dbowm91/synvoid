@@ -43,12 +43,38 @@ static DROPPED_YARA_BROADCASTS: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64
 static DHT_THREAT_LOOKUP_HITS: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 static DHT_THREAT_LOOKUP_MISSES: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 
+static THREAT_INTEL_DHT_PUBLISH_TOTAL: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+static THREAT_INTEL_DHT_PUBLISH_FAILED: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+static THREAT_INTEL_DHT_LOOKUP_HITS: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+static THREAT_INTEL_DHT_LOOKUP_MISSES: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+static THREAT_INTEL_DHT_SYNC_TOTAL: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+static THREAT_INTEL_DHT_SYNC_SUCCESS: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+static THREAT_INTEL_DHT_SYNC_FAILED: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+static THREAT_INTEL_DHT_SYNC_ADDED: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+static THREAT_INTEL_DHT_SYNC_REMOVED: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+
 static DHT_RECORD_COUNT: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 static DHT_REPLICA_COUNT: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 static DHT_QUORUM_ACHIEVED_COUNT: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 static DHT_QUORUM_FAILED_COUNT: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 
 static DHT_QUERY_LATENCIES: LazyLock<Mutex<Vec<u64>>> = LazyLock::new(|| Mutex::new(Vec::new()));
+
+static DHT_BUCKET_PEER_COUNTS: LazyLock<DashMap<usize, AtomicU64>> = LazyLock::new(DashMap::new);
+
+static DHT_RECORDS_BY_TYPE: LazyLock<DashMap<String, AtomicU64>> = LazyLock::new(DashMap::new);
+
+static DHT_ANNOUNCE_QUEUE_DEPTH: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+
+static DHT_STORE_OPERATIONS: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+static DHT_STORE_FAILURES: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+static DHT_GET_OPERATIONS: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+static DHT_GET_NOT_FOUND: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+static DHT_ANNOUNCE_SENT: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+static DHT_ANNOUNCE_FAILED: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+static DHT_PEER_DISCOVERED: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+static DHT_PEER_REMOVED: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+static DHT_PROPAGATION_HOPS: LazyLock<Mutex<Vec<u64>>> = LazyLock::new(|| Mutex::new(Vec::new()));
 
 static SERVERLESS_INVOCATIONS: LazyLock<DashMap<String, AtomicU64>> = LazyLock::new(DashMap::new);
 
@@ -192,6 +218,78 @@ pub fn get_dht_threat_lookup_misses() -> u64 {
     DHT_THREAT_LOOKUP_MISSES.load(Ordering::Relaxed)
 }
 
+pub fn record_threat_intel_dht_publish() {
+    THREAT_INTEL_DHT_PUBLISH_TOTAL.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_threat_intel_dht_publish_failed() {
+    THREAT_INTEL_DHT_PUBLISH_FAILED.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn get_threat_intel_dht_publish_total() -> u64 {
+    THREAT_INTEL_DHT_PUBLISH_TOTAL.load(Ordering::Relaxed)
+}
+
+pub fn get_threat_intel_dht_publish_failed() -> u64 {
+    THREAT_INTEL_DHT_PUBLISH_FAILED.load(Ordering::Relaxed)
+}
+
+pub fn record_threat_intel_dht_lookup_hit() {
+    THREAT_INTEL_DHT_LOOKUP_HITS.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_threat_intel_dht_lookup_miss() {
+    THREAT_INTEL_DHT_LOOKUP_MISSES.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn get_threat_intel_dht_lookup_hits() -> u64 {
+    THREAT_INTEL_DHT_LOOKUP_HITS.load(Ordering::Relaxed)
+}
+
+pub fn get_threat_intel_dht_lookup_misses() -> u64 {
+    THREAT_INTEL_DHT_LOOKUP_MISSES.load(Ordering::Relaxed)
+}
+
+pub fn record_threat_intel_dht_sync() {
+    THREAT_INTEL_DHT_SYNC_TOTAL.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_threat_intel_dht_sync_success() {
+    THREAT_INTEL_DHT_SYNC_SUCCESS.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_threat_intel_dht_sync_failed() {
+    THREAT_INTEL_DHT_SYNC_FAILED.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_threat_intel_dht_sync_added(count: u64) {
+    THREAT_INTEL_DHT_SYNC_ADDED.fetch_add(count, Ordering::Relaxed);
+}
+
+pub fn record_threat_intel_dht_sync_removed(count: u64) {
+    THREAT_INTEL_DHT_SYNC_REMOVED.fetch_add(count, Ordering::Relaxed);
+}
+
+pub fn get_threat_intel_dht_sync_total() -> u64 {
+    THREAT_INTEL_DHT_SYNC_TOTAL.load(Ordering::Relaxed)
+}
+
+pub fn get_threat_intel_dht_sync_success() -> u64 {
+    THREAT_INTEL_DHT_SYNC_SUCCESS.load(Ordering::Relaxed)
+}
+
+pub fn get_threat_intel_dht_sync_failed() -> u64 {
+    THREAT_INTEL_DHT_SYNC_FAILED.load(Ordering::Relaxed)
+}
+
+pub fn get_threat_intel_dht_sync_added() -> u64 {
+    THREAT_INTEL_DHT_SYNC_ADDED.load(Ordering::Relaxed)
+}
+
+pub fn get_threat_intel_dht_sync_removed() -> u64 {
+    THREAT_INTEL_DHT_SYNC_REMOVED.load(Ordering::Relaxed)
+}
+
 pub fn record_dht_quorum_success() {
     DHT_QUORUM_ACHIEVED_COUNT.fetch_add(1, Ordering::Relaxed);
 }
@@ -239,6 +337,144 @@ pub fn record_dht_replica_count(count: u64) {
 
 pub fn get_dht_replica_count() -> u64 {
     DHT_REPLICA_COUNT.load(Ordering::Relaxed)
+}
+
+pub fn record_dht_bucket_peers(bucket_index: usize, count: u64) {
+    if let Some(counter) = DHT_BUCKET_PEER_COUNTS.get(&bucket_index) {
+        counter.store(count, Ordering::Relaxed);
+    } else {
+        DHT_BUCKET_PEER_COUNTS.insert(bucket_index, AtomicU64::new(count));
+    }
+}
+
+pub fn get_dht_bucket_peers(bucket_index: usize) -> u64 {
+    DHT_BUCKET_PEER_COUNTS
+        .get(&bucket_index)
+        .map(|c| c.load(Ordering::Relaxed))
+        .unwrap_or(0)
+}
+
+pub fn get_all_dht_bucket_peers() -> HashMap<usize, u64> {
+    DHT_BUCKET_PEER_COUNTS
+        .iter()
+        .map(|entry| (*entry.key(), entry.value().load(Ordering::Relaxed)))
+        .collect()
+}
+
+pub fn record_dht_record_by_type(record_type: &str, count: u64) {
+    let counter = DHT_RECORDS_BY_TYPE
+        .entry(record_type.to_string())
+        .or_insert_with(|| AtomicU64::new(0));
+    counter.store(count, Ordering::Relaxed);
+}
+
+pub fn increment_dht_records_by_type(record_type: &str) {
+    if let Some(counter) = DHT_RECORDS_BY_TYPE.get(record_type) {
+        counter.fetch_add(1, Ordering::Relaxed);
+    } else {
+        DHT_RECORDS_BY_TYPE.insert(record_type.to_string(), AtomicU64::new(1));
+    }
+}
+
+pub fn get_dht_records_by_type(record_type: &str) -> u64 {
+    DHT_RECORDS_BY_TYPE
+        .get(record_type)
+        .map(|c| c.load(Ordering::Relaxed))
+        .unwrap_or(0)
+}
+
+pub fn get_all_dht_records_by_type() -> HashMap<String, u64> {
+    DHT_RECORDS_BY_TYPE
+        .iter()
+        .map(|entry| (entry.key().clone(), entry.value().load(Ordering::Relaxed)))
+        .collect()
+}
+
+pub fn record_dht_announce_queue_depth(depth: usize) {
+    DHT_ANNOUNCE_QUEUE_DEPTH.store(depth as u64, Ordering::Relaxed);
+}
+
+pub fn get_dht_announce_queue_depth() -> u64 {
+    DHT_ANNOUNCE_QUEUE_DEPTH.load(Ordering::Relaxed)
+}
+
+pub fn record_dht_store_operation(success: bool) {
+    DHT_STORE_OPERATIONS.fetch_add(1, Ordering::Relaxed);
+    if !success {
+        DHT_STORE_FAILURES.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+pub fn get_dht_store_operations() -> u64 {
+    DHT_STORE_OPERATIONS.load(Ordering::Relaxed)
+}
+
+pub fn get_dht_store_failures() -> u64 {
+    DHT_STORE_FAILURES.load(Ordering::Relaxed)
+}
+
+pub fn record_dht_get_operation(found: bool) {
+    DHT_GET_OPERATIONS.fetch_add(1, Ordering::Relaxed);
+    if !found {
+        DHT_GET_NOT_FOUND.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+pub fn get_dht_get_operations() -> u64 {
+    DHT_GET_OPERATIONS.load(Ordering::Relaxed)
+}
+
+pub fn get_dht_get_not_found() -> u64 {
+    DHT_GET_NOT_FOUND.load(Ordering::Relaxed)
+}
+
+pub fn record_dht_announce_sent() {
+    DHT_ANNOUNCE_SENT.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn get_dht_announce_sent() -> u64 {
+    DHT_ANNOUNCE_SENT.load(Ordering::Relaxed)
+}
+
+pub fn record_dht_announce_failed() {
+    DHT_ANNOUNCE_FAILED.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn get_dht_announce_failed() -> u64 {
+    DHT_ANNOUNCE_FAILED.load(Ordering::Relaxed)
+}
+
+pub fn record_dht_peer_discovered() {
+    DHT_PEER_DISCOVERED.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn get_dht_peer_discovered() -> u64 {
+    DHT_PEER_DISCOVERED.load(Ordering::Relaxed)
+}
+
+pub fn record_dht_peer_removed() {
+    DHT_PEER_REMOVED.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn get_dht_peer_removed() -> u64 {
+    DHT_PEER_REMOVED.load(Ordering::Relaxed)
+}
+
+pub fn record_dht_propagation_hop(hop_count: u64) {
+    let mut hops = DHT_PROPAGATION_HOPS.lock();
+    hops.push(hop_count);
+    if hops.len() > LATENCY_SAMPLE_SIZE {
+        hops.remove(0);
+    }
+}
+
+pub fn get_dht_average_propagation_hops() -> f64 {
+    let hops = DHT_PROPAGATION_HOPS.lock();
+    if hops.is_empty() {
+        return 0.0;
+    }
+    let sum: u64 = hops.iter().sum();
+    sum as f64 / hops.len() as f64
 }
 
 pub fn total_dropped_events() -> u64 {

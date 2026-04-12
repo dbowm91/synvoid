@@ -724,6 +724,9 @@ impl RecordStoreManager {
                 .is_ok()
             {
                 success_count += 1;
+                crate::metrics::record_dht_announce_sent();
+            } else {
+                crate::metrics::record_dht_announce_failed();
             }
         }
 

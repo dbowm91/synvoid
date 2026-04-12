@@ -136,6 +136,7 @@ impl RecordStoreManager {
         let expires_at = record.timestamp + record.ttl_seconds;
         if now > expires_at {
             tracing::warn!("Received expired record: {}", record.key);
+            crate::metrics::record_dht_store_operation(false);
             return false;
         }
 
@@ -216,6 +217,9 @@ impl RecordStoreManager {
 
         self.compute_merkle_tree();
 
+        let record_type = crate::mesh::dht::keys::DhtKey::from_str(&record.key).key_type();
+        crate::metrics::increment_dht_records_by_type(record_type);
+        crate::metrics::record_dht_store_operation(true);
         true
     }
 
@@ -281,6 +285,7 @@ impl RecordStoreManager {
             self.compute_merkle_tree();
         }
 
+        crate::metrics::record_dht_store_operation(true);
         true
     }
 
@@ -310,6 +315,7 @@ impl RecordStoreManager {
                         rs.records.insert(key.to_string(), entry);
                     }
                 }
+                crate::metrics::record_dht_get_operation(true);
                 return Some(record);
             } else {
                 let rs = self.record_state.write();
@@ -320,6 +326,7 @@ impl RecordStoreManager {
         if !self.is_global_node() {
             self.metrics_state.write().cache_misses += 1;
         }
+        crate::metrics::record_dht_get_operation(false);
         None
     }
 
@@ -480,6 +487,7 @@ impl RecordStoreManager {
             rs.pending_announces.remove(0);
         }
         rs.pending_announces.push(record);
+        crate::metrics::record_dht_announce_queue_depth(rs.pending_announces.len());
     }
 
     pub fn cleanup_expired(&self) {
@@ -567,7 +575,7 @@ impl RecordStoreManager {
         };
 
         rs.pending_announces.clear();
-
+        crate::metrics::record_dht_announce_queue_depth(0);
         Some(message)
     }
 
