@@ -145,32 +145,100 @@ pub enum DhtConsistencyLevel {
 // Note: DhtConfig has complex dependencies - add rkyv derives to individual fields as needed
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DhtConfig {
+    /// Enables the DHT subsystem. When disabled, the node participates in mesh routing
+    /// but does not perform DHT operations like storing or retrieving records.
     pub enabled: bool,
+    /// UDP port for DHT network communication. When set to 0, the operating system
+    /// assigns an available port. This port should be accessible from the internet
+    /// for full DHT participation (ensure firewall allows inbound UDP).
     pub listen_port: u16,
+    /// List of bootstrap node addresses in `host:port` format. These nodes are used
+    /// initially to discover the DHT network. Format: `["1.2.3.4:4000", "[2001:db8::1]:4000"]`.
+    /// At least one bootstrap node is required for initial network discovery.
     pub bootstrap_nodes: Vec<String>,
+    /// Minimum number of nodes that must acknowledge a write operation before it is
+    /// considered successful. Higher values increase consistency at the cost of latency.
+    /// Must be less than or equal to the number of active peers. Default: 11.
     pub write_quorum: usize,
+    /// Minimum number of nodes that must respond to a read operation before it is
+    /// considered successful. Higher values improve data consistency. Default: 11.
     pub read_quorum: usize,
+    /// Target number of replicas to maintain for each DHT record. Records are
+    /// distributed across this many nodes to provide redundancy and availability.
+    /// Default: 20.
     pub replication_factor: usize,
+    /// Maximum time to wait for a DHT query to complete before considering it failed.
+    /// Queries that timeout are retried according to the replication factor. Default: 10s.
     pub query_timeout: Duration,
+    /// Maximum time to wait for bootstrap node responses during initial network join.
+    /// If bootstrap fails, the node operates in isolated mode. Default: 30s.
     pub bootstrap_timeout: Duration,
+    /// Interval between outgoing ping messages to peer nodes for liveness checking.
+    /// Nodes that fail to respond are marked as unhealthy and removed from routing. Default: 30s.
     pub ping_interval: Duration,
+    /// Time-to-live for DHT records. When None, records never expire. When Some,
+    /// records are automatically removed after the specified duration. Default: 3600s (1 hour).
     pub record_ttl: Option<Duration>,
+    /// Consistency level for DHT operations, affecting how quorum is calculated.
+    /// See [`DhtConsistencyLevel`] for available options. Default: Medium.
     pub consistency_level: DhtConsistencyLevel,
+    /// Optional directory path for persistent DHT storage. When None, DHT data is
+    /// stored only in memory and lost on restart. When set, records are persisted
+    /// to disk for durability across restarts.
     pub disk_path: Option<String>,
+    /// Enables edge node caching of DHT records. Edge nodes cache frequently accessed
+    /// records locally to reduce latency and offload origin nodes. Default: true.
     pub edge_cache_enabled: bool,
+    /// Maximum number of DHT records to cache on edge nodes. When exceeded, the
+    /// least recently used entries are evicted. Default: 1000.
     pub edge_cache_max_entries: usize,
+    /// Time-to-live for cached DHT records on edge nodes. Cached entries older than
+    /// this are considered stale and refreshed on next access. Default: 300s.
     pub edge_cache_ttl_secs: u64,
+    /// When true, edge nodes perform an immediate DHT sync to warm up their cache
+    /// upon connecting to the network. When false, cache is populated lazily on
+    /// demand. Default: true.
     pub warm_up_on_connect: bool,
+    /// When true, edge nodes are allowed to write records to the DHT. When false,
+    /// edge nodes can only read records. Write operations require sufficient reputation.
+    /// Default: false.
     pub edge_write_enabled: bool,
+    /// Minimum reputation score required for a node to write records to the DHT.
+    /// Reputation is earned through successful interactions and node uptime.
+    /// Nodes below this threshold are restricted to read-only DHT operations. Default: 30.
     pub min_reputation_for_dht_write: i64,
+    /// Time-to-live for node health status records in the DHT. Health records
+    /// track CPU, memory, and request rate for load balancing purposes. Default: 60s.
     pub health_ttl_secs: u64,
+    /// Time-to-live for node load statistics records in the DHT. Load records
+    /// contain request rate metrics used for weighted routing decisions. Default: 60s.
     pub load_ttl_secs: u64,
+    /// Blocklist of upstream domain/IP terms that are never allowed in DHT storage.
+    /// Used to prevent storing illegal or malicious upstream definitions. Defaults block
+    /// localhost and similar loopback addresses to prevent SSRF attacks.
     pub illegal_upstream_terms: Vec<String>,
+    /// Initial interval between DHT sync attempts when starting up or reconnecting.
+    /// On each failed attempt, the interval increases up to max_sync_interval_secs.
+    /// Shorter intervals mean faster sync at the cost of more network traffic. Default: 30s.
     pub initial_sync_interval_secs: u64,
+    /// Maximum interval between DHT sync retry attempts. Controls how aggressively
+    /// the node attempts to sync after initial failures. Default: 3600s (1 hour).
     pub max_sync_interval_secs: u64,
+    /// Fraction of peers to contact in parallel during DHT operations. A value of 0.5
+    /// means contact 50% of known peers simultaneously. Higher values increase
+    /// bandwidth usage but reduce latency. Range: 0.0 to 1.0. Default: 0.5.
     pub fanout_factor: f64,
+    /// Minimum number of successful responses required before considering a DHT
+    /// operation converged. Higher values increase confidence but require more
+    /// nodes to respond. Default: 3.
     pub convergence_threshold: usize,
+    /// Optional geo-based routing configuration for latency-optimized routing.
+    /// When Some, nodes select peers based on geographic proximity and latency.
+    /// When None, geographic routing is disabled. Default: Some(GeoRoutingConfig).
     pub geo_routing: Option<crate::mesh::dht::routing::GeoRoutingConfig>,
+    /// Optional regional hub configuration for hierarchical routing.
+    /// When Some, nodes organize into regional hub hierarchies for efficient routing.
+    /// When None, flat DHT routing is used. Default: Some(RegionalHubConfig).
     pub regional_hubs: Option<crate::mesh::dht::routing::RegionalHubConfig>,
 }
 

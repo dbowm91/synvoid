@@ -895,7 +895,7 @@ impl HttpServer {
         }
 
         if path.starts_with("/_waf_css_challenge") {
-            let (html, _) = waf.challenge_manager.generate_challenge_page(&client_ip);
+            let (html, _) = waf.challenge_manager.generate_challenge_page(&client_ip, Some(&path));
             let ipc_clone = ipc.clone();
             let worker_id_clone = worker_id;
             Self::send_request_log_if_enabled(

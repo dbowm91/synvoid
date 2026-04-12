@@ -272,7 +272,7 @@ impl ChallengeManager {
         attempts.retain(|_, a| now < a.first_attempt + self.rate_limit_window_secs);
     }
 
-    pub fn generate_challenge_page(&self, ip: &IpAddr) -> (String, Option<String>) {
+    pub fn generate_challenge_page(&self, ip: &IpAddr, app_path: Option<&str>) -> (String, Option<String>) {
         if self.is_rate_limited(ip) {
             return (self.generate_rate_limited_page(), None);
         }
@@ -280,7 +280,7 @@ impl ChallengeManager {
         self.record_attempt(ip);
 
         let honeypot_html = if self.honeypot_enabled() {
-            self.honeypot.generate_html(ip)
+            self.honeypot.generate_html(ip, app_path.unwrap_or("/"))
         } else {
             String::new()
         };
@@ -353,9 +353,9 @@ impl ChallengeManager {
         }
     }
 
-    pub fn generate_nojs_page(&self, ip: &IpAddr) -> String {
+    pub fn generate_nojs_page(&self, ip: &IpAddr, app_path: Option<&str>) -> String {
         let honeypot_html = if self.honeypot_enabled() {
-            self.honeypot.generate_html(ip)
+            self.honeypot.generate_html(ip, app_path.unwrap_or("/"))
         } else {
             String::new()
         };
@@ -460,7 +460,7 @@ impl ChallengeManager {
         }
     }
 
-    pub fn is_honeypot_hit(&self, ip: &IpAddr, path: &str) -> bool {
+    pub fn is_honeypot_hit(&self, ip: &IpAddr, path: &str) -> Option<String> {
         self.honeypot.is_honeypot_hit(ip, path)
     }
 

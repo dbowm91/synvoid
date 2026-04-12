@@ -785,7 +785,7 @@ impl WafCore {
             match challenge_result {
                 ChallengeResult::NotSet | ChallengeResult::Failed => {
                     let (html, session_id) =
-                        self.challenge_manager.generate_challenge_page(&client_ip);
+                        self.challenge_manager.generate_challenge_page(&client_ip, Some(path));
                     if let Some(sid) = session_id {
                         let session_cookie_name = self.challenge_manager.css_session_cookie_name();
                         let window_secs = self.challenge_manager.css_window_secs();
@@ -1164,8 +1164,8 @@ impl WafCore {
             return self.handle_probe_event(client_ip, &matched, method, user_agent);
         }
 
-        if self.challenge_manager.is_honeypot_hit(&client_ip, path) {
-            tracing::info!("IP-bound honeypot accessed: {} by {}", path, client_ip);
+        if let Some(app_path) = self.challenge_manager.is_honeypot_hit(&client_ip, path) {
+            tracing::info!("IP-bound honeypot accessed: {} by {} (served at {})", path, client_ip, app_path);
             return self.handle_probe_event(client_ip, path, method, user_agent);
         }
 
@@ -1302,7 +1302,7 @@ impl WafCore {
             match challenge_result {
                 ChallengeResult::NotSet | ChallengeResult::Failed => {
                     let (html, session_id) =
-                        self.challenge_manager.generate_challenge_page(&client_ip);
+                        self.challenge_manager.generate_challenge_page(&client_ip, Some(path));
                     if let Some(sid) = session_id {
                         let session_cookie_name = self.challenge_manager.css_session_cookie_name();
                         let window_secs = self.challenge_manager.css_window_secs();

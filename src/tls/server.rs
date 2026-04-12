@@ -636,7 +636,7 @@ impl HttpsServer {
         }
 
         if path.starts_with("/_waf_css_challenge") {
-            let (html, _) = waf.challenge_manager.generate_challenge_page(&client_ip);
+            let (html, _) = waf.challenge_manager.generate_challenge_page(&client_ip, None);
             return Ok(Self::build_response(200, html, "text/html"));
         }
 
