@@ -20,12 +20,6 @@ pub async fn extract_client_ip_middleware(mut request: Request, next: Next) -> R
 
 static TRUSTED_PROXIES: LazyLock<RwLock<Vec<String>>> = LazyLock::new(|| RwLock::new(Vec::new()));
 
-#[allow(dead_code)]
-pub fn configure_trusted_proxies(proxies: Vec<String>) {
-    let mut guard = TRUSTED_PROXIES.write();
-    *guard = proxies;
-}
-
 fn is_trusted_proxy(ip: &str) -> bool {
     let guard = TRUSTED_PROXIES.read();
     !guard.is_empty() && guard.iter().any(|p| p == ip)

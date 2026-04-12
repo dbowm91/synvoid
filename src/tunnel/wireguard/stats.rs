@@ -251,38 +251,6 @@ pub async fn get_interface_stats(interface: &str) -> Result<WgInterfaceStats, Wg
         .ok_or_else(|| WgStatsError::ParseError("No interface found in output".to_string()))
 }
 
-#[cfg(target_os = "linux")]
-#[allow(dead_code)]
-pub async fn get_all_stats() -> Result<Vec<WgInterfaceStats>, WgStatsError> {
-    use tokio::process::Command;
-
-    let output = Command::new("wg")
-        .arg("show")
-        .arg("all")
-        .output()
-        .await
-        .map_err(|e| WgStatsError::CommandError(e.to_string()))?;
-
-    if !output.status.success() {
-        return Err(WgStatsError::CommandError(
-            String::from_utf8_lossy(&output.stderr).to_string(),
-        ));
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    parse_wg_show_output(&stdout)
-}
-
-#[cfg(target_os = "linux")]
-#[allow(dead_code)]
-pub async fn get_peer_stats(
-    interface: &str,
-    public_key: &str,
-) -> Result<Option<WgPeerStats>, WgStatsError> {
-    let stats = get_interface_stats(interface).await?;
-    Ok(stats.peer_by_public_key(public_key).cloned())
-}
-
 pub struct WgStatsCollector {
     #[allow(dead_code)]
     interface: String,
