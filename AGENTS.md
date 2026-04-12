@@ -351,12 +351,10 @@ All duplicate `current_timestamp()` definitions have been consolidated into `src
 
 | Bug | Location | Impact | Status |
 |-----|----------|--------|--------|
-| DHT query response collection | `src/mesh/dht/record_store_sync.rs:717` | `query_record_iterative()` always returns `None` | Open (CRITICAL - see plan.md 3.1) |
-| Forwarder no DNSSEC validation | `HickoryResolver` | Forwarder mode doesn't validate; AD bit not propagated | Limitation (documented) |
-| JA4 fingerprinting | `src/waf/bot.rs` | JA3 done; JA4 not wired up | Open (see plan.md 4.2) |
-| Stream large request bodies | `src/http/server.rs` | Full buffering; needs chunk-based WAF | Open (architectural change needed) |
-| Response streaming | `src/http/server.rs` | Fully buffered responses | Open (architectural change needed) |
-| HTTPS feature parity | `src/tls/server.rs` | Missing WebSocket, WASM, FastCGI, PHP, etc. | Open (see plan.md 3.14) |
+| JA4 fingerprinting | `src/tls/server.rs`, `src/waf/mod.rs:1175-1209` | JA4 computed but not passed to WAF bot detection | Open (see plan.md O.1) |
+| Stream large request bodies | `src/http/server.rs` | Full buffering; needs chunk-based WAF | Open (see plan.md O.2) |
+| Response streaming | `src/http/server.rs` | Fully buffered responses | Open (see plan.md O.3) |
+| HTTPS feature parity | `src/tls/server.rs` | Missing WebSocket, WASM, FastCGI, PHP, etc. | Open (see plan.md O.4) |
 
 ### Fixed Issues
 

@@ -1,327 +1,220 @@
 # MaluWAF Implementation Plan
 
-This document tracks deferred and remaining work. Waves 1-5 and all Deferred Items have been completed.
+This document tracks remaining work. All Waves 1-5 items have been completed.
 
 ## Quick Reference
 
 | Category | Items | Status |
 |----------|-------|--------|
-| Completed Wave 5 Items | 8 | ✅ Done |
-| Deferred Work | 12 | ✅ All Complete |
+| Future Work (Deferred) | 12 | 🔄 Pending |
+| Open Items | 4 | ⚠️ Partial/Open |
 
-**Legend**: ✅ = Completed
-
----
-
-## Wave 5: Completed Items
-
-### 5.1 Update dead_code Count in AGENTS.md
-
-**Status**: ✅ Completed
-
-**Location**: `AGENTS.md`
-
-**Fix**: Updated count from ~116 to ~93 across ~50 files.
+**Legend**: 🔄 = Pending | ⚠️ = Partial/Open | ❌ = Open
 
 ---
 
-### 5.2 Audit Module-Level allow Attributes
+## Future Work (12 items)
 
-**Status**: ✅ Completed (audit only, no changes)
-
-**Location**: Multiple modules
-
-**Audit Findings**:
-- 20 files with module-level allow attributes reviewed
-- Most suppressions are intentional (reserved future functionality, feature-gated stubs)
-- WireGuard-related items are actively used despite apparent dead code
-- Some vestigial code identified (MAX_NONCE_CACHE_SIZE, configure_trusted_proxies) - removed
+The following items were identified during implementation and deferred for future work:
 
 ---
 
-### 5.3 Complete Admin UI Orphaned Files
+### F.1 ShardedZoneStore is_empty() Optimization
 
-**Status**: ✅ Completed
-
-**Location**: `admin-ui/src/config_docs.rs`
-
-**Fix**: Added `mod config_docs;` to `admin-ui/src/lib.rs`. Build succeeds. Functions `get_field_doc()` and `get_section_doc()` are available for future wiring to admin UI.
-
----
-
-### 5.4 Add Architecture Decision Records
-
-**Status**: ✅ Completed
-
-**Location**: `docs/adr/`
-
-**Fix**: Created `docs/adr/` with 4 ADRs:
-- ADR-001: Global Nodes as Trust Anchors (Not Elected)
-- ADR-002: DNSSEC Validation Limited to Recursive Resolver
-- ADR-003: Unified Worker Process Architecture
-- ADR-004: Module Split Pattern for Large Files
-
----
-
-### 5.5 Dead Code Annotations Audit
-
-**Status**: ✅ Completed
-
-**Location**: Multiple files
-
-**Fix**: Removed:
-- `MAX_NONCE_CACHE_SIZE` constant in `src/process/ipc_signed.rs` (unused)
-- `configure_trusted_proxies()` function in `src/admin/middleware.rs` (never called)
-- `get_all_stats()` and `get_peer_stats()` functions in `src/tunnel/wireguard/stats.rs` (orphaned WireGuard stats)
-
-Kept: Most other dead_code suppressions are for reserved/future functionality.
-
----
-
-### 5.6 Unsafe Code Audit
-
-**Status**: ✅ Completed
-
-**Location**: Multiple files
-
-**Fix**: Added SAFETY comments to 5 previously unannotated unsafe blocks:
-- `src/dns/platform.rs:52` - CMSG pktinfo read
-- `src/dns/platform.rs:70` - setsockopt IP_PKTINFO
-- `src/process/ipc_transport.rs:447` - zeroed UCred
-- `src/process/ipc_transport.rs:450` - getsockopt SO_PEERCRED
-- `src/tls/server.rs:1702` - TcpStream from_raw_fd
-- `src/tcp/listener.rs:63` - setsockopt TCP_QUICKACK
-
----
-
-### 5.7 Documentation Gaps
-
-**Status**: ✅ Completed
-
-**Location**: `src/block_store.rs`, `src/utils.rs`
-
-**Fix**: `src/block_store.rs` already had documentation. Added `//!` module documentation to `src/utils.rs` explaining submodules, types, extension traits, and functions.
-
----
-
-### 5.11 Add Sync Startup Logging to Threat Intel
-
-**Status**: ✅ Completed
-
-**Location**: `src/mesh/threat_intel.rs:1447-1483`
-
-**Fix**: Added `tracing::info!("Threat intel background tasks started (role: {:?}, sync_enabled: {})", node_role, sync_enabled);` after tokio::spawn in `start_background_tasks()`.
-
----
-
-## Deferred Items - All Completed
-
-All 12 deferred items have been implemented:
-
----
-
-### D.1 ShardedZoneStore is_empty() Short-Circuit
-
-**Status**: ✅ Completed
+**Status**: 🔄 Pending
 
 **Location**: `src/dns/server/sharded_store.rs`
 
-**Fix**: `is_empty()` now short-circuits on first non-empty shard (O(1) vs O(n)).
+**Issue**: `is_empty()` iterates all 64 shards O(n).
+
+**Fix**: Short-circuit on first non-empty shard (O(1)).
 
 ---
 
-### D.2 DHT Metrics and Observability
+### F.2 DHT Metrics and Observability
 
-**Status**: ✅ Completed
+**Status**: 🔄 Pending
 
 **Location**: `src/mesh/dht/`, `src/metrics/mod.rs`
 
-**Fix**: Added per-bucket peer counts, record count by type, announce queue depth, store/get operations, peer discovery metrics, propagation hop tracking.
+**Issue**: Limited observability into DHT operations.
+
+**Fix**: Add per-bucket peer counts, record count by type, announce queue depth, store/get operations, peer discovery metrics, propagation hop tracking.
 
 ---
 
-### D.3 Configuration Documentation for DhtConfig
+### F.3 Configuration Documentation for DhtConfig
 
-**Status**: ✅ Completed
+**Status**: 🔄 Pending
 
 **Location**: `src/mesh/dht/mod.rs`
 
-**Fix**: Added doc comments to all 27 DhtConfig fields explaining purpose, valid values, and defaults.
+**Issue**: DhtConfig fields lack documentation.
+
+**Fix**: Add doc comments to all 27 DhtConfig fields explaining purpose, valid values, and defaults.
 
 ---
 
-### D.4 CSS Honeypot Enhancement - Path Tracking
+### F.4 CSS Honeypot Enhancement - Path Tracking
 
-**Status**: ✅ Completed
+**Status**: 🔄 Pending
 
 **Location**: `src/challenge/honeypot.rs`, `src/admin/handlers/honeypot.rs`
 
-**Fix**: Added `HoneypotTrapPath` struct tracking trap_path and app_path. Extended `HoneypotEntry` with per-path tracking. Added `get_path_stats()` for per-path hit statistics. `is_honeypot_hit()` now returns which app path served the trap.
+**Issue**: Honeypot doesn't track which app_path served the trap.
+
+**Fix**: Add `HoneypotTrapPath` struct, extend `HoneypotEntry` with per-path tracking, add `get_path_stats()`.
 
 ---
 
-### D.5 Metrics for Threat Intel DHT Operations
+### F.5 Metrics for Threat Intel DHT Operations
 
-**Status**: ✅ Completed
+**Status**: 🔄 Pending
 
 **Location**: `src/metrics/mod.rs`, `src/mesh/threat_intel.rs`
 
-**Fix**: Added THREAT_INTEL_DHT_PUBLISH_TOTAL/FAILED, LOOKUP_HITS/MISSES, SYNC_TOTAL/SUCCESS/FAILED/ADDED/REMOVED metrics. Instrumented publish_indicator_to_dht, lookup_threat_indicator_in_dht, and sync_from_dht.
+**Issue**: No observability into Threat Intel DHT publish/lookup/sync operations.
+
+**Fix**: Add THREAT_INTEL_DHT_PUBLISH_TOTAL/FAILED, LOOKUP_HITS/MISSES, SYNC_TOTAL/SUCCESS/FAILED/ADDED/REMOVED metrics.
 
 ---
 
-### D.6 Unified Announcement Mechanism Cleanup
+### F.6 Unified Announcement Mechanism Cleanup
 
-**Status**: ✅ Completed
+**Status**: 🔄 Pending
 
 **Location**: `src/mesh/`
 
-**Fix**: Removed dead `UpstreamRegistrationRequest` code (message type, handlers, protobuf, encoding/decoding). `UpstreamAnnounce` continues to work as the active mechanism.
+**Issue**: Dead `UpstreamRegistrationRequest` code still present.
+
+**Fix**: Remove message type, handlers, protobuf, encoding/decoding. Keep `UpstreamAnnounce` as active mechanism.
 
 ---
 
-### D.7 DHT Key Type Consistency - Remove is_global_signature_required()
+### F.7 DHT Key Type Consistency - Remove is_global_signature_required()
 
-**Status**: ✅ Completed
+**Status**: 🔄 Pending
 
 **Location**: `src/mesh/dht/keys.rs`
 
-**Fix**: Removed orphaned `is_global_signature_required()` function which was never called anywhere in the codebase.
+**Issue**: Orphaned `is_global_signature_required()` function never called.
+
+**Fix**: Remove the function.
 
 ---
 
-### D.8 Reputation System Bug - Hardcoded 50
+### F.8 Reputation System Bug - Hardcoded 50
 
-**Status**: ✅ Completed
+**Status**: 🔄 Pending
 
 **Location**: `src/mesh/transport_dht.rs`
 
-**Fix**: Replaced hardcoded `50` reputation threshold with actual `rep_score` value, matching the pattern in `record_store_message.rs:109-110`.
+**Issue**: Hardcoded `50` reputation threshold instead of actual `rep_score`.
+
+**Fix**: Replace hardcoded threshold with actual peer reputation value.
 
 ---
 
-### D.9 Global Node Liveness and Quorum Monitoring
+### F.9 Global Node Liveness and Quorum Monitoring
 
-**Status**: ✅ Completed
+**Status**: 🔄 Pending
 
 **Location**: `src/mesh/dht/`, `src/mesh/transport_global.rs`, `src/mesh/transport.rs`
 
-**Fix**: Added `GlobalNodeHeartbeat` DHT key type, struct, publishing method (30s interval, 90s TTL), and consuming logic. Heartbeat includes node_id, timestamp, and version.
+**Issue**: No heartbeat mechanism for global node liveness.
+
+**Fix**: Add `GlobalNodeHeartbeat` DHT key type, publish at 30s interval with 90s TTL.
 
 ---
 
-### D.10 IPv6 Zone ID SSRF Bypass
+### F.10 IPv6 Zone ID SSRF Bypass
 
-**Status**: ✅ Completed
+**Status**: 🔄 Pending
 
 **Location**: `src/waf/attack_detection/ssrf.rs`
 
-**Fix**: `looks_like_ip()` now strips zone IDs before parsing. `normalize_ip_for_parse()` strips zone ID. Added IPv6 parsing path in `is_private_ip()` via `parse::<IpAddr>()` fallback.
+**Issue**: `looks_like_ip()` doesn't strip zone IDs (e.g., `fe80::1%eth0`).
+
+**Fix**: Strip zone ID before parsing. Add IPv6 parsing path in `is_private_ip()`.
 
 ---
 
-### D.11 Homoglyph Normalization Gaps
+### F.11 Homoglyph Normalization Gaps
 
-**Status**: ✅ Completed
+**Status**: 🔄 Pending
 
 **Location**: `src/waf/attack_detection/normalizer.rs`
 
-**Fix**:
-- Fixed Cyrillic В→V (not B), Н→N (not H)
-- Added missing Cyrillic Т (U+0422) → T
-- Added Greek letter normalization: α→a, Α→A, τ→t, Τ→T, ο→o, Ο→O, ι→i, Ι→I, ν→v, Ν→N
+**Issue**: Missing Cyrillic and Greek character normalizations.
+
+**Fix**: Add Cyrillic Т (U+0422) → T. Add Greek letter normalizations: α→a, Α→A, τ→t, Τ→T, ο→o, Ο→O, ι→i, Ι→I, ν→v, Ν→N.
 
 ---
 
-### D.12 TODO Comments - File Manager
+### F.12 TODO Comments - File Manager
 
-**Status**: ✅ Completed
+**Status**: 🔄 Pending
 
 **Location**: `src/http/file_manager.rs`
 
-**Fix**: Reordered handler parameters (HeaderMap before Json) to satisfy axum Handler trait. Added `#[axum::debug_handler]` to all 4 handlers. Uncommented routes and removed TODO comments.
+**Issue**: TODO comments still present, routes commented out.
+
+**Fix**: Remove TODO comments, uncomment routes, add `#[axum::debug_handler]` to handlers.
 
 ---
 
-## Completed Waves Reference
+## Open Items (4)
 
-Waves 1-4 (Critical Security, High Security, Core Functionality, Code Quality) have been fully implemented. Wave 5 (Polish & Cleanup) and all Deferred Items are now complete:
+Items requiring architectural changes:
 
-### Wave 1: Critical Security (12 items)
-1.1 WAF XSS Detection Bypass via URL Encoding - ✅
-1.2 WAF libinjection Receives Pre-Normalized Input - ✅
-1.3 TOFU First-Connection MITM Vulnerability - ✅
-1.4 Empty CA Store = Permissive Trust - ✅
-1.5 Honeypot Local Blocking Key Mismatch - ✅
-1.6 Standalone Mode - Local Blocking Gap - ✅
-1.7 No RBAC Enforcement - ✅
-1.8 User Enumeration via Timing - ✅
-1.9 No Audit Logging for Admin Actions - ✅
-1.10 Non-Global Nodes Auto-Registered with Default Reputation - ✅
-1.11 SSRF Allowlist Subdomain Bypass - ✅
-1.12 Regex Not Complexity-Checked in RFI Detector - ✅
+---
 
-### Wave 2: High Security (14 items)
-2.1 Upstream Ownership Validation - ✅
-2.2 Genesis Key Rotation and Revocation - ✅
-2.3 No Certificate Chain Validation - ✅
-2.4 TOFU Without Out-of-Band Verification - ✅
-2.5 Replay Window Too Large - ✅
-2.6 Stake Grace Period Bypass - ✅
-2.7 Forward Secrecy Missing - ✅ (already implemented)
-2.8 Cache Poisoning Fingerprint Bypass - ✅
-2.9 QUIC 0-RTT Replay Risk - ✅
-2.10 Proof of Work Difficulty May Be Too Low - ✅
-2.11 No Certificate Revocation List Enforcement - ✅ (already implemented)
-2.12 SSRF Path Not Checked in Request Body - ✅ (already implemented)
-2.13 File Upload Magic Byte Enforcement Missing - ✅ (already implemented)
-2.14 Weak Random Number Generator for Admin Token - ✅ (already implemented)
+### O.1 JA4 Fingerprint Wired to WAF Bot Detection
 
-### Wave 3: Core Functionality (18 items)
-3.1 DHT Query Response Collection Missing - ✅
-3.2 Granian Uses FastCGI Client Instead of HTTP - ✅
-3.3 Edge Node DHT Propagation Blocked - ✅
-3.4 VerifiedUpstream Cache Staleness - ✅
-3.5 Image Poison Config Never Published to DHT - ✅
-3.6 Proxy Cache Preferences Never Forwarded - ✅
-3.7 Honeypot AdminState Disconnect - ✅
-3.8 Threat Intel Version Tracking Missing - ✅
-3.9 DHT Sync Interval Too Long - ✅
-3.10 Port Honeypot Rate Limiting - ✅
-3.11 Port Availability Race Condition - ✅
-3.12 PHP-FPM Socket Auto-Detection Enhancement - ✅
-3.13 FastCGI Response Handling Parity with Upstream - ✅
-3.14 Granian WebSocket Support - ✅
-3.15 Local Key Format Inconsistency - ✅
-3.16 YARA Re-announce Disabled - ✅
-3.17 Configurable Site Scope for Port Honeypot - ✅
-3.18 DHT Quorum Insufficient Check - ✅ (already implemented)
+**Status**: ⚠️ Partial
 
-### Wave 4: Code Quality (15 items)
-4.1 Atomic Counter Underflow Risk - ✅
-4.2 JA4 Fingerprint Computation Not Wired Up - ✅
-4.3 WAF Detector String Allocation - ✅
-4.4 Rate Limiter O(n) Cleanup - ✅
-4.5 Per-IP Rate Limiter LRU Eviction Iterates All Entries - ✅
-4.6 Input Normalizer NFKC Allocation - ✅
-4.7 Static File Serving Without spawn_blocking - ✅
-4.8 std::sync::Mutex in Async Context - ✅
-4.9 Repeated IPC Lock in Heartbeat - ✅
-4.10 DNS Zone Store Full-Shard Iteration - ✅
-4.11 Proxy Cache Entry Clone on Every Hit - ✅
-4.12 HTTP Path Sanitization Vector Allocation - ✅
-4.13 Response Header Filtering Vector Allocation - ✅
-4.14 Unsafe Code Missing Safety Comments - ✅
-4.15 Missing Error Context in thiserror Types - ✅
+**Location**: `src/tls/server.rs:53-63`, `src/waf/bot.rs:164-169`, `src/waf/mod.rs:1175-1209`
 
-### Wave 5: Polish & Cleanup (8 items)
-5.1 Update dead_code Count in AGENTS.md - ✅
-5.2 Audit Module-Level allow Attributes - ✅
-5.3 Complete Admin UI Orphaned Files - ✅
-5.4 Add Architecture Decision Records - ✅
-5.5 Dead Code Annotations Audit - ✅
-5.6 Unsafe Code Audit - ✅
-5.7 Documentation Gaps - ✅
-5.11 Add Sync Startup Logging to Threat Intel - ✅
+**Issue**: JA4 hash is computed from TLS ClientHello but `check_bot_protection()` only passes `user_agent`. `check_with_ja4()` exists but is never called.
+
+**Fix Required**: Pass `ja4_hash` from `HttpsConnection` through to `check_bot_protection()` and call `bot_detector.check_with_ja4()`.
+
+---
+
+### O.2 Stream Large Request Bodies
+
+**Status**: ❌ Open
+
+**Location**: `src/http/server.rs`
+
+**Issue**: Full request body is buffered in memory.
+
+**Fix Required**: Chunk-based WAF processing.
+
+---
+
+### O.3 Response Streaming
+
+**Status**: ❌ Open
+
+**Location**: `src/http/server.rs`, `src/tls/server.rs`
+
+**Issue**: Responses are fully buffered before sending.
+
+**Fix Required**: Stream responses using chunked transfer encoding.
+
+---
+
+### O.4 HTTPS Feature Parity with HTTP Server
+
+**Status**: ❌ Open
+
+**Location**: `src/tls/server.rs`
+
+**Issue**: HTTPS server missing: WebSocket, WASM, FastCGI, PHP-FPM support.
+
+**Fix Required**: Add missing transport handlers and backend support.
+
+---
 
 (End of file)

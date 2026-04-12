@@ -123,7 +123,7 @@ all_origins = local_origins ∪ verified.map(|v| v.origin_node_id)
 
 ### Origin Registration Flow
 ```
-Origin → Global: UpstreamAnnounce (or UpstreamRegistrationRequest)
+Origin → Global: UpstreamAnnounce
 Global stores: verified_upstream:{upstream_id} → VerifiedUpstream{origin_node_id, ...}
 ```
 
@@ -160,12 +160,7 @@ tracing::debug!("Local upstreams: {:?}", local_upstreams.keys());
 
 ## Architecture Notes
 
-### Why Two Registration Mechanisms?
-
-1. **`UpstreamAnnounce`**: Simple broadcast, fire-and-forget, 5-min TTL
-2. **`UpstreamRegistrationRequest`**: Request/response with ownership verification (not wired yet)
-
-**Current state**: Only `UpstreamAnnounce` is used. `UpstreamRegistrationRequest` exists but is dead code (never sent).
+### Origin Local Backend Selection
 
 ### Origin Local Backend Selection
 
