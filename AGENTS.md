@@ -354,7 +354,6 @@ All duplicate `current_timestamp()` definitions have been consolidated into `src
 | JA4 fingerprinting | `src/tls/server.rs`, `src/waf/mod.rs:1175-1209` | JA4 computed but not passed to WAF bot detection | Open (see plan.md O.1) |
 | Stream large request bodies | `src/http/server.rs` | Full buffering; needs chunk-based WAF | Open (see plan.md O.2) |
 | Response streaming | `src/http/server.rs` | Fully buffered responses | Open (see plan.md O.3) |
-| Duplicate HTTP/HTTPS handlers | `src/http/server.rs`, `src/tls/server.rs` | Two implementations of same logic; HTTPS missing WebSocket/WASM | Open (see plan.md O.4) |
 
 ### Fixed Issues
 

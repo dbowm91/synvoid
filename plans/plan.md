@@ -6,14 +6,14 @@ This document tracks remaining work. All Waves 1-5 items have been completed.
 
 | Category | Items | Status |
 |----------|-------|--------|
-| Future Work (Deferred) | 12 | 🔄 Pending |
-| Open Items | 4 | ⚠️ Partial/Open |
+| Future Work (Deferred) | 13 | 🔄 Pending |
+| Open Items | 3 | ⚠️ Partial/Open |
 
 **Legend**: 🔄 = Pending | ⚠️ = Partial/Open | ❌ = Open
 
 ---
 
-## Future Work (12 items)
+## Future Work (13 items)
 
 The following items were identified during implementation and deferred for future work:
 
@@ -163,6 +163,27 @@ The following items were identified during implementation and deferred for futur
 
 ---
 
+### F.13 O.4: ConnectionMeta Trait and Unified Handler Foundation
+
+**Status**: ✅ Foundation Complete (remaining migration is Future Work)
+
+**Location**: `src/server/request_handler.rs`
+
+**Fix**: Created `ConnectionMeta` trait with implementations for `HttpConnection` and `HttpsConnection`. Created `TlsContext` struct to carry ja4_hash and protocol through the pipeline.
+
+**What was done**:
+- `ConnectionMeta` trait with `request_drop()`, `should_drop()`, `get_ja4()`, `supports_websocket()`, `protocol()`, `tls_context()`
+- `TlsContext` struct carrying TLS metadata
+- `UnifiedHandlerConfig` for per-connection configuration
+- Implementations for both connection types
+
+**Remaining (deferred to future work)**:
+- Migrate request processing from both servers to use unified handler
+- Remove duplicate code from `tls/server.rs`
+- Wire JA4 to WAF bot detection
+
+---
+
 ## Open Items (4)
 
 Items requiring architectural changes:
@@ -202,93 +223,6 @@ Items requiring architectural changes:
 **Issue**: Responses are fully buffered before sending.
 
 **Fix Required**: Stream responses using chunked transfer encoding.
-
----
-
-### O.4 Unified Connection Handler Architecture
-
-**Status**: ❌ Open
-
-**Location**: `src/http/server.rs`, `src/tls/server.rs`, `src/server/mod.rs`
-
-**Problem**: Duplicate implementations of request handling logic.
-
-Currently there are two separate servers with ~80% identical code:
-- `HttpServer` (~3579 lines in `src/http/server.rs`) - handles plain HTTP
-- `HttpsServer` (~1774 lines in `src/tls/server.rs`) - handles TLS/SSL
-
-Both implement the same request processing pipeline (WAF checks, routing, backend dispatch, WebSocket, WASM, FastCGI, etc.) independently. This creates:
-- **Code duplication**: Bug fixes and features must be applied twice
-- **Inconsistency**: HTTPS server missing WebSocket and WASM (not actually missing FastCGI/PHP as originally documented)
-- **Maintenance burden**: Two separate code paths to maintain
-
-**Root Cause**: The HTTPS server was built by copying the HTTP server implementation rather than creating a shared abstraction.
-
-**Fix Required**: Refactor to a single unified connection handler:
-
-```
-Current Architecture:
-┌─────────────────────────────────────────────────────────────────┐
-│ UnifiedServer                                                    │
-│  ├─ run_http_server_inner()  ──► HttpServer                    │
-│  │                                  └─ handle_request()         │
-│  │                                                             │
-│  └─ run_https_server_inner() ──► HttpsServer                  │
-│                                     └─ handle_request_with_cache()
-│                                                                 │
-│ Both implement the same logic independently                     │
-└─────────────────────────────────────────────────────────────────┘
-
-Proposed Architecture:
-┌─────────────────────────────────────────────────────────────────┐
-│ UnifiedServer                                                    │
-│  └─ run_server()  ──► TcpListenerPool                          │
-│                         ├─ HTTP:  Plain connection              │
-│                         └─ HTTPS: TLS wrapped connection       │
-│                              │                                  │
-│                              ▼                                  │
-│                     ┌─────────────────────┐                    │
-│                     │ UnifiedRequestHandler│                   │
-│                     │ (shared processing)  │                    │
-│                     └─────────────────────┘                    │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-**Implementation Steps**:
-
-1. **Create unified request handler module**
-   - New file: `src/server/request_handler.rs`
-   - Extract common request processing from `HttpServer::handle_request()`
-   - Handle both plain and TLS connections uniformly
-   - Implement `trait UnifiedConnectionHandler` with `handle_connection(stream, tls_context)`
-
-2. **Modify `HttpServer` to delegate to unified handler**
-   - Keep HTTP-specific listener setup
-   - Pass connections to unified handler for processing
-
-3. **Modify `HttpsServer` to use unified handler**
-   - Keep TLS-specific accept flow
-   - Pass accepted connections to unified handler for processing
-   - Remove duplicate request processing code
-
-4. **Add TLS context passthrough**
-   - Pass TLS metadata (ja4_hash, client hello info) through unified handler
-   - This enables O.1 (JA4 wiring) as a side effect
-
-5. **Remove duplicate code**
-   - Delete `src/tls/server.rs` request handling methods after migration
-   - Keep only TLS-specific accept/handshake logic in `tls/server.rs`
-
-6. **Test both HTTP and HTTPS through same code path**
-   - Verify WebSocket works for HTTPS
-   - Verify WASM works for HTTPS
-   - Verify all backends work identically
-
-**Benefits**:
-- Single code path for all request processing
-- HTTPS automatically gets all features (WebSocket, WASM, etc.)
-- JA4 wiring becomes straightforward (TLS context flows through handler)
-- Easier to add O.2 (streaming) and O.3 (response streaming) once
 
 ---
 
