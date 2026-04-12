@@ -2161,6 +2161,84 @@ impl From<&MeshMessage> for proto::MeshMessage {
                     },
                 )),
             },
+            MeshMessage::UpstreamOwnershipChallenge {
+                request_id,
+                upstream_id,
+                challenge_type,
+                challenge_token,
+                global_node_id,
+                timestamp,
+            } => {
+                let challenge = match challenge_type {
+                    crate::mesh::protocol::OwnershipChallengeType::Http01 {
+                        token,
+                        key_authorization,
+                    } => {
+                        proto::ownership_challenge_type::Challenge::Http01(proto::Http01Challenge {
+                            token: token.clone(),
+                            key_authorization: key_authorization.clone(),
+                        })
+                    }
+                    crate::mesh::protocol::OwnershipChallengeType::Dns01 {
+                        domain,
+                        txt_record_name,
+                        txt_record_value,
+                    } => proto::ownership_challenge_type::Challenge::Dns01(proto::Dns01Challenge {
+                        domain: domain.clone(),
+                        txt_record_name: txt_record_name.clone(),
+                        txt_record_value: txt_record_value.clone(),
+                    }),
+                };
+                proto::MeshMessage {
+                    message_type: 133,
+                    payload: Some(proto::mesh_message::Payload::UpstreamOwnershipChallenge(
+                        proto::UpstreamOwnershipChallenge {
+                            request_id: request_id.to_string(),
+                            upstream_id: upstream_id.to_string(),
+                            challenge_type: Some(proto::OwnershipChallengeType {
+                                challenge: Some(challenge),
+                            }),
+                            challenge_token: challenge_token.clone(),
+                            global_node_id: global_node_id.to_string(),
+                            timestamp: *timestamp,
+                        },
+                    )),
+                }
+            }
+            MeshMessage::UpstreamChallengeProof {
+                request_id,
+                upstream_id,
+                challenge_proof,
+                origin_node_id,
+                timestamp,
+            } => {
+                let proof = match challenge_proof {
+                    crate::mesh::protocol::OwnershipChallengeProof::Http01 {
+                        key_authorization,
+                    } => proto::ownership_challenge_proof::Proof::Http01Proof(proto::Http01Proof {
+                        key_authorization: key_authorization.clone(),
+                    }),
+                    crate::mesh::protocol::OwnershipChallengeProof::Dns01 { txt_record_value } => {
+                        proto::ownership_challenge_proof::Proof::Dns01Proof(proto::Dns01Proof {
+                            txt_record_value: txt_record_value.clone(),
+                        })
+                    }
+                };
+                proto::MeshMessage {
+                    message_type: 134,
+                    payload: Some(proto::mesh_message::Payload::UpstreamChallengeProof(
+                        proto::UpstreamChallengeProof {
+                            request_id: request_id.to_string(),
+                            upstream_id: upstream_id.to_string(),
+                            challenge_proof: Some(proto::OwnershipChallengeProof {
+                                proof: Some(proof),
+                            }),
+                            origin_node_id: origin_node_id.to_string(),
+                            timestamp: *timestamp,
+                        },
+                    )),
+                }
+            }
         }
     }
 }

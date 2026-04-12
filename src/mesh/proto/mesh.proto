@@ -265,6 +265,8 @@ message MeshMessage {
         SessionRotate session_rotate = 130;
         SessionRotateAck session_rotate_ack = 131;
         ServerlessFunctionAnnounce serverless_function_announce = 132;
+        UpstreamOwnershipChallenge upstream_ownership_challenge = 133;
+        UpstreamChallengeProof upstream_challenge_proof = 134;
     }
 }
 
@@ -796,6 +798,56 @@ message UpstreamVerificationResponse {
     optional string org_id = 7;
     uint64 timestamp = 8;
     string provider_node_id = 9;
+}
+
+message UpstreamOwnershipChallenge {
+    string request_id = 1;
+    string upstream_id = 2;
+    OwnershipChallengeType challenge_type = 3;
+    string challenge_token = 4;
+    string global_node_id = 5;
+    uint64 timestamp = 6;
+}
+
+message OwnershipChallengeType {
+    oneof challenge {
+        Http01Challenge http01 = 1;
+        Dns01Challenge dns01 = 2;
+    }
+}
+
+message Http01Challenge {
+    string token = 1;
+    string key_authorization = 2;
+}
+
+message Dns01Challenge {
+    string domain = 1;
+    string txt_record_name = 2;
+    string txt_record_value = 3;
+}
+
+message UpstreamChallengeProof {
+    string request_id = 1;
+    string upstream_id = 2;
+    OwnershipChallengeProof challenge_proof = 3;
+    string origin_node_id = 4;
+    uint64 timestamp = 5;
+}
+
+message OwnershipChallengeProof {
+    oneof proof {
+        Http01Proof http01_proof = 1;
+        Dns01Proof dns01_proof = 2;
+    }
+}
+
+message Http01Proof {
+    string key_authorization = 1;
+}
+
+message Dns01Proof {
+    string txt_record_value = 1;
 }
 
 message ReputationUpdate {

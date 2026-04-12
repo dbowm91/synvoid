@@ -426,6 +426,40 @@ impl MeshTransport {
                 )
                 .await;
             }
+            MeshMessage::UpstreamOwnershipChallenge {
+                request_id,
+                upstream_id,
+                challenge_type,
+                challenge_token,
+                global_node_id,
+                timestamp: _,
+            } => {
+                self.handle_upstream_ownership_challenge(
+                    peer_id,
+                    &request_id,
+                    &upstream_id,
+                    &challenge_type,
+                    &challenge_token,
+                    &global_node_id,
+                )
+                .await;
+            }
+            MeshMessage::UpstreamChallengeProof {
+                request_id,
+                upstream_id,
+                challenge_proof,
+                origin_node_id,
+                timestamp: _,
+            } => {
+                self.handle_upstream_challenge_proof(
+                    peer_id,
+                    &request_id,
+                    &upstream_id,
+                    &challenge_proof,
+                    &origin_node_id,
+                )
+                .await;
+            }
             MeshMessage::OrgInvitationRequest {
                 request_id,
                 org_id,
@@ -1688,6 +1722,92 @@ impl MeshTransport {
         &self,
     ) -> Option<Arc<crate::mesh::verification::VerificationTaskManager>> {
         self.verification_manager.read().clone()
+    }
+
+    pub(crate) async fn handle_upstream_ownership_challenge(
+        &self,
+        peer_id: &str,
+        request_id: &str,
+        upstream_id: &str,
+        challenge_type: &crate::mesh::protocol::OwnershipChallengeType,
+        _challenge_token: &str,
+        global_node_id: &str,
+    ) {
+        tracing::info!(
+            "Received upstream ownership challenge for {} from global node {} (request_id: {})",
+            upstream_id,
+            global_node_id,
+            request_id
+        );
+
+        match challenge_type {
+            crate::mesh::protocol::OwnershipChallengeType::Dns01 {
+                domain,
+                txt_record_name,
+                txt_record_value,
+            } => {
+                tracing::info!(
+                    "DNS-01 challenge for domain {}: set TXT record {} = {}",
+                    domain,
+                    txt_record_name,
+                    txt_record_value
+                );
+
+                // In a real implementation, the origin would need to:
+                // 1. Create the TXT record in their DNS provider
+                // 2. Wait for DNS propagation
+                // 3. Send the proof back
+
+                // For now, we simulate the proof by sending back the txt_record_value
+                // In production, this would require actual DNS verification
+                let proof = crate::mesh::protocol::OwnershipChallengeProof::Dns01 {
+                    txt_record_value: txt_record_value.clone(),
+                };
+
+                let response = MeshMessage::UpstreamChallengeProof {
+                    request_id: request_id.into(),
+                    upstream_id: upstream_id.into(),
+                    challenge_proof: proof,
+                    origin_node_id: self.config.node_id().into(),
+                    timestamp: crate::mesh::safe_unix_timestamp(),
+                };
+
+                if let Err(e) = self.send_datagram_to_peer(peer_id, &response).await {
+                    tracing::warn!("Failed to send challenge proof to {}: {}", peer_id, e);
+                }
+            }
+            crate::mesh::protocol::OwnershipChallengeType::Http01 {
+                token,
+                key_authorization,
+            } => {
+                tracing::info!(
+                    "HTTP-01 challenge: serve key authorization at /.well-known/malu-challenge/{}",
+                    token
+                );
+
+                // In a real implementation, the origin would need to:
+                // 1. Serve the key_authorization at /.well-known/malu-challenge/{token}
+                // 2. Wait for the global node to fetch it
+                // 3. Send the proof back
+
+                // For now, we simulate by sending back the key_authorization
+                let proof = crate::mesh::protocol::OwnershipChallengeProof::Http01 {
+                    key_authorization: key_authorization.clone(),
+                };
+
+                let response = MeshMessage::UpstreamChallengeProof {
+                    request_id: request_id.into(),
+                    upstream_id: upstream_id.into(),
+                    challenge_proof: proof,
+                    origin_node_id: self.config.node_id().into(),
+                    timestamp: crate::mesh::safe_unix_timestamp(),
+                };
+
+                if let Err(e) = self.send_datagram_to_peer(peer_id, &response).await {
+                    tracing::warn!("Failed to send challenge proof to {}: {}", peer_id, e);
+                }
+            }
+        }
     }
 
     pub(crate) async fn send_load_report_to_peers(&self) {

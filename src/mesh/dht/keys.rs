@@ -69,6 +69,7 @@ pub enum DhtKey {
         upstream_id: String,
         provider_node_id: String,
     },
+    UpstreamOwnershipChallenge(String),
 }
 
 impl DhtKey {
@@ -215,6 +216,10 @@ impl DhtKey {
         }
     }
 
+    pub fn upstream_ownership_challenge(upstream_id: &str) -> Self {
+        DhtKey::UpstreamOwnershipChallenge(upstream_id.to_string())
+    }
+
     pub fn as_str(&self) -> String {
         match self {
             DhtKey::Organization(org_id) => format!("org:{}", org_id),
@@ -296,6 +301,9 @@ impl DhtKey {
                 provider_node_id,
             } => {
                 format!("origin_penalty:{}:{}", upstream_id, provider_node_id)
+            }
+            DhtKey::UpstreamOwnershipChallenge(upstream_id) => {
+                format!("upstream_ownership_challenge:{}", upstream_id)
             }
         }
     }
@@ -382,6 +390,9 @@ impl DhtKey {
                 upstream_id: parts[1].to_string(),
                 provider_node_id: parts[2].to_string(),
             },
+            "upstream_ownership_challenge" if parts.len() >= 2 => {
+                DhtKey::UpstreamOwnershipChallenge(parts[1..].join(":"))
+            }
             _ => DhtKey::NodeInfo(s.to_string()),
         }
     }
@@ -423,11 +434,15 @@ impl DhtKey {
                 | DhtKey::NodeCapability { .. }
                 | DhtKey::OriginReachability { .. }
                 | DhtKey::OriginPenalty { .. }
+                | DhtKey::UpstreamOwnershipChallenge(_)
         )
     }
 
     pub fn is_global_signature_required(&self) -> bool {
-        matches!(self, DhtKey::VerifiedUpstream(_))
+        matches!(
+            self,
+            DhtKey::VerifiedUpstream(_) | DhtKey::UpstreamOwnershipChallenge(_)
+        )
     }
 
     pub fn requires_confirmation(&self) -> bool {
@@ -482,6 +497,7 @@ impl DhtKey {
             DhtKey::OriginReachability { .. } => "origin_reachability",
             DhtKey::VerificationTask { .. } => "verification_task",
             DhtKey::OriginPenalty { .. } => "origin_penalty",
+            DhtKey::UpstreamOwnershipChallenge(_) => "upstream_ownership_challenge",
         }
     }
 
@@ -520,6 +536,7 @@ impl DhtKey {
             DhtKey::OriginReachability { .. } => None,
             DhtKey::VerificationTask { .. } => None,
             DhtKey::OriginPenalty { .. } => None,
+            DhtKey::UpstreamOwnershipChallenge(_) => None,
         }
     }
 

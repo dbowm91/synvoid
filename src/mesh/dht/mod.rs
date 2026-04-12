@@ -369,6 +369,31 @@ pub struct VerifiedUpstream {
     pub expires_at: u64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum OwnershipChallengeType {
+    Http01 {
+        token: String,
+        key_authorization: String,
+    },
+    Dns01 {
+        domain: String,
+        txt_record_name: String,
+        txt_record_value: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpstreamOwnershipChallenge {
+    pub upstream_id: String,
+    pub origin_node_id: String,
+    pub upstream_url: String,
+    pub org_id: Option<String>,
+    pub challenge_type: OwnershipChallengeType,
+    pub challenge_token: String,
+    pub created_at: u64,
+    pub expires_at: u64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ReachabilityStatus {
     #[default]

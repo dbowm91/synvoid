@@ -865,6 +865,21 @@ pub enum MeshMessage {
         timestamp: u64,
         provider_node_id: ArcStr,
     },
+    UpstreamOwnershipChallenge {
+        request_id: ArcStr,
+        upstream_id: ArcStr,
+        challenge_type: OwnershipChallengeType,
+        challenge_token: String,
+        global_node_id: ArcStr,
+        timestamp: u64,
+    },
+    UpstreamChallengeProof {
+        request_id: ArcStr,
+        upstream_id: ArcStr,
+        challenge_proof: OwnershipChallengeProof,
+        origin_node_id: ArcStr,
+        timestamp: u64,
+    },
     #[cfg(feature = "dns")]
     DnsRegistrationRequest {
         request_id: ArcStr,
@@ -966,6 +981,25 @@ pub enum MeshMessage {
         timestamp: u64,
     },
     ServerlessFunctionAnnounce(ServerlessFunctionAnnounce),
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub enum OwnershipChallengeType {
+    Http01 {
+        token: String,
+        key_authorization: String,
+    },
+    Dns01 {
+        domain: String,
+        txt_record_name: String,
+        txt_record_value: String,
+    },
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub enum OwnershipChallengeProof {
+    Http01 { key_authorization: String },
+    Dns01 { txt_record_value: String },
 }
 
 #[derive(Debug, thiserror::Error)]

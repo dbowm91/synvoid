@@ -1361,6 +1361,76 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                     },
                 ))
             }
+            proto::mesh_message::Payload::UpstreamOwnershipChallenge(r) => {
+                let challenge_type = match r.challenge_type {
+                    Some(ct) => match ct.challenge {
+                        Some(proto::ownership_challenge_type::Challenge::Http01(h)) => {
+                            crate::mesh::protocol::OwnershipChallengeType::Http01 {
+                                token: h.token,
+                                key_authorization: h.key_authorization,
+                            }
+                        }
+                        Some(proto::ownership_challenge_type::Challenge::Dns01(d)) => {
+                            crate::mesh::protocol::OwnershipChallengeType::Dns01 {
+                                domain: d.domain,
+                                txt_record_name: d.txt_record_name,
+                                txt_record_value: d.txt_record_value,
+                            }
+                        }
+                        None => {
+                            return Err(ProtocolError::InvalidValue(
+                                "UpstreamOwnershipChallenge missing challenge",
+                            ));
+                        }
+                    },
+                    None => {
+                        return Err(ProtocolError::InvalidValue(
+                            "UpstreamOwnershipChallenge missing challenge_type",
+                        ));
+                    }
+                };
+                Ok(MeshMessage::UpstreamOwnershipChallenge {
+                    request_id: r.request_id.into(),
+                    upstream_id: r.upstream_id.into(),
+                    challenge_type,
+                    challenge_token: r.challenge_token,
+                    global_node_id: r.global_node_id.into(),
+                    timestamp: r.timestamp,
+                })
+            }
+            proto::mesh_message::Payload::UpstreamChallengeProof(r) => {
+                let challenge_proof = match r.challenge_proof {
+                    Some(cp) => match cp.proof {
+                        Some(proto::ownership_challenge_proof::Proof::Http01Proof(h)) => {
+                            crate::mesh::protocol::OwnershipChallengeProof::Http01 {
+                                key_authorization: h.key_authorization,
+                            }
+                        }
+                        Some(proto::ownership_challenge_proof::Proof::Dns01Proof(d)) => {
+                            crate::mesh::protocol::OwnershipChallengeProof::Dns01 {
+                                txt_record_value: d.txt_record_value,
+                            }
+                        }
+                        None => {
+                            return Err(ProtocolError::InvalidValue(
+                                "UpstreamChallengeProof missing proof",
+                            ));
+                        }
+                    },
+                    None => {
+                        return Err(ProtocolError::InvalidValue(
+                            "UpstreamChallengeProof missing challenge_proof",
+                        ));
+                    }
+                };
+                Ok(MeshMessage::UpstreamChallengeProof {
+                    request_id: r.request_id.into(),
+                    upstream_id: r.upstream_id.into(),
+                    challenge_proof,
+                    origin_node_id: r.origin_node_id.into(),
+                    timestamp: r.timestamp,
+                })
+            }
         }
     }
 }

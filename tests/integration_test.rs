@@ -1085,6 +1085,7 @@ mod tls_config_tests {
                 staging: true,
                 domains: vec!["example.com".to_string(), "www.example.com".to_string()],
                 challenge_type: InternalAcmeChallengeType::Http01,
+                terms_of_service_agreed: false,
             },
             client_auth: InternalClientAuthConfig {
                 enabled: true,

@@ -31,7 +31,9 @@ impl MeshMessage {
             | Self::UpstreamRegistrationRequest { .. }
             | Self::UpstreamRegistrationResponse { .. }
             | Self::UpstreamVerificationQuery { .. }
-            | Self::UpstreamVerificationResponse { .. } => MessageCategory::Upstream,
+            | Self::UpstreamVerificationResponse { .. }
+            | Self::UpstreamOwnershipChallenge { .. }
+            | Self::UpstreamChallengeProof { .. } => MessageCategory::Upstream,
             Self::KeyForward { .. }
             | Self::KeySigned { .. }
             | Self::SessionRotate { .. }
@@ -164,6 +166,8 @@ impl MeshMessage {
             Self::UpstreamVerificationResponse { request_id, .. } => {
                 Some(request_id.as_str().into())
             }
+            Self::UpstreamOwnershipChallenge { request_id, .. } => Some(request_id.as_str().into()),
+            Self::UpstreamChallengeProof { request_id, .. } => Some(request_id.as_str().into()),
             #[cfg(feature = "dns")]
             Self::DnsRegistrationRequest { request_id, .. } => Some(request_id.as_str().into()),
             #[cfg(feature = "dns")]
@@ -214,6 +218,8 @@ impl MeshMessage {
                 | Self::ThreatAcknowledgement { .. }
                 | Self::ReputationUpdate { .. }
                 | Self::DhtSnapshotRequest { .. }
+                | Self::UpstreamOwnershipChallenge { .. }
+                | Self::UpstreamChallengeProof { .. }
         )
     }
 
