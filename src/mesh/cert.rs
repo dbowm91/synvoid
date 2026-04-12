@@ -559,19 +559,13 @@ impl MeshCertManager {
                     ))
                 }
             }
-            std::collections::hash_map::Entry::Vacant(entry) => {
-                tracing::warn!(
-                    "CRITICAL SECURITY: First connection to seed {} - fingerprint accepted without verification. \
-                    An active attacker could intercept this connection. Configure pinned_cert_fingerprint \
-                    in your mesh seed configuration for production deployments.",
-                    seed_address
-                );
-                entry.insert(PinnedFingerprint {
-                    fingerprint: fingerprint.to_string(),
-                    pinned_at: std::time::Instant::now(),
-                });
-                Ok(())
-            }
+            std::collections::hash_map::Entry::Vacant(entry) => Err(format!(
+                "TOFU: No fingerprint configured for seed {}. \
+                    First connection rejected for security. \
+                    Configure pinned_cert_fingerprint in your mesh seed configuration \
+                    or set require_explicit_fingerprint=false to allow TOFU with warning.",
+                seed_address
+            )),
         }
     }
 
