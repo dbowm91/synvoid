@@ -1480,6 +1480,12 @@ impl ThreatIntelligenceManager {
                 }
             }
         });
+
+        tracing::info!(
+            "Threat intel background tasks started (role: {:?}, sync_enabled: {})",
+            node_role,
+            sync_enabled
+        );
     }
 
     fn clone_internal(&self) -> Self {

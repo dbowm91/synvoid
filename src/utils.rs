@@ -1,3 +1,28 @@
+//! Miscellaneous utility functions and types.
+//!
+//! This module provides common utilities used across the MaluWAF codebase:
+//!
+//! # Submodules
+//! - [`ratelimit`] - Rate limiting utilities
+//! - [`errors`] - Structured error message formatters
+//!
+//! # Types
+//! - [`ArcStr`] - Atomically reference-counted string for efficient cloning
+//! - [`RunningFlag`] - Thread-safe running state flag
+//! - [`DrainFlag`] - Thread-safe drain state flag
+//!
+//! # Extension Traits
+//! - [`ResultExt`] - Extension methods for `Result` types
+//! - [`OptionExt`] - Extension methods for `Option` types
+//!
+//! # Functions
+//! - [`current_timestamp()`] - Returns seconds since UNIX epoch
+//! - [`parse_host_port()`] - Parse host:port strings into `SocketAddr`
+//! - [`ip_to_slot()`] / [`hash_ip()`] - IP hashing for consistent slot assignment
+//! - [`parse_duration()`] / [`format_duration()`] - Parse/format duration strings
+//! - [`urlencoding_decode()`] - Decode URL-encoded strings
+//! - [`is_newer_version()`] - Compare semantic version strings
+
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
