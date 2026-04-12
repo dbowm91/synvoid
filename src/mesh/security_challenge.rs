@@ -9,7 +9,7 @@ use rand::Rng;
 use crate::mesh::config::MeshConfig;
 
 const DEFAULT_CHALLENGE_TIMEOUT_SECS: u64 = 60;
-const DEFAULT_CHALLENGE_DIFFICULTY: u32 = 20;
+const DEFAULT_CHALLENGE_DIFFICULTY: u32 = 24;
 const MAX_CHALLENGE_ATTEMPTS: usize = 3;
 const CHALLENGE_CACHE_SIZE: usize = 1000;
 
