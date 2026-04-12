@@ -2,9 +2,8 @@ pub mod core;
 pub mod sliding;
 
 use metrics::{counter, gauge};
+use indexmap::IndexMap;
 use parking_lot::RwLock;
-use std::cmp::Reverse;
-use std::collections::binary_heap::BinaryHeap;
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Arc;
@@ -23,7 +22,7 @@ pub use sliding::{
     SlidingWindowConfig, SlidingWindowLimiter,
 };
 
-const DEFAULT_SHARDS: usize = 256;
+const DEFAULT_SHARDS: usize = 64;
 
 pub struct RateLimiterState {
     shards: Vec<RateLimiterShard>,
@@ -33,6 +32,7 @@ pub struct RateLimiterState {
     config: RateLimitConfigStore,
     memory_config: RateLimitMemoryConfig,
     total_entries: RwLock<usize>,
+    lru_order: RwLock<IndexMap<IpAddr, Instant>>,
 }
 
 struct RateLimiterShard {
@@ -267,6 +267,7 @@ impl RateLimiterManager {
             },
             memory_config,
             total_entries: RwLock::new(0),
+            lru_order: RwLock::new(IndexMap::new()),
         });
 
         if cleanup_interval_secs > 0 {
@@ -289,6 +290,7 @@ impl RateLimiterManager {
                             }
                         }
                         let mut requests = shard.ip_requests.write();
+                        let lru_order = &cleanup_state.lru_order;
                         requests.retain(|_ip, state| {
                             state.remove_expired_windows(now);
 
@@ -296,6 +298,9 @@ impl RateLimiterManager {
                                 false
                             } else {
                                 state.touch();
+                                if let Some(lru) = lru_order.write().get_mut(_ip) {
+                                    *lru = now;
+                                }
                                 true
                             }
                         });
@@ -342,41 +347,23 @@ impl RateLimiterManager {
     }
 
     fn evict_lru_entries(state: &Arc<RateLimiterState>, count: usize) {
-        // Use a min-heap of size `count` to find the `count` oldest entries
-        // without sorting all entries.
-        let mut heap: BinaryHeap<Reverse<(Instant, IpAddr)>> = BinaryHeap::with_capacity(count + 1);
+        let mut lru = state.lru_order.write();
 
-        for shard in &state.shards {
-            let requests = shard.ip_requests.read();
-            for (ip, ip_state) in requests.iter() {
-                if let Some(last_access) = ip_state.last_access {
-                    if heap.len() < count {
-                        heap.push(Reverse((last_access, *ip)));
-                    } else if let Some(Reverse((top_time, _))) = heap.peek() {
-                        if last_access < *top_time {
-                            heap.pop();
-                            heap.push(Reverse((last_access, *ip)));
-                        }
-                    }
-                }
-            }
-        }
+        let to_evict: Vec<IpAddr> = lru.keys().take(count).cloned().collect();
 
-        let to_evict: Vec<IpAddr> = heap
-            .into_sorted_vec()
-            .into_iter()
-            .map(|r| (r.0).1)
-            .collect();
-
-        let evicted = to_evict.len();
-        for ip in to_evict {
+        for ip in &to_evict {
             for shard in &state.shards {
-                if shard.ip_requests.write().remove(&ip).is_some() {
+                if shard.ip_requests.write().remove(ip).is_some() {
                     break;
                 }
             }
         }
 
+        for ip in &to_evict {
+            lru.shift_remove(ip);
+        }
+
+        let evicted = to_evict.len();
         if evicted > 0 {
             tracing::info!("Evicted {} LRU entries from rate limiter", evicted);
         }

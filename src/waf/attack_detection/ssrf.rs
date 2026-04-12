@@ -1,4 +1,5 @@
 use aho_corasick::AhoCorasick;
+use std::borrow::Cow;
 use std::net::IpAddr;
 use std::sync::Arc;
 
@@ -242,7 +243,12 @@ impl SsrfDetector {
     }
 
     fn contains_private_ip_or_localhost(input: &str) -> bool {
-        let input_lower = input.to_lowercase();
+        let input_lower: Cow<str> = if input.bytes().any(|b| b.is_ascii_uppercase()) {
+            Cow::Owned(input.to_lowercase())
+        } else {
+            Cow::Borrowed(input)
+        };
+
         if input_lower.contains(".localhost")
             || input_lower.contains("localhost.")
             || input_lower.contains(".local")
@@ -308,15 +314,24 @@ impl SsrfDetector {
         input: &str,
         location: InputLocation,
     ) -> Option<AttackDetectionResult> {
-        let input_lower = input.to_lowercase();
+        let input_lower: Cow<str> = if input.bytes().any(|b| b.is_ascii_uppercase()) {
+            Cow::Owned(input.to_lowercase())
+        } else {
+            Cow::Borrowed(input)
+        };
+
         if self.is_allowed_domain(&input_lower) {
             return None;
         }
 
         let decoded = url_decode_all(input);
-        let decoded_lower = decoded.to_lowercase();
+        let decoded_lower: Cow<str> = if decoded.bytes().any(|b| b.is_ascii_uppercase()) {
+            Cow::Owned(decoded.to_lowercase())
+        } else {
+            Cow::Borrowed(&decoded)
+        };
 
-        if let Some(mat) = self.inner.patterns_ref().find(&decoded_lower) {
+        if let Some(mat) = self.inner.patterns_ref().find(decoded_lower.as_ref()) {
             let matched = decoded[mat.start()..mat.end()].to_string();
             tracing::warn!(
                 attack_type = "ssrf",
@@ -332,7 +347,8 @@ impl SsrfDetector {
             });
         }
 
-        if self.block_private_ips && Self::contains_private_ip_or_localhost(&decoded_lower) {
+        if self.block_private_ips && Self::contains_private_ip_or_localhost(decoded_lower.as_ref())
+        {
             tracing::warn!(
                 attack_type = "ssrf",
                 location = %location,

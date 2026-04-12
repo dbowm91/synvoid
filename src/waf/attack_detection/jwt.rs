@@ -1,6 +1,7 @@
 use crate::utils::url_decode_all;
 use aho_corasick::AhoCorasick;
 use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use crate::waf::attack_detection::config::{AttackDetectionResult, AttackType, InputLocation};
@@ -88,7 +89,11 @@ impl JwtDetector {
         header: &str,
         location: InputLocation,
     ) -> Option<AttackDetectionResult> {
-        let header_lower = header.to_lowercase();
+        let header_lower: Cow<str> = if header.bytes().any(|b| b.is_ascii_uppercase()) {
+            Cow::Owned(header.to_lowercase())
+        } else {
+            Cow::Borrowed(header)
+        };
 
         let alg_patterns = [
             "\"alg\":\"none\"",
@@ -178,7 +183,11 @@ impl JwtDetector {
         location: InputLocation,
     ) -> Option<AttackDetectionResult> {
         let decoded = decode_jwt_part(payload)?;
-        let decoded_lower = decoded.to_lowercase();
+        let decoded_lower: Cow<str> = if decoded.bytes().any(|b| b.is_ascii_uppercase()) {
+            Cow::Owned(decoded.to_lowercase())
+        } else {
+            Cow::Borrowed(&decoded)
+        };
 
         let privilege_patterns = [
             "\"admin\":true",
@@ -261,9 +270,15 @@ fn extract_jwt_token(input: &str) -> Option<String> {
         }
     }
 
+    let input_to_check_lower: Cow<str> = if input_to_check.bytes().any(|b| b.is_ascii_uppercase()) {
+        Cow::Owned(input_to_check.to_lowercase())
+    } else {
+        Cow::Borrowed(input_to_check)
+    };
+
     let patterns = ["jwt=", "token=", "bearer ", "Bearer "];
     for pattern in patterns {
-        if let Some(pos) = input_to_check.to_lowercase().find(&pattern.to_lowercase()) {
+        if let Some(pos) = input_to_check_lower.find(pattern) {
             let start = pos + pattern.len();
             let rest = &input_to_check[start..];
             if let Some(end) =

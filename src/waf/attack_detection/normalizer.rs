@@ -366,9 +366,11 @@ impl InputNormalizer {
             if let Some(n) = normalized {
                 if n.is_whitespace() {
                     input.push(' ');
+                } else if n.is_ascii() {
+                    input.push(n);
                 } else {
-                    let nfc: String = n.nfkc().collect();
-                    input.push_str(&nfc);
+                    let nfkc: Cow<'_, str> = n.nfkc().collect();
+                    input.push_str(&nfkc);
                 }
             }
         }

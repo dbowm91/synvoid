@@ -1,5 +1,6 @@
 use crate::utils::url_decode_all;
 use aho_corasick::AhoCorasick;
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use crate::waf::attack_detection::config::{AttackDetectionResult, AttackType, InputLocation};
@@ -145,20 +146,29 @@ impl OpenRedirectDetector {
         input: &str,
         location: InputLocation,
     ) -> Option<AttackDetectionResult> {
-        let input_lower = input.to_lowercase();
-        let decoded = url_decode_all(&input_lower);
-        let decoded_lower = decoded.to_lowercase();
+        let input_lower: Cow<str> = if input.bytes().any(|b| b.is_ascii_uppercase()) {
+            Cow::Owned(input.to_lowercase())
+        } else {
+            Cow::Borrowed(input)
+        };
 
-        if !self.is_external_redirect(&decoded_lower) {
-            if decoded != input_lower {
-                return self.detect_internal(input, location);
+        let decoded = url_decode_all(&input_lower);
+        let decoded_lower: Cow<str> = if decoded.bytes().any(|b| b.is_ascii_uppercase()) {
+            Cow::Owned(decoded.to_lowercase())
+        } else {
+            Cow::Borrowed(&decoded)
+        };
+
+        if !self.is_external_redirect(decoded_lower.as_ref()) {
+            if decoded != input_lower.as_ref() {
+                return self.detect_internal(&decoded, location);
             }
             return None;
         }
 
-        let is_redirect_param = self.is_redirect_param(&decoded_lower);
+        let is_redirect_param = self.is_redirect_param(decoded_lower.as_ref());
 
-        if let Some(mat) = self.inner.patterns_ref().find(&decoded_lower) {
+        if let Some(mat) = self.inner.patterns_ref().find(decoded_lower.as_ref()) {
             let matched = decoded_lower[mat.start()..mat.end()].to_string();
             tracing::warn!(
                 attack_type = "open_redirect",
@@ -174,8 +184,8 @@ impl OpenRedirectDetector {
             });
         }
 
-        if decoded != input_lower && is_redirect_param {
-            if let Some(mat) = self.inner.patterns_ref().find(&input_lower) {
+        if decoded != input_lower.as_ref() && is_redirect_param {
+            if let Some(mat) = self.inner.patterns_ref().find(input_lower.as_ref()) {
                 let matched = input_lower[mat.start()..mat.end()].to_string();
                 tracing::warn!(
                     attack_type = "open_redirect",
@@ -240,9 +250,14 @@ impl PatternDetector for OpenRedirectDetector {
         for header_name in redirect_headers {
             if let Some(header_value) = headers.get(header_name) {
                 if let Ok(value) = header_value.to_str() {
-                    let value_lower = value.to_lowercase();
+                    let value_lower: Cow<str> = if value.bytes().any(|b| b.is_ascii_uppercase()) {
+                        Cow::Owned(value.to_lowercase())
+                    } else {
+                        Cow::Borrowed(value)
+                    };
+
                     if self.is_external_redirect(&value_lower) {
-                        if let Some(mat) = self.inner.patterns_ref().find(&value_lower) {
+                        if let Some(mat) = self.inner.patterns_ref().find(value_lower.as_ref()) {
                             let matched = value_lower[mat.start()..mat.end()].to_string();
                             tracing::warn!(
                                 attack_type = "open_redirect",
