@@ -746,6 +746,7 @@ impl MeshCertManager {
         &self,
         peer_node_id: &str,
         cert_der: &[u8],
+        intermediate_certs: Option<&[CertificateDer<'static>]>,
     ) -> Result<bool, MeshCertError> {
         if self.is_certificate_revoked(peer_node_id) {
             tracing::warn!("Peer {} certificate is revoked", peer_node_id);
@@ -788,6 +789,7 @@ impl MeshCertManager {
             .map_err(|e| MeshCertError::ConfigError(format!("Failed to build verifier: {}", e)))?;
 
         let cert = CertificateDer::from(cert_der);
+        let intermediates = intermediate_certs.unwrap_or(&[]);
         let now = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .map_err(|e| MeshCertError::ConfigError(format!("System time error: {}", e)))?
@@ -798,7 +800,7 @@ impl MeshCertManager {
 
         match verifier.verify_server_cert(
             &cert,
-            &[],
+            intermediates,
             &server_name,
             &[],
             rustls_pki_types::UnixTime::since_unix_epoch(std::time::Duration::from_secs(
@@ -806,7 +808,11 @@ impl MeshCertManager {
             )),
         ) {
             Ok(_) => {
-                tracing::debug!("Peer {} certificate verified successfully", peer_node_id);
+                tracing::debug!(
+                    "Peer {} certificate verified successfully ({} intermediate certs)",
+                    peer_node_id,
+                    intermediates.len()
+                );
                 Ok(true)
             }
             Err(e) => {
