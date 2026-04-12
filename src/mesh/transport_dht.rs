@@ -71,7 +71,10 @@ impl MeshTransport {
             records.len()
         );
 
-        let rep_score = self.topology.get_peer_audit_reputation(from_peer).await
+        let rep_score = self
+            .topology
+            .get_peer_audit_reputation(from_peer)
+            .await
             .map(|rep| (rep * 100.0) as i64)
             .unwrap_or(0);
 

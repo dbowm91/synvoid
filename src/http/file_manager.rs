@@ -189,11 +189,11 @@ async fn delete_handler(
     )))
 }
 
-#[allow(dead_code)]
+#[axum::debug_handler]
 async fn mkdir_handler(
     State(state): State<Arc<FileManagerState>>,
-    Json(payload): Json<CreateDirectoryRequest>,
     headers: HeaderMap,
+    Json(payload): Json<CreateDirectoryRequest>,
 ) -> Result<impl IntoResponse, StatusCode> {
     require_auth(&state, &headers)?;
 
@@ -210,11 +210,11 @@ async fn mkdir_handler(
     )))
 }
 
-#[allow(dead_code)]
+#[axum::debug_handler]
 async fn rename_handler(
     State(state): State<Arc<FileManagerState>>,
-    Json(payload): Json<RenameRequest>,
     headers: HeaderMap,
+    Json(payload): Json<RenameRequest>,
 ) -> Result<impl IntoResponse, StatusCode> {
     require_auth(&state, &headers)?;
 
@@ -253,11 +253,11 @@ async fn get_permissions_handler(
     Ok(Json(ApiResponse::success(permissions)))
 }
 
-#[allow(dead_code)]
+#[axum::debug_handler]
 async fn set_permissions_handler(
     State(state): State<Arc<FileManagerState>>,
-    Json(payload): Json<SetPermissionsRequest>,
     headers: HeaderMap,
+    Json(payload): Json<SetPermissionsRequest>,
 ) -> Result<impl IntoResponse, StatusCode> {
     require_auth(&state, &headers)?;
 
@@ -321,11 +321,11 @@ async fn upload_handler(
     Ok(Json(ApiResponse::success(entry)))
 }
 
-#[allow(dead_code)]
+#[axum::debug_handler]
 async fn extract_handler(
     State(state): State<Arc<FileManagerState>>,
-    Json(payload): Json<ExtractArchiveRequest>,
     headers: HeaderMap,
+    Json(payload): Json<ExtractArchiveRequest>,
 ) -> Result<impl IntoResponse, StatusCode> {
     require_auth(&state, &headers)?;
 
@@ -359,15 +359,13 @@ pub fn create_file_manager_router(
         .route("/read/*path", get(read_handler))
         .route("/write/*path", put(write_handler))
         .route("/delete/*path", delete(delete_handler))
-        // TODO: Re-enable once axum version conflict is resolved
-        // .route("/mkdir", post(mkdir_handler))
-        // .route("/rename", post(rename_handler))
-        // .route("/permissions/*path", get(get_permissions_handler))
-        // .route("/permissions", put(set_permissions_handler))
+        .route("/mkdir", post(mkdir_handler))
+        .route("/rename", post(rename_handler))
+        .route("/permissions/*path", get(get_permissions_handler))
+        .route("/permissions", put(set_permissions_handler))
         .route("/search", get(search_handler))
         .route("/upload", post(upload_handler))
-        // TODO: Re-enable once axum version conflict is resolved
-        // .route("/extract", post(extract_handler))
+        .route("/extract", post(extract_handler))
         .with_state(Arc::new(state))
 }
 

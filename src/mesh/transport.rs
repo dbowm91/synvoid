@@ -1140,6 +1140,18 @@ impl MeshTransport {
                     load_report_transport.send_load_report_to_peers().await;
                 }
             });
+
+            // Global node heartbeat: publish heartbeat every 30s for liveness monitoring
+            // Only global nodes publish heartbeats; TTL is 90s (3x interval)
+            let heartbeat_transport = transport_for_maintenance.clone();
+            let heartbeat_interval = Duration::from_secs(30);
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(heartbeat_interval);
+                loop {
+                    interval.tick().await;
+                    heartbeat_transport.publish_global_node_heartbeat().await;
+                }
+            });
         }
 
         if let Some(ref runtime) = self.runtime {

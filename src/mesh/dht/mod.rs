@@ -337,6 +337,23 @@ impl NodeLoad {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GlobalNodeHeartbeat {
+    pub node_id: String,
+    pub timestamp: u64,
+    pub version: String,
+}
+
+impl GlobalNodeHeartbeat {
+    pub fn new(node_id: String) -> Self {
+        Self {
+            node_id,
+            timestamp: crate::mesh::safe_unix_timestamp(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GlobalNodeEntry {
     pub node_id: String,
     pub address: String,

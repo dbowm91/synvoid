@@ -25,6 +25,7 @@ pub enum DhtKey {
     GlobalNodePublicKey(String),
     NodeHealth(String),
     NodeLoad(String),
+    GlobalNodeHeartbeat(String),
     VerifiedUpstream(String),
     TierClaim(String),
 
@@ -120,6 +121,10 @@ impl DhtKey {
 
     pub fn node_load(node_id: &str) -> Self {
         DhtKey::NodeLoad(node_id.to_string())
+    }
+
+    pub fn global_node_heartbeat(node_id: &str) -> Self {
+        DhtKey::GlobalNodeHeartbeat(node_id.to_string())
     }
 
     pub fn verified_upstream(upstream_id: &str) -> Self {
@@ -255,6 +260,7 @@ impl DhtKey {
             DhtKey::GlobalNodePublicKey(node_id) => format!("global_node_pubkey:{}", node_id),
             DhtKey::NodeHealth(node_id) => format!("node_health:{}", node_id),
             DhtKey::NodeLoad(node_id) => format!("node_load:{}", node_id),
+            DhtKey::GlobalNodeHeartbeat(node_id) => format!("global_node_heartbeat:{}", node_id),
             DhtKey::VerifiedUpstream(upstream_id) => format!("verified_upstream:{}", upstream_id),
             DhtKey::TierClaim(org_id) => format!("tier_claim:{}", org_id),
             DhtKey::DnsZone(zone) => format!("dns_zone:{}", zone),
@@ -366,6 +372,9 @@ impl DhtKey {
             }
             "node_health" if parts.len() >= 2 => DhtKey::NodeHealth(parts[1..].join(":")),
             "node_load" if parts.len() >= 2 => DhtKey::NodeLoad(parts[1..].join(":")),
+            "global_node_heartbeat" if parts.len() >= 2 => {
+                DhtKey::GlobalNodeHeartbeat(parts[1..].join(":"))
+            }
             "verified_upstream" if parts.len() >= 2 => {
                 DhtKey::VerifiedUpstream(parts[1..].join(":"))
             }
@@ -461,6 +470,7 @@ impl DhtKey {
                 | DhtKey::GlobalNodePublicKey(_)
                 | DhtKey::NodeHealth(_)
                 | DhtKey::NodeLoad(_)
+                | DhtKey::GlobalNodeHeartbeat(_)
                 | DhtKey::VerifiedUpstream(_)
                 | DhtKey::TierClaim(_)
                 | DhtKey::DnsZone(_)
@@ -495,6 +505,7 @@ impl DhtKey {
         match self {
             DhtKey::NodeHealth(nid) => nid == node_id,
             DhtKey::NodeLoad(nid) => nid == node_id,
+            DhtKey::GlobalNodeHeartbeat(nid) => nid == node_id,
             DhtKey::NodeInfo(nid) => nid == node_id,
             _ => false,
         }
@@ -512,6 +523,7 @@ impl DhtKey {
             DhtKey::GlobalNodePublicKey(_) => "global_node_public_key",
             DhtKey::NodeHealth(_) => "node_health",
             DhtKey::NodeLoad(_) => "node_load",
+            DhtKey::GlobalNodeHeartbeat(_) => "global_node_heartbeat",
             DhtKey::VerifiedUpstream(_) => "verified_upstream",
             DhtKey::TierClaim(_) => "tier_claim",
             DhtKey::DnsZone(_) => "dns_zone",
@@ -550,6 +562,7 @@ impl DhtKey {
             DhtKey::GlobalNodePublicKey(_) => Some(SignedRecordType::GlobalNodePublicKey),
             DhtKey::NodeHealth(_) => Some(SignedRecordType::NodeHealth),
             DhtKey::NodeLoad(_) => Some(SignedRecordType::NodeLoad),
+            DhtKey::GlobalNodeHeartbeat(_) => Some(SignedRecordType::GlobalNodeHeartbeat),
             DhtKey::VerifiedUpstream(_) => Some(SignedRecordType::VerifiedUpstream),
             DhtKey::TierClaim(_) => Some(SignedRecordType::TierClaim),
             DhtKey::DnsZone(_) => Some(SignedRecordType::DnsZone),

@@ -46,6 +46,9 @@ impl SsrfDetector {
         if let Some(normalized) = Self::parse_ipv4_flexible(ip) {
             return Self::check_is_private_ip(&normalized);
         }
+        if let Ok(ip_addr) = ip.parse::<IpAddr>() {
+            return Self::check_is_private_ip(&ip_addr.to_string());
+        }
         false
     }
 
@@ -215,6 +218,18 @@ impl SsrfDetector {
     }
 
     fn looks_like_ip(s: &str) -> bool {
+        let s = s.trim();
+        if s.is_empty() {
+            return false;
+        }
+        if let Some(zone_pos) = s.find('%') {
+            let without_zone = &s[..zone_pos];
+            return Self::looks_like_ip_without_zone(without_zone);
+        }
+        Self::looks_like_ip_without_zone(s)
+    }
+
+    fn looks_like_ip_without_zone(s: &str) -> bool {
         // Strip IPv6 brackets: find matching [ and ] and extract inner content
         let s = if s.starts_with('[') {
             if let Some(bracket_end) = s.find(']') {
@@ -268,6 +283,18 @@ impl SsrfDetector {
     }
 
     fn normalize_ip_for_parse(s: &str) -> String {
+        let s = s.trim();
+        if s.is_empty() {
+            return String::new();
+        }
+        if let Some(zone_pos) = s.find('%') {
+            let without_zone = &s[..zone_pos];
+            return Self::normalize_ip_for_parse_inner(without_zone);
+        }
+        Self::normalize_ip_for_parse_inner(s)
+    }
+
+    fn normalize_ip_for_parse_inner(s: &str) -> String {
         // Strip IPv6 brackets
         let s = if s.starts_with('[') {
             if let Some(bracket_end) = s.find(']') {

@@ -155,8 +155,59 @@ impl MeshTransport {
     }
 
     pub(crate) async fn announce_global_node(&self) {
-        // Global nodes should NOT self-announce - they must be added by genesis key
         tracing::warn!("Global nodes cannot self-announce - must be added via genesis key");
+    }
+
+    pub(crate) async fn publish_global_node_heartbeat(&self) {
+        if !self.config.role.is_global() {
+            return;
+        }
+
+        let node_id = self.config.node_id();
+        let heartbeat = crate::mesh::dht::GlobalNodeHeartbeat::new(node_id.clone());
+
+        if let Ok(value) = serde_json::to_vec(&heartbeat) {
+            let key = crate::mesh::dht::DhtKey::global_node_heartbeat(&node_id);
+            let key_str = key.as_str();
+
+            if let Some(ref record_store) = self.record_store {
+                record_store.store_and_announce(key_str, value, 90);
+                tracing::debug!("Published global node heartbeat for {}", node_id);
+            }
+        }
+    }
+
+    pub(crate) async fn consume_global_node_heartbeat(
+        &self,
+        from_node_id: &str,
+        heartbeat: &crate::mesh::dht::GlobalNodeHeartbeat,
+    ) {
+        tracing::trace!(
+            "Global node heartbeat from {}: node_id={}, version={}, ts={}",
+            from_node_id,
+            heartbeat.node_id,
+            heartbeat.version,
+            heartbeat.timestamp
+        );
+
+        if heartbeat.node_id != from_node_id {
+            tracing::warn!(
+                "Global node heartbeat node_id mismatch: expected={}, got={}",
+                from_node_id,
+                heartbeat.node_id
+            );
+            return;
+        }
+
+        let now = crate::mesh::safe_unix_timestamp();
+        let age = now.saturating_sub(heartbeat.timestamp);
+        if age > 180 {
+            tracing::warn!(
+                "Stale global node heartbeat from {}: age={}s",
+                from_node_id,
+                age
+            );
+        }
     }
 
     pub(crate) async fn add_global_node(&self, target_node_id: &str, target_public_key: &str) {
