@@ -61,7 +61,9 @@ impl ConnectionTracker {
     }
 
     pub fn decrement_active(&self) {
-        self.total_active.fetch_sub(1, Ordering::Relaxed);
+        let _ = self
+            .total_active
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_sub(1));
     }
 
     pub fn increment_idle(&self) {
@@ -69,7 +71,9 @@ impl ConnectionTracker {
     }
 
     pub fn decrement_idle(&self) {
-        self.total_idle.fetch_sub(1, Ordering::Relaxed);
+        let _ = self
+            .total_idle
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_sub(1));
     }
 
     pub fn update_worker_connections(&self, worker_id: WorkerId, active: u64, idle: u64) {

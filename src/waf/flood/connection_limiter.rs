@@ -53,14 +53,18 @@ impl ConnectionLimiter {
 
         let active = self.active_connections.fetch_add(1, Ordering::Acquire);
         if active >= self.max_connections {
-            self.active_connections.fetch_sub(1, Ordering::Release);
+            let _ =
+                self.active_connections
+                    .fetch_update(Ordering::Release, Ordering::Relaxed, |v| v.checked_sub(1));
             metrics::counter!("maluwaf.connection_limiter.max_reached").increment(1);
             return FloodDecision::RateLimited;
         }
 
         let global = self.global_second.load(Ordering::Relaxed);
         if global > self.global_rate as u64 {
-            self.active_connections.fetch_sub(1, Ordering::Release);
+            let _ =
+                self.active_connections
+                    .fetch_update(Ordering::Release, Ordering::Relaxed, |v| v.checked_sub(1));
             metrics::counter!("maluwaf.connection_limiter.global_limited").increment(1);
             return FloodDecision::RateLimited;
         }
@@ -68,8 +72,12 @@ impl ConnectionLimiter {
         let slot = self.ip_to_slot(ip);
         let ip_count = self.per_ip_second[slot].fetch_add(1, Ordering::Relaxed);
         if ip_count > self.per_ip_rate {
-            self.per_ip_second[slot].fetch_sub(1, Ordering::Relaxed);
-            self.active_connections.fetch_sub(1, Ordering::Release);
+            let _ =
+                self.per_ip_second[slot]
+                    .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_sub(1));
+            let _ =
+                self.active_connections
+                    .fetch_update(Ordering::Release, Ordering::Relaxed, |v| v.checked_sub(1));
             metrics::counter!("maluwaf.connection_limiter.ip_limited").increment(1);
             return FloodDecision::RateLimited;
         }
@@ -101,8 +109,11 @@ impl ConnectionLimiter {
     }
 
     pub fn release_connection(&self) {
-        let active = self.active_connections.fetch_sub(1, Ordering::Relaxed);
-        metrics::gauge!("maluwaf.connection_limiter.active").set(active.saturating_sub(1) as f64);
+        let _ = self
+            .active_connections
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_sub(1));
+        metrics::gauge!("maluwaf.connection_limiter.active")
+            .set(self.active_connections.load(Ordering::Relaxed) as f64);
     }
 
     fn ip_to_slot(&self, ip: IpAddr) -> usize {

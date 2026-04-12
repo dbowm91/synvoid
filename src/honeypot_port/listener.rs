@@ -140,7 +140,7 @@ impl PortHoneypotListener {
                             tokio::spawn(async move {
                                 active.fetch_add(1, Ordering::Relaxed);
                                 handle_connection(stream, remote_addr, port, &config, &storage, &detector).await;
-                                active.fetch_sub(1, Ordering::Relaxed);
+                                let _ = active.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_sub(1));
                                 let mut counts = ip_counts.write();
                                 if let Some(c) = counts.get_mut(&ip_key) {
                                     *c = c.saturating_sub(1);

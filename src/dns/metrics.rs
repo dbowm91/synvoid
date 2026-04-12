@@ -146,7 +146,9 @@ impl DnsMetrics {
     }
 
     pub fn record_tcp_disconnect(&self) {
-        self.active_tcp_connections.fetch_sub(1, Ordering::Relaxed);
+        let _ =
+            self.active_tcp_connections
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_sub(1));
     }
 
     pub fn record_query_type(&self, qtype: &str) {

@@ -80,9 +80,9 @@ impl IpcConnectionPool {
         let stats = self.inner.endpoint_stats.read().await;
 
         if let Some(endpoint_stats) = stats.get(endpoint_name) {
-            endpoint_stats
+            let _ = endpoint_stats
                 .active_connections
-                .fetch_sub(1, Ordering::AcqRel);
+                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |v| v.checked_sub(1));
         }
     }
 
@@ -93,9 +93,9 @@ impl IpcConnectionPool {
             endpoint_stats
                 .failed_connections
                 .fetch_add(1, Ordering::AcqRel);
-            endpoint_stats
+            let _ = endpoint_stats
                 .active_connections
-                .fetch_sub(1, Ordering::AcqRel);
+                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |v| v.checked_sub(1));
         }
     }
 

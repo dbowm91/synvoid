@@ -133,7 +133,9 @@ impl SynFloodProtector {
         }
 
         if should_decrement {
-            self.half_open_total.fetch_sub(1, Ordering::Relaxed);
+            let _ = self
+                .half_open_total
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_sub(1));
             let half_open = self.half_open_total.load(Ordering::Relaxed);
             metrics::gauge!("maluwaf.syn_flood.half_open_count").set(half_open as f64);
         }
@@ -188,8 +190,11 @@ impl SynFloodProtector {
         });
 
         if removed_count > 0 {
-            self.half_open_total
-                .fetch_sub(removed_count, Ordering::Relaxed);
+            let _ = self
+                .half_open_total
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+                    v.checked_sub(removed_count)
+                });
             let half_open = self.half_open_total.load(Ordering::Relaxed);
             metrics::gauge!("maluwaf.syn_flood.half_open_count").set(half_open as f64);
             tracing::debug!("Cleaned up {} stale half-open connections", removed_count);

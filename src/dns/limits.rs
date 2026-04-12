@@ -135,7 +135,9 @@ impl ConnectionLimits {
         let current = self.connection_count.fetch_add(1, Ordering::Acquire);
 
         if current >= self.max_tcp_connections {
-            self.connection_count.fetch_sub(1, Ordering::Release);
+            let _ = self
+                .connection_count
+                .fetch_update(Ordering::Release, Ordering::Relaxed, |v| v.checked_sub(1));
             return Err(ConnectionLimitError::MaxConnectionsReached);
         }
 
@@ -155,7 +157,9 @@ impl ConnectionLimits {
         let current = self.query_count.fetch_add(1, Ordering::Acquire);
 
         if current >= self.max_concurrent_queries {
-            self.query_count.fetch_sub(1, Ordering::Release);
+            let _ = self
+                .query_count
+                .fetch_update(Ordering::Release, Ordering::Relaxed, |v| v.checked_sub(1));
             return Err(ConnectionLimitError::MaxQueriesReached);
         }
 
@@ -234,13 +238,19 @@ impl ConnectionLimits {
 
 impl Drop for ConnectionGuard<'_> {
     fn drop(&mut self) {
-        self.limits.connection_count.fetch_sub(1, Ordering::Release);
+        let _ =
+            self.limits
+                .connection_count
+                .fetch_update(Ordering::Release, Ordering::Relaxed, |v| v.checked_sub(1));
     }
 }
 
 impl Drop for QueryGuard<'_> {
     fn drop(&mut self) {
-        self.limits.query_count.fetch_sub(1, Ordering::Release);
+        let _ = self
+            .limits
+            .query_count
+            .fetch_update(Ordering::Release, Ordering::Relaxed, |v| v.checked_sub(1));
     }
 }
 
