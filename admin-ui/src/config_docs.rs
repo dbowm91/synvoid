@@ -136,7 +136,7 @@ pub const FIELDS: &[(&str, &str, ConfigFieldDoc)] = &[
         impact: Some("Incorrect configuration can allow IP spoofing attacks."),
         default: "127.0.0.1, ::1",
     }),
-    
+
     ("http", "header_read_timeout_secs", ConfigFieldDoc {
         label: "Header Read Timeout",
         description: "Seconds to wait for complete HTTP headers before closing the connection.",
