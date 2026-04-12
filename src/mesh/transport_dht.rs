@@ -71,32 +71,25 @@ impl MeshTransport {
             records.len()
         );
 
+        let rep_score = self.topology.get_peer_audit_reputation(from_peer).await
+            .map(|rep| (rep * 100.0) as i64)
+            .unwrap_or(0);
+
         let min_reputation = self.get_effective_write_threshold(from_peer).await;
 
-        if min_reputation > 0 {
-            if let Some(rep) = self.topology.get_peer_audit_reputation(from_peer).await {
-                let rep_score = (rep * 100.0) as i64;
-                if rep_score < min_reputation {
-                    tracing::debug!(
-                        "Rejecting DHT record announce from {}: reputation {} below threshold {}",
-                        from_peer,
-                        rep_score,
-                        min_reputation
-                    );
-                    return;
-                }
-            } else {
-                tracing::debug!(
-                    "Rejecting DHT record announce from {}: unknown peer (no reputation)",
-                    from_peer
-                );
-                return;
-            }
+        if min_reputation > 0 && rep_score < min_reputation {
+            tracing::debug!(
+                "Rejecting DHT record announce from {}: reputation {} below threshold {}",
+                from_peer,
+                rep_score,
+                min_reputation
+            );
+            return;
         }
 
         if let Some(ref record_store) = self.record_store {
             let signer = self.mesh_signer.as_ref();
-            record_store.handle_record_announce(records, source_node_id, 50, signer);
+            record_store.handle_record_announce(records, source_node_id, rep_score, signer);
         }
     }
 

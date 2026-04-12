@@ -28,8 +28,6 @@ impl MeshMessage {
             | Self::UpstreamBlocked { .. }
             | Self::BandwidthReport { .. }
             | Self::RouteUsageReport { .. }
-            | Self::UpstreamRegistrationRequest { .. }
-            | Self::UpstreamRegistrationResponse { .. }
             | Self::UpstreamVerificationQuery { .. }
             | Self::UpstreamVerificationResponse { .. }
             | Self::UpstreamOwnershipChallenge { .. }
@@ -158,12 +156,6 @@ impl MeshMessage {
             Self::DhtSnapshotRequest { request_id, .. } => Some(request_id.as_str().into()),
             Self::DhtSnapshotResponse { request_id, .. } => Some(request_id.as_str().into()),
             Self::DhtSyncRequest { request_id, .. } => Some(request_id.as_str().into()),
-            Self::UpstreamRegistrationRequest { request_id, .. } => {
-                Some(request_id.as_str().into())
-            }
-            Self::UpstreamRegistrationResponse { request_id, .. } => {
-                Some(request_id.as_str().into())
-            }
             Self::UpstreamVerificationQuery { request_id, .. } => Some(request_id.as_str().into()),
             Self::UpstreamVerificationResponse { request_id, .. } => {
                 Some(request_id.as_str().into())

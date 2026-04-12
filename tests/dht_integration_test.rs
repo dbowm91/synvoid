@@ -299,7 +299,6 @@ fn test_signed_record_type_variants() {
     let _ = SignedRecordType::NodeLoad;
     let _ = SignedRecordType::VerifiedUpstream;
     let _ = SignedRecordType::OrgNameReservation;
-    let _ = SignedRecordType::UpstreamRegistrationRequest;
     let _ = SignedRecordType::DnsZone;
     let _ = SignedRecordType::DnsRecord;
     let _ = SignedRecordType::DnsDomainRegistration;

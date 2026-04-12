@@ -1653,52 +1653,6 @@ impl From<&MeshMessage> for proto::MeshMessage {
                     timestamp: *timestamp,
                 })),
             },
-            MeshMessage::UpstreamRegistrationRequest {
-                request_id,
-                upstream_id,
-                upstream_url,
-                org_id,
-                requesting_node_id,
-                timestamp,
-                signature,
-                mesh_upstream_id,
-            } => proto::MeshMessage {
-                message_type: 96,
-                payload: Some(proto::mesh_message::Payload::UpstreamRegistrationRequest(
-                    proto::UpstreamRegistrationRequest {
-                        request_id: request_id.to_string(),
-                        upstream_id: upstream_id.to_string(),
-                        upstream_url: upstream_url.to_string(),
-                        org_id: org_id.as_ref().map(|s| s.to_string()),
-                        requesting_node_id: requesting_node_id.to_string(),
-                        timestamp: *timestamp,
-                        signature: signature.clone(),
-                        mesh_upstream_id: mesh_upstream_id.as_ref().map(|s| s.to_string()),
-                    },
-                )),
-            },
-            MeshMessage::UpstreamRegistrationResponse {
-                request_id,
-                upstream_id,
-                approved,
-                rejection_reason,
-                global_node_id,
-                global_node_signature,
-                timestamp,
-            } => proto::MeshMessage {
-                message_type: 97,
-                payload: Some(proto::mesh_message::Payload::UpstreamRegistrationResponse(
-                    proto::UpstreamRegistrationResponse {
-                        request_id: request_id.to_string(),
-                        upstream_id: upstream_id.to_string(),
-                        approved: *approved,
-                        rejection_reason: rejection_reason.as_ref().map(|s| s.to_string()),
-                        global_node_id: global_node_id.to_string(),
-                        global_node_signature: global_node_signature.clone().unwrap_or_default(),
-                        timestamp: *timestamp,
-                    },
-                )),
-            },
             MeshMessage::UpstreamVerificationQuery {
                 request_id,
                 upstream_id,

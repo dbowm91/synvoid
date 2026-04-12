@@ -352,43 +352,6 @@ impl MeshTransport {
                 )
                 .await;
             }
-            MeshMessage::UpstreamRegistrationRequest {
-                request_id,
-                upstream_id,
-                upstream_url,
-                org_id,
-                requesting_node_id,
-                timestamp: _,
-                signature: _,
-                mesh_upstream_id: _,
-            } => {
-                self.handle_upstream_registration_request(
-                    peer_id,
-                    &request_id,
-                    &upstream_id,
-                    &upstream_url,
-                    org_id.as_deref(),
-                    &requesting_node_id,
-                )
-                .await;
-            }
-            MeshMessage::UpstreamRegistrationResponse {
-                request_id: _,
-                upstream_id,
-                approved,
-                rejection_reason,
-                global_node_id: _,
-                global_node_signature: _,
-                timestamp: _,
-            } => {
-                self.handle_upstream_registration_response(
-                    peer_id,
-                    &upstream_id,
-                    approved,
-                    rejection_reason.as_deref(),
-                )
-                .await;
-            }
             MeshMessage::UpstreamVerificationQuery {
                 request_id,
                 upstream_id,
@@ -441,22 +404,6 @@ impl MeshTransport {
                     &challenge_type,
                     &challenge_token,
                     &global_node_id,
-                )
-                .await;
-            }
-            MeshMessage::UpstreamChallengeProof {
-                request_id,
-                upstream_id,
-                challenge_proof,
-                origin_node_id,
-                timestamp: _,
-            } => {
-                self.handle_upstream_challenge_proof(
-                    peer_id,
-                    &request_id,
-                    &upstream_id,
-                    &challenge_proof,
-                    &origin_node_id,
                 )
                 .await;
             }

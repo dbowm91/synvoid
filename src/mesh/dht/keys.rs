@@ -27,7 +27,6 @@ pub enum DhtKey {
     NodeLoad(String),
     VerifiedUpstream(String),
     TierClaim(String),
-    UpstreamRegistrationRequest(String),
 
     DnsZone(String),
     DnsRecord(String, String),
@@ -129,10 +128,6 @@ impl DhtKey {
 
     pub fn tier_claim(org_id: &str) -> Self {
         DhtKey::TierClaim(org_id.to_string())
-    }
-
-    pub fn upstream_registration_request(request_id: &str) -> Self {
-        DhtKey::UpstreamRegistrationRequest(request_id.to_string())
     }
 
     pub fn dns_zone(zone: &str) -> Self {
@@ -262,9 +257,6 @@ impl DhtKey {
             DhtKey::NodeLoad(node_id) => format!("node_load:{}", node_id),
             DhtKey::VerifiedUpstream(upstream_id) => format!("verified_upstream:{}", upstream_id),
             DhtKey::TierClaim(org_id) => format!("tier_claim:{}", org_id),
-            DhtKey::UpstreamRegistrationRequest(request_id) => {
-                format!("upstream_registration_request:{}", request_id)
-            }
             DhtKey::DnsZone(zone) => format!("dns_zone:{}", zone),
             DhtKey::DnsRecord(zone, name) => format!("dns_record:{}:{}", zone, name),
             DhtKey::DnsDomainRegistration(domain) => format!("dns_domain_reg:{}", domain),
@@ -378,9 +370,6 @@ impl DhtKey {
                 DhtKey::VerifiedUpstream(parts[1..].join(":"))
             }
             "tier_claim" if parts.len() >= 2 => DhtKey::TierClaim(parts[1..].join(":")),
-            "upstream_registration_request" if parts.len() >= 2 => {
-                DhtKey::UpstreamRegistrationRequest(parts[1..].join(":"))
-            }
             "dns_zone" if parts.len() >= 2 => DhtKey::DnsZone(parts[1..].join(":")),
             "dns_record" if parts.len() >= 3 => {
                 DhtKey::DnsRecord(parts[1].to_string(), parts[2].to_string())
@@ -458,7 +447,6 @@ impl DhtKey {
                 | DhtKey::MemberCertificate(_, _)
                 | DhtKey::GlobalNodeList
                 | DhtKey::OrgNameReservation(_)
-                | DhtKey::UpstreamRegistrationRequest(_)
                 | DhtKey::DnsZone(_)
                 | DhtKey::DnsDomainRegistration(_)
                 | DhtKey::AnycastNode(_)
@@ -493,16 +481,6 @@ impl DhtKey {
         )
     }
 
-    pub fn is_global_signature_required(&self) -> bool {
-        matches!(
-            self,
-            DhtKey::VerifiedUpstream(_)
-                | DhtKey::UpstreamOwnershipChallenge(_)
-                | DhtKey::GenesisKeyTransition { .. }
-                | DhtKey::RevokedGlobalNode { .. }
-        )
-    }
-
     pub fn requires_confirmation(&self) -> bool {
         matches!(
             self,
@@ -510,7 +488,6 @@ impl DhtKey {
                 | DhtKey::Organization(_)
                 | DhtKey::Upstream(_)
                 | DhtKey::OrgNameReservation(_)
-                | DhtKey::UpstreamRegistrationRequest(_)
         )
     }
 
@@ -537,7 +514,6 @@ impl DhtKey {
             DhtKey::NodeLoad(_) => "node_load",
             DhtKey::VerifiedUpstream(_) => "verified_upstream",
             DhtKey::TierClaim(_) => "tier_claim",
-            DhtKey::UpstreamRegistrationRequest(_) => "upstream_registration_request",
             DhtKey::DnsZone(_) => "dns_zone",
             DhtKey::DnsRecord(_, _) => "dns_record",
             DhtKey::DnsDomainRegistration(_) => "dns_domain_registration",
@@ -576,9 +552,6 @@ impl DhtKey {
             DhtKey::NodeLoad(_) => Some(SignedRecordType::NodeLoad),
             DhtKey::VerifiedUpstream(_) => Some(SignedRecordType::VerifiedUpstream),
             DhtKey::TierClaim(_) => Some(SignedRecordType::TierClaim),
-            DhtKey::UpstreamRegistrationRequest(_) => {
-                Some(SignedRecordType::UpstreamRegistrationRequest)
-            }
             DhtKey::DnsZone(_) => Some(SignedRecordType::DnsZone),
             DhtKey::DnsRecord(_, _) => Some(SignedRecordType::DnsRecord),
             DhtKey::DnsDomainRegistration(_) => Some(SignedRecordType::DnsDomainRegistration),

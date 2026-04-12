@@ -48,7 +48,6 @@ pub enum SignedRecordType {
     NodeLoad,
     VerifiedUpstream,
     OrgNameReservation,
-    UpstreamRegistrationRequest,
     DnsZone,
     DnsRecord,
     DnsDomainRegistration,
@@ -70,7 +69,6 @@ impl SignedRecordType {
                 | SignedRecordType::MemberCertificate
                 | SignedRecordType::GlobalNodeList
                 | SignedRecordType::OrgNameReservation
-                | SignedRecordType::UpstreamRegistrationRequest
                 | SignedRecordType::DnsZone
                 | SignedRecordType::DnsDomainRegistration
                 | SignedRecordType::AnycastNode
@@ -106,7 +104,6 @@ impl SignedRecordType {
                 | SignedRecordType::Organization
                 | SignedRecordType::Upstream
                 | SignedRecordType::OrgNameReservation
-                | SignedRecordType::UpstreamRegistrationRequest
         )
     }
 
@@ -124,7 +121,6 @@ impl SignedRecordType {
             SignedRecordType::NodeLoad => Some(Duration::from_secs(60)),
             SignedRecordType::VerifiedUpstream => Some(Duration::from_secs(300)),
             SignedRecordType::OrgNameReservation => Some(Duration::from_secs(86400 * 7)),
-            SignedRecordType::UpstreamRegistrationRequest => Some(Duration::from_secs(3600)),
             SignedRecordType::DnsZone => Some(Duration::from_secs(3600)),
             SignedRecordType::DnsRecord => Some(Duration::from_secs(300)),
             SignedRecordType::DnsDomainRegistration => Some(Duration::from_secs(600)),
@@ -369,7 +365,6 @@ pub struct TtlManager {
     node_load_ttl: Duration,
     verified_upstream_ttl: Duration,
     org_name_reservation_ttl: Duration,
-    upstream_registration_request_ttl: Duration,
     upstream_image_protection_ttl: Duration,
     upstream_minification_ttl: Duration,
     upstream_compression_ttl: Duration,
@@ -391,7 +386,6 @@ impl Default for TtlManager {
             node_load_ttl: Duration::from_secs(60),
             verified_upstream_ttl: Duration::from_secs(300),
             org_name_reservation_ttl: Duration::from_secs(86400 * 7),
-            upstream_registration_request_ttl: Duration::from_secs(3600),
             upstream_image_protection_ttl: Duration::from_secs(3600),
             upstream_minification_ttl: Duration::from_secs(3600),
             upstream_compression_ttl: Duration::from_secs(3600),
@@ -434,7 +428,6 @@ impl TtlManager {
             SignedRecordType::NodeLoad => self.node_load_ttl,
             SignedRecordType::VerifiedUpstream => self.verified_upstream_ttl,
             SignedRecordType::OrgNameReservation => self.org_name_reservation_ttl,
-            SignedRecordType::UpstreamRegistrationRequest => self.upstream_registration_request_ttl,
             SignedRecordType::DnsZone => self.node_info_ttl,
             SignedRecordType::DnsRecord => self.upstream_ttl,
             SignedRecordType::DnsDomainRegistration => Duration::from_secs(600),

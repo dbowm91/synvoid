@@ -1034,33 +1034,6 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                 node_id: r.node_id.into(),
                 timestamp: r.timestamp,
             }),
-            proto::mesh_message::Payload::UpstreamRegistrationRequest(r) => {
-                Ok(MeshMessage::UpstreamRegistrationRequest {
-                    request_id: r.request_id.into(),
-                    upstream_id: r.upstream_id.into(),
-                    upstream_url: r.upstream_url.into(),
-                    org_id: r.org_id.map(|s| s.into()),
-                    requesting_node_id: r.requesting_node_id.into(),
-                    timestamp: r.timestamp,
-                    signature: r.signature,
-                    mesh_upstream_id: r.mesh_upstream_id.map(|s| s.into()),
-                })
-            }
-            proto::mesh_message::Payload::UpstreamRegistrationResponse(r) => {
-                Ok(MeshMessage::UpstreamRegistrationResponse {
-                    request_id: r.request_id.into(),
-                    upstream_id: r.upstream_id.into(),
-                    approved: r.approved,
-                    rejection_reason: r.rejection_reason.map(|s| s.into()),
-                    global_node_id: r.global_node_id.into(),
-                    global_node_signature: if r.global_node_signature.is_empty() {
-                        None
-                    } else {
-                        Some(r.global_node_signature)
-                    },
-                    timestamp: r.timestamp,
-                })
-            }
             proto::mesh_message::Payload::UpstreamVerificationQuery(r) => {
                 Ok(MeshMessage::UpstreamVerificationQuery {
                     request_id: r.request_id.into(),

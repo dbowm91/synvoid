@@ -229,8 +229,6 @@ message MeshMessage {
         DhtAntiEntropyResponse dht_anti_entropy_response = 93;
         DhtRecordPush dht_record_push = 94;
         DhtRecordPushAck dht_record_push_ack = 95;
-        UpstreamRegistrationRequest upstream_registration_request = 96;
-        UpstreamRegistrationResponse upstream_registration_response = 97;
         UpstreamVerificationQuery upstream_verification_query = 98;
         UpstreamVerificationResponse upstream_verification_response = 99;
         KeyForward key_forward = 100;
@@ -774,27 +772,6 @@ message DhtRecordPushAck {
     bool accepted = 4;
     repeated string missing_keys = 5;
     uint64 timestamp = 6;
-}
-
-message UpstreamRegistrationRequest {
-    string request_id = 1;
-    string upstream_id = 2;
-    string upstream_url = 3;
-    optional string org_id = 4;
-    string requesting_node_id = 5;
-    uint64 timestamp = 6;
-    bytes signature = 7;
-    optional string mesh_upstream_id = 8;
-}
-
-message UpstreamRegistrationResponse {
-    string request_id = 1;
-    string upstream_id = 2;
-    bool approved = 3;
-    optional string rejection_reason = 4;
-    string global_node_id = 5;
-    bytes global_node_signature = 6;
-    uint64 timestamp = 7;
 }
 
 message UpstreamVerificationQuery {
