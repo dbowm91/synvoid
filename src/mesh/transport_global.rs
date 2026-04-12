@@ -1,7 +1,7 @@
 #![allow(dead_code)] // Reserved for future global node protocol handling
 
 use crate::mesh::transport::MeshTransport;
-use base64::Engine;
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use ed25519_dalek::Verifier;
 
 use crate::mesh::protocol::MeshMessage;
@@ -742,5 +742,319 @@ impl MeshTransport {
             peer_count
         );
         None
+    }
+
+    pub(crate) async fn handle_genesis_key_transition(
+        &self,
+        from_peer: &str,
+        sequence: u32,
+        new_key_fingerprint: &str,
+        announced_by: &str,
+        timestamp: u64,
+        genesis_signature: &[u8],
+    ) {
+        tracing::info!(
+            "Received GenesisKeyTransition: sequence={} new_fp={} from {} announced_by={}",
+            sequence,
+            new_key_fingerprint,
+            from_peer,
+            announced_by
+        );
+
+        if !self.config.role.is_global() {
+            tracing::warn!("Non-global node received GenesisKeyTransition, ignoring");
+            return;
+        }
+
+        let genesis_key = match self.config.genesis_key() {
+            Some(g) => g,
+            None => {
+                tracing::warn!("No genesis key configured - cannot verify GenesisKeyTransition");
+                return;
+            }
+        };
+
+        let signable = format!(
+            "{}:{}:{}:{}",
+            sequence, new_key_fingerprint, announced_by, timestamp
+        );
+
+        let signature_valid = genesis_key.verify(&signable, genesis_signature)
+            || genesis_key.verify_previous_key(&signable, genesis_signature);
+
+        if !signature_valid {
+            tracing::warn!(
+                "Invalid genesis signature on GenesisKeyTransition from {}",
+                from_peer
+            );
+            return;
+        }
+
+        if let Some(ref record_store) = self.record_store {
+            let key = crate::mesh::dht::keys::DhtKey::genesis_key_transition(sequence);
+            let value = serde_json::json!({
+                "sequence": sequence,
+                "new_key_fingerprint": new_key_fingerprint,
+                "announced_by": announced_by,
+                "timestamp": timestamp,
+            });
+            if let Ok(bytes) = serde_json::to_vec(&value) {
+                record_store.store_and_announce(key.as_str(), bytes, 86400);
+                tracing::info!("Stored GenesisKeyTransition in DHT");
+            }
+        }
+
+        if self
+            .config
+            .role
+            .contains(crate::mesh::config::MeshNodeRole::GLOBAL)
+        {
+            let msg = crate::mesh::protocol::MeshMessage::GenesisKeyTransition {
+                sequence,
+                new_key_fingerprint: new_key_fingerprint.into(),
+                announced_by: announced_by.into(),
+                timestamp,
+                genesis_signature: genesis_signature.to_vec(),
+            };
+            let _ = self
+                .broadcast_to_random_peers(
+                    msg,
+                    0.5,
+                    Some(crate::mesh::config::MeshNodeRole::GLOBAL),
+                )
+                .await;
+        }
+    }
+
+    pub(crate) async fn revoke_global_node(&self, target_node_id: &str, reason: &str) {
+        if !self.config.role.is_global() {
+            tracing::warn!("Only global nodes can revoke other global nodes");
+            return;
+        }
+
+        let genesis_key = match self.config.genesis_key() {
+            Some(g) => g,
+            None => {
+                tracing::warn!("No genesis key configured - cannot revoke global nodes");
+                return;
+            }
+        };
+
+        let timestamp = crate::utils::safe_unix_timestamp();
+
+        let signable = format!("{}:{}:{}", target_node_id, reason, timestamp);
+
+        let signature = match genesis_key.sign(&signable) {
+            Some(sig) => sig,
+            None => {
+                tracing::warn!("Failed to sign revocation with genesis key");
+                return;
+            }
+        };
+
+        if let Some(ref revocation_list) = self.revocation_list {
+            revocation_list.add_revoked_node(target_node_id, reason);
+        }
+
+        if let Some(ref record_store) = self.record_store {
+            let key = crate::mesh::dht::keys::DhtKey::revoked_global_node(target_node_id);
+            let value = serde_json::json!({
+                "node_id": target_node_id,
+                "revoked_at": timestamp,
+                "reason": reason,
+            });
+            if let Ok(bytes) = serde_json::to_vec(&value) {
+                record_store.store_and_announce(key.as_str(), bytes, 86400);
+                tracing::info!("Stored RevokedGlobalNode in DHT");
+            }
+        }
+
+        if self
+            .config
+            .role
+            .contains(crate::mesh::config::MeshNodeRole::GLOBAL)
+        {
+            let msg = crate::mesh::protocol::MeshMessage::RevokeGlobalNode {
+                node_id: target_node_id.into(),
+                reason: reason.into(),
+                timestamp,
+                genesis_signature: signature,
+            };
+            let _ = self
+                .broadcast_to_random_peers(
+                    msg,
+                    0.5,
+                    Some(crate::mesh::config::MeshNodeRole::GLOBAL),
+                )
+                .await;
+        }
+
+        tracing::info!("Revoked global node {}: {}", target_node_id, reason);
+    }
+
+    pub(crate) async fn handle_revoke_global_node(
+        &self,
+        from_peer: &str,
+        node_id: &str,
+        reason: &str,
+        timestamp: u64,
+        genesis_signature: &[u8],
+    ) {
+        tracing::info!(
+            "Received RevokeGlobalNode: {} from {} reason={}",
+            node_id,
+            from_peer,
+            reason
+        );
+
+        if !self.config.role.is_global() {
+            tracing::warn!("Non-global node received RevokeGlobalNode, ignoring");
+            return;
+        }
+
+        let genesis_key = match self.config.genesis_key() {
+            Some(g) => g,
+            None => {
+                tracing::warn!("No genesis key configured - cannot verify RevokeGlobalNode");
+                return;
+            }
+        };
+
+        let signable = format!("{}:{}:{}", node_id, reason, timestamp);
+
+        let signature_valid = genesis_key.verify(&signable, genesis_signature)
+            || genesis_key.verify_previous_key(&signable, genesis_signature);
+
+        if !signature_valid {
+            tracing::warn!(
+                "Invalid genesis signature on RevokeGlobalNode from {}",
+                from_peer
+            );
+            return;
+        }
+
+        if let Some(ref revocation_list) = self.revocation_list {
+            revocation_list.add_revoked_node(node_id, reason);
+        }
+
+        if let Some(ref record_store) = self.record_store {
+            let key = crate::mesh::dht::keys::DhtKey::revoked_global_node(node_id);
+            let value = serde_json::json!({
+                "node_id": node_id,
+                "revoked_at": timestamp,
+                "reason": reason,
+            });
+            if let Ok(bytes) = serde_json::to_vec(&value) {
+                record_store.store_and_announce(key.as_str(), bytes, 86400);
+                tracing::info!("Stored RevokedGlobalNode in DHT");
+            }
+        }
+
+        if self
+            .config
+            .role
+            .contains(crate::mesh::config::MeshNodeRole::GLOBAL)
+        {
+            let msg = crate::mesh::protocol::MeshMessage::RevokeGlobalNode {
+                node_id: node_id.into(),
+                reason: reason.into(),
+                timestamp,
+                genesis_signature: genesis_signature.to_vec(),
+            };
+            let _ = self
+                .broadcast_to_random_peers(
+                    msg,
+                    0.5,
+                    Some(crate::mesh::config::MeshNodeRole::GLOBAL),
+                )
+                .await;
+        }
+    }
+
+    pub(crate) async fn initiate_genesis_key_rotation(
+        &self,
+        new_key_base64: &str,
+    ) -> Result<(), String> {
+        if !self.config.is_genesis_node() {
+            return Err("Only genesis node can initiate key rotation".to_string());
+        }
+
+        let genesis_key = match self.config.genesis_key() {
+            Some(g) => g,
+            None => {
+                return Err("No genesis key configured".to_string());
+            }
+        };
+
+        use base64::Engine;
+        let key_bytes = URL_SAFE_NO_PAD
+            .decode(new_key_base64)
+            .map_err(|e| format!("Invalid base64 genesis key: {}", e))?;
+
+        if key_bytes.len() != 32 {
+            return Err("Genesis key must be 32 bytes".to_string());
+        }
+
+        let new_sequence = genesis_key.rotation_sequence + 1;
+        let timestamp = crate::utils::safe_unix_timestamp();
+
+        let new_key_fingerprint = hex::encode(&key_bytes[..16]);
+        let new_key_fingerprint_for_store = new_key_fingerprint.clone();
+
+        let signable = format!(
+            "{}:{}:{}:{}",
+            new_sequence,
+            new_key_fingerprint,
+            self.config.node_id(),
+            timestamp
+        );
+
+        let signature = match genesis_key.sign(&signable) {
+            Some(sig) => sig,
+            None => {
+                return Err("Failed to sign rotation announcement".to_string());
+            }
+        };
+
+        if let Some(ref record_store) = self.record_store {
+            let key = crate::mesh::dht::keys::DhtKey::genesis_key_transition(new_sequence);
+            let value = serde_json::json!({
+                "sequence": new_sequence,
+                "new_key_fingerprint": new_key_fingerprint_for_store,
+                "announced_by": self.config.node_id(),
+                "timestamp": timestamp,
+            });
+            if let Ok(bytes) = serde_json::to_vec(&value) {
+                record_store.store_and_announce(key.as_str(), bytes, 86400);
+            }
+        }
+
+        if self
+            .config
+            .role
+            .contains(crate::mesh::config::MeshNodeRole::GLOBAL)
+        {
+            let msg = crate::mesh::protocol::MeshMessage::GenesisKeyTransition {
+                sequence: new_sequence,
+                new_key_fingerprint: new_key_fingerprint.clone().into(),
+                announced_by: self.config.node_id().into(),
+                timestamp,
+                genesis_signature: signature,
+            };
+            let _ = self
+                .broadcast_to_random_peers(
+                    msg,
+                    0.5,
+                    Some(crate::mesh::config::MeshNodeRole::GLOBAL),
+                )
+                .await;
+        }
+
+        tracing::info!(
+            "Initiated genesis key rotation: sequence={} new_fp={}",
+            new_sequence,
+            new_key_fingerprint
+        );
+        Ok(())
     }
 }

@@ -80,7 +80,9 @@ impl MeshMessage {
             | Self::TierKeyQuery { .. }
             | Self::TierKeyQueryResponse { .. }
             | Self::UnspentTierKeyAnnounce { .. }
-            | Self::GlobalNodeAnnounce { .. } => MessageCategory::Organization,
+            | Self::GlobalNodeAnnounce { .. }
+            | Self::GenesisKeyTransition { .. }
+            | Self::RevokeGlobalNode { .. } => MessageCategory::Organization,
             Self::ThreatAnnounce { .. }
             | Self::ThreatSyncRequest { .. }
             | Self::ThreatSyncResponse { .. }

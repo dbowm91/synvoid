@@ -267,7 +267,24 @@ message MeshMessage {
         ServerlessFunctionAnnounce serverless_function_announce = 132;
         UpstreamOwnershipChallenge upstream_ownership_challenge = 133;
         UpstreamChallengeProof upstream_challenge_proof = 134;
+        GenesisKeyTransition genesis_key_transition = 135;
+        RevokeGlobalNode revoke_global_node = 136;
     }
+}
+
+message GenesisKeyTransition {
+    uint32 sequence = 1;
+    string new_key_fingerprint = 2;
+    string announced_by = 3;
+    uint64 timestamp = 4;
+    bytes genesis_signature = 5;
+}
+
+message RevokeGlobalNode {
+    string node_id = 1;
+    string reason = 2;
+    uint64 timestamp = 3;
+    bytes genesis_signature = 4;
 }
 
 message Hello {

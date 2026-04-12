@@ -880,6 +880,10 @@ pub struct GenesisKeyConfig {
     pub public_key: Option<String>,
     #[serde(default)]
     pub is_first_node: bool,
+    #[serde(default)]
+    pub previous_genesis_key_base64: Option<String>,
+    #[serde(default)]
+    pub rotation_sequence: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

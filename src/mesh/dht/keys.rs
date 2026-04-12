@@ -70,6 +70,16 @@ pub enum DhtKey {
         provider_node_id: String,
     },
     UpstreamOwnershipChallenge(String),
+    GenesisKeyTransition {
+        sequence: u32,
+        new_key_fingerprint: String,
+        announced_by: String,
+    },
+    RevokedGlobalNode {
+        node_id: String,
+        revoked_at: u64,
+        reason: String,
+    },
 }
 
 impl DhtKey {
@@ -220,6 +230,22 @@ impl DhtKey {
         DhtKey::UpstreamOwnershipChallenge(upstream_id.to_string())
     }
 
+    pub fn genesis_key_transition(sequence: u32) -> Self {
+        DhtKey::GenesisKeyTransition {
+            sequence,
+            new_key_fingerprint: String::new(),
+            announced_by: String::new(),
+        }
+    }
+
+    pub fn revoked_global_node(node_id: &str) -> Self {
+        DhtKey::RevokedGlobalNode {
+            node_id: node_id.to_string(),
+            revoked_at: 0,
+            reason: String::new(),
+        }
+    }
+
     pub fn as_str(&self) -> String {
         match self {
             DhtKey::Organization(org_id) => format!("org:{}", org_id),
@@ -304,6 +330,23 @@ impl DhtKey {
             }
             DhtKey::UpstreamOwnershipChallenge(upstream_id) => {
                 format!("upstream_ownership_challenge:{}", upstream_id)
+            }
+            DhtKey::GenesisKeyTransition {
+                sequence,
+                new_key_fingerprint,
+                announced_by,
+            } => {
+                format!(
+                    "genesis_key_transition:{}:{}:{}",
+                    sequence, new_key_fingerprint, announced_by
+                )
+            }
+            DhtKey::RevokedGlobalNode {
+                node_id,
+                revoked_at,
+                reason,
+            } => {
+                format!("revoked_global_node:{}:{}:{}", node_id, revoked_at, reason)
             }
         }
     }
@@ -393,6 +436,16 @@ impl DhtKey {
             "upstream_ownership_challenge" if parts.len() >= 2 => {
                 DhtKey::UpstreamOwnershipChallenge(parts[1..].join(":"))
             }
+            "genesis_key_transition" if parts.len() >= 4 => DhtKey::GenesisKeyTransition {
+                sequence: parts[1].parse().unwrap_or(0),
+                new_key_fingerprint: parts[2].to_string(),
+                announced_by: parts[3].to_string(),
+            },
+            "revoked_global_node" if parts.len() >= 4 => DhtKey::RevokedGlobalNode {
+                node_id: parts[1].to_string(),
+                revoked_at: parts[2].parse().unwrap_or(0),
+                reason: parts[3..].join(":"),
+            },
             _ => DhtKey::NodeInfo(s.to_string()),
         }
     }
@@ -435,13 +488,18 @@ impl DhtKey {
                 | DhtKey::OriginReachability { .. }
                 | DhtKey::OriginPenalty { .. }
                 | DhtKey::UpstreamOwnershipChallenge(_)
+                | DhtKey::GenesisKeyTransition { .. }
+                | DhtKey::RevokedGlobalNode { .. }
         )
     }
 
     pub fn is_global_signature_required(&self) -> bool {
         matches!(
             self,
-            DhtKey::VerifiedUpstream(_) | DhtKey::UpstreamOwnershipChallenge(_)
+            DhtKey::VerifiedUpstream(_)
+                | DhtKey::UpstreamOwnershipChallenge(_)
+                | DhtKey::GenesisKeyTransition { .. }
+                | DhtKey::RevokedGlobalNode { .. }
         )
     }
 
@@ -498,6 +556,8 @@ impl DhtKey {
             DhtKey::VerificationTask { .. } => "verification_task",
             DhtKey::OriginPenalty { .. } => "origin_penalty",
             DhtKey::UpstreamOwnershipChallenge(_) => "upstream_ownership_challenge",
+            DhtKey::GenesisKeyTransition { .. } => "genesis_key_transition",
+            DhtKey::RevokedGlobalNode { .. } => "revoked_global_node",
         }
     }
 
@@ -537,6 +597,8 @@ impl DhtKey {
             DhtKey::VerificationTask { .. } => None,
             DhtKey::OriginPenalty { .. } => None,
             DhtKey::UpstreamOwnershipChallenge(_) => None,
+            DhtKey::GenesisKeyTransition { .. } => None,
+            DhtKey::RevokedGlobalNode { .. } => None,
         }
     }
 

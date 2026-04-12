@@ -56,6 +56,7 @@ impl MeshTransport {
             dns_zones: self.dns_zones.clone(),
             site_config_sync_tx: self.site_config_sync_tx.clone(),
             verification_manager: self.verification_manager.clone(),
+            revocation_list: self.revocation_list.clone(),
         }
     }
 

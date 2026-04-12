@@ -2239,6 +2239,40 @@ impl From<&MeshMessage> for proto::MeshMessage {
                     )),
                 }
             }
+            MeshMessage::GenesisKeyTransition {
+                sequence,
+                new_key_fingerprint,
+                announced_by,
+                timestamp,
+                genesis_signature,
+            } => proto::MeshMessage {
+                message_type: 135,
+                payload: Some(proto::mesh_message::Payload::GenesisKeyTransition(
+                    proto::GenesisKeyTransition {
+                        sequence: *sequence,
+                        new_key_fingerprint: new_key_fingerprint.to_string(),
+                        announced_by: announced_by.to_string(),
+                        timestamp: *timestamp,
+                        genesis_signature: genesis_signature.clone(),
+                    },
+                )),
+            },
+            MeshMessage::RevokeGlobalNode {
+                node_id,
+                reason,
+                timestamp,
+                genesis_signature,
+            } => proto::MeshMessage {
+                message_type: 136,
+                payload: Some(proto::mesh_message::Payload::RevokeGlobalNode(
+                    proto::RevokeGlobalNode {
+                        node_id: node_id.to_string(),
+                        reason: reason.to_string(),
+                        timestamp: *timestamp,
+                        genesis_signature: genesis_signature.clone(),
+                    },
+                )),
+            },
         }
     }
 }

@@ -1,28 +1,56 @@
-/// Ed25519 challenge-response authentication for mesh peers claiming global role.
-///
-/// Replaces the previous shared secret approach with cryptographic verification:
-/// - Global nodes sign a challenge with their Ed25519 private key
-/// - Verifying nodes check the signature against a list of authorized public keys
-/// - The challenge includes the peer's node_id and a timestamp to prevent replay
+use dashmap::DashMap;
 use ed25519_dalek::{Signer, Verifier};
+use std::sync::Arc;
 
-/// Verifies that a peer claiming a global role has a valid Ed25519 signature.
-///
-/// The signature is over the format: `{node_id}:{timestamp}`
-/// This prevents replay attacks since timestamps are validated.
-///
-/// # Arguments
-/// * `role` - The role claimed by the peer
-/// * `authorized_global_pubkeys` - List of authorized global node public keys (base64 URL-safe no-pad)
-/// * `peer_node_id` - The node ID claimed by the peer
-/// * `peer_public_key` - The Ed25519 public key of the peer (base64 URL-safe no-pad)
-/// * `peer_signature` - The signature over the challenge data (base64 URL-safe no-pad)
-/// * `timestamp` - The timestamp included in the challenge
-/// * `max_age_secs` - Maximum allowed age of the challenge (default: 300 seconds)
-///
-/// # Returns
-/// * `Ok(())` if the peer is not claiming global, or if signature verification succeeds
-/// * `Err(String)` with a descriptive message if verification fails
+#[derive(Debug, Clone)]
+pub struct RevocationInfo {
+    pub revoked_at: u64,
+    pub reason: String,
+}
+
+pub struct GlobalNodeRevocationList {
+    revoked_nodes: Arc<DashMap<String, RevocationInfo>>,
+}
+
+impl GlobalNodeRevocationList {
+    pub fn new() -> Self {
+        Self {
+            revoked_nodes: Arc::new(DashMap::new()),
+        }
+    }
+
+    pub fn add_revoked_node(&self, node_id: &str, reason: &str) {
+        let info = RevocationInfo {
+            revoked_at: crate::utils::current_timestamp(),
+            reason: reason.to_string(),
+        };
+        self.revoked_nodes.insert(node_id.to_string(), info);
+    }
+
+    pub fn is_node_revoked(&self, node_id: &str) -> Option<RevocationInfo> {
+        self.revoked_nodes
+            .get(node_id)
+            .map(|entry| entry.value().clone())
+    }
+
+    pub fn remove_revoked_node(&self, node_id: &str) {
+        self.revoked_nodes.remove(node_id);
+    }
+
+    pub fn get_all_revoked(&self) -> Vec<(String, RevocationInfo)> {
+        self.revoked_nodes
+            .iter()
+            .map(|entry| (entry.key().clone(), entry.value().clone()))
+            .collect()
+    }
+}
+
+impl Default for GlobalNodeRevocationList {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub fn validate_peer_role(
     role: &crate::mesh::config::MeshNodeRole,
     authorized_global_pubkeys: &[String],
@@ -31,9 +59,19 @@ pub fn validate_peer_role(
     peer_signature: Option<&str>,
     timestamp: u64,
     max_age_secs: u64,
+    revoked_nodes: Option<&GlobalNodeRevocationList>,
 ) -> Result<(), String> {
     if !role.is_global() {
         return Ok(());
+    }
+
+    if let Some(revocation_list) = revoked_nodes {
+        if let Some(revocation_info) = revocation_list.is_node_revoked(peer_node_id) {
+            return Err(format!(
+                "Global node {} has been revoked: {} (at {})",
+                peer_node_id, revocation_info.reason, revocation_info.revoked_at
+            ));
+        }
     }
 
     let pubkey = peer_public_key.ok_or_else(|| {
@@ -50,7 +88,6 @@ pub fn validate_peer_role(
         )
     })?;
 
-    // Validate timestamp to prevent replay attacks
     let now = crate::utils::current_timestamp();
     if now.saturating_sub(timestamp) > max_age_secs {
         return Err(format!(
@@ -65,7 +102,6 @@ pub fn validate_peer_role(
         ));
     }
 
-    // Verify the public key is in the authorized list
     if authorized_global_pubkeys.is_empty() {
         return Err(format!(
             "Global node {} authentication failed: no authorized global node public keys configured",
@@ -73,7 +109,6 @@ pub fn validate_peer_role(
         ));
     }
 
-    // Decode public key
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
     let pk_bytes = URL_SAFE_NO_PAD.decode(pubkey).map_err(|e| {
         format!(
@@ -90,7 +125,6 @@ pub fn validate_peer_role(
         ));
     }
 
-    // Check decoded pubkey is in authorized list
     let pk_base64 = URL_SAFE_NO_PAD.encode(&pk_bytes);
     if !authorized_global_pubkeys.iter().any(|k| k == &pk_base64) {
         return Err(format!(
@@ -99,7 +133,6 @@ pub fn validate_peer_role(
         ));
     }
 
-    // Decode signature
     let sig_bytes = URL_SAFE_NO_PAD.decode(signature).map_err(|e| {
         format!(
             "Global node {} has invalid signature encoding: {}",
@@ -115,7 +148,6 @@ pub fn validate_peer_role(
         ));
     }
 
-    // Build challenge message and verify signature
     let challenge = format!("{}:{}", peer_node_id, timestamp);
     let mut pk_array = [0u8; 32];
     pk_array.copy_from_slice(&pk_bytes);
@@ -145,16 +177,6 @@ pub fn validate_peer_role(
     Ok(())
 }
 
-/// Generates an Ed25519 signature for global node authentication.
-///
-/// Signs the format: `{node_id}:{timestamp}` using the provided secret key.
-///
-/// # Arguments
-/// * `node_id` - This node's ID
-/// * `secret_key` - Ed25519 secret key bytes (32 bytes)
-///
-/// # Returns
-/// * `(signature, timestamp)` - Base64-encoded signature and the timestamp used
 pub fn generate_global_node_auth(
     node_id: &str,
     secret_key: &[u8; 32],
@@ -200,6 +222,7 @@ mod tests {
             None,
             0,
             300,
+            None,
         );
         assert!(result.is_ok());
     }
@@ -218,8 +241,32 @@ mod tests {
             Some(&signature),
             timestamp,
             300,
+            None,
         );
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_revoked_node_fails() {
+        let (secret, public) = generate_test_keypair();
+        let (signature, timestamp) =
+            generate_global_node_auth("test-global-node", &secret).unwrap();
+
+        let revocation_list = GlobalNodeRevocationList::new();
+        revocation_list.add_revoked_node("test-global-node", "Compromised key");
+
+        let result = validate_peer_role(
+            &crate::mesh::config::MeshNodeRole::GLOBAL,
+            &[public.clone()],
+            "test-global-node",
+            Some(&public),
+            Some(&signature),
+            timestamp,
+            300,
+            Some(&revocation_list),
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("has been revoked"));
     }
 
     #[test]
@@ -233,6 +280,7 @@ mod tests {
             None,
             0,
             300,
+            None,
         );
         assert!(result.is_err());
     }
@@ -248,6 +296,7 @@ mod tests {
             None,
             0,
             300,
+            None,
         );
         assert!(result.is_err());
     }
@@ -268,6 +317,7 @@ mod tests {
             Some(&signature),
             old_timestamp,
             300,
+            None,
         );
         assert!(result.is_err());
     }
@@ -276,10 +326,8 @@ mod tests {
     fn test_unauthorized_public_key_fails() {
         let (_, public_a) = generate_test_keypair();
         let (secret_b, public_b) = generate_different_keypair(0x02);
-        // Sign with secret_b, but authorized list has public_a
         let (signature, timestamp) = generate_global_node_auth("test-node", &secret_b).unwrap();
 
-        // Node presents public_b but authorized list has public_a
         let result = validate_peer_role(
             &crate::mesh::config::MeshNodeRole::GLOBAL,
             &[public_a],
@@ -288,13 +336,9 @@ mod tests {
             Some(&signature),
             timestamp,
             300,
+            None,
         );
-        // Should fail because public_b != public_a
-        assert!(
-            result.is_err(),
-            "Expected error for unauthorized key, got: {:?}",
-            result
-        );
+        assert!(result.is_err());
     }
 
     #[test]
@@ -310,6 +354,7 @@ mod tests {
             Some(&signature),
             timestamp,
             300,
+            None,
         );
         assert!(result.is_err());
         assert!(result
@@ -320,7 +365,6 @@ mod tests {
     #[test]
     fn test_invalid_signature_fails() {
         let (secret, public) = generate_test_keypair();
-        // Sign with same secret (valid), but then corrupt the signature
         let (signature, timestamp) = generate_global_node_auth("test-node", &secret).unwrap();
         let corrupted_sig = format!("{}corrupted", signature);
 
@@ -332,11 +376,8 @@ mod tests {
             Some(&corrupted_sig),
             timestamp,
             300,
+            None,
         );
-        assert!(
-            result.is_err(),
-            "Expected error for invalid signature encoding, got: {:?}",
-            result
-        );
+        assert!(result.is_err());
     }
 }

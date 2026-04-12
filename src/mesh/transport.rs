@@ -120,6 +120,7 @@ pub struct MeshTransport {
     pub(crate) site_config_sync_tx: Arc<RwLock<Option<mpsc::Sender<(String, String)>>>>,
     pub(crate) verification_manager:
         Arc<RwLock<Option<Arc<crate::mesh::verification::VerificationTaskManager>>>>,
+    pub(crate) revocation_list: Option<Arc<crate::mesh::peer_auth::GlobalNodeRevocationList>>,
 }
 
 impl Clone for MeshTransport {
@@ -164,6 +165,7 @@ impl Clone for MeshTransport {
             dns_zones: self.dns_zones.clone(),
             site_config_sync_tx: self.site_config_sync_tx.clone(),
             verification_manager: self.verification_manager.clone(),
+            revocation_list: self.revocation_list.clone(),
         }
     }
 }
@@ -367,6 +369,13 @@ impl MeshTransport {
             dns_zones: Arc::new(RwLock::new(None)),
             site_config_sync_tx: Arc::new(RwLock::new(None)),
             verification_manager: Arc::new(RwLock::new(None)),
+            revocation_list: if is_genesis {
+                Some(Arc::new(
+                    crate::mesh::peer_auth::GlobalNodeRevocationList::new(),
+                ))
+            } else {
+                None
+            },
         }
     }
 
@@ -1220,6 +1229,7 @@ impl MeshTransport {
                         peer_sig,
                         timestamp.unwrap_or(0),
                         300,
+                        self.revocation_list.as_ref().map(|r| r.as_ref()),
                     ) {
                         tracing::warn!("Global node verification failed for {}: {}", node_id, e);
                         return Err(MeshTransportError::AuthFailed(e));
@@ -1736,6 +1746,7 @@ impl MeshTransport {
                         peer_sig,
                         resp_timestamp.unwrap_or(0),
                         300,
+                        self.revocation_list.as_ref().map(|r| r.as_ref()),
                     ) {
                         tracing::warn!(
                             "Global node Ed25519 verification failed for {}: {}",

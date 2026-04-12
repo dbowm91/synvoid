@@ -1431,6 +1431,23 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                     timestamp: r.timestamp,
                 })
             }
+            proto::mesh_message::Payload::GenesisKeyTransition(r) => {
+                Ok(MeshMessage::GenesisKeyTransition {
+                    sequence: r.sequence,
+                    new_key_fingerprint: r.new_key_fingerprint.into(),
+                    announced_by: r.announced_by.into(),
+                    timestamp: r.timestamp,
+                    genesis_signature: r.genesis_signature,
+                })
+            }
+            proto::mesh_message::Payload::RevokeGlobalNode(r) => {
+                Ok(MeshMessage::RevokeGlobalNode {
+                    node_id: r.node_id.into(),
+                    reason: r.reason.into(),
+                    timestamp: r.timestamp,
+                    genesis_signature: r.genesis_signature,
+                })
+            }
         }
     }
 }

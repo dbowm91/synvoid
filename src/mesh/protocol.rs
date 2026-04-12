@@ -981,6 +981,19 @@ pub enum MeshMessage {
         timestamp: u64,
     },
     ServerlessFunctionAnnounce(ServerlessFunctionAnnounce),
+    GenesisKeyTransition {
+        sequence: u32,
+        new_key_fingerprint: ArcStr,
+        announced_by: ArcStr,
+        timestamp: u64,
+        genesis_signature: Vec<u8>,
+    },
+    RevokeGlobalNode {
+        node_id: ArcStr,
+        reason: ArcStr,
+        timestamp: u64,
+        genesis_signature: Vec<u8>,
+    },
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

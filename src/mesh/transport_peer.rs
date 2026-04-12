@@ -544,6 +544,38 @@ impl MeshTransport {
                 )
                 .await;
             }
+            MeshMessage::GenesisKeyTransition {
+                sequence,
+                new_key_fingerprint,
+                announced_by,
+                timestamp,
+                genesis_signature,
+            } => {
+                self.handle_genesis_key_transition(
+                    peer_id,
+                    sequence,
+                    &new_key_fingerprint,
+                    &announced_by,
+                    timestamp,
+                    &genesis_signature,
+                )
+                .await;
+            }
+            MeshMessage::RevokeGlobalNode {
+                node_id,
+                reason,
+                timestamp,
+                genesis_signature,
+            } => {
+                self.handle_revoke_global_node(
+                    peer_id,
+                    &node_id,
+                    &reason,
+                    timestamp,
+                    &genesis_signature,
+                )
+                .await;
+            }
             MeshMessage::UnspentTierKeyAnnounce {
                 org_id,
                 tier_keys,

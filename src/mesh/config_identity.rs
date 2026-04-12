@@ -140,6 +140,8 @@ impl GenesisKeyConfig {
             private_key: Some(key),
             public_key,
             is_first_node: true,
+            previous_genesis_key_base64: None,
+            rotation_sequence: 0,
         }
     }
 
@@ -161,7 +163,7 @@ impl GenesisKeyConfig {
         Ok(())
     }
 
-    fn derive_public_key(key: &[u8; 32]) -> Option<String> {
+    pub(crate) fn derive_public_key(key: &[u8; 32]) -> Option<String> {
         crate::mesh::cert::get_ed25519_public_key(key)
             .map(|pk| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&pk))
     }
@@ -176,6 +178,13 @@ impl GenesisKeyConfig {
             .and_then(|key| crate::mesh::cert::sign_ed25519(data, key))
     }
 
+    pub fn sign_with_rotation(&self, data: &str) -> Option<Vec<u8>> {
+        self.private_key.as_ref().and_then(|key| {
+            let signable = format!("{}:{}", data, self.rotation_sequence);
+            crate::mesh::cert::sign_ed25519(&signable, key)
+        })
+    }
+
     pub fn verify(&self, data: &str, signature: &[u8]) -> bool {
         if let Some(ref key) = self.private_key {
             if let Some(pk) = crate::mesh::cert::get_ed25519_public_key(key) {
@@ -186,6 +195,43 @@ impl GenesisKeyConfig {
         } else {
             false
         }
+    }
+
+    pub fn verify_with_rotation(&self, data: &str, signature: &[u8], sequence: u32) -> bool {
+        if sequence != self.rotation_sequence {
+            return false;
+        }
+        if let Some(ref key) = self.private_key {
+            if let Some(pk) = crate::mesh::cert::get_ed25519_public_key(key) {
+                let signable = format!("{}:{}", data, sequence);
+                crate::mesh::cert::verify_ed25519(&signable, signature, &pk)
+            } else {
+                false
+            }
+        } else {
+            false
+        }
+    }
+
+    pub fn is_key_rotated(&self) -> bool {
+        self.previous_genesis_key_base64.is_some() || self.rotation_sequence > 0
+    }
+
+    pub fn verify_previous_key(&self, data: &str, signature: &[u8]) -> bool {
+        if let Some(ref prev_key_b64) = self.previous_genesis_key_base64 {
+            if let Ok(key_bytes) =
+                base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(prev_key_b64)
+            {
+                if key_bytes.len() == 32 {
+                    let mut key = [0u8; 32];
+                    key.copy_from_slice(&key_bytes);
+                    if let Some(pk) = crate::mesh::cert::get_ed25519_public_key(&key) {
+                        return crate::mesh::cert::verify_ed25519(data, signature, &pk);
+                    }
+                }
+            }
+        }
+        false
     }
 }
 
