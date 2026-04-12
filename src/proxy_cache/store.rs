@@ -324,7 +324,11 @@ impl ProxyCache {
         None
     }
 
-    pub async fn get_or_fetch<F, Fut>(&self, key: &CacheKey, fetch: F) -> Option<Arc<ProxyCacheEntry>>
+    pub async fn get_or_fetch<F, Fut>(
+        &self,
+        key: &CacheKey,
+        fetch: F,
+    ) -> Option<Arc<ProxyCacheEntry>>
     where
         F: FnOnce() -> Fut,
         Fut: std::future::Future<Output = Option<(Bytes, StatusCode, HeaderMap, Option<Duration>)>>,

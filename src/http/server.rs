@@ -509,7 +509,8 @@ impl HttpServer {
                 }
 
                 if path == INTERNAL_DRAIN_STATUS_PATH {
-                    return Self::handle_drain_status_request(req, state, &alt_svc, &main_config).await;
+                    return Self::handle_drain_status_request(req, state, &alt_svc, &main_config)
+                        .await;
                 }
             }
 
