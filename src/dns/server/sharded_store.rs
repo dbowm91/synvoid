@@ -83,7 +83,12 @@ impl ShardedZoneStore {
 
     /// Check if the store is empty.
     pub fn is_empty(&self) -> bool {
-        self.len() == 0
+        for shard in &self.shards {
+            if !shard.read().is_empty() {
+                return false;
+            }
+        }
+        true
     }
 
     /// Call a function for each (origin, zone) pair (acquires read lock on all shards).
