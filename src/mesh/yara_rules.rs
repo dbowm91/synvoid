@@ -205,6 +205,7 @@ impl From<YaraRulesManagerConfig> for YaraRulesMeshConfig {
         YaraRulesMeshConfig {
             enabled: config.enabled,
             sync_interval_secs: 3600,
+            re_announce_interval_secs: 300,
             allow_edge_submissions: false,
             require_global_approval: true,
             require_signature: true,

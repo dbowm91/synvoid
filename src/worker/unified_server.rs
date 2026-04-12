@@ -395,7 +395,7 @@ pub async fn run_unified_server_worker(
                     .max()
                     .unwrap_or(60000),
                 num_honeypot_ports: honeypot_port_config.ports.len(),
-                site_scope: "global".to_string(),
+                site_scope: honeypot_port_config.site_scope.clone(),
                 ..Default::default()
             };
 
@@ -553,6 +553,7 @@ pub async fn run_unified_server_worker(
                 push_enabled: mesh_threat_intel.push_enabled,
                 sync_enabled: mesh_threat_intel.sync_enabled,
                 sync_interval_secs: mesh_threat_intel.sync_interval_secs,
+                threat_sync_interval_secs: mesh_threat_intel.threat_sync_interval_secs,
                 push_severity_threshold: mesh_threat_intel.push_severity_threshold,
                 min_ttl_seconds: mesh_threat_intel.min_ttl_seconds,
                 max_indicators_per_message: mesh_threat_intel.max_indicators_per_message,
@@ -860,6 +861,27 @@ pub async fn run_unified_server_worker(
                         tracing::info!(
                             "YARA DHT sync task started (interval: {}s)",
                             mesh_config.yara_rules.sync_interval_secs
+                        );
+                    }
+
+                    // Start periodic YARA re-announce task for global nodes
+                    if mesh_config.yara_rules.re_announce_interval_secs > 0
+                        && mesh_config.role.is_global()
+                    {
+                        let rules_manager = yara_rules.clone();
+                        let re_announce_interval = std::time::Duration::from_secs(
+                            mesh_config.yara_rules.re_announce_interval_secs,
+                        );
+                        tokio::spawn(async move {
+                            let mut ticker = tokio::time::interval(re_announce_interval);
+                            loop {
+                                ticker.tick().await;
+                                rules_manager.publish_rules_to_dht();
+                            }
+                        });
+                        tracing::info!(
+                            "YARA re-announce task started (interval: {}s)",
+                            mesh_config.yara_rules.re_announce_interval_secs
                         );
                     }
 

@@ -654,111 +654,6 @@ impl RecordStoreManager {
         );
     }
 
-    pub async fn query_record_iterative(
-        &self,
-        key: &str,
-    ) -> Option<crate::mesh::protocol::DhtRecord> {
-        if !self.config.enabled {
-            return None;
-        }
-
-        let local_record = self.get_record(key);
-        if local_record.is_some() {
-            return local_record;
-        }
-
-        let rm = self.routing_state.read().routing_manager.clone()?;
-        let transport = self.routing_state.read().transport.clone()?;
-
-        let dht_key = crate::mesh::dht::keys::DhtKey::from_str(key);
-
-        if dht_key.is_privileged() && !rm.can_respond_to_privileged() {
-            tracing::debug!("Query for privileged key {} requires global node", key);
-            return None;
-        }
-
-        let target_geo = None;
-        let closest_peers = rm.find_closest_peers_hybrid(key, target_geo, 8).await;
-
-        if closest_peers.is_empty() {
-            return None;
-        }
-
-        let (tx, mut rx) = tokio::sync::mpsc::channel::<crate::mesh::protocol::DhtRecord>(1);
-        let mut queried_peers: Vec<String> = Vec::new();
-        let mut request_ids: Vec<String> = Vec::new();
-
-        for peer in closest_peers {
-            if peer.node_id_string == self.node_id {
-                continue;
-            }
-
-            if queried_peers.contains(&peer.node_id_string) {
-                continue;
-            }
-            queried_peers.push(peer.node_id_string.clone());
-
-            let request_id = format!("query-{}-{}", key, uuid::Uuid::new_v4());
-            request_ids.push(request_id.clone());
-            let (tx_oneshot, rx_oneshot) = tokio::sync::oneshot::channel();
-            let transport_clone = transport.clone();
-
-            transport_clone
-                .register_dht_query(request_id.clone(), tx_oneshot)
-                .await;
-
-            let query = MeshMessage::DhtRecordQuery {
-                request_id: request_id.clone().into(),
-                key: key.into(),
-                timestamp: MeshMessage::generate_timestamp(),
-                source_node_id: self.node_id.clone().into(),
-            };
-
-            if transport_clone
-                .send_datagram_to_peer(&peer.node_id_string, &query)
-                .await
-                .is_ok()
-            {
-                tracing::debug!(
-                    "Sent DHT record query for {} to peer {}",
-                    key,
-                    peer.node_id_string
-                );
-
-                let tx = tx.clone();
-                tokio::spawn(async move {
-                    if let Ok(record) = rx_oneshot.await {
-                        let _ = tx.send(record).await;
-                    }
-                    let _ = transport_clone.take_dht_query(&request_id).await;
-                });
-            } else {
-                let _ = transport_clone.take_dht_query(&request_id).await;
-            }
-        }
-
-        drop(tx);
-
-        if request_ids.is_empty() {
-            return None;
-        }
-
-        let timeout =
-            tokio::time::timeout(std::time::Duration::from_secs(5), async { rx.recv().await })
-                .await;
-
-        match timeout {
-            Ok(Some(record)) => {
-                tracing::debug!("DHT record query for {} returned a record", key);
-                Some(record)
-            }
-            _ => {
-                tracing::debug!("DHT record query for {} timed out or failed", key);
-                None
-            }
-        }
-    }
-
     pub async fn announce_record_to_closest(
         &self,
         record: &DhtRecord,
@@ -785,6 +680,15 @@ impl RecordStoreManager {
 
         if closest_peers.is_empty() {
             return 0;
+        }
+
+        let write_quorum = self.config.write_quorum as usize;
+        if closest_peers.len() < write_quorum {
+            tracing::warn!(
+                "DHT write warning: peer count ({}) is below write quorum ({}). DHT writes may fail or have reduced durability.",
+                closest_peers.len(),
+                write_quorum
+            );
         }
 
         let request_id = format!("announce-{}-{}", record.key, uuid::Uuid::new_v4());
@@ -823,7 +727,6 @@ impl RecordStoreManager {
             }
         }
 
-        let write_quorum = self.config.write_quorum as usize;
         if success_count >= write_quorum {
             counter!("maluwaf.dht.quorum.achieved", "type" => "write").increment(1);
             tracing::debug!(

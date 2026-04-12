@@ -118,6 +118,8 @@ pub struct YaraRulesMeshConfig {
     pub enabled: bool,
     #[serde(default = "default_yara_mesh_sync_interval")]
     pub sync_interval_secs: u64,
+    #[serde(default = "default_re_announce_interval")]
+    pub re_announce_interval_secs: u64,
     #[serde(default = "default_allow_edge_submissions")]
     pub allow_edge_submissions: bool,
     #[serde(default)]
@@ -146,6 +148,10 @@ fn default_yara_mesh_sync_interval() -> u64 {
     3600
 }
 
+fn default_re_announce_interval() -> u64 {
+    300
+}
+
 fn default_yara_mesh_max_rules_size() -> u32 {
     1024
 }
@@ -155,6 +161,7 @@ impl Default for YaraRulesMeshConfig {
         Self {
             enabled: true,
             sync_interval_secs: 3600,
+            re_announce_interval_secs: 300,
             allow_edge_submissions: false,
             require_global_approval: true,
             require_signature: true,

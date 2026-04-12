@@ -10,7 +10,7 @@ use crate::config::site::{FastCgiConfig, PhpConfig};
 use crate::fastcgi::FastCgiClient;
 
 static COMMON_PHP_SOCKETS: LazyLock<Vec<PathBuf>> = LazyLock::new(|| {
-    vec![
+    let mut paths = vec![
         PathBuf::from("/run/php/php-fpm.sock"),
         PathBuf::from("/var/run/php-fpm.sock"),
         PathBuf::from("/run/php-fpm.sock"),
@@ -27,8 +27,32 @@ static COMMON_PHP_SOCKETS: LazyLock<Vec<PathBuf>> = LazyLock::new(|| {
         PathBuf::from("/run/php/php81-fpm.sock"),
         PathBuf::from("/run/php/php82-fpm.sock"),
         PathBuf::from("/run/php/php83-fpm.sock"),
-    ]
+    ];
+    if let Ok(entries) = std::fs::read_dir("/run/php") {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                if name.ends_with("-fpm.sock") || name.ends_with("-fpm.sock.lock") {
+                    if is_unix_socket(&path) && !name.ends_with(".lock") {
+                        if !paths.contains(&path) {
+                            paths.push(path);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    paths
 });
+
+fn is_unix_socket(path: &PathBuf) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    if let Ok(meta) = std::fs::metadata(path) {
+        let mode = meta.mode();
+        return mode & 0o140000 == 0o140000;
+    }
+    false
+}
 
 pub struct PhpClient {
     client: FastCgiClient,

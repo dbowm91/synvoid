@@ -31,6 +31,8 @@ pub struct ThreatIntelligenceConfig {
     pub sync_enabled: bool,
     #[serde(default = "default_sync_interval")]
     pub sync_interval_secs: u64,
+    #[serde(default = "default_threat_sync_interval")]
+    pub threat_sync_interval_secs: u64,
     #[serde(default = "default_severity")]
     pub push_severity_threshold: String,
     #[serde(default = "default_min_ttl")]
@@ -55,6 +57,9 @@ fn default_enabled() -> bool {
 fn default_sync_interval() -> u64 {
     300
 }
+fn default_threat_sync_interval() -> u64 {
+    60
+}
 fn default_severity() -> String {
     "medium".to_string()
 }
@@ -75,6 +80,7 @@ impl ThreatIntelligenceConfig {
             push_enabled: self.push_enabled,
             sync_enabled: self.sync_enabled,
             sync_interval_secs: self.sync_interval_secs,
+            threat_sync_interval_secs: self.threat_sync_interval_secs,
             push_severity_threshold: match self.push_severity_threshold.to_lowercase().as_str() {
                 "low" => ThreatSeverity::Low,
                 "medium" => ThreatSeverity::Medium,
@@ -97,6 +103,7 @@ pub struct ThreatIntelligenceConfigInternal {
     pub push_enabled: bool,
     pub sync_enabled: bool,
     pub sync_interval_secs: u64,
+    pub threat_sync_interval_secs: u64,
     pub push_severity_threshold: ThreatSeverity,
     pub min_ttl_seconds: u64,
     pub max_indicators_per_message: usize,
@@ -112,6 +119,7 @@ impl Default for ThreatIntelligenceConfig {
             push_enabled: true,
             sync_enabled: true,
             sync_interval_secs: DEFAULT_SYNC_INTERVAL_SECS,
+            threat_sync_interval_secs: 60,
             push_severity_threshold: "medium".to_string(),
             min_ttl_seconds: 60,
             max_indicators_per_message: 50,
@@ -355,7 +363,7 @@ impl ThreatIntelligenceManager {
             signer_public_key: None,
         };
 
-        let key = format!("{}:{}", site_scope, ip);
+        let key = ip.to_string();
 
         {
             let mut indicators = self.indicators.write();
@@ -489,7 +497,7 @@ impl ThreatIntelligenceManager {
             signer_public_key: None,
         };
 
-        let key = format!("{}:{}:ratelimit", site_scope, ip);
+        let key = ip.to_string();
 
         {
             let mut indicators = self.indicators.write();
@@ -553,7 +561,7 @@ impl ThreatIntelligenceManager {
             signer_public_key: None,
         };
 
-        let key = format!("{}:{}:suspicious", site_scope, ip);
+        let key = ip.to_string();
 
         {
             let mut indicators = self.indicators.write();
@@ -1066,23 +1074,35 @@ impl ThreatIntelligenceManager {
 
         for key in &dht_keys {
             let indicator_value = key.strip_prefix("threat_indicator:").unwrap_or(key);
-            if !local_indicators.contains_key(indicator_value) {
-                if let Some(record) = record_store.get(key) {
-                    if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&record.value) {
-                        let indicator = self
-                            .parse_dht_record_value(&value)
-                            .ok_or_else(|| "Failed to parse DHT record".to_string())?;
-                        local_indicators.insert(
-                            indicator_value.to_string(),
-                            ThreatIndicatorEntry {
-                                indicator,
-                                received_from: Some("dht_sync".to_string()),
-                                local_origin: false,
-                                version: record.timestamp,
-                            },
-                        );
-                        added += 1;
-                    }
+            let record = match record_store.get(key) {
+                Some(r) => r,
+                None => continue,
+            };
+
+            let should_update = if let Some(existing) = local_indicators.get(indicator_value) {
+                if existing.local_origin {
+                    continue;
+                }
+                record.timestamp > existing.version
+            } else {
+                true
+            };
+
+            if should_update {
+                if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&record.value) {
+                    let indicator = self
+                        .parse_dht_record_value(&value)
+                        .ok_or_else(|| "Failed to parse DHT record".to_string())?;
+                    local_indicators.insert(
+                        indicator_value.to_string(),
+                        ThreatIndicatorEntry {
+                            indicator,
+                            received_from: Some("dht_sync".to_string()),
+                            local_origin: false,
+                            version: record.timestamp,
+                        },
+                    );
+                    added += 1;
                 }
             }
         }
@@ -1428,7 +1448,7 @@ impl ThreatIntelligenceManager {
         let config = self.config.clone();
         let node_id = self.node_id.clone();
         let node_role = self.node_role;
-        let initial_interval = config.sync_interval_secs;
+        let initial_interval = config.threat_sync_interval_secs;
         let sync_enabled = config.sync_enabled;
         let fanout_factor = config.fanout_factor;
 

@@ -1,4 +1,5 @@
 use parking_lot::RwLock;
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -20,6 +21,7 @@ pub struct PortHoneypotListener {
     current_port: Arc<RwLock<u16>>,
     active_connections: Arc<AtomicUsize>,
     shutdown_tx: broadcast::Sender<()>,
+    ip_connection_counts: Arc<RwLock<HashMap<String, usize>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -44,6 +46,7 @@ impl PortHoneypotListener {
             current_port: Arc::new(RwLock::new(0)),
             active_connections: Arc::new(AtomicUsize::new(0)),
             shutdown_tx,
+            ip_connection_counts: Arc::new(RwLock::new(HashMap::new())),
         })
     }
 
@@ -86,14 +89,16 @@ impl PortHoneypotListener {
     pub async fn start_on_port(&self, port: u16) -> Result<(), std::io::Error> {
         let addr = SocketAddr::new(self.config.bind_address, port);
 
-        if !self.is_port_available(port).await {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::AddrInUse,
-                format!("Port {} is already in use", port),
-            ));
-        }
-
-        let listener = TcpListener::bind(addr).await?;
+        let listener = match TcpListener::bind(addr).await {
+            Ok(l) => l,
+            Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::AddrInUse,
+                    format!("Port {} is already in use", port),
+                ));
+            }
+            Err(e) => return Err(e),
+        };
 
         *self.current_port.write() = port;
 
@@ -106,7 +111,22 @@ impl PortHoneypotListener {
                 result = listener.accept() => {
                     match result {
                         Ok((stream, remote_addr)) => {
+                            let ip_key = remote_addr.ip().to_string();
+                            {
+                                let mut counts = self.ip_connection_counts.write();
+                                let count = counts.entry(ip_key.clone()).or_insert(0);
+                                if *count >= self.config.max_connections_per_ip {
+                                    tracing::warn!("Max connections per IP {} reached, dropping connection from {}", ip_key, remote_addr);
+                                    continue;
+                                }
+                                *count += 1;
+                            }
+
                             if self.active_connections.load(Ordering::Relaxed) >= self.config.max_concurrent_connections {
+                                let mut counts = self.ip_connection_counts.write();
+                                if let Some(c) = counts.get_mut(&ip_key) {
+                                    *c = c.saturating_sub(1);
+                                }
                                 tracing::warn!("Max concurrent connections reached, dropping connection from {}", remote_addr);
                                 continue;
                             }
@@ -115,11 +135,16 @@ impl PortHoneypotListener {
                             let storage = self.storage.clone();
                             let detector = self.detector.clone();
                             let active = self.active_connections.clone();
+                            let ip_counts = self.ip_connection_counts.clone();
 
                             tokio::spawn(async move {
                                 active.fetch_add(1, Ordering::Relaxed);
                                 handle_connection(stream, remote_addr, port, &config, &storage, &detector).await;
                                 active.fetch_sub(1, Ordering::Relaxed);
+                                let mut counts = ip_counts.write();
+                                if let Some(c) = counts.get_mut(&ip_key) {
+                                    *c = c.saturating_sub(1);
+                                }
                             });
                         }
                         Err(e) => {

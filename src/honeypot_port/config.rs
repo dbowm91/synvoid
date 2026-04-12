@@ -15,6 +15,7 @@ pub struct PortHoneypotConfig {
     pub read_timeout_ms: u64,
     pub max_payload_size: usize,
     pub max_concurrent_connections: usize,
+    pub max_connections_per_ip: usize,
     pub services: Vec<ServiceConfig>,
     pub storage: StorageConfig,
     pub response_mode: ResponseModeConfig,
@@ -85,6 +86,7 @@ impl Default for PortHoneypotConfig {
             read_timeout_ms: 10000,
             max_payload_size: 8192,
             max_concurrent_connections: 256,
+            max_connections_per_ip: 10,
             services: default_services(),
             storage: StorageConfig::default(),
             response_mode: ResponseModeConfig {

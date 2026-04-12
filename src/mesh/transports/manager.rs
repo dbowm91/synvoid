@@ -1150,4 +1150,68 @@ impl MeshTransportManager {
             tracing::debug!("Published transform configs for site {} to DHT", site_id);
         }
     }
+
+    pub fn publish_single_site_transform_config(
+        &self,
+        site_id: &str,
+        site_config: &crate::config::site::SiteConfig,
+    ) {
+        let Some(ref record_store) = self.record_store else {
+            tracing::warn!("Cannot publish transform config: no record store");
+            return;
+        };
+
+        let image_poison_config = &site_config.image_poison;
+        let static_config = &site_config.r#static;
+
+        let image_protection_json = serde_json::json!({
+            "enabled": image_poison_config.enabled,
+            "min_size_bytes": image_poison_config.max_dimension.map(|v| v as u64),
+            "whitelist_patterns": image_poison_config.whitelist_patterns,
+        });
+        let image_protection_key = format!("upstream_image_protection:{}", site_id);
+        if let Ok(bytes) = serde_json::to_vec(&image_protection_json) {
+            record_store.store_and_announce(image_protection_key, bytes, 3600);
+        }
+
+        let site_image_poison_json = serde_json::json!({
+            "enabled": image_poison_config.enabled,
+            "level": image_poison_config.level,
+            "intensity": image_poison_config.intensity,
+            "seed": image_poison_config.seed,
+            "max_dimension": image_poison_config.max_dimension,
+            "jpeg_quality": image_poison_config.jpeg_quality,
+        });
+        let site_image_poison_key = format!("site_image_poison_config:{}", site_id);
+        if let Ok(bytes) = serde_json::to_vec(&site_image_poison_json) {
+            record_store.store_and_announce(site_image_poison_key, bytes, 3600);
+        }
+
+        let minification_json = serde_json::json!({
+            "enabled": static_config.enable_minification,
+            "enable_html": static_config.enable_html_minification,
+            "enable_css": static_config.enable_css_minification,
+            "enable_js": static_config.enable_js_minification,
+        });
+        let minification_key = format!("upstream_minification:{}", site_id);
+        if let Ok(bytes) = serde_json::to_vec(&minification_json) {
+            record_store.store_and_announce(minification_key, bytes, 3600);
+        }
+
+        let compression_json = serde_json::json!({
+            "enabled": static_config.enable_compression,
+            "gzip_on_the_fly": static_config.gzip_on_the_fly,
+            "gzip_level": static_config.gzip_level,
+            "gzip_min_size": static_config.gzip_min_size,
+            "gzip_types": static_config.gzip_types,
+            "enable_brotli": static_config.enable_brotli,
+            "brotli_level": static_config.brotli_level,
+        });
+        let compression_key = format!("upstream_compression:{}", site_id);
+        if let Ok(bytes) = serde_json::to_vec(&compression_json) {
+            record_store.store_and_announce(compression_key, bytes, 3600);
+        }
+
+        tracing::debug!("Published transform config for site {} to DHT", site_id);
+    }
 }

@@ -54,6 +54,8 @@ static IMAGE_POISON_CACHE: LazyLock<Cache<String, Vec<u8>>> = LazyLock::new(|| {
         .build()
 });
 
+const FORBIDDEN_RESPONSE_HEADERS: &[&str] = &["server", "x-powered-by", "connection", "keep-alive"];
+
 use crate::challenge::HONEYPOT_PREFIX;
 use crate::config::site::{ProxyHeadersConfig, SiteWebSocketConfig};
 use crate::config::HttpConfig;
@@ -1358,6 +1360,28 @@ impl HttpServer {
                         "WebSocket upgrade request accepted"
                     );
 
+                    if matches!(target.backend_type, crate::router::BackendType::AppServer) {
+                        if let Some(ref servers) = app_servers {
+                            let servers_read = servers.read().await;
+                            if let Some(supervisor) = servers_read.get(&site_id) {
+                                let socket_path = supervisor.config().resolve_socket_path();
+                                tokio::spawn(async move {
+                                    Self::handle_websocket_to_appserver(
+                                        upgraded,
+                                        socket_path,
+                                        target_clone,
+                                        path_clone,
+                                        waf_clone,
+                                        client_ip,
+                                        ws_config,
+                                    )
+                                    .await;
+                                });
+                                return Ok(Self::build_websocket_response(&parts.headers));
+                            }
+                        }
+                    }
+
                     tokio::spawn(async move {
                         Self::handle_websocket_tunnel(
                             upgraded,
@@ -1633,9 +1657,127 @@ impl HttpServer {
                             .await
                         {
                             Ok(response) => {
-                                return Ok(response
-                                    .into_http_response()
-                                    .map(|b| Full::new(b).boxed()));
+                                let content_type =
+                                    response.headers.get("content-type").map(|v| v.as_str());
+                                let mut body = response.body;
+
+                                if let Some(pm) = router.plugin_manager() {
+                                    let wasm_resp = http::Response::builder()
+                                        .status(response.status)
+                                        .body(body.clone())
+                                        .unwrap_or_else(|_| {
+                                            http::Response::builder()
+                                                .status(response.status)
+                                                .body(Bytes::new())
+                                                .unwrap_or_else(|_| {
+                                                    http::Response::new(Bytes::new())
+                                                })
+                                        });
+                                    let transform_result = if let Some(ref plugin_names) =
+                                        target.site_config.proxy.wasm_plugins
+                                    {
+                                        pm.apply_wasm_response_transforms_with_plugins(
+                                            wasm_resp,
+                                            plugin_names,
+                                            std::collections::HashMap::new(),
+                                        )
+                                    } else {
+                                        pm.apply_wasm_response_transforms(
+                                            wasm_resp,
+                                            std::collections::HashMap::new(),
+                                        )
+                                    };
+                                    match transform_result {
+                                        Ok(transformed) => {
+                                            body = transformed.into_body();
+                                        }
+                                        Err(e) => {
+                                            tracing::error!("WASM response transform error: {}", e);
+                                        }
+                                    }
+                                }
+
+                                let static_config = &target.site_config.r#static;
+                                let image_poison_config = &target.site_config.image_poison;
+
+                                let config = crate::http::response_transform::ResponseTransformConfig::from_static_config(
+                                    static_config,
+                                    image_poison_config,
+                                );
+
+                                if let Some(ref min_settings) = config.minification {
+                                    body = crate::http::response_transform::apply_minification(
+                                        body,
+                                        content_type,
+                                        min_settings,
+                                    );
+                                }
+
+                                if let Some(ref img_settings) = config.image_poisoning {
+                                    let body_len = body.len() as u64;
+                                    let mut is_image = content_type
+                                        .map(|ct| ct.starts_with("image/"))
+                                        .unwrap_or(false);
+                                    if !is_image {
+                                        let path_str = path.to_string();
+                                        is_image = IMAGE_PROTECTION_REGEX.is_match(&path_str);
+                                    }
+                                    let in_range = body_len >= img_settings.min_size;
+
+                                    if is_image && in_range {
+                                        let path_str = path.to_string();
+                                        let whitelisted = img_settings
+                                            .whitelist_patterns
+                                            .map(|patterns| {
+                                                patterns.iter().any(|p| {
+                                                    if let Some(re) = get_cached_regex(p) {
+                                                        re.is_match(&path_str)
+                                                    } else {
+                                                        false
+                                                    }
+                                                })
+                                            })
+                                            .unwrap_or(false);
+
+                                        if !whitelisted {
+                                            body = Self::apply_image_poisoning(
+                                                body,
+                                                site_id.to_string(),
+                                                None,
+                                            )
+                                            .await;
+                                        }
+                                    }
+                                }
+
+                                let mut builder = http::Response::builder().status(response.status);
+                                for (name, value) in response.headers {
+                                    let name_lower = name.to_lowercase();
+                                    if FORBIDDEN_RESPONSE_HEADERS.contains(&name_lower.as_str()) {
+                                        continue;
+                                    }
+                                    if let (Ok(name), Ok(value)) = (
+                                        http::header::HeaderName::from_bytes(name.as_bytes()),
+                                        http::HeaderValue::from_str(&value),
+                                    ) {
+                                        builder = builder.header(name, value);
+                                    }
+                                }
+
+                                builder =
+                                    Self::apply_security_headers(builder, &target, &main_config);
+
+                                return Ok(builder.body(Full::new(body).boxed()).unwrap_or_else(
+                                    |_| {
+                                        Self::build_response_with_alt_svc(
+                                            500,
+                                            crate::http::reason_phrase(500).to_string(),
+                                            "text/plain",
+                                            &alt_svc,
+                                            &main_config,
+                                        )
+                                    },
+                                ));
                             }
                             Err(e) => {
                                 tracing::warn!(
@@ -1746,29 +1888,19 @@ impl HttpServer {
                     if let Some(ref app_servers) = app_servers {
                         let app_servers_read = app_servers.read().await;
                         if let Some(supervisor) = app_servers_read.get(&site_id) {
-                            let socket_path = supervisor.config().resolve_socket_path();
                             let body_bytes_for_appserver: Bytes = full_body_arc.as_ref().clone();
 
-                            let fcgi_config =
-                                target.site_config.proxy.fastcgi.clone().unwrap_or_default();
-
-                            let client = crate::fastcgi::FastCgiClient::new(
-                                socket_path.to_string_lossy().to_string(),
-                            );
-                            match client
-                                .execute(
-                                    &method,
-                                    &parts.uri,
+                            match supervisor
+                                .forward_request(
+                                    method,
+                                    &parts.uri.to_string(),
                                     &parts.headers,
                                     body_bytes_for_appserver,
-                                    &fcgi_config,
                                 )
                                 .await
                             {
                                 Ok(response) => {
-                                    return Ok(response
-                                        .into_http_response()
-                                        .map(|b| Full::new(b).boxed()));
+                                    return Ok(response.map(|b| Full::new(b).boxed()));
                                 }
                                 Err(e) => {
                                     tracing::warn!(
@@ -2856,6 +2988,162 @@ impl HttpServer {
 
         counter!("maluwaf.websocket.closed").increment(1);
         tracing::debug!("WebSocket connection closed");
+    }
+
+    async fn handle_websocket_to_appserver(
+        upgraded: hyper::upgrade::OnUpgrade,
+        socket_path: std::path::PathBuf,
+        _target: crate::router::RouteTarget,
+        path: String,
+        waf: Arc<WafCore>,
+        client_ip: std::net::IpAddr,
+        ws_config: SiteWebSocketConfig,
+    ) {
+        let upgraded = match upgraded.await {
+            Ok(up) => up,
+            Err(e) => {
+                tracing::error!("WebSocket upgrade to AppServer failed: {}", e);
+                counter!("maluwaf.websocket.upgrade_failed").increment(1);
+                return;
+            }
+        };
+
+        counter!("maluwaf.websocket.connections").increment(1);
+
+        let ws_stream =
+            WebSocketStream::from_raw_socket(TokioIo::new(upgraded), Role::Server, None).await;
+
+        let (mut client_tx, mut client_rx) = ws_stream.split();
+
+        let ws_handler = WebSocketHandler::new()
+            .with_max_message_size(ws_config.max_message_size.unwrap_or(16 * 1024 * 1024))
+            .with_mask_required(ws_config.mask_required.unwrap_or(false));
+
+        let socket_url = format!("http://unix:{}:{}", socket_path.display(), path);
+
+        tracing::debug!(url = %socket_url, "Connecting to AppServer WebSocket");
+
+        let (upstream_ws, _) = match connect_async(&socket_url).await {
+            Ok(ws) => ws,
+            Err(e) => {
+                tracing::error!("Failed to connect to AppServer WebSocket: {}", e);
+                counter!("maluwaf.websocket.upstream_failed").increment(1);
+                return;
+            }
+        };
+
+        counter!("maluwaf.websocket.upstream_connected").increment(1);
+
+        let (mut upstream_tx, mut upstream_rx) = upstream_ws.split();
+
+        let path_clone = path.clone();
+        let waf_clone = waf.clone();
+        let should_close = std::sync::Arc::new(RunningFlag::new());
+        let should_close_clone = should_close.clone();
+
+        let client_to_upstream = async {
+            while let Some(msg_result) = client_rx.next().await {
+                if !should_close_clone.is_running() {
+                    break;
+                }
+
+                let msg: WsMessage = match msg_result {
+                    Ok(m) => m,
+                    Err(e) => {
+                        tracing::debug!("WebSocket client error: {}", e);
+                        break;
+                    }
+                };
+
+                let (method, body_vec) = match &msg {
+                    WsMessage::Text(t) => ("TEXT", t.as_bytes().to_vec()),
+                    WsMessage::Binary(b) => ("BINARY", b.to_vec()),
+                    WsMessage::Close(_) => {
+                        let _ = upstream_tx.send(WsMessage::Close(None)).await;
+                        break;
+                    }
+                    WsMessage::Ping(data) => {
+                        let _ = upstream_tx.send(WsMessage::Pong(data.clone())).await;
+                        continue;
+                    }
+                    WsMessage::Pong(_) => continue,
+                    WsMessage::Frame(_) => continue,
+                };
+
+                let mut proto_request = ProtocolRequest {
+                    client_ip: SocketAddr::from((client_ip, 0)),
+                    method: method.to_string(),
+                    path: path_clone.clone(),
+                    headers: HashMap::new(),
+                    body: body_vec,
+                    protocol: ProtocolType::WebSocket,
+                    metadata: HashMap::new(),
+                };
+
+                let action = ws_handler.apply_waf(&mut proto_request, &waf_clone);
+                match action {
+                    WafAction::Block => {
+                        tracing::warn!(
+                            client_ip = %client_ip,
+                            "WebSocket message blocked by WAF"
+                        );
+                        counter!("maluwaf.websocket.blocked").increment(1);
+                        let _ = upstream_tx.close().await;
+                        should_close_clone.stop();
+                        break;
+                    }
+                    WafAction::LogOnly => {
+                        tracing::debug!(
+                            client_ip = %client_ip,
+                            "WebSocket message logged by WAF"
+                        );
+                        counter!("maluwaf.websocket.logged").increment(1);
+                    }
+                    WafAction::Allow => {}
+                    WafAction::Challenge | WafAction::Stall | WafAction::TarPit => {
+                        tracing::debug!(
+                            client_ip = %client_ip,
+                            "WebSocket WAF action {:?} treated as allow",
+                            action
+                        );
+                    }
+                }
+
+                if let Err(e) = upstream_tx.send(msg).await {
+                    tracing::debug!("AppServer WebSocket send error: {}", e);
+                    break;
+                }
+            }
+        };
+
+        let upstream_to_client = async {
+            while let Some(msg_result) = upstream_rx.next().await {
+                if !should_close.is_running() {
+                    break;
+                }
+
+                let msg = match msg_result {
+                    Ok(m) => m,
+                    Err(e) => {
+                        tracing::debug!("AppServer WebSocket upstream error: {}", e);
+                        break;
+                    }
+                };
+
+                if let Err(e) = client_tx.send(msg).await {
+                    tracing::debug!("Client WebSocket send error: {}", e);
+                    break;
+                }
+            }
+        };
+
+        tokio::select! {
+            _ = client_to_upstream => {}
+            _ = upstream_to_client => {}
+        }
+
+        counter!("maluwaf.websocket.closed").increment(1);
+        tracing::debug!("AppServer WebSocket connection closed");
     }
 
     fn is_websocket_upgrade(headers: &http::HeaderMap) -> bool {

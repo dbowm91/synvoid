@@ -121,11 +121,17 @@ pub async fn create_site(
     })?;
 
     let site_id_for_broadcast = site_id.clone();
+    let proxy_cache_preferences = site_config
+        .proxy
+        .cache
+        .as_ref()
+        .map(crate::mesh::protocol::ProxyCachePreferences::from);
     drop(config);
     drop(_guard);
 
     if let Some(ref mesh_transport) = state.mesh.mesh_transport {
         let mesh_transport_clone = mesh_transport.clone();
+        let mesh_transport_for_publish = mesh_transport.clone();
         let version = crate::utils::safe_unix_timestamp();
 
         tokio::spawn(async move {
@@ -134,6 +140,7 @@ pub async fn create_site(
                     &site_id_for_broadcast,
                     &toml_content_for_broadcast,
                     version,
+                    proxy_cache_preferences,
                 )
                 .await
             {
@@ -154,6 +161,8 @@ pub async fn create_site(
                 }
             }
         });
+
+        mesh_transport_for_publish.publish_single_site_transform_config(&site_id, &site_config);
     }
 
     Ok(Json(SiteDetail {
@@ -233,12 +242,18 @@ pub async fn update_site(
     state_config.sites.insert(site_id.clone(), config.clone());
 
     let site_id_for_broadcast = site_id.clone();
+    let proxy_cache_preferences = config
+        .proxy
+        .cache
+        .as_ref()
+        .map(crate::mesh::protocol::ProxyCachePreferences::from);
     let version = crate::utils::safe_unix_timestamp();
     drop(state_config);
     drop(_guard);
 
     if let Some(ref mesh_transport) = state.mesh.mesh_transport {
         let mesh_transport_clone = mesh_transport.clone();
+        let mesh_transport_for_publish = mesh_transport.clone();
 
         tokio::spawn(async move {
             match mesh_transport_clone
@@ -246,6 +261,7 @@ pub async fn update_site(
                     &site_id_for_broadcast,
                     &toml_content_for_broadcast,
                     version,
+                    proxy_cache_preferences,
                 )
                 .await
             {
@@ -266,6 +282,8 @@ pub async fn update_site(
                 }
             }
         });
+
+        mesh_transport_for_publish.publish_single_site_transform_config(&site_id, &config);
     }
 
     Ok(Json(SiteDetail {

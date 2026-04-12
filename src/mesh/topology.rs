@@ -733,8 +733,36 @@ impl MeshTopology {
         &self,
         site: &str,
     ) -> Vec<crate::mesh::dht::VerifiedUpstream> {
-        if let Some(cached) = self.verified_upstream_cache.get(site).await {
-            return cached.clone();
+        let site_key = site.to_string();
+        let cached = self.verified_upstream_cache.get(&site_key).await;
+        if let Some(results) = cached {
+            let cache = self.verified_upstream_cache.clone();
+            let record_store: Option<Arc<crate::mesh::dht::RecordStoreManager>> = {
+                let rs = self.record_store.read();
+                rs.clone()
+            };
+            let site_clone = site_key.clone();
+            tokio::spawn(async move {
+                let Some(rs) = record_store.as_ref() else {
+                    return;
+                };
+                let records = rs.get_all_records();
+                let mut new_results: Vec<crate::mesh::dht::VerifiedUpstream> = Vec::new();
+                for record in records {
+                    if record.key.starts_with("verified_upstream:") {
+                        if let Ok(verified) = serde_json::from_slice::<
+                            crate::mesh::dht::VerifiedUpstream,
+                        >(&record.value)
+                        {
+                            if verified.upstream_id == site_clone {
+                                new_results.push(verified);
+                            }
+                        }
+                    }
+                }
+                cache.insert(site_clone, new_results).await;
+            });
+            return results;
         }
 
         let records = {
@@ -760,7 +788,7 @@ impl MeshTopology {
         }
 
         self.verified_upstream_cache
-            .insert(site.to_string(), results.clone())
+            .insert(site_key, results.clone())
             .await;
 
         results

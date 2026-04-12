@@ -413,6 +413,16 @@ impl AdminState {
         self
     }
 
+    pub fn with_honeypot_state(
+        mut self,
+        controller: Option<Arc<crate::honeypot_port::HoneypotMeshController>>,
+        runner: Option<Arc<crate::honeypot_port::PortHoneypotRunner>>,
+    ) -> Self {
+        self.honeypot.port_honeypot_controller = controller;
+        self.honeypot.port_honeypot_runner = runner;
+        self
+    }
+
     #[cfg(not(feature = "icmp-filter"))]
     pub fn with_icmp_filter(self, _filter: Option<Arc<TokioRwLock<()>>>) -> Self {
         self

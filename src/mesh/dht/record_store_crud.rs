@@ -517,13 +517,23 @@ impl RecordStoreManager {
     }
 
     pub fn create_record_announce(&self) -> Option<MeshMessage> {
-        if !self.config.enabled || !self.is_global_node() {
+        if !self.config.enabled {
             return None;
         }
 
         let mut rs = self.record_state.write();
         if rs.pending_announces.is_empty() {
             return None;
+        }
+
+        if !self.is_global_node() {
+            let all_public = rs
+                .pending_announces
+                .iter()
+                .all(|r| crate::mesh::dht::keys::DhtKey::from_str(&r.key).is_public());
+            if !all_public {
+                return None;
+            }
         }
 
         let records: Vec<DhtRecord> = rs.pending_announces.to_vec();
