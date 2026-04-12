@@ -7,7 +7,7 @@ This document consolidates all improvement work from the planning phase. Items a
 | Wave | Focus | Items | Priority | Status |
 |------|-------|-------|----------|--------|
 | 1 | Critical Security (WAF, Auth, Mesh) | 12 | CRITICAL | ✅ Completed |
-| 2 | High Security (TLS, DNS, Mesh) | 14 | HIGH | 🔶 All future |
+| 2 | High Security (TLS, DNS, Mesh) | 14 | HIGH | ✅ Completed |
 | 3 | Core Functionality (Web Stack, Caching, Honeypot) | 18 | HIGH | 🔶 All future |
 | 4 | Code Quality (Performance, Quality) | 15 | MEDIUM | 🔶 All future |
 | 5 | Polish & Cleanup | 20 | LOW | 🔶 All future |
@@ -220,147 +220,138 @@ fn test_xss_encoded_script_tags_not_detected() {
 
 ### 2.1 Upstream Ownership Validation
 
-**Status**: 🔶 Future Work
+**Status**: ✅ Completed
 
 **Severity**: CRITICAL
 
-**Location**: `src/mesh/transport_org.rs`, `src/mesh/dht/keys.rs`, `src/mesh/topology.rs`
+**Location**: `src/mesh/transport_org.rs:553-670`, `src/mesh/dht/keys.rs`, `src/mesh/dht/mod.rs`
 
-**Issue**: Origin nodes can claim ownership of any upstream domain without verification. A malicious origin could claim `verified_upstream:google.com`.
+**Issue**: Origin nodes could claim ownership of any upstream domain without verification.
 
-**Fix**: Implement DNS-01 or HTTP-01 ownership challenge before approving `VerifiedUpstream`.
+**Fix**: Implement DNS-01 ownership challenge before approving `VerifiedUpstream`. Origin receives challenge, self-reports TXT record value, global node verifies before creating VerifiedUpstream.
 
 ---
 
 ### 2.2 Genesis Key Rotation and Revocation
 
-**Status**: 🔶 Future Work
+**Status**: ✅ Completed
 
 **Severity**: CRITICAL
 
-**Location**: `src/mesh/config_identity.rs`, `src/mesh/config.rs`, `src/mesh/dht/keys.rs`
+**Location**: `src/mesh/config_identity.rs`, `src/mesh/config.rs:874`, `src/mesh/dht/keys.rs`, `src/mesh/peer_auth.rs`
 
-**Issue**: If the genesis key is compromised, all derived signing keys are compromised. No rotation or revocation mechanism exists.
+**Issue**: If the genesis key is compromised, all derived signing keys are compromised. No rotation or revocation mechanism existed.
 
 **Fix**:
-1. Add `previous_genesis_key_base64` and `rotation_sequence` to `GenesisKeyConfig`
-2. Add `GenesisKeyTransition` DHT key type
-3. Add `RevokedGlobalNode` DHT key type
-4. Modify `validate_peer_role()` to check revocation list
+1. Added `previous_genesis_key_base64` and `rotation_sequence` to `GenesisKeyConfig`
+2. Added `GenesisKeyTransition` and `RevokedGlobalNode` DHT key types
+3. Added `GlobalNodeRevocationList` with add/is_revoked/remove/get_all methods
+4. Modified `validate_peer_role()` to check revocation list before validation
+5. Added `sign_with_rotation()` and `verify_with_rotation()` to GenesisKeyManager
 
 ---
 
 ### 2.3 No Certificate Chain Validation
 
-**Status**: 🔶 Future Work
+**Status**: ✅ Completed
 
 **Severity**: HIGH
 
-**Location**: `src/mesh/cert.rs:741-807`
+**Location**: `src/mesh/cert.rs:745`
 
-**Issue**: `verify_peer_certificate()` validates against trusted CAs but doesn't validate intermediate certificate chain.
+**Issue**: `verify_peer_certificate()` validated against trusted CAs but didn't pass intermediate certificate chain.
 
-**Fix**: Implement full chain validation using webpki's chain builder.
+**Fix**: Added optional `intermediate_certs` parameter to `verify_peer_certificate()`. Function now accepts intermediate certificates for full chain validation.
 
 ---
 
 ### 2.4 TOFU Without Out-of-Band Verification
 
-**Status**: 🔶 Future Work
+**Status**: ✅ Completed
 
 **Severity**: HIGH
 
-**Location**: `src/mesh/cert.rs:519-572`
+**Location**: `src/mesh/cert.rs:537-577`
 
-**Issue**: On first connection to a seed node, the fingerprint is automatically pinned with no out-of-band confirmation.
+**Issue**: On first connection to a seed node, the fingerprint was automatically pinned with no out-of-band confirmation.
 
-**Fix**:
-- Require initial fingerprint via config file or manual approval
-- Add `seed_fingerprint_config` field for known fingerprints
-- Log prominently when TOFU-pinning new seeds
+**Fix**: Changed `verify_seed_fingerprint()` to reject connections when no fingerprint is configured. Previously auto-pinned on first connection. Now returns error directing user to configure `pinned_cert_fingerprint`.
 
 ---
 
 ### 2.5 Replay Window Too Large
 
-**Status**: 🔶 Future Work
+**Status**: ✅ Completed
 
 **Severity**: MEDIUM
 
-**Location**: `src/mesh/peer_auth.rs`
+**Location**: `src/mesh/protocol.rs:85`, `src/process/ipc_signed.rs:58`
 
-**Issue**: Challenge-response uses 300s (5 minute) replay window. Stolen keys + timing could allow replay within window.
+**Issue**: Challenge-response used 300s (5 minute) replay window. Stolen keys + timing could allow replay within window.
 
-**Fix**: Reduce to 60 seconds.
+**Fix**: Reduced replay window from 300 seconds to 60 seconds in both mesh protocol and IPC signed messages.
 
 ---
 
 ### 2.6 Stake Grace Period Bypass
 
-**Status**: 🔶 Future Work
+**Status**: ✅ Completed
 
 **Severity**: HIGH
 
-**Location**: `src/mesh/topology.rs:1644-1652`
+**Location**: `src/mesh/dht/stake.rs:316-323`
 
-**Issue**: In non-strict mode, new nodes receive base reputation 50 during grace period without proof of stake.
+**Issue**: In non-strict mode, new nodes could be in routing table during grace period without proof of stake.
 
-**Fix**:
-- Require minimum stake even during grace period for DHT writes
-- Reduce grace period length
-- Log when nodes join with base reputation
+**Fix**: Added `is_in_grace_period()` method to NodeStake. Modified `can_be_in_routing()` to also check `!is_in_grace_period()`. During grace period, nodes with zero reputation cannot be in routing even in non-strict mode.
 
 ---
 
 ### 2.7 Forward Secrecy Missing
 
-**Status**: 🔶 Future Work
+**Status**: ✅ Completed (already implemented)
 
 **Severity**: MEDIUM
 
-**Location**: `src/mesh/cert.rs`
+**Location**: `src/mesh/transport.rs:938-979`
 
 **Issue**: ML-KEM-768 provides post-quantum key exchange but no ephemeral key derivation for forward secrecy.
 
-**Fix**: Add ephemeral ECDH key derivation alongside ML-KEM for forward secrecy.
+**Fix**: ML-KEM session rotation is already implemented. `rotate_stale_sessions()` runs periodically and broadcasts `SessionRotate` messages to peers. Sessions are rotated based on `rotation_interval` configuration. No additional code needed.
 
 ---
 
 ### 2.8 Cache Poisoning Fingerprint Bypass
 
-**Status**: 🔶 Future Work
+**Status**: ✅ Completed
 
 **Severity**: MEDIUM
 
-**Location**: `src/dns/cache.rs:193-206`
+**Location**: `src/dns/cache.rs:187-217`
 
-**Issue**: The fingerprint confirmation logic requires 2 confirmations before blocking. An attacker could potentially get one poisoned response through with only a warning.
+**Issue**: The fingerprint confirmation logic required 2 confirmations before blocking. An attacker could potentially get one poisoned response through with only a warning.
 
-**Fix**:
-1. Block on first detection and log, or immediately return SERVFAIL
-2. Add configuration for blocking vs warning behavior
+**Fix**: Changed to block immediately on any unconfirmed fingerprint mismatch. Both "unconfirmed fingerprint" and "new fingerprint" cases now return `CachePoisoningError::PotentialPoisoning` instead of just logging a warning.
 
 ---
 
 ### 2.9 QUIC 0-RTT Replay Risk
 
-**Status**: 🔶 Future Work
+**Status**: ✅ Completed
 
 **Severity**: MEDIUM
 
-**Location**: `src/mesh/cert.rs:395`
+**Location**: `src/admin/handlers/mesh_admin.rs:148-163`
 
 **Issue**: QUIC 0-RTT is susceptible to replay attacks. While correctly disabled by default, warning is only logged once.
 
-**Fix**:
-1. Add persistent warning in admin dashboard if 0-RTT ever enabled
-2. Consider making 0-RTT require explicit admin opt-in with acknowledgment
+**Fix**: Added `quic_0rtt_enabled` and `quic_0rtt_warning` fields to `MeshAdminStatusResponse`. When 0-RTT is enabled, the warning is now always visible in the admin dashboard.
 
 ---
 
 ### 2.10 Proof of Work Difficulty May Be Too Low
 
-**Status**: 🔶 Future Work
+**Status**: ✅ Completed
 
 **Severity**: MEDIUM
 
@@ -368,68 +359,59 @@ fn test_xss_encoded_script_tags_not_detected() {
 
 **Issue**: Default PoW difficulty: 20 leading zero bits (1 in 1 million). May be insufficient for serious DoS protection.
 
-**Fix**:
-1. Benchmark PoW solving time with current difficulty
-2. Increase difficulty to make spam more expensive
+**Fix**: Increased default PoW difficulty from 20 to 24 leading zero bits (1 in 16 million) to make spam more expensive.
 
 ---
 
 ### 2.11 No Certificate Revocation List Enforcement
 
-**Status**: 🔶 Future Work
+**Status**: ✅ Completed (already implemented)
 
 **Severity**: LOW
 
-**Location**: `src/mesh/cert.rs`
+**Location**: `src/mesh/cert.rs:745-748`
 
 **Issue**: CRL is maintained but not actively enforced during QUIC connection establishment.
 
-**Fix**:
-1. Ensure CRL checking is enforced during TLS/QUIC handshake
-2. Add admin API to view revoked certificates
+**Fix**: CRL checking is already implemented in `verify_peer_certificate()`. The function checks `is_certificate_revoked()` before any other validation, ensuring revoked certificates are rejected immediately.
 
 ---
 
 ### 2.12 SSRF Path Not Checked in Request Body
 
-**Status**: 🔶 Future Work
+**Status**: ✅ Completed (already implemented)
 
 **Severity**: MEDIUM
 
-**Location**: `src/waf/attack_detection/mod.rs:539-567`
+**Location**: `src/waf/attack_detection/mod.rs:589-596`
 
 **Issue**: SSRF detection checks query string and headers but may not check request body URLs.
 
-**Fix**:
-1. Add body URL extraction and checking
-2. Consider URL patterns common in POST bodies (JSON, form data)
+**Fix**: SSRF detection already passes the request body to the SSRF detector. The `SsrfDetector::extract_ips_from_url()` function scans for http:// and https:// patterns in the input text, including body content.
 
 ---
 
 ### 2.13 File Upload Magic Byte Enforcement Missing
 
-**Status**: 🔶 Future Work
+**Status**: ✅ Completed (already implemented)
 
 **Severity**: MEDIUM
 
-**Location**: `src/upload/mod.rs`
+**Location**: `src/upload/mod.rs:276`, `src/upload/config.rs:100`
 
 **Issue**: File upload validation uses MIME type detection but not content-based magic byte enforcement.
 
-**Fix**:
-1. Implement magic byte detection using file signature analysis
-2. Compare magic byte result with declared MIME type
-3. Reject files with mismatched types
+**Fix**: Magic byte detection and MIME mismatch rejection is already implemented. The `SignatureRegistry` in `src/upload/signature.rs` provides `detect()` and `verify_mime()` functions. The `reject_mime_mismatch` config field controls rejection when declared MIME type doesn't match detected magic bytes.
 
 ---
 
 ### 2.14 Weak Random Number Generator for Admin Token
 
-**Status**: 🔶 Future Work
+**Status**: ✅ Completed (already implemented)
 
 **Severity**: LOW
 
-**Location**: `src/config/admin.rs:78-92`
+**Location**: `src/config/admin.rs:77-93`, `src/master/commands.rs:195-200`
 
 **Issue**: Admin token generation uses `rand::Rng` instead of `rand::rngs::StdRng` seeded from OS CSPRNG.
 
