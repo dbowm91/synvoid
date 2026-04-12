@@ -82,7 +82,7 @@ use crate::mesh::transports::MeshTransportType;
 pub const MESH_MESSAGE_VERSION: u8 = 1;
 const COMPRESSION_THRESHOLD: usize = 512;
 const NONCE_SIZE: usize = 16;
-const REPLAY_WINDOW_SECS: u64 = 300;
+const REPLAY_WINDOW_SECS: u64 = 60;
 const MAX_REPLAY_CACHE_SIZE: usize = 10000;
 
 #[derive(Clone)]
