@@ -155,6 +155,8 @@ pub struct MeshAdminStatusResponse {
     pub genesis_public_key_fingerprint: Option<String>,
     pub signing_key_derived: bool,
     pub signing_public_key: Option<String>,
+    pub quic_0rtt_enabled: bool,
+    pub quic_0rtt_warning: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -524,6 +526,8 @@ pub async fn get_mesh_status(
     let mut genesis_public_key_fingerprint = None;
     let mut signing_key_derived = false;
     let mut signing_public_key = None;
+    let mut quic_0rtt_enabled = false;
+    let mut quic_0rtt_warning = None;
 
     if let Some(transport) = &state.mesh.mesh_transport {
         is_global_node = transport.is_global_node();
@@ -544,6 +548,15 @@ pub async fn get_mesh_status(
         let config = transport.get_mesh_config();
         genesis_key_configured = config.has_genesis_key();
         signing_key_derived = config.has_signing_key();
+        quic_0rtt_enabled = config.tls.quic_enable_0rtt;
+
+        if quic_0rtt_enabled {
+            quic_0rtt_warning = Some(
+                "QUIC 0-RTT is enabled. 0-RTT is susceptible to replay attacks. \
+                Only enable if you understand the risks and have mitigated replay at the application layer."
+                    .to_string(),
+            );
+        }
 
         if let Some(ref pk) = config.signing_public_key() {
             signing_public_key = Some(format!("{}...", &pk[..16.min(pk.len())]));
@@ -570,6 +583,8 @@ pub async fn get_mesh_status(
         genesis_public_key_fingerprint,
         signing_key_derived,
         signing_public_key,
+        quic_0rtt_enabled,
+        quic_0rtt_warning,
     }))
 }
 

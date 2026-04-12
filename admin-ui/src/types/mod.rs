@@ -782,6 +782,8 @@ pub struct MeshAdminStatus {
     pub genesis_public_key_fingerprint: Option<String>,
     pub signing_key_derived: bool,
     pub signing_public_key: Option<String>,
+    pub quic_0rtt_enabled: bool,
+    pub quic_0rtt_warning: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
