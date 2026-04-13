@@ -267,8 +267,27 @@ impl NodeIdentityConfig {
                 if let Some(parent) = std::path::Path::new(path).parent() {
                     let _ = std::fs::create_dir_all(parent);
                 }
-                std::fs::write(path, key)
-                    .map_err(|e| format!("Failed to write signing key: {}", e))?;
+                #[cfg(unix)]
+                {
+                    use std::io::Write;
+                    use std::os::unix::fs::PermissionsExt;
+                    let temp_path = std::path::Path::new(path).with_extension("tmp");
+                    let mut file = std::fs::File::create(&temp_path)
+                        .map_err(|e| format!("Failed to create temp signing key file: {}", e))?;
+                    let perms = std::fs::Permissions::from_mode(0o600);
+                    file.set_permissions(perms)
+                        .map_err(|e| format!("Failed to set permissions on temp file: {}", e))?;
+                    file.write_all(key)
+                        .map_err(|e| format!("Failed to write signing key: {}", e))?;
+                    drop(file);
+                    std::fs::rename(&temp_path, path)
+                        .map_err(|e| format!("Failed to rename temp signing key file: {}", e))?;
+                }
+                #[cfg(not(unix))]
+                {
+                    std::fs::write(path, key)
+                        .map_err(|e| format!("Failed to write signing key: {}", e))?;
+                }
             }
         }
 

@@ -1,13 +1,13 @@
-use crate::utils::url_decode_all;
 use crate::waf::attack_detection::config::{AttackDetectionResult, AttackType, InputLocation};
 use crate::waf::attack_detection::detector_common::detect_in_headers;
+use crate::waf::attack_detection::normalizer::InputNormalizer;
 
 pub struct XssDetector;
 
 impl XssDetector {
     pub fn detect(input: &[u8], location: InputLocation) -> Option<AttackDetectionResult> {
-        let decoded = url_decode_all(std::str::from_utf8(input).unwrap_or(""));
-        let result = libinjectionrs::detect_xss(decoded.as_bytes());
+        let normalized = InputNormalizer::new().normalize(std::str::from_utf8(input).unwrap_or(""));
+        let result = libinjectionrs::detect_xss(normalized.as_bytes());
 
         if result.is_injection() {
             tracing::warn!(

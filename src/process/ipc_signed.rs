@@ -38,23 +38,26 @@ impl NonceCache {
     }
 
     fn evict_oldest(&mut self) {
-        if self.entries.is_empty() {
-            return;
-        }
-
-        let mut oldest_idx = 0;
-        let mut oldest_ts = u64::MAX;
-        for (i, entry) in self.entries.iter().enumerate() {
-            if entry.timestamp < oldest_ts {
-                oldest_ts = entry.timestamp;
-                oldest_idx = i;
+        while self.entries.len() > MAX_NONCE_CACHE_SIZE {
+            if self.entries.is_empty() {
+                return;
             }
+
+            let mut oldest_idx = 0;
+            let mut oldest_ts = u64::MAX;
+            for (i, entry) in self.entries.iter().enumerate() {
+                if entry.timestamp < oldest_ts {
+                    oldest_ts = entry.timestamp;
+                    oldest_idx = i;
+                }
+            }
+            self.entries.swap_remove(oldest_idx);
         }
-        self.entries.swap_remove(oldest_idx);
     }
 }
 
 static NONCE_CACHE: LazyLock<Mutex<NonceCache>> = LazyLock::new(|| Mutex::new(NonceCache::new()));
+const MAX_NONCE_CACHE_SIZE: usize = 10000;
 const REPLAY_WINDOW_SECS: u64 = 60;
 
 fn check_and_insert_nonce(nonce: &[u8; 16], timestamp: u64) -> bool {

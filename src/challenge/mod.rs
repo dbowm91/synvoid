@@ -101,7 +101,7 @@ impl Default for ChallengeConfig {
             pow_enabled: true,
             pow_difficulty: 12,
             pow_window_secs: 300,
-            pow_timeout_secs: 60,
+            pow_timeout_secs: 12,
             css_enabled: true,
             css_window_secs: 300,
             css_invalid_min: 80,

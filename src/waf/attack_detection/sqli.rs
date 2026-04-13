@@ -1,11 +1,13 @@
 use crate::waf::attack_detection::config::{AttackDetectionResult, AttackType, InputLocation};
 use crate::waf::attack_detection::detector_common::detect_in_headers;
+use crate::waf::attack_detection::normalizer::InputNormalizer;
 
 pub struct SqliDetector;
 
 impl SqliDetector {
     pub fn detect(input: &[u8], location: InputLocation) -> Option<AttackDetectionResult> {
-        let result = libinjectionrs::detect_sqli(input);
+        let normalized = InputNormalizer::new().normalize(std::str::from_utf8(input).unwrap_or(""));
+        let result = libinjectionrs::detect_sqli(normalized.as_bytes());
 
         if result.is_injection() {
             let fingerprint = result.fingerprint.map(|fp| fp.to_string());
