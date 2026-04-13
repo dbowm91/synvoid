@@ -237,8 +237,13 @@ impl ProxyCache {
                     disk_path: inner.disk_path.clone(),
                     checksum: inner.checksum,
                 };
-                self.entries.insert(key.clone(), updated_inner);
-                return self.entries.get(key).map(|i| i.entry.clone());
+                return Some(
+                    self.entries
+                        .entry(key.clone())
+                        .or_insert(updated_inner)
+                        .into_value()
+                        .entry,
+                );
             }
             if inner.entry.is_stale_if_error() {
                 let mut entry = (*inner.entry).clone();
@@ -251,8 +256,13 @@ impl ProxyCache {
                     disk_path: inner.disk_path.clone(),
                     checksum: inner.checksum,
                 };
-                self.entries.insert(key.clone(), updated_inner);
-                return self.entries.get(key).map(|i| i.entry.clone());
+                return Some(
+                    self.entries
+                        .entry(key.clone())
+                        .or_insert(updated_inner)
+                        .into_value()
+                        .entry,
+                );
             }
             drop(inner);
             self.entries.invalidate(key);

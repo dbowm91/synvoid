@@ -494,9 +494,9 @@ impl RecordStoreManager {
     pub fn queue_for_announce(&self, record: DhtRecord) {
         let mut rs = self.record_state.write();
         if rs.pending_announces.len() >= MAX_PENDING_ANNOUNCES {
-            rs.pending_announces.remove(0);
+            rs.pending_announces.pop_front();
         }
-        rs.pending_announces.push(record);
+        rs.pending_announces.push_back(record);
         crate::metrics::record_dht_announce_queue_depth(rs.pending_announces.len());
     }
 
@@ -544,7 +544,7 @@ impl RecordStoreManager {
             return None;
         }
 
-        let records: Vec<DhtRecord> = rs.pending_announces.to_vec();
+        let records: Vec<DhtRecord> = rs.pending_announces.iter().cloned().collect();
 
         let mut signature = Vec::new();
         let mut signer_public_key = String::new();

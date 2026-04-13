@@ -1,6 +1,6 @@
 #![allow(unused_variables)]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -205,7 +205,7 @@ pub struct RecordStoreState {
     pub record_signer: Option<crate::mesh::dht::RecordSigner>,
     pub local_version: u64,
     pub records: ShardedRecordStore,
-    pub pending_announces: Vec<DhtRecord>,
+    pub pending_announces: VecDeque<DhtRecord>,
     pub last_snapshot_version: u64,
     pub merkle_tree: Option<MerkleTree>,
     pub propagation_states: HashMap<String, PropagationState>,
@@ -281,7 +281,7 @@ impl RecordStoreManager {
                 record_signer: None,
                 local_version: 1,
                 records: ShardedRecordStore::new(),
-                pending_announces: Vec::new(),
+                pending_announces: VecDeque::new(),
                 last_snapshot_version: 0,
                 merkle_tree: None,
                 propagation_states: HashMap::new(),
