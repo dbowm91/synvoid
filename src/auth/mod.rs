@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
+use subtle::ConstantTimeEq;
 use tokio::fs as tokio_fs;
 use tokio::sync::{mpsc, RwLock};
 use tokio::time::{sleep, Duration as TokioDuration};
@@ -718,7 +719,9 @@ impl AuthManager {
 
         if let Some(session) = store.sessions.get(session_id) {
             if session.expires_at > Utc::now() {
-                return session.csrf_token.as_deref() == Some(csrf_token);
+                if let Some(stored) = session.csrf_token.as_deref() {
+                    return bool::from(stored.as_bytes().ct_eq(csrf_token.as_bytes()));
+                }
             }
         }
 

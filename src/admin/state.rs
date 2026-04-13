@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::Instant;
+use subtle::ConstantTimeEq;
 use tokio::sync::RwLock as TokioRwLock;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -609,7 +610,12 @@ impl AdminState {
 
         if let Some(valid_token) = csrf_tokens.get(token) {
             if now.duration_since(valid_token.created) < Duration::from_secs(3600)
-                && valid_token.session_id == session_id
+                && bool::from(
+                    valid_token
+                        .session_id
+                        .as_bytes()
+                        .ct_eq(session_id.as_bytes()),
+                )
             {
                 return true;
             }

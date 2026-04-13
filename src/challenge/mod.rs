@@ -272,7 +272,11 @@ impl ChallengeManager {
         attempts.retain(|_, a| now < a.first_attempt + self.rate_limit_window_secs);
     }
 
-    pub fn generate_challenge_page(&self, ip: &IpAddr, app_path: Option<&str>) -> (String, Option<String>) {
+    pub fn generate_challenge_page(
+        &self,
+        ip: &IpAddr,
+        app_path: Option<&str>,
+    ) -> (String, Option<String>) {
         if self.is_rate_limited(ip) {
             return (self.generate_rate_limited_page(), None);
         }
