@@ -622,13 +622,15 @@ rrsig.extend_from_slice(&timestamp.to_be_bytes());
 
 The consolidated implementation plan is located at `plans/plan.md`. This plan organizes all improvements into 5 waves for parallelization:
 
-| Wave | Focus |
-|------|-------|
-| 1 | Critical Security (WAF, Auth, Mesh) |
-| 2 | High Security (TLS, DNS, Mesh) |
-| 3 | Core Functionality (Web Stack, Caching, Honeypot) |
-| 4 | Code Quality (Performance, Quality) |
-| 5 | Polish & Cleanup |
+| Wave | Focus | Item Count |
+|------|-------|------------|
+| 1 | Critical Security (WAF, Auth, Mesh) | 14 |
+| 2 | High Security (TLS, DNS, Mesh) | 8 |
+| 3 | Core Functionality (Web Stack, Caching, Honeypot) | 10 |
+| 4 | Code Quality (Performance, Quality) | 8 |
+| 5 | Polish & Optimization | 7 |
+
+**Subagent Execution Model**: Items within the same wave can be executed in parallel by separate subagents. Dependencies between waves are documented in `plans/plan.md` dependencies graph.
 
 When reviewing the plan against the codebase, always verify claims directly. Plans may reference items already fixed, use outdated line numbers, or describe bugs incorrectly. Run `grep`/search for the specific patterns described to confirm they still exist before implementing fixes.
 
@@ -791,3 +793,69 @@ When working on mesh or DHT components, read `skills/malu_mesh.md` for context. 
 5. **File reference table** - purpose of each mesh-related file
 
 The skill file was originally maintained at `~/.config/opencode/skills/malu_mesh/SKILL.md` but a copy is kept in-repository for reliability.
+
+## Plan Consolidation Notes (2026-04-13)
+
+The implementation plans (plan.md, plan2.md through plan11.md) were consolidated into a single `plans/plan.md` file. Key observations:
+
+### Cross-Plan Item Dependencies
+
+Several items appeared in multiple plans with different IDs:
+- **JA4 wiring**: O.1 (plan.md), C.1 (plan2.md), W3.1 (consolidated)
+- **Request body chunking**: O.2 (plan.md), S.2 (plan2.md), W3.2 (consolidated)
+- **Response streaming**: O.3 (plan.md), S.1 (plan2.md), W3.3 (consolidated)
+- **Mesh peer auth bypass**: M3.1 (plan3.md), S.3 (plan9.md), W1.3 (consolidated)
+
+When implementing, search all plan references to avoid duplicating work.
+
+### Threat Intelligence Key Patterns
+
+| Key Pattern | Purpose | Created By |
+|-------------|---------|------------|
+| `threat_indicator:{ip}` | Individual threat indicator | Any node |
+| `threat_indicator:{ip}:{threat_type}` | Per-type indicator | (proposed, W1.8) |
+| `yara_rule:{content_hash}` | Rule content | Global nodes |
+| `yara_rules_manifest:{node_id}` | Ruleset metadata | Global nodes |
+
+### Honeypot Architecture Summary
+
+| Subsystem | Location | Publishing |
+|-----------|----------|------------|
+| HTTP Honeypot | `src/challenge/honeypot.rs` | Via `block_ip_with_threat_intel()` |
+| Port Honeypot | `src/honeypot_port/` | Via `start_mesh_threat_publishing()` |
+
+Both should publish to ThreatIntel, but standalone mode has issues (see W1.5-W1.7 in plan.md).
+
+### Web App Stack Backend Types
+
+| Backend | Config | Implementation |
+|---------|--------|----------------|
+| Static Files | `[site.static]` | `src/static_files/mod.rs` |
+| PHP-FPM | `[site.php]` | `src/php/mod.rs` |
+| FastCGI | `[site.fastcgi]` | `src/fastcgi/mod.rs` |
+| WASM/Serverless | `[site.serverless]` | `src/serverless/manager.rs` |
+| Python (Granian) | `[site.app_server]` | `src/app_server/granian.rs` |
+| HTTP Upstream | `[site.upstream]` | `src/proxy.rs` |
+| Mesh Origin | DHT + `[site.upstream]` | `src/mesh/topology.rs` |
+
+### Static File Theme Inheritance
+
+```
+Global Theme (src/theme/config.rs:ThemeDefaults)
+    ↓
+Site Error Pages Theme (src/config/site/error_pages.rs:SiteThemeConfig)
+    ↓
+Site Static Theme (NEW: src/config/site/static_theme.rs:SiteStaticThemeConfig) -- pending W.1
+    ↓
+DirectoryListingTemplate (src/theme/template.rs:461)
+```
+
+### Code Quality Issues to Address
+
+| ID | Issue | Severity | Location |
+|----|-------|----------|----------|
+| Q.3 | handle_request() 1363 lines | HIGH | `src/http/server.rs:437-1800` |
+| Q.4 | ~93 dead_code suppressions | MEDIUM | ~50 files |
+| Q.5 | ~24 unsafe blocks missing SAFETY | MEDIUM | Various |
+| Q.6 | bcrypt cost not configurable | MEDIUM | `src/auth/mod.rs:8` |
+| Q.7 | TLS 1.3 not default | MEDIUM | `src/tls/cert_resolver.rs` |
