@@ -2,14 +2,34 @@ pub mod pool;
 
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::sync::{Arc, LazyLock};
 
 use bytes::Bytes;
 use fastcgi_client::{Client, Params, Request};
 use http::{header::HeaderName, HeaderMap, HeaderValue, Method, StatusCode, Uri};
+use parking_lot::RwLock;
 
 use crate::config::site::FastCgiConfig;
 
 const FORBIDDEN_RESPONSE_HEADERS: &[&str] = &["server", "x-powered-by", "connection", "keep-alive"];
+
+static FASTCGI_POOL_MANAGER: LazyLock<RwLock<pool::FastCgiPoolManager>> =
+    LazyLock::new(|| RwLock::new(pool::FastCgiPoolManager::new()));
+
+pub fn get_pool(socket: &str, config: &FastCgiConfig) -> Arc<pool::FastCgiPool> {
+    let manager = FASTCGI_POOL_MANAGER.read();
+    manager.get_or_create_pool(socket, config)
+}
+
+pub fn remove_pool(socket: &str) {
+    let manager = FASTCGI_POOL_MANAGER.read();
+    manager.remove_pool(socket);
+}
+
+pub fn close_all_pools() {
+    let manager = FASTCGI_POOL_MANAGER.read();
+    manager.close_all();
+}
 
 pub struct FastCgiClient {
     socket_path: String,
@@ -231,6 +251,12 @@ impl FastCgiClient {
                 if let Ok(len) = cl.parse::<usize>() {
                     params = params.content_length(len);
                 }
+            }
+        }
+
+        if let Some(ref extra_params) = config.params {
+            for (key, value) in extra_params {
+                params.insert(key.clone().into(), value.clone().into());
             }
         }
 

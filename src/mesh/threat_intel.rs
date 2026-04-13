@@ -1142,9 +1142,68 @@ impl ThreatIntelligenceManager {
 
             if should_update {
                 if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&record.value) {
-                    let indicator = self
-                        .parse_dht_record_value(&value)
-                        .ok_or_else(|| "Failed to parse DHT record".to_string())?;
+                    let indicator = match self.parse_dht_record_value(&value) {
+                        Some(i) => i,
+                        None => continue,
+                    };
+
+                    let signature = value
+                        .get("signature")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let signer_pk = value
+                        .get("signer_public_key")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+
+                    if !signature.is_empty() && !signer_pk.is_empty() {
+                        let content = format!(
+                            "{}:{}:{}:{}:{}",
+                            indicator.indicator_value,
+                            indicator.threat_type as u8,
+                            indicator.severity as u8,
+                            indicator.timestamp,
+                            indicator.source_node_id
+                        );
+                        let sig_bytes = match base64::Engine::decode(
+                            &base64::engine::general_purpose::STANDARD,
+                            signature,
+                        ) {
+                            Ok(s) => s,
+                            Err(_) => {
+                                tracing::warn!(
+                                    "Threat intel DHT sync: invalid signature base64 for {}",
+                                    key
+                                );
+                                continue;
+                            }
+                        };
+                        let pk_bytes = match base64::Engine::decode(
+                            &base64::engine::general_purpose::STANDARD,
+                            signer_pk,
+                        ) {
+                            Ok(p) => p,
+                            Err(_) => {
+                                tracing::warn!(
+                                    "Threat intel DHT sync: invalid signer pk base64 for {}",
+                                    key
+                                );
+                                continue;
+                            }
+                        };
+
+                        let signer = crate::mesh::protocol::MeshMessageSigner::new(
+                            pk_bytes.clone().try_into().unwrap_or([0u8; 32]),
+                        );
+                        if !signer.verify(&content, &sig_bytes, &pk_bytes) {
+                            tracing::warn!(
+                                "Threat intel DHT sync: signature verification failed for {}",
+                                key
+                            );
+                            continue;
+                        }
+                    }
+
                     local_indicators.insert(
                         key.to_string(),
                         ThreatIndicatorEntry {

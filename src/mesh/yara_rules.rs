@@ -441,6 +441,68 @@ impl YaraRulesManager {
                         .and_then(|v| v.as_str())
                         .unwrap_or("");
 
+                    let manifest_version = value
+                        .get("version")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let manifest_timestamp_str = value
+                        .get("timestamp")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("0");
+                    let manifest_timestamp: u64 = manifest_timestamp_str.parse().unwrap_or(0);
+                    let manifest_signature = value
+                        .get("signature")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let manifest_signer_pk = value
+                        .get("signer_public_key")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+
+                    if !manifest_signature.is_empty() && !manifest_signer_pk.is_empty() {
+                        let content = format!(
+                            "{}:{}:{}:{}",
+                            manifest_version, peer_hash, manifest_node_id, manifest_timestamp
+                        );
+                        let sig_bytes = match base64::Engine::decode(
+                            &base64::engine::general_purpose::STANDARD,
+                            manifest_signature,
+                        ) {
+                            Ok(s) => s,
+                            Err(_) => {
+                                tracing::warn!(
+                                    "YARA DHT sync: invalid manifest signature base64 from {}",
+                                    manifest_node_id
+                                );
+                                continue;
+                            }
+                        };
+                        let pk_bytes = match base64::Engine::decode(
+                            &base64::engine::general_purpose::STANDARD,
+                            manifest_signer_pk,
+                        ) {
+                            Ok(p) => p,
+                            Err(_) => {
+                                tracing::warn!(
+                                    "YARA DHT sync: invalid manifest signer pk base64 from {}",
+                                    manifest_node_id
+                                );
+                                continue;
+                            }
+                        };
+
+                        let signer = crate::mesh::protocol::MeshMessageSigner::new(
+                            pk_bytes.clone().try_into().unwrap_or([0u8; 32]),
+                        );
+                        if !signer.verify(&content, &sig_bytes, &pk_bytes) {
+                            tracing::warn!(
+                                "YARA DHT sync: manifest signature verification failed for record from {}",
+                                manifest_node_id
+                            );
+                            continue;
+                        }
+                    }
+
                     if let Some(ref local_h) = local_hash {
                         if local_h == peer_hash {
                             tracing::debug!(

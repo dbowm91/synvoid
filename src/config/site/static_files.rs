@@ -3,6 +3,23 @@ use serde::{Deserialize, Serialize};
 
 use super::error_pages::SiteThemeConfig;
 
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
+pub struct SiteStaticThemeConfig {
+    #[serde(flatten)]
+    pub theme: SiteThemeConfig,
+    #[serde(default)]
+    pub directory_template_path: Option<String>,
+}
+
+impl SiteStaticThemeConfig {
+    pub fn to_theme_config(
+        &self,
+        default_theme: &crate::theme::ThemeConfig,
+    ) -> crate::theme::ThemeConfig {
+        self.theme.to_theme_config(default_theme)
+    }
+}
+
 fn default_block_hidden_files() -> Option<bool> {
     Some(true)
 }
@@ -127,7 +144,7 @@ pub struct SiteStaticConfig {
     #[serde(default)]
     pub directory_listing_format: Option<String>,
     #[serde(default)]
-    pub theme: Option<SiteThemeConfig>,
+    pub theme: Option<SiteStaticThemeConfig>,
     #[serde(default)]
     pub locations: Vec<StaticLocation>,
     #[serde(default)]

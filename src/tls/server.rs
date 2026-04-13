@@ -1086,8 +1086,8 @@ impl HttpsServer {
                         let fcgi_config =
                             target.site_config.proxy.fastcgi.clone().unwrap_or_default();
 
-                        let client = crate::fastcgi::FastCgiClient::new(socket.to_string());
-                        match client
+                        let pool = crate::fastcgi::get_pool(socket, &fcgi_config);
+                        match pool
                             .execute(
                                 &method,
                                 &parts.uri,
@@ -1201,29 +1201,19 @@ impl HttpsServer {
                     if let Some(ref app_servers) = app_servers {
                         let app_servers_read = app_servers.read().await;
                         if let Some(supervisor) = app_servers_read.get(target.site_id.as_ref()) {
-                            let socket_path = supervisor.config().resolve_socket_path();
                             let body_bytes_for_appserver: Bytes = body_bytes.clone();
 
-                            let fcgi_config =
-                                target.site_config.proxy.fastcgi.clone().unwrap_or_default();
-
-                            let client = crate::fastcgi::FastCgiClient::new(
-                                socket_path.to_string_lossy().to_string(),
-                            );
-                            match client
-                                .execute(
-                                    &method,
-                                    &parts.uri,
+                            match supervisor
+                                .forward_request(
+                                    method,
+                                    &parts.uri.to_string(),
                                     &parts.headers,
                                     body_bytes_for_appserver,
-                                    &fcgi_config,
                                 )
                                 .await
                             {
                                 Ok(response) => {
-                                    return Ok(response
-                                        .into_http_response()
-                                        .map(|b| Full::new(b).boxed()));
+                                    return Ok(response.map(|b| Full::new(b).boxed()));
                                 }
                                 Err(e) => {
                                     tracing::warn!(

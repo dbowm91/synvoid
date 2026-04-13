@@ -3,6 +3,134 @@ use std::path::Path;
 
 use crate::theme::{DirectoryEntry, DirectoryListingTemplate, ThemeConfig};
 
+pub fn load_directory_template(template_path: &str) -> Result<String, super::StaticError> {
+    fs::read_to_string(template_path).map_err(|e| {
+        super::StaticError::Internal(format!(
+            "Failed to load directory template from {}: {}",
+            template_path, e
+        ))
+    })
+}
+
+pub fn render_custom_template(
+    template: &str,
+    url_path: &str,
+    entries: &[DirectoryEntry],
+) -> Result<String, super::StaticError> {
+    let mut html = template.to_string();
+
+    html = html.replace("{{url_path}}", url_path);
+
+    let parent_link = if url_path != "/" {
+        let parent = Path::new(url_path)
+            .parent()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|| "/".to_string());
+        let parent_href = if parent.is_empty() || parent == "/" {
+            "/".to_string()
+        } else {
+            parent
+        };
+        format!(
+            r#"<tr><td colspan="3"><a href="{}">..</a></td></tr>"#,
+            parent_href
+        )
+    } else {
+        String::new()
+    };
+    html = html.replace("{{parent_link}}", &parent_link);
+
+    let rows: String = entries
+        .iter()
+        .map(|entry| {
+            let icon = if entry.is_dir { "📁" } else { "📄" };
+            format!(
+                r#"<tr>
+                    <td><a href="{}">{} {}</a></td>
+                    <td>{}</td>
+                    <td class="size">{}</td>
+                </tr>"#,
+                entry.href, icon, entry.name, entry.modified, entry.size
+            )
+        })
+        .collect();
+    html = html.replace("{{rows}}", &rows);
+
+    html = html.replace("{{site_name}}", "RustWAF");
+    html = html.replace("{{title}}", &format!("Index of {}", url_path));
+
+    Ok(html)
+}
+
+pub fn collect_directory_entries(
+    dir_path: &Path,
+) -> Result<Vec<DirectoryEntry>, super::StaticError> {
+    let entries =
+        fs::read_dir(dir_path).map_err(|e| super::StaticError::Internal(e.to_string()))?;
+
+    let mut items: Vec<DirEntry> = Vec::new();
+
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        let path = entry.path();
+        let is_dir = path.is_dir();
+
+        let metadata = entry.metadata().ok();
+        let modified = metadata
+            .as_ref()
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
+        let size = metadata
+            .as_ref()
+            .map(|m| if is_dir { 0 } else { m.len() })
+            .unwrap_or(0);
+
+        items.push(DirEntry {
+            name,
+            is_dir,
+            modified,
+            size,
+        });
+    }
+
+    items.sort_by(|a, b| match (a.is_dir, b.is_dir) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+    });
+
+    let binding = dir_path.to_string_lossy();
+    let base_path = binding.trim_end_matches('/');
+    let url_path = format!("/{}", base_path);
+
+    let mut result: Vec<DirectoryEntry> = Vec::new();
+
+    for entry in items {
+        let href = if entry.is_dir {
+            format!("{}/{}/", url_path, entry.name)
+        } else {
+            format!("{}/{}", url_path, entry.name)
+        };
+
+        result.push(DirectoryEntry {
+            name: entry.name.clone(),
+            href,
+            is_dir: entry.is_dir,
+            modified: format_modified(entry.modified),
+            size: if entry.is_dir {
+                "-".to_string()
+            } else {
+                format_size(entry.size)
+            },
+        });
+    }
+
+    Ok(result)
+}
+
 pub fn render_directory_listing(
     dir_path: &Path,
     url_path: &str,

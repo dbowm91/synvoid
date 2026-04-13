@@ -37,6 +37,7 @@ use crate::mesh::protocol::{ProviderInfo, UpstreamProtocol, WafPolicy};
 use crate::mesh::topology::MeshTopology;
 use crate::mesh::transport::MeshTransport;
 use crate::metrics::bandwidth::get_global_bandwidth_tracker_or_log;
+use crate::proxy_cache::ProxyCache;
 use crate::proxy_cache::ProxyCacheSettings;
 
 /// Default TTL for cached routing policies (1 hour)
@@ -72,6 +73,7 @@ pub struct MeshProxy {
     provider_stats: Cache<String, ProviderStats>,
     org_manager: Arc<TokioRwLock<OrganizationManager>>,
     transform_cache: Arc<Cache<String, TransformCacheEntry>>,
+    proxy_cache: Arc<RwLock<Option<ProxyCache>>>,
 }
 
 struct MeshConnection {
@@ -197,7 +199,7 @@ impl MeshProxy {
     pub fn new(
         config: Arc<MeshConfig>,
         topology: Arc<MeshTopology>,
-        _cache_config: Option<ProxyCacheSettings>,
+        cache_config: Option<ProxyCacheSettings>,
     ) -> Self {
         let cache_size = config.persistence.policy_cache_size.max(100);
         let policy_cache = Cache::builder()
@@ -221,6 +223,8 @@ impl MeshProxy {
             .time_to_live(Duration::from_secs(DEFAULT_TRANSFORM_CACHE_TTL_SECS))
             .build();
 
+        let proxy_cache = cache_config.map(ProxyCache::new);
+
         Self {
             config,
             topology,
@@ -233,7 +237,13 @@ impl MeshProxy {
             provider_stats,
             org_manager: Arc::new(TokioRwLock::new(OrganizationManager::new())),
             transform_cache: Arc::new(transform_cache),
+            proxy_cache: Arc::new(RwLock::new(proxy_cache)),
         }
+    }
+
+    #[allow(dead_code)]
+    pub fn proxy_cache(&self) -> &Arc<RwLock<Option<ProxyCache>>> {
+        &self.proxy_cache
     }
 
     pub fn set_record_store(&self, record_store: Arc<RecordStoreManager>) {

@@ -1691,8 +1691,8 @@ impl HttpServer {
                         let fcgi_config =
                             target.site_config.proxy.fastcgi.clone().unwrap_or_default();
 
-                        let client = crate::fastcgi::FastCgiClient::new(socket.to_string());
-                        match client
+                        let pool = crate::fastcgi::get_pool(&socket.to_string(), &fcgi_config);
+                        match pool
                             .execute(
                                 &method,
                                 &parts.uri,
@@ -2264,7 +2264,7 @@ impl HttpServer {
                             if let Some(ref rm) = req_metrics {
                                 rm.record_upstream_success();
                             }
-                            let (resp_parts, _upstream_body) = upstream_resp.into_parts();
+                            let (resp_parts, upstream_body) = upstream_resp.into_parts();
                             let status = resp_parts.status.as_u16();
 
                             let body_len = resp_parts
@@ -2309,7 +2309,11 @@ impl HttpServer {
 
                             return Ok(builder
                                 .body(
-                                    http_body_util::Full::new(full_body_arc.as_ref().clone())
+                                    upstream_body
+                                        .map_err(|e| {
+                                            tracing::warn!("Upstream body stream error: {}", e);
+                                            unreachable!()
+                                        })
                                         .boxed(),
                                 )
                                 .unwrap_or_else(|_| {

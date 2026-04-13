@@ -51,6 +51,7 @@ pub struct StaticFileHandler {
     mesh_compression: Option<MeshCompressionConfig>,
     mesh_minification: Option<MeshMinificationConfig>,
     theme_config: ThemeConfig,
+    directory_template_path: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -139,6 +140,8 @@ impl StaticFileHandler {
         let enable_compression = config.enable_compression.unwrap_or(true);
         let gzip_on_the_fly = config.gzip_on_the_fly.unwrap_or(true);
         let directory_listing = config.directory_listing.unwrap_or(false);
+        let directory_template_path = config.theme.as_ref()
+            .and_then(|t| t.directory_template_path.clone());
 
         let config_clone = config.clone();
 
@@ -170,6 +173,7 @@ impl StaticFileHandler {
                 mesh_compression,
                 mesh_minification,
                 theme_config,
+                directory_template_path: None,
             });
         }
 
@@ -240,6 +244,7 @@ impl StaticFileHandler {
             mesh_compression,
             mesh_minification,
             theme_config,
+            directory_template_path,
         })
     }
 
@@ -748,12 +753,28 @@ impl StaticFileHandler {
                 .directory_listing_format
                 .as_deref()
                 .unwrap_or("html");
-            let body = directory::render_directory_listing(
-                dir_path,
-                url_path,
-                format,
-                &self.theme_config,
-            )?;
+
+            let body = if let Some(ref template_path) = self.directory_template_path {
+                if format == "html" {
+                    let template = directory::load_directory_template(template_path)?;
+                    let entries = directory::collect_directory_entries(dir_path)?;
+                    directory::render_custom_template(&template, url_path, &entries)?
+                } else {
+                    directory::render_directory_listing(
+                        dir_path,
+                        url_path,
+                        format,
+                        &self.theme_config,
+                    )?
+                }
+            } else {
+                directory::render_directory_listing(
+                    dir_path,
+                    url_path,
+                    format,
+                    &self.theme_config,
+                )?
+            };
             return Ok(StaticResponse {
                 status: StatusCode::OK,
                 headers: vec![

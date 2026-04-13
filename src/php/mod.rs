@@ -7,7 +7,6 @@ use bytes::Bytes;
 use http::{Method, Uri};
 
 use crate::config::site::{FastCgiConfig, PhpConfig};
-use crate::fastcgi::FastCgiClient;
 
 static COMMON_PHP_SOCKETS: LazyLock<Vec<PathBuf>> = LazyLock::new(|| {
     let mut paths = vec![
@@ -55,15 +54,12 @@ fn is_unix_socket(path: &PathBuf) -> bool {
 }
 
 pub struct PhpClient {
-    client: FastCgiClient,
     config: PhpConfig,
 }
 
 impl PhpClient {
     pub fn new(config: PhpConfig) -> Self {
-        let socket = Self::auto_detect_socket(&config);
-        let client = FastCgiClient::new(socket);
-        PhpClient { client, config }
+        PhpClient { config }
     }
 
     fn auto_detect_socket(config: &PhpConfig) -> String {
@@ -99,10 +95,10 @@ impl PhpClient {
         headers: &http::HeaderMap,
         body: Bytes,
     ) -> Result<crate::fastcgi::FastCgiResponse, crate::fastcgi::FastCgiError> {
+        let socket = Self::auto_detect_socket(&self.config);
         let fcgi_config = self.build_fcgi_config();
-        self.client
-            .execute(method, uri, headers, body, &fcgi_config)
-            .await
+        let pool = crate::fastcgi::get_pool(&socket, &fcgi_config);
+        pool.execute(method, uri, headers, body, &fcgi_config).await
     }
 
     fn build_fcgi_config(&self) -> FastCgiConfig {
@@ -128,6 +124,69 @@ impl PhpClient {
 
         if let Some(timeout) = self.config.read_timeout {
             fcgi_config.read_timeout = Some(timeout);
+        }
+
+        let mut admin_values = Vec::new();
+        let mut php_values = Vec::new();
+
+        if let Some(ref disable_funcs) = self.config.disable_functions {
+            if !disable_funcs.is_empty() {
+                admin_values.push((
+                    "disable_functions".to_string(),
+                    disable_funcs.join(",").to_string(),
+                ));
+            }
+        }
+
+        if let Some(ref open_basedir) = self.config.open_basedir {
+            php_values.push(("open_basedir".to_string(), open_basedir.clone()));
+        }
+
+        if let Some(allow_url_fopen) = self.config.allow_url_fopen {
+            php_values.push((
+                "allow_url_fopen".to_string(),
+                if allow_url_fopen {
+                    "1".to_string()
+                } else {
+                    "0".to_string()
+                },
+            ));
+        }
+
+        if let Some(max_exec_time) = self.config.max_execution_time {
+            php_values.push((
+                "max_execution_time".to_string(),
+                max_exec_time.to_string(),
+            ));
+        }
+
+        if let Some(ref memory_limit) = self.config.memory_limit {
+            php_values.push(("memory_limit".to_string(), memory_limit.clone()));
+        }
+
+        if let Some(ref upload_max_size) = self.config.upload_max_filesize {
+            php_values.push(("upload_max_filesize".to_string(), upload_max_size.clone()));
+        }
+
+        if let Some(ref post_max_size) = self.config.post_max_size {
+            php_values.push(("post_max_size".to_string(), post_max_size.clone()));
+        }
+
+        if let Some(ref ini_settings) = self.config.ini_settings {
+            for (key, value) in ini_settings {
+                php_values.push((key.clone(), value.clone()));
+            }
+        }
+
+        if !admin_values.is_empty() || !php_values.is_empty() {
+            let mut params = std::collections::HashMap::new();
+            for (key, value) in admin_values {
+                params.insert(format!("PHP_ADMIN_VALUE:{}", key), value);
+            }
+            for (key, value) in php_values {
+                params.insert(format!("PHP_VALUE:{}", key), value);
+            }
+            fcgi_config.params = Some(params);
         }
 
         fcgi_config
