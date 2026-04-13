@@ -376,28 +376,6 @@ impl RateLimiterManager {
         }
     }
 
-    #[allow(dead_code)]
-    fn get_shard(&self, ip: IpAddr) -> &RateLimiterShard {
-        let hash = match ip {
-            IpAddr::V4(ipv4) => {
-                let octets = ipv4.octets();
-                let hash = ((octets[0] as u64) * 16777619u64)
-                    ^ ((octets[1] as u64) * 2166136261u64)
-                    ^ ((octets[2] as u64) ^ ((octets[3] as u64) * 65536u64));
-                hash as usize
-            }
-            IpAddr::V6(ipv6) => {
-                let segments = ipv6.segments();
-                let mut hash = 0u64;
-                for (i, &seg) in segments.iter().enumerate() {
-                    hash = hash.wrapping_add((seg as u64).wrapping_mul(2166136261u64 >> (i * 5)));
-                }
-                hash as usize
-            }
-        };
-        let shard_index = hash % self.state.shards.len();
-        &self.state.shards[shard_index]
-    }
 
     pub fn check_global(&self) -> RateLimitResult {
         match self.state.global_limiter.check_and_increment() {

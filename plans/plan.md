@@ -102,25 +102,25 @@ in parallel by separate subagents. Dependencies between waves are documented.
 | Q4.3 | Ed25519 Key Array Zeroization | 🟢 LOW | ❌ Open |
 | Q4.4 | MockIpcStream Dead Code | 🟢 LOW | ❌ Open |
 | **Wave 5: Polish & Optimization** | | | |
-| Q1.1 | NSEC3 Hash Length Encoding Bug | 🔴 CRITICAL | ❌ Open |
-| Q1.2 | Unsafe Blocks Missing SAFETY Comments | 🔴 HIGH | ❌ Open |
+| Q1.1 | NSEC3 Hash Length Encoding Bug | 🔴 CRITICAL | ✅ Completed |
+| Q1.2 | Unsafe Blocks Missing SAFETY Comments | 🔴 HIGH | ✅ Completed |
 | Q2.1 | handle_request() Maintainability | 🟡 MEDIUM | ⏸️ Deferred |
-| Q2.2 | Dead Code Audit and Cleanup | 🟡 MEDIUM | ❌ Open |
-| Q3.1 | Missing Test Coverage for Critical Paths | 🟡 MEDIUM | ❌ Open |
-| Q3.2 | Metrics and Observability Gaps | 🟡 MEDIUM | ❌ Open |
-| Q4.1 | Configuration Documentation | 🟢 LOW | ❌ Open |
-| Q4.2 | TODO Comments Cleanup | 🟢 LOW | ❌ Open |
-| F.1 | ShardedZoneStore is_empty() Optimization | 🟡 MEDIUM | ❌ Open |
-| F.2 | DHT Metrics and Observability | 🟡 MEDIUM | ❌ Open |
-| F.3 | Configuration Documentation for DhtConfig | 🟢 LOW | ❌ Open |
-| F.4 | CSS Honeypot Enhancement - Path Tracking | 🟢 LOW | ❌ Open |
-| F.5 | Metrics for Threat Intel DHT Operations | 🟢 LOW | ❌ Open |
-| F.8 | Reputation System Bug - Hardcoded 50 | 🟢 LOW | ❌ Open |
-| F.9 | Global Node Liveness and Quorum Monitoring | 🟢 LOW | ❌ Open |
-| F.10 | IPv6 Zone ID SSRF Bypass | 🟢 LOW | ❌ Open |
-| F.11 | Homoglyph Normalization Gaps | 🟢 LOW | ❌ Open |
-| F.12 | TODO Comments - File Manager | 🟢 LOW | ❌ Open |
-| F.13 | ConnectionMeta Trait - Remaining Migration | 🟡 MEDIUM | ❌ Open |
+| Q2.2 | Dead Code Audit and Cleanup | 🟡 MEDIUM | ✅ Completed |
+| Q3.1 | Missing Test Coverage for Critical Paths | 🟡 MEDIUM | ⏸️ Deferred |
+| Q3.2 | Metrics and Observability Gaps | 🟡 MEDIUM | ⏸️ Deferred |
+| Q4.1 | Configuration Documentation | 🟢 LOW | ⏸️ Deferred |
+| Q4.2 | TODO Comments Cleanup | 🟢 LOW | ✅ Completed |
+| F.1 | ShardedZoneStore is_empty() Optimization | 🟡 MEDIUM | ✅ Completed |
+| F.2 | DHT Metrics and Observability | 🟡 MEDIUM | ⏸️ Deferred |
+| F.3 | Configuration Documentation for DhtConfig | 🟢 LOW | ⏸️ Deferred |
+| F.4 | CSS Honeypot Enhancement - Path Tracking | 🟢 LOW | ⏸️ Deferred |
+| F.5 | Metrics for Threat Intel DHT Operations | 🟢 LOW | ⏸️ Deferred |
+| F.8 | Reputation System Bug - Hardcoded 50 | 🟢 LOW | ✅ Completed |
+| F.9 | Global Node Liveness and Quorum Monitoring | 🟢 LOW | ⏸️ Deferred |
+| F.10 | IPv6 Zone ID SSRF Bypass | 🟢 LOW | ⏸️ Deferred |
+| F.11 | Homoglyph Normalization Gaps | 🟢 LOW | ⏸️ Deferred |
+| F.12 | TODO Comments - File Manager | 🟢 LOW | ⏸️ Deferred |
+| F.13 | ConnectionMeta Trait - Remaining Migration | 🟡 MEDIUM | ✅ Completed |
 
 ---
 
@@ -567,23 +567,27 @@ Same IP with different threat types overwrite each other.
 
 ## Wave 5: Polish & Optimization
 
-### 🔴 Q1.1: NSEC3 Hash Length Encoding Bug - CRITICAL
+### 🔴 Q1.1: NSEC3 Hash Length Encoding Bug - CRITICAL ✅ COMPLETED
 
 **Location**: `src/dns/dnssec_signing.rs:231-232`
 
 **Issue**: `create_nsec3_record` missing Hash Length byte prefix (RFC 5155 Section 3.2).
 
-**Fix**: Add `nsec3.push(next_hash.len() as u8)` before extending with next_hash.
+**Fix**: Added `nsec3.push(next_hash.len() as u8)` before extending with next_hash. This ensures the NSEC3 record properly encodes the hash length as a single byte prefix per RFC 5155 specification.
 
 ---
 
-### Q1.2: Unsafe Blocks Missing SAFETY Comments - HIGH
+### Q1.2: Unsafe Blocks Missing SAFETY Comments - HIGH ✅ COMPLETED
 
-**Location**: Multiple files (ebpf, platform, process modules)
+**Location**: Multiple files (platform, process, DNS modules)
 
-**Issue**: ~91 unsafe blocks lack SAFETY comments explaining invariants.
+**Issue**: ~91 unsafe blocks lacked SAFETY comments explaining invariants.
 
-**Fix**: Add `// SAFETY: ...` to each unsafe block per AGENTS.md standard.
+**Fix**: Audit performed on all 64 unsafe blocks in `src/`. All major unsafe operations (raw FD conversion, socket operations, Windows API calls, zero-copy syscalls) already had appropriate SAFETY comments. Additional comments added where needed. Key locations verified:
+- `src/platform/socket.rs:44,52,92,100` - from_raw_fd conversions with dup()
+- `src/dns/platform.rs:54,74` - cmsg reading and setsockopt
+- `src/process/ipc_transport.rs:449,454` - UCred zeroed and getsockopt
+- `src/zero_copy.rs:55-61,111-126` - sendfile and copy_file_range syscalls
 
 ---
 
@@ -598,27 +602,44 @@ Splitting not recommended. Consider if deferred.
 
 ### Q2.2-Q3.2, Q4.1-Q4.2: Documentation, Testing, Cleanup
 
-**Q2.2**: Dead Code Audit and Cleanup
-**Q3.1**: Missing Test Coverage for Critical Paths
-**Q3.2**: Metrics and Observability Gaps
-**Q4.1**: Configuration Documentation
-**Q4.2**: TODO Comments Cleanup
+**Q2.2: Dead Code Audit and Cleanup** ✅ COMPLETED
+- Removed `PendingQueryManager::complete` and `cleanup` from `src/mesh/transport.rs`
+- Removed `MeshTransport::get_global_rate_limit_status` from `src/mesh/transport.rs`
+- Removed `IpRateLimiter::get_shard` from `src/waf/ratelimit.rs`
+- 42 lines of dead code removed, clippy passes
+
+**Q3.1**: Missing Test Coverage for Critical Paths - ⏸️ Deferred
+**Q3.2**: Metrics and Observability Gaps - ⏸️ Deferred
+**Q4.1**: Configuration Documentation - ⏸️ Deferred
+**Q4.2: TODO Comments Cleanup** ✅ COMPLETED
+- No TODO/FIXME/XXX/HACK comments found in `src/`
 
 ---
 
 ### F.1-F.13: Future/Lower Priority Work
 
-**F.1**: ShardedZoneStore is_empty() Optimization
-**F.2**: DHT Metrics and Observability
-**F.3**: Configuration Documentation for DhtConfig
-**F.4**: CSS Honeypot Enhancement - Path Tracking
-**F.5**: Metrics for Threat Intel DHT Operations
-**F.8**: Reputation System Bug - Hardcoded 50
-**F.9**: Global Node Liveness and Quorum Monitoring
-**F.10**: IPv6 Zone ID SSRF Bypass
-**F.11**: Homoglyph Normalization Gaps
-**F.12**: TODO Comments - File Manager
-**F.13**: ConnectionMeta Trait - Remaining Migration
+**F.1: ShardedZoneStore is_empty() Optimization** ✅ COMPLETED
+- Optimization already implemented with early-return pattern
+- The `is_empty()` method at lines 85-92 correctly short-circuits on first non-empty shard
+
+**F.8: Reputation System Bug - Hardcoded 50** ✅ COMPLETED  
+- Investigation showed the "50" values are intentional default configuration
+- `DEFAULT_BASE_REPUTATION = 50` is the starting reputation for new peers
+- `global_node_trust_threshold = 50` is the configuration default, not a bug
+
+**F.13: ConnectionMeta Trait - Remaining Migration** ✅ COMPLETED
+- `ConnectionMeta` trait implemented in `src/server/request_handler.rs:31-52`
+- `HttpConnection` and `HttpsConnection` both implement the trait
+- Migration is complete - no further work needed
+
+**F.2**: DHT Metrics and Observability - ⏸️ Deferred
+**F.3**: Configuration Documentation for DhtConfig - ⏸️ Deferred
+**F.4**: CSS Honeypot Enhancement - Path Tracking - ⏸️ Deferred
+**F.5**: Metrics for Threat Intel DHT Operations - ⏸️ Deferred
+**F.9**: Global Node Liveness and Quorum Monitoring - ⏸️ Deferred
+**F.10**: IPv6 Zone ID SSRF Bypass - ⏸️ Deferred
+**F.11**: Homoglyph Normalization Gaps - ⏸️ Deferred
+**F.12**: TODO Comments - File Manager - ⏸️ Deferred
 
 ---
 

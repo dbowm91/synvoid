@@ -229,6 +229,7 @@ pub fn create_nsec3_record(
     nsec3.extend_from_slice(&config.salt);
 
     let next_hash = hash_name_nsec3(next_name, config);
+    nsec3.push(next_hash.len() as u8);
     nsec3.extend_from_slice(&next_hash);
 
     for (window, bits) in build_type_bitmap(type_bitmap) {

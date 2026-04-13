@@ -65,7 +65,6 @@ pub use crate::mesh::transport_core::{
     MAX_REASONABLE_TIMESTAMP, MIN_REASONABLE_TIMESTAMP,
 };
 
-use crate::mesh::transport_types::GlobalRateLimitCheck;
 pub use crate::mesh::transport_types::{MeshGlobalRateLimiter, MeshPeerConnection};
 
 // SAFETY_REASON: Reserved for future protocol handling
@@ -302,17 +301,6 @@ impl PendingQueryManager {
         }
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn complete(&mut self, query_id: &str, result: RouteQueryResult) -> bool {
-        match self.pending.remove(query_id) {
-            Some(sender) => {
-                self.collected_providers.remove(query_id);
-                self.notify_complete.remove(query_id);
-                sender.send(result).is_ok()
-            }
-            _ => false,
-        }
-    }
 
     pub(crate) fn take(&mut self, query_id: &str) -> Option<oneshot::Sender<RouteQueryResult>> {
         self.collected_providers.remove(query_id);
@@ -320,10 +308,6 @@ impl PendingQueryManager {
         self.pending.remove(query_id)
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn cleanup(&mut self) {
-        self.pending.retain(|_, sender| !sender.is_closed());
-    }
 }
 
 impl MeshTransport {
@@ -591,10 +575,6 @@ impl MeshTransport {
         self.mlkem_session_manager = Some(manager);
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn get_global_rate_limit_status(&self) -> GlobalRateLimitCheck {
-        self.global_rate_limiter.check()
-    }
 
     pub fn announce_edge_key(&self, edge_id: &str, public_key: &str) {
         if let Some(ref record_store) = self.record_store {
