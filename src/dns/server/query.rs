@@ -870,8 +870,8 @@ impl DnsServer {
                     tracing::debug!("Resolved {} from mesh network", qname);
                     let qname_lower = qname.to_lowercase();
                     let mesh_zone = ctx.zones.find(|origin, _| {
-                        qname_lower.ends_with(&origin.to_lowercase())
-                            || qname_lower == origin.to_lowercase()
+                        let origin_lower = origin.to_lowercase();
+                        qname_lower.ends_with(&origin_lower) || qname_lower == origin_lower
                     });
                     let zsk = mesh_zone.as_ref().and_then(|zone| zone.zsk_key.as_ref());
                     return Some(Self::build_response(

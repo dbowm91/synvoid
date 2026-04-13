@@ -135,9 +135,9 @@ pub fn build_headers_to_filter(
     to_filter
 }
 
-pub fn sanitize_request_path(path: &str) -> String {
+pub fn sanitize_request_path(path: &str) -> std::borrow::Cow<'_, str> {
     if path.is_empty() {
-        return String::new();
+        return std::borrow::Cow::Owned(String::new());
     }
 
     let fast_path = {
@@ -145,7 +145,7 @@ pub fn sanitize_request_path(path: &str) -> String {
         !bytes.iter().any(|&b| b == b'%' || b == b'.' || b < 0x20) && !path.contains("//")
     };
     if fast_path {
-        return path.to_string();
+        return std::borrow::Cow::Borrowed(path);
     }
 
     let mut result = Vec::<u8>::with_capacity(path.len());
@@ -221,15 +221,15 @@ pub fn sanitize_request_path(path: &str) -> String {
     }
 
     if result.is_empty() {
-        return "/".to_string();
+        return std::borrow::Cow::Owned("/".to_string());
     }
 
-    String::from_utf8(result).unwrap_or_else(|e| {
+    std::borrow::Cow::Owned(String::from_utf8(result).unwrap_or_else(|e| {
         let valid_up_to = e.utf8_error().valid_up_to();
         let bytes = e.into_bytes();
         let (valid, _) = bytes.split_at(valid_up_to);
         String::from_utf8_lossy(valid).into_owned()
-    })
+    }))
 }
 
 #[inline]

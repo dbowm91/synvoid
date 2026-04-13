@@ -1173,6 +1173,16 @@ pub async fn run_unified_server_worker(
                         ipc_state.worker_id,
                         config_path
                     );
+
+                    if cfg!(feature = "mesh") {
+                        tracing::error!(
+                            "Config hot-reload is not supported when mesh feature is enabled. \
+                            Mesh, YARA rules, threat intel, and honeypot changes require full worker restart. \
+                            Please restart the worker to apply mesh-related configuration changes."
+                        );
+                        continue;
+                    }
+
                     let config_dir = std::path::Path::new(&config_path);
                     let mut cm = ConfigManager::new(config_dir.to_path_buf());
                     let main_path = config_dir.join("main.toml");
@@ -1180,22 +1190,8 @@ pub async fn run_unified_server_worker(
                         cm.discover_sites();
                         *shared_config.write().await = cm;
 
-                        let _needs_full_restart = [
-                            "mesh",
-                            "yara_rules",
-                            "threat_intel",
-                            "upload_validator",
-                            "honeypot",
-                        ];
-
-                        if cfg!(feature = "mesh") {
-                            tracing::warn!(
-                                "Mesh config changes require full worker restart - config hot-reload not supported for mesh subsystem"
-                            );
-                        }
-
                         tracing::info!(
-                            "Unified Server Worker {} config reloaded. Note: mesh, YARA rules, threat intel, and honeypot changes require full restart",
+                            "Unified Server Worker {} config reloaded.",
                             ipc_state.worker_id
                         );
                     } else {

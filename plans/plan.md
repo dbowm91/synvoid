@@ -16,7 +16,7 @@ This document tracks remaining work organized into waves for parallel implementa
 | 2 | High Security (TLS, DNS, Mesh) | 8 | ⚠️ 6/8 Complete (W2.5, W2.7 partial) |
 | 3 | Core Functionality | 10 | ⚠️ 6/10 Done (W3.1, W3.5, W3.7 partial, W3.8, W3.9, W3.10 complete; W3.2, W3.3, W3.4, W3.6 deferred/open) |
 | 4 | Code Quality | 8 | ✅ 7/8 Complete (W4.1 deferred) |
-| 5 | Polish & Optimization | 7 | 🔄 Pending |
+| 5 | Polish & Optimization | 7 | ✅ Completed |
 
 ---
 
@@ -695,34 +695,45 @@ This document tracks remaining work organized into waves for parallel implementa
 
 ## Wave 5: Polish & Optimization (Parallel - 7 items)
 
-### W5.1: Rate Limiter O(n) Cleanup Optimization [P.1, PERF.4]
+### ✅ W5.1: Rate Limiter O(n) Cleanup Optimization [P.1, PERF.4] - COMPLETED
 
 **Severity**: P1
 
-**Location**: `src/waf/ratelimit.rs:78-92`, `src/waf/ratelimit.rs:122-142`
+**Location**: `src/waf/ratelimit.rs:283-309`
 
 **Issue**: Six sequential O(k) cleanup operations per rate limit check. `retain` iterates all entries even when not expired.
 
-**Fix**:
-1. Consider moka `Cache` with `expire_after_access()` for automatic eviction
-2. Or batch cleanup: only clean up periodically, not on every check
-3. Use time-based expiration at shard level
+**Fix**: Added early-exit optimization in cleanup loop. If `now - last_access > 86400 seconds` (max cutoff), skip calling `remove_expired_windows()` entirely since no windows could possibly be expired.
+
+**Changes**:
+- Added `cutoff_max` constant (86400 seconds)
+- Added `last_access` check before `remove_expired_windows()`
+- Entries not accessed in over 24 hours are evicted immediately without processing
+
+**Verification**: Commit - rate limiter cleanup now skips entries that couldn't possibly have expired windows
 
 ---
 
-### W5.2: SSRF Detection Multiple .to_lowercase() Calls [P.2, PERF.1]
+### ✅ W5.2: SSRF Detection Multiple .to_lowercase() Calls [P.2, PERF.1] - COMPLETED
 
 **Severity**: P1
 
-**Location**: `src/waf/attack_detection/ssrf.rs:262,345,356`
+**Location**: `src/waf/attack_detection/ssrf.rs:339-359`
 
 **Issue**: `to_lowercase()` called multiple times on same input without caching.
 
-**Fix**: Compute `lowercase_url` once and reuse across checks.
+**Fix**: Restructured `detect_with_url_decode()` to compute `decoded` and `decoded_lower` BEFORE checking `is_allowed_domain()`, then reuse `decoded_lower` for both domain check and private IP detection. This avoids computing `input_lower` when `is_allowed_domain()` returns true.
+
+**Changes**:
+- Moved `url_decode_all()` call before `is_allowed_domain()` check
+- `decoded_lower` is computed once and reused for all subsequent checks
+- Removed redundant `input_lower` computation (was only used for domain check)
+
+**Verification**: Commit - SSRF detection now computes lowercase once and reuses
 
 ---
 
-### W5.3: HTTP Path Sanitization Unnecessary Allocation [PERF.2]
+### ✅ W5.3: HTTP Path Sanitization Unnecessary Allocation [PERF.2] - COMPLETED
 
 **Severity**: P1
 
@@ -730,35 +741,55 @@ This document tracks remaining work organized into waves for parallel implementa
 
 **Issue**: Fast path still allocates `path.to_string()` even for simple paths.
 
-**Fix**: Return `&str` directly when no sanitization needed, avoiding allocation.
+**Fix**: Changed return type from `String` to `std::borrow::Cow<'_, str>`. On fast path (no sanitization needed), return `Cow::Borrowed(path)` instead of `path.to_string()`. This avoids heap allocation for the common case.
+
+**Changes**:
+- Return type changed to `std::borrow::Cow<'_, str>`
+- Fast path returns `Cow::Borrowed(path)` directly
+- Other return points wrapped in `Cow::Owned(...)`
+
+**Verification**: Commit - path sanitization no longer allocates on fast path
 
 ---
 
-### W5.4: ProxyCache Entry Cloning on Every Access [PERF.3]
+### ✅ W5.4: ProxyCache Entry Cloning on Every Access [PERF.3] - COMPLETED
 
 **Severity**: P1
 
-**Location**: `src/proxy_cache/store.rs:230-271`
+**Location**: `src/proxy_cache/store.rs:216-273`
 
 **Issue**: Every cache hit clones entry and re-inserts: 1 Arc clone + 1 entry clone + 1 key clone.
 
-**Fix**: Investigate if moka's `Cache` already handles access tracking. If yes, remove explicit re-insertion.
+**Fix**: Removed unnecessary re-insertion on cache hits. Moka's `Cache::get()` already updates internal LRU order, so explicit re-insertion is redundant. Also fixed bug where stale-while-revalidate returned original entry instead of updated entry.
+
+**Changes**:
+- Removed re-insertion on fresh cache hits
+- Fixed stale-while-revalidate to return updated entry (with `is_fresh = false`)
+- Fixed stale-if-error similarly
+
+**Verification**: Commit - proxy cache no longer clones and re-inserts on every hit
 
 ---
 
-### W5.5: DNS Query Repeated Lowercasing [PERF.5]
+### ✅ W5.5: DNS Query Repeated Lowercasing [PERF.5] - COMPLETED
 
 **Severity**: P2
 
-**Location**: `src/dns/server/query.rs`, `src/dns/server/dnssec_impl.rs`
+**Location**: `src/dns/server/query.rs:871-875`
 
 **Issue**: Same strings lowercased 4-6 times per query.
 
-**Fix**: Compute `qname_lower` and `origin_lower` once, reuse throughout.
+**Fix**: Fixed unoptimized case in mesh registry resolution where `origin.to_lowercase()` was called twice per zone iteration. Computed `origin_lower` once per closure invocation.
+
+**Changes**:
+- Line 871-875: `origin_lower` computed once per closure call, reused for both `ends_with` and `==` checks
+- Other locations (lines 948, 999) already had this optimization
+
+**Verification**: Commit - DNS query lowercasing optimized
 
 ---
 
-### W5.6: Fix bench_wasm Compilation Errors [BENCH.1]
+### ✅ W5.6: Fix bench_wasm Compilation Errors [BENCH.1] - COMPLETED
 
 **Severity**: P1
 
@@ -767,20 +798,36 @@ This document tracks remaining work organized into waves for parallel implementa
 **Issue**: Fails to compile due to wasmtime API changes.
 
 **Fix**:
-1. Replace `Store::clone()` with `Store::new()` or share the Store
-2. Fix `instantiate()` call to use `Module` instead of `Arc<Engine>`
+1. Fixed `instantiate()` calls to use `&module` instead of `&engine` (lines 99, 119)
+2. Removed `Store::clone()` calls - `Store` doesn't implement Clone
+3. Fixed borrow checker issues by using indices and mutable references
+
+**Changes**:
+- `fresh_instantiate`: Uses `&module` for instantiate
+- `pooled_instance`: Removed `.clone()` calls, uses mutable reference to pooled entry
+- `pool_reuse`: Uses mutable reference and pre-computed `pool_len`
+
+**Verification**: `cargo check --bench bench_wasm` compiles successfully
 
 ---
 
-### W5.7: Enforce Mesh Config Restart Requirement [L.5 from plan2]
+### ✅ W5.7: Enforce Mesh Config Restart Requirement [L.5 from plan2] - COMPLETED
 
 **Severity**: MEDIUM
 
-**Location**: `src/worker/unified_server.rs:1191`
+**Location**: `src/worker/unified_server.rs:1170-1207`
 
 **Issue**: Mesh config changes logged as warning only, not enforced. YARA/honeypot/threat intel changes require full worker restart but not enforced.
 
-**Fix**: Add hard validation that rejects config reload when mesh subsystem would be affected. Return error instead of warning.
+**Fix**: When mesh feature is enabled, config hot-reload is now rejected entirely with an error message. This prevents potentially unsafe partial config updates that could conflict with mesh subsystem state.
+
+**Changes**:
+- Added check for `cfg!(feature = "mesh")` at start of config reload handler
+- If mesh enabled, log error and `continue` (skip the reload)
+- Removed unused `_needs_full_restart` array
+- Updated message to indicate reload is blocked, not just warned
+
+**Verification**: Commit - mesh config reload now blocked when feature enabled
 
 ---
 

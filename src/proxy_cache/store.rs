@@ -238,7 +238,7 @@ impl ProxyCache {
                     checksum: inner.checksum,
                 };
                 self.entries.insert(key.clone(), updated_inner);
-                return Some(inner.entry);
+                return self.entries.get(key).map(|i| i.entry.clone());
             }
             if inner.entry.is_stale_if_error() {
                 let mut entry = (*inner.entry).clone();
@@ -252,23 +252,13 @@ impl ProxyCache {
                     checksum: inner.checksum,
                 };
                 self.entries.insert(key.clone(), updated_inner);
-                return Some(inner.entry);
+                return self.entries.get(key).map(|i| i.entry.clone());
             }
             drop(inner);
             self.entries.invalidate(key);
             return None;
         }
 
-        let mut entry = (*inner.entry).clone();
-        entry.update_access();
-        let updated_inner = CacheEntryInner {
-            entry: Arc::new(entry),
-            size: inner.size,
-            on_disk: inner.on_disk,
-            disk_path: inner.disk_path.clone(),
-            checksum: inner.checksum,
-        };
-        self.entries.insert(key.clone(), updated_inner);
         Some(inner.entry)
     }
 

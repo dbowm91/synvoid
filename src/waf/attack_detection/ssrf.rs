@@ -341,22 +341,16 @@ impl SsrfDetector {
         input: &str,
         location: InputLocation,
     ) -> Option<AttackDetectionResult> {
-        let input_lower: Cow<str> = if input.bytes().any(|b| b.is_ascii_uppercase()) {
-            Cow::Owned(input.to_lowercase())
-        } else {
-            Cow::Borrowed(input)
-        };
-
-        if self.is_allowed_domain(&input_lower) {
-            return None;
-        }
-
         let decoded = url_decode_all(input);
         let decoded_lower: Cow<str> = if decoded.bytes().any(|b| b.is_ascii_uppercase()) {
             Cow::Owned(decoded.to_lowercase())
         } else {
             Cow::Borrowed(&decoded)
         };
+
+        if self.is_allowed_domain(&decoded_lower) {
+            return None;
+        }
 
         if let Some(mat) = self.inner.patterns_ref().find(decoded_lower.as_ref()) {
             let matched = decoded[mat.start()..mat.end()].to_string();

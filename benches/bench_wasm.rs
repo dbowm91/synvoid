@@ -63,22 +63,23 @@ fn create_pool(engine: &Engine) -> Vec<PooledInstance> {
 
 fn benchmark_pooled_instance(c: &mut Criterion) {
     let engine = Arc::new(Engine::default());
-    let pool = create_pool(&engine);
+    let mut pool = create_pool(&engine);
+    let pool_len = pool.len();
 
     c.benchmark_group("wasm_pooled_instance")
         .bench_function("get_from_pool_and_call", |b| {
             let mut index = 0usize;
             b.iter(|| {
-                let pooled = &pool[index % pool.len()];
+                let pooled = &mut pool[index % pool_len];
                 let func = pooled
                     .instance
                     .get_typed_func::<(i32, i32, i32, i32, i32, i32, i32, i32), i32>(
-                        &mut pooled.store.clone(),
+                        &mut pooled.store,
                         "filter_request",
                     )
                     .expect("failed to get func");
                 let result = func
-                    .call(&mut pooled.store.clone(), (0, 0, 0, 0, 0, 0, 0, 0))
+                    .call(&mut pooled.store, (0, 0, 0, 0, 0, 0, 0, 0))
                     .expect("call failed");
                 index += 1;
                 result
@@ -88,7 +89,9 @@ fn benchmark_pooled_instance(c: &mut Criterion) {
 
 fn benchmark_pool_vs_fresh(c: &mut Criterion) {
     let engine = Arc::new(Engine::default());
-    let pool = create_pool(&engine);
+    let module = compile_module(&engine);
+    let mut pool = create_pool(&engine);
+    let pool_len = pool.len();
 
     let mut group = c.benchmark_group("wasm_pool_vs_fresh");
     group.bench_function("fresh_instantiate", |b| {
@@ -96,7 +99,7 @@ fn benchmark_pool_vs_fresh(c: &mut Criterion) {
             let mut store = Store::new(&engine, ());
             let linker = Linker::new(&engine);
             let instance = linker
-                .instantiate(&mut store, &engine)
+                .instantiate(&mut store, &module)
                 .expect("failed to instantiate");
             instance
                 .get_typed_func::<(i32, i32, i32, i32, i32, i32, i32, i32), i32>(
@@ -112,19 +115,16 @@ fn benchmark_pool_vs_fresh(c: &mut Criterion) {
     group.bench_function("pool_reuse", |b| {
         let mut index = 0usize;
         b.iter(|| {
-            let pooled = &pool[index % pool.len()];
-            let mut store = Store::new(&engine, ());
-            let linker = Linker::new(&engine);
-            let instance = linker
-                .instantiate(&mut store, &engine)
-                .expect("failed to instantiate");
-            let result = instance
+            let pooled = &mut pool[index % pool_len];
+            let func = pooled
+                .instance
                 .get_typed_func::<(i32, i32, i32, i32, i32, i32, i32, i32), i32>(
-                    &mut store,
+                    &mut pooled.store,
                     "filter_request",
                 )
-                .expect("failed to get func")
-                .call(&mut store, (0, 0, 0, 0, 0, 0, 0, 0))
+                .expect("failed to get func");
+            let result = func
+                .call(&mut pooled.store, (0, 0, 0, 0, 0, 0, 0, 0))
                 .expect("call failed");
             index += 1;
             result

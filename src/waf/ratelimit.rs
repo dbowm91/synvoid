@@ -291,7 +291,14 @@ impl RateLimiterManager {
                         }
                         let mut requests = shard.ip_requests.write();
                         let lru_order = &cleanup_state.lru_order;
+                        let cutoff_max = Duration::from_secs(86400);
                         requests.retain(|_ip, state| {
+                            if let Some(last_access) = state.last_access {
+                                let age = now.duration_since(last_access);
+                                if age > cutoff_max {
+                                    return false;
+                                }
+                            }
                             state.remove_expired_windows(now);
 
                             if state.is_empty() {
