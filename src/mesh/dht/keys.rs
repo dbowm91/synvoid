@@ -38,6 +38,7 @@ pub enum DhtKey {
     UpstreamMinification(String),
     UpstreamCompression(String),
     SiteImagePoisonConfig(String),
+    SiteContentVersion(String),
     TransformedContent {
         site_id: String,
         content_hash: String,
@@ -175,18 +176,22 @@ impl DhtKey {
         DhtKey::SiteImagePoisonConfig(site_id.to_string())
     }
 
-    pub fn transformed_content(site_id: &str, content_hash: &str, transform_flags: &str) -> Self {
-        DhtKey::TransformedContent {
-            site_id: site_id.to_string(),
-            content_hash: content_hash.to_string(),
-            transform_flags: transform_flags.to_string(),
-        }
+    pub fn site_content_version(site_id: &str) -> Self {
+        DhtKey::SiteContentVersion(site_id.to_string())
     }
 
     pub fn poisoned_image(site_id: &str, original_hash: &str) -> Self {
         DhtKey::PoisonedImage {
             site_id: site_id.to_string(),
             original_hash: original_hash.to_string(),
+        }
+    }
+
+    pub fn transformed_content(site_id: &str, content_hash: &str, transform_flags: &str) -> Self {
+        DhtKey::TransformedContent {
+            site_id: site_id.to_string(),
+            content_hash: content_hash.to_string(),
+            transform_flags: transform_flags.to_string(),
         }
     }
 
@@ -290,6 +295,9 @@ impl DhtKey {
             }
             DhtKey::SiteImagePoisonConfig(site_id) => {
                 format!("site_image_poison_config:{}", site_id)
+            }
+            DhtKey::SiteContentVersion(site_id) => {
+                format!("site_content_version:{}", site_id)
             }
             DhtKey::TransformedContent {
                 site_id,
@@ -417,6 +425,9 @@ impl DhtKey {
             "site_image_poison_config" if parts.len() >= 2 => {
                 DhtKey::SiteImagePoisonConfig(parts[1..].join(":"))
             }
+            "site_content_version" if parts.len() >= 2 => {
+                DhtKey::SiteContentVersion(parts[1..].join(":"))
+            }
             "transformed" if parts.len() >= 4 => DhtKey::TransformedContent {
                 site_id: parts[1].to_string(),
                 content_hash: parts[2].to_string(),
@@ -501,6 +512,7 @@ impl DhtKey {
                 | DhtKey::TransformedContent { .. }
                 | DhtKey::PoisonedImage { .. }
                 | DhtKey::SiteImagePoisonConfig(_)
+                | DhtKey::SiteContentVersion(_)
                 | DhtKey::YaraRuleContent { .. }
                 | DhtKey::YaraRulesManifest { .. }
                 | DhtKey::NodeCapability { .. }
@@ -557,6 +569,7 @@ impl DhtKey {
             DhtKey::UpstreamMinification(_) => "upstream_minification",
             DhtKey::UpstreamCompression(_) => "upstream_compression",
             DhtKey::SiteImagePoisonConfig(_) => "site_image_poison_config",
+            DhtKey::SiteContentVersion(_) => "site_content_version",
             DhtKey::TransformedContent { .. } => "transformed_content",
             DhtKey::PoisonedImage { .. } => "poisoned_image",
             DhtKey::YaraRuleContent { .. } => "yara_rule_content",
@@ -597,6 +610,7 @@ impl DhtKey {
             DhtKey::UpstreamMinification(_) => Some(SignedRecordType::UpstreamMinification),
             DhtKey::UpstreamCompression(_) => Some(SignedRecordType::UpstreamCompression),
             DhtKey::SiteImagePoisonConfig(_) => Some(SignedRecordType::SiteImagePoisonConfig),
+            DhtKey::SiteContentVersion(_) => None,
             DhtKey::TransformedContent { .. } => None,
             DhtKey::PoisonedImage { .. } => None,
             DhtKey::YaraRuleContent { .. } => None,

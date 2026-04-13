@@ -377,6 +377,22 @@ This document tracks remaining work organized into waves for parallel implementa
 
 ## Wave 3: Core Functionality (Parallel - 10 items)
 
+### ✅ Completed Items
+- W3.1: JA4 Fingerprint Wired to WAF Bot Detection ✅
+- W3.5: Edge Node Cache Preference Propagation ✅
+- W3.8: YARA Version Comparison Bug ✅
+- W3.9: YARA DHT Sync Signature Verification ✅
+- W3.10: Threat Intel DHT Key Re-announcement ✅
+
+### ⚠️ Partial/Deferred Items
+- W3.4: ConnectionMeta Trait Migration - Deferred (infrastructure exists, full wiring requires significant refactoring)
+- W3.7: Image Poison Cache TTL and Invalidation - Partial (DHT key type added, full implementation deferred)
+
+### ❌ Open Items (Major Undertakings)
+- W3.2: Stream Large Request Bodies - Open (requires backend interface changes)
+- W3.3: Response Streaming - Open (requires transform pipeline overhaul)
+- W3.6: Edge Node HTTP Response Cache - Open (requires MeshProxy integration + SiteCachePreferencesStore)
+
 ### W3.1: JA4 Fingerprint Wired to WAF Bot Detection [O.1, C.1] - COMPLETED
 
 **Status**: ✅ Completed
@@ -429,18 +445,20 @@ This document tracks remaining work organized into waves for parallel implementa
 
 ---
 
-### W3.4: ConnectionMeta Trait Migration [O.4]
+### W3.4: ConnectionMeta Trait Migration [O.4] - DEFERRED
 
-**Status**: ⚠️ Partial
+**Status**: ⚠️ Deferred (infrastructure exists, full migration requires significant refactoring)
 
 **Location**: `src/server/request_handler.rs`, `src/http/server.rs`, `src/tls/server.rs`
 
-**Issue**: `ConnectionMeta` trait and `TlsContext` exist but not fully wired.
+**Issue**: `ConnectionMeta` trait and `TlsContext` exist but not fully wired. TLS handler has duplicate code.
 
-**Fix**:
+**Fix** (deferred):
 1. Complete migration of request processing to use unified handler
 2. Remove duplicate code in `tls/server.rs`
-3. Wire JA4 to WAF (see W3.1)
+3. Wire JA4 to WAF (see W3.1) ✅
+
+**Note**: W3.1 (JA4 wiring) is now complete. The remaining migration to use `dyn ConnectionMeta` requires significant refactoring of both HTTP and TLS handlers to use trait objects instead of concrete types. This is a large undertaking that would benefit from dedicated time.
 
 ---
 
@@ -482,19 +500,25 @@ This document tracks remaining work organized into waves for parallel implementa
 
 ---
 
-### W3.7: Image Poison Cache TTL and Invalidation [C.3 from plan5]
+### W3.7: Image Poison Cache TTL and Invalidation [C.3 from plan5] - PARTIAL
 
-**Severity**: MEDIUM
+**Status**: ⚠️ Partial (DHT key type added, full implementation deferred)
 
-**Location**: `src/mesh/proxy.rs:1408`
+**Location**: `src/mesh/dht/keys.rs:41, 179-181, 295-297, 421-423`
 
 **Issue**: Poisoned images cached with fixed 1-hour TTL, no invalidation when origin content changes.
 
-**Fix**:
-1. Add `site_content_version:{site_id}` DHT key
-2. Origin increments version when content changes
-3. Include version in poison cache key for prefix invalidation
-4. Add manual invalidation endpoint `POST /sites/{site_id}/invalidate-cache`
+**Fix** (partially implemented):
+1. ✅ Added `SiteContentVersion(String)` DHT key variant in `keys.rs`
+2. ✅ Added helper `DhtKey::site_content_version(site_id)`
+3. ✅ Added to `is_public()`, `key_type()`, `to_signed_record_type()`, `as_str()`, `from_str()`
+
+**Remaining work** (deferred due to complexity):
+- Modify poison cache key format to include version
+- Implement version storage/increment logic
+- Add manual invalidation endpoint
+
+**Note**: W3.7 is marked as MEDIUM complexity per assessment. Full implementation requires careful handling of DHT versioning and atomicity concerns.
 
 ---
 
