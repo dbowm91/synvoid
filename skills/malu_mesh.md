@@ -6,13 +6,39 @@ MaluWAF uses a mesh network architecture with DHT-based service discovery for mu
 
 ## Node Roles
 
-| Role | Purpose | Key Identifier |
-|------|---------|---------------|
-| **Global** | CA/signer, coordination, DNS authority | `node_id` |
-| **Edge** | Proxy requests, route to origins | `node_id` |
-| **Origin** | Host sites, register upstreams with global | `node_id` |
+| Role | Purpose | Key Identifier | Authentication |
+|------|---------|---------------|----------------|
+| **Global** | CA/signer, coordination, DNS authority | `node_id` | Ed25519 signature + authorized key |
+| **Edge** | Proxy requests, route to origins | `node_id` | Ed25519 self-signature |
+| **Origin** | Host sites, register upstreams with global | `node_id` | Ed25519 self-signature + Global attestation |
 
 **Critical insight**: Origins are NOT global nodes. Global nodes are CAs/coordinators. Origins are separate nodes that register with global nodes.
+
+### Role Authentication (W1.3 - Fixed)
+
+All node types now require Ed25519 signature verification:
+
+```rust
+// src/mesh/peer_auth.rs
+pub fn validate_peer_role(
+    role: &MeshNodeRole,
+    authorized_global_pubkeys: &[String],
+    peer_node_id: &str,
+    peer_public_key: Option<&str>,           // Node's own Ed25519 public key
+    peer_signature: Option<&str>,             // Self-signature
+    timestamp: u64,
+    max_age_secs: u64,
+    revoked_nodes: Option<&GlobalNodeRevocationList>,
+    global_node_attestation_key: Option<&str>, // For Origin: Global's key
+    global_node_attestation_sig: Option<&str>, // For Origin: Global's signature
+) -> Result<(), String>
+```
+
+| Role | Challenge Format | Verification |
+|------|-----------------|---------------|
+| Global | `"{node_id}:{timestamp}"` | Check pubkey in authorized list, verify signature |
+| Edge | `"edge:{node_id}:{timestamp}"` | Verify self-signature |
+| Origin | `"origin:{node_id}:{timestamp}"` | Verify self-signature + Global attestation |
 
 ## Upstream ID Format
 
@@ -48,6 +74,9 @@ Examples:
 | `node_capability:{node_id}` | Node capabilities | 5 min |
 | `origin_reachability:{upstream_id}:{provider}` | Reachability status | 60 sec |
 | `origin_penalty:{upstream_id}:{provider}` | Route penalty score | 600 sec |
+| `capability_attestation:{node_id}:{capability}` | Signed capability attestation | 24 hours |
+| `genesis_key_transition:{sequence}` | Genesis key rotation record | 24 hours |
+| `revoked_global_node:{node_id}` | Revoked global node | 24 hours |
 
 ## Routing Flow
 
@@ -174,6 +203,135 @@ When origin receives proxied request:
 - DHT key includes port: `http://example.com:80` ≠ `http://example.com:8080`
 - `supported_ports` field in config for advertising (not required for routing)
 - Edge can reject port scans early if origin advertises supported ports
+
+## Capability Attestation (W2.8)
+
+Global nodes can attest to other nodes' capabilities after verification.
+
+### DHT Key Type
+
+| Key Pattern | Purpose | TTL |
+|-------------|---------|-----|
+| `capability_attestation:{node_id}:{capability}` | Signed attestation of node capability | 24 hours |
+
+### Capability Types
+
+- `dns_server` - Node runs a DNS server
+- `waf` - Node has WAF enabled
+- `edge_proxy` - Node can proxy requests
+- `origin` - Node has registered upstreams
+
+### Attestation Flow
+
+```
+Node claims capability → Global verifies → Global signs attestation → Stored in DHT
+```
+
+### Verification Functions
+
+```rust
+// src/mesh/transport.rs
+
+// Global node attests a node's capability
+attest_capability(node_id, capability)
+
+// Verify a node has a claimed capability (checks actual state)
+verify_node_capability(peer_state, capability)
+
+// Retrieve attestation from DHT
+get_capability_attestation(node_id, capability)
+
+// Verify attestation signature against known global keys
+verify_capability_attestation(attestation)
+```
+
+### Implementation Files
+
+| File | Purpose |
+|------|---------|
+| `src/mesh/dht/capability_attestation.rs` | Attestation struct and verification |
+| `src/mesh/dht/keys.rs` | `CapabilityAttestation` DHT key type |
+| `src/mesh/transport.rs` | `attest_capability()`, `verify_node_capability()` |
+
+## Edge Node PoW Authentication (W2.6)
+
+Edge nodes can authenticate via Ed25519 signature OR Proof-of-Work.
+
+### Authentication Flow
+
+```
+Edge connects → (If pow_nonce + pow_public_key provided) → PoW validation → Authenticated
+              → (Otherwise) → Ed25519 signature validation → Authenticated
+```
+
+### PoW Validation
+
+```rust
+// src/mesh/peer_auth.rs
+
+validate_edge_node_pow(pow_public_key, pow_nonce) {
+    // 1. Derive node_id from pow_public_key using NodeId::from_public_key()
+    // 2. Verify PoW using NodeId::verify_pow(nonce)
+    // 3. If valid, node is authenticated
+}
+```
+
+### Parameters
+
+- `pow_public_key`: 32-byte Ed25519 public key
+- `pow_nonce`: Nonce that makes the PoW solution valid
+
+### Implementation Files
+
+| File | Purpose |
+|------|---------|
+| `src/mesh/peer_auth.rs` | `validate_edge_node_pow()`, `validate_peer_role()` with PoW params |
+| `src/mesh/transport.rs` | Pass `pow_nonce`, `pow_public_key` to validation |
+| `src/mesh/discovery.rs` | Pass PoW credentials from peer hello |
+
+## Multi-Genesis Key Support (W2.2)
+
+The system supports multiple authorized genesis keys for key rotation and disaster recovery.
+
+### Config Structure
+
+```rust
+// src/mesh/config.rs
+pub struct GenesisKeyConfig {
+    pub authorized_genesis_keys: Vec<String>,  // Multiple authorized public keys
+    pub previous_genesis_key_base64: Option<String>,  // For rotation
+    pub rotation_sequence: u32,
+    // ...
+}
+```
+
+### Authorization Methods
+
+```rust
+// src/mesh/config_identity.rs
+
+// Check if genesis key is authorized
+is_genesis_key_authorized(public_key: &str) -> bool
+
+// Add a key to authorized list
+authorize_genesis_key(public_key: String)
+
+// Remove a key from authorized list
+revoke_genesis_key(public_key: &str)
+```
+
+### Key Rotation Flow
+
+1. New genesis key generated
+2. `GenesisKeyTransition` announced via DHT: `genesis_key_transition:{sequence}`
+3. All global nodes update `previous_genesis_key_base64`
+4. Old key retained for verification during transition
+
+### Behavior
+
+- Empty `authorized_genesis_keys` = any genesis key allowed (backward compatible)
+- Non-empty list = genesis key must be in the list
+- Key rotation tracked via `rotation_sequence` and `GenesisKeyTransition` DHT records
 
 ## Testing Commands
 

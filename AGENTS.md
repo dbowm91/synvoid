@@ -358,10 +358,20 @@ All duplicate `current_timestamp()` definitions have been consolidated into `src
 
 | Bug | Location | Fix |
 |-----|----------|-----|
-| JA4 fingerprinting not passed to WAF | `src/tls/server.rs`, `src/waf/mod.rs` | W3.1: JA4 now wired via `check_request_full()` and `check_bot_protection()` |
-
-| Bug | Location | Fix |
-|-----|----------|-----|
+| CSRF token timing attack | `src/auth/mod.rs`, `src/admin/state.rs` | W1.1: Constant-time comparison with `subtle::ConstantTimeEq::ct_eq()` |
+| DNS crypto RNG fallback zeros | `src/dns/crypto_rng.rs` | W1.2: Functions return `Result<T, CryptoRngError>` instead of zero fallback |
+| Mesh peer auth bypass | `src/mesh/peer_auth.rs` | W1.3: Edge/Origin nodes require Ed25519 signature verification |
+| Overseer IPC unsigned connections | `src/overseer/ipc_client.rs` | W1.4: Use `connect_with_signer()` for HMAC-signed messages |
+| HTTP honeypot standalone mode | `src/worker/unified_server.rs` | W1.5/W1.7: `set_threat_intel()` called in standalone mode |
+| Port honeypot patterns not published | `src/honeypot_port/runner.rs` | W1.6: Use `remote_ip` for attack pattern indicators |
+| Threat indicators overwrite | `src/mesh/threat_intel.rs` | W1.8: Composite keys `{threat_type}:{ip}` |
+| Non-global DHT announce blocked | `src/mesh/dht/record_store_crud.rs` | W1.9: Removed non-global node blocking check |
+| Standalone threat sync missing | `src/mesh/threat_intel.rs` | W1.10: `start_background_tasks()` called in standalone |
+| WAF normalization inconsistency | `src/waf/attack_detection/xss.rs`, `sqli.rs` | W1.11: Use `InputNormalizer` like pattern detectors |
+| Private key permissions too open | `src/mesh/config_identity.rs` | W1.12: Set 0o600 permissions after writing |
+| PoW challenge window too large | `src/challenge/mod.rs` | W1.13: Reduced timeout from 60s to 12s |
+| Nonce cache unbounded | `src/process/ipc_signed.rs` | W1.14: Added MAX_NONCE_CACHE_SIZE = 10000 |
+| JA4 fingerprinting not passed to WAF | `src/tls/server.rs`, `src/waf/mod.rs` | W3.1: JA4 now wired via `check_request_full()` |
 | NSEC3 hash length encoding | `src/dns/dnssec_signing.rs:261` | Uses `hash_b32.len()` (32) instead of `hash.len()` (20) per RFC 5155 |
 | SSRF domain substring check | `src/waf/attack_detection/ssrf.rs:243` | Uses proper word boundaries for localhost/.local checks |
 | DNS dynamic update IP validation | `src/dns/update.rs` | Client IP validated against ACLs; require_tsig=true by default |
@@ -653,6 +663,24 @@ The consolidated implementation plan is located at `plans/plan.md`. This plan or
 | W3.4 | ConnectionMeta trait migration requires significant refactoring |
 | W3.6 | Edge HTTP response cache requires MeshProxy integration |
 
+### Wave 2 Completed Items (2026-04-13)
+
+| Item | Description |
+|------|-------------|
+| W2.1 | bcrypt cost minimum raised to 12 |
+| W2.2 | Multi-genesis key support (`authorized_genesis_keys` field) |
+| W2.3 | Distributed global node revocation (DHT + gossip) |
+| W2.4 | DNS server capability enforcement (`is_global_node` check) |
+| W2.6 | Edge node PoW validation (`validate_edge_node_pow()`) |
+| W2.8 | Capability attestation system (`CapabilityAttestation` DHT key) |
+
+### Wave 2 Partial Items
+
+| Item | Issue |
+|------|-------|
+| W2.5 | HTTP-01/DNS-01 challenges are stubbed/simulated |
+| W2.7 | Only TierKey encrypted, other `requires_global_node()` records plaintext |
+
 **Subagent Execution Model**: Items within the same wave can be executed in parallel by separate subagents. Dependencies between waves are documented in `plans/plan.md` dependencies graph.
 
 When reviewing the plan against the codebase, always verify claims directly. Plans may reference items already fixed, use outdated line numbers, or describe bugs incorrectly. Run `grep`/search for the specific patterns described to confirm they still exist before implementing fixes.
@@ -675,7 +703,7 @@ These admin UI files were previously orphaned but are now reachable:
 Still orphaned (not declared as module):
 - `admin-ui/src/config_docs.rs` (538 lines — field documentation)
 
-### Genesis Key Handling (Phase 2.7)
+### Genesis Key Handling (Phase 2.2, 2.7)
 
 The Admin UI System Status page now includes mesh status and genesis key management:
 
@@ -695,6 +723,58 @@ The Admin UI System Status page now includes mesh status and genesis key managem
 - `derive_signing_key(genesis_key_base64)` - derives signing key
 
 **UI Flow**: System Status page shows mesh section with genesis status. Edge nodes without signing key see "Provide Genesis Key" button that opens a modal for entering the genesis key.
+
+### Multi-Genesis Key Support (W2.2)
+
+The system supports multiple authorized genesis keys for key rotation and disaster recovery:
+
+**Config field** (`src/mesh/config.rs:GenesisKeyConfig`):
+```rust
+pub struct GenesisKeyConfig {
+    pub authorized_genesis_keys: Vec<String>,  // Multiple authorized public keys
+    pub previous_genesis_key_base64: Option<String>,  // For rotation
+    pub rotation_sequence: u32,
+    // ... other fields
+}
+```
+
+**Authorization methods** (`src/mesh/config_identity.rs`):
+- `is_genesis_key_authorized()` - Check if public key is in authorized list
+- `authorize_genesis_key()` - Add a key to authorized list
+- `revoke_genesis_key()` - Remove a key from authorized list
+
+**Behavior**:
+- Empty `authorized_genesis_keys` means any key is allowed (backward compatible)
+- Non-empty list requires the genesis key's public key to be in the list
+- Key rotation uses `GenesisKeyTransition` DHT record to propagate new keys
+
+### Capability Attestation System (W2.8)
+
+Global nodes can attest to other nodes' capabilities after verification:
+
+**DHT Key Type** (`src/mesh/dht/capability_attestation.rs`):
+```rust
+pub struct CapabilityAttestation {
+    pub node_id: String,
+    pub capability: String,  // dns_server, waf, edge_proxy, origin
+    pub attested_by_global_node: String,
+    pub signer_public_key: String,
+    pub signature: Vec<u8>,
+    pub timestamp: u64,
+}
+```
+
+**Verification functions** (`src/mesh/transport.rs`):
+- `attest_capability(node_id, capability)` - Global node verifies and signs attestation
+- `verify_node_capability(peer_state, capability)` - Check if node has claimed capability
+- `get_capability_attestation(node_id, capability)` - Retrieve from DHT
+- `verify_capability_attestation(attestation)` - Verify signature against known global keys
+
+**Capability types**:
+- `dns_server` - Node runs a DNS server
+- `waf` - Node has WAF enabled
+- `edge_proxy` - Node can proxy requests
+- `origin` - Node has registered upstreams
 
 ## DNS & DNSSEC Architecture
 

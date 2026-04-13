@@ -467,7 +467,11 @@ impl AdminState {
             }
         };
 
-        let (tx, mut rx) = tokio::sync::mpsc::channel::<(String, String, Option<crate::mesh::protocol::ProxyCachePreferences>)>(32);
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<(
+            String,
+            String,
+            Option<crate::mesh::protocol::ProxyCachePreferences>,
+        )>(32);
         mesh_transport.set_site_config_sync_callback(tx);
 
         let config = self.process.config.clone();

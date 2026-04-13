@@ -117,7 +117,17 @@ pub struct MeshTransport {
     #[cfg(feature = "dns")]
     pub(crate) dns_zones: Arc<RwLock<Option<Arc<crate::dns::server::ShardedZoneStore>>>>,
     #[allow(clippy::type_complexity)]
-    pub(crate) site_config_sync_tx: Arc<RwLock<Option<mpsc::Sender<(String, String, Option<crate::mesh::protocol::ProxyCachePreferences>)>>>>,
+    pub(crate) site_config_sync_tx: Arc<
+        RwLock<
+            Option<
+                mpsc::Sender<(
+                    String,
+                    String,
+                    Option<crate::mesh::protocol::ProxyCachePreferences>,
+                )>,
+            >,
+        >,
+    >,
     pub(crate) verification_manager:
         Arc<RwLock<Option<Arc<crate::mesh::verification::VerificationTaskManager>>>>,
     pub(crate) revocation_list: Option<Arc<crate::mesh::peer_auth::GlobalNodeRevocationList>>,
@@ -381,7 +391,11 @@ impl MeshTransport {
 
     pub fn set_site_config_sync_callback(
         &self,
-        tx: mpsc::Sender<(String, String, Option<crate::mesh::protocol::ProxyCachePreferences>)>,
+        tx: mpsc::Sender<(
+            String,
+            String,
+            Option<crate::mesh::protocol::ProxyCachePreferences>,
+        )>,
     ) {
         let mut lock = self.site_config_sync_tx.write();
         *lock = Some(tx);
