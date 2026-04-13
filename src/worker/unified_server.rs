@@ -562,6 +562,7 @@ pub async fn run_unified_server_worker(
                 hub_only_mode: mesh_threat_intel.hub_only_mode,
                 reputation_config: mesh_threat_intel.reputation_config.clone(),
                 fanout_factor: mesh_threat_intel.fanout_factor,
+                re_announce_interval_secs: mesh_threat_intel.re_announce_interval_secs,
             };
 
             // Create signer for threat intel

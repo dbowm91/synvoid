@@ -46,6 +46,8 @@ pub struct ThreatIntelligenceConfig {
     pub reputation_config: ReputationConfig,
     #[serde(default = "default_fanout_factor")]
     pub fanout_factor: f64,
+    #[serde(default = "default_re_announce_interval")]
+    pub re_announce_interval_secs: u64,
 }
 
 fn default_fanout_factor() -> f64 {
@@ -74,6 +76,10 @@ fn default_hub_only() -> bool {
     false
 }
 
+fn default_re_announce_interval() -> u64 {
+    300
+}
+
 impl ThreatIntelligenceConfig {
     pub fn to_internal(&self) -> ThreatIntelligenceConfigInternal {
         ThreatIntelligenceConfigInternal {
@@ -94,6 +100,7 @@ impl ThreatIntelligenceConfig {
             hub_only_mode: self.hub_only_mode,
             reputation_config: self.reputation_config.clone(),
             fanout_factor: self.fanout_factor,
+            re_announce_interval_secs: self.re_announce_interval_secs,
         }
     }
 }
@@ -111,6 +118,7 @@ pub struct ThreatIntelligenceConfigInternal {
     pub hub_only_mode: bool,
     pub reputation_config: ReputationConfig,
     pub fanout_factor: f64,
+    pub re_announce_interval_secs: u64,
 }
 
 impl Default for ThreatIntelligenceConfig {
@@ -127,9 +135,12 @@ impl Default for ThreatIntelligenceConfig {
             hub_only_mode: false,
             reputation_config: ReputationConfig::default(),
             fanout_factor: 0.5,
+            re_announce_interval_secs: DEFAULT_RE_ANNOUNCE_INTERVAL_SECS,
         }
     }
 }
+
+const DEFAULT_RE_ANNOUNCE_INTERVAL_SECS: u64 = 300;
 
 pub struct ThreatIntelligenceManager {
     config: Arc<ThreatIntelligenceConfigInternal>,
@@ -1489,6 +1500,7 @@ impl ThreatIntelligenceManager {
         let initial_interval = config.threat_sync_interval_secs;
         let sync_enabled = config.sync_enabled;
         let fanout_factor = config.fanout_factor;
+        let re_announce_interval_secs = config.re_announce_interval_secs;
 
         let threat_intel = Arc::new(self.clone());
 
@@ -1519,11 +1531,53 @@ impl ThreatIntelligenceManager {
             }
         });
 
+        if re_announce_interval_secs > 0 && node_role.is_global() {
+            let threat_intel_reattempt = Arc::new(self.clone());
+            let re_announce_interval = Duration::from_secs(re_announce_interval_secs);
+            tokio::spawn(async move {
+                let mut ticker = tokio::time::interval(re_announce_interval);
+                loop {
+                    ticker.tick().await;
+                    threat_intel_reattempt.re_announce_local_indicators().await;
+                }
+            });
+            tracing::info!(
+                "Threat intel re-announce task started (interval: {}s)",
+                re_announce_interval_secs
+            );
+        }
+
         tracing::info!(
             "Threat intel background tasks started (role: {:?}, sync_enabled: {})",
             node_role,
             sync_enabled
         );
+    }
+
+    pub async fn re_announce_local_indicators(&self) {
+        if !self.config.enabled {
+            return;
+        }
+
+        if self.config.hub_only_mode && !self.node_role.is_global() {
+            return;
+        }
+
+        let indicators = self.indicators.read();
+        let now = crate::mesh::safe_unix_timestamp();
+
+        for (_key, entry) in indicators.iter() {
+            if !entry.local_origin {
+                continue;
+            }
+
+            let expires_at = entry.indicator.timestamp + entry.indicator.ttl_seconds;
+            if now > expires_at {
+                continue;
+            }
+
+            self.publish_indicator_to_dht(&entry.indicator);
+        }
     }
 
     fn clone_internal(&self) -> Self {

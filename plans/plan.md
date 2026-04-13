@@ -534,18 +534,26 @@ This document tracks remaining work organized into waves for parallel implementa
 
 ---
 
-### W3.10: Threat Intel DHT Key Re-announcement [6.5]
+### W3.10: Threat Intel DHT Key Re-announcement [6.5] - COMPLETED
 
-**Severity**: MEDIUM
+**Status**: ✅ Completed
 
-**Location**: `src/mesh/threat_intel.rs`
+**Location**: 
+- `src/mesh/threat_intel.rs:26-49` - ThreatIntelligenceConfig with re_announce_interval_secs
+- `src/mesh/threat_intel.rs:101-122` - ThreatIntelligenceConfigInternal
+- `src/mesh/threat_intel.rs:1513` - start_background_tasks with re-announce task
+- `src/mesh/threat_intel.rs:1555-1575` - re_announce_local_indicators method
+- `src/worker/unified_server.rs:553-566` - threat_config construction
 
 **Issue**: Unlike YARA with `re_announce_interval_secs`, threat intel indicators are only announced once with their TTL.
 
 **Fix**:
-1. Add `re_announce_interval_secs` to `ThreatIntelligenceConfig` (default: 300s)
-2. Global nodes periodically call `publish_indicator_to_dht()` for non-expired local indicators
-3. Non-global nodes should not re-announce (preserve `hub_only_mode`)
+1. ✅ Added `re_announce_interval_secs` to `ThreatIntelligenceConfig` (default: 300s)
+2. ✅ Added `re_announce_interval_secs` to `ThreatIntelligenceConfigInternal`
+3. ✅ Global nodes periodically call `publish_indicator_to_dht()` for non-expired local indicators via `re_announce_local_indicators()`
+4. ✅ Non-global nodes do not re-announce (respects `hub_only_mode`)
+
+**Verification**: Commit - Threat intel indicators now periodically re-announced to DHT
 
 ---
 
