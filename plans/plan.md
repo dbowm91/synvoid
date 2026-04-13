@@ -14,7 +14,7 @@ This document tracks remaining work organized into waves for parallel implementa
 |------|-------|-------|--------|
 | 1 | Critical Security | 14 | ✅ Completed |
 | 2 | High Security (TLS, DNS, Mesh) | 8 | ⚠️ 6/8 Complete (W2.5, W2.7 partial) |
-| 3 | Core Functionality | 10 | 🔄 Pending |
+| 3 | Core Functionality | 10 | ⚠️ 6/10 Done (W3.1, W3.5, W3.7 partial, W3.8, W3.9, W3.10 complete; W3.2, W3.3, W3.4, W3.6 deferred/open) |
 | 4 | Code Quality | 8 | 🔄 Pending |
 | 5 | Polish & Optimization | 7 | 🔄 Pending |
 
