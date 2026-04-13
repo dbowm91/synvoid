@@ -84,6 +84,7 @@ pub fn validate_peer_role(
             peer_signature,
             timestamp,
             max_age_secs,
+            revoked_nodes,
             pow_nonce,
             pow_public_key,
         );
@@ -96,6 +97,7 @@ pub fn validate_peer_role(
             peer_signature,
             timestamp,
             max_age_secs,
+            revoked_nodes,
             global_node_attestation_key,
             global_node_attestation_sig,
             authorized_global_pubkeys,
@@ -111,11 +113,21 @@ fn validate_edge_node(
     peer_signature: Option<&str>,
     timestamp: u64,
     max_age_secs: u64,
+    revoked_nodes: Option<&GlobalNodeRevocationList>,
     pow_nonce: Option<u64>,
     pow_public_key: Option<&str>,
 ) -> Result<(), String> {
     if let (Some(nonce), Some(pk)) = (pow_nonce, pow_public_key) {
         return validate_edge_node_pow(peer_node_id, peer_public_key, Some(nonce), Some(pk));
+    }
+
+    if let Some(revocation_list) = revoked_nodes {
+        if let Some(revocation_info) = revocation_list.is_node_revoked(peer_node_id) {
+            return Err(format!(
+                "Edge node {} has been revoked: {} (at {})",
+                peer_node_id, revocation_info.reason, revocation_info.revoked_at
+            ));
+        }
     }
 
     let pubkey = peer_public_key.ok_or_else(|| {
@@ -218,10 +230,20 @@ fn validate_origin_node(
     peer_signature: Option<&str>,
     timestamp: u64,
     max_age_secs: u64,
+    revoked_nodes: Option<&GlobalNodeRevocationList>,
     global_node_attestation_key: Option<&str>,
     global_node_attestation_sig: Option<&str>,
     authorized_global_pubkeys: &[String],
 ) -> Result<(), String> {
+    if let Some(revocation_list) = revoked_nodes {
+        if let Some(revocation_info) = revocation_list.is_node_revoked(peer_node_id) {
+            return Err(format!(
+                "Origin node {} has been revoked: {} (at {})",
+                peer_node_id, revocation_info.reason, revocation_info.revoked_at
+            ));
+        }
+    }
+
     let pubkey = peer_public_key.ok_or_else(|| {
         format!(
             "Origin node {} did not provide Ed25519 public key for authentication",

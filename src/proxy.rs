@@ -12,6 +12,7 @@ use std::collections::HashSet;
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use unicode_normalization::UnicodeNormalization;
 
 use crate::config::site::{BufferingConfig, ProxyCacheConfig, ProxyHeadersConfig, RetryConfig};
 use crate::http_client::{
@@ -140,12 +141,14 @@ pub fn sanitize_request_path(path: &str) -> std::borrow::Cow<'_, str> {
         return std::borrow::Cow::Owned(String::new());
     }
 
+    let path = path.nfkc().collect::<String>();
+
     let fast_path = {
         let bytes = path.as_bytes();
         !bytes.iter().any(|&b| b == b'%' || b == b'.' || b < 0x20) && !path.contains("//")
     };
     if fast_path {
-        return std::borrow::Cow::Borrowed(path);
+        return std::borrow::Cow::Owned(path);
     }
 
     let mut result = Vec::<u8>::with_capacity(path.len());
@@ -221,15 +224,20 @@ pub fn sanitize_request_path(path: &str) -> std::borrow::Cow<'_, str> {
     }
 
     if result.is_empty() {
-        return std::borrow::Cow::Owned("/".to_string());
+        return std::borrow::Cow::Owned("/".to_string().nfkc().collect());
     }
 
-    std::borrow::Cow::Owned(String::from_utf8(result).unwrap_or_else(|e| {
-        let valid_up_to = e.utf8_error().valid_up_to();
-        let bytes = e.into_bytes();
-        let (valid, _) = bytes.split_at(valid_up_to);
-        String::from_utf8_lossy(valid).into_owned()
-    }))
+    std::borrow::Cow::Owned(
+        String::from_utf8(result)
+            .unwrap_or_else(|e| {
+                let valid_up_to = e.utf8_error().valid_up_to();
+                let bytes = e.into_bytes();
+                let (valid, _) = bytes.split_at(valid_up_to);
+                String::from_utf8_lossy(valid).into_owned()
+            })
+            .nfkc()
+            .collect(),
+    )
 }
 
 #[inline]

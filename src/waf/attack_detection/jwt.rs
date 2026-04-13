@@ -1,11 +1,17 @@
 use crate::utils::url_decode_all;
 use aho_corasick::AhoCorasick;
 use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
+use serde_json::Value;
 use std::borrow::Cow;
 use std::sync::Arc;
 
 use crate::waf::attack_detection::config::{AttackDetectionResult, AttackType, InputLocation};
 use crate::waf::attack_detection::patterns::DefaultPatterns;
+
+const SAFE_JWT_ALGORITHMS: &[&str] = &[
+    "HS256", "HS384", "HS512", "RS256", "RS384", "RS512", "ES256", "ES384", "ES512", "PS256",
+    "PS384", "PS512", "EdDSA",
+];
 
 pub struct JwtDetector {
     patterns: Arc<AhoCorasick>,
@@ -120,36 +126,24 @@ impl JwtDetector {
             }
         }
 
-        if header_lower.contains("\"alg\":")
-            && !header_lower.contains("\"alg\":\"hs")
-            && !header_lower.contains("\"alg\":\"rs")
-            && !header_lower.contains("\"alg\":\"es")
-            && !header_lower.contains("\"alg\":\"ps")
-        {
-            if let Some(start) = header_lower.find("\"alg\":") {
-                let rest = &header_lower[start..];
-                if let Some(end) =
-                    rest.find(|c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '_')
-                {
-                    let alg_value = &rest[7..end.min(20)];
-                    if alg_value.is_empty()
-                        || alg_value == "null"
-                        || alg_value == "none"
-                        || alg_value.len() < 3
-                    {
-                        tracing::warn!(
-                            attack_type = "jwt",
-                            location = %location,
-                            "JWT suspicious algorithm detected"
-                        );
-
-                        return Some(AttackDetectionResult {
-                            attack_type: AttackType::Jwt,
-                            fingerprint: Some("suspicious_alg".to_string()),
-                            matched_pattern: Some(alg_value.to_string()),
-                            input_location: location,
-                        });
-                    }
+        if let Ok(header_json) = serde_json::from_str::<Value>(&header_lower) {
+            if let Some(alg) = header_json.get("alg").and_then(|v| v.as_str()) {
+                let alg_safe = SAFE_JWT_ALGORITHMS
+                    .iter()
+                    .any(|&a| a.eq_ignore_ascii_case(alg));
+                if !alg_safe {
+                    tracing::warn!(
+                        attack_type = "jwt",
+                        location = %location,
+                        "JWT algorithm confusion attack (alg: {})",
+                        alg
+                    );
+                    return Some(AttackDetectionResult {
+                        attack_type: AttackType::Jwt,
+                        fingerprint: Some("unknown_alg".to_string()),
+                        matched_pattern: Some(alg.to_string()),
+                        input_location: location,
+                    });
                 }
             }
         }

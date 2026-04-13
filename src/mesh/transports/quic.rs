@@ -35,7 +35,7 @@ impl QuicMeshTransport {
             topology,
             cert_manager,
             record_store,
-            routing_manager,
+            routing_manager.clone(),
             threat_intel,
             mesh_signer,
             stake_manager,
@@ -43,6 +43,11 @@ impl QuicMeshTransport {
             #[cfg(feature = "dns")]
             dns_registry,
         ));
+
+        if let Some(ref rm) = routing_manager {
+            rm.set_find_node_transport(inner.clone());
+            rm.set_ping_transport(inner.clone());
+        }
 
         Self { inner }
     }

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -12,8 +13,16 @@ use crate::mesh::dht::routing::query::LookupQuery;
 use crate::mesh::dht::routing::regional_hubs::{RegionalHub, RegionalHubConfig};
 use crate::mesh::dht::routing::table::PersistedRoutingTable;
 use crate::mesh::dht::routing::table::RoutingTable;
-use crate::mesh::dht::routing::table::REPLICATION_K;
+use crate::mesh::dht::routing::table::{BUCKET_COUNT, BUCKET_REFRESH_INTERVAL, REPLICATION_K};
 use crate::mesh::protocol::MeshMessage;
+
+pub trait FindNodeTransport: Send + Sync {
+    fn send_find_node(&self, target: NodeId, request_id: String);
+}
+
+pub trait PingTransport: Send + Sync {
+    fn send_ping(&self, node_id: &str, request_id: String, local_node_id: String);
+}
 
 pub struct DhtRoutingManager {
     routing_table: Arc<RwLock<Option<RoutingTable>>>,
@@ -26,6 +35,9 @@ pub struct DhtRoutingManager {
     is_global: bool,
     geo_config: GeoRoutingConfig,
     hub_config: RegionalHubConfig,
+    find_node_transport: Arc<parking_lot::RwLock<Option<Arc<dyn FindNodeTransport>>>>,
+    ping_transport: Arc<parking_lot::RwLock<Option<Arc<dyn PingTransport>>>>,
+    pending_pings: Arc<parking_lot::RwLock<HashMap<String, Instant>>>,
 }
 
 impl Clone for DhtRoutingManager {
@@ -41,6 +53,9 @@ impl Clone for DhtRoutingManager {
             is_global: self.is_global,
             geo_config: self.geo_config.clone(),
             hub_config: self.hub_config.clone(),
+            find_node_transport: self.find_node_transport.clone(),
+            ping_transport: self.ping_transport.clone(),
+            pending_pings: self.pending_pings.clone(),
         }
     }
 }
@@ -77,6 +92,9 @@ impl DhtRoutingManager {
             is_global,
             geo_config,
             hub_config,
+            find_node_transport: Arc::new(parking_lot::RwLock::new(None)),
+            ping_transport: Arc::new(parking_lot::RwLock::new(None)),
+            pending_pings: Arc::new(parking_lot::RwLock::new(HashMap::new())),
         }
     }
 
@@ -167,7 +185,6 @@ impl DhtRoutingManager {
                     }
                 }
 
-                // Refresh regional hubs periodically
                 if self_arc.hub_config.enabled {
                     self_arc.sync_regional_hub().await;
                     let hubs = self_arc.get_regional_hubs().await;
@@ -176,7 +193,26 @@ impl DhtRoutingManager {
             }
         });
 
+        let self_refresh = Arc::new(self.clone());
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(BUCKET_REFRESH_INTERVAL);
+            loop {
+                interval.tick().await;
+                self_refresh.refresh_sparse_buckets().await;
+            }
+        });
+
+        let self_ping = Arc::new(self.clone());
+        tokio::spawn(async move {
+            self_ping.start_ping_loop().await;
+        });
+
         tracing::info!("DHT routing background tasks started");
+    }
+
+    pub fn set_find_node_transport(&self, transport: Arc<dyn FindNodeTransport>) {
+        let mut t = self.find_node_transport.write();
+        *t = Some(transport);
     }
 
     pub async fn init_with_persistence(&self, persisted: PersistedRoutingTable) {
@@ -430,6 +466,139 @@ impl DhtRoutingManager {
     pub async fn bucket_stats(&self) -> Vec<(usize, usize)> {
         let rt = self.routing_table.read().await;
         rt.as_ref().map(|t| t.bucket_stats()).unwrap_or_default()
+    }
+
+    pub async fn refresh_sparse_buckets(&self) {
+        let transport = {
+            let t = self.find_node_transport.read();
+            t.clone()
+        };
+
+        let transport = match transport {
+            Some(t) => t,
+            None => return,
+        };
+
+        let rt = self.routing_table.read().await;
+        let table = match rt.as_ref() {
+            Some(t) => t,
+            None => return,
+        };
+
+        let sparse_buckets = table.get_sparse_bucket_indices(REPLICATION_K);
+        if sparse_buckets.is_empty() {
+            return;
+        }
+
+        tracing::debug!(
+            "DHT bucket refresh: {} sparse buckets need repopulation",
+            sparse_buckets.len()
+        );
+
+        for bucket_idx in sparse_buckets {
+            let target = NodeId::generate_random_in_bucket(bucket_idx, &self.node_id_hash);
+            let request_id = format!("bucket-refresh-{}-{}", bucket_idx, uuid::Uuid::new_v4());
+            tracing::debug!(
+                "DHT bucket refresh: triggering FindNode for bucket {} (target {})",
+                bucket_idx,
+                target
+            );
+            transport.send_find_node(target, request_id);
+        }
+    }
+
+    pub fn set_ping_transport(&self, transport: Arc<dyn PingTransport>) {
+        let mut t = self.ping_transport.write();
+        *t = Some(transport);
+    }
+
+    pub async fn get_peers_to_ping(&self) -> Vec<PeerContact> {
+        let rt = self.routing_table.read().await;
+        let table = match rt.as_ref() {
+            Some(t) => t,
+            None => return Vec::new(),
+        };
+
+        let mut all_peers_to_ping = Vec::new();
+        for bucket_idx in 0..BUCKET_COUNT {
+            let peers = table.get_peers_to_ping(bucket_idx);
+            all_peers_to_ping.extend(peers);
+        }
+        all_peers_to_ping
+    }
+
+    pub async fn get_stale_peers(&self) -> Vec<PeerContact> {
+        let rt = self.routing_table.read().await;
+        let table = match rt.as_ref() {
+            Some(t) => t,
+            None => return Vec::new(),
+        };
+
+        let stale_ids = table.get_stale_peers();
+        stale_ids
+            .iter()
+            .filter_map(|id| table.get_contact(id))
+            .collect()
+    }
+
+    pub async fn start_ping_loop(&self) {
+        if !self.routing_enabled {
+            return;
+        }
+
+        let self_arc = Arc::new(self.clone());
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                self_arc.ping_peers().await;
+            }
+        });
+
+        tracing::info!("DHT ping loop started");
+    }
+
+    pub async fn ping_peers(&self) {
+        let transport = {
+            let t = self.ping_transport.read();
+            t.clone()
+        };
+
+        let transport = match transport {
+            Some(t) => t,
+            None => {
+                tracing::debug!("DHT ping transport not set, skipping ping");
+                return;
+            }
+        };
+
+        let peers_to_ping = self.get_peers_to_ping().await;
+        if peers_to_ping.is_empty() {
+            return;
+        }
+
+        tracing::debug!("DHT pinging {} stale peers", peers_to_ping.len());
+
+        for peer in peers_to_ping {
+            let request_id = format!("dht-ping-{}", uuid::Uuid::new_v4());
+            {
+                let mut pending = self.pending_pings.write();
+                pending.insert(peer.node_id_string.clone(), Instant::now());
+            }
+            transport.send_ping(&peer.node_id_string, request_id, self.node_id.clone());
+        }
+    }
+
+    pub async fn mark_peer_responded(&self, node_id: &str) {
+        {
+            let mut pending = self.pending_pings.write();
+            pending.remove(node_id);
+        }
+        self.update_peer_latency(node_id, 0).await;
+    }
+
+    pub fn get_pending_ping_count(&self) -> usize {
+        self.pending_pings.read().len()
     }
 }
 

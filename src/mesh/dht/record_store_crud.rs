@@ -79,6 +79,16 @@ impl RecordStoreManager {
         let dht_key = DhtKey::from_str(&record.key);
         let is_self_record = dht_key.is_self_record(&self.node_id);
 
+        if dht_key.is_privileged() {
+            if let Err(e) = self.access_control.require_global_node() {
+                tracing::warn!(
+                    "Record store: {} cannot store privileged record",
+                    record.source_node_id
+                );
+                return false;
+            }
+        }
+
         if !self.config.edge_write_enabled {
             if self.can_cache_on_edge(&record.key) && is_self_record {
                 return self.store_record_edge_cache(record);

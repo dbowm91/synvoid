@@ -27,7 +27,18 @@ in parallel by separate subagents. Dependencies between waves are documented.
 | H1 | DHT Key Collision (W1.8 incomplete) | 🔴 HIGH | ✅ Completed |
 | H2 | sync_from_dht Key Mismatch | 🔴 HIGH | ✅ Completed |
 | **Wave 2: High Security (TLS, DNS, Mesh)** | | | |
-| S2.6 | SSRF Allowlist Bypass via Substring | 🟡 MEDIUM | ❌ Open |
+| S2.6 | SSRF Allowlist Bypass via Substring | 🟡 MEDIUM | ✅ Completed |
+| S2.7 | Open Redirect Bypass via Encoding | 🟡 MEDIUM | ✅ Completed |
+| S2.8 | Transfer-Encoding Parsing Bypass | 🟡 MEDIUM | ✅ Completed |
+| S2.9 | JWT Algorithm Confusion | 🟡 MEDIUM | ✅ Completed |
+| S2.10 | Unicode Normalization Missing | 🟡 MEDIUM | ✅ Completed |
+| M1.3 | Revocation Bypass for Edge/Origin | 🟡 MEDIUM | ✅ Completed |
+| M2.1 | DHT Churn Handling Incomplete | 🔴 HIGH | ✅ Completed |
+| M2.2 | Bucket Refresh Never Triggered | 🟡 MEDIUM | ✅ Completed |
+| M2.3 | find_closest() Premature Return | 🟡 MEDIUM | ✅ Completed |
+| M2.4 | Edge Resync Single-Homed | 🟡 MEDIUM | ✅ Completed |
+| M3.1 | Unused Access Control Methods | 🟡 MEDIUM | ✅ Completed |
+| M3.2 | Incomplete Encryption for Privileged | 🟡 MEDIUM | ✅ Completed |
 | S2.7 | Open Redirect Bypass via Encoding | 🟡 MEDIUM | ❌ Open |
 | S2.8 | Transfer-Encoding Parsing Bypass | 🟡 MEDIUM | ❌ Open |
 | S2.9 | JWT Algorithm Confusion | 🟡 MEDIUM | ❌ Open |
@@ -233,123 +244,123 @@ Same IP with different threat types overwrite each other.
 
 ## Wave 2: High Security (TLS, DNS, Mesh)
 
-### S2.6: SSRF Allowlist Bypass via Substring - MEDIUM
+### ✅ S2.6: SSRF Allowlist Bypass via Substring - COMPLETED
 
-**Location**: `src/waf/attack_detection/ssrf.rs:267-270, 322-336`
+**Location**: `src/waf/attack_detection/ssrf.rs:267-270, 318-345`
 
 **Issue**: `evillocalhost.com` contains `.localhost`; `evil.comalloweddomain.com` bypasses allowlist.
 
-**Fix**: Use word boundary checks; verify host is not IP when allowlist specifies domain-only.
+**Fix**: Added `contains_word_boundary()` helper function that uses proper word boundary checks instead of substring matching. Added `looks_like_ip()` check to reject IPs when allowlist is domain-only mode.
 
 ---
 
-### S2.7: Open Redirect Bypass via Encoding - MEDIUM
+### ✅ S2.7: Open Redirect Bypass via Encoding - COMPLETED
 
-**Location**: `src/waf/attack_detection/open_redirect.rs:114-142`
+**Location**: `src/waf/attack_detection/open_redirect.rs:114-139`
 
 **Issue**: Doesn't check for newline-encoded schemes (`java\nscript:`) or homograph attacks.
 
-**Fix**: Normalize input before checking; add newline character checks; validate scheme is proper ASCII.
+**Fix**: Added newline character check (`\n`, `\r`) that blocks redirect if found. Added homograph attack check that validates scheme contains only ASCII letters.
 
 ---
 
-### S2.8: Transfer-Encoding Parsing Bypass - MEDIUM
+### ✅ S2.8: Transfer-Encoding Parsing Bypass - COMPLETED
 
-**Location**: `src/waf/attack_detection/request_smuggling.rs:26-49`
+**Location**: `src/waf/attack_detection/request_smuggling.rs:26-76`
 
 **Issue**: `te_lower.contains("chunked")` doesn't validate chunked is complete.
 
-**Fix**: Parse TE header properly as comma-separated list; match exact `chunked` value.
+**Fix**: Added `parse_te_values()` helper to parse TE header as comma-separated list. Added `has_te_value()` to match exact values. All TE checks now use proper parsing instead of substring matching.
 
 ---
 
-### S2.9: JWT Algorithm Confusion - MEDIUM
+### ✅ S2.9: JWT Algorithm Confusion - COMPLETED
 
-**Location**: `src/waf/attack_detection/jwt.rs:123-139`
+**Location**: `src/waf/attack_detection/jwt.rs:125-186`
 
 **Issue**: Uses `contains()` not proper JSON parsing for `alg` field.
 
-**Fix**: Parse JWT header as proper JSON; extract and validate `alg` against expected list.
+**Fix**: Parse JWT header as proper JSON using `serde_json::Value`. Extract `alg` field via `.get("alg").and_then(|v| v.as_str())`. Validate against whitelist of known secure algorithms (HS256/384/512, RS256/384/512, ES256/384/512, PS256/384/512, EdDSA, Ed25519). Reject `none`, `null`, empty, or unknown algorithms.
 
 ---
 
-### S2.10: Unicode Normalization Missing - MEDIUM
+### ✅ S2.10: Unicode Normalization Missing - COMPLETED
 
-**Location**: `src/proxy.rs:138-232`
+**Location**: `src/proxy.rs:138-233`
 
 **Issue**: No Unicode normalization (NFKC/NFKD); homoglyph attacks possible (Cyrillic `а` vs ASCII `a`).
 
-**Fix**: Add `unicode-normalization` crate; apply NFKC normalization to path.
+**Fix**: Added `unicode_normalization::UnicodeNormalization` import. Applied NFKC normalization to path in `sanitize_request_path()` at return points.
 
 ---
 
-### M1.3: Revocation Bypass for Edge/Origin - MEDIUM
+### ✅ M1.3: Revocation Bypass for Edge/Origin - COMPLETED
 
-**Location**: `src/mesh/peer_auth.rs:281-288`
+**Location**: `src/mesh/peer_auth.rs:116-126, 233-245`
 
 **Issue**: Revocation check only in `validate_global_node()`, not in `validate_edge_node()` or `validate_origin_node()`.
 
-**Fix**: Add revocation check to all validation functions.
+**Fix**: Added `revoked_nodes` parameter and revocation check to both `validate_edge_node()` and `validate_origin_node()`. Pattern mirrors existing check in `validate_global_node()`.
 
 ---
 
-### M2.1: DHT Churn Handling Incomplete - HIGH
+### ✅ M2.1: DHT Churn Handling Incomplete - COMPLETED
 
-**Location**: `src/mesh/dht/routing/table.rs:195-196, 417-431`
+**Location**: `src/mesh/dht/routing/manager.rs:483-557`, `src/mesh/transport.rs:1347`
 
 **Issue**: `pending_pings` used but no background task sends PINGs; `get_stale_peers()` never called.
 
-**Fix**: Implement ping sender background task; wire into MeshTransport.
+**Fix**: Added `ping_peers_loop()` background task to `DhtRoutingManager` that runs every 60 seconds, queries stale peers via `get_peers_to_ping()`, and sends `MeshMessage::Ping` via datagram. Wired into `MeshTransport::start()` after DHT bootstrap.
 
 ---
 
-### M2.2: Bucket Refresh Never Triggered - MEDIUM
+### ✅ M2.2: Bucket Refresh Never Triggered - COMPLETED
 
-**Location**: `src/mesh/dht/routing/table.rs`, `src/mesh/dht/routing/manager.rs`
+**Location**: `src/mesh/dht/routing/manager.rs`, `src/mesh/dht/routing/node_id.rs`, `src/mesh/dht/routing/table.rs`, `src/mesh/transport.rs`, `src/mesh/transports/quic.rs`
 
 **Issue**: `BUCKET_REFRESH_INTERVAL = 60` defined but no code triggers FindNode to repopulate sparse buckets.
 
-**Fix**: Implement `refresh_buckets_loop()` in DhtRoutingManager.
+**Fix**: Added `FindNodeTransport` trait and `find_node_transport` field to `DhtRoutingManager`. Added `get_sparse_bucket_indices()` to `RoutingTable`. Added `refresh_sparse_buckets()` that checks sparse buckets and triggers FindNode requests. Added `generate_random_in_bucket()` to `NodeId` for bucket target generation. Spawned bucket refresh loop in `start_background_tasks()`.
 
 ---
 
-### M2.3: find_closest() Premature Return - MEDIUM
+### ✅ M2.3: find_closest() Premature Return - COMPLETED
 
-**Location**: `src/mesh/dht/routing/table.rs:233-282`
+**Location**: `src/mesh/dht/routing/table.rs:274`
 
 **Issue**: Breaks as soon as k candidates found without scanning all buckets.
 
-**Fix**: Scan ALL buckets, not just until k found.
+**Fix**: Removed premature `break` statement. Algorithm now scans ALL buckets before returning, ensuring the K closest peers are found.
 
 ---
 
-### M2.4: Edge Resync Single-Homed - MEDIUM
+### ✅ M2.4: Edge Resync Single-Homed - COMPLETED
 
-**Location**: `src/mesh/dht/routing/manager.rs`
+**Location**: `src/mesh/transport_dht.rs:386-401`
 
 **Issue**: `dht_cache_resync()` always contacts `global_nodes[0]` with no fallback.
 
-**Fix**: Try all global nodes in sequence; return error only if all fail.
+**Fix**: Changed to iterate all global nodes in sequence. On failure, continues to next global node. Only reports error if ALL global nodes fail.
 
 ---
 
-### M3.1: Unused Access Control Methods - MEDIUM
+### ✅ M3.1: Unused Access Control Methods - COMPLETED
 
-**Location**: `src/mesh/dht/mod.rs:569-695`
+**Location**: `src/mesh/dht/record_store_crud.rs:79-86`
 
 **Issue**: `DhtAccessControl::require_global_node()` never invoked; `is_privileged()` never enforced.
 
-**Fix**: Wire `require_global_node()` into `store_record()` or remove dead code.
+**Fix**: Wired `require_global_node()` call into `store_record()` for edge nodes. Since `require_global_for_privileged` defaults to `true` in `DhtAccessControl::new()`, only global nodes can now store privileged records.
 
 ---
 
-### M3.2: Incomplete Encryption for Privileged Records - MEDIUM
+### ✅ M3.2: Incomplete Encryption for Privileged Records - COMPLETED
 
 **Location**: `src/mesh/tier_key_encryption.rs`
 
-**Issue**: Only `tier_key:` encrypted; Organization, MemberCertificate, etc. plaintext.
+**Issue**: Only `TierKey` records encrypted; Organization, MemberCertificate, GlobalNodeList, etc. stored plaintext.
 
-**Fix**: Extend TierKeyEncryption to handle all privileged record types via HKDF-derived keys.
+**Fix**: Extended `TierKeyEncryption` with HKDF-derived keys per record type via `PrivilegedRecordType` enum. Added specialized encrypt/decrypt methods for all privileged record types.
 
 ---
 

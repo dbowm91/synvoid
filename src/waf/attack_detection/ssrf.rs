@@ -264,10 +264,9 @@ impl SsrfDetector {
             Cow::Borrowed(input)
         };
 
-        if input_lower.contains(".localhost")
-            || input_lower.contains("localhost.")
-            || input_lower.contains(".local")
-            || input_lower.ends_with(".local")
+        if Self::has_word_boundary(&input_lower, ".localhost")
+            || Self::has_word_boundary(&input_lower, "localhost.")
+            || Self::has_word_boundary(&input_lower, ".local")
         {
             return true;
         }
@@ -280,6 +279,19 @@ impl SsrfDetector {
         }
 
         false
+    }
+
+    fn has_word_boundary(input: &str, substring: &str) -> bool {
+        if let Some(pos) = input.find(substring) {
+            let before_ok = pos == 0 || input.as_bytes()[pos - 1] == b'.';
+            let after_pos = pos + substring.len();
+            let after_ok = after_pos >= input.len()
+                || input.as_bytes()[after_pos] == b'.'
+                || input.as_bytes()[after_pos] == b':';
+            before_ok && after_ok
+        } else {
+            false
+        }
     }
 
     fn normalize_ip_for_parse(s: &str) -> String {
@@ -329,7 +341,7 @@ impl SsrfDetector {
                     return true;
                 }
             }
-            if self.allowlist_only_mode && input_lower.contains(domain.as_str()) {
+            if self.allowlist_only_mode && Self::has_word_boundary(input_lower, domain.as_str()) {
                 return true;
             }
             false

@@ -270,10 +270,6 @@ impl RoutingTable {
                     }
                 }
             }
-
-            if candidates.len() >= k {
-                break;
-            }
         }
 
         candidates.sort_by(|a, b| a.1.cmp(&b.1));
@@ -595,6 +591,15 @@ impl RoutingTable {
     pub fn get_contact(&self, node_id: &NodeId) -> Option<PeerContact> {
         let bucket_index = node_id.bucket_index(&self.local_node_id);
         self.buckets[bucket_index].get(node_id).cloned()
+    }
+
+    pub fn get_sparse_bucket_indices(&self, k: usize) -> Vec<usize> {
+        self.buckets
+            .iter()
+            .enumerate()
+            .filter(|(_, bucket)| bucket.len() < k)
+            .map(|(idx, _)| idx)
+            .collect()
     }
 }
 

@@ -384,11 +384,17 @@ impl MeshTransport {
             }
 
             if let Some(request) = record_store.create_snapshot_request() {
-                let peer_id = &global_nodes[0];
-                tracing::info!("DHT cache stale, requesting resync from {}", peer_id);
-
-                if let Err(e) = self.send_datagram_to_peer(peer_id, &request).await {
-                    tracing::warn!("Failed to request DHT resync from {}: {}", peer_id, e);
+                let mut all_failed = true;
+                for peer_id in &global_nodes {
+                    tracing::info!("DHT cache stale, requesting resync from {}", peer_id);
+                    if self.send_datagram_to_peer(peer_id, &request).await.is_ok() {
+                        all_failed = false;
+                        break;
+                    }
+                    tracing::warn!("Failed to request DHT resync from {}", peer_id);
+                }
+                if all_failed {
+                    tracing::warn!("DHT resync failed: all global nodes unreachable");
                 }
             }
         }

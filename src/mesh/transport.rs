@@ -2970,3 +2970,41 @@ impl MeshTransport {
         false
     }
 }
+
+impl crate::mesh::dht::routing::manager::FindNodeTransport for MeshTransport {
+    fn send_find_node(
+        &self,
+        target: crate::mesh::dht::routing::node_id::NodeId,
+        request_id: String,
+    ) {
+        let this = self.clone();
+        let node_id = self.config.node_id();
+        tokio::spawn(async move {
+            let find_node = MeshMessage::FindNode {
+                request_id: request_id.into(),
+                target_node_id: target.as_bytes().to_vec(),
+                requester_node_id: node_id.into(),
+                timestamp: crate::utils::safe_unix_timestamp(),
+            };
+            let _ = this
+                .send_datagram_to_peer(&target.to_string(), &find_node)
+                .await;
+        });
+    }
+}
+
+impl crate::mesh::dht::routing::manager::PingTransport for MeshTransport {
+    fn send_ping(&self, node_id: &str, request_id: String, local_node_id: String) {
+        let this = self.clone();
+        let node_id_owned = node_id.to_string();
+        let _node_id = node_id;
+        tokio::spawn(async move {
+            let ping = MeshMessage::Ping {
+                request_id: request_id.into(),
+                node_id: local_node_id.into(),
+                timestamp: crate::utils::safe_unix_timestamp(),
+            };
+            let _ = this.send_datagram_to_peer(&node_id_owned, &ping).await;
+        });
+    }
+}

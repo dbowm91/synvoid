@@ -14,6 +14,36 @@ impl RequestSmugglingDetector {
         Self
     }
 
+    fn te_contains_chunked(te_str: &str) -> bool {
+        te_str
+            .split(',')
+            .map(|v| v.trim().to_lowercase())
+            .any(|v| v == "chunked")
+    }
+
+    fn te_contains_chunked_with_other(te_str: &str) -> bool {
+        let values: Vec<&str> = te_str.split(',').collect();
+        if values.len() < 2 {
+            return false;
+        }
+        let lower_values: Vec<String> = values.iter().map(|v| v.trim().to_lowercase()).collect();
+        let has_chunked = lower_values.iter().any(|v| v == "chunked");
+        has_chunked
+    }
+
+    fn te_contains_identity_and_chunked(te_str: &str) -> bool {
+        let lower = te_str.to_lowercase();
+        let has_identity = lower.split(',').any(|v| v.trim() == "identity");
+        let has_chunked = lower.split(',').any(|v| v.trim() == "chunked");
+        has_identity && has_chunked
+    }
+
+    fn te_has_obfuscated_values(te_str: &str) -> bool {
+        te_str
+            .split(',')
+            .any(|v| v.trim().starts_with('x') || v.trim().contains("/x"))
+    }
+
     pub fn check_headers(&self, headers: &http::HeaderMap) -> Option<AttackDetectionResult> {
         let has_cl = headers.contains_key("content-length");
         let has_te = headers.contains_key("transfer-encoding");
@@ -21,9 +51,7 @@ impl RequestSmugglingDetector {
         if has_cl && has_te {
             if let Some(te_value) = headers.get("transfer-encoding") {
                 if let Ok(te_str) = te_value.to_str() {
-                    let te_lower = te_str.to_lowercase();
-
-                    if te_lower.contains("chunked") {
+                    if Self::te_contains_chunked(te_str) {
                         tracing::warn!(
                             attack_type = "request_smuggling",
                             "HTTP Request Smuggling: Both Content-Length and Transfer-Encoding: chunked present"
@@ -44,9 +72,7 @@ impl RequestSmugglingDetector {
 
         if let Some(te_value) = headers.get("transfer-encoding") {
             if let Ok(te_str) = te_value.to_str() {
-                let te_lower = te_str.to_lowercase();
-
-                if te_lower.contains("chunked,") || te_lower.contains("chunked;") {
+                if Self::te_contains_chunked_with_other(te_str) {
                     tracing::warn!(
                         attack_type = "request_smuggling",
                         "HTTP Request Smuggling: Multiple Transfer-Encoding values"
@@ -60,12 +86,8 @@ impl RequestSmugglingDetector {
                     });
                 }
 
-                let is_obfuscated_te = te_lower
-                    .split_whitespace()
-                    .any(|v| v.starts_with("x") || v.contains("/x"));
-                if is_obfuscated_te
-                    || (te_lower.contains("identity") && te_lower.contains("chunked"))
-                {
+                let is_obfuscated_te = Self::te_has_obfuscated_values(te_str);
+                if is_obfuscated_te || Self::te_contains_identity_and_chunked(te_str) {
                     tracing::warn!(
                         attack_type = "request_smuggling",
                         "HTTP Request Smuggling: Obfuscated Transfer-Encoding"

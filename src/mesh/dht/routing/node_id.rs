@@ -153,6 +153,23 @@ impl NodeId {
         }
         None
     }
+
+    pub fn generate_random_in_bucket(bucket_index: usize, local: &NodeId) -> NodeId {
+        let prefix_len = 255usize.saturating_sub(bucket_index);
+        let mut id = local.0;
+
+        if prefix_len < 256 {
+            let divergence_bit = 255usize - prefix_len;
+            let byte_idx = divergence_bit / 8;
+            let bit_idx = 7 - (divergence_bit % 8);
+            id[byte_idx] ^= 1 << bit_idx;
+        }
+
+        use rand::RngCore;
+        rand::rng().fill_bytes(&mut id);
+
+        NodeId(id)
+    }
 }
 
 impl fmt::Debug for NodeId {

@@ -112,11 +112,22 @@ impl OpenRedirectDetector {
     }
 
     fn is_external_redirect(&self, input_lower: &str) -> bool {
+        if input_lower.contains('\n') || input_lower.contains('\r') {
+            return true;
+        }
+
         if input_lower.contains("javascript:")
             || input_lower.contains("vbscript:")
             || input_lower.contains("data:")
         {
             return true;
+        }
+
+        if let Some(scheme_end) = input_lower.find(':') {
+            let scheme = &input_lower[..scheme_end];
+            if !scheme.bytes().all(|b| b.is_ascii_lowercase()) {
+                return true;
+            }
         }
 
         if input_lower.contains("//") || input_lower.contains("\\\\") || input_lower.contains("://")
