@@ -296,8 +296,16 @@ impl DegradationLevel {
 }
 
 fn rand_f32() -> f32 {
-    let bytes = crate::dns::crypto_rng::random_u32();
-    (bytes as f32) / (u32::MAX as f32)
+    match crate::dns::crypto_rng::random_u32() {
+        Ok(bytes) => (bytes as f32) / (u32::MAX as f32),
+        Err(e) => {
+            tracing::warn!(
+                "Crypto RNG failed in rate limiter, using secure default: {}",
+                e
+            );
+            0.0
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

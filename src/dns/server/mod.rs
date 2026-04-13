@@ -128,11 +128,11 @@ impl crate::config::dns::QnamePrivacyConfig {
 }
 
 impl DnsServer {
-    fn generate_random_salt() -> Vec<u8> {
+    fn generate_random_salt() -> Result<Vec<u8>, super::crypto_rng::CryptoRngError> {
         super::crypto_rng::random_bytes(16)
     }
 
-    fn generate_random_id() -> u16 {
+    fn generate_random_id() -> Result<u16, super::crypto_rng::CryptoRngError> {
         super::crypto_rng::random_u16()
     }
 

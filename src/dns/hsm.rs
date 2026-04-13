@@ -268,7 +268,8 @@ pub struct SoftHsm {
 
 impl SoftHsm {
     pub fn new(key_id: String) -> Self {
-        let bytes = super::crypto_rng::random_bytes(32);
+        let bytes =
+            super::crypto_rng::random_bytes(32).expect("Crypto RNG failure at startup for HSM");
         let key = ed25519_dalek::SigningKey::from_bytes(
             bytes
                 .as_slice()

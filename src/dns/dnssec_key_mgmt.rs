@@ -214,7 +214,8 @@ impl DnsSecKeyManager {
 
         let (public_key, private_key, key_tag, flags, key_size) = match algorithm {
             Algorithm::Ed25519 => {
-                let bytes = super::crypto_rng::random_bytes(32);
+                let bytes = super::crypto_rng::random_bytes(32)
+                    .map_err(|e| format!("Crypto RNG failed for DNSSEC key generation: {}", e))?;
                 let signing_key = SigningKey::from_bytes(
                     bytes
                         .as_slice()

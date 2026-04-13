@@ -564,7 +564,7 @@ impl DnsPadding {
         let blocks = target_size.div_ceil(block_size);
         let total_size = blocks * block_size;
 
-        let padding = random_bytes(total_size);
+        let padding = random_bytes(total_size).expect("Crypto RNG failure for EDNS padding");
 
         self.generated_padding = padding.clone();
 

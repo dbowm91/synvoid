@@ -24,10 +24,9 @@ struct CookieEntry {
 
 impl DnsCookieServer {
     pub fn new() -> Self {
-        let secret_key = super::crypto_rng::random_array::<32>();
-
+        let secret_key =
+            super::crypto_rng::random_array::<32>().expect("Crypto RNG failure at startup");
         let cookies = lru_time_cache::LruCache::with_capacity(10000);
-
         Self {
             inner: Arc::new(InnerCookieServer {
                 secret_key,
@@ -89,8 +88,8 @@ impl DnsCookieServer {
     }
 
     pub fn create_response_cookie(&self, client_ip: IpAddr) -> Vec<u8> {
-        let client_cookie = super::crypto_rng::random_bytes(COOKIE_SIZE);
-
+        let client_cookie = super::crypto_rng::random_bytes(COOKIE_SIZE)
+            .expect("Crypto RNG failure - system integrity compromised");
         let server_cookie = self.generate_server_cookie(client_ip, &client_cookie);
 
         let mut cookies = self.inner.cookies.write();

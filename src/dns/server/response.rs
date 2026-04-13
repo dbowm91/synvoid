@@ -343,7 +343,8 @@ impl DnsServer {
 
         let mut response = Vec::new();
 
-        let response_id = Self::generate_random_id();
+        let response_id =
+            Self::generate_random_id().expect("Crypto RNG failure for DNS transaction ID");
         response.extend_from_slice(&response_id.to_be_bytes());
         response.extend_from_slice(&0x8582u16.to_be_bytes());
         response.extend_from_slice(&1u16.to_be_bytes());

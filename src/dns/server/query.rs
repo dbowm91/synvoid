@@ -1057,7 +1057,9 @@ impl DnsServer {
     ) -> Arc<Vec<u8>> {
         let mut response = Vec::new();
 
-        let response_id = wire::get_message_id(query).unwrap_or_else(Self::generate_random_id);
+        let response_id = wire::get_message_id(query).unwrap_or_else(|| {
+            Self::generate_random_id().expect("Crypto RNG failure for DNS transaction ID")
+        });
         response.extend_from_slice(&response_id.to_be_bytes());
 
         let mut flags = 0x8583u16;
@@ -1165,7 +1167,9 @@ impl DnsServer {
     ) -> Arc<Vec<u8>> {
         let mut response = Vec::new();
 
-        let response_id = wire::get_message_id(query).unwrap_or_else(Self::generate_random_id);
+        let response_id = wire::get_message_id(query).unwrap_or_else(|| {
+            Self::generate_random_id().expect("Crypto RNG failure for DNS transaction ID")
+        });
         response.extend_from_slice(&response_id.to_be_bytes());
 
         // NODATA: RCODE 0 (NOERROR), authoritative answer

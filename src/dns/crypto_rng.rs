@@ -10,50 +10,39 @@ impl CryptoRngError {
     }
 }
 
-pub fn random_u16() -> u16 {
+pub fn random_u16() -> Result<u16, CryptoRngError> {
     let mut bytes = [0u8; 2];
-    if let Err(e) = getrandom::getrandom(&mut bytes) {
-        CryptoRngError::EntropyError(e).log_and_get_fallback();
-    }
-    u16::from_be_bytes(bytes)
+    getrandom::getrandom(&mut bytes)?;
+    Ok(u16::from_be_bytes(bytes))
 }
 
-pub fn random_u32() -> u32 {
+pub fn random_u32() -> Result<u32, CryptoRngError> {
     let mut bytes = [0u8; 4];
-    if let Err(e) = getrandom::getrandom(&mut bytes) {
-        CryptoRngError::EntropyError(e).log_and_get_fallback();
-    }
-    u32::from_be_bytes(bytes)
+    getrandom::getrandom(&mut bytes)?;
+    Ok(u32::from_be_bytes(bytes))
 }
 
-pub fn random_u64() -> u64 {
+pub fn random_u64() -> Result<u64, CryptoRngError> {
     let mut bytes = [0u8; 8];
-    if let Err(e) = getrandom::getrandom(&mut bytes) {
-        CryptoRngError::EntropyError(e).log_and_get_fallback();
-    }
-    u64::from_be_bytes(bytes)
+    getrandom::getrandom(&mut bytes)?;
+    Ok(u64::from_be_bytes(bytes))
 }
 
-pub fn random_bytes(len: usize) -> Vec<u8> {
+pub fn random_bytes(len: usize) -> Result<Vec<u8>, CryptoRngError> {
     let mut bytes = vec![0u8; len];
-    if let Err(e) = getrandom::getrandom(&mut bytes) {
-        CryptoRngError::EntropyError(e).log_and_get_fallback();
-    }
-    bytes
+    getrandom::getrandom(&mut bytes)?;
+    Ok(bytes)
 }
 
-pub fn random_array<const N: usize>() -> [u8; N] {
+pub fn random_array<const N: usize>() -> Result<[u8; N], CryptoRngError> {
     let mut bytes = [0u8; N];
-    if let Err(e) = getrandom::getrandom(&mut bytes) {
-        CryptoRngError::EntropyError(e).log_and_get_fallback();
-    }
-    bytes
+    getrandom::getrandom(&mut bytes)?;
+    Ok(bytes)
 }
 
-pub fn fill_bytes(dest: &mut [u8]) {
-    if let Err(e) = getrandom::getrandom(dest) {
-        CryptoRngError::EntropyError(e).log_and_get_fallback();
-    }
+pub fn fill_bytes(dest: &mut [u8]) -> Result<(), CryptoRngError> {
+    getrandom::getrandom(dest)?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -62,7 +51,7 @@ mod tests {
 
     #[test]
     fn test_random_u16_generates_valid_value() {
-        let val = random_u16();
+        let val = random_u16().expect("Crypto RNG should work in tests");
         assert!(val <= u16::MAX);
     }
 
@@ -70,7 +59,7 @@ mod tests {
     fn test_random_u16_unique_values() {
         let mut values = std::collections::HashSet::new();
         for _ in 0..1000 {
-            values.insert(random_u16());
+            values.insert(random_u16().expect("Crypto RNG should work in tests"));
         }
         assert!(
             values.len() > 900,
@@ -81,20 +70,20 @@ mod tests {
 
     #[test]
     fn test_random_u32_generates_valid_value() {
-        let val = random_u32();
+        let val = random_u32().expect("Crypto RNG should work in tests");
         assert!(val <= u32::MAX);
     }
 
     #[test]
     fn test_random_u64_generates_valid_value() {
-        let val = random_u64();
+        let val = random_u64().expect("Crypto RNG should work in tests");
         assert!(val <= u64::MAX);
     }
 
     #[test]
     fn test_random_bytes_length() {
         for len in [0, 1, 16, 32, 64, 256] {
-            let bytes = random_bytes(len);
+            let bytes = random_bytes(len).expect("Crypto RNG should work in tests");
             assert_eq!(bytes.len(), len);
         }
     }
@@ -103,7 +92,7 @@ mod tests {
     fn test_random_bytes_unique() {
         let mut values = std::collections::HashSet::new();
         for _ in 0..100 {
-            let bytes = random_bytes(32);
+            let bytes = random_bytes(32).expect("Crypto RNG should work in tests");
             values.insert(bytes);
         }
         assert!(
@@ -115,38 +104,50 @@ mod tests {
 
     #[test]
     fn test_random_array_16() {
-        let arr: [u8; 16] = random_array();
+        let arr: [u8; 16] = random_array().expect("Crypto RNG should work in tests");
         assert_eq!(arr.len(), 16);
     }
 
     #[test]
     fn test_random_array_32() {
-        let arr: [u8; 32] = random_array();
+        let arr: [u8; 32] = random_array().expect("Crypto RNG should work in tests");
         assert_eq!(arr.len(), 32);
     }
 
     #[test]
     fn test_random_array_64() {
-        let arr: [u8; 64] = random_array();
+        let arr: [u8; 64] = random_array().expect("Crypto RNG should work in tests");
         assert_eq!(arr.len(), 64);
     }
 
     #[test]
     fn test_fill_bytes() {
         let mut dest = [0u8; 100];
-        fill_bytes(&mut dest);
+        fill_bytes(&mut dest).expect("Crypto RNG should work in tests");
         assert!(dest.iter().any(|&b| b != 0), "Expected non-zero bytes");
     }
 
     #[test]
     fn test_fill_bytes_modifies_all_bytes() {
         let mut dest = [0u8; 1000];
-        fill_bytes(&mut dest);
+        fill_bytes(&mut dest).expect("Crypto RNG should work in tests");
         let non_zero_count = dest.iter().filter(|&&b| b != 0).count();
         assert!(
             non_zero_count > 900,
             "Expected >90% non-zero, got {}",
             non_zero_count
         );
+    }
+
+    #[test]
+    fn test_random_u16_error_propagation() {
+        let result: Result<u16, CryptoRngError> = random_u16();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_random_bytes_error_propagation() {
+        let result: Result<Vec<u8>, CryptoRngError> = random_bytes(32);
+        assert!(result.is_ok());
     }
 }

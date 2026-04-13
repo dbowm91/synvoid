@@ -15,7 +15,7 @@ impl DnsServer {
                 zone.nsec3param = if self.config.dnssec.nsec3_enabled {
                     Some(crate::dns::dnssec::Nsec3Config::new(
                         self.config.dnssec.nsec3_iterations,
-                        Self::generate_random_salt(),
+                        Self::generate_random_salt().map_err(|e| e.to_string())?,
                     ))
                 } else {
                     None
@@ -29,7 +29,7 @@ impl DnsServer {
                         .unwrap_or(self.config.dnssec.nsec3_iterations);
                     Some(crate::dns::dnssec::Nsec3Config::new(
                         iterations,
-                        Self::generate_random_salt(),
+                        Self::generate_random_salt().map_err(|e| e.to_string())?,
                     ))
                 } else {
                     None
