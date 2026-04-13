@@ -391,7 +391,7 @@ GLOBAL NODE updates rules
 | DHT announce | One-hop broadcast to k closest peers (NOT recursive Kademlia) |
 | Who announces | Global nodes only |
 | Who receives | All node types (global, edge, origin) |
-| Re-announce | Disabled - peers store but don't propagate further |
+| Re-announce | YARA and ThreatIntel use `re_announce_interval_secs` |
 | Peer selection | k closest peers by XOR distance (any role) |
 | Transport | Both DHT and mesh use same QUIC transport via `send_datagram_to_peer()` |
 
@@ -403,6 +403,24 @@ GLOBAL NODE updates rules
 | `yara_rule:{content_hash}` | Actual rule content (content-addressed) | 24 hours |
 | `yara_rules_manifest:{node_id}` | Global node's current ruleset metadata | 24 hours |
 
+**DHT Value Structure**:
+```json
+{
+    "version": "...",
+    "content_hash": "sha256...",
+    "node_id": "node-uuid",
+    "timestamp": 1744567890,
+    "signature": "base64-ed25519-signature",
+    "signer_public_key": "base64-public-key"
+}
+```
+
+**Signature Verification**:
+- Manifest signed over: `version:content_hash:node_id:timestamp`
+- Rule content signed over: `version:rules:content_hash:node_id:timestamp`
+- During `sync_from_dht()`, signatures are verified before accepting rules
+- Records without signatures are accepted for backward compatibility
+
 **Files**:
 | File | Purpose |
 |------|---------|
@@ -412,7 +430,8 @@ GLOBAL NODE updates rules
 **Sync Mechanism**:
 - `sync_from_dht()` replaces `send_sync_request_to_global()`
 - Queries local DHT cache (populated by DHT announces)
-- Compares content hash with peer manifests, fetches if different
+- Compares timestamp with peer manifests (not lexicographic - uses numeric comparison)
+- Fetches if different and signature verification passes
 
 ### ThreatIntel
 
@@ -420,6 +439,13 @@ GLOBAL NODE updates rules
 | Key Pattern | Purpose |
 |-------------|---------|
 | `threat_indicator:{indicator_value}` | Individual threat indicator |
+| `threat_indicator:{ip}:{threat_type}` | Per-type indicator (composite key, W1.8) |
+
+**Re-announcement**:
+- Global nodes periodically re-announce local indicators via `re_announce_local_indicators()`
+- Interval controlled by `re_announce_interval_secs` (default: 300s)
+- Only non-expired local-origin indicators are re-announced
+- Respects `hub_only_mode` (non-global nodes do not re-announce)
 
 **Sync Mechanism**:
 - `sync_from_dht()` replaces mesh broadcast sync

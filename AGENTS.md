@@ -351,11 +351,14 @@ All duplicate `current_timestamp()` definitions have been consolidated into `src
 
 | Bug | Location | Impact | Status |
 |-----|----------|--------|--------|
-| JA4 fingerprinting | `src/tls/server.rs`, `src/waf/mod.rs:1175-1209` | JA4 computed but not passed to WAF bot detection | Open (see plan.md O.1) |
-| Stream large request bodies | `src/http/server.rs` | Full buffering; needs chunk-based WAF | Open (see plan.md O.2) |
-| Response streaming | `src/http/server.rs` | Fully buffered responses | Open (see plan.md O.3) |
+| Stream large request bodies | `src/http/server.rs` | Full buffering; needs chunk-based WAF | Open (see plan.md W3.2) |
+| Response streaming | `src/http/server.rs` | Fully buffered responses | Open (see plan.md W3.3) |
 
 ### Fixed Issues
+
+| Bug | Location | Fix |
+|-----|----------|-----|
+| JA4 fingerprinting not passed to WAF | `src/tls/server.rs`, `src/waf/mod.rs` | W3.1: JA4 now wired via `check_request_full()` and `check_bot_protection()` |
 
 | Bug | Location | Fix |
 |-----|----------|-----|
@@ -622,13 +625,33 @@ rrsig.extend_from_slice(&timestamp.to_be_bytes());
 
 The consolidated implementation plan is located at `plans/plan.md`. This plan organizes all improvements into 5 waves for parallelization:
 
-| Wave | Focus | Item Count |
-|------|-------|------------|
-| 1 | Critical Security (WAF, Auth, Mesh) | 14 |
-| 2 | High Security (TLS, DNS, Mesh) | 8 |
-| 3 | Core Functionality (Web Stack, Caching, Honeypot) | 10 |
-| 4 | Code Quality (Performance, Quality) | 8 |
-| 5 | Polish & Optimization | 7 |
+| Wave | Focus | Item Count | Status |
+|------|-------|------------|--------|
+| 1 | Critical Security (WAF, Auth, Mesh) | 14 | ✅ Completed |
+| 2 | High Security (TLS, DNS, Mesh) | 8 | ⚠️ 6/8 Complete (W2.5, W2.7 partial) |
+| 3 | Core Functionality (Web Stack, Caching, Honeypot) | 10 | ⚠️ 6/10 Done |
+| 4 | Code Quality (Performance, Quality) | 8 | 🔄 Pending |
+| 5 | Polish & Optimization | 7 | 🔄 Pending |
+
+### Wave 3 Completed Items
+
+| Item | Description |
+|------|-------------|
+| W3.1 | JA4 fingerprint wired to WAF bot detection |
+| W3.5 | Edge node cache preference propagation (SiteConfigSync callback) |
+| W3.8 | YARA version comparison uses timestamp (not lexicographic) |
+| W3.9 | YARA DHT sync signature verification (Ed25519) |
+| W3.10 | Threat Intel DHT re-announcement (300s interval) |
+| W3.7 (partial) | SiteContentVersion DHT key type added |
+
+### Wave 3 Deferred Items
+
+| Item | Reason |
+|------|--------|
+| W3.2 | Request body streaming requires backend interface rewrites |
+| W3.3 | Response streaming requires transform pipeline overhaul |
+| W3.4 | ConnectionMeta trait migration requires significant refactoring |
+| W3.6 | Edge HTTP response cache requires MeshProxy integration |
 
 **Subagent Execution Model**: Items within the same wave can be executed in parallel by separate subagents. Dependencies between waves are documented in `plans/plan.md` dependencies graph.
 
@@ -730,7 +753,7 @@ GLOBAL NODE updates rules
 | DHT announce | One-hop broadcast to k closest peers (NOT recursive Kademlia) |
 | Who announces | Global nodes only |
 | Who receives | All node types (global, edge, origin) |
-| Re-announce | Disabled - peers store but don't propagate further |
+| Re-announce | YARA uses `re_announce_interval_secs`; ThreatIntel uses `re_announce_interval_secs` (W3.10) |
 | Transport | Both DHT and mesh use same QUIC transport |
 
 ### YARA DHT Keys
@@ -740,11 +763,24 @@ GLOBAL NODE updates rules
 | `yara_rule:{content_hash}` | Actual rule content (content-addressed) | 24 hours |
 | `yara_rules_manifest:{node_id}` | Global node's current ruleset metadata | 24 hours |
 
+### YARA Signature Verification
+
+YARA rules published to DHT are signed using Ed25519:
+- **Manifest signature**: `version:content_hash:node_id:timestamp`
+- **Rule content signature**: `version:rules:content_hash:node_id:timestamp`
+
+During DHT sync, signatures are verified before accepting rules from peers. Records without signatures are accepted for backward compatibility with legacy data.
+
 ### ThreatIntel DHT Keys
 
 | Key Pattern | Purpose |
 |-------------|---------|
 | `threat_indicator:{indicator_value}` | Individual threat indicator |
+| `threat_indicator:{ip}:{threat_type}` | Per-type indicator (composite key, W1.8) |
+
+### ThreatIntel Re-announcement
+
+Global nodes periodically re-announce local ThreatIntel indicators via `re_announce_local_indicators()` (W3.10). The interval is controlled by `re_announce_interval_secs` (default: 300s). Only non-expired local-origin indicators are re-announced. Respects `hub_only_mode` (non-global nodes do not re-announce). | `threat_indicator:{ip}` | Individual threat indicator |
 
 ### Implementation Files
 
