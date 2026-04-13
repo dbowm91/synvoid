@@ -628,6 +628,12 @@ impl HttpsServer {
         if path.starts_with(HONEYPOT_PREFIX) {
             counter!("maluwaf.honeypot.hit").increment(1);
             tracing::info!("HTTPS honeypot accessed: {} by {}", path, client_ip);
+            waf.block_ip_with_threat_intel(
+                client_ip,
+                "honeypot",
+                waf.config.honeypot_ban_duration_secs,
+                "global",
+            );
             return Ok(Self::build_response(
                 408,
                 "Request timeout".to_string(),

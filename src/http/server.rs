@@ -549,6 +549,36 @@ impl HttpServer {
         }
 
         // ============================================================================
+        // SECTION 4.5: Mesh Ownership Challenge Serving (HTTP-01)
+        // ============================================================================
+        // Serve HTTP-01 challenges for mesh ownership verification
+        if let Some(ref mt) = mesh_transport {
+            if let Some(token) = path.strip_prefix("/.well-known/malu-challenge/") {
+                if !token.is_empty() && !token.contains('/') {
+                    if let Some(key_authorization) = mt.get_http01_challenge(token) {
+                        tracing::debug!(
+                            "Serving HTTP-01 challenge for token {} (from {})",
+                            token,
+                            client_ip
+                        );
+                        return Ok(Response::builder()
+                            .status(200)
+                            .header(http::header::CONTENT_TYPE, "text/plain")
+                            .header(http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+                            .body(Full::new(Bytes::from(key_authorization)).boxed())
+                            .unwrap());
+                    } else {
+                        tracing::debug!(
+                            "HTTP-01 challenge not found for token {} (from {})",
+                            token,
+                            client_ip
+                        );
+                    }
+                }
+            }
+        }
+
+        // ============================================================================
         // SECTION 5: Connection Limiting
         // ============================================================================
         let connection_token = if let Some(ref conn_limiter) = waf.connection_limiter {
@@ -870,6 +900,12 @@ impl HttpServer {
         if path.starts_with(HONEYPOT_PREFIX) {
             counter!("maluwaf.honeypot.hit").increment(1);
             tracing::info!("HTTP honeypot accessed: {} by {}", path, client_ip);
+            waf.block_ip_with_threat_intel(
+                client_ip,
+                "honeypot",
+                waf.config.honeypot_ban_duration_secs,
+                "global",
+            );
             let ipc_clone = ipc.clone();
             let worker_id_clone = worker_id;
             Self::send_request_log_if_enabled(

@@ -134,6 +134,69 @@ pub struct MeshTransport {
     pub(crate) verification_manager:
         Arc<RwLock<Option<Arc<crate::mesh::verification::VerificationTaskManager>>>>,
     pub(crate) revocation_list: Option<Arc<crate::mesh::peer_auth::GlobalNodeRevocationList>>,
+    #[cfg(feature = "dns")]
+    pub(crate) ownership_challenge_store: Arc<RwLock<OwnershipChallengeStore>>,
+}
+
+#[derive(Clone)]
+pub struct Http01Challenge {
+    pub key_authorization: String,
+    pub upstream_id: String,
+    pub created_at: Instant,
+}
+
+#[derive(Clone)]
+pub struct Dns01Challenge {
+    pub domain: String,
+    pub txt_record_name: String,
+    pub txt_record_value: String,
+    pub upstream_id: String,
+    pub created_at: Instant,
+}
+
+pub struct OwnershipChallengeStore {
+    http_challenges: LruCache<String, Http01Challenge>,
+    dns_challenges: LruCache<String, Dns01Challenge>,
+}
+
+impl OwnershipChallengeStore {
+    pub fn new() -> Self {
+        Self {
+            http_challenges: LruCache::with_expiry_duration_and_capacity(
+                Duration::from_secs(300),
+                1000,
+            ),
+            dns_challenges: LruCache::with_expiry_duration_and_capacity(
+                Duration::from_secs(300),
+                1000,
+            ),
+        }
+    }
+
+    pub fn store_http_challenge(&mut self, token: String, challenge: Http01Challenge) {
+        self.http_challenges.insert(token, challenge);
+    }
+
+    pub fn get_http_challenge(&mut self, token: &str) -> Option<String> {
+        self.http_challenges
+            .get(token)
+            .map(|c| c.key_authorization.clone())
+    }
+
+    pub fn store_dns_challenge(&mut self, txt_record_name: String, challenge: Dns01Challenge) {
+        self.dns_challenges.insert(txt_record_name, challenge);
+    }
+
+    #[cfg(feature = "dns")]
+    pub fn get_dns_challenge(&mut self, txt_record_name: &str) -> Option<Dns01Challenge> {
+        self.dns_challenges.get(txt_record_name).cloned()
+    }
+}
+
+impl Default for OwnershipChallengeStore {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Clone for MeshTransport {
@@ -179,6 +242,8 @@ impl Clone for MeshTransport {
             site_config_sync_tx: self.site_config_sync_tx.clone(),
             verification_manager: self.verification_manager.clone(),
             revocation_list: self.revocation_list.clone(),
+            #[cfg(feature = "dns")]
+            ownership_challenge_store: self.ownership_challenge_store.clone(),
         }
     }
 }
@@ -391,6 +456,8 @@ impl MeshTransport {
             } else {
                 None
             },
+            #[cfg(feature = "dns")]
+            ownership_challenge_store: Arc::new(RwLock::new(OwnershipChallengeStore::new())),
         }
     }
 
@@ -417,6 +484,53 @@ impl MeshTransport {
         manager: Arc<crate::mesh::verification::VerificationTaskManager>,
     ) {
         *self.verification_manager.write() = Some(manager);
+    }
+
+    #[cfg(feature = "dns")]
+    pub fn store_http01_challenge(
+        &self,
+        token: String,
+        key_authorization: String,
+        upstream_id: String,
+    ) {
+        let challenge = Http01Challenge {
+            key_authorization,
+            upstream_id,
+            created_at: Instant::now(),
+        };
+        let mut store = self.ownership_challenge_store.write();
+        store.store_http_challenge(token, challenge);
+    }
+
+    #[cfg(feature = "dns")]
+    pub fn get_http01_challenge(&self, token: &str) -> Option<String> {
+        let mut store = self.ownership_challenge_store.write();
+        store.get_http_challenge(token)
+    }
+
+    #[cfg(feature = "dns")]
+    pub fn store_dns01_challenge(
+        &self,
+        txt_record_name: String,
+        domain: String,
+        txt_record_value: String,
+        upstream_id: String,
+    ) {
+        let challenge = Dns01Challenge {
+            domain,
+            txt_record_name: txt_record_name.clone(),
+            txt_record_value,
+            upstream_id,
+            created_at: Instant::now(),
+        };
+        let mut store = self.ownership_challenge_store.write();
+        store.store_dns_challenge(txt_record_name, challenge);
+    }
+
+    #[cfg(feature = "dns")]
+    pub fn get_dns01_challenge(&self, txt_record_name: &str) -> Option<Dns01Challenge> {
+        let mut store = self.ownership_challenge_store.write();
+        store.get_dns_challenge(txt_record_name)
     }
 
     pub fn get_org_manager(&self) -> Arc<RwLock<crate::mesh::organization::OrganizationManager>> {

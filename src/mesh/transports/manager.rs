@@ -497,6 +497,25 @@ impl MeshTransportManager {
         self.record_store.clone()
     }
 
+    #[cfg(feature = "dns")]
+    pub fn get_http01_challenge(&self, token: &str) -> Option<String> {
+        self.quic_transport
+            .read()
+            .as_ref()
+            .and_then(|qt| qt.get_inner().get_http01_challenge(token))
+    }
+
+    #[cfg(feature = "dns")]
+    pub fn get_dns01_challenge(
+        &self,
+        txt_record_name: &str,
+    ) -> Option<crate::mesh::transport::Dns01Challenge> {
+        self.quic_transport
+            .read()
+            .as_ref()
+            .and_then(|qt| qt.get_inner().get_dns01_challenge(txt_record_name))
+    }
+
     pub fn announce_capabilities(&self, node_id: &str, capabilities: &[String]) {
         if let Some(ref record_store) = self.record_store {
             let ttl = 3600; // 1 hour TTL for capabilities

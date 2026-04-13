@@ -33,7 +33,7 @@ pub enum DhtKey {
     DnsRecord(String, String),
     DnsDomainRegistration(String),
     AnycastNode(String),
-    ThreatIndicator(String),
+    ThreatIndicator(String, String),
     UpstreamImageProtection(String),
     UpstreamMinification(String),
     UpstreamCompression(String),
@@ -156,8 +156,8 @@ impl DhtKey {
         DhtKey::AnycastNode(node_id.to_string())
     }
 
-    pub fn threat_indicator(indicator_id: &str) -> Self {
-        DhtKey::ThreatIndicator(indicator_id.to_string())
+    pub fn threat_indicator(indicator_id: &str, threat_type: &str) -> Self {
+        DhtKey::ThreatIndicator(indicator_id.to_string(), threat_type.to_string())
     }
 
     pub fn upstream_image_protection(site_id: &str) -> Self {
@@ -283,7 +283,9 @@ impl DhtKey {
             DhtKey::DnsRecord(zone, name) => format!("dns_record:{}:{}", zone, name),
             DhtKey::DnsDomainRegistration(domain) => format!("dns_domain_reg:{}", domain),
             DhtKey::AnycastNode(node_id) => format!("anycast_node:{}", node_id),
-            DhtKey::ThreatIndicator(indicator_id) => format!("threat_indicator:{}", indicator_id),
+            DhtKey::ThreatIndicator(indicator_id, threat_type) => {
+                format!("threat_indicator:{}:{}", indicator_id, threat_type)
+            }
             DhtKey::UpstreamImageProtection(site_id) => {
                 format!("upstream_image_protection:{}", site_id)
             }
@@ -412,7 +414,9 @@ impl DhtKey {
                 DhtKey::DnsDomainRegistration(parts[1..].join(":"))
             }
             "anycast_node" if parts.len() >= 2 => DhtKey::AnycastNode(parts[1..].join(":")),
-            "threat_indicator" if parts.len() >= 2 => DhtKey::ThreatIndicator(parts[1..].join(":")),
+            "threat_indicator" if parts.len() >= 3 => {
+                DhtKey::ThreatIndicator(parts[1].to_string(), parts[2].to_string())
+            }
             "upstream_image_protection" if parts.len() >= 2 => {
                 DhtKey::UpstreamImageProtection(parts[1..].join(":"))
             }
@@ -508,7 +512,7 @@ impl DhtKey {
                 | DhtKey::DnsZone(_)
                 | DhtKey::DnsRecord(_, _)
                 | DhtKey::AnycastNode(_)
-                | DhtKey::ThreatIndicator(_)
+                | DhtKey::ThreatIndicator(_, _)
                 | DhtKey::TransformedContent { .. }
                 | DhtKey::PoisonedImage { .. }
                 | DhtKey::SiteImagePoisonConfig(_)
@@ -564,7 +568,7 @@ impl DhtKey {
             DhtKey::DnsRecord(_, _) => "dns_record",
             DhtKey::DnsDomainRegistration(_) => "dns_domain_registration",
             DhtKey::AnycastNode(_) => "anycast_node",
-            DhtKey::ThreatIndicator(_) => "threat_indicator",
+            DhtKey::ThreatIndicator(_, _) => "threat_indicator",
             DhtKey::UpstreamImageProtection(_) => "upstream_image_protection",
             DhtKey::UpstreamMinification(_) => "upstream_minification",
             DhtKey::UpstreamCompression(_) => "upstream_compression",
@@ -605,7 +609,7 @@ impl DhtKey {
             DhtKey::DnsRecord(_, _) => Some(SignedRecordType::DnsRecord),
             DhtKey::DnsDomainRegistration(_) => Some(SignedRecordType::DnsDomainRegistration),
             DhtKey::AnycastNode(_) => Some(SignedRecordType::AnycastNode),
-            DhtKey::ThreatIndicator(_) => Some(SignedRecordType::ThreatIndicator),
+            DhtKey::ThreatIndicator(_, _) => Some(SignedRecordType::ThreatIndicator),
             DhtKey::UpstreamImageProtection(_) => Some(SignedRecordType::UpstreamImageProtection),
             DhtKey::UpstreamMinification(_) => Some(SignedRecordType::UpstreamMinification),
             DhtKey::UpstreamCompression(_) => Some(SignedRecordType::UpstreamCompression),

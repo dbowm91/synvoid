@@ -644,7 +644,10 @@ impl ThreatIntelligenceManager {
             return;
         };
 
-        let key = DhtKey::threat_indicator(&indicator.indicator_value);
+        let key = DhtKey::threat_indicator(
+            &indicator.indicator_value,
+            &format!("{:?}", indicator.threat_type),
+        );
         let key_str = key.as_str();
 
         let (signature, signer_public_key) = if let Some(ref signer) = self.signer {
@@ -707,12 +710,12 @@ impl ThreatIntelligenceManager {
             if !indicator.signature.is_empty() {
                 if let Some(ref pk) = indicator.signer_public_key {
                     let content = format!(
-                        "{},{},{:?},{},{}",
+                        "{}:{}:{}:{}:{}",
                         indicator.indicator_value,
-                        indicator.threat_type as u32,
-                        indicator.severity,
+                        indicator.threat_type as u8,
+                        indicator.severity as u8,
                         indicator.timestamp,
-                        from_node
+                        indicator.source_node_id
                     );
                     let pk_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
                         .decode(pk)
@@ -870,11 +873,15 @@ impl ThreatIntelligenceManager {
         true
     }
 
-    pub fn lookup_threat_indicator_in_dht(&self, indicator_value: &str) -> Option<ThreatIndicator> {
+    pub fn lookup_threat_indicator_in_dht(
+        &self,
+        indicator_value: &str,
+        threat_type: ThreatType,
+    ) -> Option<ThreatIndicator> {
         let transport = self.transport.read().clone()?;
         let record_store = transport.get_record_store()?;
 
-        let key = DhtKey::threat_indicator(indicator_value);
+        let key = DhtKey::threat_indicator(indicator_value, &format!("{:?}", threat_type));
         let key_str = key.as_str();
 
         let record = match record_store.get(&key_str) {
@@ -1139,7 +1146,7 @@ impl ThreatIntelligenceManager {
                         .parse_dht_record_value(&value)
                         .ok_or_else(|| "Failed to parse DHT record".to_string())?;
                     local_indicators.insert(
-                        indicator_value.to_string(),
+                        key.to_string(),
                         ThreatIndicatorEntry {
                             indicator,
                             received_from: Some("dht_sync".to_string()),
@@ -1152,16 +1159,11 @@ impl ThreatIntelligenceManager {
             }
         }
 
-        let dht_indicator_values: Vec<&str> = dht_keys
-            .iter()
-            .filter_map(|k| k.strip_prefix("threat_indicator:"))
-            .collect();
-
         local_indicators.retain(|key, entry| {
             if entry.local_origin {
                 return true;
             }
-            if !dht_indicator_values.contains(&key.as_str()) {
+            if !dht_keys.contains(key) {
                 removed += 1;
                 return false;
             }

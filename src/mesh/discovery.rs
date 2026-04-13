@@ -422,17 +422,12 @@ impl MeshDiscovery {
                     }
                 }
 
-                // Ed25519 challenge-response authentication for all nodes
-                let global_node_att_key = if role.is_origin() {
-                    public_key.as_ref().map(|pk| pk.as_str())
-                } else {
-                    None
-                };
-                let global_node_att_sig = if role.is_origin() {
-                    global_node_key.as_ref().map(|sk| sk.as_str())
-                } else {
-                    None
-                };
+                // Origin nodes cannot self-attest as global nodes - they must obtain
+                // attestation from an actual global node via a separate registration flow.
+                // Setting both to None allows validate_origin_node to fail appropriately
+                // if the origin hasn't been properly attested by a real global node.
+                let global_node_att_key = None;
+                let global_node_att_sig = None;
                 if let Err(e) = crate::mesh::peer_auth::validate_peer_role(
                     &role,
                     &self.get_authorized_global_pubkeys(),

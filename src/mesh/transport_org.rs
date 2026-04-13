@@ -247,17 +247,17 @@ impl MeshTransport {
                             is_unspent: tk.is_unspent,
                         })
                     } else {
-                        tracing::warn!(
-                            "No session found for peer {}, sending unencrypted tier key",
+                        tracing::debug!(
+                            "No ML-KEM session for peer {}, not sending tier key",
                             to_peer
                         );
-                        Some(tk.clone())
+                        None
                     }
                 } else {
-                    Some(tk.clone())
+                    None
                 }
             } else {
-                Some(tk.clone())
+                None
             }
         } else {
             None

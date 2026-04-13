@@ -114,8 +114,9 @@ pub use threat_intel::{
     ThreatIntelligenceStats,
 };
 pub use tier_key_encryption::{
-    deserialize_encrypted_tier_key, serialize_encrypted_tier_key, EncryptedTierKeyData,
-    TierKeyEncryption, TierKeyEncryptionError,
+    deserialize_encrypted_privileged, deserialize_encrypted_tier_key,
+    serialize_encrypted_privileged, serialize_encrypted_tier_key, EncryptedPrivilegedData,
+    EncryptedTierKeyData, PrivilegedRecordType, TierKeyEncryption, TierKeyEncryptionError,
 };
 pub use topology::{MeshTopology, NetworkPartitionState, PeerState};
 pub use transport::{MeshPeerConnection, MeshTransport};

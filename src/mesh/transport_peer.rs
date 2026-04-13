@@ -1730,19 +1730,19 @@ impl MeshTransport {
                 txt_record_value,
             } => {
                 tracing::info!(
-                    "DNS-01 challenge for domain {}: set TXT record {} = {}",
+                    "DNS-01 challenge for domain {}: storing TXT record {} = {} for mesh DNS serving",
                     domain,
                     txt_record_name,
                     txt_record_value
                 );
 
-                // In a real implementation, the origin would need to:
-                // 1. Create the TXT record in their DNS provider
-                // 2. Wait for DNS propagation
-                // 3. Send the proof back
+                self.store_dns01_challenge(
+                    txt_record_name.clone(),
+                    domain.clone(),
+                    txt_record_value.clone(),
+                    upstream_id.to_string(),
+                );
 
-                // For now, we simulate the proof by sending back the txt_record_value
-                // In production, this would require actual DNS verification
                 let proof = crate::mesh::protocol::OwnershipChallengeProof::Dns01 {
                     txt_record_value: txt_record_value.clone(),
                 };
@@ -1764,16 +1764,17 @@ impl MeshTransport {
                 key_authorization,
             } => {
                 tracing::info!(
-                    "HTTP-01 challenge: serve key authorization at /.well-known/malu-challenge/{}",
+                    "HTTP-01 challenge: storing key authorization for token {} at /.well-known/malu-challenge/{}",
+                    token,
                     token
                 );
 
-                // In a real implementation, the origin would need to:
-                // 1. Serve the key_authorization at /.well-known/malu-challenge/{token}
-                // 2. Wait for the global node to fetch it
-                // 3. Send the proof back
+                self.store_http01_challenge(
+                    token.clone(),
+                    key_authorization.clone(),
+                    upstream_id.to_string(),
+                );
 
-                // For now, we simulate by sending back the key_authorization
                 let proof = crate::mesh::protocol::OwnershipChallengeProof::Http01 {
                     key_authorization: key_authorization.clone(),
                 };

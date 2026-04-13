@@ -17,15 +17,15 @@ in parallel by separate subagents. Dependencies between waves are documented.
 | ID | Focus | Severity | Status |
 |----|-------|----------|--------|
 | **Wave 1: Critical Security (WAF, Auth, Mesh)** | | | |
-| S1.1 | Threat Intel Signature Bypass | 🔴 CRITICAL | ❌ Open |
-| S1.2 | Tier Key Sent Unencrypted | 🔴 CRITICAL | ❌ Open |
-| M1.1 | Origin Node Self-Attestation Bypass | 🔴 CRITICAL | ❌ Open |
-| M1.2 | Edge Node PoW Key Unbinding | 🔴 HIGH | ❌ Open |
-| W1.5 | HTTP Honeypot Bypass (WAF not called) | 🔴 HIGH | ❌ Open |
-| W2.5 | Origin Upstream Ownership Verification | ⚠️ HIGH | ⚠️ Partial |
-| W2.7 | Tier Key Encryption Scope Extension | ⚠️ MEDIUM | ⚠️ Partial |
-| H1 | DHT Key Collision (W1.8 incomplete) | 🔴 HIGH | ❌ Open |
-| H2 | sync_from_dht Key Mismatch | 🔴 HIGH | ❌ Open |
+| S1.1 | Threat Intel Signature Bypass | 🔴 CRITICAL | ✅ Completed |
+| S1.2 | Tier Key Sent Unencrypted | 🔴 CRITICAL | ✅ Completed |
+| M1.1 | Origin Node Self-Attestation Bypass | 🔴 CRITICAL | ✅ Completed |
+| M1.2 | Edge Node PoW Key Unbinding | 🔴 HIGH | ✅ Completed |
+| W1.5 | HTTP Honeypot Bypass (WAF not called) | 🔴 HIGH | ✅ Completed |
+| W2.5 | Origin Upstream Ownership Verification | ⚠️ HIGH | ✅ Completed |
+| W2.7 | Tier Key Encryption Scope Extension | ⚠️ MEDIUM | ✅ Completed |
+| H1 | DHT Key Collision (W1.8 incomplete) | 🔴 HIGH | ✅ Completed |
+| H2 | sync_from_dht Key Mismatch | 🔴 HIGH | ✅ Completed |
 | **Wave 2: High Security (TLS, DNS, Mesh)** | | | |
 | S2.6 | SSRF Allowlist Bypass via Substring | 🟡 MEDIUM | ❌ Open |
 | S2.7 | Open Redirect Bypass via Encoding | 🟡 MEDIUM | ❌ Open |
@@ -126,9 +126,9 @@ in parallel by separate subagents. Dependencies between waves are documented.
 
 ## Wave 1: Critical Security (WAF, Auth, Mesh)
 
-### 🔴 S1.1: Threat Intel Signature Bypass - CRITICAL
+### 🔴 S1.1: Threat Intel Signature Bypass - CRITICAL ✅ COMPLETED
 
-**Location**: `src/mesh/threat_intel.rs:651-658` (signing) vs `src/mesh/threat_intel.rs:709-716` (verification)
+**Location**: `src/mesh/threat_intel.rs:709-716`
 
 **Issue**: Content string format for signing differs from verification format:
 - Signing: `"{}:{}:{}:{}:{}"` with `as u8` for threat_type/severity
@@ -136,90 +136,98 @@ in parallel by separate subagents. Dependencies between waves are documented.
 
 All threat intelligence signatures fail verification, allowing fake indicators.
 
-**Fix**: Make verification format match signing format exactly.
+**Fix**: Updated verification format at lines 709-716 to exactly match signing format:
+- Changed from `"{},{},{:?},{},{}"` to `"{}:{}:{}:{}:{}"`
+- Changed `indicator.threat_type as u32` to `indicator.threat_type as u8`
+- Changed `{:?}` (Debug format for severity) to `indicator.severity as u8`
+- Changed `from_node` to `indicator.source_node_id`
 
 ---
 
-### 🔴 S1.2: Tier Key Sent Unencrypted - CRITICAL
+### 🔴 S1.2: Tier Key Sent Unencrypted - CRITICAL ✅ COMPLETED
 
-**Location**: `src/mesh/transport_org.rs:249-254`
+**Location**: `src/mesh/transport_org.rs:249-261`
 
 **Issue**: When no ML-KEM session exists, tier keys transmitted in plaintext.
 
-**Fix**: Remove plaintext fallback; require ML-KEM session before sending tier key.
+**Fix**: Removed plaintext fallback. When no ML-KEM session exists, the tier key is not sent at all (`None`). Changed the fallback path from `Some(tk.clone())` to `None` with a debug log message "No ML-KEM session for peer {}, not sending tier key".
 
 ---
 
-### 🔴 M1.1: Origin Node Self-Attestation Bypass - CRITICAL
+### 🔴 M1.1: Origin Node Self-Attestation Bypass - CRITICAL ✅ COMPLETED
 
-**Location**: `src/mesh/discovery.rs:426-451`, `src/mesh/peer_auth.rs:238-269`
+**Location**: `src/mesh/discovery.rs:425-430`, `src/mesh/peer_auth.rs:238-269`
 
 **Issue**: Origin nodes authenticate using their own credentials as "global node attestation".
 Signature verified against origin's own public key = self-signing bypass.
 
-**Fix**: Stop self-attestation; implement proper origin attestation flow via global node.
+**Fix**: In discovery.rs, changed origin node attestation to use `None` for both `global_node_att_key` and `global_node_att_sig`. This forces attestation to fail unless the origin has been properly attested by a real global node via a separate registration flow. Origin nodes can no longer self-attest.
 
 ---
 
-### 🔴 M1.2: Edge Node PoW Key Unbinding - HIGH
+### 🔴 M1.2: Edge Node PoW Key Unbinding - HIGH ✅ COMPLETED
 
-**Location**: `src/mesh/peer_auth.rs:141-206`
+**Location**: `src/mesh/peer_auth.rs:191-196`
 
 **Issue**: `peer_public_key` and `pow_public_key` are separate and never bound together.
 Attacker can compute PoW with key A, present key B as identity, bypass PoW requirement.
 
-**Fix**: Require PoW computed on same key used for Ed25519 identity, or derive Ed25519 from PoW key via HKDF.
+**Fix**: Added key comparison check at lines 191-196 that verifies `pk_bytes != pow_pk_bytes`. If the PoW public key does not match the identity public key, the validation fails with an error message. The PoW must now be computed using the same key used for Ed25519 identity.
 
 ---
 
-### 🔴 W1.5: HTTP Honeypot Bypass - HIGH
+### 🔴 W1.5: HTTP Honeypot Bypass - HIGH ✅ COMPLETED
 
-**Location**: `src/http/server.rs:870-894`
+**Location**: `src/http/server.rs:903-908`, `src/waf/mod.rs:527`, `src/tls/server.rs:631-636`
 
 **Issue**: Direct `/_waf_hp_` requests return 408 but don't trigger WAF blocking.
 
-**Fix**: Call `waf.handle_honeypot_hit(client_ip)` or make `block_ip_with_threat_intel()` public.
+**Fix**: Made `block_ip_with_threat_intel()` public in `src/waf/mod.rs`. Added call to `waf.block_ip_with_threat_intel(client_ip, "honeypot", waf.config.honeypot_ban_duration_secs, "global")` in the honeypot handler at lines 903-908 for HTTP and lines 631-636 for HTTPS. IPs accessing honeypot paths are now immediately blocked via threat intel.
 
 ---
 
-### ⚠️ W2.5: Origin Upstream Ownership Verification - PARTIAL
+### ✅ W2.5: Origin Upstream Ownership Verification - COMPLETED
 
-**Location**: `src/mesh/transport_peer.rs:1706-1790`, `src/mesh/verification.rs`
+**Location**: `src/mesh/transport.rs`, `src/mesh/transport_peer.rs:1730-1792`, `src/http/server.rs:555-580`
 
-**Issue**: HTTP-01 and DNS-01 challenge handlers are stubbed/simulated.
+**Issue**: HTTP-01 and DNS-01 challenge handlers were stubbed/simulated.
 
-**Remaining**: Implement actual HTTP-01 challenge serving and DNS-01 provisioning.
+**Fix**: Implemented actual challenge serving:
+- Added `OwnershipChallengeStore` with LruCache-based storage for challenges
+- HTTP-01: Stores `token -> key_authorization` and serves at `/.well-known/malu-challenge/{token}`
+- DNS-01: Stores TXT record data for mesh DNS serving
+- Added challenge serving in HTTP server SECTION 4.5
 
 ---
 
-### ⚠️ W2.7: Tier Key Encryption Scope Extension - PARTIAL
+### ✅ W2.7: Tier Key Encryption Scope Extension - COMPLETED
 
-**Location**: `src/mesh/tier_key_encryption.rs`
+**Location**: `src/mesh/tier_key_encryption.rs`, `src/mesh/mod.rs`
 
 **Issue**: Only `TierKey` records encrypted; Organization, MemberCertificate, GlobalNodeList, etc. stored plaintext.
 
-**Remaining**: Encrypt all `requires_global_node()` record types with HKDF-derived keys.
+**Fix**: Extended `TierKeyEncryption` with `PrivilegedRecordType` enum and HKDF-derived keys per record type. Added specialized encrypt/decrypt methods for: Organization, MemberCertificate, GlobalNodeList, OrgNameReservation, DnsZone, DnsDomainRegistration, AnycastNode. All `requires_global_node()` record types are now encrypted.
 
 ---
 
-### 🔴 H1: DHT Key Collision - HIGH
+### 🔴 H1: DHT Key Collision - HIGH ✅ COMPLETED
 
-**Location**: `src/mesh/threat_intel.rs:647-648`
+**Location**: `src/mesh/dht/keys.rs:36,159,287,415`, `src/mesh/threat_intel.rs:647-650`
 
 **Issue**: W1.8 supposed to implement `threat_indicator:{ip}:{threat_type}` but uses flat `threat_indicator:{ip}`.
 Same IP with different threat types overwrite each other.
 
-**Fix**: Use composite keys `threat_indicator:{ip}:{threat_type}` in DHT storage.
+**Fix**: Updated `DhtKey::ThreatIndicator` variant from `ThreatIndicator(String)` to `ThreatIndicator(String, String)`. Changed `threat_indicator()` constructor to take both `indicator_id` and `threat_type`. DHT keys are now `threat_indicator:{ip}:{threat_type}` (e.g., `threat_indicator:1.2.3.4:IpBlock`).
 
 ---
 
-### 🔴 H2: sync_from_dht Key Mismatch - HIGH
+### 🔴 H2: sync_from_dht Key Mismatch - HIGH ✅ COMPLETED
 
-**Location**: `src/mesh/threat_intel.rs:1120-1168`
+**Location**: `src/mesh/threat_intel.rs:1148-1149,1162-1166`
 
 **Issue**: `sync_from_dht()` stores with just IP, but retain logic compares composite keys → never matches, all entries incorrectly retained.
 
-**Fix**: Store with composite key format; fix retain logic to use consistent keys.
+**Fix**: Changed to store with full composite key (`key.to_string()`) instead of stripped `indicator_value`. Updated retain logic to use `dht_keys.contains(key)` directly with full composite key format. Removed the now-unused `dht_indicator_values` variable that stripped prefixes.
 
 ---
 

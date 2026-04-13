@@ -188,6 +188,13 @@ pub fn validate_edge_node_pow(
         ));
     }
 
+    if pk_bytes != pow_pk_bytes {
+        return Err(format!(
+            "Edge node {} PoW public key does not match identity public key",
+            peer_node_id
+        ));
+    }
+
     let node_id = crate::mesh::dht::routing::node_id::NodeId::from_public_key(&pow_pk_bytes);
     if !node_id.verify_pow(&pow_pk_bytes, nonce) {
         return Err(format!(

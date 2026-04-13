@@ -73,6 +73,7 @@ use crate::auth::AuthManager;
 use crate::block_store::BlockStore;
 use crate::challenge::{ChallengeConfig, ChallengeManager, ChallengeResult};
 use crate::config::RateLimitMemoryConfig;
+use crate::mesh::protocol::ThreatType;
 use crate::mesh::threat_intel::ThreatIntelligenceManager;
 use crate::proxy::WafDecision;
 use crate::theme::ThemeConfig;
@@ -523,7 +524,7 @@ impl WafCore {
         }
     }
 
-    fn block_ip_with_threat_intel(
+    pub fn block_ip_with_threat_intel(
         &self,
         client_ip: IpAddr,
         reason: &str,
@@ -1092,8 +1093,8 @@ impl WafCore {
                 return Some(WafDecision::Drop);
             }
 
-            if let Some(indicator) =
-                threat_intel.lookup_threat_indicator_in_dht(&client_ip.to_string())
+            if let Some(indicator) = threat_intel
+                .lookup_threat_indicator_in_dht(&client_ip.to_string(), ThreatType::IpBlock)
             {
                 tracing::info!(
                     "DHT threat lookup hit for IP {}: type={:?}, severity={:?}, reason={}",
