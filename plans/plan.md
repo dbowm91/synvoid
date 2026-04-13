@@ -492,15 +492,22 @@ This document tracks remaining work organized into waves for parallel implementa
 
 ---
 
-### W3.8: YARA Version Comparison Bug [6.1]
+### W3.8: YARA Version Comparison Bug [6.1] - COMPLETED
 
-**Severity**: HIGH
+**Status**: ✅ Completed
 
-**Location**: `src/mesh/yara_rules.rs:443`
+**Location**: `src/mesh/yara_rules.rs:436-449`
 
 **Issue**: Lexicographic string comparison for version selection ("2.0" < "10.0").
 
-**Fix**: Compare by `timestamp` field instead of version string in `sync_from_dht()`.
+**Fix**: Compare by `timestamp` field (u64) instead of version string in `sync_from_dht()`.
+
+**Changes**:
+- Added `best_timestamp: Option<u64>` to track best timestamp
+- Extract `timestamp` from DHT record value and parse as u64
+- Use numeric comparison `timestamp > *current_best` instead of string comparison
+
+**Verification**: Commit - YARA rules now select highest timestamp rather than lexicographic version
 
 ---
 

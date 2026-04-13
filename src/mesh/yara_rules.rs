@@ -389,6 +389,7 @@ impl YaraRulesManager {
         let mut best_version: Option<String> = None;
         let mut best_rules: Option<String> = None;
         let mut best_hash: Option<String> = None;
+        let mut best_timestamp: Option<u64> = None;
 
         for record in &dht_records {
             if record.key.starts_with("yara_rules_manifest:") {
@@ -428,22 +429,29 @@ impl YaraRulesManager {
                                 .get("version")
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("");
+                            let timestamp_str = rule_value
+                                .get("timestamp")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("0");
+                            let timestamp: u64 = timestamp_str.parse().unwrap_or(0);
 
                             if rules_str.is_empty() {
                                 continue;
                             }
 
-                            match &best_version {
+                            match &best_timestamp {
                                 None => {
                                     best_version = Some(version_str.to_string());
                                     best_rules = Some(rules_str.to_string());
                                     best_hash = Some(peer_hash.to_string());
+                                    best_timestamp = Some(timestamp);
                                 }
                                 Some(current_best) => {
-                                    if version_str > current_best.as_str() {
+                                    if timestamp > *current_best {
                                         best_version = Some(version_str.to_string());
                                         best_rules = Some(rules_str.to_string());
                                         best_hash = Some(peer_hash.to_string());
+                                        best_timestamp = Some(timestamp);
                                     }
                                 }
                             }
