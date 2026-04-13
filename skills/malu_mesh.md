@@ -10,9 +10,9 @@ MaluWAF uses a mesh network architecture with DHT-based service discovery for mu
 |------|---------|---------------|----------------|
 | **Global** | CA/signer, coordination, DNS authority | `node_id` | Ed25519 signature + authorized key |
 | **Edge** | Proxy requests, route to origins | `node_id` | Ed25519 self-signature |
-| **Origin** | Host sites, register upstreams with global | `node_id` | Ed25519 self-signature + Global attestation |
+| **Origin** | Host sites, register upstreams with global | `node_id` | Ed25519 self-signature + Global attestation (must be from REAL global node, not self) |
 
-**Critical insight**: Origins are NOT global nodes. Global nodes are CAs/coordinators. Origins are separate nodes that register with global nodes.
+**Critical insight**: Origins are NOT global nodes. Global nodes are CAs/coordinators. Origins are separate nodes that register with global nodes. **Origin nodes cannot self-attest as global nodes** - they must obtain attestation from an actual configured global node via a separate registration flow.
 
 ### Role Authentication (W1.3 - Fixed)
 
@@ -596,8 +596,15 @@ GLOBAL NODE updates rules
 **DHT Keys**:
 | Key Pattern | Purpose |
 |-------------|---------|
-| `threat_indicator:{indicator_value}` | Individual threat indicator |
-| `threat_indicator:{ip}:{threat_type}` | Per-type indicator (composite key, W1.8) |
+| `threat_indicator:{ip}:{threat_type}` | Per-type indicator (composite key, e.g., `threat_indicator:1.2.3.4:IpBlock`) |
+
+**Important**: ThreatIntel uses composite keys with threat_type suffix to prevent collision between different threat types for the same IP. A key without threat_type (e.g., `threat_indicator:1.2.3.4`) will NOT match.
+
+**Signature Verification**:
+ThreatIntel indicators are signed using Ed25519. The signature content format is:
+```
+{indicator_value}:{threat_type as u8}:{severity as u8}:{timestamp}:{source_node_id}
+```
 
 **Re-announcement**:
 - Global nodes periodically re-announce local indicators via `re_announce_local_indicators()`

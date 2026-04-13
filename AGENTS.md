@@ -388,6 +388,15 @@ All duplicate `current_timestamp()` definitions have been consolidated into `src
 | HTTP body truncation | `src/http/server.rs` | Separated `full_body` from `body_slice` |
 | NODATA vs NXDOMAIN | `src/dns/server/query.rs` | Returns NOERROR with SOA when name exists but type doesn't |
 | HTTP server.rs | - | Ergonomics improved with helper functions and RequestMetrics |
+| Threat intel signature bypass | `src/mesh/threat_intel.rs:709-716` | Verification format now matches signing format |
+| Tier key plaintext fallback | `src/mesh/transport_org.rs:249-261` | Tier keys only sent when ML-KEM session exists |
+| Origin self-attestation bypass | `src/mesh/discovery.rs:425-430` | Origin nodes must use real global node attestation |
+| Edge PoW key unbinding | `src/mesh/peer_auth.rs:191-196` | PoW public key must match identity public key |
+| HTTP honeypot bypass | `src/http/server.rs:903-908` | `block_ip_with_threat_intel()` wired into honeypot handler |
+| Upstream ownership verification | `src/mesh/transport.rs`, `src/http/server.rs:555-580` | Actual HTTP-01/DNS-01 challenge serving |
+| Tier key encryption scope | `src/mesh/tier_key_encryption.rs` | Extended to all privileged record types |
+| DHT key collision | `src/mesh/dht/keys.rs:36,159,287` | Composite keys `threat_indicator:{ip}:{threat_type}` |
+| sync_from_dht key mismatch | `src/mesh/threat_intel.rs:1148-1149` | Store with full composite key format |
 
 ## Performance Hot Paths
 
@@ -726,8 +735,9 @@ During DHT sync, signatures are verified before accepting rules from peers. Reco
 
 | Key Pattern | Purpose |
 |-------------|---------|
-| `threat_indicator:{ip}` | Individual threat indicator |
-| `threat_indicator:{ip}:{threat_type}` | Per-type indicator (composite key) |
+| `threat_indicator:{ip}:{threat_type}` | Per-type indicator (composite key, e.g., `threat_indicator:1.2.3.4:IpBlock`) |
+
+**Important**: ThreatIntel uses composite keys with threat_type suffix to prevent collision between different threat types for the same IP. A key without threat_type (e.g., `threat_indicator:1.2.3.4`) will NOT match.
 
 ### ThreatIntel Re-announcement
 
