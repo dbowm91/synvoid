@@ -718,6 +718,7 @@ impl HttpsServer {
         };
 
         let method_str = method.to_string();
+        let ja4_hash = http_conn.get_ja4();
         let waf_decision = waf
             .check_request_full(
                 client_ip,
@@ -727,6 +728,7 @@ impl HttpsServer {
                 &parts.headers,
                 body_slice,
                 user_agent.as_deref(),
+                ja4_hash.as_deref(),
             )
             .await;
 

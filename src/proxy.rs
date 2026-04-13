@@ -522,6 +522,7 @@ impl ProxyServer {
                     headers,
                     body_slice,
                     user_agent.as_deref(),
+                    None,
                 )
                 .await;
 

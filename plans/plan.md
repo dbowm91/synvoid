@@ -377,19 +377,25 @@ This document tracks remaining work organized into waves for parallel implementa
 
 ## Wave 3: Core Functionality (Parallel - 10 items)
 
-### W3.1: JA4 Fingerprint Wired to WAF Bot Detection [O.1, C.1]
+### W3.1: JA4 Fingerprint Wired to WAF Bot Detection [O.1, C.1] - COMPLETED
 
-**Status**: ⚠️ Partial
+**Status**: ✅ Completed
 
-**Location**: `src/tls/server.rs:53-63`, `src/waf/bot.rs:164-169`, `src/waf/mod.rs:1175-1209`
-
-**Issue**: JA4 hash is computed but `check_bot_protection()` only passes `user_agent`. `check_with_ja4()` exists but never called.
+**Location**: 
+- `src/tls/server.rs:53-63` - JA4 stored in HttpsConnection
+- `src/tls/server.rs:720-731` - JA4 passed to WAF
+- `src/http/server.rs:1134-1143` - HTTP path (None for JA4)
+- `src/proxy.rs:515-526` - Proxy path (None for JA4)
+- `src/waf/mod.rs:872-881` - check_request_full signature updated
+- `src/waf/mod.rs:1181-1186` - check_bot_protection signature updated
 
 **Fix**:
-1. Add `ja4_hash: Option<&str>` parameter to `check_bot_protection()`
-2. Add to `check_request_full()` at `waf/mod.rs:871`
-3. Thread through: `tls/server.rs:720`, `http/server.rs:1133`, `proxy.rs:517`
-4. Call `bot_detector.check_with_fingerprints(user_agent, site_block_ai_crawlers, None, ja4_hash)`
+1. ✅ Added `ja4_hash: Option<&str>` parameter to `check_request_full()`
+2. ✅ Added to `check_bot_protection()` at `waf/mod.rs:1181`
+3. ✅ Thread through: `tls/server.rs:720`, `http/server.rs:1133`, `proxy.rs:517`
+4. ✅ Call `bot_detector.check_with_fingerprints(user_agent, site_block_ai_crawlers, None, ja4_hash)`
+
+**Verification**: Commit - JA4 now passed from HttpsConnection.get_ja4() to check_request_full() and on to bot detector
 
 ---
 

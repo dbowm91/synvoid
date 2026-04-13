@@ -836,6 +836,7 @@ impl WafCore {
             &http::HeaderMap::new(),
             None,
             user_agent,
+            None,
         )
         .await
     }
@@ -878,6 +879,7 @@ impl WafCore {
         headers: &http::HeaderMap,
         body: Option<&[u8]>,
         user_agent: Option<&str>,
+        ja4_hash: Option<&str>,
     ) -> WafDecision {
         if self.whitelist.contains(&client_ip) {
             return WafDecision::Pass;
@@ -917,7 +919,7 @@ impl WafCore {
             return decision;
         }
 
-        if let Some(decision) = self.check_bot_protection(client_ip, path, user_agent) {
+        if let Some(decision) = self.check_bot_protection(client_ip, path, user_agent, ja4_hash) {
             return decision;
         }
 
@@ -1183,8 +1185,11 @@ impl WafCore {
         client_ip: IpAddr,
         path: &str,
         user_agent: Option<&str>,
+        ja4_hash: Option<&str>,
     ) -> Option<WafDecision> {
-        let bot_result = self.bot_detector.check(user_agent);
+        let bot_result = self
+            .bot_detector
+            .check_with_fingerprints(user_agent, None, None, ja4_hash);
 
         if self.test_mode.enabled && self.test_mode.bot_off {
             return None;
