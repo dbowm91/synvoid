@@ -558,18 +558,18 @@ impl MeshTransport {
             let key_str = key.as_str();
             if let Ok(bytes) = serde_json::to_vec(&attestation) {
                 record_store.store_and_announce(key_str.to_string(), bytes, 86400);
-                tracing::debug!(
-                    "Attested capability '{}' for node {}",
-                    capability,
-                    node_id
-                );
+                tracing::debug!("Attested capability '{}' for node {}", capability, node_id);
             }
         }
 
         Some(attestation)
     }
 
-    fn verify_node_capability(&self, peer_state: &crate::mesh::topology::PeerState, capability: &str) -> bool {
+    fn verify_node_capability(
+        &self,
+        peer_state: &crate::mesh::topology::PeerState,
+        capability: &str,
+    ) -> bool {
         match capability {
             "dns_server" => peer_state.capabilities.can_serve_dns,
             "waf" => peer_state.capabilities.waf_enabled,
@@ -615,10 +615,7 @@ impl MeshTransport {
         };
 
         if !peer_state.is_global {
-            tracing::warn!(
-                "Attestation signed by non-global node {}",
-                global_node_id
-            );
+            tracing::warn!("Attestation signed by non-global node {}", global_node_id);
             return false;
         }
 

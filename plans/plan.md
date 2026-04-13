@@ -13,7 +13,7 @@ This document tracks remaining work organized into waves for parallel implementa
 | Wave | Focus | Items | Status |
 |------|-------|-------|--------|
 | 1 | Critical Security | 14 | ✅ Completed |
-| 2 | High Security (TLS, DNS, Mesh) | 8 | 🔄 Pending |
+| 2 | High Security (TLS, DNS, Mesh) | 8 | ⚠️ 6/8 Complete (W2.5, W2.7 partial) |
 | 3 | Core Functionality | 10 | 🔄 Pending |
 | 4 | Code Quality | 8 | 🔄 Pending |
 | 5 | Polish & Optimization | 7 | 🔄 Pending |
@@ -225,7 +225,7 @@ This document tracks remaining work organized into waves for parallel implementa
 
 ## Wave 2: High Security - TLS, DNS, Mesh (Parallel - 8 items)
 
-### W2.1: bcrypt Cost Validation Allows Sub-Standard Values [S.10]
+### ✅ W2.1: bcrypt Cost Validation Allows Sub-Standard Values [S.10] - COMPLETED
 
 **Severity**: MEDIUM
 
@@ -235,25 +235,34 @@ This document tracks remaining work organized into waves for parallel implementa
 
 **Fix**: Raise minimum to 12.
 
+**Verification**: Commit `442770f` - bcrypt cost minimum raised to 12
+
 ---
 
-### W2.2: Multi-Genesis Key Support [M3.7]
+### ✅ W2.2: Multi-Genesis Key Support [M3.7] - COMPLETED
 
 **Severity**: MEDIUM
 
-**Location**: `src/mesh/config_identity.rs`, `src/mesh/peer_auth.rs`, `src/mesh/transport_global.rs`
+**Location**: `src/mesh/config_identity.rs`, `src/mesh/config.rs`, `src/mesh/config_mesh.rs`
 
 **Issue**: All global nodes derive from single genesis key. If compromised, all derived identities are invalid.
 
 **Fix**:
-1. Store multiple authorized genesis keys
-2. Allow derivation from any authorized key
-3. Support `GenesisKeyTransition` mechanism
-4. Revoke compromised keys
+1. ✅ Store multiple authorized genesis keys (`authorized_genesis_keys: Vec<String>` in GenesisKeyConfig)
+2. ✅ Allow derivation from any authorized key (`is_genesis_key_authorized()` check in load_node_identity)
+3. ✅ Support `GenesisKeyTransition` mechanism (existing implementation)
+4. ✅ Revoke compromised keys (via GlobalNodeRevocationList)
+
+**New Methods**:
+- `GenesisKeyConfig::is_genesis_key_authorized()` - checks if public key is in authorized list
+- `GenesisKeyConfig::authorize_genesis_key()` - adds a key to authorized list
+- `GenesisKeyConfig::revoke_genesis_key()` - removes a key from authorized list
+
+**Verification**: Commit `442770f` - authorized_genesis_keys field added, authorization checks implemented
 
 ---
 
-### W2.3: Distributed Global Node Revocation [M3.2]
+### ✅ W2.3: Distributed Global Node Revocation [M3.2] - COMPLETED
 
 **Severity**: CRITICAL
 
@@ -262,14 +271,16 @@ This document tracks remaining work organized into waves for parallel implementa
 **Issue**: `GlobalNodeRevocationList` is stored locally only. No gossip mechanism propagates revocations.
 
 **Fix**:
-1. Write `revoked_global_node:{node_id}` to DHT with long TTL
-2. Broadcast `GlobalNodeRevoke` message to peers
-3. On receiving, store and rebroadcast to k closest peers
-4. Check revocations before trusting global nodes
+1. ✅ Write `revoked_global_node:{node_id}` to DHT with long TTL (86400s)
+2. ✅ Broadcast `GlobalNodeRevoke` message to peers
+3. ✅ On receiving, store and rebroadcast to k closest peers
+4. ✅ Check revocations before trusting global nodes
+
+**Verification**: Existing implementation complete - revoke_global_node() writes to DHT and broadcasts, handle_revoke_global_node() stores and rebroadcasts, validate_global_node() checks revocation list
 
 ---
 
-### W2.4: DNS Server Capability Enforcement [M3.3]
+### ✅ W2.4: DNS Server Capability Enforcement [M3.3] - COMPLETED
 
 **Severity**: HIGH
 
@@ -278,13 +289,15 @@ This document tracks remaining work organized into waves for parallel implementa
 **Issue**: `dns_mesh_mode_only` and `dns_server_enabled` flags exist but no runtime check prevents edge nodes from serving DNS.
 
 **Fix**:
-1. Add `role.is_global()` check in DNS server initialization
-2. DNS zone records should only be writable by global nodes
-3. `MeshDnsRegistry` should verify caller role
+1. ✅ Add `role.is_global()` check in DNS server initialization (server/mod.rs:939)
+2. ✅ DNS zone records should only be writable by global nodes (signed.rs:73)
+3. ✅ `MeshDnsRegistry` should verify caller role
+
+**Verification**: DNS server start is gated on `is_global_node()`, DnsZone requires global signature
 
 ---
 
-### W2.5: Origin Upstream Ownership Verification [M3.4]
+### W2.5: Origin Upstream Ownership Verification [M3.4] - PARTIAL
 
 **Severity**: HIGH
 
@@ -298,21 +311,30 @@ This document tracks remaining work organized into waves for parallel implementa
 3. Periodic re-verification via `VerificationTaskManager`
 4. Revoke on failure
 
+**Status**: HTTP-01 and DNS-01 challenge handlers exist in transport_peer.rs:1706-1790 but are STUBBED/SIMULATED. The verification loop and actual HTTP serving are not implemented.
+
 ---
 
-### W2.6: Edge Node Role Authentication (Full Implementation) [M3.1 continuation]
+### ✅ W2.6: Edge Node Role Authentication (Full Implementation) [M3.1 continuation] - COMPLETED
 
 **Severity**: CRITICAL
 
 **Location**: `src/mesh/peer_auth.rs`, `src/mesh/transport.rs`, `src/mesh/transport_peer.rs`
 
 **Fix** (continued from W1.3):
-5. `MeshTopology::add_peer()` should store and verify node identity keys
-6. Add role-specific validation: Edge (PoW), Origin (certificate + global attestation)
+5. ✅ `MeshTopology::add_peer()` should store and verify node identity keys
+6. ✅ Add role-specific validation: Edge (PoW), Origin (certificate + global attestation)
+
+**Implementation**:
+- Added `validate_edge_node_pow()` for PoW-based authentication
+- Edge nodes can authenticate via Ed25519 signature OR PoW
+- Wired PoW validation into transport.rs and discovery.rs
+
+**Verification**: Commit `ea2b689` - PoW validation implemented for Edge nodes
 
 ---
 
-### W2.7: Tier Key Encryption Scope Extension [M3.6]
+### W2.7: Tier Key Encryption Scope Extension [M3.6] - PARTIAL
 
 **Severity**: MEDIUM
 
@@ -325,21 +347,31 @@ This document tracks remaining work organized into waves for parallel implementa
 2. Derive per-record-type encryption keys via HKDF
 3. Store with `encrypted:` prefix, old records continue working
 
+**Status**: Only `TierKey` records are encrypted. Other `requires_global_node()` records (Organization, MemberCertificate, DnsZone, DnsDomainRegistration, AnycastNode) are signed but stored in plaintext.
+
 ---
 
-### W2.8: Capability Attestation System [M3.5]
+### ✅ W2.8: Capability Attestation System [M3.5] - COMPLETED
 
 **Severity**: MEDIUM
 
-**Location**: `src/mesh/transport.rs`, `src/mesh/dht/keys.rs`, `src/mesh/config.rs`
+**Location**: `src/mesh/transport.rs`, `src/mesh/dht/keys.rs`, `src/mesh/dht/capability_attestation.rs`
 
 **Issue**: `announce_capabilities()` stores entries but no enforcement that announced capabilities match actual abilities.
 
 **Fix**:
-1. Define valid capability enum (dns_server, origin, waf, edge_proxy)
-2. Global node verifies capability claim
-3. Global node signs attestation
-4. Other nodes verify attestation against known global keys
+1. ✅ Define valid capability enum (dns_server, origin, waf, edge_proxy)
+2. ✅ Global node verifies capability claim (`verify_node_capability()`)
+3. ✅ Global node signs attestation (`attest_capability()`)
+4. ✅ Other nodes verify attestation against known global keys (`verify_capability_attestation()`)
+
+**Implementation**:
+- Created `capability_attestation.rs` module with attestation struct and verification
+- Added `CapabilityAttestation` DHT key type for signed attestations
+- Global nodes can attest other nodes' capabilities after verification
+- Attestations are stored in DHT with 24h TTL
+
+**Verification**: Commit `ea2b689` - capability attestation system implemented
 
 ---
 
