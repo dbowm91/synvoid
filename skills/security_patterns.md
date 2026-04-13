@@ -343,10 +343,173 @@ fn attest_capability(node_id: &str, capability: &str) {
 
 ---
 
-## Key Files Reference
+### Additional Wave 2 Security Fixes (2026-04-13)
 
-| File | Security Pattern |
-|------|------------------|
+### SSRF Allowlist Bypass Prevention (S2.6)
+
+**Location**: `src/waf/attack_detection/ssrf.rs:267-294`
+
+**Pattern**: Word boundary checks instead of substring matching:
+```rust
+fn has_word_boundary(input: &str, substring: &str) -> bool {
+    if let Some(pos) = input.find(substring) {
+        let before_ok = pos == 0 || input.as_bytes()[pos - 1] == b'.';
+        let after_pos = pos + substring.len();
+        let after_ok = after_pos >= input.len()
+            || input.as_bytes()[after_pos] == b'.'
+            || input.as_bytes()[after_pos] == b':';
+        before_ok && after_ok
+    } else {
+        false
+    }
+}
+```
+
+**Why**: Prevents bypasses like `evillocalhost.com` (contains `.localhost`) or `evil.comalloweddomain.com` (contains `alloweddomain.com`).
+
+---
+
+### Open Redirect Bypass Prevention (S2.7)
+
+**Location**: `src/waf/attack_detection/open_redirect.rs:114-133`
+
+**Pattern**: Newline and homograph attack checks:
+```rust
+// Reject newlines in redirect targets
+if input_lower.contains('\n') || input_lower.contains('\r') {
+    return true;
+}
+
+// Reject non-ASCII schemes (homograph attacks)
+if let Some(scheme_end) = input_lower.find(':') {
+    let scheme = &input_lower[..scheme_end];
+    if !scheme.bytes().all(|b| b.is_ascii_lowercase()) {
+        return true;
+    }
+}
+```
+
+---
+
+### Transfer-Encoding Parsing (S2.8)
+
+**Location**: `src/waf/attack_detection/request_smuggling.rs:12-40`
+
+**Pattern**: Proper comma-separated TE header parsing:
+```rust
+fn te_contains_chunked(te_str: &str) -> bool {
+    te_str
+        .split(',')
+        .map(|v| v.trim().to_lowercase())
+        .any(|v| v == "chunked")
+}
+```
+
+**Why**: Prevents bypasses like `chunked,invalid` or `xchunked` that substring matching would miss.
+
+---
+
+### JWT Algorithm Validation (S2.9)
+
+**Location**: `src/waf/attack_detection/jwt.rs:125-186`
+
+**Pattern**: Proper JSON parsing with algorithm whitelist:
+```rust
+const SAFE_JWT_ALGORITHMS: &[&str] = &[
+    "HS256", "HS384", "HS512", "RS256", "RS384", "RS512", 
+    "ES256", "ES384", "ES512", "PS256", "PS384", "PS512", "EdDSA",
+];
+
+if let Ok(header_json) = serde_json::from_str::<Value>(&header_lower) {
+    if let Some(alg) = header_json.get("alg").and_then(|v| v.as_str()) {
+        let alg_safe = SAFE_JWT_ALGORITHMS
+            .iter()
+            .any(|&a| a.eq_ignore_ascii_case(alg));
+        if !alg_safe {
+            // detected
+        }
+    }
+}
+```
+
+**Why**: Prevents algorithm confusion attacks where `none` or custom algorithms bypass verification.
+
+---
+
+### Unicode Normalization (S2.10)
+
+**Location**: `src/proxy.rs:138-236`
+
+**Pattern**: NFKC normalization for path sanitization:
+```rust
+use unicode_normalization::UnicodeNormalization;
+
+// At function start
+let path = path.nfkc().collect::<String>();
+
+// At return points
+return Cow::Owned(result.nfkc().collect());
+```
+
+**Why**: Prevents homograph attacks where Cyrillic `а` looks like ASCII `a`.
+
+---
+
+### Revocation Check for Edge/Origin (M1.3)
+
+**Location**: `src/mesh/peer_auth.rs:116-132, 223-240`
+
+**Pattern**: Revocation checks in all node validation paths:
+```rust
+fn validate_edge_node(..., revoked_nodes: Option<&GlobalNodeRevocationList>) -> Result<(), String> {
+    if let Some(revocation_list) = revoked_nodes {
+        if let Some(revocation_info) = revocation_list.is_node_revoked(peer_node_id) {
+            return Err(format!("Edge node {} has been revoked: ...", peer_node_id));
+        }
+    }
+    // ... rest of validation
+}
+```
+
+---
+
+### DHT Churn Handling (M2.1)
+
+**Location**: `src/mesh/dht/routing/manager.rs:483-557`
+
+**Pattern**: Background ping loop for peer health:
+```rust
+async fn ping_peers_loop(&self, transport: Arc<dyn PingTransport>) {
+    loop {
+        tokio::time::sleep(Duration::from_secs(60)).await;
+        let peers = self.get_peers_to_ping();
+        for peer in peers {
+            transport.send_ping(&peer.node_id, request_id.clone(), local_id.clone()).await;
+        }
+    }
+}
+```
+
+---
+
+### Bucket Refresh (M2.2)
+
+**Location**: `src/mesh/dht/routing/manager.rs:455-492`
+
+**Pattern**: Periodic refresh of sparse buckets:
+```rust
+fn refresh_sparse_buckets(&self) {
+    let sparse = self.routing_table.get_sparse_bucket_indices(k);
+    for bucket_idx in sparse {
+        let target = NodeId::generate_random_in_bucket(bucket_idx, &self.local_node_id);
+        self.iterative_find_node(&target);
+    }
+}
+```
+
+---
+
+### Revocation Bypass Edge/Origin | `src/mesh/peer_auth.rs:116-132,223-240` | Revocation checks added to edge/origin validation |
 | `src/auth/mod.rs` | Constant-time CSRF comparison |
 | `src/admin/state.rs` | Constant-time session ID comparison |
 | `src/dns/crypto_rng.rs` | Result-based RNG with error propagation |

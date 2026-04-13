@@ -629,6 +629,111 @@ ThreatIntel indicators are signed using Ed25519. The signature content format is
 - Non-global nodes query local DHT cache (populated by announces)
 - Mesh broadcast kept as fallback only
 
+## DHT Routing Improvements (2026-04-13)
+
+### DHT Churn Handling (M2.1)
+
+**Location**: `src/mesh/dht/routing/manager.rs:483-557`, `src/mesh/transport.rs`
+
+**Problem**: `pending_pings` HashMap was populated but no background task sent PINGs to peers.
+
+**Solution**: `ping_peers_loop()` background task:
+```rust
+async fn ping_peers_loop(&self, transport: Arc<dyn PingTransport>) {
+    loop {
+        tokio::time::sleep(Duration::from_secs(60)).await;
+        let peers = self.get_peers_to_ping();
+        for peer in peers {
+            transport.send_ping(&peer.node_id, request_id.clone(), local_id.clone()).await;
+        }
+    }
+}
+```
+
+**Flow**:
+1. Loop runs every 60 seconds
+2. Queries routing table for stale peers (no pong received)
+3. Sends `MeshMessage::Ping` via datagram
+4. Tracks pending pings in `pending_pings` HashMap
+5. `mark_peer_responded()` called when `Pong` received
+
+---
+
+### Bucket Refresh (M2.2)
+
+**Location**: `src/mesh/dht/routing/manager.rs:455-492`, `src/mesh/dht/routing/node_id.rs`
+
+**Problem**: `BUCKET_REFRESH_INTERVAL = 60` was defined but never triggered.
+
+**Solution**: `refresh_sparse_buckets()` loop:
+1. `get_sparse_bucket_indices()` returns buckets with < K contacts
+2. For each sparse bucket, generates random NodeId in that bucket's range
+3. Triggers `iterative_find_node()` to discover peers in that range
+
+```rust
+fn get_sparse_bucket_indices(&self, k: usize) -> Vec<usize> {
+    self.buckets.iter()
+        .enumerate()
+        .filter(|(_, bucket)| bucket.len() < k)
+        .map(|(idx, _)| idx)
+        .collect()
+}
+```
+
+---
+
+### find_closest() Fix (M2.3)
+
+**Location**: `src/mesh/dht/routing/table.rs:274`
+
+**Problem**: Algorithm broke early when K candidates found, potentially missing closer peers in unscanned buckets.
+
+**Solution**: Removed premature `break`. Now scans ALL buckets before returning, ensuring K closest peers are found.
+
+---
+
+### Edge Resync Multi-Homed (M2.4)
+
+**Location**: `src/mesh/transport_dht.rs:386-397`
+
+**Problem**: Resync only tried `global_nodes[0]` with no fallback.
+
+**Solution**: Iterate all global nodes, continue on failure:
+```rust
+let mut all_failed = true;
+for peer_id in &global_nodes {
+    if self.send_datagram_to_peer(peer_id, &request).await.is_ok() {
+        all_failed = false;
+        break;
+    }
+}
+if all_failed {
+    tracing::warn!("DHT resync failed: all global nodes unreachable");
+}
+```
+
+---
+
+### Access Control Enforcement (M3.1)
+
+**Location**: `src/mesh/dht/record_store_crud.rs:79-90`
+
+**Problem**: `DhtAccessControl::require_global_node()` was never invoked.
+
+**Solution**: Wired into `store_record()` for edge nodes storing privileged records:
+```rust
+if dht_key.is_privileged() {
+    if let Err(e) = self.access_control.require_global_node() {
+        tracing::warn!("Record store: {} cannot store privileged record", record.source_node_id);
+        return false;
+    }
+}
+```
+
+**Effect**: Only global nodes can now store privileged records (Organization, TierKey, MemberCertificate, etc.) when `require_global_for_privileged` is `true` (default).
+
+---
+
 ### Testing Verification
 
 ```bash

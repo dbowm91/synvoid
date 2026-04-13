@@ -397,6 +397,17 @@ All duplicate `current_timestamp()` definitions have been consolidated into `src
 | Tier key encryption scope | `src/mesh/tier_key_encryption.rs` | Extended to all privileged record types |
 | DHT key collision | `src/mesh/dht/keys.rs:36,159,287` | Composite keys `threat_indicator:{ip}:{threat_type}` |
 | sync_from_dht key mismatch | `src/mesh/threat_intel.rs:1148-1149` | Store with full composite key format |
+| SSRF allowlist bypass | `src/waf/attack_detection/ssrf.rs:267-294` | Word boundary checks instead of substring matching |
+| Open redirect bypass | `src/waf/attack_detection/open_redirect.rs:114-133` | Newline and homograph attack protection |
+| Transfer-Encoding bypass | `src/waf/attack_detection/request_smuggling.rs:12-40` | Proper comma-separated TE header parsing |
+| JWT algorithm confusion | `src/waf/attack_detection/jwt.rs:125-186` | Proper JSON parsing with algorithm whitelist |
+| Unicode normalization | `src/proxy.rs:10,144-236` | NFKC normalization in sanitize_request_path |
+| Revocation bypass edge/origin | `src/mesh/peer_auth.rs:116-132,223-240` | Revocation checks added to edge/origin validation |
+| DHT churn handling | `src/mesh/dht/routing/manager.rs` | ping_peers_loop() background task implemented |
+| Bucket refresh never triggered | `src/mesh/dht/routing/manager.rs` | refresh_sparse_buckets() with FindNode requests |
+| find_closest premature return | `src/mesh/dht/routing/table.rs:274` | Removed early break, scans all buckets |
+| Edge resync single-homed | `src/mesh/transport_dht.rs:386-397` | Iterates all global nodes, not just [0] |
+| Unused access control | `src/mesh/dht/record_store_crud.rs:79-90` | require_global_node() wired into store_record() |
 
 ## Performance Hot Paths
 
