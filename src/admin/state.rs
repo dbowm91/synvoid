@@ -269,6 +269,7 @@ impl RequestLogEntry {
 
 const MAX_REQUEST_LOGS: usize = 10000;
 const MAX_HISTORY_SIZE: usize = 3600;
+const MAX_CSRF_TOKENS_PER_SESSION: usize = 10;
 
 impl AdminState {
     pub fn new(config: Arc<TokioRwLock<ConfigManager>>, admin_token: String) -> Self {
@@ -634,10 +635,26 @@ impl AdminState {
 
         let token = Uuid::new_v4().to_string();
 
-        self.security
-            .csrf_tokens
-            .write()
-            .insert(token.clone(), CsrfTokenData::new(session_id));
+        {
+            let mut tokens = self.security.csrf_tokens.write();
+            let count_for_session = tokens
+                .iter()
+                .filter(|(_, v)| v.session_id == session_id)
+                .count();
+            if count_for_session >= MAX_CSRF_TOKENS_PER_SESSION {
+                let mut to_remove: Vec<_> = tokens
+                    .iter()
+                    .filter(|(_, v)| v.session_id == session_id)
+                    .map(|(k, v)| (k.clone(), v.created))
+                    .collect();
+                to_remove.sort_by_key(|(_, created)| *created);
+                let to_remove_count = count_for_session - MAX_CSRF_TOKENS_PER_SESSION + 1;
+                for (key, _) in to_remove.into_iter().take(to_remove_count) {
+                    tokens.remove(&key);
+                }
+            }
+            tokens.insert(token.clone(), CsrfTokenData::new(session_id));
+        }
 
         token
     }

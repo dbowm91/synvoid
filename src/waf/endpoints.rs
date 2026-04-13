@@ -132,7 +132,7 @@ pub enum EndpointCheckResult {
 }
 
 pub struct SensitiveEndpoint {
-    exact_matches: Vec<String>,
+    exact_matches: HashSet<String>,
     prefix_matches: Vec<String>,
     path_prefix_matches: Vec<String>,
 }
@@ -160,7 +160,7 @@ impl SensitiveEndpointManager {
     }
 
     pub fn new(paths: Vec<String>) -> Self {
-        let mut exact_matches = Vec::new();
+        let mut exact_matches = HashSet::new();
         let mut prefix_matches = Vec::new();
         let mut path_prefix_matches = Vec::new();
 
@@ -170,7 +170,7 @@ impl SensitiveEndpointManager {
             } else if p.contains('*') {
                 prefix_matches.push(p.trim_end_matches('*').to_string());
             } else {
-                exact_matches.push(p);
+                exact_matches.insert(p);
             }
         }
 
@@ -186,10 +186,8 @@ impl SensitiveEndpointManager {
     pub fn check(&self, path: &str) -> Option<String> {
         let guard = self.inner.read();
 
-        for exact in &guard.exact_matches {
-            if path == exact {
-                return Some(exact.clone());
-            }
+        if let Some(exact) = guard.exact_matches.get(path) {
+            return Some(exact.clone());
         }
 
         for prefix in &guard.prefix_matches {

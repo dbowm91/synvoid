@@ -472,14 +472,17 @@ pub struct SuspiciousWordRecord {
 pub struct SuspiciousWordTracker {
     store: Arc<RwLock<HashMap<IpAddr, Vec<SuspiciousWordRecord>>>>,
     config: crate::config::SuspiciousWordsConfig,
+    words_lower: Vec<String>,
     total_matches: std::sync::atomic::AtomicU64,
 }
 
 impl SuspiciousWordTracker {
     pub fn new(config: crate::config::SuspiciousWordsConfig) -> Arc<Self> {
+        let words_lower: Vec<String> = config.words.iter().map(|w| w.to_lowercase()).collect();
         Arc::new(Self {
             store: Arc::new(RwLock::new(HashMap::new())),
             config,
+            words_lower,
             total_matches: std::sync::atomic::AtomicU64::new(0),
         })
     }
@@ -507,9 +510,8 @@ impl SuspiciousWordTracker {
 
         let search_lower = search_text.to_lowercase();
 
-        for word in &self.config.words {
-            let word_lower = word.to_lowercase();
-            if search_lower.contains(&word_lower) {
+        for (word, word_lower) in self.config.words.iter().zip(self.words_lower.iter()) {
+            if search_lower.contains(word_lower) {
                 let record = SuspiciousWordRecord {
                     ip,
                     matched_word: word.clone(),
