@@ -58,8 +58,8 @@ in parallel by separate subagents. Dependencies between waves are documented.
 | P1.4 | Mesh Route Query Cold-Cache Latency | 🔴 HIGH | ❌ Open |
 | P2.1 | WAF Input Normalizer Allocations | 🔴 HIGH | ❌ Open |
 | P2.2 | HTTP Server Clone/To-String Calls | 🔴 HIGH | ❌ Open |
-| P2.3 | SuspiciousWordTracker Unconditional Write Lock | 🔴 HIGH | ❌ Open |
-| P2.4 | EndpointBlocker O(n) Pattern Matching | 🔴 HIGH | ❌ Open |
+| P2.3 | SuspiciousWordTracker Unconditional Write Lock | 🔴 HIGH | ✅ Completed |
+| P2.4 | EndpointBlocker O(n) Pattern Matching | 🔴 HIGH | ✅ Completed |
 | P2.5 | TLS Client Cache Unbounded Growth | 🔴 HIGH | ❌ Open |
 | P.1 | WAF Double Normalization | 🔴 HIGH | ❌ Open |
 | P.2 | WAF Input Normalization Allocations | 🔴 HIGH | ❌ Open |
@@ -78,12 +78,12 @@ in parallel by separate subagents. Dependencies between waves are documented.
 | Q1.3 | HTTP/TLS Test Coverage Gaps | 🔴 HIGH | ❌ Open |
 | Q2.1 | Silent Send Failures in Mesh | 🟡 MEDIUM | ❌ Open |
 | Q2.2 | Multiple lowercase() in Detectors | 🟡 MEDIUM | ❌ Open |
-| Q2.3 | Unbounded CSRF Token Storage | 🟡 MEDIUM | ❌ Open |
+| Q2.3 | Unbounded CSRF Token Storage | 🟡 MEDIUM | ✅ Completed |
 | Q2.4 | MeshMessage Enum Size | 🟡 MEDIUM | ❌ Open |
-| P3.1 | DHT pending_announces O(n) Remove | 🟡 MEDIUM | ❌ Open |
+| P3.1 | DHT pending_announces O(n) Remove | 🟡 MEDIUM | ✅ Completed |
 | P3.2 | SSRF format! Allocation in Loop | 🟡 MEDIUM | ❌ Open |
 | P3.3 | Response Header Filtering Allocation | 🟡 MEDIUM | ❌ Open |
-| P3.4 | Proxy Cache Redundant Lock in SWR | 🟡 MEDIUM | ❌ Open |
+| P3.4 | Proxy Cache Redundant Lock in SWR | 🟡 MEDIUM | ✅ Completed |
 | P3.5 | RingBuffer is_empty() Not Short-Circuiting | 🟡 MEDIUM | ❌ Open |
 | P.5 | IPC Double-Poll Delay | 🟡 MEDIUM | ❌ Open |
 | P.6 | Cache Invalidation O(n) Full Scan | 🟡 MEDIUM | ❌ Open |
