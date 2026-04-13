@@ -422,7 +422,17 @@ impl MeshDiscovery {
                     }
                 }
 
-                // Ed25519 challenge-response authentication for global nodes
+                // Ed25519 challenge-response authentication for all nodes
+                let global_node_att_key = if role.is_origin() {
+                    public_key.as_ref().map(|pk| pk.as_str())
+                } else {
+                    None
+                };
+                let global_node_att_sig = if role.is_origin() {
+                    global_node_key.as_ref().map(|sk| sk.as_str())
+                } else {
+                    None
+                };
                 if let Err(e) = crate::mesh::peer_auth::validate_peer_role(
                     &role,
                     &self.get_authorized_global_pubkeys(),
@@ -431,6 +441,9 @@ impl MeshDiscovery {
                     global_node_key.as_ref().map(|sk| sk.as_str()),
                     timestamp.unwrap_or(0),
                     300,
+                    None,
+                    global_node_att_key,
+                    global_node_att_sig,
                 ) {
                     tracing::warn!("{}", e);
                     return Err(MeshDiscoveryError::AuthFailed(e));

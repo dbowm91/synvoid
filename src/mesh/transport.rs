@@ -1291,28 +1291,38 @@ impl MeshTransport {
                     }
                 }
 
-                if role.is_global() {
-                    let authorized_keys: Vec<String> = self
-                        .config
-                        .seeds
-                        .iter()
-                        .filter_map(|seed| seed.public_key.clone())
-                        .collect();
-                    let peer_pk = public_key.as_ref().map(|pk| pk.as_str());
-                    let peer_sig = global_node_key.as_ref().map(|sk| sk.as_str());
-                    if let Err(e) = crate::mesh::peer_auth::validate_peer_role(
-                        &role,
-                        &authorized_keys,
-                        &node_id,
-                        peer_pk,
-                        peer_sig,
-                        timestamp.unwrap_or(0),
-                        300,
-                        self.revocation_list.as_ref().map(|r| r.as_ref()),
-                    ) {
-                        tracing::warn!("Global node verification failed for {}: {}", node_id, e);
-                        return Err(MeshTransportError::AuthFailed(e));
-                    }
+                let authorized_keys: Vec<String> = self
+                    .config
+                    .seeds
+                    .iter()
+                    .filter_map(|seed| seed.public_key.clone())
+                    .collect();
+                let peer_pk = public_key.as_ref().map(|pk| pk.as_str());
+                let peer_sig = global_node_key.as_ref().map(|sk| sk.as_str());
+                let global_node_att_key = if role.is_origin() {
+                    public_key.as_ref().map(|pk| pk.as_str())
+                } else {
+                    None
+                };
+                let global_node_att_sig = if role.is_origin() {
+                    global_node_key.as_ref().map(|sk| sk.as_str())
+                } else {
+                    None
+                };
+                if let Err(e) = crate::mesh::peer_auth::validate_peer_role(
+                    &role,
+                    &authorized_keys,
+                    &node_id,
+                    peer_pk,
+                    peer_sig,
+                    timestamp.unwrap_or(0),
+                    300,
+                    self.revocation_list.as_ref().map(|r| r.as_ref()),
+                    global_node_att_key,
+                    global_node_att_sig,
+                ) {
+                    tracing::warn!("Node verification failed for {}: {}", node_id, e);
+                    return Err(MeshTransportError::AuthFailed(e));
                 }
 
                 let upstreams_map: HashMap<String, crate::mesh::protocol::UpstreamInfo> =
@@ -1808,32 +1818,38 @@ impl MeshTransport {
                     }
                 }
 
-                if role.is_global() {
-                    let authorized_keys: Vec<String> = self
-                        .config
-                        .seeds
-                        .iter()
-                        .filter_map(|seed| seed.public_key.clone())
-                        .collect();
-                    let peer_pk = peer_public_key.as_ref().map(|pk| pk.as_str());
-                    let peer_sig = resp_global_key.as_ref().map(|sk| sk.as_str());
-                    if let Err(e) = crate::mesh::peer_auth::validate_peer_role(
-                        &role,
-                        &authorized_keys,
-                        &node_id,
-                        peer_pk,
-                        peer_sig,
-                        resp_timestamp.unwrap_or(0),
-                        300,
-                        self.revocation_list.as_ref().map(|r| r.as_ref()),
-                    ) {
-                        tracing::warn!(
-                            "Global node Ed25519 verification failed for {}: {}",
-                            node_id,
-                            e
-                        );
-                        return Err(MeshTransportError::AuthFailed(e));
-                    }
+                let authorized_keys: Vec<String> = self
+                    .config
+                    .seeds
+                    .iter()
+                    .filter_map(|seed| seed.public_key.clone())
+                    .collect();
+                let peer_pk = peer_public_key.as_ref().map(|pk| pk.as_str());
+                let peer_sig = resp_global_key.as_ref().map(|sk| sk.as_str());
+                let global_node_att_key = if role.is_origin() {
+                    peer_public_key.as_ref().map(|pk| pk.as_str())
+                } else {
+                    None
+                };
+                let global_node_att_sig = if role.is_origin() {
+                    resp_global_key.as_ref().map(|sk| sk.as_str())
+                } else {
+                    None
+                };
+                if let Err(e) = crate::mesh::peer_auth::validate_peer_role(
+                    &role,
+                    &authorized_keys,
+                    &node_id,
+                    peer_pk,
+                    peer_sig,
+                    resp_timestamp.unwrap_or(0),
+                    300,
+                    self.revocation_list.as_ref().map(|r| r.as_ref()),
+                    global_node_att_key,
+                    global_node_att_sig,
+                ) {
+                    tracing::warn!("Node Ed25519 verification failed for {}: {}", node_id, e);
+                    return Err(MeshTransportError::AuthFailed(e));
                 }
 
                 let upstreams: Vec<String> = upstreams.keys().cloned().collect();

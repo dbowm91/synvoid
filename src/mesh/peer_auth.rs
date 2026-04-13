@@ -60,11 +60,147 @@ pub fn validate_peer_role(
     timestamp: u64,
     max_age_secs: u64,
     revoked_nodes: Option<&GlobalNodeRevocationList>,
+    global_node_attestation_key: Option<&str>,
+    global_node_attestation_sig: Option<&str>,
 ) -> Result<(), String> {
-    if !role.is_global() {
-        return Ok(());
+    if role.is_global() {
+        return validate_global_node(
+            peer_node_id,
+            peer_public_key,
+            peer_signature,
+            timestamp,
+            max_age_secs,
+            revoked_nodes,
+            authorized_global_pubkeys,
+        );
     }
 
+    if role.is_edge() {
+        return validate_edge_node(
+            peer_node_id,
+            peer_public_key,
+            peer_signature,
+            timestamp,
+            max_age_secs,
+        );
+    }
+
+    if role.is_origin() {
+        return validate_origin_node(
+            peer_node_id,
+            peer_public_key,
+            peer_signature,
+            timestamp,
+            max_age_secs,
+            global_node_attestation_key,
+            global_node_attestation_sig,
+            authorized_global_pubkeys,
+        );
+    }
+
+    Err(format!("Unknown node role: {}", role.bits()))
+}
+
+fn validate_edge_node(
+    peer_node_id: &str,
+    peer_public_key: Option<&str>,
+    peer_signature: Option<&str>,
+    timestamp: u64,
+    max_age_secs: u64,
+) -> Result<(), String> {
+    let pubkey = peer_public_key.ok_or_else(|| {
+        format!(
+            "Edge node {} did not provide Ed25519 public key for authentication",
+            peer_node_id
+        )
+    })?;
+
+    let signature = peer_signature.ok_or_else(|| {
+        format!(
+            "Edge node {} did not provide Ed25519 signature for authentication",
+            peer_node_id
+        )
+    })?;
+
+    validate_timestamp(peer_node_id, timestamp, max_age_secs)?;
+
+    let challenge = format!("edge:{}:{}", peer_node_id, timestamp);
+    verify_signature(pubkey, &challenge, signature, peer_node_id, "Edge node")
+}
+
+fn validate_origin_node(
+    peer_node_id: &str,
+    peer_public_key: Option<&str>,
+    peer_signature: Option<&str>,
+    timestamp: u64,
+    max_age_secs: u64,
+    global_node_attestation_key: Option<&str>,
+    global_node_attestation_sig: Option<&str>,
+    authorized_global_pubkeys: &[String],
+) -> Result<(), String> {
+    let pubkey = peer_public_key.ok_or_else(|| {
+        format!(
+            "Origin node {} did not provide Ed25519 public key for authentication",
+            peer_node_id
+        )
+    })?;
+
+    let signature = peer_signature.ok_or_else(|| {
+        format!(
+            "Origin node {} did not provide Ed25519 signature for authentication",
+            peer_node_id
+        )
+    })?;
+
+    validate_timestamp(peer_node_id, timestamp, max_age_secs)?;
+
+    let challenge = format!("origin:{}:{}", peer_node_id, timestamp);
+
+    verify_signature(pubkey, &challenge, signature, peer_node_id, "Origin node")?;
+
+    let attestation_key = global_node_attestation_key.ok_or_else(|| {
+        format!(
+            "Origin node {} did not provide global node attestation key",
+            peer_node_id
+        )
+    })?;
+
+    let attestation_sig = global_node_attestation_sig.ok_or_else(|| {
+        format!(
+            "Origin node {} did not provide global node attestation signature",
+            peer_node_id
+        )
+    })?;
+
+    if !authorized_global_pubkeys.is_empty()
+        && !authorized_global_pubkeys
+            .iter()
+            .any(|k| k == attestation_key)
+    {
+        return Err(format!(
+            "Origin node {} global node attestation key not in authorized list",
+            peer_node_id
+        ));
+    }
+
+    verify_signature(
+        attestation_key,
+        &challenge,
+        attestation_sig,
+        peer_node_id,
+        "Origin node global attestation",
+    )
+}
+
+fn validate_global_node(
+    peer_node_id: &str,
+    peer_public_key: Option<&str>,
+    peer_signature: Option<&str>,
+    timestamp: u64,
+    max_age_secs: u64,
+    revoked_nodes: Option<&GlobalNodeRevocationList>,
+    authorized_global_pubkeys: &[String],
+) -> Result<(), String> {
     if let Some(revocation_list) = revoked_nodes {
         if let Some(revocation_info) = revocation_list.is_node_revoked(peer_node_id) {
             return Err(format!(
@@ -88,19 +224,7 @@ pub fn validate_peer_role(
         )
     })?;
 
-    let now = crate::utils::current_timestamp();
-    if now.saturating_sub(timestamp) > max_age_secs {
-        return Err(format!(
-            "Global node {} authentication expired: timestamp {} is older than {} seconds",
-            peer_node_id, timestamp, max_age_secs
-        ));
-    }
-    if timestamp > now.saturating_add(60) {
-        return Err(format!(
-            "Global node {} authentication has future timestamp: {} (now: {})",
-            peer_node_id, timestamp, now
-        ));
-    }
+    validate_timestamp(peer_node_id, timestamp, max_age_secs)?;
 
     if authorized_global_pubkeys.is_empty() {
         return Err(format!(
@@ -133,29 +257,75 @@ pub fn validate_peer_role(
         ));
     }
 
+    let challenge = format!("{}:{}", peer_node_id, timestamp);
+    verify_signature(pubkey, &challenge, signature, peer_node_id, "Global node")
+}
+
+fn validate_timestamp(peer_node_id: &str, timestamp: u64, max_age_secs: u64) -> Result<(), String> {
+    let now = crate::utils::current_timestamp();
+    if now.saturating_sub(timestamp) > max_age_secs {
+        return Err(format!(
+            "Node {} authentication expired: timestamp {} is older than {} seconds",
+            peer_node_id, timestamp, max_age_secs
+        ));
+    }
+    if timestamp > now.saturating_add(60) {
+        return Err(format!(
+            "Node {} authentication has future timestamp: {} (now: {})",
+            peer_node_id, timestamp, now
+        ));
+    }
+    Ok(())
+}
+
+fn verify_signature(
+    pubkey: &str,
+    challenge: &str,
+    signature: &str,
+    peer_node_id: &str,
+    node_type: &str,
+) -> Result<(), String> {
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+
     let sig_bytes = URL_SAFE_NO_PAD.decode(signature).map_err(|e| {
         format!(
-            "Global node {} has invalid signature encoding: {}",
-            peer_node_id, e
+            "{} {} has invalid signature encoding: {}",
+            node_type, peer_node_id, e
         )
     })?;
 
     if sig_bytes.len() != 64 {
         return Err(format!(
-            "Global node {} signature has invalid length: {} (expected 64)",
+            "{} {} signature has invalid length: {} (expected 64)",
+            node_type,
             peer_node_id,
             sig_bytes.len()
         ));
     }
 
-    let challenge = format!("{}:{}", peer_node_id, timestamp);
+    let pk_bytes = URL_SAFE_NO_PAD.decode(pubkey).map_err(|e| {
+        format!(
+            "{} {} has invalid public key encoding: {}",
+            node_type, peer_node_id, e
+        )
+    })?;
+
+    if pk_bytes.len() != 32 {
+        return Err(format!(
+            "{} {} public key has invalid length: {} (expected 32)",
+            node_type,
+            peer_node_id,
+            pk_bytes.len()
+        ));
+    }
+
     let mut pk_array = [0u8; 32];
     pk_array.copy_from_slice(&pk_bytes);
 
     let verifying_key = ed25519_dalek::VerifyingKey::from_bytes(&pk_array).map_err(|e| {
         format!(
-            "Global node {} has invalid Ed25519 public key: {}",
-            peer_node_id, e
+            "{} {} has invalid Ed25519 public key: {}",
+            node_type, peer_node_id, e
         )
     })?;
 
@@ -169,8 +339,8 @@ pub fn validate_peer_role(
         )
         .map_err(|e| {
             format!(
-                "Global node {} Ed25519 signature verification failed: {}",
-                peer_node_id, e
+                "{} {} Ed25519 signature verification failed: {}",
+                node_type, peer_node_id, e
             )
         })?;
 
@@ -223,6 +393,34 @@ mod tests {
             0,
             300,
             None,
+            None,
+            None,
+        );
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("did not provide Ed25519 public key"));
+    }
+
+    #[test]
+    fn test_edge_node_with_valid_signature_passes() {
+        let (secret, public) = generate_test_keypair();
+        let timestamp = crate::utils::current_timestamp();
+        let challenge = format!("edge:test-node:{}", timestamp);
+        let signing_key = ed25519_dalek::SigningKey::from_bytes(&secret);
+        let signature = URL_SAFE_NO_PAD.encode(signing_key.sign(challenge.as_bytes()).to_bytes());
+
+        let result = validate_peer_role(
+            &crate::mesh::config::MeshNodeRole::EDGE,
+            &[],
+            "test-node",
+            Some(&public),
+            Some(&signature),
+            timestamp,
+            300,
+            None,
+            None,
+            None,
         );
         assert!(result.is_ok());
     }
@@ -241,6 +439,8 @@ mod tests {
             Some(&signature),
             timestamp,
             300,
+            None,
+            None,
             None,
         );
         assert!(result.is_ok());
@@ -264,6 +464,8 @@ mod tests {
             timestamp,
             300,
             Some(&revocation_list),
+            None,
+            None,
         );
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("has been revoked"));
@@ -281,6 +483,8 @@ mod tests {
             0,
             300,
             None,
+            None,
+            None,
         );
         assert!(result.is_err());
     }
@@ -296,6 +500,8 @@ mod tests {
             None,
             0,
             300,
+            None,
+            None,
             None,
         );
         assert!(result.is_err());
@@ -318,6 +524,8 @@ mod tests {
             old_timestamp,
             300,
             None,
+            None,
+            None,
         );
         assert!(result.is_err());
     }
@@ -337,6 +545,8 @@ mod tests {
             timestamp,
             300,
             None,
+            None,
+            None,
         );
         assert!(result.is_err());
     }
@@ -354,6 +564,8 @@ mod tests {
             Some(&signature),
             timestamp,
             300,
+            None,
+            None,
             None,
         );
         assert!(result.is_err());
@@ -376,6 +588,8 @@ mod tests {
             Some(&corrupted_sig),
             timestamp,
             300,
+            None,
+            None,
             None,
         );
         assert!(result.is_err());
