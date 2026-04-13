@@ -4,7 +4,7 @@ Consolidated from plan.md, plan2-11.md on 2026-04-13.
 
 ## Overview
 
-All Wave 1-5 items from the previous plan have been completed. This document tracks remaining work organized into waves for parallel implementation.
+This document tracks remaining work organized into waves for parallel implementation.
 
 ---
 
@@ -12,7 +12,7 @@ All Wave 1-5 items from the previous plan have been completed. This document tra
 
 | Wave | Focus | Items | Status |
 |------|-------|-------|--------|
-| 1 | Critical Security | 14 | 🔄 Pending |
+| 1 | Critical Security | 14 | ✅ Completed |
 | 2 | High Security (TLS, DNS, Mesh) | 8 | 🔄 Pending |
 | 3 | Core Functionality | 10 | 🔄 Pending |
 | 4 | Code Quality | 8 | 🔄 Pending |
@@ -22,7 +22,7 @@ All Wave 1-5 items from the previous plan have been completed. This document tra
 
 ## Wave 1: Critical Security (Parallel - 14 items)
 
-### W1.1: CSRF Token Timing Attack Vulnerability [S.1]
+### ✅ W1.1: CSRF Token Timing Attack Vulnerability [S.1] - COMPLETED
 
 **Severity**: HIGH
 
@@ -36,7 +36,7 @@ All Wave 1-5 items from the previous plan have been completed. This document tra
 
 ---
 
-### W1.2: DNS Crypto RNG Entropy Failure Returns Predictable Values [S.2]
+### ✅ W1.2: DNS Crypto RNG Entropy Failure Returns Predictable Values [S.2] - COMPLETED
 
 **Severity**: HIGH
 
@@ -48,7 +48,7 @@ All Wave 1-5 items from the previous plan have been completed. This document tra
 
 ---
 
-### W1.3: Mesh Peer Authentication Bypass for Non-Global Nodes [M3.1, S.3]
+### ✅ W1.3: Mesh Peer Authentication Bypass for Non-Global Nodes [M3.1, S.3] - COMPLETED
 
 **Severity**: CRITICAL
 
@@ -57,14 +57,16 @@ All Wave 1-5 items from the previous plan have been completed. This document tra
 **Issue**: `validate_peer_role()` returns `Ok(())` immediately for non-global nodes without authentication. A malicious edge node can claim any role combination.
 
 **Fix**:
-1. Require Ed25519 signature on all mesh messages
-2. Edge nodes present Ed25519 identity, claim EDGE role
-3. Origin nodes require global node attestation
-4. Add `node_signature` field to all `MeshMessage` variants
+1. Require Ed25519 signature on all mesh messages ✅
+2. Edge nodes present Ed25519 identity, claim EDGE role ✅
+3. Origin nodes require global node attestation ✅
+4. Add `node_signature` field to all `MeshMessage` variants (not needed - using existing fields)
+
+**Verification**: Commit `231e470` - Edge/Origin now require Ed25519 signature verification
 
 ---
 
-### W1.4: Overseer IPC Client Uses Unsigned Connections [S.4]
+### ✅ W1.4: Overseer IPC Client Uses Unsigned Connections [S.4] - COMPLETED
 
 **Severity**: HIGH
 
@@ -74,9 +76,11 @@ All Wave 1-5 items from the previous plan have been completed. This document tra
 
 **Fix**: Use `connect_with_signer()` instead, passing IPC session key for HMAC-signed messages.
 
+**Verification**: Commit `28ac754` - IpcSigner support added, send_signed/try_recv_signed implemented
+
 ---
 
-### W1.5: HTTP Honeypot Publishing in Standalone Mode [H.2]
+### ✅ W1.5: HTTP Honeypot Publishing in Standalone Mode [H.2] - COMPLETED
 
 **Severity**: HIGH
 
@@ -84,11 +88,11 @@ All Wave 1-5 items from the previous plan have been completed. This document tra
 
 **Issue**: In standalone mode, `get_threat_intel()` returns `None` because `set_threat_intel()` is never called. HTTP honeypot hits are not published.
 
-**Fix**: Call `set_threat_intel()` even in standalone mode.
+**Fix**: Call `set_threat_intel()` in standalone mode (done in W1.7).
 
 ---
 
-### W1.6: Port Honeypot Attack Patterns Never Published [H.3]
+### ✅ W1.6: Port Honeypot Attack Patterns Never Published [H.3] - COMPLETED
 
 **Severity**: MEDIUM
 
@@ -98,9 +102,11 @@ All Wave 1-5 items from the previous plan have been completed. This document tra
 
 **Fix**: Restructure to publish source IPs separately, then publish patterns/vectors/payloads using the record's `remote_ip`.
 
+**Verification**: Commit `ba0b29a` - Use record.remote_ip for attack patterns
+
 ---
 
-### W1.7: ThreatIntel Standalone Mode Fix [H.1, H.4]
+### ✅ W1.7: ThreatIntel Standalone Mode Fix [H.1, H.4] - COMPLETED
 
 **Severity**: HIGH
 
@@ -109,13 +115,15 @@ All Wave 1-5 items from the previous plan have been completed. This document tra
 **Issue**: In standalone mode, ThreatIntelligenceManager is created as a "dummy" with no transport, and `is_mesh_available()` returns `false`, preventing `start_mesh_threat_publishing()` from being called.
 
 **Fix**:
-1. Register ThreatIntel with `set_threat_intel()` in standalone mode
-2. Remove `is_mesh_available()` gate for honeypot publishing
-3. Start background task for cleanup/broadcast in standalone mode
+1. Register ThreatIntel with `set_threat_intel()` in standalone mode ✅
+2. Remove `is_mesh_available()` gate for honeypot publishing ✅
+3. Start background task for cleanup/broadcast in standalone mode ✅
+
+**Verification**: Commit `28ac754` - standalone now calls set_threat_intel() and start_background_tasks()
 
 ---
 
-### W1.8: Multiple Threat Indicators Overwrite Each Other [H.3b]
+### ✅ W1.8: Multiple Threat Indicators Overwrite Each Other [H.3b] - COMPLETED
 
 **Severity**: MEDIUM
 
@@ -123,11 +131,13 @@ All Wave 1-5 items from the previous plan have been completed. This document tra
 
 **Issue**: DHT key is just `ip.to_string()`, so multiple threat types for same IP overwrite each other.
 
-**Fix**: Use composite key `"{ip}:{threat_type}"` or separate DHT keys per threat type.
+**Fix**: Use composite key `"{threat_type}:{ip}"` instead.
+
+**Verification**: Commit `ba0b29a` - composite keys: IpBlock:{ip}, {threat_type}:{ip}, etc.
 
 ---
 
-### W1.9: Non-Global Node DHT Announce Blocked [H.5]
+### ✅ W1.9: Non-Global Node DHT Announce Blocked [H.5] - COMPLETED
 
 **Severity**: MEDIUM
 
@@ -135,11 +145,13 @@ All Wave 1-5 items from the previous plan have been completed. This document tra
 
 **Issue**: `create_record_announce()` blocks non-global nodes from announcing non-public DHT keys. `ThreatIndicator` is not considered public.
 
-**Fix**: Add `ThreatIndicator` to `is_public()` in DhtKey, or create category for mesh-wide shared keys.
+**Fix**: Removed non-global node blocking check in create_record_announce(). store_record() already enforces signature requirements for edge nodes.
+
+**Verification**: Commit `ba0b29a` - removed blocking check, ThreatIndicator now announceable by all
 
 ---
 
-### W1.10: Standalone Mode No Background Threat Intel Sync [H.6]
+### ✅ W1.10: Standalone Mode No Background Threat Intel Sync [H.6] - COMPLETED
 
 **Severity**: LOW
 
@@ -147,11 +159,13 @@ All Wave 1-5 items from the previous plan have been completed. This document tra
 
 **Issue**: Background task for cleanup/broadcast only runs when mesh transport is available.
 
-**Fix**: Start cleanup/broadcast task in standalone mode (transport is None so broadcast is no-op).
+**Fix**: Verified start_background_tasks() is called in both standalone mode paths.
+
+**Verification**: Confirmed in W1.7 commit.
 
 ---
 
-### W1.11: WAF Normalization Inconsistency [S.5]
+### ✅ W1.11: WAF Normalization Inconsistency [S.5] - COMPLETED
 
 **Severity**: MEDIUM
 
@@ -161,11 +175,13 @@ All Wave 1-5 items from the previous plan have been completed. This document tra
 
 **Issue**: SQLi and XSS detectors use different normalization than pattern detectors which use `InputNormalizer` with homoglyph/NFKC normalization.
 
-**Fix**: Create shared normalization path applying full `InputNormalizer` before libinjection checks.
+**Fix**: XSS and SQLi now use InputNormalizer for full normalization before libinjection checks.
+
+**Verification**: Commit `6f09ce6` - InputNormalizer applied to XSS and SQLi
 
 ---
 
-### W1.12: Private Key File Permissions Not Set [S.6]
+### ✅ W1.12: Private Key File Permissions Not Set [S.6] - COMPLETED
 
 **Severity**: MEDIUM
 
@@ -173,11 +189,13 @@ All Wave 1-5 items from the previous plan have been completed. This document tra
 
 **Issue**: When deriving signing key from genesis key, file is written with default permissions (readable by other users).
 
-**Fix**: Set restrictive permissions (0o600) after writing, similar to `tls/acme.rs:148-180`.
+**Fix**: Set 0o600 permissions after writing, following tls/acme.rs pattern.
+
+**Verification**: Commit `6f09ce6` - 0o600 permissions set on signing key file
 
 ---
 
-### W1.13: WAF PoW Challenge Timing Window Too Large [S.7]
+### ✅ W1.13: WAF PoW Challenge Timing Window Too Large [S.7] - COMPLETED
 
 **Severity**: MEDIUM
 
@@ -185,14 +203,13 @@ All Wave 1-5 items from the previous plan have been completed. This document tra
 
 **Issue**: PoW challenge expires after 60 seconds but session lasts 1 hour. Large attack window for pre-computed solutions.
 
-**Fix**:
-1. Reduce `pow_timeout_secs` to 10-15 seconds
-2. Add rate limiting on challenge requests per IP
-3. Consider binding challenge to client IP
+**Fix**: Reduced pow_timeout_secs from 60 to 12 seconds. Rate limiting already exists.
+
+**Verification**: Commit `6f09ce6` - pow_timeout_secs = 12
 
 ---
 
-### W1.14: Nonce Cache Has No Size Limit [S.8]
+### ✅ W1.14: Nonce Cache Has No Size Limit [S.8] - COMPLETED
 
 **Severity**: MEDIUM
 
@@ -200,7 +217,9 @@ All Wave 1-5 items from the previous plan have been completed. This document tra
 
 **Issue**: `NONCE_CACHE` is unbounded. `evict_oldest()` only removes one entry when called.
 
-**Fix**: Add max cache size (e.g., 10000 entries) and evict oldest when limit reached.
+**Fix**: Added MAX_NONCE_CACHE_SIZE = 10000 and modified evict_oldest() to loop until cache is under limit.
+
+**Verification**: Commit `6f09ce6` - MAX_NONCE_CACHE_SIZE added, evict_oldest() loops
 
 ---
 
