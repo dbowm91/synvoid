@@ -357,7 +357,9 @@ All duplicate `current_timestamp()` definitions have been consolidated into `src
 | PoW challenge window too large | `src/challenge/mod.rs` | Reduced timeout from 60s to 12s |
 | Nonce cache unbounded | `src/process/ipc_signed.rs` | Added MAX_NONCE_CACHE_SIZE = 10000 |
 | JA4 fingerprinting not passed to WAF | `src/tls/server.rs`, `src/waf/mod.rs` | JA4 now wired via `check_request_full()` |
-| NSEC3 hash length encoding | `src/dns/dnssec_signing.rs:261` | Uses `hash_b32.len()` (32) instead of `hash.len()` (20) per RFC 5155 |
+| NSEC3 hash length encoding | `src/dns/dnssec_signing.rs:232` | Added `nsec3.push(next_hash.len() as u8)` per RFC 5155 Section 3.2 |
+| Dead code cleanup (Wave 5) | `src/mesh/transport.rs`, `src/waf/ratelimit.rs` | Removed PendingQueryManager::complete/cleanup, get_global_rate_limit_status, get_shard |
+| ConnectionMeta trait migration | `src/server/request_handler.rs:31-99` | Implemented for HttpConnection and HttpsConnection |
 | SSRF domain substring check | `src/waf/attack_detection/ssrf.rs:243` | Uses proper word boundaries for localhost/.local checks |
 | DNS dynamic update IP validation | `src/dns/update.rs` | Client IP validated against ACLs; require_tsig=true by default |
 | TSIG verification message data | `src/dns/transfer.rs:262-281` | TSIG MAC computed over full DNS message, not just qname |

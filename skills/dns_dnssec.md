@@ -224,6 +224,7 @@ let events = manager.process_rfc5011_updates();
 1. **Forwarder mode ignores `dnssec_validation`** - Google/Cloudflare providers don't validate
 2. **TrustAnchorManager and hickory_proto::TrustAnchors are separate** - Synchronization between RFC 5011 manager and hickory's internal anchors
 3. **NSEC3 uses SHA-1** - RFC 9276 suggests SHA-1 is acceptable for NSEC3 hashing
+4. **NSEC3 Hash Length Encoding** - When creating NSEC3 records, the hash must be prefixed with its length as a single byte per RFC 5155 Section 3.2. The `create_nsec3_record()` function in `src/dns/dnssec_signing.rs` handles this correctly.
 
 ## Testing
 
