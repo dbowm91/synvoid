@@ -740,7 +740,7 @@ YARA rules published to DHT are signed using Ed25519:
 - **Manifest signature**: `version:content_hash:node_id:timestamp`
 - **Rule content signature**: `version:rules:content_hash:node_id:timestamp`
 
-During DHT sync, signatures are verified before accepting rules from peers. Records without signatures are accepted for backward compatibility with legacy data.
+During DHT sync (`sync_from_dht()`), both manifest and rule content signatures are verified before accepting rules. The manifest's `content_hash` is verified against the actual rule content hash. Records without signatures are accepted for backward compatibility with legacy data.
 
 ### ThreatIntel DHT Keys
 
@@ -749,6 +749,13 @@ During DHT sync, signatures are verified before accepting rules from peers. Reco
 | `threat_indicator:{ip}:{threat_type}` | Per-type indicator (composite key, e.g., `threat_indicator:1.2.3.4:IpBlock`) |
 
 **Important**: ThreatIntel uses composite keys with threat_type suffix to prevent collision between different threat types for the same IP. A key without threat_type (e.g., `threat_indicator:1.2.3.4`) will NOT match.
+
+### ThreatIntel Signature Verification
+
+ThreatIntel indicators published to DHT are signed using Ed25519:
+- **Indicator signature**: `indicator_value:threat_type:severity:timestamp:source_node_id`
+
+During DHT sync (`sync_from_dht()`), signatures are verified before accepting indicators. The `signer_public_key` is extracted from the DHT record and used to verify the signature. Records without valid signatures are skipped but allow backward compatibility with unsigned legacy records.
 
 ### ThreatIntel Re-announcement
 
@@ -772,6 +779,59 @@ Global nodes periodically re-announce local ThreatIntel indicators via `re_annou
 | Python (Granian) | `[site.app_server]` | `src/app_server/granian.rs` |
 | HTTP Upstream | `[site.upstream]` | `src/proxy.rs` |
 | Mesh Origin | DHT + `[site.upstream]` | `src/mesh/topology.rs` |
+
+## FastCGI Pool Management
+
+The FastCGI module (`src/fastcgi/`) provides connection pooling via `FastCgiPoolManager`:
+
+```rust
+// Get a pool for a given host:port
+let pool = fastcgi::get_pool(host, port);
+
+// Remove a pool (e.g., on config change)
+fastcgi::remove_pool(host, port);
+
+// Close all pools (e.g., on shutdown)
+fastcgi::close_all_pools();
+```
+
+Pools are stored as module-level statics via `LazyLock`, keyed by `host:port`. Each pool manages reusable FastCGI connections.
+
+## PHP Security Settings
+
+`PhpConfig` security fields are enforced via PHP-FPM:
+
+```toml
+[site.php]
+disable_functions = "exec,passthru,shell_exec,system"
+open_basedir = "/var/www/html"
+allow_url_fopen = false
+max_execution_time = 30
+memory_limit = "128M"
+upload_max_filesize = "10M"
+post_max_size = "50M"
+```
+
+These are passed to PHP-FPM as:
+- `PHP_ADMIN_VALUE:disable_functions` (admin-only, cannot be overridden)
+- `PHP_VALUE` for other settings
+
+## Static File Directory Templates
+
+Custom templates for directory listing are supported via `SiteStaticThemeConfig`:
+
+```toml
+[site.static.theme]
+directory_template_path = "/etc/maluwaf/templates/directory.html"
+preset = "dark"
+```
+
+Supported placeholders:
+- `{{url_path}}` - current URL path
+- `{{parent_link}}` - parent directory link
+- `{{rows}}` - file/folder entries
+- `{{site_name}}` - site name (RustWAF)
+- `{{title}}` - page title ("Index of {url_path}")
 
 ## Skills and Knowledge Base
 
