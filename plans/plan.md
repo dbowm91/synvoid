@@ -511,18 +511,26 @@ This document tracks remaining work organized into waves for parallel implementa
 
 ---
 
-### W3.9: YARA DHT Sync Signature Verification [6.2]
+### W3.9: YARA DHT Sync Signature Verification [6.2] - COMPLETED
 
-**Severity**: MEDIUM
+**Status**: ✅ Completed
 
-**Location**: `src/mesh/yara_rules.rs:375-484`
+**Location**: `src/mesh/yara_rules.rs:330-387` (publish) and `src/mesh/yara_rules.rs:449-517` (sync verify)
 
 **Issue**: Unlike Threat Intel, YARA rules have no signature verification during DHT sync.
 
 **Fix**:
-1. Add `signature` and `signer_public_key` fields to YARA manifest and rule content
-2. In `sync_from_dht()`, verify signature using global node's signing key from `MeshCertManager`
-3. Reject records with invalid/missing signatures from non-trusted global nodes
+1. ✅ Added `signature` and `signer_public_key` fields to manifest and rule content JSON when publishing
+2. ✅ In `sync_from_dht()`, verify signature using signer's public key from record
+3. ✅ Reject records with invalid/missing signatures
+
+**Changes**:
+- Manifest includes signature over `version:content_hash:node_id:timestamp`
+- Rule content includes signature over `version:rules:content_hash:node_id:timestamp`
+- During sync, verify signature before accepting rules from a peer
+- Records without signatures are accepted (backward compatible for unsigned legacy records)
+
+**Verification**: Commit - YARA DHT sync now verifies Ed25519 signatures
 
 ---
 

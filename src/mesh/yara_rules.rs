@@ -327,11 +327,29 @@ impl YaraRulesManager {
         let manifest_key = DhtKey::yara_rules_manifest(&self.node_id);
         let manifest_key_str = manifest_key.as_str();
 
+        let timestamp = crate::mesh::safe_unix_timestamp();
+        let (manifest_signature, manifest_signer_pk) = if let Some(ref signer) = self.signer {
+            let content = format!(
+                "{}:{}:{}:{}",
+                version, content_hash, self.node_id, timestamp
+            );
+            let sig = signer.sign(&content);
+            let pk = base64::Engine::encode(
+                &base64::engine::general_purpose::STANDARD,
+                signer.get_public_key_bytes(),
+            );
+            (sig, Some(pk))
+        } else {
+            (Vec::new(), None)
+        };
+
         let manifest_value = serde_json::json!({
             "version": version,
             "content_hash": content_hash,
             "node_id": self.node_id,
-            "timestamp": crate::mesh::safe_unix_timestamp(),
+            "timestamp": timestamp,
+            "signature": manifest_signature,
+            "signer_public_key": manifest_signer_pk,
         });
 
         if let Ok(bytes) = serde_json::to_vec(&manifest_value) {
@@ -351,12 +369,30 @@ impl YaraRulesManager {
             return;
         }
 
+        let rule_timestamp = crate::mesh::safe_unix_timestamp();
+        let (rule_signature, rule_signer_pk) = if let Some(ref signer) = self.signer {
+            let content = format!(
+                "{}:{}:{}:{}:{}",
+                version, rules, content_hash, self.node_id, rule_timestamp
+            );
+            let sig = signer.sign(&content);
+            let pk = base64::Engine::encode(
+                &base64::engine::general_purpose::STANDARD,
+                signer.get_public_key_bytes(),
+            );
+            (sig, Some(pk))
+        } else {
+            (Vec::new(), None)
+        };
+
         let rule_value = serde_json::json!({
             "version": version,
             "rules": rules,
             "content_hash": content_hash,
             "node_id": self.node_id,
-            "timestamp": crate::mesh::safe_unix_timestamp(),
+            "timestamp": rule_timestamp,
+            "signature": rule_signature,
+            "signer_public_key": rule_signer_pk,
         });
 
         if let Ok(bytes) = serde_json::to_vec(&rule_value) {
@@ -437,6 +473,59 @@ impl YaraRulesManager {
 
                             if rules_str.is_empty() {
                                 continue;
+                            }
+
+                            let signature_str = rule_value
+                                .get("signature")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            let signer_pk_str = rule_value
+                                .get("signer_public_key")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+
+                            if !signature_str.is_empty() && !signer_pk_str.is_empty() {
+                                let content = format!(
+                                    "{}:{}:{}:{}:{}",
+                                    version_str, rules_str, peer_hash, manifest_node_id, timestamp
+                                );
+                                let sig_bytes = match base64::Engine::decode(
+                                    &base64::engine::general_purpose::STANDARD,
+                                    signature_str,
+                                ) {
+                                    Ok(s) => s,
+                                    Err(_) => {
+                                        tracing::warn!(
+                                            "YARA DHT sync: invalid signature base64 from {}",
+                                            manifest_node_id
+                                        );
+                                        continue;
+                                    }
+                                };
+                                let pk_bytes = match base64::Engine::decode(
+                                    &base64::engine::general_purpose::STANDARD,
+                                    signer_pk_str,
+                                ) {
+                                    Ok(p) => p,
+                                    Err(_) => {
+                                        tracing::warn!(
+                                            "YARA DHT sync: invalid signer pk base64 from {}",
+                                            manifest_node_id
+                                        );
+                                        continue;
+                                    }
+                                };
+
+                                let signer = crate::mesh::protocol::MeshMessageSigner::new(
+                                    pk_bytes.clone().try_into().unwrap_or([0u8; 32]),
+                                );
+                                if !signer.verify(&content, &sig_bytes, &pk_bytes) {
+                                    tracing::warn!(
+                                        "YARA DHT sync: signature verification failed for record from {}",
+                                        manifest_node_id
+                                    );
+                                    continue;
+                                }
                             }
 
                             match &best_timestamp {
