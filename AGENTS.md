@@ -337,8 +337,7 @@ All duplicate `current_timestamp()` definitions have been consolidated into `src
 
 | Bug | Location | Impact | Status |
 |-----|----------|--------|--------|
-| Stream large request bodies | `src/http/server.rs` | Full buffering; needs chunk-based WAF | Open (see plan.md W3.2) |
-| Response streaming | `src/http/server.rs` | Fully buffered responses | Open (see plan.md W3.3) |
+| — | — | — | — |
 
 ### Fixed Issues
 
@@ -408,6 +407,11 @@ All duplicate `current_timestamp()` definitions have been consolidated into `src
 | find_closest premature return | `src/mesh/dht/routing/table.rs:274` | Removed early break, scans all buckets |
 | Edge resync single-homed | `src/mesh/transport_dht.rs:386-397` | Iterates all global nodes, not just [0] |
 | Unused access control | `src/mesh/dht/record_store_crud.rs:79-90` | require_global_node() wired into store_record() |
+| SuspiciousWordTracker write lock | `src/waf/probe_tracker.rs:475-513` | Pre-computed lowercased words at init; no to_lowercase() per request |
+| EndpointBlocker O(n) linear search | `src/waf/endpoints.rs:135-193` | HashSet for O(1) exact match lookups |
+| CSRF token unbounded storage | `src/admin/state.rs:633-657` | MAX_CSRF_TOKENS_PER_SESSION=10 limits tokens per session |
+| DHT pending_announces O(n) | `src/mesh/dht/record_store.rs:208` | VecDeque for O(1) pop_front() instead of Vec remove(0) |
+| Proxy cache SWR redundant lock | `src/proxy_cache/store.rs:240-255` | Entry API returns directly; no insert+get pattern |
 
 ## Performance Hot Paths
 
@@ -433,12 +437,12 @@ Agents modifying these areas should be aware of performance characteristics:
 | Area | Concern | Location |
 |------|---------|----------|
 | WAF detection | Runs ~20+ checks per request, lock acquisition per request | `src/waf/mod.rs:660-700` |
-| Cache lookups | O(1) via `LinkedHashMap`; write lock on LRU update | `src/proxy_cache/store.rs:241` |
-| Input normalization | Allocates `String` per request via various transformations | `src/waf/attack_detection/normalizer.rs:20` |
-| Rate limiting | `retain` is O(n) per call, 6 sequential calls | `src/waf/ratelimit.rs:122-142` |
+| Cache lookups | O(1) via `moka::Cache`; eviction-based cleanup | `src/proxy_cache/store.rs` |
+| Input normalization | Pre-computed lowercased words at init | `src/waf/probe_tracker.rs:475` |
+| Rate limiting | Lock-free atomic bitset for slot tracking | `src/waf/ratelimit/core.rs` |
 | HTTP path sanitization | Allocates `Vec` on every request | `src/proxy.rs:101` |
 | Response header filtering | Allocates `Vec` on every proxied response | `src/proxy.rs:147-159` |
-| SSRF detection | Calls `.to_lowercase()` multiple times on same input | `src/waf/attack_detection/ssrf.rs` |
+| SSRF detection | `Cow<str>` optimization to avoid repeated lowercasing | `src/waf/attack_detection/ssrf.rs` |
 | DNS zone store | 64-sharded `RwLock`; prefer single-shard ops over full iteration | `src/dns/server/sharded_store.rs` |
 
 ## Module Size Guide
