@@ -93,6 +93,14 @@ impl MeshConfig {
             let public_key = crate::mesh::cert::get_ed25519_public_key(&genesis_key)
                 .ok_or("Failed to derive public key from genesis key")?;
 
+            let public_key_b64 = URL_SAFE_NO_PAD.encode(&public_key);
+
+            if let Some(ref genesis_config) = self.genesis_key {
+                if !genesis_config.is_genesis_key_authorized(&public_key_b64) {
+                    return Err("Genesis key is not in the authorized list".to_string());
+                }
+            }
+
             self.node_identity
                 .derive_signing_key_from_genesis(&genesis_key, &public_key)
         } else {

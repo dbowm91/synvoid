@@ -891,6 +891,8 @@ pub struct GenesisKeyConfig {
     pub previous_genesis_key_base64: Option<String>,
     #[serde(default)]
     pub rotation_sequence: u32,
+    #[serde(default)]
+    pub authorized_genesis_keys: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

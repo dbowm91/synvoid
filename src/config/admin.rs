@@ -100,10 +100,10 @@ impl AdminConfig {
             });
         }
 
-        if self.bcrypt_cost < 10 || self.bcrypt_cost > 15 {
+        if self.bcrypt_cost < 12 || self.bcrypt_cost > 15 {
             return Err(ConfigValidationError {
                 field: "admin.bcrypt_cost".to_string(),
-                message: "bcrypt_cost must be between 10 and 15".to_string(),
+                message: "bcrypt_cost must be between 12 and 15".to_string(),
             });
         }
 

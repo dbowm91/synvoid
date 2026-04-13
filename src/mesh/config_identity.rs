@@ -142,6 +142,7 @@ impl GenesisKeyConfig {
             is_first_node: true,
             previous_genesis_key_base64: None,
             rotation_sequence: 0,
+            authorized_genesis_keys: Vec::new(),
         }
     }
 
@@ -232,6 +233,25 @@ impl GenesisKeyConfig {
             }
         }
         false
+    }
+
+    pub fn is_genesis_key_authorized(&self, genesis_public_key: &str) -> bool {
+        if self.authorized_genesis_keys.is_empty() {
+            return true;
+        }
+        self.authorized_genesis_keys
+            .iter()
+            .any(|k| k == genesis_public_key)
+    }
+
+    pub fn authorize_genesis_key(&mut self, public_key: String) {
+        if !self.authorized_genesis_keys.contains(&public_key) {
+            self.authorized_genesis_keys.push(public_key);
+        }
+    }
+
+    pub fn revoke_genesis_key(&mut self, public_key: &str) {
+        self.authorized_genesis_keys.retain(|k| k != public_key);
     }
 }
 
