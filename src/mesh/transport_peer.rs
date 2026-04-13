@@ -1232,7 +1232,7 @@ impl MeshTransport {
         source_node_id: &str,
         signature: &[u8],
         signer_public_key: Option<&str>,
-        _proxy_cache_preferences: Option<&crate::mesh::protocol::ProxyCachePreferences>,
+        proxy_cache_preferences: Option<&crate::mesh::protocol::ProxyCachePreferences>,
     ) {
         tracing::info!(
             "Received site config sync for site {} version {} from node {}",
@@ -1330,7 +1330,11 @@ impl MeshTransport {
 
         if let Some(tx) = tx_to_send {
             let _ = tx
-                .send((site_id.to_string(), config_json.to_string()))
+                .send((
+                    site_id.to_string(),
+                    config_json.to_string(),
+                    proxy_cache_preferences.cloned(),
+                ))
                 .await;
             tracing::debug!("Sent site config sync to callback handler");
         } else {

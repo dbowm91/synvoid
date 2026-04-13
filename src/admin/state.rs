@@ -467,14 +467,14 @@ impl AdminState {
             }
         };
 
-        let (tx, mut rx) = tokio::sync::mpsc::channel::<(String, String)>(32);
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<(String, String, Option<crate::mesh::protocol::ProxyCachePreferences>)>(32);
         mesh_transport.set_site_config_sync_callback(tx);
 
         let config = self.process.config.clone();
         let config_write_lock = self.metrics.config_write_lock.clone();
 
         tokio::spawn(async move {
-            while let Some((site_id, config_json)) = rx.recv().await {
+            while let Some((site_id, config_json, _proxy_cache_preferences)) = rx.recv().await {
                 tracing::info!("Received site config sync for site: {}", site_id);
 
                 let config_path = {

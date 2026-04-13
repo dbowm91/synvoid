@@ -444,19 +444,25 @@ This document tracks remaining work organized into waves for parallel implementa
 
 ---
 
-### W3.5: Edge Node Cache Preference Propagation [C.1 from plan5]
+### W3.5: Edge Node Cache Preference Propagation [C.1 from plan5] - COMPLETED
 
-**Severity**: HIGH
+**Status**: ✅ Completed
 
-**Location**: `src/mesh/transport_peer.rs:1331-1335`
+**Location**: 
+- `src/mesh/transport.rs:120` - callback channel now 3-tuple
+- `src/mesh/transport.rs:382` - set_site_config_sync_callback signature updated
+- `src/mesh/transport_peer.rs:1235-1337` - now passes proxy_cache_preferences
+- `src/admin/state.rs:470-477` - consumer updated to handle 3-tuple
 
-**Issue**: When edge receives `SiteConfigSync`, `proxy_cache_preferences` is in message but IGNORED. Callback only sends `(site_id, config_json)`.
+**Issue**: When edge receives `SiteConfigSync`, `proxy_cache_preferences` was in message but IGNORED. Callback only sent `(site_id, config_json)`.
 
 **Fix**:
-1. Extend callback channel to `(String, String, Option<ProxyCachePreferences>)`
-2. Pass preferences in `handle_site_config_sync()`
-3. Create `SiteCachePreferencesStore` for per-site preferences
-4. Update `set_site_config_sync_callback` signature
+1. ✅ Extended callback channel to `(String, String, Option<ProxyCachePreferences>)`
+2. ✅ Pass preferences in `handle_site_config_sync()`
+3. ✅ Update `set_site_config_sync_callback` signature
+4. ⚠️ SiteCachePreferencesStore deferred to W3.6 (storage for actual cache integration)
+
+**Note**: W3.6 will implement `SiteCachePreferencesStore` and integrate with MeshProxy for actual caching.
 
 ---
 
