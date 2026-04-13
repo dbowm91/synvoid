@@ -363,6 +363,44 @@ fn attest_capability(node_id: &str, capability: &str) {
 
 ---
 
+## Wave 4: Code Quality (Completed 2026-04-13)
+
+### SAFETY_REASON Comments for Intentional Dead Code
+
+**Location**: Throughout codebase, primarily `src/mesh/`, `src/overseer/`, `src/waf/`
+
+**Pattern**: Use `// SAFETY_REASON: ...` comments to document intentional `#[allow(dead_code)]` suppressions:
+
+```rust
+// SAFETY_REASON: Reserved for future DNS mesh protocol handling
+#[allow(dead_code)]
+const DNS_MESH_CONSTANT: &str = "...";
+
+// SAFETY_REASON: Serde requires this field for deserialization but it's not read
+#[allow(dead_code)] // serde: field required for deserialization
+pub struct UpgradeConfig { ... }
+```
+
+**Categories of intentional suppressions**:
+- Reserved protocol handlers (transport_dns.rs, transport_org.rs, etc.)
+- HSM support (dns/server/mod.rs:503)
+- Serde deserialization fields (overseer/upgrade.rs)
+- Debug/introspection fields (stored but not read)
+- Future use items
+
+**When to use**:
+- Reserved code for future protocol/features
+- Required by external interfaces (serde)
+- Debug/introspection that isn't read yet
+- Platform-specific code only used on some platforms
+
+**When NOT to use** (remove the code instead):
+- Truly unused helper functions
+- Debug prints left in code
+- Temporary workarounds (use TODO instead)
+
+---
+
 ## Verification Commands
 
 ```bash
@@ -387,4 +425,10 @@ rg "validate_edge_node_pow" src/mesh/
 
 # Check capability attestation
 rg "CapabilityAttestation" src/mesh/
+
+# Audit dead_code suppressions
+rg "#\[allow\(dead_code)\]" src/ --glob '*.rs' -c
+
+# Check SAFETY comments on unsafe blocks
+rg "unsafe \{" src/ --glob '*.rs' -l | xargs -I{} rg "SAFETY" {}
 ```
