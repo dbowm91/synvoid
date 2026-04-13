@@ -364,7 +364,7 @@ impl ThreatIntelligenceManager {
             signer_public_key: None,
         };
 
-        let key = ip.to_string();
+        let key = format!("{:?}:{}", ThreatType::IpBlock, ip);
 
         {
             let mut indicators = self.indicators.write();
@@ -432,7 +432,7 @@ impl ThreatIntelligenceManager {
             signer_public_key,
         };
 
-        let key = ip.to_string();
+        let key = format!("{:?}:{}", threat_type, ip);
 
         {
             let mut indicators = self.indicators.write();
@@ -498,7 +498,7 @@ impl ThreatIntelligenceManager {
             signer_public_key: None,
         };
 
-        let key = ip.to_string();
+        let key = format!("{:?}:{}", ThreatType::RateLimitViolation, ip);
 
         {
             let mut indicators = self.indicators.write();
@@ -562,7 +562,7 @@ impl ThreatIntelligenceManager {
             signer_public_key: None,
         };
 
-        let key = ip.to_string();
+        let key = format!("{:?}:{}", ThreatType::SuspiciousActivity, ip);
 
         {
             let mut indicators = self.indicators.write();

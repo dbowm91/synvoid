@@ -534,16 +534,6 @@ impl RecordStoreManager {
             return None;
         }
 
-        if !self.is_global_node() {
-            let all_public = rs
-                .pending_announces
-                .iter()
-                .all(|r| crate::mesh::dht::keys::DhtKey::from_str(&r.key).is_public());
-            if !all_public {
-                return None;
-            }
-        }
-
         let records: Vec<DhtRecord> = rs.pending_announces.to_vec();
 
         let mut signature = Vec::new();

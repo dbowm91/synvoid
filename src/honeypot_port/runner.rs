@@ -194,7 +194,14 @@ impl PortHoneypotRunner {
                                 }
                             };
 
-                            if let Ok(ip) = indicator.value.parse::<std::net::IpAddr>() {
+                            let publish_ip = match indicator.indicator_type {
+                                crate::honeypot_port::threat_intel::IndicatorType::SourceIp => {
+                                    indicator.value.parse::<std::net::IpAddr>().ok()
+                                }
+                                _ => record.remote_ip.parse::<std::net::IpAddr>().ok(),
+                            };
+
+                            if let Some(ip) = publish_ip {
                                 let ip_str = ip.to_string();
                                 if announced_ips.contains(&ip_str) {
                                     continue;
