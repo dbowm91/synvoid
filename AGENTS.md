@@ -255,9 +255,7 @@ Keys transition through these states:
 4. **Platform-specific tests** - Use `#[cfg(unix)]` or `#[cfg(windows)]`
 5. **Key tag calculation** - Use `crate::dns::dnssec::calculate_key_tag` for RFC 4034 compliant key tags
 
-## Session Lessons Learned (2026-04-11)
-
-### Subagent Verification Required
+## Subagent Execution Best Practices
 
 When using subagents to make code changes:
 1. **Always verify the actual code** — subagents may claim a fix was applied but the code still shows the old version
@@ -269,7 +267,6 @@ Common failure mode: subagent reports success but code wasn't actually modified,
 
 ### Module Splitting Decisions
 
-Large file splits (Wave 5) require careful consideration:
 - **Do NOT split cohesive request pipelines** like `http/server.rs` and `tls/server.rs` - these handle a single logical flow
 - **Do NOT rewrite files from scratch** - incremental changes are safer
 - **Prefer section comments** over refactoring for readability
@@ -290,7 +287,7 @@ Crate-level suppressions in `src/lib.rs`:
 - `elided_lifetimes_in_paths` — compiler style preference
 - `mismatched_lifetime_syntaxes` — compiler style preference
 
-`#[allow(dead_code)]` annotations: **~93 across ~50 files** (reduced after W4.2 audit). Notable per-module breakdown:
+`#[allow(dead_code)]` annotations: ~93 across ~50 files. Notable per-module breakdown:
 - `src/mesh/transport_*.rs` — ~6 items (reserved protocol handlers)
 - `src/mesh/` — ~14 items
 - `src/dns/server/` — ~4 items
@@ -299,13 +296,9 @@ Crate-level suppressions in `src/lib.rs`:
 - `src/admin/handlers/` — ~6 items
 - `src/overseer/` — ~9 items
 
-Note: Many `#[allow(dead_code)]` annotations are on reserved/future-use code paths within already-shipped modules (e.g., `transport_dns.rs` for future DNS mesh protocol). These are intentional design patterns for future extensibility. All intentional suppressions now documented with `// SAFETY_REASON: ...` comments.
+Note: Many `#[allow(dead_code)]` annotations are on reserved/future-use code paths within already-shipped modules (e.g., `transport_dns.rs` for future DNS mesh protocol). These are intentional design patterns for future extensibility. All intentional suppressions documented with `// SAFETY_REASON: ...` comments.
 
-**W4.2 Audit Results**:
-- Removed dead code: `update_peer_score()`, `RouteUsageTracker::window`, `get_admin_auth()`, unused `config` field
-- All intentional suppressions now have `SAFETY_REASON` comments explaining why
-
-`cargo clippy -- -D warnings` passes clean (previously ~14 non-dead-code warnings, now resolved).
+`cargo clippy -- -D warnings` passes clean.
 
 ### Build Configuration
 
@@ -330,17 +323,6 @@ Feature flags trimmed: `tower` removed `"timeout"`, `tower-http` removed `"trace
 
 **Note**: `once_cell` and `bincode` still appear in `Cargo.lock` as transitive dependencies (via tracing-core, gloo-worker, etc.). This is expected.
 
-### Dependency Conflict (2026-04-03) - RESOLVED
-
-**Resolved**: tonic upgraded to 0.14.5 in commit `6cd46c4`. The version conflict is now fixed:
-```toml
-# In Cargo.toml
-tonic = { version = "0.14", features = ["gzip", "transport"] }
-tonic-reflection = "0.14"
-tonic-prost = "0.14"
-prost = "0.14"
-```
-
 ### Error Handling Status
 
 `src/error.rs` has been deleted. `WafError`, `WafResult`, and `WafErrorExt` no longer exist. Every module uses `anyhow`, `Box<dyn Error>`, or custom types.
@@ -362,20 +344,20 @@ All duplicate `current_timestamp()` definitions have been consolidated into `src
 
 | Bug | Location | Fix |
 |-----|----------|-----|
-| CSRF token timing attack | `src/auth/mod.rs`, `src/admin/state.rs` | W1.1: Constant-time comparison with `subtle::ConstantTimeEq::ct_eq()` |
-| DNS crypto RNG fallback zeros | `src/dns/crypto_rng.rs` | W1.2: Functions return `Result<T, CryptoRngError>` instead of zero fallback |
-| Mesh peer auth bypass | `src/mesh/peer_auth.rs` | W1.3: Edge/Origin nodes require Ed25519 signature verification |
-| Overseer IPC unsigned connections | `src/overseer/ipc_client.rs` | W1.4: Use `connect_with_signer()` for HMAC-signed messages |
-| HTTP honeypot standalone mode | `src/worker/unified_server.rs` | W1.5/W1.7: `set_threat_intel()` called in standalone mode |
-| Port honeypot patterns not published | `src/honeypot_port/runner.rs` | W1.6: Use `remote_ip` for attack pattern indicators |
-| Threat indicators overwrite | `src/mesh/threat_intel.rs` | W1.8: Composite keys `{threat_type}:{ip}` |
-| Non-global DHT announce blocked | `src/mesh/dht/record_store_crud.rs` | W1.9: Removed non-global node blocking check |
-| Standalone threat sync missing | `src/mesh/threat_intel.rs` | W1.10: `start_background_tasks()` called in standalone |
-| WAF normalization inconsistency | `src/waf/attack_detection/xss.rs`, `sqli.rs` | W1.11: Use `InputNormalizer` like pattern detectors |
-| Private key permissions too open | `src/mesh/config_identity.rs` | W1.12: Set 0o600 permissions after writing |
-| PoW challenge window too large | `src/challenge/mod.rs` | W1.13: Reduced timeout from 60s to 12s |
-| Nonce cache unbounded | `src/process/ipc_signed.rs` | W1.14: Added MAX_NONCE_CACHE_SIZE = 10000 |
-| JA4 fingerprinting not passed to WAF | `src/tls/server.rs`, `src/waf/mod.rs` | W3.1: JA4 now wired via `check_request_full()` |
+| CSRF token timing attack | `src/auth/mod.rs`, `src/admin/state.rs` | Constant-time comparison with `subtle::ConstantTimeEq::ct_eq()` |
+| DNS crypto RNG fallback zeros | `src/dns/crypto_rng.rs` | Functions return `Result<T, CryptoRngError>` instead of zero fallback |
+| Mesh peer auth bypass | `src/mesh/peer_auth.rs` | Edge/Origin nodes require Ed25519 signature verification |
+| Overseer IPC unsigned connections | `src/overseer/ipc_client.rs` | Use `connect_with_signer()` for HMAC-signed messages |
+| HTTP honeypot standalone mode | `src/worker/unified_server.rs` | `set_threat_intel()` called in standalone mode |
+| Port honeypot patterns not published | `src/honeypot_port/runner.rs` | Use `remote_ip` for attack pattern indicators |
+| Threat indicators overwrite | `src/mesh/threat_intel.rs` | Composite keys `{threat_type}:{ip}` |
+| Non-global DHT announce blocked | `src/mesh/dht/record_store_crud.rs` | Removed non-global node blocking check |
+| Standalone threat sync missing | `src/mesh/threat_intel.rs` | `start_background_tasks()` called in standalone |
+| WAF normalization inconsistency | `src/waf/attack_detection/xss.rs`, `sqli.rs` | Use `InputNormalizer` like pattern detectors |
+| Private key permissions too open | `src/mesh/config_identity.rs` | Set 0o600 permissions after writing |
+| PoW challenge window too large | `src/challenge/mod.rs` | Reduced timeout from 60s to 12s |
+| Nonce cache unbounded | `src/process/ipc_signed.rs` | Added MAX_NONCE_CACHE_SIZE = 10000 |
+| JA4 fingerprinting not passed to WAF | `src/tls/server.rs`, `src/waf/mod.rs` | JA4 now wired via `check_request_full()` |
 | NSEC3 hash length encoding | `src/dns/dnssec_signing.rs:261` | Uses `hash_b32.len()` (32) instead of `hash.len()` (20) per RFC 5155 |
 | SSRF domain substring check | `src/waf/attack_detection/ssrf.rs:243` | Uses proper word boundaries for localhost/.local checks |
 | DNS dynamic update IP validation | `src/dns/update.rs` | Client IP validated against ACLs; require_tsig=true by default |
@@ -558,19 +540,7 @@ Key API:
 
 When modifying zone access code, prefer single-shard operations (`get`, `insert`, `update_zone`) over full-shard iteration (`for_each`, `keys`). The `Arc<ShardedZoneStore>` replaces the former `Arc<RwLock<HashMap<String, Zone>>>` pattern.
 
-## Session Lessons Learned
-
-### Subagent Verification Required
-
-When using subagents to make code changes:
-1. **Always verify the actual code** — subagents may claim a fix was applied but the code still shows the old version
-2. **Run compilation checks** — `cargo clippy --lib -- -D warnings` to catch type errors
-3. **Run tests** — `cargo test --test integration_test` to verify runtime behavior
-4. **Run format check** — `cargo fmt` then `cargo fmt --check` to catch drift
-
-Common failure mode: subagent reports success but code wasn't actually modified, or was modified incorrectly. Always read the actual file content to confirm.
-
-### Moka Cache Migration
+## Moka Cache Migration
 
 When migrating from `LruCache` to `moka::sync::Cache`:
 1. `moka::Cache` is already thread-safe — do NOT wrap in `Mutex` or `RwLock`
@@ -580,14 +550,14 @@ When migrating from `LruCache` to `moka::sync::Cache`:
 5. For byte-size eviction: use `.max_capacity()` + `.weigher()` where the weigher returns `u32`
 6. `max_capacity` expects `u64`, not `usize`
 
-### Role Comparison Best Practices
+## Role Comparison Best Practices
 
 Always use `role.is_global()` instead of `role == MeshNodeRole::Global` because:
 - `MeshNodeRole` is a bitmask (Global=0b010, Edge=0b001, Origin=0b100)
 - Composite roles like `GLOBAL_EDGE` (0b011) have the Global bit set
 - Direct equality only matches pure roles, missing composite role cases
 
-### RRSIG Timestamp Encoding
+## RRSIG Timestamp Encoding
 
 RFC 4034 requires 32-bit (u32) timestamps in RRSIG records. When writing:
 ```rust
@@ -598,9 +568,9 @@ rrsig.extend_from_slice(&(timestamp as u32).to_be_bytes());
 rrsig.extend_from_slice(&timestamp.to_be_bytes());
 ```
 
-### Mesh Upstream Routing Architecture
+## Mesh Upstream Routing Architecture
 
-**Nginx-like Domain Routing Model** (Phase 7b implemented):
+**Nginx-like Domain Routing Model**:
 
 | Component | Format | Example |
 |-----------|--------|---------|
@@ -620,78 +590,36 @@ rrsig.extend_from_slice(&timestamp.to_be_bytes());
 3. Get origins that registered this domain+port
 4. Weighted random selection → route to selected origin
 
-**Config format** (breaking change):
+**Config format**:
 ```toml
 [mesh.local_upstreams]
-# Old: shop-api = { upstream_url = "..." }
-# New (domain-based):
 "http://example.com:80" = {
     upstream_url = "http://127.0.0.1:5001",
-    supported_ports = [80, 443],  # Optional
+    supported_ports = [80, 443],
 }
 ```
 
-**Critical insight**: `make_mesh_upstream_id()` was removed from routing flow. It still exists in `config_mesh.rs` for potential other uses but should NOT be used for upstream routing.
-
 **Fixed**: Origin local backend selection is now implemented. Origin nodes accept incoming QUIC streams and route HTTP requests to local backends based on Host header. See `src/mesh/transport.rs:mesh_accept_loop` and `src/mesh/transport_peer.rs:handle_http_proxy_stream`.
 
-### Implementation Plan
+## Implementation Plan
 
 The consolidated implementation plan is located at `plans/plan.md`. This plan organizes all improvements into 5 waves for parallelization:
 
-| Wave | Focus | Item Count | Status |
-|------|-------|------------|--------|
-| 1 | Critical Security (WAF, Auth, Mesh) | 14 | ✅ Completed |
-| 2 | High Security (TLS, DNS, Mesh) | 8 | ⚠️ 6/8 Complete (W2.5, W2.7 partial) |
-| 3 | Core Functionality (Web Stack, Caching, Honeypot) | 10 | ⚠️ 6/10 Done |
-| 4 | Code Quality (Performance, Quality) | 8 | ✅ 7/8 Complete (W4.1 deferred) |
-| 5 | Polish & Optimization | 7 | 🔄 Pending |
+| Wave | Focus | Items | Parallelizable |
+|------|-------|-------|-----------------|
+| 1 | Critical Security (WAF, Auth, Mesh) | ~10 | Yes - subagents can work in parallel |
+| 2 | High Security (TLS, DNS, Mesh) | ~15 | Yes |
+| 3 | Core Functionality (Web Stack, Caching, Honeypot) | ~12 | Yes |
+| 4 | Performance & Code Quality | ~50 | Yes - by category |
+| 5 | Polish & Optimization | ~15 | Yes |
 
-### Wave 3 Completed Items
-
-| Item | Description |
-|------|-------------|
-| W3.1 | JA4 fingerprint wired to WAF bot detection |
-| W3.5 | Edge node cache preference propagation (SiteConfigSync callback) |
-| W3.8 | YARA version comparison uses timestamp (not lexicographic) |
-| W3.9 | YARA DHT sync signature verification (Ed25519) |
-| W3.10 | Threat Intel DHT re-announcement (300s interval) |
-| W3.7 (partial) | SiteContentVersion DHT key type added |
-
-### Wave 3 Deferred Items
-
-| Item | Reason |
-|------|--------|
-| W3.2 | Request body streaming requires backend interface rewrites |
-| W3.3 | Response streaming requires transform pipeline overhaul |
-| W3.4 | ConnectionMeta trait migration requires significant refactoring |
-| W3.6 | Edge HTTP response cache requires MeshProxy integration |
-
-### Wave 2 Completed Items (2026-04-13)
-
-| Item | Description |
-|------|-------------|
-| W2.1 | bcrypt cost minimum raised to 12 |
-| W2.2 | Multi-genesis key support (`authorized_genesis_keys` field) |
-| W2.3 | Distributed global node revocation (DHT + gossip) |
-| W2.4 | DNS server capability enforcement (`is_global_node` check) |
-| W2.6 | Edge node PoW validation (`validate_edge_node_pow()`) |
-| W2.8 | Capability attestation system (`CapabilityAttestation` DHT key) |
-
-### Wave 2 Partial Items
-
-| Item | Issue |
-|------|-------|
-| W2.5 | HTTP-01/DNS-01 challenges are stubbed/simulated |
-| W2.7 | Only TierKey encrypted, other `requires_global_node()` records plaintext |
-
-**Subagent Execution Model**: Items within the same wave can be executed in parallel by separate subagents. Dependencies between waves are documented in `plans/plan.md` dependencies graph.
+**Subagent Execution Model**: Items within the same wave can be executed in parallel by separate subagents. Dependencies between waves are documented in `plans/plan.md`.
 
 When reviewing the plan against the codebase, always verify claims directly. Plans may reference items already fixed, use outdated line numbers, or describe bugs incorrectly. Run `grep`/search for the specific patterns described to confirm they still exist before implementing fixes.
 
 ## Admin Panel Architecture Notes
 
-### Config Propagation (Fixed)
+### Config Propagation
 
 Config changes via the admin API now propagate to workers. `MasterConfigReload` handlers implement real reload in `src/worker/mod.rs` and `src/worker/unified_server.rs`. `PUT /config/main` updates in-memory config and broadcasts via `ProcessManager::broadcast_config_reload()`. `POST /config/reload` also broadcasts. Section-specific handlers (HTTP, TLS, security, etc.) call broadcast after persisting.
 
@@ -707,7 +635,7 @@ These admin UI files were previously orphaned but are now reachable:
 Still orphaned (not declared as module):
 - `admin-ui/src/config_docs.rs` (538 lines — field documentation)
 
-### Genesis Key Handling (Phase 2.2, 2.7)
+### Genesis Key Handling
 
 The Admin UI System Status page now includes mesh status and genesis key management:
 
@@ -718,67 +646,17 @@ The Admin UI System Status page now includes mesh status and genesis key managem
   - `signing_key_derived`, `signing_public_key`
 - `POST /mesh/derive-signing-key` - Accepts `DeriveSigningKeyRequest { genesis_key_base64 }`, derives signing key
 
-**Frontend Types** (`admin-ui/src/types/mod.rs`):
-- `MeshAdminStatus` - matches backend response
-- `DeriveSigningKeyRequest` / `DeriveSigningKeyResponse`
-
 **Frontend API** (`admin-ui/src/services/api.rs`):
 - `get_mesh_status()` - fetches mesh status
 - `derive_signing_key(genesis_key_base64)` - derives signing key
 
-**UI Flow**: System Status page shows mesh section with genesis status. Edge nodes without signing key see "Provide Genesis Key" button that opens a modal for entering the genesis key.
+**Multi-Genesis Key Support**: The system supports multiple authorized genesis keys for key rotation and disaster recovery. Empty `authorized_genesis_keys` means any key is allowed (backward compatible). Non-empty list requires the genesis key's public key to be in the list.
 
-### Multi-Genesis Key Support (W2.2)
+### Capability Attestation System
 
-The system supports multiple authorized genesis keys for key rotation and disaster recovery:
-
-**Config field** (`src/mesh/config.rs:GenesisKeyConfig`):
-```rust
-pub struct GenesisKeyConfig {
-    pub authorized_genesis_keys: Vec<String>,  // Multiple authorized public keys
-    pub previous_genesis_key_base64: Option<String>,  // For rotation
-    pub rotation_sequence: u32,
-    // ... other fields
-}
-```
-
-**Authorization methods** (`src/mesh/config_identity.rs`):
-- `is_genesis_key_authorized()` - Check if public key is in authorized list
-- `authorize_genesis_key()` - Add a key to authorized list
-- `revoke_genesis_key()` - Remove a key from authorized list
-
-**Behavior**:
-- Empty `authorized_genesis_keys` means any key is allowed (backward compatible)
-- Non-empty list requires the genesis key's public key to be in the list
-- Key rotation uses `GenesisKeyTransition` DHT record to propagate new keys
-
-### Capability Attestation System (W2.8)
-
-Global nodes can attest to other nodes' capabilities after verification:
-
-**DHT Key Type** (`src/mesh/dht/capability_attestation.rs`):
-```rust
-pub struct CapabilityAttestation {
-    pub node_id: String,
-    pub capability: String,  // dns_server, waf, edge_proxy, origin
-    pub attested_by_global_node: String,
-    pub signer_public_key: String,
-    pub signature: Vec<u8>,
-    pub timestamp: u64,
-}
-```
-
-**Verification functions** (`src/mesh/transport.rs`):
-- `attest_capability(node_id, capability)` - Global node verifies and signs attestation
-- `verify_node_capability(peer_state, capability)` - Check if node has claimed capability
-- `get_capability_attestation(node_id, capability)` - Retrieve from DHT
-- `verify_capability_attestation(attestation)` - Verify signature against known global keys
-
-**Capability types**:
-- `dns_server` - Node runs a DNS server
-- `waf` - Node has WAF enabled
-- `edge_proxy` - Node can proxy requests
-- `origin` - Node has registered upstreams
+Global nodes can attest to other nodes' capabilities after verification. DHT key type `CapabilityAttestation` stores:
+- `node_id`, `capability` (dns_server, waf, edge_proxy, origin)
+- `attested_by_global_node`, `signer_public_key`, `signature`, `timestamp`
 
 ## DNS & DNSSEC Architecture
 
@@ -794,18 +672,11 @@ The following providers do NOT perform DNSSEC validation (they are stub/forwardi
 
 ```toml
 [dns.recursive]
-upstream_provider = "Recursive"  # Required for DNSSEC
-dnssec_validation = true       # Enable validation
-trust_anchors.enabled = true   # Enable RFC 5011
-trust_anchor_path = "trusted-key.key"  # Root DNSKEY file
+upstream_provider = "Recursive"
+dnssec_validation = true
+trust_anchors.enabled = true
+trust_anchor_path = "trusted-key.key"
 ```
-
-**Implementation details**:
-- `HickoryRecursor` performs full DNSSEC chain-of-trust validation
-- `TrustAnchorManager` handles RFC 5011 key rotation
-- `is_dnssec_validated` flag propagates to AD bit in responses
-
-**Skill file**: `skills/dns_dnssec.md` contains detailed architecture documentation.
 
 ## YARA & ThreatIntel Rule Distribution
 
@@ -816,9 +687,6 @@ trust_anchor_path = "trusted-key.key"  # Root DNSKEY file
 ```
 GLOBAL NODE updates rules
          │
-         ▼
-   apply_rules() via Local/Feed/AdminAPI
-         │
          ├──▶ publish_rules_to_dht() ──▶ store rule content + manifest
          │
          └──▶ broadcast_pending_records() ──▶ DhtRecordAnnounce to k closest peers
@@ -827,7 +695,7 @@ GLOBAL NODE updates rules
               PEERS receive and store in local DHT cache
                            │
                            ▼
-   NON-GLOBAL: sync_from_dht() iterates local cache, applies newest version
+    NON-GLOBAL: sync_from_dht() iterates local cache, applies newest version
 ```
 
 ### Key Characteristics
@@ -837,8 +705,7 @@ GLOBAL NODE updates rules
 | DHT announce | One-hop broadcast to k closest peers (NOT recursive Kademlia) |
 | Who announces | Global nodes only |
 | Who receives | All node types (global, edge, origin) |
-| Re-announce | YARA uses `re_announce_interval_secs`; ThreatIntel uses `re_announce_interval_secs` (W3.10) |
-| Transport | Both DHT and mesh use same QUIC transport |
+| Re-announce | YARA uses `re_announce_interval_secs`; ThreatIntel uses `re_announce_interval_secs` |
 
 ### YARA DHT Keys
 
@@ -859,94 +726,21 @@ During DHT sync, signatures are verified before accepting rules from peers. Reco
 
 | Key Pattern | Purpose |
 |-------------|---------|
-| `threat_indicator:{indicator_value}` | Individual threat indicator |
-| `threat_indicator:{ip}:{threat_type}` | Per-type indicator (composite key, W1.8) |
+| `threat_indicator:{ip}` | Individual threat indicator |
+| `threat_indicator:{ip}:{threat_type}` | Per-type indicator (composite key) |
 
 ### ThreatIntel Re-announcement
 
-Global nodes periodically re-announce local ThreatIntel indicators via `re_announce_local_indicators()` (W3.10). The interval is controlled by `re_announce_interval_secs` (default: 300s). Only non-expired local-origin indicators are re-announced. Respects `hub_only_mode` (non-global nodes do not re-announce). | `threat_indicator:{ip}` | Individual threat indicator |
+Global nodes periodically re-announce local ThreatIntel indicators via `re_announce_local_indicators()`. The interval is controlled by `re_announce_interval_secs` (default: 300s). Only non-expired local-origin indicators are re-announced. Respects `hub_only_mode` (non-global nodes do not re-announce).
 
-### Implementation Files
-
-| File | Purpose |
-|------|---------|
-| `src/mesh/yara_rules.rs` | `publish_rules_to_dht()`, `sync_from_dht()` |
-| `src/mesh/threat_intel.rs` | `sync_from_dht()` |
-| `src/mesh/dht/keys.rs` | `YaraRuleContent`, `YaraRulesManifest`, `ThreatIndicator` key types |
-
-### Historical Context
-
-- **Before**: YARA used mesh broadcast (`YaraRuleAnnounce`) + sync request/response. ThreatIntel used mesh broadcast sync.
-- **After**: Both use DHT as primary. Global nodes publish to DHT, non-global nodes query local DHT cache.
-
-## Skills and Knowledge Base
-
-For complex subsystems, specialized skill files provide detailed architecture guidance:
-
-### Mesh & DHT Architecture
-
-**Location**: `skills/malu_mesh.md` (in-repository copy)
-
-This skill file documents the mesh networking and DHT system, which is complex and has many interdependent components:
-
-- **Node Roles**: Global (CA/signer), Edge (proxy), Origin (host sites)
-- **Upstream ID Format**: `http://host:port` (domain-based keys)
-- **DHT Key Types**: `verified_upstream:`, `upstream:`, `node_capability:`, etc.
-- **Routing Flow**: Edge → extract upstream_id → DHT query → weighted random → origin
-- **Wave Status**: See `plans/plan.md` for all improvement status
-
-**Key files referenced**:
-- `src/mesh/proxy.rs` - Route requests, extract upstream_id
-- `src/mesh/transport.rs` - Announce upstreams, proxy HTTP
-- `src/mesh/topology.rs` - Local upstream storage, DHT queries
-- `src/mesh/dht/keys.rs` - DHT key type definitions
-- `src/mesh/transport_peer.rs` - Peer message handling
-
-### Using the Skill File
-
-When working on mesh or DHT components, read `skills/malu_mesh.md` for context. The skill file contains:
-
-1. **Architecture diagrams** (via text descriptions)
-2. **Key derivation chains** (genesis → signing_key → tier_key_master)
-3. **Phase status tracking** - what's completed vs deferred
-4. **Common issues** - known gaps and debug patterns
-5. **File reference table** - purpose of each mesh-related file
-
-The skill file was originally maintained at `~/.config/opencode/skills/malu_mesh/SKILL.md` but a copy is kept in-repository for reliability.
-
-## Plan Consolidation Notes (2026-04-13)
-
-The implementation plans (plan.md, plan2.md through plan11.md) were consolidated into a single `plans/plan.md` file. Key observations:
-
-### Cross-Plan Item Dependencies
-
-Several items appeared in multiple plans with different IDs:
-- **JA4 wiring**: O.1 (plan.md), C.1 (plan2.md), W3.1 (consolidated)
-- **Request body chunking**: O.2 (plan.md), S.2 (plan2.md), W3.2 (consolidated)
-- **Response streaming**: O.3 (plan.md), S.1 (plan2.md), W3.3 (consolidated)
-- **Mesh peer auth bypass**: M3.1 (plan3.md), S.3 (plan9.md), W1.3 (consolidated)
-
-When implementing, search all plan references to avoid duplicating work.
-
-### Threat Intelligence Key Patterns
-
-| Key Pattern | Purpose | Created By |
-|-------------|---------|------------|
-| `threat_indicator:{ip}` | Individual threat indicator | Any node |
-| `threat_indicator:{ip}:{threat_type}` | Per-type indicator | (proposed, W1.8) |
-| `yara_rule:{content_hash}` | Rule content | Global nodes |
-| `yara_rules_manifest:{node_id}` | Ruleset metadata | Global nodes |
-
-### Honeypot Architecture Summary
+## Honeypot Architecture Summary
 
 | Subsystem | Location | Publishing |
 |-----------|----------|------------|
 | HTTP Honeypot | `src/challenge/honeypot.rs` | Via `block_ip_with_threat_intel()` |
 | Port Honeypot | `src/honeypot_port/` | Via `start_mesh_threat_publishing()` |
 
-Both should publish to ThreatIntel, but standalone mode has issues (see W1.5-W1.7 in plan.md).
-
-### Web App Stack Backend Types
+## Web App Stack Backend Types
 
 | Backend | Config | Implementation |
 |---------|--------|----------------|
@@ -958,25 +752,25 @@ Both should publish to ThreatIntel, but standalone mode has issues (see W1.5-W1.
 | HTTP Upstream | `[site.upstream]` | `src/proxy.rs` |
 | Mesh Origin | DHT + `[site.upstream]` | `src/mesh/topology.rs` |
 
-### Static File Theme Inheritance
+## Skills and Knowledge Base
 
-```
-Global Theme (src/theme/config.rs:ThemeDefaults)
-    ↓
-Site Error Pages Theme (src/config/site/error_pages.rs:SiteThemeConfig)
-    ↓
-Site Static Theme (NEW: src/config/site/static_theme.rs:SiteStaticThemeConfig) -- pending W.1
-    ↓
-DirectoryListingTemplate (src/theme/template.rs:461)
-```
+For complex subsystems, specialized skill files provide detailed architecture guidance:
 
-### Code Quality Issues to Address
+### Mesh & DHT Architecture
 
-| ID | Issue | Severity | Location | Status |
-|----|-------|----------|----------|--------|
-| Q.3 | handle_request() 1363 lines | HIGH | `src/http/server.rs:437-1800` | ⚠️ Deferred |
-| Q.4 | ~93 dead_code suppressions | MEDIUM | ~50 files | ✅ Fixed |
-| Q.5 | ~24 unsafe blocks missing SAFETY | MEDIUM | Various | ✅ Fixed |
-| Q.6 | bcrypt cost not configurable | MEDIUM | `src/config/admin.rs:34-35` | ✅ Already done |
-| Q.7 | TLS 1.3 not default | MEDIUM | `src/tls/config.rs:46` | ✅ Already done |
-| Q.8 | Deprecated algorithm check incomplete | LOW | `src/dns/trust_anchor.rs:412` | ✅ Fixed |
+**Location**: `skills/malu_mesh.md` (in-repository copy)
+
+This skill file documents the mesh networking and DHT system, which is complex and has many interdependent components. The skill file contains:
+1. **Architecture diagrams** (via text descriptions)
+2. **Key derivation chains** (genesis → signing_key → tier_key_master)
+3. **Phase status tracking** - what's completed vs deferred
+4. **Common issues** - known gaps and debug patterns
+5. **File reference table** - purpose of each mesh-related file
+
+The skill file was originally maintained at `~/.config/opencode/skills/malu_mesh/SKILL.md` but a copy is kept in-repository for reliability.
+
+### DNS & DNSSEC
+
+**Location**: `skills/dns_dnssec.md`
+
+Detailed architecture documentation for the DNS and DNSSEC subsystems.

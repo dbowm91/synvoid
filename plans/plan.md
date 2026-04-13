@@ -4,200 +4,632 @@ Last updated: 2026-04-13
 
 ## Overview
 
-This document tracks remaining work. Completed items have been pruned.
+This document tracks all remaining implementation work. Completed items have been pruned.
 Reference material for completed items is in `plans/COMPLETED.md`.
+
+Items are organized into **Waves** for parallelization. Items within a wave can be executed
+in parallel by separate subagents. Dependencies between waves are documented.
 
 ---
 
 ## Quick Reference
 
-| ID | Focus | Status |
-|----|-------|--------|
-| W2.5 | Origin Upstream Ownership Verification | ⚠️ Partial (stubbed) |
-| W2.7 | Tier Key Encryption Scope Extension | ⚠️ Partial (TierKey only) |
-| W3.2 | Stream Large Request Bodies | ❌ Open |
-| W3.3 | Response Streaming | ❌ Open (HTTPS streaming, HTTP buffered) |
-| W3.4 | ConnectionMeta Trait Migration | ⏸️ Deferred |
-| W3.6 | Edge Node HTTP Response Cache | ❌ Not Implemented |
-| W3.7 | Image Poison Cache TTL/Invalidation | ⚠️ Partial (DHT key added) |
-| W4.1 | handle_request() Refactor | ⏸️ Deferred (per AGENTS.md guidance) |
+| ID | Focus | Severity | Status |
+|----|-------|----------|--------|
+| **Wave 1: Critical Security (WAF, Auth, Mesh)** | | | |
+| S1.1 | Threat Intel Signature Bypass | 🔴 CRITICAL | ❌ Open |
+| S1.2 | Tier Key Sent Unencrypted | 🔴 CRITICAL | ❌ Open |
+| M1.1 | Origin Node Self-Attestation Bypass | 🔴 CRITICAL | ❌ Open |
+| M1.2 | Edge Node PoW Key Unbinding | 🔴 HIGH | ❌ Open |
+| W1.5 | HTTP Honeypot Bypass (WAF not called) | 🔴 HIGH | ❌ Open |
+| W2.5 | Origin Upstream Ownership Verification | ⚠️ HIGH | ⚠️ Partial |
+| W2.7 | Tier Key Encryption Scope Extension | ⚠️ MEDIUM | ⚠️ Partial |
+| H1 | DHT Key Collision (W1.8 incomplete) | 🔴 HIGH | ❌ Open |
+| H2 | sync_from_dht Key Mismatch | 🔴 HIGH | ❌ Open |
+| **Wave 2: High Security (TLS, DNS, Mesh)** | | | |
+| S2.6 | SSRF Allowlist Bypass via Substring | 🟡 MEDIUM | ❌ Open |
+| S2.7 | Open Redirect Bypass via Encoding | 🟡 MEDIUM | ❌ Open |
+| S2.8 | Transfer-Encoding Parsing Bypass | 🟡 MEDIUM | ❌ Open |
+| S2.9 | JWT Algorithm Confusion | 🟡 MEDIUM | ❌ Open |
+| S2.10 | Unicode Normalization Missing | 🟡 MEDIUM | ❌ Open |
+| M1.3 | Revocation Bypass for Edge/Origin | 🟡 MEDIUM | ❌ Open |
+| M2.1 | DHT Churn Handling Incomplete | 🔴 HIGH | ❌ Open |
+| M2.2 | Bucket Refresh Never Triggered | 🟡 MEDIUM | ❌ Open |
+| M2.3 | find_closest() Premature Return | 🟡 MEDIUM | ❌ Open |
+| M2.4 | Edge Resync Single-Homed | 🟡 MEDIUM | ❌ Open |
+| M3.1 | Unused Access Control Methods | 🟡 MEDIUM | ❌ Open |
+| M3.2 | Incomplete Encryption for Privileged | 🟡 MEDIUM | ❌ Open |
+| **Wave 3: Core Functionality (Web Stack, Caching, Honeypot)** | | | |
+| W3.2 | Stream Large Request Bodies | 🔴 HIGH | ❌ Open |
+| W3.3 | Response Streaming | 🔴 HIGH | ❌ Open |
+| W3.6 | Edge Node HTTP Response Cache | 🔴 HIGH | ❌ Open |
+| 1.1 | Wire FastCgiPool into Request Path | 🔴 HIGH | ❌ Open |
+| 1.2 | Fix TLS Server Granian Forwarding | 🔴 HIGH | ❌ Open |
+| 1.3 | PHP Security Settings Enforcement | 🔴 HIGH | ❌ Open |
+| 2.1 | Add SiteStaticThemeConfig | 🟡 MEDIUM | ❌ Open |
+| 2.2 | Template Loading for Directory Listing | 🟡 MEDIUM | ❌ Open |
+| 2.3 | Wire Theme Config in StaticFileHandler | 🟡 MEDIUM | ❌ Open |
+| T1 | Threat Intel Signature Verification Mismatch | 🔴 CRITICAL | ❌ Open |
+| T2 | YARA Manifest Signature Never Verified | 🔴 HIGH | ❌ Open |
+| **Wave 4: Performance & Code Quality** | | | |
+| P1.1 | SSRF Detection Multiple to_lowercase() | 🔴 HIGH | ❌ Open |
+| P1.2 | Rate Limiter O(n) Cleanup | 🔴 HIGH | ❌ Open |
+| P1.3 | Response Body WAF Scanning | 🔴 HIGH | ❌ Open |
+| P1.4 | Mesh Route Query Cold-Cache Latency | 🔴 HIGH | ❌ Open |
+| P2.1 | WAF Input Normalizer Allocations | 🔴 HIGH | ❌ Open |
+| P2.2 | HTTP Server Clone/To-String Calls | 🔴 HIGH | ❌ Open |
+| P2.3 | SuspiciousWordTracker Unconditional Write Lock | 🔴 HIGH | ❌ Open |
+| P2.4 | EndpointBlocker O(n) Pattern Matching | 🔴 HIGH | ❌ Open |
+| P2.5 | TLS Client Cache Unbounded Growth | 🔴 HIGH | ❌ Open |
+| P.1 | WAF Double Normalization | 🔴 HIGH | ❌ Open |
+| P.2 | WAF Input Normalization Allocations | 🔴 HIGH | ❌ Open |
+| P.3 | URL Decoding Repeated Allocations | 🔴 HIGH | ❌ Open |
+| P.4 | SSRF Detection Repeated URL Parsing | 🔴 HIGH | ❌ Open |
+| S2.1 | Connection Limit Global Per-Worker | 🟡 MEDIUM | ❌ Open |
+| S2.2 | Stale Cache TTL May Cause Unnecessary Refresh | 🟡 MEDIUM | ❌ Open |
+| S2.3 | TCP Worker Pool Size Default | 🟡 MEDIUM | ❌ Open |
+| S2.4 | Verified Upstream Cache TTL Only 30s | 🟡 MEDIUM | ❌ Open |
+| S2.5 | Upstream Client Cache Key Sprawl | 🟡 MEDIUM | ❌ Open |
+| M1.1 | Serial HTTP Proxy Streams | 🔴 HIGH | ❌ Open |
+| M1.2 | No HTTP/2 Multiplexing in QUIC | 🟡 MEDIUM | ❌ Open |
+| M1.3 | Route Usage Tracker Unbounded | 🟡 MEDIUM | ❌ Open |
+| Q1.1 | Heartbeat N+1 Lock Contention | 🔴 HIGH | ❌ Open |
+| Q1.2 | IPC Error Information Loss | 🔴 HIGH | ❌ Open |
+| Q1.3 | HTTP/TLS Test Coverage Gaps | 🔴 HIGH | ❌ Open |
+| Q2.1 | Silent Send Failures in Mesh | 🟡 MEDIUM | ❌ Open |
+| Q2.2 | Multiple lowercase() in Detectors | 🟡 MEDIUM | ❌ Open |
+| Q2.3 | Unbounded CSRF Token Storage | 🟡 MEDIUM | ❌ Open |
+| Q2.4 | MeshMessage Enum Size | 🟡 MEDIUM | ❌ Open |
+| P3.1 | DHT pending_announces O(n) Remove | 🟡 MEDIUM | ❌ Open |
+| P3.2 | SSRF format! Allocation in Loop | 🟡 MEDIUM | ❌ Open |
+| P3.3 | Response Header Filtering Allocation | 🟡 MEDIUM | ❌ Open |
+| P3.4 | Proxy Cache Redundant Lock in SWR | 🟡 MEDIUM | ❌ Open |
+| P3.5 | RingBuffer is_empty() Not Short-Circuiting | 🟡 MEDIUM | ❌ Open |
+| P.5 | IPC Double-Poll Delay | 🟡 MEDIUM | ❌ Open |
+| P.6 | Cache Invalidation O(n) Full Scan | 🟡 MEDIUM | ❌ Open |
+| P.7 | Rate Limiter LRU Write Lock Contention | 🟡 MEDIUM | ❌ Open |
+| P.8 | local_upstreams Single Lock | 🟡 MEDIUM | ❌ Open |
+| P.9 | verified_upstream_cache No Failed Lookup Caching | 🟡 MEDIUM | ❌ Open |
+| P.10 | Drain Polling Fixed 100ms Interval | 🟡 MEDIUM | ❌ Open |
+| P.11 | Mesh Broadcast Unbounded Spawns | 🟡 MEDIUM | ❌ Open |
+| P.12 | find_closest O(n*m) Algorithm | 🟢 LOW | ❌ Open |
+| P.13 | DNS Fingerprint Linear Scan | 🟢 LOW | ❌ Open |
+| P.14 | KBucket Linear Search | 🟢 LOW | ❌ Open |
+| P.15 | Path Sanitization Vec Allocations | 🟢 LOW | ❌ Open |
+| P.16 | HTTP Header Cloning Per-Request | 🟢 LOW | ❌ Open |
+| Q4.1 | Fix Test Result Warnings | 🟢 LOW | ❌ Open |
+| Q4.2 | proxy.rs Deep Nesting | 🟢 LOW | ❌ Open |
+| Q4.3 | Ed25519 Key Array Zeroization | 🟢 LOW | ❌ Open |
+| Q4.4 | MockIpcStream Dead Code | 🟢 LOW | ❌ Open |
+| **Wave 5: Polish & Optimization** | | | |
+| Q1.1 | NSEC3 Hash Length Encoding Bug | 🔴 CRITICAL | ❌ Open |
+| Q1.2 | Unsafe Blocks Missing SAFETY Comments | 🔴 HIGH | ❌ Open |
+| Q2.1 | handle_request() Maintainability | 🟡 MEDIUM | ⏸️ Deferred |
+| Q2.2 | Dead Code Audit and Cleanup | 🟡 MEDIUM | ❌ Open |
+| Q3.1 | Missing Test Coverage for Critical Paths | 🟡 MEDIUM | ❌ Open |
+| Q3.2 | Metrics and Observability Gaps | 🟡 MEDIUM | ❌ Open |
+| Q4.1 | Configuration Documentation | 🟢 LOW | ❌ Open |
+| Q4.2 | TODO Comments Cleanup | 🟢 LOW | ❌ Open |
+| F.1 | ShardedZoneStore is_empty() Optimization | 🟡 MEDIUM | ❌ Open |
+| F.2 | DHT Metrics and Observability | 🟡 MEDIUM | ❌ Open |
+| F.3 | Configuration Documentation for DhtConfig | 🟢 LOW | ❌ Open |
+| F.4 | CSS Honeypot Enhancement - Path Tracking | 🟢 LOW | ❌ Open |
+| F.5 | Metrics for Threat Intel DHT Operations | 🟢 LOW | ❌ Open |
+| F.8 | Reputation System Bug - Hardcoded 50 | 🟢 LOW | ❌ Open |
+| F.9 | Global Node Liveness and Quorum Monitoring | 🟢 LOW | ❌ Open |
+| F.10 | IPv6 Zone ID SSRF Bypass | 🟢 LOW | ❌ Open |
+| F.11 | Homoglyph Normalization Gaps | 🟢 LOW | ❌ Open |
+| F.12 | TODO Comments - File Manager | 🟢 LOW | ❌ Open |
+| F.13 | ConnectionMeta Trait - Remaining Migration | 🟡 MEDIUM | ❌ Open |
 
 ---
 
-## Wave 2: High Security - TLS, DNS, Mesh
+## Wave 1: Critical Security (WAF, Auth, Mesh)
+
+### 🔴 S1.1: Threat Intel Signature Bypass - CRITICAL
+
+**Location**: `src/mesh/threat_intel.rs:651-658` (signing) vs `src/mesh/threat_intel.rs:709-716` (verification)
+
+**Issue**: Content string format for signing differs from verification format:
+- Signing: `"{}:{}:{}:{}:{}"` with `as u8` for threat_type/severity
+- Verification: `"{},{},{:?},{},{}"` with `as u32` and `{:?}` Debug format
+
+All threat intelligence signatures fail verification, allowing fake indicators.
+
+**Fix**: Make verification format match signing format exactly.
+
+---
+
+### 🔴 S1.2: Tier Key Sent Unencrypted - CRITICAL
+
+**Location**: `src/mesh/transport_org.rs:249-254`
+
+**Issue**: When no ML-KEM session exists, tier keys transmitted in plaintext.
+
+**Fix**: Remove plaintext fallback; require ML-KEM session before sending tier key.
+
+---
+
+### 🔴 M1.1: Origin Node Self-Attestation Bypass - CRITICAL
+
+**Location**: `src/mesh/discovery.rs:426-451`, `src/mesh/peer_auth.rs:238-269`
+
+**Issue**: Origin nodes authenticate using their own credentials as "global node attestation".
+Signature verified against origin's own public key = self-signing bypass.
+
+**Fix**: Stop self-attestation; implement proper origin attestation flow via global node.
+
+---
+
+### 🔴 M1.2: Edge Node PoW Key Unbinding - HIGH
+
+**Location**: `src/mesh/peer_auth.rs:141-206`
+
+**Issue**: `peer_public_key` and `pow_public_key` are separate and never bound together.
+Attacker can compute PoW with key A, present key B as identity, bypass PoW requirement.
+
+**Fix**: Require PoW computed on same key used for Ed25519 identity, or derive Ed25519 from PoW key via HKDF.
+
+---
+
+### 🔴 W1.5: HTTP Honeypot Bypass - HIGH
+
+**Location**: `src/http/server.rs:870-894`
+
+**Issue**: Direct `/_waf_hp_` requests return 408 but don't trigger WAF blocking.
+
+**Fix**: Call `waf.handle_honeypot_hit(client_ip)` or make `block_ip_with_threat_intel()` public.
+
+---
 
 ### ⚠️ W2.5: Origin Upstream Ownership Verification - PARTIAL
 
-**Severity**: HIGH
-
 **Location**: `src/mesh/transport_peer.rs:1706-1790`, `src/mesh/verification.rs`
 
-**Issue**: `VerifiedUpstream` requires global node signature but no mechanism verifies origin actually serves claimed URL.
+**Issue**: HTTP-01 and DNS-01 challenge handlers are stubbed/simulated.
 
-**Status**: HTTP-01 and DNS-01 challenge handlers are **stubbed/simulated**:
-- HTTP-01 handler echoes back `key_authorization` without serving it at `/.well-known/malu-challenge/{token}`
-- DNS-01 handler logs TXT values but doesn't provision them
-- `VerificationTaskManager` (tracking/penalties) is fully implemented
-
-**Remaining Work**:
-1. Implement actual HTTP-01 challenge serving
-2. Implement actual DNS-01 challenge provisioning
-3. Wire verification loop to periodic re-verification
-4. Revoke on failure
+**Remaining**: Implement actual HTTP-01 challenge serving and DNS-01 provisioning.
 
 ---
 
 ### ⚠️ W2.7: Tier Key Encryption Scope Extension - PARTIAL
 
-**Severity**: MEDIUM
+**Location**: `src/mesh/tier_key_encryption.rs`
 
-**Location**: `src/mesh/tier_key_encryption.rs`, `src/mesh/transport_org.rs`
+**Issue**: Only `TierKey` records encrypted; Organization, MemberCertificate, GlobalNodeList, etc. stored plaintext.
 
-**Issue**: `TierKeyEncryption` only encrypts `tier_key:` records, but other `requires_global_node()` records are stored plaintext.
-
-**Status**: Only `TierKey` records are encrypted. Other `requires_global_node()` records are **stored plaintext**:
-- Organization
-- MemberCertificate
-- GlobalNodeList
-- OrgNameReservation
-- DnsZone
-- DnsDomainRegistration
-- AnycastNode
-
-**Remaining Work**:
-1. Encrypt all `requires_global_node()` record types
-2. Derive per-record-type encryption keys via HKDF
-3. Store with `encrypted:` prefix, old records continue working
+**Remaining**: Encrypt all `requires_global_node()` record types with HKDF-derived keys.
 
 ---
 
-## Wave 3: Core Functionality
+### 🔴 H1: DHT Key Collision - HIGH
 
-### ❌ W3.2: Stream Large Request Bodies - OPEN
+**Location**: `src/mesh/threat_intel.rs:647-648`
 
-**Severity**: HIGH
+**Issue**: W1.8 supposed to implement `threat_indicator:{ip}:{threat_type}` but uses flat `threat_indicator:{ip}`.
+Same IP with different threat types overwrite each other.
+
+**Fix**: Use composite keys `threat_indicator:{ip}:{threat_type}` in DHT storage.
+
+---
+
+### 🔴 H2: sync_from_dht Key Mismatch - HIGH
+
+**Location**: `src/mesh/threat_intel.rs:1120-1168`
+
+**Issue**: `sync_from_dht()` stores with just IP, but retain logic compares composite keys → never matches, all entries incorrectly retained.
+
+**Fix**: Store with composite key format; fix retain logic to use consistent keys.
+
+---
+
+## Wave 2: High Security (TLS, DNS, Mesh)
+
+### S2.6: SSRF Allowlist Bypass via Substring - MEDIUM
+
+**Location**: `src/waf/attack_detection/ssrf.rs:267-270, 322-336`
+
+**Issue**: `evillocalhost.com` contains `.localhost`; `evil.comalloweddomain.com` bypasses allowlist.
+
+**Fix**: Use word boundary checks; verify host is not IP when allowlist specifies domain-only.
+
+---
+
+### S2.7: Open Redirect Bypass via Encoding - MEDIUM
+
+**Location**: `src/waf/attack_detection/open_redirect.rs:114-142`
+
+**Issue**: Doesn't check for newline-encoded schemes (`java\nscript:`) or homograph attacks.
+
+**Fix**: Normalize input before checking; add newline character checks; validate scheme is proper ASCII.
+
+---
+
+### S2.8: Transfer-Encoding Parsing Bypass - MEDIUM
+
+**Location**: `src/waf/attack_detection/request_smuggling.rs:26-49`
+
+**Issue**: `te_lower.contains("chunked")` doesn't validate chunked is complete.
+
+**Fix**: Parse TE header properly as comma-separated list; match exact `chunked` value.
+
+---
+
+### S2.9: JWT Algorithm Confusion - MEDIUM
+
+**Location**: `src/waf/attack_detection/jwt.rs:123-139`
+
+**Issue**: Uses `contains()` not proper JSON parsing for `alg` field.
+
+**Fix**: Parse JWT header as proper JSON; extract and validate `alg` against expected list.
+
+---
+
+### S2.10: Unicode Normalization Missing - MEDIUM
+
+**Location**: `src/proxy.rs:138-232`
+
+**Issue**: No Unicode normalization (NFKC/NFKD); homoglyph attacks possible (Cyrillic `а` vs ASCII `a`).
+
+**Fix**: Add `unicode-normalization` crate; apply NFKC normalization to path.
+
+---
+
+### M1.3: Revocation Bypass for Edge/Origin - MEDIUM
+
+**Location**: `src/mesh/peer_auth.rs:281-288`
+
+**Issue**: Revocation check only in `validate_global_node()`, not in `validate_edge_node()` or `validate_origin_node()`.
+
+**Fix**: Add revocation check to all validation functions.
+
+---
+
+### M2.1: DHT Churn Handling Incomplete - HIGH
+
+**Location**: `src/mesh/dht/routing/table.rs:195-196, 417-431`
+
+**Issue**: `pending_pings` used but no background task sends PINGs; `get_stale_peers()` never called.
+
+**Fix**: Implement ping sender background task; wire into MeshTransport.
+
+---
+
+### M2.2: Bucket Refresh Never Triggered - MEDIUM
+
+**Location**: `src/mesh/dht/routing/table.rs`, `src/mesh/dht/routing/manager.rs`
+
+**Issue**: `BUCKET_REFRESH_INTERVAL = 60` defined but no code triggers FindNode to repopulate sparse buckets.
+
+**Fix**: Implement `refresh_buckets_loop()` in DhtRoutingManager.
+
+---
+
+### M2.3: find_closest() Premature Return - MEDIUM
+
+**Location**: `src/mesh/dht/routing/table.rs:233-282`
+
+**Issue**: Breaks as soon as k candidates found without scanning all buckets.
+
+**Fix**: Scan ALL buckets, not just until k found.
+
+---
+
+### M2.4: Edge Resync Single-Homed - MEDIUM
+
+**Location**: `src/mesh/dht/routing/manager.rs`
+
+**Issue**: `dht_cache_resync()` always contacts `global_nodes[0]` with no fallback.
+
+**Fix**: Try all global nodes in sequence; return error only if all fail.
+
+---
+
+### M3.1: Unused Access Control Methods - MEDIUM
+
+**Location**: `src/mesh/dht/mod.rs:569-695`
+
+**Issue**: `DhtAccessControl::require_global_node()` never invoked; `is_privileged()` never enforced.
+
+**Fix**: Wire `require_global_node()` into `store_record()` or remove dead code.
+
+---
+
+### M3.2: Incomplete Encryption for Privileged Records - MEDIUM
+
+**Location**: `src/mesh/tier_key_encryption.rs`
+
+**Issue**: Only `tier_key:` encrypted; Organization, MemberCertificate, etc. plaintext.
+
+**Fix**: Extend TierKeyEncryption to handle all privileged record types via HKDF-derived keys.
+
+---
+
+## Wave 3: Core Functionality (Web Stack, Caching, Honeypot)
+
+### 🔴 W3.2: Stream Large Request Bodies - OPEN
 
 **Location**: `src/http/server.rs`, `src/tls/server.rs`
 
 **Issue**: Full request body buffered in memory.
 
-**Status**: Chunk-based WAF scanning exists (can block attacks mid-stream), but body is still **fully buffered** for handler consumption.
-
-**Remaining Work**:
-1. Implement true streaming in `handle_request()` pipeline
-2. Process body in chunks rather than buffering full body
-3. Add configurable body buffer limit with early rejection
+**Fix**: Implement true streaming in `handle_request()` pipeline; process body in chunks.
 
 ---
 
-### ❌ W3.3: Response Streaming - OPEN
-
-**Severity**: HIGH
+### 🔴 W3.3: Response Streaming - OPEN
 
 **Location**: `src/http/server.rs`, `src/tls/server.rs`
 
-**Issue**: Responses fully buffered before sending.
+**Issue**: HTTP fully buffered (HTTPS already streams).
 
-**Status**: **Inconsistent** - HTTPS (`tls/server.rs`) truly streams responses, but HTTP (`http/server.rs`) fully buffers.
-
-**Remaining Work**:
-1. Enable HTTP response streaming via `hyper::body::Body`
-2. Chunked transfer encoding for HTTP
-3. WAF response filtering in streaming mode
+**Fix**: Enable HTTP response streaming via `hyper::body::Body`; chunked transfer encoding.
 
 ---
 
-### ⏸️ W3.4: ConnectionMeta Trait Migration - DEFERRED
-
-**Severity**: MEDIUM
-
-**Location**: `src/server/request_handler.rs`, `src/http/server.rs`, `src/tls/server.rs`
-
-**Issue**: `ConnectionMeta` trait and `TlsContext` exist but not fully wired. TLS handler has duplicate code.
-
-**Status**: Infrastructure exists. Full migration requires significant refactoring.
-
-**Note**: Per AGENTS.md guidance, `http/server.rs` and `tls/server.rs` are exceptions to size guidelines as cohesive request pipelines. Splitting is not recommended.
-
-**Remaining Work** (if pursued):
-1. Complete migration of request processing to use unified handler
-2. Remove duplicate code in `tls/server.rs`
-
----
-
-### ❌ W3.6: Edge Node HTTP Response Cache - NOT IMPLEMENTED
-
-**Severity**: HIGH
+### 🔴 W3.6: Edge Node HTTP Response Cache - NOT IMPLEMENTED
 
 **Location**: `src/mesh/proxy.rs`
 
-**Issue**: `MeshProxy::new()` has `_cache_config: Option<ProxyCacheSettings>` (underscore prefix - unused).
+**Issue**: `MeshProxy::new()` ignores `_cache_config`; no `proxy_cache` field; `SiteCachePreferencesStore` missing.
 
-**Status**: **Not implemented**:
-- `proxy_cache` field missing from `MeshProxy` struct
-- `SiteCachePreferencesStore` not found in codebase
-- `proxy_cache_preferences` passed in mesh messages but ignored
-
-**Remaining Work**:
-1. Add `proxy_cache: Option<Arc<ProxyCache>>` to `MeshProxy`
-2. Implement `SiteCachePreferencesStore`
-3. Integrate with MeshProxy for cache lookup before proxying
-4. Store responses in cache if cacheable
+**Fix**: Add `proxy_cache` to MeshProxy; implement SiteCachePreferencesStore; integrate cache lookup.
 
 ---
 
-### ⚠️ W3.7: Image Poison Cache TTL and Invalidation - PARTIAL
+### 1.1: Wire FastCgiPool into Request Path - HIGH
 
-**Severity**: MEDIUM
+**Location**: `src/fastcgi/pool.rs`, `src/fastcgi/mod.rs`
 
-**Location**: `src/mesh/dht/keys.rs`
+**Issue**: New connection created per request instead of reusing pooled connections.
 
-**Issue**: Poisoned images cached with fixed 1-hour TTL, no invalidation when origin content changes.
-
-**Status**: `SiteContentVersion` DHT key type added.
-
-**Remaining Work** (deferred):
-1. Modify poison cache key format to include version
-2. Implement version storage/increment logic
-3. Add manual invalidation endpoint
+**Fix**: Add `execute()` method to FastCgiPool; create module-level pool manager; replace `FastCgiClient::new()` calls.
 
 ---
 
-## Wave 4: Code Quality
+### 1.2: Fix TLS Server Granian Forwarding - HIGH
 
-### ⏸️ W4.1: handle_request() Refactor - DEFERRED
+**Location**: `src/tls/server.rs:1204-1215`
 
-**Severity**: HIGH
+**Issue**: TLS server uses FastCgiClient for Granian (ASGI server), should use `GranianSupervisor::forward_request()`.
+
+**Fix**: Change to use `supervisor.forward_request()` like HTTP server does.
+
+---
+
+### 1.3: PHP Security Settings Enforcement - HIGH
+
+**Location**: `src/php/mod.rs`
+
+**Issue**: `PhpConfig` defines security fields but never passes them to PHP-FPM.
+
+**Fix**: Add security params as PHP_ADMIN_VALUE and PHP_VALUE in FastCGI request.
+
+---
+
+### 2.1: Add SiteStaticThemeConfig - MEDIUM
+
+**Location**: `src/config/site/static_files.rs`
+
+**Issue**: `SiteThemeConfig` lacks `directory_template_path` for static file directory listing.
+
+**Fix**: Create `SiteStaticThemeConfig` struct wrapping `SiteThemeConfig` with `directory_template_path`.
+
+---
+
+### 2.2: Template Loading for Directory Listing - MEDIUM
+
+**Location**: `src/static_files/mod.rs`, `src/static_files/directory.rs`
+
+**Fix**: Add `load_directory_template()` and `render_custom_template()`; support Handlebars-like syntax.
+
+---
+
+### 2.3: Wire Theme Config in StaticFileHandler - MEDIUM
+
+**Location**: `src/static_files/mod.rs`
+
+**Fix**: Add `site_theme` field; check custom template path; load and render if set.
+
+---
+
+### T1: Threat Intel DHT Sync Missing Signature Verification - CRITICAL
+
+**Location**: `src/mesh/threat_intel.rs:1083`
+
+**Issue**: `sync_from_dht()` doesn't verify signatures before accepting indicators.
+
+**Fix**: Add signature verification like YARA's pattern; skip records that fail verification.
+
+---
+
+### T2: YARA Manifest Signature Never Verified - HIGH
+
+**Location**: `src/mesh/yara_rules.rs:430-528`
+
+**Issue**: Manifest's signature never read/verified during `sync_from_dht()`.
+
+**Fix**: Add manifest signature verification; verify rule content's content_hash matches manifest's peer_hash.
+
+---
+
+## Wave 4: Performance & Code Quality
+
+### P1.1: SSRF Detection Multiple to_lowercase() - HIGH
+
+**Location**: `src/waf/attack_detection/ssrf.rs:261-346`
+
+**Issue**: `to_lowercase()` called 6+ times per input; `Cow` optimization not passed through helper chain.
+
+**Fix**: Accept `Cow<str>` throughout helper functions; pass already-lowercased string through call chain.
+
+---
+
+### P1.2: Rate Limiter O(n) Cleanup - HIGH
+
+**Location**: `src/waf/ratelimit.rs:295`
+
+**Issue**: Every 30s, `retain()` iterates entire shard HashMap.
+
+**Fix**: Change to eviction-on-access pattern using LruCache; inline eviction on each access.
+
+---
+
+### P1.3: Response Body WAF Scanning - HIGH
+
+**Location**: `src/waf/mod.rs`
+
+**Issue**: WAF only inspects requests; response bodies not scanned for DLP/PII.
+
+**Fix**: Add `check_response()` method; implement response body scanning with DLP patterns.
+
+---
+
+### P1.4: Mesh Route Query Cold-Cache Latency - HIGH
+
+**Location**: `src/mesh/transport.rs:2154`, `src/mesh/proxy.rs:307-428`
+
+**Issue**: First request to any upstream requires DHT query with 5000ms timeout.
+
+**Fix**: Pre-warm route cache during mesh handshake; optimistic routing; background refresh; longer TTL.
+
+---
+
+### P2.1-P2.5, P.1-P.4, P3.1-P3.5, P.5-P.16: Various Performance Issues
+
+**See detailed descriptions in plan2.md, plan16.md, plan17.md for:**
+
+- P2.1: WAF Input Normalizer Allocations
+- P2.2: HTTP Server Clone/To-String Calls
+- P2.3: SuspiciousWordTracker Unconditional Write Lock
+- P2.4: EndpointBlocker O(n) Pattern Matching
+- P2.5: TLS Client Cache Unbounded Growth
+- P.1: WAF Double Normalization
+- P.2: WAF Input Normalization Allocations
+- P.3: URL Decoding Repeated Allocations
+- P.4: SSRF Detection Repeated URL Parsing
+- P3.1: DHT pending_announces O(n) Remove
+- P3.2: SSRF format! Allocation in Loop
+- P3.3: Response Header Filtering Allocation
+- P3.4: Proxy Cache Redundant Lock in SWR
+- P3.5: RingBuffer is_empty() Not Short-Circuiting
+- P.5: IPC Double-Poll Delay
+- P.6: Cache Invalidation O(n) Full Scan
+- P.7: Rate Limiter LRU Write Lock Contention
+- P.8: local_upstreams Single Lock
+- P.9: verified_upstream_cache No Failed Lookup Caching
+- P.10: Drain Polling Fixed 100ms Interval
+- P.11: Mesh Broadcast Unbounded Spawns
+- P.12: find_closest O(n*m) Algorithm
+- P.13: DNS Fingerprint Linear Scan
+- P.14: KBucket Linear Search
+- P.15: Path Sanitization Vec Allocations
+- P.16: HTTP Header Cloning Per-Request
+
+---
+
+### S2.1-S2.5, M1.1-M1.3: Scalability and Mesh Issues
+
+**S2.1**: Per-site connection limits
+**S2.2**: Stale Cache TTL adjustment
+**S2.3**: TCP Worker Pool auto-tuning
+**S2.4**: Verified Upstream Cache TTL increase
+**S2.5**: Upstream Client Cache key consolidation
+**M1.1**: Serial HTTP Proxy Streams fix
+**M1.2**: HTTP/2 Multiplexing in QUIC
+**M1.3**: Route Usage Tracker TTL eviction
+
+---
+
+### Q1.1-Q1.3, Q2.1-Q2.4, Q4.1-Q4.4: Code Quality Issues
+
+**Q1.1**: Heartbeat N+1 Lock Contention
+**Q1.2**: IPC Error Information Loss
+**Q1.3**: HTTP/TLS Test Coverage Gaps
+**Q2.1**: Silent Send Failures in Mesh
+**Q2.2**: Multiple lowercase() in Detectors
+**Q2.3**: Unbounded CSRF Token Storage
+**Q2.4**: MeshMessage Enum Size refactor
+**Q4.1**: Fix Test Result Warnings
+**Q4.2**: proxy.rs Deep Nesting
+**Q4.3**: Ed25519 Key Array Zeroization
+**Q4.4**: MockIpcStream Dead Code
+
+---
+
+## Wave 5: Polish & Optimization
+
+### 🔴 Q1.1: NSEC3 Hash Length Encoding Bug - CRITICAL
+
+**Location**: `src/dns/dnssec_signing.rs:231-232`
+
+**Issue**: `create_nsec3_record` missing Hash Length byte prefix (RFC 5155 Section 3.2).
+
+**Fix**: Add `nsec3.push(next_hash.len() as u8)` before extending with next_hash.
+
+---
+
+### Q1.2: Unsafe Blocks Missing SAFETY Comments - HIGH
+
+**Location**: Multiple files (ebpf, platform, process modules)
+
+**Issue**: ~91 unsafe blocks lack SAFETY comments explaining invariants.
+
+**Fix**: Add `// SAFETY: ...` to each unsafe block per AGENTS.md standard.
+
+---
+
+### Q2.1: handle_request() Maintainability - DEFERRED
 
 **Location**: `src/http/server.rs:437-1800`
 
-**Issue**: `handle_request()` spans ~1,363 lines handling 15 phases.
-
-**Status**: Per AGENTS.md guidance, `http/server.rs` is an exception to size guidelines. Section comments delineate the 15 phases. Splitting not recommended.
-
-**Remaining Work** (if pursued):
-1. Extract each phase into a private async helper function
-2. Add `RequestContext` struct to carry state between phases
+**Note**: Per AGENTS.md, this is exception to size guidelines. Section comments delineate 15 phases.
+Splitting not recommended. Consider if deferred.
 
 ---
 
-## Future Work (Lower Priority)
+### Q2.2-Q3.2, Q4.1-Q4.2: Documentation, Testing, Cleanup
 
-These items can be addressed after the items above.
+**Q2.2**: Dead Code Audit and Cleanup
+**Q3.1**: Missing Test Coverage for Critical Paths
+**Q3.2**: Metrics and Observability Gaps
+**Q4.1**: Configuration Documentation
+**Q4.2**: TODO Comments Cleanup
 
-| ID | Item | Location | Issue |
-|----|------|----------|-------|
-| F.1 | ShardedZoneStore is_empty() Optimization | `src/dns/server/sharded_store.rs` | `is_empty()` iterates all 64 shards O(n) |
-| F.2 | DHT Metrics and Observability | `src/mesh/dht/`, `src/metrics/mod.rs` | Limited observability into DHT operations |
-| F.3 | Configuration Documentation for DhtConfig | `src/mesh/dht/mod.rs` | DhtConfig fields lack documentation |
-| F.4 | CSS Honeypot Enhancement - Path Tracking | `src/challenge/honeypot.rs` | Honeypot doesn't track which app_path served trap |
-| F.5 | Metrics for Threat Intel DHT Operations | `src/metrics/mod.rs`, `src/mesh/threat_intel.rs` | No observability into Threat Intel DHT ops |
-| F.8 | Reputation System Bug - Hardcoded 50 | `src/mesh/transport_dht.rs` | Hardcoded 50 reputation threshold |
-| F.9 | Global Node Liveness and Quorum Monitoring | `src/mesh/dht/`, `src/mesh/transport_global.rs` | No heartbeat mechanism |
-| F.10 | IPv6 Zone ID SSRF Bypass | `src/waf/attack_detection/ssrf.rs` | `looks_like_ip()` doesn't strip zone IDs |
-| F.11 | Homoglyph Normalization Gaps | `src/waf/attack_detection/normalizer.rs` | Missing Cyrillic/Greek normalizations |
-| F.12 | TODO Comments - File Manager | `src/http/file_manager.rs` | TODO comments still present |
-| F.13 | ConnectionMeta Trait - Remaining Migration | `src/server/request_handler.rs` | (See W3.4 - partial) |
+---
+
+### F.1-F.13: Future/Lower Priority Work
+
+**F.1**: ShardedZoneStore is_empty() Optimization
+**F.2**: DHT Metrics and Observability
+**F.3**: Configuration Documentation for DhtConfig
+**F.4**: CSS Honeypot Enhancement - Path Tracking
+**F.5**: Metrics for Threat Intel DHT Operations
+**F.8**: Reputation System Bug - Hardcoded 50
+**F.9**: Global Node Liveness and Quorum Monitoring
+**F.10**: IPv6 Zone ID SSRF Bypass
+**F.11**: Homoglyph Normalization Gaps
+**F.12**: TODO Comments - File Manager
+**F.13**: ConnectionMeta Trait - Remaining Migration
+
+---
+
+## Implementation Order & Parallelization
+
+### Wave 1 (Critical Security) - Week 1-2
+Can parallelize: S1.1, S1.2, M1.1, M1.2, W1.5, H1, H2
+
+### Wave 2 (High Security) - Week 3-4
+Can parallelize: M2.1, M2.2, M2.3, M2.4, M3.1, M3.2, S2.6-S2.10, M1.3
+
+### Wave 3 (Core Functionality) - Week 5-6
+Can parallelize: W3.2, W3.3, W3.6, 1.1-1.3, 2.1-2.3, T1, T2
+
+### Wave 4 (Performance) - Week 7-10
+Can parallelize: P1.1-P1.4, P2.1-P2.5, P.1-P.4, S2.1-S2.5, M1.1-M1.3, Q1.1-Q1.3, Q2.1-Q2.4
+
+### Wave 5 (Polish) - Week 11+
+Can parallelize: Q1.1, Q1.2, Q2.2, Q3.1, Q3.2, Q4.1-Q4.2, F.1-F.13
 
 ---
 
@@ -212,4 +644,16 @@ cargo test --lib --no-run
 # Tests
 cargo test --test integration_test
 cargo test --test dns_server_test
+cargo test --test dht_integration_test
 ```
+
+---
+
+## Completed Items (Reference)
+
+The following items have been completed (see `plans/COMPLETED.md` for details):
+
+**Wave 1 Completed**: W1.1-W1.14, W3.1
+**Wave 2 Completed**: W2.1-W2.4, W2.6, W2.8
+**Wave 3 Completed (partial)**: W3.5, W3.7 (DHT key added), W3.8, W3.9, W3.10
+**Wave 4 Completed**: W4.2 (dead code audit)
