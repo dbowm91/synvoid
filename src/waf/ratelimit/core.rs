@@ -22,6 +22,7 @@ fn get_monotonic_time_ms() -> u64 {
 
 pub struct ShardedRateLimiter {
     shards: Box<[RateLimitShard]>,
+    // SAFETY_REASON: Debugging - stored for introspection
     #[allow(dead_code)]
     config: RateLimitConfig,
 }

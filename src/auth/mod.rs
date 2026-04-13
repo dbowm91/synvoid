@@ -88,6 +88,7 @@ pub struct LoginLog {
 }
 
 pub struct AuthManager {
+    // SAFETY_REASON: Debugging - stored for introspection
     #[allow(dead_code)]
     data_dir: PathBuf,
     store: Arc<RwLock<AuthStore>>,

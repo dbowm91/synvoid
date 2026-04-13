@@ -128,7 +128,8 @@ impl CacheEntryInner {
         hasher.finish()
     }
 
-    #[allow(dead_code)] // Reserved for cache integrity verification
+    // SAFETY_REASON: Reserved for cache integrity verification
+    #[allow(dead_code)]
     fn validate(&self, content: &[u8]) -> bool {
         Self::compute_checksum(content) == self.checksum
     }

@@ -75,8 +75,10 @@ pub struct MeshProxy {
 }
 
 struct MeshConnection {
+    // SAFETY_REASON: Debugging - stored for introspection
     #[allow(dead_code)]
     peer_node_id: String,
+    // SAFETY_REASON: Debugging - stored for introspection
     #[allow(dead_code)]
     request_id: String,
     started_at: std::time::Instant,

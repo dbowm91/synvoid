@@ -33,6 +33,7 @@ pub struct OverseerProcess {
     stable_since: Option<Instant>,
     dual_master_mode: bool,
     socket_handoff: Option<DualMasterHandoff>,
+    // SAFETY_REASON: Debugging - stored for introspection
     #[allow(dead_code)]
     drain_manager: Arc<DrainManager>,
     upgrade_generation: Option<u32>,

@@ -224,6 +224,7 @@ impl IpFeedManager {
 
 pub struct MultiFeedManager {
     feeds: Vec<Arc<IpFeedManager>>,
+    // SAFETY_REASON: Debugging - stored for introspection
     #[allow(dead_code)]
     config: IpFeedConfig,
 }

@@ -347,10 +347,9 @@ impl ProcessControl for UnixProcessControl {
             daemon = daemon.pid_file(path);
         }
 
-        unsafe { daemon.start() }
-            // SAFETY: daemon.start() must be called before any threads exist.
-            // This runs during early initialization before Tokio runtime starts.
-            .map_err(|e| PlatformError::Io(io::Error::other(e)))?;
+        // SAFETY: daemon.start() must be called before any threads exist.
+        // This runs during early initialization before Tokio runtime starts.
+        unsafe { daemon.start() }.map_err(|e| PlatformError::Io(io::Error::other(e)))?;
 
         Ok(())
     }

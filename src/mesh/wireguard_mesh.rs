@@ -26,6 +26,7 @@ pub struct WireGuardMeshPeer {
 
 pub struct WireGuardMeshRuntime {
     config: Arc<MeshWireGuardConfig>,
+    // SAFETY_REASON: Debugging - stored for introspection
     #[allow(dead_code)]
     runtime: WireGuardRuntime,
     peers: Arc<DashMap<String, WireGuardMeshPeer>>,

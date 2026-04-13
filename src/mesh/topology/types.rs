@@ -273,14 +273,6 @@ impl ShardedPeerStore {
         f(rs);
     }
 
-    #[allow(dead_code)]
-    pub fn update_peer_score<F: FnOnce(&mut PeerScore)>(&self, node_id: &str, f: F) {
-        let mut shard = self.shard(node_id).write();
-        if let Some(score) = shard.peer_scores.get_mut(node_id) {
-            f(score);
-        }
-    }
-
     pub fn upsert_peer_score<F: FnOnce(&mut PeerScore)>(
         &self,
         node_id: &str,
@@ -747,8 +739,6 @@ impl RouteUsage {
 
 pub struct RouteUsageTracker {
     usages: HashMap<String, RouteUsage>,
-    #[allow(dead_code)]
-    window: Duration,
 }
 
 impl Default for RouteUsageTracker {
@@ -758,10 +748,9 @@ impl Default for RouteUsageTracker {
 }
 
 impl RouteUsageTracker {
-    pub fn new(window: Duration) -> Self {
+    pub fn new(_window: Duration) -> Self {
         Self {
             usages: HashMap::new(),
-            window,
         }
     }
 

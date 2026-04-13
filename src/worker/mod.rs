@@ -85,6 +85,7 @@ struct CompressionTask {
     site_id: String,
     path: String,
     encoding: String,
+    // SAFETY_REASON: Debugging - stored for introspection
     #[allow(dead_code)]
     queued_at: Instant,
 }

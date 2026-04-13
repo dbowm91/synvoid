@@ -130,6 +130,7 @@ pub struct DnsRateLimiter {
     rrl_buckets: PLRwLock<TimedBucketMap<String>>,
     rrl_source_buckets: PLRwLock<TimedBucketMap<IpAddr>>,
     rrl_threshold: u64,
+    // SAFETY_REASON: Debugging - stored for introspection
     #[allow(dead_code)]
     rrl_window: Duration,
     last_cleanup: PLRwLock<Instant>,

@@ -40,6 +40,7 @@ impl OwnedTcpListener {
     /// that the descriptor is a valid TCP socket that will not be used elsewhere.
     /// The OwnedTcpListener takes ownership and will close the descriptor on drop.
     pub unsafe fn from_raw_fd(fd: RawFd) -> Self {
+        // SAFETY: Caller must uphold the contract documented on the enclosing unsafe fn.
         unsafe { Self(std::net::TcpListener::from_raw_fd(fd)) }
     }
 
@@ -87,6 +88,7 @@ impl OwnedTcpStream {
     /// that the descriptor is a valid TCP socket that will not be used elsewhere.
     /// The OwnedTcpStream takes ownership and will close the descriptor on drop.
     pub unsafe fn from_raw_fd(fd: RawFd) -> Self {
+        // SAFETY: Caller must uphold the contract documented on the enclosing unsafe fn.
         unsafe { Self(std::net::TcpStream::from_raw_fd(fd)) }
     }
 

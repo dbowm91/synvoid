@@ -21,6 +21,7 @@ pub struct WireGuardRuntime {
     config: WireGuardConfig,
     backend: Option<WireGuardBackend>,
     sessions: Arc<WgSessionManager>,
+    // SAFETY_REASON: Debugging - stored for introspection
     #[allow(dead_code)]
     stats: Arc<DashMap<String, WgConnectionStats>>,
     shutdown_tx: broadcast::Sender<()>,

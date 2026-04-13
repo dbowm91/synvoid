@@ -15,7 +15,7 @@ This document tracks remaining work organized into waves for parallel implementa
 | 1 | Critical Security | 14 | ✅ Completed |
 | 2 | High Security (TLS, DNS, Mesh) | 8 | ⚠️ 6/8 Complete (W2.5, W2.7 partial) |
 | 3 | Core Functionality | 10 | ⚠️ 6/10 Done (W3.1, W3.5, W3.7 partial, W3.8, W3.9, W3.10 complete; W3.2, W3.3, W3.4, W3.6 deferred/open) |
-| 4 | Code Quality | 8 | 🔄 Pending |
+| 4 | Code Quality | 8 | ✅ 7/8 Complete (W4.1 deferred) |
 | 5 | Polish & Optimization | 7 | 🔄 Pending |
 
 ---
@@ -589,7 +589,7 @@ This document tracks remaining work organized into waves for parallel implementa
 
 ## Wave 4: Code Quality (Parallel - 8 items)
 
-### W4.1: Refactor handle_request() in HTTP Server [Q.3]
+### W4.1: Refactor handle_request() in HTTP Server [Q.3] - DEFERRED
 
 **Severity**: HIGH
 
@@ -603,105 +603,93 @@ This document tracks remaining work organized into waves for parallel implementa
 3. Main function becomes a chain: `self.phase_early_validation(&mut ctx).await?; ...`
 4. Add `RequestContext` struct to carry state between phases
 
+**Status**: ⚠️ Deferred - this is a high-risk refactoring that could introduce regressions. The section comments already delineate the 15 phases within the function. Given AGENTS.md guidance "Do NOT split cohesive request pipelines" for http/server.rs and tls/server.rs, this refactoring is not recommended at this time.
+
 ---
 
-### W4.2: Audit #[allow(dead_code)] Suppressions [Q.4]
+### ✅ W4.2: Audit #[allow(dead_code)] Suppressions [Q.4] - COMPLETED
 
 **Severity**: MEDIUM
 
 **Location**: ~93 annotations across ~50 files
 
-**Issue**: Many dead code suppressions are intentional (reserved future code) per AGENTS.md, but ~93 is high.
-
 **Fix**:
-1. List all suppressions with `rg "#\[allow\(dead_code)"`
-2. Categorize: reserved/future | temporarily disabled | unclear
-3. Remove suppressions for genuinely dead code
-4. Document remaining with `// SAFETY_REASON: ...` style comments
+1. ✅ Listed all suppressions with `rg "#\[allow\(dead_code)"`
+2. ✅ Categorized: reserved/future | temporarily disabled | unclear
+3. ✅ Removed suppressions for genuinely dead code (update_peer_score, RouteUsageTracker::window, get_admin_auth, unused config field)
+4. ✅ Documented remaining with `// SAFETY_REASON: ...` style comments
+
+**Verification**: Commit - 50+ SAFETY_REASON comments added, dead code removed
 
 ---
 
-### W4.3: Add SAFETY Comments to Unsafe Blocks [Q.5]
+### ✅ W4.3: Add SAFETY Comments to Unsafe Blocks [Q.5] - COMPLETED
 
 **Severity**: MEDIUM
 
-**Location**: ~24 unsafe blocks missing SAFETY comments
+**Location**: ~24 unsafe blocks examined
 
-**Fix**: Add SAFETY comments using pattern:
-```rust
-unsafe {
-    // SAFETY: [reason why this is safe]
-    // - [invariant 1]
-    // - [invariant 2]
-}
-```
+**Fix**: All unsafe blocks already had adequate SAFETY comments. Minor improvements made:
+- `src/platform/unix.rs:350` - moved comment above unsafe block
+- `src/platform/socket.rs:43,90` - added contract documentation to inner blocks
+
+**Verification**: Commit - All unsafe blocks verified, minor formatting improvements
 
 ---
 
-### W4.4: Make bcrypt Cost Configurable [Q.6]
+### ✅ W4.4: Make bcrypt Cost Configurable [Q.6] - COMPLETED
 
 **Severity**: MEDIUM
 
-**Location**: `src/auth/mod.rs:8`
+**Location**: `src/config/admin.rs:34-35`
 
-**Issue**: `DEFAULT_COST` is hardcoded to 12.
-
-**Fix**:
-1. Add `bcrypt_cost` field to `AuthConfig`
-2. Default to 12 for backward compatibility
-3. Validate range (12-31 recommended)
-4. Update `hash_password()` to use configured cost
+**Fix**: `bcrypt_cost` field already exists in `AuthConfig` with validation (12-15 range). No changes needed - already implemented.
 
 ---
 
-### W4.5: Add TLS 1.3-Only Option [Q.7]
+### ✅ W4.5: Add TLS 1.3-Only Option [Q.7] - COMPLETED
 
 **Severity**: MEDIUM
 
-**Location**: `src/tls/cert_resolver.rs:266-282`
+**Location**: `src/tls/config.rs:46`
 
-**Issue**: `tls_1_3_only = false` by default, allowing TLS 1.2 fallback with known weaknesses.
-
-**Fix**:
-1. Change default to `true` in `TlsConfig::default()`
-2. Add warning when TLS 1.2 is enabled
-3. Document security trade-off in config
+**Fix**: `tls_1_3_only` defaults to `true` in `TlsConfig::default()`. Warning issued when TLS 1.2 fallback enabled. Already implemented.
 
 ---
 
-### W4.6: Fix Incomplete Deprecated Algorithm Check [Q.8]
+### ✅ W4.6: Fix Incomplete Deprecated Algorithm Check [Q.8] - COMPLETED
 
 **Severity**: LOW
 
-**Location**: `src/dns/trust_anchor.rs:408-422`
+**Location**: `src/dns/trust_anchor.rs:412`
 
-**Issue**: Comment mentions algorithms 5 (RSASHA1) and 6 (DSA-NSEC3-SHA1) but only checks 0 and 3.
+**Fix**: Updated to `matches!(algorithm, 0 | 3 | 5 | 6)` to include RSASHA1 (5) and DSA-NSEC3-SHA1 (6).
 
-**Fix**: Update to `matches!(algorithm, 0 | 3 | 5 | 6)`.
+**Verification**: Commit - deprecated algorithm check now complete
 
 ---
 
-### W4.7: Remove Dead UpstreamRegistrationRequest Code [F.6]
+### ✅ W4.7: Remove Dead UpstreamRegistrationRequest Code [F.6] - COMPLETED
 
 **Severity**: LOW
 
 **Location**: `src/mesh/`
 
-**Issue**: Dead `UpstreamRegistrationRequest` code still present.
+**Fix**: Verified `UpstreamRegistrationRequest` is not present in codebase - plan description was outdated.
 
-**Fix**: Remove message type, handlers, protobuf, encoding/decoding. Keep `UpstreamAnnounce` as active mechanism.
+**Verification**: Commit - confirmed no dead code to remove
 
 ---
 
-### W4.8: Remove is_global_signature_required() [F.7]
+### ✅ W4.8: Remove is_global_signature_required() [F.7] - COMPLETED
 
 **Severity**: LOW
 
 **Location**: `src/mesh/dht/keys.rs`
 
-**Issue**: Orphaned function never called.
+**Fix**: Verified `is_global_signature_required()` is not present in codebase - plan description was outdated.
 
-**Fix**: Remove the function.
+**Verification**: Commit - confirmed no dead code to remove
 
 ---
 

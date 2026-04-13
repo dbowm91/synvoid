@@ -29,6 +29,7 @@ impl<T> ApiResponse<T> {
         }
     }
 
+    // SAFETY_REASON: Future use - error response helper
     #[allow(dead_code)]
     fn error(message: String) -> Self {
         Self {
@@ -71,6 +72,7 @@ pub struct ExtractArchiveRequest {
 
 #[derive(Clone)]
 struct FileManagerState {
+    // SAFETY_REASON: Debugging - stored for introspection
     #[allow(dead_code)]
     config: Arc<TokioRwLock<ConfigManager>>,
     file_manager: Arc<FileManager>,
@@ -79,15 +81,6 @@ struct FileManagerState {
 
 unsafe impl Send for FileManagerState {}
 unsafe impl Sync for FileManagerState {}
-
-#[allow(dead_code)]
-fn get_admin_auth(req: &axum::extract::Request) -> Option<String> {
-    req.headers()
-        .get("Authorization")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|auth| auth.strip_prefix("Bearer "))
-        .map(|t| t.to_string())
-}
 
 fn require_auth(state: &FileManagerState, headers: &HeaderMap) -> Result<(), StatusCode> {
     let token = headers

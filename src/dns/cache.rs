@@ -627,6 +627,7 @@ impl Default for SecureDnsCache {
     }
 }
 
+// SAFETY_REASON: Used by detect_dnssec_signed for DNS name parsing
 #[allow(dead_code)]
 fn skip_name(data: &[u8], mut offset: usize) -> Option<usize> {
     loop {

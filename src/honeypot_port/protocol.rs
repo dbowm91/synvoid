@@ -17,7 +17,8 @@ pub struct ServiceBanner {
     pub response_for_payload: Option<Vec<u8>>,
 }
 
-#[allow(dead_code)] // ac field pre-compiled for pattern matching performance
+// SAFETY_REASON: ac field pre-compiled for pattern matching performance
+#[allow(dead_code)]
 pub struct ProtocolDetector {
     patterns: Vec<(String, String, String, Regex)>,
     ac: AhoCorasick,

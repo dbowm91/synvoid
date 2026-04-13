@@ -37,6 +37,7 @@ impl Default for RegionalHubConfig {
 
 pub struct RegionalHub {
     config: RegionalHubConfig,
+    // SAFETY_REASON: Debugging - stored for introspection
     #[allow(dead_code)]
     geo_distance: GeoDistance,
     hubs: RwLock<HashMap<String, Vec<HubPeer>>>,

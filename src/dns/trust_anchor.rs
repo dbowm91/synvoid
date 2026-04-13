@@ -409,7 +409,7 @@ impl TrustAnchorManager {
         // 0 = DELETE, 3 = DSA, 5 = RSASHA1, 6 = DSA-NSEC3-SHA1
         // Only support algorithms 8 (RSASHA256), 13 (ECDSAP256SHA256),
         // 14 (ECDSAP384SHA384), 15 (ED25519), 16 (ED448)
-        if matches!(algorithm, 0 | 3) {
+        if matches!(algorithm, 0 | 3 | 5 | 6) {
             tracing::warn!(
                 "RFC 5011: Key {} uses deprecated algorithm {}, rejecting",
                 key_tag,

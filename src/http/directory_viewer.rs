@@ -41,6 +41,7 @@ impl Default for DirectoryViewerConfig {
 
 #[derive(Clone)]
 struct DirectoryViewerState {
+    // SAFETY_REASON: Debugging - stored for introspection
     #[allow(dead_code)]
     config: Arc<TokioRwLock<ConfigManager>>,
     viewer_config: DirectoryViewerConfig,

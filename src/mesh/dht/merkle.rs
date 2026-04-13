@@ -437,6 +437,7 @@ impl<'de> Deserialize<'de> for MerkleTree {
     where
         D: serde::Deserializer<'de>,
     {
+        // SAFETY_REASON: Only used for deserialization
         #[derive(Deserialize)]
         #[allow(dead_code)]
         struct SerdeMerkleTree {

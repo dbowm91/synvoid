@@ -122,6 +122,7 @@ impl Default for SharedRequestHandler {
     }
 }
 
+// SAFETY_REASON: Future use - request context trait for protocol abstraction
 #[allow(dead_code)]
 pub trait RequestContext: Send + Sync {
     type Response;
@@ -290,6 +291,7 @@ mod tests {
 }
 
 impl SharedRequestHandler {
+    // SAFETY_REASON: Future use - protocol name for RequestContext
     #[allow(dead_code)]
     fn protocol_name(&self) -> &'static str {
         ""

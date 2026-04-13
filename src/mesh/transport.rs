@@ -68,11 +68,14 @@ pub use crate::mesh::transport_core::{
 use crate::mesh::transport_types::GlobalRateLimitCheck;
 pub use crate::mesh::transport_types::{MeshGlobalRateLimiter, MeshPeerConnection};
 
+// SAFETY_REASON: Reserved for future protocol handling
 #[allow(dead_code)]
 pub(crate) const MAX_PENDING_CONNECTIONS: usize = 100;
 pub(crate) const CONNECTION_RATE_LIMIT_WINDOW_SECS: u64 = 60;
+// SAFETY_REASON: Reserved for future protocol handling
 #[allow(dead_code)]
 pub(crate) const MAX_MESSAGE_QUEUE_SIZE: usize = 1000;
+// SAFETY_REASON: Reserved for future protocol handling
 #[allow(dead_code)]
 pub(crate) const DEFAULT_MAX_PEER_MESSAGE_RATE: usize = 1000;
 pub(crate) const MAX_MESSAGE_SIZE: usize = 10 * 1024 * 1024;
@@ -180,6 +183,7 @@ impl Clone for MeshTransport {
     }
 }
 
+// SAFETY_REASON: Reserved for message queuing
 #[derive(Clone)]
 #[allow(dead_code)]
 pub(crate) struct QueuedMessage {
@@ -189,6 +193,7 @@ pub(crate) struct QueuedMessage {
     enqueued_at: Instant,
 }
 
+// SAFETY_REASON: Reserved for priority handling
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[allow(dead_code)]
 pub(crate) enum MessagePriority {

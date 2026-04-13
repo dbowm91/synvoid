@@ -93,6 +93,7 @@ pub struct PluginInfo {
 pub struct WasmPluginManager {
     runtimes: RwLock<Vec<Arc<WasmRuntime>>>,
     default_limits: WasmResourceLimits,
+    // SAFETY_REASON: Debugging - stored for introspection
     #[allow(dead_code)]
     pool: Arc<WasmInstancePool>,
     plugin_paths: RwLock<HashMap<String, PathBuf>>,

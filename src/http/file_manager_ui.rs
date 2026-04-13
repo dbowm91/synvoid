@@ -14,6 +14,7 @@ use crate::theme::{ThemeConfig, ThemeRenderer};
 
 #[derive(Clone)]
 struct FileManagerUiState {
+    // SAFETY_REASON: Debugging - stored for introspection
     #[allow(dead_code)]
     config: Arc<TokioRwLock<ConfigManager>>,
     admin_token_hash: String,

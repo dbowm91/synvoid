@@ -84,6 +84,7 @@ pub fn create_record_store(
 pub struct MeshBackend {
     upstream_id: String,
     proxy: Arc<MeshProxy>,
+    // SAFETY_REASON: Debugging - stored for introspection
     #[allow(dead_code)]
     topology: Arc<MeshTopology>,
     current_peer: Arc<RwLock<Option<String>>>,

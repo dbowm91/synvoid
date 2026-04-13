@@ -71,20 +71,20 @@ mod linux {
         fn enable_tcp_pktinfo(&self, fd: std::os::fd::RawFd) -> Result<(), String> {
             // SAFETY: fd is a valid TCP socket file descriptor owned by the caller.
             // setsockopt syscall is always safe if the fd is valid.
-            unsafe {
-                let ret = libc::setsockopt(
+            let ret = unsafe {
+                libc::setsockopt(
                     fd,
                     libc::IPPROTO_IP,
                     libc::IP_PKTINFO,
                     &1 as *const i32 as *const libc::c_void,
                     std::mem::size_of::<libc::c_int>() as libc::socklen_t,
-                );
-                if ret != 0 {
-                    return Err(format!(
-                        "IP_PKTINFO for TCP: {}",
-                        std::io::Error::last_os_error()
-                    ));
-                }
+                )
+            };
+            if ret != 0 {
+                return Err(format!(
+                    "IP_PKTINFO for TCP: {}",
+                    std::io::Error::last_os_error()
+                ));
             }
 
             tracing::debug!("Enabled IP_PKTINFO on TCP socket");

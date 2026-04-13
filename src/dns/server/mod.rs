@@ -500,7 +500,8 @@ pub struct DnsServer {
     ecs_filter_config: super::edns::EcsFilterConfig,
     update_handler: Option<super::update::DynamicUpdateHandler>,
     notify_handler: Option<super::notify::NotifyHandler>,
-    #[allow(dead_code)] // Reserved for HSM-backed DNSSEC key management
+    // SAFETY_REASON: Reserved for HSM-backed DNSSEC key management
+    #[allow(dead_code)]
     hsm_manager: Option<super::hsm::HsmManager>,
     query_coalescer: Option<Arc<super::query_coalesce::QueryCoalescer>>,
     anycast_manager: Option<Arc<super::anycast::AnycastSocketManager>>,

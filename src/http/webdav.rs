@@ -48,6 +48,7 @@ impl Default for WebDavConfig {
 /// State for WebDAV handler
 #[derive(Clone)]
 struct WebDavState {
+    // SAFETY_REASON: Debugging - stored for introspection
     #[allow(dead_code)]
     config: Arc<TokioRwLock<ConfigManager>>,
     file_manager: Arc<FileManager>,
@@ -683,7 +684,7 @@ async fn options_handler(_state: &WebDavState) -> Response {
 // Router Creation
 // ============================================================================
 
-/// Create a WebDAV router with the given configuration
+// SAFETY_REASON: Future use - WebDAV router creation
 #[allow(dead_code)]
 pub fn create_webdav_router(
     config: Arc<TokioRwLock<ConfigManager>>,

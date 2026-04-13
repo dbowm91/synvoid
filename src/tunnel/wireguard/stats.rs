@@ -252,6 +252,7 @@ pub async fn get_interface_stats(interface: &str) -> Result<WgInterfaceStats, Wg
 }
 
 pub struct WgStatsCollector {
+    // SAFETY_REASON: Debugging - stored for introspection
     #[allow(dead_code)]
     interface: String,
     last_stats: Option<WgInterfaceStats>,

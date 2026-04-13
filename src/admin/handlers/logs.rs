@@ -10,6 +10,7 @@ use std::sync::Arc;
 use super::common::{ErrorPage, OptionalAuth};
 
 #[derive(Debug, Deserialize)]
+// SAFETY_REASON: Future use - query parameters for logs endpoint
 #[allow(dead_code)]
 pub struct LogsQuery {
     pub level: Option<String>,
@@ -92,6 +93,7 @@ pub async fn get_error_page(
 #[derive(Debug, Deserialize)]
 pub struct UpdateErrorPageRequest {
     pub title: Option<String>,
+    // SAFETY_REASON: Future use - message field for error page updates
     #[allow(dead_code)]
     pub message: Option<String>,
     pub content: Option<String>,

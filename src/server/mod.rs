@@ -54,6 +54,7 @@ pub struct UnifiedServer {
     tls_config: InternalTlsConfig,
     http3_config: Http3Config,
     cert_resolver: Option<Arc<CertResolver>>,
+    // SAFETY_REASON: Debugging - stored for introspection
     #[allow(dead_code)]
     tunnel_manager: Option<Arc<TunnelManager>>,
     tunnel_router: Option<Arc<Mutex<TunnelRouter>>>,

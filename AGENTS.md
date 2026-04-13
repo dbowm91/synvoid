@@ -290,7 +290,7 @@ Crate-level suppressions in `src/lib.rs`:
 - `elided_lifetimes_in_paths` — compiler style preference
 - `mismatched_lifetime_syntaxes` — compiler style preference
 
-`#[allow(dead_code)]` annotations: **~93 across ~50 files**. Notable per-module breakdown:
+`#[allow(dead_code)]` annotations: **~93 across ~50 files** (reduced after W4.2 audit). Notable per-module breakdown:
 - `src/mesh/transport_*.rs` — ~6 items (reserved protocol handlers)
 - `src/mesh/` — ~14 items
 - `src/dns/server/` — ~4 items
@@ -299,7 +299,11 @@ Crate-level suppressions in `src/lib.rs`:
 - `src/admin/handlers/` — ~6 items
 - `src/overseer/` — ~9 items
 
-Note: Many `#[allow(dead_code)]` annotations are on reserved/future-use code paths within already-shipped modules (e.g., `transport_dns.rs` for future DNS mesh protocol). These are intentional design patterns for future extensibility.
+Note: Many `#[allow(dead_code)]` annotations are on reserved/future-use code paths within already-shipped modules (e.g., `transport_dns.rs` for future DNS mesh protocol). These are intentional design patterns for future extensibility. All intentional suppressions now documented with `// SAFETY_REASON: ...` comments.
+
+**W4.2 Audit Results**:
+- Removed dead code: `update_peer_score()`, `RouteUsageTracker::window`, `get_admin_auth()`, unused `config` field
+- All intentional suppressions now have `SAFETY_REASON` comments explaining why
 
 `cargo clippy -- -D warnings` passes clean (previously ~14 non-dead-code warnings, now resolved).
 
@@ -640,7 +644,7 @@ The consolidated implementation plan is located at `plans/plan.md`. This plan or
 | 1 | Critical Security (WAF, Auth, Mesh) | 14 | ✅ Completed |
 | 2 | High Security (TLS, DNS, Mesh) | 8 | ⚠️ 6/8 Complete (W2.5, W2.7 partial) |
 | 3 | Core Functionality (Web Stack, Caching, Honeypot) | 10 | ⚠️ 6/10 Done |
-| 4 | Code Quality (Performance, Quality) | 8 | 🔄 Pending |
+| 4 | Code Quality (Performance, Quality) | 8 | ✅ 7/8 Complete (W4.1 deferred) |
 | 5 | Polish & Optimization | 7 | 🔄 Pending |
 
 ### Wave 3 Completed Items
@@ -968,10 +972,11 @@ DirectoryListingTemplate (src/theme/template.rs:461)
 
 ### Code Quality Issues to Address
 
-| ID | Issue | Severity | Location |
-|----|-------|----------|----------|
-| Q.3 | handle_request() 1363 lines | HIGH | `src/http/server.rs:437-1800` |
-| Q.4 | ~93 dead_code suppressions | MEDIUM | ~50 files |
-| Q.5 | ~24 unsafe blocks missing SAFETY | MEDIUM | Various |
-| Q.6 | bcrypt cost not configurable | MEDIUM | `src/auth/mod.rs:8` |
-| Q.7 | TLS 1.3 not default | MEDIUM | `src/tls/cert_resolver.rs` |
+| ID | Issue | Severity | Location | Status |
+|----|-------|----------|----------|--------|
+| Q.3 | handle_request() 1363 lines | HIGH | `src/http/server.rs:437-1800` | ⚠️ Deferred |
+| Q.4 | ~93 dead_code suppressions | MEDIUM | ~50 files | ✅ Fixed |
+| Q.5 | ~24 unsafe blocks missing SAFETY | MEDIUM | Various | ✅ Fixed |
+| Q.6 | bcrypt cost not configurable | MEDIUM | `src/config/admin.rs:34-35` | ✅ Already done |
+| Q.7 | TLS 1.3 not default | MEDIUM | `src/tls/config.rs:46` | ✅ Already done |
+| Q.8 | Deprecated algorithm check incomplete | LOW | `src/dns/trust_anchor.rs:412` | ✅ Fixed |

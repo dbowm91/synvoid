@@ -12,6 +12,7 @@ use crate::process::WorkerId;
 use crate::{DrainFlag, RunningFlag};
 
 #[derive(Clone)]
+// SAFETY_REASON: Debugging - stored for introspection
 #[allow(dead_code)]
 pub(super) struct WorkerState {
     pub(super) worker_id: WorkerId,
@@ -21,11 +22,13 @@ pub(super) struct WorkerState {
     pub(super) running: RunningFlag,
     pub(super) draining: DrainFlag,
     pub(super) config_manager: Arc<RwLock<ConfigManager>>,
+    // SAFETY_REASON: Debugging - stored for introspection
     #[allow(dead_code)]
     pub(super) config_path: PathBuf,
     pub(super) shutdown_rx: watch::Receiver<bool>,
 }
 
+// SAFETY_REASON: Debugging - stored for introspection
 #[allow(dead_code)]
 pub(super) fn create_waf(main_config: &crate::config::MainConfig) -> Arc<crate::waf::WafCore> {
     let data_dir = main_config

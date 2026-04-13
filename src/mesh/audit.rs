@@ -66,6 +66,7 @@ pub enum AuditSeverity {
 }
 
 pub struct AuditLogger {
+    // SAFETY_REASON: Debugging - stored for introspection
     #[allow(dead_code)]
     config: Arc<MeshConfig>,
     events: Arc<RwLock<VecDeque<AuditEvent>>>,

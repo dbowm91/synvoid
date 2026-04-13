@@ -23,11 +23,13 @@ use crate::tunnel::quic::ConnectionQuality;
 
 pub struct QuicTunnelClient {
     config: TunnelQuicConfig,
+    // SAFETY_REASON: Debugging - stored for introspection
     #[allow(dead_code)]
     tls_config: QuicTlsConfig,
     runtime: Arc<QuicRuntime>,
     sessions: Arc<DashMap<String, QuicClientSession>>,
     shutdown_tx: broadcast::Sender<()>,
+    // SAFETY_REASON: Debugging - stored for introspection
     #[allow(dead_code)]
     peer_connections: Arc<DashMap<String, QuicConnection>>,
     connections: Arc<DashMap<String, Connection>>,

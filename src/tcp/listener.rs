@@ -206,6 +206,7 @@ impl Default for TcpListenerPoolConfig {
 #[derive(Debug, Clone)]
 struct TcpListenerInstance {
     config: TcpListenerConfig,
+    // SAFETY_REASON: Debugging - stored for introspection
     #[allow(dead_code)]
     listen_addr: SocketAddr,
 }

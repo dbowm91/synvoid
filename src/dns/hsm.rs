@@ -63,6 +63,7 @@ pub struct Pkcs11Hsm {
     pin: Zeroizing<String>,
     key_label: String,
     algorithm: Algorithm,
+    // SAFETY_REASON: Future HSM support - will be used when PKCS#11 key retrieval is implemented
     #[allow(dead_code)]
     key_id: Vec<u8>,
 }

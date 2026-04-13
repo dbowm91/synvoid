@@ -79,6 +79,7 @@ pub struct AuditReportResponse {
 }
 
 pub struct ClientAuditManager {
+    // SAFETY_REASON: Debugging - stored for introspection
     #[allow(dead_code)]
     config: Arc<MeshConfig>,
     topology: Arc<TokioRwLock<MeshTopology>>,
@@ -89,6 +90,7 @@ pub struct ClientAuditManager {
     pow_enabled: bool,
     pow_difficulty: u8,
     pow_timeout_secs: u64,
+    // SAFETY_REASON: Debugging - stored for introspection
     #[allow(dead_code)]
     pow_window_secs: u64,
     pow_secret_key: [u8; 32],
