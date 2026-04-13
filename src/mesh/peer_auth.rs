@@ -62,6 +62,8 @@ pub fn validate_peer_role(
     revoked_nodes: Option<&GlobalNodeRevocationList>,
     global_node_attestation_key: Option<&str>,
     global_node_attestation_sig: Option<&str>,
+    pow_nonce: Option<u64>,
+    pow_public_key: Option<&str>,
 ) -> Result<(), String> {
     if role.is_global() {
         return validate_global_node(
@@ -82,6 +84,8 @@ pub fn validate_peer_role(
             peer_signature,
             timestamp,
             max_age_secs,
+            pow_nonce,
+            pow_public_key,
         );
     }
 
@@ -107,7 +111,13 @@ fn validate_edge_node(
     peer_signature: Option<&str>,
     timestamp: u64,
     max_age_secs: u64,
+    pow_nonce: Option<u64>,
+    pow_public_key: Option<&str>,
 ) -> Result<(), String> {
+    if let (Some(nonce), Some(pk)) = (pow_nonce, pow_public_key) {
+        return validate_edge_node_pow(peer_node_id, peer_public_key, Some(nonce), Some(pk));
+    }
+
     let pubkey = peer_public_key.ok_or_else(|| {
         format!(
             "Edge node {} did not provide Ed25519 public key for authentication",
@@ -126,6 +136,73 @@ fn validate_edge_node(
 
     let challenge = format!("edge:{}:{}", peer_node_id, timestamp);
     verify_signature(pubkey, &challenge, signature, peer_node_id, "Edge node")
+}
+
+pub fn validate_edge_node_pow(
+    peer_node_id: &str,
+    peer_public_key: Option<&str>,
+    pow_nonce: Option<u64>,
+    pow_public_key: Option<&str>,
+) -> Result<(), String> {
+    let pubkey = peer_public_key.ok_or_else(|| {
+        format!(
+            "Edge node {} did not provide public key for PoW validation",
+            peer_node_id
+        )
+    })?;
+
+    let nonce =
+        pow_nonce.ok_or_else(|| format!("Edge node {} did not provide PoW nonce", peer_node_id))?;
+
+    let pow_key = pow_public_key
+        .ok_or_else(|| format!("Edge node {} did not provide PoW public key", peer_node_id))?;
+
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+    let pk_bytes = URL_SAFE_NO_PAD.decode(pubkey).map_err(|e| {
+        format!(
+            "Edge node {} has invalid public key encoding: {}",
+            peer_node_id, e
+        )
+    })?;
+
+    let pow_pk_bytes = URL_SAFE_NO_PAD.decode(pow_key).map_err(|e| {
+        format!(
+            "Edge node {} has invalid PoW public key encoding: {}",
+            peer_node_id, e
+        )
+    })?;
+
+    if pk_bytes.len() != 32 {
+        return Err(format!(
+            "Edge node {} public key has invalid length: {} (expected 32)",
+            peer_node_id,
+            pk_bytes.len()
+        ));
+    }
+
+    if pow_pk_bytes.len() != 32 {
+        return Err(format!(
+            "Edge node {} PoW public key has invalid length: {} (expected 32)",
+            peer_node_id,
+            pow_pk_bytes.len()
+        ));
+    }
+
+    let node_id = crate::mesh::dht::routing::node_id::NodeId::from_public_key(&pow_pk_bytes);
+    if !node_id.verify_pow(&pow_pk_bytes, nonce) {
+        return Err(format!(
+            "Edge node {} PoW verification failed",
+            peer_node_id
+        ));
+    }
+
+    tracing::debug!(
+        "Edge node {} PoW validated successfully (nonce: {})",
+        peer_node_id,
+        nonce
+    );
+
+    Ok(())
 }
 
 fn validate_origin_node(
@@ -395,6 +472,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            None,
         );
         assert!(result.is_err());
         assert!(result
@@ -421,6 +500,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            None,
         );
         assert!(result.is_ok());
     }
@@ -439,6 +520,8 @@ mod tests {
             Some(&signature),
             timestamp,
             300,
+            None,
+            None,
             None,
             None,
             None,
@@ -466,6 +549,8 @@ mod tests {
             Some(&revocation_list),
             None,
             None,
+            None,
+            None,
         );
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("has been revoked"));
@@ -485,6 +570,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            None,
         );
         assert!(result.is_err());
     }
@@ -500,6 +587,8 @@ mod tests {
             None,
             0,
             300,
+            None,
+            None,
             None,
             None,
             None,
@@ -526,6 +615,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            None,
         );
         assert!(result.is_err());
     }
@@ -547,6 +638,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            None,
         );
         assert!(result.is_err());
     }
@@ -564,6 +657,8 @@ mod tests {
             Some(&signature),
             timestamp,
             300,
+            None,
+            None,
             None,
             None,
             None,
@@ -588,6 +683,8 @@ mod tests {
             Some(&corrupted_sig),
             timestamp,
             300,
+            None,
+            None,
             None,
             None,
             None,

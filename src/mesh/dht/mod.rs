@@ -1,3 +1,4 @@
+pub mod capability_attestation;
 pub mod keys;
 pub mod merkle;
 pub mod network_policy;
@@ -17,6 +18,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+pub use capability_attestation::CapabilityAttestation;
 pub use keys::*;
 pub use merkle::{MerkleNode, MerkleProof, MerkleProofNode, MerkleTree, ProofPosition};
 pub use network_policy::{

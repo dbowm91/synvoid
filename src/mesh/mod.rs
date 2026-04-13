@@ -73,9 +73,9 @@ pub use config::{
     MeshWireGuardPeer, NodeIdentityConfig,
 };
 pub use dht::{
-    DhtAccessControl, DhtConfig, DhtError, DhtKey, DhtRecordEntry, MerkleNode, MerkleProof,
-    MerkleProofNode, MerkleTree, NodeInfo, ProofPosition, RecordStoreConfig, RecordStoreManager,
-    RecordStoreStats, TierKeyStore, TierKeyStoreEntry,
+    CapabilityAttestation, DhtAccessControl, DhtConfig, DhtError, DhtKey, DhtRecordEntry,
+    MerkleNode, MerkleProof, MerkleProofNode, MerkleTree, NodeInfo, ProofPosition,
+    RecordStoreConfig, RecordStoreManager, RecordStoreStats, TierKeyStore, TierKeyStoreEntry,
 };
 pub use hierarchical_routing::{
     DirectedRouteQuery, HierarchicalRoutingConfig, HierarchicalRoutingManager, MeshBloomFilter,

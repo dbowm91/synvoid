@@ -80,6 +80,10 @@ pub enum DhtKey {
         revoked_at: u64,
         reason: String,
     },
+    CapabilityAttestation {
+        node_id: String,
+        capability: String,
+    },
 }
 
 impl DhtKey {
@@ -246,6 +250,13 @@ impl DhtKey {
         }
     }
 
+    pub fn capability_attestation(node_id: &str, capability: &str) -> Self {
+        DhtKey::CapabilityAttestation {
+            node_id: node_id.to_string(),
+            capability: capability.to_string(),
+        }
+    }
+
     pub fn as_str(&self) -> String {
         match self {
             DhtKey::Organization(org_id) => format!("org:{}", org_id),
@@ -346,6 +357,12 @@ impl DhtKey {
             } => {
                 format!("revoked_global_node:{}:{}:{}", node_id, revoked_at, reason)
             }
+            DhtKey::CapabilityAttestation {
+                node_id,
+                capability,
+            } => {
+                format!("capability_attestation:{}:{}", node_id, capability)
+            }
         }
     }
 
@@ -444,6 +461,10 @@ impl DhtKey {
                 revoked_at: parts[2].parse().unwrap_or(0),
                 reason: parts[3..].join(":"),
             },
+            "capability_attestation" if parts.len() >= 3 => DhtKey::CapabilityAttestation {
+                node_id: parts[1].to_string(),
+                capability: parts[2].to_string(),
+            },
             _ => DhtKey::NodeInfo(s.to_string()),
         }
     }
@@ -483,6 +504,7 @@ impl DhtKey {
                 | DhtKey::YaraRuleContent { .. }
                 | DhtKey::YaraRulesManifest { .. }
                 | DhtKey::NodeCapability { .. }
+                | DhtKey::CapabilityAttestation { .. }
                 | DhtKey::OriginReachability { .. }
                 | DhtKey::OriginPenalty { .. }
                 | DhtKey::UpstreamOwnershipChallenge(_)
@@ -540,6 +562,7 @@ impl DhtKey {
             DhtKey::YaraRuleContent { .. } => "yara_rule_content",
             DhtKey::YaraRulesManifest { .. } => "yara_rules_manifest",
             DhtKey::NodeCapability { .. } => "node_capability",
+            DhtKey::CapabilityAttestation { .. } => "capability_attestation",
             DhtKey::OriginReachability { .. } => "origin_reachability",
             DhtKey::VerificationTask { .. } => "verification_task",
             DhtKey::OriginPenalty { .. } => "origin_penalty",
@@ -579,6 +602,7 @@ impl DhtKey {
             DhtKey::YaraRuleContent { .. } => None,
             DhtKey::YaraRulesManifest { .. } => None,
             DhtKey::NodeCapability { .. } => None,
+            DhtKey::CapabilityAttestation { .. } => None,
             DhtKey::OriginReachability { .. } => None,
             DhtKey::VerificationTask { .. } => None,
             DhtKey::OriginPenalty { .. } => None,

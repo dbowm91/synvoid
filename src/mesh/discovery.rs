@@ -444,6 +444,8 @@ impl MeshDiscovery {
                     None,
                     global_node_att_key,
                     global_node_att_sig,
+                    pow_nonce,
+                    pow_public_key.as_ref().map(|s| s.as_str()),
                 ) {
                     tracing::warn!("{}", e);
                     return Err(MeshDiscoveryError::AuthFailed(e));

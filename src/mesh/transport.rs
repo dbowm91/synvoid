@@ -498,6 +498,142 @@ impl MeshTransport {
         }
     }
 
+    pub fn attest_capability(
+        &self,
+        node_id: &str,
+        capability: &str,
+    ) -> Option<crate::mesh::dht::CapabilityAttestation> {
+        if !self.config.role.is_global() {
+            tracing::warn!("Only global nodes can attest capabilities");
+            return None;
+        }
+
+        let peer_state = futures::executor::block_on(self.topology.get_peer(node_id));
+
+        let peer_state = match peer_state {
+            Some(p) => p,
+            None => {
+                tracing::warn!("Cannot attest capability for unknown node: {}", node_id);
+                return None;
+            }
+        };
+
+        if !self.verify_node_capability(&peer_state, capability) {
+            tracing::warn!(
+                "Node {} does not have capability '{}' - attestation denied",
+                node_id,
+                capability
+            );
+            return None;
+        }
+
+        let signer = self.mesh_signer.as_ref()?;
+        let timestamp = crate::utils::current_timestamp();
+        let global_node_id = self.config.node_id();
+
+        let temp_attestation = crate::mesh::dht::CapabilityAttestation::new(
+            node_id.to_string(),
+            capability.to_string(),
+            global_node_id.clone(),
+            String::new(),
+            vec![],
+            timestamp,
+        );
+
+        let signature = signer.sign(&temp_attestation.signable_content());
+
+        let signer_public_key = signer.get_public_key();
+
+        let attestation = crate::mesh::dht::CapabilityAttestation::new(
+            node_id.to_string(),
+            capability.to_string(),
+            global_node_id,
+            signer_public_key,
+            signature,
+            timestamp,
+        );
+
+        if let Some(ref record_store) = self.record_store {
+            let key = crate::mesh::dht::keys::DhtKey::capability_attestation(node_id, capability);
+            let key_str = key.as_str();
+            if let Ok(bytes) = serde_json::to_vec(&attestation) {
+                record_store.store_and_announce(key_str.to_string(), bytes, 86400);
+                tracing::debug!(
+                    "Attested capability '{}' for node {}",
+                    capability,
+                    node_id
+                );
+            }
+        }
+
+        Some(attestation)
+    }
+
+    fn verify_node_capability(&self, peer_state: &crate::mesh::topology::PeerState, capability: &str) -> bool {
+        match capability {
+            "dns_server" => peer_state.capabilities.can_serve_dns,
+            "waf" => peer_state.capabilities.waf_enabled,
+            "edge_proxy" => peer_state.capabilities.can_proxy,
+            "origin" => !peer_state.upstreams.is_empty(),
+            _ => {
+                tracing::warn!("Unknown capability: {}", capability);
+                false
+            }
+        }
+    }
+
+    pub fn get_capability_attestation(
+        &self,
+        node_id: &str,
+        capability: &str,
+    ) -> Option<crate::mesh::dht::CapabilityAttestation> {
+        let key = crate::mesh::dht::keys::DhtKey::capability_attestation(node_id, capability);
+        let key_str = key.as_str();
+
+        if let Some(ref record_store) = self.record_store {
+            if let Some(record) = record_store.get(&key_str) {
+                return serde_json::from_slice(&record.value).ok();
+            }
+        }
+        None
+    }
+
+    pub fn verify_capability_attestation(
+        &self,
+        attestation: &crate::mesh::dht::CapabilityAttestation,
+    ) -> bool {
+        let global_node_id = &attestation.attested_by_global_node;
+
+        let peer_state = futures::executor::block_on(self.topology.get_peer(global_node_id));
+
+        let Some(peer_state) = peer_state else {
+            tracing::warn!(
+                "Cannot verify attestation - global node {} not found in topology",
+                global_node_id
+            );
+            return false;
+        };
+
+        if !peer_state.is_global {
+            tracing::warn!(
+                "Attestation signed by non-global node {}",
+                global_node_id
+            );
+            return false;
+        }
+
+        if !self.verify_node_capability(&peer_state, &attestation.capability) {
+            tracing::warn!(
+                "Global node {} does not have capability '{}' it attested",
+                global_node_id,
+                attestation.capability
+            );
+            return false;
+        }
+
+        attestation.verify_signature()
+    }
+
     pub fn publish_single_site_transform_config(
         &self,
         site_id: &str,
@@ -1253,8 +1389,8 @@ impl MeshTransport {
                 quic_port,
                 wireguard_port,
                 public_key,
-                pow_nonce: _,
-                pow_public_key: _,
+                pow_nonce,
+                pow_public_key,
             } => {
                 if version != MESH_MESSAGE_VERSION {
                     return Err(MeshTransportError::VersionMismatch {
@@ -1320,6 +1456,8 @@ impl MeshTransport {
                     self.revocation_list.as_ref().map(|r| r.as_ref()),
                     global_node_att_key,
                     global_node_att_sig,
+                    pow_nonce,
+                    pow_public_key.as_ref().map(|s| s.as_str()),
                 ) {
                     tracing::warn!("Node verification failed for {}: {}", node_id, e);
                     return Err(MeshTransportError::AuthFailed(e));
@@ -1847,6 +1985,8 @@ impl MeshTransport {
                     self.revocation_list.as_ref().map(|r| r.as_ref()),
                     global_node_att_key,
                     global_node_att_sig,
+                    None,
+                    None,
                 ) {
                     tracing::warn!("Node Ed25519 verification failed for {}: {}", node_id, e);
                     return Err(MeshTransportError::AuthFailed(e));
