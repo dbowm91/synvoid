@@ -1,8 +1,69 @@
 use std::io;
 use std::path::PathBuf;
+use std::sync::Arc;
 
-use crate::process::{IpcStream, Message};
+use crate::process::{IpcSigner, IpcStream, Message};
 use crate::utils::errors::ipc as ipc_errors;
+
+fn create_ipc_signer() -> Option<Arc<IpcSigner>> {
+    if let Ok(key_file) = std::env::var("MALUWAF_IPC_KEY_FILE") {
+        if let Ok(key_hex) = std::fs::read_to_string(&key_file) {
+            let key_hex = key_hex.trim();
+            if key_hex.len() == 64 {
+                let mut key = [0u8; 32];
+                let mut valid = true;
+                for (i, chunk) in key_hex.as_bytes().chunks(2).enumerate() {
+                    if chunk.len() != 2 {
+                        valid = false;
+                        break;
+                    }
+                    if let Ok(s) = std::str::from_utf8(chunk) {
+                        if let Ok(b) = u8::from_str_radix(s, 16) {
+                            key[i] = b;
+                        } else {
+                            valid = false;
+                            break;
+                        }
+                    } else {
+                        valid = false;
+                        break;
+                    }
+                }
+                if valid {
+                    let _ = std::fs::remove_file(&key_file);
+                    return Some(Arc::new(IpcSigner::new(&key)));
+                }
+            }
+        }
+    }
+    if let Ok(key_hex) = std::env::var("MALUWAF_IPC_KEY") {
+        if key_hex.len() == 64 {
+            let mut key = [0u8; 32];
+            let mut valid = true;
+            for (i, chunk) in key_hex.as_bytes().chunks(2).enumerate() {
+                if chunk.len() != 2 {
+                    valid = false;
+                    break;
+                }
+                if let Ok(s) = std::str::from_utf8(chunk) {
+                    if let Ok(b) = u8::from_str_radix(s, 16) {
+                        key[i] = b;
+                    } else {
+                        valid = false;
+                        break;
+                    }
+                } else {
+                    valid = false;
+                    break;
+                }
+            }
+            if valid {
+                return Some(Arc::new(IpcSigner::new(&key)));
+            }
+        }
+    }
+    None
+}
 
 pub struct IpcClient {
     socket_path: PathBuf,
@@ -23,7 +84,12 @@ impl IpcClient {
     }
 
     fn connect(&self) -> Result<IpcStream, String> {
-        IpcStream::connect_unix(&self.socket_path).map_err(|e| ipc_errors::connect_failed(&e))
+        if let Some(signer) = create_ipc_signer() {
+            IpcStream::connect_with_signer(&self.socket_path, signer)
+                .map_err(|e| ipc_errors::connect_failed(&e))
+        } else {
+            IpcStream::connect_unix(&self.socket_path).map_err(|e| ipc_errors::connect_failed(&e))
+        }
     }
 
     fn handle_recv_result(
@@ -48,7 +114,7 @@ impl IpcClient {
         let mut stream = self.connect()?;
 
         stream
-            .send(request)
+            .send_signed(request)
             .map_err(|e| format!("Failed to send message: {}", e))?;
 
         let result = stream.recv(self.timeout_ms);
@@ -62,7 +128,7 @@ impl IpcClient {
     pub fn try_send(&mut self, msg: &Message) -> Result<(), String> {
         let mut stream = self.connect()?;
         stream
-            .send(msg)
+            .send_signed(msg)
             .map_err(|e| format!("Failed to send: {}", e))
     }
 
@@ -75,39 +141,25 @@ impl IpcClient {
         let mut stream = self.connect()?;
 
         stream
-            .send(msg)
+            .send_signed(msg)
             .map_err(|e| format!("Failed to send: {}", e))?;
 
         self.handle_recv_result(stream.recv(self.timeout_ms))
     }
 }
 
-/// Trait for executing IPC commands with a consistent pattern.
-///
-/// Implement this trait to create reusable IPC command handlers that follow
-/// the connect -> send -> receive -> handle response pattern.
 pub trait IpcCommand: Send + Sync {
-    /// The type of response expected from this command.
     type Response;
 
-    /// Returns the socket path to connect to.
     fn socket_path(&self) -> &PathBuf;
-    /// Returns the timeout in milliseconds for this command.
     fn timeout_ms(&self) -> u64;
-    /// Builds the request message to send.
     fn build_request(&self) -> Message;
-    /// Handles the response message and converts it to the target response type.
     fn handle_response(&self, msg: Message) -> Result<Self::Response, String>;
-    /// Returns a filter function to validate expected response messages.
-    /// Default accepts any message.
     fn expected_message(&self) -> Box<dyn Fn(&Message) -> bool + '_> {
         Box::new(|_| true)
     }
 }
 
-/// Executes an IPC command using the IpcCommand trait.
-///
-/// This function handles the full lifecycle: connect, send, receive, and response handling.
 pub fn execute_ipc_command<C: IpcCommand>(cmd: &C) -> Result<C::Response, String> {
     let mut client = IpcClient::new(cmd.socket_path().clone()).with_timeout(cmd.timeout_ms());
 
@@ -119,9 +171,6 @@ pub fn execute_ipc_command<C: IpcCommand>(cmd: &C) -> Result<C::Response, String
         .and_then(|msg| cmd.handle_response(msg))
 }
 
-/// A simple IPC command implementation that uses function pointers.
-///
-/// Useful for one-off commands without implementing the full trait.
 pub struct SimpleIpcCommand {
     socket_path: PathBuf,
     timeout_ms: u64,
@@ -193,9 +242,15 @@ pub fn send_and_receive(
 }
 
 pub fn send_message(socket_path: &std::path::Path, msg: &Message) -> Result<(), String> {
-    let mut stream =
-        IpcStream::connect_unix(socket_path).map_err(|e| ipc_errors::connect_failed(&e))?;
-    stream.send(msg).map_err(|e| ipc_errors::send_failed(&e))
+    let mut stream = if let Some(signer) = create_ipc_signer() {
+        IpcStream::connect_with_signer(socket_path, signer)
+            .map_err(|e| ipc_errors::connect_failed(&e))?
+    } else {
+        IpcStream::connect_unix(socket_path).map_err(|e| ipc_errors::connect_failed(&e))?
+    };
+    stream
+        .send_signed(msg)
+        .map_err(|e| ipc_errors::send_failed(&e))
 }
 
 pub fn map_ipc_error<T>(result: Result<T, io::Error>, context: &str) -> Result<T, String> {
@@ -228,10 +283,16 @@ pub fn send_and_expect_response(
     expected: fn(&Message) -> bool,
     timeout_ms: u64,
 ) -> Result<Message, String> {
-    let mut stream =
-        IpcStream::connect_unix(socket_path).map_err(|e| ipc_errors::connect_failed(&e))?;
+    let mut stream = if let Some(signer) = create_ipc_signer() {
+        IpcStream::connect_with_signer(socket_path, signer)
+            .map_err(|e| ipc_errors::connect_failed(&e))?
+    } else {
+        IpcStream::connect_unix(socket_path).map_err(|e| ipc_errors::connect_failed(&e))?
+    };
 
-    stream.send(&msg).map_err(|e| ipc_errors::send_failed(&e))?;
+    stream
+        .send_signed(&msg)
+        .map_err(|e| ipc_errors::send_failed(&e))?;
 
     match stream.recv(timeout_ms) {
         Ok(Some(response)) if expected(&response) => Ok(response),

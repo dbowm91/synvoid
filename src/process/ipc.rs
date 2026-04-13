@@ -1,4 +1,5 @@
-use std::io;
+use std::io::{self, Write};
+use std::sync::Arc;
 
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
@@ -7,6 +8,7 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 
 use super::ipc_framing::{read_message_sync, write_message_sync, DEFAULT_BUFFER_SIZE};
+use super::ipc_signed::{IpcSigner, SignedIpcMessage};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CommandMethod {
@@ -1321,6 +1323,7 @@ pub struct IpcStream {
     #[cfg(windows)]
     stream: std::fs::File,
     read_buffer: Vec<u8>,
+    signer: Option<Arc<IpcSigner>>,
 }
 
 #[cfg(windows)]
@@ -1470,6 +1473,7 @@ pub fn connect_to_master(path: &std::path::Path) -> io::Result<IpcStream> {
         Ok(IpcStream {
             stream,
             read_buffer: Vec::with_capacity(DEFAULT_BUFFER_SIZE),
+            signer: None,
         })
     }
 
@@ -1494,6 +1498,7 @@ pub fn connect_to_master(path: &std::path::Path) -> io::Result<IpcStream> {
                     return Ok(IpcStream {
                         stream: handle,
                         read_buffer: Vec::with_capacity(DEFAULT_BUFFER_SIZE),
+                        signer: None,
                     });
                 }
                 Err(e) if e.kind() == io::ErrorKind::NotFound && attempts < max_attempts => {
@@ -1513,6 +1518,7 @@ impl IpcStream {
         Self {
             stream,
             read_buffer: Vec::with_capacity(DEFAULT_BUFFER_SIZE),
+            signer: None,
         }
     }
 
@@ -1521,7 +1527,19 @@ impl IpcStream {
         Self {
             stream,
             read_buffer: Vec::with_capacity(DEFAULT_BUFFER_SIZE),
+            signer: None,
         }
+    }
+
+    #[cfg(unix)]
+    pub fn connect_with_signer(path: &std::path::Path, signer: Arc<IpcSigner>) -> io::Result<Self> {
+        let stream = UnixStream::connect(path)?;
+        stream.set_nonblocking(true).ok();
+        Ok(Self {
+            stream,
+            read_buffer: Vec::with_capacity(DEFAULT_BUFFER_SIZE),
+            signer: Some(signer),
+        })
     }
 
     #[cfg(unix)]
@@ -1531,6 +1549,7 @@ impl IpcStream {
         Ok(Self {
             stream,
             read_buffer: Vec::with_capacity(DEFAULT_BUFFER_SIZE),
+            signer: None,
         })
     }
 
@@ -1543,8 +1562,25 @@ impl IpcStream {
         write_message_sync(&mut self.stream, msg)
     }
 
+    pub fn send_signed(&mut self, msg: &Message) -> io::Result<()> {
+        if let Some(ref signer) = self.signer {
+            let data = SignedIpcMessage::serialize_signed(msg, signer)?;
+            self.stream.write_all(&data)
+        } else {
+            write_message_sync(&mut self.stream, msg)
+        }
+    }
+
     pub fn try_recv(&mut self) -> io::Result<Option<Message>> {
         read_message_sync(&mut self.stream, &mut self.read_buffer)
+    }
+
+    pub fn try_recv_signed(&mut self) -> io::Result<Option<Message>> {
+        if let Some(ref signer) = self.signer {
+            SignedIpcMessage::deserialize_signed_from_stream(&mut self.stream, signer)
+        } else {
+            read_message_sync(&mut self.stream, &mut self.read_buffer)
+        }
     }
 
     pub fn recv(&mut self, timeout_ms: u64) -> io::Result<Option<Message>> {
@@ -1556,7 +1592,7 @@ impl IpcStream {
         let max_sleep = 50u64;
 
         loop {
-            match self.try_recv() {
+            match self.try_recv_signed() {
                 Ok(Some(msg)) => return Ok(Some(msg)),
                 Ok(None) => {
                     if start.elapsed() >= timeout {

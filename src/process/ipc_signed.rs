@@ -4,6 +4,8 @@ use std::sync::{Arc, LazyLock, Mutex};
 use hmac::{Hmac, Mac};
 use sha3::Sha3_256;
 
+use crate::process::Message;
+
 pub type HmacSha3_256 = Hmac<Sha3_256>;
 
 pub const HMAC_SIZE: usize = 32;
@@ -391,6 +393,75 @@ impl SignedIpcMessage {
         }
 
         crate::serialization::deserialize(payload)
+    }
+
+    pub fn deserialize_signed_from_stream<R: Read>(
+        stream: &mut R,
+        signer: &IpcSigner,
+    ) -> io::Result<Option<Message>> {
+        let mut len_buf = [0u8; 4];
+        match stream.read_exact(&mut len_buf) {
+            Ok(_) => {}
+            Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
+            Err(e) => return Err(e),
+        }
+
+        let total_len = u32::from_be_bytes(len_buf) as usize;
+        const MAX_MESSAGE_SIZE: usize = 1024 * 1024;
+        if !(TIMESTAMP_SIZE + NONCE_SIZE + HMAC_SIZE..=MAX_MESSAGE_SIZE).contains(&total_len) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "signed message size invalid",
+            ));
+        }
+
+        let mut raw = vec![0u8; total_len];
+        stream.read_exact(&mut raw).map_err(io::Error::other)?;
+
+        let timestamp = u64::from_be_bytes(
+            raw[0..TIMESTAMP_SIZE]
+                .try_into()
+                .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "bad timestamp"))?,
+        );
+
+        if !verify_timestamp(timestamp) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "message timestamp outside replay window",
+            ));
+        }
+
+        let nonce: [u8; 16] = raw[TIMESTAMP_SIZE..TIMESTAMP_SIZE + NONCE_SIZE]
+            .try_into()
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "bad nonce"))?;
+
+        if !check_and_insert_nonce(&nonce, timestamp) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "replay detected: duplicate nonce",
+            ));
+        }
+
+        let hmac: [u8; HMAC_SIZE] = raw
+            [TIMESTAMP_SIZE + NONCE_SIZE..TIMESTAMP_SIZE + NONCE_SIZE + HMAC_SIZE]
+            .try_into()
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "bad hmac"))?;
+
+        let payload = &raw[TIMESTAMP_SIZE + NONCE_SIZE + HMAC_SIZE..];
+
+        let mut hmac_data = Vec::with_capacity(TIMESTAMP_SIZE + NONCE_SIZE + payload.len());
+        hmac_data.extend_from_slice(&timestamp.to_be_bytes());
+        hmac_data.extend_from_slice(&nonce);
+        hmac_data.extend_from_slice(payload);
+
+        if !signer.verify(&hmac_data, &hmac) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "HMAC verification failed",
+            ));
+        }
+
+        crate::serialization::deserialize(payload).map(Some)
     }
 }
 

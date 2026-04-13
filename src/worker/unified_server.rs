@@ -473,6 +473,8 @@ pub async fn run_unified_server_worker(
                     None,
                 ))
             };
+            dummy_threat.start_background_tasks();
+            crate::waf::set_threat_intel(dummy_threat.clone());
             (
                 None::<Arc<MeshTransportManager>>,
                 Some(dummy_threat),
@@ -947,6 +949,8 @@ pub async fn run_unified_server_worker(
                 None,
             ))
         };
+        dummy_threat.start_background_tasks();
+        crate::waf::set_threat_intel(dummy_threat.clone());
         (
             None::<Arc<MeshTransportManager>>,
             Some(dummy_threat),
@@ -955,18 +959,13 @@ pub async fn run_unified_server_worker(
     };
 
     // Wire up port honeypot threat publishing to mesh network
-    // Only start if honeypot is enabled AND we have a real threat_intel manager (not dummy)
     if let Some(ref runner) = port_honeypot_runner {
         if let Some(ref threat_intel) = _threat_intel_manager {
-            if threat_intel.is_mesh_available() {
-                runner.start_mesh_threat_publishing(
-                    threat_intel.clone(),
-                    30, // publish every 30 seconds
-                );
-                tracing::info!("Port honeypot threat publishing wired to mesh network");
-            } else {
-                tracing::warn!("Honeypot threat publishing running in standalone mode...");
-            }
+            runner.start_mesh_threat_publishing(
+                threat_intel.clone(),
+                30, // publish every 30 seconds
+            );
+            tracing::info!("Port honeypot threat publishing wired to mesh network");
         }
     }
 
