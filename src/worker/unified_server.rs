@@ -313,6 +313,14 @@ pub async fn run_unified_server_worker(
     // Wrap in Arc immediately for easier sharing
     let unified_server: Arc<UnifiedServer> = Arc::new(unified_server);
 
+    // Setup ACME if enabled (this spawns the renewal task)
+    #[cfg(feature = "dns")]
+    {
+        if let Some(_acme_manager) = unified_server.setup_acme() {
+            tracing::info!("ACME manager started for worker {}", worker_id);
+        }
+    }
+
     // Initialize Granian supervisors for AppServer backends
     let app_servers_for_init = app_servers_init.clone();
     let worker_id_for_app = worker_id;
@@ -1259,6 +1267,31 @@ pub async fn run_unified_server_worker(
                         .is_err()
                     {
                         tracing::warn!("Failed to send health check ack to master");
+                    }
+                }
+                Some(Message::MasterCertReload) => {
+                    tracing::info!(
+                        "Unified Server Worker {} received cert reload",
+                        ipc_state.worker_id
+                    );
+                    if let Some(cert_resolver) = ipc_state.unified_server.get_cert_resolver() {
+                        if let Err(e) = cert_resolver.load_certificates() {
+                            tracing::error!(
+                                "Failed to reload certificates in worker {}: {}",
+                                ipc_state.worker_id,
+                                e
+                            );
+                        } else {
+                            tracing::info!(
+                                "Certificates reloaded successfully in worker {}",
+                                ipc_state.worker_id
+                            );
+                        }
+                    } else {
+                        tracing::warn!(
+                            "No cert_resolver in worker {}, cannot reload certificates",
+                            ipc_state.worker_id
+                        );
                     }
                 }
                 Some(Message::BlocklistUpdate { blocks, version: _ }) => {

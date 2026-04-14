@@ -450,6 +450,17 @@ pub async fn handle_worker_connection(
                             process_manager.mark_worker_stopped(id);
                             return Err(());
                         }
+                        Message::WorkerCertReload { id, domains } => {
+                            tracing::info!(
+                                "Worker {} triggered cert reload for domains: {:?}",
+                                id,
+                                domains
+                            );
+                            let pm = process_manager.clone();
+                            tokio::spawn(async move {
+                                pm.broadcast_cert_reload().await;
+                            });
+                        }
                         Message::StaticWorkerStarted { worker_id, pid } => {
                             tracing::debug!("Static worker {} connected (PID: {})", worker_id, pid);
                         }

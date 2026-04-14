@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
 use tokio::sync::{broadcast, Mutex, RwLock};
 
 use crate::config::ConfigManager;
@@ -14,6 +15,7 @@ use crate::udp::listener::{UdpListenerPool, UdpListenerPoolConfig};
 use crate::dns::DnsServer;
 use crate::metrics::WorkerMetrics;
 use crate::process::ipc::WorkerId;
+use crate::tls::acme::AcmeManager;
 use crate::tls::cert_resolver::CertResolver;
 use crate::tls::config::InternalTlsConfig;
 use crate::tunnel::{TunnelManager, TunnelRouter};
@@ -76,6 +78,8 @@ pub struct UnifiedServer {
     _dns_addr: Option<SocketAddr>,
     #[cfg(feature = "dns")]
     _dns_addr_v6: Option<SocketAddr>,
+    #[cfg(feature = "dns")]
+    acme_manager: Arc<StdMutex<Option<Arc<AcmeManager>>>>,
 }
 
 impl UnifiedServer {
@@ -418,6 +422,8 @@ impl UnifiedServer {
             _dns_addr: dns_addr,
             #[cfg(feature = "dns")]
             _dns_addr_v6: dns_addr_v6,
+            #[cfg(feature = "dns")]
+            acme_manager: Arc::new(StdMutex::new(None)),
         })
     }
 
@@ -447,6 +453,58 @@ impl UnifiedServer {
     ) -> Self {
         self.serverless_manager = Some(manager);
         self
+    }
+
+    #[cfg(feature = "dns")]
+    pub fn setup_acme(&self) -> Option<Arc<AcmeManager>> {
+        let tls_config = self.tls_config.clone();
+        let cert_resolver = self.cert_resolver.as_ref()?;
+
+        if !tls_config.acme.enabled {
+            return None;
+        }
+
+        let acme_config = tls_config.acme.clone();
+        let resolver = cert_resolver.clone();
+
+        let acme_manager = Arc::new(AcmeManager::new(acme_config, resolver));
+
+        let ipc = self.ipc.as_ref()?;
+        let worker_id = self.worker_id?;
+
+        let ipc_clone = ipc.clone();
+        let renew_callback = move |domains: Vec<String>| {
+            tracing::info!(
+                "ACME certificates renewed for {:?}, notifying master",
+                domains
+            );
+            let ipc = ipc_clone.clone();
+            let domains = domains.clone();
+            tokio::spawn(async move {
+                let msg = crate::process::Message::WorkerCertReload {
+                    id: worker_id,
+                    domains,
+                };
+                let mut ipc = ipc.lock().await;
+                if let Err(e) = ipc.send(&msg).await {
+                    tracing::error!("Failed to send cert reload message: {}", e);
+                }
+            });
+        };
+        acme_manager.set_renew_callback(renew_callback);
+
+        let acme_clone = acme_manager.clone();
+        tokio::spawn(async move {
+            if let Err(e) = acme_clone.init().await {
+                tracing::error!("Failed to initialize ACME manager: {}", e);
+                return;
+            }
+            acme_clone.spawn_renewal_task();
+        });
+
+        tracing::info!("ACME manager initialized");
+        *self.acme_manager.lock().unwrap() = Some(acme_manager.clone());
+        Some(acme_manager)
     }
 
     pub fn stop_accepting(&self) {
@@ -479,6 +537,10 @@ impl UnifiedServer {
 
     pub fn get_block_store(&self) -> Option<Arc<crate::block_store::BlockStore>> {
         self.waf.block_store.clone()
+    }
+
+    pub fn get_cert_resolver(&self) -> Option<Arc<CertResolver>> {
+        self.cert_resolver.clone()
     }
 
     pub fn get_waf(&self) -> Arc<crate::waf::WafCore> {

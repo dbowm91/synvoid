@@ -183,7 +183,7 @@ impl std::fmt::Display for ErrorCode {
 ///   WorkerRequestLog, WorkerShutdownComplete, WorkerError
 /// - **Master Commands**: MasterShutdown, MasterConfigReload,
 ///   MasterProcessConfigReload, MasterSupervisorConfigReload, MasterHealthCheck,
-///   MasterResizeThreadpool, HealthCheckAck, WorkerResizeAck
+///   MasterResizeThreadpool, MasterCertReload, HealthCheckAck, WorkerResizeAck
 /// - **Static Worker**: StaticWorkerStarted, StaticWorkerReady,
 ///   StaticWorkerHeartbeat, StaticWorkerRequestLog, StaticWorkerShutdownComplete,
 ///   StaticWorkerBackgroundTasksDone, StaticWorkerResizeAck, StaticWorkerScan,
@@ -275,12 +275,17 @@ pub enum Message {
     MasterResizeThreadpool {
         worker_threads: u32,
     },
+    MasterCertReload,
     HealthCheckAck {
         timestamp: u64,
     },
     WorkerResizeAck {
         id: WorkerId,
         worker_threads: u32,
+    },
+    WorkerCertReload {
+        id: WorkerId,
+        domains: Vec<String>,
     },
     StaticWorkerStarted {
         worker_id: usize,
@@ -744,8 +749,10 @@ impl Message {
             | Message::MasterSupervisorConfigReload { .. }
             | Message::MasterHealthCheck { .. }
             | Message::MasterResizeThreadpool { .. }
+            | Message::MasterCertReload
             | Message::HealthCheckAck { .. }
             | Message::WorkerResizeAck { .. }
+            | Message::WorkerCertReload { .. }
             | Message::StaticWorkerStarted { .. }
             | Message::StaticWorkerReady { .. }
             | Message::StaticWorkerHeartbeat { .. }
@@ -1029,7 +1036,8 @@ impl Message {
             | Message::WorkerHeartbeat { .. }
             | Message::WorkerRequestLog { .. }
             | Message::WorkerShutdownComplete { .. }
-            | Message::WorkerError { .. } => MessageCategory::WorkerLifecycle,
+            | Message::WorkerError { .. }
+            | Message::WorkerCertReload { .. } => MessageCategory::WorkerLifecycle,
 
             Message::MasterShutdown { .. }
             | Message::MasterConfigReload { .. }
@@ -1037,6 +1045,7 @@ impl Message {
             | Message::MasterSupervisorConfigReload { .. }
             | Message::MasterHealthCheck { .. }
             | Message::MasterResizeThreadpool { .. }
+            | Message::MasterCertReload
             | Message::HealthCheckAck { .. }
             | Message::WorkerResizeAck { .. } => MessageCategory::MasterCommand,
 

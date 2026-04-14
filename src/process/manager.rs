@@ -1187,6 +1187,30 @@ impl ProcessManager {
         // They receive config reload via signal-based communication or will pick up on next request.
     }
 
+    pub async fn broadcast_cert_reload(&self) {
+        let msg = Message::MasterCertReload;
+
+        // Send to static worker (though static worker doesn't handle TLS certs)
+        if let Some(ref ipc) = self.get_static_worker_ipc() {
+            let mut ipc = ipc.lock().await;
+            if let Err(e) = ipc.send(&msg) {
+                tracing::error!("Failed to send cert reload to static worker: {}", e);
+            } else {
+                tracing::info!("Broadcast cert reload to static worker");
+            }
+        }
+
+        // Send to all unified server workers
+        for ipc in self.get_all_unified_server_worker_ipc() {
+            let mut ipc = ipc.lock().await;
+            if let Err(e) = ipc.send(&msg) {
+                tracing::error!("Failed to send cert reload to unified server worker: {}", e);
+            } else {
+                tracing::info!("Broadcast cert reload to unified server worker");
+            }
+        }
+    }
+
     pub async fn check_workers_health(&self) {
         let workers = self.workers.read();
         let now = Instant::now();

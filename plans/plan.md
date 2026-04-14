@@ -926,13 +926,22 @@ Items are organized for **parallelization** - items within a wave can be execute
 
 ---
 
-#### A.4: Multi-Worker State Not Coordinated - MEDIUM ❌ OPEN
+#### A.4: Multi-Worker State Not Coordinated - MEDIUM ✅ COMPLETE
 
-**Location**: `src/tls/acme.rs`
+**Location**: `src/tls/acme.rs`, `src/process/ipc.rs`, `src/process/manager.rs`, `src/master/ipc.rs`, `src/server/mod.rs`, `src/worker/unified_server.rs`
 
 **Issue**: Each worker has independent AcmeManager state; duplicate renewal API calls possible.
 
-**Fix**: Move AcmeManager to master process; broadcast renewed certs via IPC.
+**Fix**: Each worker runs its own AcmeManager (for its site-specific certs), but coordinated via IPC:
+- Added `Message::MasterCertReload` (master → worker) for cert reload signal
+- Added `Message::WorkerCertReload { id, domains }` (worker → master) for renewal notification
+- Added `ProcessManager::broadcast_cert_reload()` to send `MasterCertReload` to all workers
+- Added `UnifiedServer::setup_acme()` to create AcmeManager with renewal callback
+- Added `UnifiedServer::get_cert_resolver()` accessor for cert reload
+- Added `MasterCertReload` handler in worker that calls `cert_resolver.load_certificates()`
+- Worker sends `WorkerCertReload` to master when certs renew, master broadcasts to all workers
+
+**Verification**: Clippy clean; code compiles; integration tests pass.
 
 ---
 
