@@ -206,6 +206,67 @@ fn generate_csrf_token(&self, session_id: String) -> String {
 
 ---
 
+### Shared InputNormalizer with Optional Arc
+
+**Before**: Create new normalizer on every call
+```rust
+pub fn detect(input: &[u8], location: InputLocation) -> Option<AttackDetectionResult> {
+    let normalized = InputNormalizer::new().normalize(std::str::from_utf8(input).unwrap_or(""));
+    // ...
+}
+```
+
+**After**: Accept shared Arc normalizer, with fallback for backward compatibility
+```rust
+pub fn detect(
+    input: &[u8],
+    location: InputLocation,
+    normalizer: Option<&InputNormalizer>,
+) -> Option<AttackDetectionResult> {
+    let normalized = if let Some(n) = normalizer {
+        n.normalize(std::str::from_utf8(input).unwrap_or(""))
+    } else {
+        InputNormalizer::new().normalize(std::str::from_utf8(input).unwrap_or(""))
+    };
+    // ...
+}
+```
+
+**Location**: `src/waf/attack_detection/sqli.rs`, `xss.rs`
+
+---
+
+### Batch Lock Acquisition Pattern
+
+**Before**: N+1 lock acquisitions in loop
+```rust
+let app_servers = heartbeat_state.app_servers.read().await;
+for (site_id, supervisor) in app_servers.iter() {
+    let mut ipc = heartbeat_state.ipc.lock().await; // Lock acquired N times
+    ipc.send(&Message::AppServerHealth { ... }).await;
+}
+```
+
+**After**: Collect data first (read-only), then single lock for batch send
+```rust
+let app_health: Vec<(String, bool)> = {
+    let app_servers = heartbeat_state.app_servers.read().await;
+    app_servers
+        .iter()
+        .map(|(site_id, supervisor)| (site_id.clone(), supervisor.is_healthy()))
+        .collect()
+};
+
+let mut ipc = heartbeat_state.ipc.lock().await;
+for (site_id, healthy) in app_health {
+    ipc.send(&Message::AppServerHealth { ... }).await;
+}
+```
+
+**Location**: `src/worker/unified_server.rs:1087-1098`
+
+---
+
 ## Testing Performance Changes
 
 ```bash

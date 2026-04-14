@@ -428,6 +428,12 @@ All duplicate `current_timestamp()` definitions have been consolidated into `src
 | CSRF token unbounded storage | `src/admin/state.rs:633-657` | MAX_CSRF_TOKENS_PER_SESSION=10 limits tokens per session |
 | DHT pending_announces O(n) | `src/mesh/dht/record_store.rs:208` | VecDeque for O(1) pop_front() instead of Vec remove(0) |
 | Proxy cache SWR redundant lock | `src/proxy_cache/store.rs:240-255` | Entry API returns directly; no insert+get pattern |
+| WAF double normalization | `src/waf/attack_detection/sqli.rs`, `xss.rs` | Detectors accept optional normalizer; callers pass shared Arc |
+| Heartbeat N+1 lock contention | `src/worker/unified_server.rs:1087-1098` | Collect health data first, then batch send with single lock |
+| DHT routing JoinHandle leak | `src/mesh/dht/routing/manager.rs` | Added shutdown_tx and shutdown() method |
+| Worker unified server JoinHandle leak | `src/worker/unified_server.rs` | Added task_handles; tasks aborted on shutdown |
+| Proxy cache JoinHandle leak | `src/proxy_cache/store.rs` | Added cleanup_shutdown_tx and shutdown() method |
+| PHP-FPM open_basedir bypass | `src/php/mod.rs` | open_basedir now uses PHP_ADMIN_VALUE |
 
 ## Performance Hot Paths
 
@@ -834,6 +840,7 @@ post_max_size = "50M"
 
 These are passed to PHP-FPM as:
 - `PHP_ADMIN_VALUE:disable_functions` (admin-only, cannot be overridden)
+- `PHP_ADMIN_VALUE:open_basedir` (admin-only, cannot be overridden)
 - `PHP_VALUE` for other settings
 
 ## Static File Directory Templates
