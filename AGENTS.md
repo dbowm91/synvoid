@@ -629,21 +629,19 @@ rrsig.extend_from_slice(&timestamp.to_be_bytes());
 
 ## Implementation Plan
 
-The consolidated implementation plan is located at `plans/plan.md`. Waves 1-3 have been completed.
-The plan now tracks:
+The consolidated implementation plan is located at `plans/plan.md`. This single file contains:
 
 | Wave | Focus | Items | Status |
 |------|-------|-------|--------|
-| 1 | Critical Security (WAF, Auth, Mesh) | ~10 | ✅ Completed |
-| 2 | High Security (TLS, DNS, Mesh) | ~15 | ✅ Completed |
-| 3 | Core Functionality (Web Stack, Caching, Honeypot) | ~12 | ✅ Completed |
-| 4 | Performance & Code Quality | ~40 | ❌ Open |
-| 5 | Future Work | ~12 | ⏸️ Deferred |
+| 4 | Performance & Code Quality | ~70 | ❌ Open |
+| 5 | Future Work | ~25 | ⏸️ Deferred |
 
 **Subagent Execution Model**: Items within Wave 4 can be executed in parallel by separate subagents.
 Dependencies between items are documented in `plans/plan.md`.
 
 When reviewing the plan against the codebase, always verify claims directly. Plans may reference items already fixed, use outdated line numbers, or describe bugs incorrectly. Run `grep`/search for the specific patterns described to confirm they still exist before implementing fixes.
+
+**Plan Consolidation Note**: All previous plan files (plan2.md through plan24.md) have been merged into `plans/plan.md`. The original files have been removed.
 
 ## Admin Panel Architecture Notes
 
