@@ -380,6 +380,20 @@ impl RecordStoreManager {
             .collect()
     }
 
+    pub fn get_by_prefix(&self, prefix: &str) -> Vec<DhtRecord> {
+        let rs = self.record_state.read();
+        rs.records
+            .get_by_prefix(prefix)
+            .into_iter()
+            .filter(|(_, entry)| {
+                let now = crate::mesh::safe_unix_timestamp();
+                let expires_at = entry.record.timestamp + entry.record.ttl_seconds;
+                now < expires_at
+            })
+            .map(|(_, e)| e.record.clone())
+            .collect()
+    }
+
     pub fn get_version(&self) -> u64 {
         self.record_state.read().local_version
     }

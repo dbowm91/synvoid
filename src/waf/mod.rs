@@ -1075,7 +1075,7 @@ impl WafCore {
 
     fn check_dht_threat_lookup(&self, client_ip: IpAddr) -> Option<WafDecision> {
         if let Some(ref threat_intel) = get_threat_intel() {
-            if let Some(indicator) = threat_intel.lookup_local_indicator(&client_ip.to_string()) {
+            if let Some(indicator) = threat_intel.lookup_local_indicator_by_ip(&client_ip.to_string()) {
                 tracing::info!(
                     "Local threat indicator hit for IP {}: type={:?}, severity={:?}, reason={}",
                     client_ip,

@@ -614,7 +614,7 @@ ThreatIntel indicators are signed using Ed25519. The signature content format is
 
 **Sync Mechanism**:
 - `sync_from_dht()` replaces mesh broadcast sync
-- Gets all `threat_indicator:*` records from local cache
+- Uses `get_by_prefix("threat_indicator:")` to efficiently retrieve threat indicator records
 - Imports indicators not already present locally
 
 ### Historical Context
@@ -731,6 +731,40 @@ if dht_key.is_privileged() {
 ```
 
 **Effect**: Only global nodes can now store privileged records (Organization, TierKey, MemberCertificate, etc.) when `require_global_for_privileged` is `true` (default).
+
+---
+
+## Wave 5 Fixes (2026-04-14)
+
+### Threat Intel Key Format Standardization (T.I)
+
+**Problem**: Three different key formats were used inconsistently: `IpBlock:1.2.3.4`, `1.2.3.4:IpBlock`, `threat_indicator:1.2.3.4:IpBlock`.
+
+**Solution**: Added `make_indicator_key()` helper at `src/mesh/threat_intel.rs:25-27`:
+```rust
+fn make_indicator_key(ip: &str, threat_type: ThreatType) -> String {
+    format!("threat_indicator:{}:{:?}", ip, threat_type)
+}
+```
+All local storage now uses the composite key format `threat_indicator:{ip}:{threat_type}`.
+
+### Threat Intel O(n) Iteration Optimization (M16.8)
+
+**Problem**: `sync_from_dht()` used `get_all_records()` then filtered by prefix, iterating all DHT records.
+
+**Solution**: Added `get_by_prefix()` method to `ShardedRecordStore` and `RecordStoreManager`. Changed `sync_from_dht` to use `record_store.get_by_prefix("threat_indicator:")`.
+
+### Peer Score Decay Wired (M16.12)
+
+**Problem**: `apply_periodic_decay()` existed in `ReputationManager` but was never called.
+
+**Solution**: Added call to `reputation.apply_periodic_decay()` in `start_background_tasks()` loop at `src/mesh/threat_intel.rs:1590`.
+
+### TOFU Expiry Reduced (M16.13)
+
+**Problem**: TOFU certificate fingerprints expired after 90 days.
+
+**Solution**: Reduced `MAX_TOOF_FINGERPRINT_AGE_DAYS` from 90 to 30 days at `src/mesh/cert.rs:81-82`.
 
 ---
 

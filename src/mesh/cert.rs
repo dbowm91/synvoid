@@ -78,8 +78,8 @@ struct PinnedFingerprint {
     pinned_at: std::time::Instant,
 }
 
-const MAX_TOOF_FINGERPRINT_AGE_DAYS: u64 = 90;
-const MAX_TOOF_FINGERPRINT_AGE_SECS: u64 = 90 * 24 * 60 * 60;
+const MAX_TOOF_FINGERPRINT_AGE_DAYS: u64 = 30;
+const MAX_TOOF_FINGERPRINT_AGE_SECS: u64 = 30 * 24 * 60 * 60;
 
 #[cfg(feature = "audit")]
 use chrono::Utc;

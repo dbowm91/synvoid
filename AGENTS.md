@@ -466,6 +466,10 @@ All duplicate `current_timestamp()` definitions have been consolidated into `src
 | PoW difficulty increased | `src/mesh/dht/routing/node_id.rs:7` | NODE_ID_POW_DIFFICULTY from 32 to 40 bits |
 | WASM configurable defaults | `src/config/serverless.rs` | default_memory_mb, default_cpu_fuel, default_timeout_seconds |
 | Granian socket path isolation | `src/app_server/granian.rs` | UUID in socket path |
+| Threat intel key format | `src/mesh/threat_intel.rs:25-27,379,451,517,581,978,1077` | `make_indicator_key()` standardizes composite keys |
+| Threat intel O(n) iteration | `src/mesh/dht/record_store_crud.rs:383-396` | `get_by_prefix()` instead of get_all_records |
+| Peer score decay wired | `src/mesh/threat_intel.rs:1590` | `apply_periodic_decay()` called in background loop |
+| TOFU expiry reduced | `src/mesh/cert.rs:81-82` | MAX_TOOF_FINGERPRINT_AGE_DAYS from 90 to 30 |
 
 ## Performance Hot Paths
 

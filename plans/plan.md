@@ -1,12 +1,12 @@
 # MaluWAF Implementation Plan
 
-Last updated: 2026-04-14 (Wave 3 items completed)
+Last updated: 2026-04-14 (Wave 5 items: T.I, M16.8, M16.12, M16.13 completed)
 
 ## Overview
 
 This document is the consolidated implementation plan for MaluWAF. It combines items from all previous plan files (plan.md through plan24.md) into a single coherent plan organized by waves.
 
-**Completed Waves (1-3)** are marked as done. **Wave 4** contains current open items organized by category. **Wave 5** contains deferred future work.
+**Completed Waves (1-3)** are marked as done. **Wave 4** contains current open items organized by category. **Wave 5** contains deferred future work (some items now completed).
 
 Items are organized for **parallelization** - items within a wave can be executed in parallel by separate subagents. Dependencies are documented.
 
@@ -1126,13 +1126,15 @@ Items are organized for **parallelization** - items within a wave can be execute
 
 ---
 
-#### T.I: Threat Intel Key Format Inconsistency - CRITICAL ❌ OPEN
+#### T.I: Threat Intel Key Format Inconsistency - CRITICAL ✅ COMPLETE
 
-**Location**: `src/mesh/threat_intel.rs:749,1128-1217`
+**Location**: `src/mesh/threat_intel.rs:25-27,379,451,517,581,978,1077`
 
 **Issue**: Three different key formats used inconsistently: `IpBlock:1.2.3.4`, `1.2.3.4:IpBlock`, `threat_indicator:1.2.3.4:IpBlock`.
 
-**Fix**: Standardize on `"{type}:{ip}"` format for local storage; convert DHT keys properly in sync.
+**Fix**: Added `make_indicator_key()` helper that returns `threat_indicator:{ip}:{threat_type}`. Updated all local storage (`announce_local_block`, `announce_honeypot_indicator`, `announce_local_rate_limit`, `announce_local_suspicious`, `handle_incoming_threat`) to use consistent composite key format. Updated `sync_from_dht` to use full key format for lookups. Updated `lookup_local_indicator` and `lookup_local_indicator_by_ip` to use composite keys.
+
+**Verification**: Clippy clean; tests compile.
 
 ---
 
@@ -1296,13 +1298,15 @@ Items are organized for **parallelization** - items within a wave can be execute
 
 ---
 
-#### M16.8: Threat Intel O(n) Key Iteration - MEDIUM ⏸️ DEFERRED
+#### M16.8: Threat Intel O(n) Key Iteration - MEDIUM ✅ COMPLETE
 
-**Location**: `src/mesh/threat_intel.rs:1148-1149`
+**Location**: `src/mesh/threat_intel.rs:1131-1137`, `src/mesh/dht/record_store_crud.rs:383-396`, `src/mesh/dht/record_store.rs:106-120`
 
-**Issue**: Threat intel sync uses prefix scan `threat_indicator:` - O(n) where n = total indicators.
+**Issue**: Threat intel sync used `get_all_records()` then filtered by prefix, iterating all DHT records.
 
-**Fix**: See M16.4 (same root cause, similar fix).
+**Fix**: Added `get_by_prefix()` method to `ShardedRecordStore` and `RecordStoreManager`. Changed `sync_from_dht` to use `record_store.get_by_prefix("threat_indicator:")` instead of `get_all_records()` followed by filtering.
+
+**Verification**: Clippy clean.
 
 ---
 
@@ -1338,23 +1342,27 @@ Items are organized for **parallelization** - items within a wave can be execute
 
 ---
 
-#### M16.12: Peer Score Decay Not Implemented - LOW ⏸️ DEFERRED
+#### M16.12: Peer Score Decay Not Implemented - LOW ✅ COMPLETE
 
-**Location**: `src/mesh/topology/types.rs`, `src/mesh/reputation.rs`
+**Location**: `src/mesh/threat_intel.rs:1590`, `src/mesh/reputation.rs:377-392`
 
-**Issue**: Peer reputation scores don't decay over time; unbounded memory growth.
+**Issue**: `apply_periodic_decay()` existed but was never called, so peer reputation scores never decayed.
 
-**Fix**: Implement time-based score decay; add decay rate config; remove inactive peers.
+**Fix**: Added call to `reputation.apply_periodic_decay()` in `start_background_tasks()` loop (runs every 60 seconds). The decay function has its own internal interval check so it only applies decay when configured interval has elapsed.
+
+**Verification**: Clippy clean.
 
 ---
 
-#### M16.13: TOFU Expiry Too Long - LOW ⏸️ DEFERRED
+#### M16.13: TOFU Expiry Too Long - LOW ✅ COMPLETE
 
-**Location**: `src/mesh/cert.rs`
+**Location**: `src/mesh/cert.rs:81-82`
 
-**Issue**: TOFU certificate fingerprints expire after 90 days - longer than ideal.
+**Issue**: TOFU certificate fingerprints expired after 90 days.
 
-**Fix**: Reduce TOFU expiry to 30 days; add certificate rotation notification.
+**Fix**: Reduced `MAX_TOOF_FINGERPRINT_AGE_DAYS` from 90 to 30 days.
+
+**Verification**: Clippy clean.
 
 ---
 

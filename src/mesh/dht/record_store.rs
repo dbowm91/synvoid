@@ -102,6 +102,19 @@ impl ShardedRecordStore {
         }
         result
     }
+
+    pub fn get_by_prefix(&self, prefix: &str) -> Vec<(String, DhtRecordEntry)> {
+        let mut result = Vec::new();
+        for shard in &self.shards {
+            let guard = shard.read();
+            for (k, v) in guard.iter() {
+                if k.starts_with(prefix) {
+                    result.push((k.clone(), v.clone()));
+                }
+            }
+        }
+        result
+    }
 }
 
 impl Default for ShardedRecordStore {

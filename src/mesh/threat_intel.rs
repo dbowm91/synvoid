@@ -22,6 +22,10 @@ use crate::metrics;
 
 const DEFAULT_SYNC_INTERVAL_SECS: u64 = 300;
 
+fn make_indicator_key(ip: &str, threat_type: ThreatType) -> String {
+    format!("threat_indicator:{}:{:?}", ip, threat_type)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ThreatIntelligenceConfig {
     #[serde(default = "default_enabled")]
@@ -376,7 +380,7 @@ impl ThreatIntelligenceManager {
             signer_public_key: None,
         };
 
-        let key = format!("{:?}:{}", ThreatType::IpBlock, ip);
+        let key = make_indicator_key(&ip.to_string(), ThreatType::IpBlock);
 
         {
             let mut indicators = self.indicators.write();
@@ -444,7 +448,7 @@ impl ThreatIntelligenceManager {
             signer_public_key,
         };
 
-        let key = format!("{:?}:{}", threat_type, ip);
+        let key = make_indicator_key(&ip.to_string(), threat_type);
 
         {
             let mut indicators = self.indicators.write();
@@ -510,7 +514,7 @@ impl ThreatIntelligenceManager {
             signer_public_key: None,
         };
 
-        let key = format!("{:?}:{}", ThreatType::RateLimitViolation, ip);
+        let key = make_indicator_key(&ip.to_string(), ThreatType::RateLimitViolation);
 
         {
             let mut indicators = self.indicators.write();
@@ -574,7 +578,7 @@ impl ThreatIntelligenceManager {
             signer_public_key: None,
         };
 
-        let key = format!("{:?}:{}", ThreatType::SuspiciousActivity, ip);
+        let key = make_indicator_key(&ip.to_string(), ThreatType::SuspiciousActivity);
 
         {
             let mut indicators = self.indicators.write();
@@ -966,11 +970,18 @@ impl ThreatIntelligenceManager {
         })
     }
 
-    pub fn lookup_local_indicator(&self, indicator_value: &str) -> Option<ThreatIndicator> {
+    pub fn lookup_local_indicator(
+        &self,
+        indicator_value: &str,
+        threat_type: ThreatType,
+    ) -> Option<ThreatIndicator> {
+        let key = make_indicator_key(indicator_value, threat_type);
         let indicators = self.indicators.read();
-        indicators
-            .get(indicator_value)
-            .map(|entry| entry.indicator.clone())
+        indicators.get(&key).map(|entry| entry.indicator.clone())
+    }
+
+    pub fn lookup_local_indicator_by_ip(&self, ip: &str) -> Option<ThreatIndicator> {
+        self.lookup_local_indicator(ip, ThreatType::IpBlock)
     }
 
     pub fn is_mesh_available(&self) -> bool {
@@ -1063,7 +1074,7 @@ impl ThreatIntelligenceManager {
         let mut removed_keys = Vec::new();
 
         for indicator in indicators {
-            let key = indicator.indicator_value.clone();
+        let key = make_indicator_key(&indicator.indicator_value, indicator.threat_type);
 
             let accepted = self.handle_incoming_threat(indicator, from_node, from_role, signer);
 
@@ -1117,31 +1128,24 @@ impl ThreatIntelligenceManager {
             }
         };
 
-        let dht_records = record_store.get_all_records();
+        let dht_records = record_store.get_by_prefix("threat_indicator:");
         let mut local_indicators = self.indicators.write();
 
         let dht_keys: std::collections::HashSet<String> = dht_records
             .iter()
-            .filter_map(|r| {
-                if r.key.starts_with("threat_indicator:") {
-                    Some(r.key.clone())
-                } else {
-                    None
-                }
-            })
+            .map(|r| r.key.clone())
             .collect();
 
         let mut added = 0;
         let mut removed = 0;
 
         for key in &dht_keys {
-            let indicator_value = key.strip_prefix("threat_indicator:").unwrap_or(key);
             let record = match record_store.get(key) {
                 Some(r) => r,
                 None => continue,
             };
 
-            let should_update = if let Some(existing) = local_indicators.get(indicator_value) {
+            let should_update = if let Some(existing) = local_indicators.get(key) {
                 if existing.local_origin {
                     continue;
                 }
@@ -1583,6 +1587,8 @@ impl ThreatIntelligenceManager {
 
             loop {
                 interval.tick().await;
+
+                threat_intel.reputation.apply_periodic_decay();
 
                 if !config.enabled || !config.push_enabled {
                     continue;
