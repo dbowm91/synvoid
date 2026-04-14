@@ -783,3 +783,161 @@ Quorum table:
 | 3 | 2 |
 | 4 | 2 |
 | 5 | 3 |
+
+---
+
+## Wave 4 Security Fixes (2026-04-14)
+
+### TLS Passthrough WAF Enforcement
+
+**Location**: `src/worker/unified_server.rs:214-226`, `src/config/site/proxy.rs`
+
+**Issue**: When `tls_passthrough = true`, L7 WAF inspection was completely bypassed.
+
+**Pattern**: Add opt-in WAF enforcement for passthrough traffic:
+```rust
+// In site proxy config
+pub struct SiteProxyConfig {
+    pub tls_passthrough: bool,
+    pub tls_passthrough_enforce_waf: bool,  // NEW
+}
+
+// In unified server, check enforcement flag
+if site.proxy.tls_passthrough && site.proxy.tls_passthrough_enforce_waf {
+    // Run WAF checks on passthrough traffic
+    waf.check_request_full(...);
+}
+```
+
+**Metrics**: `TLS_PASSTHROUGH_REQUESTS`, `TLS_PASSTHROUGH_WAF_BYPASSED`
+
+---
+
+### Connection Limiter Slot Hash Collisions
+
+**Location**: `src/waf/flood/connection_limiter.rs:8,119-121`
+
+**Issue**: `CONNECTION_TRACKER_SLOTS = 65536` with simple modulo hash - high collision risk.
+
+**Pattern**: Increased slot count to reduce collision probability:
+```rust
+// BEFORE
+const CONNECTION_TRACKER_SLOTS: usize = 65536;
+
+// AFTER
+const CONNECTION_TRACKER_SLOTS: usize = 262144;
+```
+
+---
+
+### Revocation List Passed in Discovery
+
+**Location**: `src/mesh/discovery.rs:439`
+
+**Issue**: Global node, Edge, and Origin revocation was bypassed - revocation list always `None`.
+
+**Pattern**: Store and pass revocation list to validation:
+```rust
+pub struct MeshDiscovery {
+    // ... existing fields
+    revocation_list: Option<Arc<GlobalNodeRevocationList>>,
+}
+
+impl MeshDiscovery {
+    pub fn new(/* ... */, revocation_list: Option<Arc<GlobalNodeRevocationList>>) -> Self {
+        Self { revocation_list, .. }
+    }
+}
+
+// Pass to validate_peer_role
+validate_peer_role(
+    // ...
+    self.revocation_list.as_ref().map(|r| r.as_ref()),
+    // ...
+)
+```
+
+---
+
+### SSRF Subdomain Spoofing Detection
+
+**Location**: `src/waf/attack_detection/ssrf.rs:267-294`
+
+**Issue**: Only checked exact `.localhost` and `.local` - bypassable via subdomain.
+
+**Pattern**: Check for localhost lookalikes:
+```rust
+fn matches_localhost_lookalike(input: &str) -> bool {
+    let lookalike_patterns = [
+        "localhost", "localshost", "locahost", "locaihost",
+        "loca1host", "iocalhost", "1ocalhost", "oocalhost",
+    ];
+    
+    for pattern in &lookalike_patterns {
+        if let Some(pos) = input.find(pattern) {
+            // Check word boundaries
+            let before_ok = pos == 0 || !input.as_bytes()[pos - 1].is_ascii_alphanumeric();
+            let after_ok = /* ... */;
+            if before_ok && after_ok {
+                return true;
+            }
+        }
+    }
+    // Also check 127.0.0.1 with proper boundaries
+    false
+}
+```
+
+---
+
+### Genesis Key Default Deny
+
+**Location**: `src/mesh/config_identity.rs:238-245`
+
+**Issue**: Empty `authorized_genesis_keys` permitted any key (backward compatible but insecure).
+
+**Pattern**: Deny by default with warning:
+```rust
+pub fn is_genesis_key_authorized(&self, genesis_public_key: &str) -> bool {
+    if self.authorized_genesis_keys.is_empty() {
+        tracing::warn!(
+            "No authorized genesis keys configured - rejecting genesis key authentication. \
+            This is a security risk if the system expects authorized keys."
+        );
+        return false;  // Changed from true
+    }
+    self.authorized_genesis_keys.iter().any(|k| k == genesis_public_key)
+}
+```
+
+---
+
+### Rate Limiting Race Condition Fix
+
+**Location**: `src/admin/auth.rs:35-52`
+
+**Issue**: Check-before-add pattern allowed bursts exceeding limit.
+
+**Pattern**: Atomic check-after-add:
+```rust
+// BEFORE (race condition)
+if counter.get() >= limit { return Err(); }
+counter.fetch_add(1, Ordering::Relaxed);
+
+// AFTER (atomic)
+let current = counter.fetch_add(1, Ordering::Relaxed);
+if current >= limit {
+    counter.fetch_sub(1, Ordering::Relaxed);  // rollback
+    return Err();
+}
+```
+
+---
+
+### Revocation List Propagation in Discovery
+
+**Location**: `src/mesh/discovery.rs:439`
+
+**Issue**: `handle_hello` passed `None` for revocation list.
+
+**Fix**: Now stores `revocation_list` in struct and passes it to `validate_peer_role()`.

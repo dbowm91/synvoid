@@ -286,3 +286,277 @@ cargo bench --bench bench_waf_detection
 2. **Use `checked_sub` for atomic counter decrement** - prevents underflow
 3. **Prefer single-shard operations** - over full iteration in sharded stores
 4. **Use `std::time::Instant`** - for timeout comparisons, not `Duration::from_secs`
+
+---
+
+## Wave 4 Performance Fixes (2026-04-14)
+
+### Cache Invalidation with Secondary Index
+
+**Location**: `src/proxy_cache/store.rs:451-511`
+
+**Issue**: `invalidate_by_host()` scanned all entries - O(n).
+
+**Pattern**: Maintain secondary index for O(1) host lookups:
+```rust
+pub struct ProxyCache {
+    entries: RwLock<HashMap<CacheKey, CacheEntry>>,
+    by_host: RwLock<HashMap<Host, Vec<CacheKey>>>,  // Secondary index
+}
+
+impl ProxyCache {
+    pub fn insert(&self, key: CacheKey, entry: CacheEntry) {
+        // ... insert into main map ...
+        self.by_host.write().entry(entry.host.clone())
+            .or_insert_with(Vec::new)
+            .push(key);
+    }
+    
+    pub fn invalidate_by_host(&self, host: &str) {
+        if let Some(keys) = self.by_host.write().remove(host) {
+            for key in keys {
+                self.entries.write().remove(&key);
+            }
+        }
+    }
+}
+```
+
+---
+
+### Concurrent HTTP Proxy with First-Success-Wins
+
+**Location**: `src/mesh/proxy.rs:785-853`
+
+**Issue**: Serial provider requests - waited for each to fail before trying next.
+
+**Pattern**: Fire all concurrently, race to first success:
+```rust
+async fn proxy_to_peer_with_fallback(
+    &self,
+    providers: Vec<PeerProvider>,
+    request: Request,
+) -> Result<Response, ProxyError> {
+    let (tx, mut rx) = mpsc::channel(providers.len());
+    
+    for provider in providers {
+        let tx = tx.clone();
+        tokio::spawn(async move {
+            match provider.proxy_request(request.clone()).await {
+                Ok(resp) => let _ = tx.send(Ok(resp)).await,
+                Err(e) => let _ = tx.send(Err(e)).await,
+            }
+        });
+    }
+    drop(tx);  // Drop original sender
+    
+    // First success wins
+    rx.recv().await.unwrap_or_else(|| Err(ProxyError::NoProviders))
+}
+```
+
+---
+
+### Mesh Broadcast Bounded Concurrency
+
+**Location**: `src/worker/unified_server.rs:729-740`
+
+**Issue**: Unbounded `tokio::spawn()` for every broadcast - could exhaust resources.
+
+**Pattern**: Semaphore for backpressure:
+```rust
+const MAX_CONCURRENT_BROADCASTS: usize = 10;
+
+pub struct UnifiedServerWorkerState {
+    broadcast_semaphore: Arc<Semaphore>,
+}
+
+async fn broadcast_to_mesh(&self, message: MeshMessage) {
+    let permit = self.broadcast_semaphore
+        .acquire()
+        .await
+        .expect("semaphore closed");
+    
+    let _permit = permit;  // Held until drop
+    
+    // Perform broadcast
+    self.mesh.broadcast(message).await;
+}
+```
+
+---
+
+### Background Cleanup for Unbounded Trackers
+
+**Location**: `src/mesh/topology.rs:1528-1543`
+
+**Issue**: `cleanup_stale_metrics()` defined but never called.
+
+**Pattern**: Spawn background task with periodic cleanup:
+```rust
+pub fn start_background_tasks(&self) {
+    let topology = self.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(300));
+        loop {
+            interval.tick().await;
+            topology.cleanup_stale_metrics(10000);
+        }
+    });
+}
+```
+
+---
+
+### Metrics Bounded with LRU Eviction
+
+**Location**: `src/metrics/mod.rs:900`
+
+**Issue**: `per_site` HashMap grew unbounded.
+
+**Pattern**: Max capacity with eviction:
+```rust
+const MAX_PER_SITE_ENTRIES: usize = 10000;
+
+struct SiteMetricsCollector {
+    per_site: Mutex<HashMap<String, SiteMetrics>>,
+}
+
+impl SiteMetricsCollector {
+    fn record_request(&self, site: &str) {
+        let mut sites = self.per_site.lock();
+        
+        // Evict if at capacity
+        if sites.len() >= MAX_PER_SITE_ENTRIES && !sites.contains_key(site) {
+            // Remove least recently used entry
+            if let Some(oldest) = /* find LRU entry */ {
+                sites.remove(&oldest);
+            }
+        }
+        
+        sites.entry(site.to_string()).or_insert_with(SiteMetrics::new);
+    }
+}
+```
+
+---
+
+### Threat Intel Indicators Bounded with VecDeque
+
+**Location**: `src/mesh/threat_intel.rs:153-154`
+
+**Issue**: `pending_announces` Vec grew unbounded.
+
+**Pattern**: VecDeque with max size:
+```rust
+const MAX_PENDING_INDICATORS: usize = 10000;
+
+struct ThreatIntelState {
+    pending_announces: Mutex<VecDeque<ThreatIndicator>>,
+}
+
+impl ThreatIntelState {
+    fn add_pending_indicator(&self, indicator: ThreatIndicator) {
+        let mut pending = self.pending_announces.lock();
+        if pending.len() >= MAX_PENDING_INDICATORS {
+            pending.pop_front();  // Remove oldest
+        }
+        pending.push_back(indicator);
+    }
+}
+```
+
+---
+
+### YARA Submissions TTL Cleanup
+
+**Location**: `src/mesh/yara_rules.rs:235-236`
+
+**Issue**: `submissions` HashMaps never cleaned up.
+
+**Pattern**: Background task with TTL:
+```rust
+const SUBMISSION_TTL_SECS: u64 = 7 * 24 * 3600;  // 7 days
+const MAX_SUBMISSIONS: usize = 1000;
+
+pub fn cleanup_expired_submissions(&self) {
+    let now = Instant::now();
+    let mut submissions = self.submissions.write();
+    let mut expired = Vec::new();
+    
+    for (id, submission) in submissions.iter() {
+        if now.duration_since(submission.timestamp) > Duration::from_secs(SUBMISSION_TTL_SECS) {
+            expired.push(id.clone());
+        }
+    }
+    
+    for id in expired {
+        submissions.remove(&id);
+    }
+    
+    // Also enforce size limit
+    while submissions.len() > MAX_SUBMISSIONS {
+        if let Some(oldest) = submissions.iter()
+            .min_by_key(|(_, s)| s.timestamp)
+            .map(|(k, _)| k.clone())
+        {
+            submissions.remove(&oldest);
+        }
+    }
+}
+```
+
+---
+
+### NonceCache O(log n) Eviction
+
+**Location**: `src/process/ipc_signed.rs:40-55`
+
+**Issue**: `evict_oldest()` was O(n) with Vec.
+
+**Pattern**: HashMap + BTreeMap for O(log n):
+```rust
+use std::collections::{HashMap, BTreeSet};
+
+struct NonceEntry {
+    nonce: String,
+    timestamp: Instant,
+    node_id: Option<String>,
+}
+
+struct NonceCache {
+    by_nonce: HashMap<String, NonceEntry>,
+    by_time: BTreeSet<(Instant, String)>,  // (timestamp, nonce)
+}
+
+impl NonceCache {
+    fn evict_oldest(&mut self) {
+        if let Some((oldest_time, oldest_nonce)) = self.by_time.iter().next() {
+            self.by_time.remove(&(*oldest_time, oldest_nonce.clone()));
+            self.by_nonce.remove(&oldest_nonce);
+        }
+    }
+}
+```
+
+---
+
+### Atomic Connection Tracker Updates
+
+**Location**: `src/overseer/connection_tracker.rs:79-98`
+
+**Issue**: Non-atomic update of worker counts and totals.
+
+**Pattern**: Atomic delta updates:
+```rust
+impl ConnectionTracker {
+    fn update_worker_connections(&self, worker_id: &str, delta: i32) {
+        let mut workers = self.workers.write();
+        let entry = workers.entry(worker_id.to_string()).or_insert(0i32);
+        *entry = entry.saturating_add(delta);  // Atomic-like with interior mutability
+        
+        // Update total atomically
+        self.total_connections.fetch_add(delta, Ordering::Relaxed);
+    }
+}
+```
