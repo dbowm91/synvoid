@@ -73,7 +73,7 @@ use crate::auth::AuthManager;
 use crate::block_store::BlockStore;
 use crate::challenge::{ChallengeConfig, ChallengeManager, ChallengeResult};
 use crate::config::RateLimitMemoryConfig;
-use crate::mesh::protocol::ThreatType;
+use crate::mesh::protocol::{ThreatSeverity, ThreatType};
 use crate::mesh::threat_intel::ThreatIntelligenceManager;
 use crate::proxy::WafDecision;
 use crate::theme::ThemeConfig;
@@ -540,6 +540,28 @@ impl WafCore {
                 reason.to_string(),
                 duration,
                 scope.to_string(),
+            );
+        }
+    }
+
+    pub fn block_ip_for_honeypot(
+        &self,
+        client_ip: IpAddr,
+        reason: &str,
+        duration: u64,
+        scope: &str,
+    ) {
+        if let Some(ref store) = self.block_store {
+            store.block_ip(client_ip, reason, duration, scope);
+        }
+        if let Some(ref threat_intel) = get_threat_intel() {
+            threat_intel.announce_honeypot_indicator(
+                client_ip,
+                ThreatType::SuspiciousActivity,
+                ThreatSeverity::High,
+                reason.to_string(),
+                Some(duration),
+                scope,
             );
         }
     }

@@ -900,7 +900,7 @@ impl HttpServer {
         if path.starts_with(HONEYPOT_PREFIX) {
             counter!("maluwaf.honeypot.hit").increment(1);
             tracing::info!("HTTP honeypot accessed: {} by {}", path, client_ip);
-            waf.block_ip_with_threat_intel(
+            waf.block_ip_for_honeypot(
                 client_ip,
                 "honeypot",
                 waf.config.honeypot_ban_duration_secs,

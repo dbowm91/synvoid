@@ -1154,15 +1154,15 @@ Items are organized for **parallelization** - items within a wave can be execute
 
 ### 4.21: Honeypot Improvements
 
-#### S.2: HTTP Honeypot Announcement to Threat Intel - MEDIUM ⚠️ PARTIAL
+#### S.2: HTTP Honeypot Announcement to Threat Intel - MEDIUM ✅ COMPLETE
 
-**Location**: `src/http/server.rs:903` (HTTP honeypot), `src/honeypot_port/runner.rs:215` (port honeypot)
+**Location**: `src/http/server.rs:903` (HTTP honeypot), `src/honeypot_port/runner.rs:215` (port honeypot), `src/waf/mod.rs:547-562` (new method)
 
 **Issue**: HTTP honeypot blocks locally but doesn't call `announce_honeypot_indicator()`.
 
-**Fix**: HTTP honeypot uses `block_ip_with_threat_intel()` which calls `threat_intel.announce_local_block()` - achieves similar goal but uses generic block path. Port honeypot (`runner.rs:215`) correctly calls `announce_honeypot_indicator()`.
+**Fix**: Added `block_ip_for_honeypot()` method to `WafCore` at `waf/mod.rs:547-562` that calls `threat_intel.announce_honeypot_indicator()` with `ThreatType::SuspiciousActivity` and `ThreatSeverity::High`, including Ed25519 signing. HTTP honeypot handler now calls this new method instead of `block_ip_with_threat_intel()`.
 
-**Note**: HTTP honeypot and port honeypot use different paths. HTTP honeypot → `announce_local_block`, port honeypot → `announce_honeypot_indicator`. These are semantically different but functionally both announce to mesh threat intel.
+**Verification**: Clippy clean; code compiles.
 
 ---
 
