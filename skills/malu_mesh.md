@@ -768,6 +768,63 @@ All local storage now uses the composite key format `threat_indicator:{ip}:{thre
 
 ---
 
+## ACME HTTP-01 Challenge Serving (M.2)
+
+### Overview
+
+The mesh supports ACME HTTP-01 challenges across edge/origin topologies. When an origin needs a certificate from Let's Encrypt (or similar ACME CA), the HTTP-01 challenge response must be reachable at the edge node's IP address — not just the origin's IP.
+
+### Protocol Flow
+
+```
+1. Origin initiates ACME order
+       ↓
+2. Global Node issues UpstreamOwnershipChallenge{Http01{token, key_authorization}}
+       ↓ (mesh QUIC, HMAC signed)
+3. All registered edge nodes store token → key_authorization
+       ↓
+4. ACME Server probes: GET /.well-known/acme-challenge/{token}
+       ↓ (standard HTTP/TCP port 80, resolves to edge IP)
+5. Edge serves key_authorization directly from challenge store
+```
+
+### Two Serving Paths
+
+**Path A — Direct HTTP server** (`src/http/server.rs:551-579`):
+The edge node's own HTTP server handles ACME requests. This path serves requests that arrive via the normal HTTP/TCP flow (ACME server → edge node directly).
+
+**Path B — Mesh QUIC stream** (`src/mesh/transport_peer.rs:2345-2366`):
+The edge node's mesh accept loop receives QUIC streams from global nodes. When the stream contains an HTTP request with `Host: origin-host`, `handle_http_proxy_stream()` now checks for ACME paths first before attempting backend proxy.
+
+### Why Both Paths?
+
+- Path A covers the case where the edge node IS the HTTP endpoint visible to the ACME server
+- Path B covers the case where a global node is proxying the ACME request through mesh QUIC
+
+The challenge store on the edge must be populated BEFORE the ACME server probes. Global nodes push `UpstreamOwnershipChallenge` messages to all registered edges immediately when a challenge is initiated.
+
+### Threat Model
+
+| Assumption | Implication |
+|-----------|-------------|
+| Mesh messages are HMAC authenticated | Attackers cannot inject fake challenges |
+| Edges receive challenges before ACME probes | Race condition possible if edge is offline |
+| Edge only serves challenges it received | Cannot forge — only has public key_authz |
+
+**Not suitable for**: scenarios where edges should have zero knowledge of origin private keys, or where the `Host` header is untrusted without additional verification.
+
+### Key Code Locations
+
+| File | Line | Purpose |
+|------|------|---------|
+| `src/mesh/transport.rs` | 478-491 | `store_http01_challenge()` stores to LRU cache |
+| `src/mesh/transport.rs` | 493-497 | `get_http01_challenge()` retrieves (dns-gated) |
+| `src/mesh/transport_peer.rs` | 2345-2366 | ACME path check in proxy stream handler |
+| `src/http/server.rs` | 551-579 | Direct HTTP server challenge serving |
+| `src/mesh/transport_peer.rs` | 1870-1884 | Receiving `UpstreamOwnershipChallenge` from mesh |
+
+---
+
 ### Testing Verification
 
 ```bash

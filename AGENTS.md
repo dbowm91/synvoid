@@ -549,6 +549,27 @@ Upstream TLS clients are cached by config hash in a `DashMap` for reuse across r
 
 **NoVerifier replacement**: `HostnameSkippingVerifier` wraps `WebPkiServerVerifier` — validates certificate chain and signatures, only skips hostname verification. Logs WARN on every use.
 
+### ACME HTTP-01 Challenge Serving
+
+ACME HTTP-01 challenges work across edge/origin mesh topologies. When an origin needs a certificate, the edge node must be able to serve the challenge response.
+
+**Two serving paths:**
+
+1. **Direct HTTP** (`src/http/server.rs:551-579`): The edge's HTTP server handles incoming ACME requests directly from the ACME server (port 80/TCP). The global node has already pushed `UpstreamOwnershipChallenge{Http01{token, key_authorization}}` to all registered edges via mesh QUIC. The edge stores this in its `ownership_challenge_store` and serves it when the ACME server probes.
+
+2. **Mesh QUIC stream** (`src/mesh/transport_peer.rs:2345-2366`): When the global node proxies ACME requests through mesh QUIC (with `Host: origin-host`), `handle_http_proxy_stream()` checks for `GET /.well-known/acme-challenge/{token}` and serves directly from the challenge store — without proxying to a backend.
+
+**Flow:**
+```
+Origin initiates ACME order
+    → Global Node sends UpstreamOwnershipChallenge to all edges (mesh QUIC)
+    → Edges store token → key_authorization in LRU cache (5 min TTL)
+    → ACME server probes edge IP: GET /.well-known/acme-challenge/{token}
+    → Edge serves key_authorization from store
+```
+
+**Threat model:** Only serves challenges the edge received via HMAC-signed mesh messages. Cannot forge challenges since it only has the public `key_authorization` string (the ACME server verifies using the origin's private key). Race condition risk if edge is offline when global node pushes the challenge.
+
 ### ACME Client
 
 `src/tls/acme.rs` implements a full ACME client using the `instant-acme` crate. Supports HTTP-01 and DNS-01 (feature-gated `dns`) challenges. Certificate renewal runs every 24h via `spawn_renewal_task()`. Config under `[tls.acme]` in TOML.
