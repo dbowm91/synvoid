@@ -9,6 +9,7 @@ thread_local! {
     static NORMALIZE_CHARS: RefCell<Vec<char>> = RefCell::new(Vec::with_capacity(4096));
 }
 
+#[derive(Clone)]
 pub struct InputNormalizer {
     max_decode_passes: usize,
 }

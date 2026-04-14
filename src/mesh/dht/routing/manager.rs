@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use lru_time_cache::LruCache;
-use tokio::sync::RwLock;
+use tokio::sync::{watch, RwLock};
 
 use crate::mesh::config::{MeshConfig, MeshNodeRole};
 use crate::mesh::dht::routing::contact::{GeoInfo, PeerContact};
@@ -38,6 +38,8 @@ pub struct DhtRoutingManager {
     find_node_transport: Arc<parking_lot::RwLock<Option<Arc<dyn FindNodeTransport>>>>,
     ping_transport: Arc<parking_lot::RwLock<Option<Arc<dyn PingTransport>>>>,
     pending_pings: Arc<parking_lot::RwLock<HashMap<String, Instant>>>,
+    join_handles: Arc<parking_lot::Mutex<Vec<tokio::task::JoinHandle<()>>>>,
+    shutdown_tx: Arc<watch::Sender<()>>,
 }
 
 impl Clone for DhtRoutingManager {
@@ -56,6 +58,8 @@ impl Clone for DhtRoutingManager {
             find_node_transport: self.find_node_transport.clone(),
             ping_transport: self.ping_transport.clone(),
             pending_pings: self.pending_pings.clone(),
+            join_handles: self.join_handles.clone(),
+            shutdown_tx: self.shutdown_tx.clone(),
         }
     }
 }
@@ -95,6 +99,8 @@ impl DhtRoutingManager {
             find_node_transport: Arc::new(parking_lot::RwLock::new(None)),
             ping_transport: Arc::new(parking_lot::RwLock::new(None)),
             pending_pings: Arc::new(parking_lot::RwLock::new(HashMap::new())),
+            join_handles: Arc::new(parking_lot::Mutex::new(Vec::new())),
+            shutdown_tx: Arc::new(watch::channel::<()>(()).0),
         }
     }
 
@@ -160,54 +166,97 @@ impl DhtRoutingManager {
         );
     }
 
+    #[allow(unused_must_use)]
     pub fn start_background_tasks(&self) {
         if !self.routing_enabled {
             return;
         }
 
         let self_arc = Arc::new(self.clone());
+        let shutdown_rx = self.shutdown_tx.subscribe();
 
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
+            let mut shutdown = shutdown_rx;
             loop {
-                interval.tick().await;
+                tokio::select! {
+                    _ = shutdown.changed() => {
+                        tracing::debug!("Bucket stats loop shutdown");
+                        break;
+                    }
+                    _ = interval.tick() => {
+                        let peer_count = self_arc.total_peers().await;
+                        tracing::debug!("DHT routing table: {} peers", peer_count);
 
-                let peer_count = self_arc.total_peers().await;
-                tracing::debug!("DHT routing table: {} peers", peer_count);
+                        let stats = self_arc.bucket_stats().await;
+                        if !stats.is_empty() {
+                            let non_empty: usize = stats.iter().filter(|(_, c)| *c > 0).count();
+                            tracing::debug!("DHT bucket stats: {} non-empty buckets", non_empty);
 
-                let stats = self_arc.bucket_stats().await;
-                if !stats.is_empty() {
-                    let non_empty: usize = stats.iter().filter(|(_, c)| *c > 0).count();
-                    tracing::debug!("DHT bucket stats: {} non-empty buckets", non_empty);
+                            for (bucket_idx, count) in &stats {
+                                crate::metrics::record_dht_bucket_peers(*bucket_idx, *count as u64);
+                            }
+                        }
 
-                    for (bucket_idx, count) in &stats {
-                        crate::metrics::record_dht_bucket_peers(*bucket_idx, *count as u64);
+                        if self_arc.hub_config.enabled {
+                            self_arc.sync_regional_hub().await;
+                            let hubs = self_arc.get_regional_hubs().await;
+                            tracing::debug!("Regional hubs refreshed: {} total hubs", hubs.len());
+                        }
                     }
                 }
+            }
+        });
+        self.join_handles.lock().push(handle);
 
-                if self_arc.hub_config.enabled {
-                    self_arc.sync_regional_hub().await;
-                    let hubs = self_arc.get_regional_hubs().await;
-                    tracing::debug!("Regional hubs refreshed: {} total hubs", hubs.len());
+        let self_refresh = Arc::new(self.clone());
+        let shutdown_rx = self.shutdown_tx.subscribe();
+        let handle = tokio::spawn(async move {
+            let mut interval = tokio::time::interval(BUCKET_REFRESH_INTERVAL);
+            let mut shutdown = shutdown_rx;
+            loop {
+                tokio::select! {
+                    _ = shutdown.changed() => {
+                        tracing::debug!("Bucket refresh loop shutdown");
+                        break;
+                    }
+                    _ = interval.tick() => {
+                        self_refresh.refresh_sparse_buckets().await;
+                    }
                 }
             }
         });
-
-        let self_refresh = Arc::new(self.clone());
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(BUCKET_REFRESH_INTERVAL);
-            loop {
-                interval.tick().await;
-                self_refresh.refresh_sparse_buckets().await;
-            }
-        });
+        self.join_handles.lock().push(handle);
 
         let self_ping = Arc::new(self.clone());
-        tokio::spawn(async move {
-            self_ping.start_ping_loop().await;
+        let shutdown_rx = self.shutdown_tx.subscribe();
+        let handle = tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+            let mut shutdown = shutdown_rx;
+            loop {
+                tokio::select! {
+                    _ = shutdown.changed() => {
+                        tracing::debug!("Ping loop shutdown");
+                        break;
+                    }
+                    _ = interval.tick() => {
+                        self_ping.ping_peers().await;
+                    }
+                }
+            }
         });
+        self.join_handles.lock().push(handle);
 
         tracing::info!("DHT routing background tasks started");
+    }
+
+    pub async fn shutdown(&self) {
+        let _ = self.shutdown_tx.send(());
+        let handles: Vec<_> = self.join_handles.lock().drain(..).collect();
+        for handle in handles {
+            let _ = handle.await;
+        }
+        tracing::info!("DHT routing background tasks shut down");
     }
 
     pub fn set_find_node_transport(&self, transport: Arc<dyn FindNodeTransport>) {

@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use tokio::sync::{Mutex as TokioMutex, RwLock};
+use tokio::task::JoinHandle;
 
 use super::connect::connect_to_master_async;
 use super::drain_state::WorkerDrainState;
@@ -187,6 +188,7 @@ struct UnifiedServerWorkerState {
     drain_state: Arc<WorkerDrainState>,
     stop_accepting_tx: Arc<TokioMutex<Option<tokio::sync::broadcast::Sender<()>>>>,
     unified_server: Arc<crate::server::UnifiedServer>,
+    task_handles: Arc<TokioMutex<Vec<JoinHandle<()>>>>,
 }
 
 pub async fn run_unified_server_worker(
@@ -1047,6 +1049,7 @@ pub async fn run_unified_server_worker(
         drain_state: drain_state.clone(),
         stop_accepting_tx: stop_accepting_tx.clone(),
         unified_server: unified_server.clone(),
+        task_handles: Arc::new(TokioMutex::new(Vec::new())),
     };
 
     {
@@ -1062,6 +1065,7 @@ pub async fn run_unified_server_worker(
         Arc::new(std::sync::atomic::AtomicI32::new(0));
 
     let heartbeat_state = state.clone();
+    let task_handles = state.task_handles.clone();
     let heartbeat_handle = tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(5));
 
@@ -1074,32 +1078,42 @@ pub async fn run_unified_server_worker(
 
             let uptime = heartbeat_state.start_time.elapsed().as_secs();
             let payload = heartbeat_state.metrics.to_payload(uptime);
+            let timestamp = current_timestamp();
+            let worker_id = heartbeat_state.worker_id;
+
+            let app_health: Vec<(String, bool)> = {
+                let app_servers = heartbeat_state.app_servers.read().await;
+                app_servers
+                    .iter()
+                    .map(|(site_id, supervisor)| (site_id.clone(), supervisor.is_healthy()))
+                    .collect()
+            };
 
             let mut ipc = heartbeat_state.ipc.lock().await;
             let _ = ipc
                 .send(&Message::UnifiedServerWorkerHeartbeat {
-                    id: heartbeat_state.worker_id,
-                    timestamp: current_timestamp(),
+                    id: worker_id,
+                    timestamp,
                     metrics: payload,
                 })
                 .await;
 
-            let app_servers = heartbeat_state.app_servers.read().await;
-            for (site_id, supervisor) in app_servers.iter() {
-                let mut ipc = heartbeat_state.ipc.lock().await;
+            for (site_id, healthy) in app_health {
                 let _ = ipc
                     .send(&Message::AppServerHealth {
-                        id: heartbeat_state.worker_id,
-                        site_id: site_id.clone(),
-                        healthy: supervisor.is_healthy(),
-                        timestamp: current_timestamp(),
+                        id: worker_id,
+                        site_id,
+                        healthy,
+                        timestamp,
                     })
                     .await;
             }
         }
     });
+    task_handles.lock().await.push(heartbeat_handle);
 
-    let _bandwidth_persist_handle = tokio::spawn(async move {
+    let task_handles = state.task_handles.clone();
+    let bandwidth_persist_handle = tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(60));
 
         loop {
@@ -1107,6 +1121,7 @@ pub async fn run_unified_server_worker(
             crate::metrics::bandwidth::persist_global_bandwidth_tracker();
         }
     });
+    task_handles.lock().await.push(bandwidth_persist_handle);
 
     let ipc_state = state.clone();
     let ipc_exit_code = worker_exit_code.clone();
@@ -1158,6 +1173,13 @@ pub async fn run_unified_server_worker(
 
                     tracing::info!("Persisting bandwidth data on shutdown...");
                     crate::metrics::bandwidth::persist_global_bandwidth_tracker();
+
+                    tracing::info!("Aborting spawned tasks...");
+                    let handles = ipc_state.task_handles.lock().await;
+                    for handle in handles.iter() {
+                        handle.abort();
+                    }
+                    drop(handles);
 
                     let mut ipc = ipc_state.ipc.lock().await;
                     let _ = ipc
@@ -1394,6 +1416,9 @@ pub async fn run_unified_server_worker(
         }
     });
 
+    let task_handles = state.task_handles.clone();
+    task_handles.lock().await.push(ipc_handle);
+
     let server_state = state.clone();
     let server_handle = tokio::spawn(async move {
         if let Err(e) = unified_server.run().await {
@@ -1404,11 +1429,7 @@ pub async fn run_unified_server_worker(
 
     let master_dead_flag = state.master_dead.clone();
 
-    tokio::select! {
-        _ = heartbeat_handle => {}
-        _ = ipc_handle => {}
-        _ = server_handle => {}
-    }
+    let _ = server_handle.await;
 
     running.stop();
 

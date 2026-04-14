@@ -142,6 +142,7 @@ pub struct ProxyCache {
     cache_hits: AtomicU64,
     cache_misses: AtomicU64,
     current_memory_size: AtomicU64,
+    cleanup_shutdown_tx: Arc<tokio::sync::watch::Sender<()>>,
 }
 
 impl Clone for ProxyCache {
@@ -153,6 +154,7 @@ impl Clone for ProxyCache {
             cache_hits: AtomicU64::new(self.cache_hits.load(Ordering::Relaxed)),
             cache_misses: AtomicU64::new(self.cache_misses.load(Ordering::Relaxed)),
             current_memory_size: AtomicU64::new(self.current_memory_size.load(Ordering::Relaxed)),
+            cleanup_shutdown_tx: self.cleanup_shutdown_tx.clone(),
         }
     }
 }
@@ -179,6 +181,7 @@ impl ProxyCache {
             }
         }
 
+        let (shutdown_tx, _) = tokio::sync::watch::channel(());
         Self {
             entries: cache,
             settings,
@@ -186,6 +189,7 @@ impl ProxyCache {
             cache_hits: AtomicU64::new(0),
             cache_misses: AtomicU64::new(0),
             current_memory_size: AtomicU64::new(0),
+            cleanup_shutdown_tx: Arc::new(shutdown_tx),
         }
     }
 
@@ -197,19 +201,31 @@ impl ProxyCache {
         &self.settings
     }
 
-    pub fn start_background_cleanup(&self, interval_secs: u64) {
+    pub fn start_background_cleanup(&self, interval_secs: u64) -> tokio::task::JoinHandle<()> {
         let cache = Arc::new(self.clone());
+        let mut shutdown_rx = self.cleanup_shutdown_tx.subscribe();
 
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(interval_secs));
             loop {
-                interval.tick().await;
-                let removed = cache.cleanup_expired();
-                if removed > 0 {
-                    tracing::debug!("Cache cleanup: removed {} expired entries", removed);
+                tokio::select! {
+                    _ = shutdown_rx.changed() => {
+                        tracing::debug!("Cache cleanup: shutdown signal received");
+                        break;
+                    }
+                    _ = interval.tick() => {
+                        let removed = cache.cleanup_expired();
+                        if removed > 0 {
+                            tracing::debug!("Cache cleanup: removed {} expired entries", removed);
+                        }
+                    }
                 }
             }
-        });
+        })
+    }
+
+    pub fn shutdown(&self) {
+        let _ = self.cleanup_shutdown_tx.send(());
     }
 
     #[inline]

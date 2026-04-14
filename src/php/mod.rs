@@ -139,7 +139,7 @@ impl PhpClient {
         }
 
         if let Some(ref open_basedir) = self.config.open_basedir {
-            php_values.push(("open_basedir".to_string(), open_basedir.clone()));
+            admin_values.push(("open_basedir".to_string(), open_basedir.clone()));
         }
 
         if let Some(allow_url_fopen) = self.config.allow_url_fopen {
