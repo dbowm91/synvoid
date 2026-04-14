@@ -888,6 +888,7 @@ impl FileManager {
         let mut extracted = Vec::new();
         let mut total_extracted_size: u64 = 0;
         let max_size = self.config.archive_max_size;
+        let max_compression_ratio = 10;
 
         let dest_canonical = dest.canonicalize().unwrap_or_else(|_| PathBuf::from(dest));
 
@@ -895,6 +896,19 @@ impl FileManager {
             let mut file = archive
                 .by_index(i)
                 .map_err(|e| FileManagerError::InvalidPath(format!("zip error: {}", e)))?;
+
+            let compressed_size = file.compressed_size();
+            let uncompressed_size = file.size();
+
+            if uncompressed_size > 0 && compressed_size > 0 {
+                let ratio = uncompressed_size as f64 / compressed_size as f64;
+                if ratio > max_compression_ratio as f64 {
+                    return Err(FileManagerError::InvalidPath(format!(
+                        "potential zip bomb detected: compression ratio {} exceeds limit {}",
+                        ratio, max_compression_ratio
+                    )));
+                }
+            }
 
             let outpath = dest.join(file.name());
 

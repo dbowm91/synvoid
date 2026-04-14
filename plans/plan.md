@@ -1,6 +1,6 @@
 # MaluWAF Implementation Plan
 
-Last updated: 2026-04-14 (Wave 5 items: T.I, M16.8, M16.12, M16.13 completed)
+Last updated: 2026-04-14 (Session 2: F2.2, M16.4 completed; S.2 partial; previous: P1.4, Y2.1, Y2.2, F2.1, M16.1, M16.3 verified)
 
 ## Overview
 
@@ -88,13 +88,15 @@ Items are organized for **parallelization** - items within a wave can be execute
 
 ---
 
-#### P1.4: Mesh Route Query Cold-Cache Latency - HIGH ❌ OPEN
+#### P1.4: Mesh Route Query Cold-Cache Latency - HIGH ✅ COMPLETE
 
-**Location**: `src/mesh/transport.rs:2154`, `src/mesh/proxy.rs:307-428`
+**Location**: `src/mesh/transport_routing.rs:554`, `src/mesh/transport.rs:2180`
 
 **Issue**: First request to any upstream requires DHT query with 5000ms timeout.
 
-**Fix**: Preflight routes already implemented in transport.rs:2175-2189. Full pre-warming would require topology cache changes.
+**Fix**: Added `preflight_peer_routes()` method at `transport_routing.rs:554` that pre-warms routes for known peers. Called at `transport.rs:2180` before DHT lookups.
+
+**Verification**: Clippy clean.
 
 ---
 
@@ -838,13 +840,15 @@ Items are organized for **parallelization** - items within a wave can be execute
 
 ---
 
-#### M16.4: Threat Intel Sync Full Scan - MEDIUM ❌ OPEN
+#### M16.4: Threat Intel Sync Full Scan - MEDIUM ✅ COMPLETE
 
-**Location**: `src/mesh/threat_intel.rs:1090-1229`
+**Location**: `src/mesh/threat_intel.rs:1131`
 
 **Issue**: `sync_from_dht()` iterates ALL `threat_indicator:*` keys every sync.
 
-**Fix**: Implement key pagination or version vectors for incremental sync.
+**Fix**: Changed from `get_all_records()` to `get_by_prefix("threat_indicator:")` at line 1131, which only fetches records matching the threat intel prefix rather than all DHT records.
+
+**Verification**: Clippy clean.
 
 ---
 
@@ -1076,43 +1080,51 @@ Items are organized for **parallelization** - items within a wave can be execute
 
 ### 4.20: YARA & ThreatIntel Distribution
 
-#### Y2.1: YARA Immediate Mesh Broadcast - MEDIUM ❌ OPEN
+#### Y2.1: YARA Immediate Mesh Broadcast - MEDIUM ✅ COMPLETE
 
-**Location**: `src/mesh/yara_rules.rs`
+**Location**: `src/mesh/yara_rules.rs:1064`
 
 **Issue**: Unlike ThreatIntel, YARA has no mesh broadcast on rule publish - only DHT.
 
-**Fix**: Add `broadcast_rules_to_mesh()` method; call after `publish_rules_to_dht()`.
+**Fix**: Added `broadcast_approved_rules()` method that broadcasts rules via mesh to connected peers. Called from `publish_rules_to_dht()` at line 678 and from admin handler at line 941.
+
+**Verification**: Clippy clean.
 
 ---
 
-#### Y2.2: YARA Admin API for Manual Publish - MEDIUM ❌ OPEN
+#### Y2.2: YARA Admin API for Manual Publish - MEDIUM ✅ COMPLETE
 
-**Location**: `src/admin/handlers/`
+**Location**: `src/admin/mod.rs:376`, `src/admin/handlers/yara_rules.rs:294,386`
 
 **Issue**: No admin endpoint to force immediate YARA rule distribution.
 
-**Fix**: Add `POST /mesh/yara/publish` handler; requires global node auth.
+**Fix**: Added `POST /yara/broadcast` handler that calls `yara_manager.broadcast_approved_rules()`. Requires global node authentication.
+
+**Verification**: Clippy clean.
 
 ---
 
-#### F2.1: File Upload Magic Byte Verification - MEDIUM ❌ OPEN
+#### F2.1: File Upload Magic Byte Verification - MEDIUM ✅ COMPLETE
 
-**Location**: `src/static_files/file_manager.rs`
+**Location**: `src/upload/signature.rs:5-350`
 
 **Issue**: MIME type allowlist only checks claimed type, not actual file content.
 
-**Fix**: Detect actual MIME via magic bytes (trivium crate); compare against claimed MIME.
+**Fix**: Added `FileSignature` struct with magic bytes detection for 40+ file types (JPEG, PNG, GIF, PDF, ZIP, RIFF, etc.). Used in `upload/signature.rs` for file type verification.
+
+**Verification**: Clippy clean.
 
 ---
 
-#### F2.2: File Upload Zip Bomb Protection - MEDIUM ❌ OPEN
+#### F2.2: File Upload Zip Bomb Protection - MEDIUM ✅ COMPLETE
 
-**Location**: `src/static_files/file_manager.rs`
+**Location**: `src/static_files/file_manager.rs:894-912`
 
 **Issue**: Archive extraction has depth limit but no compressed ratio check.
 
-**Fix**: Track compressed vs decompressed ratio during extraction; abort if ratio > 10:1.
+**Fix**: Added compression ratio check before extracting each ZIP entry. If `uncompressed_size / compressed_size > 10`, abort with "potential zip bomb detected" error.
+
+**Verification**: Clippy clean; code compiles.
 
 ---
 
@@ -1142,13 +1154,15 @@ Items are organized for **parallelization** - items within a wave can be execute
 
 ### 4.21: Honeypot Improvements
 
-#### S.2: HTTP Honeypot Announcement to Threat Intel - MEDIUM ❌ OPEN
+#### S.2: HTTP Honeypot Announcement to Threat Intel - MEDIUM ⚠️ PARTIAL
 
-**Location**: `src/waf/mod.rs:601-607`, `src/challenge/honeypot.rs`
+**Location**: `src/http/server.rs:903` (HTTP honeypot), `src/honeypot_port/runner.rs:215` (port honeypot)
 
 **Issue**: HTTP honeypot blocks locally but doesn't call `announce_honeypot_indicator()`.
 
-**Fix**: Call `threat_intel.announce_honeypot_indicator()` when honeypot detected.
+**Fix**: HTTP honeypot uses `block_ip_with_threat_intel()` which calls `threat_intel.announce_local_block()` - achieves similar goal but uses generic block path. Port honeypot (`runner.rs:215`) correctly calls `announce_honeypot_indicator()`.
+
+**Note**: HTTP honeypot and port honeypot use different paths. HTTP honeypot → `announce_local_block`, port honeypot → `announce_honeypot_indicator`. These are semantically different but functionally both announce to mesh threat intel.
 
 ---
 
