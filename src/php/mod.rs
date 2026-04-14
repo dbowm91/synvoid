@@ -154,10 +154,7 @@ impl PhpClient {
         }
 
         if let Some(max_exec_time) = self.config.max_execution_time {
-            php_values.push((
-                "max_execution_time".to_string(),
-                max_exec_time.to_string(),
-            ));
+            php_values.push(("max_execution_time".to_string(), max_exec_time.to_string()));
         }
 
         if let Some(ref memory_limit) = self.config.memory_limit {

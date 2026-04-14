@@ -441,10 +441,8 @@ impl YaraRulesManager {
                         .and_then(|v| v.as_str())
                         .unwrap_or("");
 
-                    let manifest_version = value
-                        .get("version")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("");
+                    let manifest_version =
+                        value.get("version").and_then(|v| v.as_str()).unwrap_or("");
                     let manifest_timestamp_str = value
                         .get("timestamp")
                         .and_then(|v| v.as_str())

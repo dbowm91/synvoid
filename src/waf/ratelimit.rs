@@ -376,7 +376,6 @@ impl RateLimiterManager {
         }
     }
 
-
     pub fn check_global(&self) -> RateLimitResult {
         match self.state.global_limiter.check_and_increment() {
             RateLimitDecision::Allowed => RateLimitResult::Allowed,

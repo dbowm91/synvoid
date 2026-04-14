@@ -140,7 +140,9 @@ impl StaticFileHandler {
         let enable_compression = config.enable_compression.unwrap_or(true);
         let gzip_on_the_fly = config.gzip_on_the_fly.unwrap_or(true);
         let directory_listing = config.directory_listing.unwrap_or(false);
-        let directory_template_path = config.theme.as_ref()
+        let directory_template_path = config
+            .theme
+            .as_ref()
             .and_then(|t| t.directory_template_path.clone());
 
         let config_clone = config.clone();
@@ -768,12 +770,7 @@ impl StaticFileHandler {
                     )?
                 }
             } else {
-                directory::render_directory_listing(
-                    dir_path,
-                    url_path,
-                    format,
-                    &self.theme_config,
-                )?
+                directory::render_directory_listing(dir_path, url_path, format, &self.theme_config)?
             };
             return Ok(StaticResponse {
                 status: StatusCode::OK,

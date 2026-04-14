@@ -442,8 +442,8 @@ Agents modifying these areas should be aware of performance characteristics:
 | Cache lookups | O(1) via `moka::Cache`; eviction-based cleanup | `src/proxy_cache/store.rs` |
 | Input normalization | Pre-computed lowercased words at init | `src/waf/probe_tracker.rs:475` |
 | Rate limiting | Lock-free atomic bitset for slot tracking | `src/waf/ratelimit/core.rs` |
-| HTTP path sanitization | Allocates `Vec` on every request | `src/proxy.rs:101` |
-| Response header filtering | Allocates `Vec` on every proxied response | `src/proxy.rs:147-159` |
+| HTTP path sanitization | Not called in request path | `src/proxy.rs:139` |
+| Response header filtering | Vec allocation on every proxied response | `src/proxy.rs:244-256` |
 | SSRF detection | `Cow<str>` optimization to avoid repeated lowercasing | `src/waf/attack_detection/ssrf.rs` |
 | DNS zone store | 64-sharded `RwLock`; prefer single-shard ops over full iteration | `src/dns/server/sharded_store.rs` |
 
@@ -629,17 +629,19 @@ rrsig.extend_from_slice(&timestamp.to_be_bytes());
 
 ## Implementation Plan
 
-The consolidated implementation plan is located at `plans/plan.md`. This plan organizes all improvements into 5 waves for parallelization:
+The consolidated implementation plan is located at `plans/plan.md`. Waves 1-3 have been completed.
+The plan now tracks:
 
-| Wave | Focus | Items | Parallelizable |
-|------|-------|-------|-----------------|
-| 1 | Critical Security (WAF, Auth, Mesh) | ~10 | Yes - subagents can work in parallel |
-| 2 | High Security (TLS, DNS, Mesh) | ~15 | Yes |
-| 3 | Core Functionality (Web Stack, Caching, Honeypot) | ~12 | Yes |
-| 4 | Performance & Code Quality | ~50 | Yes - by category |
-| 5 | Polish & Optimization | ~15 | Yes |
+| Wave | Focus | Items | Status |
+|------|-------|-------|--------|
+| 1 | Critical Security (WAF, Auth, Mesh) | ~10 | ✅ Completed |
+| 2 | High Security (TLS, DNS, Mesh) | ~15 | ✅ Completed |
+| 3 | Core Functionality (Web Stack, Caching, Honeypot) | ~12 | ✅ Completed |
+| 4 | Performance & Code Quality | ~40 | ❌ Open |
+| 5 | Future Work | ~12 | ⏸️ Deferred |
 
-**Subagent Execution Model**: Items within the same wave can be executed in parallel by separate subagents. Dependencies between waves are documented in `plans/plan.md`.
+**Subagent Execution Model**: Items within Wave 4 can be executed in parallel by separate subagents.
+Dependencies between items are documented in `plans/plan.md`.
 
 When reviewing the plan against the codebase, always verify claims directly. Plans may reference items already fixed, use outdated line numbers, or describe bugs incorrectly. Run `grep`/search for the specific patterns described to confirm they still exist before implementing fixes.
 

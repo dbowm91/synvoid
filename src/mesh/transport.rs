@@ -301,13 +301,11 @@ impl PendingQueryManager {
         }
     }
 
-
     pub(crate) fn take(&mut self, query_id: &str) -> Option<oneshot::Sender<RouteQueryResult>> {
         self.collected_providers.remove(query_id);
         self.notify_complete.remove(query_id);
         self.pending.remove(query_id)
     }
-
 }
 
 impl MeshTransport {
@@ -574,7 +572,6 @@ impl MeshTransport {
     pub fn set_mlkem_session_manager(&mut self, manager: Arc<SessionManager<MlKem768>>) {
         self.mlkem_session_manager = Some(manager);
     }
-
 
     pub fn announce_edge_key(&self, edge_id: &str, public_key: &str) {
         if let Some(ref record_store) = self.record_store {
