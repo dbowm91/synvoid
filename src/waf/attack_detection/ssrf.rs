@@ -271,9 +271,51 @@ impl SsrfDetector {
             return true;
         }
 
+        if Self::matches_localhost_lookalike(&input_lower) {
+            return true;
+        }
+
         for ip in Self::extract_ips_from_url(&input_lower) {
             let normalized = Self::normalize_ip_for_parse(&ip);
             if Self::is_private_ip(&normalized) {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    fn matches_localhost_lookalike(input: &str) -> bool {
+        let lookalike_patterns = [
+            "localhost",
+            "localshost",
+            "locahost",
+            "locaihost",
+            "loca1host",
+            "iocalhost",
+            "1ocalhost",
+            "oocalhost",
+            "locaihost",
+            "iocalhost",
+        ];
+
+        for pattern in &lookalike_patterns {
+            if let Some(pos) = input.find(pattern) {
+                let before_ok = pos == 0 || !input.as_bytes()[pos - 1].is_ascii_alphanumeric();
+                let after_pos = pos + pattern.len();
+                let after_ok = after_pos >= input.len()
+                    || !input.as_bytes()[after_pos].is_ascii_alphanumeric();
+                if before_ok && after_ok {
+                    return true;
+                }
+            }
+        }
+
+        if let Some(pos) = input.find("127.0.0.1") {
+            let before_ok = pos == 0 || input.as_bytes()[pos - 1] == b'.';
+            let after_pos = pos + "127.0.0.1".len();
+            let after_ok = after_pos >= input.len() || input.as_bytes()[after_pos] == b':';
+            if before_ok && after_ok {
                 return true;
             }
         }
@@ -335,11 +377,12 @@ impl SsrfDetector {
             if input_lower == domain.as_str() {
                 return true;
             }
-            if input_lower.ends_with(&format!(".{}", domain)) {
-                let prefix_len = input_lower.len() - domain.len();
-                if prefix_len > 0 && input_lower.as_bytes()[prefix_len - 1] == b'.' {
-                    return true;
-                }
+            let dot_domain = domain.as_str();
+            if input_lower.len() > dot_domain.len()
+                && input_lower[input_lower.len() - dot_domain.len()..].starts_with('.')
+                && input_lower[..input_lower.len() - dot_domain.len() - 1].ends_with('.')
+            {
+                return true;
             }
             if self.allowlist_only_mode && Self::has_word_boundary(input_lower, domain.as_str()) {
                 return true;

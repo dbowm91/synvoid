@@ -35,8 +35,14 @@ static DROPPED_THREAT_LEVEL_EVENTS: LazyLock<AtomicU64> = LazyLock::new(|| Atomi
 static DROPPED_PROCESS_EVENTS: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 static DROPPED_WORKER_EVENTS: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 
+static TLS_PASSTHROUGH_REQUESTS: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+static TLS_PASSTHROUGH_WAF_BYPASSED: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+
 static HONEYPOT_INDICATORS_PUBLISHED: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 static HONEYPOT_RECORDS_PROCESSED: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+static HONEYPOT_HTTP_TRAPS_HIT: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+static PORT_HONEYPOT_CONNECTIONS_CAPTURED: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
 
 static DROPPED_YARA_BROADCASTS: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 
@@ -180,6 +186,22 @@ pub fn get_dropped_worker_events() -> u64 {
     DROPPED_WORKER_EVENTS.load(Ordering::Relaxed)
 }
 
+pub fn record_tls_passthrough_request() {
+    TLS_PASSTHROUGH_REQUESTS.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn get_tls_passthrough_requests() -> u64 {
+    TLS_PASSTHROUGH_REQUESTS.load(Ordering::Relaxed)
+}
+
+pub fn record_tls_passthrough_waf_bypassed() {
+    TLS_PASSTHROUGH_WAF_BYPASSED.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn get_tls_passthrough_waf_bypassed() -> u64 {
+    TLS_PASSTHROUGH_WAF_BYPASSED.load(Ordering::Relaxed)
+}
+
 pub fn record_honeypot_indicators_published(count: u64) {
     HONEYPOT_INDICATORS_PUBLISHED.fetch_add(count, Ordering::Relaxed);
 }
@@ -194,6 +216,22 @@ pub fn record_honeypot_records_processed(count: u64) {
 
 pub fn get_honeypot_records_processed() -> u64 {
     HONEYPOT_RECORDS_PROCESSED.load(Ordering::Relaxed)
+}
+
+pub fn record_honeypot_http_traps_hit() {
+    HONEYPOT_HTTP_TRAPS_HIT.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn get_honeypot_http_traps_hit() -> u64 {
+    HONEYPOT_HTTP_TRAPS_HIT.load(Ordering::Relaxed)
+}
+
+pub fn record_port_honeypot_connections_captured() {
+    PORT_HONEYPOT_CONNECTIONS_CAPTURED.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn get_port_honeypot_connections_captured() -> u64 {
+    PORT_HONEYPOT_CONNECTIONS_CAPTURED.load(Ordering::Relaxed)
 }
 
 pub fn record_dropped_yara_broadcast() {
@@ -1132,8 +1170,22 @@ impl WorkerMetrics {
         result
     }
 
+    const MAX_PER_SITE_ENTRIES: usize = 10000;
+
     pub fn record_site_request_start(&self, site_id: &str) -> u64 {
         let mut sites = self.per_site.lock();
+        if sites.len() >= Self::MAX_PER_SITE_ENTRIES {
+            sites.retain(|_, v| v.current_concurrent.load(Ordering::Relaxed) > 0);
+        }
+        if sites.len() >= Self::MAX_PER_SITE_ENTRIES {
+            let key_to_remove = sites
+                .iter()
+                .find(|(_, v)| v.current_concurrent.load(Ordering::Relaxed) == 0)
+                .map(|(k, _)| k.clone());
+            if let Some(key) = key_to_remove {
+                sites.remove(&key);
+            }
+        }
         let site = sites.entry(site_id.to_string()).or_default();
         site.record_request_start()
     }

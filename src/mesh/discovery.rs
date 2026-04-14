@@ -9,6 +9,7 @@ use tokio::time::timeout;
 
 use crate::mesh::cert::MeshCertManager;
 use crate::mesh::config::{MeshConfig, MeshSeedNode};
+use crate::mesh::peer_auth::GlobalNodeRevocationList;
 use crate::mesh::protocol::{MeshCapabilities, MeshMessage, MESH_MESSAGE_VERSION};
 use crate::mesh::topology::{MeshTopology, PeerStatus};
 
@@ -19,6 +20,7 @@ pub struct MeshDiscovery {
     running: Arc<RwLock<bool>>,
     shutdown_tx: Arc<RwLock<Option<mpsc::Sender<()>>>>,
     record_store: Option<Arc<crate::mesh::dht::RecordStoreManager>>,
+    revocation_list: Option<Arc<GlobalNodeRevocationList>>,
 }
 
 impl MeshDiscovery {
@@ -27,6 +29,7 @@ impl MeshDiscovery {
         topology: Arc<MeshTopology>,
         cert_manager: Arc<RwLock<MeshCertManager>>,
         record_store: Option<Arc<crate::mesh::dht::RecordStoreManager>>,
+        revocation_list: Option<Arc<GlobalNodeRevocationList>>,
     ) -> Self {
         Self {
             config,
@@ -35,6 +38,7 @@ impl MeshDiscovery {
             running: Arc::new(RwLock::new(false)),
             shutdown_tx: Arc::new(RwLock::new(None)),
             record_store,
+            revocation_list,
         }
     }
 
@@ -436,7 +440,7 @@ impl MeshDiscovery {
                     global_node_key.as_ref().map(|sk| sk.as_str()),
                     timestamp.unwrap_or(0),
                     300,
-                    None,
+                    self.revocation_list.as_ref().map(|r| r.as_ref()),
                     global_node_att_key,
                     global_node_att_sig,
                     pow_nonce,

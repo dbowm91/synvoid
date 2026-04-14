@@ -5,7 +5,7 @@ use std::time::Instant;
 use super::FloodDecision;
 use crate::utils::ip_to_slot;
 
-const CONNECTION_TRACKER_SLOTS: usize = 65536;
+const CONNECTION_TRACKER_SLOTS: usize = 262144;
 
 pub struct ConnectionLimiter {
     per_ip_rate: u32,

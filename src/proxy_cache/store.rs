@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -6,6 +7,7 @@ use std::time::{Duration, Instant};
 use bytes::Bytes;
 use http::{HeaderMap, StatusCode};
 use moka::sync::Cache;
+use parking_lot::RwLock;
 use thiserror::Error;
 
 use super::config::ProxyCacheSettings;
@@ -143,6 +145,7 @@ pub struct ProxyCache {
     cache_misses: AtomicU64,
     current_memory_size: AtomicU64,
     cleanup_shutdown_tx: Arc<tokio::sync::watch::Sender<()>>,
+    host_index: RwLock<HashMap<String, Vec<CacheKey>>>,
 }
 
 impl Clone for ProxyCache {
@@ -155,6 +158,7 @@ impl Clone for ProxyCache {
             cache_misses: AtomicU64::new(self.cache_misses.load(Ordering::Relaxed)),
             current_memory_size: AtomicU64::new(self.current_memory_size.load(Ordering::Relaxed)),
             cleanup_shutdown_tx: self.cleanup_shutdown_tx.clone(),
+            host_index: RwLock::new(HashMap::new()),
         }
     }
 }
@@ -190,6 +194,7 @@ impl ProxyCache {
             cache_misses: AtomicU64::new(0),
             current_memory_size: AtomicU64::new(0),
             cleanup_shutdown_tx: Arc::new(shutdown_tx),
+            host_index: RwLock::new(HashMap::new()),
         }
     }
 
@@ -441,7 +446,12 @@ impl ProxyCache {
                 .fetch_add(size as u64, Ordering::Relaxed);
         }
 
-        self.entries.insert(key, entry_inner);
+        self.entries.insert(key.clone(), entry_inner);
+
+        {
+            let mut host_index = self.host_index.write();
+            host_index.entry(key.host.clone()).or_default().push(key);
+        }
 
         Ok(())
     }
@@ -461,6 +471,13 @@ impl ProxyCache {
                     .ok();
             }
             self.entries.invalidate(key);
+        }
+
+        {
+            let mut host_index = self.host_index.write();
+            if let Some(keys) = host_index.get_mut(&key.host) {
+                keys.retain(|k| k != key);
+            }
         }
     }
 
@@ -496,12 +513,10 @@ impl ProxyCache {
     }
 
     pub fn invalidate_by_host(&self, host: &str) -> usize {
-        let to_remove: Vec<CacheKey> = self
-            .entries
-            .iter()
-            .filter(|(k, _)| k.host == host)
-            .map(|(k, _)| (*k).clone())
-            .collect();
+        let to_remove: Vec<CacheKey> = {
+            let host_index = self.host_index.read();
+            host_index.get(host).cloned().unwrap_or_default()
+        };
 
         let count = to_remove.len();
 
@@ -523,6 +538,11 @@ impl ProxyCache {
             }
         }
 
+        {
+            let mut host_index = self.host_index.write();
+            host_index.remove(host);
+        }
+
         count
     }
 
@@ -536,6 +556,7 @@ impl ProxyCache {
         }
         self.entries.invalidate_all();
         self.current_memory_size.store(0, Ordering::Relaxed);
+        self.host_index.write().clear();
     }
 
     pub fn stats(&self) -> CacheStats {

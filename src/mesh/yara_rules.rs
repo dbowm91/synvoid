@@ -5,13 +5,17 @@ use std::time::{Duration, Instant};
 use base64::Engine;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
+use sha2::Digest;
+use sha2::Sha256;
 use tokio::sync::mpsc;
 
 use crate::mesh::config::{MeshNodeRole, YaraRulesMeshConfig};
 use crate::mesh::dht::keys::DhtKey;
 use crate::mesh::protocol::MeshMessage;
 use crate::upload::yara_rule_feed::YaraRuleFeedManager;
+
+const MAX_PENDING_SUBMISSIONS: usize = 1000;
+const SUBMISSION_EXPIRY_SECS: u64 = 86400 * 7;
 
 #[derive(Debug, Clone)]
 pub struct BroadcastAckTracker {
@@ -978,6 +982,48 @@ impl YaraRulesManager {
             .filter(|s| s.status == YaraRuleSubmissionStatus::Pending)
             .cloned()
             .collect()
+    }
+
+    pub fn cleanup_expired_submissions(&self) {
+        let now = crate::mesh::safe_unix_timestamp();
+        let expiry_time = now.saturating_sub(SUBMISSION_EXPIRY_SECS);
+
+        let mut submissions = self.submissions.write();
+        let expired_ids: Vec<String> = submissions
+            .iter()
+            .filter(|(_, s)| {
+                s.status == YaraRuleSubmissionStatus::Pending && s.submitted_at < expiry_time
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+
+        for id in &expired_ids {
+            submissions.remove(id);
+        }
+
+        if !expired_ids.is_empty() {
+            tracing::info!(
+                "Cleaned up {} expired YARA rule submissions",
+                expired_ids.len()
+            );
+        }
+
+        if submissions.len() >= MAX_PENDING_SUBMISSIONS {
+            let mut pending: Vec<_> = submissions
+                .iter()
+                .filter(|(_, s)| s.status == YaraRuleSubmissionStatus::Pending)
+                .map(|(id, s)| (id.clone(), s.submitted_at))
+                .collect();
+            pending.sort_by_key(|(_, ts)| *ts);
+            let to_remove = pending.len().saturating_sub(MAX_PENDING_SUBMISSIONS / 2);
+            for (id, _) in pending.into_iter().take(to_remove) {
+                submissions.remove(&id);
+            }
+            tracing::warn!(
+                "Trimmed {} old pending submissions to stay within limit",
+                to_remove
+            );
+        }
     }
 
     pub fn get_all_submissions(&self) -> Vec<YaraRuleSubmission> {

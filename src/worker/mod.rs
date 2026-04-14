@@ -292,8 +292,6 @@ pub async fn run_static_worker(
                 break;
             }
 
-            tokio::time::sleep(Duration::from_millis(50)).await;
-
             let mut ipc = ipc_state.ipc.lock().await;
             match ipc.recv_with_timeout::<crate::process::Message>(50).await {
                 Ok(Some(crate::process::Message::MasterShutdown {

@@ -123,9 +123,11 @@ impl GranianConfig {
         self.worker_id = worker_id;
 
         if self.socket_path.is_none() {
-            self.socket_path = Some(
-                std::env::temp_dir().join(format!("maluwaf-{}-app-{}.sock", site_id, worker_id)),
-            );
+            let uuid = uuid::Uuid::new_v4().to_string()[..8].to_string();
+            self.socket_path = Some(std::env::temp_dir().join(format!(
+                "maluwaf-{}-{}-app-{}.sock",
+                site_id, uuid, worker_id
+            )));
         }
 
         if self.auto_detect_venv {

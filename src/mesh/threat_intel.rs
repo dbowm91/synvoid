@@ -1,6 +1,6 @@
 #![allow(unused_variables)]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -141,6 +141,7 @@ impl Default for ThreatIntelligenceConfig {
 }
 
 const DEFAULT_RE_ANNOUNCE_INTERVAL_SECS: u64 = 300;
+const MAX_PENDING_INDICATORS: usize = 10000;
 
 pub struct ThreatIntelligenceManager {
     config: Arc<ThreatIntelligenceConfigInternal>,
@@ -151,7 +152,7 @@ pub struct ThreatIntelligenceManager {
     signer: Option<Arc<crate::mesh::protocol::MeshMessageSigner>>,
     local_version: RwLock<u64>,
     indicators: RwLock<HashMap<String, ThreatIndicatorEntry>>,
-    pending_announces: RwLock<Vec<ThreatIndicator>>,
+    pending_announces: RwLock<VecDeque<ThreatIndicator>>,
     mesh_sender: Arc<RwLock<Option<mpsc::Sender<MeshMessage>>>>,
     transport: Arc<RwLock<Option<Arc<crate::mesh::transport::MeshTransport>>>>,
     last_sync: RwLock<Instant>,
@@ -220,7 +221,7 @@ impl ThreatIntelligenceManager {
             signer,
             local_version: RwLock::new(1),
             indicators: RwLock::new(HashMap::new()),
-            pending_announces: RwLock::new(Vec::new()),
+            pending_announces: RwLock::new(VecDeque::new()),
             mesh_sender: Arc::new(RwLock::new(None)),
             transport: Arc::new(RwLock::new(None)),
             last_sync: RwLock::new(Instant::now()),
@@ -616,11 +617,11 @@ impl ThreatIntelligenceManager {
 
         let mut queue = self.pending_announces.write();
 
-        if queue.len() >= self.config.max_indicators_per_message {
-            queue.remove(0);
+        if queue.len() >= MAX_PENDING_INDICATORS {
+            queue.pop_front();
         }
 
-        queue.push(indicator);
+        queue.push_back(indicator);
     }
 
     pub fn publish_indicator_to_dht(&self, indicator: &ThreatIndicator) {
@@ -629,7 +630,16 @@ impl ThreatIntelligenceManager {
         }
 
         if self.config.hub_only_mode && !self.node_role.is_global() {
-            tracing::debug!("Skipping DHT publish for non-global node in hub_only_mode");
+            static WARNED_ONCE: std::sync::LazyLock<std::sync::Mutex<bool>> =
+                std::sync::LazyLock::new(|| std::sync::Mutex::new(false));
+            let mut warned = WARNED_ONCE.lock().unwrap();
+            if !*warned {
+                tracing::warn!(
+                    "DHT publish skipped for non-global node in hub_only_mode (standalone). \
+                     Threat intel will not be distributed to mesh."
+                );
+                *warned = true;
+            }
             return;
         }
 
@@ -1284,10 +1294,12 @@ impl ThreatIntelligenceManager {
     }
 
     pub fn create_threat_announce(&self) -> Option<MeshMessage> {
-        let indicators: Vec<ThreatIndicator> = std::mem::take(&mut *self.pending_announces.write());
+        let mut queue = self.pending_announces.write();
+        let indicators: Vec<ThreatIndicator> = queue.drain(..).collect();
         if indicators.is_empty() {
             return None;
         }
+        drop(queue);
         let highest_severity = indicators
             .iter()
             .map(|i| i.severity)

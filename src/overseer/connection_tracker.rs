@@ -77,7 +77,7 @@ impl ConnectionTracker {
     }
 
     pub fn update_worker_connections(&self, worker_id: WorkerId, active: u64, idle: u64) {
-        self.by_worker.insert(
+        let old_values = self.by_worker.insert(
             worker_id,
             WorkerConnections {
                 active,
@@ -86,21 +86,54 @@ impl ConnectionTracker {
             },
         );
 
-        let mut total_active: u64 = 0;
-        let mut total_idle: u64 = 0;
+        if let Some(old) = old_values {
+            let delta_active = active as i64 - old.active as i64;
+            let delta_idle = idle as i64 - old.idle as i64;
 
-        for entry in self.by_worker.iter() {
-            total_active += entry.active;
-            total_idle += entry.idle;
+            if delta_active != 0 {
+                if delta_active > 0 {
+                    self.total_active
+                        .fetch_add(delta_active as u64, Ordering::Relaxed);
+                } else {
+                    let _ =
+                        self.total_active
+                            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+                                v.checked_sub((-delta_active) as u64)
+                            });
+                }
+            }
+
+            if delta_idle != 0 {
+                if delta_idle > 0 {
+                    self.total_idle
+                        .fetch_add(delta_idle as u64, Ordering::Relaxed);
+                } else {
+                    let _ =
+                        self.total_idle
+                            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+                                v.checked_sub((-delta_idle) as u64)
+                            });
+                }
+            }
+        } else {
+            self.total_active.fetch_add(active, Ordering::Relaxed);
+            self.total_idle.fetch_add(idle, Ordering::Relaxed);
         }
-
-        self.total_active.store(total_active, Ordering::Relaxed);
-        self.total_idle.store(total_idle, Ordering::Relaxed);
     }
 
     pub fn remove_worker(&self, worker_id: &WorkerId) {
-        self.by_worker.remove(worker_id);
-        self.recalculate_totals();
+        if let Some((_, connections)) = self.by_worker.remove(worker_id) {
+            let _ = self
+                .total_active
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+                    v.checked_sub(connections.active)
+                });
+            let _ = self
+                .total_idle
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+                    v.checked_sub(connections.idle)
+                });
+        }
     }
 
     fn recalculate_totals(&self) {

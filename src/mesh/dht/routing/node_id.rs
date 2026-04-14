@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 pub const NODE_ID_LEN: usize = 32;
-pub const NODE_ID_POW_DIFFICULTY: u32 = 32;
+pub const NODE_ID_POW_DIFFICULTY: u32 = 40;
 pub const NODE_ID_POW_PREFIX: &[u8] = b"nodeid-pow-v1:";
 
 #[derive(

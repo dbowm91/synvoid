@@ -687,6 +687,14 @@ impl DhtBootstrapper {
             return Err("No seed nodes provided".to_string());
         }
 
+        if seed_nodes.len() < 3 {
+            tracing::warn!(
+                "DHT bootstrap with only {} seed node(s) - vulnerable to eclipse attack. \
+                Configure at least 3 independent seed nodes for production deployments.",
+                seed_nodes.len()
+            );
+        }
+
         for seed in seed_nodes {
             self.routing_manager
                 .add_peer(

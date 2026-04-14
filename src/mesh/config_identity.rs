@@ -237,7 +237,11 @@ impl GenesisKeyConfig {
 
     pub fn is_genesis_key_authorized(&self, genesis_public_key: &str) -> bool {
         if self.authorized_genesis_keys.is_empty() {
-            return true;
+            tracing::warn!(
+                "No authorized genesis keys configured - rejecting genesis key authentication. \
+                This is a security risk if the system expects authorized keys."
+            );
+            return false;
         }
         self.authorized_genesis_keys
             .iter()

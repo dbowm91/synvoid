@@ -219,11 +219,34 @@ pub async fn run_unified_server_worker(
             .filter(|(_, site)| site.proxy.tls_passthrough == Some(true))
             .map(|(id, _)| id.clone())
             .collect();
+        let passthrough_with_waf: Vec<_> = config
+            .sites
+            .iter()
+            .filter(|(_, site)| {
+                site.proxy.tls_passthrough == Some(true)
+                    && site.proxy.tls_passthrough_enforce_waf == Some(true)
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
         if !passthrough_sites.is_empty() {
-            tracing::warn!(
-                "TLS passthrough is enabled for sites: {:?}. WAF inspection is BYPASSED for these sites - L7 attacks will not be blocked.",
-                passthrough_sites
-            );
+            if !passthrough_with_waf.is_empty() {
+                tracing::info!(
+                    "TLS passthrough with WAF enforcement enabled for sites: {:?}. WAF will inspect L7 traffic.",
+                    passthrough_with_waf
+                );
+            }
+            let bypass_sites: Vec<_> = passthrough_sites
+                .iter()
+                .filter(|s| !passthrough_with_waf.contains(s))
+                .cloned()
+                .collect();
+            if !bypass_sites.is_empty() {
+                tracing::warn!(
+                    "TLS passthrough is enabled for sites: {:?}. WAF inspection is BYPASSED for these sites - L7 attacks will not be blocked. Set tls_passthrough_enforce_waf = true to enable WAF inspection for passthrough traffic.",
+                    bypass_sites
+                );
+                crate::metrics::record_tls_passthrough_waf_bypassed();
+            }
         }
     }
 
@@ -492,6 +515,7 @@ pub async fn run_unified_server_worker(
 
             // Create mesh topology first
             let topology = Arc::new(MeshTopology::new(mesh_config_arc.clone()));
+            topology.start_background_tasks();
 
             // Create DHT routing manager if enabled
             let routing_manager = if mesh_config
@@ -728,9 +752,11 @@ pub async fn run_unified_server_worker(
                 // Spawn forwarder task that receives mesh messages and broadcasts to peers
                 if let Some(quic_transport) = transport_manager.get_quic_transport() {
                     let mesh_transport = quic_transport.get_inner();
+                    let broadcast_semaphore = Arc::new(tokio::sync::Semaphore::new(10));
                     tokio::spawn(async move {
                         while let Some(msg) = mesh_broadcast_rx.recv().await {
                             let transport = mesh_transport.clone();
+                            let permit = broadcast_semaphore.clone().acquire_owned().await.ok();
                             tokio::spawn(async move {
                                 transport
                                     .broadcast_to_all_peers(
@@ -738,6 +764,7 @@ pub async fn run_unified_server_worker(
                                         Some(crate::mesh::config::MeshNodeRole::GLOBAL),
                                     )
                                     .await;
+                                drop(permit);
                             });
                         }
                     });

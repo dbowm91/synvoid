@@ -60,6 +60,7 @@ const BLOCK_BROADCAST_FAILURE_THRESHOLD: u32 = 5;
 /// from the origin WAF is preserved when we receive blocks from other nodes.
 const BLOCK_DURATION_SECS: u64 = 300;
 
+#[derive(Clone)]
 pub struct MeshProxy {
     config: Arc<MeshConfig>,
     topology: Arc<MeshTopology>,
@@ -780,79 +781,64 @@ impl MeshProxy {
             }
         };
 
+        let (result_tx, mut result_rx) = tokio::sync::mpsc::channel::<(
+            String,
+            Result<Response<BoxBody<Bytes, Infallible>>, MeshProxyError>,
+        )>(providers.len());
+
+        for provider in &providers {
+            let result_tx = result_tx.clone();
+            let upstream_id = upstream_id.to_string();
+            let node_id = provider.node_id.clone();
+            let upstream_url = provider.upstream_url.clone();
+            let body = body_bytes.clone();
+            let method_clone = method.clone();
+            let uri_clone = uri.clone();
+            let headers_clone = headers.clone();
+            let proxy = self.clone();
+
+            tokio::spawn(async move {
+                tracing::debug!("Trying provider {} for {}", node_id, upstream_id);
+
+                // Build request with original method/URI/headers, preserving client's path
+                let request_body = http_body_util::Full::new(body);
+                let mut retry_req = Request::builder().method(method_clone).uri(uri_clone);
+                for (name, value) in headers_clone.iter() {
+                    retry_req = retry_req.header(name.as_str(), value.to_str().unwrap_or(""));
+                }
+                let retry_req = match retry_req.body(request_body) {
+                    Ok(req) => req,
+                    Err(e) => {
+                        let _ = result_tx
+                            .send((node_id, Err(MeshProxyError::SendFailed(e.to_string()))))
+                            .await;
+                        return;
+                    }
+                };
+
+                let result = proxy
+                    .proxy_to_peer(&node_id, &upstream_id, upstream_url, retry_req)
+                    .await;
+                let _ = result_tx.send((node_id, result)).await;
+            });
+        }
+
+        drop(result_tx);
+
         let mut last_error = None;
+        let mut successful_provider: Option<String> = None;
+        let mut successful_resp: Option<Response<BoxBody<Bytes, Infallible>>> = None;
 
-        for (idx, provider) in providers.iter().enumerate() {
-            if idx > 0 {
-                let wait_time = rand::rng().random_range(10..100);
-                tokio::time::sleep(Duration::from_millis(wait_time)).await;
-            }
-
-            tracing::debug!(
-                "Trying provider {} for {} (attempt {}/{})",
-                provider.node_id,
-                upstream_id,
-                idx + 1,
-                providers.len()
-            );
-
-            // Build request with original method/URI/headers, preserving client's path
-            let request_body = http_body_util::Full::new(body_bytes.clone());
-            let mut retry_req = Request::builder().method(method.clone()).uri(uri.clone());
-            for (name, value) in headers.iter() {
-                retry_req = retry_req.header(name.as_str(), value.to_str().unwrap_or(""));
-            }
-            let retry_req = retry_req
-                .body(request_body)
-                .map_err(|e| MeshProxyError::SendFailed(e.to_string()))?;
-
-            match self
-                .proxy_to_peer(
-                    &provider.node_id,
-                    upstream_id,
-                    provider.upstream_url.clone(),
-                    retry_req,
-                )
-                .await
-            {
+        while let Some((provider_node_id, result)) = result_rx.recv().await {
+            match result {
                 Ok(resp) => {
-                    self.record_provider_success(&provider.node_id);
-
-                    if let Some(cached) = self.get_cached_policy(upstream_id) {
-                        if cached.provider_node_id != provider.node_id {
-                            let updated = CachedPolicy {
-                                provider_node_id: provider.node_id.clone(),
-                                upstream_url: provider.upstream_url.clone(),
-                                waf_policy: provider.waf_policy.clone(),
-                                protocol: UpstreamProtocol::Http,
-                                priority_tier: provider.priority_tier,
-                                expires_at: Instant::now()
-                                    + Duration::from_secs(DEFAULT_POLICY_CACHE_TTL_SECS),
-                            };
-                            self.cache_policy(upstream_id, updated);
-                        }
-                    }
-
-                    let request_size =
-                        body_bytes.len() + format!("{} {} HTTP/1.1\r\n", method, uri).len();
-                    let response_size = resp.body().size_hint().exact().unwrap_or(0);
-
-                    if let Some(bandwidth) = get_global_bandwidth_tracker_or_log() {
-                        bandwidth.record_site_mesh_egress(upstream_id, request_size as u64);
-                        bandwidth.record_site_mesh_ingress(upstream_id, response_size);
-                    }
-
-                    tracing::info!(
-                        "Successfully proxied to {} via provider {} (tried {}/{})",
-                        upstream_id,
-                        provider.node_id,
-                        idx + 1,
-                        providers.len()
-                    );
-                    return Ok(resp);
+                    self.record_provider_success(&provider_node_id);
+                    successful_provider = Some(provider_node_id.clone());
+                    successful_resp = Some(resp);
+                    break;
                 }
                 Err(e) => {
-                    let failure_count = self.record_provider_failure(&provider.node_id);
+                    let failure_count = self.record_provider_failure(&provider_node_id);
 
                     let tm = {
                         let guard = self.transport_manager.read();
@@ -861,7 +847,7 @@ impl MeshProxy {
                     if let Some(ref tm) = tm {
                         tm.report_reachability(
                             upstream_id,
-                            &provider.node_id,
+                            &provider_node_id,
                             crate::mesh::dht::ReachabilityStatus::Failed,
                             0,
                             0.0,
@@ -888,16 +874,50 @@ impl MeshProxy {
                     }
 
                     tracing::warn!(
-                        "Provider {} failed for {} (attempt {}/{}): {}",
-                        provider.node_id,
+                        "Provider {} failed for {}: {}",
+                        provider_node_id,
                         upstream_id,
-                        idx + 1,
-                        providers.len(),
                         e
                     );
                     last_error = Some(e);
                 }
             }
+        }
+
+        if let Some((provider_node_id, resp)) = successful_provider.zip(successful_resp) {
+            if let Some(cached) = self.get_cached_policy(upstream_id) {
+                if cached.provider_node_id != provider_node_id {
+                    if let Some(provider_info) =
+                        providers.iter().find(|p| p.node_id == provider_node_id)
+                    {
+                        let updated = CachedPolicy {
+                            provider_node_id: provider_node_id.clone(),
+                            upstream_url: provider_info.upstream_url.clone(),
+                            waf_policy: provider_info.waf_policy.clone(),
+                            protocol: UpstreamProtocol::Http,
+                            priority_tier: provider_info.priority_tier,
+                            expires_at: Instant::now()
+                                + Duration::from_secs(DEFAULT_POLICY_CACHE_TTL_SECS),
+                        };
+                        self.cache_policy(upstream_id, updated);
+                    }
+                }
+            }
+
+            let request_size = body_bytes.len() + format!("{} {} HTTP/1.1\r\n", method, uri).len();
+            let response_size = resp.body().size_hint().exact().unwrap_or(0);
+
+            if let Some(bandwidth) = get_global_bandwidth_tracker_or_log() {
+                bandwidth.record_site_mesh_egress(upstream_id, request_size as u64);
+                bandwidth.record_site_mesh_ingress(upstream_id, response_size);
+            }
+
+            tracing::info!(
+                "Successfully proxied to {} via provider {}",
+                upstream_id,
+                provider_node_id
+            );
+            return Ok(resp);
         }
 
         Err(last_error

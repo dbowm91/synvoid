@@ -1,12 +1,13 @@
-use crate::utils::url_decode_all;
 use crate::waf::attack_detection::config::{AttackType, InputLocation};
 use crate::waf::attack_detection::detector_common::{BasePatternDetector, PatternDetector};
+use crate::waf::attack_detection::normalizer::InputNormalizer;
 use crate::waf::attack_detection::patterns::DefaultPatterns;
 use aho_corasick::AhoCorasick;
 use std::sync::Arc;
 
 pub struct SstiDetector {
     inner: BasePatternDetector,
+    normalizer: InputNormalizer,
 }
 
 impl SstiDetector {
@@ -19,19 +20,21 @@ impl SstiDetector {
             AttackType::Ssti,
             "ssti",
         );
-        Self { inner }
+        Self {
+            inner,
+            normalizer: InputNormalizer::new(),
+        }
     }
 
-    fn detect_with_url_decode(
+    fn detect_with_normalization(
         &self,
         input: &str,
         location: InputLocation,
     ) -> Option<crate::waf::attack_detection::config::AttackDetectionResult> {
-        let input_lower = input.to_lowercase();
-        let decoded = url_decode_all(&input_lower);
+        let normalized = self.normalizer.normalize(input);
 
-        if let Some(mat) = self.inner.patterns_ref().find(&decoded) {
-            let matched = decoded[mat.start()..mat.end()].to_string();
+        if let Some(mat) = self.inner.patterns_ref().find(&normalized.normalized) {
+            let matched = normalized.normalized[mat.start()..mat.end()].to_string();
             tracing::warn!(
                 attack_type = "ssti",
                 matched_pattern = %matched,
@@ -48,9 +51,9 @@ impl SstiDetector {
             );
         }
 
-        if decoded != input_lower {
-            if let Some(mat) = self.inner.patterns_ref().find(&input_lower) {
-                let matched = input_lower[mat.start()..mat.end()].to_string();
+        if normalized.normalized != input {
+            if let Some(mat) = self.inner.patterns_ref().find(input) {
+                let matched = input[mat.start()..mat.end()].to_string();
                 tracing::warn!(
                     attack_type = "ssti",
                     matched_pattern = %matched,
@@ -82,7 +85,7 @@ impl PatternDetector for SstiDetector {
         input: &str,
         location: InputLocation,
     ) -> Option<crate::waf::attack_detection::config::AttackDetectionResult> {
-        self.detect_with_url_decode(input, location)
+        self.detect_with_normalization(input, location)
     }
 }
 

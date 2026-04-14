@@ -13,25 +13,6 @@ mod tests {
     use std::sync::Arc;
     use tokio::sync::Mutex;
 
-    struct MockIpcStream {
-        messages: Vec<Message>,
-        sent_messages: Vec<Message>,
-    }
-
-    impl MockIpcStream {
-        fn new() -> Self {
-            Self {
-                messages: Vec::new(),
-                sent_messages: Vec::new(),
-            }
-        }
-
-        fn with_messages(mut self, messages: Vec<Message>) -> Self {
-            self.messages = messages;
-            self
-        }
-    }
-
     #[tokio::test]
     async fn test_worker_started_message_parsing() {
         let message = Message::WorkerStarted {

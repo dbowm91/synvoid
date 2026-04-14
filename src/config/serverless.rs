@@ -7,6 +7,24 @@ pub struct ServerlessConfig {
     pub enabled: bool,
     #[serde(default)]
     pub functions: Vec<FunctionDefinition>,
+    #[serde(default = "default_memory_mb")]
+    pub default_memory_mb: usize,
+    #[serde(default = "default_cpu_fuel")]
+    pub default_cpu_fuel: u64,
+    #[serde(default = "default_timeout_seconds")]
+    pub default_timeout_seconds: u64,
+}
+
+fn default_memory_mb() -> usize {
+    64
+}
+
+fn default_cpu_fuel() -> u64 {
+    1000000
+}
+
+fn default_timeout_seconds() -> u64 {
+    30
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]

@@ -270,12 +270,16 @@ impl CertResolver {
         } else if self.config.enable_tls_12_fallback {
             tracing::info!("TLS: allowing TLS 1.2 and TLS 1.3 (fallback enabled)");
             counter!("maluwaf.tls.config", "mode" => "fallback_enabled").increment(1);
+            tracing::warn!(
+                "TLS 1.2 enabled with fallback. CBC cipher suites are vulnerable to BEAST attacks. \
+                For secure environments, use tls_1_3_only = true or configure custom cipher suites."
+            );
             &[&TLS13, &TLS12]
         } else {
             tracing::warn!(
                 "TLS: allowing TLS 1.2 and TLS 1.3 (backward compatibility mode). \
-                Consider enabling tls_1_3_only for production environments. \
-                Enable enable_tls_12_fallback only if legacy clients require TLS 1.2."
+                CBC cipher suites (TLS 1.2) are vulnerable to BEAST attacks. \
+                For production, set tls_1_3_only = true to enforce TLS 1.3 only."
             );
             counter!("maluwaf.tls.config", "mode" => "backward_compat").increment(1);
             &[&TLS13, &TLS12]

@@ -283,6 +283,7 @@ pub fn create_mesh_backend_from_config(
 
     let config = Arc::new(config.clone());
     let topology = Arc::new(MeshTopology::new(config.clone()));
+    topology.start_background_tasks();
     let _cert_manager = Arc::new(RwLock::new(MeshCertManager::new(&config)));
 
     let cache_settings = config.proxy_cache.as_ref().map(|cc| {

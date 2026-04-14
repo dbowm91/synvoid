@@ -47,6 +47,9 @@ pub struct SiteProxyConfig {
     pub tls_passthrough_warn_only: Option<bool>,
 
     #[serde(default)]
+    pub tls_passthrough_enforce_waf: Option<bool>,
+
+    #[serde(default)]
     pub wasm_plugins: Option<Vec<String>>,
 
     #[serde(default = "default_wasm_on_error")]

@@ -11,6 +11,7 @@ use sha3::Sha3_256;
 use std::collections::HashMap;
 use std::sync::Arc;
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
+use zeroize::{Zeroize, Zeroizing};
 
 use pqc::{
     Ciphertext, MlKem768, PublicKey as PqcPublicKey, SecretKey as PqcSecretKey, SharedSecret,
@@ -22,24 +23,43 @@ pub const SESSION_ID_HEADER: &str = "X-Integrity-Session";
 pub const KEY_EXCHANGE_HEADER: &str = "X-Integrity-Config";
 pub const KEY_REQUEST_HEADER: &str = "X-Integrity-Key-Request";
 
+struct SecretKeyBytes(Zeroizing<[u8; 32]>);
+
+impl Clone for SecretKeyBytes {
+    fn clone(&self) -> Self {
+        Self(Zeroizing::new(*self.0))
+    }
+}
+
+impl Drop for SecretKeyBytes {
+    fn drop(&mut self) {
+        self.0.zeroize();
+    }
+}
+
+unsafe impl Send for SecretKeyBytes {}
+unsafe impl Sync for SecretKeyBytes {}
+
 #[derive(Clone)]
 pub struct Ed25519Signer {
-    signing_key: SigningKey,
+    key_bytes: SecretKeyBytes,
     verifying_key: Vec<u8>,
 }
 
 impl Ed25519Signer {
     pub fn new(secret_key: [u8; 32]) -> Self {
-        let signing_key = SigningKey::from_bytes(&secret_key);
+        let key_bytes = Zeroizing::new(secret_key);
+        let signing_key = SigningKey::from_bytes(&key_bytes);
         let verifying_key = signing_key.verifying_key().as_bytes().to_vec();
         Self {
-            signing_key,
+            key_bytes: SecretKeyBytes(key_bytes),
             verifying_key,
         }
     }
 
     pub fn sign(&self, message: &str) -> String {
-        let signature = self.signing_key.sign(message.as_bytes());
+        let signing_key = SigningKey::from_bytes(&self.key_bytes.0);
+        let signature = signing_key.sign(message.as_bytes());
         URL_SAFE_NO_PAD.encode(signature.to_bytes())
     }
 

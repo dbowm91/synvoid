@@ -766,10 +766,11 @@ impl MeshTopology {
         }
 
         let records = {
-            let record_store = self.record_store.read();
-            let Some(ref rs) = *record_store else {
+            let guard = self.record_store.read();
+            if guard.is_none() {
                 return Vec::new();
-            };
+            }
+            let rs = guard.as_ref().unwrap();
             rs.get_all_records()
         };
 
@@ -1540,5 +1541,16 @@ impl MeshTopology {
         }
 
         removed
+    }
+
+    pub fn start_background_tasks(self: &Arc<Self>) {
+        let topology = self.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(300));
+            loop {
+                interval.tick().await;
+                topology.cleanup_stale_metrics(10000).await;
+            }
+        });
     }
 }

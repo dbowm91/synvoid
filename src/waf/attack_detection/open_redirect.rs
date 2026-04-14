@@ -157,13 +157,7 @@ impl OpenRedirectDetector {
         input: &str,
         location: InputLocation,
     ) -> Option<AttackDetectionResult> {
-        let input_lower: Cow<str> = if input.bytes().any(|b| b.is_ascii_uppercase()) {
-            Cow::Owned(input.to_lowercase())
-        } else {
-            Cow::Borrowed(input)
-        };
-
-        let decoded = url_decode_all(&input_lower);
+        let decoded = url_decode_all(input);
         let decoded_lower: Cow<str> = if decoded.bytes().any(|b| b.is_ascii_uppercase()) {
             Cow::Owned(decoded.to_lowercase())
         } else {
@@ -171,7 +165,7 @@ impl OpenRedirectDetector {
         };
 
         if !self.is_external_redirect(decoded_lower.as_ref()) {
-            if decoded != input_lower.as_ref() {
+            if decoded != input {
                 return self.detect_internal(&decoded, location);
             }
             return None;
@@ -195,9 +189,9 @@ impl OpenRedirectDetector {
             });
         }
 
-        if decoded != input_lower.as_ref() && is_redirect_param {
-            if let Some(mat) = self.inner.patterns_ref().find(input_lower.as_ref()) {
-                let matched = input_lower[mat.start()..mat.end()].to_string();
+        if decoded != input && is_redirect_param {
+            if let Some(mat) = self.inner.patterns_ref().find(decoded_lower.as_ref()) {
+                let matched = decoded_lower[mat.start()..mat.end()].to_string();
                 tracing::warn!(
                     attack_type = "open_redirect",
                     matched_pattern = %matched,
@@ -211,21 +205,6 @@ impl OpenRedirectDetector {
                     input_location: location,
                 });
             }
-        }
-
-        if is_redirect_param {
-            tracing::warn!(
-                attack_type = "open_redirect",
-                matched_pattern = "redirect_param_external_url",
-                location = %location,
-                "Open redirect detected: redirect param with external URL"
-            );
-            return Some(AttackDetectionResult {
-                attack_type: AttackType::OpenRedirect,
-                fingerprint: None,
-                matched_pattern: Some("redirect_param_external_url".to_string()),
-                input_location: location,
-            });
         }
 
         None
