@@ -441,6 +441,31 @@ All duplicate `current_timestamp()` definitions have been consolidated into `src
 | Metrics Vec O(n) front removal | `src/metrics/mod.rs:61,77` | DHT_QUERY_LATENCIES and DHT_PROPAGATION_HOPS use VecDeque |
 | Upstream client cache bounded | `src/http_client/mod.rs` | Replaced DashMap with moka::sync::Cache (max 100, TTL 300s) |
 | Verified upstream cache TTL | `src/mesh/topology.rs:58` | TTL increased from 30s to 300s |
+| TLS passthrough WAF bypass | `src/worker/unified_server.rs` | Added tls_passthrough_enforce_waf config and metrics |
+| Connection limiter slot collisions | `src/waf/flood/connection_limiter.rs` | Increased CONNECTION_TRACKER_SLOTS from 65536 to 262144 |
+| Revocation list not passed in discovery | `src/mesh/discovery.rs:439` | Now passes revocation list to validate_peer_role |
+| SSTI HTML entity bypass | `src/waf/attack_detection/ssti.rs` | Replaced url_decode_all with InputNormalizer |
+| SSRF subdomain spoofing bypass | `src/waf/attack_detection/ssrf.rs` | Added matches_localhost_lookalike function |
+| Weak TLS cipher suites warning | `src/tls/cert_resolver.rs` | Enhanced warning messages for CBC/BEAST |
+| Genesis key empty list permits any | `src/mesh/config_identity.rs:238` | Now denies by default with warning |
+| Rate limiting race condition | `src/admin/auth.rs:35` | Atomic check-after-add pattern |
+| Cache invalidation O(n) full scan | `src/proxy_cache/store.rs:451` | Secondary index for O(1) host lookups |
+| IPC double-poll delay | `src/worker/mod.rs:295` | Removed redundant sleep(50ms) |
+| Mesh broadcast unbounded spawns | `src/worker/unified_server.rs:729` | Semaphore with max 10 concurrent broadcasts |
+| Serial HTTP proxy streams | `src/mesh/proxy.rs:785` | Concurrent provider requests, first-success-wins |
+| Route usage tracker unbounded | `src/mesh/topology.rs:1528` | Added start_background_tasks() for cleanup |
+| NONCE_CACHE O(n) eviction | `src/process/ipc_signed.rs:40` | HashMap + BTreeMap for O(log n) |
+| Connection tracker non-atomic | `src/overseer/connection_tracker.rs:79` | Atomic delta updates |
+| MockIpcStream dead code | `src/master/ipc.rs:16` | Removed |
+| Metrics per_site unbounded | `src/metrics/mod.rs:900` | MAX_PER_SITE_ENTRIES = 10000 |
+| Threat intel indicators unbounded | `src/mesh/threat_intel.rs:153` | VecDeque with MAX_PENDING_INDICATORS = 10000 |
+| YARA submissions unbounded | `src/mesh/yara_rules.rs:235` | cleanup_expired_submissions() with TTL |
+| Honeypot metrics | `src/metrics/mod.rs` | HONEYPOT_HTTP_TRAPS_HIT, PORT_HONEYPOT_CONNECTIONS_CAPTURED |
+| Silent DHT publish standalone | `src/mesh/threat_intel.rs:626` | tracing::warn once per session |
+| Eclipse attack warning | `src/mesh/dht/routing/manager.rs` | Warning when bootstrapping with <3 seeds |
+| PoW difficulty increased | `src/mesh/dht/routing/node_id.rs:7` | NODE_ID_POW_DIFFICULTY from 32 to 40 bits |
+| WASM configurable defaults | `src/config/serverless.rs` | default_memory_mb, default_cpu_fuel, default_timeout_seconds |
+| Granian socket path isolation | `src/app_server/granian.rs` | UUID in socket path |
 
 ## Performance Hot Paths
 
