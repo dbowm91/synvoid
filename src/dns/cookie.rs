@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use parking_lot::RwLock;
+use subtle::ConstantTimeEq;
 
 const COOKIE_SIZE: usize = 8;
 const MAX_COOKIE_AGE_SECS: u64 = 3600;
@@ -79,12 +80,7 @@ impl DnsCookieServer {
             return false;
         }
 
-        let mut diff = 0u8;
-        for (a, b) in expected_server.iter().zip(server_cookie.iter()) {
-            diff |= a ^ b;
-        }
-
-        diff == 0
+        expected_server.ct_eq(server_cookie).into()
     }
 
     pub fn create_response_cookie(&self, client_ip: IpAddr) -> Vec<u8> {

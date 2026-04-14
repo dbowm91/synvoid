@@ -1,6 +1,10 @@
 #![allow(dead_code)] // Reserved for future DHT protocol handling
 
+use std::time::{Duration, Instant};
+
 use crate::mesh::transport::MeshTransport;
+use ed25519_dalek::Verifier;
+use hex;
 
 impl MeshTransport {
     pub(crate) async fn handle_dht_snapshot_request(
@@ -9,12 +13,72 @@ impl MeshTransport {
         request_id: &str,
         _node_id: &str,
         from_version: u64,
+        signature: &[u8],
+        signer_public_key: &str,
     ) {
         tracing::debug!(
             "Received DHT snapshot request from {} (from_version: {})",
             from_peer,
             from_version
         );
+
+        let now = Instant::now();
+        let window = Duration::from_secs(crate::mesh::transport::SNAPSHOT_REQUEST_RATE_LIMIT_WINDOW_SECS);
+        {
+            let mut times = self.snapshot_request_times.write();
+            let peer_times = times.entry(from_peer.to_string()).or_insert_with(Vec::new);
+            peer_times.retain(|&t| now.duration_since(t) < window);
+            if peer_times.len() >= crate::mesh::transport::MAX_SNAPSHOT_REQUESTS_PER_WINDOW {
+                tracing::warn!(
+                    "DHT snapshot request rate limit exceeded for peer {}",
+                    from_peer
+                );
+                return;
+            }
+            peer_times.push(now);
+        }
+
+        if !signature.is_empty() && !signer_public_key.is_empty() {
+            if let Some(ref stake_manager) = self.stake_manager {
+                if !stake_manager.can_read_dht(signer_public_key) {
+                    tracing::warn!(
+                        "DHT snapshot request from {} rejected: insufficient stake",
+                        from_peer
+                    );
+                    return;
+                }
+            }
+
+            let signature_valid = if !signature.is_empty() && !signer_public_key.is_empty() {
+                let content = format!("{},{},{}", request_id, _node_id, from_version);
+                match hex::decode(signer_public_key) {
+                    Ok(pk_bytes) if pk_bytes.len() == 32 && signature.len() == 64 => {
+                        let mut pk_array = [0u8; 32];
+                        pk_array.copy_from_slice(&pk_bytes);
+                        let mut sig_array = [0u8; 64];
+                        sig_array.copy_from_slice(signature);
+                        match ed25519_dalek::VerifyingKey::from_bytes(&pk_array) {
+                            Ok(pk) => pk.verify(
+                                content.as_bytes(),
+                                &ed25519_dalek::Signature::from_bytes(&sig_array),
+                            ).is_ok(),
+                            Err(_) => false,
+                        }
+                    }
+                    _ => false,
+                }
+            } else {
+                false
+            };
+
+            if !signature_valid {
+                tracing::warn!(
+                    "DHT snapshot request from {} rejected: invalid signature",
+                    from_peer
+                );
+                return;
+            }
+        }
 
         if let Some(ref record_store) = self.record_store {
             if let Some(response) = record_store.create_snapshot_response(request_id, from_version)

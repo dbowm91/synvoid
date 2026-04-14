@@ -278,10 +278,13 @@ fn validate_origin_node(
         )
     })?;
 
-    if !authorized_global_pubkeys.is_empty()
-        && !authorized_global_pubkeys
-            .iter()
-            .any(|k| k == attestation_key)
+    if authorized_global_pubkeys.is_empty() {
+        return Err("No authorized global node keys configured for origin attestation".to_string());
+    }
+
+    if !authorized_global_pubkeys
+        .iter()
+        .any(|k| k == attestation_key)
     {
         return Err(format!(
             "Origin node {} global node attestation key not in authorized list",

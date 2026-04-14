@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use super::server::{DnsZoneRecord, RecordType, Zone};
+use super::tsig::{parse_tsig_from_query, TsigVerifier};
 use super::wire;
 use crate::dns::server::ShardedZoneStore;
 
@@ -203,17 +204,17 @@ impl DynamicUpdate {
         Ok((name, pos))
     }
 
-    fn skip_rr(query: &[u8], pos: usize) -> usize {
+    pub(crate) fn skip_rr(query: &[u8], pos: usize) -> usize {
         let (_name, end_pos) = Self::parse_name(query, pos).unwrap_or((String::new(), pos));
         end_pos + 4
     }
 
-    fn skip_rr_with_rdata(query: &[u8], pos: usize) -> usize {
+    pub(crate) fn skip_rr_with_rdata(query: &[u8], pos: usize) -> usize {
         let (_name, end_pos) = Self::parse_name(query, pos).unwrap_or((String::new(), pos));
         end_pos + 4
     }
 
-    fn skip_rr_full(query: &[u8], pos: usize) -> usize {
+    pub(crate) fn skip_rr_full(query: &[u8], pos: usize) -> usize {
         let (_name, end_pos) = Self::parse_name(query, pos).unwrap_or((String::new(), pos));
         if end_pos + 10 > query.len() {
             return query.len();
@@ -229,6 +230,7 @@ pub struct DynamicUpdateHandler {
     enabled: bool,
     allow_any: bool,
     require_tsig: bool,
+    tsig_verifier: Option<Arc<TsigVerifier>>,
     allowed_ips: Vec<String>,
     zone_sync: Option<Arc<super::anycast_sync::AnycastZoneSync>>,
 }
@@ -240,6 +242,7 @@ impl DynamicUpdateHandler {
             enabled: false,
             allow_any: false,
             require_tsig: true,
+            tsig_verifier: None,
             allowed_ips: Vec::new(),
             zone_sync: None,
         }
@@ -249,6 +252,11 @@ impl DynamicUpdateHandler {
         self.enabled = enabled;
         self.allow_any = allow_any;
         self.require_tsig = require_tsig;
+        self
+    }
+
+    pub fn with_tsig_verifier(mut self, verifier: Arc<TsigVerifier>) -> Self {
+        self.tsig_verifier = Some(verifier);
         self
     }
 
@@ -285,6 +293,29 @@ impl DynamicUpdateHandler {
         false
     }
 
+    fn compute_additional_section_offset(
+        &self,
+        query: &[u8],
+        mut pos: usize,
+        qdcount: u16,
+        ancount: u16,
+        nscount: u16,
+    ) -> Result<usize, String> {
+        for _ in 0..qdcount {
+            pos = super::DynamicUpdate::skip_rr(query, pos);
+        }
+
+        for _ in 0..ancount {
+            pos = super::DynamicUpdate::skip_rr_with_rdata(query, pos);
+        }
+
+        for _ in 0..nscount {
+            pos = super::DynamicUpdate::skip_rr_full(query, pos);
+        }
+
+        Ok(pos)
+    }
+
     pub fn handle_update(
         &self,
         query: &[u8],
@@ -300,6 +331,46 @@ impl DynamicUpdateHandler {
                 client_ip
             );
             return Err("Dynamic updates not allowed from this IP".to_string());
+        }
+
+        let qdcount = u16::from_be_bytes([query[4], query[5]]);
+        let ancount = u16::from_be_bytes([query[6], query[7]]);
+        let nscount = u16::from_be_bytes([query[8], query[9]]);
+
+        let additional_offset = self.compute_additional_section_offset(query, 12, qdcount, ancount, nscount)?;
+
+        let tsig = parse_tsig_from_query(query, additional_offset);
+
+        if self.require_tsig {
+            if tsig.is_none() {
+                tracing::warn!(
+                    "SECURITY: Dynamic update DENIED for zone update from {} - TSIG required but not present",
+                    client_ip
+                );
+                return Err("Dynamic updates require TSIG authentication".to_string());
+            }
+
+            if let (Some(tsig_data), Some(verifier)) = (&tsig, &self.tsig_verifier) {
+                if let Err(e) = verifier.verify(
+                    &[],
+                    query,
+                    &tsig_data.mac,
+                    &tsig_data.key_name,
+                    tsig_data.algorithm,
+                    tsig_data.time_signed,
+                    tsig_data.fudge,
+                    tsig_data.tsig_error,
+                    tsig_data.other_len,
+                ) {
+                    tracing::warn!(
+                        "SECURITY: Dynamic update DENIED for zone={} client={} - TSIG verification failed: {}",
+                        "unknown",
+                        client_ip,
+                        e
+                    );
+                    return Err(format!("TSIG verification failed: {}", e));
+                }
+            }
         }
 
         let update = DynamicUpdate::parse(query)?;

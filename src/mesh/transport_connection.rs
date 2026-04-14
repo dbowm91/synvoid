@@ -31,6 +31,7 @@ impl MeshTransport {
             pending_dht_queries: self.pending_dht_queries.clone(),
             auth_failures: self.auth_failures.clone(),
             peer_message_times: self.peer_message_times.clone(),
+            snapshot_request_times: self.snapshot_request_times.clone(),
             global_rate_limiter: self.global_rate_limiter.clone(),
             org_manager: self.org_manager.clone(),
             tier_key_store: self.tier_key_store.clone(),

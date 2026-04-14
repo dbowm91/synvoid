@@ -546,6 +546,8 @@ impl From<&MeshMessage> for proto::MeshMessage {
                 upstream_id,
                 action,
                 signature,
+                origin_ed25519_pubkey,
+                origin_signature,
             } => proto::MeshMessage {
                 message_type: 11,
                 payload: Some(proto::mesh_message::Payload::UpstreamAnnounce(
@@ -553,6 +555,8 @@ impl From<&MeshMessage> for proto::MeshMessage {
                         upstream_id: upstream_id.to_string(),
                         action: *action as u32,
                         signature: signature.clone(),
+                        origin_ed25519_pubkey: origin_ed25519_pubkey.to_string(),
+                        origin_signature: origin_signature.clone(),
                     },
                 )),
             },
@@ -1211,6 +1215,8 @@ impl From<&MeshMessage> for proto::MeshMessage {
                 request_id,
                 node_id,
                 from_version,
+                signature,
+                signer_public_key,
             } => proto::MeshMessage {
                 message_type: 80,
                 payload: Some(proto::mesh_message::Payload::DhtSnapshotRequest(
@@ -1218,6 +1224,8 @@ impl From<&MeshMessage> for proto::MeshMessage {
                         request_id: request_id.to_string(),
                         node_id: node_id.to_string(),
                         from_version: *from_version,
+                        signature: signature.clone(),
+                        signer_public_key: signer_public_key.clone(),
                     },
                 )),
             },

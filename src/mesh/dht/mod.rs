@@ -452,6 +452,7 @@ pub struct VerifiedUpstream {
     pub org_id: Option<String>,
     pub global_node_id: String,
     pub global_node_signature: Vec<u8>,
+    pub origin_signature: Vec<u8>,
     pub registered_at: u64,
     pub expires_at: u64,
 }

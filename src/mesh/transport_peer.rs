@@ -559,8 +559,10 @@ impl MeshTransport {
                 request_id,
                 node_id,
                 from_version,
+                signature,
+                signer_public_key,
             } => {
-                self.handle_dht_snapshot_request(peer_id, &request_id, &node_id, from_version)
+                self.handle_dht_snapshot_request(peer_id, &request_id, &node_id, from_version, &signature, &signer_public_key)
                     .await;
             }
             MeshMessage::DhtSnapshotResponse {
@@ -1005,6 +1007,104 @@ impl MeshTransport {
                         "YARA message received but YARA rules not enabled: {:?}",
                         msg
                     );
+                }
+            }
+            MeshMessage::UpstreamAnnounce {
+                upstream_id,
+                action,
+                signature,
+                origin_ed25519_pubkey,
+                origin_signature,
+            } => {
+                use crate::mesh::dht::keys::DhtKey;
+                use crate::mesh::protocol::AnnounceAction;
+                use ed25519_dalek::Verifier;
+
+                let upstream_id_str = upstream_id.to_string();
+                let origin_pk_str = origin_ed25519_pubkey.to_string();
+
+                let sign_data = format!(
+                    "{}:{:?}:{}",
+                    upstream_id_str,
+                    action,
+                    peer_id
+                );
+
+                let signature_valid = if !origin_signature.is_empty() && !origin_ed25519_pubkey.is_empty() {
+                    let pk_bytes = hex::decode(&origin_pk_str);
+                    let sig_bytes: Vec<u8> = origin_signature.clone();
+                    if pk_bytes.as_ref().map_or(false, |b| b.len() == 32) && sig_bytes.len() == 64 {
+                        let pk_bytes = pk_bytes.unwrap();
+                        let mut pk_array = [0u8; 32];
+                        pk_array.copy_from_slice(&pk_bytes);
+
+                        let mut sig_array = [0u8; 64];
+                        sig_array.copy_from_slice(&sig_bytes);
+
+                        match ed25519_dalek::VerifyingKey::from_bytes(&pk_array) {
+                            Ok(pk) => pk.verify(
+                                sign_data.as_bytes(),
+                                &ed25519_dalek::Signature::from_bytes(&sig_array),
+                            ).is_ok(),
+                            Err(_) => false,
+                        }
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+
+                if !signature_valid {
+                    tracing::warn!(
+                        "UpstreamAnnounce from {} for {} rejected: invalid origin signature",
+                        peer_id,
+                        upstream_id_str
+                    );
+                    return Ok(());
+                }
+
+                let key = DhtKey::verified_upstream(&upstream_id_str);
+                let key_str = key.as_str();
+
+                match action {
+                    AnnounceAction::Add | AnnounceAction::Update => {
+                        if let Some(ref record_store) = self.record_store {
+                            let origin_node_id = if let Ok(pk_bytes) = hex::decode(&origin_pk_str) {
+                                crate::mesh::dht::routing::node_id::NodeId::from_public_key(&pk_bytes)
+                                    .to_string()
+                            } else {
+                                origin_pk_str.clone()
+                            };
+
+                            let verified_upstream = crate::mesh::dht::VerifiedUpstream {
+                                upstream_id: upstream_id_str.clone(),
+                                origin_node_id,
+                                upstream_url: String::new(),
+                                org_id: None,
+                                global_node_id: peer_id.to_string(),
+                                global_node_signature: signature.clone(),
+                                origin_signature: origin_signature.clone(),
+                                registered_at: crate::mesh::safe_unix_timestamp(),
+                                expires_at: crate::mesh::safe_unix_timestamp() + 300,
+                            };
+                            if let Ok(bytes) = serde_json::to_vec(&verified_upstream) {
+                                let ttl = 300;
+                                record_store.store_and_announce(key_str.to_string(), bytes, ttl);
+                                tracing::debug!(
+                                    "Stored verified upstream {} in DHT (action: {:?})",
+                                    upstream_id_str,
+                                    action
+                                );
+                            }
+                        }
+                    }
+                    AnnounceAction::Remove => {
+                        tracing::debug!(
+                            "Upstream {} announced removed (expires via TTL)",
+                            upstream_id_str
+                        );
+                    }
                 }
             }
             _ => {
@@ -1988,45 +2088,6 @@ impl MeshTransport {
             } => {
                 let _ = query_id;
                 tracing::debug!("Route not found: {} from query {}", upstream_id, query_id);
-            }
-            MeshMessage::UpstreamAnnounce {
-                upstream_id,
-                action,
-                signature: _,
-            } => {
-                use crate::mesh::dht::keys::DhtKey;
-                use crate::mesh::protocol::AnnounceAction;
-
-                let upstream_id = upstream_id.to_string();
-                let key = DhtKey::upstream(&upstream_id);
-                let key_str = key.as_str();
-
-                match action {
-                    AnnounceAction::Add | AnnounceAction::Update => {
-                        if let Some(ref record_store) = self.record_store {
-                            let value = serde_json::json!({
-                                "upstream_id": upstream_id,
-                                "announced_at": crate::mesh::safe_unix_timestamp(),
-                            });
-                            if let Ok(bytes) = serde_json::to_vec(&value) {
-                                let ttl = 300; // 5 minute TTL
-                                record_store.store_and_announce(key_str.to_string(), bytes, ttl);
-                                tracing::debug!(
-                                    "Stored upstream {} in DHT (action: {:?})",
-                                    upstream_id,
-                                    action
-                                );
-                            }
-                        }
-                    }
-                    AnnounceAction::Remove => {
-                        // Record will expire via TTL - no explicit removal needed
-                        tracing::debug!(
-                            "Upstream {} announced removed (expires via TTL)",
-                            upstream_id
-                        );
-                    }
-                }
             }
             MeshMessage::UpstreamUpdate {
                 upstream_id,

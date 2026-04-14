@@ -379,6 +379,8 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                     upstream_id: a.upstream_id.into(),
                     action,
                     signature: a.signature,
+                    origin_ed25519_pubkey: a.origin_ed25519_pubkey.into(),
+                    origin_signature: a.origin_signature,
                 })
             }
             proto::mesh_message::Payload::UpstreamUpdate(u) => Ok(MeshMessage::UpstreamUpdate {
@@ -721,6 +723,8 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                     request_id: r.request_id.into(),
                     node_id: r.node_id.into(),
                     from_version: r.from_version,
+                    signature: r.signature,
+                    signer_public_key: r.signer_public_key,
                 })
             }
             proto::mesh_message::Payload::DhtSnapshotResponse(r) => {

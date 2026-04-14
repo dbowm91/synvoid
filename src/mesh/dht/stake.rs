@@ -422,6 +422,11 @@ impl StakeManager {
         false
     }
 
+    fn get_global_node_count(&self) -> usize {
+        let stakes = self.stakes.read();
+        stakes.values().filter(|s| s.role.is_global()).count()
+    }
+
     pub fn process_global_slash_vote(&self, vote: GlobalSlashVote) {
         let target_id = vote.target_node_id.clone();
         let mut votes = self.global_slash_votes.write();
@@ -432,7 +437,10 @@ impl StakeManager {
             entry.push(vote);
         }
 
-        if entry.len() >= 3 {
+        let global_count = self.get_global_node_count();
+        let quorum = (global_count * 2 / 3).max(1);
+
+        if entry.len() >= quorum {
             if let Some(reason) = entry.first().map(|v| v.reason.clone()) {
                 drop(votes);
                 self.slash_node(&target_id, reason, "global_committee");

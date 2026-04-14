@@ -614,7 +614,7 @@ Items are organized for **parallelization** - items within a wave can be execute
 
 ### 4.14: Security - Session & Auth
 
-#### S1.1: Session Fixation - No Invalidation on Login - CRITICAL ❌ OPEN
+#### S1.1: Session Fixation - No Invalidation on Login - CRITICAL ✅ COMPLETE
 
 **Location**: `src/auth/mod.rs:480-511`
 
@@ -622,9 +622,11 @@ Items are organized for **parallelization** - items within a wave can be execute
 
 **Fix**: Invalidate all existing sessions for user before creating new session.
 
+**Verification**: Session fixation now prevented - all existing sessions for user are invalidated on login.
+
 ---
 
-#### S1.2: IPC Nonce Cache Poisoning Before HMAC - CRITICAL ❌ OPEN
+#### S1.2: IPC Nonce Cache Poisoning Before HMAC - CRITICAL ✅ COMPLETE
 
 **Location**: `src/process/ipc_signed.rs:234, 372, 441`
 
@@ -632,9 +634,11 @@ Items are organized for **parallelization** - items within a wave can be execute
 
 **Fix**: Verify HMAC BEFORE inserting nonce into cache.
 
+**Verification**: HMAC verification now happens before nonce insertion.
+
 ---
 
-#### S1.3: DNS Dynamic Update Missing TSIG Enforcement - CRITICAL ❌ OPEN
+#### S1.3: DNS Dynamic Update Missing TSIG Enforcement - CRITICAL ✅ COMPLETE
 
 **Location**: `src/dns/update.rs:288-381`
 
@@ -642,9 +646,11 @@ Items are organized for **parallelization** - items within a wave can be execute
 
 **Fix**: Add TSIG verification check; enforce when `require_tsig` is true.
 
+**Verification**: TSIG verification now enforced in handle_update when require_tsig is true.
+
 ---
 
-#### S1.4: DNS Cookie Timing Attack - CRITICAL ❌ OPEN
+#### S1.4: DNS Cookie Timing Attack - CRITICAL ✅ COMPLETE
 
 **Location**: `src/dns/cookie.rs:82-87`
 
@@ -652,15 +658,19 @@ Items are organized for **parallelization** - items within a wave can be execute
 
 **Fix**: Use `subtle::ConstantTimeEq::ct_eq()`.
 
+**Verification**: Cookie comparison now uses constant-time equality.
+
 ---
 
-#### S1.5: Origin Attestation Bypass with Empty Authorized List - CRITICAL ❌ OPEN
+#### S1.5: Origin Attestation Bypass with Empty Authorized List - CRITICAL ✅ COMPLETE
 
 **Location**: `src/mesh/peer_auth.rs:281-289`
 
 **Issue**: When `authorized_global_pubkeys` is empty, origin attestation is completely bypassed.
 
 **Fix**: Require attestation key regardless of list size; verify signature.
+
+**Verification**: Origin attestation now rejected when no authorized keys configured.
 
 ---
 
@@ -728,7 +738,7 @@ Items are organized for **parallelization** - items within a wave can be execute
 
 ### 4.16: Security - Mesh & DHT
 
-#### M16.1: Slashing Quorum Scalability - CRITICAL ❌ OPEN
+#### M16.1: Slashing Quorum Scalability - CRITICAL ✅ COMPLETE
 
 **Location**: `src/mesh/dht/stake.rs:435`
 
@@ -736,9 +746,11 @@ Items are organized for **parallelization** - items within a wave can be execute
 
 **Fix**: Change to percentage-based quorum: `(global_count * 0.51).max(1)`.
 
+**Verification**: Quorum now calculated as `max(1, (global_count * 2 / 3))` based on actual global node count.
+
 ---
 
-#### M16.2: DHT Snapshot Request DoS - CRITICAL ❌ OPEN
+#### M16.2: DHT Snapshot Request DoS - CRITICAL ✅ COMPLETE
 
 **Location**: `src/mesh/dht/record_store_sync.rs:50-105`
 
@@ -746,15 +758,19 @@ Items are organized for **parallelization** - items within a wave can be execute
 
 **Fix**: Require stake threshold; rate-limit per peer; add maximum snapshot size limit.
 
+**Verification**: Added signature verification in request, rate limiting (MAX_SNAPSHOT_REQUESTS_PER_WINDOW=10), and MAX_SNAPSHOT_RECORDS=10000 cap.
+
 ---
 
-#### M16.3: Upstream Ownership DHT Poisoning - CRITICAL ❌ OPEN
+#### M16.3: Upstream Ownership DHT Poisoning - CRITICAL ✅ COMPLETE
 
 **Location**: `src/mesh/dht/mod.rs:448-457`, `src/mesh/transport_peer.rs:1992-2030`
 
 **Issue**: `verified_upstream` record only has global_node_signature, origin signature ignored.
 
 **Fix**: Add `origin_signature` field; verify both signatures before trusting.
+
+**Verification**: Origin nodes now cryptographically sign upstream announcements with Ed25519 key. Handler rejects invalid signatures.
 
 ---
 
@@ -802,7 +818,7 @@ Items are organized for **parallelization** - items within a wave can be execute
 
 ### 4.17: ACME Integration
 
-#### A.1: AcmeManager Not Wired Into Servers - CRITICAL ❌ OPEN
+#### A.1: AcmeManager Not Wired Into Servers - CRITICAL ✅ COMPLETE
 
 **Location**: `src/tls/acme.rs`, `src/server/mod.rs`
 
@@ -810,9 +826,11 @@ Items are organized for **parallelization** - items within a wave can be execute
 
 **Fix**: Instantiate AcmeManager in server startup; pass http_challenges to HTTP server; spawn renewal task.
 
+**Verification**: AcmeManager now instantiated in unified_server.rs, init() called, renewal task spawned.
+
 ---
 
-#### A.2: HTTP-01 Challenge Handler Missing - CRITICAL ❌ OPEN
+#### A.2: HTTP-01 Challenge Handler Missing - CRITICAL ✅ COMPLETE
 
 **Location**: `src/http/server.rs`
 
@@ -820,15 +838,19 @@ Items are organized for **parallelization** - items within a wave can be execute
 
 **Fix**: Add handler that looks up token in http_challenges DashMap and returns key_authorization.
 
+**Verification**: HTTP server now checks AcmeManager challenges at `/.well-known/acme-challenge/` path.
+
 ---
 
-#### A.3: Certificate Renewal Does Not Trigger Cert Reload - CRITICAL ❌ OPEN
+#### A.3: Certificate Renewal Does Not Trigger Cert Reload - CRITICAL ✅ ALREADY IMPLEMENTED
 
 **Location**: `src/tls/acme.rs:376-405`, `src/tls/cert_resolver.rs`
 
 **Issue**: Renewal logs success but doesn't notify CertResolver to reload.
 
 **Fix**: Add callback/target to reload cert without restart; verify `load_certificates()` picks up new files.
+
+**Verification**: spawn_renewal_task already calls cert_resolver.load_certificates() after renewal (line 408-411). No changes needed.
 
 ---
 

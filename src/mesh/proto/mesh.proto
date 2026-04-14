@@ -393,6 +393,8 @@ message UpstreamAnnounce {
     string upstream_id = 1;
     uint32 action = 2;
     bytes signature = 3;
+    string origin_ed25519_pubkey = 4;
+    bytes origin_signature = 5;
 }
 
 message UpstreamUpdate {
@@ -718,6 +720,8 @@ message DhtSnapshotRequest {
     string request_id = 1;
     string node_id = 2;
     uint64 from_version = 3;
+    bytes signature = 4;
+    string signer_public_key = 5;
 }
 
 message DhtSnapshotResponse {

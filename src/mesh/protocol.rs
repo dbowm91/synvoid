@@ -396,6 +396,8 @@ pub enum MeshMessage {
         upstream_id: ArcStr,
         action: AnnounceAction,
         signature: Vec<u8>,
+        origin_ed25519_pubkey: ArcStr,
+        origin_signature: Vec<u8>,
     },
     UpstreamUpdate {
         upstream_id: ArcStr,
@@ -669,6 +671,8 @@ pub enum MeshMessage {
         request_id: ArcStr,
         node_id: ArcStr,
         from_version: u64,
+        signature: Vec<u8>,
+        signer_public_key: String,
     },
     DhtSnapshotResponse {
         request_id: ArcStr,

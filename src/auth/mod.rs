@@ -477,6 +477,7 @@ impl AuthManager {
             user.locked_until = None;
 
             let user_id = user.id.clone();
+
             let session = Session {
                 id: Uuid::new_v4().to_string(),
                 user_id: user_id.clone(),
@@ -489,6 +490,7 @@ impl AuthManager {
                 csrf_token: Some(Uuid::new_v4().to_string()),
             };
 
+            store.sessions.retain(|_, s| s.user_id != user_id);
             store.sessions.insert(session.id.clone(), session.clone());
 
             store.login_logs.push(LoginLog {

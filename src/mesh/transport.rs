@@ -81,6 +81,9 @@ pub(crate) const MAX_MESSAGE_SIZE: usize = 10 * 1024 * 1024;
 pub(crate) const MAX_BATCH_KEYS: usize = 10000;
 pub(crate) const MAX_HTTP_BODY_SIZE: usize = 50 * 1024 * 1024;
 pub(crate) const PEER_RATE_LIMIT_WINDOW_SECS: u64 = 60;
+pub(crate) const SNAPSHOT_REQUEST_RATE_LIMIT_WINDOW_SECS: u64 = 60;
+pub(crate) const MAX_SNAPSHOT_REQUESTS_PER_WINDOW: usize = 10;
+pub(crate) const MAX_SNAPSHOT_RECORDS: usize = 10000;
 /// Maximum duration for a block received from another node (24 hours)
 pub(crate) const MAX_BLOCK_DURATION_SECS: u64 = 86400;
 
@@ -99,6 +102,7 @@ pub struct MeshTransport {
     pub(crate) pending_dht_queries: Arc<Mutex<HashMap<String, oneshot::Sender<DhtRecord>>>>,
     pub(crate) auth_failures: Arc<RwLock<HashMap<String, Vec<Instant>>>>,
     pub(crate) peer_message_times: Arc<RwLock<HashMap<String, Vec<Instant>>>>,
+    pub(crate) snapshot_request_times: Arc<RwLock<HashMap<String, Vec<Instant>>>>,
     pub(crate) global_rate_limiter: Arc<MeshGlobalRateLimiter>,
     pub(crate) org_manager: Arc<RwLock<crate::mesh::organization::OrganizationManager>>,
     pub(crate) tier_key_store: Option<Arc<RwLock<crate::mesh::dht::TierKeyStore>>>,
@@ -215,6 +219,7 @@ impl Clone for MeshTransport {
             pending_dht_queries: self.pending_dht_queries.clone(),
             auth_failures: self.auth_failures.clone(),
             peer_message_times: self.peer_message_times.clone(),
+            snapshot_request_times: self.snapshot_request_times.clone(),
             global_rate_limiter: self.global_rate_limiter.clone(),
             org_manager: self.org_manager.clone(),
             tier_key_store: self.tier_key_store.clone(),
@@ -402,6 +407,7 @@ impl MeshTransport {
             pending_dht_queries: Arc::new(Mutex::new(HashMap::new())),
             auth_failures: Arc::new(RwLock::new(HashMap::new())),
             peer_message_times: Arc::new(RwLock::new(HashMap::new())),
+            snapshot_request_times: Arc::new(RwLock::new(HashMap::new())),
             global_rate_limiter,
             org_manager: {
                 let mut org_mgr = crate::mesh::organization::OrganizationManager::new();
@@ -2447,10 +2453,20 @@ impl MeshTransport {
                     Vec::new()
                 };
 
+                let (origin_signature, origin_ed25519_pubkey) =
+                    if let Some(ref signer) = self.origin_ed25519_signer {
+                        let content = format!("{}:{:?}:{}", upstream_id_for_sig, action, self.config.node_id());
+                        (signer.sign(&content).into_bytes(), signer.verifying_key().into())
+                    } else {
+                        (Vec::new(), String::new().into())
+                    };
+
                 let announce_message = MeshMessage::UpstreamAnnounce {
                     upstream_id: upstream_id_for_msg.into(),
                     action,
                     signature,
+                    origin_ed25519_pubkey,
+                    origin_signature,
                 };
 
                 let encoded = match announce_message.encode() {

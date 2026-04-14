@@ -52,10 +52,25 @@ impl RecordStoreManager {
             return None;
         }
 
+        let rs = self.record_state.read();
+        let request_id = uuid::Uuid::new_v4().to_string();
+        let from_version = rs.local_version;
+
+        let mut signature = Vec::new();
+        let mut signer_public_key = String::new();
+
+        if let Some(ref signer) = rs.mesh_signer {
+            let content = format!("{},{},{}", request_id, self.node_id, from_version);
+            signature = signer.sign(&content);
+            signer_public_key = signer.get_public_key();
+        }
+
         Some(MeshMessage::DhtSnapshotRequest {
-            request_id: uuid::Uuid::new_v4().to_string().into(),
+            request_id: request_id.into(),
             node_id: self.node_id.clone().into(),
-            from_version: self.record_state.read().local_version,
+            from_version,
+            signature,
+            signer_public_key,
         })
     }
 
@@ -75,6 +90,7 @@ impl RecordStoreManager {
                 let dht_key = DhtKey::from_str(&r.key);
                 dht_key.is_public()
             })
+            .take(crate::mesh::transport::MAX_SNAPSHOT_RECORDS)
             .collect();
 
         let mut signature = Vec::new();
