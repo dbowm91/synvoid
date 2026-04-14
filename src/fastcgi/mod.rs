@@ -329,6 +329,14 @@ pub fn parse_socket_address(socket: &str) -> Result<(String, bool), String> {
             .trim_start_matches("tcp://")
             .to_string();
         Ok((addr, true))
+    } else if socket.starts_with('[') {
+        if let Some(bracket_end) = socket.find("]:") {
+            let ip = &socket[1..bracket_end];
+            let port = &socket[bracket_end + 2..];
+            Ok((format!("{}:{}", ip, port), true))
+        } else {
+            Err(format!("Invalid bracketed IPv6 address: {}", socket))
+        }
     } else if socket.contains(':') {
         Ok((socket.to_string(), true))
     } else {

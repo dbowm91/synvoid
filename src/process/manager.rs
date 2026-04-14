@@ -7,7 +7,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use parking_lot::RwLock as PLRwLock;
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, Mutex as TokioMutex};
+use tokio::task::JoinHandle;
 use tokio::time::interval;
 
 pub use super::worker::{
@@ -101,6 +102,7 @@ pub struct ProcessManager {
     static_worker_cache_misses: Arc<AtomicU64>,
     request_logs: Arc<PLRwLock<VecDeque<RequestLogPayload>>>,
     started_at: Instant,
+    health_monitor_handle: Arc<TokioMutex<Option<JoinHandle<()>>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -182,6 +184,7 @@ impl ProcessManager {
                 static_worker_cache_misses: Arc::new(AtomicU64::new(0)),
                 request_logs: Arc::new(PLRwLock::new(VecDeque::with_capacity(10000))),
                 started_at: Instant::now(),
+                health_monitor_handle: Arc::new(TokioMutex::new(None)),
             },
             event_rx,
         )
@@ -190,6 +193,11 @@ impl ProcessManager {
     pub fn set_unified_server_port(&self, port: u16) {
         let mut p = self.unified_server_port.write();
         *p = Some(port);
+    }
+
+    pub async fn set_health_monitor_handle(&self, handle: JoinHandle<()>) {
+        let mut guard = self.health_monitor_handle.lock().await;
+        *guard = Some(handle);
     }
 
     pub fn get_unified_server_port(&self) -> Option<u16> {
@@ -1508,6 +1516,10 @@ impl ProcessManager {
         }
 
         self.running.store(false, Ordering::SeqCst);
+
+        if let Some(handle) = self.health_monitor_handle.lock().await.take() {
+            handle.abort();
+        }
 
         self.broadcast_shutdown(true);
         self.wait_for_workers_to_stop().await;

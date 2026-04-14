@@ -60,7 +60,7 @@ pub use security::{
     SiteGeoipConfig, SiteSecurityConfig, SiteSecurityHeadersConfig, SiteUpstreamConfig,
     SiteUpstreamTlsConfig, SiteWhitelistConfig,
 };
-pub use static_files::{SiteStaticConfig, StaticLocation};
+pub use static_files::{SiteStaticConfig, SiteStaticThemeConfig, StaticLocation};
 pub use traffic_shaping::{SiteTrafficConnectionConfig, SiteTrafficShapingConfig};
 pub use upload::{SiteAllowedTypesConfig, SitePathUploadConfig, SiteUploadConfig};
 

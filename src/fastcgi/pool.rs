@@ -66,7 +66,7 @@ impl FastCgiPool {
 
     pub fn from_config(fcgi_config: &FastCgiConfig, socket: String) -> Arc<Self> {
         let config = FastCgiPoolConfig {
-            max_connections: 10,
+            max_connections: fcgi_config.max_connections.unwrap_or(10),
             connection_timeout: Duration::from_secs(fcgi_config.connect_timeout.unwrap_or(5)),
             health_check_interval: Duration::from_secs(30),
             health_check_timeout: Duration::from_secs(3),

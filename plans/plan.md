@@ -1,6 +1,6 @@
 # MaluWAF Implementation Plan
 
-Last updated: 2026-04-14
+Last updated: 2026-04-14 (Wave 3 items completed)
 
 ## Overview
 
@@ -66,13 +66,15 @@ Items are organized for **parallelization** - items within a wave can be execute
 
 ---
 
-#### P2.5: TLS Client Cache Unbounded Growth - HIGH ❌ OPEN
+#### P2.5: TLS Client Cache Unbounded Growth - HIGH ✅ COMPLETE
 
 **Location**: `src/http_client/mod.rs:34-35`
 
 **Issue**: `UPSTREAM_CLIENT_CACHE` is unbounded `DashMap` with no eviction.
 
-**Fix**: Add `max_capacity()` and TTL to cache; implement LRU eviction.
+**Fix**: Replaced `DashMap` with `moka::sync::Cache` with `max_capacity(100)` and `time_to_live(Duration::from_secs(300))`. Created `UpstreamTlsConfigHashable` struct that excludes `skip_verify_reason` from hash.
+
+**Verification**: Clippy clean; 124 integration tests pass.
 
 ---
 
@@ -118,13 +120,15 @@ Items are organized for **parallelization** - items within a wave can be execute
 
 ---
 
-#### S2.4: Verified Upstream Cache TTL Only 30s - MEDIUM ❌ OPEN
+#### S2.4: Verified Upstream Cache TTL Only 30s - MEDIUM ✅ COMPLETE
 
 **Location**: `src/mesh/topology.rs:58`
 
 **Issue**: `time_to_live(Duration::from_secs(30))` causes frequent refreshes.
 
-**Fix**: Increase TTL to 5-10 minutes; balance freshness vs DHT load.
+**Fix**: Increased TTL from 30s to 300s (5 minutes) to balance freshness vs DHT load.
+
+**Verification**: Clippy clean.
 
 ---
 
@@ -402,13 +406,15 @@ Items are organized for **parallelization** - items within a wave can be execute
 
 ---
 
-#### R1.4: Process Manager Health Monitor JoinHandle Leak - MEDIUM ❌ OPEN
+#### R1.4: Process Manager Health Monitor JoinHandle Leak - MEDIUM ✅ COMPLETE
 
-**Location**: `src/process/manager.rs:1940-1959`
+**Location**: `src/process/manager.rs`, `src/startup/master.rs`
 
 **Issue**: `start_health_monitor()` spawns task with infinite loop; `JoinHandle` never stored.
 
-**Fix**: Store and await `JoinHandle` during manager shutdown.
+**Fix**: Added `health_monitor_handle: Arc<TokioMutex<Option<JoinHandle<()>>>>` field to `ProcessManager`. Added `set_health_monitor_handle()` method to store the handle. Modified `graceful_shutdown()` to abort the health monitor task during shutdown.
+
+**Verification**: Clippy clean; integration tests pass.
 
 ---
 
@@ -444,13 +450,15 @@ Items are organized for **parallelization** - items within a wave can be execute
 
 ---
 
-#### R2.4: Probe Tracker Events Unbounded - MEDIUM ❌ OPEN
+#### R2.4: Probe Tracker Events Unbounded - MEDIUM ✅ COMPLETE
 
-**Location**: `src/waf/probe_tracker.rs:107`
+**Location**: `src/waf/probe_tracker.rs`
 
 **Issue**: `store: Arc<RwLock<HashMap<String, ProbeRecord>>>` - events accumulate indefinitely.
 
-**Fix**: Add per-IP event count limit; implement sliding window; clean stale entries during persistence.
+**Fix**: Added `MAX_EVENTS_PER_IP = 1000` constant. Implemented sliding window in `add_event()` - when limit is reached, oldest event is removed first. Added `cleanup_stale_events()` method and wired it into `persist_to_disk()`.
+
+**Verification**: Clippy clean.
 
 ---
 
@@ -508,13 +516,15 @@ Items are organized for **parallelization** - items within a wave can be execute
 
 ### 4.11: Code Quality - Minor Issues
 
-#### R4.1: Metrics Vec O(n) Front Removal - LOW ❌ OPEN
+#### R4.1: Metrics Vec O(n) Front Removal - LOW ✅ COMPLETE
 
 **Location**: `src/metrics/mod.rs:61,77`
 
 **Issue**: `latencies.remove(0)` and `hops.remove(0)` are O(n) operations.
 
-**Fix**: Change to `VecDeque` for O(1) front removal.
+**Fix**: Changed `DHT_QUERY_LATENCIES` and `DHT_PROPAGATION_HOPS` from `Mutex<Vec<T>>` to `Mutex<VecDeque<T>>`. Updated `record_dht_query_latency()` and `record_dht_propagation_hop()` to use `push_back()` and `pop_front()`.
+
+**Verification**: Clippy clean.
 
 ---
 
@@ -932,65 +942,63 @@ Items are organized for **parallelization** - items within a wave can be execute
 
 ### 4.19: Web App Stack Improvements
 
-#### W15.1: Static Files Per-Location Theme Override - MEDIUM ❌ OPEN
+#### W15.1: Static Files Per-Location Theme Override - MEDIUM ✅ COMPLETE
 
 **Location**: `src/config/site/static_files.rs`, `src/static_files/mod.rs`
 
 **Issue**: Theme configuration is site-wide only; cannot have different themes per location.
 
-**Fix**: Add `theme` field to `StaticLocation` struct; pass matched location's theme to directory listing.
+**Fix**: Added `theme` field to `StaticLocation` struct; passed matched location's theme to directory listing.
+
+**Verification**: Clippy clean; integration tests pass.
 
 ---
 
-#### W15.2: PHP-FPM Security Hardening - HIGH ✅ COMPLETE
-
-**Location**: `src/php/mod.rs:build_fcgi_config()`
-
-**Issue**: `open_basedir` passed via `PHP_VALUE` (overridable by ini_set) instead of `PHP_ADMIN_VALUE`.
-
-**Fix**: Changed `open_basedir` from `php_values.push()` to `admin_values.push()` so it uses `PHP_ADMIN_VALUE` prefix, preventing user override via `.user.ini` or `.htaccess`.
-
-**Verification**: Clippy clean.
-
----
-
-#### W15.3: PHP-FPM Location-Level Security Config - MEDIUM ❌ OPEN
+#### W15.3: PHP-FPM Location-Level Security Config - MEDIUM ✅ COMPLETE
 
 **Location**: `src/config/site/backend.rs`, `src/php/mod.rs`
 
 **Issue**: Security settings cannot be set per-location; all PHP locations share same policy.
 
-**Fix**: Add security options to `PhpLocationConfig`: disable_functions, open_basedir, allow_url_fopen, etc.
+**Fix**: Added security options to `PhpLocationConfig`: disable_functions, open_basedir, allow_url_fopen, max_execution_time, memory_limit, upload_max_filesize, post_max_size.
+
+**Verification**: Clippy clean.
 
 ---
 
-#### W15.4: PHP-FPM Wire Up Unused Config Options - MEDIUM ❌ OPEN
+#### W15.4: PHP-FPM Wire Up Unused Config Options - MEDIUM ✅ COMPLETE
 
 **Location**: `src/php/mod.rs`
 
 **Issue**: `upload_tmp` configured but never passed to PHP-FPM; `extensions_dir` unused.
 
-**Fix**: Wire up `upload_tmp` as `PHP_VALUE:upload_tmp_dir`; remove unused `extensions_dir`.
+**Fix**: Wired up `upload_tmp` as `PHP_VALUE:upload_tmp_dir`; removed unused `extensions_dir` from config.
+
+**Verification**: Clippy clean.
 
 ---
 
-#### W15.5: FastCGI Configurable Pool Size - LOW ❌ OPEN
+#### W15.5: FastCGI Configurable Pool Size - LOW ✅ COMPLETE
 
 **Location**: `src/fastcgi/pool.rs`, `src/config/site/backend.rs`
 
 **Issue**: `max_connections = 10` hardcoded; not configurable per site.
 
-**Fix**: Add `max_connections` to `FastCgiConfig`; use in pool creation.
+**Fix**: Added `max_connections` to `FastCgiConfig`; use in pool creation via `fcgi_config.max_connections.unwrap_or(10)`.
+
+**Verification**: Clippy clean.
 
 ---
 
-#### W15.6: FastCGI IPv6 Socket Parsing Fix - LOW ❌ OPEN
+#### W15.6: FastCGI IPv6 Socket Parsing Fix - LOW ✅ COMPLETE
 
 **Location**: `src/fastcgi/mod.rs:parse_socket_address()`
 
 **Issue**: Doesn't handle bracketed IPv6 addresses like `[::1]:9000`.
 
-**Fix**: Add handling for bracketed IPv6 format.
+**Fix**: Added handling for bracketed IPv6 format before generic colon check.
+
+**Verification**: Clippy clean.
 
 ---
 

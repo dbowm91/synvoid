@@ -16,6 +16,7 @@ const DEFAULT_MAX_RECORDS: usize = 1000;
 const DEFAULT_RETENTION_DAYS: u64 = 7;
 const DEFAULT_WINDOW_SECS: u64 = 300;
 const DEFAULT_MAX_ENDPOINTS: usize = 3;
+const MAX_EVENTS_PER_IP: usize = 1000;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProbeEvent {
@@ -59,6 +60,11 @@ impl ProbeRecord {
         if !self.unique_endpoints.contains(&endpoint) {
             self.unique_endpoints.push(endpoint);
         }
+
+        if self.events.len() >= MAX_EVENTS_PER_IP {
+            self.events.remove(0);
+        }
+
         self.events.push(event);
         self.event_count += 1;
         self.last_seen = timestamp;
@@ -69,6 +75,11 @@ impl ProbeRecord {
 
     pub fn is_expired(&self, now: u64, retention_secs: u64) -> bool {
         now > self.first_seen + retention_secs
+    }
+
+    pub fn cleanup_stale_events(&mut self, retention_secs: u64) {
+        let cutoff = current_timestamp().saturating_sub(retention_secs);
+        self.events.retain(|e| e.timestamp >= cutoff);
     }
 
     pub fn key(ip: &IpAddr) -> String {
@@ -179,7 +190,8 @@ impl ProbeTracker {
                             // Periodic persist handled elsewhere
                         }
                         Some(req) = rx.recv() => {
-                            Self::persist_to_disk(&path, req.entries, config_clone.max_records).await;
+                            let retention_secs = config_clone.retention_days * 86400;
+                            Self::persist_to_disk(&path, req.entries, config_clone.max_records, retention_secs).await;
                         }
                     }
                 }
@@ -398,8 +410,9 @@ impl ProbeTracker {
             };
             let path = path.clone();
             let max_records = self.config.max_records;
+            let retention_secs = self.config.retention_days * 86400;
             tokio::spawn(async move {
-                Self::persist_to_disk(&path, entries, max_records).await;
+                Self::persist_to_disk(&path, entries, max_records, retention_secs).await;
             });
         }
     }
@@ -408,8 +421,16 @@ impl ProbeTracker {
         path: &PathBuf,
         entries: HashMap<String, ProbeRecord>,
         max_records: usize,
+        retention_secs: u64,
     ) {
-        let entries_to_save: Vec<ProbeRecord> = entries.into_values().take(max_records).collect();
+        let mut entries_to_save: Vec<ProbeRecord> = entries
+            .into_values()
+            .take(max_records)
+            .map(|mut e| {
+                e.cleanup_stale_events(retention_secs);
+                e
+            })
+            .collect();
 
         match serde_json::to_string_pretty(&entries_to_save) {
             Ok(json) => {

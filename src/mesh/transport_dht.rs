@@ -23,7 +23,8 @@ impl MeshTransport {
         );
 
         let now = Instant::now();
-        let window = Duration::from_secs(crate::mesh::transport::SNAPSHOT_REQUEST_RATE_LIMIT_WINDOW_SECS);
+        let window =
+            Duration::from_secs(crate::mesh::transport::SNAPSHOT_REQUEST_RATE_LIMIT_WINDOW_SECS);
         {
             let mut times = self.snapshot_request_times.write();
             let peer_times = times.entry(from_peer.to_string()).or_insert_with(Vec::new);
@@ -58,10 +59,12 @@ impl MeshTransport {
                         let mut sig_array = [0u8; 64];
                         sig_array.copy_from_slice(signature);
                         match ed25519_dalek::VerifyingKey::from_bytes(&pk_array) {
-                            Ok(pk) => pk.verify(
-                                content.as_bytes(),
-                                &ed25519_dalek::Signature::from_bytes(&sig_array),
-                            ).is_ok(),
+                            Ok(pk) => pk
+                                .verify(
+                                    content.as_bytes(),
+                                    &ed25519_dalek::Signature::from_bytes(&sig_array),
+                                )
+                                .is_ok(),
                             Err(_) => false,
                         }
                     }

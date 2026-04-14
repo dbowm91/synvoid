@@ -187,4 +187,6 @@ pub struct StaticLocation {
     pub try_files: Option<Vec<String>>,
     #[serde(default)]
     pub cache_ttl: Option<u64>,
+    #[serde(default)]
+    pub theme: Option<SiteStaticThemeConfig>,
 }

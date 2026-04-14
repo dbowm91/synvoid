@@ -337,7 +337,8 @@ impl DynamicUpdateHandler {
         let ancount = u16::from_be_bytes([query[6], query[7]]);
         let nscount = u16::from_be_bytes([query[8], query[9]]);
 
-        let additional_offset = self.compute_additional_section_offset(query, 12, qdcount, ancount, nscount)?;
+        let additional_offset =
+            self.compute_additional_section_offset(query, 12, qdcount, ancount, nscount)?;
 
         let tsig = parse_tsig_from_query(query, additional_offset);
 

@@ -169,6 +169,10 @@ impl PhpClient {
             php_values.push(("post_max_size".to_string(), post_max_size.clone()));
         }
 
+        if let Some(ref upload_tmp) = self.config.upload_tmp {
+            php_values.push(("upload_tmp_dir".to_string(), upload_tmp.clone()));
+        }
+
         if let Some(ref ini_settings) = self.config.ini_settings {
             for (key, value) in ini_settings {
                 php_values.push((key.clone(), value.clone()));

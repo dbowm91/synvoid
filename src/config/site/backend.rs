@@ -28,6 +28,8 @@ pub struct FastCgiConfig {
     pub send_timeout: Option<u64>,
     #[serde(default)]
     pub read_timeout: Option<u64>,
+    #[serde(default)]
+    pub max_connections: Option<usize>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
@@ -187,6 +189,20 @@ pub struct PhpLocationConfig {
     pub send_timeout: Option<u64>,
     #[serde(default)]
     pub read_timeout: Option<u64>,
+    #[serde(default)]
+    pub disable_functions: Option<String>,
+    #[serde(default)]
+    pub open_basedir: Option<String>,
+    #[serde(default)]
+    pub allow_url_fopen: Option<bool>,
+    #[serde(default)]
+    pub max_execution_time: Option<u64>,
+    #[serde(default)]
+    pub memory_limit: Option<String>,
+    #[serde(default)]
+    pub upload_max_filesize: Option<String>,
+    #[serde(default)]
+    pub post_max_size: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]

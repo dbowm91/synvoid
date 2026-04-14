@@ -13,7 +13,7 @@ use http_body_util::Full;
 use metrics::{counter, histogram};
 use tokio::io::AsyncReadExt;
 
-use crate::config::site::SiteStaticConfig;
+use crate::config::site::{SiteStaticConfig, SiteStaticThemeConfig};
 use crate::mesh::config::{
     MeshCompressionConfig, MeshImageProtectionConfig, MeshMinificationConfig,
 };
@@ -28,6 +28,7 @@ pub struct NormalizedLocation {
     pub index: Option<String>,
     pub try_files: Vec<String>,
     pub cache_ttl: Option<u64>,
+    pub theme: Option<SiteStaticThemeConfig>,
 }
 
 #[derive(Clone)]
@@ -208,6 +209,7 @@ impl StaticFileHandler {
                     .clone()
                     .unwrap_or_else(|| vec!["$uri".to_string()]),
                 cache_ttl: loc.cache_ttl,
+                theme: loc.theme.clone(),
             });
         }
 
@@ -756,7 +758,19 @@ impl StaticFileHandler {
                 .as_deref()
                 .unwrap_or("html");
 
-            let body = if let Some(ref template_path) = self.directory_template_path {
+            let effective_theme_config = location
+                .theme
+                .as_ref()
+                .map(|t| t.to_theme_config(&self.theme_config))
+                .unwrap_or_else(|| self.theme_config.clone());
+
+            let effective_template_path: Option<String> = location
+                .theme
+                .as_ref()
+                .and_then(|t| t.directory_template_path.clone())
+                .or_else(|| self.directory_template_path.clone());
+
+            let body = if let Some(template_path) = effective_template_path.as_deref() {
                 if format == "html" {
                     let template = directory::load_directory_template(template_path)?;
                     let entries = directory::collect_directory_entries(dir_path)?;
@@ -766,11 +780,16 @@ impl StaticFileHandler {
                         dir_path,
                         url_path,
                         format,
-                        &self.theme_config,
+                        &effective_theme_config,
                     )?
                 }
             } else {
-                directory::render_directory_listing(dir_path, url_path, format, &self.theme_config)?
+                directory::render_directory_listing(
+                    dir_path,
+                    url_path,
+                    format,
+                    &effective_theme_config,
+                )?
             };
             return Ok(StaticResponse {
                 status: StatusCode::OK,

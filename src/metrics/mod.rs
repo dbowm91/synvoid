@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -58,7 +58,8 @@ static DHT_REPLICA_COUNT: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(
 static DHT_QUORUM_ACHIEVED_COUNT: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 static DHT_QUORUM_FAILED_COUNT: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 
-static DHT_QUERY_LATENCIES: LazyLock<Mutex<Vec<u64>>> = LazyLock::new(|| Mutex::new(Vec::new()));
+static DHT_QUERY_LATENCIES: LazyLock<Mutex<VecDeque<u64>>> =
+    LazyLock::new(|| Mutex::new(VecDeque::new()));
 
 static DHT_BUCKET_PEER_COUNTS: LazyLock<DashMap<usize, AtomicU64>> = LazyLock::new(DashMap::new);
 
@@ -74,7 +75,8 @@ static DHT_ANNOUNCE_SENT: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(
 static DHT_ANNOUNCE_FAILED: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 static DHT_PEER_DISCOVERED: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 static DHT_PEER_REMOVED: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
-static DHT_PROPAGATION_HOPS: LazyLock<Mutex<Vec<u64>>> = LazyLock::new(|| Mutex::new(Vec::new()));
+static DHT_PROPAGATION_HOPS: LazyLock<Mutex<VecDeque<u64>>> =
+    LazyLock::new(|| Mutex::new(VecDeque::new()));
 
 static SERVERLESS_INVOCATIONS: LazyLock<DashMap<String, AtomicU64>> = LazyLock::new(DashMap::new);
 
@@ -308,9 +310,9 @@ pub fn get_dht_quorum_failed_count() -> u64 {
 
 pub fn record_dht_query_latency(latency_ms: u64) {
     let mut latencies = DHT_QUERY_LATENCIES.lock();
-    latencies.push(latency_ms);
+    latencies.push_back(latency_ms);
     if latencies.len() > LATENCY_SAMPLE_SIZE {
-        latencies.remove(0);
+        latencies.pop_front();
     }
 }
 
@@ -462,9 +464,9 @@ pub fn get_dht_peer_removed() -> u64 {
 
 pub fn record_dht_propagation_hop(hop_count: u64) {
     let mut hops = DHT_PROPAGATION_HOPS.lock();
-    hops.push(hop_count);
+    hops.push_back(hop_count);
     if hops.len() > LATENCY_SAMPLE_SIZE {
-        hops.remove(0);
+        hops.pop_front();
     }
 }
 

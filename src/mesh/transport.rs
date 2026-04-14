@@ -2455,8 +2455,16 @@ impl MeshTransport {
 
                 let (origin_signature, origin_ed25519_pubkey) =
                     if let Some(ref signer) = self.origin_ed25519_signer {
-                        let content = format!("{}:{:?}:{}", upstream_id_for_sig, action, self.config.node_id());
-                        (signer.sign(&content).into_bytes(), signer.verifying_key().into())
+                        let content = format!(
+                            "{}:{:?}:{}",
+                            upstream_id_for_sig,
+                            action,
+                            self.config.node_id()
+                        );
+                        (
+                            signer.sign(&content).into_bytes(),
+                            signer.verifying_key().into(),
+                        )
                     } else {
                         (Vec::new(), String::new().into())
                     };

@@ -9,7 +9,6 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
-use dashmap::DashMap;
 use http::{header, Method, Request, Response, Uri};
 use http_body_util::BodyExt;
 use http_body_util::Full;
@@ -19,6 +18,7 @@ use hyper_rustls::HttpsConnector;
 use hyper_util::client::legacy::{connect::HttpConnector, Client};
 use hyper_util::rt::TokioExecutor;
 use hyperlocal::{UnixConnector, Uri as HyperlocalUri};
+use moka::sync::Cache;
 use serde::{de::DeserializeOwned, Serialize};
 
 pub type HttpClient = Client<HttpsConnector<HttpConnector>, Full<Bytes>>;
@@ -26,13 +26,44 @@ pub type UnixHttpClient = Client<UnixConnector, Full<Bytes>>;
 
 #[derive(Hash, PartialEq, Eq)]
 struct UpstreamClientKey {
-    tls_config: UpstreamTlsConfig,
+    tls_config: UpstreamTlsConfigHashable,
     pool_max_idle: usize,
     pool_idle_secs: u64,
 }
 
-static UPSTREAM_CLIENT_CACHE: LazyLock<DashMap<UpstreamClientKey, HttpClient>> =
-    LazyLock::new(DashMap::new);
+#[derive(Hash, PartialEq, Eq, Clone)]
+struct UpstreamTlsConfigHashable {
+    verify: bool,
+    ca_cert_path: Option<String>,
+    server_name: Option<String>,
+    skip_verify: bool,
+    allow_plaintext: bool,
+}
+
+impl From<&UpstreamTlsConfig> for UpstreamTlsConfigHashable {
+    fn from(cfg: &UpstreamTlsConfig) -> Self {
+        Self {
+            verify: cfg.verify,
+            ca_cert_path: cfg.ca_cert_path.clone(),
+            server_name: cfg.server_name.clone(),
+            skip_verify: cfg.skip_verify,
+            allow_plaintext: cfg.allow_plaintext,
+        }
+    }
+}
+
+const MAX_UPSTREAM_CLIENT_CACHE_SIZE: u64 = 100;
+const UPSTREAM_CLIENT_CACHE_TTL_SECS: u64 = 300;
+
+fn upstream_client_cache() -> Cache<UpstreamClientKey, HttpClient> {
+    Cache::builder()
+        .max_capacity(MAX_UPSTREAM_CLIENT_CACHE_SIZE)
+        .time_to_live(Duration::from_secs(UPSTREAM_CLIENT_CACHE_TTL_SECS))
+        .build()
+}
+
+static UPSTREAM_CLIENT_CACHE: LazyLock<Cache<UpstreamClientKey, HttpClient>> =
+    LazyLock::new(upstream_client_cache);
 
 pub fn is_unix_socket_url(url: &str) -> Option<PathBuf> {
     let trimmed = url.trim();
@@ -165,7 +196,7 @@ pub fn create_upstream_client(
     tls_config: &UpstreamTlsConfig,
 ) -> HttpClient {
     let key = UpstreamClientKey {
-        tls_config: tls_config.clone(),
+        tls_config: UpstreamTlsConfigHashable::from(tls_config),
         pool_max_idle: pool_max_idle_per_host,
         pool_idle_secs: pool_idle_timeout.as_secs(),
     };

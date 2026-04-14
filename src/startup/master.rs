@@ -570,9 +570,10 @@ async fn run_master(
     setup_signal_handlers(master_state.clone(), process_manager.clone());
 
     let pm_health = process_manager.clone();
-    tokio::spawn(async move {
+    let handle = tokio::spawn(async move {
         crate::process::start_health_monitor(pm_health, 5).await;
     });
+    process_manager.set_health_monitor_handle(handle).await;
 
     let pm_persist = process_manager.clone();
     let persist_interval_secs = main_config.blocklist_limits.persist_interval_secs;

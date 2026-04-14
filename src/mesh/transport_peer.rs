@@ -562,8 +562,15 @@ impl MeshTransport {
                 signature,
                 signer_public_key,
             } => {
-                self.handle_dht_snapshot_request(peer_id, &request_id, &node_id, from_version, &signature, &signer_public_key)
-                    .await;
+                self.handle_dht_snapshot_request(
+                    peer_id,
+                    &request_id,
+                    &node_id,
+                    from_version,
+                    &signature,
+                    &signer_public_key,
+                )
+                .await;
             }
             MeshMessage::DhtSnapshotResponse {
                 request_id,
@@ -1023,14 +1030,11 @@ impl MeshTransport {
                 let upstream_id_str = upstream_id.to_string();
                 let origin_pk_str = origin_ed25519_pubkey.to_string();
 
-                let sign_data = format!(
-                    "{}:{:?}:{}",
-                    upstream_id_str,
-                    action,
-                    peer_id
-                );
+                let sign_data = format!("{}:{:?}:{}", upstream_id_str, action, peer_id);
 
-                let signature_valid = if !origin_signature.is_empty() && !origin_ed25519_pubkey.is_empty() {
+                let signature_valid = if !origin_signature.is_empty()
+                    && !origin_ed25519_pubkey.is_empty()
+                {
                     let pk_bytes = hex::decode(&origin_pk_str);
                     let sig_bytes: Vec<u8> = origin_signature.clone();
                     if pk_bytes.as_ref().map_or(false, |b| b.len() == 32) && sig_bytes.len() == 64 {
@@ -1042,10 +1046,12 @@ impl MeshTransport {
                         sig_array.copy_from_slice(&sig_bytes);
 
                         match ed25519_dalek::VerifyingKey::from_bytes(&pk_array) {
-                            Ok(pk) => pk.verify(
-                                sign_data.as_bytes(),
-                                &ed25519_dalek::Signature::from_bytes(&sig_array),
-                            ).is_ok(),
+                            Ok(pk) => pk
+                                .verify(
+                                    sign_data.as_bytes(),
+                                    &ed25519_dalek::Signature::from_bytes(&sig_array),
+                                )
+                                .is_ok(),
                             Err(_) => false,
                         }
                     } else {
@@ -1071,8 +1077,10 @@ impl MeshTransport {
                     AnnounceAction::Add | AnnounceAction::Update => {
                         if let Some(ref record_store) = self.record_store {
                             let origin_node_id = if let Ok(pk_bytes) = hex::decode(&origin_pk_str) {
-                                crate::mesh::dht::routing::node_id::NodeId::from_public_key(&pk_bytes)
-                                    .to_string()
+                                crate::mesh::dht::routing::node_id::NodeId::from_public_key(
+                                    &pk_bytes,
+                                )
+                                .to_string()
                             } else {
                                 origin_pk_str.clone()
                             };
