@@ -47,6 +47,7 @@ impl Drop for ChallengeGuard {
     }
 }
 
+#[allow(clippy::type_complexity)]
 pub struct AcmeManager {
     config: InternalAcmeConfig,
     cert_resolver: Arc<CertResolver>,
@@ -54,6 +55,7 @@ pub struct AcmeManager {
     credentials_path: PathBuf,
     http_challenges: Arc<DashMap<String, String>>,
     managed_certs: parking_lot::RwLock<HashMap<String, ManagedCert>>,
+    renew_callback: parking_lot::RwLock<Option<Box<dyn Fn(Vec<String>) + Send + Sync>>>,
 }
 
 impl AcmeManager {
@@ -72,6 +74,7 @@ impl AcmeManager {
             credentials_path,
             http_challenges: Arc::new(DashMap::new()),
             managed_certs: parking_lot::RwLock::new(HashMap::new()),
+            renew_callback: parking_lot::RwLock::new(None),
         }
     }
 
@@ -351,6 +354,15 @@ impl AcmeManager {
         self.http_challenges.get(token).map(|v| v.clone())
     }
 
+    /// Set a callback to be invoked after successful certificate renewal.
+    /// The callback receives the list of renewed domain names.
+    pub fn set_renew_callback<F>(&self, callback: F)
+    where
+        F: Fn(Vec<String>) + Send + Sync + 'static,
+    {
+        *self.renew_callback.write() = Some(Box::new(callback));
+    }
+
     /// Check managed certs for expiring ones and renew.
     pub async fn renew_expiring(&self) -> Result<Vec<String>, AcmeError> {
         if !self.config.enabled {
@@ -378,6 +390,12 @@ impl AcmeManager {
                 Err(e) => {
                     tracing::error!("Failed to renew certificate for {}: {}", domain, e);
                 }
+            }
+        }
+
+        if !renewed.is_empty() {
+            if let Some(callback) = self.renew_callback.read().as_ref() {
+                callback(renewed.clone());
             }
         }
 

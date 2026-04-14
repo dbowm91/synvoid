@@ -128,6 +128,76 @@ impl CertDistManager {
         self.certs.read().keys().cloned().collect()
     }
 
+    pub fn rotate_session_key(
+        &mut self,
+        new_mesh_session_key: Vec<u8>,
+    ) -> Result<Vec<(String, EncryptedCertData)>, CertDistError> {
+        let old_certs: Vec<(String, DecryptedCert)> = self
+            .certs
+            .read()
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+
+        let mut re_encrypted = Vec::new();
+        for (site_id, cert) in old_certs {
+            let encrypted = self.distribute_cert_with_key(
+                &site_id,
+                &cert.cert_data,
+                &cert.key_pem,
+                &new_mesh_session_key,
+            )?;
+            re_encrypted.push((site_id, encrypted));
+        }
+
+        self.mesh_session_key = new_mesh_session_key;
+
+        Ok(re_encrypted)
+    }
+
+    fn distribute_cert_with_key(
+        &self,
+        site_id: &str,
+        cert_pem: &[u8],
+        key_pem: &[u8],
+        mesh_session_key: &[u8],
+    ) -> Result<EncryptedCertData, CertDistError> {
+        let per_site_key = self.derive_site_key_with_key(site_id, mesh_session_key)?;
+
+        let cipher = Aes256Gcm::new_from_slice(&per_site_key)
+            .map_err(|e| CertDistError::Encryption(e.to_string()))?;
+
+        let mut nonce_bytes = [0u8; NONCE_SIZE];
+        rand::fill(&mut nonce_bytes);
+        let nonce = Nonce::from_slice(&nonce_bytes);
+
+        let ciphertext = cipher
+            .encrypt(nonce, key_pem)
+            .map_err(|e| CertDistError::Encryption(e.to_string()))?;
+
+        Ok(EncryptedCertData {
+            site_id: site_id.to_string(),
+            cert_data: cert_pem.to_vec(),
+            encrypted_key: ciphertext,
+            nonce: nonce_bytes.to_vec(),
+        })
+    }
+
+    fn derive_site_key_with_key(
+        &self,
+        site_id: &str,
+        mesh_session_key: &[u8],
+    ) -> Result<[u8; DERIVED_KEY_SIZE], CertDistError> {
+        let hk = Hkdf::<Sha256>::new(None, mesh_session_key);
+
+        let mut okm = [0u8; DERIVED_KEY_SIZE];
+        let info = self.build_hkdf_info(site_id);
+        hk.expand(&info, &mut okm)
+            .map_err(|e| CertDistError::KeyDerivation(e.to_string()))?;
+
+        Ok(okm)
+    }
+
     fn derive_site_key(&self, site_id: &str) -> Result<[u8; DERIVED_KEY_SIZE], CertDistError> {
         let hk = Hkdf::<Sha256>::new(None, &self.mesh_session_key);
 
@@ -256,5 +326,32 @@ mod tests {
         assert!(manager.remove_cert("site1"));
         assert!(!manager.has_cert("site1"));
         assert!(!manager.remove_cert("site1"));
+    }
+
+    #[test]
+    fn test_rotate_session_key() {
+        let mut old_key = [0u8; 32];
+        let mut new_key = [1u8; 32];
+        rand::fill(&mut old_key);
+        rand::fill(&mut new_key);
+
+        let mut manager = CertDistManager::new(old_key.to_vec());
+        let cert_pem = b"-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----";
+        let key_pem = b"-----BEGIN PRIVATE KEY-----\ntest\n-----END PRIVATE KEY-----";
+
+        manager.distribute_cert("site1", cert_pem, key_pem).unwrap();
+        manager.distribute_cert("site2", cert_pem, key_pem).unwrap();
+
+        let re_encrypted = manager.rotate_session_key(new_key.to_vec()).unwrap();
+
+        assert_eq!(re_encrypted.len(), 2);
+
+        let re_encrypted_site1 = re_encrypted
+            .iter()
+            .find(|(id, _)| id == "site1")
+            .map(|(_, e)| e)
+            .unwrap();
+        assert_eq!(re_encrypted_site1.site_id, "site1");
+        assert_eq!(re_encrypted_site1.cert_data, cert_pem);
     }
 }

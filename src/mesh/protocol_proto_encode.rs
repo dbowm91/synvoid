@@ -2235,6 +2235,68 @@ impl From<&MeshMessage> for proto::MeshMessage {
                     },
                 )),
             },
+            MeshMessage::SiteTlsCertSync(msg) => {
+                let certs = msg
+                    .certs
+                    .iter()
+                    .map(|c| proto::SiteTlsCertEntry {
+                        site_id: c.site_id.clone(),
+                        cert_data: c.cert_data.clone(),
+                        encrypted_key: c.encrypted_key.clone(),
+                        nonce: c.nonce.clone(),
+                    })
+                    .collect();
+                proto::MeshMessage {
+                    message_type: 137,
+                    payload: Some(proto::mesh_message::Payload::SiteTlsCertSync(
+                        proto::SiteTlsCertSync {
+                            site_id: msg.site_id.clone(),
+                            node_id: msg.node_id.clone(),
+                            timestamp: msg.timestamp,
+                            signature: msg.signature.clone(),
+                            signer_public_key: msg.signer_public_key.clone(),
+                            certs,
+                        },
+                    )),
+                }
+            }
+            MeshMessage::SiteTlsCertRequest(msg) => proto::MeshMessage {
+                message_type: 138,
+                payload: Some(proto::mesh_message::Payload::SiteTlsCertRequest(
+                    proto::SiteTlsCertRequest {
+                        site_id: msg.site_id.clone(),
+                        node_id: msg.node_id.clone(),
+                        timestamp: msg.timestamp,
+                        signature: msg.signature.clone(),
+                        signer_public_key: msg.signer_public_key.clone(),
+                    },
+                )),
+            },
+            MeshMessage::SiteTlsCertResponse(msg) => {
+                let certs = msg
+                    .certs
+                    .iter()
+                    .map(|c| proto::SiteTlsCertEntry {
+                        site_id: c.site_id.clone(),
+                        cert_data: c.cert_data.clone(),
+                        encrypted_key: c.encrypted_key.clone(),
+                        nonce: c.nonce.clone(),
+                    })
+                    .collect();
+                proto::MeshMessage {
+                    message_type: 139,
+                    payload: Some(proto::mesh_message::Payload::SiteTlsCertResponse(
+                        proto::SiteTlsCertResponse {
+                            site_id: msg.site_id.clone(),
+                            node_id: msg.node_id.clone(),
+                            timestamp: msg.timestamp,
+                            signature: msg.signature.clone(),
+                            signer_public_key: msg.signer_public_key.clone(),
+                            certs,
+                        },
+                    )),
+                }
+            }
         }
     }
 }

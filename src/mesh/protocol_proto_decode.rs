@@ -1425,6 +1425,59 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                     genesis_signature: r.genesis_signature,
                 })
             }
+            proto::mesh_message::Payload::SiteTlsCertSync(r) => {
+                let certs = r
+                    .certs
+                    .into_iter()
+                    .map(|c| crate::mesh::protocol::SiteTlsCertEntry {
+                        site_id: c.site_id,
+                        cert_data: c.cert_data,
+                        encrypted_key: c.encrypted_key,
+                        nonce: c.nonce,
+                    })
+                    .collect();
+                Ok(MeshMessage::SiteTlsCertSync(
+                    crate::mesh::protocol::SiteTlsCertSync {
+                        site_id: r.site_id,
+                        node_id: r.node_id,
+                        timestamp: r.timestamp,
+                        signature: r.signature,
+                        signer_public_key: r.signer_public_key,
+                        certs,
+                    },
+                ))
+            }
+            proto::mesh_message::Payload::SiteTlsCertRequest(r) => Ok(
+                MeshMessage::SiteTlsCertRequest(crate::mesh::protocol::SiteTlsCertRequest {
+                    site_id: r.site_id,
+                    node_id: r.node_id,
+                    timestamp: r.timestamp,
+                    signature: r.signature,
+                    signer_public_key: r.signer_public_key,
+                }),
+            ),
+            proto::mesh_message::Payload::SiteTlsCertResponse(r) => {
+                let certs = r
+                    .certs
+                    .into_iter()
+                    .map(|c| crate::mesh::protocol::SiteTlsCertEntry {
+                        site_id: c.site_id,
+                        cert_data: c.cert_data,
+                        encrypted_key: c.encrypted_key,
+                        nonce: c.nonce,
+                    })
+                    .collect();
+                Ok(MeshMessage::SiteTlsCertResponse(
+                    crate::mesh::protocol::SiteTlsCertResponse {
+                        site_id: r.site_id,
+                        node_id: r.node_id,
+                        timestamp: r.timestamp,
+                        signature: r.signature,
+                        signer_public_key: r.signer_public_key,
+                        certs,
+                    },
+                ))
+            }
         }
     }
 }

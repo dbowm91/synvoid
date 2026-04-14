@@ -267,6 +267,9 @@ message MeshMessage {
         UpstreamChallengeProof upstream_challenge_proof = 134;
         GenesisKeyTransition genesis_key_transition = 135;
         RevokeGlobalNode revoke_global_node = 136;
+        SiteTlsCertSync site_tls_cert_sync = 137;
+        SiteTlsCertRequest site_tls_cert_request = 138;
+        SiteTlsCertResponse site_tls_cert_response = 139;
     }
 }
 
@@ -1382,4 +1385,37 @@ message ServerlessFunctionAnnounce {
     uint32 memory_mb = 6;
     uint32 timeout_seconds = 7;
     int32 priority = 8;
+}
+
+message SiteTlsCertSync {
+    string site_id = 1;
+    string node_id = 2;
+    uint64 timestamp = 3;
+    bytes signature = 4;
+    optional string signer_public_key = 5;
+    repeated SiteTlsCertEntry certs = 6;
+}
+
+message SiteTlsCertEntry {
+    string site_id = 1;
+    bytes cert_data = 2;
+    bytes encrypted_key = 3;
+    bytes nonce = 4;
+}
+
+message SiteTlsCertRequest {
+    string site_id = 1;
+    string node_id = 2;
+    uint64 timestamp = 3;
+    bytes signature = 4;
+    optional string signer_public_key = 5;
+}
+
+message SiteTlsCertResponse {
+    string site_id = 1;
+    string node_id = 2;
+    uint64 timestamp = 3;
+    bytes signature = 4;
+    optional string signer_public_key = 5;
+    repeated SiteTlsCertEntry certs = 6;
 }

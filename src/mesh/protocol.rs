@@ -979,6 +979,9 @@ pub enum MeshMessage {
         timestamp: u64,
         genesis_signature: Vec<u8>,
     },
+    SiteTlsCertSync(SiteTlsCertSync),
+    SiteTlsCertRequest(SiteTlsCertRequest),
+    SiteTlsCertResponse(SiteTlsCertResponse),
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -1396,6 +1399,43 @@ pub struct ServerlessFunctionAnnounce {
     pub memory_mb: Option<usize>,
     pub timeout_seconds: Option<u64>,
     pub priority: i32,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SiteTlsCertEntry {
+    pub site_id: String,
+    pub cert_data: Vec<u8>,
+    pub encrypted_key: Vec<u8>,
+    pub nonce: Vec<u8>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SiteTlsCertSync {
+    pub site_id: String,
+    pub node_id: String,
+    pub timestamp: u64,
+    pub signature: Vec<u8>,
+    pub signer_public_key: Option<String>,
+    pub certs: Vec<SiteTlsCertEntry>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SiteTlsCertRequest {
+    pub site_id: String,
+    pub node_id: String,
+    pub timestamp: u64,
+    pub signature: Vec<u8>,
+    pub signer_public_key: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SiteTlsCertResponse {
+    pub site_id: String,
+    pub node_id: String,
+    pub timestamp: u64,
+    pub signature: Vec<u8>,
+    pub signer_public_key: Option<String>,
+    pub certs: Vec<SiteTlsCertEntry>,
 }
 
 #[path = "protocol_message.rs"]
