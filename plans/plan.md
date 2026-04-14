@@ -960,13 +960,15 @@ Items are organized for **parallelization** - items within a wave can be execute
 
 ---
 
-#### M.2: Edge Cannot Proxy ACME Challenges to Origin - MEDIUM ❌ OPEN
+#### M.2: Edge Cannot Proxy ACME Challenges to Origin - MEDIUM ✅ COMPLETE
 
-**Location**: `src/proxy.rs`
+**Location**: `src/mesh/transport_peer.rs:2313`
 
 **Issue**: ACME HTTP-01 challenges arrive at edge but aren't forwarded to origin backend.
 
-**Fix**: Add special handling for `/.well-known/acme-challenge/` to proxy to origin backend.
+**Fix**: Added special handling in `handle_http_proxy_stream()` for `GET /.well-known/acme-challenge/` requests. When an edge node receives an ACME HTTP-01 challenge request over mesh QUIC, it now checks the ownership challenge store for the key authorization and serves it directly without proxying to backend. This handles the case where an edge node receives mesh QUIC connections destined for the origin's Host header.
+
+**Verification**: Clippy clean; code compiles.
 
 ---
 

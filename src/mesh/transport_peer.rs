@@ -2312,7 +2312,7 @@ impl MeshTransport {
 
     async fn handle_http_proxy_stream(
         &self,
-        _header_str: &str,
+        header_str: &str,
         http_data: Vec<u8>,
         send_stream: &mut SendStream,
         topology: &MeshTopology,
@@ -2341,6 +2341,29 @@ impl MeshTransport {
                 return Ok(());
             }
         };
+
+        if let Some(token) = header_str.strip_prefix("GET /.well-known/acme-challenge/") {
+            let token = token.trim();
+            if !token.is_empty() && !token.contains('\r') && !token.contains('\n') {
+                if let Some(key_authz) = self.get_http01_challenge(token) {
+                    tracing::debug!(
+                        "ACME HTTP-01 challenge served from mesh for token {}",
+                        token
+                    );
+                    let resp = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n{}",
+                        key_authz.len(),
+                        key_authz
+                    );
+                    send_stream
+                        .write_all(resp.as_bytes())
+                        .await
+                        .map_err(|e| MeshTransportError::SendFailed(e.to_string()))?;
+                    let _ = send_stream.finish();
+                    return Ok(());
+                }
+            }
+        }
 
         let parsed_url = match url::Url::parse(&backend_url) {
             Ok(u) => u,
