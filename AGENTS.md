@@ -258,12 +258,26 @@ Keys transition through these states:
 ## Subagent Execution Best Practices
 
 When using subagents to make code changes:
-1. **Always verify the actual code** — subagents may claim a fix was applied but the code still shows the old version
+1. **Always verify the actual code** — subagents may claim a fix was applied but the code still shows the old version. Always read the file directly to confirm.
 2. **Run compilation checks** — `cargo clippy --lib -- -D warnings` to catch type errors
 3. **Run tests** — `cargo test --test integration_test` to verify runtime behavior
 4. **Run format check** — `cargo fmt` then `cargo fmt --check` to catch drift
 
-Common failure mode: subagent reports success but code wasn't actually modified, or was modified incorrectly. Always read the actual file content to confirm.
+**Critical verification step**: After any subagent reports completion:
+```bash
+# Check if file was actually modified
+git diff HEAD -- <file>
+# Or grep for the expected fix
+rg "expected_pattern" <file>
+```
+
+Common failure mode: subagent reports success but code wasn't actually modified, or was modified incorrectly. This is especially common with:
+- Complex refactoring requiring multi-file changes
+- Architectural changes requiring wiring new components
+- Proto file changes requiring code generation
+- Cases where fix requires understanding existing code patterns
+
+For complex changes, prefer direct implementation or verify each step incrementally.
 
 ### Module Splitting Decisions
 

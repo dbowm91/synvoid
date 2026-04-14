@@ -595,3 +595,191 @@ rg "#\[allow\(dead_code)\]" src/ --glob '*.rs' -c
 # Check SAFETY comments on unsafe blocks
 rg "unsafe \{" src/ --glob '*.rs' -l | xargs -I{} rg "SAFETY" {}
 ```
+
+---
+
+## Wave 4 Critical Security Fixes (2026-04-14)
+
+### Session Fixation Prevention
+
+**Location**: `src/auth/mod.rs:479-493`
+
+**Issue**: When a user logs in, existing sessions for that user were NOT invalidated. An attacker with a valid session could continue using it after legitimate user login.
+
+**Pattern**: Invalidate all existing sessions before creating new session:
+
+```rust
+// Before creating new session, remove all existing sessions for this user
+store.sessions.retain(|_, s| s.user_id != user_id);
+store.sessions.insert(session.id.clone(), session.clone());
+```
+
+---
+
+### IPC Nonce Cache Poisoning Prevention
+
+**Location**: `src/process/ipc_signed.rs:230-262`
+
+**Issue**: Nonce was inserted into cache BEFORE HMAC verification. An attacker could flood nonce cache with fake nonces before HMAC rejection.
+
+**Pattern**: Verify HMAC BEFORE inserting nonce:
+
+```rust
+// 1. Extract timestamp and nonce
+// 2. Verify HMAC FIRST
+if !self.signer.verify(&hmac_data, &hmac) {
+    return Err(io::Error::new(
+        io::ErrorKind::InvalidData,
+        "HMAC verification failed",
+    ));
+}
+// 3. Only after HMAC passes, check and insert nonce
+if !check_and_insert_nonce(&nonce, timestamp) {
+    return Err(io::Error::new(
+        io::ErrorKind::InvalidData,
+        "replay detected: duplicate nonce",
+    ));
+}
+```
+
+---
+
+### DNS Dynamic Update TSIG Enforcement
+
+**Location**: `src/dns/update.rs:288-395`
+
+**Issue**: `handle_update` never enforced TSIG authentication despite `require_tsig` field existing.
+
+**Pattern**: Parse TSIG from additional section and verify before processing update:
+
+```rust
+// Compute additional section offset
+let additional_offset = self.compute_additional_section_offset(query, 12, qdcount, ancount, nscount)?;
+let tsig = parse_tsig_from_query(query, additional_offset);
+
+if self.require_tsig {
+    if tsig.is_none() {
+        return Err("Dynamic updates require TSIG authentication".to_string());
+    }
+    // Verify TSIG using TsigVerifier
+}
+```
+
+---
+
+### DNS Cookie Timing Attack Prevention
+
+**Location**: `src/dns/cookie.rs:82-88`
+
+**Issue**: Cookie MAC comparison used XOR loop instead of constant-time comparison.
+
+**Pattern**: Use `subtle::ConstantTimeEq`:
+
+```rust
+use subtle::ConstantTimeEq;
+
+// BEFORE (timing attack vulnerable)
+let mut diff = 0u8;
+for (a, b) in expected_server.iter().zip(server_cookie.iter()) {
+    diff |= a ^ b;
+}
+diff == 0
+
+// AFTER (constant-time)
+expected_server.ct_eq(server_cookie).into()
+```
+
+---
+
+### Origin Attestation with Empty Authorized List
+
+**Location**: `src/mesh/peer_auth.rs:281-300`
+
+**Issue**: When `authorized_global_pubkeys` is empty, origin attestation was bypassed entirely.
+
+**Pattern**: Reject attestation when no authorized keys configured:
+
+```rust
+// If no authorized keys, reject all attestation attempts
+if authorized_global_pubkeys.is_empty() {
+    return Err("No authorized global node keys configured for origin attestation".to_string());
+}
+
+// Then check if key is in authorized list
+if !authorized_global_pubkeys.iter().any(|k| k == attestation_key) {
+    return Err("Origin node attestation key not in authorized list".to_string());
+}
+```
+
+---
+
+### DHT Snapshot Request Rate Limiting
+
+**Location**: `src/mesh/transport_dht.rs:6-77`
+
+**Issue**: `DhtSnapshotRequest` had no rate limiting or authentication - DoS vector.
+
+**Pattern**: 
+1. Track request times per peer with automatic expiration
+2. Verify signature before responding
+3. Limit response size
+
+```rust
+// Rate limit check
+let now = Instant::now();
+let window = Duration::from_secs(SNAPSHOT_REQUEST_RATE_LIMIT_WINDOW_SECS);
+{
+    let mut times = self.snapshot_request_times.write();
+    let peer_times = times.entry(from_peer.to_string()).or_insert_with(Vec::new);
+    peer_times.retain(|&t| now.duration_since(t) < window);
+    if peer_times.len() >= MAX_SNAPSHOT_REQUESTS_PER_WINDOW {
+        return; // Rate limited
+    }
+    peer_times.push(now);
+}
+
+// Signature verification
+if !signature.is_empty() && !signer_public_key.is_empty() {
+    // Verify Ed25519 signature...
+}
+
+// Size limit on response
+.take(MAX_SNAPSHOT_RECORDS)
+```
+
+---
+
+### Slashing Quorum Scalability
+
+**Location**: `src/mesh/dht/stake.rs:425-447`
+
+**Issue**: Slashing required exactly 3 global node votes - impossible with 1-2 global nodes.
+
+**Pattern**: Percentage-based quorum calculation:
+
+```rust
+fn get_global_node_count(&self) -> usize {
+    let stakes = self.stakes.read();
+    stakes.values().filter(|s| s.role.is_global()).count()
+}
+
+fn process_global_slash_vote(&self, vote: GlobalSlashVote) {
+    // ... add vote ...
+    
+    let global_count = self.get_global_node_count();
+    let quorum = (global_count * 2 / 3).max(1);  // >50% of global nodes
+    
+    if entry.len() >= quorum {
+        self.slash_node(&target_id, reason, "global_committee");
+    }
+}
+```
+
+Quorum table:
+| Global Nodes | Quorum |
+|-------------|--------|
+| 1 | 1 |
+| 2 | 1 |
+| 3 | 2 |
+| 4 | 2 |
+| 5 | 3 |
