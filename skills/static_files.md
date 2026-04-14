@@ -125,6 +125,32 @@ pub struct DirectoryEntry {
 2. The `StaticFileHandler` extracts template path from config
 3. On directory request, template is loaded and rendered
 
+## Per-Location Themes
+
+Each `StaticLocation` can have its own `theme` field, allowing different themes per URL path:
+
+```rust
+pub struct StaticLocation {
+    pub path: String,
+    pub root: String,
+    pub index: Option<String>,
+    pub try_files: Option<Vec<String>>,
+    pub cache_ttl: Option<u64>,
+    pub theme: Option<SiteStaticThemeConfig>,  // per-location theme
+}
+```
+
+**Config example**:
+```toml
+[site.static]
+locations = [
+    { path = "/public", root = "/var/www/public", theme = { preset = "dark" } },
+    { path = "/docs", root = "/var/www/docs", theme = { preset = "light", directory_template_path = "/etc/maluwaf/docs-template.html" } }
+]
+```
+
+When serving a directory, the location's theme takes precedence over the site-wide theme.
+
 ## Testing
 
 ```bash

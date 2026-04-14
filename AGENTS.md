@@ -434,6 +434,13 @@ All duplicate `current_timestamp()` definitions have been consolidated into `src
 | Worker unified server JoinHandle leak | `src/worker/unified_server.rs` | Added task_handles; tasks aborted on shutdown |
 | Proxy cache JoinHandle leak | `src/proxy_cache/store.rs` | Added cleanup_shutdown_tx and shutdown() method |
 | PHP-FPM open_basedir bypass | `src/php/mod.rs` | open_basedir now uses PHP_ADMIN_VALUE |
+| PHP-FPM location-level security | `src/config/site/backend.rs` | Security options (disable_functions, open_basedir, etc.) now per-location |
+| Static files per-location theme | `src/config/site/static_files.rs` | Theme can now be set per static location |
+| Process manager JoinHandle leak | `src/process/manager.rs` | Health monitor handle stored and aborted on shutdown |
+| Probe tracker unbounded events | `src/waf/probe_tracker.rs` | MAX_EVENTS_PER_IP sliding window with 1000 limit |
+| Metrics Vec O(n) front removal | `src/metrics/mod.rs:61,77` | DHT_QUERY_LATENCIES and DHT_PROPAGATION_HOPS use VecDeque |
+| Upstream client cache bounded | `src/http_client/mod.rs` | Replaced DashMap with moka::sync::Cache (max 100, TTL 300s) |
+| Verified upstream cache TTL | `src/mesh/topology.rs:58` | TTL increased from 30s to 300s |
 
 ## Performance Hot Paths
 
@@ -842,6 +849,20 @@ These are passed to PHP-FPM as:
 - `PHP_ADMIN_VALUE:disable_functions` (admin-only, cannot be overridden)
 - `PHP_ADMIN_VALUE:open_basedir` (admin-only, cannot be overridden)
 - `PHP_VALUE` for other settings
+
+## PHP Per-Location Security
+
+Security settings can be configured per-location via `PhpLocationConfig`:
+
+```toml
+[site.proxy.php.locations]
+path = "/api"
+disable_functions = "exec,passthru,shell_exec"
+open_basedir = "/var/www/api"
+max_execution_time = 60
+```
+
+Location-level settings override site-level settings for that specific path prefix.
 
 ## Static File Directory Templates
 
