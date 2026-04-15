@@ -736,19 +736,20 @@ rrsig.extend_from_slice(&timestamp.to_be_bytes());
 
 ## Implementation Plan
 
-The consolidated implementation plan is located at `plans/plan.md`. This single file contains:
+The consolidated implementation plan is located at `plans/plan.md`. 
+
+**Remaining items**: 11 (1 PARTIAL, 9 DEFERRED, 1 ❌ DEFERRED)
 
 | Wave | Focus | Items | Status |
 |------|-------|-------|--------|
-| 4 | Performance & Code Quality | ~70 | ❌ Open |
-| 5 | Future Work | ~25 | ⏸️ Deferred |
+| 4 | Deferred items | 5 | ⏸️ DEFERRED |
+| 5 | Future Work | 6 | ⏸️ DEFERRED |
 
-**Subagent Execution Model**: Items within Wave 4 can be executed in parallel by separate subagents.
-Dependencies between items are documented in `plans/plan.md`.
+**Subagent Execution Model**: All remaining items are independent and can be executed in parallel.
 
 When reviewing the plan against the codebase, always verify claims directly. Plans may reference items already fixed, use outdated line numbers, or describe bugs incorrectly. Run `grep`/search for the specific patterns described to confirm they still exist before implementing fixes.
 
-**Plan Consolidation Note**: All previous plan files (plan2.md through plan24.md) have been merged into `plans/plan.md`. The original files have been removed.
+**Plan Consolidation Note**: Previous plan files (plan2.md through plan24.md) have been merged into `plans/plan.md`. Completed items have been pruned.
 
 ## Admin Panel Architecture Notes
 
