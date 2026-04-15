@@ -1,6 +1,6 @@
 # MaluWAF Implementation Plan
 
-Last updated: 2026-04-15 (Wave 5 items Q3.2, F.9, F.10, Q4.1, A.6 completed; previous: P1.4, Y2.1, Y2.2, F2.1, F2.2, M16.4 verified)
+Last updated: 2026-04-15 (Session: Fixed S1.2 IPC nonce cache poisoning [partial fix completed], R3.1 chrono timestamp consolidation [56 occurrences], R3.2 body collection deduplication [shared function])
 
 ## Overview
 
@@ -292,11 +292,11 @@ Items are organized for **parallelization** - items within a wave can be execute
 
 ### 4.6: Performance - Configuration
 
-#### S2.1: Connection Limit Global Per-Worker - MEDIUM ❌ OPEN
+#### S2.1: Connection Limit Global Per-Worker - MEDIUM ⏸️ DEFERRED
 
-**Issue**: `SiteConnectionLimiter` exists but never instantiated; global limiter only.
+**Issue**: `SiteConnectionLimiter` exists but never instantiated; global limiter only. Additionally, `ConnectionLimiter::try_acquire(site_id, ...)` accepts site_id but doesn't actually track per-site connections - site_id is ignored in rate limiting logic.
 
-**Fix**: Wire `SiteConnectionLimiter::new()` into request path.
+**Fix**: Would require architectural changes to `ConnectionLimiter` to track per-site connection counts, and proper `SiteConnectionLimiter` instantiation with site-specific configuration.
 
 ---
 
