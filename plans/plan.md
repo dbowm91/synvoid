@@ -56,13 +56,31 @@ Items are organized for **parallelization** - items within a wave can be execute
 
 ---
 
-#### P2.2: HTTP Server Clone/To-String Calls - HIGH ❌ OPEN
+#### P2.2: HTTP Server Clone/To-String Calls - HIGH ⏸️ DEFERRED
 
 **Location**: `src/http/server.rs`
 
 **Issue**: 175 `.clone()` calls and 148 `.to_string()` calls per request in hot path.
 
-**Fix**: Use `&str` references instead of `String` ownership; restructure helper functions. Large refactor required to change RequestLogPayload and IPC serialization - deferred for later.
+**Investigation Result**:
+Two categories of clones exist:
+
+1. **Accept loop (lines 447-460)**: `router.clone()`, `waf.clone()`, etc. - These are necessary because they're moved into an `async move` closure for `tokio::spawn`. The struct `HttpServer` is consumed when spawning tasks.
+
+2. **Per-request (lines 808-813)**: `method.to_string()`, `path.clone()`, etc. - These are for `send_request_log_if_enabled()` which requires owned `String` types because `RequestLogPayload` struct uses `String` fields (not `&str`).
+
+The fundamental issue is that:
+- `RequestLogPayload` uses `String` for serialization (via `serde`)
+- `send_request_log_if_enabled()` takes owned `String` parameters
+- The logging is only enabled via config check, but strings are always cloned
+
+**Fix options**:
+1. Change `RequestLogPayload` to use `&str` - breaks serialization
+2. Pass `&str` and convert inside `send_request_log_if_enabled()` - still clones for the log message
+3. Make logging conditional at compile time via feature flag
+4. Defer until a broader refactor of logging infrastructure
+
+**Fix**: Deferred - requires architectural changes to `RequestLogPayload` and IPC serialization. The allocations only matter when `verbose_request_logging` is enabled (off by default).
 
 ---
 
