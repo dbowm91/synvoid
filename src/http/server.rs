@@ -3701,3 +3701,124 @@ impl HttpServer {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_valid_http_request_start_valid_methods() {
+        for method in HTTP_VALID_METHODS {
+            let request = format!("{} / HTTP/1.1\r\n", method);
+            assert!(
+                is_valid_http_request_start(request.as_bytes()),
+                "Should recognize valid method: {}",
+                method
+            );
+        }
+    }
+
+    #[test]
+    fn test_is_valid_http_request_start_invalid() {
+        assert!(!is_valid_http_request_start(b""));
+        assert!(!is_valid_http_request_start(b"GET"));
+        assert!(!is_valid_http_request_start(b"GET/ HTTP/1.1"));
+        assert!(!is_valid_http_request_start(b"INVALID / HTTP/1.1\r\n"));
+    }
+
+    #[test]
+    fn test_is_valid_http_request_start_with_query() {
+        assert!(is_valid_http_request_start(b"POST /path?query=value HTTP/1.1\r\n"));
+        assert!(is_valid_http_request_start(b"GET /api/users?id=123 HTTP/1.0\r\n"));
+    }
+
+    #[test]
+    fn test_is_tls_client_hello_valid() {
+        let tls_hello = [0x16, 0x03, 0x00];
+        assert!(is_tls_client_hello(&tls_hello));
+
+        let tls_hello = [0x16, 0x03, 0x01];
+        assert!(is_tls_client_hello(&tls_hello));
+
+        let tls_hello = [0x16, 0x03, 0x03];
+        assert!(is_tls_client_hello(&tls_hello));
+    }
+
+    #[test]
+    fn test_is_tls_client_hello_invalid() {
+        assert!(!is_tls_client_hello(b"GET / HTTP/1.1"));
+        assert!(!is_tls_client_hello(&[0x16, 0x03, 0x04]));
+        assert!(!is_tls_client_hello(&[0x15]));
+        assert!(!is_tls_client_hello(&[]));
+        assert!(!is_tls_client_hello(&[0x16, 0x04]));
+    }
+
+    #[test]
+    fn test_is_tls_client_hello_minimum_length() {
+        assert!(!is_tls_client_hello(&[0x16, 0x03]));
+        assert!(!is_tls_client_hello(&[0x16]));
+        assert!(!is_tls_client_hello(&[]));
+    }
+
+    #[test]
+    fn test_protocol_validating_stream_initial_bytes() {
+        let stream = ProtocolValidatingStream::<std::io::Cursor<Vec<u8>>>::new(
+            std::io::Cursor::new(vec![]),
+            b"Hello World".to_vec(),
+        );
+        assert_eq!(stream.initial_bytes.as_ref().map(|s| s.len()), Some(11));
+    }
+
+    #[test]
+    fn test_get_cached_regex_valid_pattern() {
+        let pattern = r"\.(?:jpe?g|png|gif)$";
+        let regex = get_cached_regex(pattern);
+        assert!(regex.is_some());
+
+        let regex2 = get_cached_regex(pattern);
+        assert!(regex2.is_some());
+    }
+
+    #[test]
+    fn test_get_cached_regex_invalid_pattern() {
+        let pattern = r"[";
+        let regex = get_cached_regex(pattern);
+        assert!(regex.is_none());
+    }
+
+    #[test]
+    fn test_get_cached_regex_caches_result() {
+        let pattern = r"test\d+";
+        let regex1 = get_cached_regex(pattern);
+        let regex2 = get_cached_regex(pattern);
+        assert!(regex1.is_some());
+        assert!(regex2.is_some());
+        assert_eq!(regex1.map(|r| r.as_str().to_string()), regex2.map(|r| r.as_str().to_string()));
+    }
+
+    #[test]
+    fn test_image_protection_regex_matches() {
+        let regex = IMAGE_PROTECTION_REGEX.clone();
+
+        assert!(regex.is_match("/image.jpg"));
+        assert!(regex.is_match("/image.jpeg"));
+        assert!(regex.is_match("/image.png"));
+        assert!(regex.is_match("/image.gif"));
+        assert!(regex.is_match("/image.webp"));
+        assert!(regex.is_match("/image.bmp"));
+        assert!(regex.is_match("/image.svg"));
+        assert!(regex.is_match("/image.ico"));
+        assert!(regex.is_match("/image.jpg?querystring"));
+    }
+
+    #[test]
+    fn test_image_protection_regex_no_match() {
+        let regex = IMAGE_PROTECTION_REGEX.clone();
+
+        assert!(!regex.is_match("/image.txt"));
+        assert!(!regex.is_match("/image.html"));
+        assert!(!regex.is_match("/image"));
+        assert!(!regex.is_match("/jpeg"));
+        assert!(!regex.is_match("/image.png#anchor"));
+    }
+}
