@@ -56,31 +56,40 @@ Items are organized for **parallelization** - items within a wave can be execute
 
 ---
 
-#### P2.2: HTTP Server Clone/To-String Calls - HIGH ⏸️ DEFERRED
+#### P2.2: HTTP Server Clone/To-String Calls - HIGH ✅ COMPLETE
 
 **Location**: `src/http/server.rs`
 
 **Issue**: 175 `.clone()` calls and 148 `.to_string()` calls per request in hot path.
 
-**Investigation Result**:
-Two categories of clones exist:
+**Fix Applied**: Changed `send_request_log_if_enabled()` to take `&str` references instead of owned `String` values. String conversions now happen INSIDE the function only when verbose logging is actually enabled.
 
-1. **Accept loop (lines 447-460)**: `router.clone()`, `waf.clone()`, etc. - These are necessary because they're moved into an `async move` closure for `tokio::spawn`. The struct `HttpServer` is consumed when spawning tasks.
+**Before** (allocation happens before function call, even if logging disabled):
+```rust
+Self::send_request_log_if_enabled(
+    ipc_clone, worker_id_clone, &main_config, client_ip,
+    method.to_string(),  // ALLOCATED
+    path.clone(),          // CLONED
+    0, ...
+);
+```
 
-2. **Per-request (lines 808-813)**: `method.to_string()`, `path.clone()`, etc. - These are for `send_request_log_if_enabled()` which requires owned `String` types because `RequestLogPayload` struct uses `String` fields (not `&str`).
+**After** (strings only created if logging is enabled):
+```rust
+Self::send_request_log_if_enabled(
+    ipc_clone, worker_id_clone, &main_config, client_ip,
+    &method_str,  // BORROWED
+    &path,         // BORROWED
+    0, ...
+);
+// Inside the function:
+let log = RequestLogPayload {
+    method: method.to_string(),  // Only if verbose logging enabled
+    ...
+};
+```
 
-The fundamental issue is that:
-- `RequestLogPayload` uses `String` for serialization (via `serde`)
-- `send_request_log_if_enabled()` takes owned `String` parameters
-- The logging is only enabled via config check, but strings are always cloned
-
-**Fix options**:
-1. Change `RequestLogPayload` to use `&str` - breaks serialization
-2. Pass `&str` and convert inside `send_request_log_if_enabled()` - still clones for the log message
-3. Make logging conditional at compile time via feature flag
-4. Defer until a broader refactor of logging infrastructure
-
-**Fix**: Deferred - requires architectural changes to `RequestLogPayload` and IPC serialization. The allocations only matter when `verbose_request_logging` is enabled (off by default).
+**Impact**: Zero overhead when `verbose_request_logging.enabled = false` (default). When enabled, only necessary allocations occur.
 
 ---
 
