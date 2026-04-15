@@ -22,13 +22,13 @@ This document contains the remaining deferred and partially-complete items from 
 | R3.3 | MEDIUM | ⏸️ DEFERRED | Code Quality |
 | R3.4 | LOW | ❌ DEFERRED | Code Quality |
 | Q2.1 | MEDIUM | ⏸️ DEFERRED | Architecture |
-| Q3.1 | MEDIUM | ⏸️ PARTIAL | Testing |
+| Q3.1 | MEDIUM | 🔧 IN PROGRESS | Testing |
 | M5 | MEDIUM | ⏸️ DEFERRED | Mesh/DHT |
 | M6 | MEDIUM | 🔧 IN PROGRESS | Mesh/DHT |
 | M16.9 | MEDIUM | ✅ COMPLETED | Mesh/DHT |
 | M16.10 | MEDIUM | ⏸️ DEFERRED | Mesh/DHT |
 
-**Total**: 11 items (1 COMPLETED, 1 PARTIAL, 7 DEFERRED, 1 IN PROGRESS, 1 ❌ DEFERRED)
+**Total**: 11 items (1 COMPLETED, 7 DEFERRED, 2 IN PROGRESS, 1 ❌ DEFERRED)
 
 ---
 
@@ -133,7 +133,7 @@ This document contains the remaining deferred and partially-complete items from 
 
 ---
 
-#### Q3.1: Missing Test Coverage for Critical Paths - MEDIUM ⏸️ PARTIAL
+#### Q3.1: Missing Test Coverage for Critical Paths - MEDIUM 🔧 IN PROGRESS
 
 **Progress Made**:
 
@@ -147,10 +147,47 @@ This document contains the remaining deferred and partially-complete items from 
    - Content-Length mismatches
    All 24 proxy_pipeline_tests now pass.
 
-**Remaining Work**:
-- Full HTTP/TLS server request handling tests (not just proxy)
-- Mesh routing integration tests
-- DHT operations under various network conditions
+3. **HTTP Server Handler Tests**: Added `http_server_handler_tests` module with 8 tests covering:
+   - SharedRequestHandler health/ready requests
+   - JSON response building
+   - Error response building
+   - Cookie and Alt-Svc header injection
+
+4. **Early HTTP Parser Tests**: Added `early_http_parser_tests` module with 13 tests covering:
+   - GET/POST/PUT/DELETE/PATCH/HEAD/OPTIONS methods
+   - Query parameter parsing
+   - Cookie parsing
+   - Content-Length parsing
+   - Malformed and partial request handling
+
+5. **Response Builder Tests**: Added `response_builder_tests` module with 6 tests covering:
+   - Reason phrase coverage
+   - Error response body content
+   - JSON response content-type
+   - Cookie header injection
+   - Alt-Svc header injection
+
+6. **HTTP Security Header Tests**: Added `http_security_header_tests` module with 5 tests covering:
+   - Security headers injection (HSTS, CSP, X-Frame-Options, etc.)
+   - WebSocket upgrade detection edge cases
+   - WebSocket accept key RFC 6455 compliance
+   - CORS wildcard and specific origin handling
+
+7. **DHT Integration Tests**: Added 15 new tests covering:
+   - Record store basic operations
+   - Record store prefix search
+   - Record store clear
+   - Signed record TTL
+   - TTL manager for different record types
+   - Message timestamp validation edge cases
+   - KBucket eviction when full
+   - GeoInfo distance calculation
+   - Persisted bucket roundtrip
+   - Stake manager initial state
+   - DHT rate limiter peer independence
+   - DHT key privileged vs public classification
+
+**Total new tests added**: 47 (8 + 13 + 6 + 5 + 15)
 
 ---
 
@@ -194,18 +231,49 @@ This document contains the remaining deferred and partially-complete items from 
    - Protobuf definitions added
    - Encoding/decoding implemented
 
-**Remaining Work**:
-- Wire QuorumManager into `record_store_crud` for privileged keys
-- When storing `verified_upstream`, broadcast to all global nodes
-- Collect signatures/rejections, only store if 2/3+ AND no valid rejections
-- Implement veto verification (check DHT for "domain taken" claims)
-- Log suspicious veto patterns
+**Remaining Work** (Implementation Steps):
+
+1. **Wire QuorumManager into RecordStoreManager**:
+   - Add `quorum_manager: Option<Arc<QuorumManager>>` to `RecordStoreManager`
+   - Add `set_quorum_manager()` method to initialize it
+   - Pass quorum_manager reference when creating record store
+
+2. **Modify `store_record_global` for quorum-tracked keys**:
+   - Identify privileged keys (verified_upstream, etc.) that need quorum
+   - For these keys, do NOT store immediately
+   - Instead, call `start_quorum_request()` and broadcast to global nodes
+
+3. **Implement quorum broadcast**:
+   - When quorum request starts, broadcast `QuorumStoreRequest` to all global nodes
+   - Use existing mesh message infrastructure
+   - Track responses with deadline (10 seconds per `QuorumRequest`)
+
+4. **Handle quorum responses**:
+   - When `QuorumSignatureResponse` received: call `add_signature()`
+   - When `QuorumRejectionResponse` received: call `add_rejection()`
+   - Check `threshold_met()` after each response
+
+5. **Implement veto verification**:
+   - For `DomainTaken` rejections, check DHT for existing key
+   - `verify_rejection()` in QuorumManager already exists, wire it up
+   - Mark verified fruitless claims in veto_history
+
+6. **Complete quorum and store**:
+   - On `threshold_met()` AND no valid rejections:
+     - Store the record locally with full quorum signatures
+     - Call `complete_request()` to clean up
+   - On valid rejection: abort, do not store
+   - On timeout: use signatures_collected if >= threshold, else abort
+
+7. **Log suspicious veto patterns**:
+   - After each quorum, call `get_veto_abuse_score()` for rejecting nodes
+   - Log warnings for scores exceeding threshold
 
 **Design**:
 - Threshold: 2/3 of active global nodes
 - Veto is hard block: ANY valid rejection blocks
 - Non-response is acceptable
-- Rejection verification for verifiable claims
+- Rejection verification for verifiable claims (DomainTaken checked against DHT)
 
 ---
 

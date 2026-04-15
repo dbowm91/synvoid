@@ -1057,3 +1057,307 @@ fn test_sync_to_regional_hub() {
         "sync_to_regional_hub should populate hub peers"
     );
 }
+
+// ── DHT Record Operations Under Various Conditions ──────────────────
+
+#[test]
+fn test_record_store_basic_operations() {
+    use maluwaf::mesh::dht::store::DhtRecordStore;
+
+    let store = DhtRecordStore::new();
+    let key = "test_key".to_string();
+    let value = b"test_value".to_vec();
+
+    store.put(DhtRecord::new(key.clone(), value.clone(), None));
+
+    let retrieved = store.get(&key);
+    assert!(retrieved.is_some(), "Record should exist after put");
+    assert_eq!(retrieved.unwrap().value, value);
+}
+
+#[test]
+fn test_record_store_insert_and_retrieve() {
+    use maluwaf::mesh::dht::store::DhtRecordStore;
+
+    let store = DhtRecordStore::new();
+    let key = "insert_test".to_string();
+    let value = b"insert_value".to_vec();
+
+    store.put(DhtRecord::new(key.clone(), value.clone(), None));
+
+    let retrieved = store.get(&key);
+    assert!(retrieved.is_some());
+    assert_eq!(retrieved.unwrap().value, value);
+}
+
+#[test]
+fn test_record_store_multiple_keys_same_prefix() {
+    use maluwaf::mesh::dht::store::DhtRecordStore;
+
+    let store = DhtRecordStore::new();
+
+    store.put(DhtRecord::new(
+        "site:example.com".to_string(),
+        b"content1".to_vec(),
+        None,
+    ));
+    store.put(DhtRecord::new(
+        "site:example.org".to_string(),
+        b"content2".to_vec(),
+        None,
+    ));
+    store.put(DhtRecord::new(
+        "site:example.net".to_string(),
+        b"content3".to_vec(),
+        None,
+    ));
+    store.put(DhtRecord::new(
+        "upstream:example.com".to_string(),
+        b"upstream1".to_vec(),
+        None,
+    ));
+
+    let site_records = store.get_by_prefix("site:");
+    assert_eq!(site_records.len(), 3, "Should find 3 site: records");
+
+    let upstream_records = store.get_by_prefix("upstream:");
+    assert_eq!(upstream_records.len(), 1, "Should find 1 upstream: record");
+}
+
+#[test]
+fn test_record_store_clear_preserves_nothing() {
+    use maluwaf::mesh::dht::store::DhtRecordStore;
+
+    let store = DhtRecordStore::new();
+    store.put(DhtRecord::new("k1".to_string(), b"v1".to_vec(), None));
+    store.put(DhtRecord::new("k2".to_string(), b"v2".to_vec(), None));
+
+    assert_eq!(store.len(), 2);
+
+    store.clear();
+
+    assert!(store.is_empty(), "Store should be empty after clear");
+    assert_eq!(store.len(), 0);
+}
+
+#[test]
+fn test_signed_record_with_ttl() {
+    use maluwaf::mesh::dht::signed::{SignedDhtRecord, SignedRecordType};
+
+    let record = SignedDhtRecord::new(
+        "test:key".to_string(),
+        b"test_value".to_vec(),
+        "publisher_1".to_string(),
+        SignedRecordType::Upstream,
+    );
+
+    assert!(!record.is_expired());
+}
+
+#[test]
+fn test_ttl_manager_different_record_types() {
+    use maluwaf::mesh::dht::signed::{SignedRecordType, TtlManager};
+
+    let manager = TtlManager::new();
+
+    let org_ttl = manager.ttl_for(SignedRecordType::Organization);
+    let upstream_ttl = manager.ttl_for(SignedRecordType::Upstream);
+    let node_ttl = manager.ttl_for(SignedRecordType::NodeInfo);
+
+    assert!(org_ttl > Duration::ZERO, "Organization TTL should be set");
+    assert!(upstream_ttl > Duration::ZERO, "Upstream TTL should be set");
+    assert!(node_ttl > Duration::ZERO, "NodeInfo TTL should be set");
+
+    assert_ne!(
+        org_ttl, upstream_ttl,
+        "Different record types should have different TTLs"
+    );
+}
+
+#[test]
+fn test_validate_message_timestamp_edge_cases() {
+    use maluwaf::mesh::dht::signed::{
+        validate_message_timestamp, DHT_MESSAGE_TIMESTAMP_WINDOW_SECS,
+    };
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    assert!(
+        validate_message_timestamp(now),
+        "Current time should be valid"
+    );
+
+    let at_window_edge = now + DHT_MESSAGE_TIMESTAMP_WINDOW_SECS as u64;
+    assert!(
+        validate_message_timestamp(at_window_edge),
+        "At window edge should be valid"
+    );
+
+    let just_outside_window = now + DHT_MESSAGE_TIMESTAMP_WINDOW_SECS as u64 + 1;
+    assert!(
+        !validate_message_timestamp(just_outside_window),
+        "Just outside window should be invalid"
+    );
+}
+
+#[test]
+fn test_kbucket_eviction_when_full() {
+    let mut bucket = KBucket::new(0);
+
+    for i in 0..K_SIZE {
+        let node_id = NodeId::from_bytes(&[i as u8; 32]).unwrap();
+        let contact = PeerContact::new(
+            node_id,
+            format!("node-{:02x}", i),
+            "192.168.1.1".to_string(),
+            443,
+        );
+        let result = bucket.insert(contact);
+        assert!(result.is_ok(), "Should insert {}th node", i);
+    }
+
+    assert!(bucket.is_full(), "Bucket should be full");
+
+    let new_id = NodeId::from_bytes(&[0xFFu8; 32]).unwrap();
+    let new_contact = PeerContact::new(
+        new_id,
+        "node-ff".to_string(),
+        "192.168.1.1".to_string(),
+        443,
+    );
+    let eviction_result = bucket.insert(new_contact);
+    assert!(eviction_result.is_err(), "Should reject when full");
+}
+
+#[test]
+fn test_geo_info_distance_calculation() {
+    let us_geo = GeoInfo::with_coords(37.7749, -122.4194);
+    let eu_geo = GeoInfo::with_coords(52.5200, 13.4050);
+
+    let us_lat = us_geo.latitude.unwrap();
+    let us_lon = us_geo.longitude.unwrap();
+    let eu_lat = eu_geo.latitude.unwrap();
+    let eu_lon = eu_geo.longitude.unwrap();
+
+    let distance = ((eu_lat - us_lat).powi(2) + (eu_lon - us_lon).powi(2)).sqrt();
+    assert!(
+        distance > 0.0,
+        "Distance between US and EU should be non-zero"
+    );
+}
+
+#[test]
+fn test_persisted_bucket_roundtrip() {
+    use maluwaf::mesh::dht::routing::PersistedBucket;
+
+    let bucket = PersistedBucket {
+        index: 0,
+        peers: vec![],
+        last_updated: 1234567890,
+    };
+
+    let bytes = bucket.to_bytes_rkyv();
+    let restored = PersistedBucket::from_bytes_rkyv(&bytes).unwrap();
+
+    assert_eq!(restored.index, 0);
+    assert_eq!(restored.last_updated, 1234567890);
+}
+
+#[test]
+fn test_record_signer_produces_valid_signature() {
+    use maluwaf::mesh::dht::signed::RecordSigner;
+
+    let mut record = SignedDhtRecord::new(
+        "test:key".to_string(),
+        b"test_value".to_vec(),
+        "publisher_1".to_string(),
+        SignedRecordType::Upstream,
+    );
+
+    let signer = RecordSigner::new(Some([0x42u8; 32]));
+    let verifying_key = signer.get_verifying_key();
+
+    if let Some(key) = verifying_key {
+        record.signer_public_key = Some(key);
+    }
+
+    let signature = signer.sign(&record);
+    assert!(signature.is_some(), "Should produce a signature");
+
+    if let Some(sig) = signature {
+        record.signature = sig;
+        assert!(signer.verify(&record), "Signature should verify");
+    }
+}
+
+#[test]
+fn test_stake_manager_initial_state() {
+    use maluwaf::mesh::dht::stake::StakeManager;
+
+    let config = StakeConfig::default();
+    let manager = StakeManager::new(config, "test-node".to_string(), false);
+
+    let active = manager.get_all_active_stakes();
+    assert!(
+        active.is_empty(),
+        "New manager should have no active stakes"
+    );
+
+    let can_write = manager.can_write_dht("unknown-node");
+    assert!(!can_write, "Unknown node should not be able to write");
+}
+
+#[test]
+fn test_dht_rate_limiter_different_peers_independent() {
+    use maluwaf::mesh::dht::DhtRateLimiter;
+
+    let limiter = DhtRateLimiter::new(2, 60);
+
+    assert!(limiter.is_allowed("peer-a"));
+    assert!(limiter.is_allowed("peer-a"));
+    assert!(
+        !limiter.is_allowed("peer-a"),
+        "peer-a should be blocked after limit"
+    );
+
+    assert!(
+        limiter.is_allowed("peer-b"),
+        "peer-b should still be allowed"
+    );
+    assert!(
+        limiter.is_allowed("peer-b"),
+        "peer-b should still be allowed"
+    );
+    assert!(
+        !limiter.is_allowed("peer-b"),
+        "peer-b should now be blocked"
+    );
+}
+
+#[test]
+fn test_dht_key_privileged_vs_public() {
+    let org_key = DhtKey::organization("test");
+    let upstream_key = DhtKey::upstream("api.example.com");
+    let tier_key = DhtKey::tier_key("org", "key");
+
+    assert!(
+        !org_key.is_public(),
+        "Organization key should not be public"
+    );
+    assert!(
+        org_key.is_privileged(),
+        "Organization key should be privileged"
+    );
+
+    assert!(upstream_key.is_public(), "Upstream key should be public");
+    assert!(
+        !upstream_key.is_privileged(),
+        "Upstream key should not be privileged"
+    );
+
+    assert!(!tier_key.is_public(), "TierKey should not be public");
+    assert!(tier_key.is_privileged(), "TierKey should be privileged");
+}

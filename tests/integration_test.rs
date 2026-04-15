@@ -2824,3 +2824,485 @@ mod proxy_pipeline_tests {
         let _ = client.await;
     }
 }
+
+#[cfg(test)]
+mod http_server_handler_tests {
+    use maluwaf::config::MainConfig;
+    use maluwaf::http::shared_handler::SharedRequestHandler;
+
+    fn make_test_config() -> MainConfig {
+        MainConfig::default()
+    }
+
+    #[test]
+    fn test_shared_handler_health_request() {
+        let handler = SharedRequestHandler::new();
+        let config = make_test_config();
+
+        let resp = handler.handle_health_request(&None, &config);
+
+        assert_eq!(resp.status(), 200);
+    }
+
+    #[test]
+    fn test_shared_handler_ready_request_healthy() {
+        let handler = SharedRequestHandler::new();
+        let config = make_test_config();
+
+        let resp = handler.handle_ready_request(true, &None, &config);
+
+        assert_eq!(resp.status(), 200);
+    }
+
+    #[test]
+    fn test_shared_handler_ready_request_not_ready() {
+        let handler = SharedRequestHandler::new();
+        let config = make_test_config();
+
+        let resp = handler.handle_ready_request(false, &None, &config);
+
+        assert_eq!(resp.status(), 503);
+    }
+
+    #[test]
+    fn test_shared_handler_build_json_response() {
+        let handler = SharedRequestHandler::new();
+        let config = make_test_config();
+
+        let resp = handler.build_json_response(200, r#"{"test":true}"#.to_string(), &None, &config);
+
+        assert_eq!(resp.status(), 200);
+        assert!(resp.headers().get("content-type").is_some());
+    }
+
+    #[test]
+    fn test_shared_handler_build_error_response_404() {
+        let handler = SharedRequestHandler::new();
+        let config = make_test_config();
+
+        let resp = handler.build_error_response(404, "Not Found", &None, &config);
+
+        assert_eq!(resp.status(), 404);
+    }
+
+    #[test]
+    fn test_shared_handler_build_error_response_500() {
+        let handler = SharedRequestHandler::new();
+        let config = make_test_config();
+
+        let resp = handler.build_error_response(500, "Internal Server Error", &None, &config);
+
+        assert_eq!(resp.status(), 500);
+    }
+
+    #[test]
+    fn test_shared_handler_build_response_with_cookie() {
+        let handler = SharedRequestHandler::new();
+        let config = make_test_config();
+
+        let resp = handler.build_response_with_cookie(
+            200,
+            r#"{"logged_in":true}"#.to_string(),
+            "application/json",
+            "session=abc123",
+            &None,
+            &config,
+        );
+
+        assert_eq!(resp.status(), 200);
+        assert!(resp.headers().get("set-cookie").is_some());
+    }
+
+    #[test]
+    fn test_shared_handler_build_response_with_alt_svc() {
+        let handler = SharedRequestHandler::new();
+        let config = make_test_config();
+
+        let alt_svc = Some("h2=\"https://alt.example.com:443\"".to_string());
+        let resp = handler.build_response_with_alt_svc(
+            200,
+            r#"{"ok":true}"#.to_string(),
+            "application/json",
+            &alt_svc,
+            &config,
+        );
+
+        assert_eq!(resp.status(), 200);
+        assert!(resp.headers().get("alt-svc").is_some());
+    }
+}
+
+#[cfg(test)]
+mod early_http_parser_tests {
+    use maluwaf::http::early_parse::{EarlyHttpParser, EarlyHttpRequest};
+
+    #[test]
+    fn test_parse_get_root() {
+        let data = b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n";
+        let result = EarlyHttpParser::parse(data);
+
+        assert!(result.is_some());
+        let req = result.unwrap();
+        assert_eq!(req.method, "GET");
+        assert_eq!(req.path, "/");
+        assert_eq!(req.host, Some("localhost".to_string()));
+        assert!(req.cookies.is_none());
+        assert_eq!(req.content_length, None);
+    }
+
+    #[test]
+    fn test_parse_get_with_query_params() {
+        let data = b"GET /api/items?id=123&name=test HTTP/1.1\r\nHost: localhost\r\n\r\n";
+        let result = EarlyHttpParser::parse(data);
+
+        assert!(result.is_some());
+        let req = result.unwrap();
+        assert_eq!(req.method, "GET");
+        assert_eq!(req.path, "/api/items?id=123&name=test");
+    }
+
+    #[test]
+    fn test_parse_post_with_json_body() {
+        let data = b"POST /api/data HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: 13\r\n\r\n{\"key\":\"value\"}";
+        let result = EarlyHttpParser::parse(data);
+
+        assert!(result.is_some());
+        let req = result.unwrap();
+        assert_eq!(req.method, "POST");
+        assert_eq!(req.path, "/api/data");
+        assert_eq!(req.content_length, Some(13));
+    }
+
+    #[test]
+    fn test_parse_with_multiple_cookies() {
+        let data = b"GET / HTTP/1.1\r\nHost: localhost\r\nCookie: session=abc; csrf=xyz; theme=dark\r\n\r\n";
+        let result = EarlyHttpParser::parse(data);
+
+        assert!(result.is_some());
+        let req = result.unwrap();
+        assert!(req.cookies.is_some());
+        let cookies = req.cookies.unwrap();
+        assert!(cookies.contains("session=abc"));
+        assert!(cookies.contains("csrf=xyz"));
+        assert!(cookies.contains("theme=dark"));
+    }
+
+    #[test]
+    fn test_parse_missing_host() {
+        let data = b"GET / HTTP/1.1\r\n\r\n";
+        let result = EarlyHttpParser::parse(data);
+
+        assert!(result.is_some());
+        let req = result.unwrap();
+        assert_eq!(req.method, "GET");
+        assert_eq!(req.path, "/");
+        assert!(req.host.is_none());
+    }
+
+    #[test]
+    fn test_parse_empty_request() {
+        let data = b"";
+        let result = EarlyHttpParser::parse(data);
+
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_parse_partial_request() {
+        let data = b"GET /api";
+        let result = EarlyHttpParser::parse(data);
+
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_parse_malformed_request_line() {
+        let data = b"GET / HTTP/1.0\r\n\r\n";
+        let result = EarlyHttpParser::parse(data);
+
+        assert!(result.is_some());
+        let req = result.unwrap();
+        assert_eq!(req.method, "GET");
+        assert_eq!(req.path, "/");
+    }
+
+    #[test]
+    fn test_parse_delete_method() {
+        let data = b"DELETE /api/items/123 HTTP/1.1\r\nHost: localhost\r\n\r\n";
+        let result = EarlyHttpParser::parse(data);
+
+        assert!(result.is_some());
+        let req = result.unwrap();
+        assert_eq!(req.method, "DELETE");
+        assert_eq!(req.path, "/api/items/123");
+    }
+
+    #[test]
+    fn test_parse_put_method() {
+        let data = b"PUT /api/items/123 HTTP/1.1\r\nHost: localhost\r\nContent-Length: 10\r\n\r\n{\"id\":\"123\"}";
+        let result = EarlyHttpParser::parse(data);
+
+        assert!(result.is_some());
+        let req = result.unwrap();
+        assert_eq!(req.method, "PUT");
+        assert_eq!(req.path, "/api/items/123");
+        assert_eq!(req.content_length, Some(10));
+    }
+
+    #[test]
+    fn test_parse_patch_method() {
+        let data = b"PATCH /api/items/123 HTTP/1.1\r\nHost: localhost\r\nContent-Length: 15\r\n\r\n{\"name\":\"updated\"}";
+        let result = EarlyHttpParser::parse(data);
+
+        assert!(result.is_some());
+        let req = result.unwrap();
+        assert_eq!(req.method, "PATCH");
+        assert_eq!(req.path, "/api/items/123");
+        assert_eq!(req.content_length, Some(15));
+    }
+
+    #[test]
+    fn test_parse_head_method() {
+        let data = b"HEAD /api/items HTTP/1.1\r\nHost: localhost\r\n\r\n";
+        let result = EarlyHttpParser::parse(data);
+
+        assert!(result.is_some());
+        let req = result.unwrap();
+        assert_eq!(req.method, "HEAD");
+        assert_eq!(req.path, "/api/items");
+    }
+
+    #[test]
+    fn test_parse_options_method() {
+        let data = b"OPTIONS * HTTP/1.1\r\nHost: localhost\r\n\r\n";
+        let result = EarlyHttpParser::parse(data);
+
+        assert!(result.is_some());
+        let req = result.unwrap();
+        assert_eq!(req.method, "OPTIONS");
+        assert_eq!(req.path, "*");
+    }
+}
+
+#[cfg(test)]
+mod response_builder_tests {
+    use maluwaf::http::response_builder::{
+        build_json_response, build_response_with_alt_svc, build_response_with_cookie,
+        error_response_bytes, error_response_full, reason_phrase,
+    };
+    use maluwaf::config::MainConfig;
+
+    fn make_test_config() -> MainConfig {
+        MainConfig::default()
+    }
+
+    #[test]
+    fn test_reason_phrase_coverage() {
+        assert_eq!(reason_phrase(100), "Continue");
+        assert_eq!(reason_phrase(101), "Switching Protocols");
+        assert_eq!(reason_phrase(201), "Created");
+        assert_eq!(reason_phrase(204), "No Content");
+        assert_eq!(reason_phrase(301), "Moved Permanently");
+        assert_eq!(reason_phrase(302), "Found");
+        assert_eq!(reason_phrase(304), "Not Modified");
+    }
+
+    #[test]
+    fn test_error_response_bytes_body() {
+        let resp = error_response_bytes(400);
+        assert_eq!(resp.body(), &bytes::Bytes::from_static(b"Bad Request"));
+    }
+
+    #[test]
+    fn test_error_response_full_status() {
+        let resp = error_response_full(404);
+        assert_eq!(resp.status(), 404);
+    }
+
+    #[test]
+    fn test_build_json_response_content_type() {
+        let config = make_test_config();
+        let resp = build_json_response(200, r#"{"test":true}"#.to_string(), &None, &config);
+
+        assert_eq!(resp.status(), 200);
+        let ct = resp.headers().get("content-type").unwrap();
+        assert!(ct.to_str().unwrap().contains("application/json"));
+    }
+
+    #[test]
+    fn test_build_response_with_cookie_sets_header() {
+        let config = make_test_config();
+        let resp = build_response_with_cookie(
+            200,
+            r#"{"ok":true}"#.to_string(),
+            "application/json",
+            "session=xyz",
+            &None,
+            &config,
+        );
+
+        assert_eq!(resp.status(), 200);
+        assert!(resp.headers().get("set-cookie").is_some());
+    }
+
+    #[test]
+    fn test_build_response_with_alt_svc() {
+        let config = make_test_config();
+        let alt_svc = Some("h2=\"localhost:8443\"".to_string());
+        let resp = build_response_with_alt_svc(
+            200,
+            "OK".to_string(),
+            "text/plain",
+            &alt_svc,
+            &config,
+        );
+
+        assert_eq!(resp.status(), 200);
+        assert!(resp.headers().get("alt-svc").is_some());
+    }
+}
+
+#[cfg(test)]
+mod http_security_header_tests {
+    use bytes::Bytes;
+    use http::{Response, StatusCode};
+    use http_body_util::Full;
+    use maluwaf::http::headers::{
+        inject_cors_headers, inject_security_headers, is_websocket_upgrade,
+        compute_websocket_accept_key,
+    };
+    use maluwaf::config::site::{SiteCorsConfig, SiteSecurityHeadersConfig};
+
+    fn make_security_config() -> SiteSecurityHeadersConfig {
+        SiteSecurityHeadersConfig {
+            enabled: None,
+            strict_transport_security: Some("max-age=31536000; includeSubDomains".to_string()),
+            content_security_policy: Some("default-src 'self'".to_string()),
+            x_frame_options: Some("DENY".to_string()),
+            x_content_type_options: Some("nosniff".to_string()),
+            x_xss_protection: Some("1; mode=block".to_string()),
+            referrer_policy: Some("strict-origin-when-cross-origin".to_string()),
+            permissions_policy: Some("geolocation=()".to_string()),
+            cache_control: Some("no-store".to_string()),
+            expect_ct: None,
+            x_permitted_cross_domain_policies: Some("none".to_string()),
+            x_download_options: Some("noopen".to_string()),
+            content_type: None,
+            more_clear_headers: vec![],
+            cors: SiteCorsConfig::default(),
+            cookie: Default::default(),
+            date_header: None,
+            date_jitter_seconds: None,
+            server_token: None,
+        }
+    }
+
+    #[test]
+    fn test_inject_security_headers_all_present() {
+        let config = make_security_config();
+        let builder = Response::builder();
+        let resp = inject_security_headers(builder, &config).body(()).unwrap();
+
+        assert_eq!(
+            resp.headers().get("strict-transport-security").unwrap(),
+            "max-age=31536000; includeSubDomains"
+        );
+        assert_eq!(
+            resp.headers().get("content-security-policy").unwrap(),
+            "default-src 'self'"
+        );
+        assert_eq!(resp.headers().get("x-frame-options").unwrap(), "DENY");
+        assert_eq!(
+            resp.headers().get("x-content-type-options").unwrap(),
+            "nosniff"
+        );
+        assert_eq!(
+            resp.headers().get("x-xss-protection").unwrap(),
+            "1; mode=block"
+        );
+        assert_eq!(
+            resp.headers().get("referrer-policy").unwrap(),
+            "strict-origin-when-cross-origin"
+        );
+        assert_eq!(
+            resp.headers().get("permissions-policy").unwrap(),
+            "geolocation=()"
+        );
+        assert_eq!(resp.headers().get("cache-control").unwrap(), "no-store");
+        assert_eq!(
+            resp.headers().get("x-permitted-cross-domain-policies").unwrap(),
+            "none"
+        );
+        assert_eq!(
+            resp.headers().get("x-download-options").unwrap(),
+            "noopen"
+        );
+    }
+
+    #[test]
+    fn test_is_websocket_upgrade_edge_cases() {
+        let mut headers = http::HeaderMap::new();
+
+        headers.insert("upgrade", "websocket".parse().unwrap());
+        headers.insert("connection", "Upgrade".parse().unwrap());
+        assert!(is_websocket_upgrade(&headers));
+
+        headers.clear();
+        headers.insert("upgrade", "websocket".parse().unwrap());
+        headers.insert("connection", "upgrade".parse().unwrap());
+        assert!(is_websocket_upgrade(&headers));
+
+        headers.clear();
+        headers.insert("upgrade", "websocket".parse().unwrap());
+        headers.insert("connection", "keep-alive".parse().unwrap());
+        assert!(!is_websocket_upgrade(&headers));
+
+        headers.clear();
+        headers.insert("upgrade", "h2".parse().unwrap());
+        headers.insert("connection", "Upgrade".parse().unwrap());
+        assert!(!is_websocket_upgrade(&headers));
+
+        headers.clear();
+        headers.insert("connection", "Upgrade".parse().unwrap());
+        assert!(!is_websocket_upgrade(&headers));
+    }
+
+    #[test]
+    fn test_compute_websocket_accept_key_rfc6455() {
+        // RFC 6455 Section 4.2.2 example key
+        let key = "dGhlIHNhbXBsZSBub25jZQ==";
+        let expected = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
+        assert_eq!(compute_websocket_accept_key(key), expected);
+    }
+
+    #[test]
+    fn test_inject_cors_headers_wildcard_with_flag() {
+        let mut config = SiteCorsConfig::default();
+        config.allow_origin = Some("*".to_string());
+        config.allow_wildcard_cors = true;
+
+        let builder = Response::builder();
+        let resp = inject_cors_headers(builder, &config).body(()).unwrap();
+
+        assert_eq!(
+            resp.headers().get("access-control-allow-origin").unwrap(),
+            "*"
+        );
+    }
+
+    #[test]
+    fn test_inject_cors_headers_specific_origin() {
+        let mut config = SiteCorsConfig::default();
+        config.allow_origin = Some("https://example.com".to_string());
+        config.allow_methods = Some(vec!["GET".to_string(), "POST".to_string()]);
+        config.allow_headers = Some(vec!["Content-Type".to_string()]);
+
+        let builder = Response::builder();
+        let resp = inject_cors_headers(builder, &config).body(()).unwrap();
+
+        assert_eq!(
+            resp.headers().get("access-control-allow-origin").unwrap(),
+            "https://example.com"
+        );
+    }
+}
