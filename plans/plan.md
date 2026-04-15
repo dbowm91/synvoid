@@ -256,13 +256,23 @@ Items are organized for **parallelization** - items within a wave can be execute
 
 ### 4.5: Performance - Input Handling
 
-#### P.3: URL Decoding Repeated Allocations - HIGH ❌ OPEN
+#### P.3: URL Decoding Repeated Allocations - HIGH ⏸️ DEFERRED
 
 **Location**: `src/waf/attack_detection/*.rs`
 
 **Issue**: `InputNormalizer` decodes URLs, then detectors call `url_decode_all()` again.
 
-**Fix**: InputNormalizer and detector url_decode_all() serve different purposes. Full caching would need significant refactoring.
+**Investigation Result**: The detectors use `detect_with_url_decode()` which calls `url_decode_all()` on input that has already been normalized by `InputNormalizer::normalize()`. However:
+
+1. `InputNormalizer` handles additional transformations beyond URL decoding (`\x`, `\u`, null bytes, HTML entities, NFKC normalization)
+2. `url_decode_all()` uses `urlencoding_decode` while `InputNormalizer` uses character-by-character `%XX` decoding
+3. Both are iterative (10 passes) but produce equivalent results for pure URL-encoded inputs
+
+The redundancy is theoretically wasteful but unlikely to cause correctness issues. However, the normalizer uses thread-local buffers (`NORMALIZE_BUFFER`) that are cleared per-call, preventing caching across detectors. Eliminating the redundancy would require either:
+- Passing already-decoded input to detectors (architectural change)
+- Having detectors skip decoding when input is known to be pre-normalized
+
+**Fix**: Deferred - significant refactoring required with low practical benefit (correctness is not affected).
 
 ---
 
@@ -338,11 +348,41 @@ Items are organized for **parallelization** - items within a wave can be execute
 
 ### 4.7: Code Quality - Testing & Coverage
 
-#### Q1.3: HTTP/TLS Test Coverage Gaps - HIGH ❌ OPEN
+#### Q1.3: HTTP/TLS Test Coverage Gaps - HIGH ⚠️ PARTIAL
 
-**Issue**: `http/server.rs` (3622 lines) and `tls/server.rs` (1774 lines) have no integration tests.
+**Location**: `src/http/server.rs` (~3700 lines) and `src/tls/server.rs` (~1770 lines)
 
-**Fix**: Add integration tests that start HTTP/TLS server and send real requests.
+**Issue**: These files have no `#[cfg(test)]` modules.
+
+**Investigation Result**:
+- `http/server.rs` has ZERO internal unit tests
+- `tls/server.rs` has ZERO internal unit tests
+- `tests/integration_test.rs` has proxy forwarding tests (NOT server tests)
+- T1.1-T1.4 do NOT overlap - they test admin, upstream, cache, buffer pools
+
+**What exists**:
+- `http/shared_handler.rs`: 4 tests for request context and response building
+- `http/response_builder.rs`: minimal tests
+- `http/webdav.rs`: WebDAV method tests
+- `http/headers.rs`: header utility tests
+- `http/file_manager.rs`: file manager tests
+- `http/early_parse.rs`: early parsing tests
+- `tls/sni_peek.rs`: SNI/JA4 tests
+- `tls/acme_dns.rs`: ACME DNS tests
+
+**What NOT tested** (http/server.rs):
+- `serve()` main loop (TCP accept, connection spawning)
+- `handle_request()` sections 1-15 (core request handling)
+- Internal endpoints (drain, health, ready)
+- Connection limiting semaphore
+- Bandwidth limiting
+- WebSocket upgrade detection
+- Request parsing and routing
+- WAF check integration
+- Honeypot handling
+- Backend selection and proxying
+
+**Fix**: Add unit tests for http/server.rs helpers and components. Integration tests would require starting TCP servers which is complex.
 
 ---
 
