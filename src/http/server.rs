@@ -3729,8 +3729,12 @@ mod tests {
 
     #[test]
     fn test_is_valid_http_request_start_with_query() {
-        assert!(is_valid_http_request_start(b"POST /path?query=value HTTP/1.1\r\n"));
-        assert!(is_valid_http_request_start(b"GET /api/users?id=123 HTTP/1.0\r\n"));
+        assert!(is_valid_http_request_start(
+            b"POST /path?query=value HTTP/1.1\r\n"
+        ));
+        assert!(is_valid_http_request_start(
+            b"GET /api/users?id=123 HTTP/1.0\r\n"
+        ));
     }
 
     #[test]
@@ -3794,7 +3798,10 @@ mod tests {
         let regex2 = get_cached_regex(pattern);
         assert!(regex1.is_some());
         assert!(regex2.is_some());
-        assert_eq!(regex1.map(|r| r.as_str().to_string()), regex2.map(|r| r.as_str().to_string()));
+        assert_eq!(
+            regex1.map(|r| r.as_str().to_string()),
+            regex2.map(|r| r.as_str().to_string())
+        );
     }
 
     #[test]
