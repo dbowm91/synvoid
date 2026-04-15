@@ -178,7 +178,7 @@ pub fn create_http_client_with_config(
 
     let https_connector = hyper_rustls::HttpsConnectorBuilder::new()
         .with_tls_config(tls_config)
-        .https_only()
+        .https_or_http()
         .enable_http2()
         .wrap_connector(http_connector);
 
@@ -333,11 +333,10 @@ fn build_tls_config(
         let verifier_reason = skip_verify_reason.unwrap_or("not specified");
         let verifier = HostnameSkippingVerifier::new(inner, verifier_reason.to_string());
 
-        let mut config = builder
+        let config = builder
             .dangerous()
             .with_custom_certificate_verifier(Arc::new(verifier))
             .with_no_client_auth();
-        config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
         return config;
     }
 
@@ -378,11 +377,9 @@ fn build_tls_config(
         }
     }
 
-    let mut config = builder
+    builder
         .with_root_certificates(root_store)
-        .with_no_client_auth();
-    config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
-    config
+        .with_no_client_auth()
 }
 
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
