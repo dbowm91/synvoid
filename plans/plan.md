@@ -1487,9 +1487,24 @@ Added 9 unit tests covering helper functions:
 
 ---
 
-#### Q3.1: Missing Test Coverage for Critical Paths - MEDIUM ⏸️ DEFERRED
+#### Q3.1: Missing Test Coverage for Critical Paths - MEDIUM ⏸️ PARTIAL
 
-**Note**: Add integration tests for HTTP/TLS request handling, mesh routing, DHT operations.
+**Progress Made**:
+
+1. **Fixed DHT Integration Tests**: `tests/dht_integration_test.rs` had 5 calls to `register_node()` with outdated 3-argument signature (now requires 4 args including `caller_verified_id: Option<&str>`). Fixed all calls to pass `None` as the fourth argument.
+
+2. **Fixed Proxy Pipeline Tests**: `tests/integration_test.rs` had 7 async forward_request tests that were hanging due to:
+   - ALPN conflict with hyper-rustls 0.27
+   - HTTPS-only connector for HTTP URLs
+   - Mock servers not closing connections
+   - Case-sensitive header assertions
+   - Content-Length mismatches
+   All 24 proxy_pipeline_tests now pass.
+
+**Remaining Work**:
+- Full HTTP/TLS server request handling tests (not just proxy)
+- Mesh routing integration tests
+- DHT operations under various network conditions
 
 ---
 
@@ -1545,21 +1560,41 @@ Added 9 unit tests covering helper functions:
 
 #### M5: DHT Data Versioning/Conflict Resolution - MEDIUM ⏸️ DEFERRED
 
-**Location**: `src/mesh/dht/record_store.rs`
+**Location**: `src/mesh/dht/record_store.rs`, `src/mesh/dht/record_store_crud.rs`
 
 **Issue**: No conflict resolution for concurrent updates - last-write-wins based on storage order.
 
-**Fix**: Add timestamp-based conflict resolution; consider vector clocks or CRDTs.
+**Assessment**: `DhtRecordEntry` already has a `version: u64` field, but it's only used for local tracking (incremented on each `store_record_global` call), not conflict resolution. When two nodes store the same key concurrently, the last write simply overwrites.
+
+**Fix**: Would require significant architectural changes:
+- Implement vector clocks or similar causal ordering mechanism
+- Define semantic merge strategies for different record types (threat_intel vs upstream vs organization)
+- Protocol changes to propagate version metadata
+- Handling race conditions during merge
+
+**Risk**: High - could introduce data loss if merge logic is incorrect.
 
 ---
 
 #### M6: No Global Node Quorum Verification - MEDIUM ⏸️ DEFERRED
 
-**Location**: `src/mesh/topology.rs`, `src/mesh/transport.rs`
+**Location**: `src/mesh/dht/record_store_crud.rs`, `src/mesh/dht/keys.rs`
 
-**Issue**: Operations require global node signature but don't verify quorum of signatures.
+**Issue**: High-value operations (e.g., `verified_upstream` records) accept a single global node signature without verifying quorum.
 
-**Fix**: Require quorum of global signatures for high-value operations.
+**Assessment**: Current implementation:
+- Records are signed by source node with Ed25519
+- `stake_manager.can_write_dht()` checks if node has sufficient stake
+- `access_control.require_global_node()` enforces global node requirement for privileged records
+- M16.1 (slashing quorum) uses percentage-based quorum for governance, but record storage doesn't verify multiple signatures
+
+**Fix**: Would require significant architectural changes:
+- Change record structures to hold multiple signatures (e.g., `Vec<(node_id, signature)>`)
+- Modify store logic to collect signatures from multiple global nodes before storing
+- Define minimum quorum threshold (e.g., >50% or >2/3 of active global nodes)
+- Protocol changes for signature collection
+
+**Risk**: High - could break existing protocols and increase storage overhead.
 
 ---
 
@@ -1603,21 +1638,46 @@ Added 9 unit tests covering helper functions:
 
 #### M16.9: DHT Re-balancing on Global Departure - MEDIUM ⏸️ DEFERRED
 
-**Location**: `src/mesh/dht/record_store_sync.rs`
+**Location**: `src/mesh/dht/record_store_sync.rs`, `src/mesh/dht/record_store_crud.rs`
 
 **Issue**: Global node departure doesn't redistribute replicated records.
 
-**Fix**: Implement departure detection; trigger record migration; verify replication factor.
+**Assessment**: Current implementation:
+- `replication_factor` (default 20) controls how many peers store each record
+- `announce_record_to_closest()` stores records to k closest peers
+- Anti-entropy process can repair divergence between replicas
+- But no mechanism to detect global node departure and trigger re-replication
+
+**Fix**: Would require significant architectural changes:
+- Add departure detection via heartbeat monitoring
+- Track which peers hold replicas of each record
+- When a peer departs, trigger re-announce of its records to new peers
+- Verify replication factor is maintained after departure
+
+**Risk**: Medium - could cause increased network traffic during rebalancing.
 
 ---
 
 #### M16.10: Regional Diversity Not Enforced - MEDIUM ⏸️ DEFERRED
 
-**Location**: `src/mesh/transport_dns.rs:20-59`, `src/mesh/dht/keys.rs`
+**Location**: `src/dns/mesh_sync/registration.rs`, `src/mesh/transport_dns.rs`
 
 **Issue**: Origin nodes can register anycast without evidence of geographic diversity.
 
-**Fix**: Require evidence of multi-region deployment; add regional diversity score.
+**Assessment**: Current implementation:
+- `DnsRegistration` includes a `geo` field for geographic location
+- `RegisteredOriginNode` stores geo information
+- No verification that claimed geo matches actual IP location
+- No minimum diversity requirement for anycast registration
+- A single entity could register multiple origins all claiming the same region
+
+**Fix**: Would require significant architectural changes:
+- Add GeoIP verification (compare claimed geo against actual IP location)
+- Define minimum regional diversity threshold for anycast
+- Implement regional diversity scoring
+- Protocol changes to propagate diversity metrics
+
+**Risk**: Medium - could break legitimate single-region deployments.
 
 ---
 
