@@ -1,4 +1,5 @@
 use super::*;
+use crate::utils::current_timestamp;
 
 impl MeshDnsRegistry {
     pub fn verify_certificate_chain(&self, chain: &[Vec<u8>]) -> Result<bool, String> {
@@ -6,7 +7,7 @@ impl MeshDnsRegistry {
             return Err("Empty certificate chain".to_string());
         }
 
-        let _now = chrono::Utc::now().timestamp() as u64;
+        let _now = current_timestamp();
 
         for (i, cert_der) in chain.iter().enumerate() {
             if cert_der.len() < 4 {
@@ -54,7 +55,7 @@ impl MeshDnsRegistry {
         verify_ownership: bool,
         ip_addresses: Vec<String>,
     ) -> DomainVerificationRequest {
-        let now = chrono::Utc::now().timestamp() as u64;
+        let now = current_timestamp();
         let request_id = format!("{}-{}-{}", domain, origin_node_id, now);
 
         let verification_type = if verify_ownership {
@@ -145,7 +146,7 @@ impl MeshDnsRegistry {
     }
 
     pub fn cleanup_expired_verifications(&self) -> usize {
-        let now = chrono::Utc::now().timestamp() as u64;
+        let now = current_timestamp();
         let mut pending = self.pending_verifications.write();
         let initial_count = pending.len();
 
@@ -261,7 +262,7 @@ impl MeshDnsRegistry {
             false
         };
 
-        let now = chrono::Utc::now().timestamp() as u64;
+        let now = current_timestamp();
 
         let origin = RegisteredOriginNode {
             node_id: registration.node_id.clone(),
@@ -341,7 +342,7 @@ impl MeshDnsRegistry {
             request_id: request_id.clone(),
             registration: registration.clone(),
             verify_domain_ownership,
-            timestamp: chrono::Utc::now().timestamp() as u64,
+            timestamp: current_timestamp(),
         };
 
         let global_nodes = if let Some(ref rm) = self.routing_manager {
@@ -395,7 +396,7 @@ impl MeshDnsRegistry {
                                 nameservers_required: None,
                                 error_message: None,
                                 global_node_id: global_node.node_id.to_string(),
-                                timestamp: chrono::Utc::now().timestamp() as u64,
+                                timestamp: current_timestamp(),
                             });
                         }
                         Err(e) => {
@@ -444,7 +445,7 @@ impl MeshDnsRegistry {
                 nameservers_required: None,
                 error_message: None,
                 global_node_id: self.node_id.clone(),
-                timestamp: chrono::Utc::now().timestamp() as u64,
+                timestamp: current_timestamp(),
             });
         }
 
@@ -459,7 +460,7 @@ impl MeshDnsRegistry {
             return Err("Only global nodes can handle registration requests".to_string());
         }
 
-        let now = chrono::Utc::now().timestamp() as u64;
+        let now = current_timestamp();
         let request_id = request.request_id.clone();
         let domain = request.registration.domain.clone();
         let origin_node_id = request.registration.node_id.clone();
@@ -555,7 +556,7 @@ impl MeshDnsRegistry {
             loop {
                 tokio::time::sleep(tokio::time::Duration::from_secs(retry_interval)).await;
 
-                let now = chrono::Utc::now().timestamp() as u64;
+                let now = current_timestamp();
                 let mut to_retry = Vec::new();
                 let mut to_remove = Vec::new();
                 let mut failures_to_send: Vec<VerificationFailure> = Vec::new();

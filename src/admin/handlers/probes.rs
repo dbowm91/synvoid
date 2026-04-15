@@ -1,4 +1,5 @@
 use super::super::state::AdminState;
+use crate::utils::current_timestamp;
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
@@ -277,7 +278,7 @@ pub async fn block_probes(
             pm.handle_blocklist_update(vec![crate::process::ipc::BlockEntryData {
                 ip: ip.clone(),
                 reason: "Blocked via probe admin API".to_string(),
-                blocked_at: chrono::Utc::now().timestamp() as u64,
+                blocked_at: current_timestamp(),
                 ban_expire_seconds: ban_duration_secs,
                 site_scope: String::new(),
             }]);

@@ -52,6 +52,7 @@
 //! a legitimate edge node. This is verified by the global node using the edge's public key.
 
 use crate::mesh::config::MeshConfig;
+use crate::utils::current_timestamp;
 use axum::{
     extract::State,
     routing::{get, post},
@@ -216,7 +217,7 @@ impl KeyExchangeHttpState {
             client_x25519_pubkey: client_x25519_pubkey.into(),
             global_node_id: global_node_id.clone().into(),
             nonce: nonce.into(),
-            timestamp: chrono::Utc::now().timestamp() as u64,
+            timestamp: current_timestamp(),
         };
 
         mesh_transport
@@ -382,7 +383,7 @@ impl KeyExchangeService {
             client_x25519_pubkey: client_x25519_pubkey.into(),
             global_node_id: global_node_id.clone().into(),
             nonce: nonce.into(),
-            timestamp: chrono::Utc::now().timestamp() as u64,
+            timestamp: current_timestamp(),
         };
 
         transport

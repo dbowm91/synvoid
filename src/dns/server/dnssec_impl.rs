@@ -1,4 +1,5 @@
 use super::*;
+use crate::utils::current_timestamp;
 
 impl DnsServer {
     pub fn initialize_dnssec(&self) -> Result<(), String> {
@@ -531,7 +532,7 @@ impl DnsServer {
             }
         };
 
-        let now = chrono::Utc::now().timestamp() as u64;
+        let now = current_timestamp();
         let sig_expire = now + (7 * 86400);
         let sig_inception = now - 86400;
 

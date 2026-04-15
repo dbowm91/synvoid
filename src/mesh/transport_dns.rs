@@ -1,6 +1,7 @@
 #![allow(dead_code)] // Reserved for future DNS mesh protocol handling
 
 use crate::mesh::transport::MeshTransport;
+use crate::utils::current_timestamp;
 use base64::Engine;
 use flate2::read::ZlibDecoder as ReadZlibDecoder;
 use flate2::write::ZlibEncoder;
@@ -736,7 +737,7 @@ impl MeshTransport {
             return;
         }
 
-        let now = chrono::Utc::now().timestamp() as u64;
+        let now = current_timestamp();
         let time_until_shutdown = shutdown_at.saturating_sub(now);
 
         tracing::info!(
@@ -804,7 +805,7 @@ impl MeshTransport {
             }
         };
 
-        let now = chrono::Utc::now().timestamp() as u64;
+        let now = current_timestamp();
         if now.saturating_sub(timestamp) > 300 {
             tracing::warn!("DNS domain register request timestamp too old");
             return;
@@ -930,7 +931,7 @@ impl MeshTransport {
             }
         };
 
-        let now = chrono::Utc::now().timestamp() as u64;
+        let now = current_timestamp();
 
         let registered_origins = dns_registry.get_registered_origin_nodes();
         let origin_exists = registered_origins

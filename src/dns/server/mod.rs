@@ -22,6 +22,7 @@ use super::store::ZoneStore;
 use super::wire;
 use crate::config::dns::{DnsConfig, DnsRateLimitMode, DnsZoneEntry};
 use crate::tls::cert_resolver::CertResolver;
+use crate::utils::current_timestamp;
 
 pub use hickory_proto::rr::RecordType;
 
@@ -694,7 +695,7 @@ impl DnsServer {
                     action: super::firewall::DnsFirewallAction::Block,
                     target: "10.0.0.0/8".to_string(),
                     ttl: 300,
-                    created_at: chrono::Utc::now().timestamp() as u64,
+                    created_at: current_timestamp(),
                     expires_at: None,
                     enabled: true,
                 };
@@ -706,7 +707,7 @@ impl DnsServer {
                     action: super::firewall::DnsFirewallAction::Block,
                     target: "172.16.0.0/12".to_string(),
                     ttl: 300,
-                    created_at: chrono::Utc::now().timestamp() as u64,
+                    created_at: current_timestamp(),
                     expires_at: None,
                     enabled: true,
                 };
@@ -718,7 +719,7 @@ impl DnsServer {
                     action: super::firewall::DnsFirewallAction::Block,
                     target: "192.168.0.0/16".to_string(),
                     ttl: 300,
-                    created_at: chrono::Utc::now().timestamp() as u64,
+                    created_at: current_timestamp(),
                     expires_at: None,
                     enabled: true,
                 };
@@ -730,7 +731,7 @@ impl DnsServer {
                     action: super::firewall::DnsFirewallAction::Block,
                     target: "127.0.0.0/8".to_string(),
                     ttl: 300,
-                    created_at: chrono::Utc::now().timestamp() as u64,
+                    created_at: current_timestamp(),
                     expires_at: None,
                     enabled: true,
                 };
@@ -742,7 +743,7 @@ impl DnsServer {
                     action: super::firewall::DnsFirewallAction::Block,
                     target: "169.254.0.0/16".to_string(),
                     ttl: 300,
-                    created_at: chrono::Utc::now().timestamp() as u64,
+                    created_at: current_timestamp(),
                     expires_at: None,
                     enabled: true,
                 };
@@ -754,7 +755,7 @@ impl DnsServer {
                     action: super::firewall::DnsFirewallAction::Block,
                     target: "::1/128".to_string(),
                     ttl: 300,
-                    created_at: chrono::Utc::now().timestamp() as u64,
+                    created_at: current_timestamp(),
                     expires_at: None,
                     enabled: true,
                 };
@@ -766,7 +767,7 @@ impl DnsServer {
                     action: super::firewall::DnsFirewallAction::Block,
                     target: "fc00::/7".to_string(),
                     ttl: 300,
-                    created_at: chrono::Utc::now().timestamp() as u64,
+                    created_at: current_timestamp(),
                     expires_at: None,
                     enabled: true,
                 };
@@ -778,7 +779,7 @@ impl DnsServer {
                     action: super::firewall::DnsFirewallAction::Block,
                     target: "fe80::/10".to_string(),
                     ttl: 300,
-                    created_at: chrono::Utc::now().timestamp() as u64,
+                    created_at: current_timestamp(),
                     expires_at: None,
                     enabled: true,
                 };
@@ -792,7 +793,7 @@ impl DnsServer {
                     action: super::firewall::DnsFirewallAction::Block,
                     target: "0x2".to_string(),
                     ttl: 300,
-                    created_at: chrono::Utc::now().timestamp() as u64,
+                    created_at: current_timestamp(),
                     expires_at: None,
                     enabled: true,
                 };

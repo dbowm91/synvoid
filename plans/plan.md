@@ -502,13 +502,28 @@ Items are organized for **parallelization** - items within a wave can be execute
 
 ### 4.10: Code Quality - Duplication
 
-#### R3.1: Chrono Timestamp Duplication - MEDIUM ❌ OPEN
+#### R3.1: Chrono Timestamp Duplication - MEDIUM ✅ COMPLETE
 
-**Location**: ~30 files, 78+ occurrences
+**Location**: 12 files, 56 occurrences replaced
 
 **Issue**: `chrono::Utc::now().timestamp() as u64` scattered instead of using `crate::utils::current_timestamp()`.
 
-**Fix**: Replace all with `crate::utils::current_timestamp()`.
+**Fix**: Replaced all 56 occurrences across 12 files:
+- `src/dns/firewall.rs` (10)
+- `src/dns/server/mod.rs` (9)
+- `src/mesh/transport_dns.rs` (3)
+- `src/mesh/passover_key_exchange.rs` (2)
+- `src/dns/server/dnssec_impl.rs` (1)
+- `src/dns/mesh_sync/verification.rs` (9)
+- `src/dns/mesh_sync/registration.rs` (5)
+- `src/dns/mesh_sync/dht.rs` (4)
+- `src/dns/mesh_sync/query.rs` (4)
+- `src/dns/mesh_sync/mod.rs` (1)
+- `src/dns/mesh_sync/health.rs` (6)
+- `src/dns/dnssec_signing.rs` (1)
+- `src/admin/handlers/probes.rs` (1)
+
+**Verification**: clippy clean; 124 integration tests pass.
 
 ---
 

@@ -1,4 +1,5 @@
 use super::*;
+use crate::utils::current_timestamp;
 use metrics::gauge;
 
 impl MeshDnsRegistry {
@@ -18,7 +19,7 @@ impl MeshDnsRegistry {
                 node.healthy = update.healthy;
                 node.latency_ms = update.latency_ms;
                 node.load_percent = update.load_percent;
-                node.last_update = chrono::Utc::now().timestamp() as u64;
+                node.last_update = current_timestamp();
 
                 if let Some(latency) = update.latency_ms {
                     gauge!("dns_anycast_node_latency_ms").set(latency as f64);
@@ -118,7 +119,7 @@ impl MeshDnsRegistry {
                         capacity,
                         latency_ms: None,
                         load_percent: None,
-                        last_update: chrono::Utc::now().timestamp() as u64,
+                        last_update: current_timestamp(),
                         authenticated: false,
                         dns_zones,
                     })
@@ -240,7 +241,7 @@ impl MeshDnsRegistry {
             score -= (load as f64) * 0.5;
         }
 
-        let now = chrono::Utc::now().timestamp() as u64;
+        let now = current_timestamp();
         if node.last_update > 0 && now > node.last_update {
             let age_secs = now - node.last_update;
             if age_secs > 300 {
@@ -265,7 +266,7 @@ impl MeshDnsRegistry {
             node.healthy = update.healthy;
             node.latency_ms = update.latency_ms;
             node.load_percent = update.load_percent;
-            node.last_update = chrono::Utc::now().timestamp() as u64;
+            node.last_update = current_timestamp();
         }
 
         Ok(())
@@ -275,7 +276,7 @@ impl MeshDnsRegistry {
         let mut edges = self.edge_nodes.write();
 
         if let Some(edge) = edges.get_mut(&report.edge_node_id) {
-            edge.last_update = chrono::Utc::now().timestamp() as u64;
+            edge.last_update = current_timestamp();
 
             if report.healthy {
                 edge.consecutive_failures = 0;
@@ -311,7 +312,7 @@ impl MeshDnsRegistry {
             }
         }
 
-        let now = chrono::Utc::now().timestamp() as u64;
+        let now = current_timestamp();
 
         if shutdown.graceful {
             let lead_time = self.config.graceful_shutdown_lead_time_secs;

@@ -15,6 +15,7 @@ use crate::dns::messages::{
     DomainVerificationRequest, DomainVerificationStatus, DomainVerificationType,
 };
 use crate::dns::resolver::DnsResolver;
+use crate::utils::current_timestamp;
 
 mod dht;
 mod health;
@@ -101,7 +102,7 @@ impl MeshNodeCertificate {
     }
 
     pub fn is_valid(&self) -> bool {
-        let now = chrono::Utc::now().timestamp() as u64;
+        let now = current_timestamp();
         now >= self.not_before && now <= self.not_after
     }
 }

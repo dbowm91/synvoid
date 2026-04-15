@@ -1,4 +1,5 @@
 use super::*;
+use crate::utils::current_timestamp;
 
 impl MeshDnsRegistry {
     pub async fn register_origin_node(&self, registration: DnsRegistration) -> Result<(), String> {
@@ -61,7 +62,7 @@ impl MeshDnsRegistry {
             false
         };
 
-        let now = chrono::Utc::now().timestamp() as u64;
+        let now = current_timestamp();
         let origin = RegisteredOriginNode {
             node_id: registration.node_id.clone(),
             domains: vec![registration.domain.clone()],
@@ -157,7 +158,7 @@ impl MeshDnsRegistry {
             load_percent: None,
             consecutive_failures: 0,
             last_failure_reason: None,
-            last_update: chrono::Utc::now().timestamp() as u64,
+            last_update: current_timestamp(),
             authenticated,
             domains_origin_mapping: HashMap::new(),
         };
@@ -204,7 +205,7 @@ impl MeshDnsRegistry {
             capacity: registration.capacity,
             latency_ms: None,
             load_percent: None,
-            last_update: chrono::Utc::now().timestamp() as u64,
+            last_update: current_timestamp(),
             authenticated,
             dns_zones: registration.dns_zones.clone(),
         };
@@ -266,7 +267,7 @@ impl MeshDnsRegistry {
                 let mut mapping = self.domain_to_origin_mapping.write();
 
                 for reg in request.domains {
-                    let now = chrono::Utc::now().timestamp() as u64;
+                    let now = current_timestamp();
                     let cert_chain_verified = if self.config.require_cert_chain_verification
                         && !reg.certificate_chain.is_empty()
                     {
@@ -337,7 +338,7 @@ impl MeshDnsRegistry {
                         load_percent: None,
                         consecutive_failures: 0,
                         last_failure_reason: None,
-                        last_update: chrono::Utc::now().timestamp() as u64,
+                        last_update: current_timestamp(),
                         authenticated,
                         domains_origin_mapping: HashMap::new(),
                     };

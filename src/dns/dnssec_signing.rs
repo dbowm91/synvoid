@@ -1,5 +1,6 @@
 // DNSSEC signing: RRSET signing, NSEC/NSEC3 record generation, RRSIG creation
 
+use crate::utils::current_timestamp;
 use ed25519_dalek::Signer;
 use sha2::{Digest, Sha256};
 
@@ -48,7 +49,7 @@ pub fn create_rrsig_record(
     rrsig.push(labels_count);
     rrsig.extend_from_slice(&original_ttl.to_be_bytes());
 
-    let now = chrono::Utc::now().timestamp() as u64;
+    let now = current_timestamp();
     let sig_expire = now + (7 * 86400);
     let sig_inception = now - (86400);
 

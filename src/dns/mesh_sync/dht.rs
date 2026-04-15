@@ -1,4 +1,5 @@
 use super::*;
+use crate::utils::current_timestamp;
 
 impl MeshDnsRegistry {
     pub fn apply_dht_domain_registration(
@@ -12,7 +13,7 @@ impl MeshDnsRegistry {
             return;
         }
 
-        let now = chrono::Utc::now().timestamp() as u64;
+        let now = current_timestamp();
 
         let origin = RegisteredOriginNode {
             node_id: origin_node_id.clone(),
@@ -59,7 +60,7 @@ impl MeshDnsRegistry {
         latency_ms: Option<u32>,
         load_percent: Option<u8>,
     ) {
-        let now = chrono::Utc::now().timestamp() as u64;
+        let now = current_timestamp();
 
         let mut origins = self.origin_nodes.write();
         if let Some(origin) = origins.get_mut(node_id) {
@@ -180,7 +181,7 @@ impl MeshDnsRegistry {
                                 capacity,
                                 latency_ms: None,
                                 load_percent: None,
-                                last_update: chrono::Utc::now().timestamp() as u64,
+                                last_update: current_timestamp(),
                                 authenticated: is_authenticated,
                                 dns_zones: dns_zones.clone(),
                             };
@@ -208,7 +209,7 @@ impl MeshDnsRegistry {
                             existing_node.geo = Some(geo);
                             existing_node.healthy = healthy;
                             existing_node.capacity = capacity;
-                            existing_node.last_update = chrono::Utc::now().timestamp() as u64;
+                            existing_node.last_update = current_timestamp();
                             existing_node.authenticated = is_authenticated;
                             existing_node.dns_zones = dns_zones.clone();
                             self.anycast_nodes
