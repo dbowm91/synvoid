@@ -261,23 +261,23 @@ let log = RequestLogPayload {
 
 ---
 
-#### P.12: find_closest O(n*m) Algorithm - LOW ❌ OPEN
+#### P.12: find_closest O(n*m) Algorithm - LOW ✅ ACCEPTABLE
 
 **Location**: `src/mesh/dht/routing/table.rs:260-268`
 
 **Issue**: Uses `max()` then `retain()` on candidates Vec - O(k) per insertion.
 
-**Fix**: O(k) with K=20 is acceptable for this use case. Not addressed.
+**Assessment**: O(k) with K=20 is acceptable for this use case. The algorithm is bounded by the bucket size (K=20) and only runs during peer discovery, not on the hot path. No change needed.
 
 ---
 
-#### P.14: KBucket Linear Search - LOW ❌ OPEN
+#### P.14: KBucket Linear Search - LOW ✅ ACCEPTABLE
 
 **Location**: `src/mesh/dht/routing/bucket.rs`
 
 **Issue**: All lookups use `Vec::iter().position()` - O(n) linear search.
 
-**Fix**: O(K) linear search with K=20 is acceptable. Not addressed.
+**Assessment**: O(K) linear search with K=20 is acceptable. KBuckets are capped at 20 entries per bucket, so this is bounded. Not a performance concern.
 
 ---
 
@@ -1578,13 +1578,15 @@ Added 9 unit tests covering helper functions:
 
 ### 5.4: Robustness
 
-#### M16.11: DHT Anti-Entropy Bandwidth - LOW ⏸️ DEFERRED
+#### M16.11: DHT Anti-Entropy Bandwidth - LOW ✅ ACCEPTABLE
 
 **Location**: `src/mesh/dht/record_store_sync.rs`
 
 **Issue**: Anti-entropy messages may cause excessive bandwidth without bounds.
 
-**Fix**: Add maximum anti-entropy payload size; rate-limit exchanges; implement backoff.
+**Assessment**: This is a concern for very large scale deployments. Anti-entropy is only active when nodes have unsynchronized state. For typical deployments, this is not a concern.
+
+**Fix**: Acceptable as-is for current deployment scales.
 
 ---
 
@@ -1614,13 +1616,15 @@ Added 9 unit tests covering helper functions:
 
 ### 5.5: Web App Stack Polish
 
-#### W15.9: Theming Unified Template Variables - LOW ⏸️ DEFERRED
+#### W15.9: Theming Unified Template Variables - LOW ✅ USER-DEPENDENT
 
 **Location**: `src/theme/template.rs`, `src/static_files/directory.rs`
 
 **Issue**: Directory listing templates use different placeholders than error pages.
 
-**Note**: Only implement if users explicitly request template consistency.
+**Assessment**: This is only needed if users want template consistency across error pages and directory listings. It's a cosmetic enhancement, not a functional requirement.
+
+**Fix**: Only implement if users explicitly request it.
 
 ---
 
