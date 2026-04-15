@@ -571,6 +571,9 @@ pub async fn start_admin_server(
     };
 
     let yara_rate_limiter = Some(Arc::new(YaraRateLimiter::default_for_yara()));
+    if let Some(ref limiter) = yara_rate_limiter {
+        limiter.clone().start_cleanup_task();
+    }
 
     let addr: std::net::SocketAddr =
         format!("{}:{}", bind_addr, port)

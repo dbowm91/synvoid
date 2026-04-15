@@ -121,6 +121,23 @@ impl YaraRateLimiter {
             YaraRateLimitOp::StatusList => self.inner.status_list_limiter.check(ip),
         }
     }
+
+    pub fn cleanup(&self) {
+        self.inner.submit_limiter.cleanup();
+        self.inner.broadcast_apply_limiter.cleanup();
+        self.inner.approve_reject_limiter.cleanup();
+        self.inner.status_list_limiter.cleanup();
+    }
+
+    pub fn start_cleanup_task(self: Arc<Self>) {
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                self.cleanup();
+            }
+        });
+    }
 }
 
 #[derive(Clone, Default, Serialize, Deserialize)]

@@ -765,13 +765,20 @@ impl MeshTopology {
             return results;
         }
 
+        let is_store_available = {
+            let guard = self.record_store.read();
+            guard.is_some()
+        };
+
+        if !is_store_available {
+            let site_key = site.to_string();
+            self.verified_upstream_cache.insert(site_key, Vec::new()).await;
+            return Vec::new();
+        }
+
         let records = {
             let guard = self.record_store.read();
-            if guard.is_none() {
-                return Vec::new();
-            }
-            let rs = guard.as_ref().unwrap();
-            rs.get_all_records()
+            guard.as_ref().unwrap().get_all_records()
         };
 
         let mut results: Vec<crate::mesh::dht::VerifiedUpstream> = Vec::new();
