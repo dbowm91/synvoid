@@ -174,25 +174,38 @@ This document contains the remaining deferred and partially-complete items from 
 
 ---
 
-#### M6: No Global Node Quorum Verification - MEDIUM ⏸️ DEFERRED
+#### M6: No Global Node Quorum Verification - MEDIUM 🔧 IN PROGRESS
 
-**Location**: `src/mesh/dht/record_store_crud.rs`, `src/mesh/dht/keys.rs`
+**Location**: `src/mesh/dht/quorum.rs` (new), `src/mesh/dht/record_store_crud.rs`, `src/mesh/protocol.rs`
 
 **Issue**: High-value operations (e.g., `verified_upstream` records) accept a single global node signature without verifying quorum.
 
-**Assessment**: Current implementation:
-- Records are signed by source node with Ed25519
-- `stake_manager.can_write_dht()` checks if node has sufficient stake
-- `access_control.require_global_node()` enforces global node requirement for privileged records
-- M16.1 (slashing quorum) uses percentage-based quorum for governance, but record storage doesn't verify multiple signatures
+**Progress Made**:
 
-**Fix**: Would require significant architectural changes:
-- Change record structures to hold multiple signatures (e.g., `Vec<(node_id, signature)>`)
-- Modify store logic to collect signatures from multiple global nodes before storing
-- Define minimum quorum threshold (e.g., >50% or >2/3 of active global nodes)
-- Protocol changes for signature collection
+1. **Quorum infrastructure** (`src/mesh/dht/quorum.rs`):
+   - `QuorumRequest`: tracks ongoing requests with signatures/rejections
+   - `QuorumManager`: manages pending requests, tracks veto history
+   - `RejectionReason` enum: DomainTaken, InvalidFormat, Unauthorized, PolicyViolation
+   - 2/3 threshold for storing records
+   - Veto abuse detection: tracks suspicious rejections
 
-**Risk**: High - could break existing protocols and increase storage overhead.
+2. **Protocol changes**:
+   - Added `QuorumStoreRequest`, `QuorumSignatureResponse`, `QuorumRejectionResponse` messages
+   - Protobuf definitions added
+   - Encoding/decoding implemented
+
+**Remaining Work**:
+- Wire QuorumManager into `record_store_crud` for privileged keys
+- When storing `verified_upstream`, broadcast to all global nodes
+- Collect signatures/rejections, only store if 2/3+ AND no valid rejections
+- Implement veto verification (check DHT for "domain taken" claims)
+- Log suspicious veto patterns
+
+**Design**:
+- Threshold: 2/3 of active global nodes
+- Veto is hard block: ANY valid rejection blocks
+- Non-response is acceptable
+- Rejection verification for verifiable claims
 
 ---
 
