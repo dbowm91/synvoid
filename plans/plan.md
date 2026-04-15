@@ -396,9 +396,13 @@ Added 12 unit tests covering helper functions:
 - `get_cached_regex()` - valid patterns, invalid patterns, caching
 - `IMAGE_PROTECTION_REGEX` - image extension matching
 
-**Remaining gaps** (tls/server.rs):
-- All `#[cfg(test)]` needed for tls/server.rs
-- http/server.rs: `serve()`, `handle_request()`, internal endpoints, WAF integration
+**Fix Applied** (tls/server.rs):
+Added 9 unit tests covering helper functions:
+- `is_valid_http_request_start()` - valid methods, invalid requests, query strings
+- `is_tls_client_hello()` - valid/invalid TLS headers, minimum length
+- ALPN_HTTP2 constant
+- INTERNAL_HEALTH_PATH and INTERNAL_READY_PATH constants
+- HTTP_VALID_METHODS completeness
 
 ---
 

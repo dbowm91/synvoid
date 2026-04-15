@@ -1765,3 +1765,88 @@ pub async fn proxy_raw_tcp(
     counter!("maluwaf.tls.passthrough.completed").increment(1);
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_valid_http_request_start_valid_methods() {
+        for method in HTTP_VALID_METHODS {
+            let request = format!("{} / HTTP/1.1\r\n", method);
+            assert!(
+                is_valid_http_request_start(request.as_bytes()),
+                "Should recognize valid method: {}",
+                method
+            );
+        }
+    }
+
+    #[test]
+    fn test_is_valid_http_request_start_invalid() {
+        assert!(!is_valid_http_request_start(b""));
+        assert!(!is_valid_http_request_start(b"GET"));
+        assert!(!is_valid_http_request_start(b"GET/ HTTP/1.1"));
+        assert!(!is_valid_http_request_start(b"INVALID / HTTP/1.1\r\n"));
+    }
+
+    #[test]
+    fn test_is_valid_http_request_start_with_query() {
+        assert!(is_valid_http_request_start(b"POST /path?query=value HTTP/1.1\r\n"));
+        assert!(is_valid_http_request_start(b"GET /api/users?id=123 HTTP/1.0\r\n"));
+    }
+
+    #[test]
+    fn test_is_tls_client_hello_valid() {
+        let tls_hello = [0x16, 0x03, 0x00];
+        assert!(is_tls_client_hello(&tls_hello));
+
+        let tls_hello = [0x16, 0x03, 0x01];
+        assert!(is_tls_client_hello(&tls_hello));
+
+        let tls_hello = [0x16, 0x03, 0x03];
+        assert!(is_tls_client_hello(&tls_hello));
+    }
+
+    #[test]
+    fn test_is_tls_client_hello_invalid() {
+        assert!(!is_tls_client_hello(b"GET / HTTP/1.1"));
+        assert!(!is_tls_client_hello(&[0x16, 0x03, 0x04]));
+        assert!(!is_tls_client_hello(&[0x15]));
+        assert!(!is_tls_client_hello(&[]));
+        assert!(!is_tls_client_hello(&[0x16, 0x04]));
+    }
+
+    #[test]
+    fn test_is_tls_client_hello_minimum_length() {
+        assert!(!is_tls_client_hello(&[0x16, 0x03]));
+        assert!(!is_tls_client_hello(&[0x16]));
+        assert!(!is_tls_client_hello(&[]));
+    }
+
+    #[test]
+    fn test_alpn_http2_constant() {
+        assert_eq!(ALPN_HTTP2, b"h2");
+        assert_eq!(ALPN_HTTP2.len(), 2);
+    }
+
+    #[test]
+    fn test_internal_paths_constants() {
+        assert_eq!(INTERNAL_HEALTH_PATH, "/__internal__/health");
+        assert_eq!(INTERNAL_READY_PATH, "/__internal__/ready");
+    }
+
+    #[test]
+    fn test_http_valid_methods_complete() {
+        assert_eq!(HTTP_VALID_METHODS.len(), 9);
+        assert!(HTTP_VALID_METHODS.contains(&"GET"));
+        assert!(HTTP_VALID_METHODS.contains(&"POST"));
+        assert!(HTTP_VALID_METHODS.contains(&"PUT"));
+        assert!(HTTP_VALID_METHODS.contains(&"DELETE"));
+        assert!(HTTP_VALID_METHODS.contains(&"HEAD"));
+        assert!(HTTP_VALID_METHODS.contains(&"OPTIONS"));
+        assert!(HTTP_VALID_METHODS.contains(&"PATCH"));
+        assert!(HTTP_VALID_METHODS.contains(&"CONNECT"));
+        assert!(HTTP_VALID_METHODS.contains(&"TRACE"));
+    }
+}
