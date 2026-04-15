@@ -25,10 +25,10 @@ This document contains the remaining deferred and partially-complete items from 
 | Q3.1 | MEDIUM | ⏸️ PARTIAL | Testing |
 | M5 | MEDIUM | ⏸️ DEFERRED | Mesh/DHT |
 | M6 | MEDIUM | 🔧 IN PROGRESS | Mesh/DHT |
-| M16.9 | MEDIUM | ⏸️ DEFERRED | Mesh/DHT |
+| M16.9 | MEDIUM | ✅ COMPLETED | Mesh/DHT |
 | M16.10 | MEDIUM | ⏸️ DEFERRED | Mesh/DHT |
 
-**Total**: 11 items (1 PARTIAL, 8 DEFERRED, 1 IN PROGRESS, 1 ❌ DEFERRED)
+**Total**: 11 items (1 COMPLETED, 1 PARTIAL, 7 DEFERRED, 1 IN PROGRESS, 1 ❌ DEFERRED)
 
 ---
 
@@ -211,25 +211,17 @@ This document contains the remaining deferred and partially-complete items from 
 
 ### 5.3: Security Hardening
 
-#### M16.9: DHT Re-balancing on Global Departure - MEDIUM ⏸️ DEFERRED
+#### M16.9: DHT Re-balancing on Global Departure - MEDIUM ✅ COMPLETED
 
-**Location**: `src/mesh/dht/record_store_sync.rs`, `src/mesh/dht/record_store_crud.rs`
+**Location**: `src/mesh/dht/record_store_message.rs`, `src/mesh/transport_peer.rs`
 
-**Issue**: Global node departure doesn't redistribute replicated records.
-
-**Assessment**: Current implementation:
-- `replication_factor` (default 20) controls how many peers store each record
-- `announce_record_to_closest()` stores records to k closest peers
-- Anti-entropy process can repair divergence between replicas
-- But no mechanism to detect global node departure and trigger re-replication
-
-**Fix**: Would require significant architectural changes:
-- Add departure detection via heartbeat monitoring
-- Track which peers hold replicas of each record
-- When a peer departs, trigger re-announce of its records to new peers
-- Verify replication factor is maintained after departure
-
-**Risk**: Medium - could cause increased network traffic during rebalancing.
+**Fix Applied**:
+- Added `rebalance_after_departure()` to `RecordStoreManager` that:
+  - Collects all local_origin records
+  - Re-announces each to k-closest peers via `send_datagram_to_peer`
+  - Tracks success count and warns if write quorum not met
+  - Records metrics for announce sent/failed
+- Modified `handle_peer_gone()` to check if departing node was global before removal, then trigger rebalance if so
 
 ---
 
