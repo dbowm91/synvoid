@@ -543,6 +543,11 @@ impl UnifiedServer {
         self.cert_resolver.clone()
     }
 
+    #[cfg(feature = "dns")]
+    pub fn get_dns_server(&self) -> Option<Arc<crate::dns::DnsServer>> {
+        self.dns_server.clone()
+    }
+
     pub fn get_waf(&self) -> Arc<crate::waf::WafCore> {
         self.waf.clone()
     }

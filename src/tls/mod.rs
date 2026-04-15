@@ -13,6 +13,8 @@ pub mod config;
 pub mod server;
 pub mod sni_peek;
 
+#[cfg(feature = "dns")]
+pub use acme_dns::AcmeDnsChallenge;
 pub use cert_resolver::CertResolver;
 pub use config::InternalTlsConfig as ServerTlsConfig;
 pub use server::HttpsServer;

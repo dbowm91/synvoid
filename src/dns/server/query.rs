@@ -672,6 +672,31 @@ impl DnsServer {
             return Self::build_simple_nxdomain_response(query);
         }
 
+        #[cfg(feature = "dns")]
+        if qtype == 16 {
+            // TXT record query - check for ACME DNS-01 challenge
+            if qname_lower.starts_with("_acme-challenge.") {
+                if let Some(acme_challenges) = ctx.acme_dns_challenges {
+                    let domain = qname_lower
+                        .strip_prefix("_acme-challenge.")
+                        .unwrap_or(&qname_lower);
+                    if let Some(txt_value) = acme_challenges.get_txt_value(domain) {
+                        tracing::debug!(
+                            "Serving ACME DNS-01 challenge for {}: {}",
+                            domain,
+                            txt_value
+                        );
+                        return Some(Self::build_acme_txt_response(
+                            query_id,
+                            &qname,
+                            &txt_value,
+                            edns_options.as_ref(),
+                        ));
+                    }
+                }
+            }
+        }
+
         let record_type = RecordType::from(qtype);
 
         let trie_guard = ctx.zone_trie.read();

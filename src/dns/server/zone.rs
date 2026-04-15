@@ -287,6 +287,8 @@ impl DnsServer {
             notify_handler: self.notify_handler.as_ref(),
             query_coalescer: self.query_coalescer.as_ref(),
             dns64_translator: self.dns64_translator.as_ref(),
+            #[cfg(feature = "dns")]
+            acme_dns_challenges: self.acme_dns_challenges.as_ref(),
         }
     }
 

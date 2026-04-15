@@ -7,6 +7,7 @@
 use std::sync::Arc;
 
 /// DNS-01 challenge manager for ACME.
+#[derive(Clone)]
 pub struct AcmeDnsChallenge {
     /// Pending challenges: domain -> key_authorization (dns value)
     pending: Arc<dashmap::DashMap<String, String>>,

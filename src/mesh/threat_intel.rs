@@ -1074,7 +1074,7 @@ impl ThreatIntelligenceManager {
         let mut removed_keys = Vec::new();
 
         for indicator in indicators {
-        let key = make_indicator_key(&indicator.indicator_value, indicator.threat_type);
+            let key = make_indicator_key(&indicator.indicator_value, indicator.threat_type);
 
             let accepted = self.handle_incoming_threat(indicator, from_node, from_role, signer);
 
@@ -1131,10 +1131,8 @@ impl ThreatIntelligenceManager {
         let dht_records = record_store.get_by_prefix("threat_indicator:");
         let mut local_indicators = self.indicators.write();
 
-        let dht_keys: std::collections::HashSet<String> = dht_records
-            .iter()
-            .map(|r| r.key.clone())
-            .collect();
+        let dht_keys: std::collections::HashSet<String> =
+            dht_records.iter().map(|r| r.key.clone()).collect();
 
         let mut added = 0;
         let mut removed = 0;

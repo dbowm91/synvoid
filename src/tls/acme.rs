@@ -9,6 +9,7 @@ use instant_acme::{
     NewAccount, NewOrder, OrderStatus, RetryPolicy,
 };
 
+use super::acme_dns::AcmeDnsChallenge;
 use super::cert_resolver::CertResolver;
 use super::config::InternalAcmeConfig;
 
@@ -54,6 +55,8 @@ pub struct AcmeManager {
     account: parking_lot::RwLock<Option<Account>>,
     credentials_path: PathBuf,
     http_challenges: Arc<DashMap<String, String>>,
+    #[cfg(feature = "dns")]
+    dns_challenges: Option<Arc<AcmeDnsChallenge>>,
     managed_certs: parking_lot::RwLock<HashMap<String, ManagedCert>>,
     renew_callback: parking_lot::RwLock<Option<Box<dyn Fn(Vec<String>) + Send + Sync>>>,
 }
@@ -73,9 +76,18 @@ impl AcmeManager {
             account: parking_lot::RwLock::new(None),
             credentials_path,
             http_challenges: Arc::new(DashMap::new()),
+            #[cfg(feature = "dns")]
+            dns_challenges: Some(Arc::new(AcmeDnsChallenge::new())),
+            #[cfg(not(feature = "dns"))]
+            dns_challenges: None,
             managed_certs: parking_lot::RwLock::new(HashMap::new()),
             renew_callback: parking_lot::RwLock::new(None),
         }
+    }
+
+    #[cfg(feature = "dns")]
+    pub fn get_dns_challenges(&self) -> Option<Arc<AcmeDnsChallenge>> {
+        self.dns_challenges.clone()
     }
 
     /// Initialize the ACME account, loading from cache or creating new.
@@ -249,14 +261,21 @@ impl AcmeManager {
                     );
                 }
                 ChallengeType::Dns01 => {
-                    // DNS-01 challenge handled externally
-                    let dns_value = key_auth.dns_value();
-                    tracing::info!(
-                        "DNS-01 challenge for {} — TXT record _acme-challenge.{} = {}",
-                        domain,
-                        domain,
-                        dns_value
-                    );
+                    // DNS-01 challenge: store in AcmeDnsChallenge for DNS server to serve
+                    let key_auth_str = key_auth.as_str();
+                    if let Some(ref dns_challenges) = self.dns_challenges {
+                        dns_challenges.prepare_challenge(domain, key_auth_str);
+                        tracing::info!(
+                            "DNS-01 challenge for {} — stored for _acme-challenge.{} TXT record",
+                            domain,
+                            domain
+                        );
+                    } else {
+                        tracing::warn!(
+                            "DNS-01 challenge for {} but dns_challenges not available",
+                            domain
+                        );
+                    }
                 }
                 _ => {
                     return Err(AcmeError::Protocol(format!(

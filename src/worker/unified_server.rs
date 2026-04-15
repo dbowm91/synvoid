@@ -316,8 +316,18 @@ pub async fn run_unified_server_worker(
     // Setup ACME if enabled (this spawns the renewal task)
     #[cfg(feature = "dns")]
     {
-        if let Some(_acme_manager) = unified_server.setup_acme() {
+        if let Some(acme_manager) = unified_server.setup_acme() {
             tracing::info!("ACME manager started for worker {}", worker_id);
+
+            // Wire AcmeDnsChallenge to DNS server for DNS-01 support
+            if let Some(dns_server) = unified_server.get_dns_server() {
+                if let Some(dns_challenges) = acme_manager.get_dns_challenges() {
+                    let _server = (*dns_server)
+                        .clone()
+                        .with_acme_dns_challenges(dns_challenges);
+                    tracing::info!("ACME DNS-01 challenges wired to DNS server");
+                }
+            }
         }
     }
 

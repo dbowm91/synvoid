@@ -95,7 +95,7 @@ impl DotServer {
                 .await
                 .map_err(|e| format!("Failed to read query: {}", e))?;
 
-            let (zones, zone_trie, cache, ecs_config) = {
+            let (zones, zone_trie, cache, ecs_config, acme_dns_challenges) = {
                 let dns_server_guard = dns_server.read();
                 let server = match dns_server_guard.as_ref() {
                     Some(s) => s,
@@ -109,6 +109,10 @@ impl DotServer {
                     server.get_zone_trie(),
                     server.get_cache(),
                     server.get_ecs_filter_config(),
+                    #[cfg(feature = "dns")]
+                    server.acme_dns_challenges.clone(),
+                    #[cfg(not(feature = "dns"))]
+                    None,
                 )
             };
 
@@ -134,6 +138,8 @@ impl DotServer {
                 notify_handler: None,
                 query_coalescer: None,
                 dns64_translator: None,
+                #[cfg(feature = "dns")]
+                acme_dns_challenges: acme_dns_challenges.as_ref(),
             };
 
             let response = if let Some(c) = &ctx.cache {

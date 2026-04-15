@@ -161,21 +161,23 @@ impl DohServer {
                 .expect("response builder should not fail"));
         }
 
-        let dns_server_guard = dns_server.read();
-        let server = match dns_server_guard.as_ref() {
-            Some(s) => s,
-            None => {
-                return Ok(hyper::Response::builder()
-                    .status(StatusCode::SERVICE_UNAVAILABLE)
-                    .body(Full::new(Bytes::new()))
-                    .expect("response builder should not fail"));
-            }
-        };
+        let (zones, zone_trie, cache, ecs_config, acme_dns_challenges) = {
+            let dns_server_guard = dns_server.read();
+            let server = dns_server_guard
+                .as_ref()
+                .expect("DNS server not configured");
 
-        let zones = server.get_zones();
-        let zone_trie = server.get_zone_trie();
-        let cache = server.get_cache();
-        let ecs_config = server.get_ecs_filter_config();
+            (
+                server.get_zones(),
+                server.get_zone_trie(),
+                server.get_cache(),
+                server.get_ecs_filter_config(),
+                #[cfg(feature = "dns")]
+                server.acme_dns_challenges.clone(),
+                #[cfg(not(feature = "dns"))]
+                None,
+            )
+        };
 
         let ctx = crate::dns::server::QueryContext {
             zones: &zones,
@@ -199,6 +201,8 @@ impl DohServer {
             notify_handler: None,
             query_coalescer: None,
             dns64_translator: None,
+            #[cfg(feature = "dns")]
+            acme_dns_challenges: acme_dns_challenges.as_ref(),
         };
 
         let response = if let Some(c) = &ctx.cache {

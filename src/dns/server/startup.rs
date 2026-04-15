@@ -21,6 +21,8 @@ impl DnsServer {
             update_handler: self.update_handler.clone(),
             notify_handler: self.notify_handler.clone(),
             query_coalescer: self.query_coalescer.clone(),
+            #[cfg(feature = "dns")]
+            acme_dns_challenges: self.acme_dns_challenges.clone(),
         }
     }
 
@@ -216,6 +218,8 @@ impl DnsServer {
         let geoip_lookup_udp = geoip_lookup.clone();
         let anycast_udp = anycast_mgr.clone();
         let udp_buffer_size = config.limits.udp_buffer_size;
+        #[cfg(feature = "dns")]
+        let acme_dns_challenges_udp = self.acme_dns_challenges.clone();
 
         tokio::spawn(async move {
             let DnsHandlerState {
@@ -237,6 +241,8 @@ impl DnsServer {
                 update_handler: update_handler_udp,
                 notify_handler: notify_handler_udp,
                 query_coalescer: query_coalescer_udp,
+                #[cfg(feature = "dns")]
+                    acme_dns_challenges: _acme_dns_challenges_udp,
             } = udp_state;
             let ctx = QueryContext {
                 zones: &zones_udp,
@@ -260,6 +266,8 @@ impl DnsServer {
                 notify_handler: notify_handler_udp.as_ref(),
                 query_coalescer: query_coalescer_udp.as_ref(),
                 dns64_translator: None,
+                #[cfg(feature = "dns")]
+                acme_dns_challenges: acme_dns_challenges_udp.as_ref(),
             };
             let mut buf = vec![0u8; udp_buffer_size];
 
@@ -398,6 +406,8 @@ impl DnsServer {
         tracing::info!("Anycast DNS UDP server started on {:?}", bound_addresses);
 
         let anycast_mgr_tcp = anycast_manager.clone();
+        #[cfg(feature = "dns")]
+        let acme_dns_challenges_tcp = self.acme_dns_challenges.clone();
 
         let tcp_state = state;
         let mesh_registry_tcp = mesh_registry;
@@ -423,6 +433,8 @@ impl DnsServer {
                 update_handler: update_handler_tcp,
                 notify_handler: notify_handler_tcp,
                 query_coalescer: query_coalescer_tcp,
+                #[cfg(feature = "dns")]
+                    acme_dns_challenges: _acme_dns_challenges_tcp,
             } = tcp_state;
             loop {
                 tokio::select! {
@@ -468,6 +480,8 @@ impl DnsServer {
                                 let update_handler_clone = update_handler_tcp.clone();
                                 let notify_handler_clone = notify_handler_tcp.clone();
                                 let query_coalescer_clone = query_coalescer_tcp.clone();
+                                #[cfg(feature = "dns")]
+                                let acme_dns_challenges_clone = acme_dns_challenges_tcp.clone();
 
                                 tokio::spawn(async move {
                                     let max_idle_time = Some(std::time::Duration::from_secs(
@@ -496,6 +510,8 @@ impl DnsServer {
                                         notify_handler: notify_handler_clone.as_ref(),
                                         query_coalescer: query_coalescer_clone.as_ref(),
                                         dns64_translator: None,
+                                        #[cfg(feature = "dns")]
+                                        acme_dns_challenges: acme_dns_challenges_clone.as_ref(),
                                     };
                                     if let Err(e) = Self::handle_tcp_query(conn.stream, ctx).await {
                                         tracing::debug!("Anycast TCP DNS error: {}", e);
@@ -544,6 +560,8 @@ impl DnsServer {
         let udp_state = state.clone();
         let mesh_registry_udp = mesh_registry.clone();
         let geoip_lookup_udp = geoip_lookup.clone();
+        #[cfg(feature = "dns")]
+        let acme_dns_challenges_udp = self.acme_dns_challenges.clone();
 
         tokio::spawn(async move {
             let DnsHandlerState {
@@ -565,6 +583,8 @@ impl DnsServer {
                 update_handler: update_handler_udp,
                 notify_handler: notify_handler_udp,
                 query_coalescer: query_coalescer_udp,
+                #[cfg(feature = "dns")]
+                    acme_dns_challenges: _acme_dns_challenges_udp,
             } = udp_state;
             let ctx = QueryContext {
                 zones: &zones_udp,
@@ -588,6 +608,8 @@ impl DnsServer {
                 notify_handler: notify_handler_udp.as_ref(),
                 query_coalescer: query_coalescer_udp.as_ref(),
                 dns64_translator: None,
+                #[cfg(feature = "dns")]
+                acme_dns_challenges: acme_dns_challenges_udp.as_ref(),
             };
             let mut buf = vec![0u8; udp_buffer_size];
 
@@ -729,6 +751,8 @@ impl DnsServer {
         let mesh_registry_tcp = mesh_registry;
         let geoip_lookup_tcp = geoip_lookup;
         let tcp_buffer_size = self.config.limits.udp_buffer_size;
+        #[cfg(feature = "dns")]
+        let acme_dns_challenges_tcp = self.acme_dns_challenges.clone();
 
         tokio::spawn(async move {
             let DnsHandlerState {
@@ -750,6 +774,8 @@ impl DnsServer {
                 update_handler: update_handler_tcp,
                 notify_handler: notify_handler_tcp,
                 query_coalescer: query_coalescer_tcp,
+                #[cfg(feature = "dns")]
+                    acme_dns_challenges: _acme_dns_challenges_tcp,
             } = tcp_state;
             let _buf = vec![0u8; tcp_buffer_size];
 
@@ -796,6 +822,8 @@ impl DnsServer {
                                 let update_handler_clone = update_handler_tcp.clone();
                                 let notify_handler_clone = notify_handler_tcp.clone();
                                 let query_coalescer_clone = query_coalescer_tcp.clone();
+                                #[cfg(feature = "dns")]
+                                let acme_dns_challenges_clone = acme_dns_challenges_tcp.clone();
 
                                 tokio::spawn(async move {
                                     let max_idle_time = Some(std::time::Duration::from_secs(
@@ -823,6 +851,8 @@ impl DnsServer {
                                         notify_handler: notify_handler_clone.as_ref(),
                                         query_coalescer: query_coalescer_clone.as_ref(),
                                         dns64_translator: None,
+                                        #[cfg(feature = "dns")]
+                                        acme_dns_challenges: acme_dns_challenges_clone.as_ref(),
                                     };
                                     if let Err(e) = Self::handle_tcp_query(stream, ctx).await {
                                         tracing::debug!("TCP DNS error: {}", e);

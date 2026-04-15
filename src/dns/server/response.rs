@@ -778,4 +778,87 @@ impl DnsServer {
         };
         name_size + 2 + 2 + 4 + 2 + rdata_size
     }
+
+    pub(super) fn build_acme_txt_response(
+        query_id: u16,
+        qname: &str,
+        txt_value: &str,
+        edns_options: Option<&EdnsOptions>,
+    ) -> Arc<Vec<u8>> {
+        let max_response_size = edns_options
+            .map(|e| e.udp_payload_size as usize)
+            .unwrap_or(512);
+
+        let mut response = Vec::new();
+
+        response.extend_from_slice(&query_id.to_be_bytes());
+        response.extend_from_slice(&0x8580u16.to_be_bytes());
+        response.extend_from_slice(&1u16.to_be_bytes());
+        response.extend_from_slice(&1u16.to_be_bytes()); // ANCOUNT = 1
+        response.extend_from_slice(&0u16.to_be_bytes()); // NSCOUNT
+        let arcount_offset = response.len();
+        response.extend_from_slice(&0u16.to_be_bytes()); // ARCOUNT placeholder
+
+        let name_parts: Vec<&str> = qname.split('.').collect();
+        for part in &name_parts {
+            response.push((*part).len() as u8);
+            response.extend_from_slice(part.as_bytes());
+        }
+        response.push(0);
+
+        response.extend_from_slice(&16u16.to_be_bytes()); // TYPE TXT
+        response.extend_from_slice(&1u16.to_be_bytes()); // CLASS IN
+
+        // TTL = 300 seconds (5 minutes)
+        response.extend_from_slice(&300u32.to_be_bytes());
+
+        // Build TXT record data
+        let txt_bytes = txt_value.as_bytes();
+        let mut txt_data = Vec::new();
+        let mut offset = 0;
+        while offset < txt_bytes.len() {
+            let remaining = txt_bytes.len() - offset;
+            let chunk_len = std::cmp::min(remaining, 255);
+            txt_data.push(chunk_len as u8);
+            txt_data.extend_from_slice(&txt_bytes[offset..offset + chunk_len]);
+            offset += chunk_len;
+        }
+        response.extend_from_slice(&(txt_data.len() as u16).to_be_bytes());
+        response.extend_from_slice(&txt_data);
+
+        if let Some(edns) = edns_options {
+            let opt_record =
+                crate::dns::edns::EdnsOptions::build_opt_record(edns.udp_payload_size, false);
+            if !opt_record.is_empty() {
+                response.extend_from_slice(&[0]);
+                response.extend_from_slice(&41u16.to_be_bytes());
+                response.extend_from_slice(&(opt_record.len() as u16).to_be_bytes());
+                response.extend_from_slice(&opt_record);
+            }
+        }
+
+        let has_opt = edns_options.is_some();
+        let arcount: u16 = if has_opt { 1 } else { 0 };
+        response[arcount_offset..arcount_offset + 2].copy_from_slice(&arcount.to_be_bytes());
+
+        if response.len() > max_response_size && max_response_size > 0 {
+            return Self::build_truncated_response(
+                qname,
+                16,
+                &[crate::dns::server::DnsZoneRecord {
+                    name: qname.to_string(),
+                    record_type: RecordType::TXT,
+                    value: txt_value.to_string(),
+                    ttl: 300,
+                    priority: None,
+                }],
+                false,
+                edns_options,
+                None,
+                "",
+            );
+        }
+
+        Arc::new(response)
+    }
 }

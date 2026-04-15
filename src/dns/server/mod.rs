@@ -446,6 +446,8 @@ struct DnsHandlerState {
     update_handler: Option<super::update::DynamicUpdateHandler>,
     notify_handler: Option<super::notify::NotifyHandler>,
     query_coalescer: Option<Arc<super::query_coalesce::QueryCoalescer>>,
+    #[cfg(feature = "dns")]
+    acme_dns_challenges: Option<Arc<crate::tls::AcmeDnsChallenge>>,
 }
 
 /// Shared DNS query context to reduce function parameter count.
@@ -472,6 +474,8 @@ pub struct QueryContext<'a> {
     pub notify_handler: Option<&'a super::notify::NotifyHandler>,
     pub query_coalescer: Option<&'a Arc<super::query_coalesce::QueryCoalescer>>,
     pub dns64_translator: Option<&'a super::dns64::Dns64Translator>,
+    #[cfg(feature = "dns")]
+    pub acme_dns_challenges: Option<&'a Arc<crate::tls::AcmeDnsChallenge>>,
 }
 
 pub struct DnsServer {
@@ -509,6 +513,8 @@ pub struct DnsServer {
     zone_sync: Option<Arc<super::anycast_sync::AnycastZoneSync>>,
     recursive_server: Option<Arc<super::recursive::RecursiveDnsServer>>,
     dns64_translator: Option<super::dns64::Dns64Translator>,
+    #[cfg(feature = "dns")]
+    pub(crate) acme_dns_challenges: Option<Arc<crate::tls::AcmeDnsChallenge>>,
 }
 
 impl Clone for DnsServer {
@@ -546,6 +552,8 @@ impl Clone for DnsServer {
             zone_sync: None,        // Cannot clone - requires re-initialization
             recursive_server: None, // Cannot clone - requires re-initialization
             dns64_translator: self.dns64_translator.clone(),
+            #[cfg(feature = "dns")]
+            acme_dns_challenges: self.acme_dns_challenges.clone(),
         }
     }
 }
@@ -859,6 +867,17 @@ impl DnsServer {
             zone_sync: None,
             recursive_server: None,
             dns64_translator,
+            #[cfg(feature = "dns")]
+            acme_dns_challenges: None,
         }
+    }
+
+    #[cfg(feature = "dns")]
+    pub fn with_acme_dns_challenges(
+        mut self,
+        challenges: Arc<crate::tls::AcmeDnsChallenge>,
+    ) -> Self {
+        self.acme_dns_challenges = Some(challenges);
+        self
     }
 }
