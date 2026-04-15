@@ -369,13 +369,6 @@ impl SignedIpcMessage {
             .try_into()
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "nonce extraction failed"))?;
 
-        if !check_and_insert_nonce(&nonce, timestamp) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "replay detected: duplicate nonce",
-            ));
-        }
-
         let hmac: [u8; HMAC_SIZE] = data
             [4 + TIMESTAMP_SIZE + NONCE_SIZE..4 + TIMESTAMP_SIZE + NONCE_SIZE + HMAC_SIZE]
             .try_into()
@@ -392,6 +385,13 @@ impl SignedIpcMessage {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "HMAC verification failed",
+            ));
+        }
+
+        if !check_and_insert_nonce(&nonce, timestamp) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "replay detected: duplicate nonce",
             ));
         }
 
@@ -438,13 +438,6 @@ impl SignedIpcMessage {
             .try_into()
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "bad nonce"))?;
 
-        if !check_and_insert_nonce(&nonce, timestamp) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "replay detected: duplicate nonce",
-            ));
-        }
-
         let hmac: [u8; HMAC_SIZE] = raw
             [TIMESTAMP_SIZE + NONCE_SIZE..TIMESTAMP_SIZE + NONCE_SIZE + HMAC_SIZE]
             .try_into()
@@ -461,6 +454,13 @@ impl SignedIpcMessage {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "HMAC verification failed",
+            ));
+        }
+
+        if !check_and_insert_nonce(&nonce, timestamp) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "replay detected: duplicate nonce",
             ));
         }
 

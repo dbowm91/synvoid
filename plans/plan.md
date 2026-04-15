@@ -686,13 +686,13 @@ Items are organized for **parallelization** - items within a wave can be execute
 
 #### S1.2: IPC Nonce Cache Poisoning Before HMAC - CRITICAL ✅ COMPLETE
 
-**Location**: `src/process/ipc_signed.rs:234, 372, 441`
+**Location**: `src/process/ipc_signed.rs:234 (SignedReader::read_message), 372 (deserialize_signed), 441 (deserialize_signed_from_stream)`
 
-**Issue**: Nonce inserted into cache BEFORE HMAC verification completes.
+**Issue**: Nonce inserted into cache BEFORE HMAC verification completes. `SignedReader::read_message()` was correct, but `deserialize_signed()` and `deserialize_signed_from_stream()` inserted nonce before HMAC verification.
 
-**Fix**: Verify HMAC BEFORE inserting nonce into cache.
+**Fix**: Verify HMAC BEFORE inserting nonce into cache. Applied to all three functions.
 
-**Verification**: HMAC verification now happens before nonce insertion.
+**Verification**: HMAC verification now happens before nonce insertion in all three functions. Clippy clean; 124 integration tests pass.
 
 ---
 

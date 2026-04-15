@@ -56,6 +56,7 @@ mod tests {
             ipc_read_timeout_ms: 3000,
             ipc_write_timeout_ms: 3000,
             master_startup_timeout_secs: 30,
+            drain_check_interval_ms: 100,
         };
 
         assert_eq!(config.restart_delay_secs, 10);
@@ -311,7 +312,7 @@ mod tests {
     fn test_drain_manager_basic() {
         use maluwaf::overseer::drain_manager::DrainManager;
 
-        let manager = DrainManager::new();
+        let manager = DrainManager::new(100);
 
         let drain_id = manager.start_drain(60);
         assert!(drain_id > 0);
