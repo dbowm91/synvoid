@@ -179,6 +179,10 @@ impl QuorumManager {
         }
     }
 
+    pub fn is_verification_enabled(&self) -> bool {
+        self.verification_enabled
+    }
+
     pub async fn start_request(&self, request: QuorumRequest) -> String {
         let request_id = request.request_id.clone();
         let mut pending = self.pending_requests.write().await;

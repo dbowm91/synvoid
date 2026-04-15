@@ -24,11 +24,11 @@ This document contains the remaining deferred and partially-complete items from 
 | Q2.1 | MEDIUM | ⏸️ DEFERRED | Architecture |
 | Q3.1 | MEDIUM | ⏸️ PARTIAL | Testing |
 | M5 | MEDIUM | ⏸️ DEFERRED | Mesh/DHT |
-| M6 | MEDIUM | ⏸️ DEFERRED | Mesh/DHT |
+| M6 | MEDIUM | 🔧 IN PROGRESS | Mesh/DHT |
 | M16.9 | MEDIUM | ⏸️ DEFERRED | Mesh/DHT |
 | M16.10 | MEDIUM | ⏸️ DEFERRED | Mesh/DHT |
 
-**Total**: 11 items (1 PARTIAL, 9 DEFERRED, 1 ❌ DEFERRED)
+**Total**: 11 items (1 PARTIAL, 8 DEFERRED, 1 IN PROGRESS, 1 ❌ DEFERRED)
 
 ---
 
