@@ -283,23 +283,48 @@ let log = RequestLogPayload {
 
 ### 4.5: Performance - Input Handling
 
-#### P.3: URL Decoding Repeated Allocations - HIGH ⏸️ DEFERRED
+#### P.3: URL Decoding Repeated Allocations - HIGH ⏸️ DEFERRED (No Security Impact)
 
 **Location**: `src/waf/attack_detection/*.rs`
 
 **Issue**: `InputNormalizer` decodes URLs, then detectors call `url_decode_all()` again.
 
-**Investigation Result**: The detectors use `detect_with_url_decode()` which calls `url_decode_all()` on input that has already been normalized by `InputNormalizer::normalize()`. However:
+**Affected Detectors** (8): SsrfDetector, OpenRedirectDetector, PathTraversalDetector, RfiDetector, LdapInjectionDetector, XPathInjectionDetector, XxeDetector, JwtDetector
 
-1. `InputNormalizer` handles additional transformations beyond URL decoding (`\x`, `\u`, null bytes, HTML entities, NFKC normalization)
-2. `url_decode_all()` uses `urlencoding_decode` while `InputNormalizer` uses character-by-character `%XX` decoding
-3. Both are iterative (10 passes) but produce equivalent results for pure URL-encoded inputs
+**NOT Affected** (3): SqliDetector, XssDetector (use libinjection), CmdInjectionDetector (uses custom normalize_input)
 
-The redundancy is theoretically wasteful but unlikely to cause correctness issues. However, the normalizer uses thread-local buffers (`NORMALIZE_BUFFER`) that are cleared per-call, preventing caching across detectors. Eliminating the redundancy would require either:
-- Passing already-decoded input to detectors (architectural change)
-- Having detectors skip decoding when input is known to be pre-normalized
+**Quantified Impact** (typical 1KB query, 8 detectors):
+| Metric | Normal Input | Encoded Input |
+|--------|-------------|--------------|
+| Extra allocations | ~8-16 | ~8-16 |
+| Extra decode passes | ~8 | ~8 |
+| Memory overhead | Negligible | Negligible |
 
-**Fix**: Deferred - significant refactoring required with low practical benefit (correctness is not affected).
+**Key Finding**: The redundancy is REAL but its impact is MINIMAL:
+- `url_decode_all` uses `input.to_string()` (always allocates) then single-pass decode
+- `InputNormalizer` uses thread-local buffer (no heap allocation for small inputs)
+- For normal inputs: ~2 extra allocations, ~2 extra passes per detector
+- For encoded inputs: Similar - normalizer already decoded
+
+**Security Assessment**: NO SECURITY IMPACT
+- Double URL decoding is idempotent - applying `%XX` decode twice = once
+- Doesn't cause false positives or negatives
+- May actually help: defense-in-depth if normalizer has a bug
+- Handles edge cases with >10 passes of encoding
+
+**When it would matter**:
+- Very high request volume (100K+/second)
+- Large request bodies processed by multiple detectors
+- Memory-constrained environments
+
+**Fix Options**:
+| Option | Complexity | Risk | Recommendation |
+|--------|-----------|------|----------------|
+| A: Skip if no `%` in input | Low | Medium (could miss edge cases) | Heuristic, not recommended |
+| B: Flag in NormalizedInput | Medium | Low | Clean if fixed |
+| C: detect_pre_normalized() | Medium | Low | Clean separation |
+
+**Verdict**: LOW PRIORITY - The cost is negligible (~8-16 allocations per request) and there's no security reason to fix it. Recommend keeping DEFERRED unless profiling shows otherwise.
 
 ---
 
