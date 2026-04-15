@@ -100,3 +100,113 @@ impl Default for AuthRateLimiter {
 
 pub static AUTH_RATE_LIMITER: std::sync::LazyLock<AuthRateLimiter> =
     std::sync::LazyLock::new(AuthRateLimiter::new);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_hash_admin_token() {
+        let token = "test_admin_token";
+        let hash = hash_admin_token(token).unwrap();
+
+        assert!(!hash.is_empty());
+        assert_ne!(hash, token);
+        assert!(hash.starts_with("$2"));
+    }
+
+    #[test]
+    fn test_verify_admin_token_valid() {
+        let token = "my_secret_token";
+        let hash = hash_admin_token(token).unwrap();
+
+        assert!(verify_admin_token(token, &hash));
+    }
+
+    #[test]
+    fn test_verify_admin_token_invalid() {
+        let token = "my_secret_token";
+        let hash = hash_admin_token(token).unwrap();
+
+        assert!(!verify_admin_token("wrong_token", &hash));
+    }
+
+    #[test]
+    fn test_verify_admin_token_invalid_hash() {
+        assert!(!verify_admin_token("token", "invalid_hash"));
+    }
+
+    #[test]
+    fn test_auth_rate_limiter_record_failure() {
+        let limiter = AuthRateLimiter::new();
+        let identifier = "192.168.1.100";
+
+        limiter.record_failure(identifier);
+
+        let attempts = limiter.attempts.read();
+        assert!(attempts.contains_key(identifier));
+    }
+
+    #[test]
+    fn test_auth_rate_limiter_record_failure_multiple() {
+        let limiter = AuthRateLimiter::new();
+        let identifier = "192.168.1.101";
+
+        for _ in 0..3 {
+            limiter.record_failure(identifier);
+        }
+
+        let attempts = limiter.attempts.read();
+        let entry = attempts.get(identifier);
+        assert!(entry.is_some());
+        let (times, _) = entry.unwrap();
+        assert!(times.len() <= MAX_AUTH_ATTEMPTS);
+    }
+
+    #[test]
+    fn test_auth_rate_limiter_record_success() {
+        let limiter = AuthRateLimiter::new();
+        let identifier = "192.168.1.102";
+
+        limiter.record_failure(identifier);
+        limiter.record_failure(identifier);
+
+        limiter.record_success(identifier);
+
+        let attempts = limiter.attempts.read();
+        assert!(!attempts.contains_key(identifier));
+    }
+
+    #[test]
+    fn test_auth_rate_limiter_cleanup_expired() {
+        let limiter = AuthRateLimiter::new();
+        let identifier = "192.168.1.103";
+
+        limiter.record_failure(identifier);
+        limiter.cleanup_expired();
+
+        let attempts = limiter.attempts.read();
+        assert!(attempts.contains_key(identifier));
+    }
+
+    #[test]
+    fn test_hash_admin_token_with_cost() {
+        let token = "test_token";
+        let hash_low = hash_admin_token_with_cost(token, 4).unwrap();
+        let hash_high = hash_admin_token_with_cost(token, 12).unwrap();
+
+        assert!(!hash_low.is_empty());
+        assert!(!hash_high.is_empty());
+    }
+
+    #[test]
+    fn test_auth_rate_limiter_separate_identifiers() {
+        let limiter = AuthRateLimiter::new();
+
+        limiter.record_failure("192.168.1.1");
+        limiter.record_failure("192.168.1.2");
+
+        let attempts = limiter.attempts.read();
+        assert_eq!(attempts.len(), 2);
+    }
+}

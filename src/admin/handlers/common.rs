@@ -249,3 +249,206 @@ impl ErrorPage {
             .collect()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::IpAddr;
+
+    #[test]
+    fn test_required_role_is_admin() {
+        assert!(RequiredRole::Admin.is_admin());
+        assert!(!RequiredRole::User.is_admin());
+    }
+
+    #[test]
+    fn test_parse_ip_valid() {
+        let ipv4: IpAddr = "192.168.1.1".parse().unwrap();
+        assert_eq!(parse_ip("192.168.1.1").unwrap(), ipv4);
+
+        let ipv6: IpAddr = "::1".parse().unwrap();
+        assert_eq!(parse_ip("::1").unwrap(), ipv6);
+    }
+
+    #[test]
+    fn test_parse_ip_invalid() {
+        assert!(parse_ip("not-an-ip").is_err());
+        assert!(parse_ip("").is_err());
+    }
+
+    #[test]
+    fn test_pagination_query_defaults() {
+        let query = PaginationQuery::default();
+        assert_eq!(query.limit, Some(50));
+        assert_eq!(query.offset, Some(0));
+        assert!(query.search.is_none());
+    }
+
+    #[test]
+    fn test_pagination_query_with_defaults() {
+        let query = PaginationQuery {
+            limit: Some(100),
+            offset: Some(20),
+            search: Some("test".to_string()),
+        };
+
+        let (limit, offset) = query.with_defaults(50, 500);
+        assert_eq!(limit, 100);
+        assert_eq!(offset, 20);
+    }
+
+    #[test]
+    fn test_pagination_query_with_defaults_respects_max() {
+        let query = PaginationQuery {
+            limit: Some(1000),
+            offset: Some(0),
+            search: None,
+        };
+
+        let (limit, _) = query.with_defaults(50, 500);
+        assert_eq!(limit, 500);
+    }
+
+    #[test]
+    fn test_pagination_query_uses_default_when_none() {
+        let query = PaginationQuery {
+            limit: None,
+            offset: None,
+            search: None,
+        };
+
+        let (limit, offset) = query.with_defaults(50, 500);
+        assert_eq!(limit, 50);
+        assert_eq!(offset, 0);
+    }
+
+    #[test]
+    fn test_paginated_response_new_with_items() {
+        let items = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        let response = PaginatedResponse::new(items, 10, 3, 0);
+
+        assert_eq!(response.items.len(), 3);
+        assert_eq!(response.total, 10);
+        assert!(response.has_more);
+    }
+
+    #[test]
+    fn test_paginated_response_has_more_false_at_end() {
+        let items = vec!["a".to_string()];
+        let response = PaginatedResponse::new(items, 5, 5, 0);
+
+        assert!(!response.has_more);
+    }
+
+    #[test]
+    fn test_paginated_response_empty() {
+        let response: PaginatedResponse<String> = PaginatedResponse::empty();
+
+        assert!(response.items.is_empty());
+        assert_eq!(response.total, 0);
+        assert!(!response.has_more);
+    }
+
+    #[test]
+    fn test_pagination_limits_constants() {
+        assert_eq!(PAGINATION_LIMITS_DEFAULT.default, 50);
+        assert_eq!(PAGINATION_LIMITS_DEFAULT.max, 500);
+
+        assert_eq!(PAGINATION_LIMITS_LARGE.default, 100);
+        assert_eq!(PAGINATION_LIMITS_LARGE.max, 1000);
+
+        assert_eq!(PAGINATION_LIMITS_SMALL.default, 20);
+        assert_eq!(PAGINATION_LIMITS_SMALL.max, 100);
+    }
+
+    #[test]
+    fn test_pagination_limits_apply_within_bounds() {
+        let limits = PAGINATION_LIMITS_DEFAULT;
+
+        let (limit, offset) = limits.apply(Some(25), Some(10));
+        assert_eq!(limit, 25);
+        assert_eq!(offset, 10);
+    }
+
+    #[test]
+    fn test_pagination_limits_apply_above_max() {
+        let limits = PAGINATION_LIMITS_DEFAULT;
+
+        let (limit, offset) = limits.apply(Some(1000), Some(5));
+        assert_eq!(limit, 500);
+        assert_eq!(offset, 5);
+    }
+
+    #[test]
+    fn test_pagination_limits_apply_uses_default() {
+        let limits = PAGINATION_LIMITS_DEFAULT;
+
+        let (limit, offset) = limits.apply(None, None);
+        assert_eq!(limit, 50);
+        assert_eq!(offset, 0);
+    }
+
+    #[test]
+    fn test_status_response_factory_methods() {
+        let success = StatusResponse::success("done");
+        assert_eq!(success.status, "success");
+
+        let error = StatusResponse::error("failed");
+        assert_eq!(error.status, "error");
+
+        let ok = StatusResponse::ok("ok");
+        assert_eq!(ok.status, "ok");
+    }
+
+    #[test]
+    fn test_error_page_list_all() {
+        let pages = ErrorPage::list();
+        assert_eq!(pages.len(), ERROR_PAGES.len());
+
+        for page in &pages {
+            let found = ERROR_PAGES.iter().any(|(code, _, _)| *code == page.code);
+            assert!(found);
+        }
+    }
+
+    #[test]
+    fn test_error_page_from_code_valid() {
+        let page = ErrorPage::from_code(400).unwrap();
+        assert_eq!(page.code, 400);
+        assert_eq!(page.name, "Bad Request");
+
+        let page = ErrorPage::from_code(500).unwrap();
+        assert_eq!(page.code, 500);
+        assert_eq!(page.name, "Internal Server Error");
+    }
+
+    #[test]
+    fn test_error_page_from_code_invalid() {
+        assert!(ErrorPage::from_code(600).is_none());
+        assert!(ErrorPage::from_code(199).is_none());
+    }
+
+    #[test]
+    fn test_config_path_sanitization() {
+        let config_dir = std::path::PathBuf::from("/etc/config");
+        let site_id = "example.com";
+
+        let path = config_path(&config_dir, site_id);
+        assert_eq!(
+            path,
+            std::path::PathBuf::from("/etc/config/example_com.toml")
+        );
+    }
+
+    #[test]
+    fn test_config_path_preserves_underscores() {
+        let config_dir = std::path::PathBuf::from("/etc/config");
+        let site_id = "my_site.test";
+
+        let path = config_path(&config_dir, site_id);
+        assert_eq!(
+            path,
+            std::path::PathBuf::from("/etc/config/my_site_test.toml")
+        );
+    }
+}

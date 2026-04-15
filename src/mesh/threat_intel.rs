@@ -698,7 +698,21 @@ impl ThreatIntelligenceManager {
 
         if let Ok(bytes) = serde_json::to_vec(&value) {
             let ttl = indicator.ttl_seconds.max(self.config.min_ttl_seconds);
-            if record_store.store_and_announce(key_str.to_string(), bytes, ttl) {
+            let is_critical_threat = indicator.severity == ThreatSeverity::Critical
+                || indicator.severity == ThreatSeverity::High;
+
+            let stored = if is_critical_threat && self.node_role.is_global() {
+                record_store.store_and_announce_critical(
+                    key_str.to_string(),
+                    bytes,
+                    ttl,
+                    record_store.replication_factor(),
+                )
+            } else {
+                record_store.store_and_announce(key_str.to_string(), bytes, ttl)
+            };
+
+            if stored {
                 metrics::record_threat_intel_dht_publish();
                 tracing::debug!(
                     "Published threat indicator to DHT: {} ({})",

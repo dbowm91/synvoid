@@ -633,6 +633,27 @@ impl RecordStoreManager {
     }
 
     pub fn store_and_announce(&self, key: String, value: Vec<u8>, ttl_seconds: u64) -> bool {
+        self.store_and_announce_with_broadcast(key, value, ttl_seconds, false, 0)
+    }
+
+    pub fn store_and_announce_critical(
+        &self,
+        key: String,
+        value: Vec<u8>,
+        ttl_seconds: u64,
+        replication_factor: usize,
+    ) -> bool {
+        self.store_and_announce_with_broadcast(key, value, ttl_seconds, true, replication_factor)
+    }
+
+    fn store_and_announce_with_broadcast(
+        &self,
+        key: String,
+        value: Vec<u8>,
+        ttl_seconds: u64,
+        immediate_broadcast: bool,
+        replication_factor: usize,
+    ) -> bool {
         if !self.config.enabled {
             return false;
         }
@@ -652,8 +673,17 @@ impl RecordStoreManager {
 
         let stored = self.store_record(record.clone(), 100);
         if stored {
-            self.queue_for_announce(record);
+            self.queue_for_announce(record.clone());
             tracing::debug!("Stored and queued record for announce: {}", key);
+
+            if immediate_broadcast && self.is_global_node() && replication_factor > 0 {
+                let record_store = self.clone();
+                tokio::spawn(async move {
+                    record_store
+                        .announce_record_to_closest(&record, replication_factor)
+                        .await;
+                });
+            }
         }
         stored
     }

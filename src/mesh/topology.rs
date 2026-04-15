@@ -772,7 +772,9 @@ impl MeshTopology {
 
         if !is_store_available {
             let site_key = site.to_string();
-            self.verified_upstream_cache.insert(site_key, Vec::new()).await;
+            self.verified_upstream_cache
+                .insert(site_key, Vec::new())
+                .await;
             return Vec::new();
         }
 
@@ -1586,9 +1588,9 @@ impl MeshTopology {
 
         let heartbeat_records = rs.get_by_prefix("global_node_heartbeat:");
         for record in heartbeat_records {
-            if let Ok(heartbeat) = serde_json::from_slice::<crate::mesh::dht::GlobalNodeHeartbeat>(
-                &record.value,
-            ) {
+            if let Ok(heartbeat) =
+                serde_json::from_slice::<crate::mesh::dht::GlobalNodeHeartbeat>(&record.value)
+            {
                 let age = now.saturating_sub(heartbeat.timestamp);
                 if age <= heartbeat_ttl {
                     live_count += 1;
@@ -1598,14 +1600,11 @@ impl MeshTopology {
 
         crate::metrics::record_global_node_liveness_count(live_count);
 
-        let expected_global_nodes = self
-            .config
-            .connection
-            .reconnection_priority
-            .global_nodes;
+        let expected_global_nodes = self.config.connection.reconnection_priority.global_nodes;
         if expected_global_nodes > 0 && live_count < expected_global_nodes as u64 {
             let previously_live = crate::metrics::get_global_node_liveness_count();
-            if previously_live > 0 && previously_live >= expected_global_nodes as u64
+            if previously_live > 0
+                && previously_live >= expected_global_nodes as u64
                 && live_count < previously_live
             {
                 tracing::warn!(

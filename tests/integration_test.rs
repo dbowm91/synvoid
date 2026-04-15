@@ -2361,3 +2361,465 @@ mod yara_manager_lifecycle_tests {
         assert!(stats.is_global);
     }
 }
+
+#[cfg(test)]
+mod proxy_pipeline_tests {
+    use ahash::AHashSet;
+    use bytes::Bytes;
+    use http_body_util::Full;
+    use maluwaf::http_client::{get, post_json};
+    use maluwaf::proxy::{
+        filter_response_headers, filter_response_headers_buf, is_hop_by_hop_header,
+        sanitize_request_path,
+    };
+    use std::net::SocketAddr;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+    use tokio::time::Duration;
+
+    #[test]
+    fn test_sanitize_request_path_url_encoding_basic() {
+        assert_eq!(
+            sanitize_request_path("/path%20with%20spaces"),
+            "/path with spaces"
+        );
+        assert_eq!(sanitize_request_path("/hello%2Fworld"), "/hello/world");
+    }
+
+    #[test]
+    fn test_sanitize_request_path_url_encoding_valid() {
+        assert_eq!(
+            sanitize_request_path("/path%20with%20spaces"),
+            "/path with spaces"
+        );
+        assert_eq!(sanitize_request_path("/hello%2Fworld"), "/hello/world");
+        assert_eq!(sanitize_request_path("/%ZZ"), "/%ZZ");
+    }
+
+    #[test]
+    fn test_sanitize_request_path_null_bytes() {
+        assert_eq!(sanitize_request_path("/api\x00users"), "/apiusers");
+        assert_eq!(sanitize_request_path("/\x00/path"), "/path");
+        assert_eq!(sanitize_request_path("/%00null"), "/null");
+    }
+
+    #[test]
+    fn test_sanitize_request_path_control_chars() {
+        assert_eq!(sanitize_request_path("/api\x01\x02users"), "/apiusers");
+        assert_eq!(sanitize_request_path("/path\x1F/more"), "/path/more");
+        assert_eq!(sanitize_request_path("/path~more"), "/path~more");
+    }
+
+    #[test]
+    fn test_sanitize_request_path_directory_traversal() {
+        assert_eq!(sanitize_request_path("/a/b/../c"), "/c");
+        assert_eq!(sanitize_request_path("/../a"), "a");
+    }
+
+    #[test]
+    fn test_sanitize_request_path_multiple_slashes() {
+        assert_eq!(sanitize_request_path("///etc/passwd"), "/etc/passwd");
+        assert_eq!(sanitize_request_path("/api//users"), "/api/users");
+        assert_eq!(sanitize_request_path("/a///b"), "/a/b");
+    }
+
+    #[test]
+    fn test_sanitize_request_path_unicode_normalization() {
+        let result = sanitize_request_path("/caf\u{00E9}");
+        assert_eq!(result, "/caf\u{00E9}");
+
+        let composed = sanitize_request_path("/caf\u{0065}\u{0301}");
+        assert_eq!(composed, "/caf\u{00E9}");
+    }
+
+    #[test]
+    fn test_sanitize_request_path_dot_segments_preserved() {
+        assert_eq!(sanitize_request_path("/a/./b"), "/a/./b");
+    }
+
+    #[test]
+    fn test_sanitize_request_path_empty_after_sanitization() {
+        assert_eq!(sanitize_request_path("/.."), "/");
+    }
+
+    #[test]
+    fn test_sanitize_request_path_returns_cow() {
+        use std::borrow::Cow;
+        let result = sanitize_request_path("/api/users");
+        assert!(matches!(result, Cow::Owned(_)));
+
+        let simple = sanitize_request_path("/simple");
+        assert!(matches!(simple, Cow::Owned(_)));
+    }
+
+    #[test]
+    fn test_is_hop_by_hop_header_case_insensitive() {
+        assert!(is_hop_by_hop_header("Connection"));
+        assert!(is_hop_by_hop_header("CONNECTION"));
+        assert!(is_hop_by_hop_header("connection"));
+        assert!(is_hop_by_hop_header("KEEP-ALIVE"));
+        assert!(is_hop_by_hop_header("Keep-Alive"));
+        assert!(is_hop_by_hop_header("Transfer-Encoding"));
+        assert!(is_hop_by_hop_header("UPGRADE"));
+    }
+
+    #[test]
+    fn test_is_hop_by_hop_header_not_hop() {
+        assert!(!is_hop_by_hop_header("Content-Type"));
+        assert!(!is_hop_by_hop_header("Content-Length"));
+        assert!(!is_hop_by_hop_header("Host"));
+        assert!(!is_hop_by_hop_header("Authorization"));
+        assert!(!is_hop_by_hop_header("X-Forwarded-For"));
+        assert!(!is_hop_by_hop_header("X-Real-IP"));
+        assert!(!is_hop_by_hop_header("User-Agent"));
+    }
+
+    #[test]
+    fn test_filter_response_headers_preserves_normal() {
+        let mut headers = http::HeaderMap::new();
+        headers.insert("content-type", "application/json".parse().unwrap());
+        headers.insert("date", "Mon, 01 Jan 2024 00:00:00 GMT".parse().unwrap());
+        headers.insert("cache-control", "max-age=3600".parse().unwrap());
+
+        let filtered = filter_response_headers(&headers, &AHashSet::new());
+        let names: Vec<&str> = filtered.iter().map(|(k, _)| k.as_str()).collect();
+
+        assert!(names.contains(&"content-type"));
+        assert!(names.contains(&"date"));
+        assert!(names.contains(&"cache-control"));
+        assert_eq!(names.len(), 3);
+    }
+
+    #[test]
+    fn test_filter_response_headers_strips_hop_by_hop() {
+        let mut headers = http::HeaderMap::new();
+        headers.insert("connection", "keep-alive".parse().unwrap());
+        headers.insert("keep-alive", "timeout=5".parse().unwrap());
+        headers.insert("transfer-encoding", "chunked".parse().unwrap());
+        headers.insert("upgrade", "websocket".parse().unwrap());
+        headers.insert("te", "trailers".parse().unwrap());
+        headers.insert("trailers", "x-custom".parse().unwrap());
+        headers.insert("content-type", "text/html".parse().unwrap());
+
+        let filtered = filter_response_headers(&headers, &AHashSet::new());
+        let names: Vec<&str> = filtered.iter().map(|(k, _)| k.as_str()).collect();
+
+        assert!(names.contains(&"content-type"));
+        assert!(!names.iter().any(|n| *n == "connection"));
+        assert!(!names.iter().any(|n| *n == "keep-alive"));
+        assert!(!names.iter().any(|n| *n == "transfer-encoding"));
+        assert!(!names.iter().any(|n| *n == "upgrade"));
+        assert!(!names.iter().any(|n| *n == "te"));
+        assert!(!names.iter().any(|n| *n == "trailers"));
+    }
+
+    #[test]
+    fn test_filter_response_headers_strips_server_leaks() {
+        let mut headers = http::HeaderMap::new();
+        headers.insert("server", "nginx/1.18".parse().unwrap());
+        headers.insert("x-powered-by", "PHP/7.4".parse().unwrap());
+        headers.insert("x-aspnet-version", "5.0".parse().unwrap());
+        headers.insert("x-runtime", "0.5".parse().unwrap());
+        headers.insert("content-type", "text/html".parse().unwrap());
+
+        let mut custom_filter = AHashSet::new();
+        custom_filter.insert("server".to_string());
+        custom_filter.insert("x-powered-by".to_string());
+        custom_filter.insert("x-runtime".to_string());
+
+        let filtered = filter_response_headers(&headers, &custom_filter);
+        let names: Vec<&str> = filtered.iter().map(|(k, _)| k.as_str()).collect();
+
+        assert!(names.contains(&"content-type"));
+        assert!(!names.iter().any(|n| *n == "server"));
+        assert!(!names.iter().any(|n| *n == "x-powered-by"));
+        assert!(names.iter().any(|n| *n == "x-aspnet-version"));
+        assert!(!names.iter().any(|n| *n == "x-runtime"));
+    }
+
+    #[test]
+    fn test_filter_response_headers_custom_filters() {
+        let mut headers = http::HeaderMap::new();
+        headers.insert("x-custom-secret", "value".parse().unwrap());
+        headers.insert("x-internal", "debug".parse().unwrap());
+        headers.insert("content-type", "application/json".parse().unwrap());
+
+        let mut custom_filters = AHashSet::new();
+        custom_filters.insert("x-custom-secret".to_string());
+        custom_filters.insert("x-internal".to_string());
+
+        let filtered = filter_response_headers(&headers, &custom_filters);
+        let names: Vec<&str> = filtered.iter().map(|(k, _)| k.as_str()).collect();
+
+        assert!(names.contains(&"content-type"));
+        assert!(!names.iter().any(|n| *n == "x-custom-secret"));
+        assert!(!names.iter().any(|n| *n == "x-internal"));
+    }
+
+    #[test]
+    fn test_filter_response_headers_buf_clears_on_reuse() {
+        let mut buf = Vec::new();
+
+        let mut headers1 = http::HeaderMap::new();
+        headers1.insert("content-type", "text/html".parse().unwrap());
+        headers1.insert("x-secret", "hidden".parse().unwrap());
+
+        let mut filter_set = AHashSet::new();
+        filter_set.insert("x-secret".to_string());
+
+        filter_response_headers_buf(&headers1, &filter_set, &mut buf);
+        assert_eq!(buf.len(), 1);
+        assert_eq!(buf[0].0, "content-type");
+
+        let mut headers2 = http::HeaderMap::new();
+        headers2.insert("x-another", "value".parse().unwrap());
+
+        filter_response_headers_buf(&headers2, &AHashSet::new(), &mut buf);
+        assert_eq!(buf.len(), 1);
+        assert_eq!(buf[0].0, "x-another");
+    }
+
+    #[tokio::test]
+    async fn test_forward_request_basic() {
+        let addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
+        let listener = TcpListener::bind(addr).await.unwrap();
+        let bind_addr: SocketAddr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 4096];
+            let n = socket.read(&mut buf).await.unwrap();
+
+            let request = String::from_utf8_lossy(&buf[..n]);
+            assert!(request.starts_with("GET /test HTTP/1.1"));
+            assert!(request.contains("Host:"));
+
+            let response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 11\r\n\r\nHello World";
+            socket.write_all(response.as_bytes()).await.unwrap();
+        });
+
+        let client = tokio::spawn(async move {
+            let url = format!("http://{}/test", bind_addr);
+            let client = maluwaf::http_client::create_http_client_with_config(
+                Duration::from_secs(5),
+                10,
+                Duration::from_secs(30),
+            );
+
+            let res = get(&client, &url).await.unwrap();
+            assert_eq!(res.status_code(), 200);
+
+            let body = String::from_utf8_lossy(&res.body);
+            assert_eq!(body, "Hello World");
+        });
+
+        server.await.unwrap();
+        client.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_forward_request_post_with_body() {
+        let addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
+        let listener = TcpListener::bind(addr).await.unwrap();
+        let bind_addr: SocketAddr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 4096];
+            let n = socket.read(&mut buf).await.unwrap();
+
+            let request = String::from_utf8_lossy(&buf[..n]);
+            assert!(request.starts_with("POST /api/data HTTP/1.1"));
+            assert!(request.contains("Content-Length:"));
+            assert!(request.contains("{\"key\":\"value\"}"));
+
+            let response = "HTTP/1.1 201 Created\r\nContent-Type: application/json\r\nContent-Length: 30\r\n\r\n{\"status\":\"created\",\"id\":123}";
+            socket.write_all(response.as_bytes()).await.unwrap();
+        });
+
+        let client = tokio::spawn(async move {
+            let url = format!("http://{}/api/data", bind_addr);
+            let http_client = maluwaf::http_client::create_http_client_with_config(
+                Duration::from_secs(5),
+                10,
+                Duration::from_secs(30),
+            );
+
+            #[derive(serde::Serialize)]
+            struct PostData<'a> {
+                key: &'a str,
+            }
+
+            let res = post_json(&http_client, &url, &PostData { key: "value" })
+                .await
+                .unwrap();
+            assert_eq!(res.status_code(), 201);
+
+            let body = String::from_utf8_lossy(&res.body);
+            assert!(body.contains("created"));
+        });
+
+        server.await.unwrap();
+        client.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_forward_request_upstream_error() {
+        let addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
+        let listener = TcpListener::bind(addr).await.unwrap();
+        let bind_addr: SocketAddr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 4096];
+            let _n = socket.read(&mut buf).await.unwrap();
+
+            let response = "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n";
+            socket.write_all(response.as_bytes()).await.unwrap();
+        });
+
+        let client = tokio::spawn(async move {
+            let url = format!("http://{}/error", bind_addr);
+            let client = maluwaf::http_client::create_http_client_with_config(
+                Duration::from_secs(5),
+                10,
+                Duration::from_secs(30),
+            );
+
+            let res = get(&client, &url).await.unwrap();
+            assert_eq!(res.status_code(), 500);
+        });
+
+        server.await.unwrap();
+        client.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_forward_request_hop_by_hop_headers_stripped() {
+        let addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
+        let listener = TcpListener::bind(addr).await.unwrap();
+        let bind_addr: SocketAddr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 8192];
+            let n = socket.read(&mut buf).await.unwrap();
+
+            let request = String::from_utf8_lossy(&buf[..n]);
+            assert!(request.starts_with("GET /test HTTP/1.1"));
+            assert!(!request.contains("Connection:"));
+            assert!(!request.contains("Keep-Alive:"));
+            assert!(!request.contains("Transfer-Encoding:"));
+            assert!(!request.contains("Upgrade:"));
+
+            let response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 11\r\n\r\nHello World";
+            socket.write_all(response.as_bytes()).await.unwrap();
+        });
+
+        let client = tokio::spawn(async move {
+            let url = format!("http://{}/test", bind_addr);
+            let http_client = maluwaf::http_client::create_http_client_with_config(
+                Duration::from_secs(5),
+                10,
+                Duration::from_secs(30),
+            );
+
+            let mut req = http::Request::new(Full::new(Bytes::new()));
+            *req.uri_mut() = url.parse().unwrap();
+            *req.method_mut() = http::Method::GET;
+            req.headers_mut()
+                .insert("Connection", "keep-alive".parse().unwrap());
+            req.headers_mut()
+                .insert("Keep-Alive", "timeout=5".parse().unwrap());
+            req.headers_mut()
+                .insert("Upgrade", "websocket".parse().unwrap());
+
+            let res = http_client.request(req).await.unwrap();
+            assert_eq!(res.status().as_u16(), 200);
+        });
+
+        server.await.unwrap();
+        client.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_forward_request_response_server_headers_stripped() {
+        let addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
+        let listener = TcpListener::bind(addr).await.unwrap();
+        let bind_addr: SocketAddr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 4096];
+            let _n = socket.read(&mut buf).await.unwrap();
+
+            let response = "HTTP/1.1 200 OK\r\n\
+                Server: nginx/1.18\r\n\
+                X-Powered-By: PHP/7.4\r\n\
+                Content-Type: text/plain\r\n\
+                Content-Length: 11\r\n\r\n\
+                Hello World";
+            socket.write_all(response.as_bytes()).await.unwrap();
+        });
+
+        let client = tokio::spawn(async move {
+            let url = format!("http://{}/test", bind_addr);
+            let client = maluwaf::http_client::create_http_client_with_config(
+                Duration::from_secs(5),
+                10,
+                Duration::from_secs(30),
+            );
+
+            let res = get(&client, &url).await.unwrap();
+            assert_eq!(res.status_code(), 200);
+
+            let header_names: Vec<&str> = res.headers_iter().map(|(k, _)| k.as_str()).collect();
+            assert!(!header_names.iter().any(|n| *n == "server"));
+            assert!(!header_names.iter().any(|n| *n == "x-powered-by"));
+            assert!(header_names.contains(&"content-type"));
+        });
+
+        server.await.unwrap();
+        client.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_forward_request_connection_timeout() {
+        let addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
+        let listener = TcpListener::bind(addr).await.unwrap();
+        let _bind_addr: SocketAddr = listener.local_addr().unwrap();
+
+        drop(listener);
+
+        let client = tokio::spawn(async move {
+            let url = "http://127.0.0.1:0/test";
+            let client = maluwaf::http_client::create_http_client_with_config(
+                Duration::from_secs(1),
+                10,
+                Duration::from_secs(30),
+            );
+
+            let result = get(&client, url).await;
+            assert!(result.is_err());
+        });
+
+        let _ = client.await;
+    }
+
+    #[tokio::test]
+    async fn test_forward_request_invalid_url() {
+        let client = tokio::spawn(async move {
+            let url = "http://[invalid:::]/test";
+            let client = maluwaf::http_client::create_http_client_with_config(
+                Duration::from_secs(5),
+                10,
+                Duration::from_secs(30),
+            );
+
+            let result = get(&client, url).await;
+            assert!(result.is_err());
+        });
+
+        let _ = client.await;
+    }
+}

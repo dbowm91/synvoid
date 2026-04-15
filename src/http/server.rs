@@ -3608,7 +3608,9 @@ impl HttpServer {
         B::Error: std::fmt::Debug,
     {
         use crate::http::shared_handler::BodyCollectionProtocol;
-        let result = collect_body_with_chunk_waf_impl(body, waf, client_ip, BodyCollectionProtocol::Http).await;
+        let result =
+            collect_body_with_chunk_waf_impl(body, waf, client_ip, BodyCollectionProtocol::Http)
+                .await;
         match &result {
             Ok(body) => {
                 *request_body_size = body.len() as u64;

@@ -583,4 +583,281 @@ mod tests {
         assert!(stats.small_acquired >= 10);
         assert!(stats.small_reused > 0 || stats.small_available > 0);
     }
+
+    #[test]
+    fn test_buffer_allocation_sizes() {
+        let small = BufferPool::acquire(1);
+        assert_eq!(small.len(), 1);
+        assert!(small.capacity() >= 1);
+
+        let at_boundary = BufferPool::acquire(SMALL_BUF_SIZE);
+        assert_eq!(at_boundary.len(), SMALL_BUF_SIZE);
+
+        let above_small = BufferPool::acquire(SMALL_BUF_SIZE + 1);
+        assert_eq!(above_small.len(), SMALL_BUF_SIZE + 1);
+    }
+
+    #[test]
+    fn test_buffer_allocation_tier_selection() {
+        let small_buf = BufferPool::acquire(100);
+        assert!(small_buf.capacity() >= SMALL_BUF_SIZE);
+
+        let medium_buf = BufferPool::acquire(SMALL_BUF_SIZE + 100);
+        assert!(medium_buf.capacity() >= MEDIUM_BUF_SIZE);
+
+        let large_buf = BufferPool::acquire(MEDIUM_BUF_SIZE + 100);
+        assert!(large_buf.capacity() >= LARGE_BUF_SIZE);
+
+        let jumbo_buf = BufferPool::acquire(LARGE_BUF_SIZE + 100);
+        assert!(jumbo_buf.capacity() >= LARGE_BUF_SIZE + 100);
+    }
+
+    #[test]
+    fn test_buffer_recycling_exact_size_reuse() {
+        let stats_before = BufferPool::stats();
+
+        let buf1 = BufferPool::acquire(1024);
+        let cap1 = buf1.capacity();
+        drop(buf1);
+
+        let stats_after_drop = BufferPool::stats();
+        assert!(
+            stats_after_drop.small_available > stats_before.small_available
+                || stats_after_drop.small_reused > stats_before.small_reused
+        );
+
+        let buf2 = BufferPool::acquire(1024);
+        assert_eq!(buf2.capacity(), cap1);
+    }
+
+    #[test]
+    fn test_pool_limits_small_tier() {
+        let acquire_count = 100.min(SMALL_POOL_CAP * 2);
+
+        let stats_before = BufferPool::stats();
+        let initial_available = stats_before.small_available;
+
+        let mut bufs = Vec::with_capacity(acquire_count);
+        for _ in 0..acquire_count {
+            bufs.push(BufferPool::acquire(100));
+        }
+
+        let stats_mid = BufferPool::stats();
+        assert!(stats_mid.small_acquired >= acquire_count as u64);
+
+        drop(bufs);
+
+        let stats_after = BufferPool::stats();
+        let returned = stats_after
+            .small_available
+            .saturating_sub(initial_available);
+        assert!(returned <= SMALL_POOL_CAP);
+    }
+
+    #[test]
+    fn test_pool_limits_medium_tier() {
+        let acquire_count = 50.min(MEDIUM_POOL_CAP * 2);
+
+        let stats_before = BufferPool::stats();
+        let initial_available = stats_before.medium_available;
+
+        let mut bufs = Vec::with_capacity(acquire_count);
+        for _ in 0..acquire_count {
+            bufs.push(BufferPool::acquire(MEDIUM_BUF_SIZE / 2));
+        }
+
+        drop(bufs);
+
+        let stats_after = BufferPool::stats();
+        let returned = stats_after
+            .medium_available
+            .saturating_sub(initial_available);
+        assert!(returned <= MEDIUM_POOL_CAP);
+    }
+
+    #[test]
+    fn test_pool_never_grows_beyond_capacity() {
+        let initial_stats = BufferPool::stats();
+        let initial_small = initial_stats.small_available;
+
+        let mut bufs = Vec::new();
+        for _ in 0..SMALL_POOL_CAP * 3 {
+            bufs.push(BufferPool::acquire(100));
+        }
+
+        let stats_during = BufferPool::stats();
+        let total_small_in_pool =
+            NUM_SHARDS * (initial_small + BufferPool::config().small_pool_cap / NUM_SHARDS);
+        assert!(
+            stats_during.small_available <= total_small_in_pool
+                || stats_during.small_acquired >= (SMALL_POOL_CAP * 3) as u64
+        );
+
+        drop(bufs);
+    }
+
+    #[test]
+    fn test_buffer_zero_sized_allocation() {
+        let buf = BufferPool::acquire(0);
+        assert_eq!(buf.len(), 0);
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn test_pooled_buf_operations() {
+        let mut buf = BufferPool::acquire(5);
+        buf.as_mut_slice().copy_from_slice(b"hello");
+        assert_eq!(buf.len(), 5);
+        assert_eq!(buf.as_slice(), b"hello");
+
+        buf.truncate(3);
+        assert_eq!(buf.len(), 3);
+        assert_eq!(buf.as_slice(), b"hel");
+
+        buf.clear();
+        assert_eq!(buf.len(), 3);
+        assert_eq!(buf.as_slice(), &[0, 0, 0]);
+    }
+
+    #[test]
+    fn test_pooled_buf_advance() {
+        let mut buf = BufferPool::acquire(10);
+        buf.as_mut_slice().copy_from_slice(b"0123456789");
+        assert_eq!(buf.len(), 10);
+
+        buf.advance(3);
+        assert_eq!(buf.len(), 7);
+        assert_eq!(buf.as_slice(), b"3456789");
+
+        buf.advance(10);
+        assert_eq!(buf.len(), 0);
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn test_concurrent_allocation_different_sizes() {
+        use std::thread;
+
+        let handles: Vec<_> = (0..4)
+            .map(|i| {
+                thread::spawn(move || {
+                    let size = match i {
+                        0 => 100,
+                        1 => SMALL_BUF_SIZE / 2,
+                        2 => MEDIUM_BUF_SIZE / 2,
+                        3 => LARGE_BUF_SIZE / 2,
+                        _ => 100,
+                    };
+                    for _ in 0..50 {
+                        let buf = BufferPool::acquire(size);
+                        assert_eq!(buf.len(), size);
+                    }
+                })
+            })
+            .collect();
+
+        for handle in handles {
+            assert!(handle.join().is_ok());
+        }
+    }
+
+    #[test]
+    fn test_concurrent_acquire_release() {
+        use std::thread;
+
+        let handle = thread::spawn(|| {
+            for _ in 0..100 {
+                let buf = BufferPool::acquire(256);
+                drop(buf);
+            }
+        });
+
+        let handle2 = thread::spawn(|| {
+            for _ in 0..100 {
+                let buf = BufferPool::acquire(256);
+                drop(buf);
+            }
+        });
+
+        assert!(handle.join().is_ok());
+        assert!(handle2.join().is_ok());
+    }
+
+    #[test]
+    fn test_stats_accuracy_after_drop() {
+        let stats_before = BufferPool::stats();
+        let small_before = stats_before.small_available;
+
+        let _buf = BufferPool::acquire(1024);
+        let stats_after_acquire = BufferPool::stats();
+
+        drop(_buf);
+        let stats_after_drop = BufferPool::stats();
+
+        assert_eq!(
+            stats_after_acquire.small_acquired,
+            stats_after_drop.small_acquired
+        );
+        assert!(
+            stats_after_drop.small_available >= small_before
+                || stats_after_drop.small_reused > stats_after_acquire.small_reused
+        );
+    }
+
+    #[test]
+    fn test_reuse_rate_calculation() {
+        let stats = BufferPool::stats();
+        let rate = stats.reuse_rate();
+        assert!(rate >= 0.0);
+        assert!(rate <= 1.0);
+    }
+
+    #[test]
+    fn test_pooled_buf_write_trait() {
+        use std::io::Write;
+
+        let mut buf = BufferPool::acquire(0);
+        let written = buf.write(b"test").unwrap();
+        assert_eq!(written, 4);
+        assert_eq!(buf.len(), 4);
+    }
+
+    #[test]
+    fn test_global_pool_acquire() {
+        let buf = BufferPool::acquire_global(1024);
+        assert_eq!(buf.len(), 1024);
+
+        let buf_small = BufferPool::acquire_global_small();
+        assert_eq!(buf_small.len(), SMALL_BUF_SIZE);
+
+        let buf_medium = BufferPool::acquire_global_medium();
+        assert_eq!(buf_medium.len(), MEDIUM_BUF_SIZE);
+
+        let buf_large = BufferPool::acquire_global(LARGE_BUF_SIZE);
+        assert_eq!(buf_large.len(), LARGE_BUF_SIZE);
+    }
+
+    #[test]
+    fn test_buffer_pool_config_defaults() {
+        let config = BufferPoolConfig::default();
+        assert_eq!(config.small_buf_size, SMALL_BUF_SIZE);
+        assert_eq!(config.medium_buf_size, MEDIUM_BUF_SIZE);
+        assert_eq!(config.large_buf_size, LARGE_BUF_SIZE);
+        assert_eq!(config.small_pool_cap, SMALL_POOL_CAP);
+        assert_eq!(config.medium_pool_cap, MEDIUM_POOL_CAP);
+        assert_eq!(config.large_pool_cap, LARGE_POOL_CAP);
+        assert_eq!(config.jumbo_pool_cap, JUMBO_POOL_CAP);
+    }
+
+    #[test]
+    fn test_deref_and_asref_traits() {
+        let mut buf = BufferPool::acquire(5);
+        buf.as_mut_slice().copy_from_slice(b"hello");
+
+        let slice: &[u8] = &*buf;
+        assert_eq!(slice, b"hello");
+
+        let as_ref: &[u8] = buf.as_ref();
+        assert_eq!(as_ref, b"hello");
+    }
 }

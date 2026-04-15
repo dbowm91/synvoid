@@ -102,3 +102,55 @@ async fn handle_logs_socket(socket: WebSocket, broadcaster: Arc<broadcaster::Bro
 
     tracing::debug!("WebSocket client {} disconnected from logs", client_id);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_bearer_token_no_header() {
+        let headers = axum::http::HeaderMap::new();
+        let result = validate_bearer_token(&headers, "test_hash");
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[test]
+    fn test_validate_bearer_token_invalid_format() {
+        use axum::http::header::AUTHORIZATION;
+
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(AUTHORIZATION, "Basic abc".parse().unwrap());
+
+        let result = validate_bearer_token(&headers, "test_hash");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_bearer_token_wrong_token() {
+        use axum::http::header::AUTHORIZATION;
+
+        let token = "correct_token";
+        let hash = crate::admin::auth::hash_admin_token(token).unwrap();
+
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(AUTHORIZATION, format!("Bearer {}", hash).parse().unwrap());
+
+        let result = validate_bearer_token(&headers, "wrong_token");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_bearer_token_correct() {
+        use axum::http::header::AUTHORIZATION;
+
+        let token = "my_admin_token";
+        let hash = crate::admin::auth::hash_admin_token(token).unwrap();
+
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(AUTHORIZATION, format!("Bearer {}", token).parse().unwrap());
+
+        let result = validate_bearer_token(&headers, &hash);
+        assert!(result.is_ok());
+    }
+}

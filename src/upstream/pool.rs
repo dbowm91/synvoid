@@ -613,3 +613,711 @@ pub struct UpstreamMetrics {
     pub total_connections: usize,
     pub average_load: f64,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_backend_is_available() {
+        let backend = Backend::new("http://127.0.0.1:8080".to_string());
+        assert!(backend.is_available());
+
+        backend.increment_connections();
+        assert!(backend.is_available());
+
+        backend.increment_connections();
+        assert!(backend.is_available());
+    }
+
+    #[test]
+    fn test_backend_max_connections() {
+        let backend = Backend::new("http://127.0.0.1:8080".to_string()).with_max_connections(2);
+        assert!(backend.is_available());
+
+        backend.increment_connections();
+        backend.increment_connections();
+        assert!(!backend.is_available());
+    }
+
+    #[test]
+    fn test_backend_connection_guard() {
+        let backend = Backend::new("http://127.0.0.1:8080".to_string()).with_max_connections(2);
+        assert_eq!(backend.current_connections.load(Ordering::Relaxed), 0);
+
+        {
+            let _guard = backend.connection_scope();
+            assert_eq!(backend.current_connections.load(Ordering::Relaxed), 1);
+        }
+
+        assert_eq!(backend.current_connections.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn test_backend_record_success_recovery() {
+        let backend = Backend::new("http://127.0.0.1:8080".to_string());
+        assert!(backend.is_healthy.is_running());
+
+        backend.is_healthy.set(false);
+        assert!(!backend.is_healthy.is_running());
+
+        backend.record_success();
+        assert!(!backend.is_healthy.is_running());
+
+        backend.record_success();
+        assert!(!backend.is_healthy.is_running());
+
+        backend.record_success();
+        assert!(backend.is_healthy.is_running());
+    }
+
+    #[test]
+    fn test_backend_record_failure_circuit_breaker() {
+        let backend = Backend::new("http://127.0.0.1:8080".to_string());
+        assert!(backend.is_healthy.is_running());
+
+        backend.record_failure();
+        assert!(backend.is_healthy.is_running());
+
+        backend.record_failure();
+        assert!(backend.is_healthy.is_running());
+
+        backend.record_failure();
+        assert!(!backend.is_healthy.is_running());
+    }
+
+    #[test]
+    fn test_backend_consecutive_failures_reset_on_success() {
+        let backend = Backend::new("http://127.0.0.1:8080".to_string());
+        assert_eq!(backend.consecutive_failures.load(Ordering::Relaxed), 0);
+
+        backend.record_failure();
+        backend.record_failure();
+        assert_eq!(backend.consecutive_failures.load(Ordering::Relaxed), 2);
+
+        backend.record_success();
+        assert_eq!(backend.consecutive_failures.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn test_backend_consecutive_successes_reset_on_failure() {
+        let backend = Backend::new("http://127.0.0.1:8080".to_string());
+        assert_eq!(backend.consecutive_successes.load(Ordering::Relaxed), 0);
+
+        backend.record_success();
+        backend.record_success();
+        assert_eq!(backend.consecutive_successes.load(Ordering::Relaxed), 2);
+
+        backend.record_failure();
+        assert_eq!(backend.consecutive_successes.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn test_backend_load_calculation() {
+        let backend = Backend::new("http://127.0.0.1:8080".to_string()).with_max_connections(10);
+        assert_eq!(backend.load(), 0.0);
+
+        backend.increment_connections();
+        backend.increment_connections();
+        backend.increment_connections();
+        assert_eq!(backend.load(), 0.3);
+    }
+
+    #[test]
+    fn test_upstream_pool_round_robin() {
+        let pool = UpstreamPool::new(
+            vec![
+                "http://127.0.0.1:8080".to_string(),
+                "http://127.0.0.1:8081".to_string(),
+                "http://127.0.0.1:8082".to_string(),
+            ],
+            LoadBalanceAlgorithm::RoundRobin,
+        );
+
+        let selected: Vec<_> = (0..6)
+            .map(|_| pool.select_backend().unwrap().url.as_ref().clone())
+            .collect();
+
+        assert_eq!(selected[0], "http://127.0.0.1:8080");
+        assert_eq!(selected[1], "http://127.0.0.1:8081");
+        assert_eq!(selected[2], "http://127.0.0.1:8082");
+        assert_eq!(selected[3], "http://127.0.0.1:8080");
+        assert_eq!(selected[4], "http://127.0.0.1:8081");
+        assert_eq!(selected[5], "http://127.0.0.1:8082");
+    }
+
+    #[test]
+    fn test_upstream_pool_least_connections() {
+        let pool = UpstreamPool::new(
+            vec![
+                "http://127.0.0.1:8080".to_string(),
+                "http://127.0.0.1:8081".to_string(),
+                "http://127.0.0.1:8082".to_string(),
+            ],
+            LoadBalanceAlgorithm::LeastConnections,
+        );
+
+        {
+            let backend = pool.select_backend().unwrap();
+            backend.increment_connections();
+        }
+
+        {
+            let backend = pool.select_backend().unwrap();
+            backend.increment_connections();
+        }
+
+        {
+            let backend = pool.select_backend().unwrap();
+            backend.increment_connections();
+        }
+
+        let backend1 = pool.select_backend().unwrap();
+        let _url1 = backend1.url.as_ref().clone();
+        backend1.increment_connections();
+        backend1.increment_connections();
+        backend1.increment_connections();
+
+        let backend2 = pool.select_backend().unwrap();
+        backend2.increment_connections();
+        backend2.increment_connections();
+
+        let backend3 = pool.select_backend().unwrap();
+        backend3.increment_connections();
+
+        let load1 = backend1.load();
+        let load2 = backend2.load();
+        let load3 = backend3.load();
+
+        assert!(load3 <= load2);
+        assert!(load2 <= load1);
+    }
+
+    #[test]
+    fn test_upstream_pool_least_connections_with_load() {
+        let pool = UpstreamPool::new(
+            vec![
+                "http://127.0.0.1:8080".to_string(),
+                "http://127.0.0.1:8081".to_string(),
+            ],
+            LoadBalanceAlgorithm::LeastConnections,
+        );
+
+        let backend1 = pool.select_backend().unwrap();
+        backend1.increment_connections();
+        backend1.increment_connections();
+        backend1.increment_connections();
+
+        let backend2 = pool.select_backend().unwrap();
+        let url = backend2.url.as_ref().clone();
+        backend2.increment_connections();
+
+        assert_eq!(url, "http://127.0.0.1:8081");
+    }
+
+    #[test]
+    fn test_upstream_pool_selects_only_healthy_backends() {
+        let pool = UpstreamPool::new(
+            vec![
+                "http://127.0.0.1:8080".to_string(),
+                "http://127.0.0.1:8081".to_string(),
+            ],
+            LoadBalanceAlgorithm::RoundRobin,
+        );
+
+        pool.mark_unhealthy("http://127.0.0.1:8080");
+
+        let backend = pool.select_backend().unwrap();
+        assert_eq!(backend.url.as_ref(), "http://127.0.0.1:8081");
+    }
+
+    #[test]
+    fn test_upstream_pool_returns_none_when_all_unhealthy() {
+        let pool = UpstreamPool::new(
+            vec![
+                "http://127.0.0.1:8080".to_string(),
+                "http://127.0.0.1:8081".to_string(),
+            ],
+            LoadBalanceAlgorithm::RoundRobin,
+        );
+
+        pool.mark_unhealthy("http://127.0.0.1:8080");
+        pool.mark_unhealthy("http://127.0.0.1:8081");
+
+        assert!(pool.select_backend().is_none());
+    }
+
+    #[test]
+    fn test_upstream_pool_backup_fallback() {
+        let pool = UpstreamPool::new_with_backup(
+            vec!["http://127.0.0.1:8080".to_string()],
+            vec!["http://127.0.0.1:9090".to_string()],
+            LoadBalanceAlgorithm::RoundRobin,
+        );
+
+        assert_eq!(
+            pool.select_backend().unwrap().url.as_ref(),
+            "http://127.0.0.1:8080"
+        );
+
+        pool.mark_unhealthy("http://127.0.0.1:8080");
+
+        let backup = pool.select_backend().unwrap();
+        assert_eq!(backup.url.as_ref(), "http://127.0.0.1:9090");
+    }
+
+    #[test]
+    fn test_upstream_pool_backup_only_when_no_primaries() {
+        let pool = UpstreamPool::new_with_backup(
+            vec!["http://127.0.0.1:8080".to_string()],
+            vec!["http://127.0.0.1:9090".to_string()],
+            LoadBalanceAlgorithm::RoundRobin,
+        );
+
+        pool.mark_unhealthy("http://127.0.0.1:8080");
+
+        let selected = pool.select_backend().unwrap();
+        assert_eq!(selected.url.as_ref(), "http://127.0.0.1:9090");
+        assert!(selected.is_backup);
+    }
+
+    #[test]
+    fn test_upstream_pool_add_backend() {
+        let pool = UpstreamPool::new(
+            vec!["http://127.0.0.1:8080".to_string()],
+            LoadBalanceAlgorithm::RoundRobin,
+        );
+
+        assert!(pool.select_backend().is_some());
+
+        pool.add_backend("http://127.0.0.1:8081".to_string());
+
+        let backends = pool.get_backends();
+        assert_eq!(backends.len(), 2);
+    }
+
+    #[test]
+    fn test_upstream_pool_add_backend_no_duplicate() {
+        let pool = UpstreamPool::new(
+            vec!["http://127.0.0.1:8080".to_string()],
+            LoadBalanceAlgorithm::RoundRobin,
+        );
+
+        pool.add_backend("http://127.0.0.1:8080".to_string());
+
+        let backends = pool.get_backends();
+        assert_eq!(backends.len(), 1);
+    }
+
+    #[test]
+    fn test_upstream_pool_remove_backend() {
+        let pool = UpstreamPool::new(
+            vec![
+                "http://127.0.0.1:8080".to_string(),
+                "http://127.0.0.1:8081".to_string(),
+            ],
+            LoadBalanceAlgorithm::RoundRobin,
+        );
+
+        pool.remove_backend("http://127.0.0.1:8080");
+
+        let backends = pool.get_backends();
+        assert_eq!(backends.len(), 1);
+        assert_eq!(backends[0].url.as_ref(), "http://127.0.0.1:8081");
+    }
+
+    #[test]
+    fn test_upstream_pool_mark_healthy() {
+        let pool = UpstreamPool::new(
+            vec!["http://127.0.0.1:8080".to_string()],
+            LoadBalanceAlgorithm::RoundRobin,
+        );
+
+        pool.mark_unhealthy("http://127.0.0.1:8080");
+        assert!(!pool.select_backend().is_some());
+
+        pool.mark_healthy("http://127.0.0.1:8080");
+        assert!(pool.select_backend().is_some());
+    }
+
+    #[test]
+    fn test_upstream_pool_mark_unhealthy() {
+        let pool = UpstreamPool::new(
+            vec!["http://127.0.0.1:8080".to_string()],
+            LoadBalanceAlgorithm::RoundRobin,
+        );
+
+        pool.mark_unhealthy("http://127.0.0.1:8080");
+        assert!(pool.select_backend().is_none());
+    }
+
+    #[test]
+    fn test_upstream_pool_get_metrics() {
+        let pool = UpstreamPool::new(
+            vec![
+                "http://127.0.0.1:8080".to_string(),
+                "http://127.0.0.1:8081".to_string(),
+            ],
+            LoadBalanceAlgorithm::RoundRobin,
+        );
+
+        let metrics = pool.get_metrics();
+        assert_eq!(metrics.total_backends, 2);
+        assert_eq!(metrics.healthy_backends, 2);
+        assert_eq!(metrics.unhealthy_backends, 0);
+    }
+
+    #[test]
+    fn test_upstream_pool_get_metrics_with_unhealthy() {
+        let pool = UpstreamPool::new(
+            vec![
+                "http://127.0.0.1:8080".to_string(),
+                "http://127.0.0.1:8081".to_string(),
+            ],
+            LoadBalanceAlgorithm::RoundRobin,
+        );
+
+        pool.mark_unhealthy("http://127.0.0.1:8080");
+
+        let metrics = pool.get_metrics();
+        assert_eq!(metrics.total_backends, 2);
+        assert_eq!(metrics.healthy_backends, 1);
+        assert_eq!(metrics.unhealthy_backends, 1);
+    }
+
+    #[test]
+    fn test_upstream_pool_mark_failed() {
+        let pool = UpstreamPool::new(
+            vec!["http://127.0.0.1:8080".to_string()],
+            LoadBalanceAlgorithm::RoundRobin,
+        );
+
+        pool.mark_failed("http://127.0.0.1:8080");
+        pool.mark_failed("http://127.0.0.1:8080");
+        pool.mark_failed("http://127.0.0.1:8080");
+
+        assert!(pool.select_backend().is_none());
+    }
+
+    #[test]
+    fn test_upstream_pool_has_primaries() {
+        let pool = UpstreamPool::new(
+            vec![
+                "http://127.0.0.1:8080".to_string(),
+                "http://127.0.0.1:8081".to_string(),
+            ],
+            LoadBalanceAlgorithm::RoundRobin,
+        );
+
+        assert!(pool.has_primaries());
+
+        pool.mark_unhealthy("http://127.0.0.1:8080");
+        pool.mark_unhealthy("http://127.0.0.1:8081");
+
+        assert!(!pool.has_primaries());
+    }
+
+    #[test]
+    fn test_upstream_pool_select_next_backend() {
+        let pool = UpstreamPool::new(
+            vec![
+                "http://127.0.0.1:8080".to_string(),
+                "http://127.0.0.1:8081".to_string(),
+                "http://127.0.0.1:8082".to_string(),
+            ],
+            LoadBalanceAlgorithm::RoundRobin,
+        );
+
+        let current = pool.select_backend().unwrap();
+        let current_url = current.url.as_ref().clone();
+
+        let next = pool.select_next_backend(&current);
+        assert!(next.is_some());
+        assert_ne!(next.unwrap().url.as_ref(), &current_url);
+    }
+
+    #[test]
+    fn test_validate_upstream_url() {
+        assert_eq!(
+            validate_upstream_url("http://127.0.0.1:8080").unwrap(),
+            "http://127.0.0.1:8080"
+        );
+        assert_eq!(
+            validate_upstream_url("https://example.com").unwrap(),
+            "https://example.com"
+        );
+        assert!(validate_upstream_url("").is_err());
+        assert!(validate_upstream_url("ftp://example.com").is_err());
+        assert!(validate_upstream_url("file:///etc/passwd").is_err());
+        assert_eq!(validate_upstream_url("/path").unwrap(), "/path");
+    }
+
+    #[test]
+    fn test_backend_try_new_valid() {
+        let backend = Backend::try_new("http://127.0.0.1:8080".to_string());
+        assert!(backend.is_ok());
+        assert_eq!(backend.unwrap().url.as_ref(), "http://127.0.0.1:8080");
+    }
+
+    #[test]
+    fn test_backend_try_new_invalid() {
+        let result = Backend::try_new("ftp://127.0.0.1:8080".to_string());
+        match result {
+            Ok(_) => panic!("Expected error for invalid scheme"),
+            Err(e) => assert!(e.contains("Invalid upstream URL scheme")),
+        }
+    }
+
+    #[test]
+    fn test_backend_with_weight() {
+        let backend = Backend::new("http://127.0.0.1:8080".to_string()).with_weight(5);
+        assert_eq!(backend.weight, 5);
+    }
+
+    #[test]
+    fn test_backend_with_protocol() {
+        let backend = Backend::new("http://127.0.0.1:8080".to_string())
+            .with_protocol(BackendProtocol::GrpcTls);
+        assert_eq!(backend.protocol, BackendProtocol::GrpcTls);
+    }
+
+    #[test]
+    fn test_backend_supports_grpc() {
+        let http_backend = Backend::new("http://127.0.0.1:8080".to_string());
+        assert!(!http_backend.supports_grpc());
+
+        let grpc_backend =
+            Backend::new("http://127.0.0.1:8080".to_string()).with_protocol(BackendProtocol::Grpc);
+        assert!(grpc_backend.supports_grpc());
+
+        let grpc_tls_backend = Backend::new("http://127.0.0.1:8080".to_string())
+            .with_protocol(BackendProtocol::GrpcTls);
+        assert!(grpc_tls_backend.supports_grpc());
+    }
+
+    #[test]
+    fn test_backend_supports_websocket() {
+        let http_backend = Backend::new("http://127.0.0.1:8080".to_string());
+        assert!(!http_backend.supports_websocket());
+
+        let ws_backend = Backend::new("http://127.0.0.1:8080".to_string())
+            .with_protocol(BackendProtocol::WebSocket);
+        assert!(ws_backend.supports_websocket());
+
+        let wss_backend =
+            Backend::new("http://127.0.0.1:8080".to_string()).with_protocol(BackendProtocol::Wss);
+        assert!(wss_backend.supports_websocket());
+    }
+
+    #[test]
+    fn test_backend_new_backup() {
+        let primary = Backend::new("http://127.0.0.1:8080".to_string());
+        let backup = Backend::new_backup("http://127.0.0.1:9090".to_string());
+
+        assert!(!primary.is_backup);
+        assert!(backup.is_backup);
+    }
+
+    #[test]
+    fn test_backend_composite_load() {
+        let backend = Backend::new("http://127.0.0.1:8080".to_string()).with_max_connections(10);
+        backend.increment_connections();
+        backend.increment_connections();
+
+        let load = backend.composite_load();
+        assert!(load > 0.0);
+        assert!(load <= 1.0);
+    }
+
+    #[test]
+    fn test_backend_cpu_percent() {
+        let backend = Backend::new("http://127.0.0.1:8080".to_string());
+        assert_eq!(backend.get_cpu_percent(), 0.0);
+
+        backend.set_cpu_percent(50.0);
+        assert_eq!(backend.get_cpu_percent(), 50.0);
+    }
+
+    #[test]
+    fn test_backend_memory_percent() {
+        let backend = Backend::new("http://127.0.0.1:8080".to_string());
+        assert_eq!(backend.get_memory_percent(), 0.0);
+
+        backend.set_memory_percent(75.0);
+        assert_eq!(backend.get_memory_percent(), 75.0);
+    }
+
+    #[test]
+    fn test_load_balance_algorithm_default() {
+        let algorithm: LoadBalanceAlgorithm = Default::default();
+        assert_eq!(algorithm, LoadBalanceAlgorithm::RoundRobin);
+    }
+
+    #[test]
+    fn test_backend_protocol_default() {
+        let protocol: BackendProtocol = Default::default();
+        assert_eq!(protocol, BackendProtocol::Http);
+    }
+
+    #[test]
+    fn test_upstream_pool_with_max_connections_enforcement() {
+        let pool = UpstreamPool::new(
+            vec!["http://127.0.0.1:8080".to_string()],
+            LoadBalanceAlgorithm::RoundRobin,
+        );
+
+        let backend = pool.select_backend().unwrap();
+        let backend = backend.with_max_connections(1);
+
+        backend.increment_connections();
+        assert!(!backend.is_available());
+    }
+
+    #[test]
+    fn test_upstream_pool_select_backend_for_ip() {
+        let pool = UpstreamPool::new(
+            vec![
+                "http://127.0.0.1:8080".to_string(),
+                "http://127.0.0.1:8081".to_string(),
+            ],
+            LoadBalanceAlgorithm::IpHash,
+        );
+
+        let backend1 = pool.select_backend_for_ip("192.168.1.1");
+        let backend2 = pool.select_backend_for_ip("192.168.1.2");
+
+        assert!(backend1.is_some());
+        assert!(backend2.is_some());
+    }
+
+    #[test]
+    fn test_upstream_pool_select_backend_for_ip_same_client() {
+        let pool = UpstreamPool::new(
+            vec![
+                "http://127.0.0.1:8080".to_string(),
+                "http://127.0.0.1:8081".to_string(),
+            ],
+            LoadBalanceAlgorithm::IpHash,
+        );
+
+        let backend1 = pool.select_backend_for_ip("192.168.1.100");
+        let backend2 = pool.select_backend_for_ip("192.168.1.100");
+
+        assert_eq!(
+            backend1.unwrap().url.as_ref(),
+            backend2.unwrap().url.as_ref()
+        );
+    }
+
+    #[test]
+    fn test_upstream_pool_select_backend_for_protocol() {
+        let pool = UpstreamPool::new(
+            vec![
+                "http://127.0.0.1:8080".to_string(),
+                "http://127.0.0.1:8081".to_string(),
+            ],
+            LoadBalanceAlgorithm::RoundRobin,
+        );
+
+        pool.add_backend_with_protocol("http://127.0.0.1:8082".to_string(), BackendProtocol::Grpc);
+
+        let grpc_backend = pool.select_backend_for_protocol(BackendProtocol::Grpc);
+        assert!(grpc_backend.is_some());
+        assert_eq!(grpc_backend.unwrap().url.as_ref(), "http://127.0.0.1:8082");
+    }
+
+    #[test]
+    fn test_upstream_pool_select_backend_for_protocol_none_available() {
+        let pool = UpstreamPool::new(
+            vec!["http://127.0.0.1:8080".to_string()],
+            LoadBalanceAlgorithm::RoundRobin,
+        );
+
+        let grpc_backend = pool.select_backend_for_protocol(BackendProtocol::Grpc);
+        assert!(grpc_backend.is_none());
+    }
+
+    #[test]
+    fn test_upstream_pool_add_backend_with_weight() {
+        let pool = UpstreamPool::new(
+            vec!["http://127.0.0.1:8080".to_string()],
+            LoadBalanceAlgorithm::RoundRobin,
+        );
+
+        pool.add_backend_with_weight(
+            "http://127.0.0.1:8081".to_string(),
+            5,
+            BackendProtocol::Http,
+        );
+
+        let backends = pool.get_backends();
+        let backend = backends
+            .iter()
+            .find(|b| b.url.as_ref() == "http://127.0.0.1:8081")
+            .unwrap();
+        assert_eq!(backend.weight, 5);
+    }
+
+    #[test]
+    fn test_upstream_pool_update_backend_weight() {
+        let pool = UpstreamPool::new(
+            vec!["http://127.0.0.1:8080".to_string()],
+            LoadBalanceAlgorithm::RoundRobin,
+        );
+
+        pool.add_backend_with_weight(
+            "http://127.0.0.1:8080".to_string(),
+            10,
+            BackendProtocol::Http,
+        );
+
+        let backends = pool.get_backends();
+        let backend = &backends[0];
+        assert_eq!(backend.weight, 10);
+    }
+
+    #[test]
+    fn test_connection_guard_decrement_on_drop() {
+        let backend = Backend::new("http://127.0.0.1:8080".to_string()).with_max_connections(10);
+
+        backend.increment_connections();
+        backend.increment_connections();
+        assert_eq!(backend.current_connections.load(Ordering::Relaxed), 2);
+
+        {
+            let _guard = backend.connection_scope();
+            assert_eq!(backend.current_connections.load(Ordering::Relaxed), 3);
+        }
+
+        assert_eq!(backend.current_connections.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn test_connection_guard_prevents_underflow() {
+        let backend = Backend::new("http://127.0.0.1:8080".to_string()).with_max_connections(10);
+
+        {
+            let _guard = backend.connection_scope();
+        }
+
+        assert_eq!(backend.current_connections.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn test_upstream_metrics_average_load() {
+        let pool = UpstreamPool::new(
+            vec![
+                "http://127.0.0.1:8080".to_string(),
+                "http://127.0.0.1:8081".to_string(),
+            ],
+            LoadBalanceAlgorithm::RoundRobin,
+        );
+
+        let backend1 = pool.select_backend().unwrap();
+        backend1.increment_connections();
+        backend1.increment_connections();
+
+        let metrics = pool.get_metrics();
+        assert_eq!(metrics.total_connections, 2);
+    }
+}

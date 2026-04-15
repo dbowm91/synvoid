@@ -54,3 +54,59 @@ impl Broadcaster {
         self.sender.clone()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_broadcaster_new() {
+        let broadcaster = Broadcaster::new(100);
+        assert_eq!(broadcaster.client_count(), 0);
+    }
+
+    #[test]
+    fn test_broadcaster_new_client() {
+        let broadcaster = Broadcaster::new(100);
+        let (client_id, rx) = broadcaster.new_client();
+
+        assert!(!client_id.is_empty());
+        assert_eq!(broadcaster.client_count(), 1);
+        drop(rx);
+    }
+
+    #[test]
+    fn test_broadcaster_remove_client() {
+        let broadcaster = Broadcaster::new(100);
+        let (client_id, rx) = broadcaster.new_client();
+
+        broadcaster.remove_client(&client_id);
+        assert_eq!(broadcaster.client_count(), 0);
+        drop(rx);
+    }
+
+    #[test]
+    fn test_broadcaster_max_clients_eviction() {
+        let broadcaster = Broadcaster::new(2);
+
+        let (_id1, rx1) = broadcaster.new_client();
+        let (_id2, rx2) = broadcaster.new_client();
+        let (_id3, rx3) = broadcaster.new_client();
+
+        assert_eq!(broadcaster.client_count(), 2);
+
+        drop(rx1);
+        drop(rx2);
+        drop(rx3);
+    }
+
+    #[test]
+    fn test_broadcaster_get_sender() {
+        let broadcaster = Broadcaster::new(100);
+        let sender = broadcaster.get_sender();
+        let _receiver = sender.subscribe();
+
+        let result = sender.send("test".to_string());
+        assert!(result.is_ok());
+    }
+}

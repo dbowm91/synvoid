@@ -20,7 +20,7 @@ use crate::mesh::transports::MeshTransportManager;
 use crate::mesh::yara_rules::YaraRulesManager;
 use crate::platform::fs::PlatformPaths;
 use crate::process::ipc_transport::IpcStream as AsyncIpcStream;
-use crate::process::{current_timestamp, Message, WorkerId};
+use crate::process::{check_ports_available, current_timestamp, Message, WorkerId};
 use crate::server::UnifiedServer;
 use crate::upload::UploadValidator;
 use crate::{DrainFlag, RunningFlag};
@@ -210,6 +210,74 @@ pub async fn run_unified_server_worker(
     let ipc = setup_worker_ipc(&args.master_socket, &worker_id).await?;
 
     let shared_config = setup_config(&args.config_path).await;
+
+    {
+        let config_guard = shared_config.read().await;
+        let main_config = &config_guard.main;
+
+        let mut ports_to_check = Vec::new();
+        let mut port_labels = std::collections::HashMap::new();
+
+        ports_to_check.push(main_config.server.port);
+        port_labels.insert(main_config.server.port, "HTTP");
+
+        if main_config.tls.enabled {
+            ports_to_check.push(main_config.tls.port);
+            port_labels.insert(main_config.tls.port, "TLS");
+        }
+
+        if main_config.http3.enabled {
+            ports_to_check.push(main_config.http3.port);
+            port_labels.insert(main_config.http3.port, "HTTP3");
+        }
+
+        if main_config.admin.enabled {
+            ports_to_check.push(main_config.admin.port);
+            port_labels.insert(main_config.admin.port, "Admin");
+        }
+
+        if let Some(ref mesh_config) = main_config.mesh {
+            if mesh_config.enabled {
+                ports_to_check.push(mesh_config.port);
+                port_labels.insert(mesh_config.port, "Mesh");
+            }
+        }
+
+        if let Err(e) = check_ports_available(&ports_to_check) {
+            let error_msg = e.to_string();
+            let unavailable: Vec<u16> = error_msg
+                .split(['[', ']', ' '])
+                .filter_map(|s| s.trim().parse().ok())
+                .collect();
+
+            let conflicts: Vec<String> = unavailable
+                .iter()
+                .map(|port| {
+                    port_labels
+                        .get(port)
+                        .map(|label| format!("{} (port {})", label, port))
+                        .unwrap_or_else(|| format!("port {}", port))
+                })
+                .collect();
+
+            if conflicts.is_empty() {
+                tracing::error!("Port conflict detected: {}", e);
+            } else {
+                tracing::error!(
+                    "Port conflicts detected between services: {}. Other services may be affected.",
+                    conflicts.join(", ")
+                );
+            }
+            return Err(Box::new(std::io::Error::new(
+                std::io::ErrorKind::AddrInUse,
+                if conflicts.is_empty() {
+                    format!("Port conflict: {}", e)
+                } else {
+                    conflicts.join(", ")
+                },
+            )));
+        }
+    }
 
     {
         let config = shared_config.read().await;

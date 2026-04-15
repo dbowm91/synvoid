@@ -731,3 +731,220 @@ pub fn get_cpu_memory_usage() -> (f32, f32) {
     };
     (cpu_percent, memory_percent)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn create_test_state() -> AdminState {
+        let config_dir = std::env::temp_dir();
+        let config = Arc::new(TokioRwLock::new(crate::config::ConfigManager::new(
+            config_dir,
+        )));
+        AdminState::new(config, "test_admin_token".to_string())
+    }
+
+    #[test]
+    fn test_csrf_token_generation() {
+        let state = create_test_state();
+        let session_id = "test-session-123";
+
+        let token = state.generate_csrf_token(session_id.to_string());
+        assert!(!token.is_empty());
+        assert_eq!(token.len(), 36);
+    }
+
+    #[test]
+    fn test_csrf_token_generation_multiple_per_session() {
+        let state = create_test_state();
+        let session_id = "test-session-456";
+
+        let tokens: Vec<String> = (0..5)
+            .map(|_| state.generate_csrf_token(session_id.to_string()))
+            .collect();
+
+        for token in &tokens {
+            assert!(state.validate_csrf(token, session_id));
+        }
+    }
+
+    #[test]
+    fn test_csrf_token_validation_valid() {
+        let state = create_test_state();
+        let session_id = "valid-session";
+
+        let token = state.generate_csrf_token(session_id.to_string());
+        assert!(state.validate_csrf(&token, session_id));
+    }
+
+    #[test]
+    fn test_csrf_token_validation_invalid_token() {
+        let state = create_test_state();
+        let session_id = "some-session";
+
+        let _token = state.generate_csrf_token(session_id.to_string());
+        assert!(!state.validate_csrf("invalid-token", session_id));
+    }
+
+    #[test]
+    fn test_csrf_token_validation_wrong_session() {
+        let state = create_test_state();
+
+        let token = state.generate_csrf_token("session-a".to_string());
+        assert!(!state.validate_csrf(&token, "session-b"));
+    }
+
+    #[test]
+    fn test_csrf_token_max_per_session() {
+        let state = create_test_state();
+        let session_id = "limited-session";
+
+        for _ in 0..15 {
+            let _ = state.generate_csrf_token(session_id.to_string());
+        }
+
+        let tokens = state.security.csrf_tokens.read();
+        let count_for_session = tokens
+            .iter()
+            .filter(|(_, v)| v.session_id == session_id)
+            .count();
+        assert_eq!(count_for_session, MAX_CSRF_TOKENS_PER_SESSION);
+    }
+
+    #[test]
+    fn test_invalidate_csrf_tokens_for_session() {
+        let state = create_test_state();
+        let session_id = "to-invalidate";
+
+        state.generate_csrf_token(session_id.to_string());
+        state.generate_csrf_token(session_id.to_string());
+
+        state.invalidate_csrf_tokens_for_session(session_id);
+
+        let tokens = state.security.csrf_tokens.read();
+        assert_eq!(tokens.len(), 0);
+    }
+
+    #[test]
+    fn test_cleanup_expired_csrf_tokens() {
+        let state = create_test_state();
+        let session_id = "cleanup-test";
+
+        state.generate_csrf_token(session_id.to_string());
+
+        state.cleanup_expired_csrf_tokens();
+        assert_eq!(state.security.csrf_tokens.read().len(), 1);
+    }
+
+    #[test]
+    fn test_admin_rate_limiter_check_allowed() {
+        let limiter = AdminRateLimiter::new(100, 10);
+        let ip = "192.168.1.1";
+
+        for _ in 0..100 {
+            assert!(limiter.check(ip));
+        }
+    }
+
+    #[test]
+    fn test_admin_rate_limiter_multiple_ips() {
+        let limiter = AdminRateLimiter::new(100, 10);
+
+        assert!(limiter.check("192.168.1.1"));
+        assert!(limiter.check("192.168.1.2"));
+        assert!(limiter.check("192.168.1.3"));
+    }
+
+    #[test]
+    fn test_admin_rate_limiter_cleanup() {
+        let limiter = AdminRateLimiter::new(10, 1);
+        let ip = "10.0.0.1";
+
+        limiter.check(ip);
+        limiter.check(ip);
+
+        limiter.cleanup();
+
+        assert!(limiter.check(ip));
+    }
+
+    #[test]
+    fn test_yara_rate_limiter_operations() {
+        let limiter = YaraRateLimiter::default_for_yara();
+        let ip = "192.168.1.100";
+
+        assert!(limiter.check(ip, YaraRateLimitOp::Submit));
+        assert!(limiter.check(ip, YaraRateLimitOp::BroadcastApply));
+        assert!(limiter.check(ip, YaraRateLimitOp::ApproveReject));
+        assert!(limiter.check(ip, YaraRateLimitOp::StatusList));
+    }
+
+    #[test]
+    fn test_yara_rate_limiter_separate_limits() {
+        let limiter = YaraRateLimiter::new(2, 3, 4, 5);
+        let ip = "test-ip";
+
+        assert!(limiter.check(ip, YaraRateLimitOp::Submit));
+        assert!(limiter.check(ip, YaraRateLimitOp::BroadcastApply));
+        assert!(limiter.check(ip, YaraRateLimitOp::ApproveReject));
+        assert!(limiter.check(ip, YaraRateLimitOp::StatusList));
+    }
+
+    #[test]
+    fn test_csrf_token_data_creation() {
+        let data = CsrfTokenData::new("session-xyz".to_string());
+        assert_eq!(data.session_id, "session-xyz");
+        assert!(data.created <= Instant::now());
+    }
+
+    #[test]
+    fn test_request_log_entry_new() {
+        let entry = RequestLogEntry::new(
+            "192.168.1.1".to_string(),
+            "GET".to_string(),
+            "/test".to_string(),
+            200,
+            50,
+            "site1".to_string(),
+            Some("Mozilla/5.0".to_string()),
+            1024,
+            0,
+        );
+
+        assert!(!entry.id.is_empty());
+        assert_eq!(entry.client_ip, "192.168.1.1");
+        assert_eq!(entry.method, "GET");
+        assert_eq!(entry.path, "/test");
+        assert_eq!(entry.status, 200);
+        assert_eq!(entry.response_time_ms, 50);
+    }
+
+    #[test]
+    fn test_request_log_entry_id_unique() {
+        let entry1 = RequestLogEntry::new(
+            "10.0.0.1".to_string(),
+            "POST".to_string(),
+            "/api".to_string(),
+            201,
+            100,
+            "site2".to_string(),
+            None,
+            500,
+            100,
+        );
+
+        let entry2 = RequestLogEntry::new(
+            "10.0.0.2".to_string(),
+            "POST".to_string(),
+            "/api".to_string(),
+            201,
+            100,
+            "site2".to_string(),
+            None,
+            500,
+            100,
+        );
+
+        assert_ne!(entry1.id, entry2.id);
+    }
+}

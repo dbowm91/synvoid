@@ -1331,3 +1331,691 @@ impl StaticWorkerMetrics {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    #[test]
+    fn test_proxy_cache_counter_increments() {
+        let initial_hits = get_proxy_cache_hits();
+        let initial_misses = get_proxy_cache_misses();
+
+        record_proxy_cache_hit();
+        record_proxy_cache_hit();
+        record_proxy_cache_miss();
+
+        assert_eq!(get_proxy_cache_hits(), initial_hits + 2);
+        assert_eq!(get_proxy_cache_misses(), initial_misses + 1);
+    }
+
+    #[test]
+    fn test_static_cache_counter_increments() {
+        let initial_hits = get_static_cache_hits();
+        let initial_misses = get_static_cache_misses();
+
+        record_static_cache_hit();
+        record_static_cache_miss();
+        record_static_cache_miss();
+
+        assert_eq!(get_static_cache_hits(), initial_hits + 1);
+        assert_eq!(get_static_cache_misses(), initial_misses + 2);
+    }
+
+    #[test]
+    fn test_dropped_events_counter_increments() {
+        let initial_tls = get_dropped_tls_reload_events();
+        let initial_threat = get_dropped_threat_level_events();
+        let initial_process = get_dropped_process_events();
+        let initial_worker = get_dropped_worker_events();
+
+        record_dropped_tls_reload_event();
+        record_dropped_threat_level_event();
+        record_dropped_process_event();
+        record_dropped_worker_event();
+
+        assert_eq!(get_dropped_tls_reload_events(), initial_tls + 1);
+        assert_eq!(get_dropped_threat_level_events(), initial_threat + 1);
+        assert_eq!(get_dropped_process_events(), initial_process + 1);
+        assert_eq!(get_dropped_worker_events(), initial_worker + 1);
+    }
+
+    #[test]
+    fn test_total_dropped_events() {
+        let initial_total = total_dropped_events();
+
+        record_dropped_tls_reload_event();
+        record_dropped_process_event();
+
+        let new_total = total_dropped_events();
+        assert_eq!(new_total, initial_total + 2);
+    }
+
+    #[test]
+    fn test_dropped_event_counts_struct() {
+        let initial = get_dropped_event_counts();
+
+        record_dropped_tls_reload_event();
+        record_dropped_threat_level_event();
+
+        let counts = get_dropped_event_counts();
+        assert_eq!(counts.tls_reload, initial.tls_reload + 1);
+        assert_eq!(counts.threat_level, initial.threat_level + 1);
+        assert_eq!(counts.total, initial.total + 2);
+    }
+
+    #[test]
+    fn test_dht_threat_lookup_counters() {
+        let initial_hits = get_dht_threat_lookup_hits();
+        let initial_misses = get_dht_threat_lookup_misses();
+
+        record_dht_threat_lookup_hit();
+        record_dht_threat_lookup_hit();
+        record_dht_threat_lookup_miss();
+
+        assert_eq!(get_dht_threat_lookup_hits(), initial_hits + 2);
+        assert_eq!(get_dht_threat_lookup_misses(), initial_misses + 1);
+    }
+
+    #[test]
+    fn test_threat_intel_dht_counters() {
+        let initial_total = get_threat_intel_dht_publish_total();
+        let initial_failed = get_threat_intel_dht_publish_failed();
+
+        record_threat_intel_dht_publish();
+        record_threat_intel_dht_publish();
+        record_threat_intel_dht_publish_failed();
+
+        assert_eq!(get_threat_intel_dht_publish_total(), initial_total + 2);
+        assert_eq!(get_threat_intel_dht_publish_failed(), initial_failed + 1);
+    }
+
+    #[test]
+    fn test_threat_intel_dht_sync_counters() {
+        let initial_total = get_threat_intel_dht_sync_total();
+        let initial_success = get_threat_intel_dht_sync_success();
+        let initial_failed = get_threat_intel_dht_sync_failed();
+        let initial_added = get_threat_intel_dht_sync_added();
+        let initial_removed = get_threat_intel_dht_sync_removed();
+
+        record_threat_intel_dht_sync();
+        record_threat_intel_dht_sync_success();
+        record_threat_intel_dht_sync_failed();
+        record_threat_intel_dht_sync_added(5);
+        record_threat_intel_dht_sync_removed(3);
+
+        assert_eq!(get_threat_intel_dht_sync_total(), initial_total + 1);
+        assert_eq!(get_threat_intel_dht_sync_success(), initial_success + 1);
+        assert_eq!(get_threat_intel_dht_sync_failed(), initial_failed + 1);
+        assert_eq!(get_threat_intel_dht_sync_added(), initial_added + 5);
+        assert_eq!(get_threat_intel_dht_sync_removed(), initial_removed + 3);
+    }
+
+    #[test]
+    fn test_dht_quorum_counters() {
+        let initial_success = get_dht_quorum_achieved_count();
+        let initial_failed = get_dht_quorum_failed_count();
+
+        record_dht_quorum_success();
+        record_dht_quorum_failure();
+        record_dht_quorum_success();
+
+        assert_eq!(get_dht_quorum_achieved_count(), initial_success + 2);
+        assert_eq!(get_dht_quorum_failed_count(), initial_failed + 1);
+    }
+
+    #[test]
+    fn test_dht_store_and_get_operations() {
+        let initial_ops = get_dht_store_operations();
+        let initial_failures = get_dht_store_failures();
+        let initial_get_ops = get_dht_get_operations();
+        let initial_not_found = get_dht_get_not_found();
+
+        record_dht_store_operation(true);
+        record_dht_store_operation(false);
+        record_dht_get_operation(true);
+        record_dht_get_operation(false);
+        record_dht_get_operation(false);
+
+        assert_eq!(get_dht_store_operations(), initial_ops + 2);
+        assert_eq!(get_dht_store_failures(), initial_failures + 1);
+        assert_eq!(get_dht_get_operations(), initial_get_ops + 3);
+        assert_eq!(get_dht_get_not_found(), initial_not_found + 2);
+    }
+
+    #[test]
+    fn test_dht_announce_counters() {
+        let initial_sent = get_dht_announce_sent();
+        let initial_failed = get_dht_announce_failed();
+
+        record_dht_announce_sent();
+        record_dht_announce_sent();
+        record_dht_announce_failed();
+
+        assert_eq!(get_dht_announce_sent(), initial_sent + 2);
+        assert_eq!(get_dht_announce_failed(), initial_failed + 1);
+    }
+
+    #[test]
+    fn test_dht_peer_counters() {
+        let initial_discovered = get_dht_peer_discovered();
+        let initial_removed = get_dht_peer_removed();
+
+        record_dht_peer_discovered();
+        record_dht_peer_removed();
+
+        assert_eq!(get_dht_peer_discovered(), initial_discovered + 1);
+        assert_eq!(get_dht_peer_removed(), initial_removed + 1);
+    }
+
+    #[test]
+    fn test_tls_passthrough_counters() {
+        let initial_requests = get_tls_passthrough_requests();
+        let initial_bypassed = get_tls_passthrough_waf_bypassed();
+
+        record_tls_passthrough_request();
+        record_tls_passthrough_waf_bypassed();
+
+        assert_eq!(get_tls_passthrough_requests(), initial_requests + 1);
+        assert_eq!(get_tls_passthrough_waf_bypassed(), initial_bypassed + 1);
+    }
+
+    #[test]
+    fn test_honeypot_counters() {
+        let initial_published = get_honeypot_indicators_published();
+        let initial_processed = get_honeypot_records_processed();
+        let initial_traps = get_honeypot_http_traps_hit();
+        let initial_captured = get_port_honeypot_connections_captured();
+
+        record_honeypot_indicators_published(10);
+        record_honeypot_records_processed(5);
+        record_honeypot_http_traps_hit();
+        record_port_honeypot_connections_captured();
+
+        assert_eq!(get_honeypot_indicators_published(), initial_published + 10);
+        assert_eq!(get_honeypot_records_processed(), initial_processed + 5);
+        assert_eq!(get_honeypot_http_traps_hit(), initial_traps + 1);
+        assert_eq!(
+            get_port_honeypot_connections_captured(),
+            initial_captured + 1
+        );
+    }
+
+    #[test]
+    fn test_dht_record_counters() {
+        let _initial_count = get_dht_record_count();
+        let _initial_replica = get_dht_replica_count();
+
+        record_dht_record_count(100);
+        record_dht_replica_count(50);
+
+        assert_eq!(get_dht_record_count(), 100);
+        assert_eq!(get_dht_replica_count(), 50);
+    }
+
+    #[test]
+    fn test_dht_bucket_peers() {
+        record_dht_bucket_peers(0, 5);
+        record_dht_bucket_peers(1, 10);
+        record_dht_bucket_peers(0, 7);
+
+        assert_eq!(get_dht_bucket_peers(0), 7);
+        assert_eq!(get_dht_bucket_peers(1), 10);
+        assert_eq!(get_dht_bucket_peers(99), 0);
+
+        let all = get_all_dht_bucket_peers();
+        assert_eq!(all.get(&0), Some(&7));
+        assert_eq!(all.get(&1), Some(&10));
+    }
+
+    #[test]
+    fn test_dht_records_by_type() {
+        let _initial = get_dht_records_by_type("test_type");
+
+        increment_dht_records_by_type("sqli");
+        increment_dht_records_by_type("xss");
+        increment_dht_records_by_type("sqli");
+
+        assert_eq!(get_dht_records_by_type("sqli"), 2);
+        assert_eq!(get_dht_records_by_type("xss"), 1);
+        assert_eq!(get_dht_records_by_type("unknown"), 0);
+
+        record_dht_record_by_type("custom_type", 42);
+        assert_eq!(get_dht_records_by_type("custom_type"), 42);
+
+        let all = get_all_dht_records_by_type();
+        assert!(all.contains_key("sqli"));
+        assert!(all.contains_key("xss"));
+        assert!(all.contains_key("custom_type"));
+    }
+
+    #[test]
+    fn test_dht_announce_queue_depth() {
+        record_dht_announce_queue_depth(25);
+        assert_eq!(get_dht_announce_queue_depth(), 25);
+
+        record_dht_announce_queue_depth(50);
+        assert_eq!(get_dht_announce_queue_depth(), 50);
+    }
+
+    #[test]
+    fn test_dht_propagation_hops() {
+        record_dht_propagation_hop(3);
+        record_dht_propagation_hop(5);
+        record_dht_propagation_hop(2);
+
+        let avg = get_dht_average_propagation_hops();
+        assert!((avg - 3.333).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_global_node_liveness_counters() {
+        let _initial_count = get_global_node_liveness_count();
+        let initial_quorum = get_global_node_quorum_lost_events();
+
+        record_global_node_liveness_count(5);
+        record_global_node_quorum_lost();
+
+        assert_eq!(get_global_node_liveness_count(), 5);
+        assert_eq!(get_global_node_quorum_lost_events(), initial_quorum + 1);
+    }
+
+    #[test]
+    fn test_attack_type_counter() {
+        reset_attack_type_counts();
+
+        record_attack_type("SQLi");
+        record_attack_type("XSS");
+        record_attack_type("SQLi");
+        record_attack_type("SQLi");
+
+        let counts = get_attack_type_counts();
+        assert_eq!(counts.get("SQLi"), Some(&3));
+        assert_eq!(counts.get("XSS"), Some(&1));
+        assert_eq!(counts.get("Unknown"), None);
+
+        reset_attack_type_counts();
+        let counts_after_reset = get_attack_type_counts();
+        assert_eq!(counts_after_reset.get("SQLi"), None);
+    }
+
+    #[test]
+    fn test_cache_metrics_hit_rate() {
+        let metrics = CacheMetrics {
+            proxy_cache_hits: 80,
+            proxy_cache_misses: 20,
+            static_cache_hits: 95,
+            static_cache_misses: 5,
+        };
+
+        assert!((metrics.proxy_cache_hit_rate() - 80.0).abs() < 0.01);
+        assert!((metrics.static_cache_hit_rate() - 95.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_cache_metrics_hit_rate_empty() {
+        let metrics = CacheMetrics {
+            proxy_cache_hits: 0,
+            proxy_cache_misses: 0,
+            static_cache_hits: 0,
+            static_cache_misses: 0,
+        };
+
+        assert_eq!(metrics.proxy_cache_hit_rate(), 0.0);
+        assert_eq!(metrics.static_cache_hit_rate(), 0.0);
+    }
+
+    #[test]
+    fn test_site_metrics_counter_increments() {
+        let metrics = SiteMetrics::new();
+
+        metrics.record_blocked();
+        metrics.record_blocked();
+        metrics.record_challenged();
+        metrics.record_proxied();
+        metrics.record_error();
+        metrics.record_upstream_success();
+        metrics.record_upstream_failure();
+        metrics.record_upstream_failure();
+
+        assert_eq!(metrics.blocked.load(Ordering::Relaxed), 2);
+        assert_eq!(metrics.challenged.load(Ordering::Relaxed), 1);
+        assert_eq!(metrics.proxied.load(Ordering::Relaxed), 1);
+        assert_eq!(metrics.errors.load(Ordering::Relaxed), 1);
+        assert_eq!(metrics.upstream_successes.load(Ordering::Relaxed), 1);
+        assert_eq!(metrics.upstream_failures.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn test_site_metrics_request_lifecycle() {
+        let metrics = SiteMetrics::new();
+
+        let current1 = metrics.record_request_start();
+        assert_eq!(current1, 1);
+        assert_eq!(metrics.current_concurrent.load(Ordering::Relaxed), 1);
+        assert_eq!(metrics.peak_concurrent.load(Ordering::Relaxed), 1);
+
+        let current2 = metrics.record_request_start();
+        assert_eq!(current2, 2);
+        assert_eq!(metrics.peak_concurrent.load(Ordering::Relaxed), 2);
+
+        metrics.record_request_end(100);
+        assert_eq!(metrics.current_concurrent.load(Ordering::Relaxed), 1);
+        assert_eq!(metrics.total_latency_ms.load(Ordering::Relaxed), 100);
+        assert_eq!(metrics.request_count.load(Ordering::Relaxed), 1);
+
+        metrics.record_request_end(200);
+        assert_eq!(metrics.current_concurrent.load(Ordering::Relaxed), 0);
+
+        let avg = metrics.total_latency_ms.load(Ordering::Relaxed) as f64
+            / metrics.request_count.load(Ordering::Relaxed) as f64;
+        assert!((avg - 150.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_site_metrics_upstream_health() {
+        let metrics = SiteMetrics::new();
+
+        assert!(metrics.is_upstream_healthy());
+
+        metrics.record_upstream_failure();
+        assert!(!metrics.is_upstream_healthy());
+
+        metrics.record_upstream_success();
+        assert!(metrics.is_upstream_healthy());
+
+        for _ in 0..10 {
+            metrics.record_upstream_failure();
+        }
+        assert!(metrics.is_upstream_healthy());
+    }
+
+    #[test]
+    fn test_site_metrics_clone() {
+        let metrics = SiteMetrics::new();
+        metrics.record_blocked();
+        metrics.record_proxied();
+
+        let cloned = metrics.clone();
+        assert_eq!(cloned.blocked.load(Ordering::Relaxed), 1);
+        assert_eq!(cloned.proxied.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn test_worker_metrics_basic_counters() {
+        let metrics = WorkerMetrics::new();
+
+        metrics.record_challenged();
+        metrics.record_proxied();
+        metrics.record_error();
+
+        assert_eq!(metrics.challenged.load(Ordering::Relaxed), 1);
+        assert_eq!(metrics.proxied.load(Ordering::Relaxed), 1);
+        assert_eq!(metrics.errors.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn test_worker_metrics_request_lifecycle() {
+        let metrics = WorkerMetrics::new();
+
+        metrics.record_request_start();
+        metrics.record_request_start();
+        assert_eq!(metrics.total_requests.load(Ordering::Relaxed), 2);
+        assert_eq!(metrics.peak_concurrent.load(Ordering::Relaxed), 2);
+
+        metrics.record_request_end(50);
+        metrics.record_request_end(100);
+
+        assert_eq!(metrics.request_count.load(Ordering::Relaxed), 2);
+        let avg = metrics.total_latency_ms.load(Ordering::Relaxed) as f64
+            / metrics.request_count.load(Ordering::Relaxed) as f64;
+        assert!((avg - 75.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_worker_metrics_per_site_aggregation() {
+        use std::sync::atomic::AtomicU64;
+
+        let metrics = WorkerMetrics::new();
+        static TEST_SITE_COUNTER: AtomicU64 = AtomicU64::new(0);
+        let counter = TEST_SITE_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let site1 = format!("per_agg_site_{}_a", counter);
+        let site2 = format!("per_agg_site_{}_b", counter);
+
+        let first_s1 = metrics.record_site_request_start(&site1);
+        let first_s2 = metrics.record_site_request_start(&site2);
+        let second_s1 = metrics.record_site_request_start(&site1);
+
+        assert_eq!(first_s1, 1, "first request on site1 should return 1");
+        assert_eq!(first_s2, 1, "first request on site2 should return 1");
+        assert_eq!(second_s1, 2, "second request on site1 should return 2");
+
+        let third_s1 = metrics.record_site_request_start(&site1);
+        let second_s2 = metrics.record_site_request_start(&site2);
+        assert_eq!(third_s1, 3, "third request on site1 should return 3");
+        assert_eq!(second_s2, 2, "second request on site2 should return 2");
+
+        metrics.record_site_blocked(&site1);
+        metrics.record_site_challenged(&site2);
+        metrics.record_site_proxied(&site1);
+        metrics.record_site_error(&site1);
+
+        metrics.record_site_request_end(&site1, 100);
+        metrics.record_site_request_end(&site2, 200);
+        metrics.record_site_request_end(&site1, 150);
+
+        metrics.record_site_upstream_success(&site1);
+        metrics.record_site_upstream_failure(&site2);
+
+        let sites = metrics.per_site.lock();
+        let s1 = sites.get(&site1).expect("site1 should exist");
+        let s2 = sites.get(&site2).expect("site2 should exist");
+
+        assert_eq!(s1.blocked.load(Ordering::Relaxed), 1);
+        assert_eq!(s1.proxied.load(Ordering::Relaxed), 1);
+        assert_eq!(s1.errors.load(Ordering::Relaxed), 1);
+        assert_eq!(s1.upstream_successes.load(Ordering::Relaxed), 1);
+        assert_eq!(s2.challenged.load(Ordering::Relaxed), 1);
+        assert_eq!(s2.upstream_failures.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn test_worker_metrics_latency_samples() {
+        let metrics = WorkerMetrics::new();
+
+        for i in 1..=10 {
+            metrics.record_request_end(i * 10);
+        }
+
+        let count = metrics.request_count.load(Ordering::Relaxed);
+        assert_eq!(count, 10);
+
+        let avg = metrics.avg_latency_ms();
+        assert!((avg - 55.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_worker_metrics_requests_per_second() {
+        let metrics = WorkerMetrics::new();
+
+        metrics.record_request_start();
+        metrics.record_request_end(100);
+
+        let rps = metrics.requests_per_second(10);
+        assert!((rps - 0.1).abs() < 0.01);
+
+        let rps_zero = metrics.requests_per_second(0);
+        assert_eq!(rps_zero, 0.0);
+    }
+
+    #[test]
+    fn test_worker_metrics_current_load() {
+        let metrics = WorkerMetrics::new();
+
+        assert_eq!(metrics.current_load(), 0.0);
+
+        metrics.record_request_start();
+        metrics.record_request_start();
+
+        assert_eq!(metrics.current_load(), 2.0);
+    }
+
+    #[test]
+    fn test_worker_metrics_to_payload() {
+        let metrics = WorkerMetrics::new();
+        metrics.record_request_start();
+        metrics.record_request_end(100);
+
+        let payload = metrics.to_payload(60);
+
+        assert_eq!(payload.total_requests, 1);
+        assert!((payload.avg_latency_ms - 100.0).abs() < 0.01);
+        assert_eq!(payload.uptime_secs, 60);
+    }
+
+    #[test]
+    fn test_worker_metrics_clone() {
+        let metrics = WorkerMetrics::new();
+        metrics.record_proxied();
+
+        let cloned = metrics.clone();
+        assert_eq!(cloned.proxied.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn test_static_worker_metrics() {
+        let metrics = StaticWorkerMetrics::new();
+
+        metrics.record_cache_hit();
+        metrics.record_cache_hit();
+        metrics.record_cache_miss();
+        metrics.record_minification();
+        metrics.record_compression();
+        metrics.record_error();
+
+        assert_eq!(metrics.cache_hits(), 2);
+        assert_eq!(metrics.cache_misses(), 1);
+        assert!((metrics.cache_hit_rate() - 66.666).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_static_worker_metrics_hit_rate_empty() {
+        let metrics = StaticWorkerMetrics::new();
+        assert_eq!(metrics.cache_hit_rate(), 0.0);
+    }
+
+    #[test]
+    fn test_static_worker_metrics_shared() {
+        let metrics = StaticWorkerMetrics::shared();
+        metrics.record_cache_hit();
+
+        assert_eq!(metrics.cache_hits(), 1);
+    }
+
+    #[test]
+    fn test_serverless_metrics() {
+        let func_name = "serverless_test_func";
+        record_serverless_invocation(func_name, "success");
+        record_serverless_invocation(func_name, "success");
+        record_serverless_invocation(func_name, "error");
+        record_serverless_invocation("serverless_test_func2", "success");
+
+        assert_eq!(get_serverless_invocation_count(func_name), 3);
+        assert_eq!(get_serverless_invocation_count("serverless_test_func2"), 1);
+        assert_eq!(get_serverless_invocation_count("serverless_unknown"), 0);
+
+        assert_eq!(get_serverless_error_count(func_name), 1);
+        assert_eq!(get_serverless_error_count("serverless_test_func2"), 0);
+    }
+
+    #[test]
+    fn test_serverless_duration() {
+        let func_name = "duration_test_func";
+        record_serverless_duration(func_name, 100);
+        record_serverless_duration(func_name, 200);
+        record_serverless_duration(func_name, 300);
+
+        let avg = get_serverless_duration_avg(func_name);
+        assert!((avg - 200.0).abs() < 0.01);
+
+        assert_eq!(get_serverless_duration_avg("duration_unknown"), 0.0);
+    }
+
+    #[test]
+    fn test_serverless_active_instances() {
+        let func_name = "active_inst_func";
+        record_serverless_active_instances(func_name, 5);
+        record_serverless_active_instances("active_inst_func2", 10);
+
+        assert_eq!(get_serverless_active_instances(func_name), 5);
+        assert_eq!(get_serverless_active_instances("active_inst_func2"), 10);
+        assert_eq!(get_serverless_active_instances("active_inst_unknown"), 0);
+    }
+
+    #[test]
+    fn test_get_all_serverless_metrics() {
+        let func_name = "all_metrics_test_func";
+        record_serverless_invocation(func_name, "success");
+        record_serverless_invocation(func_name, "error");
+        record_serverless_duration(func_name, 150);
+        record_serverless_active_instances(func_name, 3);
+
+        let all = get_all_serverless_metrics();
+        assert!(!all.is_empty());
+
+        let func_metric = all.iter().find(|m| m.function_name == func_name);
+        assert!(func_metric.is_some());
+
+        if let Some(m) = func_metric {
+            assert_eq!(m.invocations_total, 2);
+            assert_eq!(m.errors_total, 1);
+            assert!((m.avg_duration_ms - 150.0).abs() < 0.01);
+            assert_eq!(m.active_instances, 3);
+        }
+    }
+
+    #[test]
+    fn test_worker_metrics_with_arc() {
+        let metrics = Arc::new(WorkerMetrics::new());
+
+        let metrics_clone = metrics.clone();
+        metrics_clone.record_proxied();
+
+        assert_eq!(metrics.proxied.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn test_site_metrics_to_payload_with_latencies() {
+        let metrics = SiteMetrics::new();
+
+        for i in 1..=5 {
+            metrics.record_request_start();
+            metrics.record_request_end(i * 10);
+        }
+
+        let payload = metrics.to_payload("test_site");
+
+        assert_eq!(payload.total_requests, 5);
+        assert!((payload.avg_latency_ms - 30.0).abs() < 0.01);
+        assert!(payload.p50_latency_ms > 0.0);
+        assert!(payload.p95_latency_ms >= payload.p50_latency_ms);
+        assert!(payload.p99_latency_ms >= payload.p95_latency_ms);
+    }
+
+    #[test]
+    fn test_dropped_yara_broadcast_counter() {
+        let initial = get_dropped_yara_broadcasts();
+
+        record_dropped_yara_broadcast();
+        record_dropped_yara_broadcast();
+
+        assert_eq!(get_dropped_yara_broadcasts(), initial + 2);
+    }
+
+    #[test]
+    fn test_worker_metrics_avg_latency_zero_requests() {
+        let metrics = WorkerMetrics::new();
+        assert_eq!(metrics.avg_latency_ms(), 0.0);
+    }
+}

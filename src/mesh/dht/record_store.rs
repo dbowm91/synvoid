@@ -383,6 +383,10 @@ impl RecordStoreManager {
         self.node_role.is_global()
     }
 
+    pub fn replication_factor(&self) -> usize {
+        self.config.replication_factor
+    }
+
     pub fn get_network_policy(&self) -> Option<crate::mesh::dht::NetworkPolicy> {
         self.routing_state.read().network_policy.clone()
     }
