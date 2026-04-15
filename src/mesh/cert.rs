@@ -17,7 +17,7 @@ use rustls_pki_types::pem::{self, PemObject};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 use crate::mesh::config::MeshConfig;
 
@@ -1106,7 +1106,7 @@ pub fn sign_ed25519(data: &str, private_key: &[u8]) -> Option<Vec<u8>> {
     if private_key.len() != 32 {
         return None;
     }
-    let mut key_array = [0u8; 32];
+    let mut key_array = Zeroizing::new([0u8; 32]);
     key_array.copy_from_slice(private_key);
     let signing_key = ed25519_dalek::SigningKey::from_bytes(&key_array);
     let signature = signing_key.sign(data.as_bytes());
@@ -1117,9 +1117,9 @@ pub fn verify_ed25519(data: &str, signature: &[u8], public_key: &[u8]) -> bool {
     if signature.len() != 64 || public_key.len() != 32 {
         return false;
     }
-    let mut sig_array = [0u8; 64];
+    let mut sig_array = Zeroizing::new([0u8; 64]);
     sig_array.copy_from_slice(signature);
-    let mut pk_array = [0u8; 32];
+    let mut pk_array = Zeroizing::new([0u8; 32]);
     pk_array.copy_from_slice(public_key);
 
     match ed25519_dalek::VerifyingKey::from_bytes(&pk_array) {
@@ -1137,7 +1137,7 @@ pub fn get_ed25519_public_key(private_key: &[u8]) -> Option<Vec<u8>> {
     if private_key.len() != 32 {
         return None;
     }
-    let mut key_array = [0u8; 32];
+    let mut key_array = Zeroizing::new([0u8; 32]);
     key_array.copy_from_slice(private_key);
     let signing_key = ed25519_dalek::SigningKey::from_bytes(&key_array);
     let verifying_key = signing_key.verifying_key();

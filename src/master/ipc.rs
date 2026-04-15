@@ -6,12 +6,7 @@ use crate::process::{ErrorCode, ErrorSeverity, Message, ProcessManager, WorkerId
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::process::ipc_rate_limit::IpcRateLimiter;
-    use crate::process::ipc_transport::IpcEndpoint;
-    use crate::process::manager::ProcessManager;
     use crate::process::WorkerMetricsPayload;
-    use std::sync::Arc;
-    use tokio::sync::Mutex;
 
     #[tokio::test]
     async fn test_worker_started_message_parsing() {

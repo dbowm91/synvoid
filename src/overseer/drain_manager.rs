@@ -21,20 +21,22 @@ pub struct DrainManager {
     workers: Arc<RwLock<HashMap<WorkerId, WorkerDrainState>>>,
     current_drain_id: Arc<AtomicU64>,
     drain_start_time: Arc<Mutex<Option<Instant>>>,
+    poll_interval_ms: u64,
 }
 
 impl Default for DrainManager {
     fn default() -> Self {
-        Self::new()
+        Self::new(100)
     }
 }
 
 impl DrainManager {
-    pub fn new() -> Self {
+    pub fn new(poll_interval_ms: u64) -> Self {
         Self {
             workers: Arc::new(RwLock::new(HashMap::new())),
             current_drain_id: Arc::new(AtomicU64::new(0)),
             drain_start_time: Arc::new(Mutex::new(None)),
+            poll_interval_ms,
         }
     }
 
@@ -171,7 +173,7 @@ impl DrainManager {
                 return true;
             }
 
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            tokio::time::sleep(Duration::from_millis(self.poll_interval_ms)).await;
         }
 
         let active = self.total_active_connections();
@@ -422,7 +424,7 @@ mod tests {
 
     #[test]
     fn test_drain_manager() {
-        let manager = DrainManager::new();
+        let manager = DrainManager::new(100);
 
         let drain_id = manager.start_drain(30);
         assert!(drain_id > 0);

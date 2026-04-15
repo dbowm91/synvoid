@@ -193,7 +193,9 @@ pub struct TcpListenerPoolConfig {
 impl Default for TcpListenerPoolConfig {
     fn default() -> Self {
         Self {
-            worker_pool_size: 4,
+            worker_pool_size: std::thread::available_parallelism()
+                .map(|p| p.get())
+                .unwrap_or(4),
             connection_timeout_secs: 5,
             max_connections: 10000,
             socket_options: TcpSocketOptions::default(),

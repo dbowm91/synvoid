@@ -1566,8 +1566,6 @@ async fn wait_for_drain(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicU64, Ordering};
-    use std::sync::Arc;
 
     #[tokio::test]
     async fn test_wait_for_drain_immediate() {

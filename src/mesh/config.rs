@@ -758,6 +758,8 @@ pub struct MeshConfig {
     pub tier_config: TierConfig,
     #[serde(default = "config_defaults::default_bandwidth_report_interval")]
     pub bandwidth_report_interval_secs: u64,
+    #[serde(default = "config_defaults::default_stale_cache_ttl_secs")]
+    pub stale_cache_ttl_secs: u64,
     #[serde(default = "config_defaults::default_ratelimit_block_advertisement")]
     pub ratelimit_block_advertisement: bool,
     #[serde(default)]

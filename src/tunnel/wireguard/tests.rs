@@ -1,8 +1,6 @@
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-
 use crate::tunnel::wireguard::config::{WgImplementation, WireGuardConfig, WireGuardPeerConfig};
 use crate::tunnel::wireguard::session::{WgPeerSession, WgSessionManager};
-use crate::tunnel::wireguard::stats::{WgInterfaceStats, WgPeerStats, WgStatsCollector};
+use crate::tunnel::wireguard::stats::{WgInterfaceStats, WgPeerStats};
 
 #[test]
 fn test_vpn_client_config_wireguard_mode() {

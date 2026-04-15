@@ -49,6 +49,8 @@ impl OverseerProcess {
             .clone()
             .unwrap_or_else(|| PathBuf::from("config"));
 
+        let drain_check_interval_ms = config.drain_check_interval_ms;
+
         Ok(Self {
             master_child: None,
             upgraded_master_child: None,
@@ -62,7 +64,7 @@ impl OverseerProcess {
             stable_since: None,
             dual_master_mode: false,
             socket_handoff: None,
-            drain_manager: Arc::new(DrainManager::new()),
+            drain_manager: Arc::new(DrainManager::new(drain_check_interval_ms)),
             upgrade_generation: None,
         })
     }
@@ -1531,7 +1533,6 @@ mod tests {
     #![allow(unused_variables, dead_code)]
     use super::*;
     use std::path::PathBuf;
-    use std::time::Duration;
 
     #[test]
     fn test_overseer_config_default() {
@@ -1568,6 +1569,7 @@ mod tests {
             ipc_read_timeout_ms: 10000,
             ipc_write_timeout_ms: 10000,
             master_startup_timeout_secs: 60,
+            drain_check_interval_ms: 100,
         };
 
         assert_eq!(config.config_path, Some(PathBuf::from("/custom/config")));

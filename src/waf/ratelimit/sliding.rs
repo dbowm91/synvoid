@@ -329,7 +329,6 @@ mod tests {
     use super::*;
     use std::net::IpAddr;
     use std::thread;
-    use std::time::Duration;
 
     #[test]
     fn test_atomic_bucket_window_basic() {

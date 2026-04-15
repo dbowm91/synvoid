@@ -153,7 +153,9 @@ fn default_tcp_enabled() -> bool {
     false
 }
 fn default_tcp_worker_pool_size() -> usize {
-    4
+    std::thread::available_parallelism()
+        .map(|p| p.get())
+        .unwrap_or(4)
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]

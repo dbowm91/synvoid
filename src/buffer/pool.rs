@@ -528,7 +528,7 @@ mod tests {
 
     #[test]
     fn test_acquire_large() {
-        let mut buf = BufferPool::acquire(128 * 1024);
+        let buf = BufferPool::acquire(128 * 1024);
         assert_eq!(buf.len(), 128 * 1024);
     }
 

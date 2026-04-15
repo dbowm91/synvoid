@@ -44,8 +44,6 @@ use crate::proxy_cache::ProxyCacheSettings;
 const DEFAULT_POLICY_CACHE_TTL_SECS: u64 = 3600;
 /// Cooldown period after provider failure before retry (10 seconds)
 const FAILED_PROVIDER_COOLDOWN_SECS: u64 = 10;
-/// TTL for stale cache entries before forcing refresh (60 seconds)
-const STALE_CACHE_TTL_SECS: u64 = 60;
 /// Maximum exponential backoff delay (120 seconds)
 const MAX_EXPONENTIAL_BACKOFF_SECS: u64 = 120;
 /// Window for health metrics calculation (5 minutes)
@@ -323,7 +321,7 @@ impl MeshProxy {
 
         if let Some(cached) = self.get_cached_policy(&upstream_id) {
             let is_expired = cached.expires_at < Instant::now();
-            let stale_ttl = Duration::from_secs(STALE_CACHE_TTL_SECS);
+            let stale_ttl = Duration::from_secs(self.config.stale_cache_ttl_secs);
             let is_stale = cached.expires_at < Instant::now() - stale_ttl;
 
             let peer_healthy =
@@ -707,7 +705,7 @@ impl MeshProxy {
             }
 
             if let Some(ref c) = cached_for_check {
-                let stale_ttl = Duration::from_secs(STALE_CACHE_TTL_SECS);
+                let stale_ttl = Duration::from_secs(self.config.stale_cache_ttl_secs);
                 if c.expires_at < Instant::now() - stale_ttl {
                     self.mark_stale_cache_for_refresh(upstream_id);
                 }

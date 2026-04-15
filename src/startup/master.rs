@@ -153,6 +153,11 @@ pub fn run_overseer_mode(
         ipc_read_timeout_ms: main_config.overseer.ipc_read_timeout_ms,
         ipc_write_timeout_ms: main_config.overseer.ipc_write_timeout_ms,
         master_startup_timeout_secs: main_config.overseer.master_startup_timeout_secs,
+        drain_check_interval_ms: main_config
+            .upgrade
+            .as_ref()
+            .map(|u| u.drain_check_interval_ms)
+            .unwrap_or(100),
     };
 
     // Run the overseer (which spawns Master, which spawns Workers)

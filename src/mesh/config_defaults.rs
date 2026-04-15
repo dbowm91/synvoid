@@ -8,6 +8,10 @@ pub fn default_bandwidth_report_interval() -> u64 {
     30
 }
 
+pub fn default_stale_cache_ttl_secs() -> u64 {
+    60
+}
+
 pub fn default_ratelimit_block_advertisement() -> bool {
     true
 }
@@ -47,6 +51,7 @@ impl Default for MeshConfig {
             node_identity: NodeIdentityConfig::default(),
             tier_config: TierConfig::default(),
             bandwidth_report_interval_secs: default_bandwidth_report_interval(),
+            stale_cache_ttl_secs: default_stale_cache_ttl_secs(),
             ratelimit_block_advertisement: default_ratelimit_block_advertisement(),
             origin_signing_key: None,
             global_node: GlobalNodeConfig::default(),

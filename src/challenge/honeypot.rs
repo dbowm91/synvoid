@@ -239,7 +239,7 @@ mod tests {
         let ip2 = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 2));
 
         let paths1 = tracker.generate_for_ip(&ip1, "/app1");
-        let paths2 = tracker.generate_for_ip(&ip2, "/app2");
+        let _paths2 = tracker.generate_for_ip(&ip2, "/app2");
 
         let app_path = tracker.is_honeypot_hit(&ip1, &paths1[0]);
         assert!(app_path.is_some());

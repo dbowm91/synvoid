@@ -41,6 +41,9 @@ impl Defaults {
     pub const fn master_startup_timeout() -> u64 {
         30
     }
+    pub const fn drain_poll_interval() -> u64 {
+        100
+    }
     pub const fn min_workers() -> usize {
         2
     }
@@ -113,6 +116,8 @@ pub struct OverseerConfig {
     pub ipc_write_timeout_ms: u64,
     #[serde(default = "default_master_startup_timeout")]
     pub master_startup_timeout_secs: u64,
+    #[serde(default = "default_drain_poll_interval")]
+    pub drain_check_interval_ms: u64,
 }
 
 impl Default for OverseerConfig {
@@ -131,6 +136,7 @@ impl Default for OverseerConfig {
             ipc_read_timeout_ms: 5000,
             ipc_write_timeout_ms: 5000,
             master_startup_timeout_secs: 30,
+            drain_check_interval_ms: 100,
         }
     }
 }
@@ -328,6 +334,9 @@ fn default_ipc_write_timeout() -> u64 {
 }
 fn default_master_startup_timeout() -> u64 {
     Defaults::master_startup_timeout()
+}
+fn default_drain_poll_interval() -> u64 {
+    Defaults::drain_poll_interval()
 }
 fn default_min_workers() -> usize {
     Defaults::min_workers()

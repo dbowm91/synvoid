@@ -374,7 +374,7 @@ mod tests {
 
         let manager = PortManager::new(config, registry);
 
-        let initial_ports: Vec<u16> = manager.select_ports().iter().map(|(p, _)| *p).collect();
+        let _initial_ports: Vec<u16> = manager.select_ports().iter().map(|(p, _)| *p).collect();
 
         // Rotate should give different ports (statistically likely)
         let rotated = manager.rotate();

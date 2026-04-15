@@ -900,7 +900,7 @@ mod result_ext_tests {
     fn test_inspect_err_calls_closure_on_err() {
         let mut called = false;
         let result: Result<i32, &str> = Err("error");
-        result.inspect_err(|e| {
+        let _ = result.inspect_err(|e| {
             assert_eq!(e, &"error");
             called = true;
         });
@@ -911,7 +911,7 @@ mod result_ext_tests {
     fn test_inspect_err_does_nothing_on_ok() {
         let mut called = false;
         let result: Result<i32, &str> = Ok(42);
-        result.inspect_err(|_| called = true);
+        let _ = result.inspect_err(|_| called = true);
         assert!(!called);
     }
 
