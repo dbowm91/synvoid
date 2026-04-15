@@ -2649,6 +2649,7 @@ impl HttpServer {
         if let Some(ref rm) = req_metrics {
             rm.record_request_end(latency_ms);
         }
+        crate::metrics::record_http_request_latency(latency_ms);
 
         let status = response.as_ref().map(|r| r.status().as_u16()).unwrap_or(0);
         let ipc_clone = ipc.clone();

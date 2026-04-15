@@ -67,6 +67,9 @@ static DHT_QUORUM_FAILED_COUNT: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64
 static DHT_QUERY_LATENCIES: LazyLock<Mutex<VecDeque<u64>>> =
     LazyLock::new(|| Mutex::new(VecDeque::new()));
 
+static HTTP_REQUEST_LATENCIES: LazyLock<Mutex<VecDeque<u64>>> =
+    LazyLock::new(|| Mutex::new(VecDeque::new()));
+
 static DHT_BUCKET_PEER_COUNTS: LazyLock<DashMap<usize, AtomicU64>> = LazyLock::new(DashMap::new);
 
 static DHT_RECORDS_BY_TYPE: LazyLock<DashMap<String, AtomicU64>> = LazyLock::new(DashMap::new);
@@ -83,6 +86,9 @@ static DHT_PEER_DISCOVERED: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::ne
 static DHT_PEER_REMOVED: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 static DHT_PROPAGATION_HOPS: LazyLock<Mutex<VecDeque<u64>>> =
     LazyLock::new(|| Mutex::new(VecDeque::new()));
+
+static GLOBAL_NODE_LIVENESS_COUNT: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+static GLOBAL_NODE_QUORUM_LOST_EVENTS: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 
 static SERVERLESS_INVOCATIONS: LazyLock<DashMap<String, AtomicU64>> = LazyLock::new(DashMap::new);
 
@@ -363,6 +369,18 @@ pub fn get_dht_average_query_latency_ms() -> f64 {
     sum as f64 / latencies.len() as f64
 }
 
+pub fn record_http_request_latency(latency_ms: u64) {
+    let mut latencies = HTTP_REQUEST_LATENCIES.lock();
+    if latencies.len() >= LATENCY_SAMPLE_SIZE {
+        latencies.pop_front();
+    }
+    latencies.push_back(latency_ms);
+}
+
+pub fn get_http_request_latencies() -> Vec<u64> {
+    HTTP_REQUEST_LATENCIES.lock().iter().copied().collect()
+}
+
 pub fn record_dht_record_count(count: u64) {
     DHT_RECORD_COUNT.store(count, Ordering::Relaxed);
 }
@@ -515,6 +533,22 @@ pub fn get_dht_average_propagation_hops() -> f64 {
     }
     let sum: u64 = hops.iter().sum();
     sum as f64 / hops.len() as f64
+}
+
+pub fn record_global_node_liveness_count(count: u64) {
+    GLOBAL_NODE_LIVENESS_COUNT.store(count, Ordering::Relaxed);
+}
+
+pub fn get_global_node_liveness_count() -> u64 {
+    GLOBAL_NODE_LIVENESS_COUNT.load(Ordering::Relaxed)
+}
+
+pub fn record_global_node_quorum_lost() {
+    GLOBAL_NODE_QUORUM_LOST_EVENTS.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn get_global_node_quorum_lost_events() -> u64 {
+    GLOBAL_NODE_QUORUM_LOST_EVENTS.load(Ordering::Relaxed)
 }
 
 pub fn total_dropped_events() -> u64 {

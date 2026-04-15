@@ -257,12 +257,20 @@ impl SsrfDetector {
         is_ipv4 || is_ipv6
     }
 
+    fn has_ipv6_zone_id(input: &str) -> bool {
+        input.contains('%')
+    }
+
     fn contains_private_ip_or_localhost(input: &str) -> bool {
         let input_lower: Cow<str> = if input.bytes().any(|b| b.is_ascii_uppercase()) {
             Cow::Owned(input.to_lowercase())
         } else {
             Cow::Borrowed(input)
         };
+
+        if Self::has_ipv6_zone_id(&input_lower) {
+            return true;
+        }
 
         if Self::has_word_boundary(&input_lower, ".localhost")
             || Self::has_word_boundary(&input_lower, "localhost.")

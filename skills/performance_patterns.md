@@ -554,9 +554,161 @@ impl ConnectionTracker {
         let mut workers = self.workers.write();
         let entry = workers.entry(worker_id.to_string()).or_insert(0i32);
         *entry = entry.saturating_add(delta);  // Atomic-like with interior mutability
-        
+
         // Update total atomically
         self.total_connections.fetch_add(delta, Ordering::Relaxed);
+    }
+}
+```
+
+---
+
+## Wave 5 Performance & Observability (2026-04-15)
+
+### HTTP Request Latency Tracking
+
+**Location**: `src/metrics/mod.rs:70-71,372-382`, `src/http/server.rs:2652`
+
+**Issue**: No HTTP request latency metrics for observability.
+
+**Pattern**: VecDeque-based latency histogram:
+```rust
+static HTTP_REQUEST_LATENCIES: LazyLock<Mutex<VecDeque<u64>>> =
+    LazyLock::new(|| Mutex::new(VecDeque::new()));
+
+const LATENCY_SAMPLE_SIZE: usize = 1000;
+
+pub fn record_http_request_latency(latency_ms: u64) {
+    let mut latencies = HTTP_REQUEST_LATENCIES.lock();
+    if latencies.len() >= LATENCY_SAMPLE_SIZE {
+        latencies.pop_front();  // O(1) removal from front
+    }
+    latencies.push_back(latency_ms);
+}
+
+pub fn get_http_request_latencies() -> Vec<u64> {
+    HTTP_REQUEST_LATENCIES.lock().iter().copied().collect()
+}
+```
+
+**Recording point**: Called in HTTP server at request completion.
+
+---
+
+### Global Node Liveness Monitoring
+
+**Location**: `src/metrics/mod.rs:87-89,535-549`, `src/mesh/topology.rs:1559-1617`
+
+**Issue**: Global node heartbeats exist but no alerting when quorum goes offline.
+
+**Pattern**: Periodic liveness check with quorum loss detection:
+```rust
+static GLOBAL_NODE_LIVENESS_COUNT: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+static GLOBAL_NODE_QUORUM_LOST_EVENTS: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+
+pub async fn check_global_node_liveness(&self) {
+    let heartbeat_ttl: u64 = 90;  // Must match heartbeat TTL
+    let mut live_count: u64 = 0;
+
+    let heartbeat_records = record_store.get_by_prefix("global_node_heartbeat:");
+    for record in heartbeat_records {
+        if let Ok(heartbeat) = serde_json::from_slice::<GlobalNodeHeartbeat>(&record.value) {
+            let age = now.saturating_sub(heartbeat.timestamp);
+            if age <= heartbeat_ttl {
+                live_count += 1;
+            }
+        }
+    }
+
+    record_global_node_liveness_count(live_count);
+
+    // Warn if quorum lost
+    let expected = self.config.connection.reconnection_priority.global_nodes;
+    if expected > 0 && live_count < expected as u64 {
+        let previously_live = get_global_node_liveness_count();
+        if previously_live > 0 && previously_live >= expected as u64 && live_count < previously_live {
+            tracing::warn!(
+                "Global node quorum potentially lost: expected={} alive={}",
+                expected, live_count
+            );
+            record_global_node_quorum_lost();
+        }
+    }
+}
+```
+
+**Background task**: Runs every 60 seconds via `start_background_tasks()`.
+
+---
+
+### IPv6 Zone ID SSRF Rejection
+
+**Location**: `src/waf/attack_detection/ssrf.rs:260-273`
+
+**Issue**: Zone IDs (`%eth0`, `%1`) were stripped before analysis, potentially bypassing localhost detection.
+
+**Pattern**: Reject inputs containing zone IDs:
+```rust
+fn has_ipv6_zone_id(input: &str) -> bool {
+    input.contains('%')
+}
+
+fn contains_private_ip_or_localhost(input: &str) -> bool {
+    let input_lower: Cow<str> = /* ... */;
+
+    // Reject zone IDs - they should not appear in legitimate URLs
+    if Self::has_ipv6_zone_id(&input_lower) {
+        return true;
+    }
+
+    // ... rest of checks
+}
+```
+
+**Why rejection over stripping**: Zone IDs are Linux-specific interface specifiers that shouldn't appear in URLs applications process. Allowing them creates an obfuscation vector.
+
+---
+
+### ACME Config Validation
+
+**Location**: `src/config/tls.rs:106-151`
+
+**Issue**: No validation that cache_dir is writable; no warning for terms_of_service_agreed=false.
+
+**Pattern**: Validate at startup with helpful error messages:
+```rust
+impl AcmeConfig {
+    pub fn validate(&self) -> Result<(), ConfigValidationError> {
+        if self.email.is_none() {
+            return Err(ConfigValidationError { field: "tls.acme.email".to_string(), message: "ACME enabled but no email provided".to_string() });
+        }
+        if self.domains.is_empty() {
+            return Err(ConfigValidationError { field: "tls.acme.domains".to_string(), message: "ACME enabled but no domains specified".to_string() });
+        }
+
+        // Validate cache_dir is writable
+        if let Some(ref cache_dir) = self.cache_dir {
+            let path = std::path::Path::new(cache_dir);
+            if !path.exists() {
+                std::fs::create_dir_all(path).map_err(|e| ConfigValidationError {
+                    field: "tls.acme.cache_dir".to_string(),
+                    message: format!("Could not create cache_dir: {}", e),
+                })?;
+            }
+            // Write test file
+            let test_file = path.join(".maluwaf_acme_write_test");
+            std::fs::write(&test_file, b"").map_err(|e| ConfigValidationError {
+                field: "tls.acme.cache_dir".to_string(),
+                message: format!("cache_dir is not writable: {}", e),
+            })?;
+            let _ = std::fs::remove_file(&test_file);
+        }
+
+        // Warn if ToS not agreed
+        if self.enabled && !self.terms_of_service_agreed {
+            tracing::warn!("ACME is enabled but terms_of_service_agreed is false. Set to true after reviewing ACME terms of service.");
+        }
+        Ok(())
     }
 }
 ```

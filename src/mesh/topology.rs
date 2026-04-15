@@ -1559,5 +1559,63 @@ impl MeshTopology {
                 topology.cleanup_stale_metrics(10000).await;
             }
         });
+
+        let topology = Arc::clone(self);
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                topology.check_global_node_liveness().await;
+            }
+        });
+    }
+
+    pub async fn check_global_node_liveness(&self) {
+        let record_store = {
+            let guard = self.record_store.read();
+            guard.clone()
+        };
+
+        let Some(rs) = record_store.as_ref() else {
+            return;
+        };
+
+        let now = crate::mesh::safe_unix_timestamp();
+        let heartbeat_ttl: u64 = 90;
+        let mut live_count: u64 = 0;
+
+        let heartbeat_records = rs.get_by_prefix("global_node_heartbeat:");
+        for record in heartbeat_records {
+            if let Ok(heartbeat) = serde_json::from_slice::<crate::mesh::dht::GlobalNodeHeartbeat>(
+                &record.value,
+            ) {
+                let age = now.saturating_sub(heartbeat.timestamp);
+                if age <= heartbeat_ttl {
+                    live_count += 1;
+                }
+            }
+        }
+
+        crate::metrics::record_global_node_liveness_count(live_count);
+
+        let expected_global_nodes = self
+            .config
+            .connection
+            .reconnection_priority
+            .global_nodes;
+        if expected_global_nodes > 0 && live_count < expected_global_nodes as u64 {
+            let previously_live = crate::metrics::get_global_node_liveness_count();
+            if previously_live > 0 && previously_live >= expected_global_nodes as u64
+                && live_count < previously_live
+            {
+                tracing::warn!(
+                    "Global node quorum potentially lost: expected={} alive={} (previously {})",
+                    expected_global_nodes,
+                    live_count,
+                    previously_live
+                );
+                crate::metrics::record_global_node_quorum_lost();
+            }
+        }
     }
 }

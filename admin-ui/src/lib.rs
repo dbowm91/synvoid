@@ -1,6 +1,6 @@
 mod app;
 mod components;
-mod config_docs;
+pub mod config_docs;
 mod hooks;
 mod pages;
 mod services;

@@ -477,6 +477,10 @@ All duplicate `current_timestamp()` definitions have been consolidated into `src
 | Stale cache TTL configurable | `src/mesh/config.rs`, `src/mesh/proxy.rs` | `stale_cache_ttl_secs` field in MeshConfig |
 | Drain polling interval wired | `src/overseer/drain_manager.rs:174` | `drain_check_interval_ms` config now used |
 | Admin rate limiter auto-cleanup | `src/admin/state.rs:83-128` | Background task every 60 seconds |
+| IPv6 zone ID SSRF bypass | `src/waf/attack_detection/ssrf.rs:260-273` | Zone IDs (`%eth0`) now cause rejection instead of being stripped |
+| Global node liveness monitoring | `src/mesh/topology.rs:1559-1617` | `check_global_node_liveness()` warns on quorum loss |
+| HTTP request latency metrics | `src/metrics/mod.rs:70-71,372-382` | `HTTP_REQUEST_LATENCIES` VecDeque with record/get functions |
+| ACME config validation | `src/config/tls.rs:106-151` | `AcmeConfig::validate()` checks cache_dir writability |
 
 ## Performance Hot Paths
 

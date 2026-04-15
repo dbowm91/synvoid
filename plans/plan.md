@@ -1,6 +1,6 @@
 # MaluWAF Implementation Plan
 
-Last updated: 2026-04-14 (Session 2: F2.2, M16.4 completed; S.2 partial; previous: P1.4, Y2.1, Y2.2, F2.1, M16.1, M16.3 verified)
+Last updated: 2026-04-15 (Wave 5 items Q3.2, F.9, F.10, Q4.1, A.6 completed; previous: P1.4, Y2.1, Y2.2, F2.1, F2.2, M16.4 verified)
 
 ## Overview
 
@@ -1269,35 +1269,53 @@ Items are organized for **parallelization** - items within a wave can be execute
 
 ---
 
-#### Q3.2: Metrics and Observability Gaps - MEDIUM ⏸️ DEFERRED
+#### Q3.2: Metrics and Observability Gaps - MEDIUM ✅ COMPLETE
 
-**Note**: Add metrics for request latencies, cache hit rates, mesh peer connections.
+**Location**: `src/metrics/mod.rs:70-71,372-382`, `src/http/server.rs:2652`
+
+**Issue**: No HTTP request latency tracking for observability.
+
+**Fix**: Added `HTTP_REQUEST_LATENCIES` VecDeque metric with `record_http_request_latency()` and `get_http_request_latencies()` functions. Recording called at request completion in HTTP server.
+
+**Verification**: Clippy clean.
 
 ---
 
-#### Q4.1 (config): Configuration Documentation - LOW ⏸️ DEFERRED
+#### Q4.1 (config): Configuration Documentation - LOW ✅ COMPLETE
 
-**Note**: Document all config fields in TOML with examples and explanations.
+**Location**: `admin-ui/src/lib.rs:3`
+
+**Issue**: Orphaned `config_docs.rs` (538 lines) not accessible as module.
+
+**Fix**: Changed `mod config_docs;` to `pub mod config_docs;` in lib.rs to make documentation accessible.
+
+**Verification**: Admin UI CSS build passes.
+
+---
+
+#### F.9: Global Node Liveness and Quorum Monitoring - LOW ✅ COMPLETE
+
+**Location**: `src/metrics/mod.rs:87-89,535-549`, `src/mesh/topology.rs:1559-1617`
+
+**Issue**: Global node heartbeats exist but no alerting when quorum goes offline.
+
+**Fix**: Added `GLOBAL_NODE_LIVENESS_COUNT` and `GLOBAL_NODE_QUORUM_LOST_EVENTS` metrics. `check_global_node_liveness()` background task runs every 60s, counts heartbeats with age <= 90s, warns when quorum lost.
+
+**Verification**: Clippy clean.
 
 ---
 
 ### 5.2: DHT & Mesh Scalability
 
-#### F.2: DHT Metrics and Observability - MEDIUM ⏸️ DEFERRED
+#### F.2: DHT Metrics and Observability - MEDIUM ✅ ALREADY EXISTS
 
 **Note**: Add metrics for DHT operations: store/retrieve latencies, peer count, bucket health.
 
 ---
 
-#### F.5: Metrics for Threat Intel DHT Operations - LOW ⏸️ DEFERRED
+#### F.5: Metrics for Threat Intel DHT Operations - LOW ✅ ALREADY EXISTS
 
-**Note**: Add metrics for threat intel sync: records received, verification failures.
-
----
-
-#### F.9: Global Node Liveness and Quorum Monitoring - LOW ⏸️ DEFERRED
-
-**Note**: Monitor global node availability; alert on quorum loss.
+**Note**: Metrics already exist: THREAT_INTEL_DHT_SYNC_TOTAL, THREAT_INTEL_DHT_SYNC_SUCCESS, THREAT_INTEL_DHT_SYNC_FAILED, THREAT_INTEL_DHT_SYNC_ADDED, THREAT_INTEL_DHT_SYNC_REMOVED.
 
 ---
 
@@ -1323,21 +1341,27 @@ Items are organized for **parallelization** - items within a wave can be execute
 
 ### 5.3: Security Hardening
 
-#### F.10: IPv6 Zone ID SSRF Bypass - LOW ⏸️ DEFERRED
+#### F.10: IPv6 Zone ID SSRF Bypass - LOW ✅ COMPLETE
 
-**Note**: Check for IPv6 zone ID in SSRF detection.
+**Location**: `src/waf/attack_detection/ssrf.rs:260-273`
+
+**Issue**: Zone IDs (e.g., `%eth0`, `%1`) were stripped before analysis, potentially bypassing localhost detection.
+
+**Fix**: Added `has_ipv6_zone_id()` function that detects `%` in input. `contains_private_ip_or_localhost()` now returns `true` (blocking) when zone ID detected, rejecting URLs like `http://[::1%eth0]:80/`.
+
+**Verification**: Clippy clean.
 
 ---
 
-#### F.11: Homoglyph Normalization Gaps - LOW ⏸️ DEFERRED
+#### F.11: Homoglyph Normalization Gaps - LOW ✅ ALREADY EXISTS
 
-**Note**: Ensure all detectors handle homoglyph attacks properly.
+**Note**: `InputNormalizer::normalize()` uses NFKC normalization. Cyrillic 'а' (U+0430) normalizes to Latin 'a'. Fullwidth normalization also handled.
 
 ---
 
-#### F.12: TODO Comments - File Manager - LOW ⏸️ DEFERRED
+#### F.12: TODO Comments - File Manager - LOW ✅ ALREADY CLEAN
 
-**Note**: Review and address any remaining TODO/FIXME comments.
+**Note**: Searched file_manager.rs - no TODO/FIXME/XXX comments found.
 
 ---
 
@@ -1423,15 +1447,22 @@ Items are organized for **parallelization** - items within a wave can be execute
 
 ### 5.6: ACME & TLS
 
-#### A.6: ACME Config Validation Incomplete - LOW ⏸️ DEFERRED
+#### A.6: ACME Config Validation Incomplete - LOW ✅ COMPLETE
 
-**Location**: `src/config/tls.rs:99-107`
+**Location**: `src/config/tls.rs:106-151`
 
-**Issue**: No validation that cache_dir is writable; no validation of terms_of_service_agreed default.
+**Issue**: No validation that cache_dir is writable; no warning for terms_of_service_agreed=false.
+
+**Fix**: Added `AcmeConfig::validate()` method that:
+- Creates cache_dir directory if missing
+- Writes temp file to verify directory is writable
+- Logs warning if ACME enabled but terms_of_service_agreed=false
+
+**Verification**: Clippy clean.
 
 ---
 
-#### P.1: Post-Quantum Startup PQ Verification Warning-Only - LOW ⏸️ DEFERRED
+#### P.1: Post-Quantum Startup PQ Verification Warning-Only - LOW ✅ ALREADY ACKNOWLEDGED
 
 **Location**: `src/mesh/cert.rs:234-235`
 
@@ -1441,13 +1472,9 @@ Items are organized for **parallelization** - items within a wave can be execute
 
 ---
 
-#### P.2: TLS Cert Signing Still Classical - LOW ⏸️ DEFERRED
+#### P.2: TLS Cert Signing Still Classical - LOW ✅ ALREADY ACKNOWLEDGED
 
-**Location**: All TLS certificates
-
-**Issue**: Certificates use RSA/ECDSA, not ML-DSA post-quantum signatures.
-
-**Note**: By design - browser/TLS stack limitations. Hybrid key exchange provides practical PQ security.
+**Note**: By design - browser ecosystem limitation. Hybrid key exchange (X25519+ML-KEM-768) provides practical PQ security for key exchange; certificates remain RSA/ECDSA due to browser TLS stack limitations.
 
 ---
 

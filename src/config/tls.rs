@@ -96,17 +96,55 @@ impl TlsConfig {
                 }
             }
         }
-        if self.acme.enabled && self.acme.email.is_none() {
+        if self.acme.enabled {
+            self.acme.validate()?;
+        }
+        Ok(())
+    }
+}
+
+impl AcmeConfig {
+    pub fn validate(&self) -> Result<(), ConfigValidationError> {
+        if self.email.is_none() {
             return Err(ConfigValidationError {
                 field: "tls.acme.email".to_string(),
                 message: "ACME enabled but no email provided".to_string(),
             });
         }
-        if self.acme.enabled && self.acme.domains.is_empty() {
+        if self.domains.is_empty() {
             return Err(ConfigValidationError {
                 field: "tls.acme.domains".to_string(),
                 message: "ACME enabled but no domains specified".to_string(),
             });
+        }
+        if let Some(ref cache_dir) = self.cache_dir {
+            let path = std::path::Path::new(cache_dir);
+            if !path.exists() {
+                if let Err(e) = std::fs::create_dir_all(path) {
+                    return Err(ConfigValidationError {
+                        field: "tls.acme.cache_dir".to_string(),
+                        message: format!(
+                            "ACME cache_dir does not exist and could not be created: {}",
+                            e
+                        ),
+                    });
+                }
+            }
+            let temp_file = path.join(".maluwaf_acme_write_test");
+            if let Err(e) = std::fs::write(&temp_file, b"") {
+                return Err(ConfigValidationError {
+                    field: "tls.acme.cache_dir".to_string(),
+                    message: format!("ACME cache_dir is not writable: {}", e),
+                });
+            }
+            let _ = std::fs::remove_file(&temp_file);
+        }
+        if self.enabled && !self.terms_of_service_agreed {
+            tracing::warn!(
+                "ACME is enabled but terms_of_service_agreed is false. \
+                ACME will not be able to obtain certificates until the terms of service are agreed. \
+                Set tls.acme.terms_of_service_agreed = true after reviewing the ACME terms of service."
+            );
         }
         Ok(())
     }
