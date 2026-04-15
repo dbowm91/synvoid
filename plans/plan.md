@@ -317,7 +317,7 @@ let decoded = if input_lower.contains('%') || input_lower.contains('+') {
 - `src/waf/attack_detection/xxe.rs`
 - `src/waf/attack_detection/jwt.rs`
 
-**Verification**: Clippy clean.
+**Verification**: Clippy clean. Note: 10 pre-existing test failures in ssrf, open_redirect, and request_smuggling tests (not caused by this fix - verified by testing at commit d8f6a31 before any P.3 changes).
 
 ---
 
