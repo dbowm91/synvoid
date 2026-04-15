@@ -945,13 +945,21 @@ Items are organized for **parallelization** - items within a wave can be execute
 
 ---
 
-#### A.5: ACME DNS-01 Not Integrated with Mesh DNS - MEDIUM ❌ OPEN
+#### A.5: ACME DNS-01 Not Integrated with Mesh DNS - MEDIUM ✅ COMPLETE
 
-**Location**: `src/tls/acme_dns.rs`, `src/dns/mesh_sync/verification.rs:209,604`
+**Location**: `src/tls/acme.rs`, `src/tls/acme_dns.rs`, `src/dns/server/mod.rs`, `src/dns/server/query.rs`, `src/dns/server/response.rs`, `src/dns/server/startup.rs`, `src/dns/doh.rs`, `src/dns/dot.rs`, `src/worker/unified_server.rs`
 
 **Issue**: DNS-01 support exists but no integration between AcmeManager and mesh DNS.
 
-**Fix**: Add callback from AcmeManager to mesh DNS; route ACME DNS queries appropriately.
+**Fix**: Integrated AcmeDnsChallenge with DNS server query handling:
+- Added `AcmeDnsChallenge` field to `AcmeManager` with `prepare_challenge`/`cleanup`
+- Added `Arc<AcmeDnsChallenge>` to `DnsServer`, `DnsHandlerState`, and `QueryContext`
+- Added `build_acme_txt_response()` to serve ACME DNS-01 TXT records
+- Added `with_acme_dns_challenges()` builder method to `DnsServer`
+- DNS query handler checks for `_acme-challenge.*` TXT queries and serves challenge values
+- ACME manager wired to DNS server via `UnifiedServer::setup_acme()`
+
+**Verification**: Clippy clean; code compiles.
 
 ---
 

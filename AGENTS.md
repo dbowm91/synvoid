@@ -392,6 +392,7 @@ All duplicate `current_timestamp()` definitions have been consolidated into `src
 | Private key zeroization | `src/mesh/cert.rs` | Uses `ZeroizeOnDrop` for private key storage |
 | ACME ToS agreement | `src/tls/acme.rs` | `terms_of_service_agreed` now configurable |
 | Multi-worker ACME coordination | `src/process/ipc.rs`, `src/process/manager.rs`, `src/master/ipc.rs`, `src/server/mod.rs`, `src/worker/unified_server.rs` | Workers run AcmeManager with IPC-based cert reload broadcast |
+| ACME DNS-01 integration | `src/tls/acme.rs`, `src/dns/server/query.rs`, `src/dns/server/response.rs` | AcmeDnsChallenge wired to DNS server to serve _acme-challenge.* TXT records |
 | `pattern_detector!` macro infinite recursion | `src/waf/attack_detection/detector_common.rs` | Fix applied to macro-generated impl |
 | WAF empty headers in proxy path | `src/proxy.rs:486` | Pass actual request headers to check_request_full |
 | Dynamic worker server stub | `src/worker/mod.rs` | Deprecated; unified server handles requests |
