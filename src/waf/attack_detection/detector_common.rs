@@ -147,7 +147,12 @@ macro_rules! url_decode_detector {
             fn detect_with_url_decode(&self, input: &str, location: InputLocation) -> Option<AttackDetectionResult> {
                 use $crate::utils::url_decode_all;
                 let input_lower = input.to_lowercase();
-                let decoded = url_decode_all(&input_lower);
+
+                let decoded = if input_lower.contains('%') || input_lower.contains('+') {
+                    url_decode_all(&input_lower)
+                } else {
+                    input_lower.clone()
+                };
 
                 if let Some(mat) = self.inner.patterns_ref().find(&decoded) {
                     let matched = decoded[mat.start()..mat.end()].to_string();

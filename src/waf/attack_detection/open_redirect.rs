@@ -157,7 +157,11 @@ impl OpenRedirectDetector {
         input: &str,
         location: InputLocation,
     ) -> Option<AttackDetectionResult> {
-        let decoded = url_decode_all(input);
+        let decoded = if input.contains('%') || input.contains('+') {
+            url_decode_all(input)
+        } else {
+            input.to_string()
+        };
         let decoded_lower: Cow<str> = if decoded.bytes().any(|b| b.is_ascii_uppercase()) {
             Cow::Owned(decoded.to_lowercase())
         } else {

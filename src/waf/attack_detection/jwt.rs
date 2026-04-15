@@ -254,7 +254,11 @@ impl JwtDetector {
 }
 
 fn extract_jwt_token(input: &str) -> Option<String> {
-    let decoded = url_decode_all(input);
+    let decoded = if input.contains('%') || input.contains('+') {
+        url_decode_all(input)
+    } else {
+        input.to_string()
+    };
     let input_to_check = decoded.as_str();
 
     if input_to_check.contains('.') && input_to_check.matches('.').count() == 2 {

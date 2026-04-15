@@ -27,7 +27,11 @@ impl XxeDetector {
         input: &str,
         location: InputLocation,
     ) -> Option<AttackDetectionResult> {
-        let decoded = crate::utils::url_decode_all(input);
+        let decoded = if input.contains('%') || input.contains('+') {
+            crate::utils::url_decode_all(input)
+        } else {
+            input.to_string()
+        };
         let normalized = normalize_xml(&decoded);
         let normalized_lower = normalized.to_lowercase();
 

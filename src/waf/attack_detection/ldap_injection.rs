@@ -26,7 +26,11 @@ impl LdapInjectionDetector {
         location: InputLocation,
     ) -> Option<crate::waf::attack_detection::config::AttackDetectionResult> {
         let input_lower = input.to_lowercase();
-        let decoded = url_decode_all(&input_lower);
+        let decoded = if input_lower.contains('%') || input_lower.contains('+') {
+            url_decode_all(&input_lower)
+        } else {
+            input_lower.clone()
+        };
 
         if let Some(mat) = self.inner.patterns_ref().find(&decoded) {
             let matched = decoded[mat.start()..mat.end()].to_string();

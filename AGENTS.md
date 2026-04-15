@@ -9,6 +9,25 @@ MaluWAF is a WAF (Web Application Firewall) with a multi-process architecture:
 - **Master** (`src/master/`): Parent process that spawns/manages workers, handles IPC
 - **Worker** (`src/worker/`): Handles HTTP requests and communicates via IPC
 
+### Scalability Target
+
+MaluWAF is designed for **high scalability** with targets well in excess of **500K requests/second**.
+
+This has several implications:
+- **Every allocation matters**: At 500K rps, even small per-request allocations compound to millions/sec
+- **Avoid O(n) operations in hot paths**: Linear searches, repeated string conversions, unnecessary clones
+- **Prefer O(1) lookups**: HashMap/HashSet over Vec iteration for any frequency
+- **Reuse buffers**: Thread-local buffers, object pools, moka caches instead of per-request allocations
+- **Lazy evaluation**: Only compute what's needed; defer expensive operations until confirmed necessary
+
+When modifying hot path code, consider the multiplicative effect at scale:
+```rust
+// At 500K rps, these compound quickly:
+// - 1 extra allocation/req × 500K = 500K allocations/sec
+// - 8 extra allocations/req × 500K = 4M allocations/sec
+// - Each extra CPU cycle × 500K = significant overhead
+```
+
 ## Running Tests
 
 ### Quick Test Commands
