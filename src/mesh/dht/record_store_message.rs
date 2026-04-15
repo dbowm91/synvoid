@@ -475,6 +475,104 @@ impl RecordStoreManager {
         });
     }
 
+    pub async fn rebalance_after_departure(&self, departed_node_id: &str) {
+        if !self.config.enabled || !self.node_role.is_global() {
+            return;
+        }
+
+        let routing_manager = self.routing_state.read().routing_manager.clone();
+        let Some(rm) = routing_manager else {
+            return;
+        };
+
+        let transport_opt = self.routing_state.read().transport.clone();
+        let Some(transport) = transport_opt else {
+            return;
+        };
+
+        let replication_factor = self.config.replication_factor;
+        let write_quorum = self.config.write_quorum as usize;
+
+        let records_to_rebalance: Vec<(String, DhtRecord)> = {
+            let rs = self.record_state.read();
+            rs.records
+                .iter()
+                .into_iter()
+                .filter(|(_, entry)| entry.local_origin)
+                .map(|(k, v)| (k.clone(), v.record.clone()))
+                .collect()
+        };
+
+        if records_to_rebalance.is_empty() {
+            tracing::debug!("No local records to rebalance after departure of {}", departed_node_id);
+            return;
+        }
+
+        tracing::info!(
+            "DHT rebalance triggered after departure of {}: re-announcing {} records",
+            departed_node_id,
+            records_to_rebalance.len()
+        );
+
+        let signer_public_key = {
+            let rs = self.record_state.read();
+            rs.mesh_signer
+                .as_ref()
+                .map(|s| s.get_public_key())
+                .unwrap_or_default()
+        };
+
+        for (key, record) in records_to_rebalance {
+            let target_geo = None;
+            let closest_peers = rm
+                .find_closest_peers_hybrid(&key, target_geo, replication_factor)
+                .await;
+
+            if closest_peers.is_empty() {
+                tracing::warn!("DHT rebalance: no peers found for key {}", &key);
+                continue;
+            }
+
+            let request_id = format!("rebalance-{}-{}", &key, uuid::Uuid::new_v4());
+            let announce = MeshMessage::DhtRecordAnnounce {
+                request_id: request_id.into(),
+                records: vec![record.clone()],
+                write_quorum: self.config.write_quorum,
+                timestamp: MeshMessage::generate_timestamp(),
+                source_node_id: self.node_id.clone().into(),
+                signature: Vec::new(),
+                signer_public_key: signer_public_key.clone(),
+            };
+
+            let mut success_count = 0;
+            for peer in closest_peers {
+                if peer.node_id_string == self.node_id {
+                    continue;
+                }
+
+                if transport
+                    .send_datagram_to_peer(&peer.node_id_string, &announce)
+                    .await
+                    .is_ok()
+                {
+                    success_count += 1;
+                    crate::metrics::record_dht_announce_sent();
+                } else {
+                    crate::metrics::record_dht_announce_failed();
+                }
+            }
+
+            if success_count < write_quorum {
+                tracing::warn!(
+                    "DHT rebalance: write quorum not met for {} ({}/{})",
+                    &key,
+                    success_count,
+                    write_quorum
+                );
+            }
+        }
+    }
+
     async fn run_anti_entropy_cycle(
         record_store: &Arc<RecordStoreManager>,
         replication_factor: usize,

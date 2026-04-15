@@ -1324,7 +1324,22 @@ impl MeshTransport {
             reason
         );
 
+        let was_global = {
+            if let Some(peer) = self.topology.get_peer(node_id).await {
+                peer.role.is_global()
+            } else {
+                false
+            }
+        };
+
         self.topology.remove_peer(node_id).await;
+
+        if was_global {
+            tracing::info!("Global node {} departed, triggering DHT rebalance", node_id);
+            if let Some(ref record_store) = self.record_store {
+                record_store.rebalance_after_departure(node_id).await;
+            }
+        }
 
         self.update_threat_intel_global_nodes().await;
     }
