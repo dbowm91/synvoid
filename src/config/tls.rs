@@ -33,6 +33,8 @@ pub struct TlsConfig {
     pub acme: AcmeConfig,
     #[serde(default)]
     pub client_auth: ClientAuthConfig,
+    #[serde(default)]
+    pub strict_protocol_validation: bool,
 }
 
 impl Default for TlsConfig {
@@ -50,6 +52,7 @@ impl Default for TlsConfig {
             port: default_tls_port(),
             acme: AcmeConfig::default(),
             client_auth: ClientAuthConfig::default(),
+            strict_protocol_validation: false,
         }
     }
 }

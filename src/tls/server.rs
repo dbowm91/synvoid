@@ -17,6 +17,7 @@ use metrics::counter;
 use parking_lot::Mutex;
 use std::convert::Infallible;
 use std::net::SocketAddr;
+use std::os::fd::{AsRawFd, FromRawFd};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
@@ -47,6 +48,31 @@ use super::config::InternalTlsConfig;
 const ALPN_HTTP2: &[u8] = b"h2";
 
 use crate::tls::sni_peek::compute_ja4;
+
+fn is_tls_client_hello(bytes: &[u8]) -> bool {
+    bytes.len() >= 3 && bytes[0] == 0x16 && bytes[1] == 0x03 && (bytes[2] <= 0x03)
+}
+
+const HTTP_VALID_METHODS: &[&str] = &[
+    "GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS", "PATCH", "CONNECT", "TRACE",
+];
+
+fn is_valid_http_request_start(bytes: &[u8]) -> bool {
+    if bytes.is_empty() {
+        return false;
+    }
+
+    for method in HTTP_VALID_METHODS {
+        let method_bytes = method.as_bytes();
+        if bytes.len() > method_bytes.len()
+            && bytes[..method_bytes.len()] == *method_bytes
+            && bytes[method_bytes.len()] == b' '
+        {
+            return true;
+        }
+    }
+    false
+}
 
 struct HttpsConnection {
     io: Mutex<Option<TokioIo<tokio_rustls::server::TlsStream<tokio::net::TcpStream>>>>,
@@ -325,6 +351,24 @@ impl HttpsServer {
                             let serverless_manager_h1 = serverless_manager.clone();
                             let app_servers_h2 = app_servers.clone();
                             let app_servers_h1 = app_servers.clone();
+
+                            if http_config.strict_protocol_validation {
+                                let raw_fd = stream.as_raw_fd();
+                                let socket = unsafe { std::net::TcpStream::from_raw_fd(raw_fd) };
+                                socket.set_nonblocking(false).ok();
+                                let mut peek_buf = [0u8; 16];
+                                if let Ok(1..) = socket.peek(&mut peek_buf) {
+                                    if is_valid_http_request_start(&peek_buf) {
+                                        counter!("maluwaf.tls.http_on_tls_port").increment(1);
+                                        tracing::debug!(
+                                            "Rejected HTTP connection on TLS port from {}",
+                                            client_ip
+                                        );
+                                    }
+                                }
+                                socket.set_nonblocking(true).ok();
+                                std::mem::forget(socket);
+                            }
 
                             tokio::spawn(async move {
                                 match acceptor.accept(stream).await {

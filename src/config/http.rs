@@ -25,6 +25,8 @@ pub struct HttpConfig {
     pub waf_stall_timeout_secs: u64,
     #[serde(default = "default_max_connections")]
     pub max_connections: u32,
+    #[serde(default = "default_strict_protocol_validation")]
+    pub strict_protocol_validation: bool,
 }
 
 impl Default for HttpConfig {
@@ -40,6 +42,7 @@ impl Default for HttpConfig {
             pipeline_limit: default_pipeline_limit(),
             waf_stall_timeout_secs: default_waf_stall_timeout(),
             max_connections: default_max_connections(),
+            strict_protocol_validation: default_strict_protocol_validation(),
         }
     }
 }
@@ -75,6 +78,10 @@ fn default_pipeline_limit() -> usize {
 
 fn default_max_connections() -> u32 {
     10000
+}
+
+fn default_strict_protocol_validation() -> bool {
+    false
 }
 
 impl HttpConfig {

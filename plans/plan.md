@@ -1,6 +1,6 @@
 # MaluWAF Implementation Plan
 
-Last updated: 2026-04-15 (Session: Fixed S1.2 IPC nonce cache poisoning [partial fix completed], R3.1 chrono timestamp consolidation [56 occurrences], R3.2 body collection deduplication [shared function])
+Last updated: 2026-04-15 (Session: Implemented P1.1/P1.2 protocol validation; P1.1 HTTP strict validation with ProtocolValidatingStream; P1.2 TLS HTTP-on-TLS detection; R3.1 chrono consolidation [56 occ]; R3.2 body collection dedup; S1.2 IPC nonce fix)
 
 ## Overview
 
@@ -539,13 +539,13 @@ Items are organized for **parallelization** - items within a wave can be execute
 
 ---
 
-#### R3.3: HttpConnection/HttpsConnection Duplication - MEDIUM ❌ OPEN
+#### R3.3: HttpConnection/HttpsConnection Duplication - MEDIUM ⏸️ DEFERRED
 
-**Location**: `src/http/server.rs:91-104`, `src/tls/server.rs:50-84`
+**Location**: `src/http/server.rs:150-174`, `src/tls/server.rs:51-85`
 
-**Issue**: Nearly identical structs - both have `io`, `drop_requested`, `new()`, `request_drop()`, etc.
+**Issue**: Nearly identical structs - both have `io`, `drop_requested`, `new()`, `request_drop()`, etc. ~15 lines each.
 
-**Fix**: Create generic `StreamConnection<S>` wrapper struct.
+**Fix**: Creating generic `StreamConnection<S>` wrapper would add generics complexity for limited benefit. The structs are small and the stream type differences (TcpStream vs TlsStream) make clean generics difficult. HTTPS also has additional `ja4_hash` field.
 
 ---
 
@@ -1238,23 +1238,34 @@ Items are organized for **parallelization** - items within a wave can be execute
 
 ### 4.22: Protocol Validation
 
-#### P1.1: HTTP Server Protocol Validation - HIGH ❌ OPEN
+#### P1.1: HTTP Server Protocol Validation - HIGH ✅ COMPLETE
 
-**Location**: `src/http/server.rs`
+**Location**: `src/http/server.rs:90-148, 462-492`, `src/config/http.rs`
 
 **Issue**: Accepts any TCP connection; doesn't validate HTTP protocol before parsing.
 
-**Fix**: Peek initial bytes; reject if not HTTP; add `strict_protocol_validation` config.
+**Fix**: Added `strict_protocol_validation` config option to `HttpConfig`. When enabled:
+- Peeks initial bytes from TCP stream before HTTP parsing
+- Rejects TLS ClientHello on HTTP port (metric: `maluwaf.http.tls_on_http_port`)
+- Rejects non-HTTP protocols (metric: `maluwaf.http.invalid_protocol`)
+- Uses `ProtocolValidatingStream<S>` wrapper to buffer peeked bytes for HTTP parser
+
+**Verification**: clippy clean; 124 integration tests pass.
 
 ---
 
-#### P1.2: TLS Server Protocol Validation - HIGH ❌ OPEN
+#### P1.2: TLS Server Protocol Validation - HIGH ✅ COMPLETE
 
-**Location**: `src/tls/server.rs`
+**Location**: `src/tls/server.rs:47-74, 355-374`, `src/config/tls.rs`, `src/config/http.rs`
 
 **Issue**: Non-TLS connections held until TLS handshake timeout.
 
-**Fix**: Peek first bytes before handshake; reject if not TLS handshake; add early rejection.
+**Fix**: Added `strict_protocol_validation` config option to `TlsConfig` (via HttpConfig). When enabled:
+- Peeks initial bytes using raw fd before TLS handshake
+- Rejects HTTP on TLS port (metric: `maluwaf.tls.http_on_tls_port`)
+- Uses `std::net::TcpStream::peek()` with raw fd to avoid consuming bytes
+
+**Verification**: clippy clean; 124 integration tests pass.
 
 ---
 

@@ -90,13 +90,99 @@ use tokio::sync::RwLock;
 static REQUEST_LOG_RATE_LIMITER: AtomicU32 = AtomicU32::new(0);
 static REQUEST_LOG_RATE_LIMITER_RESET: AtomicU64 = AtomicU64::new(0);
 
+const HTTP_VALID_METHODS: &[&str] = &[
+    "GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS", "PATCH", "CONNECT", "TRACE",
+];
+
+fn is_valid_http_request_start(bytes: &[u8]) -> bool {
+    if bytes.is_empty() {
+        return false;
+    }
+
+    for method in HTTP_VALID_METHODS {
+        let method_bytes = method.as_bytes();
+        if bytes.len() > method_bytes.len()
+            && bytes[..method_bytes.len()] == *method_bytes
+            && bytes[method_bytes.len()] == b' '
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn is_tls_client_hello(bytes: &[u8]) -> bool {
+    bytes.len() >= 3 && bytes[0] == 0x16 && bytes[1] == 0x03 && (bytes[2] <= 0x03)
+}
+
+struct ProtocolValidatingStream<S> {
+    stream: S,
+    initial_bytes: Option<Vec<u8>>,
+}
+
+impl<S> ProtocolValidatingStream<S> {
+    fn new(stream: S, initial_bytes: Vec<u8>) -> Self {
+        Self {
+            stream,
+            initial_bytes: Some(initial_bytes),
+        }
+    }
+}
+
+impl<S: tokio::io::AsyncRead + Unpin> tokio::io::AsyncRead for ProtocolValidatingStream<S> {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        if let Some(bytes) = self.initial_bytes.take() {
+            let len = bytes.len().min(buf.remaining());
+            buf.put_slice(&bytes[..len]);
+            if len < bytes.len() {
+                self.initial_bytes = Some(bytes[len..].to_vec());
+            }
+            return std::task::Poll::Ready(Ok(()));
+        }
+        std::pin::Pin::new(&mut self.stream).poll_read(cx, buf)
+    }
+}
+
+impl<S: tokio::io::AsyncWrite + Unpin> tokio::io::AsyncWrite for ProtocolValidatingStream<S> {
+    fn poll_write(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        std::pin::Pin::new(&mut self.stream).poll_write(cx, buf)
+    }
+
+    fn poll_flush(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.stream).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.stream).poll_shutdown(cx)
+    }
+}
+
 struct HttpConnection {
-    io: Mutex<Option<TokioIo<tokio::net::TcpStream>>>,
+    io: Mutex<Option<TokioIo<ProtocolValidatingStream<tokio::net::TcpStream>>>>,
     drop_requested: RunningFlag,
 }
 
 impl HttpConnection {
-    fn new(stream: tokio::net::TcpStream) -> Self {
+    fn new(stream: tokio::net::TcpStream, initial_bytes: Vec<u8>) -> Self {
+        let stream = if initial_bytes.is_empty() {
+            ProtocolValidatingStream::new(stream, vec![])
+        } else {
+            ProtocolValidatingStream::new(stream, initial_bytes)
+        };
         Self {
             io: Mutex::new(Some(TokioIo::new(stream))),
             drop_requested: RunningFlag::new(),
@@ -111,7 +197,7 @@ impl HttpConnection {
         !self.drop_requested.is_running()
     }
 
-    fn take_stream(&self) -> Option<TokioIo<tokio::net::TcpStream>> {
+    fn take_stream(&self) -> Option<TokioIo<ProtocolValidatingStream<tokio::net::TcpStream>>> {
         self.io.lock().take()
     }
 }
@@ -373,7 +459,41 @@ impl HttpServer {
                             let connection_limit = connection_limit.clone();
                             let app_servers = app_servers.clone();
 
-                            let http_conn = Arc::new(HttpConnection::new(stream));
+                            let (initial_bytes, stream_for_conn) = if http_config.strict_protocol_validation {
+                                let mut peek_buf = [0u8; 16];
+                                let mut stream_clone = stream;
+                                match tokio::io::AsyncReadExt::read(&mut stream_clone, &mut peek_buf).await {
+                                    Ok(n) => {
+                                        if n == 0 {
+                                            continue;
+                                        }
+                                        if is_tls_client_hello(&peek_buf[..n]) {
+                                            counter!("maluwaf.http.tls_on_http_port").increment(1);
+                                            tracing::debug!(
+                                                "Rejected TLS connection on HTTP port from {}",
+                                                client_ip
+                                            );
+                                            continue;
+                                        }
+                                        if !is_valid_http_request_start(&peek_buf[..n]) {
+                                            counter!("maluwaf.http.invalid_protocol").increment(1);
+                                            tracing::debug!(
+                                                "Rejected non-HTTP connection on HTTP port from {}",
+                                                client_ip
+                                            );
+                                            continue;
+                                        }
+                                        (peek_buf[..n].to_vec(), stream_clone)
+                                    }
+                                    Err(_) => {
+                                        continue;
+                                    }
+                                }
+                            } else {
+                                (vec![], stream)
+                            };
+
+                            let http_conn = Arc::new(HttpConnection::new(stream_for_conn, initial_bytes));
                             let http_conn_clone = http_conn.clone();
 
                             let io = match http_conn.io.lock().take() {
