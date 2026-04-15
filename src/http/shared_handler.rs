@@ -3,7 +3,10 @@ use http::{Response, StatusCode};
 use http_body_util::combinators::BoxBody;
 use http_body_util::BodyExt;
 use http_body_util::Full;
+use metrics;
 use std::convert::Infallible;
+use std::net::IpAddr;
+use std::sync::Arc;
 
 use crate::config::MainConfig;
 use crate::http::response_builder::{
@@ -296,4 +299,91 @@ impl SharedRequestHandler {
     fn protocol_name(&self) -> &'static str {
         ""
     }
+}
+
+#[derive(Clone, Copy)]
+pub enum BodyCollectionProtocol {
+    Http,
+    Https,
+}
+
+impl BodyCollectionProtocol {
+    fn counter_blocked(&self) -> &'static str {
+        match self {
+            BodyCollectionProtocol::Http => "maluwaf.http.streaming_body_blocked",
+            BodyCollectionProtocol::Https => "maluwaf.https.streaming_body_blocked",
+        }
+    }
+
+    fn counter_too_large(&self) -> &'static str {
+        match self {
+            BodyCollectionProtocol::Http => "maluwaf.http.streaming_body_too_large",
+            BodyCollectionProtocol::Https => "maluwaf.https.streaming_body_too_large",
+        }
+    }
+}
+
+pub async fn collect_body_with_chunk_waf_impl<B>(
+    mut body: B,
+    waf: &Arc<crate::waf::WafCore>,
+    client_ip: IpAddr,
+    protocol: BodyCollectionProtocol,
+) -> Result<Bytes, ()>
+where
+    B: http_body::Body<Data = Bytes> + Unpin,
+    B::Error: std::fmt::Debug,
+{
+    const CHUNK_SIZE: usize = 64 * 1024;
+    const MAX_ACCUMULATED_WAF: usize = 512 * 1024;
+
+    let mut accumulated = Vec::new();
+    let mut waf_checked_up_to: usize = 0;
+
+    while let Some(frame_result) = body.frame().await {
+        match frame_result {
+            Ok(frame) => {
+                if let Ok(chunk) = frame.into_data() {
+                    accumulated.extend_from_slice(&chunk);
+
+                    if accumulated.len() - waf_checked_up_to >= CHUNK_SIZE {
+                        let check_end = accumulated
+                            .len()
+                            .min(waf_checked_up_to + MAX_ACCUMULATED_WAF);
+                        if check_end > waf_checked_up_to {
+                            let chunk_to_check = &accumulated[waf_checked_up_to..check_end];
+                            if let Some(
+                                crate::proxy::WafDecision::Drop
+                                | crate::proxy::WafDecision::Block(_, _),
+                            ) = waf.check_request_body(chunk_to_check)
+                            {
+                                tracing::warn!(
+                                    client_ip = %client_ip,
+                                    "Request blocked during streaming body WAF check"
+                                );
+                                metrics::counter!(protocol.counter_blocked()).increment(1);
+                                return Err(());
+                            }
+                            waf_checked_up_to = check_end;
+                        }
+                    }
+
+                    if accumulated.len() > 100 * 1024 * 1024 {
+                        tracing::warn!(
+                            client_ip = %client_ip,
+                            size = accumulated.len(),
+                            "Request body exceeded 100MB limit during streaming"
+                        );
+                        metrics::counter!(protocol.counter_too_large()).increment(1);
+                        return Ok(Bytes::from(accumulated));
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::debug!("Error reading body frame: {:?}", e);
+                break;
+            }
+        }
+    }
+
+    Ok(Bytes::from(accumulated))
 }

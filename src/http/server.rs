@@ -28,6 +28,8 @@ use tokio::net::TcpListener;
 use tokio::sync::broadcast;
 use tokio::sync::Semaphore;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
+
+use crate::http::shared_handler::collect_body_with_chunk_waf_impl;
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Role, WebSocketStream};
 
 static WHITELIST_REGEX_CACHE: LazyLock<DashMap<String, Option<regex::Regex>>> =
@@ -3476,7 +3478,7 @@ impl HttpServer {
     }
 
     async fn collect_body_with_chunk_waf<B>(
-        mut body: B,
+        body: B,
         waf: &Arc<crate::waf::WafCore>,
         client_ip: IpAddr,
         request_body_size: &mut u64,
@@ -3485,61 +3487,17 @@ impl HttpServer {
         B: http_body::Body<Data = Bytes> + Unpin,
         B::Error: std::fmt::Debug,
     {
-        const CHUNK_SIZE: usize = 64 * 1024; // 64KB chunks
-        const MAX_ACCUMULATED_WAF: usize = 512 * 1024; // Run WAF on accumulated body up to 512KB
-
-        let mut accumulated = Vec::new();
-        let mut waf_checked_up_to: usize = 0;
-
-        while let Some(frame_result) = body.frame().await {
-            match frame_result {
-                Ok(frame) => {
-                    if let Ok(chunk) = frame.into_data() {
-                        accumulated.extend_from_slice(&chunk);
-
-                        if accumulated.len() - waf_checked_up_to >= CHUNK_SIZE {
-                            let check_end = accumulated
-                                .len()
-                                .min(waf_checked_up_to + MAX_ACCUMULATED_WAF);
-                            if check_end > waf_checked_up_to {
-                                let chunk_to_check = &accumulated[waf_checked_up_to..check_end];
-                                if let Some(
-                                    crate::proxy::WafDecision::Drop
-                                    | crate::proxy::WafDecision::Block(_, _),
-                                ) = waf.check_request_body(chunk_to_check)
-                                {
-                                    tracing::warn!(
-                                        client_ip = %client_ip,
-                                        "Request blocked during streaming body WAF check"
-                                    );
-                                    counter!("maluwaf.http.streaming_body_blocked").increment(1);
-                                    return Err(());
-                                }
-                                waf_checked_up_to = check_end;
-                            }
-                        }
-
-                        if accumulated.len() > 100 * 1024 * 1024 {
-                            tracing::warn!(
-                                client_ip = %client_ip,
-                                size = accumulated.len(),
-                                "Request body exceeded 100MB limit during streaming"
-                            );
-                            counter!("maluwaf.http.streaming_body_too_large").increment(1);
-                            *request_body_size = accumulated.len() as u64;
-                            return Ok(Bytes::from(accumulated));
-                        }
-                    }
-                }
-                Err(e) => {
-                    tracing::debug!("Error reading body frame: {:?}", e);
-                    break;
-                }
+        use crate::http::shared_handler::BodyCollectionProtocol;
+        let result = collect_body_with_chunk_waf_impl(body, waf, client_ip, BodyCollectionProtocol::Http).await;
+        match &result {
+            Ok(body) => {
+                *request_body_size = body.len() as u64;
+            }
+            Err(()) => {
+                *request_body_size = 0;
             }
         }
-
-        *request_body_size = accumulated.len() as u64;
-        Ok(Bytes::from(accumulated))
+        result
     }
 
     #[allow(clippy::too_many_arguments)]

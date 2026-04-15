@@ -527,13 +527,15 @@ Items are organized for **parallelization** - items within a wave can be execute
 
 ---
 
-#### R3.2: Body Collection Logic Duplication - MEDIUM ❌ OPEN
+#### R3.2: Body Collection Logic Duplication - MEDIUM ✅ COMPLETE
 
-**Location**: `src/http/server.rs:3477-3542`, `src/tls/server.rs:1627-1692`
+**Location**: `src/http/shared_handler.rs:305-370`, `src/http/server.rs:3480-3500`, `src/tls/server.rs:1628-1640`
 
-**Issue**: `collect_body_with_chunk_waf` duplicated between HTTP and TLS servers.
+**Issue**: `collect_body_with_chunk_waf` duplicated between HTTP and TLS servers with identical logic.
 
-**Fix**: Extract common logic to shared function in `src/http/shared_handler.rs` or `src/common/body.rs`.
+**Fix**: Extracted common logic to `collect_body_with_chunk_waf_impl()` in `src/http/shared_handler.rs`. HTTP and TLS wrappers call this shared function with `BodyCollectionProtocol` enum to select appropriate metric counter names.
+
+**Verification**: clippy clean; 124 integration tests pass.
 
 ---
 
