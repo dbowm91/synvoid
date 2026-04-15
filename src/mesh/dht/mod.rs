@@ -682,6 +682,15 @@ impl DhtAccessControl {
         false
     }
 
+    pub fn requires_quorum(&self, key: &str) -> bool {
+        for prefix in &self.global_signature_required_keys {
+            if key.starts_with(prefix) {
+                return true;
+            }
+        }
+        false
+    }
+
     pub fn is_self_only(&self, key: &str) -> bool {
         for prefix in &self.self_only_keys {
             if key.starts_with(prefix) {

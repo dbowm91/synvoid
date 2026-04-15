@@ -15,6 +15,8 @@ pub struct ConnectionLimiter {
     connection_queue: RwLock<Vec<mpsc::Sender<ConnectionToken>>>,
     ip_connections: RwLock<HashMap<IpAddr, AtomicU32>>,
     ip_burst_tokens: RwLock<HashMap<IpAddr, AtomicU32>>,
+    site_connections: RwLock<HashMap<String, HashMap<IpAddr, AtomicU32>>>,
+    site_total_connections: RwLock<HashMap<String, AtomicU32>>,
 }
 
 #[derive(Debug)]
@@ -32,6 +34,8 @@ impl ConnectionLimiter {
             connection_queue: RwLock::new(Vec::new()),
             ip_connections: RwLock::new(HashMap::new()),
             ip_burst_tokens: RwLock::new(HashMap::new()),
+            site_connections: RwLock::new(HashMap::new()),
+            site_total_connections: RwLock::new(HashMap::new()),
         })
     }
 
@@ -45,6 +49,16 @@ impl ConnectionLimiter {
         let total = self.total_connections.load(Ordering::Acquire);
         if total >= config.max_connections {
             return Err(ConnectionLimitError::GlobalLimitExceeded);
+        }
+
+        let site_count = {
+            let sites = self.site_total_connections.read();
+            sites.get(site_id).map(|c| c.load(Ordering::Acquire)).unwrap_or(0)
+        };
+
+        let max_per_site = 10000;
+        if site_count >= max_per_site {
+            return Err(ConnectionLimitError::SiteLimitExceeded);
         }
 
         let ip_count = {
@@ -73,9 +87,20 @@ impl ConnectionLimiter {
         self.total_connections.fetch_add(1, Ordering::Release);
 
         {
+            let mut site_totals = self.site_total_connections.write();
+            let counter = site_totals.entry(site_id.to_string()).or_insert_with(|| AtomicU32::new(0));
+            counter.fetch_add(1, Ordering::Release);
+        }
+
+        {
             let mut ips = self.ip_connections.write();
             let counter = ips.entry(client_ip).or_insert_with(|| AtomicU32::new(0));
             counter.fetch_add(1, Ordering::Release);
+
+            let mut sites = self.site_connections.write();
+            let site_ips = sites.entry(site_id.to_string()).or_insert_with(|| HashMap::new());
+            let ip_counter = site_ips.entry(client_ip).or_insert_with(|| AtomicU32::new(0));
+            ip_counter.fetch_add(1, Ordering::Release);
         }
 
         if can_burst > 0 {
@@ -137,6 +162,15 @@ impl ConnectionLimiter {
             .total_connections
             .fetch_update(Ordering::Release, Ordering::Relaxed, |v| v.checked_sub(1));
 
+        let mut site_totals = self.site_total_connections.write();
+        if let Some(counter) = site_totals.get(&token.site_id) {
+            let prev = counter.fetch_update(Ordering::Release, Ordering::Relaxed, |v| v.checked_sub(1));
+            if prev == Ok(1) {
+                site_totals.remove(&token.site_id);
+            }
+        }
+        drop(site_totals);
+
         let mut ips = self.ip_connections.write();
         if let Some(counter) = ips.get(&token.client_ip) {
             let prev =
@@ -148,6 +182,20 @@ impl ConnectionLimiter {
                     token.client_ip,
                     AtomicU32::new(self.config.connection_burst),
                 );
+            }
+        }
+        drop(ips);
+
+        let mut sites = self.site_connections.write();
+        if let Some(site_ips) = sites.get_mut(&token.site_id) {
+            if let Some(counter) = site_ips.get(&token.client_ip) {
+                let prev = counter.fetch_update(Ordering::Release, Ordering::Relaxed, |v| v.checked_sub(1));
+                if prev == Ok(1) {
+                    site_ips.remove(&token.client_ip);
+                }
+            }
+            if site_ips.is_empty() {
+                sites.remove(&token.site_id);
             }
         }
     }
@@ -171,6 +219,7 @@ pub enum ConnectionLimitError {
     GlobalLimitExceeded,
     PerIpLimitExceeded,
     BurstExceeded,
+    SiteLimitExceeded,
     QueueFull,
     QueueTimeout,
     QueueClosed,
@@ -196,6 +245,9 @@ impl std::fmt::Display for ConnectionLimitError {
             }
             ConnectionLimitError::QueueClosed => {
                 write!(f, "connection queue closed")
+            }
+            ConnectionLimitError::SiteLimitExceeded => {
+                write!(f, "per-site connection limit exceeded")
             }
         }
     }

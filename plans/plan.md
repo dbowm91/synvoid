@@ -17,7 +17,7 @@ This document contains the remaining deferred and partially-complete items from 
 | Item | Priority | Status | Category |
 |------|----------|--------|----------|
 | M1.2 | MEDIUM | ⏸️ DEFERRED | Mesh |
-| S2.1 | MEDIUM | ⏸️ DEFERRED | Config |
+| S2.1 | MEDIUM | 🔧 IN PROGRESS | Config |
 | Q4.2 | LOW | ❌ DEFERRED | Code Quality |
 | R3.3 | MEDIUM | ⏸️ DEFERRED | Code Quality |
 | R3.4 | LOW | ❌ DEFERRED | Code Quality |
@@ -28,7 +28,7 @@ This document contains the remaining deferred and partially-complete items from 
 | M16.9 | MEDIUM | ✅ COMPLETED | Mesh/DHT |
 | M16.10 | MEDIUM | ⏸️ DEFERRED | Mesh/DHT |
 
-**Total**: 11 items (1 COMPLETED, 7 DEFERRED, 2 IN PROGRESS, 1 ❌ DEFERRED)
+**Total**: 11 items (1 COMPLETED, 5 DEFERRED, 3 IN PROGRESS, 1 ❌ DEFERRED, 1 PARTIAL)
 
 ---
 
@@ -59,22 +59,30 @@ This document contains the remaining deferred and partially-complete items from 
 
 ### 4.6: Performance - Configuration
 
-#### S2.1: Connection Limit Global Per-Worker - MEDIUM ⏸️ DEFERRED
+#### S2.1: Connection Limit Global Per-Worker - MEDIUM 🔧 IN PROGRESS
 
 **Location**: `src/waf/traffic_shaper/limiter.rs`
 
 **Issue**: `SiteConnectionLimiter` never instantiated; `site_id` parameter in `try_acquire` ignored.
 
-**Assessment**: Current implementation:
-- `ConnectionLimiter::try_acquire(site_id, client_ip)` accepts but ignores `site_id`
-- `SiteConnectionLimiter` struct exists but is never instantiated anywhere in the codebase
-- Global connection limits apply to all sites combined, not per-site
+**Progress Made**:
 
-**Fix**: Would require significant architectural changes:
+1. **Added per-site tracking to ConnectionLimiter**:
+   - Added `site_connections: RwLock<HashMap<String, HashMap<IpAddr, AtomicU32>>>` for per-site per-IP tracking
+   - Added `site_total_connections: RwLock<HashMap<String, AtomicU32>>` for per-site total tracking
+   - Updated `try_acquire()` to check and increment per-site counts
+   - Updated `release()` to decrement per-site counts
+   - Added `SiteLimitExceeded` error variant
+
+2. **SiteConnectionLimiter infrastructure now functional**:
+   - Per-site connection counts are now tracked
+   - Site-level limits enforced (default max 10000 per site)
+   - IP-level limits still tracked globally AND per-site
+
+**Remaining Work**:
+- Wire per-site limits from `SiteTrafficConnectionConfig` into `try_acquire`
 - Instantiate `SiteConnectionLimiter` per site in site configuration
-- Modify `ConnectionLimiter` to track connections per site (nested HashMap: site_id -> ip -> count)
-- Update all call sites to use per-site limiter
-- Consider memory overhead of per-site tracking at high connection counts
+- Update call sites to use actual per-site limiter instead of global
 
 ---
 

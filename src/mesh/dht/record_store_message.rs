@@ -475,6 +475,176 @@ impl RecordStoreManager {
         });
     }
 
+    pub async fn start_quorum_request(
+        &self,
+        key: String,
+        value: Vec<u8>,
+        ttl_seconds: u64,
+    ) -> Option<String> {
+        let quorum_manager_opt = {
+            let qm = self.quorum_manager.read();
+            qm.clone()
+        };
+
+        let Some(quorum_manager) = quorum_manager_opt else {
+            tracing::warn!("No quorum manager configured");
+            return None;
+        };
+
+        let topology_opt = {
+            let routing = self.routing_state.read();
+            routing.topology.clone()
+        };
+
+        let Some(topology) = topology_opt else {
+            tracing::warn!("No topology available for quorum request");
+            return None;
+        };
+
+        let transport_opt = {
+            let routing = self.routing_state.read();
+            routing.transport.clone()
+        };
+
+        let Some(transport) = transport_opt else {
+            tracing::warn!("No transport available for quorum request");
+            return None;
+        };
+
+        let global_nodes = topology.get_global_nodes_as_peer_info().await;
+        if global_nodes.is_empty() {
+            tracing::warn!("No global nodes available for quorum request");
+            return None;
+        }
+
+        let (origin_signature, signer_public_key) = {
+            let rs = self.record_state.read();
+            if let Some(ref signer) = rs.mesh_signer {
+                let signed_content = serde_json::to_string(&serde_json::json!({
+                    "key": key,
+                    "value": value,
+                    "timestamp": crate::mesh::safe_unix_timestamp(),
+                })).unwrap_or_default();
+
+                let signature = signer.sign(&signed_content);
+                let pk = signer.get_public_key();
+                (signature, pk)
+            } else {
+                (Vec::new(), String::new())
+            }
+        };
+
+        let request_id = format!("quorum-{}-{}", key, uuid::Uuid::new_v4());
+
+        let quorum_request = crate::mesh::dht::quorum::QuorumRequest::new(
+            request_id.clone(),
+            key.clone(),
+            value.clone(),
+            ttl_seconds,
+            self.node_id.clone(),
+            origin_signature.clone(),
+            &global_nodes.iter().map(|p| p.node_id.clone()).collect::<Vec<_>>(),
+        );
+
+        quorum_manager.start_request(quorum_request).await;
+
+        let quorum_msg = MeshMessage::QuorumStoreRequest {
+            request_id: request_id.clone().into(),
+            key: key.clone().into(),
+            value,
+            ttl_seconds,
+            origin_node_id: self.node_id.clone().into(),
+            origin_signature,
+            action: crate::mesh::protocol::AnnounceAction::Add,
+        };
+
+        for peer in &global_nodes {
+            if peer.node_id == self.node_id {
+                continue;
+            }
+
+            if let Err(e) = transport.send_datagram_to_peer(&peer.node_id, &quorum_msg).await {
+                tracing::warn!(
+                    "Failed to send quorum request to {}: {}",
+                    peer.node_id,
+                    e
+                );
+            }
+        }
+
+        tracing::info!(
+            "Started quorum request {} for key {} with {} global nodes",
+            request_id,
+            key,
+            global_nodes.len()
+        );
+
+        Some(request_id)
+    }
+
+    pub async fn handle_quorum_signature_response(
+        &self,
+        request_id: &str,
+        node_id: &str,
+        signature: Vec<u8>,
+    ) -> bool {
+        let qm = self.quorum_manager.read();
+        if let Some(ref manager) = *qm {
+            manager.add_signature(request_id, node_id.to_string(), signature).await
+        } else {
+            false
+        }
+    }
+
+    pub async fn handle_quorum_rejection_response(
+        &self,
+        request_id: &str,
+        node_id: &str,
+        reason: crate::mesh::dht::quorum::RejectionReason,
+        evidence: Option<Vec<u8>>,
+    ) {
+        let qm = self.quorum_manager.read();
+        if let Some(ref manager) = *qm {
+            manager.add_rejection(request_id, node_id.to_string(), reason, evidence).await;
+        }
+    }
+
+    pub async fn check_quorum_completion(&self, request_id: &str) -> Option<crate::mesh::dht::quorum::QuorumResult> {
+        let qm = self.quorum_manager.read();
+        if let Some(ref manager) = *qm {
+            if let Some(request) = manager.get_request(request_id).await {
+                let topology_opt = {
+                    let routing = self.routing_state.read();
+                    routing.topology.clone()
+                };
+
+                if let Some(topology) = topology_opt {
+                    let global_nodes = topology.get_global_nodes().await;
+                    let total = global_nodes.len();
+
+                    if request.threshold_met(total) {
+                        if request.has_rejections() {
+                            return Some(crate::mesh::dht::quorum::QuorumResult::Rejected {
+                                rejection: request.rejections.first().cloned().unwrap(),
+                                verified: false,
+                            });
+                        }
+
+                        return Some(crate::mesh::dht::quorum::QuorumResult::Approved(request.signatures.clone()));
+                    }
+
+                    if request.deadline_passed() {
+                        return Some(crate::mesh::dht::quorum::QuorumResult::Timeout {
+                            signatures_collected: request.signatures.clone(),
+                            threshold: crate::mesh::dht::quorum::QuorumRequest::required_signatures(total),
+                        });
+                    }
+                }
+            }
+        }
+        None
+    }
+
     pub async fn rebalance_after_departure(&self, departed_node_id: &str) {
         if !self.config.enabled || !self.node_role.is_global() {
             return;
