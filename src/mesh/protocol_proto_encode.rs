@@ -574,6 +574,58 @@ impl From<&MeshMessage> for proto::MeshMessage {
                     },
                 )),
             },
+            MeshMessage::QuorumStoreRequest {
+                request_id,
+                key,
+                value,
+                ttl_seconds,
+                origin_node_id,
+                origin_signature,
+                action,
+            } => proto::MeshMessage {
+                message_type: 100,
+                payload: Some(proto::mesh_message::Payload::QuorumStoreRequest(
+                    proto::QuorumStoreRequest {
+                        request_id: request_id.to_string(),
+                        key: key.to_string(),
+                        value: value.clone(),
+                        ttl_seconds: *ttl_seconds,
+                        origin_node_id: origin_node_id.to_string(),
+                        origin_signature: origin_signature.clone(),
+                        action: *action as u32,
+                    },
+                )),
+            },
+            MeshMessage::QuorumSignatureResponse {
+                request_id,
+                key,
+                signature,
+            } => proto::MeshMessage {
+                message_type: 101,
+                payload: Some(proto::mesh_message::Payload::QuorumSignatureResponse(
+                    proto::QuorumSignatureResponse {
+                        request_id: request_id.to_string(),
+                        key: key.to_string(),
+                        signature: signature.clone(),
+                    },
+                )),
+            },
+            MeshMessage::QuorumRejectionResponse {
+                request_id,
+                key,
+                reason,
+                evidence,
+            } => proto::MeshMessage {
+                message_type: 102,
+                payload: Some(proto::mesh_message::Payload::QuorumRejectionResponse(
+                    proto::QuorumRejectionResponse {
+                        request_id: request_id.to_string(),
+                        key: key.to_string(),
+                        reason: reason.to_string(),
+                        evidence: evidence.clone(),
+                    },
+                )),
+            },
             MeshMessage::KeepAlive => proto::MeshMessage {
                 message_type: 13,
                 payload: Some(proto::mesh_message::Payload::KeepAlive(proto::KeepAlive {})),

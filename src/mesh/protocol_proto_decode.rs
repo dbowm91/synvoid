@@ -392,6 +392,37 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                     .map_err(|_| ProtocolError::ConversionFailed("upstream info"))?,
                 signature: u.signature,
             }),
+            proto::mesh_message::Payload::QuorumStoreRequest(q) => {
+                Ok(MeshMessage::QuorumStoreRequest {
+                    request_id: q.request_id.into(),
+                    key: q.key.into(),
+                    value: q.value.clone(),
+                    ttl_seconds: q.ttl_seconds,
+                    origin_node_id: q.origin_node_id.into(),
+                    origin_signature: q.origin_signature.clone(),
+                    action: match q.action {
+                        0 => AnnounceAction::Add,
+                        1 => AnnounceAction::Update,
+                        2 => AnnounceAction::Remove,
+                        _ => AnnounceAction::Add,
+                    },
+                })
+            }
+            proto::mesh_message::Payload::QuorumSignatureResponse(q) => {
+                Ok(MeshMessage::QuorumSignatureResponse {
+                    request_id: q.request_id.into(),
+                    key: q.key.into(),
+                    signature: q.signature.clone(),
+                })
+            }
+            proto::mesh_message::Payload::QuorumRejectionResponse(q) => {
+                Ok(MeshMessage::QuorumRejectionResponse {
+                    request_id: q.request_id.into(),
+                    key: q.key.into(),
+                    reason: q.reason.into(),
+                    evidence: q.evidence.clone(),
+                })
+            }
             proto::mesh_message::Payload::KeepAlive(_) => Ok(MeshMessage::KeepAlive),
             proto::mesh_message::Payload::KeepAliveAck(_) => Ok(MeshMessage::KeepAliveAck),
             proto::mesh_message::Payload::LookupRequest(r) => Ok(MeshMessage::LookupRequest {

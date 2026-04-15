@@ -31,7 +31,10 @@ impl MeshMessage {
             | Self::UpstreamVerificationQuery { .. }
             | Self::UpstreamVerificationResponse { .. }
             | Self::UpstreamOwnershipChallenge { .. }
-            | Self::UpstreamChallengeProof { .. } => MessageCategory::Upstream,
+            | Self::UpstreamChallengeProof { .. }
+            | Self::QuorumStoreRequest { .. }
+            | Self::QuorumSignatureResponse { .. }
+            | Self::QuorumRejectionResponse { .. } => MessageCategory::Upstream,
             Self::KeyForward { .. }
             | Self::KeySigned { .. }
             | Self::SessionRotate { .. }

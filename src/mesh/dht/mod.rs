@@ -2,6 +2,7 @@ pub mod capability_attestation;
 pub mod keys;
 pub mod merkle;
 pub mod network_policy;
+pub mod quorum;
 pub mod record_store;
 pub mod routing;
 pub mod signed;

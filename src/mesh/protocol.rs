@@ -404,6 +404,26 @@ pub enum MeshMessage {
         info: UpstreamInfo,
         signature: Vec<u8>,
     },
+    QuorumStoreRequest {
+        request_id: ArcStr,
+        key: ArcStr,
+        value: Vec<u8>,
+        ttl_seconds: u64,
+        origin_node_id: ArcStr,
+        origin_signature: Vec<u8>,
+        action: AnnounceAction,
+    },
+    QuorumSignatureResponse {
+        request_id: ArcStr,
+        key: ArcStr,
+        signature: Vec<u8>,
+    },
+    QuorumRejectionResponse {
+        request_id: ArcStr,
+        key: ArcStr,
+        reason: ArcStr,
+        evidence: Option<Vec<u8>>,
+    },
     KeyForward {
         session_id: ArcStr,
         key_id: ArcStr,

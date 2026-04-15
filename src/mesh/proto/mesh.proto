@@ -171,6 +171,9 @@ message MeshMessage {
         UpstreamUrlDenied upstream_url_denied = 19;
         UpstreamAnnounce upstream_announce = 20;
         UpstreamUpdate upstream_update = 21;
+        QuorumStoreRequest quorum_store_request = 140;
+        QuorumSignatureResponse quorum_signature_response = 141;
+        QuorumRejectionResponse quorum_rejection_response = 142;
         KeepAlive keep_alive = 22;
         KeepAliveAck keep_alive_ack = 23;
         Error error = 24;
@@ -404,6 +407,29 @@ message UpstreamUpdate {
     string upstream_id = 1;
     UpstreamInfo info = 2;
     bytes signature = 3;
+}
+
+message QuorumStoreRequest {
+    string request_id = 1;
+    string key = 2;
+    bytes value = 3;
+    uint64 ttl_seconds = 4;
+    string origin_node_id = 5;
+    bytes origin_signature = 6;
+    uint32 action = 7;
+}
+
+message QuorumSignatureResponse {
+    string request_id = 1;
+    string key = 2;
+    bytes signature = 3;
+}
+
+message QuorumRejectionResponse {
+    string request_id = 1;
+    string key = 2;
+    string reason = 3;
+    optional bytes evidence = 4;
 }
 
 message KeepAlive {}
