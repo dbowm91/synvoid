@@ -389,7 +389,7 @@ All duplicate `current_timestamp()` definitions have been consolidated into `src
 | AuthStore merge | `src/auth/mod.rs` | Merges users and sessions collections |
 | CSRF session binding | `src/admin/state.rs` | CSRF tokens now validated against session ID |
 | WAF URL decoding | `src/waf/attack_detection/*.rs` | SSTI, LDAP, XPath, Open Redirect, JWT detectors decode URLs |
-| Private key zeroization | `src/mesh/cert.rs` | Uses `ZeroizeOnDrop` for private key storage |
+| Private key zeroization | `src/mesh/cert.rs` | Uses `ZeroizeOnDrop` for private key storage; Ed25519 signing functions use `Zeroizing<>` for stack arrays |
 | ACME ToS agreement | `src/tls/acme.rs` | `terms_of_service_agreed` now configurable |
 | Multi-worker ACME coordination | `src/process/ipc.rs`, `src/process/manager.rs`, `src/master/ipc.rs`, `src/server/mod.rs`, `src/worker/unified_server.rs` | Workers run AcmeManager with IPC-based cert reload broadcast |
 | ACME DNS-01 integration | `src/tls/acme.rs`, `src/dns/server/query.rs`, `src/dns/server/response.rs` | AcmeDnsChallenge wired to DNS server to serve _acme-challenge.* TXT records |
@@ -472,6 +472,11 @@ All duplicate `current_timestamp()` definitions have been consolidated into `src
 | Threat intel O(n) iteration | `src/mesh/dht/record_store_crud.rs:383-396` | `get_by_prefix()` instead of get_all_records |
 | Peer score decay wired | `src/mesh/threat_intel.rs:1590` | `apply_periodic_decay()` called in background loop |
 | TOFU expiry reduced | `src/mesh/cert.rs:81-82` | MAX_TOOF_FINGERPRINT_AGE_DAYS from 90 to 30 |
+| Verified upstream cache failure | `src/mesh/topology.rs:768-778` | Cache empty Vec::new() when record_store unavailable |
+| TCP worker pool auto-tuning | `src/config/network.rs:155`, `src/tcp/listener.rs:196` | Uses available_parallelism() like HTTP workers |
+| Stale cache TTL configurable | `src/mesh/config.rs`, `src/mesh/proxy.rs` | `stale_cache_ttl_secs` field in MeshConfig |
+| Drain polling interval wired | `src/overseer/drain_manager.rs:174` | `drain_check_interval_ms` config now used |
+| Admin rate limiter auto-cleanup | `src/admin/state.rs:83-128` | Background task every 60 seconds |
 
 ## Performance Hot Paths
 
@@ -481,7 +486,7 @@ The unified worker uses a single `tokio` async event loop which is far more effi
 - **Single async process**: A single `UnifiedServer` with one tokio runtime handles thousands of sites concurrently via cooperative scheduling
 - **Internal parallelism**: Use `tokio::spawn()` and async concurrency primitives (semaphores, channels) within the worker, NOT process-level parallelism
 - **Why NOT multi-process scaling**: Multiple worker processes compete for CPU cores, increase context switching, and add IPC overhead
-- **TcpListenerPool**: The worker uses an internal thread pool (`worker_pool_size: 4`) for accepting connections, but this runs within the single async context
+- **TcpListenerPool**: The worker uses an internal thread pool for accepting connections, auto-tuned via `std::thread::available_parallelism()` (default: CPU cores, fallback: 4)
 
 **Do NOT increase `unified_server_workers` for scaling purposes.** Instead, tune `tcp.worker_pool_size` or use async primitives within the existing event loop.
 
