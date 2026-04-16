@@ -117,8 +117,8 @@ This document contains all remaining implementation items across the MaluWAF pro
 |------|----------|----------|-------------|-------|--------|
 | **P2.1** | MEDIUM | Performance | Shard BlockStore (lock contention) | `src/block_store.rs` | ✅ COMPLETED |
 | **P2.2** | MEDIUM | Performance | Reduce to_lowercase() allocations | Multiple files | ✅ COMPLETED |
-| **P2.1** | MEDIUM | Performance | Provider stats cache mutation pattern | `src/mesh/proxy.rs` | 📋 TODO |
-| **P2.2** | MEDIUM | Performance | Global connection limiter contention | `src/http/server.rs` | 📋 TODO |
+| **P2.3** | MEDIUM | Performance | Provider stats cache mutation pattern | `src/mesh/proxy.rs` | 📋 TODO |
+| **P2.4** | MEDIUM | Performance | Global connection limiter contention | `src/http/server.rs` | 📋 TODO |
 | **P3** | MEDIUM | Performance | filter_response_headers() allocation overhead | `src/proxy.rs` | ✅ COMPLETED |
 | **M-D3** | P2 | Mesh/DHT | CapabilityAttestation write not restricted | `src/mesh/dht/mod.rs` | ✅ COMPLETED |
 | **M-D4** | P2 | Mesh/DHT | DHT announce wrapper signature missing | `src/mesh/dht/record_store_sync.rs` | ✅ COMPLETED |
