@@ -21,6 +21,9 @@ use crate::admin::state::AdminState;
         crate::admin::handlers::stats::get_sites_stats,
         crate::admin::handlers::sites::list_sites,
         crate::admin::handlers::sites::get_site,
+        crate::admin::handlers::serverless::list_functions,
+        crate::admin::handlers::serverless::get_serverless_health,
+        crate::admin::handlers::serverless::get_function_stats,
     ),
     components(
         schemas(
@@ -28,6 +31,9 @@ use crate::admin::state::AdminState;
             crate::admin::handlers::stats::SiteStats,
             crate::admin::handlers::sites::SiteInfo,
             crate::admin::handlers::sites::SiteDetail,
+            crate::admin::handlers::serverless::ServerlessStatus,
+            crate::admin::handlers::serverless::ServerlessHealth,
+            crate::admin::handlers::serverless::FunctionStatsResponse,
         )
     ),
     tags(

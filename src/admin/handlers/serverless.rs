@@ -6,20 +6,21 @@ use axum::{
     Json,
 };
 use serde::Serialize;
+use utoipa::ToSchema;
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, ToSchema)]
 pub struct ServerlessStatus {
     pub functions: Vec<serde_json::Value>,
     pub total_functions: usize,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, ToSchema)]
 pub struct FunctionStatsResponse {
     pub name: String,
     pub stats: Option<serde_json::Value>,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, ToSchema)]
 pub struct ServerlessHealth {
     pub enabled: bool,
     pub total_functions: usize,
@@ -29,6 +30,16 @@ pub struct ServerlessHealth {
     pub unhealthy_functions: usize,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/serverless/health",
+    responses(
+        (status = 200, description = "Serverless functions health status", body = ServerlessHealth),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "serverless"
+)]
 pub async fn get_serverless_health(
     _auth: OptionalAuth,
 ) -> Result<Json<ServerlessHealth>, StatusCode> {
@@ -53,6 +64,16 @@ pub async fn get_serverless_health(
     }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/serverless/functions",
+    responses(
+        (status = 200, description = "List of serverless functions", body = ServerlessStatus),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "serverless"
+)]
 pub async fn list_functions(
     _auth: OptionalAuth,
 ) -> Result<Json<ServerlessStatus>, StatusCode> {
@@ -85,6 +106,20 @@ pub async fn list_functions(
     Ok(Json(status))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/serverless/functions/{name}/stats",
+    params(
+        ("name" = String, Path, description = "Function name")
+    ),
+    responses(
+        (status = 200, description = "Function statistics", body = FunctionStatsResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Function not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "serverless"
+)]
 pub async fn get_function_stats(
     Path(name): Path<String>,
     _auth: OptionalAuth,
