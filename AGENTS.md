@@ -739,31 +739,21 @@ rrsig.extend_from_slice(&timestamp.to_be_bytes());
 
 ## Implementation Plan
 
-The consolidated implementation plan is located at `plans/plan.md`.
+**Location**: `plans/plan.md`
 
-**Remaining items**: 2 (1 DEFERRED, 1 NOT RECOMMENDED)
+The consolidated implementation plan contains all remaining items organized into 5 parallelization waves:
 
-| Wave | Focus | Items | Status |
-|------|-------|-------|--------|
-| All | Remaining | 2 | 1 DEFERRED, 1 NOT RECOMMENDED |
+| Wave | Focus | Priority Items |
+|------|-------|----------------|
+| 1 | Critical Security & Test Fixes | S-1, S-3, S-4, D1, E2, T1, T2, M-D1, M-D2 |
+| 2 | High Priority Security & Performance | S-5 through S-10, P1.1-P1.3, W1-W2 |
+| 3 | Medium Priority Improvements | M-D3-M-D6, W3-W6, H1, H4, C1, O1 |
+| 4 | Lower Priority & Feature Work | M-D7-M-D10, W7-W10, G1-G8, O2-O3, D5-D6 |
+| 5 | Feature Implementation | OpenAPI, T1-T2 (YARA), Admin Panel, Web App Stack |
 
-**Closed Items**:
-- S2.1: Per-site connection limiting ✅
-- Q3.1: Test coverage (47 new tests) ✅
-- M5: DHT timestamp-based conflict resolution ✅
-- M6: Quorum verification wired ✅
-- M16.9: DHT rebalancing on global departure ✅
-- M16.10: Geo derived from IP programmatically ✅
-- M1.2: QUIC multiplexing (NOT REAL ISSUE) ❌
-- Q4.2: proxy.rs nesting (NOT RECOMMENDED) ❌
-- R3.3: HttpConnection duplication (NOT RECOMMENDED) ❌
-- R3.4: Honeypot duplication (INTENTIONAL) ❌
+**Subagent Execution Model**: Items within the same wave can be executed in parallel. Items across waves may have dependencies.
 
-**Subagent Execution Model**: All remaining items are independent and can be executed in parallel.
-
-When reviewing the plan against the codebase, always verify claims directly. Plans may reference items already fixed, use outdated line numbers, or describe bugs incorrectly. Run `grep`/search for the specific patterns described to confirm they still exist before implementing fixes.
-
-**Plan Consolidation Note**: Previous plan files (plan2.md through plan24.md) have been merged into `plans/plan.md`. Completed items have been pruned.
+**Verification**: When reviewing the plan against the codebase, always verify claims directly. Plans may reference items already fixed, use outdated line numbers, or describe bugs incorrectly. Run `grep`/search for the specific patterns described to confirm they still exist before implementing fixes.
 
 ## Admin Panel Architecture Notes
 
