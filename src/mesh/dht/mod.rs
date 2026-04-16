@@ -595,7 +595,11 @@ impl DhtAccessControl {
         let global_signature_required_keys =
             vec!["verified_upstream:".to_string(), "tier_claim:".to_string()];
 
-        let self_only_keys = vec!["node_health:".to_string(), "node_load:".to_string()];
+        let self_only_keys = vec![
+            "node_health:".to_string(),
+            "node_load:".to_string(),
+            "capability_attestation:".to_string(),
+        ];
 
         Self {
             require_global_for_privileged: true,
