@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::fmt;
+use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use crate::mesh::safe_unix_timestamp;
@@ -16,14 +18,29 @@ impl RejectionReason {
     pub fn is_verifiable(&self) -> bool {
         matches!(self, RejectionReason::DomainTaken)
     }
+}
 
-    pub fn to_string(&self) -> String {
+impl fmt::Display for RejectionReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            RejectionReason::DomainTaken => "domain_taken".to_string(),
-            RejectionReason::InvalidFormat => "invalid_format".to_string(),
-            RejectionReason::Unauthorized => "unauthorized".to_string(),
-            RejectionReason::PolicyViolation => "policy_violation".to_string(),
-            RejectionReason::Unknown(s) => s.clone(),
+            RejectionReason::DomainTaken => write!(f, "domain_taken"),
+            RejectionReason::InvalidFormat => write!(f, "invalid_format"),
+            RejectionReason::Unauthorized => write!(f, "unauthorized"),
+            RejectionReason::PolicyViolation => write!(f, "policy_violation"),
+            RejectionReason::Unknown(s) => write!(f, "{}", s),
+        }
+    }
+}
+
+impl FromStr for RejectionReason {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "domain_taken" => Ok(RejectionReason::DomainTaken),
+            "invalid_format" => Ok(RejectionReason::InvalidFormat),
+            "unauthorized" => Ok(RejectionReason::Unauthorized),
+            "policy_violation" => Ok(RejectionReason::PolicyViolation),
+            _ => Ok(RejectionReason::Unknown(s.to_string())),
         }
     }
 }

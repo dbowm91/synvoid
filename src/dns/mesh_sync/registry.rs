@@ -29,6 +29,7 @@ impl MeshDnsRegistry {
             verification_tx: None,
             verification_failure_tx: None,
             verification_metrics: VerificationMetrics::new(),
+            geoip: None,
         }
     }
 
@@ -57,6 +58,27 @@ impl MeshDnsRegistry {
     pub fn with_dns_resolver<R: DnsResolver + 'static>(mut self, resolver: R) -> Self {
         self.dns_resolver = Some(Arc::new(resolver));
         self
+    }
+
+    pub fn with_geoip(mut self, geoip: Arc<crate::geoip::GeoIpManager>) -> Self {
+        self.geoip = Some(geoip);
+        self
+    }
+
+    pub(crate) fn derive_geo_from_ips(&self, ips: &[String]) -> Option<String> {
+        let Some(geoip) = self.geoip.as_ref() else {
+            return Some("Unknown".to_string());
+        };
+
+        for ip_str in ips {
+            if let Ok(ip) = ip_str.parse::<std::net::IpAddr>() {
+                if let Some(country_info) = geoip.get_country_info(ip) {
+                    return Some(country_info.code);
+                }
+            }
+        }
+
+        Some("Unknown".to_string())
     }
 
     pub fn node_id(&self) -> &str {

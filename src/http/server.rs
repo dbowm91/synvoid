@@ -556,6 +556,7 @@ impl HttpServer {
         Ok(())
     }
 
+    #[allow(unused_assignments)]
     async fn handle_request(
         mut req: hyper::Request<hyper::body::Incoming>,
         client_addr: SocketAddr,
@@ -738,7 +739,8 @@ impl HttpServer {
             None
         };
 
-        let _conn_token = connection_token;
+        #[allow(unused_assignments)]
+        let mut conn_token = connection_token;
 
         // ============================================================================
         // SECTION 6: Bandwidth Limiting
@@ -1277,6 +1279,59 @@ impl HttpServer {
         };
 
         let site_id = target.site_id.to_string();
+
+        let site_traffic_config = &target.site_config.traffic_shaping.connection;
+        let site_max_connections = site_traffic_config.max_connections;
+        let site_max_per_ip = site_traffic_config.max_connections_per_ip;
+
+        if site_max_connections.is_some() || site_max_per_ip.is_some() {
+            if let Some(ref conn_limiter) = waf.connection_limiter {
+                let old_token = conn_token.take();
+                if let Some(token) = old_token {
+                    conn_limiter.release(token);
+                }
+                match conn_limiter
+                    .try_acquire_with_limits(&site_id, client_ip, site_max_connections, site_max_per_ip)
+                    .await
+                {
+                    Ok(new_token) => {
+                        // conn_token is held for duration of request and released on drop
+                        conn_token = Some(new_token);
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Per-site connection limit exceeded for site {}: {}",
+                            site_id,
+                            e
+                        );
+                        counter!("maluwaf.traffic.connection_limited").increment(1);
+                        let ipc_clone = ipc.clone();
+                        let worker_id_clone = worker_id;
+                        Self::send_request_log_if_enabled(
+                            ipc_clone,
+                            worker_id_clone,
+                            &main_config,
+                            client_ip,
+                            &method.to_string(),
+                            &path,
+                            503,
+                            start.elapsed().as_millis() as u64,
+                            &site_id,
+                            user_agent.as_deref(),
+                            true,
+                        );
+                        return Ok(Self::build_response_with_alt_svc(
+                            503,
+                            "Too Many Connections".to_string(),
+                            "application/json",
+                            &alt_svc,
+                            &main_config,
+                        ));
+                    }
+                }
+            }
+        }
+
         let req_metrics = metrics.as_ref().map(|m| RequestMetrics {
             site_id: site_id.clone(),
             metrics: Arc::clone(m),

@@ -44,6 +44,17 @@ impl ConnectionLimiter {
         site_id: &str,
         client_ip: IpAddr,
     ) -> Result<ConnectionToken, ConnectionLimitError> {
+        self.try_acquire_with_limits(site_id, client_ip, None, None)
+            .await
+    }
+
+    pub async fn try_acquire_with_limits(
+        &self,
+        site_id: &str,
+        client_ip: IpAddr,
+        max_per_site: Option<u32>,
+        max_per_ip: Option<u32>,
+    ) -> Result<ConnectionToken, ConnectionLimitError> {
         let config = &self.config;
 
         let total = self.total_connections.load(Ordering::Acquire);
@@ -51,16 +62,17 @@ impl ConnectionLimiter {
             return Err(ConnectionLimitError::GlobalLimitExceeded);
         }
 
+        let effective_max_per_site = max_per_site.unwrap_or(10000);
         let site_count = {
             let sites = self.site_total_connections.read();
             sites.get(site_id).map(|c| c.load(Ordering::Acquire)).unwrap_or(0)
         };
 
-        let max_per_site = 10000;
-        if site_count >= max_per_site {
+        if site_count >= effective_max_per_site {
             return Err(ConnectionLimitError::SiteLimitExceeded);
         }
 
+        let effective_max_per_ip = max_per_ip.unwrap_or(config.max_connections_per_ip);
         let ip_count = {
             let ips = self.ip_connections.read();
             ips.get(&client_ip)
@@ -68,7 +80,7 @@ impl ConnectionLimiter {
                 .unwrap_or(0)
         };
 
-        if ip_count >= config.max_connections_per_ip {
+        if ip_count >= effective_max_per_ip {
             return Err(ConnectionLimitError::PerIpLimitExceeded);
         }
 
@@ -98,7 +110,7 @@ impl ConnectionLimiter {
             counter.fetch_add(1, Ordering::Release);
 
             let mut sites = self.site_connections.write();
-            let site_ips = sites.entry(site_id.to_string()).or_insert_with(|| HashMap::new());
+            let site_ips = sites.entry(site_id.to_string()).or_insert_with(HashMap::new);
             let ip_counter = site_ips.entry(client_ip).or_insert_with(|| AtomicU32::new(0));
             ip_counter.fetch_add(1, Ordering::Release);
         }
@@ -116,6 +128,23 @@ impl ConnectionLimiter {
             client_ip,
             acquired_at: Instant::now(),
         })
+    }
+
+    pub async fn check_site_limit(
+        &self,
+        site_id: &str,
+        max_per_site: Option<u32>,
+    ) -> Result<(), ConnectionLimitError> {
+        let effective_max_per_site = max_per_site.unwrap_or(10000);
+        let site_count = {
+            let sites = self.site_total_connections.read();
+            sites.get(site_id).map(|c| c.load(Ordering::Acquire)).unwrap_or(0)
+        };
+
+        if site_count >= effective_max_per_site {
+            return Err(ConnectionLimitError::SiteLimitExceeded);
+        }
+        Ok(())
     }
 
     pub async fn acquire_with_queue(

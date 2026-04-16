@@ -1016,6 +1016,66 @@ impl MeshTransport {
                     );
                 }
             }
+            MeshMessage::QuorumStoreRequest {
+                request_id,
+                key,
+                value,
+                ttl_seconds,
+                origin_node_id,
+                origin_signature,
+                action: _,
+            } => {
+                if let Some(ref record_store) = self.record_store {
+                    let record = crate::mesh::protocol::DhtRecord {
+                        key: key.to_string(),
+                        value,
+                        timestamp: crate::mesh::safe_unix_timestamp(),
+                        sequence_number: 0,
+                        ttl_seconds,
+                        source_node_id: origin_node_id.to_string(),
+                        signature: origin_signature.clone(),
+                        signer_public_key: None,
+                    };
+
+                    if record_store.handle_quorum_store_request(
+                        &request_id.to_string(),
+                        peer_id,
+                        record,
+                    ).await {
+                        tracing::debug!("Quorum store request accepted for key: {}", key);
+                    } else {
+                        tracing::debug!("Quorum store request rejected for key: {}", key);
+                    }
+                }
+            }
+            MeshMessage::QuorumSignatureResponse {
+                request_id,
+                key: _,
+                signature,
+            } => {
+                if let Some(ref record_store) = self.record_store {
+                    let _ = record_store.handle_quorum_signature_response(
+                        &request_id.to_string(),
+                        peer_id,
+                        signature,
+                    ).await;
+                }
+            }
+            MeshMessage::QuorumRejectionResponse {
+                request_id,
+                key: _,
+                reason,
+                evidence,
+            } => {
+                if let Some(ref record_store) = self.record_store {
+                    record_store.handle_quorum_rejection_response(
+                        &request_id.to_string(),
+                        peer_id,
+                        reason,
+                        evidence,
+                    ).await;
+                }
+            }
             MeshMessage::UpstreamAnnounce {
                 upstream_id,
                 action,

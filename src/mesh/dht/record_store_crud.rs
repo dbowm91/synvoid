@@ -184,6 +184,50 @@ impl RecordStoreManager {
             }
         }
 
+        let key_requires_quorum = self.access_control.requires_quorum(&record.key);
+
+        if key_requires_quorum && is_local_record {
+            let record_store = self.clone();
+            let key = record.key.clone();
+            let value = record.value.clone();
+            let ttl = record.ttl_seconds;
+
+            tokio::spawn(async move {
+                if let Some(request_id) = record_store.start_quorum_request(key.clone(), value, ttl).await {
+                    tracing::debug!("Started quorum request {} for key: {}", request_id, key);
+                    let mut attempts = 0;
+                    let max_attempts = 50;
+
+                    while attempts < max_attempts {
+                        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+
+                        if let Some(result) = record_store.check_quorum_completion(&request_id).await {
+                            match result {
+                                crate::mesh::dht::quorum::QuorumResult::Approved(_) => {
+                                    tracing::info!("Quorum approved for key: {}, storing record", key);
+                                    if record_store.store_record_after_quorum(&record).await {
+                                        tracing::info!("Record stored after quorum for key: {}", key);
+                                    }
+                                    break;
+                                }
+                                crate::mesh::dht::quorum::QuorumResult::Rejected { .. } => {
+                                    tracing::warn!("Quorum rejected for key: {}", key);
+                                    break;
+                                }
+                                crate::mesh::dht::quorum::QuorumResult::Timeout { .. } => {
+                                    tracing::warn!("Quorum timeout for key: {}", key);
+                                    break;
+                                }
+                            }
+                        }
+                        attempts += 1;
+                    }
+                }
+            });
+
+            return true;
+        }
+
         if is_local_record {
             let rs = self.record_state.read();
             if let Some(ref signer) = rs.record_signer {
@@ -203,6 +247,35 @@ impl RecordStoreManager {
         }
 
         let mut rs = self.record_state.write();
+
+        let should_replace = match rs.records.get(&record.key) {
+            None => true,
+            Some(existing_entry) => {
+                let existing_key = (
+                    existing_entry.record.timestamp,
+                    existing_entry.record.sequence_number,
+                    existing_entry.record.source_node_id.clone(),
+                );
+                let new_key = (
+                    record.timestamp,
+                    record.sequence_number,
+                    record.source_node_id.clone(),
+                );
+                new_key > existing_key
+            }
+        };
+
+        if !should_replace {
+            tracing::debug!(
+                "Rejected older record for key {} (existing timestamp: {}, new timestamp: {})",
+                record.key,
+                rs.records.get(&record.key).map(|e| e.record.timestamp).unwrap_or(0),
+                record.timestamp
+            );
+            crate::metrics::record_dht_store_operation(false);
+            return false;
+        }
+
         let version = rs.local_version;
         rs.records.insert(
             record.key.clone(),

@@ -62,11 +62,23 @@ impl MeshDnsRegistry {
             false
         };
 
+        let derived_geo = self.derive_geo_from_ips(&registration.ip_addresses);
+        if let (Some(claimed_geo), Some(d_geo)) = (&registration.geo, &derived_geo) {
+            if claimed_geo != d_geo {
+                tracing::warn!(
+                    "Origin {} geo mismatch: claimed={}, derived={}",
+                    registration.node_id,
+                    claimed_geo,
+                    d_geo
+                );
+            }
+        }
+
         let now = current_timestamp();
         let origin = RegisteredOriginNode {
             node_id: registration.node_id.clone(),
             domains: vec![registration.domain.clone()],
-            geo: registration.geo.clone(),
+            geo: derived_geo,
             healthy: registration.healthy,
             capacity: registration.capacity,
             latency_ms: registration.latency_ms,
@@ -197,10 +209,22 @@ impl MeshDnsRegistry {
             return Err("Registration requires mTLS authentication".to_string());
         }
 
+        let derived_geo = self.derive_geo_from_ips(&registration.anycast_ips);
+        if let (Some(claimed_geo), Some(d_geo)) = (&registration.geo, &derived_geo) {
+            if claimed_geo != d_geo {
+                tracing::warn!(
+                    "Anycast {} geo mismatch: claimed={}, derived={}",
+                    registration.node_id,
+                    claimed_geo,
+                    d_geo
+                );
+            }
+        }
+
         let anycast = RegisteredAnycastNode {
             node_id: registration.node_id.clone(),
             anycast_ips: registration.anycast_ips.clone(),
-            geo: registration.geo.clone(),
+            geo: derived_geo.clone(),
             healthy: registration.healthy,
             capacity: registration.capacity,
             latency_ms: None,
@@ -226,7 +250,7 @@ impl MeshDnsRegistry {
             dht_store.store_anycast_node(
                 registration.node_id.clone(),
                 registration.anycast_ips.clone(),
-                registration.geo.as_ref().map(|g| g.to_string()),
+                derived_geo.clone(),
                 registration.capacity,
                 registration.healthy,
                 registration.dns_zones.clone(),
@@ -293,10 +317,22 @@ impl MeshDnsRegistry {
                         false
                     };
 
+                    let derived_geo = self.derive_geo_from_ips(&reg.ip_addresses);
+                    if let (Some(claimed_geo), Some(d_geo)) = (&reg.geo, &derived_geo) {
+                        if claimed_geo != d_geo {
+                            tracing::warn!(
+                                "Origin {} geo mismatch: claimed={}, derived={}",
+                                reg.node_id,
+                                claimed_geo,
+                                d_geo
+                            );
+                        }
+                    }
+
                     let origin = RegisteredOriginNode {
                         node_id: reg.node_id.clone(),
                         domains: vec![reg.domain.clone()],
-                        geo: reg.geo.clone(),
+                        geo: derived_geo,
                         healthy: reg.healthy,
                         capacity: reg.capacity,
                         latency_ms: reg.latency_ms,
@@ -328,11 +364,23 @@ impl MeshDnsRegistry {
                 let mut edges = self.edge_nodes.write();
 
                 for reg in request.domains {
+                    let derived_geo = self.derive_geo_from_ips(&reg.ip_addresses);
+                    if let (Some(claimed_geo), Some(d_geo)) = (&reg.geo, &derived_geo) {
+                        if claimed_geo != d_geo {
+                            tracing::warn!(
+                                "Edge {} geo mismatch: claimed={}, derived={}",
+                                reg.node_id,
+                                claimed_geo,
+                                d_geo
+                            );
+                        }
+                    }
+
                     let edge = RegisteredEdgeNode {
                         node_id: reg.node_id.clone(),
                         domains: vec![reg.domain.clone()],
                         ip_addresses: reg.ip_addresses.clone(),
-                        geo: reg.geo.clone(),
+                        geo: derived_geo,
                         healthy: reg.healthy,
                         latency_ms: reg.latency_ms,
                         load_percent: None,

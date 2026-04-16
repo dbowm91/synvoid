@@ -64,6 +64,11 @@ pub fn create_record_store(
         rs.set_routing_manager(rm);
     }
 
+    if role.is_global() {
+        let quorum_manager = Arc::new(crate::mesh::dht::quorum::QuorumManager::new());
+        rs.set_quorum_manager(quorum_manager);
+    }
+
     rs.start_background_tasks();
 
     if config.role.is_global() {

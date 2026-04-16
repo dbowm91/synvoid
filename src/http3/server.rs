@@ -207,7 +207,7 @@ impl Http3Server {
 
         let client_ip = remote_addr.ip();
 
-        let connection_token = if let Some(ref conn_limiter) = waf.connection_limiter {
+        let mut connection_token = if let Some(ref conn_limiter) = waf.connection_limiter {
             match conn_limiter.try_acquire("_http3_", client_ip).await {
                 Ok(token) => Some(token),
                 Err(e) => {
@@ -430,6 +430,40 @@ impl Http3Server {
 
         match route_result {
             RouteResult::Found(route_target) => {
+                let site_id = route_target.site_id.to_string();
+                let site_traffic_config = &route_target.site_config.traffic_shaping.connection;
+                let site_max_connections = site_traffic_config.max_connections;
+                let site_max_per_ip = site_traffic_config.max_connections_per_ip;
+
+                if site_max_connections.is_some() || site_max_per_ip.is_some() {
+                    if let Some(ref conn_limiter) = waf.connection_limiter {
+                        if let Some(token) = connection_token.take() {
+                            conn_limiter.release(token);
+                        }
+                        match conn_limiter
+                            .try_acquire_with_limits(&site_id, client_ip, site_max_connections, site_max_per_ip)
+                            .await
+                        {
+                            Ok(new_token) => {
+                                connection_token = Some(new_token);
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    "HTTP/3 per-site connection limit exceeded for site {}: {}",
+                                    site_id,
+                                    e
+                                );
+                                counter!("maluwaf.http3.connection_limited").increment(1);
+                                request_stream
+                                    .finish()
+                                    .await
+                                    .map_err(|e| format!("Failed to finish stream: {}", e))?;
+                                return Ok(());
+                            }
+                        }
+                    }
+                }
+
                 let body = format!(
                     "HTTP/3 proxied to {} - path: {}",
                     route_target.upstream, path

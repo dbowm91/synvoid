@@ -160,6 +160,7 @@ pub struct MeshDnsRegistry {
     verification_tx: Option<mpsc::Sender<VerificationTask>>,
     verification_failure_tx: Option<mpsc::Sender<VerificationFailure>>,
     verification_metrics: VerificationMetrics,
+    geoip: Option<Arc<crate::geoip::GeoIpManager>>,
 }
 
 pub struct VerificationTask {
