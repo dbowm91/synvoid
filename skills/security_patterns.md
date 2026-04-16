@@ -1069,3 +1069,136 @@ if current >= limit {
 **Issue**: `handle_hello` passed `None` for revocation list.
 
 **Fix**: Now stores `revocation_list` in struct and passes it to `validate_peer_role()`.
+
+---
+
+## Wave 2 Security (Completed 2026-04-16)
+
+### VerifiedUpstream Signature Verification
+
+**Location**: `src/mesh/topology.rs:732-805`
+
+**Issue**: `find_verified_upstreams_for_site()` accepted records without verifying `global_node_signature`.
+
+**Pattern**: Verify Ed25519 signature before accepting VerifiedUpstream record:
+```rust
+// Construct signing data
+let sign_data = format!(
+    "{}:{}:{}:{}",
+    verified.upstream_id,
+    verified.origin_node_id,
+    verified.upstream_url,
+    verified.registered_at
+);
+
+// Look up global node's public key
+if let Some(pubkey) = lookup_global_node_key(&verified.global_node_id) {
+    // Verify signature
+    if !verify_ed25519(&sign_data, &verified.global_node_signature, &pubkey) {
+        continue; // Skip invalid record
+    }
+}
+```
+
+---
+
+### RFC 5011 Missing→Pending Transition
+
+**Location**: `src/dns/trust_anchor.rs:583-588`
+
+**Issue**: When key in `Missing` state was re-observed, transitioned to `Seen` instead of `Pending`.
+
+**Pattern**: Per RFC 5011 Section 3.3, re-observed missing keys should transition to `Pending`:
+```rust
+TrustAnchorState::Missing => {
+    anchor.state = TrustAnchorState::Pending;
+    anchor.pending_since = Some(now);
+    anchor.first_seen_at = Some(now);
+    Rfc5011Event::KeyPending { key_tag }
+}
+```
+
+---
+
+### CSPRNG for Signing Key Generation
+
+**Location**: `src/mesh/config_identity.rs:343-345`
+
+**Issue**: Used `rand::rng().fill_bytes()` (SmallRng) instead of OS CSPRNG.
+
+**Pattern**: Use `OsRng` for cryptographic key generation:
+```rust
+use rand::TryRngCore;
+let mut rng = rand::rngs::OsRng;
+rng.try_fill_bytes(&mut key).expect("RNG failure");
+```
+
+---
+
+### Dynamic Update RDATA Validation
+
+**Location**: `src/dns/update.rs:455-517`
+
+**Issue**: `check_prerequisite()` only verified existence, not RDATA content when present.
+
+**Pattern**: Validate RDATA when present in prerequisite per RFC 2136:
+```rust
+if !prereq.rdata.is_empty() {
+    let record_values: Vec<String> = records.iter().map(|r| r.value.clone()).collect();
+    let has_matching_rdata = record_values.iter().any(|v| {
+        let encoded = Self::encode_rdata_normalized(v);
+        encoded == prereq.rdata
+    });
+    Ok(has_matching_rdata)
+}
+```
+
+---
+
+### RouteResponse Signature Verification
+
+**Location**: `src/mesh/discovery.rs:585-608`
+
+**Issue**: RouteResponse signature was logged but never verified.
+
+**Pattern**: Verify Ed25519 signature using provider's public key:
+```rust
+let sign_data = format!(
+    "{}:{}:{}:{}:{}",
+    upstream_id, provider_node_id, hops, ttl_secs, timestamp
+);
+
+if let Some(pubkey) = cert_manager.get_global_node_key(&provider_node_id) {
+    if !verify_ed25519(&sign_data, &signature, &pubkey) {
+        tracing::warn!("Route response signature verification failed");
+        return;
+    }
+}
+```
+
+---
+
+### DHT Record Content Hash Chain
+
+**Location**: `src/mesh/protocol.rs:1319-1340`
+
+**Issue**: DHT records used timestamp-based conflict resolution without cryptographic integrity.
+
+**Pattern**: Add `content_hash` field computed from record value:
+```rust
+pub struct DhtRecord {
+    // ... existing fields ...
+    pub content_hash: Vec<u8>,
+}
+
+impl DhtRecord {
+    pub fn compute_content_hash(&self) -> Vec<u8> {
+        use sha2::Digest;
+        sha2::Sha256::digest(&self.value).to_vec()
+    }
+
+    pub fn verify_content_hash(&self) -> bool {
+        self.content_hash == self.compute_content_hash()
+    }
+}
+```

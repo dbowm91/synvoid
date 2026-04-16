@@ -708,7 +708,133 @@ impl AcmeConfig {
         if self.enabled && !self.terms_of_service_agreed {
             tracing::warn!("ACME is enabled but terms_of_service_agreed is false. Set to true after reviewing ACME terms of service.");
         }
-        Ok(())
+            Ok(())
+        }
+    }
+}
+```
+
+---
+
+## Wave 2 Performance & Security Fixes (2026-04-16)
+
+### HotHashMap Type Alias
+
+**Location**: `src/utils.rs`
+
+**Issue**: SipHash (std HashMap) is 3-5x slower than Ahash for non-cryptographic workloads.
+
+**Pattern**: Create a type alias for hot path HashMaps:
+```rust
+use ahash::AHashMap;
+pub type HotHashMap<K, V> = AHashMap<K, V>;
+pub mod collections {
+    pub use ahash::{AHashMap, AHashSet};
+}
+```
+
+**Files migrated**:
+- `src/waf/ratelimit/core.rs` - dirty_slots tracking
+- `src/proxy_cache/store.rs` - host index
+- `src/block_store.rs` - IP blocking storage
+- `src/http/server.rs` - app_servers and WASM transforms
+
+---
+
+### Cow<str> for Zero-Copy HTTP Parsing
+
+**Location**: `src/http/server.rs:777-792`
+
+**Issue**: 3 heap allocations per request for path, host, user_agent.
+
+**Pattern**: Use `Cow<'_, str>` to avoid allocations when possible:
+```rust
+use std::borrow::Cow;
+
+let path = parts
+    .uri
+    .path_and_query()
+    .map(|pq| Cow::Owned(pq.to_string()))
+    .unwrap_or_else(|| Cow::Borrowed("/"));
+
+let host = parts
+    .headers
+    .get("host")
+    .and_then(|v| v.to_str().ok())
+    .map(Cow::Borrowed)
+    .unwrap_or_else(|| Cow::Borrowed(""));
+
+let user_agent = parts
+    .headers
+    .get("user-agent")
+    .and_then(|v| v.to_str().ok())
+    .map(|s| Cow::Owned(s.to_string()));
+```
+
+---
+
+### Power-of-2 Bitmask Optimization
+
+**Location**: `src/utils.rs:481-513`
+
+**Issue**: Modulo operation is slow; bitmask is ~10x faster for power-of-2 slot counts.
+
+**Pattern**: Use bitmask only when `num_slots.is_power_of_two()`:
+```rust
+pub fn ip_to_slot(ip: IpAddr, num_slots: usize) -> usize {
+    if num_slots.is_power_of_two() {
+        let mask = num_slots - 1;
+        // Use & mask instead of % num_slots
+    } else {
+        // Fallback to modulo for non-power-of-2
+    }
+}
+```
+
+---
+
+### Shared NormalizedInputs for WAF Detectors
+
+**Location**: `src/waf/attack_detection/mod.rs:202-212`
+
+**Issue**: sqli, xss, ssti detectors each iterated over headers independently (3 iterations).
+
+**Pattern**: Parse headers once via `NormalizedInputs::normalize_all()` before any detector checks:
+```rust
+// At start of check_request()
+let inputs = NormalizedInputs::normalize_all(&headers, &path, &query, &body);
+
+// All 11 detectors now share the same pre-normalized inputs
+let sqli_result = detector.check_sqli(&inputs, ...);
+let xss_result = detector.check_xss(&inputs, ...);
+```
+
+---
+
+### InstancePool Shared WasmRuntime
+
+**Location**: `src/serverless/instance_pool.rs`
+
+**Issue**: Each `spawn_instance()` created new `WasmPluginManager` → unbounded memory.
+
+**Pattern**: Share `Arc<WasmRuntime>` across all instances:
+```rust
+pub struct InstancePool {
+    // ...
+    runtime: Arc<WasmRuntime>,
+}
+
+impl InstancePool {
+    pub fn new(config: InstancePoolConfig, function_definition: FunctionDefinition) -> Result<Self, InstancePoolError> {
+        let runtime = Arc::new(crate::plugin::WasmPluginManager::new());
+        Ok(Self { runtime, ... })
+    }
+
+    fn spawn_instance(&self, id: String) -> Result<Arc<ServerlessInstance>, InstancePoolError> {
+        let runtime = self.runtime.clone();
+        // Pass cloned runtime to instance
+        let instance = Arc::new(ServerlessInstance::new(id, name, runtime));
+        Ok(instance)
     }
 }
 ```

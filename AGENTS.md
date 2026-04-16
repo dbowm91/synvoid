@@ -496,6 +496,18 @@ All duplicate `current_timestamp()` definitions have been consolidated into `src
 | Stale cache TTL configurable | `src/mesh/config.rs`, `src/mesh/proxy.rs` | `stale_cache_ttl_secs` field in MeshConfig |
 | Drain polling interval wired | `src/overseer/drain_manager.rs:174` | `drain_check_interval_ms` config now used |
 | Admin rate limiter auto-cleanup | `src/admin/state.rs:83-128` | Background task every 60 seconds |
+| VerifiedUpstream signature bypass | `src/mesh/topology.rs:732-805` | Added global_node_signature verification on lookup |
+| RFC 5011 Missing state bypass | `src/dns/trust_anchor.rs:583-588` | Missing→Pending transition with pending_since set |
+| Non-CSPRNG signing key | `src/mesh/config_identity.rs:343-345` | Uses OsRng instead of SmallRng |
+| Dynamic update RDATA bypass | `src/dns/update.rs:455-517` | check_prerequisite() now validates RDATA content |
+| RouteResponse unverified | `src/mesh/discovery.rs:585-608` | RouteResponse signature now verified via cert_manager |
+| DHT record store no chain | `src/mesh/protocol.rs:1319-1340` | Added content_hash field and verify_content_hash() |
+| HashMap hot path slowdown | `src/utils.rs`, multiple files | HotHashMap type alias with AHashMap |
+| HTTP to_string() allocations | `src/http/server.rs:777-792` | Cow<'_, str> avoids unnecessary heap allocation |
+| ip_to_slot slow modulo | `src/utils.rs:481-513` | Power-of-2 bitmask optimization |
+| WAF header iteration redundancy | `src/waf/attack_detection/mod.rs:202-212` | normalize_all() called once, shared by all detectors |
+| InstancePool wrong path | `src/serverless/instance_pool.rs:169-170` | Uses name.with_extension("wasm") instead of path |
+| InstancePool unbounded memory | `src/serverless/instance_pool.rs:73,168` | Shared Arc<WasmRuntime> across instances |
 | IPv6 zone ID SSRF bypass | `src/waf/attack_detection/ssrf.rs:260-273` | Zone IDs (`%eth0`) now cause rejection instead of being stripped |
 | Global node liveness monitoring | `src/mesh/topology.rs:1559-1617` | `check_global_node_liveness()` warns on quorum loss |
 | HTTP request latency metrics | `src/metrics/mod.rs:70-71,372-382` | `HTTP_REQUEST_LATENCIES` VecDeque with record/get functions |
