@@ -525,6 +525,10 @@ All duplicate `current_timestamp()` definitions have been consolidated into `src
 | Off-by-one restart backoff | `src/overseer/process.rs:1657` | Changed count < 6 instead of <= 6 |
 | Edge PoW revocation bypass | `src/mesh/peer_auth.rs:120-131` | Revocation check before PoW handling |
 | DnsRecord not privileged | `src/mesh/dht/keys.rs:496` | DnsRecord added to is_privileged() check |
+| CapabilityAttestation unrestricted | `src/mesh/dht/mod.rs:598` | Added capability_attestation to self_only_keys |
+| DHT announce no signature | `src/mesh/dht/record_store_sync.rs:720-728` | DhtRecordAnnounce now properly signed |
+| edge_can_respond_privileged warning | `src/mesh/dht/routing/manager.rs:119-127` | Warning log when edge responds to privileged queries |
+| TLS honeypot wrong blocking | `src/tls/server.rs:676` | Uses block_ip_for_honeypot instead of block_ip_with_threat_intel |
 
 ## Performance Hot Paths
 
@@ -768,8 +772,8 @@ The consolidated implementation plan contains all remaining items organized into
 | Wave | Focus | Priority Items |
 |------|-------|----------------|
 | 1 | Critical Security & Test Fixes | ✅ COMPLETED - S-1, S-3, S-4, D1, E2, T1, T2, M-D1, M-D2 |
-| 2 | High Priority Security & Performance | S-5 through S-10, P1.1-P1.3, W1-W2 |
-| 3 | Medium Priority Improvements | M-D3-M-D6, W3-W6, H1, H4, C1, O1 |
+| 2 | High Priority Security & Performance | ✅ COMPLETED - S-5 through S-10, P1.1-P1.3, W1-W2 |
+| 3 | Medium Priority Improvements | ✅ COMPLETED - M-D3, M-D4, M-D6, H1; In Progress - W4-W5, M-D5, P2.1-P2.2, P3, O1 |
 | 4 | Lower Priority & Feature Work | M-D7-M-D10, W7-W10, G1-G8, O2-O3, D5-D6 |
 | 5 | Feature Implementation | OpenAPI, T1-T2 (YARA), Admin Panel, Web App Stack |
 
