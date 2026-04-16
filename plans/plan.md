@@ -24,20 +24,20 @@ This document contains all remaining implementation items across the MaluWAF pro
 
 | Category | Items | Highest Priority |
 |----------|-------|------------------|
-| Security | S-3, S-4, S-5, S-6, S-7, S-8, S-9, S-10 | S-5 (VerifiedUpstream signature) |
-| Dependency | D1, D5, D6 | D1 (wasmtime 42.0.2) |
-| Performance | P1.1, P1.2, P1.3, P2.1, P2.2, P3 | P1.1 (AHashMap hot paths) |
-| Mesh/DHT | M-D1, M-D2, M-D3, M-D4, M-D5, M-D6, M-D7, M-D8, M-D9, M-D10 | M-D1 (PoW bypass) |
-| WASM | W1, W2, W3, W4, W5, W6, W7, W8, W9, W10 | W1/W2 (InstancePool bugs) |
-| Honeypot/Threat | H1, H2, H3, H4, T1, T2 | H1, H2, T1 |
-| Edge Transform | E1, E2, E3, E4, E5, E6, E7 | E2 (QUIC proxy transforms) |
-| Code Quality | C1, C2, O1, O2, O3 | C1 (blocking sleep) |
-| Testing | T1, T2, G1, G2, G3, G4, G5, G6, G7, G8 | T1, T2 (test fixes) |
-| Testing (plan11) | T1, T2, T3, T4, T5 | T1 (ACME tests) |
-| OpenAPI | Phase 1-5 | - |
-| Admin Panel | Items 1-15 | Items 1, 5, 7 |
-| Web App Stack | Phases 1-6 | Phase 1 (PHP security) |
-| Reverse Proxy/WAF | P1.1, P1.2, P2.1, P2.2, P3.1 | P1.2 (header iteration) |
+| Security | S-5 (VerifiedUpstream sig - DONE), S-10 | S-10 (DHT chain) |
+| Dependency | D1 | D1 (wasmtime 42.0.2) |
+| Performance | P1.1, P1.2, P1.3, P2.1, P2.2, P3, P2.3, P2.4 | P1.1 (AHashMap hot paths) |
+| Mesh/DHT | M-D1, M-D2, M-D5 | M-D1 (PoW bypass) |
+| WASM | W1, W2 | W1/W2 (InstancePool bugs) |
+| Honeypot/Threat | H1, H2, H3, H4 | H1, H2 |
+| Edge Transform | E1, E3, E4, E5, E6 | E1 (DHT key mismatch) |
+| Code Quality | C1, O1, O2, O3 | C1 (blocking sleep) |
+| Testing | G1, G2, G3, G4, G5, G6, G7, G8 | G1 (process tree) |
+| Testing (plan11) | T1, T4, T5 | T1 (WAF detection tests) |
+| OpenAPI | Phase 2-5 (in progress) | Handler annotations |
+| Admin Panel | Items 1-15 | Admin 2 (Mesh Config) |
+| Web App Stack | Phase 3-5 (deferred) | Phase 3 |
+| Reverse Proxy/WAF | P1.1, P1.2, P2.1, P2.2, P3.1, P2.3, P2.4 | P1.1 (AHashMap hot paths) |
 
 ### Already Fixed (from plan files)
 
@@ -281,7 +281,7 @@ This document contains all remaining implementation items across the MaluWAF pro
 
 ---
 
-#### S-10: DHT Record Store Lacks Cryptographic Chain - HIGH 🚧 IN PROGRESS
+#### S-10: DHT Record Store Lacks Cryptographic Chain - HIGH ✅ COMPLETED
 
 **Location**: `src/mesh/dht/record_store_crud.rs:63-72`
 
