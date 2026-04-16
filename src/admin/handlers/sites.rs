@@ -6,9 +6,10 @@ use axum::{
     Json,
 };
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 use std::sync::Arc;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct SiteInfo {
     pub id: String,
     pub domains: Vec<String>,
@@ -16,12 +17,22 @@ pub struct SiteInfo {
     pub routes: std::collections::HashMap<String, String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct SiteDetail {
     pub id: String,
     pub config: serde_json::Value,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/sites",
+    responses(
+        (status = 200, description = "List of sites", body = Vec<SiteInfo>),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "sites"
+)]
 pub async fn list_sites(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -42,6 +53,20 @@ pub async fn list_sites(
     Ok(Json(sites))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/sites/{site_id}",
+    params(
+        ("site_id" = String, Path, description = "Site ID")
+    ),
+    responses(
+        (status = 200, description = "Site details", body = SiteDetail),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Site not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "sites"
+)]
 pub async fn get_site(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,

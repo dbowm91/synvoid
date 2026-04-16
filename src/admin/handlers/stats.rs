@@ -8,17 +8,20 @@ use axum::{
     Json,
 };
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 use std::sync::Arc;
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
 pub struct SystemStats {
     pub uptime_secs: u64,
     pub total_requests: u64,
     pub requests_per_second: f64,
+    #[schema(example = 0.05)]
     pub blocked_per_second: f64,
     pub active_connections: u32,
     pub memory_used_mb: u64,
     pub memory_total_mb: u64,
+    #[schema(example = 12.5)]
     pub cpu_usage_percent: f32,
     pub sites_loaded: usize,
     pub healthy_backends: usize,
@@ -35,7 +38,7 @@ pub struct SystemStats {
     pub time_validation_errors: u64,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
 pub struct SiteStats {
     pub site_id: String,
     pub domains: Vec<String>,
@@ -58,6 +61,16 @@ pub struct SiteStats {
     pub mesh_bytes_received: u64,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/stats/summary",
+    responses(
+        (status = 200, description = "System statistics", body = SystemStats),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "stats"
+)]
 pub async fn get_summary(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -96,6 +109,16 @@ pub async fn get_summary(
     Ok(Json(stats))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/stats/sites",
+    responses(
+        (status = 200, description = "Site statistics", body = Vec<SiteStats>),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "stats"
+)]
 pub async fn get_sites_stats(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,

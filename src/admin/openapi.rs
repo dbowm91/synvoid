@@ -16,6 +16,20 @@ use crate::admin::state::AdminState;
             url = "https://github.com/anomalyco/maluwaf"
         )
     ),
+    paths(
+        crate::admin::handlers::stats::get_summary,
+        crate::admin::handlers::stats::get_sites_stats,
+        crate::admin::handlers::sites::list_sites,
+        crate::admin::handlers::sites::get_site,
+    ),
+    components(
+        schemas(
+            crate::admin::handlers::stats::SystemStats,
+            crate::admin::handlers::stats::SiteStats,
+            crate::admin::handlers::sites::SiteInfo,
+            crate::admin::handlers::sites::SiteDetail,
+        )
+    ),
     tags(
         (name = "stats", description = "System statistics endpoints"),
         (name = "sites", description = "Site configuration management"),
