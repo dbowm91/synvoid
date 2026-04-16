@@ -6,6 +6,7 @@ use axum::{
     Json,
 };
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 use std::sync::Arc;
 
 const DEFAULT_MAX_CONNECTIONS: usize = 100;
@@ -23,7 +24,7 @@ fn create_upstream_status(url: &str) -> UpstreamStatus {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct UpstreamStatus {
     pub url: String,
     pub healthy: bool,
@@ -34,13 +35,23 @@ pub struct UpstreamStatus {
     pub consecutive_successes: u32,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct SiteUpstreams {
     pub site_id: String,
     pub default_upstream: String,
     pub backends: Vec<UpstreamStatus>,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/upstreams",
+    responses(
+        (status = 200, description = "List of upstreams", body = Vec<SiteUpstreams>),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "upstreams"
+)]
 pub async fn list_upstreams(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -60,6 +71,20 @@ pub async fn list_upstreams(
     Ok(Json(upstreams))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/upstreams/{site_id}",
+    params(
+        ("site_id" = String, Path, description = "Site ID")
+    ),
+    responses(
+        (status = 200, description = "Site upstreams", body = SiteUpstreams),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Site not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "upstreams"
+)]
 pub async fn get_site_upstreams(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
