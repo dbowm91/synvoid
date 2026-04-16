@@ -10,9 +10,9 @@
 //! - Graceful shutdown with data flush
 
 use crate::config::DenyListLimitsConfig;
+use crate::utils::collections::AHashMap;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::net::IpAddr;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -70,7 +70,7 @@ impl BlockEntry {
 }
 
 pub struct BlockStore {
-    store: Arc<RwLock<HashMap<String, BlockEntry>>>,
+    store: Arc<RwLock<AHashMap<String, BlockEntry>>>,
     enabled: bool,
     persist_path: Option<PathBuf>,
     config: DenyListLimitsConfig,
@@ -81,7 +81,7 @@ pub struct BlockStore {
 
 #[derive(Debug, Clone)]
 struct PersistRequest {
-    entries: HashMap<String, BlockEntry>,
+    entries: AHashMap<String, BlockEntry>,
 }
 
 impl BlockStore {
@@ -93,12 +93,12 @@ impl BlockStore {
             DEFAULT_MAX_ENTRIES
         };
 
-        let store: HashMap<String, BlockEntry> = if let Some(ref path) = persist_path {
+        let store: AHashMap<String, BlockEntry> = if let Some(ref path) = persist_path {
             if path.exists() {
                 match std::fs::read_to_string(path) {
                     Ok(content) => match serde_json::from_str::<Vec<BlockEntry>>(&content) {
                         Ok(entries) => {
-                            let mut validated = HashMap::new();
+                            let mut validated = AHashMap::new();
                             let mut parse_errors = 0;
                             for e in entries {
                                 match e.ip.parse::<IpAddr>() {
@@ -131,19 +131,19 @@ impl BlockStore {
                         }
                         Err(e) => {
                             tracing::warn!("Failed to parse blocks.json: {}, starting fresh", e);
-                            HashMap::new()
+                            AHashMap::new()
                         }
                     },
                     Err(e) => {
                         tracing::warn!("Failed to read blocks.json: {}, starting fresh", e);
-                        HashMap::new()
+                        AHashMap::new()
                     }
                 }
             } else {
-                HashMap::new()
+                AHashMap::new()
             }
         } else {
-            HashMap::new()
+            AHashMap::new()
         };
 
         let initial_count = store.len();
@@ -160,7 +160,7 @@ impl BlockStore {
                     let mut interval = tokio::time::interval(std::time::Duration::from_secs(
                         config.persist_interval_secs,
                     ));
-                    let mut pending: Option<HashMap<String, BlockEntry>> = None;
+                    let mut pending: Option<AHashMap<String, BlockEntry>> = None;
 
                     loop {
                         tokio::select! {
@@ -208,7 +208,7 @@ impl BlockStore {
 
     pub(crate) async fn persist_to_disk(
         path: &PathBuf,
-        entries: HashMap<String, BlockEntry>,
+        entries: AHashMap<String, BlockEntry>,
         max_entries: usize,
     ) {
         let entries_to_save: Vec<BlockEntry> = entries

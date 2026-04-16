@@ -18,6 +18,7 @@ use http_body_util::Full;
 use hyper_util::rt::TokioIo;
 use metrics::counter;
 use sha2::Digest;
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::net::{IpAddr, SocketAddr};
@@ -776,20 +777,20 @@ impl HttpServer {
         let path = parts
             .uri
             .path_and_query()
-            .map(|pq| pq.to_string())
-            .unwrap_or_else(|| "/".to_string());
+            .map(|pq| Cow::Owned(pq.to_string()))
+            .unwrap_or_else(|| Cow::Borrowed("/"));
         let host = parts
             .headers
             .get("host")
             .and_then(|v| v.to_str().ok())
-            .unwrap_or("")
-            .to_string();
+            .map(Cow::Borrowed)
+            .unwrap_or_else(|| Cow::Borrowed(""));
 
         let user_agent = parts
             .headers
             .get("user-agent")
             .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_string());
+            .map(|s| Cow::Owned(s.to_string()));
 
         let cookies = parts.headers.get("cookie").and_then(|v| v.to_str().ok());
 
@@ -1593,7 +1594,7 @@ impl HttpServer {
                                         upgraded,
                                         socket_path,
                                         target_clone,
-                                        path_clone,
+                                        path_clone.into_owned(),
                                         waf_clone,
                                         client_ip,
                                         ws_config,
@@ -1609,7 +1610,7 @@ impl HttpServer {
                         Self::handle_websocket_tunnel(
                             upgraded,
                             target_clone,
-                            path_clone,
+                            path_clone.into_owned(),
                             waf_clone,
                             client_ip,
                             ws_config,

@@ -350,6 +350,7 @@ impl RecordStoreManager {
             source_node_id: record.source_node_id.clone(),
             signature: record.signature.clone(),
             signer_public_key: record.signer_public_key.clone(),
+            content_hash: record.content_hash.clone(),
         };
 
         let mut rs = self.record_state.write();
@@ -702,13 +703,19 @@ impl RecordStoreManager {
 
         let record = DhtRecord {
             key,
-            value,
+            value: value.clone(),
             timestamp: now,
             sequence_number: 0,
             ttl_seconds: 86400,
             source_node_id: self.node_id.clone(),
             signature: Vec::new(),
             signer_public_key: None,
+            content_hash: {
+                use sha2::{Digest, Sha256};
+                let mut hasher = Sha256::new();
+                hasher.update(&value);
+                hasher.finalize().to_vec()
+            },
         };
 
         let stored = self.store_record(record.clone(), 100);
@@ -749,13 +756,19 @@ impl RecordStoreManager {
 
         let record = DhtRecord {
             key: key.clone(),
-            value,
+            value: value.clone(),
             timestamp: now,
             sequence_number: 0,
             ttl_seconds,
             source_node_id: self.node_id.clone(),
             signature: Vec::new(),
             signer_public_key: None,
+            content_hash: {
+                use sha2::{Digest, Sha256};
+                let mut hasher = Sha256::new();
+                hasher.update(&value);
+                hasher.finalize().to_vec()
+            },
         };
 
         let stored = self.store_record(record.clone(), 100);

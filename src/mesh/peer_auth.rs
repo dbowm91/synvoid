@@ -723,4 +723,471 @@ mod tests {
         );
         assert!(result.is_err());
     }
+
+    #[test]
+    fn test_origin_node_with_valid_signature_and_attestation_passes() {
+        let (origin_secret, origin_public) = generate_test_keypair();
+        let (global_secret, global_public) = generate_different_keypair(0x03);
+
+        let timestamp = crate::utils::current_timestamp();
+        let challenge = format!("origin:origin-node:{}", timestamp);
+
+        let origin_signing_key = ed25519_dalek::SigningKey::from_bytes(&origin_secret);
+        let origin_signature =
+            URL_SAFE_NO_PAD.encode(origin_signing_key.sign(challenge.as_bytes()).to_bytes());
+
+        let global_signing_key = ed25519_dalek::SigningKey::from_bytes(&global_secret);
+        let attestation_signature =
+            URL_SAFE_NO_PAD.encode(global_signing_key.sign(challenge.as_bytes()).to_bytes());
+
+        let result = validate_peer_role(
+            &crate::mesh::config::MeshNodeRole::ORIGIN,
+            &[global_public.clone()],
+            "origin-node",
+            Some(&origin_public),
+            Some(&origin_signature),
+            timestamp,
+            300,
+            None,
+            Some(&global_public),
+            Some(&attestation_signature),
+            None,
+            None,
+        );
+        assert!(result.is_ok(), "Origin validation failed: {:?}", result);
+    }
+
+    #[test]
+    fn test_origin_node_missing_attestation_key_fails() {
+        let (origin_secret, origin_public) = generate_test_keypair();
+        let (_, global_public) = generate_different_keypair(0x03);
+
+        let timestamp = crate::utils::current_timestamp();
+        let challenge = format!("origin:origin-node:{}", timestamp);
+
+        let origin_signing_key = ed25519_dalek::SigningKey::from_bytes(&origin_secret);
+        let origin_signature =
+            URL_SAFE_NO_PAD.encode(origin_signing_key.sign(challenge.as_bytes()).to_bytes());
+
+        let result = validate_peer_role(
+            &crate::mesh::config::MeshNodeRole::ORIGIN,
+            &[global_public.clone()],
+            "origin-node",
+            Some(&origin_public),
+            Some(&origin_signature),
+            timestamp,
+            300,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("did not provide global node attestation key"));
+    }
+
+    #[test]
+    fn test_origin_node_attestation_key_not_authorized_fails() {
+        let (origin_secret, origin_public) = generate_test_keypair();
+        let (global_secret, global_public) = generate_different_keypair(0x03);
+        let (_, unauthorized_global) = generate_different_keypair(0x04);
+
+        let timestamp = crate::utils::current_timestamp();
+        let challenge = format!("origin:origin-node:{}", timestamp);
+
+        let origin_signing_key = ed25519_dalek::SigningKey::from_bytes(&origin_secret);
+        let origin_signature =
+            URL_SAFE_NO_PAD.encode(origin_signing_key.sign(challenge.as_bytes()).to_bytes());
+
+        let global_signing_key = ed25519_dalek::SigningKey::from_bytes(&global_secret);
+        let attestation_signature =
+            URL_SAFE_NO_PAD.encode(global_signing_key.sign(challenge.as_bytes()).to_bytes());
+
+        let result = validate_peer_role(
+            &crate::mesh::config::MeshNodeRole::ORIGIN,
+            &[unauthorized_global],
+            "origin-node",
+            Some(&origin_public),
+            Some(&origin_signature),
+            timestamp,
+            300,
+            None,
+            Some(&global_public),
+            Some(&attestation_signature),
+            None,
+            None,
+        );
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("global node attestation key not in authorized list"));
+    }
+
+    #[test]
+    fn test_origin_node_revoked_fails() {
+        let (origin_secret, origin_public) = generate_test_keypair();
+        let (global_secret, global_public) = generate_different_keypair(0x03);
+
+        let timestamp = crate::utils::current_timestamp();
+        let challenge = format!("origin:origin-node:{}", timestamp);
+
+        let origin_signing_key = ed25519_dalek::SigningKey::from_bytes(&origin_secret);
+        let origin_signature =
+            URL_SAFE_NO_PAD.encode(origin_signing_key.sign(challenge.as_bytes()).to_bytes());
+
+        let global_signing_key = ed25519_dalek::SigningKey::from_bytes(&global_secret);
+        let attestation_signature =
+            URL_SAFE_NO_PAD.encode(global_signing_key.sign(challenge.as_bytes()).to_bytes());
+
+        let revocation_list = GlobalNodeRevocationList::new();
+        revocation_list.add_revoked_node("origin-node", "Security breach");
+
+        let result = validate_peer_role(
+            &crate::mesh::config::MeshNodeRole::ORIGIN,
+            &[global_public.clone()],
+            "origin-node",
+            Some(&origin_public),
+            Some(&origin_signature),
+            timestamp,
+            300,
+            Some(&revocation_list),
+            Some(&global_public),
+            Some(&attestation_signature),
+            None,
+            None,
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("has been revoked"));
+    }
+
+    #[test]
+    fn test_edge_node_with_valid_pow_passes() {
+        use crate::mesh::dht::routing::node_id::NodeId;
+
+        let (_, public) = generate_test_keypair();
+
+        let pow_pk_bytes = URL_SAFE_NO_PAD.decode(&public).expect("valid base64");
+        let pow_nonce = NodeId::find_pow_nonce(&pow_pk_bytes).expect("pow nonce found");
+
+        let result = validate_edge_node_pow(
+            "edge-pow-node",
+            Some(&public),
+            Some(pow_nonce),
+            Some(&public),
+        );
+        assert!(result.is_ok(), "PoW validation failed: {:?}", result);
+    }
+
+    #[test]
+    fn test_edge_node_pow_key_mismatch_fails() {
+        use crate::mesh::dht::routing::node_id::NodeId;
+        let (_, public) = generate_test_keypair();
+        let (_, different_public) = generate_different_keypair(0x05);
+
+        let pow_pk_bytes = URL_SAFE_NO_PAD
+            .decode(&different_public)
+            .expect("valid base64");
+        let pow_nonce = NodeId::find_pow_nonce(&pow_pk_bytes).expect("pow nonce found");
+
+        let result = validate_edge_node_pow(
+            "edge-pow-node",
+            Some(&public),
+            Some(pow_nonce),
+            Some(&different_public),
+        );
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("PoW public key does not match identity public key"));
+    }
+
+    #[test]
+    fn test_edge_node_pow_invalid_nonce_fails() {
+        use crate::mesh::dht::routing::node_id::NodeId;
+        let (_, public) = generate_test_keypair();
+
+        let pow_pk_bytes = URL_SAFE_NO_PAD.decode(&public).expect("valid base64");
+        let _ = NodeId::find_pow_nonce(&pow_pk_bytes).expect("pow nonce found");
+
+        let invalid_nonce = u64::MAX;
+
+        let result = validate_edge_node_pow(
+            "edge-pow-node",
+            Some(&public),
+            Some(invalid_nonce),
+            Some(&public),
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("PoW verification failed"));
+    }
+
+    #[test]
+    fn test_edge_node_pow_missing_nonce_fails() {
+        let (_, public) = generate_test_keypair();
+
+        let result = validate_edge_node_pow("edge-pow-node", Some(&public), None, Some(&public));
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("did not provide PoW nonce"));
+    }
+
+    #[test]
+    fn test_edge_node_pow_missing_pow_key_fails() {
+        use crate::mesh::dht::routing::node_id::NodeId;
+        let (_, public) = generate_test_keypair();
+
+        let pow_pk_bytes = URL_SAFE_NO_PAD.decode(&public).expect("valid base64");
+        let pow_nonce = NodeId::find_pow_nonce(&pow_pk_bytes).expect("pow nonce found");
+
+        let result = validate_edge_node_pow("edge-pow-node", Some(&public), Some(pow_nonce), None);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("did not provide PoW public key"));
+    }
+
+    #[test]
+    fn test_edge_node_with_pow_bypasses_signature() {
+        use crate::mesh::dht::routing::node_id::NodeId;
+
+        let (_, public) = generate_test_keypair();
+
+        let pow_pk_bytes = URL_SAFE_NO_PAD.decode(&public).expect("valid base64");
+        let pow_nonce = NodeId::find_pow_nonce(&pow_pk_bytes).expect("pow nonce found");
+
+        let result = validate_peer_role(
+            &crate::mesh::config::MeshNodeRole::EDGE,
+            &[],
+            "edge-pow-node",
+            Some(&public),
+            None,
+            0,
+            300,
+            None,
+            None,
+            None,
+            Some(pow_nonce),
+            Some(&public),
+        );
+        assert!(result.is_ok(), "PoW validation failed: {:?}", result);
+    }
+
+    #[test]
+    fn test_composite_role_global_edge_passes_global_validation() {
+        let (secret, public) = generate_test_keypair();
+        let (signature, timestamp) = generate_global_node_auth("composite-node", &secret).unwrap();
+
+        let result = validate_peer_role(
+            &crate::mesh::config::MeshNodeRole::GLOBAL_EDGE,
+            &[public.clone()],
+            "composite-node",
+            Some(&public),
+            Some(&signature),
+            timestamp,
+            300,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_composite_role_global_origin_passes_origin_validation() {
+        let (origin_secret, origin_public) = generate_test_keypair();
+        let (global_secret, global_public) = generate_different_keypair(0x07);
+
+        let timestamp = crate::utils::current_timestamp();
+        let challenge = format!("origin:composite-origin:{}", timestamp);
+
+        let origin_signing_key = ed25519_dalek::SigningKey::from_bytes(&origin_secret);
+        let origin_signature =
+            URL_SAFE_NO_PAD.encode(origin_signing_key.sign(challenge.as_bytes()).to_bytes());
+
+        let global_signing_key = ed25519_dalek::SigningKey::from_bytes(&global_secret);
+        let attestation_signature =
+            URL_SAFE_NO_PAD.encode(global_signing_key.sign(challenge.as_bytes()).to_bytes());
+
+        let result = validate_peer_role(
+            &crate::mesh::config::MeshNodeRole::GLOBAL_ORIGIN,
+            &[global_public.clone()],
+            "composite-origin",
+            Some(&origin_public),
+            Some(&origin_signature),
+            timestamp,
+            300,
+            None,
+            Some(&global_public),
+            Some(&attestation_signature),
+            None,
+            None,
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_future_timestamp_fails() {
+        let (secret, public) = generate_test_keypair();
+        let future_timestamp = crate::utils::current_timestamp() + 120;
+        let challenge = format!("test-node:{}", future_timestamp);
+        let signing_key = ed25519_dalek::SigningKey::from_bytes(&secret);
+        let signature = URL_SAFE_NO_PAD.encode(signing_key.sign(challenge.as_bytes()).to_bytes());
+
+        let result = validate_peer_role(
+            &crate::mesh::config::MeshNodeRole::GLOBAL,
+            &[public.clone()],
+            "test-node",
+            Some(&public),
+            Some(&signature),
+            future_timestamp,
+            300,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("future timestamp"));
+    }
+
+    #[test]
+    fn test_invalid_public_key_encoding_fails() {
+        let result = validate_peer_role(
+            &crate::mesh::config::MeshNodeRole::GLOBAL,
+            &["invalid_base64_key".to_string()],
+            "test-node",
+            Some("invalid_base64_key"),
+            Some("some_signature"),
+            crate::utils::current_timestamp(),
+            300,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("invalid public key encoding"));
+    }
+
+    #[test]
+    fn test_revocation_list_check_for_edge_node() {
+        let revocation_list = GlobalNodeRevocationList::new();
+        revocation_list.add_revoked_node("revoked-edge", "Compromised");
+
+        let (_, public) = generate_test_keypair();
+        let timestamp = crate::utils::current_timestamp();
+        let challenge = format!("edge:revoked-edge:{}", timestamp);
+        let (secret, _) = generate_test_keypair();
+        let signing_key = ed25519_dalek::SigningKey::from_bytes(&secret);
+        let signature = URL_SAFE_NO_PAD.encode(signing_key.sign(challenge.as_bytes()).to_bytes());
+
+        let result = validate_peer_role(
+            &crate::mesh::config::MeshNodeRole::EDGE,
+            &[],
+            "revoked-edge",
+            Some(&public),
+            Some(&signature),
+            timestamp,
+            300,
+            Some(&revocation_list),
+            None,
+            None,
+            None,
+            None,
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("has been revoked"));
+    }
+
+    #[test]
+    fn test_revocation_list_check_for_global_node() {
+        let revocation_list = GlobalNodeRevocationList::new();
+        revocation_list.add_revoked_node("revoked-global", "Key compromise");
+
+        let (secret, public) = generate_test_keypair();
+        let (signature, timestamp) = generate_global_node_auth("revoked-global", &secret).unwrap();
+
+        let result = validate_peer_role(
+            &crate::mesh::config::MeshNodeRole::GLOBAL,
+            &[public.clone()],
+            "revoked-global",
+            Some(&public),
+            Some(&signature),
+            timestamp,
+            300,
+            Some(&revocation_list),
+            None,
+            None,
+            None,
+            None,
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("has been revoked"));
+    }
+
+    #[test]
+    fn test_empty_authorized_pubkeys_for_origin_attestation_fails() {
+        let (origin_secret, origin_public) = generate_test_keypair();
+        let (global_secret, global_public) = generate_different_keypair(0x08);
+
+        let timestamp = crate::utils::current_timestamp();
+        let challenge = format!("origin:origin-node:{}", timestamp);
+
+        let origin_signing_key = ed25519_dalek::SigningKey::from_bytes(&origin_secret);
+        let origin_signature =
+            URL_SAFE_NO_PAD.encode(origin_signing_key.sign(challenge.as_bytes()).to_bytes());
+
+        let global_signing_key = ed25519_dalek::SigningKey::from_bytes(&global_secret);
+        let attestation_signature =
+            URL_SAFE_NO_PAD.encode(global_signing_key.sign(challenge.as_bytes()).to_bytes());
+
+        let result = validate_peer_role(
+            &crate::mesh::config::MeshNodeRole::ORIGIN,
+            &[],
+            "origin-node",
+            Some(&origin_public),
+            Some(&origin_signature),
+            timestamp,
+            300,
+            None,
+            Some(&global_public),
+            Some(&attestation_signature),
+            None,
+            None,
+        );
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("No authorized global node keys configured"));
+    }
+
+    #[test]
+    fn test_generate_and_validate_global_node_auth_roundtrip() {
+        let (secret, public) = generate_test_keypair();
+        let node_id = "test-auth-node";
+
+        let (signature, timestamp) = generate_global_node_auth(node_id, &secret).unwrap();
+
+        let result = validate_peer_role(
+            &crate::mesh::config::MeshNodeRole::GLOBAL,
+            &[public.clone()],
+            node_id,
+            Some(&public),
+            Some(&signature),
+            timestamp,
+            300,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        assert!(result.is_ok());
+    }
 }

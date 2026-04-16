@@ -622,13 +622,19 @@ impl MeshTransport {
                 if found {
                     let record = crate::mesh::protocol::DhtRecord {
                         key: key.to_string(),
-                        value,
+                        value: value.clone(),
                         timestamp,
                         sequence_number: 0,
                         ttl_seconds: 0,
                         source_node_id: source_node_id.to_string(),
                         signature,
                         signer_public_key: Some(signer_public_key),
+                        content_hash: {
+                            use sha2::{Digest, Sha256};
+                            let mut hasher = Sha256::new();
+                            hasher.update(&value);
+                            hasher.finalize().to_vec()
+                        },
                     };
                     let _ = self.complete_dht_query(&request_id, record).await;
                 }
@@ -1028,13 +1034,19 @@ impl MeshTransport {
                 if let Some(ref record_store) = self.record_store {
                     let record = crate::mesh::protocol::DhtRecord {
                         key: key.to_string(),
-                        value,
+                        value: value.clone(),
                         timestamp: crate::mesh::safe_unix_timestamp(),
                         sequence_number: 0,
                         ttl_seconds,
                         source_node_id: origin_node_id.to_string(),
                         signature: origin_signature.clone(),
                         signer_public_key: None,
+                        content_hash: {
+                            use sha2::{Digest, Sha256};
+                            let mut hasher = Sha256::new();
+                            hasher.update(&value);
+                            hasher.finalize().to_vec()
+                        },
                     };
 
                     if record_store

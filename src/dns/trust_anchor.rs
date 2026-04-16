@@ -581,9 +581,10 @@ impl TrustAnchorManager {
                 TrustAnchorState::Revoked => Rfc5011Event::KeyRevoked { key_tag },
                 TrustAnchorState::Removed => Rfc5011Event::KeyRemoved { key_tag },
                 TrustAnchorState::Missing => {
-                    anchor.state = TrustAnchorState::Seen;
+                    anchor.state = TrustAnchorState::Pending;
+                    anchor.pending_since = Some(now);
                     anchor.first_seen_at = Some(now);
-                    Rfc5011Event::KeySeen { key_tag }
+                    Rfc5011Event::KeyPending { key_tag }
                 }
             }
         } else {

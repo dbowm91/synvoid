@@ -577,6 +577,7 @@ impl From<proto::DhtRecord> for DhtRecord {
             } else {
                 Some(pb.signer_public_key)
             },
+            content_hash: pb.content_hash,
         }
     }
 }
@@ -591,6 +592,7 @@ impl From<DhtRecord> for proto::DhtRecord {
             source_node_id: r.source_node_id,
             signature: r.signature,
             signer_public_key: r.signer_public_key.unwrap_or_default(),
+            content_hash: r.content_hash,
         }
     }
 }

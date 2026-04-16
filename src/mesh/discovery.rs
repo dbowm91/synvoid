@@ -585,10 +585,33 @@ impl MeshDiscovery {
         } = msg
         {
             if !signature.is_empty() {
-                tracing::warn!(
-                    "Route response from {} has signature but MeshDiscovery has no signer for verification",
-                    provider_node_id
+                let sign_data = format!(
+                    "{}:{}:{}:{}:{}",
+                    upstream_id, provider_node_id, hops, ttl_secs, timestamp
                 );
+
+                let cert_manager = self.cert_manager.read();
+                if let Some(pubkey) = cert_manager.get_global_node_key(&provider_node_id) {
+                    if !crate::mesh::cert::verify_ed25519(&sign_data, &signature, &pubkey) {
+                        tracing::warn!(
+                            "Route response signature verification failed for {} from provider {}",
+                            upstream_id,
+                            provider_node_id
+                        );
+                        return;
+                    }
+                    tracing::trace!(
+                        "Route response signature verified for {} from provider {}",
+                        upstream_id,
+                        provider_node_id
+                    );
+                } else {
+                    tracing::warn!(
+                        "No public key found for provider {}, cannot verify route response signature",
+                        provider_node_id
+                    );
+                    return;
+                }
             }
 
             self.topology.cache_route(

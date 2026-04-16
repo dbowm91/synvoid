@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -9,6 +8,8 @@ use http::{HeaderMap, StatusCode};
 use moka::sync::Cache;
 use parking_lot::RwLock;
 use thiserror::Error;
+
+use crate::utils::collections::AHashMap;
 
 use super::config::ProxyCacheSettings;
 use super::key::CacheKey;
@@ -145,7 +146,7 @@ pub struct ProxyCache {
     cache_misses: AtomicU64,
     current_memory_size: AtomicU64,
     cleanup_shutdown_tx: Arc<tokio::sync::watch::Sender<()>>,
-    host_index: RwLock<HashMap<String, Vec<CacheKey>>>,
+    host_index: RwLock<AHashMap<String, Vec<CacheKey>>>,
 }
 
 impl Clone for ProxyCache {
@@ -158,7 +159,7 @@ impl Clone for ProxyCache {
             cache_misses: AtomicU64::new(self.cache_misses.load(Ordering::Relaxed)),
             current_memory_size: AtomicU64::new(self.current_memory_size.load(Ordering::Relaxed)),
             cleanup_shutdown_tx: self.cleanup_shutdown_tx.clone(),
-            host_index: RwLock::new(HashMap::new()),
+            host_index: RwLock::new(AHashMap::default()),
         }
     }
 }
@@ -194,7 +195,7 @@ impl ProxyCache {
             cache_misses: AtomicU64::new(0),
             current_memory_size: AtomicU64::new(0),
             cleanup_shutdown_tx: Arc::new(shutdown_tx),
-            host_index: RwLock::new(HashMap::new()),
+            host_index: RwLock::new(AHashMap::default()),
         }
     }
 

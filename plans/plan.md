@@ -92,23 +92,23 @@ This document contains all remaining implementation items across the MaluWAF pro
 ### Wave 2: High Priority Security & Performance
 *Can be implemented in parallel by multiple agents*
 
-| Item | Priority | Category | Description | Files |
-|------|----------|----------|-------------|-------|
-| **S-5** | HIGH | Security | VerifiedUpstream records not signature-verified on lookup | `src/mesh/topology.rs` |
-| **S-6** | HIGH | Security | RFC 5011 state machine Missing->Valid bypass | `src/dns/trust_anchor.rs` |
-| **S-7** | HIGH | Security | Non-CSPRNG RNG for signing key generation | `src/mesh/config_identity.rs` |
-| **S-8** | HIGH | Security | Dynamic update prerequisite only checks existence | `src/dns/update.rs` |
-| **S-9** | HIGH | Security | RouteResponse signature never verified | `src/mesh/discovery.rs` |
-| **S-10** | HIGH | Security | DHT record store lacks cryptographic chain | `src/mesh/dht/record_store_crud.rs` |
-| **P1.1** | HIGH | Performance | Replace HashMap with AHashMap in hot paths | Multiple files |
-| **P1.2** | HIGH | Performance | Reduce to_string() allocations in HTTP handler | `src/http/server.rs` |
-| **P1.3** | HIGH | Performance | Fix ip_to_slot power-of-2 modulo | `src/utils.rs` |
-| **P1.2** | HIGH | WAF | WAF detector header iteration redundancy | `src/waf/attack_detection/mod.rs` |
-| **W1** | HIGH | WASM | InstancePool uses wrong path (routing prefix as file path) | `src/serverless/instance_pool.rs` |
-| **W2** | HIGH | WASM | InstancePool spawns new WasmPluginManager per instance | `src/serverless/instance_pool.rs` |
-| **T1** | HIGH | Testing | ACME workflow tests missing | `tests/integration_test.rs` |
-| **T1** | HIGH | Testing | ThreatIntel publication/sync tests missing | `tests/dht_integration_test.rs` |
-| **T3** | HIGH | Testing | PeerAuth validation tests missing | `src/mesh/peer_auth.rs` |
+| Item | Priority | Category | Description | Files | Status |
+|------|----------|----------|-------------|-------|--------|
+| **S-5** | HIGH | Security | VerifiedUpstream records not signature-verified on lookup | `src/mesh/topology.rs` | ✅ COMPLETED |
+| **S-6** | HIGH | Security | RFC 5011 state machine Missing->Valid bypass | `src/dns/trust_anchor.rs` | ✅ COMPLETED |
+| **S-7** | HIGH | Security | Non-CSPRNG RNG for signing key generation | `src/mesh/config_identity.rs` | ✅ COMPLETED |
+| **S-8** | HIGH | Security | Dynamic update prerequisite only checks existence | `src/dns/update.rs` | ✅ COMPLETED |
+| **S-9** | HIGH | Security | RouteResponse signature never verified | `src/mesh/discovery.rs` | ✅ COMPLETED |
+| **S-10** | HIGH | Security | DHT record store lacks cryptographic chain | `src/mesh/dht/record_store_crud.rs` | ✅ COMPLETED |
+| **P1.1** | HIGH | Performance | Replace HashMap with AHashMap in hot paths | Multiple files | ✅ COMPLETED |
+| **P1.2** | HIGH | Performance | Reduce to_string() allocations in HTTP handler | `src/http/server.rs` | ✅ COMPLETED |
+| **P1.3** | HIGH | Performance | Fix ip_to_slot power-of-2 modulo | `src/utils.rs` | ✅ COMPLETED |
+| **WAF P1.2** | HIGH | WAF | WAF detector header iteration redundancy | `src/waf/attack_detection/mod.rs` | ✅ COMPLETED |
+| **W1** | HIGH | WASM | InstancePool uses wrong path (routing prefix as file path) | `src/serverless/instance_pool.rs` | ✅ COMPLETED |
+| **W2** | HIGH | WASM | InstancePool spawns new WasmPluginManager per instance | `src/serverless/instance_pool.rs` | ✅ COMPLETED |
+| **T1 (ACME)** | HIGH | Testing | ACME workflow tests missing | `tests/integration_test.rs` | ✅ COMPLETED |
+| **T1 (ThreatIntel)** | HIGH | Testing | ThreatIntel publication/sync tests missing | `tests/dht_integration_test.rs` | ✅ COMPLETED |
+| **T3** | HIGH | Testing | PeerAuth validation tests missing | `src/mesh/peer_auth.rs` | ✅ COMPLETED |
 
 ### Wave 3: Medium Priority Improvements
 *Can be implemented in parallel by multiple agents*

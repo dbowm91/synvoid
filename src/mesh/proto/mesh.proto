@@ -700,6 +700,7 @@ message DhtRecord {
     string source_node_id = 5;
     bytes signature = 6;
     string signer_public_key = 7;
+    bytes content_hash = 8;
 }
 
 message DhtRecordAnnounce {

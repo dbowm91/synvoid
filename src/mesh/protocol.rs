@@ -1325,6 +1325,23 @@ pub struct DhtRecord {
     pub source_node_id: String,
     pub signature: Vec<u8>,
     pub signer_public_key: Option<String>,
+    pub content_hash: Vec<u8>,
+}
+
+impl DhtRecord {
+    pub fn compute_content_hash(&self) -> Vec<u8> {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(&self.value);
+        hasher.finalize().to_vec()
+    }
+
+    pub fn verify_content_hash(&self) -> bool {
+        if self.content_hash.is_empty() {
+            return true;
+        }
+        self.compute_content_hash() == self.content_hash
+    }
 }
 
 #[derive(Debug, Clone)]

@@ -16,6 +16,8 @@ use std::time::{Duration, Instant};
 use parking_lot::RwLock as ParkingLotRwLock;
 use tokio::sync::RwLock;
 
+use ed25519_dalek::Verifier;
+
 use moka::future::Cache as MokaCache;
 
 use crate::mesh::config::{MeshConfig, MeshNodeRole};
@@ -755,6 +757,64 @@ impl MeshTopology {
                         >(&record.value)
                         {
                             if verified.upstream_id == site_clone {
+                                if !verified.global_node_signature.is_empty() {
+                                    let sign_data = format!(
+                                        "{}:{}:{}:{}",
+                                        verified.upstream_id,
+                                        verified.origin_node_id,
+                                        verified.upstream_url,
+                                        verified.registered_at
+                                    );
+
+                                    let key =
+                                        format!("global_node_key:{}", verified.global_node_id);
+                                    if let Some(key_record) = rs.get_record(&key) {
+                                        if let Ok(key_json) =
+                                            serde_json::from_slice::<serde_json::Value>(
+                                                &key_record.value,
+                                            )
+                                        {
+                                            if let Some(pubkey_str) = key_json
+                                                .get("public_key")
+                                                .and_then(|v| v.as_str().map(|s| s.to_string()))
+                                            {
+                                                use base64::{
+                                                    engine::general_purpose::STANDARD, Engine,
+                                                };
+                                                let sig_bytes =
+                                                    verified.global_node_signature.clone();
+                                                if let Ok(pubkey_bytes) =
+                                                    STANDARD.decode(pubkey_str)
+                                                {
+                                                    if pubkey_bytes.len() == 32
+                                                        && sig_bytes.len() == 64
+                                                    {
+                                                        let mut pk_array = [0u8; 32];
+                                                        pk_array.copy_from_slice(&pubkey_bytes);
+                                                        let mut sig_array = [0u8; 64];
+                                                        sig_array.copy_from_slice(&sig_bytes);
+
+                                                        if let Ok(pk) =
+                                                            ed25519_dalek::VerifyingKey::from_bytes(
+                                                                &pk_array,
+                                                            )
+                                                        {
+                                                            let sig = ed25519_dalek::Signature::from_bytes(&sig_array);
+                                                            if pk
+                                                                .verify(sign_data.as_bytes(), &sig)
+                                                                .is_ok()
+                                                            {
+                                                                new_results.push(verified);
+                                                                continue;
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    continue;
+                                }
                                 new_results.push(verified);
                             }
                         }
@@ -780,7 +840,8 @@ impl MeshTopology {
 
         let records = {
             let guard = self.record_store.read();
-            guard.as_ref().unwrap().get_all_records()
+            let result = guard.as_ref().unwrap().get_all_records();
+            result
         };
 
         let mut results: Vec<crate::mesh::dht::VerifiedUpstream> = Vec::new();
@@ -791,6 +852,60 @@ impl MeshTopology {
                     serde_json::from_slice::<crate::mesh::dht::VerifiedUpstream>(&record.value)
                 {
                     if verified.upstream_id == site {
+                        if !verified.global_node_signature.is_empty() {
+                            let sign_data = format!(
+                                "{}:{}:{}:{}",
+                                verified.upstream_id,
+                                verified.origin_node_id,
+                                verified.upstream_url,
+                                verified.registered_at
+                            );
+
+                            let key = format!("global_node_key:{}", verified.global_node_id);
+                            let guard = self.record_store.read();
+                            if let Some(key_record) = guard.as_ref().unwrap().get_record(&key) {
+                                if let Ok(key_json) =
+                                    serde_json::from_slice::<serde_json::Value>(&key_record.value)
+                                {
+                                    if let Some(pubkey_str) = key_json
+                                        .get("public_key")
+                                        .and_then(|v| v.as_str().map(|s| s.to_string()))
+                                    {
+                                        use base64::{engine::general_purpose::STANDARD, Engine};
+                                        let sig_bytes = verified.global_node_signature.clone();
+                                        if let Ok(pubkey_bytes) = STANDARD.decode(pubkey_str) {
+                                            if pubkey_bytes.len() == 32 && sig_bytes.len() == 64 {
+                                                let mut pk_array = [0u8; 32];
+                                                pk_array.copy_from_slice(&pubkey_bytes);
+                                                let mut sig_array = [0u8; 64];
+                                                sig_array.copy_from_slice(&sig_bytes);
+
+                                                if let Ok(pk) =
+                                                    ed25519_dalek::VerifyingKey::from_bytes(
+                                                        &pk_array,
+                                                    )
+                                                {
+                                                    let sig = ed25519_dalek::Signature::from_bytes(
+                                                        &sig_array,
+                                                    );
+                                                    if pk.verify(sign_data.as_bytes(), &sig).is_ok()
+                                                    {
+                                                        results.push(verified);
+                                                        continue;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            tracing::trace!(
+                                "VerifiedUpstream signature verification failed for {} from global node {}",
+                                site,
+                                verified.global_node_id
+                            );
+                            continue;
+                        }
                         results.push(verified);
                     }
                 }

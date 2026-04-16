@@ -340,8 +340,9 @@ impl NodeIdentityConfig {
         }
 
         let mut key = [0u8; 32];
-        use rand::RngCore;
-        rand::rng().fill_bytes(&mut key);
+        use rand::TryRngCore;
+        let mut rng = rand::rngs::OsRng;
+        rng.try_fill_bytes(&mut key).expect("RNG failure");
         self.private_key = Some(key.to_vec());
         self.public_key = Some(derive_node_id_hash(&key));
         self.node_id = Some(derive_node_id(&key));

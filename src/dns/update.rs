@@ -453,32 +453,66 @@ impl DynamicUpdateHandler {
     }
 
     fn check_prerequisite(&self, zone: &Zone, prereq: &UpdatePrerequisite) -> Result<bool, String> {
+        let records = zone
+            .records
+            .get(&(prereq.name.clone(), RecordType::from(prereq.rtype)));
+
         match prereq.condition {
             PrerequisiteCondition::Exists => {
-                let records = zone
-                    .records
-                    .get(&(prereq.name.clone(), RecordType::from(prereq.rtype)));
-                Ok(records.is_some_and(|r| !r.is_empty()))
+                if !records.is_none_or(|r| r.is_empty()) {
+                    return Ok(false);
+                }
+                if !prereq.rdata.is_empty() {
+                    let record_values: Vec<String> = records
+                        .as_ref()
+                        .unwrap()
+                        .iter()
+                        .map(|r| r.value.clone())
+                        .collect();
+                    let has_matching_rdata = record_values.iter().any(|v| {
+                        let encoded = Self::encode_rdata_normalized(v);
+                        encoded == prereq.rdata
+                    });
+                    Ok(has_matching_rdata)
+                } else {
+                    Ok(true)
+                }
             }
-            PrerequisiteCondition::NotExists => {
-                let records = zone
-                    .records
-                    .get(&(prereq.name.clone(), RecordType::from(prereq.rtype)));
-                Ok(records.is_none_or(|r| r.is_empty()))
-            }
+            PrerequisiteCondition::NotExists => Ok(records.is_none_or(|r| r.is_empty())),
             PrerequisiteCondition::ExistsRRset => {
-                let records = zone
-                    .records
-                    .get(&(prereq.name.clone(), RecordType::from(prereq.rtype)));
-                Ok(records.is_some_and(|r| !r.is_empty()))
+                if !records.is_none_or(|r| r.is_empty()) {
+                    return Ok(false);
+                }
+                if !prereq.rdata.is_empty() {
+                    let record_values: Vec<String> = records
+                        .as_ref()
+                        .unwrap()
+                        .iter()
+                        .map(|r| r.value.clone())
+                        .collect();
+                    let has_matching_rdata = record_values.iter().any(|v| {
+                        let encoded = Self::encode_rdata_normalized(v);
+                        encoded == prereq.rdata
+                    });
+                    Ok(has_matching_rdata)
+                } else {
+                    Ok(true)
+                }
             }
-            PrerequisiteCondition::NotExistsRRset => {
-                let records = zone
-                    .records
-                    .get(&(prereq.name.clone(), RecordType::from(prereq.rtype)));
-                Ok(records.is_none_or(|r| r.is_empty()))
-            }
+            PrerequisiteCondition::NotExistsRRset => Ok(records.is_none_or(|r| r.is_empty())),
         }
+    }
+
+    fn encode_rdata_normalized(value: &str) -> Vec<u8> {
+        let mut encoded = Vec::new();
+        for part in value.split_whitespace() {
+            encoded.extend_from_slice(part.as_bytes());
+            encoded.push(b' ');
+        }
+        if !encoded.is_empty() {
+            encoded.pop();
+        }
+        encoded
     }
 
     fn build_response(&self, query: &[u8], rcode: u8) -> Vec<u8> {

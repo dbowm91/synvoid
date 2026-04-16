@@ -1361,3 +1361,365 @@ fn test_dht_key_privileged_vs_public() {
     assert!(!tier_key.is_public(), "TierKey should not be public");
     assert!(tier_key.is_privileged(), "TierKey should be privileged");
 }
+
+// ── ThreatIntel DHT Integration Tests ────────────────────────────────────
+
+#[test]
+fn test_threat_indicator_key_format() {
+    use maluwaf::mesh::protocol::{ThreatSeverity, ThreatType};
+
+    let ip = "192.168.1.100";
+    let threat_type = ThreatType::IpBlock;
+
+    let key = DhtKey::threat_indicator(ip, &format!("{:?}", threat_type));
+    assert_eq!(key.as_str(), "threat_indicator:192.168.1.100:IpBlock");
+
+    let key = DhtKey::threat_indicator(ip, &format!("{:?}", ThreatType::AsnBlock));
+    assert_eq!(key.as_str(), "threat_indicator:192.168.1.100:AsnBlock");
+
+    let key = DhtKey::threat_indicator(ip, &format!("{:?}", ThreatType::DomainBlock));
+    assert_eq!(key.as_str(), "threat_indicator:192.168.1.100:DomainBlock");
+}
+
+#[test]
+fn test_threat_indicator_key_parsing() {
+    let key = DhtKey::from_str("threat_indicator:10.0.0.1:IpBlock");
+    assert!(matches!(key, DhtKey::ThreatIndicator(_, _)));
+    if let DhtKey::ThreatIndicator(id, tt) = key {
+        assert_eq!(id, "10.0.0.1");
+        assert_eq!(tt, "IpBlock");
+    }
+
+    let key = DhtKey::from_str("threat_indicator:192.168.1.100:RateLimitViolation");
+    assert!(matches!(key, DhtKey::ThreatIndicator(_, _)));
+    if let DhtKey::ThreatIndicator(id, tt) = key {
+        assert_eq!(id, "192.168.1.100");
+        assert_eq!(tt, "RateLimitViolation");
+    }
+}
+
+#[test]
+fn test_threat_indicator_key_with_ip_variants() {
+    let ipv6 = "2001:db8::1";
+    let key = DhtKey::threat_indicator(ipv6, "IpBlock");
+    assert_eq!(key.as_str(), "threat_indicator:2001:db8::1:IpBlock");
+
+    let key = DhtKey::from_str("threat_indicator:2001:db8::1:IpBlock");
+    assert!(matches!(key, DhtKey::ThreatIndicator(_, _)));
+}
+
+#[test]
+fn test_threat_indicator_record_signature_format() {
+    use base64::Engine;
+    use maluwaf::mesh::dht::signed::RecordSigner;
+
+    let signer = RecordSigner::new(Some([0x42u8; 32]));
+    let verifying_key = signer.get_verifying_key();
+    assert!(verifying_key.is_some());
+
+    let content = format!(
+        "{}:{}:{}:{}:{}",
+        "192.168.1.100", 0u8, 3u8, 1234567890u64, "node-global-1"
+    );
+
+    let signature = signer.sign(&content);
+    assert!(signature.is_some());
+
+    let sig_bytes = signature.unwrap();
+    let encoded = base64::engine::general_purpose::STANDARD.encode(&sig_bytes);
+    assert!(!encoded.is_empty());
+
+    let decoded = base64::engine::general_purpose::STANDARD.decode(&encoded);
+    assert!(decoded.is_ok());
+    assert_eq!(decoded.unwrap(), sig_bytes);
+}
+
+#[test]
+fn test_threat_indicator_signed_record_roundtrip() {
+    use base64::Engine;
+    use maluwaf::mesh::protocol::{ThreatIndicator, ThreatSeverity, ThreatType};
+
+    let signer = RecordSigner::new(Some([0xABu8; 32]));
+    let verifying_key = signer.get_verifying_key().unwrap();
+
+    let indicator = ThreatIndicator {
+        threat_type: ThreatType::IpBlock,
+        indicator_value: "192.168.1.100".to_string(),
+        severity: ThreatSeverity::High,
+        reason: "brute force attack".to_string(),
+        ttl_seconds: 3600,
+        source_node_id: "global-node-1".to_string(),
+        timestamp: 1234567890,
+        site_scope: "global".to_string(),
+        rate_limit_requests: Some(100),
+        rate_limit_window_secs: Some(60),
+        suspicious_pattern: Some("rapid_login".to_string()),
+        signature: Vec::new(),
+        signer_public_key: None,
+    };
+
+    let content = format!(
+        "{}:{}:{}:{}:{}",
+        indicator.indicator_value,
+        indicator.threat_type as u8,
+        indicator.severity as u8,
+        indicator.timestamp,
+        indicator.source_node_id
+    );
+
+    let signature = signer.sign(&content).unwrap();
+    let pk_base64 = base64::engine::general_purpose::STANDARD.encode(verifying_key);
+
+    let value = serde_json::json!({
+        "indicator_value": indicator.indicator_value,
+        "threat_type": indicator.threat_type as u8,
+        "severity": indicator.severity as u8,
+        "reason": indicator.reason,
+        "ttl_seconds": indicator.ttl_seconds,
+        "source_node_id": indicator.source_node_id,
+        "timestamp": indicator.timestamp,
+        "site_scope": indicator.site_scope,
+        "rate_limit_requests": indicator.rate_limit_requests,
+        "rate_limit_window_secs": indicator.rate_limit_window_secs,
+        "suspicious_pattern": indicator.suspicious_pattern,
+        "signature": base64::engine::general_purpose::STANDARD.encode(&signature),
+        "signer_public_key": pk_base64,
+    });
+
+    let bytes = serde_json::to_vec(&value).unwrap();
+    assert!(!bytes.is_empty());
+
+    let parsed: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(parsed["indicator_value"], "192.168.1.100");
+    assert_eq!(parsed["threat_type"], 0);
+    assert_eq!(parsed["severity"], 3);
+}
+
+#[test]
+fn test_threat_indicator_store_and_retrieve() {
+    use base64::Engine;
+    use maluwaf::mesh::dht::store::DhtRecordStore;
+    use maluwaf::mesh::protocol::{ThreatSeverity, ThreatType};
+
+    let store = DhtRecordStore::new();
+
+    let ip = "10.0.0.50";
+    let threat_type = ThreatType::IpBlock;
+    let key = DhtKey::threat_indicator(ip, &format!("{:?}", threat_type));
+    let key_str = key.as_str();
+
+    let indicator_value = serde_json::json!({
+        "indicator_value": ip,
+        "threat_type": threat_type as u8,
+        "severity": ThreatSeverity::Medium as u8,
+        "reason": "port scan",
+        "ttl_seconds": 1800,
+        "source_node_id": "edge-node-1",
+        "timestamp": 1234567890u64,
+        "site_scope": "global",
+        "rate_limit_requests": null,
+        "rate_limit_window_secs": null,
+        "suspicious_pattern": null,
+        "signature": "",
+        "signer_public_key": null::<String>,
+    });
+
+    let bytes = serde_json::to_vec(&indicator_value).unwrap();
+    let record = DhtRecord::new(key_str.to_string(), bytes, Some("edge-node-1".to_string()));
+    store.put(record);
+
+    let retrieved = store.get(key_str);
+    assert!(retrieved.is_some());
+
+    let retrieved_value: serde_json::Value =
+        serde_json::from_slice(&retrieved.unwrap().value).unwrap();
+    assert_eq!(retrieved_value["indicator_value"], "10.0.0.50");
+    assert_eq!(retrieved_value["threat_type"], 0);
+}
+
+#[test]
+fn test_threat_indicator_prefix_search() {
+    use maluwaf::mesh::dht::store::DhtRecordStore;
+    use maluwaf::mesh::protocol::ThreatType;
+
+    let store = DhtRecordStore::new();
+
+    store.put(DhtRecord::new(
+        "threat_indicator:192.168.1.100:IpBlock".to_string(),
+        b"value1".to_vec(),
+        None,
+    ));
+    store.put(DhtRecord::new(
+        "threat_indicator:192.168.1.101:IpBlock".to_string(),
+        b"value2".to_vec(),
+        None,
+    ));
+    store.put(DhtRecord::new(
+        "threat_indicator:10.0.0.1:AsnBlock".to_string(),
+        b"value3".to_vec(),
+        None,
+    ));
+    store.put(DhtRecord::new(
+        "upstream:api.example.com".to_string(),
+        b"not_threat".to_vec(),
+        None,
+    ));
+
+    let threat_records = store.get_by_prefix("threat_indicator:");
+    assert_eq!(threat_records.len(), 3);
+
+    let ip_block_records: Vec<_> = threat_records
+        .iter()
+        .filter(|r| r.key.contains("IpBlock"))
+        .collect();
+    assert_eq!(ip_block_records.len(), 2);
+
+    let asn_records: Vec<_> = threat_records
+        .iter()
+        .filter(|r| r.key.contains("AsnBlock"))
+        .collect();
+    assert_eq!(asn_records.len(), 1);
+}
+
+#[test]
+fn test_threat_indicator_composite_key_uniqueness() {
+    use maluwaf::mesh::protocol::ThreatType;
+
+    let ip = "192.168.1.100";
+
+    let key_ip_block = DhtKey::threat_indicator(ip, &format!("{:?}", ThreatType::IpBlock));
+    let key_ip_throttle = DhtKey::threat_indicator(ip, &format!("{:?}", ThreatType::IpThrottle));
+    let key_asn_block = DhtKey::threat_indicator(ip, &format!("{:?}", ThreatType::AsnBlock));
+
+    assert_ne!(
+        key_ip_block.as_str(),
+        key_ip_throttle.as_str(),
+        "Different threat types for same IP should produce different keys"
+    );
+    assert_ne!(
+        key_ip_block.as_str(),
+        key_asn_block.as_str(),
+        "Different threat types for same IP should produce different keys"
+    );
+    assert_ne!(
+        key_ip_throttle.as_str(),
+        key_asn_block.as_str(),
+        "Different threat types for same IP should produce different keys"
+    );
+
+    assert_eq!(
+        key_ip_block.as_str(),
+        "threat_indicator:192.168.1.100:IpBlock"
+    );
+    assert_eq!(
+        key_ip_throttle.as_str(),
+        "threat_indicator:192.168.1.100:IpThrottle"
+    );
+    assert_eq!(
+        key_asn_block.as_str(),
+        "threat_indicator:192.168.1.100:AsnBlock"
+    );
+}
+
+#[test]
+fn test_threat_indicator_signature_verification_flow() {
+    use base64::Engine;
+    use maluwaf::mesh::dht::signed::RecordSigner;
+
+    let signer = RecordSigner::new(Some([0x99u8; 32]));
+    let verifying_key = signer.get_verifying_key().unwrap();
+    let pk_bytes: [u8; 32] = verifying_key;
+
+    let content = format!(
+        "{}:{}:{}:{}:{}",
+        "203.0.113.50", 0u8, 2u8, 1234568000u64, "origin-node-1"
+    );
+
+    let signature = signer.sign(&content).unwrap();
+
+    let verifier = RecordSigner::new(Some(pk_bytes));
+    let test_record_content = format!(
+        "{}:{}:{}:{}:{}",
+        "203.0.113.50", 0u8, 2u8, 1234568000u64, "origin-node-1"
+    );
+
+    let mut signed_record = SignedDhtRecord::new(
+        "threat_indicator:203.0.113.50:IpBlock".to_string(),
+        test_record_content.as_bytes().to_vec(),
+        "origin-node-1".to_string(),
+        SignedRecordType::Upstream,
+    );
+    signed_record.signer_public_key = Some(pk_bytes);
+    signed_record.signature = signature.clone();
+
+    assert!(signer.verify(&signed_record));
+
+    let sig_base64 = base64::engine::general_purpose::STANDARD.encode(&signature);
+    let pk_base64 = base64::engine::general_purpose::STANDARD.encode(&pk_bytes);
+
+    let decoded_sig = base64::engine::general_purpose::STANDARD
+        .decode(&sig_base64)
+        .unwrap();
+    let decoded_pk = base64::engine::general_purpose::STANDARD
+        .decode(&pk_base64)
+        .unwrap();
+
+    assert_eq!(decoded_sig, signature);
+    assert_eq!(decoded_pk, pk_bytes.to_vec());
+}
+
+#[test]
+fn test_threat_indicator_different_severity_levels() {
+    use base64::Engine;
+    use maluwaf::mesh::protocol::{ThreatSeverity, ThreatType};
+
+    let severities = [
+        ThreatSeverity::Low,
+        ThreatSeverity::Medium,
+        ThreatSeverity::High,
+        ThreatSeverity::Critical,
+    ];
+
+    for severity in severities {
+        let signer = RecordSigner::new(Some([0x11u8; 32]));
+        let verifying_key = signer.get_verifying_key().unwrap();
+
+        let content = format!(
+            "{}:{}:{}:{}:{}",
+            "192.168.1.1",
+            ThreatType::SuspiciousActivity as u8,
+            severity as u8,
+            1234567890u64,
+            "test-node"
+        );
+
+        let signature = signer.sign(&content).unwrap();
+        let pk_base64 = base64::engine::general_purpose::STANDARD.encode(verifying_key);
+
+        let value = serde_json::json!({
+            "indicator_value": "192.168.1.1",
+            "threat_type": ThreatType::SuspiciousActivity as u8,
+            "severity": severity as u8,
+            "reason": "test",
+            "ttl_seconds": 300,
+            "source_node_id": "test-node",
+            "timestamp": 1234567890u64,
+            "site_scope": "test",
+            "rate_limit_requests": null,
+            "rate_limit_window_secs": null,
+            "suspicious_pattern": null,
+            "signature": base64::engine::general_purpose::STANDARD.encode(&signature),
+            "signer_public_key": pk_base64,
+        });
+
+        let parsed: serde_json::Value =
+            serde_json::from_slice(&serde_json::to_vec(&value).unwrap()).unwrap();
+
+        assert_eq!(
+            parsed["severity"].as_u64().unwrap(),
+            severity as u8,
+            "Severity {:?} should serialize correctly",
+            severity
+        );
+    }
+}

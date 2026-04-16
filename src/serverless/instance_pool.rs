@@ -72,6 +72,7 @@ pub enum InstanceState {
 pub struct InstancePool {
     config: InstancePoolConfig,
     function_definition: FunctionDefinition,
+    runtime: Arc<crate::plugin::WasmRuntime>,
     instances: RwLock<Vec<Arc<ServerlessInstance>>>,
     active_instances: RwLock<HashMap<String, Arc<ServerlessInstance>>>,
     idle_instances: RwLock<Vec<Arc<ServerlessInstance>>>,
@@ -131,9 +132,25 @@ impl ServerlessInstance {
 
 impl InstancePool {
     pub fn new(config: InstancePoolConfig, function_definition: FunctionDefinition) -> Self {
+        let wasm_path = std::path::Path::new(&function_definition.name).with_extension("wasm");
+        let runtime = crate::plugin::WasmPluginManager::new()
+            .load_plugin_with_limits(
+                &wasm_path,
+                crate::plugin::WasmResourceLimits {
+                    max_memory_mb: function_definition.memory_mb.unwrap_or(64),
+                    max_cpu_fuel: function_definition.cpu_fuel.unwrap_or(0),
+                    timeout_seconds: function_definition.timeout_seconds.unwrap_or(30),
+                    max_instances: function_definition.max_instances.unwrap_or(10),
+                    memory_budget_mb: None,
+                    wasi_enabled: false,
+                },
+            )
+            .expect("Failed to load serverless function");
+
         Self {
             config,
             function_definition,
+            runtime,
             instances: RwLock::new(Vec::new()),
             active_instances: RwLock::new(HashMap::new()),
             idle_instances: RwLock::new(Vec::new()),
@@ -165,24 +182,10 @@ impl InstancePool {
     }
 
     fn spawn_instance(&self, id: String) -> Result<Arc<ServerlessInstance>, InstancePoolError> {
-        let runtime = crate::plugin::WasmPluginManager::new()
-            .load_plugin_with_limits(
-                std::path::Path::new(&self.function_definition.path),
-                crate::plugin::WasmResourceLimits {
-                    max_memory_mb: self.function_definition.memory_mb.unwrap_or(64),
-                    max_cpu_fuel: self.function_definition.cpu_fuel.unwrap_or(0),
-                    timeout_seconds: self.function_definition.timeout_seconds.unwrap_or(30),
-                    max_instances: 1,
-                    memory_budget_mb: None,
-                    wasi_enabled: false,
-                },
-            )
-            .map_err(InstancePoolError::InstanceCreationFailed)?;
-
         let instance = Arc::new(ServerlessInstance::new(
             id,
             self.function_definition.name.clone(),
-            runtime,
+            self.runtime.clone(),
         ));
 
         Ok(instance)

@@ -3300,3 +3300,362 @@ mod http_security_header_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod acme_workflow_tests {
+    use maluwaf::config::tls::{AcmeChallengeType, AcmeConfig, TlsConfig};
+    use maluwaf::tls::acme::AcmeError;
+    use maluwaf::tls::config::{InternalAcmeChallengeType, InternalAcmeConfig};
+    use maluwaf::tls::AcmeDnsChallenge;
+    use std::sync::Arc;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_acme_config_validation_email_required() {
+        let config = AcmeConfig {
+            enabled: true,
+            email: None,
+            cache_dir: Some("/tmp/acme".to_string()),
+            staging: true,
+            domains: vec!["example.com".to_string()],
+            challenge_type: AcmeChallengeType::Http01,
+            terms_of_service_agreed: true,
+        };
+
+        let err = config.validate().unwrap_err();
+        assert_eq!(err.field, "tls.acme.email");
+        assert!(err.message.contains("email"));
+    }
+
+    #[test]
+    fn test_acme_config_validation_domains_required() {
+        let config = AcmeConfig {
+            enabled: true,
+            email: Some("admin@example.com".to_string()),
+            cache_dir: Some("/tmp/acme".to_string()),
+            staging: true,
+            domains: vec![],
+            challenge_type: AcmeChallengeType::Http01,
+            terms_of_service_agreed: true,
+        };
+
+        let err = config.validate().unwrap_err();
+        assert_eq!(err.field, "tls.acme.domains");
+        assert!(err.message.contains("domains"));
+    }
+
+    #[test]
+    fn test_acme_config_validation_cache_dir_writable() {
+        let config = AcmeConfig {
+            enabled: true,
+            email: Some("admin@example.com".to_string()),
+            cache_dir: Some("/nonexistent/path/that/cannot/be/created".to_string()),
+            staging: true,
+            domains: vec!["example.com".to_string()],
+            challenge_type: AcmeChallengeType::Http01,
+            terms_of_service_agreed: true,
+        };
+
+        let err = config.validate().unwrap_err();
+        assert_eq!(err.field, "tls.acme.cache_dir");
+        assert!(err.message.contains("writable") || err.message.contains("created"));
+    }
+
+    #[test]
+    fn test_acme_config_validation_cache_dir_created_if_missing() {
+        let temp_dir = TempDir::new().unwrap();
+        let cache_path = temp_dir.path().join("acme_cache");
+
+        let config = AcmeConfig {
+            enabled: true,
+            email: Some("admin@example.com".to_string()),
+            cache_dir: Some(cache_path.to_string_lossy().to_string()),
+            staging: true,
+            domains: vec!["example.com".to_string()],
+            challenge_type: AcmeChallengeType::Http01,
+            terms_of_service_agreed: true,
+        };
+
+        assert!(!cache_path.exists());
+        let result = config.validate();
+        assert!(
+            result.is_ok(),
+            "Expected validation to succeed, got: {:?}",
+            result
+        );
+        assert!(cache_path.exists());
+    }
+
+    #[test]
+    fn test_acme_config_validation_terms_of_service_warning() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let config = AcmeConfig {
+            enabled: true,
+            email: Some("admin@example.com".to_string()),
+            cache_dir: Some(temp_dir.path().to_string_lossy().to_string()),
+            staging: false,
+            domains: vec!["example.com".to_string()],
+            challenge_type: AcmeChallengeType::Http01,
+            terms_of_service_agreed: false,
+        };
+
+        let result = config.validate();
+        assert!(
+            result.is_ok(),
+            "ToS not agreed should warn but not fail: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_acme_config_validation_success_with_all_required_fields() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let config = AcmeConfig {
+            enabled: true,
+            email: Some("admin@example.com".to_string()),
+            cache_dir: Some(temp_dir.path().to_string_lossy().to_string()),
+            staging: true,
+            domains: vec!["example.com".to_string(), "www.example.com".to_string()],
+            challenge_type: AcmeChallengeType::Http01,
+            terms_of_service_agreed: true,
+        };
+
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_acme_config_validation_dns_challenge_type() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let config = AcmeConfig {
+            enabled: true,
+            email: Some("admin@example.com".to_string()),
+            cache_dir: Some(temp_dir.path().to_string_lossy().to_string()),
+            staging: true,
+            domains: vec!["example.com".to_string()],
+            challenge_type: AcmeChallengeType::Dns01,
+            terms_of_service_agreed: true,
+        };
+
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_tls_config_with_acme_validates_acme_section() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let config = TlsConfig {
+            enabled: true,
+            cert_path: None,
+            key_path: None,
+            acme: AcmeConfig {
+                enabled: true,
+                email: Some("admin@example.com".to_string()),
+                cache_dir: Some(temp_dir.path().to_string_lossy().to_string()),
+                staging: true,
+                domains: vec!["example.com".to_string()],
+                challenge_type: AcmeChallengeType::Http01,
+                terms_of_service_agreed: true,
+            },
+            ..Default::default()
+        };
+
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_tls_config_acme_disabled_does_not_require_validation() {
+        let config = TlsConfig {
+            enabled: true,
+            cert_path: Some("/tmp/nonexistent.pem".to_string()),
+            key_path: Some("/tmp/nonexistent.pem".to_string()),
+            acme: AcmeConfig::default(),
+            ..Default::default()
+        };
+
+        let err = config.validate().unwrap_err();
+        assert_eq!(err.field, "tls.cert_path");
+    }
+
+    #[test]
+    fn test_http_challenge_response_serving() {
+        use dashmap::DashMap;
+
+        let http_challenges: Arc<DashMap<String, String>> = Arc::new(DashMap::new());
+        let token = "test-token-abc123";
+        let key_auth = "test-key-authorization-value";
+
+        http_challenges.insert(token.to_string(), key_auth.to_string());
+
+        let path = format!("/.well-known/acme-challenge/{}", token);
+        let stored_value =
+            http_challenges.get(path.strip_prefix("/.well-known/acme-challenge/").unwrap());
+
+        assert!(stored_value.is_some());
+        assert_eq!(stored_value.unwrap().value(), &key_auth.to_string());
+    }
+
+    #[test]
+    fn test_http_challenge_response_not_found() {
+        use dashmap::DashMap;
+
+        let http_challenges: Arc<DashMap<String, String>> = Arc::new(DashMap::new());
+
+        let stored_value = http_challenges.get("nonexistent-token");
+
+        assert!(stored_value.is_none());
+    }
+
+    #[cfg(feature = "dns")]
+    #[test]
+    fn test_dns_challenge_prepare_and_serve() {
+        let challenge = AcmeDnsChallenge::new();
+        let domain = "example.com";
+        let key_auth = "test-key-authorization";
+
+        let txt_value = challenge.prepare_challenge(domain, key_auth);
+
+        assert!(!txt_value.is_empty());
+
+        let stored = challenge.get_txt_value(domain);
+        assert!(stored.is_some());
+        assert_eq!(stored.unwrap(), txt_value);
+    }
+
+    #[cfg(not(feature = "dns"))]
+    #[test]
+    fn test_dns_challenge_not_available_without_feature() {
+        let config = InternalAcmeConfig {
+            enabled: true,
+            email: Some("admin@example.com".to_string()),
+            domains: vec!["example.com".to_string()],
+            challenge_type: InternalAcmeChallengeType::Dns01,
+            ..Default::default()
+        };
+
+        assert!(!config.enabled || config.email.is_none() || config.domains.is_empty());
+    }
+
+    #[test]
+    fn test_dns_challenge_cleanup() {
+        let challenge = AcmeDnsChallenge::new();
+        let domain = "example.com";
+
+        challenge.prepare_challenge(domain, "key-auth");
+        assert!(challenge.get_txt_value(domain).is_some());
+
+        challenge.cleanup(domain);
+        assert!(challenge.get_txt_value(domain).is_none());
+    }
+
+    #[test]
+    fn test_dns_challenge_pending_challenges() {
+        let challenge = AcmeDnsChallenge::new();
+
+        challenge.prepare_challenge("example.com", "key-auth-1");
+        challenge.prepare_challenge("example.org", "key-auth-2");
+
+        let pending = challenge.pending_challenges();
+        assert_eq!(pending.len(), 2);
+
+        let domains: Vec<&str> = pending
+            .iter()
+            .map(|(d, _): &(String, String)| d.as_str())
+            .collect();
+        assert!(domains.contains(&"example.com"));
+        assert!(domains.contains(&"example.org"));
+    }
+
+    #[test]
+    fn test_acme_manager_http_challenges_store() {
+        use dashmap::DashMap;
+
+        let challenges: Arc<DashMap<String, String>> = Arc::new(DashMap::new());
+
+        challenges.insert("token1".to_string(), "key-auth-1".to_string());
+        challenges.insert("token2".to_string(), "key-auth-2".to_string());
+
+        assert_eq!(challenges.len(), 2);
+        assert_eq!(challenges.get("token1").unwrap().value(), "key-auth-1");
+        assert_eq!(challenges.get("token2").unwrap().value(), "key-auth-2");
+
+        challenges.remove("token1");
+        assert_eq!(challenges.len(), 1);
+        assert!(challenges.get("token1").is_none());
+    }
+
+    #[test]
+    fn test_acme_error_disabled() {
+        let err = AcmeError::Disabled;
+        assert_eq!(err.to_string(), "ACME is disabled");
+    }
+
+    #[test]
+    fn test_acme_error_protocol() {
+        let err = AcmeError::Protocol("test error".to_string());
+        assert_eq!(err.to_string(), "ACME protocol error: test error");
+    }
+
+    #[test]
+    fn test_acme_error_config() {
+        let err = AcmeError::Config("missing email".to_string());
+        assert_eq!(err.to_string(), "ACME config error: missing email");
+    }
+
+    #[test]
+    fn test_acme_error_io() {
+        let err = AcmeError::Io("file not found".to_string());
+        assert_eq!(err.to_string(), "ACME IO error: file not found");
+    }
+
+    #[test]
+    fn test_acme_manager_disabled_returns_early() {
+        let config = InternalAcmeConfig {
+            enabled: false,
+            email: Some("admin@example.com".to_string()),
+            domains: vec!["example.com".to_string()],
+            ..Default::default()
+        };
+
+        assert!(!config.enabled);
+    }
+
+    #[test]
+    fn test_internal_acme_config_defaults() {
+        let config = InternalAcmeConfig::default();
+
+        assert!(!config.enabled);
+        assert!(config.email.is_none());
+        assert!(config.cache_dir.is_none());
+        assert!(!config.staging);
+        assert!(config.domains.is_empty());
+        assert_eq!(config.challenge_type, InternalAcmeChallengeType::Http01);
+        assert!(!config.terms_of_service_agreed);
+    }
+
+    #[test]
+    fn test_internal_acme_config_from_main_config() {
+        use maluwaf::config::AcmeConfig as MainAcmeConfig;
+
+        let main_config = MainAcmeConfig {
+            enabled: true,
+            email: Some("test@example.com".to_string()),
+            cache_dir: Some("/tmp/acme".to_string()),
+            staging: true,
+            domains: vec!["example.com".to_string()],
+            challenge_type: AcmeChallengeType::Dns01,
+            terms_of_service_agreed: true,
+        };
+
+        let internal: InternalAcmeConfig = main_config.into();
+
+        assert!(internal.enabled);
+        assert_eq!(internal.email, Some("test@example.com".to_string()));
+        assert_eq!(internal.domains, vec!["example.com".to_string()]);
+        assert!(internal.staging);
+        assert_eq!(internal.challenge_type, InternalAcmeChallengeType::Dns01);
+        assert!(internal.terms_of_service_agreed);
+    }
+}

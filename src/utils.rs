@@ -436,7 +436,16 @@ pub fn current_timestamp() -> u64 {
     safe_unix_timestamp()
 }
 
+use ahash::AHashMap;
 use std::net::{IpAddr, SocketAddr};
+
+pub type HotHashMap<K, V> = AHashMap<K, V>;
+pub type HotHashSet<T> = std::collections::HashSet<T, ahash::RandomState>;
+
+#[allow(clippy::redundant_pub_crate)]
+pub mod collections {
+    pub use ahash::{AHashMap, AHashSet};
+}
 
 pub fn parse_host_port(host: &str, port: u16) -> Result<SocketAddr, String> {
     if host.starts_with('[') {
@@ -479,19 +488,38 @@ fn hash_ipv6(ipv6: std::net::Ipv6Addr) -> u64 {
 
 #[inline]
 pub fn ip_to_slot(ip: IpAddr, num_slots: usize) -> usize {
-    match ip {
-        IpAddr::V4(ipv4) => {
-            let octets = ipv4.octets();
-            let hash = ((u32::from(octets[0]) << 24)
-                | (u32::from(octets[1]) << 16)
-                | (u32::from(octets[2]) << 8)
-                | u32::from(octets[3]))
-            .wrapping_mul(0x9e3779b9);
-            (hash >> 16) as usize % num_slots
+    if num_slots.is_power_of_two() {
+        let mask = num_slots - 1;
+        match ip {
+            IpAddr::V4(ipv4) => {
+                let octets = ipv4.octets();
+                let hash = ((u32::from(octets[0]) << 24)
+                    | (u32::from(octets[1]) << 16)
+                    | (u32::from(octets[2]) << 8)
+                    | u32::from(octets[3]))
+                .wrapping_mul(0x9e3779b9);
+                ((hash >> 16) as usize) & mask
+            }
+            IpAddr::V6(ipv6) => {
+                let hash = hash_ipv6(ipv6);
+                ((hash >> 32) as usize) & mask
+            }
         }
-        IpAddr::V6(ipv6) => {
-            let hash = hash_ipv6(ipv6);
-            (hash >> 32) as usize % num_slots
+    } else {
+        match ip {
+            IpAddr::V4(ipv4) => {
+                let octets = ipv4.octets();
+                let hash = ((u32::from(octets[0]) << 24)
+                    | (u32::from(octets[1]) << 16)
+                    | (u32::from(octets[2]) << 8)
+                    | u32::from(octets[3]))
+                .wrapping_mul(0x9e3779b9);
+                (hash >> 16) as usize % num_slots
+            }
+            IpAddr::V6(ipv6) => {
+                let hash = hash_ipv6(ipv6);
+                (hash >> 32) as usize % num_slots
+            }
         }
     }
 }

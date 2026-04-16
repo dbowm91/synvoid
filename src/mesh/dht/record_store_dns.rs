@@ -35,13 +35,19 @@ impl RecordStoreManager {
 
         let mut record = DhtRecord {
             key,
-            value,
+            value: value.clone(),
             timestamp: now,
             sequence_number: 0,
             ttl_seconds,
             source_node_id: self.node_id.clone(),
             signature: Vec::new(),
             signer_public_key: None,
+            content_hash: {
+                use sha2::{Digest, Sha256};
+                let mut hasher = Sha256::new();
+                hasher.update(&value);
+                hasher.finalize().to_vec()
+            },
         };
 
         // Sign the DNS domain registration record with the record signer
@@ -168,15 +174,23 @@ impl RecordStoreManager {
         let dht_key = DhtKey::anycast_node(&node_id);
         let key = dht_key.as_str();
 
+        let content_hash = {
+            use sha2::{Digest, Sha256};
+            let mut hasher = Sha256::new();
+            hasher.update(&value);
+            hasher.finalize().to_vec()
+        };
+
         let mut record = DhtRecord {
             key,
-            value,
+            value: value.clone(),
             timestamp: now,
             sequence_number: 0,
             ttl_seconds: 600,
             source_node_id: self.node_id.clone(),
             signature: Vec::new(),
             signer_public_key: None,
+            content_hash,
         };
 
         // Sign the anycast record with the record signer

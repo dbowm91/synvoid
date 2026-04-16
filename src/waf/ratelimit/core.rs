@@ -1,10 +1,10 @@
-use std::collections::HashSet;
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::Instant;
 
 use parking_lot::Mutex;
 
+use crate::utils::collections::AHashSet;
 use crate::utils::ip_to_slot;
 use crate::utils::ratelimit::{
     IpRateLimiter, RateLimitResult, RateLimitStats, RateLimitStatsProvider,
@@ -407,7 +407,7 @@ pub struct SlottedIpRateLimiter {
 
     start_instant: Instant,
 
-    dirty_slots: Mutex<HashSet<usize>>,
+    dirty_slots: Mutex<AHashSet<usize>>,
 }
 
 impl SlottedIpRateLimiter {
@@ -421,7 +421,7 @@ impl SlottedIpRateLimiter {
             current_minute: AtomicU64::new(0),
             current_five_min: AtomicU64::new(0),
             start_instant: Instant::now(),
-            dirty_slots: Mutex::new(HashSet::new()),
+            dirty_slots: Mutex::new(AHashSet::default()),
         }
     }
 
