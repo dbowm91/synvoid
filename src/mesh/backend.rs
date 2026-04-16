@@ -60,6 +60,11 @@ pub fn create_record_store(
         access_control,
     ));
 
+    rs.enable_rate_limiting(
+        dht_config.announce_rate_limit_max_requests,
+        dht_config.announce_rate_limit_window_secs,
+    );
+
     if let Some(rm) = routing_manager {
         rs.set_routing_manager(rm);
     }

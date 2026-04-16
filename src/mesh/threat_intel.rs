@@ -1633,7 +1633,7 @@ impl ThreatIntelligenceManager {
             }
         });
 
-        if re_announce_interval_secs > 0 && node_role.is_global() {
+        if re_announce_interval_secs > 0 {
             let threat_intel_reattempt = Arc::new(self.clone());
             let re_announce_interval = Duration::from_secs(re_announce_interval_secs);
             tokio::spawn(async move {

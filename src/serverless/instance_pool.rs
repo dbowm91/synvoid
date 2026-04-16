@@ -78,6 +78,7 @@ pub struct InstancePool {
     idle_instances: RwLock<Vec<Arc<ServerlessInstance>>>,
     last_scale_up: RwLock<Instant>,
     last_scale_down: RwLock<Instant>,
+    shutdown_tx: tokio::sync::watch::Sender<()>,
 }
 
 impl ServerlessInstance {
@@ -156,6 +157,7 @@ impl InstancePool {
             idle_instances: RwLock::new(Vec::new()),
             last_scale_up: RwLock::new(Instant::now()),
             last_scale_down: RwLock::new(Instant::now()),
+            shutdown_tx: tokio::sync::watch::channel(()).0,
         }
     }
 
@@ -343,31 +345,83 @@ impl InstancePool {
     }
 
     pub async fn run_autoscaler(&self) {
+        let mut interval = tokio::time::interval(Duration::from_secs(10));
+        let mut shutdown_rx = self.shutdown_tx.subscribe();
+
         loop {
-            tokio::time::sleep(Duration::from_secs(10)).await;
-
-            let utilization = self.get_utilization();
-
-            if utilization >= self.config.scale_up_threshold {
-                let current = self.instances.read().len();
-                if current < self.config.max_instances {
-                    let to_add = ((current as f64 * 0.5) as usize).max(1);
-                    if let Err(e) = self.scale_up(to_add).await {
-                        tracing::warn!("Autoscaler scale up failed: {}", e);
-                    }
+            tokio::select! {
+                _ = shutdown_rx.changed() => {
+                    tracing::info!("InstancePool autoscaler shutdown signal received");
+                    break;
                 }
-            } else if utilization <= self.config.scale_down_threshold {
-                let current = self.instances.read().len();
-                if current > self.config.min_instances {
-                    let to_remove = ((current as f64 * 0.3) as usize).max(1);
-                    if let Err(e) = self.scale_down(to_remove).await {
-                        tracing::warn!("Autoscaler scale down failed: {}", e);
+                _ = interval.tick() => {
+                    let utilization = self.get_utilization();
+
+                    if utilization >= self.config.scale_up_threshold {
+                        let current = self.instances.read().len();
+                        if current < self.config.max_instances {
+                            let to_add = ((current as f64 * 0.5) as usize).max(1);
+                            if let Err(e) = self.scale_up(to_add).await {
+                                tracing::warn!("Autoscaler scale up failed: {}", e);
+                            }
+                        }
+                    } else if utilization <= self.config.scale_down_threshold {
+                        let current = self.instances.read().len();
+                        if current > self.config.min_instances {
+                            let to_remove = ((current as f64 * 0.3) as usize).max(1);
+                            if let Err(e) = self.scale_down(to_remove).await {
+                                tracing::warn!("Autoscaler scale down failed: {}", e);
+                            }
+                        }
                     }
+
+                    self.evict_idle_instances().await;
                 }
             }
-
-            self.evict_idle_instances().await;
         }
+    }
+
+    pub async fn shutdown(&self, timeout_secs: u64) {
+        let _ = self.shutdown_tx.send(());
+
+        let active_count = self.active_instances.read().len();
+        if active_count > 0 {
+            tracing::info!(
+                "Waiting for {} active instance(s) to complete (timeout: {}s)",
+                active_count,
+                timeout_secs
+            );
+
+            let start = Instant::now();
+            loop {
+                let active = self.active_instances.read().len();
+                if active == 0 {
+                    break;
+                }
+                if start.elapsed().as_secs() >= timeout_secs {
+                    tracing::warn!(
+                        "Shutdown timeout: {} active instance(s) forcibly evicted",
+                        active
+                    );
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        }
+
+        let instances_to_evict: Vec<Arc<ServerlessInstance>> = self.instances.read().iter().cloned().collect();
+        for instance in instances_to_evict {
+            *instance.state.write() = InstanceState::Evicted;
+        }
+
+        self.instances.write().clear();
+        self.idle_instances.write().clear();
+        self.active_instances.write().clear();
+
+        tracing::info!(
+            "InstancePool for '{}' shut down, evicted all instances",
+            self.function_definition.name
+        );
     }
 
     async fn evict_idle_instances(&self) {

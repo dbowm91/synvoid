@@ -20,6 +20,7 @@ use crate::mesh::transports::MeshTransportManager;
 use crate::mesh::yara_rules::YaraRulesManager;
 use crate::platform::fs::PlatformPaths;
 use crate::process::ipc_transport::IpcStream as AsyncIpcStream;
+use crate::plugin::get_global_plugin_manager;
 use crate::process::{check_ports_available, current_timestamp, Message, WorkerId};
 use crate::server::UnifiedServer;
 use crate::upload::UploadValidator;
@@ -352,7 +353,10 @@ pub async fn run_unified_server_worker(
         let config = shared_config.read().await;
         let serverless_config = &config.main.serverless;
         if serverless_config.enabled {
-            let manager = Arc::new(crate::serverless::manager::ServerlessManager::new());
+            let runtime = get_global_plugin_manager().get_wasm_manager();
+            let manager = Arc::new(
+                crate::serverless::manager::ServerlessManager::new().with_runtime(runtime),
+            );
             if let Err(e) = manager.initialize(serverless_config.clone()) {
                 tracing::warn!("Failed to initialize serverless manager: {}", e);
                 None
@@ -374,8 +378,12 @@ pub async fn run_unified_server_worker(
         .with_metrics(metrics.clone())
         .with_ipc(ipc_for_server, worker_id_for_server)
         .with_serverless_manager(
-            serverless_manager
-                .unwrap_or_else(|| Arc::new(crate::serverless::manager::ServerlessManager::new())),
+            serverless_manager.unwrap_or_else(|| {
+                let runtime = get_global_plugin_manager().get_wasm_manager();
+                Arc::new(
+                    crate::serverless::manager::ServerlessManager::new().with_runtime(runtime),
+                )
+            }),
         );
 
     // Wrap in Arc immediately for easier sharing
@@ -1077,11 +1085,13 @@ pub async fn run_unified_server_worker(
     // Wire up port honeypot threat publishing to mesh network
     if let Some(ref runner) = port_honeypot_runner {
         if let Some(ref threat_intel) = _threat_intel_manager {
-            runner.start_mesh_threat_publishing(
-                threat_intel.clone(),
-                30, // publish every 30 seconds
-            );
-            tracing::info!("Port honeypot threat publishing wired to mesh network");
+            if _mesh_transport_manager.is_some() {
+                runner.start_mesh_threat_publishing(
+                    threat_intel.clone(),
+                    30,
+                );
+                tracing::info!("Port honeypot threat publishing wired to mesh network");
+            }
         }
     }
 

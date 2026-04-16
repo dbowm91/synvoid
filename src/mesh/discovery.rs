@@ -96,22 +96,144 @@ impl MeshDiscovery {
     }
 
     async fn bootstrap_from_seeds(&self) -> Result<(), MeshDiscoveryError> {
-        for seed in &self.config.seeds {
-            match self.connect_to_seed(seed).await {
-                Ok(_) => {
-                    tracing::info!("Connected to seed node: {}", seed.address);
-                    return Ok(());
+        const MAX_RETRIES_PER_SEED: u32 = 3;
+        const INITIAL_BACKOFF_MS: u64 = 1000;
+        const MAX_BACKOFF_MS: u64 = 16000;
+
+        if self.config.seeds.is_empty() {
+            tracing::warn!("No seed nodes configured, trying peer-to-peer bootstrap");
+            return self.bootstrap_fallback().await;
+        }
+
+        let mut overall_success = false;
+
+        for (attempt, seed) in self.config.seeds.iter().enumerate() {
+            let mut retry_count = 0;
+            let mut backoff_ms = INITIAL_BACKOFF_MS;
+
+            loop {
+                match self.connect_to_seed(seed).await {
+                    Ok(_) => {
+                        tracing::info!("Connected to seed node: {}", seed.address);
+                        overall_success = true;
+                        break;
+                    }
+                    Err(e) => {
+                        retry_count += 1;
+                        if retry_count >= MAX_RETRIES_PER_SEED {
+                            tracing::warn!(
+                                "Seed {} failed after {} attempts: {}",
+                                seed.address,
+                                MAX_RETRIES_PER_SEED,
+                                e
+                            );
+                            break;
+                        }
+
+                        tracing::debug!(
+                            "Seed {} attempt {} failed: {}. Retrying in {}ms",
+                            seed.address,
+                            retry_count,
+                            e,
+                            backoff_ms
+                        );
+
+                        tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+                        backoff_ms = (backoff_ms * 2).min(MAX_BACKOFF_MS);
+                    }
                 }
-                Err(e) => {
-                    tracing::warn!("Failed to connect to seed {}: {}", seed.address, e);
+            }
+
+            if overall_success {
+                return Ok(());
+            }
+        }
+
+        if overall_success {
+            return Ok(());
+        }
+
+        tracing::warn!(
+            "All {} seed(s) exhausted after {} attempts each, trying fallback bootstrap",
+            self.config.seeds.len(),
+            MAX_RETRIES_PER_SEED
+        );
+
+        self.bootstrap_fallback().await
+    }
+
+    async fn bootstrap_fallback(&self) -> Result<(), MeshDiscoveryError> {
+        if let Err(e) = self.bootstrap_from_cached_peers().await {
+            tracing::warn!("Cached peer bootstrap failed: {}", e);
+        }
+
+        if let Some(record_store) = &self.record_store {
+            if let Err(e) = self.bootstrap_from_dht(record_store).await {
+                tracing::warn!("DHT bootstrap failed: {}", e);
+            }
+        }
+
+        let peers = self.topology.get_all_peers().await;
+        if !peers.is_empty() {
+            tracing::info!(
+                "Bootstrap complete: {} peers available via fallback methods",
+                peers.len()
+            );
+            return Ok(());
+        }
+
+        tracing::warn!("All bootstrap methods exhausted, no peers available");
+        Err(MeshDiscoveryError::NoSeedsAvailable)
+    }
+
+    async fn bootstrap_from_dht(
+        &self,
+        record_store: &Arc<crate::mesh::dht::RecordStoreManager>,
+    ) -> Result<(), MeshDiscoveryError> {
+        let all_records = record_store.get_all_records();
+        let mut global_node_records = all_records
+            .into_iter()
+            .filter(|(key, _)| key.starts_with("global_node:"))
+            .collect::<Vec<_>>();
+
+        if global_node_records.is_empty() {
+            tracing::debug!("No global node records found in DHT for bootstrap");
+            return Ok(());
+        }
+
+        tracing::info!(
+            "Found {} global node record(s) in DHT for bootstrap",
+            global_node_records.len()
+        );
+
+        let mut connected = false;
+        for (key, record) in global_node_records {
+            if let Ok(node_info) = serde_json::from_str::<serde_json::Value>(&record.value) {
+                if let Some(address) = node_info.get("address").and_then(|v| v.as_str()) {
+                    tracing::debug!("Attempting DHT bootstrap via discovered node: {}", address);
+                    match self.try_connect_peer(address).await {
+                        Ok(_) => {
+                            tracing::info!(
+                                "DHT bootstrap success: connected to discovered node {}",
+                                address
+                            );
+                            connected = true;
+                            break;
+                        }
+                        Err(e) => {
+                            tracing::warn!("DHT discovered node {} connection failed: {}", address, e);
+                        }
+                    }
                 }
             }
         }
 
-        tracing::warn!("All seeds failed, trying peer-to-peer bootstrap from cached peers");
-        self.bootstrap_from_cached_peers().await?;
+        if connected {
+            return Ok(());
+        }
 
-        Err(MeshDiscoveryError::NoSeedsAvailable)
+        tracing::debug!("DHT bootstrap could not find reachable peers");
+        Ok(())
     }
 
     async fn bootstrap_from_cached_peers(&self) -> Result<(), MeshDiscoveryError> {

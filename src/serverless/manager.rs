@@ -245,6 +245,16 @@ impl ServerlessManager {
             .map(|c| c.enabled)
             .unwrap_or(false)
     }
+
+    pub async fn shutdown(&self) {
+        let pools = self.pools.read().clone();
+        for (name, pool) in pools {
+            tracing::info!("Shutting down serverless pool: {}", name);
+            pool.shutdown(30).await;
+        }
+        self.pools.write().clear();
+        tracing::info!("ServerlessManager shutdown complete");
+    }
 }
 
 impl Default for ServerlessManager {

@@ -995,6 +995,18 @@ pub struct MeshDhtConfig {
     pub proxy_to_origins: bool,
     #[serde(default = "default_can_host_origins")]
     pub can_host_origins: bool,
+    #[serde(default = "default_announce_rate_limit_max_requests")]
+    pub announce_rate_limit_max_requests: u32,
+    #[serde(default = "default_announce_rate_limit_window_secs")]
+    pub announce_rate_limit_window_secs: u64,
+}
+
+fn default_announce_rate_limit_max_requests() -> u32 {
+    100
+}
+
+fn default_announce_rate_limit_window_secs() -> u64 {
+    60
 }
 
 fn default_convergence_threshold() -> usize {
@@ -1171,6 +1183,8 @@ impl Default for MeshDhtConfig {
             dht_write_enabled: true,
             proxy_to_origins: true,
             can_host_origins: false,
+            announce_rate_limit_max_requests: 100,
+            announce_rate_limit_window_secs: 60,
         }
     }
 }

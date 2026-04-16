@@ -105,7 +105,7 @@ The following vulnerabilities exist in transitive dependencies and are documente
 |---------------|-------|-----|--------|-------|
 | KyberSlash | `pqc_kyber` | RUSTSEC-2023-0079 | No fix | Used by wasm-pow for PoW challenges |
 | ~~Denial of Service~~ | ~~`quinn-proto`~~ | ~~RUSTSEC-2026-0037~~ | **Patched** | Fixed via git patch to 0.11.14 |
-| ~~Shared linear mem unsoundness~~ | ~~`wasmtime`~~ | ~~RUSTSEC-2025-0118~~ | **Patched** | 36.0.6 >= 36.0.3 fix threshold |
+| Winch compiler backend sandbox escape | `wasmtime` | RUSTSEC-2026-0095 | **Patched** | Updated to 42.0.2 |
 
 ### Medium Severity
 
@@ -136,6 +136,12 @@ The following vulnerabilities exist in transitive dependencies and are documente
 - **Patch**: Applied via `[patch.crates-io]` in Cargo.toml
 - **TODO**: Remove patch when quinn 0.11.10+ is released on crates.io
 - **Tracking**: https://github.com/quinn-rs/quinn/releases
+
+### wasmtime (RUSTSEC-2026-0095)
+- **Issue**: Winch compiler backend sandbox escape (CVE-2026-34987)
+- **Severity**: High
+- **Fix**: Updated to `wasmtime 42.0.2`
+- **Status**: Patched in Cargo.toml
 
 ### rustls-pemfile Removal
 - **Issue**: Unmaintained (RUSTSEC-2025-0134)

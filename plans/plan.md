@@ -144,33 +144,33 @@ This document contains all remaining implementation items across the MaluWAF pro
 ### Wave 4: Lower Priority & Feature Work
 *Can be implemented in parallel by multiple agents*
 
-| Item | Priority | Category | Description | Files |
-|------|----------|----------|-------------|-------|
-| **M-D7** | P3 | Mesh/DHT | No DHT announce rate limiting | `src/mesh/dht/record_store_message.rs` |
-| **M-D9** | P2 | Mesh/DHT | Bootstrap only fails-fast on seed connection | `src/mesh/discovery.rs` |
-| **M-D10** | P3 | Mesh/DHT | Routing table sparse bucket refresh may miss peers | `src/mesh/dht/routing/manager.rs` |
-| **W7** | LOW | WASM | No serverless instance pool metrics | `src/serverless/instance_pool.rs` |
-| **W8** | LOW | WASM | Missing serverless invocation metrics | `src/serverless/manager.rs` |
-| **W9** | LOW | WASM | No graceful shutdown for serverless pools | `src/serverless/instance_pool.rs` |
-| **W10** | MEDIUM | WASM | PluginManager and ServerlessManager use separate WASM runtimes | `src/plugin/mod.rs` |
-| **H2** | MEDIUM | Honeypot | Port honeypot re-announce only runs for global nodes | `src/mesh/threat_intel.rs` |
-| **H3** | LOW | Honeypot | Standalone mode calls unnecessary mesh publishing | `src/worker/unified_server.rs` |
-| **T2** | HIGH | Testing | ThreatIntel publication/sync tests | `tests/dht_integration_test.rs` |
-| **T4** | MEDIUM | Testing | WAF detection integration tests | `tests/integration_test.rs` |
-| **P3.1** | MEDIUM | Testing | ProxyCache clone rebuilds host index | `src/proxy_cache/store.rs` |
-| **G1** | HIGH | Testing | Full process tree not tested | `tests/process_spawn_test.rs` |
-| **G2** | HIGH | Testing | Socket handoff not tested | `tests/e2e_process_test.rs` |
-| **G3** | HIGH | Testing | Upgrade/rollback protocol not tested | `tests/upgrade_protocol_test.rs` |
-| **G4** | MEDIUM | Testing | Master IPC loop not tested | `src/master/ipc.rs` |
-| **G5** | MEDIUM | Testing | Static worker not tested | `src/worker/mod.rs` |
-| **G6** | MEDIUM | Testing | Drain protocol not E2E tested | `tests/` |
-| **G7** | LOW | Testing | IpcRateLimiter not tested | `src/process/ipc_rate_limit.rs` |
-| **G8** | LOW | Testing | Windows named pipe path not tested | `src/master/windows.rs` |
-| **O2** | MEDIUM | Code Quality | proxy.rs (1720 lines) too large | `src/proxy.rs` |
-| **O3** | MEDIUM | Code Quality | router.rs::new() is 185 lines | `src/router.rs` |
-| **C2** | CRITICAL | Code Quality | Circular dependency: proxy.rs ↔ waf/mod.rs | `src/proxy.rs`, `src/waf/mod.rs` |
-| **D5** | RECOMMENDED | Documentation | Update SECURITY.md with RUSTSEC-2026-0095 | `SECURITY.md` |
-| **D6** | RECOMMENDED | Documentation | Remove superseded RUSTSEC-2025-0118 | `SECURITY.md` |
+| Item | Priority | Category | Description | Files | Status |
+|------|----------|----------|-------------|-------|--------|
+| **M-D7** | P3 | Mesh/DHT | No DHT announce rate limiting | `src/mesh/dht/record_store_message.rs` | ✅ COMPLETED |
+| **M-D9** | P2 | Mesh/DHT | Bootstrap only fails-fast on seed connection | `src/mesh/discovery.rs` | ✅ COMPLETED |
+| **M-D10** | P3 | Mesh/DHT | Routing table sparse bucket refresh may miss peers | `src/mesh/dht/routing/manager.rs` | ✅ COMPLETED |
+| **W7** | LOW | WASM | No serverless instance pool metrics | `src/serverless/instance_pool.rs` | ✅ COMPLETED |
+| **W8** | LOW | WASM | Missing serverless invocation metrics | `src/serverless/manager.rs` | ✅ COMPLETED |
+| **W9** | LOW | WASM | No graceful shutdown for serverless pools | `src/serverless/instance_pool.rs` | ✅ COMPLETED |
+| **W10** | MEDIUM | WASM | PluginManager and ServerlessManager use separate WASM runtimes | `src/plugin/mod.rs` | ✅ COMPLETED |
+| **H2** | MEDIUM | Honeypot | Port honeypot re-announce only runs for global nodes | `src/mesh/threat_intel.rs` | ✅ COMPLETED |
+| **H3** | LOW | Honeypot | Standalone mode calls unnecessary mesh publishing | `src/worker/unified_server.rs` | ✅ COMPLETED |
+| **T2** | HIGH | Testing | ThreatIntel publication/sync tests | `tests/dht_integration_test.rs` | ⏸️ DEFERRED |
+| **T4** | MEDIUM | Testing | WAF detection integration tests | `tests/integration_test.rs` | ⏸️ DEFERRED |
+| **P3.1** | MEDIUM | Testing | ProxyCache clone rebuilds host index | `src/proxy_cache/store.rs` | ✅ COMPLETED |
+| **G1** | HIGH | Testing | Full process tree not tested | `tests/process_spawn_test.rs` | ⏸️ DEFERRED |
+| **G2** | HIGH | Testing | Socket handoff not tested | `tests/e2e_process_test.rs` | ⏸️ DEFERRED |
+| **G3** | HIGH | Testing | Upgrade/rollback protocol not tested | `tests/upgrade_protocol_test.rs` | ⏸️ DEFERRED |
+| **G4** | MEDIUM | Testing | Master IPC loop not tested | `src/master/ipc.rs` | ⏸️ DEFERRED |
+| **G5** | MEDIUM | Testing | Static worker not tested | `src/worker/mod.rs` | ⏸️ DEFERRED |
+| **G6** | MEDIUM | Testing | Drain protocol not E2E tested | `tests/` | ⏸️ DEFERRED |
+| **G7** | LOW | Testing | IpcRateLimiter not tested | `src/process/ipc_rate_limit.rs` | ⏸️ DEFERRED |
+| **G8** | LOW | Testing | Windows named pipe path not tested | `src/master/windows.rs` | ⏸️ DEFERRED |
+| **O2** | MEDIUM | Code Quality | proxy.rs (1720 lines) too large | `src/proxy.rs` | ⏸️ DEFERRED |
+| **O3** | MEDIUM | Code Quality | router.rs::new() is 185 lines | `src/router.rs` | ⏸️ DEFERRED |
+| **C2** | CRITICAL | Code Quality | Circular dependency: proxy.rs ↔ waf/mod.rs | `src/proxy.rs`, `src/waf/mod.rs` | ⏸️ DEFERRED |
+| **D5** | RECOMMENDED | Documentation | Update SECURITY.md with RUSTSEC-2026-0095 | `SECURITY.md` | ✅ COMPLETED |
+| **D6** | RECOMMENDED | Documentation | Remove superseded RUSTSEC-2025-0118 | `SECURITY.md` | ✅ COMPLETED |
 
 ### Wave 5: Feature Implementation
 *Larger features that can be parallelized*
