@@ -26,6 +26,8 @@ use crate::admin::state::AdminState;
         crate::admin::handlers::serverless::get_function_stats,
         crate::admin::handlers::upstreams::list_upstreams,
         crate::admin::handlers::upstreams::get_site_upstreams,
+        crate::admin::handlers::system::get_master_status,
+        crate::admin::handlers::system::get_system_info,
     ),
     components(
         schemas(
@@ -38,6 +40,9 @@ use crate::admin::state::AdminState;
             crate::admin::handlers::serverless::FunctionStatsResponse,
             crate::admin::handlers::upstreams::UpstreamStatus,
             crate::admin::handlers::upstreams::SiteUpstreams,
+            crate::admin::handlers::system::MasterStatusResponse,
+            crate::admin::handlers::system::MasterMetricsResponse,
+            crate::admin::handlers::system::SystemInfoResponse,
         )
     ),
     tags(
@@ -47,6 +52,7 @@ use crate::admin::state::AdminState;
         (name = "config", description = "Configuration management"),
         (name = "upstreams", description = "Upstream backend management"),
         (name = "logs", description = "Log retrieval"),
+        (name = "system", description = "System and process management"),
         (name = "mesh", description = "Mesh network management"),
         (name = "plugins", description = "Plugin management"),
         (name = "serverless", description = "Serverless function management"),

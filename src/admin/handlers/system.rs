@@ -5,11 +5,12 @@ use axum::{
     Json,
 };
 use serde::Serialize;
+use utoipa::ToSchema;
 use std::sync::Arc;
 
 use super::common::{OptionalAuth, StatusResponse};
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct MasterStatusResponse {
     pub running: bool,
     pub pid: Option<u32>,
@@ -20,7 +21,7 @@ pub struct MasterStatusResponse {
     pub metrics: MasterMetricsResponse,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct MasterMetricsResponse {
     pub total_requests: u64,
     pub blocked: u64,
@@ -32,7 +33,7 @@ pub struct MasterMetricsResponse {
     pub requests_per_second: f64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct SystemInfoResponse {
     pub version: String,
     pub build_timestamp: String,
@@ -41,6 +42,16 @@ pub struct SystemInfoResponse {
     pub running_mode: String,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/system/master",
+    responses(
+        (status = 200, description = "Master process status", body = MasterStatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "system"
+)]
 pub async fn get_master_status(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -67,6 +78,16 @@ pub async fn get_master_status(
     }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/system/info",
+    responses(
+        (status = 200, description = "System information", body = SystemInfoResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "system"
+)]
 pub async fn get_system_info(
     State(_state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
