@@ -113,33 +113,33 @@ This document contains all remaining implementation items across the MaluWAF pro
 ### Wave 3: Medium Priority Improvements
 *Can be implemented in parallel by multiple agents*
 
-| Item | Priority | Category | Description | Files |
-|------|----------|----------|-------------|-------|
-| **P2.1** | MEDIUM | Performance | Shard BlockStore (lock contention) | `src/block_store.rs` |
-| **P2.2** | MEDIUM | Performance | Reduce to_lowercase() allocations | Multiple files |
-| **P2.1** | MEDIUM | Performance | Provider stats cache mutation pattern | `src/mesh/proxy.rs` |
-| **P2.2** | MEDIUM | Performance | Global connection limiter contention | `src/http/server.rs` |
-| **P3** | MEDIUM | Performance | filter_response_headers() allocation overhead | `src/proxy.rs` |
-| **M-D3** | P2 | Mesh/DHT | CapabilityAttestation write not restricted | `src/mesh/dht/mod.rs` |
-| **M-D4** | P2 | Mesh/DHT | DHT announce wrapper signature missing | `src/mesh/dht/record_store_sync.rs` |
-| **M-D5** | P2 | Mesh/DHT | Quorum async tasks accumulate on timeout | `src/mesh/dht/record_store_crud.rs` |
-| **M-D6** | P2 | Mesh/DHT | edge_can_respond_privileged config erosion risk | `src/mesh/dht/routing/manager.rs` |
-| **W3** | MEDIUM | WASM | Instance pool doesn't reuse WasmRuntime | `src/serverless/instance_pool.rs` |
-| **W4** | MEDIUM | WASM | No admin API for serverless | `src/admin/handlers/` |
-| **W5** | MEDIUM | WASM | No health checks for serverless instances | `src/serverless/instance_pool.rs` |
-| **W6** | MEDIUM | WASM | Instance pool limits not enforced | `src/serverless/instance_pool.rs` |
-| **H1** | MEDIUM | Honeypot | TLS honeypot uses wrong blocking function | `src/tls/server.rs` |
-| **H4** | MEDIUM | Honeypot | Signature format mismatch in Threat Intel | `src/mesh/threat_intel.rs` |
-| **T1** | MEDIUM | Testing | WAF detection integration tests missing | `tests/integration_test.rs` |
-| **T5** | MEDIUM | Testing | Benchmarks missing | `benches/` |
-| **T2** | MEDIUM | Testing | Restart delay exponential backoff test | `src/overseer/process.rs` |
-| **E1** | MEDIUM | Edge Transform | DHT key mismatch in MeshProxy (dormant) | `src/mesh/proxy.rs` |
-| **E3** | MEDIUM | Edge Transform | All transforms silently skipped in MeshProxy | `src/mesh/proxy.rs` |
-| **E4** | MEDIUM | Edge Transform | Poisoned image cache key mismatch | `src/mesh/proxy.rs` |
-| **E5** | MEDIUM | Edge Transform | Duplicate transform config publishing code | `src/mesh/transports/manager.rs` |
-| **E6** | MEDIUM | Edge Transform | Dead code - MeshBackend/MeshProxy subsystem | `src/mesh/backend.rs` |
-| **C1** | CRITICAL | Code Quality | Blocking std::thread::sleep in async contexts | `src/worker/mod.rs` |
-| **O1** | HIGH | Code Quality | lib.rs exposes 55+ modules publicly | `src/lib.rs` |
+| Item | Priority | Category | Description | Files | Status |
+|------|----------|----------|-------------|-------|--------|
+| **P2.1** | MEDIUM | Performance | Shard BlockStore (lock contention) | `src/block_store.rs` | 📋 TODO |
+| **P2.2** | MEDIUM | Performance | Reduce to_lowercase() allocations | Multiple files | 📋 TODO |
+| **P2.1** | MEDIUM | Performance | Provider stats cache mutation pattern | `src/mesh/proxy.rs` | 📋 TODO |
+| **P2.2** | MEDIUM | Performance | Global connection limiter contention | `src/http/server.rs` | 📋 TODO |
+| **P3** | MEDIUM | Performance | filter_response_headers() allocation overhead | `src/proxy.rs` | 📋 TODO |
+| **M-D3** | P2 | Mesh/DHT | CapabilityAttestation write not restricted | `src/mesh/dht/mod.rs` | ✅ COMPLETED |
+| **M-D4** | P2 | Mesh/DHT | DHT announce wrapper signature missing | `src/mesh/dht/record_store_sync.rs` | ✅ COMPLETED |
+| **M-D5** | P2 | Mesh/DHT | Quorum async tasks accumulate on timeout | `src/mesh/dht/record_store_crud.rs` | 📋 TODO |
+| **M-D6** | P2 | Mesh/DHT | edge_can_respond_privileged config erosion risk | `src/mesh/dht/routing/manager.rs` | ✅ COMPLETED |
+| **W3** | MEDIUM | WASM | Instance pool doesn't reuse WasmRuntime | `src/serverless/instance_pool.rs` | ✅ COMPLETED |
+| **W4** | MEDIUM | WASM | No admin API for serverless | `src/admin/handlers/` | 📋 TODO |
+| **W5** | MEDIUM | WASM | No health checks for serverless instances | `src/serverless/instance_pool.rs` | 📋 TODO |
+| **W6** | MEDIUM | WASM | Instance pool limits not enforced | `src/serverless/instance_pool.rs` | ✅ COMPLETED |
+| **H1** | MEDIUM | Honeypot | TLS honeypot uses wrong blocking function | `src/tls/server.rs` | ✅ COMPLETED |
+| **H4** | MEDIUM | Honeypot | Signature format mismatch in Threat Intel | `src/mesh/threat_intel.rs` | 📋 TODO |
+| **T1** | MEDIUM | Testing | WAF detection integration tests missing | `tests/integration_test.rs` | 📋 TODO |
+| **T5** | MEDIUM | Testing | Benchmarks missing | `benches/` | 📋 TODO |
+| **T2** | MEDIUM | Testing | Restart delay exponential backoff test | `src/overseer/process.rs` | 📋 TODO |
+| **E1** | MEDIUM | Edge Transform | DHT key mismatch in MeshProxy (dormant) | `src/mesh/proxy.rs` | 📋 TODO |
+| **E3** | MEDIUM | Edge Transform | All transforms silently skipped in MeshProxy | `src/mesh/proxy.rs` | 📋 TODO |
+| **E4** | MEDIUM | Edge Transform | Poisoned image cache key mismatch | `src/mesh/proxy.rs` | 📋 TODO |
+| **E5** | MEDIUM | Edge Transform | Duplicate transform config publishing code | `src/mesh/transports/manager.rs` | 📋 TODO |
+| **E6** | MEDIUM | Edge Transform | Dead code - MeshBackend/MeshProxy subsystem | `src/mesh/backend.rs` | 📋 TODO |
+| **C1** | CRITICAL | Code Quality | Blocking std::thread::sleep in async contexts | `src/worker/mod.rs` | ⏸️ DEFERRED |
+| **O1** | HIGH | Code Quality | lib.rs exposes 55+ modules publicly | `src/lib.rs` | 📋 TODO |
 
 ### Wave 4: Lower Priority & Feature Work
 *Can be implemented in parallel by multiple agents*
