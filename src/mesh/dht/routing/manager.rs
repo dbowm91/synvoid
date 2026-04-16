@@ -117,6 +117,12 @@ impl DhtRoutingManager {
     }
 
     pub fn can_respond_to_privileged(&self) -> bool {
+        if self.edge_can_respond_privileged && !self.is_global {
+            tracing::warn!(
+                "Node is configured with edge_can_respond_privileged=true but is not a global node. \
+                This allows edge node to respond to privileged DHT queries, effectively making it global for read operations."
+            );
+        }
         self.is_global || self.edge_can_respond_privileged
     }
 
