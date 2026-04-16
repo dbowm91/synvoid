@@ -503,6 +503,16 @@ All duplicate `current_timestamp()` definitions have been consolidated into `src
 | DHT store older record overwrite | `src/mesh/dht/record_store_crud.rs:249-270` | Timestamp-based conflict resolution before insert |
 | Quorum manager not wired | `src/mesh/backend.rs`, `src/mesh/dht/record_store_message.rs` | QuorumManager created for global nodes, handlers added |
 | Geo self-reported not verified | `src/dns/mesh_sync/registration.rs` | Geo derived from IP via GeoIP, self-reported geo ignored |
+| ML-KEM key mismatch | `src/mesh/config_identity.rs`, `pqc/src/keys.rs` | Public key derived from loaded secret key, not generated |
+| ML-DSA key mismatch | `src/mesh/config_identity.rs`, `pqc/src/dsa.rs` | Verifying key derived from loaded signing key |
+| Threat intel unsigned records | `src/mesh/threat_intel.rs:1233-1242` | sync_from_dht() skips records without valid signatures |
+| Threat intel publish no signer | `src/mesh/threat_intel.rs:650-654` | Refuses to publish if no signer configured |
+| wasmtime RUSTSEC-2026-0095 | `Cargo.toml` | Updated wasmtime to 42.0.2 |
+| Mesh QUIC proxy transforms | `src/mesh/transport_peer.rs:2483-2674` | apply_response_transforms() for minification |
+| Connection limiter stack overflow | `src/waf/flood/connection_limiter.rs:14-15,30-37` | Heap allocation via vec!().into_boxed_slice() |
+| Off-by-one restart backoff | `src/overseer/process.rs:1657` | Changed count < 6 instead of <= 6 |
+| Edge PoW revocation bypass | `src/mesh/peer_auth.rs:120-131` | Revocation check before PoW handling |
+| DnsRecord not privileged | `src/mesh/dht/keys.rs:496` | DnsRecord added to is_privileged() check |
 
 ## Performance Hot Paths
 
@@ -745,7 +755,7 @@ The consolidated implementation plan contains all remaining items organized into
 
 | Wave | Focus | Priority Items |
 |------|-------|----------------|
-| 1 | Critical Security & Test Fixes | S-1, S-3, S-4, D1, E2, T1, T2, M-D1, M-D2 |
+| 1 | Critical Security & Test Fixes | ✅ COMPLETED - S-1, S-3, S-4, D1, E2, T1, T2, M-D1, M-D2 |
 | 2 | High Priority Security & Performance | S-5 through S-10, P1.1-P1.3, W1-W2 |
 | 3 | Medium Priority Improvements | M-D3-M-D6, W3-W6, H1, H4, C1, O1 |
 | 4 | Lower Priority & Feature Work | M-D7-M-D10, W7-W10, G1-G8, O2-O3, D5-D6 |

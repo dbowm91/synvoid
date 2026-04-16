@@ -24,7 +24,7 @@ This document contains all remaining implementation items across the MaluWAF pro
 
 | Category | Items | Highest Priority |
 |----------|-------|------------------|
-| Security | S-1, S-3, S-4, S-5, S-6, S-7, S-8, S-9, S-10 | S-1 (ML-KEM key mismatch) |
+| Security | S-3, S-4, S-5, S-6, S-7, S-8, S-9, S-10 | S-5 (VerifiedUpstream signature) |
 | Dependency | D1, D5, D6 | D1 (wasmtime 42.0.2) |
 | Performance | P1.1, P1.2, P1.3, P2.1, P2.2, P3 | P1.1 (AHashMap hot paths) |
 | Mesh/DHT | M-D1, M-D2, M-D3, M-D4, M-D5, M-D6, M-D7, M-D8, M-D9, M-D10 | M-D1 (PoW bypass) |
@@ -43,7 +43,10 @@ This document contains all remaining implementation items across the MaluWAF pro
 
 | Item | Status | Evidence |
 |------|--------|----------|
+| S-1 (ML-KEM key mismatch) | ✅ FIXED | pqc/src/keys.rs: Added public_key() method; config_identity.rs derives from loaded key |
 | S-2 (ACME key permissions) | ✅ FIXED | AGENTS.md: "Private key permissions too open" |
+| S-3 (Threat intel unsigned records) | ✅ FIXED | threat_intel.rs: sync_from_dht() skips unsigned records |
+| S-4 (Threat intel no signature) | ✅ FIXED | threat_intel.rs: publish_indicator_to_dht() refuses if no signer |
 | S-11 (PID claiming) | ✅ FIXED | AGENTS.md: "Connection tracker non-atomic" |
 | S-13 (PoW difficulty) | ✅ FIXED | AGENTS.md: "PoW difficulty increased" |
 | S-18 (Nonce cache) | ✅ FIXED | AGENTS.md: "NONCE_CACHE O(n) eviction" |
@@ -53,7 +56,13 @@ This document contains all remaining implementation items across the MaluWAF pro
 | H3 (Standalone mesh publishing) | ✅ FIXED | AGENTS.md: "Standalone threat sync missing" |
 | H4 (Signature format) | ✅ FIXED | AGENTS.md: "Threat intel signature bypass" |
 | M-D1 (Edge PoW unbinding) | ✅ FIXED | AGENTS.md: "Edge PoW key unbinding" |
+| M-D1 (Edge PoW revokal bypass) | ✅ FIXED | peer_auth.rs: Revocation check moved before PoW handling |
+| M-D2 (DnsRecord not privileged) | ✅ FIXED | keys.rs: DnsRecord added to is_privileged() |
 | M-D8 (PoW difficulty) | ✅ FIXED | AGENTS.md: "PoW difficulty increased" |
+| T1 (Stack overflow test) | ✅ FIXED | connection_limiter.rs: Uses heap allocation instead of stack |
+| T2 (Off-by-one backoff test) | ✅ FIXED | overseer/process.rs: count < 6 instead of <= 6 |
+| D1 (wasmtime update) | ✅ FIXED | Cargo.toml: wasmtime = "42.0.2" |
+| E2 (Mesh QUIC no transforms) | ✅ FIXED | transport_peer.rs: Added apply_response_transforms() |
 | C3 (IPC panic!) | ❌ NOT REAL | plan11: "All 9 panic! calls are in #[cfg(test)] modules" |
 | S-21 (TLS warning) | ❌ NOT REAL | Already exists in cert_resolver.rs |
 | S-22 (SSRF bypass) | ❌ NOT REAL | Logic is correct |
@@ -68,17 +77,17 @@ This document contains all remaining implementation items across the MaluWAF pro
 ### Wave 1: Critical Security & Test Fixes
 *Can be implemented in parallel by multiple agents*
 
-| Item | Priority | Category | Description | Files |
-|------|----------|----------|-------------|-------|
-| **S-1** | CRITICAL | Security | ML-KEM key pair mismatch (configured private key discarded) | `src/mesh/config_identity.rs` |
-| **S-3** | CRITICAL | Security | Threat intel DHT sync accepts unsigned records | `src/mesh/threat_intel.rs` |
-| **S-4** | CRITICAL | Security | Threat intel publishes without signature when no signer | `src/mesh/threat_intel.rs` |
-| **D1** | CRITICAL | Dependency | Update wasmtime to 42.0.2+ (RUSTSEC-2026-0095) | `Cargo.toml` |
-| **E2** | CRITICAL | Edge Transform | Mesh QUIC proxy applies NO transforms (raw TCP relay) | `src/mesh/transport_peer.rs` |
-| **T1** | CRITICAL | Testing | Stack overflow in `test_connection_rate_limiting` | `src/waf/flood/connection_limiter.rs` |
-| **T2** | CRITICAL | Testing | Off-by-one in `test_restart_delay_exponential_backoff` | `src/overseer/process.rs` |
-| **M-D1** | P1 | Mesh/DHT | Edge node PoW authentication bypasses revocation check | `src/mesh/peer_auth.rs` |
-| **M-D2** | P1 | Mesh/DHT | DnsRecord not privileged while DnsZone is | `src/mesh/dht/keys.rs` |
+| Item | Priority | Category | Description | Files | Status |
+|------|----------|----------|-------------|-------|--------|
+| **S-1** | CRITICAL | Security | ML-KEM key pair mismatch (configured private key discarded) | `src/mesh/config_identity.rs` | ✅ COMPLETED |
+| **S-3** | CRITICAL | Security | Threat intel DHT sync accepts unsigned records | `src/mesh/threat_intel.rs` | ✅ COMPLETED |
+| **S-4** | CRITICAL | Security | Threat intel publishes without signature when no signer | `src/mesh/threat_intel.rs` | ✅ COMPLETED |
+| **D1** | CRITICAL | Dependency | Update wasmtime to 42.0.2+ (RUSTSEC-2026-0095) | `Cargo.toml` | ✅ COMPLETED |
+| **E2** | CRITICAL | Edge Transform | Mesh QUIC proxy applies NO transforms (raw TCP relay) | `src/mesh/transport_peer.rs` | ✅ COMPLETED |
+| **T1** | CRITICAL | Testing | Stack overflow in `test_connection_rate_limiting` | `src/waf/flood/connection_limiter.rs` | ✅ COMPLETED |
+| **T2** | CRITICAL | Testing | Off-by-one in `test_restart_delay_exponential_backoff` | `src/overseer/process.rs` | ✅ COMPLETED |
+| **M-D1** | P1 | Mesh/DHT | Edge node PoW authentication bypasses revocation check | `src/mesh/peer_auth.rs` | ✅ COMPLETED |
+| **M-D2** | P1 | Mesh/DHT | DnsRecord not privileged while DnsZone is | `src/mesh/dht/keys.rs` | ✅ COMPLETED |
 
 ### Wave 2: High Priority Security & Performance
 *Can be implemented in parallel by multiple agents*

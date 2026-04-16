@@ -6,6 +6,134 @@ This skill documents the security patterns implemented in Wave 1 and Wave 2 (202
 
 ## Wave 1: Critical Security (Completed 2026-04-11)
 
+## Wave 1: Critical Security (Completed 2026-04-16)
+
+### ML-KEM/ML-DSA Key Pair Derivation from Loaded Secrets
+
+**Location**: `src/mesh/config_identity.rs:49-84`, `pqc/src/keys.rs`, `pqc/src/dsa.rs`
+
+**Issue**: When loading ML-KEM-768 or ML-DSA private keys from base64 configuration, the code was discarding the loaded key and generating a new random keypair instead.
+
+**Pattern**: Derive public key FROM the loaded secret key:
+
+```rust
+// ML-KEM-768: Extract public key from secret key
+let sk = MlKem768::secret_key_from_base64(b64)
+    .map_err(|e| format!("Invalid base64 ML-KEM key: {}", e))?;
+let pk = sk.public_key().map_err(|e| format!("Failed to derive public key: {}", e))?;
+self.ml_kem_public_key_base64 = Some(pk.to_base64());
+
+// ML-DSA-44: Extract verifying key from signing key
+let sk = pqc::SigningKey::from_base64(b64)
+    .map_err(|e| format!("Invalid base64 ML-DSA key: {}", e))?;
+let vk = sk.verifying_key();
+self.ml_dsa_public_key_base64 = Some(vk.to_base64());
+```
+
+**Implementation**:
+- `pqc/src/keys.rs`: Added `public_key()` method to `SecretKey` using aws-lc-rs
+- `pqc/src/dsa.rs`: Added `verifying_key()` method to `SigningKey`
+
+---
+
+### Threat Intel DHT Sync Signature Requirement
+
+**Location**: `src/mesh/threat_intel.rs:1233-1242`
+
+**Issue**: `sync_from_dht()` accepted records without signatures, allowing unsigned threats to be accepted.
+
+**Pattern**: Skip records without valid signatures:
+
+```rust
+if !signature.is_empty() && !signer_pk.is_empty() {
+    // verify signature...
+} else {
+    tracing::warn!(
+        "Threat intel DHT sync: missing signature or signer pk for {}",
+        key
+    );
+    continue;  // Skip unsigned records
+}
+```
+
+---
+
+### Threat Intel Publish Signature Requirement
+
+**Location**: `src/mesh/threat_intel.rs:650-654`
+
+**Issue**: When a node had no signer configured, `publish_indicator_to_dht()` would publish with empty signature.
+
+**Pattern**: Refuse to publish if no signer:
+
+```rust
+if self.signer.is_none() {
+    tracing::warn!("Cannot publish threat indicator: no signer configured");
+    return;
+}
+```
+
+---
+
+### Edge Node PoW Revocation Check Order
+
+**Location**: `src/mesh/peer_auth.rs:120-131`
+
+**Issue**: When PoW was provided for edge node authentication, the revocation check was bypassed.
+
+**Pattern**: Revocation check must happen BEFORE authentication method dispatch:
+
+```rust
+fn validate_edge_node(...) -> Result<(), String> {
+    // ALWAYS check revocation first, regardless of auth method
+    if let Some(revocation_list) = revoked_nodes {
+        if let Some(revocation_info) = revocation_list.is_node_revoked(peer_node_id) {
+            return Err(format!(
+                "Edge node {} has been revoked: {} (at {})",
+                peer_node_id, revocation_info.reason, revocation_info.revoked_at
+            ));
+        }
+    }
+
+    // Then dispatch to appropriate auth method
+    if let (Some(nonce), Some(pk)) = (pow_nonce, pow_public_key) {
+        return validate_edge_node_pow(...);
+    }
+    // ...
+}
+```
+
+---
+
+### DnsRecord Privilege Classification
+
+**Location**: `src/mesh/dht/keys.rs:496`
+
+**Issue**: `DnsZone` was privileged but `DnsRecord` was not, allowing edge nodes to store individual DNS records without proper authorization.
+
+**Pattern**: Add DnsRecord to privileged key types:
+
+```rust
+pub fn is_privileged(&self) -> bool {
+    matches!(
+        self,
+        DhtKey::Organization(_)
+            | DhtKey::TierKey(_, _)
+            | DhtKey::MemberCertificate(_, _)
+            | DhtKey::GlobalNodeList
+            | DhtKey::OrgNameReservation(_)
+            | DhtKey::DnsZone(_)
+            | DhtKey::DnsRecord(_, _)  // Added
+            | DhtKey::DnsDomainRegistration(_)
+            | DhtKey::AnycastNode(_)
+    )
+}
+```
+
+---
+
+## Wave 1: Critical Security (Completed 2026-04-11)
+
 ## Constant-Time Comparison for Sensitive Data
 
 ### CSRF Token Validation
