@@ -903,7 +903,7 @@ During DHT sync (`sync_from_dht()`), signatures are verified before accepting in
 
 ### ThreatIntel Re-announcement
 
-Global nodes periodically re-announce local ThreatIntel indicators via `re_announce_local_indicators()`. The interval is controlled by `re_announce_interval_secs` (default: 300s). Only non-expired local-origin indicators are re-announced. Respects `hub_only_mode` (non-global nodes do not re-announce).
+Global nodes periodically re-announce ThreatIntel indicators via `re_announce_local_indicators()`. The interval is controlled by `re_announce_interval_secs` (default: 300s). ALL non-expired indicators are re-announced regardless of `local_origin` flag. Respects `hub_only_mode` (non-global nodes do not re-announce).
 
 ## Honeypot Architecture Summary
 
@@ -923,6 +923,16 @@ Global nodes periodically re-announce local ThreatIntel indicators via `re_annou
 | Python (Granian) | `[site.app_server]` | `src/app_server/granian.rs` |
 | HTTP Upstream | `[site.upstream]` | `src/proxy.rs` |
 | Mesh Origin | DHT + `[site.upstream]` | `src/mesh/topology.rs` |
+
+### FileManager YARA Integration
+
+The `FileManager` (`src/static_files/file_manager.rs`) uses mesh YARA rules for malware scanning on upload. It implements `reload_yara_rules_if_needed()` which syncs with the global `YaraRulesManager` from `src/waf/mod.rs`. When `scan_on_upload` is enabled, the FileManager:
+
+1. Initializes with bundled YARA rules as fallback
+2. Periodically checks for newer versions from mesh YARA rules
+3. Reloads rules via `yara_scanner.reload_with_rules()` when version changes
+
+This allows FileManager to leverage YARA rules distributed via the mesh network.
 
 ## FastCGI Pool Management
 
