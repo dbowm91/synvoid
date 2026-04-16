@@ -132,7 +132,7 @@ This document contains all remaining implementation items across the MaluWAF pro
 | **H4** | MEDIUM | Honeypot | Signature format mismatch in Threat Intel | `src/mesh/threat_intel.rs` | ✅ COMPLETED |
 | **T1** | MEDIUM | Testing | WAF detection integration tests missing | `tests/integration_test.rs` | 📋 TODO |
 | **T5** | MEDIUM | Testing | Benchmarks missing | `benches/` | 📋 TODO |
-| **T2** | MEDIUM | Testing | Restart delay exponential backoff test | `src/overseer/process.rs` | 📋 TODO |
+| **T2** | MEDIUM | Testing | Restart delay exponential backoff test | `src/overseer/process.rs` | ✅ COMPLETED |
 | **E1** | MEDIUM | Edge Transform | DHT key mismatch in MeshProxy (dormant) | `src/mesh/proxy.rs` | 📋 TODO |
 | **E3** | MEDIUM | Edge Transform | All transforms silently skipped in MeshProxy | `src/mesh/proxy.rs` | 📋 TODO |
 | **E4** | MEDIUM | Edge Transform | Poisoned image cache key mismatch | `src/mesh/proxy.rs` | 📋 TODO |
@@ -177,7 +177,7 @@ This document contains all remaining implementation items across the MaluWAF pro
 
 | Item | Priority | Category | Description | Files | Status |
 |------|----------|----------|-------------|-------|--------|
-| **OpenAPI** | - | Feature | Add OpenAPI documentation with utoipa | `src/admin/openapi.rs`, handlers | 📋 TODO |
+| **OpenAPI** | - | Feature | Add OpenAPI documentation with utoipa | `src/admin/openapi.rs`, handlers | 🚧 IN PROGRESS |
 | **T1** | HIGH | YARA/ThreatIntel | ThreatIntel re-announcement only local-origin | `src/mesh/threat_intel.rs` | ✅ COMPLETED |
 | **T2** | MEDIUM | YARA/ThreatIntel | File upload malware scanner doesn't use mesh YARA | `src/static_files/file_manager.rs` | ✅ COMPLETED |
 | **E7** | INFO | Edge Transform | Verify direct HTTP mode works | (already working) | ✅ COMPLETED |

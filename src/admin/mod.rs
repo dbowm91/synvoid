@@ -8,6 +8,7 @@
 pub mod alerting;
 mod audit;
 mod auth;
+pub mod openapi;
 mod handlers;
 mod metrics;
 mod middleware;
@@ -502,13 +503,7 @@ fn build_router_from_state(
 
     Router::new()
         .nest("/api", api_routes)
-        .route(
-            "/api/openapi.json",
-            get(|| async {
-                let schema = schemars::schema_for!(());
-                axum::Json(schema)
-            }),
-        )
+        .route("/api/openapi.json", get(openapi::get_openapi_json))
         .route("/health", get(health_check))
         .fallback_service(ServeDir::new("admin-ui/dist"))
         .layer(create_cors_layer(&admin_cors_config))
