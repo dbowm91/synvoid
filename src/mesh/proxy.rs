@@ -69,7 +69,7 @@ pub struct MeshProxy {
     active_connections: Arc<RwLock<HashMap<String, MeshConnection>>>,
     policy_cache: Cache<String, CachedPolicy>,
     failed_providers: Cache<String, Instant>,
-    provider_stats: Cache<String, ProviderStats>,
+    provider_stats: Arc<RwLock<HashMap<String, ProviderStats>>>,
     org_manager: Arc<TokioRwLock<OrganizationManager>>,
     transform_cache: Arc<Cache<String, TransformCacheEntry>>,
     proxy_cache: Arc<RwLock<Option<ProxyCache>>>,
@@ -209,10 +209,7 @@ impl MeshProxy {
             .max_capacity(cache_size as u64)
             .time_to_live(Duration::from_secs(FAILED_PROVIDER_COOLDOWN_SECS * 2))
             .build();
-        let provider_stats = Cache::builder()
-            .max_capacity(cache_size as u64)
-            .time_to_live(Duration::from_secs(HEALTH_METRICS_WINDOW_SECS))
-            .build();
+        let provider_stats = Arc::new(RwLock::new(HashMap::new()));
 
         let transform_cache = Cache::builder()
             .max_capacity(DEFAULT_TRANSFORM_CACHE_SIZE as u64)
@@ -497,50 +494,67 @@ impl MeshProxy {
     }
 
     fn is_provider_unhealthy(&self, provider_node_id: &str) -> bool {
-        if let Some(mut provider_stats) = self.provider_stats.get(provider_node_id) {
-            provider_stats.decay();
-            self.provider_stats
-                .insert(provider_node_id.to_string(), provider_stats.clone());
-            return !provider_stats.is_healthy();
-        }
-        self.is_provider_failed(provider_node_id)
+        let is_unhealthy = {
+            let mut stats = self.provider_stats.write();
+            if let Some(provider_stats) = stats.get_mut(provider_node_id) {
+                provider_stats.decay();
+                !provider_stats.is_healthy()
+            } else {
+                drop(stats);
+                return self.is_provider_failed(provider_node_id);
+            }
+        };
+        is_unhealthy
     }
 
     fn record_provider_success(&self, provider_node_id: &str) {
         self.clear_provider_failure(provider_node_id);
 
-        let mut stats = self
-            .provider_stats
-            .get(provider_node_id)
-            .unwrap_or(ProviderStats {
-                total_requests: 0,
-                successful_requests: 0,
-                consecutive_failures: 0,
-                last_failure: None,
-                last_success: None,
-                cooldown_until: None,
-            });
-        stats.record_success();
-        self.provider_stats
-            .insert(provider_node_id.to_string(), stats);
+        let mut stats = self.provider_stats.write();
+        let entry = stats.entry(provider_node_id.to_string());
+        match entry {
+            std::collections::hash_map::Entry::Occupied(mut e) => {
+                e.get_mut().record_success();
+            }
+            std::collections::hash_map::Entry::Vacant(e) => {
+                let mut new_stats = ProviderStats {
+                    total_requests: 0,
+                    successful_requests: 0,
+                    consecutive_failures: 0,
+                    last_failure: None,
+                    last_success: None,
+                    cooldown_until: None,
+                };
+                new_stats.record_success();
+                e.insert(new_stats);
+            }
+        }
     }
 
     fn record_provider_failure(&self, provider_node_id: &str) -> u32 {
-        let mut stats = self
-            .provider_stats
-            .get(provider_node_id)
-            .unwrap_or(ProviderStats {
-                total_requests: 0,
-                successful_requests: 0,
-                consecutive_failures: 0,
-                last_failure: None,
-                last_success: None,
-                cooldown_until: None,
-            });
-        stats.record_failure();
-        let failure_count = stats.consecutive_failures;
-        self.provider_stats
-            .insert(provider_node_id.to_string(), stats);
+        let failure_count = {
+            let mut stats = self.provider_stats.write();
+            let entry = stats.entry(provider_node_id.to_string());
+            match entry {
+                std::collections::hash_map::Entry::Occupied(mut e) => {
+                    e.get_mut().record_failure();
+                    e.get().consecutive_failures
+                }
+                std::collections::hash_map::Entry::Vacant(e) => {
+                    let mut new_stats = ProviderStats {
+                        total_requests: 0,
+                        successful_requests: 0,
+                        consecutive_failures: 0,
+                        last_failure: None,
+                        last_success: None,
+                        cooldown_until: None,
+                    };
+                    new_stats.record_failure();
+                    e.insert(new_stats);
+                    1
+                }
+            }
+        };
         self.mark_provider_failed(provider_node_id);
         failure_count
     }

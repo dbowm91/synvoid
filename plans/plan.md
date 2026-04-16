@@ -24,20 +24,20 @@ This document contains all remaining implementation items across the MaluWAF pro
 
 | Category | Items | Highest Priority |
 |----------|-------|------------------|
-| Security | S-5 (VerifiedUpstream sig - DONE), S-10 | S-10 (DHT chain) |
+| Security | S-10 | S-10 (DHT chain) |
 | Dependency | D1 | D1 (wasmtime 42.0.2) |
-| Performance | P1.1, P1.2, P1.3, P2.1, P2.2, P3, P2.3, P2.4 | P1.1 (AHashMap hot paths) |
-| Mesh/DHT | M-D1, M-D2, M-D5 | M-D1 (PoW bypass) |
+| Performance | P2.4 | P2.4 (connection limiter) |
+| Mesh/DHT | M-D5 | M-D5 (quorum tasks) |
 | WASM | W1, W2 | W1/W2 (InstancePool bugs) |
 | Honeypot/Threat | H1, H2, H3, H4 | H1, H2 |
-| Edge Transform | E1, E3, E4, E5, E6 | E1 (DHT key mismatch) |
-| Code Quality | C1, O1, O2, O3 | C1 (blocking sleep) |
-| Testing | G1, G2, G3, G4, G5, G6, G7, G8 | G1 (process tree) |
+| Edge Transform | (all completed) | - |
+| Code Quality | O1, O2, O3 | O2 (proxy.rs size) |
+| Testing | G1-G8, T1, T4, T5 | G1 (process tree) |
 | Testing (plan11) | T1, T4, T5 | T1 (WAF detection tests) |
 | OpenAPI | Phase 2-5 (in progress) | Handler annotations |
 | Admin Panel | Items 1-15 | Admin 2 (Mesh Config) |
 | Web App Stack | Phase 3-5 (deferred) | Phase 3 |
-| Reverse Proxy/WAF | P1.1, P1.2, P2.1, P2.2, P3.1, P2.3, P2.4 | P1.1 (AHashMap hot paths) |
+| Reverse Proxy/WAF | P2.4 | P2.4 (connection limiter) |
 
 ### Already Fixed (from plan files)
 
@@ -117,12 +117,12 @@ This document contains all remaining implementation items across the MaluWAF pro
 |------|----------|----------|-------------|-------|--------|
 | **P2.1** | MEDIUM | Performance | Shard BlockStore (lock contention) | `src/block_store.rs` | ✅ COMPLETED |
 | **P2.2** | MEDIUM | Performance | Reduce to_lowercase() allocations | Multiple files | ✅ COMPLETED |
-| **P2.3** | MEDIUM | Performance | Provider stats cache mutation pattern | `src/mesh/proxy.rs` | 📋 TODO |
-| **P2.4** | MEDIUM | Performance | Global connection limiter contention | `src/http/server.rs` | 📋 TODO |
+| **P2.3** | MEDIUM | Performance | Provider stats cache mutation pattern | `src/mesh/proxy.rs` | ✅ COMPLETED |
+| **P2.4** | MEDIUM | Performance | Global connection limiter contention | `src/http/server.rs` | ⏸️ DEFERRED |
 | **P3** | MEDIUM | Performance | filter_response_headers() allocation overhead | `src/proxy.rs` | ✅ COMPLETED |
 | **M-D3** | P2 | Mesh/DHT | CapabilityAttestation write not restricted | `src/mesh/dht/mod.rs` | ✅ COMPLETED |
 | **M-D4** | P2 | Mesh/DHT | DHT announce wrapper signature missing | `src/mesh/dht/record_store_sync.rs` | ✅ COMPLETED |
-| **M-D5** | P2 | Mesh/DHT | Quorum async tasks accumulate on timeout | `src/mesh/dht/record_store_crud.rs` | 📋 TODO |
+| **M-D5** | P2 | Mesh/DHT | Quorum async tasks accumulate on timeout | `src/mesh/dht/record_store_crud.rs` | ⏸️ DEFERRED |
 | **M-D6** | P2 | Mesh/DHT | edge_can_respond_privileged config erosion risk | `src/mesh/dht/routing/manager.rs` | ✅ COMPLETED |
 | **W3** | MEDIUM | WASM | Instance pool doesn't reuse WasmRuntime | `src/serverless/instance_pool.rs` | ✅ COMPLETED |
 | **W4** | MEDIUM | WASM | No admin API for serverless | `src/admin/handlers/` | ✅ COMPLETED |
@@ -133,14 +133,14 @@ This document contains all remaining implementation items across the MaluWAF pro
 | **T1** | MEDIUM | Testing | WAF detection integration tests missing | `tests/integration_test.rs` | 📋 TODO |
 | **T5** | MEDIUM | Testing | Benchmarks missing | `benches/` | 📋 TODO |
 | **T2** | MEDIUM | Testing | Restart delay exponential backoff test | `src/overseer/process.rs` | ✅ COMPLETED |
-| **E1** | MEDIUM | Edge Transform | DHT key mismatch in MeshProxy (dormant) | `src/mesh/proxy.rs` | 📋 TODO |
-| **E3** | MEDIUM | Edge Transform | All transforms silently skipped in MeshProxy | `src/mesh/proxy.rs` | 📋 TODO |
-| **E4** | MEDIUM | Edge Transform | Poisoned image cache key mismatch | `src/mesh/proxy.rs` | 📋 TODO |
-| **E5** | MEDIUM | Edge Transform | Duplicate transform config publishing code | `src/mesh/transports/manager.rs` | 📋 TODO |
-| **E6** | MEDIUM | Edge Transform | Dead code - MeshBackend/MeshProxy subsystem | `src/mesh/backend.rs` | 📋 TODO |
-| **C1** | CRITICAL | Code Quality | Blocking std::thread::sleep in async contexts | `src/worker/mod.rs` | ⏸️ DEFERRED |
+| **E1** | MEDIUM | Edge Transform | DHT key mismatch in MeshProxy (dormant) | `src/mesh/proxy.rs` | ✅ COMPLETED |
+| **E3** | MEDIUM | Edge Transform | All transforms silently skipped in MeshProxy | `src/mesh/proxy.rs` | ✅ COMPLETED |
+| **E4** | MEDIUM | Edge Transform | Poisoned image cache key mismatch | `src/mesh/proxy.rs` | ✅ COMPLETED |
+| **E5** | MEDIUM | Edge Transform | Duplicate transform config publishing code | `src/mesh/transports/manager.rs` | ✅ COMPLETED |
+| **E6** | MEDIUM | Edge Transform | Dead code - MeshBackend/MeshProxy subsystem | `src/mesh/backend.rs` | ✅ COMPLETED |
+| **C1** | CRITICAL | Code Quality | Blocking std::thread::sleep in async contexts | `src/worker/mod.rs` | ✅ COMPLETED |
 | **C2** | CRITICAL | Code Quality | Circular dependency: proxy.rs ↔ waf/mod.rs | `src/proxy.rs`, `src/waf/mod.rs` | ✅ COMPLETED |
-| **O1** | HIGH | Code Quality | lib.rs exposes 55+ modules publicly | `src/lib.rs` | 📋 TODO |
+| **O1** | HIGH | Code Quality | lib.rs exposes 55+ modules publicly | `src/lib.rs` | ⏸️ DEFERRED |
 
 ### Wave 4: Lower Priority & Feature Work
 *Can be implemented in parallel by multiple agents*
