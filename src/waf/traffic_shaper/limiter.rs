@@ -63,12 +63,14 @@ impl ConnectionLimiter {
         }
 
         let effective_max_per_site = max_per_site.unwrap_or(10000);
-        let site_count = {
+        let site_count = if max_per_site.is_some() {
             let sites = self.site_total_connections.read();
             sites
                 .get(site_id)
                 .map(|c| c.load(Ordering::Acquire))
                 .unwrap_or(0)
+        } else {
+            0
         };
 
         if site_count >= effective_max_per_site {
@@ -101,7 +103,7 @@ impl ConnectionLimiter {
 
         self.total_connections.fetch_add(1, Ordering::Release);
 
-        {
+        if max_per_site.is_some() {
             let mut site_totals = self.site_total_connections.write();
             let counter = site_totals
                 .entry(site_id.to_string())
@@ -113,7 +115,9 @@ impl ConnectionLimiter {
             let mut ips = self.ip_connections.write();
             let counter = ips.entry(client_ip).or_insert_with(|| AtomicU32::new(0));
             counter.fetch_add(1, Ordering::Release);
+        }
 
+        if max_per_site.is_some() {
             let mut sites = self.site_connections.write();
             let site_ips = sites
                 .entry(site_id.to_string())

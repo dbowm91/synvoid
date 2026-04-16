@@ -26,7 +26,7 @@ This document contains all remaining implementation items across the MaluWAF pro
 |----------|-------|------------------|
 | Security | S-10 | S-10 (DHT chain) |
 | Dependency | D1 | D1 (wasmtime 42.0.2) |
-| Performance | P2.4 | P2.4 (connection limiter) |
+| Performance | (all completed) | - |
 | Mesh/DHT | M-D5 | M-D5 (quorum tasks) |
 | WASM | W1, W2 | W1/W2 (InstancePool bugs) |
 | Honeypot/Threat | H1, H2, H3, H4 | H1, H2 |
@@ -37,7 +37,7 @@ This document contains all remaining implementation items across the MaluWAF pro
 | OpenAPI | Phase 2-5 (in progress) | Handler annotations |
 | Admin Panel | Items 1-15 | Admin 2 (Mesh Config) |
 | Web App Stack | Phase 3-5 (deferred) | Phase 3 |
-| Reverse Proxy/WAF | P2.4 | P2.4 (connection limiter) |
+| Reverse Proxy/WAF | (all completed) | - |
 
 ### Already Fixed (from plan files)
 
@@ -118,7 +118,7 @@ This document contains all remaining implementation items across the MaluWAF pro
 | **P2.1** | MEDIUM | Performance | Shard BlockStore (lock contention) | `src/block_store.rs` | ✅ COMPLETED |
 | **P2.2** | MEDIUM | Performance | Reduce to_lowercase() allocations | Multiple files | ✅ COMPLETED |
 | **P2.3** | MEDIUM | Performance | Provider stats cache mutation pattern | `src/mesh/proxy.rs` | ✅ COMPLETED |
-| **P2.4** | MEDIUM | Performance | Global connection limiter contention | `src/http/server.rs` | ⏸️ DEFERRED |
+| **P2.4** | MEDIUM | Performance | Global connection limiter contention | `src/waf/traffic_shaper/limiter.rs` | ✅ COMPLETED |
 | **P3** | MEDIUM | Performance | filter_response_headers() allocation overhead | `src/proxy.rs` | ✅ COMPLETED |
 | **M-D3** | P2 | Mesh/DHT | CapabilityAttestation write not restricted | `src/mesh/dht/mod.rs` | ✅ COMPLETED |
 | **M-D4** | P2 | Mesh/DHT | DHT announce wrapper signature missing | `src/mesh/dht/record_store_sync.rs` | ✅ COMPLETED |
