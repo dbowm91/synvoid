@@ -24,20 +24,21 @@ This document contains all remaining implementation items across the MaluWAF pro
 
 | Category | Items | Highest Priority |
 |----------|-------|------------------|
-| Security | S-10 | S-10 (DHT chain) |
 | Dependency | D1 | D1 (wasmtime 42.0.2) |
-| Performance | (all completed) | - |
 | Mesh/DHT | M-D5 | M-D5 (quorum tasks) |
-| WASM | W1, W2 | W1/W2 (InstancePool bugs) |
-| Honeypot/Threat | H1, H2, H3, H4 | H1, H2 |
-| Edge Transform | (all completed) | - |
 | Code Quality | O1, O2, O3 | O2 (proxy.rs size) |
 | Testing | G1-G8, T1, T4, T5 | G1 (process tree) |
-| Testing (plan11) | T1, T4, T5 | T1 (WAF detection tests) |
 | OpenAPI | Phase 2-5 (in progress) | Handler annotations |
 | Admin Panel | Items 1-15 | Admin 2 (Mesh Config) |
 | Web App Stack | Phase 3-5 (deferred) | Phase 3 |
-| Reverse Proxy/WAF | (all completed) | - |
+
+### All Completed Categories
+- Security: S-1 through S-10 all fixed
+- Performance: P1.1, P1.2, P1.3, P2.1, P2.2, P2.3, P2.4, P3 all fixed
+- WASM: W1-W10 all fixed
+- Honeypot/Threat: H1-H4 all fixed
+- Edge Transform: E1-E6 all verified/completed
+- Reverse Proxy/WAF: All items fixed
 
 ### Already Fixed (from plan files)
 
@@ -131,7 +132,7 @@ This document contains all remaining implementation items across the MaluWAF pro
 | **H1** | MEDIUM | Honeypot | TLS honeypot uses wrong blocking function | `src/tls/server.rs` | ✅ COMPLETED |
 | **H4** | MEDIUM | Honeypot | Signature format mismatch in Threat Intel | `src/mesh/threat_intel.rs` | ✅ COMPLETED |
 | **T1** | MEDIUM | Testing | WAF detection integration tests missing | `tests/integration_test.rs` | 📋 TODO |
-| **T5** | MEDIUM | Testing | Benchmarks missing | `benches/` | 📋 TODO |
+| **T5** | MEDIUM | Testing | Benchmarks missing | `benches/` | ⏸️ DEFERRED |
 | **T2** | MEDIUM | Testing | Restart delay exponential backoff test | `src/overseer/process.rs` | ✅ COMPLETED |
 | **E1** | MEDIUM | Edge Transform | DHT key mismatch in MeshProxy (dormant) | `src/mesh/proxy.rs` | ✅ COMPLETED |
 | **E3** | MEDIUM | Edge Transform | All transforms silently skipped in MeshProxy | `src/mesh/proxy.rs` | ✅ COMPLETED |
