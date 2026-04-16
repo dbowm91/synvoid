@@ -175,25 +175,25 @@ This document contains all remaining implementation items across the MaluWAF pro
 ### Wave 5: Feature Implementation
 *Larger features that can be parallelized*
 
-| Item | Priority | Category | Description | Files |
-|------|----------|----------|-------------|-------|
-| **OpenAPI** | - | Feature | Add OpenAPI documentation with utoipa | `src/admin/openapi.rs`, handlers |
-| **T1** | HIGH | YARA/ThreatIntel | ThreatIntel re-announcement only local-origin | `src/mesh/threat_intel.rs` |
-| **T2** | MEDIUM | YARA/ThreatIntel | File upload malware scanner doesn't use mesh YARA | `src/static_files/file_manager.rs` |
-| **E7** | INFO | Edge Transform | Verify direct HTTP mode works | (already working) |
-| **Web Phase 1** | - | Web App | PHP location-level security bug | `src/php/mod.rs` |
-| **Web Phase 2** | - | Web App | Remove third-party CDN dependencies | `src/bin/server.rs` |
-| **Web Phase 3** | - | Web App | Create standalone directory listing module | `src/theme/dir_listing.rs` |
-| **Web Phase 4** | - | Web App | Enhanced directory listing features | `src/theme/` |
-| **Web Phase 5** | - | Web App | Theme system alignment | `src/theme/renderer.rs` |
-| **Admin 1** | LOW | Admin | Fix placeholder Blocking tab | `admin-ui/` |
-| **Admin 2** | HIGH | Admin | Add Mesh Configuration page | `admin-ui/` |
-| **Admin 3** | MEDIUM | Admin | Add DNS Configuration page | `admin-ui/` |
-| **Admin 4** | MEDIUM | Admin | Add Settings search | `admin-ui/` |
-| **Admin 5** | LOW | Admin | Wire up contextual help documentation | `admin-ui/` |
-| **Admin 6** | MEDIUM | Admin | Add Error Page editor | `admin-ui/` |
-| **Admin 7** | LOW | Admin | Add Restart indicators systematically | `admin-ui/` |
-| **Admin 8-15** | MEDIUM/LOW | Admin | Various admin panel improvements | `admin-ui/` |
+| Item | Priority | Category | Description | Files | Status |
+|------|----------|----------|-------------|-------|--------|
+| **OpenAPI** | - | Feature | Add OpenAPI documentation with utoipa | `src/admin/openapi.rs`, handlers | 📋 TODO |
+| **T1** | HIGH | YARA/ThreatIntel | ThreatIntel re-announcement only local-origin | `src/mesh/threat_intel.rs` | ✅ COMPLETED |
+| **T2** | MEDIUM | YARA/ThreatIntel | File upload malware scanner doesn't use mesh YARA | `src/static_files/file_manager.rs` | ✅ COMPLETED |
+| **E7** | INFO | Edge Transform | Verify direct HTTP mode works | (already working) | ✅ COMPLETED |
+| **Web Phase 1** | - | Web App | PHP location-level security bug | `src/php/mod.rs` | ✅ COMPLETED |
+| **Web Phase 2** | - | Web App | Remove third-party CDN dependencies | `src/bin/server.rs` | ✅ COMPLETED |
+| **Web Phase 3** | - | Web App | Create standalone directory listing module | `src/theme/dir_listing.rs` | ⏸️ DEFERRED |
+| **Web Phase 4** | - | Web App | Enhanced directory listing features | `src/theme/` | ⏸️ DEFERRED |
+| **Web Phase 5** | - | Web App | Theme system alignment | `src/theme/renderer.rs` | ⏸️ DEFERRED |
+| **Admin 1** | LOW | Admin | Fix placeholder Blocking tab | `admin-ui/` | 📋 TODO |
+| **Admin 2** | HIGH | Admin | Add Mesh Configuration page | `admin-ui/` | 📋 TODO |
+| **Admin 3** | MEDIUM | Admin | Add DNS Configuration page | `admin-ui/` | 📋 TODO |
+| **Admin 4** | MEDIUM | Admin | Add Settings search | `admin-ui/` | 📋 TODO |
+| **Admin 5** | LOW | Admin | Wire up contextual help documentation | `admin-ui/` | 📋 TODO |
+| **Admin 6** | MEDIUM | Admin | Add Error Page editor | `admin-ui/` | 📋 TODO |
+| **Admin 7** | LOW | Admin | Add Restart indicators systematically | `admin-ui/` | 📋 TODO |
+| **Admin 8-15** | MEDIUM/LOW | Admin | Various admin panel improvements | `admin-ui/` | 📋 TODO |
 
 ---
 

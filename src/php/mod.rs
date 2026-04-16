@@ -6,7 +6,7 @@ use std::sync::LazyLock;
 use bytes::Bytes;
 use http::{Method, Uri};
 
-use crate::config::site::{FastCgiConfig, PhpConfig};
+use crate::config::site::{FastCgiConfig, PhpConfig, PhpLocationConfig};
 
 static COMMON_PHP_SOCKETS: LazyLock<Vec<PathBuf>> = LazyLock::new(|| {
     let mut paths = vec![
@@ -194,8 +194,15 @@ impl PhpClient {
     }
 }
 
-pub fn create_php_client(site_config: &crate::config::site::SiteConfig) -> Option<PhpClient> {
-    let php_config = site_config.proxy.php.clone()?;
+pub fn create_php_client(
+    site_config: &crate::config::site::SiteConfig,
+    location_config: Option<&PhpLocationConfig>,
+) -> Option<PhpClient> {
+    let mut php_config = site_config.proxy.php.clone()?;
+
+    if let Some(loc) = location_config {
+        merge_php_location_config(&mut php_config, loc);
+    }
 
     if php_config.socket.is_none() && php_config.host.is_none() && !has_available_php_socket() {
         tracing::debug!("No PHP-FPM socket found for site, skipping PHP backend");
@@ -203,6 +210,64 @@ pub fn create_php_client(site_config: &crate::config::site::SiteConfig) -> Optio
     }
 
     Some(PhpClient::new(php_config))
+}
+
+fn merge_php_location_config(site: &mut PhpConfig, location: &PhpLocationConfig) {
+    if location.socket.is_some() {
+        site.socket = location.socket.clone();
+    }
+    if location.host.is_some() {
+        site.host = location.host.clone();
+    }
+    if location.port.is_some() {
+        site.port = location.port;
+    }
+    if location.root.is_some() {
+        site.root = location.root.clone();
+    }
+    if location.index.is_some() {
+        site.index = location.index.clone();
+    }
+    if location.upload_tmp.is_some() {
+        site.upload_tmp = location.upload_tmp.clone();
+    }
+    if location.connect_timeout.is_some() {
+        site.connect_timeout = location.connect_timeout;
+    }
+    if location.send_timeout.is_some() {
+        site.send_timeout = location.send_timeout;
+    }
+    if location.read_timeout.is_some() {
+        site.read_timeout = location.read_timeout;
+    }
+    if let Some(ref disable_funcs) = location.disable_functions {
+        let funcs: Vec<String> = disable_funcs
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        if !funcs.is_empty() {
+            site.disable_functions = Some(funcs);
+        }
+    }
+    if location.open_basedir.is_some() {
+        site.open_basedir = location.open_basedir.clone();
+    }
+    if location.allow_url_fopen.is_some() {
+        site.allow_url_fopen = location.allow_url_fopen;
+    }
+    if location.max_execution_time.is_some() {
+        site.max_execution_time = location.max_execution_time;
+    }
+    if location.memory_limit.is_some() {
+        site.memory_limit = location.memory_limit.clone();
+    }
+    if location.upload_max_filesize.is_some() {
+        site.upload_max_filesize = location.upload_max_filesize.clone();
+    }
+    if location.post_max_size.is_some() {
+        site.post_max_size = location.post_max_size.clone();
+    }
 }
 
 fn has_available_php_socket() -> bool {

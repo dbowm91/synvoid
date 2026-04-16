@@ -12,6 +12,8 @@ use walkdir::WalkDir;
 use crate::config::site::SiteStaticConfig;
 use crate::upload::malware_scanner::MalwareScanner;
 use crate::upload::rate_limit::{RateLimitConfig, UploadRateLimiter};
+use crate::upload::yara_scanner::YaraScanner;
+use crate::upload::YaraError;
 
 const BLOCKED_EXTENSIONS: &[&str] = &[
     "exe",
@@ -220,12 +222,19 @@ pub struct FileManager {
     config: Arc<FileManagerConfig>,
     malware_scanner: Arc<MalwareScanner>,
     rate_limiter: Arc<UploadRateLimiter>,
+    reload_lock: parking_lot::RwLock<()>,
 }
 
 impl FileManager {
     pub fn new(config: FileManagerConfig) -> Self {
         let malware_scanner = if config.scan_on_upload {
-            Arc::new(MalwareScanner::new())
+            match YaraScanner::new(crate::upload::yara_scanner::YaraRulesSource::Bundled) {
+                Ok(scanner) => Arc::new(MalwareScanner::with_yara(Some(scanner))),
+                Err(e) => {
+                    tracing::warn!("Failed to create YARA scanner for FileManager: {}, using built-in rules only", e);
+                    Arc::new(MalwareScanner::new())
+                }
+            }
         } else {
             Arc::new(MalwareScanner::with_yara(None))
         };
@@ -236,7 +245,35 @@ impl FileManager {
             config: Arc::new(config),
             malware_scanner,
             rate_limiter,
+            reload_lock: parking_lot::RwLock::new(()),
         }
+    }
+
+    fn reload_yara_rules_if_needed(&self) -> Result<(), YaraError> {
+        if let Some(yara_scanner) = self.malware_scanner.get_yara_scanner() {
+            if let Some(yara_rules) = crate::waf::get_yara_rules() {
+                let current_version = yara_scanner.get_version();
+                let new_version = yara_rules.get_current_version();
+
+                if current_version != new_version {
+                    let _guard = self.reload_lock.write();
+                    let current_version = yara_scanner.get_version();
+                    let new_version = yara_rules.get_current_version();
+
+                    if current_version != new_version {
+                        if let Some(new_rules) = yara_rules.get_current_rules() {
+                            tracing::debug!(
+                                current_version = ?current_version,
+                                new_version = ?new_version,
+                                "Reloading YARA rules in FileManager with new version"
+                            );
+                            yara_scanner.reload_with_rules(&new_rules, new_version)?;
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     pub fn config(&self) -> &FileManagerConfig {
@@ -751,6 +788,10 @@ impl FileManager {
         }
 
         if self.config.scan_on_upload {
+            if let Err(e) = self.reload_yara_rules_if_needed() {
+                tracing::warn!("Failed to reload YARA rules for FileManager: {}", e);
+            }
+
             match self.malware_scanner.scan_bytes(&data).await {
                 Ok(scan_result) if !scan_result.is_clean() => {
                     let matched_names: Vec<String> = scan_result.matched_rule_names();

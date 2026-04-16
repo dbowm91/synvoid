@@ -310,149 +310,187 @@ fn get_dashboard_html() -> &'static str {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MaluWAF VPN Dashboard</title>
-    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        :root { --bg-primary: #0a0a0f; --bg-secondary: #12121a; --bg-tertiary: #1a1a24; --bg-card: #16161f; --text-primary: #f0f0f5; --text-secondary: #9090a0; --accent-primary: #00d4aa; --accent-secondary: #00b894; --accent-glow: rgba(0,212,170,0.3); --border-color: #2a2a3a; }
-        body { background-color: var(--bg-primary); color: var(--text-primary); font-family: 'Inter', sans-serif; }
-        .bg-card { background-color: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px; }
-        .text-accent { color: var(--accent-primary); }
-        .border-accent { border-color: var(--accent-primary); }
-        input, select { background-color: var(--bg-tertiary); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 8px; padding: 10px 14px; width: 100%; box-sizing: border-box; }
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        :root { --bg-primary: #0a0a0f; --bg-secondary: #12121a; --bg-tertiary: #1a1a24; --bg-card: #16161f; --text-primary: #f0f0f5; --text-secondary: #9090a0; --accent-primary: #00d4aa; --accent-secondary: #00b894; --accent-glow: rgba(0,212,170,0.3); --border-color: #2a2a3a; --blue: #3b82f6; --red: #dc2626; }
+        body { background-color: var(--bg-primary); color: var(--text-primary); font-family: system-ui, -apple-system, sans-serif; min-height: 100vh; }
+        .container { max-width: 1024px; margin: 0 auto; padding: 24px; }
+        header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 32px; }
+        .header-left { display: flex; align-items: center; gap: 16px; }
+        .logo { width: 48px; height: 48px; border-radius: 12px; background-color: var(--accent-primary); display: flex; align-items: center; justify-content: center; font-size: 24px; font-weight: bold; color: var(--bg-primary); }
+        h1 { font-size: 24px; font-weight: bold; }
+        .subtitle { font-size: 14px; color: var(--text-secondary); }
+        .status-badge { display: flex; align-items: center; gap: 8px; padding: 6px 12px; background-color: var(--bg-card); border: 1px solid var(--border-color); border-radius: 8px; font-weight: 500; }
+        .status-dot { width: 10px; height: 10px; border-radius: 50%; }
+        .status-connected { background-color: #22c55e; box-shadow: 0 0 8px #22c55e; }
+        .status-disconnected { background-color: #6b7280; }
+        .grid { display: grid; gap: 24px; }
+        .grid-2 { grid-template-columns: repeat(2, 1fr); }
+        @media (max-width: 768px) { .grid-2 { grid-template-columns: 1fr; } }
+        .card { background-color: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px; padding: 24px; margin-bottom: 24px; }
+        .card-title { font-size: 18px; font-weight: 600; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
+        .card-title svg { width: 20px; height: 20px; color: var(--accent-primary); }
+        .form-group { margin-bottom: 16px; }
+        .form-group:last-child { margin-bottom: 0; }
+        label { display: block; font-size: 14px; color: var(--text-secondary); margin-bottom: 6px; }
+        input, select { background-color: var(--bg-tertiary); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 8px; padding: 10px 14px; width: 100%; font-size: 14px; }
         input:focus, select:focus { outline: none; border-color: var(--accent-primary); box-shadow: 0 0 0 2px var(--accent-glow); }
-        button { background-color: var(--accent-primary); color: var(--bg-primary); border-radius: 8px; padding: 10px 20px; font-weight: 600; border: none; cursor: pointer; transition: all 0.2s; }
+        .btn-group { display: flex; gap: 8px; }
+        button { background-color: var(--accent-primary); color: var(--bg-primary); border-radius: 8px; padding: 10px 20px; font-weight: 600; border: none; cursor: pointer; transition: all 0.2s; font-size: 14px; }
         button:hover { box-shadow: 0 0 15px var(--accent-glow); transform: translateY(-1px); }
         button:disabled { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }
         button.secondary { background-color: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border-color); }
         button.secondary:hover { box-shadow: none; background-color: var(--bg-secondary); }
-        button.danger { background-color: #dc2626; }
+        button.danger { background-color: var(--red); }
         button.danger:hover { box-shadow: 0 0 15px rgba(220,38,38,0.4); }
-        .status-dot { width: 10px; height: 10px; border-radius: 50%; }
-        .status-connected { background-color: #22c55e; box-shadow: 0 0 8px #22c55e; }
-        .status-disconnected { background-color: #6b7280; }
-        .font-mono { font-family: 'JetBrains Mono', monospace; }
-        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
-        .animate-pulse { animation: pulse 2s infinite; }
+        .stat-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-bottom: 16px; }
+        .stat-box { background-color: var(--bg-secondary); padding: 16px; border-radius: 8px; }
+        .stat-label { font-size: 12px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em; }
+        .stat-value { font-size: 20px; font-family: ui-monospace, monospace; font-weight: 600; margin-top: 4px; }
+        .stat-value.upload { color: var(--accent-primary); }
+        .stat-value.download { color: var(--blue); }
+        .info-bar { display: flex; justify-content: space-between; align-items: center; font-size: 14px; color: var(--text-secondary); background-color: var(--bg-secondary); padding: 12px; border-radius: 8px; }
+        .info-bar span:last-child { font-family: ui-monospace, monospace; }
+        .traffic-chart { height: 100px; display: flex; align-items: flex-end; gap: 2px; padding: 8px 0; }
+        .traffic-bar { flex: 1; min-width: 4px; border-radius: 2px 2px 0 0; transition: height 0.3s ease; }
+        .traffic-bar.upload { background-color: var(--accent-primary); }
+        .traffic-bar.download { background-color: var(--blue); }
+        .chart-legend { display: flex; gap: 16px; font-size: 12px; margin-top: 8px; }
+        .legend-item { display: flex; align-items: center; gap: 4px; }
+        .legend-dot { width: 8px; height: 8px; border-radius: 2px; }
+        .legend-dot.upload { background-color: var(--accent-primary); }
+        .legend-dot.download { background-color: var(--blue); }
+        .mapping-form { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+        .mapping-form input[type="number"] { width: 80px; }
+        .mapping-form select { width: 80px; }
+        .mapping-form input[type="text"] { flex: 1; min-width: 150px; }
+        .mappings-list { display: flex; flex-direction: column; gap: 8px; }
+        .mapping-item { display: flex; justify-content: space-between; align-items: center; background-color: var(--bg-secondary); padding: 12px; border-radius: 8px; font-family: ui-monospace, monospace; font-size: 14px; }
+        .mapping-item .protocol { color: var(--text-secondary); text-transform: uppercase; font-size: 12px; }
+        .mapping-item .upstream { color: var(--accent-primary); }
+        .mapping-item button { padding: 4px 8px; font-size: 12px; background: transparent; border: none; color: var(--red); cursor: pointer; }
+        .mapping-item button:hover { text-decoration: underline; }
+        .empty-state { text-align: center; color: var(--text-secondary); padding: 16px; }
+        .flex-1 { flex: 1; }
     </style>
 </head>
-<body class="min-h-screen">
-    <div class="max-w-5xl mx-auto p-6">
-        <header class="flex justify-between items-center mb-8">
-            <div class="flex items-center gap-4">
-                <div class="w-12 h-12 rounded-xl bg-[var(--accent-primary)] flex items-center justify-center text-2xl font-bold text-[var(--bg-primary)]">M</div>
+<body>
+    <div class="container">
+        <header>
+            <div class="header-left">
+                <div class="logo">M</div>
                 <div>
-                    <h1 class="text-2xl font-bold">VPN Dashboard</h1>
-                    <p class="text-sm text-[var(--text-secondary)]" id="transportType">Transport: --</p>
+                    <h1>VPN Dashboard</h1>
+                    <p class="subtitle" id="transportType">Transport: --</p>
                 </div>
             </div>
-            <div class="flex items-center gap-4">
-                <div class="flex items-center gap-2 px-3 py-1.5 bg-[var(--bg-card)] rounded-lg border border-[var(--border-color)]">
-                    <span class="status-dot" id="statusDot"></span>
-                    <span id="statusText" class="font-medium">Disconnected</span>
-                </div>
+            <div class="status-badge">
+                <span class="status-dot" id="statusDot"></span>
+                <span id="statusText">Disconnected</span>
             </div>
         </header>
         
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-            <div class="bg-card p-6">
-                <h2 class="text-lg font-semibold mb-4 flex items-center gap-2">
-                    <svg class="w-5 h-5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+        <div class="grid grid-2">
+            <div class="card">
+                <h2 class="card-title">
+                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
                     Connection
                 </h2>
-                <div class="space-y-4">
-                    <div>
-                        <label class="block text-sm text-[var(--text-secondary)] mb-1.5">Server</label>
-                        <input type="text" id="server" placeholder="waf.example.com">
+                <div class="form-group">
+                    <label>Server</label>
+                    <input type="text" id="server" placeholder="waf.example.com">
+                </div>
+                <div class="grid grid-2">
+                    <div class="form-group">
+                        <label>Port</label>
+                        <input type="number" id="port" value="51821">
                     </div>
-                    <div class="grid grid-cols-2 gap-3">
-                        <div>
-                            <label class="block text-sm text-[var(--text-secondary)] mb-1.5">Port</label>
-                            <input type="number" id="port" value="51821">
-                        </div>
-                        <div>
-                            <label class="block text-sm text-[var(--text-secondary)] mb-1.5">Transport</label>
-                            <select id="transport">
-                                <option value="quic">QUIC</option>
-                                <option value="wireguard">WireGuard</option>
-                            </select>
-                        </div>
+                    <div class="form-group">
+                        <label>Transport</label>
+                        <select id="transport">
+                            <option value="quic">QUIC</option>
+                            <option value="wireguard">WireGuard</option>
+                        </select>
                     </div>
-                    <div>
-                        <label class="block text-sm text-[var(--text-secondary)] mb-1.5">Client ID</label>
-                        <input type="text" id="clientId" placeholder="my-client">
-                    </div>
-                    <div>
-                        <label class="block text-sm text-[var(--text-secondary)] mb-1.5">Auth Token</label>
-                        <input type="password" id="token" placeholder="your-secret-token">
-                    </div>
-                    <div class="flex gap-2">
-                        <button onclick="connect()" id="connectBtn" class="flex-1">Connect</button>
-                        <button onclick="disconnect()" class="danger" id="disconnectBtn" disabled>Disconnect</button>
-                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Client ID</label>
+                    <input type="text" id="clientId" placeholder="my-client">
+                </div>
+                <div class="form-group">
+                    <label>Auth Token</label>
+                    <input type="password" id="token" placeholder="your-secret-token">
+                </div>
+                <div class="btn-group">
+                    <button onclick="connect()" id="connectBtn" class="flex-1">Connect</button>
+                    <button onclick="disconnect()" id="disconnectBtn" class="danger" disabled>Disconnect</button>
                 </div>
             </div>
             
-            <div class="bg-card p-6">
-                <h2 class="text-lg font-semibold mb-4 flex items-center gap-2">
-                    <svg class="w-5 h-5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+            <div class="card">
+                <h2 class="card-title">
+                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
                     Statistics
                 </h2>
-                <div class="grid grid-cols-2 gap-3 mb-4">
-                    <div class="bg-[var(--bg-secondary)] p-4 rounded-lg">
-                        <div class="text-xs text-[var(--text-secondary)] uppercase tracking-wide">Upload</div>
-                        <div class="text-xl font-mono font-semibold text-accent" id="bytesSent">0 B</div>
+                <div class="stat-grid">
+                    <div class="stat-box">
+                        <div class="stat-label">Upload</div>
+                        <div class="stat-value upload" id="bytesSent">0 B</div>
                     </div>
-                    <div class="bg-[var(--bg-secondary)] p-4 rounded-lg">
-                        <div class="text-xs text-[var(--text-secondary)] uppercase tracking-wide">Download</div>
-                        <div class="text-xl font-mono font-semibold text-blue-400" id="bytesReceived">0 B</div>
+                    <div class="stat-box">
+                        <div class="stat-label">Download</div>
+                        <div class="stat-value download" id="bytesReceived">0 B</div>
                     </div>
-                    <div class="bg-[var(--bg-secondary)] p-4 rounded-lg">
-                        <div class="text-xs text-[var(--text-secondary)] uppercase tracking-wide">Packets Sent</div>
-                        <div class="text-lg font-mono" id="packetsSent">0</div>
+                    <div class="stat-box">
+                        <div class="stat-label">Packets Sent</div>
+                        <div class="stat-value" id="packetsSent">0</div>
                     </div>
-                    <div class="bg-[var(--bg-secondary)] p-4 rounded-lg">
-                        <div class="text-xs text-[var(--text-secondary)] uppercase tracking-wide">Packets Received</div>
-                        <div class="text-lg font-mono" id="packetsReceived">0</div>
+                    <div class="stat-box">
+                        <div class="stat-label">Packets Received</div>
+                        <div class="stat-value" id="packetsReceived">0</div>
                     </div>
                 </div>
-                <div class="flex justify-between items-center text-sm text-[var(--text-secondary)] bg-[var(--bg-secondary)] p-3 rounded-lg">
+                <div class="info-bar">
                     <span>Duration:</span>
-                    <span class="font-mono" id="duration">--</span>
+                    <span id="duration">--</span>
                 </div>
             </div>
         </div>
         
-        <div class="bg-card p-6 mb-6">
-            <h2 class="text-lg font-semibold mb-4 flex items-center gap-2">
-                <svg class="w-5 h-5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z"/></svg>
+        <div class="card">
+            <h2 class="card-title">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z"/></svg>
                 Traffic
             </h2>
-            <canvas id="trafficChart" height="100"></canvas>
+            <div class="traffic-chart" id="trafficChart"></div>
+            <div class="chart-legend">
+                <div class="legend-item"><div class="legend-dot upload"></div><span>Upload</span></div>
+                <div class="legend-item"><div class="legend-dot download"></div><span>Download</span></div>
+            </div>
         </div>
         
-        <div class="bg-card p-6">
-            <h2 class="text-lg font-semibold mb-4 flex items-center gap-2">
-                <svg class="w-5 h-5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/></svg>
+        <div class="card">
+            <h2 class="card-title">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/></svg>
                 Port Mappings
             </h2>
-            <div class="flex gap-2 mb-4 flex-wrap">
-                <input type="number" id="mapLocalPort" class="w-24" placeholder="Local">
-                <input type="number" id="mapRemotePort" class="w-24" placeholder="Remote">
-                <select id="mapProtocol" class="w-24">
+            <div class="mapping-form">
+                <input type="number" id="mapLocalPort" placeholder="Local">
+                <input type="number" id="mapRemotePort" placeholder="Remote">
+                <select id="mapProtocol">
                     <option value="tcp">TCP</option>
                     <option value="udp">UDP</option>
                 </select>
-                <input type="text" id="mapUpstream" class="flex-1 min-w-[200px]" placeholder="Upstream (optional)">
+                <input type="text" id="mapUpstream" placeholder="Upstream (optional)">
                 <button onclick="addMapping()" class="secondary">Add</button>
             </div>
-            <div id="mappingsList" class="space-y-2"></div>
+            <div id="mappingsList" class="mappings-list"></div>
         </div>
     </div>
     
     <script>
-        let chart = null;
-        let cumulativeData = { upload: [], download: [], labels: [] };
+        let trafficData = { upload: [], download: [] };
+        const MAX_BARS = 50;
         
         function formatBytes(b) { 
             if (!b || b === 0) return '0 B'; 
@@ -471,34 +509,22 @@ fn get_dashboard_html() -> &'static str {
                 .replace(/'/g, '&#39;');
         }
         
-        function initChart() {
-            const ctx = document.getElementById('trafficChart').getContext('2d');
-            chart = new Chart(ctx, {
-                type: 'line',
-                data: {
-                    labels: [],
-                    datasets: [
-                        { label: 'Upload', data: [], borderColor: '#00d4aa', backgroundColor: 'rgba(0,212,170,0.1)', fill: true, tension: 0.3, pointRadius: 0 },
-                        { label: 'Download', data: [], borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.1)', fill: true, tension: 0.3, pointRadius: 0 }
-                    ]
-                },
-                options: {
-                    responsive: true,
-                    interaction: { intersect: false, mode: 'index' },
-                    scales: {
-                        x: { display: false },
-                        y: { 
-                            ticks: { color: '#9090a0', callback: v => formatBytes(v) },
-                            grid: { color: '#2a2a3a' },
-                            beginAtZero: true
-                        }
-                    },
-                    plugins: {
-                        legend: { labels: { color: '#f0f0f5' } },
-                        tooltip: { callbacks: { label: ctx => ctx.dataset.label + ': ' + formatBytes(ctx.raw) } }
-                    }
-                }
-            });
+        function updateTrafficChart() {
+            const chart = document.getElementById('trafficChart');
+            const maxVal = Math.max(...trafficData.upload, ...trafficData.download, 1);
+            
+            let html = '';
+            for (let i = 0; i < MAX_BARS; i++) {
+                const upload = trafficData.upload[i] || 0;
+                const download = trafficData.download[i] || 0;
+                const uploadHeight = Math.max(2, (upload / maxVal) * 80);
+                const downloadHeight = Math.max(2, (download / maxVal) * 80);
+                html += `<div style="display:flex;flex-direction:column;justify-content:flex-end;gap:1px;height:100%;">
+                    <div class="traffic-bar upload" style="height:${uploadHeight}px;"></div>
+                    <div class="traffic-bar download" style="height:${downloadHeight}px;"></div>
+                </div>`;
+            }
+            chart.innerHTML = html;
         }
         
         async function loadStatus() {
@@ -517,18 +543,13 @@ fn get_dashboard_html() -> &'static str {
                 document.getElementById('packetsReceived').textContent = d.packets_received.toLocaleString();
                 document.getElementById('duration').textContent = d.connected_duration_secs ? d.connected_duration_secs + 's' : '--';
                 
-                cumulativeData.labels.push(new Date().toLocaleTimeString());
-                cumulativeData.upload.push(d.bytes_sent);
-                cumulativeData.download.push(d.bytes_received);
-                if (cumulativeData.labels.length > 30) {
-                    cumulativeData.labels.shift();
-                    cumulativeData.upload.shift();
-                    cumulativeData.download.shift();
+                trafficData.upload.push(d.bytes_sent);
+                trafficData.download.push(d.bytes_received);
+                if (trafficData.upload.length > MAX_BARS) {
+                    trafficData.upload.shift();
+                    trafficData.download.shift();
                 }
-                chart.data.labels = cumulativeData.labels;
-                chart.data.datasets[0].data = cumulativeData.upload;
-                chart.data.datasets[1].data = cumulativeData.download;
-                chart.update('none');
+                updateTrafficChart();
                 
                 const statusDot = document.getElementById('statusDot');
                 const statusText = document.getElementById('statusText');
@@ -550,14 +571,13 @@ fn get_dashboard_html() -> &'static str {
                 const list = document.getElementById('mappingsList');
                 if (d.port_mappings && d.port_mappings.length > 0) {
                     list.innerHTML = d.port_mappings.map(m => 
-                        '<div class="flex justify-between items-center bg-[var(--bg-secondary)] p-3 rounded-lg">' +
-                            '<span class="font-mono text-sm">' + escapeHtml(String(m.local_port)) + ' → ' + escapeHtml(String(m.remote_port)) + ' <span class="text-[var(--text-secondary)]">(' + escapeHtml(m.protocol).toUpperCase() + ')</span>' +
-                            (m.upstream_host ? ' <span class="text-accent">→ ' + escapeHtml(m.upstream_host) + '</span>' : '') + '</span>' +
-                            '<button onclick="removeMapping(' + m.local_port + ',\'' + m.protocol + '\')" class="text-red-400 text-sm hover:text-red-300 bg-transparent border-none cursor-pointer">Remove</button>' +
-                        '</div>'
+                        `<div class="mapping-item">
+                            <span>${escapeHtml(String(m.local_port))} → ${escapeHtml(String(m.remote_port))} <span class="protocol">(${escapeHtml(m.protocol)})</span>` +
+                            (m.upstream_host ? ` <span class="upstream">→ ${escapeHtml(m.upstream_host)}</span>` : '') + '</span>' +
+                            `<button onclick="removeMapping(${m.local_port},'${m.protocol}')">Remove</button></div>`
                     ).join('');
                 } else {
-                    list.innerHTML = '<div class="text-[var(--text-secondary)] text-center py-4">No port mappings configured</div>';
+                    list.innerHTML = '<div class="empty-state">No port mappings configured</div>';
                 }
             } catch(e) { console.error(e); }
         }
@@ -615,7 +635,6 @@ fn get_dashboard_html() -> &'static str {
             loadStatus();
         }
         
-        initChart();
         loadStatus();
         setInterval(loadStatus, 2000);
     </script>

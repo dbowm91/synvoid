@@ -7,6 +7,7 @@
 //! the static file handler and minifier.
 
 use crate::config::site::BackendConfig;
+use crate::config::site::PhpLocationConfig;
 use crate::config::{MainConfig, SiteConfig};
 use crate::location_matcher::LocationMatcher;
 use crate::mesh::config::{
@@ -66,9 +67,11 @@ pub struct RouteTarget {
     pub tunnel_peer: Option<Arc<str>>,
     pub tunnel_port: Option<u16>,
     pub serverless_function: Option<Arc<str>>,
+    pub php_location_config: Option<PhpLocationConfig>,
 }
 
 #[derive(Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum RouteResult {
     Found(RouteTarget),
     NotFound(String),
@@ -349,6 +352,7 @@ impl Router {
                                 tunnel_peer: Some(Arc::from(peer.as_str())),
                                 tunnel_port: Some(port),
                                 serverless_function: None,
+                                php_location_config: None,
                             })
                         } else {
                             RouteResult::Found(RouteTarget {
@@ -362,6 +366,7 @@ impl Router {
                                 tunnel_peer: None,
                                 tunnel_port: None,
                                 serverless_function: None,
+                                php_location_config: None,
                             })
                         }
                     }
@@ -380,6 +385,7 @@ impl Router {
                             tunnel_peer: None,
                             tunnel_port: None,
                             serverless_function: None,
+                            php_location_config: None,
                         })
                     }
                     BackendConfig::AxumDynamic { socket, plugin } => {
@@ -400,6 +406,7 @@ impl Router {
                             tunnel_peer: None,
                             tunnel_port: None,
                             serverless_function: None,
+                            php_location_config: None,
                         })
                     }
                     BackendConfig::AppServer { socket } => {
@@ -421,6 +428,7 @@ impl Router {
                             tunnel_peer: None,
                             tunnel_port: None,
                             serverless_function: None,
+                            php_location_config: None,
                         })
                     }
                     BackendConfig::Static { enabled } => {
@@ -438,6 +446,7 @@ impl Router {
                                     tunnel_peer: None,
                                     tunnel_port: None,
                                     serverless_function: None,
+                                    php_location_config: location.php.clone(),
                                 }));
                             }
                         }
@@ -468,6 +477,7 @@ impl Router {
                         tunnel_peer: None,
                         tunnel_port: None,
                         serverless_function: None,
+                        php_location_config: location.php.clone(),
                     }));
                 }
             }
@@ -486,6 +496,7 @@ impl Router {
                         tunnel_peer: None,
                         tunnel_port: None,
                         serverless_function: None,
+                        php_location_config: None,
                     }));
                 }
             }
@@ -504,6 +515,7 @@ impl Router {
                         tunnel_peer: None,
                         tunnel_port: None,
                         serverless_function: None,
+                        php_location_config: None,
                     }));
                 }
             }
@@ -522,6 +534,7 @@ impl Router {
                         tunnel_peer: None,
                         tunnel_port: None,
                         serverless_function: None,
+                        php_location_config: None,
                     }));
                 }
             }
@@ -541,6 +554,7 @@ impl Router {
                             tunnel_peer: None,
                             tunnel_port: None,
                             serverless_function: Some(Arc::from(func.name.clone())),
+                            php_location_config: None,
                         }));
                     }
                 }
@@ -582,6 +596,7 @@ impl Router {
                             tunnel_peer: Some(Arc::from(peer.as_str())),
                             tunnel_port: Some(port),
                             serverless_function: None,
+                            php_location_config: None,
                         });
                     }
 
@@ -596,6 +611,7 @@ impl Router {
                         tunnel_peer: None,
                         tunnel_port: None,
                         serverless_function: None,
+                        php_location_config: None,
                     });
                 }
                 BackendConfig::FastCgi { socket } => {
@@ -613,6 +629,7 @@ impl Router {
                         tunnel_peer: None,
                         tunnel_port: None,
                         serverless_function: None,
+                        php_location_config: None,
                     });
                 }
                 BackendConfig::AxumDynamic { socket, plugin } => {
@@ -633,6 +650,7 @@ impl Router {
                         tunnel_peer: None,
                         tunnel_port: None,
                         serverless_function: None,
+                        php_location_config: None,
                     });
                 }
                 BackendConfig::AppServer { socket } => {
@@ -654,6 +672,7 @@ impl Router {
                         tunnel_peer: None,
                         tunnel_port: None,
                         serverless_function: None,
+                        php_location_config: None,
                     });
                 }
                 BackendConfig::Static { enabled } => {
@@ -670,6 +689,7 @@ impl Router {
                                 tunnel_peer: None,
                                 tunnel_port: None,
                                 serverless_function: None,
+                                php_location_config: None,
                             });
                         }
                     }
@@ -702,6 +722,7 @@ impl Router {
                     tunnel_peer: None,
                     tunnel_port: None,
                     serverless_function: None,
+                    php_location_config: None,
                 });
             }
         }
@@ -719,6 +740,7 @@ impl Router {
                     tunnel_peer: None,
                     tunnel_port: None,
                     serverless_function: None,
+                    php_location_config: None,
                 });
             }
         }
@@ -740,6 +762,7 @@ impl Router {
                 tunnel_peer: None,
                 tunnel_port: None,
                 serverless_function: None,
+                php_location_config: None,
             });
         }
 
@@ -757,6 +780,7 @@ impl Router {
                     tunnel_peer: None,
                     tunnel_port: None,
                     serverless_function: None,
+                    php_location_config: None,
                 });
             }
         }
@@ -773,6 +797,7 @@ impl Router {
             tunnel_peer: None,
             tunnel_port: None,
             serverless_function: None,
+            php_location_config: None,
         })
     }
 
@@ -856,6 +881,7 @@ impl Router {
                         tunnel_peer: None,
                         tunnel_port: None,
                         serverless_function: None,
+                        php_location_config: None,
                     })
                 } else {
                     RouteResult::Error(
