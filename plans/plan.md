@@ -107,7 +107,7 @@ This document contains all remaining implementation items across the MaluWAF pro
 | **W1** | HIGH | WASM | InstancePool uses wrong path (routing prefix as file path) | `src/serverless/instance_pool.rs` | ✅ COMPLETED |
 | **W2** | HIGH | WASM | InstancePool spawns new WasmPluginManager per instance | `src/serverless/instance_pool.rs` | ✅ COMPLETED |
 | **T1 (ACME)** | HIGH | Testing | ACME workflow tests missing | `tests/integration_test.rs` | ✅ COMPLETED |
-| **T1 (ThreatIntel)** | HIGH | Testing | ThreatIntel publication/sync tests missing | `tests/dht_integration_test.rs` | ✅ COMPLETED |
+| **T1 (ThreatIntel)** | HIGH | Testing | ThreatIntel publication/sync tests missing | `tests/dht_integration_test.rs` | 🔍 REVERTED - API mismatch |
 | **T3** | HIGH | Testing | PeerAuth validation tests missing | `src/mesh/peer_auth.rs` | ✅ COMPLETED |
 
 ### Wave 3: Medium Priority Improvements
