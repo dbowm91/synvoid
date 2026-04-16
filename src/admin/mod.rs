@@ -461,6 +461,18 @@ fn build_router_from_state(
             post(handlers::plugins::reload_plugin),
         )
         .route(
+            "/serverless/functions",
+            get(handlers::serverless::list_functions),
+        )
+        .route(
+            "/serverless/functions/{name}/stats",
+            get(handlers::serverless::get_function_stats),
+        )
+        .route(
+            "/serverless/health",
+            get(handlers::serverless::get_serverless_health),
+        )
+        .route(
             "/honeypot/status",
             get(handlers::honeypot::get_honeypot_status),
         )

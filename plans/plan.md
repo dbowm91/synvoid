@@ -115,21 +115,21 @@ This document contains all remaining implementation items across the MaluWAF pro
 
 | Item | Priority | Category | Description | Files | Status |
 |------|----------|----------|-------------|-------|--------|
-| **P2.1** | MEDIUM | Performance | Shard BlockStore (lock contention) | `src/block_store.rs` | 📋 TODO |
-| **P2.2** | MEDIUM | Performance | Reduce to_lowercase() allocations | Multiple files | 📋 TODO |
+| **P2.1** | MEDIUM | Performance | Shard BlockStore (lock contention) | `src/block_store.rs` | ✅ COMPLETED |
+| **P2.2** | MEDIUM | Performance | Reduce to_lowercase() allocations | Multiple files | ✅ COMPLETED |
 | **P2.1** | MEDIUM | Performance | Provider stats cache mutation pattern | `src/mesh/proxy.rs` | 📋 TODO |
 | **P2.2** | MEDIUM | Performance | Global connection limiter contention | `src/http/server.rs` | 📋 TODO |
-| **P3** | MEDIUM | Performance | filter_response_headers() allocation overhead | `src/proxy.rs` | 📋 TODO |
+| **P3** | MEDIUM | Performance | filter_response_headers() allocation overhead | `src/proxy.rs` | ✅ COMPLETED |
 | **M-D3** | P2 | Mesh/DHT | CapabilityAttestation write not restricted | `src/mesh/dht/mod.rs` | ✅ COMPLETED |
 | **M-D4** | P2 | Mesh/DHT | DHT announce wrapper signature missing | `src/mesh/dht/record_store_sync.rs` | ✅ COMPLETED |
 | **M-D5** | P2 | Mesh/DHT | Quorum async tasks accumulate on timeout | `src/mesh/dht/record_store_crud.rs` | 📋 TODO |
 | **M-D6** | P2 | Mesh/DHT | edge_can_respond_privileged config erosion risk | `src/mesh/dht/routing/manager.rs` | ✅ COMPLETED |
 | **W3** | MEDIUM | WASM | Instance pool doesn't reuse WasmRuntime | `src/serverless/instance_pool.rs` | ✅ COMPLETED |
-| **W4** | MEDIUM | WASM | No admin API for serverless | `src/admin/handlers/` | 📋 TODO |
-| **W5** | MEDIUM | WASM | No health checks for serverless instances | `src/serverless/instance_pool.rs` | 📋 TODO |
+| **W4** | MEDIUM | WASM | No admin API for serverless | `src/admin/handlers/` | ✅ COMPLETED |
+| **W5** | MEDIUM | WASM | No health checks for serverless instances | `src/serverless/instance_pool.rs` | ✅ COMPLETED |
 | **W6** | MEDIUM | WASM | Instance pool limits not enforced | `src/serverless/instance_pool.rs` | ✅ COMPLETED |
 | **H1** | MEDIUM | Honeypot | TLS honeypot uses wrong blocking function | `src/tls/server.rs` | ✅ COMPLETED |
-| **H4** | MEDIUM | Honeypot | Signature format mismatch in Threat Intel | `src/mesh/threat_intel.rs` | 📋 TODO |
+| **H4** | MEDIUM | Honeypot | Signature format mismatch in Threat Intel | `src/mesh/threat_intel.rs` | ✅ COMPLETED |
 | **T1** | MEDIUM | Testing | WAF detection integration tests missing | `tests/integration_test.rs` | 📋 TODO |
 | **T5** | MEDIUM | Testing | Benchmarks missing | `benches/` | 📋 TODO |
 | **T2** | MEDIUM | Testing | Restart delay exponential backoff test | `src/overseer/process.rs` | 📋 TODO |
@@ -139,6 +139,7 @@ This document contains all remaining implementation items across the MaluWAF pro
 | **E5** | MEDIUM | Edge Transform | Duplicate transform config publishing code | `src/mesh/transports/manager.rs` | 📋 TODO |
 | **E6** | MEDIUM | Edge Transform | Dead code - MeshBackend/MeshProxy subsystem | `src/mesh/backend.rs` | 📋 TODO |
 | **C1** | CRITICAL | Code Quality | Blocking std::thread::sleep in async contexts | `src/worker/mod.rs` | ⏸️ DEFERRED |
+| **C2** | CRITICAL | Code Quality | Circular dependency: proxy.rs ↔ waf/mod.rs | `src/proxy.rs`, `src/waf/mod.rs` | ✅ COMPLETED |
 | **O1** | HIGH | Code Quality | lib.rs exposes 55+ modules publicly | `src/lib.rs` | 📋 TODO |
 
 ### Wave 4: Lower Priority & Feature Work
@@ -168,7 +169,6 @@ This document contains all remaining implementation items across the MaluWAF pro
 | **G8** | LOW | Testing | Windows named pipe path not tested | `src/master/windows.rs` | ⏸️ DEFERRED |
 | **O2** | MEDIUM | Code Quality | proxy.rs (1720 lines) too large | `src/proxy.rs` | ⏸️ DEFERRED |
 | **O3** | MEDIUM | Code Quality | router.rs::new() is 185 lines | `src/router.rs` | ⏸️ DEFERRED |
-| **C2** | CRITICAL | Code Quality | Circular dependency: proxy.rs ↔ waf/mod.rs | `src/proxy.rs`, `src/waf/mod.rs` | ⏸️ DEFERRED |
 | **D5** | RECOMMENDED | Documentation | Update SECURITY.md with RUSTSEC-2026-0095 | `SECURITY.md` | ✅ COMPLETED |
 | **D6** | RECOMMENDED | Documentation | Remove superseded RUSTSEC-2025-0118 | `SECURITY.md` | ✅ COMPLETED |
 

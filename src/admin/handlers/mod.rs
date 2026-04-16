@@ -8,6 +8,7 @@ pub mod mesh_admin;
 pub mod plugins;
 pub mod probes;
 pub mod rule_feed;
+pub mod serverless;
 pub mod sites;
 pub mod stats;
 pub mod system;

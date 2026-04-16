@@ -26,6 +26,7 @@ use crate::proxy_cache::{
 };
 use crate::upstream::{Backend, LoadBalanceAlgorithm, UpstreamPool};
 use crate::waf::{UpstreamErrorTracker, WafCore};
+pub use crate::waf::WafDecision;
 use ahash::AHashSet;
 use std::sync::LazyLock;
 
@@ -1367,32 +1368,6 @@ impl ProxyServer {
 
         Ok(builder.body(body)?)
     }
-}
-
-/// WAF decision for a request.
-///
-/// This enum represents the result of WAF inspection, indicating how the
-/// request should be handled.
-pub enum WafDecision {
-    /// Block the request with the given HTTP status code and message.
-    Block(u16, String),
-    /// Challenge the client with the given HTML challenge page.
-    Challenge(String),
-    /// Challenge with Set-Cookie headers (for CSS challenges).
-    ChallengeWithCookie {
-        html: String,
-        session_cookie_name: String,
-        session_cookie_value: String,
-        session_cookie_max_age: u64,
-    },
-    /// Feed the client tarpit content (markov chain generated).
-    Tarpit(String),
-    /// Allow the request to pass through to the backend.
-    Pass,
-    /// Silently drop the connection without response.
-    Drop,
-    /// Stall the connection (for honeypot endpoints).
-    Stall,
 }
 
 pub fn apply_response_header_transforms(

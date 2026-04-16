@@ -460,6 +460,56 @@ impl InstancePool {
             utilization: self.get_utilization(),
         }
     }
+
+    pub fn check_health(&self) -> PoolHealth {
+        let instances = self.instances.read();
+        let mut healthy = 0;
+        let mut unhealthy = 0;
+        let mut unhealthy_reasons: Vec<String> = Vec::new();
+
+        for instance in instances.iter() {
+            let state = instance.state.read();
+            let metrics = instance.metrics.read();
+
+            let instance_healthy = match *state {
+                InstanceState::Ready | InstanceState::Busy => {
+                    !(metrics.requests_handled == 0 && instance.age() > Duration::from_secs(60))
+                }
+                InstanceState::Initializing | InstanceState::Evicted => false,
+            };
+
+            if instance_healthy {
+                healthy += 1;
+            } else {
+                unhealthy += 1;
+                unhealthy_reasons.push(format!(
+                    "{}:{:?}:{}reqs:{}idle_for{:?}",
+                    instance.id,
+                    *state,
+                    metrics.requests_handled,
+                    metrics.is_idle,
+                    metrics.last_used.elapsed()
+                ));
+            }
+        }
+
+        PoolHealth {
+            healthy_instances: healthy,
+            unhealthy_instances: unhealthy,
+            total_instances: instances.len(),
+            utilization: self.get_utilization(),
+            unhealthy_reasons,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct PoolHealth {
+    pub healthy_instances: usize,
+    pub unhealthy_instances: usize,
+    pub total_instances: usize,
+    pub utilization: f64,
+    pub unhealthy_reasons: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default)]

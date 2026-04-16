@@ -69,13 +69,32 @@ pub struct WhitelistConfig {
     pub ips: Vec<IpAddr>,
 }
 
+/// WAF decision for a request.
+///
+/// This enum represents the result of WAF inspection, indicating how the
+/// request should be handled.
+#[derive(Debug, Clone)]
+pub enum WafDecision {
+    Block(u16, String),
+    Challenge(String),
+    ChallengeWithCookie {
+        html: String,
+        session_cookie_name: String,
+        session_cookie_value: String,
+        session_cookie_max_age: u64,
+    },
+    Tarpit(String),
+    Pass,
+    Drop,
+    Stall,
+}
+
 use crate::auth::AuthManager;
 use crate::block_store::BlockStore;
 use crate::challenge::{ChallengeConfig, ChallengeManager, ChallengeResult};
 use crate::config::RateLimitMemoryConfig;
 use crate::mesh::protocol::{ThreatSeverity, ThreatType};
 use crate::mesh::threat_intel::ThreatIntelligenceManager;
-use crate::proxy::WafDecision;
 use crate::theme::ThemeConfig;
 use crate::upload::UploadValidator;
 
